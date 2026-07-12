@@ -14,13 +14,7 @@ import torch
 from omegaconf import DictConfig, OmegaConf
 
 from vrl.config.builders import build_configs
-from vrl.config.precision import (
-    PrecisionPolicy,
-    precision_bridge_fields,
-    resolve_precision_policy,
-)
 from vrl.generation.ray.launcher import RayGenerationLauncher
-from vrl.models.dtypes import resolve_torch_dtype
 from vrl.models.interfaces import require_runtime_model
 from vrl.ray.dependencies import require_ray
 from vrl.ray.placement import GlobalRayPlacementOwner, cross_node_preflight
@@ -59,7 +53,6 @@ from vrl.trainers.checkpointing import (
 from vrl.trainers.data import load_prompt_examples_from_config
 from vrl.trainers.distributed import DistributedTrainingContext, resolve_training_context
 from vrl.trainers.online import OnlineTrainer
-from vrl.trainers.precision import torch_dtype_for_trainer_precision
 from vrl.trainers.strategy import build_strategy
 from vrl.trainers.weight_sync import build_runtime_weight_syncer
 from vrl.utils.memory import capture_host_memory, format_host_memory, log_host_memory
@@ -184,25 +177,6 @@ def _require_supported_online_strategy(context: DistributedTrainingContext) -> N
             "run_online_recipe. Use single_process, ddp, or fsdp "
             "(SPRINT_multi_gpu_training.md / SPRINT_symmetric_colocated_ddp.md).",
         )
-
-
-def _apply_precision_policy(cfg: DictConfig, trainer_config: Any) -> None:
-    """Bridge public ``precision:`` onto trainer fields.
-
-    Public config exposes one training-forward dtype. Internally we still report
-    train and rollout separately so the precision guard can prove both sides
-    stayed aligned.
-    """
-
-    policy = resolve_precision_policy(cfg)
-    for field_name, value in precision_bridge_fields(policy).items():
-        setattr(trainer_config, field_name, value)
-
-
-def _rollout_weight_dtype(policy: PrecisionPolicy) -> Any:
-    """Resolve the rollout model's storage dtype, preserving quantized masters."""
-
-    return resolve_torch_dtype(policy.rollout_storage_precision)
 
 
 def _log_rollout_memory_plan(trainer_config: Any) -> None:
@@ -511,8 +485,12 @@ class OnlineRecipeRun:
     def prepare_metrics_csv(self) -> None:
         component_cols = ",".join(f"r_{name}" for name in self.stack.component_names)
         header = (
-            "epoch,loss,policy_loss,sft_loss,kl_penalty,reward_mean,reward_std,"
-            "clip_fraction,approx_kl,logprob_abs_diff_mean,logprob_abs_diff_max,"
+            "epoch,loss,policy_loss,sft_loss,kl_penalty,weighted_kl_loss,"
+            "reward_mean,reward_std,"
+            "clip_fraction,active_clip_fraction,pre_update_clip_fraction,"
+            "pre_update_active_clip_fraction,pre_update_logprob_abs_diff_max,"
+            "tis_clip_fraction,rs_seq_masked_fraction,approx_kl,"
+            "logprob_abs_diff_mean,logprob_abs_diff_max,"
             "ratio_abs_dev_mean,ratio_abs_dev_max,mismatch_kl,mismatch_k3_kl,"
             "advantage_mean,grad_norm,adv_saturation,"
             "adv_zero_rate,group_size,trained_prompt_num,"
@@ -556,16 +534,25 @@ class OnlineRecipeRun:
             "policy_loss": metrics.policy_loss,
             "sft_loss": metrics.sft_loss,
             "kl_penalty": metrics.kl_penalty,
+            "weighted_kl_loss": metrics.weighted_kl_loss,
             "reward_mean": metrics.reward_mean,
             "reward_std": metrics.reward_std,
-            "clip_fraction": metrics.clip_fraction,
-            "approx_kl": metrics.approx_kl,
-            "logprob_abs_diff_mean": metrics.logprob_abs_diff_mean,
-            "logprob_abs_diff_max": metrics.logprob_abs_diff_max,
-            "ratio_abs_dev_mean": metrics.ratio_abs_dev_mean,
-            "ratio_abs_dev_max": metrics.ratio_abs_dev_max,
-            "mismatch_kl": metrics.mismatch_kl,
-            "mismatch_k3_kl": metrics.mismatch_k3_kl,
+            # Keep the stable flat CSV schema at this IO boundary; internally the
+            # ownership is explicit (overall update vs pass-zero parity snapshot).
+            "clip_fraction": metrics.update.clip_fraction,
+            "active_clip_fraction": metrics.update.active_clip_fraction,
+            "pre_update_clip_fraction": metrics.initial_replay.clip_fraction,
+            "pre_update_active_clip_fraction": metrics.initial_replay.active_clip_fraction,
+            "pre_update_logprob_abs_diff_max": metrics.initial_replay.logprob_abs_diff_max,
+            "tis_clip_fraction": metrics.update.tis_clip_fraction,
+            "rs_seq_masked_fraction": metrics.update.rs_seq_masked_fraction,
+            "approx_kl": metrics.update.approx_kl,
+            "logprob_abs_diff_mean": metrics.logprob_mismatch.logprob_abs_diff_mean,
+            "logprob_abs_diff_max": metrics.logprob_mismatch.logprob_abs_diff_max,
+            "ratio_abs_dev_mean": metrics.logprob_mismatch.ratio_abs_dev_mean,
+            "ratio_abs_dev_max": metrics.logprob_mismatch.ratio_abs_dev_max,
+            "mismatch_kl": metrics.logprob_mismatch.mismatch_kl,
+            "mismatch_k3_kl": metrics.logprob_mismatch.mismatch_k3_kl,
             "advantage_mean": metrics.advantage_mean,
             "grad_norm": metrics.grad_norm,
             "adv_saturation": metrics.adv_saturation,
@@ -607,9 +594,16 @@ class OnlineRecipeRun:
                         f"{row['policy_loss']:.6f}",
                         f"{row['sft_loss']:.6f}",
                         f"{row['kl_penalty']:.6f}",
+                        f"{row['weighted_kl_loss']:.6f}",
                         f"{row['reward_mean']:.4f}",
                         f"{row['reward_std']:.4f}",
                         f"{row['clip_fraction']:.4f}",
+                        f"{row['active_clip_fraction']:.4f}",
+                        f"{row['pre_update_clip_fraction']:.4f}",
+                        f"{row['pre_update_active_clip_fraction']:.4f}",
+                        f"{row['pre_update_logprob_abs_diff_max']:.6f}",
+                        f"{row['tis_clip_fraction']:.4f}",
+                        f"{row['rs_seq_masked_fraction']:.4f}",
                         f"{row['approx_kl']:.6f}",
                         f"{row['logprob_abs_diff_mean']:.6f}",
                         f"{row['logprob_abs_diff_max']:.6f}",
@@ -679,6 +673,39 @@ class OnlineRecipeRun:
         stack.strategy.barrier()
 
 
+def _prepare_metrics_csv_rank_consistent(
+    run: OnlineRecipeRun,
+    training_context: DistributedTrainingContext,
+) -> None:
+    """Run the rank-0 CSV preflight and propagate its verdict to every rank.
+
+    Only rank 0 owns the output path in multi-node runs, so peers cannot safely
+    inspect the header themselves. Broadcasting the small error description
+    keeps every rank on the same side of the first training collective instead
+    of relying on torchrun to notice and terminate a lone rank-0 exception.
+    """
+
+    if not training_context.distributed:
+        run.prepare_metrics_csv()
+        return
+
+    failure: str | None = None
+    if training_context.is_primary:
+        try:
+            run.prepare_metrics_csv()
+        except Exception as exc:
+            failure = f"{type(exc).__name__}: {exc}"
+
+    payload = [failure]
+    torch.distributed.broadcast_object_list(
+        payload,
+        src=0,
+        device=training_context.device,
+    )
+    if payload[0] is not None:
+        raise RuntimeError(f"metrics CSV preflight failed on rank 0: {payload[0]}")
+
+
 def _resolve_reference_artifacts(examples: list[Any], cfg: DictConfig) -> None:
     """Resolve manifest-relative REFERENCE paths once, at prompt load time.
 
@@ -726,7 +753,6 @@ async def run_online_recipe(
     _preflight_production_video_reward(cfg)
     built = build_configs(cfg)
     trainer_config = built["trainer"]
-    _apply_precision_policy(cfg, trainer_config)
     _log_rollout_memory_plan(trainer_config)
     _warn_global_std_streaming_divergence(cfg, trainer_config)
     gradient_accumulation_steps = int(getattr(trainer_config, "gradient_accumulation_steps", 0))
@@ -771,17 +797,10 @@ async def run_online_recipe(
         resources,
         trainer_device=device,
     )
-    # Replay/training model storage follows ``train`` (via trainer_config);
-    # the generation (rollout) model can use a different ``rollout`` dtype.
-    weight_dtype = torch_dtype_for_trainer_precision(trainer_config, torch)
-    policy = resolve_precision_policy(cfg)
-    # Quantized rollout GEMMs still load master weights in the training dtype;
-    # extract_runtime_spec carries the separate swap token to the runtime builder.
-    rollout_weight_dtype = _rollout_weight_dtype(policy)
     examples = load_prompt_examples_from_config(cfg.data)
     _resolve_reference_artifacts(examples, cfg)
     log_host_memory("before_trainer_bundle_build", log=logger)
-    bundle = definition.build_replay_bundle(cfg, device, weight_dtype)
+    bundle = definition.build_replay_bundle(cfg, device)
     log_host_memory("after_trainer_bundle_build", log=logger)
     if definition.after_bundle_built is not None:
         definition.after_bundle_built(bundle, cfg)
@@ -836,7 +855,6 @@ async def run_online_recipe(
         runtime_inputs = build_ray_generation_inputs_for_family(
             cfg,
             components.family,
-            weight_dtype=rollout_weight_dtype,
             executor_kwargs=dict(rollout_executor_kwargs),
         )
         log_host_memory("before_rollout_backend_build", log=logger)
@@ -938,8 +956,7 @@ async def run_online_recipe(
             rng=rng,
             resume=resume_checkpoint is not None,
         )
-        if is_primary:
-            run.prepare_metrics_csv()
+        _prepare_metrics_csv_rank_consistent(run, training_context)
 
         logger.info(
             "Starting %s online recipe: epochs=%d examples=%d n=%d",

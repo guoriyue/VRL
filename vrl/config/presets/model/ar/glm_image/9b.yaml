@@ -8,7 +8,6 @@
 model:
   family: glm_image
   path: zai-org/GLM-Image
-  dtype: bfloat16
 
   use_lora: true
   lora:

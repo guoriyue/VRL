@@ -254,7 +254,7 @@ def test_assign_roles_rejects_duplicate_probed_gpu() -> None:
         owner.assign_roles({0: 0, 1: 0})
 
 
-def test_bundle_specs_size_shared_bundle_to_max_role_cpu() -> None:
+def test_bundle_requirements_size_shared_bundle_to_max_role_cpu() -> None:
     """A shared rollout/reward bundle reserves the larger of the two CPU asks."""
     owner = _owner(
         {
@@ -271,13 +271,13 @@ def test_bundle_specs_size_shared_bundle_to_max_role_cpu() -> None:
     )
     owner.rollout_cpus_per_worker = 2.0
     # reward_cpus_per_worker default is 0.5; shared bundle must take 2.0.
-    specs = owner._bundle_specs()
+    requirements = owner._bundle_requirements()
     shared_bundle = owner.layout.rollout_bundle_indices[0]
-    assert specs[shared_bundle]["CPU"] == 2.0
-    assert specs[shared_bundle]["GPU"] == 1.0
+    assert requirements[shared_bundle]["CPU"] == 2.0
+    assert requirements[shared_bundle]["GPU"] == 1.0
     # Trainer-reserved bundle holds the GPU with only a token CPU.
     trainer_bundle = owner.layout.trainer_bundle_indices[0]
-    assert specs[trainer_bundle] == {"CPU": 0.001, "GPU": 1.0}
+    assert requirements[trainer_bundle] == {"CPU": 0.001, "GPU": 1.0}
 
 
 def test_shutdown_retries_same_placement_group_after_remove_failure(monkeypatch) -> None:

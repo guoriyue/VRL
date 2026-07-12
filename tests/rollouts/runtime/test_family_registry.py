@@ -49,7 +49,7 @@ def test_family_registry_covers_current_rollout_families() -> None:
             assert entry.ar_build is not None
             assert entry.build is None
         assert entry.runtime_builder.startswith(expected_model_prefix)
-        assert entry.runtime_spec_extractor.startswith(expected_model_prefix)
+        assert entry.model_build_resolver.startswith(expected_model_prefix)
         assert ":" in entry.gatherer.import_path
 
 
@@ -201,7 +201,7 @@ def test_ar_families_declare_importable_replay_builders() -> None:
         assert entry.replay_runtime_builder, f"{entry.family} lacks replay_runtime_builder"
         assert callable(import_from_path(entry.replay_runtime_builder))
         assert callable(import_from_path(entry.runtime_builder))
-        assert callable(import_from_path(entry.runtime_spec_extractor))
+        assert callable(import_from_path(entry.model_build_resolver))
 
 
 def test_diffusion_families_resolve_a_replay_path() -> None:

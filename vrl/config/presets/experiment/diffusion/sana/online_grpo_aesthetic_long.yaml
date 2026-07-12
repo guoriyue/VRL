@@ -1,18 +1,20 @@
 # SANA 1.6B + aesthetic GRPO — LONG RUN (real aesthetic-improvement curve).
 #
 # Built on the validated seam:
-# - Rollout scheduler is now FlowMatchEuler (sana/model.py from_spec swap), so it
+# - Rollout scheduler is now FlowMatchEuler (sana/model.py from_build swap), so it
 #   matches the replay scheduler and first-step parity holds (|Δlogp|=5.9e-5).
+# - The SANA family build owns fp16 base parameters while this recipe uses bf16
+#   forward autocast for SDE activation range.
 # - ppo_epochs 2 + timestep_fraction 0.5 (no streaming: gas=0 so the 8x16 batch
 #   is replayable across ppo epochs) was proven to MOVE the reward in the 8-prompt
 #   overfit validation (eval aesthetic 4.2627 -> 4.2917 -> 4.3166, monotonic).
 # - EMA off so the eval curve tracks the actual policy (no averaging lag).
 #
 # Differences from the overfit validation: full DrawBench train set (192 prompts)
-# + a HELD-OUT eval set (drawbench eval_64, 64 prompts) so the curve judges
-# generalization, not memorization. Eval + checkpoint every epoch (save_freq 1)
-# so the run is judgeable AND resumable on the shared GPU — resume after a kill
-# with `trainer.resume_from=<outputs/sana_aesthetic_long/ckpt dir>`.
+# plus a held-out eval set (drawbench eval_64, 64 prompts) for standalone
+# checkpoint evaluation. Save every epoch so the run is judgeable and resumable
+# on the shared GPU; resume with
+# `trainer.resume_from=<outputs/sana_aesthetic_long/ckpt dir>`.
 #
 # Run (single GPU): CUDA_VISIBLE_DEVICES=0 PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True \
 #   vrl-train --config experiment/diffusion/sana/online_grpo_aesthetic_long
@@ -25,7 +27,6 @@ defaults:
   - /reward/aesthetic
   - _self_
 
-precision: bf16
 
 sampling:
   max_sequence_length: 300
@@ -33,6 +34,11 @@ sampling:
 actor:
   optim:
     lr: 3.0e-4
+  # Symmetric 8/8 chunk shape, same as online_grpo_aesthetic.yaml: SANA's bf16
+  # kernels are batch-shape sensitive (16/1 measured 0.014 pre-update log-prob
+  # drift > the 0.01 debug.first_step limit; 8/8 was bit-exact), so with the
+  # hard parity gate below the 16/1 shape aborts at the first optimizer step.
+  replay_samples_per_chunk: 8
   gradient_checkpointing: true
   ppo_epochs: 2
   timestep_fraction: 0.5
@@ -42,11 +48,11 @@ actor:
 rollout:
   n_samples_per_prompt: 16
   prompts_per_batch: 8
-  samples_per_chunk: 16
+  samples_per_chunk: 8
 
 trainer:
   output_dir: outputs/sana_aesthetic_long
-  total_epochs: 20            # ~24 updates/epoch; stop early when the curve plateaus
+  total_epochs: 20            # 20 rollout updates, 40 optimizer steps (ppo_epochs=2)
   save_freq: 1                # checkpoint every epoch -> resumable on the shared GPU
   debug:
-    first_step: true          # keep the parity assert live (cheap, one line/epoch)
+    first_step: true          # fail before the first optimizer step on bad parity

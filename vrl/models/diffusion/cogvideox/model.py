@@ -48,14 +48,13 @@ from vrl.models.diffusion.common import (
     DiffusionBackboneInput,
     DiffusionBackboneRunnerBase,
     DiffusionBranch,
-    LatentDecodeSpec,
-    LatentDecodeTransform,
+    LatentDecodePlan,
     expand_batch_timestep,
     pack_eval_timestep,
 )
 from vrl.models.diffusion.common.lora import LoraModelMixin
 from vrl.models.diffusion.common.tensors import require_tensor
-from vrl.models.dtypes import resolve_torch_dtype
+from vrl.models.interfaces.runtime import ModelBuild
 
 
 def cogvideox_rotary_embeds(
@@ -90,7 +89,9 @@ def cogvideox_rotary_embeds(
 
     if p_t is None:
         grid_crops_coords = get_resize_crop_region_for_grid(
-            (grid_height, grid_width), base_size_width, base_size_height,
+            (grid_height, grid_width),
+            base_size_width,
+            base_size_height,
         )
         return get_3d_rotary_pos_embed(
             embed_dim=transformer_config.attention_head_dim,
@@ -139,7 +140,8 @@ class CogVideoXModel(LoraModelMixin, DiffusersPipelineModelBase, DiffusionBackbo
             embeds = request.prompt_embeds
         else:
             embeds = require_tensor(
-                request.negative_prompt_embeds, "negative_prompt_embeds",
+                request.negative_prompt_embeds,
+                "negative_prompt_embeds",
             )
         return DiffusionBranch(
             hidden_states=request.hidden_states,
@@ -151,14 +153,14 @@ class CogVideoXModel(LoraModelMixin, DiffusersPipelineModelBase, DiffusionBackbo
     # -- backend ownership (called by runtime, not by collectors) -------
 
     @classmethod
-    def from_spec(cls, spec: Any) -> CogVideoXModel:
+    def from_build(cls, build: ModelBuild) -> CogVideoXModel:
         """Load the diffusers CogVideoX pipeline + freeze non-trainable modules."""
         from diffusers import CogVideoXPipeline
 
-        model_dtype = resolve_torch_dtype(spec.dtype)
-        frozen_dtype, load_kwargs = diffusers_pipeline_dtypes(spec, model_dtype)
+        model_dtype = build.parameter_dtype
+        prompt_encoder_dtype, load_kwargs = diffusers_pipeline_dtypes(build, model_dtype)
         pipeline = CogVideoXPipeline.from_pretrained(
-            spec.model_name_or_path,
+            build.model_name_or_path,
             **load_kwargs,
         )
         pipeline.vae.requires_grad_(False)
@@ -166,11 +168,11 @@ class CogVideoXModel(LoraModelMixin, DiffusersPipelineModelBase, DiffusionBackbo
         if text_encoder is not None:
             # T5-XXL (~9.5 GB bf16); park on CPU (Qwen-Image discipline).
             text_encoder.requires_grad_(False)
-            text_encoder.to("cpu", dtype=frozen_dtype)
-        pipeline.vae.to(spec.device, dtype=torch.float32)
+            text_encoder.to("cpu", dtype=prompt_encoder_dtype)
+        pipeline.vae.to(build.device, dtype=torch.float32)
         return cls(
             pipeline=pipeline,
-            device=spec.device,
+            device=build.device,
         )
 
     def _encoder_device(self) -> Any:
@@ -212,7 +214,8 @@ class CogVideoXModel(LoraModelMixin, DiffusersPipelineModelBase, DiffusionBackbo
         }
         if do_cfg and negative_prompt_embeds is not None:
             result["negative_prompt_embeds"] = negative_prompt_embeds.to(
-                self.device, dtype=td,
+                self.device,
+                dtype=td,
             )
         return result
 
@@ -243,10 +246,7 @@ class CogVideoXModel(LoraModelMixin, DiffusersPipelineModelBase, DiffusionBackbo
         scheduler.set_timesteps(request.num_steps, device=device)
         timesteps = scheduler.timesteps
 
-        seed = (
-            request.seed if request.seed is not None
-            else random.randint(0, sys.maxsize)
-        )
+        seed = request.seed if request.seed is not None else random.randint(0, sys.maxsize)
         generator = torch.Generator(device=device)
         generator.manual_seed(seed)
 
@@ -306,8 +306,7 @@ class CogVideoXModel(LoraModelMixin, DiffusersPipelineModelBase, DiffusionBackbo
             device=latent_input.device,
         )
         negative_embeds = (
-            None if state.negative_prompt_embeds is None
-            else state.negative_prompt_embeds.to(td)
+            None if state.negative_prompt_embeds is None else state.negative_prompt_embeds.to(td)
         )
         output = DiffusionBackboneCaller(
             self.transformer,
@@ -386,8 +385,8 @@ class CogVideoXModel(LoraModelMixin, DiffusersPipelineModelBase, DiffusionBackbo
             return chunk.permute(0, 2, 1, 3, 4).to(vae.dtype) / scaling
 
         decoder = ChunkedLatentDecoder(
-            LatentDecodeSpec(
-                transform=LatentDecodeTransform(_transform),
+            LatentDecodePlan(
+                prepare_latents=_transform,
                 vae_decode=lambda chunk: vae.decode(chunk, return_dict=False)[0],
                 postprocess=lambda video: pipe.video_processor.postprocess_video(
                     video,
@@ -402,7 +401,6 @@ class CogVideoXModel(LoraModelMixin, DiffusersPipelineModelBase, DiffusionBackbo
 
 class CogVideoXReplayModel(DiffusersReplayModelBase, CogVideoXModel):
     """Replay-only CogVideoX model that owns no prompt encoder, VAE, or pipeline."""
-
 
 
 __all__ = [

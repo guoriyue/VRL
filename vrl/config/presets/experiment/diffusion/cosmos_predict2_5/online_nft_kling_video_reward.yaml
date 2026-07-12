@@ -9,7 +9,6 @@ defaults:
   - /reward/kling_video_reward
   - /dataset/videophy
 
-precision: bf16
 
 # Compile-both: compile the DiT for BOTH train replay and rollout denoise. The
 # model block is read by the trainer AND inherited by the rollout worker, so this

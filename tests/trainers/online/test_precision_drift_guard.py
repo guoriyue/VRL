@@ -3,15 +3,18 @@
 from __future__ import annotations
 
 import logging
+from dataclasses import asdict
 from types import SimpleNamespace
 
 import pytest
 import torch
 
 from tests.trainers.online._collector_control import CollectorControlFake
+from vrl.algorithms.logprob_mismatch import compute_logprob_mismatch_stats
 from vrl.trainers.core.types import PrecisionDriftGuardConfig
 from vrl.trainers.online.precision_guard import (
     PrecisionDriftError,
+    measure_precision_drift,
     resolve_guard_mode,
     run_precision_drift_guard,
     select_guard_timesteps,
@@ -92,7 +95,7 @@ def test_precision_drift_guard_checks_fp16_same_forward_precision() -> None:
         metadata={
             "trainer_autocast_enabled": True,
             "trainer_transformer_dtype": "float16",
-            "rollout_transformer_dtype": "float16",
+            "rollout_autocast_dtype": "float16",
         },
     )
     assert record is not None
@@ -100,7 +103,7 @@ def test_precision_drift_guard_checks_fp16_same_forward_precision() -> None:
     assert record["train_rollout_precision_match"] is True
     assert record["violated"] is False
     assert record["trainer_autocast_enabled"] is True
-    assert record["rollout_transformer_dtype"] == "float16"
+    assert record["rollout_autocast_dtype"] == "float16"
     assert record["metadata"]["trainer_transformer_dtype"] == "float16"
 
 
@@ -162,6 +165,65 @@ def test_precision_drift_guard_flags_nonfinite() -> None:
 
     with pytest.raises(PrecisionDriftError):
         _run(cfg, train="fp32", rollout="bf16", evaluate_fn=_inf)
+
+
+def test_measure_precision_drift_selects_one_whole_worst_rank_record(monkeypatch) -> None:
+    """Distributed provenance must not splice maxima into another rank's record."""
+
+    cfg = PrecisionDriftGuardConfig(
+        mode="warn",
+        max_abs_log_ratio=0.1,
+        max_ratio_abs_dev=0.1,
+    )
+    remote_stats = compute_logprob_mismatch_stats(
+        torch.full((4,), -5.0),
+        torch.zeros(4),
+    )
+
+    dist = torch.distributed
+    monkeypatch.setattr(dist, "is_available", lambda: True)
+    monkeypatch.setattr(dist, "is_initialized", lambda: True)
+    monkeypatch.setattr(dist, "get_world_size", lambda: 2)
+    monkeypatch.setattr(dist, "get_rank", lambda: 0)
+
+    def _all_gather_object(gathered, local):
+        remote = dict(local)
+        remote.update(
+            {
+                "violated": True,
+                "worst_rank": 1,
+                "worst_timestep": 17,
+                "worst_stats": asdict(remote_stats),
+                "metadata": {"rank_marker": "remote"},
+                "rank_marker": "remote",
+            }
+        )
+        gathered[:] = [local, remote]
+
+    monkeypatch.setattr(dist, "all_gather_object", _all_gather_object)
+
+    record = measure_precision_drift(
+        cfg,
+        train_precision="fp32",
+        rollout_precision="bf16",
+        math_precision="fp32",
+        timestep_indices=[3],
+        evaluate_fn=_eval_with_drift(1.0),
+        metadata={"rank_marker": "local"},
+    )
+
+    assert record is not None
+    assert record["world_size"] == 2
+    assert record["worst_rank"] == 1
+    assert record["worst_timestep"] == 17
+    assert record["rank_marker"] == "remote"
+    assert record["metadata"] == {"rank_marker": "remote"}
+    assert record["worst_stats"] == asdict(remote_stats)
+    # Rank 0 has the larger ratio max (exp(1)-1), while rank 1 has the much
+    # larger abs-log drift. Returning rank 1's smaller ratio proves the record
+    # was selected whole instead of receiving a field-wise global maximum.
+    local_ratio_max = float(torch.exp(torch.tensor(1.0)) - 1.0)
+    assert record["worst_stats"]["ratio_abs_dev_max"] < local_ratio_max
 
 
 # -- select_guard_timesteps ------------------------------------------------

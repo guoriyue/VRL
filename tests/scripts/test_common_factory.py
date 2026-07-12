@@ -13,7 +13,7 @@ from vrl.algorithms.grpo.continuous import (
 )
 from vrl.config.builders import build_configs
 from vrl.config.loading import load_config
-from vrl.models.diffusion.build import extract_family_runtime_spec
+from vrl.models.diffusion.build import resolve_family_model_build
 from vrl.scripts.common.factory import (
     build_algorithm_and_evaluator_from_cfg,
     build_reward_from_cfg,
@@ -105,10 +105,10 @@ def test_wan_empty_lora_preserves_base_policy_initially() -> None:
     """Checks Wan empty LoRA preserves base policy initially."""
     cfg = load_config("experiment/diffusion/wan_2_1/online_grpo_physics")
 
-    spec = extract_family_runtime_spec(cfg, torch.device("cpu"), torch.bfloat16)
+    build = resolve_family_model_build(cfg, torch.device("cpu"))
 
-    assert spec.use_lora is True
-    lora_config = spec.lora
+    assert build.use_lora is True
+    lora_config = build.lora
     assert lora_config is not None
     # Wan's apply_lora reads ``init_lora_weights`` with a True default, so an
     # empty training adapter still initially preserves base Wan output.
@@ -128,6 +128,92 @@ def test_sana_aesthetic_keeps_cpu_observation_only_pickscore() -> None:
     ]
     pickscore = reward.rewards[1][2]
     assert pickscore.runtime._worker_config["device"] == "cpu"
+
+
+def test_sana_family_pins_fp16_parameters_under_bf16_forward() -> None:
+    """SANA owns its parameter invariant without exposing a model dtype knob."""
+    from vrl.rollouts.families import get_rollout_family_entry
+
+    cfg = load_config("experiment/diffusion/sana/online_grpo_aesthetic")
+    built = build_configs(cfg)
+    build = resolve_family_model_build(cfg, torch.device("cpu"))
+
+    entry = get_rollout_family_entry("sana")
+    assert entry.build is not None
+    assert entry.build.base_parameter_dtype == "fp16"
+    assert cfg.model.get("dtype") is None
+    # Structural invariants, not preset literals: rollout must follow the
+    # train forward precision (no split), and the replay chunk must mirror the
+    # rollout chunk (SANA's batch-shape-sensitive kernels need symmetric
+    # shapes for log-prob parity). The pinned-parameter-vs-forward split
+    # itself is asserted on parameter_dtype / autocast_dtype below.
+    assert built["trainer"].train_precision == built["trainer"].rollout_precision
+    assert built["trainer"].replay_samples_per_chunk == built["trainer"].samples_per_chunk
+    assert build.parameter_dtype is torch.float16
+    assert build.rollout is not None
+    assert build.rollout.autocast_dtype is torch.bfloat16
+
+
+@pytest.mark.parametrize(
+    "experiment",
+    [
+        "experiment/diffusion/sana/online_grpo_aesthetic",
+        "experiment/diffusion/sana/online_grpo_aesthetic_long",
+        "experiment/diffusion/sana/online_grpo_pickscore_validation",
+    ],
+)
+def test_sana_experiments_pin_the_validated_symmetric_chunk_shape(
+    experiment: str,
+) -> None:
+    """The measured 8/8 shape is a parity and memory contract, not a tuning default."""
+    trainer = build_configs(load_config(experiment))["trainer"]
+
+    assert trainer.samples_per_chunk == 8
+    assert trainer.replay_samples_per_chunk == 8
+
+
+@pytest.mark.parametrize("configured_dtype", ["fp16", "bf16"])
+def test_sana_rejects_redundant_or_conflicting_model_dtype(
+    configured_dtype: str,
+) -> None:
+    """A family invariant must not also survive as a user-controlled knob."""
+    cfg = load_config("experiment/diffusion/sana/online_grpo_aesthetic")
+    cfg.model.dtype = configured_dtype
+
+    with pytest.raises(ValueError, match=r"model\.dtype is not configurable.*sana"):
+        resolve_family_model_build(cfg, torch.device("cpu"))
+
+
+def test_ordinary_diffusion_family_rejects_duplicate_model_dtype() -> None:
+    cfg = load_config("experiment/diffusion/sd3_5/online_grpo_ocr")
+    cfg.model.dtype = "fp16"
+
+    with pytest.raises(ValueError, match=r"model\.dtype.*top-level precision"):
+        resolve_family_model_build(cfg, torch.device("cpu"))
+
+
+def test_sana_family_invariant_rejects_direct_tool_parameter_override() -> None:
+    cfg = load_config("experiment/diffusion/sana/online_grpo_aesthetic")
+
+    with pytest.raises(ValueError, match=r"parameter_dtype_override.*conflicts"):
+        resolve_family_model_build(
+            cfg,
+            torch.device("cpu"),
+            parameter_dtype_override="bf16",
+        )
+
+
+def test_token_objective_rejects_unused_math_precision_override() -> None:
+    cfg = load_config("experiment/ar/emu3/online_grpo_pickscore_validation")
+    cfg.precision = {
+        "training": {"dtype": "bf16"},
+        "rollout": {"dtype": "bf16"},
+        "diffusion_math": {"dtype": "bf16"},
+    }
+    built = build_configs(cfg)
+
+    with pytest.raises(ValueError, match=r"precision\.diffusion_math\.dtype.*diffusion log-prob"):
+        build_algorithm_and_evaluator_from_cfg(cfg, built=built, family="emu3")
 
 
 def test_reward_factory_passes_the_selected_local_device(monkeypatch) -> None:

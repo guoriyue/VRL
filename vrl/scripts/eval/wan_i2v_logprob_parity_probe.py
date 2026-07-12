@@ -40,14 +40,13 @@ import torch
 from vrl.math.diffusion.flow_matching import sde_step_with_logprob
 
 
-def _build_spec(args: argparse.Namespace) -> object:
-    from vrl.models.interfaces.runtime import RuntimeBuildSpec
+def _resolve_model_build(args: argparse.Namespace) -> object:
+    from vrl.models.interfaces.runtime import ModelBuild
 
-    return RuntimeBuildSpec(
+    return ModelBuild(
         model_name_or_path=args.model_path,
         device=torch.device("cuda"),
-        dtype=torch.bfloat16,
-        task_variant="i2v",
+        parameter_dtype=torch.bfloat16,
         model_config={"offload_mode": args.offload},
     )
 
@@ -67,11 +66,18 @@ def main() -> None:
     parser.add_argument("--sde-type", default="cps")
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--offload", choices=["none", "model", "sequential"], default="sequential")
-    parser.add_argument("--threshold", type=float, default=0.01,
-                        help="mean |fresh-old| log-prob bar (trainer debug.first_step)")
+    parser.add_argument(
+        "--threshold",
+        type=float,
+        default=0.01,
+        help="mean |fresh-old| log-prob bar (trainer debug.first_step)",
+    )
     parser.add_argument("--out-dir", default="outputs/wan_i2v_parity_probe")
-    parser.add_argument("--decode-video", action="store_true",
-                        help="also VAE-decode and save the rollout clips for eyeballing")
+    parser.add_argument(
+        "--decode-video",
+        action="store_true",
+        help="also VAE-decode and save the rollout clips for eyeballing",
+    )
     args = parser.parse_args()
 
     from PIL import Image
@@ -84,7 +90,7 @@ def main() -> None:
 
     print(f"[load] {args.model_path} (offload={args.offload})", flush=True)
     t0 = time.time()
-    model = WanI2VDiffusersModel.from_spec(_build_spec(args))
+    model = WanI2VDiffusersModel.from_build(_resolve_model_build(args))
     print(f"[load] done in {time.time() - t0:.0f}s", flush=True)
 
     image = Image.open(args.image).convert("RGB")
@@ -117,7 +123,10 @@ def main() -> None:
             timestep = state.timesteps[step_idx]
             noise_pred = model.forward_step(state, step_idx)["noise_pred"]
             prev_latents = state.scheduler.step(
-                noise_pred, timestep, state.latents, return_dict=False,
+                noise_pred,
+                timestep,
+                state.latents,
+                return_dict=False,
             )[0]
             sde = sde_step_with_logprob(
                 state.scheduler,
@@ -134,9 +143,12 @@ def main() -> None:
             act.append(prev_latents.float().cpu())
             old_lp.append(sde.log_prob.float().cpu())
             ts.append(timestep.detach().float().cpu().expand(args.num_samples).clone())
-            print(f"[rollout] step {step_idx + 1}/{len(state.timesteps)} "
-                  f"old_lp[0]={sde.log_prob.reshape(-1)[0].item():.4f} "
-                  f"peak={torch.cuda.max_memory_allocated() / 2**30:.1f}GiB", flush=True)
+            print(
+                f"[rollout] step {step_idx + 1}/{len(state.timesteps)} "
+                f"old_lp[0]={sde.log_prob.reshape(-1)[0].item():.4f} "
+                f"peak={torch.cuda.max_memory_allocated() / 2**30:.1f}GiB",
+                flush=True,
+            )
     rollout_s = time.time() - t0
 
     # ---- export -> CPU wire round-trip (the trajectory-store contract) ------
@@ -179,9 +191,11 @@ def main() -> None:
             ratio = torch.exp(fresh.log_prob.cpu() - old_lp[step_idx])
             diffs.append(diff)
             ratios.append(ratio)
-            print(f"[replay] step {step_idx + 1}/{len(obs)} "
-                  f"|fresh-old| mean={diff.mean().item():.6f} max={diff.max().item():.6f}",
-                  flush=True)
+            print(
+                f"[replay] step {step_idx + 1}/{len(obs)} "
+                f"|fresh-old| mean={diff.mean().item():.6f} max={diff.max().item():.6f}",
+                flush=True,
+            )
     replay_s = time.time() - t0
 
     all_diff = torch.stack(diffs)
@@ -220,8 +234,11 @@ def main() -> None:
             print(f"[video] {path}", flush=True)
 
     print(json.dumps(report, indent=2), flush=True)
-    print(f"[verdict] {'PASS' if passed else 'FAIL'}: mean |fresh-old| log-prob "
-          f"{mean_diff:.6f} vs threshold {args.threshold}", flush=True)
+    print(
+        f"[verdict] {'PASS' if passed else 'FAIL'}: mean |fresh-old| log-prob "
+        f"{mean_diff:.6f} vs threshold {args.threshold}",
+        flush=True,
+    )
     raise SystemExit(0 if passed else 1)
 
 

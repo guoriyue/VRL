@@ -6,6 +6,7 @@ from typing import Any
 import torch
 
 from vrl.models.diffusion.sd3_5.model import SD3_5Model
+from vrl.models.interfaces.runtime import RolloutBuildOptions
 
 
 class _FakeModule:
@@ -50,14 +51,17 @@ def test_sd3_fp32_runtime_loads_frozen_components_without_fp32_peak(monkeypatch)
         staticmethod(fake_from_pretrained),
     )
 
-    spec = SimpleNamespace(
+    build = SimpleNamespace(
         model_name_or_path="stabilityai/stable-diffusion-3.5-medium",
-        dtype=torch.float32,
-        extra={"frozen_dtype": "float16"},
+        parameter_dtype=torch.float32,
+        rollout=RolloutBuildOptions(
+            autocast_dtype=torch.float32,
+            prompt_encoder_dtype=torch.float16,
+        ),
         device="cuda:0",
     )
 
-    model = SD3_5Model.from_spec(spec)
+    model = SD3_5Model.from_build(build)
 
     assert model.pipeline is pipeline
     assert calls == [

@@ -24,10 +24,10 @@ def build_model(cfg, device, dtype):
 
     cfg.model.use_lora = True
     entry = get_rollout_family_entry(normalize_rollout_family(cfg.model.family))
-    extract_spec = import_from_path(entry.runtime_spec_extractor)
+    resolve_build = import_from_path(entry.model_build_resolver)
     build_bundle = import_from_path(entry.runtime_builder)
-    spec = extract_spec(cfg, device, dtype)
-    return build_bundle(spec).model
+    build = resolve_build(cfg, device, parameter_dtype_override=dtype)
+    return build_bundle(build).model
 
 
 def _sampling_request(cfg) -> VideoGenerationRequest:
@@ -77,7 +77,9 @@ def make_step_fn(model, cfg, device, dtype, teacache=None):
     sampling = cfg.sampling
     state = prepare_sampling_state(model, cfg)
     park_frozen_components(model)
-    cache_state = TeaCacheState(teacache, int(sampling.num_steps)) if teacache is not None else None
+    cache_state = (
+        TeaCacheState(teacache, int(sampling.num_steps)) if teacache is not None else None
+    )
 
     def one_step(idx: int):
         step_idx = idx % int(sampling.num_steps)

@@ -17,7 +17,7 @@ from vrl.models.ar.emu3.model import (
     emu3_grid_token_num,
 )
 from vrl.models.ar.emu3.runner import Emu3TokenRunner
-from vrl.models.interfaces.runtime import RuntimeBuildSpec
+from vrl.models.interfaces.runtime import ModelBuild
 
 EMU3_FAMILY_CAPABILITY = ar_discrete_family_capability("emu3", "ar_t2i")
 
@@ -33,9 +33,9 @@ _EMU3_LORA_DEFAULTS: dict[str, Any] = {
 }
 
 
-def emu3_config_from_runtime_spec(spec: RuntimeBuildSpec) -> dict[str, Any]:
-    sampling_config = spec.sampling_config or {}
-    config = ar_model_config_base(spec, _EMU3_LORA_DEFAULTS)
+def emu3_config_from_build(build: ModelBuild) -> dict[str, Any]:
+    sampling_config = build.sampling_config or {}
+    config = ar_model_config_base(build, _EMU3_LORA_DEFAULTS)
 
     for key in ("guidance_scale", "temperature", "image_area", "ratio"):
         if key in sampling_config:
@@ -109,21 +109,17 @@ class Emu3ChunkExecutor(ARDiscreteChunkExecutorBase):
         ratio = sampling.get("ratio")
 
         repeated_prompts = [chunk.prompt] * chunk.sample_count
-        prompt_ids, prompt_mask, (height, width) = (
-            self.model.encode_generation_prompts(
-                repeated_prompts,
-                max_text_length=max_text_length,
-                image_area=image_area,
-                ratio=ratio,
-            )
+        prompt_ids, prompt_mask, (height, width) = self.model.encode_generation_prompts(
+            repeated_prompts,
+            max_text_length=max_text_length,
+            image_area=image_area,
+            ratio=ratio,
         )
-        uncond_ids, uncond_mask, uncond_grid = (
-            self.model.encode_generation_prompts(
-                [""] * chunk.sample_count,
-                max_text_length=max_text_length,
-                image_area=image_area,
-                ratio=ratio,
-            )
+        uncond_ids, uncond_mask, uncond_grid = self.model.encode_generation_prompts(
+            [""] * chunk.sample_count,
+            max_text_length=max_text_length,
+            image_area=image_area,
+            ratio=ratio,
         )
         if uncond_grid != (height, width):
             raise RuntimeError(
@@ -198,5 +194,5 @@ class Emu3ChunkExecutor(ARDiscreteChunkExecutorBase):
 __all__ = [
     "EMU3_FAMILY_CAPABILITY",
     "Emu3ChunkExecutor",
-    "emu3_config_from_runtime_spec",
+    "emu3_config_from_build",
 ]

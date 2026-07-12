@@ -9,7 +9,6 @@ defaults:
   - /dataset/videophy
   - /reward/aesthetic
 
-precision: bf16
 
 sampling:
   max_sequence_length: 226

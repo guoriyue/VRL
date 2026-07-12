@@ -19,7 +19,6 @@ defaults:
   - /reward/target_dino_similarity
   - /dataset/droid_overfit_validation_sft_predict25_240p_33f
 
-precision: bf16
 
 algorithm:
   sft_weight: 0.1

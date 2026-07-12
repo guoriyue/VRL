@@ -9,11 +9,134 @@ import torch
 import torch.nn as nn
 
 from vrl.models.interfaces.runtime import (
-    RuntimeBuildSpec,
+    ModelBuild,
+    RolloutBuildOptions,
     bundle_loads_full_generation_modules,
     full_generation_bundle_metadata,
     minimal_replay_bundle_metadata,
 )
+
+
+def test_rollout_build_options_rejects_quantized_outer_autocast() -> None:
+    """Quantization formats are selective GEMM policies, not autocast dtypes."""
+
+    with pytest.raises(ValueError, match=r"FP8.*NVFP4.*outer torch\.autocast"):
+        RolloutBuildOptions(
+            autocast_dtype="fp8",
+            prompt_encoder_dtype="bf16",
+            quantization_format="fp8",
+        )
+
+
+@pytest.mark.parametrize("dtype", ["fp8", "fp4"])
+def test_model_build_rejects_subbyte_parameter_storage(dtype: str) -> None:
+    with pytest.raises(ValueError, match="neither is parameter storage"):
+        ModelBuild(
+            model_name_or_path="fake/repo",
+            device="cpu",
+            parameter_dtype=dtype,
+        )
+
+
+@pytest.mark.parametrize(
+    ("quantization_format", "message"),
+    [("fp4", "replaced.*nvfp4"), ("int8", "quantization.format")],
+)
+def test_rollout_build_options_rejects_unknown_or_ambiguous_quantization(
+    quantization_format: str,
+    message: str,
+) -> None:
+    with pytest.raises(ValueError, match=message):
+        RolloutBuildOptions(
+            autocast_dtype="bf16",
+            prompt_encoder_dtype="fp16",
+            quantization_format=quantization_format,
+        )
+
+
+def test_rollout_build_options_normalizes_fp8_default_recipe() -> None:
+    options = RolloutBuildOptions(
+        autocast_dtype="bf16",
+        prompt_encoder_dtype="bf16",
+        quantization_format="FP8",
+    )
+
+    assert options.quantization_format == "fp8"
+    assert options.quantization_recipe == "rowwise"
+
+
+def test_rollout_build_options_accepts_nvfp4_without_recipe() -> None:
+    options = RolloutBuildOptions(
+        autocast_dtype="bf16",
+        prompt_encoder_dtype="bf16",
+        quantization_format="NVFP4",
+    )
+
+    assert options.quantization_format == "nvfp4"
+    assert options.quantization_recipe is None
+
+
+def test_rollout_build_options_rejects_nvfp4_recipe() -> None:
+    with pytest.raises(ValueError, match=r"nvfp4.*does not accept.*recipe"):
+        RolloutBuildOptions(
+            autocast_dtype="bf16",
+            prompt_encoder_dtype="bf16",
+            quantization_format="nvfp4",
+            quantization_recipe="rowwise",
+        )
+
+
+def test_model_build_reconstructs_nested_rollout_payload() -> None:
+    """The primitive Ray mapping becomes the typed one-layer rollout contract."""
+
+    build = ModelBuild(
+        model_name_or_path="fake/repo",
+        device="cpu",
+        parameter_dtype="fp16",
+        rollout={
+            "autocast_dtype": "bf16",
+            "prompt_encoder_dtype": "fp32",
+            "quantization_format": "fp8",
+            "quantization_recipe": "rowwise",
+            "base_weight_sync": False,
+        },
+    )
+
+    assert build.parameter_dtype is torch.float16
+    assert isinstance(build.rollout, RolloutBuildOptions)
+    assert build.rollout.autocast_dtype is torch.bfloat16
+    assert build.rollout.prompt_encoder_dtype is torch.float32
+    assert build.rollout.quantization_format == "fp8"
+    assert build.rollout.base_weight_sync is False
+
+
+def test_model_build_resolver_projects_nvfp4_over_the_rollout_base_dtype() -> None:
+    from omegaconf import OmegaConf
+
+    from vrl.models.model_build import resolve_model_build
+
+    cfg = OmegaConf.create(
+        {
+            "model": {"path": "fake/repo"},
+            "precision": {
+                "training": {"dtype": "bf16"},
+                "rollout": {
+                    "dtype": "bf16",
+                    "quantization": {"format": "nvfp4"},
+                    "prompt_encoders": {"dtype": "fp16"},
+                },
+            },
+        },
+    )
+
+    build = resolve_model_build(cfg, "cuda", for_rollout=True)
+    rollout = build.require_rollout()
+
+    assert build.parameter_dtype is torch.bfloat16
+    assert rollout.autocast_dtype is torch.bfloat16
+    assert rollout.prompt_encoder_dtype is torch.float16
+    assert rollout.quantization_format == "nvfp4"
+    assert rollout.quantization_recipe is None
 
 
 class _TinyTransformer(nn.Module):
@@ -52,8 +175,8 @@ class _TinyRuntimeModel(nn.Module):
         return self.load_state_dict(state_dict, strict=False)
 
 
-def _spec(**overrides: Any) -> RuntimeBuildSpec:
-    """Build a RuntimeBuildSpec from friendly overrides.
+def _build(**overrides: Any) -> ModelBuild:
+    """Build a ModelBuild from friendly overrides.
 
     Translates the legacy ``use_lora`` / ``lora_config`` / ``scheduler_config``
     test kwargs into the carried ``model_config`` / ``sampling_config`` blocks
@@ -76,18 +199,31 @@ def _spec(**overrides: Any) -> RuntimeBuildSpec:
     values: dict[str, Any] = {
         "model_name_or_path": "fake/repo",
         "device": "cpu",
-        "dtype": torch.float32,
-        "task_variant": "t2i",
+        "parameter_dtype": torch.float32,
         "model_config": model_config,
         "sampling_config": dict(scheduler_config),
     }
     values.update(overrides)
-    return RuntimeBuildSpec(**values)
+    return ModelBuild(**values)
 
 
-
-
-@pytest.mark.parametrize("family", ["sd3_5", "qwen_image", "flux", "cosmos-predict2", "sana", "lumina2", "hunyuan_video", "mochi", "cogvideox", "pixart_sigma", "hunyuan_image", "wan_2_1"])
+@pytest.mark.parametrize(
+    "family",
+    [
+        "sd3_5",
+        "qwen_image",
+        "flux",
+        "cosmos-predict2",
+        "sana",
+        "lumina2",
+        "hunyuan_video",
+        "mochi",
+        "cogvideox",
+        "pixart_sigma",
+        "hunyuan_image",
+        "wan_2_1",
+    ],
+)
 def test_registry_descriptor_replay_builder_returns_minimal_bundle(
     monkeypatch: pytest.MonkeyPatch,
     family: str,
@@ -96,14 +232,20 @@ def test_registry_descriptor_replay_builder_returns_minimal_bundle(
 
     These families ship no builder functions: the registry entry's
     ``DiffusionFamilyBuild`` recipe drives the generic builder, keyed by
-    ``spec.family``. Behavioral contract matches the per-family builders above.
+    ``build.family``. Behavioral contract matches the per-family builders above.
     """
     from vrl.models.diffusion import build as _shared_build
+
+    loaded_builds: list[ModelBuild] = []
+
+    def fake_transformer_loader(build: ModelBuild, *_args: Any, **_kwargs: Any):
+        loaded_builds.append(build)
+        return _TinyTransformer()
 
     monkeypatch.setattr(
         _shared_build,
         "load_diffusers_transformer",
-        lambda *_args, **_kwargs: _TinyTransformer(),
+        fake_transformer_loader,
     )
     monkeypatch.setattr(
         _shared_build,
@@ -119,19 +261,39 @@ def test_registry_descriptor_replay_builder_returns_minimal_bundle(
     )
 
     bundle = _shared_build.build_family_replay_runtime_bundle(
-        _spec(family=family),
+        _build(
+            family=family,
+            parameter_dtype=torch.float16 if family == "sana" else torch.float32,
+        ),
     )
 
     assert bundle_loads_full_generation_modules(bundle) is False
+    assert loaded_builds
+    if family == "sana":
+        assert loaded_builds[-1].parameter_dtype is torch.float16
     assert bundle.raw_handle is None
     assert set(bundle.trainable_modules) == {"transformer"}
     assert bundle.metadata["family"] == family
     with pytest.raises(RuntimeError, match="pipeline"):
         _ = bundle.model.pipeline
 
-    # A spec without family fails loud instead of guessing.
-    with pytest.raises(ValueError, match=r"spec\.family"):
-        _shared_build.build_family_replay_runtime_bundle(_spec())
+    # A build without family fails loud instead of guessing.
+    with pytest.raises(ValueError, match=r"build\.family"):
+        _shared_build.build_family_replay_runtime_bundle(_build())
+
+
+@pytest.mark.parametrize(
+    "builder_name",
+    ["build_family_runtime_bundle", "build_family_replay_runtime_bundle"],
+)
+def test_sana_builders_enforce_family_parameter_dtype(builder_name: str) -> None:
+    """Manual builds cannot bypass the SANA parameter invariant."""
+    from vrl.models.diffusion import build as _shared_build
+
+    with pytest.raises(ValueError, match=r"sana.*requires base parameter dtype.*fp16"):
+        getattr(_shared_build, builder_name)(
+            _build(family="sana", parameter_dtype=torch.bfloat16),
+        )
 
 
 def test_wan_replay_builder_uses_wan_pipeline_scheduler_class(
@@ -142,7 +304,7 @@ def test_wan_replay_builder_uses_wan_pipeline_scheduler_class(
 
     scheduler_classes: list[str] = []
 
-    def fake_scheduler_loader(_spec: Any, class_name: str, **_kwargs: Any) -> _TinyScheduler:
+    def fake_scheduler_loader(_build: Any, class_name: str, **_kwargs: Any) -> _TinyScheduler:
         scheduler_classes.append(class_name)
         return _TinyScheduler()
 
@@ -153,7 +315,7 @@ def test_wan_replay_builder_uses_wan_pipeline_scheduler_class(
     )
     monkeypatch.setattr(_shared_build, "load_diffusers_scheduler", fake_scheduler_loader)
 
-    bundle = _shared_build.build_family_replay_runtime_bundle(_spec(family="wan_2_1"))
+    bundle = _shared_build.build_family_replay_runtime_bundle(_build(family="wan_2_1"))
 
     assert scheduler_classes == ["UniPCMultistepScheduler"]
     assert bundle.scheduler.timesteps.tolist() == [1.0]
@@ -178,7 +340,7 @@ def test_wan_i2v_replay_builder_uses_i2v_replay_model(
     )
 
     bundle = _shared_build.build_family_replay_runtime_bundle(
-        _spec(family="wan_2_1_i2v", task_variant="i2v"),
+        _build(family="wan_2_1_i2v"),
     )
 
     assert bundle_loads_full_generation_modules(bundle) is False
@@ -195,7 +357,7 @@ def test_wan_dual_stage_replay_builder_loads_low_noise_transformer(
     loaded_subfolders: list[str] = []
 
     def fake_transformer_loader(
-        _spec: Any,
+        _build: Any,
         _class_name: str,
         *,
         subfolder: str = "transformer",
@@ -214,9 +376,8 @@ def test_wan_dual_stage_replay_builder_loads_low_noise_transformer(
     )
 
     bundle = _shared_build.build_family_replay_runtime_bundle(
-        _spec(
+        _build(
             family="wan_2_1_i2v",
-            task_variant="i2v",
             extra={
                 "boundary_ratio": 0.9,
                 "trainable_transformers": ["transformer_2"],
@@ -255,13 +416,12 @@ def test_cosmos_predict25_replay_builder_keeps_diffusion_nft_surface(
     monkeypatch.setattr(
         predict2_5.model.CosmosPredict25ReplayModel,
         "apply_lora",
-        lambda self, _spec: self.transformer.requires_grad_(True),
+        lambda self, _build: self.transformer.requires_grad_(True),
     )
 
     bundle = _shared_build.build_family_replay_runtime_bundle(
-        _spec(
+        _build(
             family="cosmos-predict2.5",
-            task_variant="text2world",
             use_lora=True,
             lora_config={"rank": 1, "alpha": 1, "target_modules": ["to_q"]},
         ),
@@ -283,12 +443,11 @@ def test_anima_replay_builder_uses_only_transformer_checkpoint(
     monkeypatch.setattr(
         runtime,
         "load_anima_transformer",
-        lambda _spec: _TinyTransformer(),
+        lambda _build: _TinyTransformer(),
     )
 
     bundle = runtime.build_anima_replay_runtime_bundle(
-        _spec(
-            task_variant="text_to_image",
+        _build(
             extra={
                 "transformer_path": "/tmp/anima-preview3-base.safetensors",
                 "scheduler_shift": 3.0,
@@ -314,12 +473,12 @@ def test_anima_empty_prompts_are_replaced_before_tokenization() -> None:
     assert _non_empty_prompts(["", "  ", "anime"]) == [".", ".", "anime"]
 
 
-def test_anima_runtime_spec_uses_explicit_local_paths() -> None:
-    """Checks Anima runtime spec uses explicit local paths."""
+def test_anima_model_build_uses_explicit_local_paths() -> None:
+    """Checks the Anima model build uses explicit local paths."""
     from vrl.config.loading import load_config
-    from vrl.models.diffusion.build import extract_family_runtime_spec
+    from vrl.models.diffusion.build import resolve_family_model_build
     from vrl.models.diffusion.cosmos.anima.runtime import (
-        extract_anima_replay_runtime_spec,
+        resolve_anima_replay_model_build,
     )
 
     cfg = load_config(
@@ -336,9 +495,11 @@ def test_anima_runtime_spec_uses_explicit_local_paths() -> None:
         ],
     )
 
-    full = extract_family_runtime_spec(cfg, "cpu", torch.float32)
-    replay = extract_anima_replay_runtime_spec(cfg, "cpu", torch.float32)
+    full = resolve_family_model_build(cfg, "cpu")
+    replay = resolve_anima_replay_model_build(cfg, "cpu")
 
+    assert isinstance(full.rollout, RolloutBuildOptions)
+    assert replay.rollout is None
     assert full.model_config["transformer_path"] == "/models/anima/transformer.safetensors"
     assert full.model_config["text_encoder_path"] == "/models/anima/text_encoder.safetensors"
     assert full.model_config["vae_path"] == "/models/anima/vae.safetensors"
@@ -352,7 +513,7 @@ def test_anima_artifact_resolution_fails_loud_when_hub_fetch_fails(
 ) -> None:
     """Hub-fetch failure surfaces the config knob, not a raw download error."""
     from vrl.config.loading import load_config
-    from vrl.models.diffusion.cosmos.anima.runtime import extract_anima_replay_runtime_spec
+    from vrl.models.diffusion.cosmos.anima.runtime import resolve_anima_replay_model_build
 
     cfg = load_config(
         "experiment/diffusion/anima_preview3/online_grpo_aesthetic",
@@ -361,7 +522,7 @@ def test_anima_artifact_resolution_fails_loud_when_hub_fetch_fails(
             "model.use_lora=false",
         ],
     )
-    spec = extract_anima_replay_runtime_spec(cfg, "cpu", torch.float32)
+    build = resolve_anima_replay_model_build(cfg, "cpu")
 
     # Resolution delegates to hf_hub_download (auto-fetch, same contract as
     # from_pretrained); when the hub fetch fails the error names the config
@@ -374,13 +535,13 @@ def test_anima_artifact_resolution_fails_loud_when_hub_fetch_fails(
     monkeypatch.setattr(huggingface_hub, "hf_hub_download", _refuse)
 
     with pytest.raises(ValueError, match=r"model\.path='circlestone-labs/Anima'"):
-        spec.model_config["transformer_path"] = ""
+        build.model_config["transformer_path"] = ""
         from vrl.models.diffusion.cosmos.anima.runtime import _resolve_artifact
 
         _resolve_artifact(
-            spec.model_name_or_path,
+            build.model_name_or_path,
             explicit_path="",
-            relative_file=spec.model_config["transformer_file"],
+            relative_file=build.model_config["transformer_file"],
             field_name="transformer_path",
         )
 
@@ -440,7 +601,7 @@ def test_ar_replay_builders_return_minimal_bundles(
     monkeypatch.setattr(model_module, model_attr, _TinyRuntimeModel)
 
     bundle = build_family_ar_replay_runtime_bundle(
-        _spec(family=family, ar_task=ar_task),
+        _build(family=family),
     )
 
     assert bundle_loads_full_generation_modules(bundle) is False
@@ -484,7 +645,13 @@ def test_ar_rollout_builders_follow_registry_descriptors(
     monkeypatch.setattr(model_module, model_attr, _TinyRuntimeModel)
 
     bundle = build_family_ar_runtime_bundle(
-        _spec(family=family, ar_task=ar_task),
+        _build(
+            family=family,
+            rollout=RolloutBuildOptions(
+                autocast_dtype=torch.float32,
+                prompt_encoder_dtype=torch.float16,
+            ),
+        ),
     )
 
     assert bundle_loads_full_generation_modules(bundle) is True

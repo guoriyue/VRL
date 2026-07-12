@@ -70,6 +70,11 @@ def test_removed_sampling_r1_duplicate_is_unknown() -> None:
     assert find_unknown_keys(cfg) == ["sampling.r1"]
 
 
+def test_removed_model_dtype_is_unknown() -> None:
+    cfg = OmegaConf.create({"model": {"family": "sd3_5", "dtype": "bf16"}})
+    assert find_unknown_keys(cfg) == ["model.dtype"]
+
+
 def test_warn_unknown_keys_logs_one_line(caplog) -> None:
     cfg = OmegaConf.create({"sampling": {"num_stps": 5}})
     with caplog.at_level(logging.WARNING):

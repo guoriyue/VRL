@@ -10,7 +10,7 @@ from vrl.generation import GenerationRequest
 from vrl.generation.ar import ARRequestLayout
 from vrl.generation.ar.decode_loop import ActiveSequence
 from vrl.generation.execution.ids import build_sample_rows
-from vrl.models.ar.build import extract_family_ar_runtime_spec
+from vrl.models.ar.build import resolve_family_ar_model_build
 from vrl.models.ar.nextstep_1.runtime import (
     NextStep1ARChunkResult,
     NextStep1ChunkGatherer,
@@ -71,19 +71,19 @@ def test_ar_layout_requires_shape_sampling_fields() -> None:
             ARRequestLayout().parse_sampling_params(request)
 
 
-def test_descriptor_extractor_carries_actor_gradient_checkpointing() -> None:
+def test_descriptor_resolver_carries_actor_gradient_checkpointing() -> None:
     cfg = OmegaConf.create(
         {
             "model": {"family": "nextstep_1", "use_lora": False},
-            "precision": "fp32",
+            "precision": {"training": {"dtype": "fp32"}, "rollout": {"dtype": "fp32"}},
             "actor": {"gradient_checkpointing": True},
         },
     )
 
-    spec = extract_family_ar_runtime_spec(cfg, "cpu", "float32")
+    build = resolve_family_ar_model_build(cfg, "cpu")
 
-    assert spec.family == "nextstep_1"
-    assert spec.model_config["gradient_checkpointing"] is True
+    assert build.family == "nextstep_1"
+    assert build.model_config["gradient_checkpointing"] is True
 
 
 def test_nextstep_gather_derives_reward_image_from_canonical_output() -> None:

@@ -45,6 +45,7 @@ from vrl.models.diffusion import (
 from vrl.models.diffusion.common import align_replay_tensor
 from vrl.models.diffusion.common.lora import LoraModelMixin
 from vrl.models.diffusion.cosmos import CosmosReplayForward
+from vrl.models.interfaces.runtime import ModelBuild
 from vrl.utils.logging import init_logger, kv
 
 logger = init_logger(__name__)
@@ -82,17 +83,17 @@ class Cosmos3Model(CosmosReplayForward, LoraModelMixin, DiffusersPipelineModelBa
 
     # ---- properties (mirror predict2_5) ----
     @classmethod
-    def from_spec(cls, spec: Any) -> Cosmos3Model:
+    def from_build(cls, build: ModelBuild) -> Cosmos3Model:
         # Lazy: diffusers@main (Cosmos3 classes) must not be imported at module load.
         from diffusers import Cosmos3OmniPipeline
 
-        kwargs: dict[str, Any] = {"torch_dtype": spec.dtype}
-        revision = (spec.model_config or {}).get("revision") or None
+        kwargs: dict[str, Any] = {"torch_dtype": build.parameter_dtype}
+        revision = (build.model_config or {}).get("revision") or None
         if revision:
             kwargs["revision"] = revision
         # enable_safety_checker=False avoids the cosmos_guardrail import/dep in dev.
         pipeline = Cosmos3OmniPipeline.from_pretrained(
-            spec.model_name_or_path,
+            build.model_name_or_path,
             enable_safety_checker=False,
             **kwargs,
         )
@@ -100,19 +101,19 @@ class Cosmos3Model(CosmosReplayForward, LoraModelMixin, DiffusersPipelineModelBa
         pipeline.set_progress_bar_config(disable=True)
         if hasattr(pipeline, "vae"):
             pipeline.vae.requires_grad_(False)
-            pipeline.vae.to(spec.device, dtype=torch.float32)
+            pipeline.vae.to(build.device, dtype=torch.float32)
         # No separate text encoder: the joint transformer consumes raw Qwen2 ids.
-        pipeline.transformer.to(spec.device, dtype=spec.dtype)
+        pipeline.transformer.to(build.device, dtype=build.parameter_dtype)
         logger.info(
             "loaded Cosmos3 omni generator %s",
-            kv(path=spec.model_name_or_path, device=spec.device, dtype=spec.dtype),
+            kv(path=build.model_name_or_path, device=build.device, dtype=build.parameter_dtype),
         )
-        return cls(pipeline=pipeline, device=spec.device)
+        return cls(pipeline=pipeline, device=build.device)
 
-    def _lora_dtype(self, spec: Any) -> Any | None:
-        # The transformer is already cast at load (from_spec .to(dtype));
+    def _lora_dtype(self, build: ModelBuild) -> Any | None:
+        # The transformer is already cast at load (from_build .to(dtype));
         # skip the mixin's default pre-wrap dtype cast.
-        del spec
+        del build
         return None
 
     # ---- encode ----
@@ -185,13 +186,21 @@ class Cosmos3Model(CosmosReplayForward, LoraModelMixin, DiffusersPipelineModelBa
         has_img = bool(cond_idx.numel() > 0)
         cond_frames = [int(i) for i in cond_idx.tolist()] or None
         cond_vision = pipe._prepare_vision_segment(
-            latents, has_img, mrope_offset, float(fps),
-            curr=cond_text["und_len"], device=device,
+            latents,
+            has_img,
+            mrope_offset,
+            float(fps),
+            curr=cond_text["und_len"],
+            device=device,
             condition_frame_indexes=cond_frames,
         )
         uncond_vision = pipe._prepare_vision_segment(
-            latents, has_img, mrope_offset, float(fps),
-            curr=uncond_text["und_len"], device=device,
+            latents,
+            has_img,
+            mrope_offset,
+            float(fps),
+            curr=uncond_text["und_len"],
+            device=device,
             condition_frame_indexes=cond_frames,
         )
 
@@ -227,7 +236,9 @@ class Cosmos3Model(CosmosReplayForward, LoraModelMixin, DiffusersPipelineModelBa
         timestep = float(state.timesteps[step_idx].item())
         vision_tokens = state.latents.to(device=device, dtype=dtype)
         vision_timesteps = torch.full(
-            (state.num_noisy_vision_tokens,), timestep, device=device,
+            (state.num_noisy_vision_tokens,),
+            timestep,
+            device=device,
         )
 
         def _run(pack: dict[str, Any]) -> torch.Tensor:
@@ -245,7 +256,9 @@ class Cosmos3Model(CosmosReplayForward, LoraModelMixin, DiffusersPipelineModelBa
                 vision_noisy_frame_indexes=pack["vision_noisy_frame_indexes"],
             )
             velocity, _s, _a = self.pipeline._mask_velocity_predictions(
-                preds_vision, None, [state.vision_condition_mask],
+                preds_vision,
+                None,
+                [state.vision_condition_mask],
             )
             return velocity
 
@@ -297,7 +310,8 @@ class Cosmos3Model(CosmosReplayForward, LoraModelMixin, DiffusersPipelineModelBa
             "pooled_prompt_embeds": None,
             "latents_clean": state.latents.detach(),
             "vision_condition_mask": align_replay_tensor(
-                state.vision_condition_mask, state.latents.shape[0],
+                state.vision_condition_mask,
+                state.latents.shape[0],
             ),
         }
 
@@ -320,12 +334,22 @@ class Cosmos3Model(CosmosReplayForward, LoraModelMixin, DiffusersPipelineModelBa
         has_img = bool(cond_idx.numel() > 0)
         cond_frames = [int(i) for i in cond_idx.tolist()] or None
         cond_vision = pipe._prepare_vision_segment(
-            latents, has_img, mrope_offset, float(fps),
-            curr=cond_text["und_len"], device=device, condition_frame_indexes=cond_frames,
+            latents,
+            has_img,
+            mrope_offset,
+            float(fps),
+            curr=cond_text["und_len"],
+            device=device,
+            condition_frame_indexes=cond_frames,
         )
         uncond_vision = pipe._prepare_vision_segment(
-            latents, has_img, mrope_offset, float(fps),
-            curr=uncond_text["und_len"], device=device, condition_frame_indexes=cond_frames,
+            latents,
+            has_img,
+            mrope_offset,
+            float(fps),
+            curr=uncond_text["und_len"],
+            device=device,
+            condition_frame_indexes=cond_frames,
         )
         return Cosmos3SamplingState(
             latents=latents,

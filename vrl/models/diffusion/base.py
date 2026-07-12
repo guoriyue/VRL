@@ -19,6 +19,7 @@ import torch.nn as nn
 
 from vrl.generation.diffusion.layout import VideoGenerationRequest
 from vrl.models.interfaces import ReplayRequest, ReplayResult, ReplaySegmentResult
+from vrl.models.interfaces.runtime import ModelBuild
 from vrl.models.utils import (
     TrainableStateSlots,
     activate_adapter_on,
@@ -49,6 +50,10 @@ class DiffusionSamplingStateBase:
 class DiffusionModelBase(nn.Module, ABC):
     """Shared model base for diffusion families on the RL path."""
 
+    # Rollout builders resolve this once from PrecisionPolicy; executors and
+    # direct probes consume it around the transformer forward. It is distinct
+    # from parameter storage (SANA keeps fp16 weights under bf16 autocast).
+    autocast_dtype: torch.dtype | None = None
     # Some upstream diffusion-RL recipes intentionally keep LoRA replay outside
     # autocast. The trainer reads this flag when choosing the replay context.
     disable_train_autocast: bool = False
@@ -114,14 +119,14 @@ class DiffusionModelBase(nn.Module, ABC):
         """Rebuild private sampling state for trainer replay."""
         raise NotImplementedError
 
-    def prepare_replay(self, spec: Any) -> None:
+    def prepare_replay(self, build: ModelBuild) -> None:
         """Family hook run once by the replay builder right after construction.
 
         Default no-op. FLUX overrides it to set its dynamic-shift replay
         timesteps (the replay scheduler must carry the same mu-shifted schedule
-        the rollout used); the spec carries the sampling block it derives from.
+        the rollout used); the build carries the sampling block it derives from.
         """
-        del spec
+        del build
         return None
 
     def replay_forward(
@@ -318,11 +323,11 @@ class DiffusionModelBase(nn.Module, ABC):
         self._active_slot_version = int(version)
 
     @classmethod
-    def from_spec(cls, spec: Any) -> DiffusionModelBase:  # pragma: no cover (abstract)
-        """Load the backend from a runtime spec."""
+    def from_build(cls, build: ModelBuild) -> DiffusionModelBase:  # pragma: no cover (abstract)
+        """Load the backend from a runtime build."""
         raise NotImplementedError
 
-    def apply_lora(self, spec: Any) -> None:  # pragma: no cover (default no-op)
+    def apply_lora(self, build: ModelBuild) -> None:  # pragma: no cover (default no-op)
         raise NotImplementedError
 
     def apply_full_finetune(self) -> None:  # pragma: no cover (default no-op)
@@ -339,11 +344,12 @@ class DiffusionModelBase(nn.Module, ABC):
         """Swap the transformer's big policy GEMMs to fp8 in place (rollout only).
 
         Replaces the large attention/MLP ``nn.Linear`` modules with ``Fp8Linear``,
-        leaving embeddings / the noise-pred head / norm-feeding linears in bf16.
+        leaving embeddings / the noise-pred head / norm-feeding linears in the
+        resolved rollout base dtype.
         Default ``rowwise`` (torch, validated); ``blockwise`` opts into vLLM's
         faster block kernel (more GPU memory). Returns the dotted paths quantized.
         This is a generation/rollout-only optimization; the trainer's replay forward
-        keeps its bf16/fp32 master and is never quantized. Call before
+        keeps its configured base-precision parameters and is never quantized. Call before
         ``torch_compile_transformer`` so inductor sees the fp8 modules.
         """
 
@@ -351,20 +357,18 @@ class DiffusionModelBase(nn.Module, ABC):
 
         return swap_linears_to_fp8(self.transformer, recipe=recipe)
 
-    def quantize_rollout_fp4(self) -> list[str]:
-        """Swap the transformer's big policy GEMMs to nvfp4 in place (rollout only).
+    def quantize_rollout_nvfp4(self) -> list[str]:
+        """Swap validated rollout MLP GEMMs to NVFP4 in place.
 
-        The conservative production ``nvfp4`` profile targets big MLP linears
-        only; attention remains in the master dtype pending a real rollout -> BF16
-        replay SDE/reward gate. Embeddings, the noise-pred head, and norm-feeding
-        linears also stay in the master dtype. Rollout-only: trainer replay is
-        never quantized. Call before ``torch_compile_transformer`` so inductor sees
-        the fp4 modules.
+        Attention projections remain under the rollout base dtype until the
+        wider NVFP4 target profile passes a real rollout-to-replay SDE/reward
+        gate. Keeping this thin method alongside the FP8 sibling is the shared
+        cross-family dispatch boundary used by the rollout loader.
         """
 
-        from vrl.nn.quantization import swap_linears_to_fp4
+        from vrl.nn.quantization import swap_linears_to_nvfp4
 
-        return swap_linears_to_fp4(self.transformer)
+        return swap_linears_to_nvfp4(self.transformer)
 
     def set_num_steps(self, n: int) -> None:  # pragma: no cover
         raise NotImplementedError
@@ -410,7 +414,7 @@ class DiffusionModelBase(nn.Module, ABC):
 
         The set is derived from the diffusers pipeline — every nn.Module
         component except the trainable transformer — so it tracks whatever
-        ``from_spec`` froze instead of a hand-kept name list. Families that attach
+        ``from_build`` froze instead of a hand-kept name list. Families that attach
         no diffusers pipeline (single-file checkpoints, replay models) move
         nothing.
         """
@@ -433,32 +437,32 @@ class DiffusionModelBase(nn.Module, ABC):
 
 
 def diffusers_pipeline_dtypes(
-    spec: Any,
+    build: ModelBuild,
     model_dtype: torch.dtype,
 ) -> tuple[torch.dtype, dict[str, Any]]:
-    """Resolve the frozen-module dtype + ``from_pretrained`` kwargs for a family.
+    """Resolve prompt-encoder dtype plus pipeline load kwargs for a family.
 
-    Frozen text encoders / VAE follow the ``frozen`` precision axis. Its
-    default already encodes the Flow-GRPO SD3 contract (fp16 when the denoiser
-    runs fp32, else the model dtype), so ``spec.frozen_dtype`` is authoritative
-    when present; fall back for bare/test specs. Returns ``(frozen_dtype,
-    load_kwargs)`` where ``load_kwargs`` carries the per-component
-    ``torch_dtype`` mapping diffusers expects.
+    ``build.rollout.prompt_encoder_dtype`` is authoritative when present; bare
+    test builds retain the historical fallback. VAEs are not controlled by this
+    option: rollout families explicitly keep them in fp32 for decode fidelity.
+    The initial ``from_pretrained`` mapping preserves that fp32 VAE boundary
+    while avoiding an all-fp32 prompt-encoder load peak.
     """
 
-    frozen_dtype = getattr(spec, "frozen_dtype", None)
-    if frozen_dtype is None:
-        frozen_dtype = torch.float16 if model_dtype == torch.float32 else model_dtype
+    rollout = getattr(build, "rollout", None)
+    prompt_encoder_dtype = getattr(rollout, "prompt_encoder_dtype", None)
+    if prompt_encoder_dtype is None:
+        prompt_encoder_dtype = torch.float16 if model_dtype == torch.float32 else model_dtype
     load_kwargs: dict[str, Any] = {}
-    if model_dtype == torch.float32 and frozen_dtype != torch.float32:
+    if model_dtype == torch.float32 and prompt_encoder_dtype != torch.float32:
         load_kwargs["torch_dtype"] = {
             "transformer": torch.float32,
             "vae": torch.float32,
-            "default": frozen_dtype,
+            "default": prompt_encoder_dtype,
         }
     elif model_dtype != torch.float32:
         load_kwargs["torch_dtype"] = model_dtype
-    return frozen_dtype, load_kwargs
+    return prompt_encoder_dtype, load_kwargs
 
 
 class DiffusersPipelineModelBase(DiffusionModelBase):

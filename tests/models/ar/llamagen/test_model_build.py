@@ -1,4 +1,4 @@
-"""LlamaGen runtime spec extraction and executor request-parsing tests."""
+"""LlamaGen model-build resolution and executor request-parsing tests."""
 
 from __future__ import annotations
 
@@ -6,10 +6,10 @@ import pytest
 from omegaconf import OmegaConf
 
 from vrl.generation import GenerationRequest
-from vrl.models.ar.build import extract_family_ar_runtime_spec
+from vrl.models.ar.build import resolve_family_ar_model_build
 from vrl.models.ar.llamagen.runtime import (
     LlamaGenChunkExecutor,
-    llamagen_config_from_runtime_spec,
+    llamagen_config_from_build,
 )
 
 
@@ -21,7 +21,7 @@ def _cfg():
                 "path": "peizesun/llamagen_t2i",
                 "use_lora": True,
             },
-            "precision": "fp32",
+            "precision": {"training": {"dtype": "fp32"}, "rollout": {"dtype": "fp32"}},
             "sampling": {
                 "guidance_scale": 7.5,
                 "temperature": 1.0,
@@ -32,20 +32,22 @@ def _cfg():
     )
 
 
-def test_extract_runtime_spec_defaults() -> None:
+def test_resolve_model_build_defaults() -> None:
     """Checks default checkpoint path and AR task selection."""
     cfg = OmegaConf.create(
-        {"model": {"family": "llamagen", "use_lora": False}, "precision": "fp32"},
+        {
+            "model": {"family": "llamagen", "use_lora": False},
+            "precision": {"training": {"dtype": "fp32"}, "rollout": {"dtype": "fp32"}},
+        },
     )
-    spec = extract_family_ar_runtime_spec(cfg, device="cpu", weight_dtype="float32")
-    assert spec.model_name_or_path == "peizesun/llamagen_t2i"
-    assert spec.ar_task == "ar_t2i"
+    build = resolve_family_ar_model_build(cfg, device="cpu")
+    assert build.model_name_or_path == "peizesun/llamagen_t2i"
 
 
-def test_config_from_runtime_spec_uses_fused_projection_lora_targets() -> None:
+def test_config_from_build_uses_fused_projection_lora_targets() -> None:
     """The vendored GPT has wqkv/wo, not q_proj/k_proj/v_proj."""
-    spec = extract_family_ar_runtime_spec(_cfg(), device="cpu", weight_dtype="float32")
-    config = llamagen_config_from_runtime_spec(spec)
+    build = resolve_family_ar_model_build(_cfg(), device="cpu")
+    config = llamagen_config_from_build(build)
     assert config["lora_target_modules"] == ("wqkv", "wo")
     assert config["guidance_scale"] == 7.5
     assert config["top_k"] == 1000

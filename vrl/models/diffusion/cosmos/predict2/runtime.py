@@ -1,6 +1,6 @@
 """Cosmos Predict2 family runtime.
 
-Backend imports live inside the model's ``from_spec`` so the shared runtime
+Backend imports live inside the model's ``from_build`` so the shared runtime
 does not import diffusers or cosmos-library backends eagerly.
 """
 
@@ -19,6 +19,8 @@ from vrl.generation.types import GenerationRequest
 from vrl.utils.logging import init_logger
 
 logger = init_logger(__name__)
+
+
 class CosmosChunkExecutor(ReferenceConditionedChunks, DiffusionChunkExecutorBase):
     """Diffusion executor for Cosmos Predict2 Video2World rollouts."""
 

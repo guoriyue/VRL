@@ -48,6 +48,7 @@ from typing import Any
 import torch
 import torch.nn as nn
 
+from vrl.models.dtypes import resolve_torch_dtype
 from vrl.scripts.perf.common.synthetic_diffusion import (
     build_synthetic_forward,
     build_synthetic_inputs,
@@ -97,8 +98,16 @@ def classify_linear(fqn: str) -> str:
         return "lora"
     if any(
         tag in name
-        for tag in (".to_q", ".to_k", ".to_v", ".to_qkv", ".to_added_qkv",
-                    "add_q_proj", "add_k_proj", "add_v_proj")
+        for tag in (
+            ".to_q",
+            ".to_k",
+            ".to_v",
+            ".to_qkv",
+            ".to_added_qkv",
+            "add_q_proj",
+            "add_k_proj",
+            "add_v_proj",
+        )
     ):
         return "qkv"
     if "to_out" in name or "to_add_out" in name:
@@ -113,9 +122,20 @@ def classify_linear(fqn: str) -> str:
         return "adaln"
     if any(
         tag in name
-        for tag in ("time_embed", "time_text_embed", "timestep_embedder", "text_embedder",
-                    "t_embedder", "condition_embedder", "context_embedder", "patch_embed",
-                    "caption", "pos_embed", "time_proj", "proj_out")
+        for tag in (
+            "time_embed",
+            "time_text_embed",
+            "timestep_embedder",
+            "text_embedder",
+            "t_embedder",
+            "condition_embedder",
+            "context_embedder",
+            "patch_embed",
+            "caption",
+            "pos_embed",
+            "time_proj",
+            "proj_out",
+        )
     ):
         return "io_embed"
     return "other"
@@ -265,14 +285,18 @@ def format_report(bd: Breakdown) -> str:
     ]
     for cat, us, calls in rows:
         n_fqn = len(bd.category_fqns.get(cat, []))
-        lines.append(f"{cat:<10}{us:>14,.1f}{100.0 * us / total:>8.1f}%{calls:>9}   {n_fqn} linear(s)")
+        lines.append(
+            f"{cat:<10}{us:>14,.1f}{100.0 * us / total:>8.1f}%{calls:>9}   {n_fqn} linear(s)"
+        )
     lines.append("-" * 78)
     lines.append(f"{'TOTAL':<10}{total:>14,.1f}{100.0:>8.1f}%")
 
     other = bd.category_fqns.get("other", [])
     if other:
         lines.append("")
-        lines.append(f"WARNING: {len(other)} linear(s) fell to 'other' (unclassified) -- coverage gap:")
+        lines.append(
+            f"WARNING: {len(other)} linear(s) fell to 'other' (unclassified) -- coverage gap:"
+        )
         for fqn in other[:20]:
             lines.append(f"  - {fqn}")
         if len(other) > 20:
@@ -280,7 +304,9 @@ def format_report(bd: Breakdown) -> str:
     else:
         lines.append("(coverage: every Linear classified; 'other' empty)")
     if bd.device_kind != "cuda":
-        lines.append("NOTE: CPU run -- numbers are CPU self-time for self-test; run --device cuda for real GEMM kernel time.")
+        lines.append(
+            "NOTE: CPU run -- numbers are CPU self-time for self-test; run --device cuda for real GEMM kernel time."
+        )
     return "\n".join(lines)
 
 
@@ -314,22 +340,27 @@ def main() -> None:
     parser.add_argument("--dtype", default="bf16", choices=["fp32", "bf16", "fp16"])
     parser.add_argument("--batch", type=int, default=2, help="2 == cond+uncond CFG pair")
     parser.add_argument(
-        "--layers", type=int, default=None,
+        "--layers",
+        type=int,
+        default=None,
         help="override transformer depth (default: production; use a small value for a fast CPU self-test)",
     )
     parser.add_argument("--warmup", type=int, default=3)
     parser.add_argument("--active", type=int, default=5)
     parser.add_argument(
-        "--no-concat-padding-mask", dest="concat_padding_mask", action="store_false",
+        "--no-concat-padding-mask",
+        dest="concat_padding_mask",
+        action="store_false",
         help="cosmos only: skip the torchvision padding-mask resize (no GEMM impact)",
     )
     parser.add_argument(
-        "--fuse-qkv", action="store_true",
+        "--fuse-qkv",
+        action="store_true",
         help="fuse to_q/to_k/to_v into one to_qkv GEMM (SD3/Wan; no-op on Cosmos) before profiling",
     )
     args = parser.parse_args()
 
-    dtype = {"fp32": torch.float32, "bf16": torch.bfloat16, "fp16": torch.float16}[args.dtype]
+    dtype = resolve_torch_dtype(args.dtype)
     device = torch.device(args.device)
     if device.type == "cpu" and dtype is not torch.float32:
         logger.info("CPU run: forcing fp32 (bf16/fp16 matmul is not CPU-accelerated)")
@@ -339,7 +370,11 @@ def main() -> None:
         "building synthetic %s on %s (%s), batch=%d", args.family, device, dtype, args.batch
     )
     model, forward_fn = build_synthetic_forward(
-        args.family, batch=args.batch, device=device, dtype=dtype, layers=args.layers,
+        args.family,
+        batch=args.batch,
+        device=device,
+        dtype=dtype,
+        layers=args.layers,
         concat_padding_mask=args.concat_padding_mask,
     )
     if args.fuse_qkv:

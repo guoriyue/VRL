@@ -1,16 +1,15 @@
-"""Numeric limits shared by low-precision quantization formats."""
+"""Numeric limits and layout dimensions owned by quantization protocols."""
 
 from __future__ import annotations
 
 from itertools import pairwise
 
-# Maximum finite magnitude of the E4M3 scale format used by both FP8 GEMMs and
-# NVFP4's per-block decode scales.
+# E4M3 is both the FP8 GEMM format and NVFP4's per-block scale format.
 FP8_E4M3_MAX = 448.0
 
-# NVFP4 protocol values and the additional shape constraints of the packed
-# scaled-mm backend. Keeping them here gives the CPU reference, Triton kernel,
-# module gate, and tests one source of truth.
+# NVFP4 protocol values and packed scaled-mm layout constraints. These are
+# hardware-format boundaries shared by the CPU reference, Triton kernel, module
+# gate, and tests, so their ALL_CAPS representation is intentional.
 E2M1_VALUES = (0.0, 0.5, 1.0, 1.5, 2.0, 3.0, 4.0, 6.0)
 E2M1_MAX = E2M1_VALUES[-1]
 E2M1_MIDPOINTS = tuple((lower + upper) / 2 for lower, upper in pairwise(E2M1_VALUES))

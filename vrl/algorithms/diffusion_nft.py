@@ -8,7 +8,7 @@ from typing import Any
 from vrl.algorithms.advantages import group_relative_advantages
 from vrl.algorithms.base import Algorithm
 from vrl.algorithms.trajectory import AlgorithmInput
-from vrl.algorithms.types import TrainStepMetrics
+from vrl.algorithms.types import PolicyUpdateStats, TrainStepMetrics
 
 
 def normalized_mse(prediction: Any, target: Any) -> Any:
@@ -288,30 +288,16 @@ class DiffusionNFT(Algorithm):
         kl_loss = ((forward_prediction.float() - ref_prediction.float()) ** 2).mean()
         kl_term = float(cfg.kl_coef) * kl_loss
         loss = policy_loss + kl_term
-
-        with torch.no_grad():
-            previous_deviation = (
-                (forward_prediction.float() - previous_prediction.float()) ** 2
-            ).mean()
-            approx_kl = ((forward_prediction.float() - ref_prediction.float()) ** 2).mean()
+        kl_value = float(kl_loss.detach().item())
 
         return loss, TrainStepMetrics(
             loss=float(loss.detach().item()),
             policy_loss=float(policy_loss.detach().item()),
-            kl_penalty=float(kl_loss.detach().item()),
-            clip_fraction=0.0,
-            approx_kl=float(approx_kl.detach().item()),
-            advantage_mean=float(advantages.detach().float().mean().item()),
-            grad_norm=0.0,
-            adv_zero_rate=float((advantages.detach().abs() < 1e-6).float().mean().item()),
-            adv_saturation=float(
-                (advantages.detach().abs() >= cfg.adv_clip_max - 1e-6).float().mean().item(),
+            kl_penalty=kl_value,
+            weighted_kl_loss=float(kl_term.detach().item()),
+            update=PolicyUpdateStats(
+                approx_kl=kl_value,
             ),
-            phase_times={
-                "diffusion_nft.previous_policy_deviation": float(
-                    previous_deviation.item(),
-                ),
-            },
         )
 
     def after_optimizer_step(self, model: Any, global_step: int) -> None:

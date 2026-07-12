@@ -1,0 +1,176 @@
+from __future__ import annotations
+
+import os
+import socket
+from pathlib import Path
+from types import SimpleNamespace
+
+import pytest
+import torch
+import torch.distributed as dist
+import torch.multiprocessing as mp
+
+from vrl.scripts.common.online import (
+    OnlineRecipeRun,
+    _prepare_metrics_csv_rank_consistent,
+)
+from vrl.trainers.distributed import DistributedTrainingContext
+
+
+def _context(*, distributed: bool, primary: bool) -> DistributedTrainingContext:
+    return DistributedTrainingContext(
+        strategy="ddp" if distributed else "single_process",
+        distributed=distributed,
+        rank=0 if primary else 1,
+        local_rank=0,
+        world_size=2 if distributed else 1,
+        is_primary=primary,
+        device=torch.device("cpu"),
+    )
+
+
+def _free_port() -> int:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.bind(("127.0.0.1", 0))
+        return int(sock.getsockname()[1])
+
+
+def _run_metrics_preflight_rank(
+    rank: int,
+    world_size: int,
+    port: int,
+    marker_path: str,
+    fail: bool,
+    queue: mp.Queue,
+) -> None:
+    os.environ["MASTER_ADDR"] = "127.0.0.1"
+    os.environ["MASTER_PORT"] = str(port)
+    dist.init_process_group("gloo", rank=rank, world_size=world_size)
+    try:
+
+        def _prepare() -> None:
+            if rank != 0:
+                raise AssertionError("only rank 0 may prepare the metrics CSV")
+            if fail:
+                raise ValueError("different metrics schema")
+            Path(marker_path).write_text("prepared\n", encoding="utf-8")
+
+        try:
+            _prepare_metrics_csv_rank_consistent(
+                SimpleNamespace(prepare_metrics_csv=_prepare),
+                _context(distributed=True, primary=rank == 0),
+            )
+        except RuntimeError as exc:
+            queue.put((rank, str(exc)))
+        else:
+            queue.put((rank, "ok"))
+    finally:
+        dist.destroy_process_group()
+
+
+def test_metrics_csv_preflight_preserves_single_process_error() -> None:
+    def _raise_schema_error() -> None:
+        raise ValueError("different metrics schema")
+
+    run = SimpleNamespace(prepare_metrics_csv=_raise_schema_error)
+
+    with pytest.raises(ValueError, match="different metrics schema"):
+        _prepare_metrics_csv_rank_consistent(
+            run,
+            _context(distributed=False, primary=True),
+        )
+
+
+def test_online_resume_rejects_changed_reward_component_schema(tmp_path) -> None:
+    path = tmp_path / "metrics.csv"
+    OnlineRecipeRun(
+        stack=SimpleNamespace(component_names=("aesthetic",)),
+        csv_path=path,
+        rng=None,
+        resume=False,
+    ).prepare_metrics_csv()
+
+    resumed = OnlineRecipeRun(
+        stack=SimpleNamespace(component_names=("aesthetic", "pickscore")),
+        csv_path=path,
+        rng=None,
+        resume=True,
+    )
+
+    with pytest.raises(ValueError, match="different metrics schema"):
+        resumed.prepare_metrics_csv()
+
+
+def test_metrics_csv_preflight_broadcasts_primary_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def _broadcast(payload, *, src, device) -> None:
+        assert payload == ["ValueError: different metrics schema"]
+        assert src == 0
+        assert device == torch.device("cpu")
+
+    monkeypatch.setattr(torch.distributed, "broadcast_object_list", _broadcast)
+
+    def _raise_schema_error() -> None:
+        raise ValueError("different metrics schema")
+
+    run = SimpleNamespace(prepare_metrics_csv=_raise_schema_error)
+
+    with pytest.raises(RuntimeError, match="rank 0: ValueError: different metrics schema"):
+        _prepare_metrics_csv_rank_consistent(
+            run,
+            _context(distributed=True, primary=True),
+        )
+
+
+def test_metrics_csv_preflight_peer_uses_broadcast_verdict(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def _broadcast(payload, *, src, device) -> None:
+        del src, device
+        payload[0] = "ValueError: different metrics schema"
+
+    monkeypatch.setattr(torch.distributed, "broadcast_object_list", _broadcast)
+    prepared = False
+
+    def _prepare() -> None:
+        nonlocal prepared
+        prepared = True
+
+    with pytest.raises(RuntimeError, match="rank 0: ValueError: different metrics schema"):
+        _prepare_metrics_csv_rank_consistent(
+            SimpleNamespace(prepare_metrics_csv=_prepare),
+            _context(distributed=True, primary=False),
+        )
+
+    assert prepared is False
+
+
+@pytest.mark.parametrize("fail", [False, True])
+def test_metrics_csv_preflight_is_rank_consistent_with_real_gloo(tmp_path, fail) -> None:
+    context = mp.get_context("spawn")
+    queue = context.Queue()
+    marker = tmp_path / "prepared.txt"
+    port = _free_port()
+    processes = [
+        context.Process(
+            target=_run_metrics_preflight_rank,
+            args=(rank, 2, port, str(marker), fail, queue),
+        )
+        for rank in range(2)
+    ]
+    for process in processes:
+        process.start()
+    results = sorted(queue.get(timeout=10) for _ in processes)
+    for process in processes:
+        process.join(timeout=10)
+        assert process.exitcode == 0
+
+    if fail:
+        assert all(
+            "rank 0: ValueError: different metrics schema" in result for _, result in results
+        )
+        assert not marker.exists()
+    else:
+        assert results == [(0, "ok"), (1, "ok")]
+        assert marker.read_text(encoding="utf-8") == "prepared\n"

@@ -240,14 +240,14 @@ def _write_checkpoint_artifacts_and_publish(
             # LIVE parameters); EMA+fsdp is rejected at strategy construction,
             # so the two paths never conflict.
             parameters = getattr(module, "parameters", None)
-            if callable(parameters) and any(
-                isinstance(p, DTensor) for p in parameters()
-            ):
+            if callable(parameters) and any(isinstance(p, DTensor) for p in parameters()):
                 gathered_state = next(
                     (
                         trainable_modules[trainable_name]
                         for trainable_name, trainable in getattr(
-                            bundle, "trainable_modules", {},
+                            bundle,
+                            "trainable_modules",
+                            {},
                         ).items()
                         if trainable is module and trainable_name in trainable_modules
                     ),
@@ -373,7 +373,12 @@ def restore_training_checkpoint(
         return
     checkpoint_family = checkpoint.payload.get("family")
     bundle_family = getattr(bundle, "metadata", {}).get("family")
-    if strict and checkpoint_family and bundle_family and str(checkpoint_family) != str(bundle_family):
+    if (
+        strict
+        and checkpoint_family
+        and bundle_family
+        and str(checkpoint_family) != str(bundle_family)
+    ):
         raise ValueError(
             f"checkpoint family mismatch: checkpoint={checkpoint_family!r}, "
             f"bundle={bundle_family!r}",
@@ -408,8 +413,7 @@ def load_trainable_state(
     extra = sorted(set(state) - set(modules))
     if strict and (missing or extra):
         raise ValueError(
-            "checkpoint trainable module keys mismatch: "
-            f"missing={missing}, extra={extra}",
+            f"checkpoint trainable module keys mismatch: missing={missing}, extra={extra}",
         )
     for name, module in modules.items():
         if name not in state:
@@ -490,10 +494,23 @@ def save_resolved_config(cfg: Any, output_dir: str | Path, *, resumed: bool) -> 
 
 
 def prepare_metrics_csv(csv_path: str | Path, header: str, *, resume: bool) -> None:
-    """Create metrics CSV unless resume should append to an existing file."""
+    """Create metrics CSV unless resume should append to an existing file.
+
+    Appending to a file with a different header would silently shift every
+    column for csv.DictReader consumers (the curve verdict reads this file),
+    so a resume across a metrics-schema change must refuse instead.
+    """
 
     path = Path(csv_path)
     if resume and path.exists():
+        with path.open() as f:
+            existing_header = f.readline()
+        if existing_header.rstrip("\n") != header.rstrip("\n"):
+            raise ValueError(
+                f"{path} was written by a different metrics schema; appending "
+                "would silently misalign columns. Move the old file aside or "
+                "start a fresh output_dir.",
+            )
         return
     if resume:
         logger.warning("Resume requested but metrics file does not exist; creating %s", path)
@@ -557,8 +574,7 @@ def infer_next_epoch(
         return _non_negative_int(match.group(1), "checkpoint directory suffix")
 
     raise ValueError(
-        "cannot infer next_epoch: checkpoint_meta.next_epoch and "
-        "trainer_state.step are missing",
+        "cannot infer next_epoch: checkpoint_meta.next_epoch and trainer_state.step are missing",
     )
 
 
@@ -620,8 +636,7 @@ def is_complete_checkpoint(checkpoint_dir: str | Path) -> bool:
         return False
     expected_bytes = meta.get("checkpoint_file_bytes")
     return not (
-        expected_bytes is not None
-        and checkpoint_file.stat().st_size != int(expected_bytes)
+        expected_bytes is not None and checkpoint_file.stat().st_size != int(expected_bytes)
     )
 
 

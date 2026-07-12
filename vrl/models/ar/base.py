@@ -56,11 +56,10 @@ class ARModelBase(nn.Module):
         embeddings stay high precision — the per-token log-probs the RL loss
         consumes are computed from them. VQ decoders / vision towers live
         outside ``language_model`` and are never touched. The trainer's replay
-        core keeps its bf16/fp32 master and is never quantized.
+        core keeps its configured base-precision parameters and is never quantized.
         """
 
-        from vrl.nn.quantization import swap_linears_to_fp8
-        from vrl.nn.quantization.targeting import LM_EXCLUDE
+        from vrl.nn.quantization import LM_EXCLUDE, swap_linears_to_fp8
 
         return swap_linears_to_fp8(
             self.language_model,
@@ -68,19 +67,21 @@ class ARModelBase(nn.Module):
             exclude=LM_EXCLUDE,
         )
 
-    def quantize_rollout_fp4(self) -> list[str]:
-        """Swap the language trunk's big GEMMs to nvfp4 in place (rollout only).
+    def quantize_rollout_nvfp4(self) -> list[str]:
+        """Swap the language trunk's eligible MLP GEMMs to NVFP4.
 
-        The conservative production profile quantizes only the language trunk's
-        MLP GEMMs. Attention stays in the master dtype pending a real policy-drift
-        gate; vocabulary heads and embeddings stay there because they directly
-        produce or define the logits consumed by the RL loss.
+        Attention projections and vocabulary heads remain in the rollout base
+        dtype. The head exclusion preserves the logits scored by the RL
+        objective, while MLP-only targeting is the validated NVFP4 rollout
+        profile shared with diffusion models.
         """
 
-        from vrl.nn.quantization import swap_linears_to_fp4
-        from vrl.nn.quantization.targeting import LM_EXCLUDE
+        from vrl.nn.quantization import LM_EXCLUDE, swap_linears_to_nvfp4
 
-        return swap_linears_to_fp4(self.language_model, exclude=LM_EXCLUDE)
+        return swap_linears_to_nvfp4(
+            self.language_model,
+            exclude=LM_EXCLUDE,
+        )
 
     def disable_adapter(self) -> contextlib.AbstractContextManager[None]:
         """Disable the LoRA adapter for a reference forward, or no-op when absent."""

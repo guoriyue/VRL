@@ -34,7 +34,7 @@ from vrl.models.diffusion.base import (
     ReplayRolloutStubs,
 )
 from vrl.models.diffusion.common.lora import LoraModelMixin
-from vrl.models.dtypes import resolve_torch_dtype
+from vrl.models.interfaces.runtime import ModelBuild
 
 # LTX-2 latent channel dimension (transformer in/out channels). The other latent
 # grid factors (temporal/spatial compression) are read from Echo's own
@@ -87,9 +87,9 @@ class EchoSamplingState(DiffusionSamplingStateBase):
     ``scheduler`` is None (the evaluator owns its own scheduler).
     """
 
-    video_context: torch.Tensor    # Gemma text context [B, S, 4096]
-    attention_mask: Any            # text padding mask [B, S] or None
-    num_train_timesteps: int       # sigma = t / num_train_timesteps
+    video_context: torch.Tensor  # Gemma text context [B, S, 4096]
+    attention_mask: Any  # text padding mask [B, S] or None
+    num_train_timesteps: int  # sigma = t / num_train_timesteps
 
 
 class EchoModel(LoraModelMixin, DiffusionModelBase):
@@ -100,9 +100,9 @@ class EchoModel(LoraModelMixin, DiffusionModelBase):
     def __init__(
         self,
         *,
-        echo: Any,                 # LTX2DiffusionWrapper
-        text_encoder: Any,         # GemmaTextEncoderWrapper
-        video_vae: Any,            # VideoVAEWrapper
+        echo: Any,  # LTX2DiffusionWrapper
+        text_encoder: Any,  # GemmaTextEncoderWrapper
+        video_vae: Any,  # VideoVAEWrapper
         scheduler: Any,
         dtype: torch.dtype,
         device: Any = None,
@@ -130,8 +130,8 @@ class EchoModel(LoraModelMixin, DiffusionModelBase):
     def _lora_transformer(self) -> Any:
         return self.transformer
 
-    def _lora_dtype(self, spec: Any) -> Any:
-        del spec
+    def _lora_dtype(self, build: ModelBuild) -> Any:
+        del build
         return self._dtype
 
     @property
@@ -197,11 +197,11 @@ class EchoModel(LoraModelMixin, DiffusionModelBase):
     # -- backend ownership ---------------------------------------------
 
     @classmethod
-    def from_spec(cls, spec: Any) -> EchoModel:
-        """Build Echo's text encoder + LTX transformer + video VAE from a spec.
+    def from_build(cls, build: ModelBuild) -> EchoModel:
+        """Build Echo's text encoder + LTX transformer + video VAE from a build.
 
-        ``spec.model_name_or_path`` is the merged Echo safetensors checkpoint;
-        ``spec.model_config['gemma_path']`` is the separate Gemma-3-12B directory.
+        ``build.model_name_or_path`` is the merged Echo safetensors checkpoint;
+        ``build.model_config['gemma_path']`` is the separate Gemma-3-12B directory.
         """
 
         from diffusers import FlowMatchEulerDiscreteScheduler
@@ -211,21 +211,21 @@ class EchoModel(LoraModelMixin, DiffusionModelBase):
         )
         from ltx_distillation.models.vae_wrapper import create_vae_wrappers
 
-        dtype = resolve_torch_dtype(spec.dtype)
-        device = torch.device(spec.device) if spec.device is not None else torch.device("cpu")
-        model_cfg = spec.model_config or {}
+        dtype = build.parameter_dtype
+        device = torch.device(build.device) if build.device is not None else torch.device("cpu")
+        model_cfg = build.model_config or {}
         gemma_ref = model_cfg.get("gemma_path")
         if not gemma_ref:
             raise ValueError(
                 "Echo requires model.gemma_path (a Gemma-3-12B HF repo id or local dir)",
             )
-        checkpoint = _resolve_echo_checkpoint(spec.model_name_or_path)
+        checkpoint = _resolve_echo_checkpoint(build.model_name_or_path)
         gemma_path = _resolve_gemma_dir(gemma_ref)
 
         # Sampling resolution sizes the wrapper's RoPE/patch grid; the rollout
         # request can override per call, but the wrapper wants a build-time
         # default. Read it from the sampling block when present.
-        sampling = getattr(spec, "sampling_config", None) or {}
+        sampling = getattr(build, "sampling_config", None) or {}
         video_height = int(sampling.get("height", 512))
         video_width = int(sampling.get("width", 768))
 
@@ -439,7 +439,9 @@ def _sigma_from_timestep(
 ) -> torch.Tensor:
     """Flow-match timestep -> sigma in (0, 1]; guards sigma=0."""
 
-    sigma = torch.as_tensor(t, device=like.device, dtype=torch.float32) / float(num_train_timesteps)
+    sigma = torch.as_tensor(t, device=like.device, dtype=torch.float32) / float(
+        num_train_timesteps
+    )
     return sigma.clamp_min(1e-6)
 
 

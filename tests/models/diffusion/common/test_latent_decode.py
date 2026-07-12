@@ -4,8 +4,7 @@ import torch
 
 from vrl.models.diffusion.common import (
     ChunkedLatentDecoder,
-    LatentDecodeSpec,
-    LatentDecodeTransform,
+    LatentDecodePlan,
 )
 
 
@@ -18,8 +17,8 @@ def test_chunked_latent_decoder_decodes_in_batch_chunks() -> None:
         return chunk + 10
 
     decoder = ChunkedLatentDecoder(
-        LatentDecodeSpec(
-            transform=LatentDecodeTransform(lambda x: x * 2),
+        LatentDecodePlan(
+            prepare_latents=lambda x: x * 2,
             vae_decode=decode,
             postprocess=lambda x: x - 1,
             output_layout="image_bchw",
@@ -37,8 +36,8 @@ def test_chunked_latent_decoder_decodes_in_batch_chunks() -> None:
 def test_chunked_latent_decoder_standardizes_video_layout() -> None:
     """Checks chunked latent decoder standardizes video layout."""
     decoder = ChunkedLatentDecoder(
-        LatentDecodeSpec(
-            transform=LatentDecodeTransform(lambda x: x),
+        LatentDecodePlan(
+            prepare_latents=lambda x: x,
             vae_decode=lambda x: x,
             postprocess=lambda x: x.permute(0, 2, 1, 3, 4),
             output_layout="video_btchw",

@@ -22,8 +22,9 @@ from vrl.generation.diffusion.layout import VideoGenerationRequest
 from vrl.math.diffusion.flow_matching import sde_step_with_logprob
 from vrl.models.diffusion.build import (
     build_family_runtime_bundle,
-    extract_family_runtime_spec,
+    resolve_family_model_build,
 )
+from vrl.models.dtypes import resolve_torch_dtype
 from vrl.rewards.inference import RewardInferenceArtifact, RewardInferenceRequest
 from vrl.rewards.models.kling_video_reward import KlingVideoRewardModel
 from vrl.trainers.checkpointing import load_trainable_state, load_training_checkpoint
@@ -35,7 +36,7 @@ logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True, slots=True)
-class CheckpointSpec:
+class CheckpointTarget:
     """One checkpoint label/path pair from the CLI."""
 
     label: str
@@ -139,8 +140,7 @@ def main(argv: list[str] | None = None) -> None:
         prompts = prompts[: args.limit]
     if not prompts:
         raise ValueError("provide --prompt, --manifest, or --eval-manifest")
-    checkpoints = [_parse_checkpoint_spec(value) for value in args.checkpoint]
-    _validate_unique_labels(checkpoints)
+    checkpoint_targets = _parse_checkpoint_targets(args.checkpoint)
 
     device = _resolve_device(args.device)
     dtype = _resolve_dtype(args.dtype, cfg, device=device)
@@ -150,7 +150,9 @@ def main(argv: list[str] | None = None) -> None:
 
     run_config = {
         "config": args.config,
-        "checkpoints": [{"label": spec.label, "path": str(spec.path)} for spec in checkpoints],
+        "checkpoints": [
+            {"label": target.label, "path": str(target.path)} for target in checkpoint_targets
+        ],
         "prompt_count": len(prompts),
         "samples_per_prompt": int(args.samples_per_prompt),
         "seed": int(args.seed),
@@ -165,7 +167,7 @@ def main(argv: list[str] | None = None) -> None:
 
     generated = _generate_all(
         cfg,
-        checkpoints,
+        checkpoint_targets,
         prompts,
         samples_per_prompt=int(args.samples_per_prompt),
         base_seed=int(args.seed),
@@ -202,31 +204,35 @@ def _load_prompts(args: argparse.Namespace, cfg: DictConfig) -> list[str]:
     return prompts
 
 
-def _parse_checkpoint_spec(value: str) -> CheckpointSpec:
+def _parse_checkpoint_targets(values: list[str]) -> list[CheckpointTarget]:
+    targets = [_parse_checkpoint_target(value) for value in values]
+    labels = [target.label for target in targets]
+    if len(set(labels)) != len(labels):
+        raise ValueError(f"checkpoint labels must be unique: {labels}")
+    return targets
+
+
+def _parse_checkpoint_target(value: str) -> CheckpointTarget:
     text = str(value).strip()
     if not text:
         raise ValueError("--checkpoint values must be non-empty")
     if "=" in text:
         label, raw_path = text.split("=", 1)
-        label = _safe_label(label)
+        label = _normalize_checkpoint_label(label)
         path = Path(raw_path).expanduser().resolve()
     else:
         path = Path(text).expanduser().resolve()
-        label = _safe_label(path.parent.name if path.name == "checkpoint-final" else path.name)
+        label = _normalize_checkpoint_label(
+            path.parent.name if path.name == "checkpoint-final" else path.name,
+        )
     if not label:
         raise ValueError(f"checkpoint label resolved empty for {value!r}")
     if not path.exists():
         raise FileNotFoundError(f"checkpoint path does not exist: {path}")
-    return CheckpointSpec(label=label, path=path)
+    return CheckpointTarget(label=label, path=path)
 
 
-def _validate_unique_labels(checkpoints: list[CheckpointSpec]) -> None:
-    labels = [checkpoint.label for checkpoint in checkpoints]
-    if len(set(labels)) != len(labels):
-        raise ValueError(f"checkpoint labels must be unique: {labels}")
-
-
-def _safe_label(value: str) -> str:
+def _normalize_checkpoint_label(value: str) -> str:
     return re.sub(r"[^A-Za-z0-9_.-]+", "_", str(value).strip()).strip("._-")
 
 
@@ -243,14 +249,7 @@ def _resolve_device(device_arg: str) -> torch.device:
 
 def _resolve_dtype(dtype_arg: str, cfg: DictConfig, *, device: torch.device) -> torch.dtype:
     if dtype_arg != "auto":
-        return {
-            "fp32": torch.float32,
-            "float32": torch.float32,
-            "fp16": torch.float16,
-            "float16": torch.float16,
-            "bf16": torch.bfloat16,
-            "bfloat16": torch.bfloat16,
-        }[dtype_arg]
+        return resolve_torch_dtype(dtype_arg)
     trainer_config = build_configs(cfg)["trainer"]
     dtype = torch_dtype_for_trainer_precision(trainer_config, torch)
     if getattr(device, "type", str(device)) == "cpu":
@@ -293,7 +292,7 @@ def _keep_model_between_checkpoints(args: argparse.Namespace) -> bool:
 
 def _generate_all(
     cfg: DictConfig,
-    checkpoints: list[CheckpointSpec],
+    checkpoint_targets: list[CheckpointTarget],
     prompts: list[str],
     *,
     samples_per_prompt: int,
@@ -307,24 +306,27 @@ def _generate_all(
     generated: list[GeneratedVideo] = []
     bundle: Any | None = None
     try:
-        for checkpoint_index, checkpoint in enumerate(checkpoints):
+        for target in checkpoint_targets:
             if bundle is None or not keep_model_between_checkpoints:
                 _release_cuda()
                 logger.info(
                     "Building Cosmos Predict2.5 generation bundle for %s",
-                    checkpoint.label,
+                    target.label,
                 )
-                spec = extract_family_runtime_spec(cfg, device, dtype)
-                bundle = build_family_runtime_bundle(spec)
-            _load_checkpoint_into_bundle(bundle, checkpoint)
+                build = resolve_family_model_build(
+                    cfg,
+                    device,
+                    parameter_dtype_override=dtype,
+                )
+                bundle = build_family_runtime_bundle(build)
+            _load_checkpoint_into_bundle(bundle, target)
             model = bundle.model.eval()
             try:
                 generated.extend(
                     _generate_checkpoint_videos(
                         model,
-                        checkpoint,
+                        target,
                         prompts,
-                        checkpoint_index=checkpoint_index,
                         samples_per_prompt=samples_per_prompt,
                         base_seed=base_seed,
                         output_dir=output_dir,
@@ -345,18 +347,17 @@ def _generate_all(
     return generated
 
 
-def _load_checkpoint_into_bundle(bundle: Any, checkpoint: CheckpointSpec) -> None:
-    logger.info("Loading trainable state from %s", checkpoint.path)
-    training_checkpoint = load_training_checkpoint(checkpoint.path)
+def _load_checkpoint_into_bundle(bundle: Any, target: CheckpointTarget) -> None:
+    logger.info("Loading trainable state from %s", target.path)
+    training_checkpoint = load_training_checkpoint(target.path)
     load_trainable_state(bundle, training_checkpoint.trainable_state, strict=True)
 
 
 def _generate_checkpoint_videos(
     model: Any,
-    checkpoint: CheckpointSpec,
+    target: CheckpointTarget,
     prompts: list[str],
     *,
-    checkpoint_index: int,
     samples_per_prompt: int,
     base_seed: int,
     output_dir: Path,
@@ -365,20 +366,19 @@ def _generate_checkpoint_videos(
     dtype: Any,
 ) -> list[GeneratedVideo]:
     videos: list[GeneratedVideo] = []
-    video_dir = output_dir / "videos" / checkpoint.label
+    video_dir = output_dir / "videos" / target.label
     video_dir.mkdir(parents=True, exist_ok=True)
     for prompt_index, prompt in enumerate(prompts):
         for sample_index in range(samples_per_prompt):
             seed = _seed_for(
                 base_seed=base_seed,
-                checkpoint_index=checkpoint_index,
                 prompt_index=prompt_index,
                 sample_index=sample_index,
                 samples_per_prompt=samples_per_prompt,
             )
             logger.info(
                 "Generating checkpoint=%s prompt=%d sample=%d seed=%d",
-                checkpoint.label,
+                target.label,
                 prompt_index,
                 sample_index,
                 seed,
@@ -395,7 +395,7 @@ def _generate_checkpoint_videos(
             write_mp4(tensor, path, fps=float(sampling["fps"]))
             videos.append(
                 GeneratedVideo(
-                    checkpoint_label=checkpoint.label,
+                    checkpoint_label=target.label,
                     prompt_index=prompt_index,
                     sample_index=sample_index,
                     seed=seed,
@@ -409,12 +409,10 @@ def _generate_checkpoint_videos(
 def _seed_for(
     *,
     base_seed: int,
-    checkpoint_index: int,
     prompt_index: int,
     sample_index: int,
     samples_per_prompt: int,
 ) -> int:
-    del checkpoint_index
     # Keep seeds identical across checkpoints so reward changes reflect weights,
     # not a different latent-noise draw.
     return int(base_seed) + int(prompt_index) * int(samples_per_prompt) + int(sample_index)

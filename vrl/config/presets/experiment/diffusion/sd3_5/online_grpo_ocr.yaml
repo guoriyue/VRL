@@ -7,7 +7,6 @@ defaults:
   - /reward/ocr
   - /dataset/ocr
 
-precision: bf16
 
 sampling:
   max_sequence_length: 128

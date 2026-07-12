@@ -1,4 +1,4 @@
-"""GLM-Image runtime spec / executor wiring tests."""
+"""GLM-Image model-build and executor wiring tests."""
 
 from __future__ import annotations
 
@@ -6,27 +6,30 @@ import pytest
 from omegaconf import OmegaConf
 
 from vrl.generation.types import GenerationRequest
-from vrl.models.ar.build import extract_family_ar_runtime_spec
+from vrl.models.ar.build import resolve_family_ar_model_build
 from vrl.models.ar.glm_image.runner import GlmImageTokenRunner
 from vrl.models.ar.glm_image.runtime import (
     GLM_IMAGE_FAMILY_CAPABILITY,
     GlmImageChunkExecutor,
-    glm_image_config_from_runtime_spec,
+    glm_image_config_from_build,
 )
 
 
-def test_extract_runtime_spec_defaults_to_glm_image_checkpoint() -> None:
+def test_resolve_model_build_defaults_to_glm_image_checkpoint() -> None:
     cfg = OmegaConf.create(
-        {"model": {"family": "glm_image"}, "precision": "fp32", "sampling": {}},
+        {
+            "model": {"family": "glm_image"},
+            "precision": {"training": {"dtype": "fp32"}, "rollout": {"dtype": "fp32"}},
+            "sampling": {},
+        },
     )
 
-    spec = extract_family_ar_runtime_spec(cfg, device="cpu", weight_dtype="float32")
+    build = resolve_family_ar_model_build(cfg, device="cpu")
 
-    assert spec.ar_task == "ar_t2i"
-    assert spec.model_name_or_path == "zai-org/GLM-Image"
+    assert build.model_name_or_path == "zai-org/GLM-Image"
 
 
-def test_extract_runtime_spec_carries_sampling_and_lora_overrides() -> None:
+def test_resolve_model_build_carries_sampling_and_lora_overrides() -> None:
     cfg = OmegaConf.create(
         {
             "model": {
@@ -35,7 +38,7 @@ def test_extract_runtime_spec_carries_sampling_and_lora_overrides() -> None:
                 "use_lora": True,
                 "lora": {"rank": 8},
             },
-            "precision": "fp32",
+            "precision": {"training": {"dtype": "fp32"}, "rollout": {"dtype": "fp32"}},
             "sampling": {
                 "temperature": 0.8,
                 "top_p": 0.9,
@@ -48,10 +51,10 @@ def test_extract_runtime_spec_carries_sampling_and_lora_overrides() -> None:
         }
     )
 
-    spec = extract_family_ar_runtime_spec(cfg, device="cpu", weight_dtype="float32")
-    config = glm_image_config_from_runtime_spec(spec)
+    build = resolve_family_ar_model_build(cfg, device="cpu")
+    config = glm_image_config_from_build(build)
 
-    assert spec.model_name_or_path == "/ckpt/glm-image"
+    assert build.model_name_or_path == "/ckpt/glm-image"
     assert config["temperature"] == 0.8
     assert config["top_p"] == 0.9
     assert config["image_height"] == 768

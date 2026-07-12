@@ -6,7 +6,6 @@
 model:
   family: llamagen
   path: peizesun/llamagen_t2i
-  dtype: bfloat16
 
   # Checkpoint files inside `path` (HF repo or local dir) and the frozen text
   # encoder. Defaults match LlamaGenConfig; listed here for discoverability.

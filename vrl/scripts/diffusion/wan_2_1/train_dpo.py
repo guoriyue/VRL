@@ -77,8 +77,7 @@ def _build_offline_dpo_trainer_config(
         if adam_only_keys:
             paths = ", ".join(f"actor.optim.{key}" for key in adam_only_keys)
             raise ValueError(
-                "actor.use_adafactor=true does not consume AdamW-only key(s): "
-                f"{paths}",
+                f"actor.use_adafactor=true does not consume AdamW-only key(s): {paths}",
             )
 
     scale_lr = bool(require(cfg, "actor.scale_lr"))
@@ -185,12 +184,11 @@ def train_wan_2_1_dpo(cfg: DictConfig) -> None:
     dpo_config = build_algorithm_config(cfg)
     if not isinstance(dpo_config, DiffusionDPOConfig):
         raise TypeError(
-            f"Wan-DPO expects algorithm.kind=diffusion_dpo, got "
-            f"{type(dpo_config).__name__}",
+            f"Wan-DPO expects algorithm.kind=diffusion_dpo, got {type(dpo_config).__name__}",
         )
 
     precision = resolve_precision_policy(cfg)
-    mixed_precision = normalize_mixed_precision(precision.train)
+    mixed_precision = normalize_mixed_precision(precision.training.dtype)
     train_batch_size = int(require(cfg, "actor.train_batch_size"))
     grad_accum = int(require(cfg, "actor.gradient_accumulation_steps"))
     trainer_cfg = _build_offline_dpo_trainer_config(
@@ -217,7 +215,7 @@ def train_wan_2_1_dpo(cfg: DictConfig) -> None:
     resources = resolve_distributed_resources(cfg)
     logger.info(format_distributed_resource_plan(resources))
     device = torch.device(trainer_torch_device(resources))
-    weight_dtype = resolve_torch_dtype(precision.train)
+    weight_dtype = resolve_torch_dtype(precision.training.dtype)
 
     # 1. Runtime via family runtime (no diffusers import here)
     bundle = build_wan_2_1_runtime_bundle_from_cfg(cfg, device, weight_dtype)
@@ -234,7 +232,10 @@ def train_wan_2_1_dpo(cfg: DictConfig) -> None:
     # 2. Encoders bound to the loaded pipeline
     num_frames = int(sampling.num_frames)
     encode_pixels, encode_text = _build_encoders(
-        pipeline, num_frames=num_frames, device=device, dtype=weight_dtype,
+        pipeline,
+        num_frames=num_frames,
+        device=device,
+        dtype=weight_dtype,
     )
 
     # 3. Data — Pick-a-Pic v2 preference pairs
@@ -243,7 +244,8 @@ def train_wan_2_1_dpo(cfg: DictConfig) -> None:
     resolution = int(require(cfg, "data.preprocessing.resolution")) or int(sampling.height)
     logger.info(
         "Loading Pick-a-Pic from %s split=%s",
-        data_cfg.dataset_name, data_cfg.split,
+        data_cfg.dataset_name,
+        data_cfg.split,
     )
     ds = load_pickapic(
         split=str(data_cfg.split),
@@ -267,11 +269,12 @@ def train_wan_2_1_dpo(cfg: DictConfig) -> None:
     # 4. Trainer — its config was resolved before runtime/data construction so
     # unsupported optimizer modes fail without paying model or dataset startup.
     pipeline.scheduler.set_timesteps(
-        pipeline.scheduler.config.num_train_timesteps, device=device,
+        pipeline.scheduler.config.num_train_timesteps,
+        device=device,
     )
     trainer = OfflineDPOTrainer(
         model=wan_model,
-        ref_model=None,                       # use LoRA disable_adapter for ref
+        ref_model=None,  # use LoRA disable_adapter for ref
         forward_fn=wan_forward,
         noise_scheduler=pipeline.scheduler,
         encode_pixels=encode_pixels,
@@ -319,7 +322,10 @@ def train_wan_2_1_dpo(cfg: DictConfig) -> None:
 
     logger.info(
         "Starting Wan-1.3B DPO — %d steps, beta=%g, lr=%g, num_frames=%d",
-        max_train_steps, trainer_cfg.beta, trainer_cfg.lr, num_frames,
+        max_train_steps,
+        trainer_cfg.beta,
+        trainer_cfg.lr,
+        num_frames,
     )
 
     # LoRA-only checkpoints export the adapter weights; full fine-tunes export
@@ -350,15 +356,21 @@ def train_wan_2_1_dpo(cfg: DictConfig) -> None:
             logger.info(
                 "step %d | loss=%.4f acc=%.3f model_diff=%.4f ref_diff=%.4f "
                 "model_mse=%.4f ref_mse=%.4f gn=%.3f",
-                step, m.loss, m.implicit_acc, m.model_diff, m.ref_diff,
-                m.raw_model_loss, m.raw_ref_loss, m.grad_norm,
+                step,
+                m.loss,
+                m.implicit_acc,
+                m.model_diff,
+                m.ref_diff,
+                m.raw_model_loss,
+                m.raw_ref_loss,
+                m.grad_norm,
             )
             with open(csv_path, "a") as f:
                 row = ",".join(f"{getattr(m, name):.6f}" for name in metric_fields)
                 f.write(f"{step},{row}\n")
 
         if checkpointing_steps > 0 and (step + 1) % checkpointing_steps == 0:
-            ckpt = out_dir / f"checkpoint-{step+1}"
+            ckpt = out_dir / f"checkpoint-{step + 1}"
             save_training_checkpoint(
                 ckpt,
                 trainer=trainer,

@@ -19,6 +19,7 @@ from vrl.rollouts.evaluators.types import SegmentSignal, TrajectorySignalBatch
 
 class TestGRPOSingleSampleNaN:
     """Groups tests for grposingle sample na n."""
+
     def test_single_sample_returns_zero_not_nan(self) -> None:
         """Single sample per group → advantage = 0.0, NOT NaN."""
         import torch
@@ -54,11 +55,13 @@ class TestGRPOSingleSampleNaN:
         assert advantages[0] < 0
         assert advantages[3] > 0
 
+
 class TestGRPOFlowMatchingKL:
     """Groups tests for grpoflow matching KL."""
+
     def test_flow_kl_ignores_dt_by_default_to_match_flow_grpo(self) -> None:
         """Checks flow KL ignores dt by default to match flow GRPO."""
-        grpo = GRPO(GRPOConfig(kl_coef=1.0))
+        grpo = GRPO(GRPOConfig(kl_coef=0.04))
         signals = _flow_signals(
             log_prob=torch.zeros(2),
             old_log_prob=torch.zeros(2),
@@ -76,8 +79,9 @@ class TestGRPOFlowMatchingKL:
             ),
         )
 
-        assert loss.item() == pytest.approx(0.5)
+        assert loss.item() == pytest.approx(0.02)
         assert metrics.kl_penalty == pytest.approx(0.5)
+        assert metrics.weighted_kl_loss == pytest.approx(0.02)
 
     def test_flow_kl_can_use_dt_when_explicitly_configured(self) -> None:
         """Checks flow KL can use dt when explicitly configured."""
@@ -124,8 +128,8 @@ class TestGRPOClippedSurrogate:
         assert loss.item() == pytest.approx(-advantages.mean().item())
         assert metrics.policy_loss == pytest.approx(-advantages.mean().item())
         # No drift from old policy → no clipping, zero approx-KL.
-        assert metrics.clip_fraction == pytest.approx(0.0)
-        assert metrics.approx_kl == pytest.approx(0.0)
+        assert metrics.update.clip_fraction == pytest.approx(0.0)
+        assert metrics.update.approx_kl == pytest.approx(0.0)
 
     def test_positive_advantage_uses_clipped_ratio_when_ratio_high(self) -> None:
         """Positive advantage + ratio above 1+clip_ratio → loss uses clipped ratio.
@@ -146,7 +150,8 @@ class TestGRPOClippedSurrogate:
             AlgorithmInput(signals=signals, advantages=adv),
         )
         assert loss.item() == pytest.approx(-adv.item() * (1.0 + clip_ratio))
-        assert metrics.clip_fraction == pytest.approx(1.0)
+        assert metrics.update.clip_fraction == pytest.approx(1.0)
+        assert metrics.update.active_clip_fraction == pytest.approx(1.0)
 
     def test_negative_advantage_uses_unclipped_ratio_when_ratio_high(self) -> None:
         """Negative advantage + ratio above 1+clip_ratio → unclipped term wins.
@@ -163,11 +168,15 @@ class TestGRPOClippedSurrogate:
             old_log_prob=torch.zeros(1),
         )
         adv = torch.tensor([-3.0])
-        loss, _ = grpo.compute_loss(
+        loss, metrics = grpo.compute_loss(
             AlgorithmInput(signals=signals, advantages=adv),
         )
         ratio = torch.exp(torch.tensor(log_ratio)).item()
         assert loss.item() == pytest.approx(-adv.item() * ratio)
+        # The ratio is outside the band, but this direction pulls the policy
+        # back toward the old policy, so the differentiable surrogate remains.
+        assert metrics.update.clip_fraction == pytest.approx(1.0)
+        assert metrics.update.active_clip_fraction == pytest.approx(0.0)
 
     def test_clip_fraction_and_approx_kl_match_formula(self) -> None:
         """clip_fraction = mean(|ratio-1|>clip_ratio); approx_kl = 0.5*mean(d^2)."""
@@ -183,11 +192,12 @@ class TestGRPOClippedSurrogate:
         # Independent literal anchors, not the metric's own formula recomputed:
         # ratio = exp([1, 0]) -> |e-1| > 0.2 clipped, |1-1| < 0.2 not -> 0.5 clipped;
         # approx_kl = 0.5 * mean([1, 0] ** 2) = 0.25.
-        assert metrics.clip_fraction == pytest.approx(0.5)
-        assert metrics.approx_kl == pytest.approx(0.25)
+        assert metrics.update.clip_fraction == pytest.approx(0.5)
+        assert metrics.update.active_clip_fraction == pytest.approx(0.5)
+        assert metrics.update.approx_kl == pytest.approx(0.25)
 
-    def test_reports_logprob_mismatch_metrics(self) -> None:
-        """GRPO surfaces rollout-vs-replay (fresh vs old) drift in TrainStepMetrics."""
+    def test_objective_leaves_logprob_mismatch_to_replay_boundary(self) -> None:
+        """The objective reports update math; the trainer owns backend parity."""
         grpo = GRPO(GRPOConfig(kl_coef=0.0))
         signals = _flow_signals(
             log_prob=torch.full((2,), 0.1),  # replay logprob
@@ -196,10 +206,9 @@ class TestGRPOClippedSurrogate:
         _, metrics = grpo.compute_loss(
             AlgorithmInput(signals=signals, advantages=torch.ones(2)),
         )
-        ratio = torch.exp(torch.tensor(0.1)).item()
-        assert metrics.logprob_abs_diff_mean == pytest.approx(0.1, abs=1e-6)
-        assert metrics.ratio_abs_dev_mean == pytest.approx(ratio - 1.0, abs=1e-6)
-        assert metrics.mismatch_kl == pytest.approx(-0.1, abs=1e-6)
+        assert metrics.logprob_mismatch.logprob_abs_diff_mean == 0.0
+        assert metrics.logprob_mismatch.ratio_abs_dev_mean == 0.0
+        assert metrics.logprob_mismatch.finite is True
 
     def test_mismatch_metrics_zero_when_on_policy(self) -> None:
         """fresh == old → all mismatch metrics are zero."""
@@ -208,15 +217,15 @@ class TestGRPOClippedSurrogate:
         _, metrics = grpo.compute_loss(
             AlgorithmInput(signals=signals, advantages=torch.ones(3)),
         )
-        assert metrics.logprob_abs_diff_mean == 0.0
-        assert metrics.ratio_abs_dev_max == 0.0
-        assert metrics.mismatch_k3_kl == 0.0
+        assert metrics.logprob_mismatch.logprob_abs_diff_mean == 0.0
+        assert metrics.logprob_mismatch.ratio_abs_dev_max == 0.0
+        assert metrics.logprob_mismatch.mismatch_k3_kl == 0.0
 
 
 class TestGRPOTruncatedImportanceSampling:
     """TIS bounds the rollout->replay importance weight (continuous.py).
 
-    These guard the fp8/fp4-rollout correction path: under a quantized rollout the
+    These guard the FP8/NVFP4 rollout correction path: under quantized rollout the
     weight exp(replay - rollout) inflates on a few samples and, on negative
     advantages, drives a large *unclipped* gradient. TIS caps/masks it. The TIS
     knobs live on the algorithm's injected ``precision_correction`` (the trainer
@@ -236,7 +245,8 @@ class TestGRPOTruncatedImportanceSampling:
 
         def _signals():
             return _flow_signals(
-                log_prob=torch.tensor([1.0, 0.0, -0.5]), old_log_prob=torch.zeros(3),
+                log_prob=torch.tensor([1.0, 0.0, -0.5]),
+                old_log_prob=torch.zeros(3),
             )
 
         base, _ = self._grpo().compute_loss(AlgorithmInput(signals=_signals(), advantages=adv))
@@ -244,7 +254,7 @@ class TestGRPOTruncatedImportanceSampling:
             AlgorithmInput(signals=_signals(), advantages=adv),
         )
         assert off.item() == pytest.approx(base.item())
-        assert off_m.tis_clip_fraction == 0.0
+        assert off_m.update.tis_clip_fraction == 0.0
 
     def test_truncate_caps_unclipped_negative_advantage_gradient(self) -> None:
         """truncate caps the ratio, so the dangerous adv<0 unclipped branch is bounded.
@@ -258,7 +268,7 @@ class TestGRPOTruncatedImportanceSampling:
         adv = torch.tensor([-3.0])
         loss, metrics = grpo.compute_loss(AlgorithmInput(signals=signals, advantages=adv))
         assert loss.item() == pytest.approx(-adv.item() * cap)
-        assert metrics.tis_clip_fraction == pytest.approx(1.0)
+        assert metrics.update.tis_clip_fraction == pytest.approx(1.0)
 
     def test_truncate_leaves_in_range_samples_untouched(self) -> None:
         """A ratio below the cap is unchanged; clip fraction reflects only altered ones."""
@@ -268,7 +278,7 @@ class TestGRPOTruncatedImportanceSampling:
         _, metrics = grpo.compute_loss(
             AlgorithmInput(signals=signals, advantages=torch.tensor([-3.0, 1.0])),
         )
-        assert metrics.tis_clip_fraction == pytest.approx(0.5)
+        assert metrics.update.tis_clip_fraction == pytest.approx(0.5)
 
     def test_mask_drops_out_of_range_samples_from_mean(self) -> None:
         """mask mode rejects catastrophic-drift samples entirely (masked mean)."""
@@ -279,7 +289,7 @@ class TestGRPOTruncatedImportanceSampling:
             AlgorithmInput(signals=signals, advantages=torch.tensor([5.0, 1.0])),
         )
         assert loss.item() == pytest.approx(-1.0)
-        assert metrics.tis_clip_fraction == pytest.approx(0.5)
+        assert metrics.update.tis_clip_fraction == pytest.approx(0.5)
 
     @pytest.mark.parametrize(
         "kwargs",
@@ -315,7 +325,8 @@ class TestGRPORejectSampling:
 
         def _sig():
             return _flow_signals(
-                log_prob=torch.tensor([1.0, 0.0, -0.5]), old_log_prob=torch.zeros(3),
+                log_prob=torch.tensor([1.0, 0.0, -0.5]),
+                old_log_prob=torch.zeros(3),
             )
 
         base, _ = self._grpo().compute_loss(AlgorithmInput(signals=_sig(), advantages=adv))
@@ -323,19 +334,20 @@ class TestGRPORejectSampling:
             AlgorithmInput(signals=_sig(), advantages=adv),
         )
         assert off.item() == pytest.approx(base.item())
-        assert off_m.rs_seq_masked_fraction == 0.0
+        assert off_m.update.rs_seq_masked_fraction == 0.0
 
     def test_out_of_band_sample_dropped_from_mean(self) -> None:
         # sample0 log-ratio=ln3 (ratio 3) above high=ln2 → rejected; sample1 ratio 1 kept.
         grpo = self._grpo(rs_mode="seq_mean_k1")
         signals = _flow_signals(
-            log_prob=torch.tensor([math.log(3.0), 0.0]), old_log_prob=torch.zeros(2),
+            log_prob=torch.tensor([math.log(3.0), 0.0]),
+            old_log_prob=torch.zeros(2),
         )
         loss, metrics = grpo.compute_loss(
             AlgorithmInput(signals=signals, advantages=torch.tensor([5.0, 1.0])),
         )
         assert loss.item() == pytest.approx(-1.0)  # only kept sample1: -adv1*1
-        assert metrics.rs_seq_masked_fraction == pytest.approx(0.5)
+        assert metrics.update.rs_seq_masked_fraction == pytest.approx(0.5)
 
     def test_rs_and_tis_combine_in_denominator(self) -> None:
         # ratios [3, 1.5, 1]; TIS(mask,cap=2) drops s0; RS(band) also drops s0.
@@ -351,8 +363,8 @@ class TestGRPORejectSampling:
         # s1: ratio 1.5 clipped to 1.2 at clip_ratio 0.2 → max(-2*1.5, -2*1.2) = -2.4
         # s2: ratio 1 → -1.0 ; mean over the 2 kept = -1.7
         assert loss.item() == pytest.approx(-1.7)
-        assert metrics.tis_clip_fraction == pytest.approx(1 / 3)
-        assert metrics.rs_seq_masked_fraction == pytest.approx(1 / 3)
+        assert metrics.update.tis_clip_fraction == pytest.approx(1 / 3)
+        assert metrics.update.rs_seq_masked_fraction == pytest.approx(1 / 3)
 
 
 def _flow_signals(

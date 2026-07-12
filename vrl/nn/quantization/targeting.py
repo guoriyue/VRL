@@ -4,9 +4,8 @@ from __future__ import annotations
 
 from enum import StrEnum
 
-# Small, numerically sensitive layers stay in the model's master dtype. These
-# names describe model structure rather than any one quantization scheme, so FP8
-# and FP4 must consume the same table.
+# Small, numerically sensitive layers stay in the model's base dtype. These
+# names describe model structure rather than one quantization scheme.
 DEFAULT_EXCLUDE: tuple[str, ...] = (
     "norm",
     "embed",
@@ -20,10 +19,9 @@ DEFAULT_EXCLUDE: tuple[str, ...] = (
 # logits are the values scored by the RL objective.
 LM_EXCLUDE: tuple[str, ...] = (*DEFAULT_EXCLUDE, "head", "output")
 
-# The conservative FP4 production profile keeps attention in the master dtype
-# until full-attention FP4 passes a real rollout -> BF16 replay SDE/reward gate.
-# MLP-only is a risk boundary, not evidence that the aligned attention kernels
-# cannot execute. This is a deliberately isolated model-name taxonomy.
+# The conservative NVFP4 production profile keeps attention in the base dtype
+# until full-attention NVFP4 passes a real rollout -> replay SDE/reward gate.
+# This is a deliberately isolated model-path taxonomy.
 MLP_PATH_SEGMENTS = frozenset(
     {"ff", "ffn", "feed_forward", "mlp", "img_mlp", "txt_mlp"},
 )

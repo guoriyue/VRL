@@ -1,4 +1,4 @@
-"""FP4's drift-safe MLP targeting against real diffusers module paths."""
+"""NVFP4's conservative MLP targeting against real diffusers module paths."""
 
 from __future__ import annotations
 
@@ -26,7 +26,7 @@ from vrl.nn.quantization.targeting import is_mlp_linear_path
         build_tiny_lumina2_transformer,
     ],
 )
-def test_fp4_selects_real_mlp_paths_but_not_attention(builder) -> None:
+def test_nvfp4_selects_real_mlp_paths_but_not_attention(builder) -> None:
     transformer = builder()
     linear_paths = [
         path for path, module in transformer.named_modules() if isinstance(module, nn.Linear)
@@ -39,7 +39,7 @@ def test_fp4_selects_real_mlp_paths_but_not_attention(builder) -> None:
     assert not any(path.endswith(("to_q", "to_k", "to_v", "to_out.0")) for path in selected)
 
 
-def test_fp4_does_not_misclassify_sana_attention_when_mlp_uses_convolutions() -> None:
+def test_nvfp4_does_not_misclassify_sana_attention_when_mlp_uses_convolutions() -> None:
     transformer = build_tiny_sana_transformer()
     linear_paths = [
         path for path, module in transformer.named_modules() if isinstance(module, nn.Linear)

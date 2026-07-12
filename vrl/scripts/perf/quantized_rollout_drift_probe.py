@@ -10,7 +10,7 @@ this turns the open question into a measured number end to end.
 WHAT it does, all on the GPU, through the ACTUAL codebase code paths:
   1. Build a synthetic policy head (activations @ weight) and compute per-sample
      logprobs two ways: bf16 (the replay/training forward) and the production
-     FP8/FP4 ``torch._scaled_mm`` module. The quantized logprob is the
+     FP8/NVFP4 ``torch._scaled_mm`` module. The quantized logprob is the
      behavior ``old_log_prob``; the bf16 logprob is the fresh replay ``log_prob``.
   2. Measure the drift with ``compute_logprob_mismatch_stats`` (the one shared
      stats helper used by metrics + guard) -- abs diff, ratio dev, mismatch KL.
@@ -30,7 +30,7 @@ uses and preserves their per-timestep loss semantics. Only the model is syntheti
 (a single GEMM head stands in for the policy logit projection), so this is a
 kernel/correction-path stress test rather than real-model SDE-logprob accuracy.
 
-Usage:  python -m vrl.scripts.perf.quantized_rollout_drift_probe --scheme fp8|fp4
+Usage:  python -m vrl.scripts.perf.quantized_rollout_drift_probe --scheme fp8|nvfp4
 """
 
 from __future__ import annotations
@@ -123,12 +123,16 @@ def _policy_grad_norm(
         ),
     )
     loss.backward()
-    return float(w.grad.norm()), metrics.tis_clip_fraction, metrics.rs_seq_masked_fraction
+    return (
+        float(w.grad.norm()),
+        metrics.update.tis_clip_fraction,
+        metrics.update.rs_seq_masked_fraction,
+    )
 
 
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--scheme", choices=("fp8", "fp4"), default="fp8")
+    parser.add_argument("--scheme", choices=("fp8", "nvfp4"), default="fp8")
     return parser.parse_args()
 
 
@@ -149,7 +153,7 @@ def _require_precision_guard(
         guard_record = run_precision_drift_guard(
             guard_config,
             train_precision="bf16",
-            rollout_precision=scheme,
+            rollout_precision=f"bf16+{scheme}",
             math_precision="fp32",
             timestep_indices=[0],
             evaluate_fn=evaluate,
@@ -167,12 +171,14 @@ def _require_precision_guard(
 def main(*, scheme: str | None = None) -> None:
     if scheme is None:
         scheme = _parse_args().scheme
-    elif scheme not in {"fp8", "fp4"}:
-        raise ValueError(f"scheme must be fp8 or fp4; got {scheme!r}")
+    elif scheme not in {"fp8", "nvfp4"}:
+        raise ValueError(f"scheme must be fp8 or nvfp4; got {scheme!r}")
     if not torch.cuda.is_available():
         raise SystemExit("this probe needs a CUDA device with quantized GEMM support")
-    if scheme == "fp4" and not nvfp4_available():
-        raise SystemExit("fp4 drift probing requires a Blackwell-class GPU")
+    if scheme == "nvfp4" and not nvfp4_available():
+        raise SystemExit(
+            "nvfp4 drift probing requires an NVFP4-capable CUDA build and Blackwell-class GPU",
+        )
     torch.manual_seed(0)
     device = "cuda"
     dev_name = torch.cuda.get_device_name(0)
@@ -333,11 +339,11 @@ def main(*, scheme: str | None = None) -> None:
     print("  per-timestep semantics. The trajectory product above is stress context only.")
     print("  This synthetic head cannot replace a real-model SDE-logprob calibration run.")
 
-    # FP4's synthetic correction-path gate follows the same sample-step ratio
+    # NVFP4's synthetic correction-path gate follows the same sample-step ratio
     # consumed by GRPO. Real-model SDE logprobs remain a separate P2 gate.
-    if scheme == "fp4" and (not step_stats.finite or over_cap > 0.10):
+    if scheme == "nvfp4" and (not step_stats.finite or over_cap > 0.10):
         print(
-            "fp4 drift gate failed: "
+            "nvfp4 drift gate failed: "
             f"finite={step_stats.finite}, over_cap={over_cap:.3f} (limit=0.100)",
         )
         raise SystemExit(1)

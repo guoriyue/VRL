@@ -80,6 +80,9 @@ def test_weighted_mean_matches_token_grpo_per_segment() -> None:
     assert metrics.policy_loss == pytest.approx(
         (initial_metrics.policy_loss + 3.0 * final_metrics.policy_loss) / 4.0,
     )
+    assert metrics.update.approx_kl == pytest.approx(
+        (initial_metrics.update.approx_kl + 3.0 * final_metrics.update.approx_kl) / 4.0,
+    )
 
 
 def test_default_selfcheck_weight_zero_does_not_affect_loss() -> None:

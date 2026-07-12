@@ -10,15 +10,19 @@ import contextlib
 import logging
 import time
 from collections import defaultdict
-from collections.abc import Mapping
-from dataclasses import dataclass
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass, field
 from typing import Any
 
 import torch
 import torch.nn as nn
 
 from vrl.algorithms.base import Algorithm
-from vrl.algorithms.types import TrainStepMetrics
+from vrl.algorithms.logprob_mismatch import (
+    LogprobMismatchStats,
+    compute_logprob_mismatch_stats,
+)
+from vrl.algorithms.types import InitialReplayStats, PolicyUpdateStats, TrainStepMetrics
 from vrl.rollouts.batch import RolloutBatch
 from vrl.rollouts.batch.ops import (
     move_training_batch_to_device,
@@ -29,7 +33,10 @@ from vrl.rollouts.orchestration import build_rollout_schedule
 from vrl.trainers.core.base import Trainer
 from vrl.trainers.core.types import TrainerConfig, TrainState
 from vrl.trainers.online.ema import EMAModuleWrapper
-from vrl.trainers.online.precision_guard import run_precision_drift_guard
+from vrl.trainers.online.precision_guard import (
+    enforce_precision_drift,
+    measure_precision_drift,
+)
 from vrl.trainers.precision import normalize_mixed_precision
 from vrl.trainers.strategy import SingleProcessStrategy, Strategy, TrainingMemoryState
 from vrl.trainers.weight_sync import TrainableStateGetter, WeightSyncer
@@ -244,8 +251,14 @@ def _needs_grad_scaler(
 
 
 def _precision_label(value: Any) -> str:
-    token = str(value or "").strip().lower()
-    return "fp32" if token in ("", "no") else token.removeprefix("torch.")
+    token = str(value or "").strip().lower().removeprefix("torch.")
+    return {
+        "": "fp32",
+        "no": "fp32",
+        "float32": "fp32",
+        "bfloat16": "bf16",
+        "float16": "fp16",
+    }.get(token, token)
 
 
 def _dtype_label(value: Any) -> str | None:
@@ -278,6 +291,7 @@ def _trainer_precision_metadata(
     config: TrainerConfig,
     device: torch.device,
     model: Any,
+    evaluator: Any | None,
 ) -> dict[str, Any]:
     train_precision = _precision_label(_resolve_mixed_precision(config))
     rollout_precision = _precision_label(config.rollout_precision or train_precision)
@@ -285,7 +299,11 @@ def _trainer_precision_metadata(
     return {
         "train_precision": train_precision,
         "rollout_precision": rollout_precision,
-        "math_precision": _precision_label(config.math_precision),
+        # Report the dtype the evaluator actually consumes instead of carrying a
+        # duplicate TrainerConfig projection of the public precision policy.
+        "math_precision": _precision_label(
+            getattr(evaluator, "math_dtype", None) or torch.float32,
+        ),
         "mixed_precision": _resolve_mixed_precision(config),
         "trainer_autocast_enabled": autocast_dtype is not None,
         "trainer_autocast_dtype": _dtype_label(autocast_dtype),
@@ -301,7 +319,7 @@ def _merge_rollout_precision_context(
     batch_context: dict[str, Any],
 ) -> dict[str, Any]:
     merged = dict(metadata)
-    for key in ("rollout_transformer_dtype", "rollout_autocast_enabled"):
+    for key in ("rollout_autocast_dtype", "rollout_autocast_enabled"):
         if key in batch_context:
             merged[key] = batch_context[key]
     return merged
@@ -335,6 +353,139 @@ class TrainingBatch:
     pre_filter_reward_std: float
     pre_filter_adv_mean: float
     reward_components: dict[str, list[float]]
+
+
+@dataclass(slots=True)
+class _ReplayMetrics:
+    """Typed aggregation shared by streaming and full-batch replay paths."""
+
+    losses: list[float] = field(default_factory=list)
+    policy_losses: list[float] = field(default_factory=list)
+    kl_penalties: list[float] = field(default_factory=list)
+    weighted_kl_losses: list[float] = field(default_factory=list)
+    updates: list[PolicyUpdateStats] = field(default_factory=list)
+    mismatches: list[LogprobMismatchStats] = field(default_factory=list)
+    weights: list[float] = field(default_factory=list)
+    initial_updates: list[PolicyUpdateStats] = field(default_factory=list)
+    initial_mismatches: list[LogprobMismatchStats] = field(default_factory=list)
+    initial_weights: list[float] = field(default_factory=list)
+    grad_norms: list[float] = field(default_factory=list)
+    weighted_sft_losses: list[float] = field(default_factory=list)
+    sft_weights: list[float] = field(default_factory=list)
+
+    def add(
+        self,
+        metrics: TrainStepMetrics,
+        *,
+        weight: float,
+        capture_initial_replay: bool,
+    ) -> None:
+        """Record one replay evaluation with its objective-normalization weight."""
+
+        resolved_weight = float(weight)
+        if resolved_weight <= 0:
+            raise ValueError("real replay metric weight must be positive")
+
+        self.losses.append(metrics.loss)
+        self.policy_losses.append(metrics.policy_loss)
+        self.kl_penalties.append(metrics.kl_penalty)
+        self.weighted_kl_losses.append(metrics.weighted_kl_loss)
+        self.updates.append(metrics.update)
+        self.mismatches.append(metrics.logprob_mismatch)
+        self.weights.append(resolved_weight)
+        if capture_initial_replay:
+            self.initial_updates.append(metrics.update)
+            self.initial_mismatches.append(metrics.logprob_mismatch)
+            self.initial_weights.append(resolved_weight)
+
+    def initial_replay_snapshot(self) -> tuple[InitialReplayStats, float]:
+        """Build the local snapshot captured before the first optimizer boundary."""
+
+        update = PolicyUpdateStats.weighted_mean(
+            self.initial_updates,
+            self.initial_weights,
+        )
+        mismatch = LogprobMismatchStats.aggregate(
+            self.initial_mismatches,
+            self.initial_weights,
+        )
+        finite = bool(self.initial_mismatches) and mismatch.finite
+        return (
+            InitialReplayStats(
+                clip_fraction=update.clip_fraction,
+                active_clip_fraction=update.active_clip_fraction,
+                logprob_abs_diff_max=(mismatch.logprob_abs_diff_max if finite else float("inf")),
+                finite=finite,
+            ),
+            sum(self.initial_weights),
+        )
+
+    def add_sft(self, loss: float, weight: float) -> None:
+        self.weighted_sft_losses.append(float(loss) * float(weight))
+        self.sft_weights.append(float(weight))
+
+    @property
+    def sft_loss(self) -> float:
+        denominator = sum(self.sft_weights)
+        return sum(self.weighted_sft_losses) / denominator if denominator > 0 else 0.0
+
+    def build(
+        self,
+        *,
+        reward_mean: float,
+        reward_std: float,
+        reward_components: dict[str, float],
+        advantage_mean: float,
+        adv_saturation: float,
+        adv_zero_rate: float,
+        group_size: float,
+        trained_prompt_num: int,
+        phase_times: dict[str, float],
+        initial_replay: InitialReplayStats,
+    ) -> TrainStepMetrics:
+        """Build the public step result while preserving each reduction rule."""
+
+        def mean(values: Sequence[float]) -> float:
+            return sum(values) / len(values) if values else 0.0
+
+        def weighted_mean(values: Sequence[float]) -> float:
+            total_weight = sum(self.weights)
+            if not values or total_weight <= 0:
+                return 0.0
+            if len(values) != len(self.weights):
+                raise ValueError("replay metric values/weights length mismatch")
+            return (
+                sum(
+                    float(value) * weight
+                    for value, weight in zip(values, self.weights, strict=True)
+                )
+                / total_weight
+            )
+
+        sft_loss = self.sft_loss
+        return TrainStepMetrics(
+            loss=weighted_mean(self.losses) + sft_loss,
+            policy_loss=weighted_mean(self.policy_losses),
+            sft_loss=sft_loss,
+            kl_penalty=weighted_mean(self.kl_penalties),
+            weighted_kl_loss=weighted_mean(self.weighted_kl_losses),
+            reward_mean=reward_mean,
+            reward_std=reward_std,
+            reward_components=reward_components,
+            advantage_mean=advantage_mean,
+            update=PolicyUpdateStats.weighted_mean(self.updates, self.weights),
+            logprob_mismatch=LogprobMismatchStats.aggregate(
+                self.mismatches,
+                self.weights,
+            ),
+            initial_replay=initial_replay,
+            grad_norm=mean(self.grad_norms),
+            adv_saturation=adv_saturation,
+            adv_zero_rate=adv_zero_rate,
+            group_size=group_size,
+            trained_prompt_num=trained_prompt_num,
+            phase_times=dict(phase_times),
+        )
 
 
 def _rollout_reward_components(
@@ -423,6 +574,116 @@ def _distributed_max_int(value: int, device: torch.device) -> int:
         tensor = tensor.to(device)
     dist.all_reduce(tensor, op=dist.ReduceOp.MAX)
     return int(tensor.item())
+
+
+def _distributed_max_float(value: float, device: torch.device) -> float:
+    """Return the maximum float across ranks without changing single-rank runs."""
+
+    dist = torch.distributed
+    if not (dist.is_available() and dist.is_initialized() and dist.get_world_size() > 1):
+        return float(value)
+    tensor = torch.tensor([float(value)], dtype=torch.float64)
+    if dist.get_backend() == "nccl":
+        tensor = tensor.to(device)
+    dist.all_reduce(tensor, op=dist.ReduceOp.MAX)
+    return float(tensor.item())
+
+
+def _distributed_all_true(value: bool, device: torch.device) -> bool:
+    """Return True only when every training rank reports True."""
+
+    dist = torch.distributed
+    if not (dist.is_available() and dist.is_initialized() and dist.get_world_size() > 1):
+        return bool(value)
+    tensor = torch.tensor([int(bool(value))], dtype=torch.int32)
+    if dist.get_backend() == "nccl":
+        tensor = tensor.to(device)
+    dist.all_reduce(tensor, op=dist.ReduceOp.MIN)
+    return bool(tensor.item())
+
+
+def _distributed_parity_verdict(
+    *,
+    local_finite: bool,
+    local_max_abs_diff: float,
+    limit: float,
+    device: torch.device,
+) -> tuple[bool, float, bool]:
+    """Return one rank-consistent parity verdict for every training process."""
+
+    finite = _distributed_all_true(local_finite, device)
+    max_abs_diff = _distributed_max_float(
+        local_max_abs_diff if local_finite else float("inf"),
+        device,
+    )
+    return finite, max_abs_diff, finite and max_abs_diff <= limit
+
+
+def _distributed_initial_replay_stats(
+    local: InitialReplayStats,
+    *,
+    local_weight: float,
+    device: torch.device,
+) -> tuple[InitialReplayStats, bool]:
+    """Resolve the global snapshot and whether any rank measured replay."""
+
+    weight = float(local_weight)
+    if weight < 0:
+        raise ValueError("initial replay weight must be non-negative")
+    has_local_measurements = weight > 0
+    # Zero-weight ranks execute the same collectives as real ranks, but none of
+    # their placeholder values may enter a weighted sum or max reduction. The
+    # conditional also prevents IEEE ``nan * 0`` from poisoning the sum.
+    weighted_clip_fraction = local.clip_fraction * weight if has_local_measurements else 0.0
+    weighted_active_clip_fraction = (
+        local.active_clip_fraction * weight if has_local_measurements else 0.0
+    )
+    dist = torch.distributed
+    distributed = dist.is_available() and dist.is_initialized() and dist.get_world_size() > 1
+    if distributed:
+        totals = torch.tensor(
+            [
+                weighted_clip_fraction,
+                weighted_active_clip_fraction,
+                weight,
+            ],
+            dtype=torch.float64,
+        )
+        if dist.get_backend() == "nccl":
+            totals = totals.to(device)
+        dist.all_reduce(totals, op=dist.ReduceOp.SUM)
+        total_weight = float(totals[2].item())
+        clip_fraction = float(totals[0].item()) / total_weight if total_weight > 0 else 0.0
+        active_clip_fraction = float(totals[1].item()) / total_weight if total_weight > 0 else 0.0
+    else:
+        total_weight = weight
+        clip_fraction = local.clip_fraction if total_weight > 0 else 0.0
+        active_clip_fraction = local.active_clip_fraction if total_weight > 0 else 0.0
+
+    # A rank with nothing to measure is neutral, not a failure: dummy chunks
+    # exist precisely so an all-filtered rank still runs matching collectives.
+    # Whether ANY rank measured something is the gate's decision (it skips a
+    # globally empty first update), not a per-rank finiteness verdict.
+    finite = _distributed_all_true(local.finite or not has_local_measurements, device)
+    if not has_local_measurements:
+        local_max_abs_diff = 0.0
+    elif local.finite:
+        local_max_abs_diff = local.logprob_abs_diff_max
+    else:
+        local_max_abs_diff = float("inf")
+    max_abs_diff = _distributed_max_float(
+        local_max_abs_diff,
+        device,
+    )
+    return (
+        InitialReplayStats(
+            clip_fraction=clip_fraction,
+            active_clip_fraction=active_clip_fraction,
+            logprob_abs_diff_max=max_abs_diff if finite else float("inf"),
+            finite=finite,
+        ),
+        total_weight > 0,
+    )
 
 
 def _balanced_training_sample_chunks(
@@ -697,7 +958,7 @@ class OnlineTrainer(Trainer):
                     "evaluator output must be TrajectorySignalBatch; "
                     f"got {type(signals).__name__}",
                 )
-            return algorithm_adapter.compute_loss(
+            loss, metrics = algorithm_adapter.compute_loss(
                 self.algorithm,
                 AlgorithmInput(
                     signals=signals,
@@ -705,6 +966,40 @@ class OnlineTrainer(Trainer):
                     group_ids=chunk_batch.group_ids,
                 ),
             )
+
+        # Parity is a trainer/evaluator fact, not an objective-specific metric.
+        # Measure every replayed segment here so TokenGRPO, trust-region variants,
+        # and multi-segment objectives cannot accidentally leave a false zero that
+        # lets the pre-optimizer correctness gate pass.
+        fresh_parts: list[torch.Tensor] = []
+        old_parts: list[torch.Tensor] = []
+        for segment in signals.segments.values():
+            fresh = segment.log_prob
+            old = segment.old_log_prob
+            if fresh is None or old is None:
+                continue
+            if fresh.shape != old.shape:
+                raise ValueError(
+                    "replay/rollout log-prob shape mismatch while measuring parity: "
+                    f"fresh={tuple(fresh.shape)} old={tuple(old.shape)}",
+                )
+            mask = segment.mask
+            if isinstance(mask, torch.Tensor) and mask.numel() == fresh.numel():
+                valid = mask.reshape(-1).to(device=fresh.device, dtype=torch.bool)
+                fresh_parts.append(fresh.reshape(-1)[valid])
+                old_parts.append(old.reshape(-1)[valid])
+            else:
+                fresh_parts.append(fresh.reshape(-1))
+                old_parts.append(old.reshape(-1))
+        if not fresh_parts:
+            raise RuntimeError(
+                "evaluator-backed policy loss produced no replay/rollout log-prob pair",
+            )
+        metrics.logprob_mismatch = compute_logprob_mismatch_stats(
+            torch.cat(fresh_parts),
+            torch.cat(old_parts),
+        )
+        return loss, metrics
 
     def _clip_and_step(self, optimizer: Any) -> tuple[float, bool]:
         """Clip grads and step the optimizer.
@@ -909,7 +1204,7 @@ class OnlineTrainer(Trainer):
         self._update_optimizer = self._ensure_optimizer()
         self._update_ema = self._ensure_ema()
         self.model.train()
-        self._update_agg_metrics: dict[str, list[float]] = defaultdict(list)
+        self._update_agg_metrics = _ReplayMetrics()
         self._update_optimizer.zero_grad(set_to_none=True)
 
     async def backward_on_training_batch(
@@ -981,17 +1276,11 @@ class OnlineTrainer(Trainer):
                     loss = loss * sample_chunk.loss_weight / loss_scale
                 self._backward(loss)
                 if not sample_chunk.is_dummy:
-                    agg["loss"].append(metrics.loss)
-                    agg["policy_loss"].append(metrics.policy_loss)
-                    agg["kl_penalty"].append(metrics.kl_penalty)
-                    agg["clip_fraction"].append(metrics.clip_fraction)
-                    agg["approx_kl"].append(metrics.approx_kl)
-                    agg["logprob_abs_diff_mean"].append(metrics.logprob_abs_diff_mean)
-                    agg["logprob_abs_diff_max"].append(metrics.logprob_abs_diff_max)
-                    agg["ratio_abs_dev_mean"].append(metrics.ratio_abs_dev_mean)
-                    agg["ratio_abs_dev_max"].append(metrics.ratio_abs_dev_max)
-                    agg["mismatch_kl"].append(metrics.mismatch_kl)
-                    agg["mismatch_k3_kl"].append(metrics.mismatch_k3_kl)
+                    agg.add(
+                        metrics,
+                        weight=sample_chunk.loss_weight,
+                        capture_initial_replay=True,
+                    )
                 await asyncio.sleep(0)
 
     async def finish_optimizer_update(
@@ -1015,8 +1304,13 @@ class OnlineTrainer(Trainer):
         """
         optimizer = self._update_optimizer
         agg = self._update_agg_metrics
+        local_initial, local_weight = agg.initial_replay_snapshot()
+        initial_replay = self._validate_first_update_parity(
+            local_initial,
+            local_weight=local_weight,
+        )
         grad_norm, stepped = self._clip_and_step(optimizer)
-        agg["grad_norm"].append(grad_norm)
+        agg.grad_norms.append(grad_norm)
         if stepped:
             after_optimizer_step = getattr(self.algorithm, "after_optimizer_step", None)
             if callable(after_optimizer_step):
@@ -1026,40 +1320,18 @@ class OnlineTrainer(Trainer):
                 self._update_ema.step(trainable, self.state.global_step)
         self.state.global_step += 1
 
-        def avg(key: str) -> float:
-            vals = agg.get(key, [])
-            return sum(vals) / len(vals) if vals else 0.0
-
-        def mx(key: str) -> float:
-            vals = agg.get(key, [])
-            return max(vals) if vals else 0.0
-
-        sft_loss = self._weighted_sft_metric(agg)
-
         phase_times = dict(phase_times)
-        metrics = TrainStepMetrics(
-            loss=avg("loss") + sft_loss,
-            policy_loss=avg("policy_loss"),
-            sft_loss=sft_loss,
-            kl_penalty=avg("kl_penalty"),
+        metrics = agg.build(
             reward_mean=reward_mean,
             reward_std=reward_std,
             reward_components=reward_components,
             advantage_mean=adv_mean,
-            clip_fraction=avg("clip_fraction"),
-            approx_kl=avg("approx_kl"),
-            logprob_abs_diff_mean=avg("logprob_abs_diff_mean"),
-            logprob_abs_diff_max=mx("logprob_abs_diff_max"),
-            ratio_abs_dev_mean=avg("ratio_abs_dev_mean"),
-            ratio_abs_dev_max=mx("ratio_abs_dev_max"),
-            mismatch_kl=avg("mismatch_kl"),
-            mismatch_k3_kl=avg("mismatch_k3_kl"),
-            grad_norm=avg("grad_norm"),
             adv_saturation=adv_saturation,
             adv_zero_rate=adv_zero_rate,
             group_size=group_size,
             trained_prompt_num=trained_prompt_num,
             phase_times=phase_times,
+            initial_replay=initial_replay,
         )
         self.state.step += 1
         self.state.total_reward += metrics.reward_mean
@@ -1101,7 +1373,7 @@ class OnlineTrainer(Trainer):
         # 3. Train loop — gradient accumulation across per-prompt batches.
         self.model.train()
         autocast_ctx = _get_autocast(cfg, self.device, model=self.model)
-        agg_metrics: dict[str, list[float]] = defaultdict(list)
+        agg_metrics = _ReplayMetrics()
         uses_evaluator = bool(getattr(self.algorithm, "uses_evaluator", True))
         algorithm_adapter = AlgorithmAdapter()
         if not uses_evaluator and not callable(getattr(self.algorithm, "compute_loss", None)):
@@ -1132,8 +1404,6 @@ class OnlineTrainer(Trainer):
                 reward_std=reward_std,
                 reward_components=reward_components,
                 advantage_mean=pre_filter_adv_mean,
-                clip_fraction=0.0,
-                approx_kl=0.0,
                 grad_norm=0.0,
                 adv_saturation=adv_saturation,
                 adv_zero_rate=adv_zero_rate,
@@ -1167,7 +1437,7 @@ class OnlineTrainer(Trainer):
         # (using first filtered batch so memory footprint is bounded).
         first_step_debug_record: dict[str, Any] | None = None
         precision_metadata = _merge_rollout_precision_context(
-            _trainer_precision_metadata(cfg, self.device, self.model),
+            _trainer_precision_metadata(cfg, self.device, self.model, self.evaluator),
             filtered_batches[0].context,
         )
         first_debug_chunk = _training_sample_chunks(
@@ -1201,6 +1471,20 @@ class OnlineTrainer(Trainer):
             _ratio = torch.exp(_dbg_log_prob - _old_lp_0)
             _old_lp_first = _old_lp_0.reshape(-1)[0]
             _fresh_lp_first = _dbg_log_prob.reshape(-1)[0]
+            _parity_limit = float(cfg.debug.max_abs_logprob_diff)
+            _local_parity_finite = bool(
+                torch.isfinite(_old_lp_0).all().item()
+                and torch.isfinite(_dbg_log_prob).all().item()
+                and torch.isfinite(_diff).all().item()
+                and torch.isfinite(_ratio).all().item()
+            )
+            _local_parity_max = float(_diff.max().item())
+            _parity_finite, _parity_max, _parity_passed = _distributed_parity_verdict(
+                local_finite=_local_parity_finite,
+                local_max_abs_diff=_local_parity_max,
+                limit=_parity_limit,
+                device=self.device,
+            )
             logger.info(
                 "DEBUG first-step log-prob diff: mean=%.6f max=%.6f | "
                 "old_lp[0]=%.6f fresh_lp[0]=%.6f",
@@ -1209,21 +1493,14 @@ class OnlineTrainer(Trainer):
                 _old_lp_first.item(),
                 _fresh_lp_first.item(),
             )
-            # Replay parity is the ratio==1 invariant: with unchanged weights
-            # the fresh log-prob must reproduce the collection-time one. A
-            # large gap means the training signal is garbage (e.g. the
-            # Predict2 EDM-sigma-domain bug sat at mean diff ~115 in metrics
-            # nobody alerted on) — shout, do not just persist a jsonl row.
-            if _diff.mean().item() > 0.01:
-                logger.warning(
-                    "first-step log-prob parity violated: mean abs diff "
-                    "%.4f > 0.01. Replay does not reproduce rollout "
-                    "log-probs; GRPO ratios are untrustworthy. Suspect "
-                    "replay-side conditioning/scheduler-domain drift.",
-                    _diff.mean().item(),
-                )
             first_step_debug_record = {
                 "event": "first_step_logprob_parity",
+                "passed": _parity_passed,
+                "finite": _parity_finite,
+                "max_abs_diff": _parity_max,
+                "local_finite": _local_parity_finite,
+                "local_max_abs_diff": _local_parity_max,
+                "max_abs_diff_limit": _parity_limit,
                 "trainer_step": int(self.state.step),
                 "global_step": int(self.state.global_step),
                 "device": str(self.device),
@@ -1243,6 +1520,23 @@ class OnlineTrainer(Trainer):
                 },
                 "runtime_debug": _dbg_batch.context.get("runtime_debug"),
             }
+            # Replay parity is the ratio==1 invariant: with unchanged weights
+            # the fresh log-prob must reproduce the collection-time one. Persist
+            # the failing evidence before aborting so NaN/Inf cannot exploit a
+            # false comparison and train a corrupted policy.
+            if not _parity_passed and self._strategy.context.is_primary:
+                write_jsonl(
+                    f"{cfg.output_dir}/training_debug.jsonl",
+                    first_step_debug_record,
+                )
+            if not _parity_passed:
+                raise RuntimeError(
+                    "first-step log-prob parity failed before optimizer step: "
+                    f"finite={_parity_finite}, max_abs_diff={_parity_max:.6g}, "
+                    f"limit={_parity_limit:.6g}. Replay does not reproduce rollout "
+                    "log-probs; check forward precision, conditioning, and the "
+                    "scheduler domain.",
+                )
         elif cfg.debug.first_step and self.state.step == 0:
             # Non-evaluator algorithms (NFT) compute no log-prob ratio, so the
             # parity probe above is blind to them. Ask the algorithm for its
@@ -1321,24 +1615,50 @@ class OnlineTrainer(Trainer):
                     )
                 return _sig
 
-            _guard_record = run_precision_drift_guard(
+            _guard_record = measure_precision_drift(
                 cfg.precision_drift_guard,
                 train_precision=_resolve_mixed_precision(cfg),
                 rollout_precision=cfg.rollout_precision or _resolve_mixed_precision(cfg),
-                math_precision=cfg.math_precision,
+                math_precision=_precision_label(
+                    getattr(self.evaluator, "math_dtype", None) or torch.float32,
+                ),
                 timestep_indices=train_indices,
                 evaluate_fn=_guard_evaluate,
                 metadata=precision_metadata,
-                logger=logger,
             )
+            if _guard_record is not None:
+                _worst = dict(_guard_record.get("worst_stats") or {})
+                _worst["logprob_abs_diff_max"] = _distributed_max_float(
+                    float(_worst.get("logprob_abs_diff_max", 0.0)),
+                    self.device,
+                )
+                _worst["ratio_abs_dev_max"] = _distributed_max_float(
+                    float(_worst.get("ratio_abs_dev_max", 0.0)),
+                    self.device,
+                )
+                _worst["finite"] = _distributed_all_true(
+                    bool(_worst.get("finite", True)),
+                    self.device,
+                )
+                _guard_record["worst_stats"] = _worst
+                _guard_record["violated"] = not _distributed_all_true(
+                    not bool(_guard_record["violated"]),
+                    self.device,
+                )
+                # Fail mode runs on every rank after the shared verdict; warn mode
+                # logs once so distributed runs do not race on duplicate output.
+                if _guard_record["mode"] == "fail" or self._strategy.context.is_primary:
+                    enforce_precision_drift(_guard_record, logger=logger)
             if _guard_record is not None and first_step_debug_record is not None:
                 first_step_debug_record["precision_drift_guard"] = _guard_record
 
+        initial_replay = InitialReplayStats()
         for _ppo_epoch in range(cfg.ppo_epochs):
             # Accumulate a configurable number of rollout micro-batches per
             # optimizer update. Flow-GRPO sets this to num_batches_per_epoch//2,
             # so an epoch can intentionally contain multiple optimizer updates.
             for batch_start in range(0, len(filtered_batches), grad_accum_batches):
+                capture_initial_replay = _ppo_epoch == 0 and batch_start == 0
                 chunk_batches = filtered_batches[batch_start : batch_start + grad_accum_batches]
                 chunk_advs = filtered_advs[batch_start : batch_start + grad_accum_batches]
                 # Flow-GRPO uses Accelerate accumulation over both rollout
@@ -1384,25 +1704,11 @@ class OnlineTrainer(Trainer):
                             self._backward(loss)
 
                         if not sample_chunk.is_dummy:
-                            agg_metrics["loss"].append(metrics.loss)
-                            agg_metrics["policy_loss"].append(metrics.policy_loss)
-                            agg_metrics["kl_penalty"].append(metrics.kl_penalty)
-                            agg_metrics["clip_fraction"].append(metrics.clip_fraction)
-                            agg_metrics["approx_kl"].append(metrics.approx_kl)
-                            agg_metrics["logprob_abs_diff_mean"].append(
-                                metrics.logprob_abs_diff_mean,
+                            agg_metrics.add(
+                                metrics,
+                                weight=sample_chunk.loss_weight,
+                                capture_initial_replay=capture_initial_replay,
                             )
-                            agg_metrics["logprob_abs_diff_max"].append(
-                                metrics.logprob_abs_diff_max,
-                            )
-                            agg_metrics["ratio_abs_dev_mean"].append(
-                                metrics.ratio_abs_dev_mean,
-                            )
-                            agg_metrics["ratio_abs_dev_max"].append(
-                                metrics.ratio_abs_dev_max,
-                            )
-                            agg_metrics["mismatch_kl"].append(metrics.mismatch_kl)
-                            agg_metrics["mismatch_k3_kl"].append(metrics.mismatch_k3_kl)
 
                         # Continuous rollout production runs on the same asyncio
                         # loop as training orchestration. Yield once per
@@ -1411,8 +1717,14 @@ class OnlineTrainer(Trainer):
                         await asyncio.sleep(0)
 
                 with timer.time("optim_step"):
+                    if capture_initial_replay:
+                        local_initial, local_weight = agg_metrics.initial_replay_snapshot()
+                        initial_replay = self._validate_first_update_parity(
+                            local_initial,
+                            local_weight=local_weight,
+                        )
                     _gn, _stepped = self._clip_and_step(optimizer)
-                    agg_metrics["grad_norm"].append(_gn)
+                    agg_metrics.grad_norms.append(_gn)
 
                 # A scaler-skipped step (inf/nan grads) left the weights
                 # unchanged — do not fold a non-update into EMA or the
@@ -1428,18 +1740,6 @@ class OnlineTrainer(Trainer):
 
                 self.state.global_step += 1
 
-        # Aggregate metrics — each metric averages over its own count (loss/policy
-        # appended per-timestep, grad_norm appended per-inner-epoch).
-        def avg(key: str) -> float:
-            vals = agg_metrics.get(key, [])
-            return sum(vals) / len(vals) if vals else 0.0
-
-        def mx(key: str) -> float:
-            vals = agg_metrics.get(key, [])
-            return max(vals) if vals else 0.0
-
-        sft_loss = self._weighted_sft_metric(agg_metrics)
-
         reward_mean = pre_filter_reward_mean
         reward_std = pre_filter_reward_std
         adv_mean = pre_filter_adv_mean
@@ -1454,29 +1754,17 @@ class OnlineTrainer(Trainer):
             self._stats_sink.record(self.state.step, step_stats)
             self._write_phase_events(timer)
 
-        metrics = TrainStepMetrics(
-            loss=avg("loss") + sft_loss,
-            policy_loss=avg("policy_loss"),
-            sft_loss=sft_loss,
-            kl_penalty=avg("kl_penalty"),
+        metrics = agg_metrics.build(
             reward_mean=reward_mean,
             reward_std=reward_std,
             reward_components=reward_components,
             advantage_mean=adv_mean,
-            clip_fraction=avg("clip_fraction"),
-            approx_kl=avg("approx_kl"),
-            logprob_abs_diff_mean=avg("logprob_abs_diff_mean"),
-            logprob_abs_diff_max=mx("logprob_abs_diff_max"),
-            ratio_abs_dev_mean=avg("ratio_abs_dev_mean"),
-            ratio_abs_dev_max=mx("ratio_abs_dev_max"),
-            mismatch_kl=avg("mismatch_kl"),
-            mismatch_k3_kl=avg("mismatch_k3_kl"),
-            grad_norm=avg("grad_norm"),
             adv_saturation=adv_saturation,
             adv_zero_rate=adv_zero_rate,
             group_size=group_size,
             trained_prompt_num=trained_prompt_num,
             phase_times=phase_times,
+            initial_replay=initial_replay,
         )
 
         # Update state
@@ -1496,10 +1784,11 @@ class OnlineTrainer(Trainer):
                 self.model
             )
             first_step_debug_record["post_step_global_step"] = int(self.state.global_step)
-            write_jsonl(
-                f"{cfg.output_dir}/training_debug.jsonl",
-                first_step_debug_record,
-            )
+            if self._strategy.context.is_primary:
+                write_jsonl(
+                    f"{cfg.output_dir}/training_debug.jsonl",
+                    first_step_debug_record,
+                )
 
         return metrics
 
@@ -1545,7 +1834,7 @@ class OnlineTrainer(Trainer):
         total_groups: int,
         is_dummy: bool,
         autocast_ctx: Any,
-        agg: dict[str, list[float]],
+        agg: _ReplayMetrics,
     ) -> None:
         """Backpropagate one correctly normalized, rank-balanced SFT term.
 
@@ -1568,15 +1857,60 @@ class OnlineTrainer(Trainer):
             scaled_term = sft_term * float(loss_weight) / int(total_groups)
         self._backward(scaled_term)
         if not is_dummy:
-            agg["sft_loss_weighted"].append(float(sft_term.detach()) * float(loss_weight))
-            agg["sft_loss_weights"].append(float(loss_weight))
+            agg.add_sft(float(sft_term.detach()), float(loss_weight))
 
-    @staticmethod
-    def _weighted_sft_metric(agg: Mapping[str, list[float]]) -> float:
-        weighted = agg.get("sft_loss_weighted", [])
-        weights = agg.get("sft_loss_weights", [])
-        denominator = sum(weights)
-        return sum(weighted) / denominator if denominator > 0 else 0.0
+    def _validate_first_update_parity(
+        self,
+        local: InitialReplayStats,
+        *,
+        local_weight: float,
+    ) -> InitialReplayStats:
+        """Return the global initial snapshot and validate it before optimizer.step."""
+
+        cfg = self.config
+        resolved, has_measurements = _distributed_initial_replay_stats(
+            local,
+            local_weight=local_weight,
+            device=self.device,
+        )
+        if (
+            not cfg.debug.first_step
+            or self.state.step != 0
+            or self.state.global_step != 0
+            or self.evaluator is None
+            or not bool(getattr(self.algorithm, "uses_evaluator", True))
+        ):
+            return resolved
+
+        # The weight sum is already reduced with the metric numerators. Reusing
+        # it avoids a fourth collective solely to count local evaluations.
+        if not has_measurements:
+            return resolved
+
+        limit = float(cfg.debug.max_abs_logprob_diff)
+        passed = resolved.finite and resolved.logprob_abs_diff_max <= limit
+        record = {
+            "event": "first_step_full_logprob_parity",
+            "passed": passed,
+            "finite": resolved.finite,
+            "max_abs_diff": resolved.logprob_abs_diff_max,
+            "max_abs_diff_limit": limit,
+            "trainer_step": int(self.state.step),
+            "global_step": int(self.state.global_step),
+            "driver_trainable_before_step": trainable_state_digest(self.model),
+        }
+        if self._strategy.context.is_primary:
+            write_jsonl(f"{cfg.output_dir}/training_debug.jsonl", record)
+        if not passed:
+            raise RuntimeError(
+                "full first-step log-prob parity failed before optimizer step: "
+                f"finite={resolved.finite}, "
+                f"max_abs_diff={resolved.logprob_abs_diff_max:.6g}, "
+                f"limit={limit:.6g}. The first-sample probe is insufficient; "
+                "align rollout/replay precision and batch shape or recompute "
+                "the old policy with the replay backend.",
+            )
+        return resolved
 
     @property
     def _sft_weight(self) -> float:

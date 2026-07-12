@@ -14,7 +14,7 @@ from vrl.algorithms.logprob_mismatch import (
     combine_keep_masks,
 )
 from vrl.algorithms.trajectory import AlgorithmInput
-from vrl.algorithms.types import TrainStepMetrics
+from vrl.algorithms.types import PolicyUpdateStats, TrainStepMetrics
 
 
 @dataclass(slots=True)
@@ -75,6 +75,9 @@ class TokenGRPO(GRPO):
 
         denom = eff_mask.sum().clamp_min(1.0)
         policy_loss = (per_token_loss * eff_mask).sum() / denom
+        active_clip_fraction = (
+            ((clipped_loss > unclipped_loss).to(eff_mask.dtype) * eff_mask).sum() / denom
+        ).item()
 
         if cfg.kl_coef > 0:
             if signals.ref_log_prob is None:
@@ -90,16 +93,20 @@ class TokenGRPO(GRPO):
             log_ratio = new_lp - ref_lp
             kl_per_tok = _token_kl_per_token(log_ratio, cfg.kl_estimator)
             kl_loss = (kl_per_tok * eff_mask).sum() / denom
-            loss = policy_loss + cfg.kl_coef * kl_loss
+            kl_term = cfg.kl_coef * kl_loss
+            loss = policy_loss + kl_term
         else:
             kl_loss = torch.zeros((), device=new_lp.device)
+            kl_term = torch.zeros((), device=new_lp.device)
             loss = policy_loss
 
         with torch.no_grad():
             valid = mask > 0
             if valid.any():
                 ratio_valid = ratio[valid]
-                clip_fraction = (torch.abs(ratio_valid - 1.0) > cfg.clip_ratio).float().mean().item()
+                clip_fraction = (
+                    (torch.abs(ratio_valid - 1.0) > cfg.clip_ratio).float().mean().item()
+                )
                 approx_kl = 0.5 * ((new_lp - old_lp) ** 2)[valid].mean().item()
                 if tis_keep is None:
                     tis_clip_fraction = (
@@ -115,18 +122,20 @@ class TokenGRPO(GRPO):
                 tis_clip_fraction = 0.0
             # RS keep is per-sequence (B,1); its rejected fraction is over whole
             # sequences, independent of the per-token valid count above.
-            rs_seq_masked_fraction = (
-                0.0 if rs_keep is None else (1.0 - rs_keep.mean()).item()
-            )
+            rs_seq_masked_fraction = 0.0 if rs_keep is None else (1.0 - rs_keep.mean()).item()
 
         metrics = TrainStepMetrics(
             loss=loss.item(),
             policy_loss=policy_loss.item(),
             kl_penalty=kl_loss.item(),
-            clip_fraction=clip_fraction,
-            approx_kl=approx_kl,
-            tis_clip_fraction=tis_clip_fraction,
-            rs_seq_masked_fraction=rs_seq_masked_fraction,
+            weighted_kl_loss=kl_term.item(),
+            update=PolicyUpdateStats(
+                clip_fraction=clip_fraction,
+                active_clip_fraction=active_clip_fraction,
+                approx_kl=approx_kl,
+                tis_clip_fraction=tis_clip_fraction,
+                rs_seq_masked_fraction=rs_seq_masked_fraction,
+            ),
         )
         return loss, metrics
 

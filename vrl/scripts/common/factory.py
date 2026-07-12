@@ -207,8 +207,19 @@ def build_algorithm_and_evaluator_from_cfg(
     entry = _entry_from_family(cfg, family)
     algorithm_config = built["algorithm"]
     kind = str(OmegaConf.select(cfg, "algorithm.kind", default=""))
+    diffusion_logprob_kinds = {"grpo", "dance_grpo", "flow_dppo", "grpo_guard"}
+    # Production callers pass the complete build result. Unit-level callers may
+    # inject only an algorithm config to exercise type rejection; resolve the
+    # same public source directly in that narrow path.
+    precision = built.get("precision") or resolve_precision_policy(cfg)
+    if precision.diffusion_math != "fp32" and kind not in diffusion_logprob_kinds:
+        raise ValueError(
+            "precision.diffusion_math.dtype overrides are supported only by "
+            "diffusion log-prob "
+            f"objectives; algorithm.kind={kind!r} keeps its protected math in fp32",
+        )
 
-    if kind in ("grpo", "dance_grpo", "flow_dppo", "grpo_guard"):
+    if kind in diffusion_logprob_kinds:
         # All four are flow-matching GRPO-family algorithms on the same SDE
         # evaluator. dance_grpo reuses FlowGRPO unchanged (its delta is the
         # trainer's random timestep selection + multi-reward); flow_dppo /
@@ -244,7 +255,7 @@ def build_algorithm_and_evaluator_from_cfg(
         else:
             algorithm = GRPO(algorithm_config)
         collector_config = collector_config or _rollout_config_for_entry(cfg, entry)
-        math_dtype = resolve_torch_dtype(resolve_precision_policy(cfg).math)
+        math_dtype = resolve_torch_dtype(precision.diffusion_math)
         return AlgorithmEvaluatorPair(
             algorithm=algorithm,
             evaluator=DiffusionSDELogProbEvaluator(

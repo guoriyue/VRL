@@ -6,17 +6,17 @@ from typing import Any
 
 
 def normalize_mixed_precision(mixed_precision: Any) -> str:
-    """Normalize user precision config to ``"no"``, ``"fp16"``, or ``"bf16"``."""
+    """Normalize a value to the AMP ``no``/``fp16``/``bf16`` protocol."""
 
     if isinstance(mixed_precision, bool):
         if mixed_precision:
             raise ValueError(
-                "actor.mixed_precision=true is ambiguous; use 'fp16' or 'bf16'",
+                "AMP mixed precision value true is ambiguous; expected 'no', 'fp16', or 'bf16'",
             )
         return "no"
 
-    precision = str(mixed_precision or "").lower().strip()
-    if not precision:
+    token = str(mixed_precision or "").lower().strip()
+    if not token:
         return "no"
 
     aliases = {
@@ -31,13 +31,13 @@ def normalize_mixed_precision(mixed_precision: Any) -> str:
         "half": "fp16",
         "bfloat16": "bf16",
     }
-    precision = aliases.get(precision, precision)
-    if precision not in {"no", "fp16", "bf16"}:
+    token = aliases.get(token, token)
+    if token not in {"no", "fp16", "bf16"}:
         raise ValueError(
-            "actor.mixed_precision must be one of 'no', 'fp16', or 'bf16', "
+            "AMP mixed precision must resolve to 'no', 'fp16', or 'bf16'; "
             f"got {mixed_precision!r}",
         )
-    return precision
+    return token
 
 
 def torch_dtype_for_mixed_precision(

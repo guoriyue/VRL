@@ -4,7 +4,6 @@
 model:
   family: janus_pro
   path: deepseek-ai/Janus-Pro-1B
-  dtype: bfloat16
 
   use_lora: true
   lora:

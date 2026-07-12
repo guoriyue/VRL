@@ -16,10 +16,10 @@ def test_parse_checkpoint_accepts_label_and_path(tmp_path) -> None:
     checkpoint = tmp_path / "checkpoint-final"
     checkpoint.mkdir()
 
-    spec = eval_script._parse_checkpoint_spec(f"baseline={checkpoint}")
+    target = eval_script._parse_checkpoint_target(f"baseline={checkpoint}")
 
-    assert spec.label == "baseline"
-    assert spec.path == checkpoint.resolve()
+    assert target.label == "baseline"
+    assert target.path == checkpoint.resolve()
 
 
 def test_seed_grid_is_identical_across_checkpoints() -> None:
@@ -28,9 +28,9 @@ def test_seed_grid_is_identical_across_checkpoints() -> None:
     yet distinct cells still get distinct seeds (the grid is not degenerate)."""
 
     def seed(checkpoint_index: int, prompt_index: int, sample_index: int) -> int:
+        del checkpoint_index
         return eval_script._seed_for(
             base_seed=17,
-            checkpoint_index=checkpoint_index,
             prompt_index=prompt_index,
             sample_index=sample_index,
             samples_per_prompt=4,
@@ -148,7 +148,7 @@ def test_generate_all_releases_model_before_rebuilding(monkeypatch, tmp_path) ->
 
     model_refs: list[weakref.ReferenceType[FakeModel]] = []
 
-    def fake_build_runtime_bundle(_spec):
+    def fake_build_runtime_bundle(_build):
         gc.collect()
         if model_refs:
             assert model_refs[-1]() is None
@@ -159,8 +159,8 @@ def test_generate_all_releases_model_before_rebuilding(monkeypatch, tmp_path) ->
     monkeypatch.setattr(eval_script, "_release_cuda", gc.collect)
     monkeypatch.setattr(
         eval_script,
-        "extract_family_runtime_spec",
-        lambda cfg, device, dtype: object(),
+        "resolve_family_model_build",
+        lambda cfg, device, **kwargs: object(),
     )
     monkeypatch.setattr(
         eval_script,
@@ -175,8 +175,8 @@ def test_generate_all_releases_model_before_rebuilding(monkeypatch, tmp_path) ->
     videos = eval_script._generate_all(
         OmegaConf.create({}),
         [
-            eval_script.CheckpointSpec("base", tmp_path / "base"),
-            eval_script.CheckpointSpec("trained", tmp_path / "trained"),
+            eval_script.CheckpointTarget("base", tmp_path / "base"),
+            eval_script.CheckpointTarget("trained", tmp_path / "trained"),
         ],
         ["prompt"],
         samples_per_prompt=1,

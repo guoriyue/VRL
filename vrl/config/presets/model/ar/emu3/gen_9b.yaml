@@ -6,7 +6,6 @@
 model:
   family: emu3
   path: BAAI/Emu3-Gen-hf
-  dtype: bfloat16
 
   use_lora: true
   lora:

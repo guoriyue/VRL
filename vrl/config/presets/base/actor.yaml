@@ -5,7 +5,13 @@
 # "off" defaults, as is the ema block). All optimizer/clip/loop infra defaults
 # live on the dataclasses in vrl/trainers/core/types.py — base YAML must not
 # restate them.
-precision: bf16
+precision:
+  training:
+    dtype: bf16
+  # Rollout compute and prompt encoders inherit training.dtype. SDE/scheduler/
+  # log-prob math defaults to fp32. Set rollout.dtype, rollout.quantization,
+  # rollout.prompt_encoders.dtype, or diffusion_math.dtype only for a measured
+  # override.
 
 actor:
   optim:

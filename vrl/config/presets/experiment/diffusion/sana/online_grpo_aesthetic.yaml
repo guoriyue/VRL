@@ -13,9 +13,8 @@ defaults:
   # scorer detects aesthetic reward hacking without changing the objective.
   - /reward/pickscore
 
-# The fp16 checkpoint is the validated SANA path. bf16 linear attention produces
-# confetti artifacts and would also make rollout/replay dtype handling diverge.
-precision: fp16
+# The SANA family build pins base transformer parameters to fp16. Use bf16 forward
+# autocast so stochastic SDE activations keep enough exponent range to avoid fp16 NaNs.
 
 sampling:
   max_sequence_length: 300
@@ -23,6 +22,10 @@ sampling:
 actor:
   optim:
     lr: 3.0e-4
+  # Match the measured rollout chunk. SANA's bf16 kernels are batch-shape
+  # sensitive: rollout=8/replay=1 produced 0.014 pre-update log-prob drift,
+  # while 8/8 was bit-exact and fit the 32GB card with backward enabled.
+  replay_samples_per_chunk: 8
   gradient_checkpointing: true
   # One inner step leaves ratio-based learning nearly inert; four is the
   # repository's measured diffusion-GRPO setting for a real policy movement.
@@ -31,7 +34,10 @@ actor:
 rollout:
   n_samples_per_prompt: 16
   prompts_per_batch: 8
-  samples_per_chunk: 16
+  # Both aesthetic and PickScore stay resident on the colocated card after
+  # scoring. Eight samples peaks below the remaining VAE decode budget; sixteen
+  # deterministically OOMs and only succeeds through the runtime split fallback.
+  samples_per_chunk: 8
 
 trainer:
   output_dir: outputs/sana_aesthetic_trustworthy_curve

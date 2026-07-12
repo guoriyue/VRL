@@ -17,7 +17,7 @@ from vrl.generation.types import GenerationRequest
 from vrl.models.ar.build import ar_model_config_base
 from vrl.models.ar.capabilities import ar_discrete_family_capability
 from vrl.models.ar.llamagen.runner import LlamaGenARModelRunner
-from vrl.models.interfaces.runtime import RuntimeBuildSpec
+from vrl.models.interfaces.runtime import ModelBuild
 
 LLAMAGEN_FAMILY_CAPABILITY = ar_discrete_family_capability("llamagen", "ar_t2i")
 
@@ -34,10 +34,10 @@ _LLAMAGEN_LORA_DEFAULTS: dict[str, Any] = {
 }
 
 
-def llamagen_config_from_runtime_spec(spec: RuntimeBuildSpec) -> dict[str, Any]:
-    model_config = spec.model_config or {}
-    sampling_config = spec.sampling_config or {}
-    config = ar_model_config_base(spec, _LLAMAGEN_LORA_DEFAULTS)
+def llamagen_config_from_build(build: ModelBuild) -> dict[str, Any]:
+    model_config = build.model_config or {}
+    sampling_config = build.sampling_config or {}
+    config = ar_model_config_base(build, _LLAMAGEN_LORA_DEFAULTS)
 
     for key in ("guidance_scale", "temperature", "top_k", "top_p", "image_token_num"):
         if key in sampling_config:
@@ -212,5 +212,5 @@ class LlamaGenChunkExecutor(ARDiscreteChunkExecutorBase):
 __all__ = [
     "LLAMAGEN_FAMILY_CAPABILITY",
     "LlamaGenChunkExecutor",
-    "llamagen_config_from_runtime_spec",
+    "llamagen_config_from_build",
 ]

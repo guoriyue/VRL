@@ -129,8 +129,10 @@ def main(argv: list[str] | None = None) -> None:
         raise FileNotFoundError(f"no .mp4 files found in {video_dir}")
 
     prompts = _pair_prompts(videos, args.manifest)
-    output = Path(args.output).expanduser().resolve() if args.output else (
-        video_dir / "eval_video_metrics.csv"
+    output = (
+        Path(args.output).expanduser().resolve()
+        if args.output
+        else (video_dir / "eval_video_metrics.csv")
     )
 
     rows: list[dict[str, Any]] = [
@@ -163,8 +165,8 @@ def main(argv: list[str] | None = None) -> None:
             for key, value in scores.get(str(video), {}).items():
                 row[f"{prefix}_{key}"] = value
 
-    for spec in args.merge_json:
-        prefix, merged = _load_merge_json(spec)
+    for merge_arg in args.merge_json:
+        prefix, merged = _load_merge_json(merge_arg)
         for row, video in zip(rows, videos, strict=True):
             for metric, value in merged.get(video.name, {}).items():
                 row[f"{prefix}_{metric}"] = value
@@ -376,12 +378,12 @@ def _score_reward_model(
     return scores
 
 
-def _load_merge_json(spec: str) -> tuple[str, dict[str, dict[str, float]]]:
+def _load_merge_json(merge_arg: str) -> tuple[str, dict[str, dict[str, float]]]:
     """Parse a ``prefix=path`` external-metric JSON into ``(prefix, {filename: {metric: score}})``."""
 
-    if "=" not in spec:
-        raise ValueError(f"--merge-json expects prefix=path, got {spec!r}")
-    prefix, path = spec.split("=", 1)
+    if "=" not in merge_arg:
+        raise ValueError(f"--merge-json expects prefix=path, got {merge_arg!r}")
+    prefix, path = merge_arg.split("=", 1)
     payload = json.loads(Path(path).expanduser().resolve().read_text(encoding="utf-8"))
     if not isinstance(payload, dict):
         raise ValueError(f"--merge-json {path!r} must be a JSON object keyed by video filename")

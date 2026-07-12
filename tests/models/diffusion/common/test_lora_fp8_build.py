@@ -1,8 +1,8 @@
 """LoRA + quantized rollout construction order.
 
-The 17B single-card path depends on attaching LoRA and dropping fp8 masters on
-CPU before the compact rollout policy is moved to CUDA. These tests pin both
-halves of that contract without loading a real checkpoint.
+The 17B single-card path depends on attaching LoRA and dropping source masters
+on CPU before the compact rollout policy is moved to CUDA. These tests pin both
+FP8 and NVFP4 lifecycle contracts without loading a real checkpoint.
 """
 
 from __future__ import annotations
@@ -15,9 +15,10 @@ import pytest
 import torch
 from torch import nn
 
+from vrl.generation.capabilities import FamilyCapability
 from vrl.models.diffusion.build import build_diffusion_runtime_bundle
 from vrl.models.diffusion.common.lora import LoraModelMixin
-from vrl.models.interfaces.runtime import RuntimeBuildSpec
+from vrl.models.interfaces.runtime import ModelBuild, RolloutBuildOptions
 
 
 class _TrackingTransformer(nn.Module):
@@ -40,16 +41,22 @@ class _LoraPolicy(LoraModelMixin):
         self.transformer = transformer
 
 
-def _spec(*, quantized: bool) -> SimpleNamespace:
+def _build(*, quantization_format: str | None) -> SimpleNamespace:
     return SimpleNamespace(
-        rollout_quantization="fp8" if quantized else None,
-        dtype=torch.float16,
+        rollout=SimpleNamespace(
+            quantization_format=quantization_format,
+        ),
+        parameter_dtype=torch.float16,
         lora_path=None,
         lora={"rank": 2, "alpha": 2, "target_modules": ["proj"]},
     )
 
 
-def test_quantized_lora_attach_defers_device_move(monkeypatch) -> None:
+@pytest.mark.parametrize("quantization_format", ["fp8", "nvfp4"])
+def test_quantized_lora_attach_defers_device_move(
+    quantization_format: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     events: list[str] = []
     fake_peft = ModuleType("peft")
     fake_peft.LoraConfig = lambda **_kwargs: object()
@@ -57,7 +64,9 @@ def test_quantized_lora_attach_defers_device_move(monkeypatch) -> None:
     fake_peft.get_peft_model = lambda transformer, _cfg: transformer
     monkeypatch.setitem(sys.modules, "peft", fake_peft)
 
-    _LoraPolicy(events).apply_lora(_spec(quantized=True))
+    _LoraPolicy(events).apply_lora(
+        _build(quantization_format=quantization_format),
+    )
     assert events == []
 
 
@@ -69,7 +78,48 @@ def test_plain_lora_attach_keeps_direct_device_move(monkeypatch) -> None:
     fake_peft.get_peft_model = lambda transformer, _cfg: transformer
     monkeypatch.setitem(sys.modules, "peft", fake_peft)
 
-    _LoraPolicy(events).apply_lora(_spec(quantized=False))
+    policy = _LoraPolicy(events)
+    policy.apply_lora(_build(quantization_format=None))
+    assert events == ["move"]
+    assert policy.transformer.proj.weight.dtype is torch.float16
+
+
+def test_fp8_config_replay_build_does_not_defer_device_move(monkeypatch) -> None:
+    """Replay owns no rollout options even when collection uses fp8."""
+    from omegaconf import OmegaConf
+
+    from vrl.models.model_build import resolve_model_build
+
+    events: list[str] = []
+    fake_peft = ModuleType("peft")
+    fake_peft.LoraConfig = lambda **_kwargs: object()
+    fake_peft.PeftModel = object
+    fake_peft.get_peft_model = lambda transformer, _cfg: transformer
+    monkeypatch.setitem(sys.modules, "peft", fake_peft)
+    cfg = OmegaConf.create(
+        {
+            "model": {
+                "path": "fake",
+                "use_lora": True,
+                "lora": {"rank": 2, "alpha": 2, "target_modules": ["proj"]},
+            },
+            "precision": {
+                "training": {"dtype": "bf16"},
+                "rollout": {
+                    "dtype": "bf16",
+                    "quantization": {"format": "fp8"},
+                },
+            },
+        },
+    )
+    build = resolve_model_build(
+        cfg,
+        "cpu",
+        for_rollout=False,
+    )
+
+    assert build.rollout is None
+    _LoraPolicy(events).apply_lora(build)
     assert events == ["move"]
 
 
@@ -85,10 +135,10 @@ def test_shared_builder_drops_master_before_quantized_lora_gpu_move(monkeypatch)
             self.trainable_modules = {"transformer": self.transformer}
 
         @classmethod
-        def from_spec(cls, _spec: Any) -> _Policy:
+        def from_build(cls, _build: Any) -> _Policy:
             return cls()
 
-        def apply_lora(self, _spec: Any) -> None:
+        def apply_lora(self, _build: Any) -> None:
             events.append("attach")
 
         def quantize_rollout_fp8(self, recipe: str = "rowwise") -> list[str]:
@@ -109,11 +159,16 @@ def test_shared_builder_drops_master_before_quantized_lora_gpu_move(monkeypatch)
         "drop_quantized_masters",
         lambda _model: events.append("drop") or 4,
     )
-    spec = RuntimeBuildSpec(
+    build = ModelBuild(
         model_name_or_path="fake",
         device="cpu",
-        dtype=torch.float16,
-        rollout_quantization="fp8",
+        parameter_dtype=torch.float16,
+        rollout=RolloutBuildOptions(
+            autocast_dtype=torch.bfloat16,
+            prompt_encoder_dtype=torch.bfloat16,
+            quantization_format="fp8",
+            base_weight_sync=False,
+        ),
         model_config={
             "use_lora": True,
             "lora": {"rank": 2, "alpha": 2, "target_modules": ["proj"]},
@@ -122,26 +177,61 @@ def test_shared_builder_drops_master_before_quantized_lora_gpu_move(monkeypatch)
     )
 
     build_diffusion_runtime_bundle(
-        spec,
+        build,
         model_cls=_Policy,
-        capability=SimpleNamespace(family="fake"),
+        capability=FamilyCapability(
+            family="fake",
+            task="t2i",
+            trajectory_kind="diffusion",
+        ),
         memory_owner="fake VAE",
     )
 
     assert events == ["attach", "quantize", "drop", "move"]
 
 
-@pytest.mark.parametrize("scheme", ["fp8", "fp4"])
-def test_full_finetune_dtype_move_preserves_quantized_cache(scheme: str, monkeypatch) -> None:
-    """The shared full path swaps on CPU before a model-owned dtype move."""
+def test_nvfp4_hardware_guard_runs_before_quantization_mutation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from vrl.models.loader import apply_rollout_quantization
 
+    class _Policy:
+        def __init__(self) -> None:
+            self.quantize_calls = 0
+
+        def quantize_rollout_nvfp4(self) -> list[str]:
+            self.quantize_calls += 1
+            return ["proj"]
+
+    monkeypatch.setattr("vrl.nn.quantization.nvfp4_available", lambda _device: False)
+    model = _Policy()
+    build = ModelBuild(
+        model_name_or_path="fake",
+        device="cpu",
+        parameter_dtype=torch.bfloat16,
+        rollout=RolloutBuildOptions(
+            autocast_dtype=torch.bfloat16,
+            prompt_encoder_dtype=torch.bfloat16,
+            quantization_format="nvfp4",
+        ),
+    )
+
+    with pytest.raises(RuntimeError, match="NVFP4-capable CUDA target"):
+        apply_rollout_quantization(model, build)
+
+    assert model.quantize_calls == 0
+
+
+@pytest.mark.parametrize("quantization_format", ["fp8", "nvfp4"])
+def test_full_finetune_dtype_move_preserves_quantized_cache(
+    quantization_format: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The shared full path swaps on CPU before a model-owned dtype move."""
     from vrl.nn.quantization import Fp4Linear, Fp8Linear
 
-    if scheme == "fp4":
-        # This structural test intentionally keeps the fake policy on CPU so it
-        # can isolate Module._apply cache handling. Production hardware rejection
-        # is covered separately in test_fp4_loader_rejects_unsupported_target.
-        monkeypatch.setattr("vrl.nn.quantization.fp4.nvfp4_available", lambda _device: True)
+    if quantization_format == "nvfp4":
+        monkeypatch.setattr("vrl.nn.quantization.nvfp4_available", lambda _device: True)
 
     class _Policy:
         def __init__(self) -> None:
@@ -153,7 +243,7 @@ def test_full_finetune_dtype_move_preserves_quantized_cache(scheme: str, monkeyp
             self.raw_handle = object()
 
         @classmethod
-        def from_spec(cls, _spec: Any) -> _Policy:
+        def from_build(cls, _build: Any) -> _Policy:
             return cls()
 
         @property
@@ -165,7 +255,7 @@ def test_full_finetune_dtype_move_preserves_quantized_cache(scheme: str, monkeyp
             self.transformer[0] = Fp8Linear(self.transformer[0])
             return ["0"]
 
-        def quantize_rollout_fp4(self) -> list[str]:
+        def quantize_rollout_nvfp4(self) -> list[str]:
             self.transformer[0] = Fp4Linear(self.transformer[0])
             return ["0"]
 
@@ -175,23 +265,31 @@ def test_full_finetune_dtype_move_preserves_quantized_cache(scheme: str, monkeyp
         def generation_memory_targets(self) -> dict[str, Any]:
             return {}
 
-    spec = RuntimeBuildSpec(
+    build = ModelBuild(
         model_name_or_path="fake",
         device="cpu",
-        dtype=torch.bfloat16,
-        rollout_quantization=scheme,
+        parameter_dtype=torch.bfloat16,
+        rollout=RolloutBuildOptions(
+            autocast_dtype=torch.bfloat16,
+            prompt_encoder_dtype=torch.bfloat16,
+            quantization_format=quantization_format,
+        ),
         model_config={"use_lora": False},
     )
 
     bundle = build_diffusion_runtime_bundle(
-        spec,
+        build,
         model_cls=_Policy,
-        capability=SimpleNamespace(family="fake"),
+        capability=FamilyCapability(
+            family="fake",
+            task="t2i",
+            trajectory_kind="diffusion",
+        ),
         memory_owner="fake VAE",
     )
 
     quantized = bundle.model.transformer[0]
-    if scheme == "fp8":
+    if quantization_format == "fp8":
         assert quantized.weight_fp8.dtype is torch.float8_e4m3fn
     else:
         assert quantized.weight_fp4.dtype is torch.float4_e2m1fn_x2

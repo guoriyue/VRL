@@ -19,7 +19,6 @@ from vrl.trainers.checkpointing import (
 
 
 def test_training_checkpoint_round_trips_trainer_and_trainable_modules(tmp_path) -> None:
-
     """Checks training checkpoint round trips trainer and trainable modules."""
     trainer = _Trainer()
     source = _Bundle()
@@ -156,6 +155,7 @@ def test_save_training_checkpoint_non_primary_gathers_but_writes_nothing(tmp_pat
 
 def test_training_checkpoint_writes_optional_lora_export(tmp_path) -> None:
     """Checks training checkpoint writes optional LoRA export."""
+
     class _ExportModule:
         def save_pretrained(self, path):
             path.mkdir(parents=True)
@@ -180,6 +180,7 @@ def test_training_checkpoint_exports_lora_with_ema_without_mutating_resume_state
     tmp_path,
 ) -> None:
     """Checks training checkpoint exports LoRA with EMA without mutating resume state."""
+
     class _ExportModule:
         def __init__(self, module) -> None:
             self.module = module
@@ -232,6 +233,7 @@ def test_training_checkpoint_skips_lora_ema_export_before_first_ema_update(
     tmp_path,
 ) -> None:
     """Checks training checkpoint skips LoRA EMA export before first EMA update."""
+
     class _ExportModule:
         def __init__(self, module) -> None:
             self.module = module
@@ -482,3 +484,17 @@ def test_resave_to_existing_checkpoint_dir_replaces_it(tmp_path) -> None:
         )
     assert is_complete_checkpoint(target)
     assert load_training_checkpoint(target).payload["family"] == "unit"
+
+
+def test_prepare_metrics_csv_rejects_resume_across_schema_change(tmp_path) -> None:
+    """Appending new-schema rows under an old header silently shifts columns."""
+    from vrl.trainers.checkpointing import prepare_metrics_csv
+
+    path = tmp_path / "metrics.csv"
+    header = "epoch,loss,approx_kl\n"
+
+    prepare_metrics_csv(path, header, resume=False)
+    prepare_metrics_csv(path, header, resume=True)  # same schema appends fine
+
+    with pytest.raises(ValueError, match="different metrics schema"):
+        prepare_metrics_csv(path, "epoch,loss,active_clip_fraction,approx_kl\n", resume=True)

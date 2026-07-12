@@ -46,8 +46,7 @@ from vrl.models.diffusion.common import (
     DiffusionBackboneInput,
     DiffusionBackboneRunnerBase,
     DiffusionBranch,
-    LatentDecodeSpec,
-    LatentDecodeTransform,
+    LatentDecodePlan,
     expand_batch_timestep,
     pack_eval_timestep,
 )
@@ -57,7 +56,7 @@ from vrl.models.diffusion.common.lora import (
     copy_adapter_weights,
     freeze_adapter_params,
 )
-from vrl.models.dtypes import resolve_torch_dtype
+from vrl.models.interfaces.runtime import ModelBuild
 
 
 @dataclass
@@ -134,22 +133,22 @@ class FluxModel(LoraModelMixin, DiffusersPipelineModelBase, DiffusionBackboneRun
     # -- backend ownership (called by runtime, not by collectors) -------
 
     @classmethod
-    def from_spec(cls, spec: Any) -> FluxModel:
+    def from_build(cls, build: ModelBuild) -> FluxModel:
         """Load the diffusers FLUX pipeline + freeze non-trainable modules."""
         from diffusers import FluxPipeline
 
-        if (spec.model_config or {}).get("nft_previous_adapter") and not spec.use_lora:
+        if (build.model_config or {}).get("nft_previous_adapter") and not build.use_lora:
             raise RuntimeError(
                 "model.nft_previous_adapter requires LoRA (the frozen previous "
                 "adapter is a PEFT adapter); set model.use_lora=true.",
             )
 
-        model_dtype = resolve_torch_dtype(spec.dtype)
-        # Frozen text encoders / VAE follow the ``frozen`` precision axis, same
-        # contract as SD3: fp16 when the denoiser runs fp32, else the model dtype.
-        frozen_dtype, load_kwargs = diffusers_pipeline_dtypes(spec, model_dtype)
+        model_dtype = build.parameter_dtype
+        # Prompt encoders use their rollout-only precision policy. VAE remains
+        # family-owned FP32 below because decode fidelity is a separate concern.
+        prompt_encoder_dtype, load_kwargs = diffusers_pipeline_dtypes(build, model_dtype)
         pipeline = FluxPipeline.from_pretrained(
-            spec.model_name_or_path,
+            build.model_name_or_path,
             **load_kwargs,
         )
         pipeline.vae.requires_grad_(False)
@@ -164,11 +163,11 @@ class FluxModel(LoraModelMixin, DiffusersPipelineModelBase, DiffusionBackboneRun
         ):
             if enc is not None:
                 enc.requires_grad_(False)
-                enc.to("cpu", dtype=frozen_dtype)
-        pipeline.vae.to(spec.device, dtype=torch.float32)
+                enc.to("cpu", dtype=prompt_encoder_dtype)
+        pipeline.vae.to(build.device, dtype=torch.float32)
         return cls(
             pipeline=pipeline,
-            device=spec.device,
+            device=build.device,
         )
 
     # -- DiffusionNFT previous-policy adapter -----------------------------
@@ -177,7 +176,7 @@ class FluxModel(LoraModelMixin, DiffusersPipelineModelBase, DiffusionBackboneRun
     # weight copy each optimizer step (never optimized). Call ``attach_*`` after
     # the normal LoRA attach (``self.transformer`` must already carry ``default``).
 
-    def apply_lora(self, spec: Any) -> None:
+    def apply_lora(self, build: ModelBuild) -> None:
         """Attach LoRA; opt into the DiffusionNFT ``previous`` mirror via config.
 
         ``model.nft_previous_adapter: true`` (the NFT recipes' switch) builds the
@@ -185,11 +184,11 @@ class FluxModel(LoraModelMixin, DiffusersPipelineModelBase, DiffusionBackboneRun
         knowledge that used to ride the builders' ``after_lora`` hook. GRPO
         configs leave the key unset and pay nothing.
         """
-        super().apply_lora(spec)
-        if bool((spec.model_config or {}).get("nft_previous_adapter", False)):
-            self.attach_previous_policy_adapter(spec)
+        super().apply_lora(build)
+        if bool((build.model_config or {}).get("nft_previous_adapter", False)):
+            self.attach_previous_policy_adapter(build)
 
-    def attach_previous_policy_adapter(self, spec: Any) -> None:
+    def attach_previous_policy_adapter(self, build: ModelBuild) -> None:
         """Build the frozen ``previous`` adapter, seeded from ``default``.
 
         Idempotent on the adapter slot: only adds it once, then (re)seeds it from
@@ -198,10 +197,10 @@ class FluxModel(LoraModelMixin, DiffusersPipelineModelBase, DiffusionBackboneRun
         """
 
         transformer = self.transformer
-        lora_config = getattr(spec, "lora", None)
+        lora_config = getattr(build, "lora", None)
         if lora_config is None:
             raise ValueError(
-                "attach_previous_policy_adapter requires spec.lora (LoRA NFT only)",
+                "attach_previous_policy_adapter requires build.lora (LoRA NFT only)",
             )
         if "previous" not in getattr(transformer, "peft_config", {}):
             transformer.add_adapter("previous", build_lora_config(lora_config))
@@ -256,12 +255,22 @@ class FluxModel(LoraModelMixin, DiffusersPipelineModelBase, DiffusionBackboneRun
         the batch-shared position grid without owning a FluxPipeline.
         """
         latent_image_ids = torch.zeros(height, width, 3, device=device, dtype=dtype)
-        latent_image_ids[..., 1] = latent_image_ids[..., 1] + torch.arange(
-            height, device=device, dtype=dtype,
-        )[:, None]
-        latent_image_ids[..., 2] = latent_image_ids[..., 2] + torch.arange(
-            width, device=device, dtype=dtype,
-        )[None, :]
+        latent_image_ids[..., 1] = (
+            latent_image_ids[..., 1]
+            + torch.arange(
+                height,
+                device=device,
+                dtype=dtype,
+            )[:, None]
+        )
+        latent_image_ids[..., 2] = (
+            latent_image_ids[..., 2]
+            + torch.arange(
+                width,
+                device=device,
+                dtype=dtype,
+            )[None, :]
+        )
         return latent_image_ids.reshape(height * width, 3)
 
     # -- encode_prompt -------------------------------------------------
@@ -281,7 +290,7 @@ class FluxModel(LoraModelMixin, DiffusersPipelineModelBase, DiffusionBackboneRun
         """
         del negative_prompt
         max_seq = kwargs.get("max_sequence_length", 512)
-        # The frozen encoders live on CPU (see from_spec); run encode there, then
+        # The frozen encoders live on CPU (see from_build); run encode there, then
         # move the embeds onto the model/transformer device for the denoise forward.
         enc_device = self._encoder_device()
         prompt_embeds, pooled_prompt_embeds, text_ids = self.pipeline.encode_prompt(
@@ -326,10 +335,7 @@ class FluxModel(LoraModelMixin, DiffusersPipelineModelBase, DiffusionBackboneRun
         pooled_prompt_embeds = encoded["pooled_prompt_embeds"]
         text_ids = encoded["text_ids"]
 
-        seed = (
-            request.seed if request.seed is not None
-            else random.randint(0, sys.maxsize)
-        )
+        seed = request.seed if request.seed is not None else random.randint(0, sys.maxsize)
         generator = torch.Generator(device=device)
         generator.manual_seed(seed)
 
@@ -351,7 +357,9 @@ class FluxModel(LoraModelMixin, DiffusersPipelineModelBase, DiffusionBackboneRun
         # Timesteps depend on the packed image sequence length (dynamic shifting),
         # so set them only now that the latents (hence seq len) exist.
         timesteps = self._set_dynamic_timesteps(
-            request.num_steps, latents.shape[1], device,
+            request.num_steps,
+            latents.shape[1],
+            device,
         )
 
         # Record the spatial shape decode_latents must unpack to (safe: same model
@@ -420,10 +428,12 @@ class FluxModel(LoraModelMixin, DiffusersPipelineModelBase, DiffusionBackboneRun
                     "pooled_projections": state.pooled_prompt_embeds.to(td),
                     # Rotary position ids stay float32 (computed in float).
                     "img_ids": state.latent_image_ids.to(
-                        device=latent_input.device, dtype=torch.float32,
+                        device=latent_input.device,
+                        dtype=torch.float32,
                     ),
                     "txt_ids": state.text_ids.to(
-                        device=latent_input.device, dtype=torch.float32,
+                        device=latent_input.device,
+                        dtype=torch.float32,
                     ),
                     "guidance": guidance,
                 },
@@ -605,8 +615,8 @@ class FluxModel(LoraModelMixin, DiffusersPipelineModelBase, DiffusionBackboneRun
             return unpacked.to(pipe.vae.dtype) / scaling_factor + shift_factor
 
         decoder = ChunkedLatentDecoder(
-            LatentDecodeSpec(
-                transform=LatentDecodeTransform(_transform),
+            LatentDecodePlan(
+                prepare_latents=_transform,
                 vae_decode=lambda chunk: pipe.vae.decode(chunk, return_dict=False)[0],
                 postprocess=lambda image: pipe.image_processor.postprocess(
                     image,
@@ -622,8 +632,7 @@ class FluxModel(LoraModelMixin, DiffusersPipelineModelBase, DiffusionBackboneRun
 class FluxReplayModel(DiffusersReplayModelBase, FluxModel):
     """Replay-only FLUX model that owns no prompt encoders, VAE, or pipeline."""
 
-
-    def prepare_replay(self, spec: Any) -> None:
+    def prepare_replay(self, build: ModelBuild) -> None:
         """Set the mu-shifted replay timesteps FLUX's dynamic scheduler needs.
 
         The replay scheduler was loaded WITHOUT timesteps (mu unknown in the
@@ -635,18 +644,17 @@ class FluxReplayModel(DiffusersReplayModelBase, FluxModel):
         asserts old==new log-prob, so any drift here surfaces immediately.)
         FLUX packs an 8x VAE + 2x2 patch grid: seq_len = (H // 16) * (W // 16).
         """
-        if (spec.model_config or {}).get("nft_previous_adapter") and not spec.use_lora:
+        if (build.model_config or {}).get("nft_previous_adapter") and not build.use_lora:
             raise RuntimeError(
                 "model.nft_previous_adapter requires LoRA (the frozen previous "
                 "adapter is a PEFT adapter); set model.use_lora=true.",
             )
-        sampling = spec.sampling_config or {}
-        num_steps = spec.num_steps
+        sampling = build.sampling_config or {}
+        num_steps = build.num_steps
         height, width = sampling.get("height"), sampling.get("width")
         if num_steps is not None and height and width:
             image_seq_len = (int(height) // 16) * (int(width) // 16)
-            self._set_dynamic_timesteps(int(num_steps), image_seq_len, spec.device)
-
+            self._set_dynamic_timesteps(int(num_steps), image_seq_len, build.device)
 
 
 __all__ = ["FluxModel", "FluxReplayModel", "FluxSamplingState"]

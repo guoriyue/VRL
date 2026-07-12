@@ -1,9 +1,4 @@
-"""nvfp4 rollout linear: quantization math + swap correctness (CPU), GEMM parity (GPU).
-
-Mirrors test_fp8.py's split: structure/math tests run anywhere; the numeric
-GEMM tests need a CUDA device whose ``torch._scaled_mm`` accepts nvfp4 operands
-(Blackwell) and are skipped otherwise.
-"""
+"""NVFP4 rollout linear math, ownership, targeting, and GPU parity tests."""
 
 from __future__ import annotations
 
@@ -13,35 +8,44 @@ import pytest
 import torch
 from torch import nn
 
-from vrl.nn.quantization import Fp4Linear, drop_quantized_masters, swap_linears_to_fp4
-from vrl.nn.quantization.fp4 import (
-    E2M1_VALUES,
-    FP4_BLOCK,
-    FP4_K_ALIGNMENT,
-    FP4_N_ALIGNMENT,
-    quantize_nvfp4,
-    to_blocked_scale_layout,
+from vrl.nn.quantization import (
+    Fp4Linear,
+    drop_quantized_masters,
+    swap_linears_to_nvfp4,
 )
+from vrl.nn.quantization.formats import (
+    E2M1_VALUES,
+    NVFP4_BLOCK_SIZE,
+    NVFP4_K_ALIGNMENT,
+    NVFP4_N_ALIGNMENT,
+)
+from vrl.nn.quantization.fp4 import quantize_nvfp4, to_blocked_scale_layout
 
 
-def _fp4_capable() -> bool:
+def _nvfp4_capable() -> bool:
     if not torch.cuda.is_available():
         return False
     try:
         x = torch.randn(128, 64, device="cuda", dtype=torch.bfloat16)
-        w = torch.randn(64, 64, device="cuda", dtype=torch.bfloat16)
-        x4, xs, _ = quantize_nvfp4(x)
-        w4, ws, _ = quantize_nvfp4(w)
-        torch._scaled_mm(x4, w4.t(), scale_a=xs, scale_b=ws, out_dtype=torch.bfloat16)
+        weight = torch.randn(64, 64, device="cuda", dtype=torch.bfloat16)
+        x4, x_scale, _ = quantize_nvfp4(x)
+        weight4, weight_scale, _ = quantize_nvfp4(weight)
+        torch._scaled_mm(
+            x4,
+            weight4.t(),
+            scale_a=x_scale,
+            scale_b=weight_scale,
+            out_dtype=torch.bfloat16,
+        )
         return True
     except Exception:
         return False
 
 
-requires_fp4 = pytest.mark.skipif(not _fp4_capable(), reason="needs CUDA nvfp4 _scaled_mm")
-
-
-# --- quantization math (CPU) --------------------------------------------------
+requires_nvfp4 = pytest.mark.skipif(
+    not _nvfp4_capable(),
+    reason="needs CUDA NVFP4 _scaled_mm",
+)
 
 
 def _unpack_codes(packed: torch.Tensor) -> torch.Tensor:
@@ -90,244 +94,251 @@ def _dequantize_nvfp4_reference(
     block_scales = _undo_blocked_scale_layout(
         scales,
         rows=rows,
-        cols=k // FP4_BLOCK,
+        cols=k // NVFP4_BLOCK_SIZE,
     ).float()
     effective = block_scales * tensor_scale
-    return (values.view(rows, k // FP4_BLOCK, FP4_BLOCK) * effective[..., None]).view(
-        rows,
-        k,
-    )
+    return (
+        values.view(rows, k // NVFP4_BLOCK_SIZE, NVFP4_BLOCK_SIZE) * effective[..., None]
+    ).view(rows, k)
 
 
-def test_quantize_dequant_error_is_bounded():
+# --- quantization math (CPU) --------------------------------------------------
+
+
+def test_quantize_dequant_error_is_bounded() -> None:
     torch.manual_seed(0)
-    t = torch.randn(64, 128)
-    packed, scales, tensor_scale = quantize_nvfp4(t)
-    dequant = _dequantize_nvfp4_reference(packed, scales, tensor_scale)
-    rel = float((dequant - t).abs().mean() / t.abs().mean())
-    assert rel < 0.2  # RTN e2m1 with 1x16 block scales: ~0.13 measured on randn
+    tensor = torch.randn(64, 128)
+    packed, scales, tensor_scale = quantize_nvfp4(tensor)
+    dequantized = _dequantize_nvfp4_reference(packed, scales, tensor_scale)
+    relative_error = float((dequantized - tensor).abs().mean() / tensor.abs().mean())
+    assert relative_error < 0.2
 
 
-def test_exact_grid_values_roundtrip_exactly():
-    # amax=6 makes tensor_scale*block_scale == 1.0 exactly (448 is e4m3-exact),
-    # so on-grid e2m1 values must dequantize bit-exactly.
+def test_exact_grid_values_roundtrip_exactly() -> None:
     grid = torch.tensor(E2M1_VALUES)
-    t = torch.cat([grid, -grid]).repeat(2)[: 2 * FP4_BLOCK].view(2, FP4_BLOCK)
-    packed, scales, tensor_scale = quantize_nvfp4(t)
-    dequant = _dequantize_nvfp4_reference(packed, scales, tensor_scale)
-    torch.testing.assert_close(dequant, t, rtol=0, atol=0)
+    tensor = torch.cat([grid, -grid]).repeat(2)[: 2 * NVFP4_BLOCK_SIZE].view(2, NVFP4_BLOCK_SIZE)
+    packed, scales, tensor_scale = quantize_nvfp4(tensor)
+    dequantized = _dequantize_nvfp4_reference(packed, scales, tensor_scale)
+    torch.testing.assert_close(dequantized, tensor, rtol=0, atol=0)
 
 
-def test_midpoints_round_to_nearest_even_code():
+def test_midpoints_round_to_nearest_even_code() -> None:
     midpoints = torch.tensor([0.25, 0.75, 1.25, 1.75, 2.5, 3.5, 5.0, 6.0])
-    t = torch.cat([midpoints, -midpoints])
-    packed, _, _ = quantize_nvfp4(t.view(1, FP4_BLOCK))
+    tensor = torch.cat([midpoints, -midpoints])
+    packed, _, _ = quantize_nvfp4(tensor.view(1, NVFP4_BLOCK_SIZE))
 
     assert _unpack_codes(packed).tolist() == [
         [0, 2, 2, 4, 4, 6, 6, 7, 8, 10, 10, 12, 12, 14, 14, 15],
     ]
 
 
-def test_unaligned_k_is_rejected():
+def test_unaligned_k_is_rejected() -> None:
     with pytest.raises(ValueError, match="K % 16"):
         quantize_nvfp4(torch.randn(4, 24))
 
 
-def test_blocked_scale_layout_shape_and_origin():
+def test_blocked_scale_layout_shape_and_origin() -> None:
     scales = torch.arange(6 * 8, dtype=torch.float32).view(6, 8).to(torch.float8_e4m3fn)
     flat = to_blocked_scale_layout(scales)
-    # 6 rows pad to 128, 8 cols pad to 8 (2 col-blocks of 4): 128 * 8 total.
     assert flat.shape == (128 * 8,)
     assert float(flat.float()[0]) == float(scales.float()[0, 0])
 
 
-# --- Fp4Linear ownership contract (CPU) ----------------------------------------
+# --- module ownership (CPU) ---------------------------------------------------
 
 
-def test_master_weight_is_the_only_state_dict_entry():
-    lin = nn.Linear(64, 32, bias=True)
-    q = Fp4Linear(lin)
-    keys = set(q.state_dict().keys())
-    assert keys == {"weight", "bias"}  # fp4 cache + scales are non-persistent
+def test_nvfp4_is_the_module_scheme_identity() -> None:
+    assert Fp4Linear.quantization_scheme == "nvfp4"
 
 
-def test_requantizes_on_state_dict_load():
-    q = Fp4Linear(nn.Linear(64, 32, bias=False))
-    before = q.weight_fp4.view(torch.uint8).clone()
-    q.load_state_dict({"weight": torch.randn(32, 64)})
-    assert not torch.equal(before, q.weight_fp4.view(torch.uint8))
+def test_master_weight_is_the_only_state_dict_entry() -> None:
+    quantized = Fp4Linear(nn.Linear(64, 32, bias=True))
+    assert set(quantized.state_dict()) == {"weight", "bias"}
 
 
-def test_drop_master_frees_and_blocks_base_load():
-    q = Fp4Linear(nn.Linear(64, 32, bias=False))
-    assert q.drop_master() == 32 * 64 * 4  # fp32 master: numel x 4 bytes
-    assert q.weight is None
-    assert q.drop_master() == 0
+def test_requantizes_on_state_dict_load() -> None:
+    quantized = Fp4Linear(nn.Linear(64, 32, bias=False))
+    before = quantized.weight_fp4.view(torch.uint8).clone()
+    quantized.load_state_dict({"weight": torch.randn(32, 64)})
+    assert not torch.equal(before, quantized.weight_fp4.view(torch.uint8))
+
+
+def test_drop_master_frees_and_blocks_base_load() -> None:
+    quantized = Fp4Linear(nn.Linear(64, 32, bias=False))
+    assert quantized.drop_master() == 32 * 64 * 4
+    assert quantized.weight is None
+    assert quantized.drop_master() == 0
     with pytest.raises(RuntimeError, match="master-free"):
-        q.load_state_dict({"weight": torch.randn(32, 64)})
-    # adapter-only sync (no base key) must stay a no-op, not raise
-    q.load_state_dict({}, strict=False)
+        quantized.load_state_dict({"weight": torch.randn(32, 64)})
+    quantized.load_state_dict({}, strict=False)
 
 
-def test_drop_quantized_masters_covers_fp4():
+def test_drop_quantized_masters_covers_nvfp4() -> None:
     root = nn.Sequential(Fp4Linear(nn.Linear(64, 32, bias=False)))
     assert drop_quantized_masters(root) > 0
     assert root[0].weight is None
 
 
-def test_unaligned_in_features_rejected():
-    with pytest.raises(ValueError, match=rf"in_features % {FP4_K_ALIGNMENT}"):
+def test_unaligned_in_features_rejected() -> None:
+    with pytest.raises(ValueError, match=rf"in_features % {NVFP4_K_ALIGNMENT}"):
         Fp4Linear(nn.Linear(48, 32))
 
 
-def test_unaligned_out_features_rejected():
-    with pytest.raises(ValueError, match=rf"out_features % {FP4_N_ALIGNMENT}"):
+def test_unaligned_out_features_rejected() -> None:
+    with pytest.raises(ValueError, match=rf"out_features % {NVFP4_N_ALIGNMENT}"):
         Fp4Linear(nn.Linear(64, 33))
 
 
-def test_invalid_recipe_rejected():
+def test_invalid_recipe_rejected() -> None:
     with pytest.raises(ValueError, match="nvfp4"):
         Fp4Linear(nn.Linear(64, 32), recipe="rowwise")
 
 
-# --- swap targeting (CPU) -------------------------------------------------------
+# --- targeting (CPU) ---------------------------------------------------------
 
 
 class _Blockish(nn.Module):
     def __init__(self, dim: int) -> None:
         super().__init__()
-        self.x_embedder = nn.Linear(dim, dim)  # `embed` -> excluded
+        self.x_embedder = nn.Linear(dim, dim)
         self.to_q = nn.Linear(dim, dim)
         self.ff_up = nn.Linear(dim, 4 * dim)
-        self.small = nn.Linear(dim, 64)  # below min_features
-        self.odd_k = nn.Linear(dim + 16, dim)  # 1040 % 32 != 0 -> alignment skip
-        self.odd_n = nn.Linear(dim, dim + 8)  # 1032 % 16 != 0 -> alignment skip
-        self.proj_out = nn.Linear(dim, dim)  # excluded
+        self.small = nn.Linear(dim, 64)
+        self.odd_k = nn.Linear(dim + 16, dim)
+        self.odd_n = nn.Linear(dim, dim + 8)
+        self.proj_out = nn.Linear(dim, dim)
 
 
-def test_swap_targets_aligned_big_linears_only():
+def test_swap_targets_aligned_big_mlp_linears_only() -> None:
     model = _Blockish(1024)
-    swapped = swap_linears_to_fp4(model)
+    swapped = swap_linears_to_nvfp4(model)
     assert swapped == ["ff_up"]
+    assert isinstance(model.ff_up, Fp4Linear)
     assert isinstance(model.to_q, nn.Linear)
-    assert not isinstance(model.to_q, Fp4Linear)
     assert isinstance(model.odd_k, nn.Linear)
     assert isinstance(model.odd_n, nn.Linear)
     assert isinstance(model.x_embedder, nn.Linear)
     assert isinstance(model.proj_out, nn.Linear)
 
 
-def test_attention_mlp_target_profile_includes_aligned_attention():
+def test_attention_mlp_profile_includes_aligned_attention() -> None:
     model = _Blockish(1024)
-
-    swapped = swap_linears_to_fp4(model, target_profile="attention_mlp")
-
+    swapped = swap_linears_to_nvfp4(model, target_profile="attention_mlp")
     assert swapped == ["to_q", "ff_up"]
     assert isinstance(model.to_q, Fp4Linear)
     assert isinstance(model.ff_up, Fp4Linear)
-    assert isinstance(model.odd_k, nn.Linear)
-    assert isinstance(model.odd_n, nn.Linear)
 
 
-def test_invalid_target_profile_raises_before_fp4_mutation():
+def test_invalid_target_profile_raises_before_mutation() -> None:
     model = _Blockish(1024)
-
     with pytest.raises(ValueError, match="bogus"):
-        swap_linears_to_fp4(model, target_profile="bogus")
-
+        swap_linears_to_nvfp4(model, target_profile="bogus")
     assert not any(isinstance(module, Fp4Linear) for module in model.modules())
 
 
-# --- runtime wiring (CPU) --------------------------------------------------------
+# --- runtime wiring (CPU) -----------------------------------------------------
 
 
 class _FakeModel:
     def __init__(self) -> None:
-        self.fp4_calls = 0
+        self.nvfp4_calls = 0
 
-    def quantize_rollout_fp4(self) -> list[str]:
-        self.fp4_calls += 1
-        return ["blocks.0.attn.to_q"]
+    def quantize_rollout_nvfp4(self) -> list[str]:
+        self.nvfp4_calls += 1
+        return ["blocks.0.ff.net.0"]
 
 
-def test_apply_rollout_quantization_dispatches_fp4(caplog):
+def _rollout_spec(
+    *,
+    recipe: str | None = None,
+    device: str | None = None,
+    torch_compile: dict | None = None,
+) -> SimpleNamespace:
+    return SimpleNamespace(
+        device=device,
+        torch_compile=torch_compile,
+        rollout=SimpleNamespace(
+            quantization_format="nvfp4",
+            quantization_recipe=recipe,
+            base_weight_sync=True,
+        ),
+    )
+
+
+def test_apply_rollout_quantization_dispatches_nvfp4(caplog, monkeypatch) -> None:
     from vrl.models.loader import apply_rollout_quantization
 
+    monkeypatch.setattr("vrl.nn.quantization.nvfp4_available", lambda _device: True)
     model = _FakeModel()
     with caplog.at_level("INFO"):
-        apply_rollout_quantization(
-            model,
-            SimpleNamespace(
-                rollout_quantization="fp4",
-                rollout_quantization_recipe=None,
-            ),
-        )
-    assert model.fp4_calls == 1
-    assert "fp4 rollout (recipe=nvfp4, profile=mlp_only)" in caplog.text
+        apply_rollout_quantization(model, _rollout_spec(device="cuda:0"))
+    assert model.nvfp4_calls == 1
+    assert "nvfp4" in caplog.text
 
 
-def test_fp4_rejects_fp8_recipes():
-    from vrl.models.loader import apply_rollout_quantization
+def test_nvfp4_runtime_options_reject_fp8_recipes() -> None:
+    from vrl.models.interfaces.runtime import RolloutBuildOptions
 
-    with pytest.raises(ValueError, match="not an fp4 recipe"):
-        apply_rollout_quantization(
-            _FakeModel(),
-            SimpleNamespace(rollout_quantization="fp4", rollout_quantization_recipe="rowwise"),
+    with pytest.raises(ValueError, match="does not accept a recipe"):
+        RolloutBuildOptions(
+            autocast_dtype="bf16",
+            prompt_encoder_dtype="fp16",
+            quantization_format="nvfp4",
+            quantization_recipe="rowwise",
         )
 
 
-def test_fp4_loader_rejects_unsupported_target_before_mutation(monkeypatch):
+def test_loader_rejects_unsupported_target_before_mutation(monkeypatch) -> None:
     from vrl.models.loader import apply_rollout_quantization
 
     model = _FakeModel()
-    monkeypatch.setattr("vrl.nn.quantization.fp4.nvfp4_available", lambda _device: False)
-
+    monkeypatch.setattr("vrl.nn.quantization.nvfp4_available", lambda _device: False)
     with pytest.raises(RuntimeError, match="NVFP4-capable CUDA target"):
-        apply_rollout_quantization(
-            model,
-            SimpleNamespace(
-                rollout_quantization="fp4",
-                rollout_quantization_recipe=None,
-                device="cuda:0",
-            ),
-        )
-
-    assert model.fp4_calls == 0
+        apply_rollout_quantization(model, _rollout_spec(device="cuda:0"))
+    assert model.nvfp4_calls == 0
 
 
-def test_fp4_loader_allows_torch_compile_after_production_shape_gate():
+def test_loader_allows_torch_compile_after_shape_gate(monkeypatch) -> None:
     from vrl.models.loader import apply_rollout_quantization
 
+    monkeypatch.setattr("vrl.nn.quantization.nvfp4_available", lambda _device: True)
     model = _FakeModel()
     apply_rollout_quantization(
         model,
-        SimpleNamespace(
-            rollout_quantization="fp4",
-            rollout_quantization_recipe=None,
-            torch_compile={"enable": True, "mode": "default"},
-        ),
+        _rollout_spec(torch_compile={"enable": True, "mode": "default"}),
     )
-    assert model.fp4_calls == 1
+    assert model.nvfp4_calls == 1
 
 
-def test_extract_runtime_spec_derives_fp4_from_precision_rollout():
+def test_resolve_model_build_derives_nvfp4_from_nested_precision() -> None:
     from omegaconf import OmegaConf
 
-    from vrl.models.runtime_config import extract_runtime_spec
+    from vrl.models.model_build import resolve_model_build
 
     cfg = OmegaConf.create(
-        {"model": {"path": "x"}, "precision": {"train": "bf16", "rollout": "fp4"}},
+        {
+            "model": {"path": "x"},
+            "precision": {
+                "training": {"dtype": "bf16"},
+                "rollout": {
+                    "dtype": "bf16",
+                    "quantization": {"format": "nvfp4"},
+                },
+            },
+        },
     )
-    spec = extract_runtime_spec(cfg, "cuda", torch.bfloat16, task_variant="t2i")
-    assert spec.rollout_quantization == "fp4"
-    assert spec.dtype is torch.bfloat16  # storage stays the bf16 master
+    build = resolve_model_build(cfg, "cuda")
+    assert build.rollout is not None
+    assert build.rollout.quantization_format == "nvfp4"
+    assert build.rollout.autocast_dtype is torch.bfloat16
+    assert build.parameter_dtype is torch.bfloat16
 
 
-# --- GEMM parity (GPU, Blackwell) -------------------------------------------------
+# --- GPU parity and compile ---------------------------------------------------
 
 
-@requires_fp4
-def test_fused_cuda_quantizer_matches_cpu_reference_bytes():
+@requires_nvfp4
+def test_fused_cuda_quantizer_matches_cpu_reference_bytes() -> None:
     torch.manual_seed(0)
     random_values = torch.randn(64, 256, dtype=torch.bfloat16)
     padded_and_partial_chunk = torch.randn(37, 1600, dtype=torch.bfloat16)
@@ -358,81 +369,105 @@ def test_fused_cuda_quantizer_matches_cpu_reference_bytes():
     for cpu in (random_values, padded_and_partial_chunk, sparse_blocks, midpoints):
         cpu_data, cpu_scales, cpu_tensor_scale = quantize_nvfp4(cpu)
         gpu_data, gpu_scales, gpu_tensor_scale = quantize_nvfp4(cpu.cuda())
-
         assert torch.equal(cpu_data.view(torch.uint8), gpu_data.cpu().view(torch.uint8))
         assert torch.equal(cpu_scales.view(torch.uint8), gpu_scales.cpu().view(torch.uint8))
         torch.testing.assert_close(gpu_tensor_scale.cpu(), cpu_tensor_scale, rtol=0, atol=0)
 
 
-@requires_fp4
-def test_fp4_linear_matches_dequant_reference():
+@requires_nvfp4
+def test_linear_matches_dequantized_reference() -> None:
     torch.manual_seed(0)
-    lin = nn.Linear(256, 512, bias=True).cuda().to(torch.bfloat16)
-    q = Fp4Linear(lin)
+    linear = nn.Linear(256, 512, bias=True).cuda().to(torch.bfloat16)
+    quantized = Fp4Linear(linear)
     x = torch.randn(64, 256, device="cuda", dtype=torch.bfloat16)
 
     with torch.no_grad():
-        out = q(x)
-        x4, xs, xg = quantize_nvfp4(x)
-        w4, ws, wg = quantize_nvfp4(lin.weight.data)
-        x_dq = _dequantize_nvfp4_reference(x4, xs, xg)
-        w_dq = _dequantize_nvfp4_reference(w4, ws, wg)
-        ref = (x_dq @ w_dq.t() + lin.bias.float()).to(torch.bfloat16)
-        # The GEMM must reproduce the dequantized reference; tolerance covers bf16
-        # accumulation only, not quantization (that is baked into both sides).
-        rel = float((out.float() - ref.float()).abs().mean() / ref.float().abs().mean())
-    assert rel < 5e-3
+        output = quantized(x)
+        x4, x_scale, x_tensor_scale = quantize_nvfp4(x)
+        weight4, weight_scale, weight_tensor_scale = quantize_nvfp4(linear.weight.data)
+        x_dequantized = _dequantize_nvfp4_reference(x4, x_scale, x_tensor_scale)
+        weight_dequantized = _dequantize_nvfp4_reference(
+            weight4,
+            weight_scale,
+            weight_tensor_scale,
+        )
+        reference = (x_dequantized @ weight_dequantized.t() + linear.bias.float()).to(
+            torch.bfloat16,
+        )
+        relative_error = float(
+            (output.float() - reference.float()).abs().mean() / reference.float().abs().mean(),
+        )
+    assert relative_error < 5e-3
 
 
-@requires_fp4
-def test_fp4_linear_preserves_leading_dims_and_dtype():
-    q = Fp4Linear(nn.Linear(128, 256, bias=False).cuda().to(torch.bfloat16))
+@requires_nvfp4
+def test_linear_preserves_leading_dims_and_dtype() -> None:
+    quantized = Fp4Linear(nn.Linear(128, 256, bias=False).cuda().to(torch.bfloat16))
     x = torch.randn(2, 8, 128, device="cuda", dtype=torch.float32)
-    out = q(x)
-    assert out.shape == (2, 8, 256)
-    assert out.dtype == torch.float32  # cast back to the input dtype
+    output = quantized(x)
+    assert output.shape == (2, 8, 256)
+    assert output.dtype == torch.float32
 
 
-@requires_fp4
-def test_master_free_fp4_forward_still_runs():
-    q = Fp4Linear(nn.Linear(128, 128, bias=False).cuda().to(torch.bfloat16))
-    q.drop_master()
-    out = q(torch.randn(16, 128, device="cuda", dtype=torch.bfloat16))
-    assert out.shape == (16, 128)
+@requires_nvfp4
+def test_master_free_forward_still_runs() -> None:
+    quantized = Fp4Linear(nn.Linear(128, 128, bias=False).cuda().to(torch.bfloat16))
+    quantized.drop_master()
+    output = quantized(torch.randn(16, 128, device="cuda", dtype=torch.bfloat16))
+    assert output.shape == (16, 128)
 
 
-@requires_fp4
-def test_fp4_cache_survives_cpu_to_cuda_dtype_move():
-    q = Fp4Linear(nn.Linear(64, 32, bias=False).to(torch.bfloat16))
-
-    q.to("cuda", dtype=torch.bfloat16)
-
-    assert q.weight_fp4.dtype is torch.float4_e2m1fn_x2
-    assert q.weight_scale.dtype is torch.float8_e4m3fn
-    assert q.weight_tensor_scale.dtype is torch.float32
-    assert q(torch.randn(128, 64, device="cuda", dtype=torch.bfloat16)).shape == (128, 32)
-
-
-@requires_fp4
-def test_master_free_fp4_cache_moves_without_dtype_cast():
-    q = Fp4Linear(nn.Linear(64, 32, bias=False).to(torch.bfloat16))
-    q.drop_master()
-
-    q.to("cuda", dtype=torch.bfloat16)
-
-    assert q.weight_fp4.device.type == "cuda"
-    assert q.weight_fp4.dtype is torch.float4_e2m1fn_x2
-    assert q.weight_scale.dtype is torch.float8_e4m3fn
-    assert q.weight_tensor_scale.dtype is torch.float32
-    assert q(torch.randn(128, 64, device="cuda", dtype=torch.bfloat16)).shape == (128, 32)
+@requires_nvfp4
+def test_cache_survives_cpu_to_cuda_dtype_move() -> None:
+    quantized = Fp4Linear(nn.Linear(64, 32, bias=False).to(torch.bfloat16))
+    quantized.to("cuda", dtype=torch.bfloat16)
+    assert quantized.weight_fp4.dtype is torch.float4_e2m1fn_x2
+    assert quantized.weight_scale.dtype is torch.float8_e4m3fn
+    assert quantized.weight_tensor_scale.dtype is torch.float32
+    assert quantized(torch.randn(128, 64, device="cuda", dtype=torch.bfloat16)).shape == (
+        128,
+        32,
+    )
 
 
-@requires_fp4
-def test_fp4_production_shape_torch_compile():
-    q = Fp4Linear(nn.Linear(1024, 1024, bias=False).cuda().to(torch.bfloat16))
-    compiled = torch.compile(q, fullgraph=True)
+@requires_nvfp4
+def test_master_free_cache_moves_without_dtype_cast() -> None:
+    quantized = Fp4Linear(nn.Linear(64, 32, bias=False).to(torch.bfloat16))
+    quantized.drop_master()
+    quantized.to("cuda", dtype=torch.bfloat16)
+    assert quantized.weight_fp4.device.type == "cuda"
+    assert quantized.weight_fp4.dtype is torch.float4_e2m1fn_x2
+    assert quantized.weight_scale.dtype is torch.float8_e4m3fn
+    assert quantized.weight_tensor_scale.dtype is torch.float32
 
-    out = compiled(torch.randn(128, 1024, device="cuda", dtype=torch.bfloat16))
 
-    assert out.shape == (128, 1024)
-    assert out.dtype is torch.bfloat16
+@requires_nvfp4
+def test_production_shape_torch_compile() -> None:
+    quantized = Fp4Linear(nn.Linear(1024, 1024, bias=False).cuda().to(torch.bfloat16))
+    compiled = torch.compile(quantized, fullgraph=True)
+    output = compiled(torch.randn(128, 1024, device="cuda", dtype=torch.bfloat16))
+    assert output.shape == (128, 1024)
+    assert output.dtype is torch.bfloat16
+
+
+@requires_nvfp4
+def test_compiled_linear_requantizes_after_weight_sync() -> None:
+    torch.manual_seed(0)
+    quantized = Fp4Linear(nn.Linear(128, 128, bias=False).cuda().to(torch.bfloat16))
+    compiled = torch.compile(quantized, fullgraph=True)
+    x = torch.randn(32, 128, device="cuda", dtype=torch.bfloat16)
+    before_output = compiled(x)
+    before = quantized.weight_fp4.view(torch.uint8).clone()
+
+    updated = nn.Linear(128, 128, bias=False).cuda().to(torch.bfloat16)
+    quantized.load_state_dict(updated.state_dict())
+    reference = Fp4Linear(updated)(x)
+    output = compiled(x)
+
+    assert not torch.equal(before, quantized.weight_fp4.view(torch.uint8))
+    assert not torch.equal(before_output, output)
+    relative_error = float(
+        (output.float() - reference.float()).abs().mean()
+        / reference.float().abs().mean().clamp_min(1e-12),
+    )
+    assert relative_error < 5e-3

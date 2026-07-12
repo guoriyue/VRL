@@ -52,7 +52,6 @@ class TestRewardUpdateFlow:
                 return loss, TrainStepMetrics(
                     loss=loss.item(),
                     policy_loss=loss.item(),
-                    approx_kl=0.0,
                 )
 
         class _CapturingCollector(CollectorControlFake):
@@ -114,9 +113,7 @@ class TestRewardUpdateFlow:
         )
         asyncio.run(trainer.step([example]))
 
-        # Group-batched collect: one call per prompt, carrying group_size=2.
-        # Conditioning rides the typed GenerationInput; reward targets ride the
-        # group metadata dict (PromptExample owns that mapping).
+        # Conditioning uses GenerationInput; reward targets use group metadata.
         assert len(captured_kwargs) == 1
         kw = captured_kwargs[0]
         assert kw["group_size"] == 2
@@ -160,20 +157,19 @@ class TestRewardUpdateFlow:
                 return advantages
 
             def compute_loss(self, inputs):
-                signals, advantages, old_log_probs = _algorithm_inputs(inputs)
+                signals, advantages, _old_log_probs = _algorithm_inputs(inputs)
                 loss = signals.log_prob.mean() + advantages.mean() * 0.0
                 return loss, TrainStepMetrics(
                     loss=loss.item(),
                     policy_loss=loss.item(),
-                    approx_kl=float(old_log_probs.mean().item()),
                 )
 
         class _Collector(CollectorControlFake):
             async def score_rollouts(self, pendings):
                 return list(pendings)
 
-            async def collect_unscored(self, inputs, **kwargs):
-                prompts = [getattr(item, "prompt", item) for item in inputs]
+            async def collect_unscored(self, prompts, **kwargs):
+                prompts = [getattr(item, "prompt", item) for item in prompts]
                 collect_calls.append(prompts)
                 group_size = int(kwargs["group_size"])
                 batch_size = len(prompts) * group_size
@@ -278,8 +274,8 @@ class TestRewardUpdateFlow:
             async def score_rollouts(self, pendings):
                 return list(pendings)
 
-            async def collect_unscored(self, inputs, **kwargs):
-                prompts = [getattr(item, "prompt", item) for item in inputs]
+            async def collect_unscored(self, prompts, **kwargs):
+                prompts = [getattr(item, "prompt", item) for item in prompts]
                 collect_calls.append(list(prompts))
                 group_size = int(kwargs["group_size"])
                 batch_size = len(prompts) * group_size
@@ -462,8 +458,8 @@ class TestRewardUpdateFlow:
             async def score_rollouts(self, pendings):
                 return list(pendings)
 
-            async def collect_unscored(self, inputs, **kwargs):
-                prompts = [getattr(item, "prompt", item) for item in inputs]
+            async def collect_unscored(self, prompts, **kwargs):
+                prompts = [getattr(item, "prompt", item) for item in prompts]
                 group_size = int(kwargs["group_size"])
                 batch_size = len(prompts) * group_size
                 group_ids = torch.tensor(
@@ -574,8 +570,8 @@ class TestRewardUpdateFlow:
             async def score_rollouts(self, pendings):
                 return list(pendings)
 
-            async def collect_unscored(self, inputs, **kwargs):
-                prompts = [getattr(item, "prompt", item) for item in inputs]
+            async def collect_unscored(self, prompts, **kwargs):
+                prompts = [getattr(item, "prompt", item) for item in prompts]
                 group_size = int(kwargs["group_size"])
                 batch_size = len(prompts) * group_size
                 group_ids = torch.tensor(
@@ -698,7 +694,7 @@ def test_replay_samples_per_chunk_splits_backward_and_preserves_gradient(monkeyp
             return list(pendings)
 
         async def collect_unscored(self, prompts, **kwargs):
-            prompts = list(prompts)
+            prompts = [getattr(item, "prompt", item) for item in prompts]
             group_size = int(kwargs["group_size"])
             batch_size = len(prompts) * group_size
             return RolloutBatch(

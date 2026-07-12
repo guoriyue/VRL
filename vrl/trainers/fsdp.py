@@ -90,12 +90,18 @@ def build_fsdp_mesh(context: DistributedTrainingContext, mesh_dims: list[str]) -
     )
 
 
-def mixed_precision_policy(name: str) -> Any:
+def mixed_precision_policy(
+    name: str,
+    *,
+    parameter_dtype: torch.dtype | None = None,
+) -> Any:
     """Map the config knob to an FSDP2 ``MixedPrecisionPolicy``.
 
-    ``actor`` is the standard RL-actor recipe: bf16 params/compute, fp32
-    gradient reduction (the reduce-scatter accumulates in fp32 to avoid drift).
-    ``none`` keeps full precision (params and reduction in their native dtype).
+    ``actor`` keeps the model builder's resolved parameter dtype and performs
+    gradient reduction in fp32. FSDP must not introduce a second parameter-dtype
+    owner: most families follow top-level precision, while SANA deliberately
+    stores fp16 parameters under bf16 forward autocast. ``none`` leaves both
+    parameters and reduction in their native dtype.
     """
 
     from torch.distributed.fsdp import MixedPrecisionPolicy
@@ -103,8 +109,10 @@ def mixed_precision_policy(name: str) -> Any:
     if name == "none":
         return MixedPrecisionPolicy()
     if name == "actor":
+        if parameter_dtype is None:
+            raise ValueError("FSDP actor precision requires the resolved parameter dtype")
         return MixedPrecisionPolicy(
-            param_dtype=torch.bfloat16,
+            param_dtype=parameter_dtype,
             reduce_dtype=torch.float32,
         )
     raise ValueError(
@@ -186,8 +194,12 @@ def apply_fsdp(
 
     base = unwrap_module(handle)
     for block in iter_blocks(base):
-        fully_shard(block, mesh=mesh, mp_policy=mp_policy, reshard_after_forward=reshard_after_forward)
-    fully_shard(handle, mesh=mesh, mp_policy=mp_policy, reshard_after_forward=reshard_after_forward)
+        fully_shard(
+            block, mesh=mesh, mp_policy=mp_policy, reshard_after_forward=reshard_after_forward
+        )
+    fully_shard(
+        handle, mesh=mesh, mp_policy=mp_policy, reshard_after_forward=reshard_after_forward
+    )
     return handle
 
 

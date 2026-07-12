@@ -75,8 +75,8 @@ def test_run_denoise_steps_writes_preallocated_buffers(return_kl: bool) -> None:
     )
 
 
-def test_run_denoise_steps_records_rollout_transformer_dtype() -> None:
-    """Checks denoise metadata records the rollout forward dtype."""
+def test_run_denoise_steps_records_rollout_autocast_dtype() -> None:
+    """Checks denoise metadata records the rollout autocast dtype."""
     executor = _Executor()
 
     result = executor.run_denoise_steps(
@@ -85,8 +85,23 @@ def test_run_denoise_steps_records_rollout_transformer_dtype() -> None:
         config=_config(sample_count=2),
     )
 
-    assert result.engine_counters["diffusion_rollout_transformer_dtype"] == "float16"
+    assert result.engine_counters["diffusion_rollout_autocast_dtype"] == "float16"
     assert result.engine_counters["diffusion_rollout_autocast_enabled"] is False
+
+
+def test_configured_autocast_dtype_overrides_prompt_storage_dtype() -> None:
+    """Autocast is explicit when checkpoint and activation dtypes differ."""
+    executor = _Executor()
+    executor.model = _Model()
+    executor.model.autocast_dtype = torch.bfloat16
+
+    result = executor.run_denoise_steps(
+        state=_state(batch=2, steps=1),
+        encoded={"prompt_embeds": torch.zeros(2, 1, dtype=torch.float16)},
+        config=_config(sample_count=2),
+    )
+
+    assert result.engine_counters["diffusion_rollout_autocast_dtype"] == "bfloat16"
 
 
 def test_decode_denoise_result_threads_rollout_dtype_into_context() -> None:
@@ -104,7 +119,7 @@ def test_decode_denoise_result_threads_rollout_dtype_into_context() -> None:
         denoise_result=denoise,
     )
 
-    assert chunk.context["rollout_transformer_dtype"] == "float16"
+    assert chunk.context["rollout_autocast_dtype"] == "float16"
     assert chunk.context["rollout_autocast_enabled"] is False
 
 

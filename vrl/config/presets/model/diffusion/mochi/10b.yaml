@@ -1,4 +1,4 @@
-# Mochi-1 10B AsymmDiT — checkpoint, LoRA. T5-XXL parks on CPU (from_spec).
+# Mochi-1 10B AsymmDiT — checkpoint, LoRA. T5-XXL parks on CPU (from_build).
 model:
   family: mochi
   executor:

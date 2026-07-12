@@ -20,7 +20,6 @@ defaults:
   - /base/distributed/ray_rollout_cross_node
   - /base/rollout/orchestration/continuous
 
-precision: bf16
 
 sampling:
   height: 128

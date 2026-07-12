@@ -244,9 +244,9 @@ class GlobalRayPlacementOwner:
             return
 
         ray = require_ray()
-        bundle_specs = self._bundle_specs()
+        bundle_requirements = self._bundle_requirements()
         strategy = self._strategy()
-        pg = _create_raw_placement_group(bundle_specs, strategy=strategy)
+        pg = _create_raw_placement_group(bundle_requirements, strategy=strategy)
         # Claim the raw handle before waiting for readiness. A ready/probe/assign
         # failure whose removal also fails must leave this exact placement group
         # reachable by terminal shutdown.
@@ -257,7 +257,7 @@ class GlobalRayPlacementOwner:
             except Exception as exc:
                 raise RuntimeError(
                     f"Ray placement group not ready after {self.ready_timeout_s:.0f}s: "
-                    f"bundles={bundle_specs} strategy={strategy!r}. "
+                    f"bundles={bundle_requirements} strategy={strategy!r}. "
                     "The cluster cannot satisfy these bundles -- check whether "
                     "resident actors hold the GPUs this group is trying to reserve.",
                 ) from exc
@@ -393,15 +393,15 @@ class GlobalRayPlacementOwner:
         # Cross-node spreads bundles across nodes; single-node packs them.
         return "SPREAD" if self.resources.cross_node else "PACK"
 
-    def _bundle_specs(self) -> list[dict[str, float]]:
-        specs: list[dict[str, float]] = []
+    def _bundle_requirements(self) -> list[dict[str, float]]:
+        requirements: list[dict[str, float]] = []
         for bundle_index, gpu_id in enumerate(self.layout.bundle_gpu_ids):
             cpu = self._bundle_cpu(bundle_index, gpu_id)
-            spec: dict[str, float] = {"CPU": cpu}
+            bundle: dict[str, float] = {"CPU": cpu}
             if gpu_id is not None:
-                spec["GPU"] = 1.0
-            specs.append(spec)
-        return specs
+                bundle["GPU"] = 1.0
+            requirements.append(bundle)
+        return requirements
 
     def _bundle_cpu(self, bundle_index: int, gpu_id: int | None) -> float:
         """CPU a bundle reserves = max over the roles that may run in it.

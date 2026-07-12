@@ -4,6 +4,7 @@ import importlib
 from typing import Any
 
 import pytest
+import torch
 
 from vrl.models.diffusion.common.vae_decode_memory import (
     VaeDecodeMemory,
@@ -114,7 +115,7 @@ def test_wan_runtime_bundle_records_model_build_memory_metadata(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Checks Wan runtime bundle records model build memory metadata."""
-    from vrl.models.interfaces.runtime import RuntimeBuildSpec
+    from vrl.models.interfaces.runtime import ModelBuild, RolloutBuildOptions
 
     class _FakeModel:
         def __init__(self) -> None:
@@ -124,7 +125,7 @@ def test_wan_runtime_bundle_records_model_build_memory_metadata(
             self.raw_handle = object()
 
         @classmethod
-        def from_spec(cls, _spec: Any) -> _FakeModel:
+        def from_build(cls, _build: Any) -> _FakeModel:
             return cls()
 
         def generation_memory_targets(self) -> dict[str, Any]:
@@ -144,11 +145,15 @@ def test_wan_runtime_bundle_records_model_build_memory_metadata(
     monkeypatch.setattr(_wan_model, "WanT2VDiffusersModel", _FakeModel)
 
     bundle = _shared_build.build_family_runtime_bundle(
-        RuntimeBuildSpec(
+        ModelBuild(
             model_name_or_path="fake/model",
             device="cpu",
-            dtype="float32",
+            parameter_dtype="float32",
             family="wan_2_1",
+            rollout=RolloutBuildOptions(
+                autocast_dtype="float32",
+                prompt_encoder_dtype="float16",
+            ),
             sampling_config={"num_steps": 2},
             model_config={"memory": {"vae_decode": {"tiling": True, "slicing": True}}},
         ),
@@ -166,11 +171,11 @@ def test_wan_runtime_bundle_records_model_build_memory_metadata(
         "model_module_name",
         "model_class_name",
         "build_fn_name",
-        "spec_family",
+        "build_family",
     ),
     [
         # sd3_5 is a registry-descriptor family: the generic builder resolves
-        # its model class from the registry recipe, keyed by spec.family.
+        # its model class from the registry recipe, keyed by build.family.
         (
             "vrl.models.diffusion.build",
             "vrl.models.diffusion.sd3_5.model",
@@ -186,7 +191,7 @@ def test_wan_runtime_bundle_records_model_build_memory_metadata(
             "cosmos-predict2",
         ),
         # predict2_5 is also a registry-descriptor family (LoRA-only, so the
-        # shared fake spec below carries a minimal lora block).
+        # shared fake build below carries a minimal lora block).
         (
             "vrl.models.diffusion.build",
             "vrl.models.diffusion.cosmos.predict2_5.model",
@@ -209,10 +214,12 @@ def test_full_generation_runtime_bundles_record_model_build_memory_metadata(
     model_module_name: str,
     model_class_name: str,
     build_fn_name: str,
-    spec_family: str | None,
+    build_family: str | None,
 ) -> None:
     """Checks full-generation runtime bundles report VAE memory policy."""
-    from vrl.models.interfaces.runtime import RuntimeBuildSpec
+    from vrl.models.interfaces.runtime import ModelBuild, RolloutBuildOptions
+
+    loaded_builds: list[ModelBuild] = []
 
     class _FakeModel:
         def __init__(self) -> None:
@@ -225,7 +232,8 @@ def test_full_generation_runtime_bundles_record_model_build_memory_metadata(
             return {"vae_decode": self.vae}
 
         @classmethod
-        def from_spec(cls, _spec: Any) -> _FakeModel:
+        def from_build(cls, build: ModelBuild) -> _FakeModel:
+            loaded_builds.append(build)
             return cls()
 
         def apply_full_finetune(self) -> None:
@@ -237,7 +245,7 @@ def test_full_generation_runtime_bundles_record_model_build_memory_metadata(
         def torch_compile_transformer(self, _mode: str) -> None:
             return None
 
-        def apply_lora(self, _spec: Any) -> None:
+        def apply_lora(self, _build: Any) -> None:
             return None
 
     runtime_module = importlib.import_module(runtime_module_name)
@@ -245,11 +253,15 @@ def test_full_generation_runtime_bundles_record_model_build_memory_metadata(
     monkeypatch.setattr(model_module, model_class_name, _FakeModel)
 
     bundle = getattr(runtime_module, build_fn_name)(
-        RuntimeBuildSpec(
+        ModelBuild(
             model_name_or_path="fake/model",
             device="cpu",
-            dtype="float32",
-            family=spec_family,
+            parameter_dtype="float16" if build_family == "sana" else "float32",
+            family=build_family,
+            rollout=RolloutBuildOptions(
+                autocast_dtype="float32",
+                prompt_encoder_dtype="float16",
+            ),
             sampling_config={"num_steps": 2},
             model_config={
                 "memory": {"vae_decode": {"tiling": True, "slicing": False}},
@@ -265,6 +277,9 @@ def test_full_generation_runtime_bundles_record_model_build_memory_metadata(
         "vae_tiling": True,
         "vae_slicing": False,
     }
+    assert loaded_builds
+    if build_family == "sana":
+        assert loaded_builds[-1].parameter_dtype is torch.float16
 
 
 def test_declared_section_without_target_is_skipped_not_applied() -> None:
@@ -312,8 +327,7 @@ def test_family_loaders_do_not_apply_memory_policy() -> None:
         if "vae_decode_memory" in source or "memory_metadata" in source:
             offenders.append(str(path))
     assert not offenders, (
-        "family loaders must not apply memory policy or carry its state: "
-        f"{offenders}"
+        f"family loaders must not apply memory policy or carry its state: {offenders}"
     )
 
 

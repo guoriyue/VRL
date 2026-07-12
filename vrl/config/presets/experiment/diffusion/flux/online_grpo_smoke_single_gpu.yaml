@@ -17,7 +17,6 @@ defaults:
   - /dataset/ocr
   - _self_
 
-precision: bf16
 
 sampling:
   height: 256

@@ -27,7 +27,7 @@ from vrl.models.ar.build import ar_model_config_base
 from vrl.models.ar.capabilities import ar_discrete_family_capability
 from vrl.models.ar.janus_pro import JANUS_R1_SEGMENTS
 from vrl.models.ar.janus_pro.runner import JanusProARModelRunner
-from vrl.models.interfaces.runtime import RuntimeBuildSpec
+from vrl.models.interfaces.runtime import ModelBuild
 from vrl.trajectory import build_ar_multisegment_trajectory
 from vrl.utils.logging import init_logger
 
@@ -52,10 +52,10 @@ _JANUS_LORA_DEFAULTS: dict[str, Any] = {
 }
 
 
-def janus_config_from_runtime_spec(spec: RuntimeBuildSpec) -> dict[str, Any]:
-    model_config = spec.model_config or {}
-    sampling_config = spec.sampling_config or {}
-    config = ar_model_config_base(spec, _JANUS_LORA_DEFAULTS)
+def janus_config_from_build(build: ModelBuild) -> dict[str, Any]:
+    model_config = build.model_config or {}
+    sampling_config = build.sampling_config or {}
+    config = ar_model_config_base(build, _JANUS_LORA_DEFAULTS)
 
     for key in ("guidance_scale", "temperature", "image_token_num"):
         if key in sampling_config:
@@ -335,9 +335,9 @@ class JanusProR1ChunkExecutor(JanusProChunkExecutor):
     ) -> Any:
         """Build an R1 image sampler backed by the shared AR decode loop driver."""
 
-        specs = list(sample_rows)
+        rows = list(sample_rows)
         scheduler_batch_size = (
-            params.ar_scheduler_batch_size if params.use_ar_scheduler else len(specs)
+            params.ar_scheduler_batch_size if params.use_ar_scheduler else len(rows)
         )
 
         def sample(
@@ -350,7 +350,7 @@ class JanusProR1ChunkExecutor(JanusProChunkExecutor):
             image_token_num = int(kwargs.get("image_token_num", params.image_token_num))
             decode_result = ARDecodeLoop(
                 request=request,
-                sample_rows=specs,
+                sample_rows=rows,
                 runner=self._ar_runner(request),
                 max_new_tokens=image_token_num,
                 tokenizer_key="janus_pro_r1",
@@ -527,5 +527,5 @@ __all__ = [
     "JanusProR1ChunkExecutor",
     "JanusProR1ChunkGatherer",
     "JanusProR1ChunkResult",
-    "janus_config_from_runtime_spec",
+    "janus_config_from_build",
 ]

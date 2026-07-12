@@ -5,7 +5,6 @@ from __future__ import annotations
 import pickle
 
 import pytest
-import torch
 
 from vrl.config.loading import load_config
 from vrl.generation.ar.executor import ARDiscreteChunkGatherer
@@ -25,6 +24,11 @@ from vrl.rollouts.families import (
     ("experiment", "family", "expected_gatherer"),
     [
         ("diffusion/sd3_5/online_grpo_ocr", "sd3_5", DiffusionChunkGatherer),
+        (
+            "diffusion/sana/online_grpo_aesthetic",
+            "sana",
+            DiffusionChunkGatherer,
+        ),
         ("diffusion/wan_2_1/online_grpo_ocr", "wan_2_1", DiffusionChunkGatherer),
         (
             "diffusion/wan_2_1/online_grpo_kling_video_reward",
@@ -97,7 +101,6 @@ def test_rollout_runtime_inputs_are_serializable_and_registry_backed(
     inputs = build_ray_generation_inputs_for_family(
         cfg,
         family,
-        weight_dtype=torch.bfloat16,
         executor_kwargs={"samples_per_chunk": 2},
     )
 
@@ -118,8 +121,8 @@ def test_rollout_runtime_inputs_are_serializable_and_registry_backed(
     assert not isinstance(inputs.gatherer, GenerationChunkExecutor)
 
 
-def test_diffusion_launch_contract_uses_worker_primitive_device_and_dtype() -> None:
-    """Checks diffusion launch contract uses worker primitive device and dtype."""
+def test_diffusion_launch_contract_uses_resolved_config_parameter_dtype() -> None:
+    """The worker payload derives ordinary parameter dtype from rollout precision."""
     cfg = load_config(
         "experiment/diffusion/sd3_5/online_grpo_ocr",
         overrides=[
@@ -134,13 +137,82 @@ def test_diffusion_launch_contract_uses_worker_primitive_device_and_dtype() -> N
     inputs = build_ray_generation_inputs_for_family(
         cfg,
         "sd3_5",
-        weight_dtype=torch.float16,
     )
 
     assert isinstance(inputs, RayGenerationLaunchInputs)
     assert inputs.launch_contract.model_build is not None
     assert inputs.launch_contract.model_build["device"] == "cuda"
-    assert inputs.launch_contract.model_build["dtype"] == "float16"
+    assert inputs.launch_contract.model_build["parameter_dtype"] == "bfloat16"
+    assert inputs.launch_contract.model_build["rollout"]["autocast_dtype"] == "bfloat16"
+
+
+def test_sana_launch_contract_carries_parameter_and_rollout_precision() -> None:
+    """SANA's fp16 parameters and bf16 autocast survive the Ray boundary."""
+    cfg = load_config(
+        "experiment/diffusion/sana/online_grpo_aesthetic",
+        overrides=[
+            "distributed.resources.visible_devices=[]",
+            "distributed.resources.trainer.num_gpus=0",
+            "distributed.resources.rollout.num_gpus=0",
+            "distributed.resources.rollout.gpus_per_worker=0",
+            "distributed.resources.rollout.num_workers=1",
+            "distributed.resources.reward.num_gpus=0",
+            "distributed.resources.reward.gpus_per_worker=0",
+        ],
+    )
+
+    inputs = build_ray_generation_inputs_for_family(
+        cfg,
+        "sana",
+    )
+
+    model_build = inputs.launch_contract.model_build
+    assert model_build is not None
+    assert model_build["parameter_dtype"] == "float16"
+    assert model_build["rollout"] == {
+        "autocast_dtype": "bfloat16",
+        "prompt_encoder_dtype": "bfloat16",
+        "quantization_format": None,
+        "quantization_recipe": None,
+        "base_weight_sync": False,
+    }
+    assert pickle.loads(pickle.dumps(model_build)) == model_build
+
+
+def test_sana_fp8_rollout_keeps_bf16_outer_autocast() -> None:
+    """FP8 swaps GEMMs; unswapped rollout ops remain under bf16 autocast."""
+    cfg = load_config(
+        "experiment/diffusion/sana/online_grpo_aesthetic",
+        overrides=[
+            "distributed.resources.visible_devices=[]",
+            "distributed.resources.trainer.num_gpus=0",
+            "distributed.resources.rollout.num_gpus=0",
+            "distributed.resources.rollout.gpus_per_worker=0",
+            "distributed.resources.rollout.num_workers=1",
+            "distributed.resources.reward.num_gpus=0",
+            "distributed.resources.reward.gpus_per_worker=0",
+        ],
+    )
+    cfg.precision = {
+        "training": {"dtype": "bf16"},
+        "rollout": {
+            "dtype": "bf16",
+            "quantization": {"format": "fp8"},
+            "prompt_encoders": {"dtype": "bf16"},
+        },
+    }
+
+    inputs = build_ray_generation_inputs_for_family(
+        cfg,
+        "sana",
+    )
+
+    model_build = inputs.launch_contract.model_build
+    assert model_build is not None
+    assert model_build["parameter_dtype"] == "float16"
+    assert model_build["rollout"]["autocast_dtype"] == "bfloat16"
+    assert model_build["rollout"]["prompt_encoder_dtype"] == "bfloat16"
+    assert model_build["rollout"]["quantization_format"] == "fp8"
 
 
 def test_generation_chunk_auto_reaches_ray_runtime_without_executor_coercion() -> None:
@@ -164,13 +236,11 @@ def test_generation_chunk_auto_reaches_ray_runtime_without_executor_coercion() -
     inputs = build_ray_generation_inputs_for_family(
         cfg,
         "sd3_5",
-        weight_dtype=torch.bfloat16,
     )
 
     assert "samples_per_chunk" not in inputs.launch_contract.executor_kwargs
     assert (
-        build_rollout_config_from_cfg(cfg, family="sd3_5")
-        .request_sampling()["samples_per_chunk"]
+        build_rollout_config_from_cfg(cfg, family="sd3_5").request_sampling()["samples_per_chunk"]
         == "auto"
     )
 
@@ -214,7 +284,6 @@ def test_model_torch_compile_applies_to_all_diffusion_rollout_families(
     inputs = build_ray_generation_inputs_for_family(
         cfg,
         family,
-        weight_dtype=torch.bfloat16,
     )
 
     assert entry.capability.trajectory_kind == "diffusion"
@@ -224,7 +293,6 @@ def test_model_torch_compile_applies_to_all_diffusion_rollout_families(
         "enable": True,
         "mode": "default",
     }
-
 
 
 def test_explicit_executor_kwargs_override_registry_defaults() -> None:
@@ -244,7 +312,6 @@ def test_explicit_executor_kwargs_override_registry_defaults() -> None:
     inputs = build_ray_generation_inputs_for_family(
         cfg,
         "sd3_5",
-        weight_dtype=torch.bfloat16,
         executor_kwargs={"samples_per_chunk": 3},
     )
 

@@ -16,7 +16,7 @@ backends implement the offload:
 It reports, per backend:
   1. RESIDUAL after sleep = reserved GPU a slept worker still holds (the headroom a
      colocated trainer loses vs a full teardown).
-  2. sleep+wake wall time, against the cold ``from_spec`` reload it replaces.
+  2. sleep+wake wall time, against the cold ``from_build`` reload it replaces.
 
 This is the GPU-side acceptance probe for the sprint; one-shot, not imported by
 runtime code. Needs a free GPU (the model is ~11 GB resident).
@@ -34,6 +34,7 @@ from typing import Any
 import torch
 
 from vrl.models.diffusion.sd3_5.model import SD3_5Model
+from vrl.models.dtypes import resolve_torch_dtype
 
 _WEIGHTS_TAG = "weights"
 
@@ -51,13 +52,13 @@ def _gpu_used_mb() -> float:
 
 
 def _build(model_name: str, device: str, dtype: torch.dtype) -> SD3_5Model:
-    spec = SimpleNamespace(
+    build = SimpleNamespace(
         model_name_or_path=model_name,
         device=device,
-        dtype=dtype,
-        frozen_dtype=None,  # let from_spec apply the Flow-GRPO default
+        parameter_dtype=dtype,
+        rollout=None,  # let from_build apply the Flow-GRPO frozen-dtype default
     )
-    return SD3_5Model.from_spec(spec)
+    return SD3_5Model.from_build(build)
 
 
 def _cumem():
@@ -174,7 +175,7 @@ def main() -> None:
     if not torch.cuda.is_available():
         raise SystemExit("rollout_sleep_probe needs a CUDA device")
 
-    dtype = {"bf16": torch.bfloat16, "fp16": torch.float16, "fp32": torch.float32}[args.dtype]
+    dtype = resolve_torch_dtype(args.dtype)
     torch.cuda.set_device(args.device)
 
     # Cold reload baseline (what sleep replaces), measured once with a warm/cold OS
@@ -186,7 +187,7 @@ def main() -> None:
     cold_ms = (time.perf_counter() - t0) * 1e3
     del cold_model
     torch.cuda.empty_cache()
-    print(f"cold from_spec reload (replaced by sleep) = {cold_ms:8.1f} ms")
+    print(f"cold from_build reload (replaced by sleep) = {cold_ms:8.1f} ms")
 
     backends = ["naive", "cumem"] if args.backend == "both" else [args.backend]
     for backend in backends:

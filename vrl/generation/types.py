@@ -149,6 +149,7 @@ class GenerationOutput:
 
 
 __all__ = [
+    "GenerationInput",
     "GenerationMetrics",
     "GenerationOutput",
     "GenerationRequest",

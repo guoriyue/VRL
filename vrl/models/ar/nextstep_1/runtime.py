@@ -21,13 +21,13 @@ from vrl.generation.types import (
 from vrl.models.ar.build import ar_model_config_base
 from vrl.models.ar.capabilities import ar_continuous_family_capability
 from vrl.models.ar.nextstep_1.runner import NextStep1ARModelRunner
-from vrl.models.interfaces.runtime import RuntimeBuildSpec
+from vrl.models.interfaces.runtime import ModelBuild
 from vrl.trajectory import build_ar_continuous_trajectory
 
 NEXTSTEP_1_FAMILY_CAPABILITY = ar_continuous_family_capability("nextstep_1", "ar_t2i")
 
 
-def enrich_nextstep_runtime_spec(spec: RuntimeBuildSpec, cfg: Any) -> None:
+def enrich_nextstep_build(build: ModelBuild, cfg: Any) -> None:
     """Carry the actor-owned gradient-checkpointing knob into model config."""
 
     # gradient_checkpointing lives under cfg.actor (outside the model block the
@@ -36,8 +36,8 @@ def enrich_nextstep_runtime_spec(spec: RuntimeBuildSpec, cfg: Any) -> None:
     actor = cfg.get("actor") if hasattr(cfg, "get") else None
     if actor is not None:
         gc = actor.get("gradient_checkpointing") if hasattr(actor, "get") else None
-        if gc is not None and spec.model_config is not None:
-            spec.model_config["gradient_checkpointing"] = bool(gc)
+        if gc is not None and build.model_config is not None:
+            build.model_config["gradient_checkpointing"] = bool(gc)
 
 
 # NextStep LoRA defaults mirror the upstream recipe; applied at read time so the
@@ -51,10 +51,10 @@ _NEXTSTEP_LORA_DEFAULTS: dict[str, Any] = {
 }
 
 
-def nextstep_config_from_runtime_spec(spec: RuntimeBuildSpec) -> dict[str, Any]:
-    model_config = spec.model_config or {}
-    sampling_config = spec.sampling_config or {}
-    config = ar_model_config_base(spec, _NEXTSTEP_LORA_DEFAULTS)
+def nextstep_config_from_build(build: ModelBuild) -> dict[str, Any]:
+    model_config = build.model_config or {}
+    sampling_config = build.sampling_config or {}
+    config = ar_model_config_base(build, _NEXTSTEP_LORA_DEFAULTS)
 
     for key in (
         "guidance_scale",
@@ -345,6 +345,6 @@ __all__ = [
     "NextStep1ARChunkResult",
     "NextStep1ChunkExecutor",
     "NextStep1ChunkGatherer",
-    "enrich_nextstep_runtime_spec",
-    "nextstep_config_from_runtime_spec",
+    "enrich_nextstep_build",
+    "nextstep_config_from_build",
 ]

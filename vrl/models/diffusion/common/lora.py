@@ -18,9 +18,11 @@ from __future__ import annotations
 
 from typing import Any
 
+from vrl.models.interfaces.runtime import ModelBuild
+
 
 class LoraModelMixin:
-    """Attach a PEFT LoRA adapter to the family transformer per runtime spec."""
+    """Attach a PEFT LoRA adapter to the family transformer per runtime build."""
 
     # Fresh-adapter weight init when the config does not set init_lora_weights.
     # Wan overrides to True: empty training adapters must initially preserve
@@ -37,39 +39,42 @@ class LoraModelMixin:
         """
         return self.transformer
 
-    def _lora_dtype(self, spec: Any) -> Any | None:
+    def _lora_dtype(self, build: ModelBuild) -> Any | None:
         """Dtype for the pre-wrap device move; ``None`` skips the cast.
 
-        Default: the spec's model dtype — the near-universal diffusers-family
+        Default: the build's parameter dtype — the near-universal diffusers-family
         behavior. Overrides: cosmos predict2/cosmos3 return ``None`` (their
         transformer is already cast at load); anima/echo return their stored
-        ``self._dtype`` (single-file checkpoints without the spec dtype axis).
+        ``self._dtype`` (single-file checkpoints with their own parameter storage).
         """
-        from vrl.models.dtypes import resolve_torch_dtype
 
-        return resolve_torch_dtype(spec.dtype)
+        return build.parameter_dtype
 
-    def apply_lora(self, spec: Any) -> None:
-        """Wrap the family transformer with PEFT LoRA per ``spec.lora_*``."""
+    def apply_lora(self, build: ModelBuild) -> None:
+        """Wrap the family transformer with PEFT LoRA per ``build.lora_*``."""
         from peft import LoraConfig, PeftModel, get_peft_model
 
         transformer = self._lora_transformer()
         transformer.requires_grad_(False)
-        dtype = self._lora_dtype(spec)
+        dtype = self._lora_dtype(build)
         # Quantized LoRA rollouts attach PEFT while the checkpoint is still on
         # CPU. The shared builder then swaps the wrapped base linears, drops
         # their unsynced masters, and only moves the compact policy to the GPU.
         # Moving here would make a 17B bf16 checkpoint exceed a 32GB card before
-        # fp8 has a chance to halve it. Plain-precision LoRA keeps the historical
-        # direct move; replay builders never request rollout quantization.
-        defer_device_move = bool(getattr(spec, "rollout_quantization", None))
+        # quantization has a chance to compact it. Plain-precision LoRA keeps
+        # the historical direct move; replay builders never request rollout
+        # quantization.
+        rollout = getattr(build, "rollout", None)
+        defer_device_move = bool(
+            rollout is not None and getattr(rollout, "quantization_format", None),
+        )
         if not defer_device_move:
             if dtype is None:
                 transformer.to(self.device)
             else:
                 transformer.to(self.device, dtype=dtype)
 
-        lora_path = spec.lora_path
+        lora_path = build.lora_path
         if lora_path:
             wrapped = PeftModel.from_pretrained(
                 transformer,
@@ -80,7 +85,7 @@ class LoraModelMixin:
             self._set_transformer(wrapped)
             return
 
-        lora_config = spec.lora
+        lora_config = build.lora
         assert lora_config is not None
         cfg = LoraConfig(
             r=lora_config["rank"],

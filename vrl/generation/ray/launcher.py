@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections.abc import Iterable, Mapping
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 from typing import Any
 
 from vrl.generation.execution import (
@@ -26,7 +26,7 @@ from vrl.generation.ray.utils import (
 )
 from vrl.generation.ray.weight_sync import RayGenerationWeightSync
 from vrl.generation.ray.worker import RayGenerationWorker
-from vrl.models.dtypes import dtype_to_config_string
+from vrl.models.dtypes import dtype_to_wire_name
 from vrl.ray.actor_group import RayActorGroup
 from vrl.ray.dependencies import require_ray
 from vrl.ray.placement import RolePlacement
@@ -247,7 +247,6 @@ class RayGenerationLauncher:
         cfg: Any,
         entry: Any,
         *,
-        weight_dtype: Any,
         executor_kwargs: Mapping[str, Any] | None = None,
         policy_version: int = 0,
     ) -> RayGenerationLaunchInputs:
@@ -256,24 +255,34 @@ class RayGenerationLauncher:
         ray_config = RayGenerationConfig.from_cfg(cfg)
 
         runtime_device = "cuda" if ray_config.gpus_per_worker > 0 else "cpu"
-        runtime_build = _call_runtime_build_extractor(
+        build = _resolve_model_build(
             entry,
             cfg,
             runtime_device,
-            dtype_to_config_string(weight_dtype),
         )
+        # The lifecycle resolver, not the model config, owns whether rollout
+        # workers will receive trainable-state updates. Thread that resolved fact
+        # into the one build option that needs it before the Ray payload is frozen.
+        if build.rollout is not None:
+            build.rollout = replace(
+                build.rollout,
+                # Full-finetune sync replaces base parameters; LoRA sync only
+                # sends adapters. Resolve that lifecycle fact once here so the
+                # quantizer does not have to reinterpret model configuration.
+                base_weight_sync=(ray_config.sync_trainable_state and not build.use_lora),
+            )
         resolved_executor_kwargs = _build_executor_kwargs(entry, cfg)
         resolved_executor_kwargs.update(dict(executor_kwargs or {}))
         runtime_extra = _runtime_extra(cfg)
         runtime_extra["family_capability"] = entry.capability.to_dict()
         _validate_model_compile_supported(cfg, entry)
-        runtime_build_payload = _runtime_build_payload(runtime_build)
+        model_build_payload = _model_build_payload(build)
 
         return RayGenerationLaunchInputs(
             launch_contract=GenerationRuntimeLaunchContract(
                 family=entry.family,
                 task=entry.task,
-                model_build=runtime_build_payload,
+                model_build=model_build_payload,
                 executor_kwargs=resolved_executor_kwargs,
                 policy_version=policy_version,
                 runtime_builder=entry.runtime_builder,
@@ -284,14 +293,13 @@ class RayGenerationLauncher:
         )
 
 
-def _call_runtime_build_extractor(
+def _resolve_model_build(
     entry: Any,
     cfg: Any,
     device: str,
-    weight_dtype: str,
 ) -> Any:
-    extractor = import_from_path(entry.runtime_spec_extractor)
-    return extractor(cfg, device, weight_dtype)
+    resolver = import_from_path(entry.model_build_resolver)
+    return resolver(cfg, device)
 
 
 def _build_gatherer(entry: Any) -> ChunkGatherer:
@@ -303,10 +311,7 @@ def _build_executor_kwargs(entry: Any, cfg: Any) -> dict[str, Any]:
     from vrl.generation.diffusion.executor import GENERIC_DIFFUSION_EXECUTOR
 
     kwargs: dict[str, Any] = {}
-    # Which executor kwargs to thread is DERIVED from the family capability,
-    # not declared on the entry: diffusion executors take a chunk batch size
-    # (AR ones don't), and reference-conditioned executors take a reference
-    # image. One source (entry.capability) drives both.
+    # Diffusion executors take a chunk batch size; AR executors do not.
     if entry.capability.trajectory_kind == "diffusion":
         samples_per_chunk = cfg_path(cfg, "rollout.samples_per_chunk", None)
         # ``auto`` belongs to the request and is resolved by RayGenerationRuntime
@@ -325,12 +330,16 @@ def _build_executor_kwargs(entry: Any, cfg: Any) -> dict[str, Any]:
     return kwargs
 
 
-def _runtime_build_payload(runtime_build: Any) -> dict[str, Any]:
-    payload = asdict(runtime_build)
+def _model_build_payload(build: Any) -> dict[str, Any]:
+    payload = asdict(build)
     payload["device"] = str(payload["device"])
-    payload["dtype"] = dtype_to_config_string(payload["dtype"])
-    if payload.get("frozen_dtype") is not None:
-        payload["frozen_dtype"] = dtype_to_config_string(payload["frozen_dtype"])
+    payload["parameter_dtype"] = dtype_to_wire_name(payload["parameter_dtype"])
+    rollout = payload.get("rollout")
+    if rollout is not None:
+        rollout["autocast_dtype"] = dtype_to_wire_name(rollout["autocast_dtype"])
+        rollout["prompt_encoder_dtype"] = dtype_to_wire_name(
+            rollout["prompt_encoder_dtype"],
+        )
     return payload
 
 

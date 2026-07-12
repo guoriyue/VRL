@@ -35,8 +35,7 @@ from vrl.models.diffusion.common import (
     DiffusionBackboneCaller,
     DiffusionBackboneInput,
     DiffusionBranch,
-    LatentDecodeSpec,
-    LatentDecodeTransform,
+    LatentDecodePlan,
     align_replay_tensor,
     broadcast_spatial_timestep,
     replay_tensor,
@@ -45,6 +44,7 @@ from vrl.models.diffusion.common import (
 from vrl.models.diffusion.common.lora import LoraModelMixin
 from vrl.models.diffusion.common.tensors import require_tensor
 from vrl.models.diffusion.cosmos import CosmosReplayForward
+from vrl.models.interfaces.runtime import ModelBuild
 
 
 @dataclass(slots=True)
@@ -71,8 +71,12 @@ class CosmosPredict2DiffusionBackboneRunner:
             indicator = extra["cond_indicator"]
             condition_mask = extra["cond_mask"]
         else:
-            embeds = require_tensor(request.negative_prompt_embeds, "Cosmos Predict2 negative_prompt_embeds")
-            indicator = require_tensor(extra.get("uncond_indicator"), "Cosmos Predict2 uncond_indicator")
+            embeds = require_tensor(
+                request.negative_prompt_embeds, "Cosmos Predict2 negative_prompt_embeds"
+            )
+            indicator = require_tensor(
+                extra.get("uncond_indicator"), "Cosmos Predict2 uncond_indicator"
+            )
             condition_mask = extra.get("uncond_mask")
         hidden_states, timestep = self._prepare_branch(
             latents=request.hidden_states,
@@ -181,7 +185,7 @@ class CosmosPredict2Model(CosmosReplayForward, LoraModelMixin, DiffusersPipeline
     # -- backend ownership (called by runtime, not by collectors) -------
 
     @classmethod
-    def from_spec(cls, spec: Any) -> CosmosPredict2Model:
+    def from_build(cls, build: ModelBuild) -> CosmosPredict2Model:
         """Load Cosmos2VideoToWorldPipeline + freeze non-trainable modules.
 
         Patches the diffusers safety checker with a passthrough during load
@@ -204,7 +208,8 @@ class CosmosPredict2Model(CosmosReplayForward, LoraModelMixin, DiffusersPipeline
         _v2w_mod.CosmosSafetyChecker = _PassthroughSafetyChecker  # type: ignore[assignment]
         try:
             pipeline = Cosmos2VideoToWorldPipeline.from_pretrained(
-                spec.model_name_or_path, torch_dtype=spec.dtype,
+                build.model_name_or_path,
+                torch_dtype=build.parameter_dtype,
             )
         finally:
             _v2w_mod.CosmosSafetyChecker = _orig
@@ -215,17 +220,17 @@ class CosmosPredict2Model(CosmosReplayForward, LoraModelMixin, DiffusersPipeline
         pipeline.set_progress_bar_config(disable=True)
         pipeline.vae.requires_grad_(False)
         pipeline.text_encoder.requires_grad_(False)
-        pipeline.vae.to(spec.device, dtype=torch.float32)
-        pipeline.text_encoder.to(spec.device, dtype=spec.dtype)
+        pipeline.vae.to(build.device, dtype=torch.float32)
+        pipeline.text_encoder.to(build.device, dtype=build.parameter_dtype)
         return cls(
             pipeline=pipeline,
-            device=spec.device,
+            device=build.device,
         )
 
-    def _lora_dtype(self, spec: Any) -> Any | None:
+    def _lora_dtype(self, build: ModelBuild) -> Any | None:
         # The transformer is already cast at load (from_pretrained torch_dtype);
         # skip the mixin's default pre-wrap dtype cast.
-        del spec
+        del build
         return None
 
     # -- encode_prompt -------------------------------------------------
@@ -306,14 +311,16 @@ class CosmosPredict2Model(CosmosReplayForward, LoraModelMixin, DiffusersPipeline
             ).to(device, dtype=pipe.vae.dtype)
         else:
             video_input = torch.zeros(
-                batch_size, 3, 1, request.height, request.width,
-                device=device, dtype=pipe.vae.dtype,
+                batch_size,
+                3,
+                1,
+                request.height,
+                request.width,
+                device=device,
+                dtype=pipe.vae.dtype,
             )
 
-        seed = (
-            request.seed if request.seed is not None
-            else random.randint(0, sys.maxsize)
-        )
+        seed = request.seed if request.seed is not None else random.randint(0, sys.maxsize)
         generator = torch.Generator(device="cpu")
         generator.manual_seed(seed)
 
@@ -339,7 +346,10 @@ class CosmosPredict2Model(CosmosReplayForward, LoraModelMixin, DiffusersPipeline
 
         # Padding mask at pixel resolution; transformer repeats internally.
         padding_mask = latents.new_zeros(
-            1, 1, request.height, request.width,
+            1,
+            1,
+            request.height,
+            request.width,
             dtype=prompt_embeds.dtype,
         )
 
@@ -395,7 +405,8 @@ class CosmosPredict2Model(CosmosReplayForward, LoraModelMixin, DiffusersPipeline
         cond_mask = state.cond_mask.expand(batch_size, -1, -1, -1, -1)
         uncond_mask = (
             state.uncond_mask.expand(batch_size, -1, -1, -1, -1)
-            if state.uncond_mask is not None else None
+            if state.uncond_mask is not None
+            else None
         )
         # padding_mask kept at [1, 1, H, W] — transformer repeats internally.
         padding_mask = state.padding_mask
@@ -403,7 +414,8 @@ class CosmosPredict2Model(CosmosReplayForward, LoraModelMixin, DiffusersPipeline
         cond_indicator = state.cond_indicator.expand(batch_size, -1, -1, -1, -1)
         uncond_indicator = (
             state.uncond_indicator.expand(batch_size, -1, -1, -1, -1)
-            if state.uncond_indicator is not None else None
+            if state.uncond_indicator is not None
+            else None
         )
 
         output = DiffusionBackboneCaller(
@@ -559,10 +571,7 @@ class CosmosPredict2Model(CosmosReplayForward, LoraModelMixin, DiffusersPipeline
         x = (video.to(pipe.vae.dtype) * 2.0 - 1.0).to(self.device)
         with torch.no_grad():
             encoded = torch.cat(
-                [
-                    pipe.vae.encode(sample.unsqueeze(0)).latent_dist.mode()
-                    for sample in x
-                ],
+                [pipe.vae.encode(sample.unsqueeze(0)).latent_dist.mode() for sample in x],
                 dim=0,
             )
         latents_mean = (
@@ -603,8 +612,8 @@ class CosmosPredict2Model(CosmosReplayForward, LoraModelMixin, DiffusersPipeline
             return x * latents_std / sigma_data + latents_mean
 
         decoder = ChunkedLatentDecoder(
-            LatentDecodeSpec(
-                transform=LatentDecodeTransform(_transform),
+            LatentDecodePlan(
+                prepare_latents=_transform,
                 vae_decode=lambda chunk: pipe.vae.decode(
                     chunk,
                     return_dict=False,
@@ -622,7 +631,6 @@ class CosmosPredict2Model(CosmosReplayForward, LoraModelMixin, DiffusersPipeline
 
 class CosmosPredict2ReplayModel(DiffusersReplayModelBase, CosmosPredict2Model):
     """Replay-only Cosmos Predict2 model without pipeline-only modules."""
-
 
     # restore_eval_state is inherited from CosmosPredict2Model: it reads
     # ``self.scheduler``, which this replay model overrides to return its own

@@ -208,7 +208,7 @@ def _cfg() -> Any:
 def _definition() -> OnlineRecipeDefinition:
     return OnlineRecipeDefinition(
         family="sd3_5",
-        build_replay_bundle=lambda cfg, device, weight_dtype: SimpleNamespace(
+        build_replay_bundle=lambda cfg, device: SimpleNamespace(
             model=_FakeModel(),
             scheduler=object(),
             trainable_modules={},
@@ -260,8 +260,15 @@ def _install_common_fakes(
     )
 
     monkeypatch.setattr(online, "_preflight_production_video_reward", lambda cfg: None)
-    monkeypatch.setattr(online, "build_configs", lambda cfg: {"trainer": trainer_config})
-    monkeypatch.setattr(online, "_apply_precision_policy", lambda cfg, trainer: None)
+    precision = SimpleNamespace(
+        rollout="float32",
+        rollout_base_precision="float32",
+    )
+    monkeypatch.setattr(
+        online,
+        "build_configs",
+        lambda cfg: {"trainer": trainer_config, "precision": precision},
+    )
     monkeypatch.setattr(online, "load_training_checkpoint_from_config", lambda cfg: None)
     monkeypatch.setattr(
         online,
@@ -275,14 +282,6 @@ def _install_common_fakes(
         online,
         "reward_torch_device",
         lambda resources, *, trainer_device: "cpu",
-    )
-    monkeypatch.setattr(
-        online, "torch_dtype_for_trainer_precision", lambda trainer, torch: torch.float32
-    )
-    monkeypatch.setattr(
-        online,
-        "resolve_precision_policy",
-        lambda cfg: SimpleNamespace(rollout="float32"),
     )
     monkeypatch.setattr(online, "load_prompt_examples_from_config", lambda cfg: ["prompt"])
     monkeypatch.setattr(online, "log_host_memory", lambda *args, **kwargs: None)

@@ -20,7 +20,7 @@ from vrl.generation.ray.launch_inputs import RayGenerationLaunchInputs
 from vrl.generation.ray.runtime import RayGenerationRuntime
 from vrl.generation.types import GenerationOutput, GenerationRequest, GenerationSampleRow
 from vrl.models.ar.capabilities import ar_discrete_family_capability
-from vrl.models.interfaces import ReplayResult, RuntimeBuildSpec, RuntimeBundle
+from vrl.models.interfaces import ModelBuild, ReplayResult, RuntimeBundle
 
 # Every test here spins up Ray (~seconds each) — slow by nature, run nightly not per-PR.
 pytestmark = pytest.mark.slow_test if pytest is not None else ()
@@ -86,8 +86,8 @@ class _Gatherer:
         )
 
 
-def build_tiny_runtime_bundle(spec: RuntimeBuildSpec) -> RuntimeBundle:
-    assert str(spec.device) == "cpu"
+def build_tiny_runtime_bundle(build: ModelBuild) -> RuntimeBundle:
+    assert str(build.device) == "cpu"
     return RuntimeBundle(
         model=_TinyRuntimeModel(),
         trainable_modules={},
@@ -105,7 +105,7 @@ def _launch_contract() -> GenerationRuntimeLaunchContract:
         model_build={
             "model_name_or_path": "unit-test",
             "device": "cpu",
-            "dtype": "float32",
+            "parameter_dtype": "float32",
         },
         runtime_builder=("tests.generation.ray.test_rollout_launcher:build_tiny_runtime_bundle"),
         executor_cls="tests.generation.ray.test_rollout_launcher:_TinyChunkExecutor",

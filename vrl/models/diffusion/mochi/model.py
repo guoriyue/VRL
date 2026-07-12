@@ -47,14 +47,13 @@ from vrl.models.diffusion.common import (
     DiffusionBackboneInput,
     DiffusionBackboneRunnerBase,
     DiffusionBranch,
-    LatentDecodeSpec,
-    LatentDecodeTransform,
+    LatentDecodePlan,
     expand_batch_timestep,
     pack_eval_timestep,
 )
 from vrl.models.diffusion.common.lora import LoraModelMixin
 from vrl.models.diffusion.common.tensors import require_tensor
-from vrl.models.dtypes import resolve_torch_dtype
+from vrl.models.interfaces.runtime import ModelBuild
 
 
 def standard_mochi_scheduler(scheduler_config: Any, num_steps: int, device: Any) -> Any:
@@ -106,7 +105,8 @@ class MochiModel(LoraModelMixin, DiffusersPipelineModelBase, DiffusionBackboneRu
             mask = request.extra.get("encoder_attention_mask")
         else:
             embeds = require_tensor(
-                request.negative_prompt_embeds, "negative_prompt_embeds",
+                request.negative_prompt_embeds,
+                "negative_prompt_embeds",
             )
             mask = request.extra.get("negative_encoder_attention_mask")
         return DiffusionBranch(
@@ -129,14 +129,14 @@ class MochiModel(LoraModelMixin, DiffusersPipelineModelBase, DiffusionBackboneRu
     # -- backend ownership (called by runtime, not by collectors) -------
 
     @classmethod
-    def from_spec(cls, spec: Any) -> MochiModel:
+    def from_build(cls, build: ModelBuild) -> MochiModel:
         """Load the diffusers Mochi pipeline + freeze non-trainable modules."""
         from diffusers import MochiPipeline
 
-        model_dtype = resolve_torch_dtype(spec.dtype)
-        frozen_dtype, load_kwargs = diffusers_pipeline_dtypes(spec, model_dtype)
+        model_dtype = build.parameter_dtype
+        prompt_encoder_dtype, load_kwargs = diffusers_pipeline_dtypes(build, model_dtype)
         pipeline = MochiPipeline.from_pretrained(
-            spec.model_name_or_path,
+            build.model_name_or_path,
             **load_kwargs,
         )
         pipeline.vae.requires_grad_(False)
@@ -145,11 +145,11 @@ class MochiModel(LoraModelMixin, DiffusersPipelineModelBase, DiffusionBackboneRu
         text_encoder = getattr(pipeline, "text_encoder", None)
         if text_encoder is not None:
             text_encoder.requires_grad_(False)
-            text_encoder.to("cpu", dtype=frozen_dtype)
-        pipeline.vae.to(spec.device, dtype=torch.float32)
+            text_encoder.to("cpu", dtype=prompt_encoder_dtype)
+        pipeline.vae.to(build.device, dtype=torch.float32)
         return cls(
             pipeline=pipeline,
-            device=spec.device,
+            device=build.device,
         )
 
     def _encoder_device(self) -> Any:
@@ -194,16 +194,17 @@ class MochiModel(LoraModelMixin, DiffusersPipelineModelBase, DiffusionBackboneRu
         result: dict[str, Any] = {
             "prompt_embeds": prompt_embeds.to(self.device, dtype=td),
             "prompt_attention_mask": (
-                None if prompt_attention_mask is None
-                else prompt_attention_mask.to(self.device)
+                None if prompt_attention_mask is None else prompt_attention_mask.to(self.device)
             ),
         }
         if do_cfg and negative_prompt_embeds is not None:
             result["negative_prompt_embeds"] = negative_prompt_embeds.to(
-                self.device, dtype=td,
+                self.device,
+                dtype=td,
             )
             result["negative_prompt_attention_mask"] = (
-                None if negative_prompt_attention_mask is None
+                None
+                if negative_prompt_attention_mask is None
                 else negative_prompt_attention_mask.to(self.device)
             )
         return result
@@ -227,14 +228,13 @@ class MochiModel(LoraModelMixin, DiffusersPipelineModelBase, DiffusionBackboneRu
         negative_prompt_attention_mask = encoded.get("negative_prompt_attention_mask")
 
         scheduler = standard_mochi_scheduler(
-            pipe.scheduler.config, request.num_steps, device,
+            pipe.scheduler.config,
+            request.num_steps,
+            device,
         )
         timesteps = scheduler.timesteps
 
-        seed = (
-            request.seed if request.seed is not None
-            else random.randint(0, sys.maxsize)
-        )
+        seed = request.seed if request.seed is not None else random.randint(0, sys.maxsize)
         generator = torch.Generator(device=device)
         generator.manual_seed(seed)
 
@@ -282,13 +282,11 @@ class MochiModel(LoraModelMixin, DiffusersPipelineModelBase, DiffusionBackboneRu
         latent_input = state.latents.to(td)
         # Standard clock t descends 1000->0; Mochi's native clock ascends, so
         # the transformer sees num_train_timesteps - t.
-        timestep_batch = (
-            float(state.num_train_timesteps)
-            - expand_batch_timestep(t, bsz).to(device=latent_input.device, dtype=td)
+        timestep_batch = float(state.num_train_timesteps) - expand_batch_timestep(t, bsz).to(
+            device=latent_input.device, dtype=td
         )
         negative_embeds = (
-            None if state.negative_prompt_embeds is None
-            else state.negative_prompt_embeds.to(td)
+            None if state.negative_prompt_embeds is None else state.negative_prompt_embeds.to(td)
         )
         output = DiffusionBackboneCaller(
             self.transformer,
@@ -328,9 +326,7 @@ class MochiModel(LoraModelMixin, DiffusersPipelineModelBase, DiffusionBackboneRu
         if state.negative_prompt_embeds is not None:
             tensors["negative_prompt_embeds"] = state.negative_prompt_embeds
         if state.negative_prompt_attention_mask is not None:
-            tensors["negative_prompt_attention_mask"] = (
-                state.negative_prompt_attention_mask
-            )
+            tensors["negative_prompt_attention_mask"] = state.negative_prompt_attention_mask
         return tensors
 
     def restore_eval_state(
@@ -368,21 +364,13 @@ class MochiModel(LoraModelMixin, DiffusersPipelineModelBase, DiffusionBackboneRu
 
         def _transform(chunk: torch.Tensor) -> torch.Tensor:
             x = chunk.to(vae.dtype)
-            mean = (
-                torch.tensor(vae.config.latents_mean)
-                .view(1, -1, 1, 1, 1)
-                .to(x.device, x.dtype)
-            )
-            std = (
-                torch.tensor(vae.config.latents_std)
-                .view(1, -1, 1, 1, 1)
-                .to(x.device, x.dtype)
-            )
+            mean = torch.tensor(vae.config.latents_mean).view(1, -1, 1, 1, 1).to(x.device, x.dtype)
+            std = torch.tensor(vae.config.latents_std).view(1, -1, 1, 1, 1).to(x.device, x.dtype)
             return x * std / vae.config.scaling_factor + mean
 
         decoder = ChunkedLatentDecoder(
-            LatentDecodeSpec(
-                transform=LatentDecodeTransform(_transform),
+            LatentDecodePlan(
+                prepare_latents=_transform,
                 vae_decode=lambda chunk: vae.decode(chunk, return_dict=False)[0],
                 postprocess=lambda video: pipe.video_processor.postprocess_video(
                     video,
@@ -398,8 +386,7 @@ class MochiModel(LoraModelMixin, DiffusersPipelineModelBase, DiffusionBackboneRu
 class MochiReplayModel(DiffusersReplayModelBase, MochiModel):
     """Replay-only Mochi model that owns no prompt encoder, VAE, or pipeline."""
 
-
-    def prepare_replay(self, spec: Any) -> None:
+    def prepare_replay(self, build: ModelBuild) -> None:
         """Standardize the replay scheduler onto Mochi's descending-sigma domain.
 
         The generic replay loader builds the scheduler from the shipped config
@@ -407,16 +394,17 @@ class MochiReplayModel(DiffusersReplayModelBase, MochiModel):
         and the SDE log-prob math live in the standard descending domain; the
         replay scheduler must carry the same table the rollout used.
         """
-        num_steps = spec.num_steps
+        num_steps = build.num_steps
         # A scheduler without .config is a hand-injected test double — only
         # real diffusers schedulers carry the shipped (inverted) config that
         # needs standardizing.
         config = getattr(self._scheduler, "config", None)
         if num_steps is not None and config is not None:
             self._scheduler = standard_mochi_scheduler(
-                config, int(num_steps), spec.device,
+                config,
+                int(num_steps),
+                build.device,
             )
-
 
 
 __all__ = [

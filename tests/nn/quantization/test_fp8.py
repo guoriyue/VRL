@@ -128,22 +128,18 @@ def test_swap_targets_big_attention_and_mlp_only():
     assert isinstance(dit.x_embedder, nn.Linear) and not isinstance(dit.x_embedder, Fp8Linear)
 
 
-def test_mlp_only_target_profile_excludes_attention():
+def test_mlp_only_target_profile_excludes_attention() -> None:
     dit = _DiT(dim=1024, heads=8, depth=1)
-
     swapped = swap_linears_to_fp8(dit, target_profile="mlp_only")
-
     assert swapped == ["blocks.0.ff.net.0", "blocks.0.ff.net.2"]
     assert isinstance(dit.blocks[0].attn.to_q, nn.Linear)
     assert not isinstance(dit.blocks[0].attn.to_q, Fp8Linear)
 
 
-def test_invalid_target_profile_raises_before_fp8_mutation():
+def test_invalid_target_profile_raises_before_fp8_mutation() -> None:
     dit = _DiT(dim=1024, heads=8, depth=1)
-
     with pytest.raises(ValueError, match="bogus"):
         swap_linears_to_fp8(dit, target_profile="bogus")
-
     assert not any(isinstance(module, Fp8Linear) for module in dit.modules())
 
 
@@ -200,6 +196,10 @@ def test_swap_excludes_qwen_modulation_and_text_input():
 def test_invalid_recipe_rejected():
     with pytest.raises(ValueError, match="recipe"):
         Fp8Linear(nn.Linear(16, 16), recipe="bogus")
+
+
+def test_fp8_is_the_module_scheme_identity() -> None:
+    assert Fp8Linear.quantization_scheme == "fp8"
 
 
 # --- numeric: per-GEMM and end-to-end drift (GPU) ----------------------------
@@ -289,41 +289,26 @@ def test_master_free_fp8_survives_adapter_only_weight_sync():
     assert torch.equal(policy.lora, update)
 
 
-def test_drop_fp8_masters_compatibility_facade():
-    from vrl.nn.quantization import drop_fp8_masters
-
-    fp8 = Fp8Linear(nn.Linear(16, 16, bias=False))
-
-    assert drop_fp8_masters(fp8) == 16 * 16 * 4
-    assert fp8.weight is None
-
-
 @requires_fp8
-def test_fp8_cache_survives_cpu_to_cuda_dtype_move():
-    """A model-level dtype move must rebuild, not cast, the derived fp8 cache."""
+def test_fp8_cache_survives_cpu_to_cuda_dtype_move() -> None:
+    """A model-level dtype move rebuilds rather than casts the FP8 cache."""
 
     fp8 = Fp8Linear(nn.Linear(128, 128, bias=False).to(torch.bfloat16))
-
     fp8.to("cuda", dtype=torch.bfloat16)
-
     assert fp8.weight_fp8.dtype is torch.float8_e4m3fn
     assert fp8.weight_scale.dtype is torch.float32
-    out = fp8(torch.randn(16, 128, device="cuda", dtype=torch.bfloat16))
-    assert out.shape == (16, 128)
+    assert fp8(torch.randn(16, 128, device="cuda", dtype=torch.bfloat16)).shape == (16, 128)
 
 
 @requires_fp8
-def test_master_free_fp8_cache_moves_without_dtype_cast():
+def test_master_free_fp8_cache_moves_without_dtype_cast() -> None:
     fp8 = Fp8Linear(nn.Linear(128, 128, bias=False).to(torch.bfloat16))
     fp8.drop_master()
-
     fp8.to("cuda", dtype=torch.bfloat16)
-
     assert fp8.weight_fp8.device.type == "cuda"
     assert fp8.weight_fp8.dtype is torch.float8_e4m3fn
     assert fp8.weight_scale.dtype is torch.float32
-    out = fp8(torch.randn(16, 128, device="cuda", dtype=torch.bfloat16))
-    assert out.shape == (16, 128)
+    assert fp8(torch.randn(16, 128, device="cuda", dtype=torch.bfloat16)).shape == (16, 128)
 
 
 @requires_fp8
@@ -350,7 +335,7 @@ def test_fp8_linear_preserves_leading_dims_and_bias():
     assert out.shape == (2, 64, 4096)
 
 
-# --- fp8 rollout guards: no silent bf16 when precision.rollout=fp8 (CPU) ---------
+# --- FP8 rollout guards: no silent base-dtype fallback (CPU) ---------------------
 
 
 class _SwapModel:
@@ -363,25 +348,34 @@ class _SwapModel:
         return self._swapped
 
 
+def _rollout_spec(
+    quantization: str | None,
+    *,
+    recipe: str | None = None,
+    **values,
+) -> SimpleNamespace:
+    return SimpleNamespace(
+        rollout=SimpleNamespace(
+            quantization_format=quantization,
+            quantization_recipe=recipe,
+            base_weight_sync=True,
+        ),
+        **values,
+    )
+
+
 def test_apply_rollout_quantization_raises_when_swap_matches_nothing():
     from vrl.models.loader import apply_rollout_quantization
 
     with pytest.raises(RuntimeError, match="matched 0 linears"):
-        apply_rollout_quantization(_SwapModel([]), SimpleNamespace(rollout_quantization="fp8"))
+        apply_rollout_quantization(_SwapModel([]), _rollout_spec("fp8"))
 
 
 def test_apply_rollout_quantization_noop_and_count_when_not_fp8_or_swapped():
     from vrl.models.loader import apply_rollout_quantization
 
-    assert (
-        apply_rollout_quantization(_SwapModel([]), SimpleNamespace(rollout_quantization=None)) == 0
-    )
-    assert (
-        apply_rollout_quantization(
-            _SwapModel(["a", "b"]), SimpleNamespace(rollout_quantization="fp8")
-        )
-        == 2
-    )
+    assert apply_rollout_quantization(_SwapModel([]), _rollout_spec(None)) == 0
+    assert apply_rollout_quantization(_SwapModel(["a", "b"]), _rollout_spec("fp8")) == 2
 
 
 def test_apply_rollout_quantization_rejects_blockwise_with_compile():
@@ -391,9 +385,9 @@ def test_apply_rollout_quantization_rejects_blockwise_with_compile():
     with pytest.raises(ValueError, match=r"blockwise.*torch_compile"):
         apply_rollout_quantization(
             _SwapModel(["a"]),
-            SimpleNamespace(
-                rollout_quantization="fp8",
-                rollout_quantization_recipe="blockwise",
+            _rollout_spec(
+                "fp8",
+                recipe="blockwise",
                 torch_compile={"enable": True, "mode": "default"},
             ),
         )
@@ -401,9 +395,9 @@ def test_apply_rollout_quantization_rejects_blockwise_with_compile():
     model = _SwapModel(["a"])
     apply_rollout_quantization(
         model,
-        SimpleNamespace(
-            rollout_quantization="fp8",
-            rollout_quantization_recipe="blockwise",
+        _rollout_spec(
+            "fp8",
+            recipe="blockwise",
             torch_compile=None,
         ),
     )
@@ -411,9 +405,9 @@ def test_apply_rollout_quantization_rejects_blockwise_with_compile():
     model = _SwapModel(["a"])
     apply_rollout_quantization(
         model,
-        SimpleNamespace(
-            rollout_quantization="fp8",
-            rollout_quantization_recipe="rowwise",
+        _rollout_spec(
+            "fp8",
+            recipe="rowwise",
             torch_compile={"enable": True, "mode": "default"},
         ),
     )
@@ -421,46 +415,32 @@ def test_apply_rollout_quantization_rejects_blockwise_with_compile():
 
 
 def test_apply_rollout_quantization_passes_recipe_through():
-    """precision.rollout_recipe reaches the fp8 swap; absent → rowwise default."""
+    """The nested rollout quantization recipe reaches the FP8 swap."""
     from vrl.models.loader import apply_rollout_quantization
 
     model = _SwapModel(["a"])
     apply_rollout_quantization(
         model,
-        SimpleNamespace(rollout_quantization="fp8", rollout_quantization_recipe="blockwise"),
+        _rollout_spec("fp8", recipe="blockwise"),
     )
     assert model.recipe_seen == "blockwise"
 
     model = _SwapModel(["a"])
-    apply_rollout_quantization(model, SimpleNamespace(rollout_quantization="fp8"))
+    apply_rollout_quantization(model, _rollout_spec("fp8"))
     assert model.recipe_seen == "rowwise"
 
 
-@pytest.mark.parametrize("scheme", ["fp8", "fp4"])
+@pytest.mark.parametrize("scheme", ["fp8", "nvfp4"])
 def test_backstop_raises_for_any_requested_scheme_when_unquantized(scheme):
-    """Any requested rollout quantization with no matching module fails loud."""
+    """Scheme-agnostic: any requested rollout quantization with no QuantizedLinear
+    → loud fail, not silent bf16 (covers NVFP4 and future schemes uniformly)."""
     from vrl.models.loader import assert_rollout_quantization_applied
 
     model = SimpleNamespace(
         transformer=nn.Sequential(nn.Linear(16, 16))
     )  # plain, no QuantizedLinear
     with pytest.raises(RuntimeError, match=rf"0 {scheme} quantized linear"):
-        assert_rollout_quantization_applied(
-            model, SimpleNamespace(rollout_quantization=scheme, task_variant="t2i")
-        )
-
-
-def test_backstop_rejects_a_different_quantization_scheme():
-    """An FP4 request must not pass merely because an FP8 module exists."""
-    from vrl.models.loader import assert_rollout_quantization_applied
-
-    model = SimpleNamespace(transformer=nn.Sequential(Fp8Linear(nn.Linear(16, 16))))
-
-    with pytest.raises(RuntimeError, match="0 fp4 quantized linear"):
-        assert_rollout_quantization_applied(
-            model,
-            SimpleNamespace(rollout_quantization="fp4", task_variant="t2i"),
-        )
+        assert_rollout_quantization_applied(model, _rollout_spec(scheme))
 
 
 def test_backstop_ok_when_quantized_module_present_incl_compiled():
@@ -471,22 +451,29 @@ def test_backstop_ok_when_quantized_module_present_incl_compiled():
         Fp8Linear(nn.Linear(16, 16)), QuantizedLinear
     )  # scheme subclasses the marker
     real = nn.Sequential(Fp8Linear(nn.Linear(16, 16)))  # CPU construct is fine
-    assert_rollout_quantization_applied(
-        SimpleNamespace(transformer=real), SimpleNamespace(rollout_quantization="fp8")
-    )
+    assert_rollout_quantization_applied(SimpleNamespace(transformer=real), _rollout_spec("fp8"))
     # torch.compile wrapper exposes _orig_mod — the guard must unwrap it
     compiled = SimpleNamespace(_orig_mod=real)
     assert_rollout_quantization_applied(
-        SimpleNamespace(transformer=compiled), SimpleNamespace(rollout_quantization="fp8")
+        SimpleNamespace(transformer=compiled), _rollout_spec("fp8")
     )
+
+
+def test_backstop_rejects_a_different_quantization_scheme() -> None:
+    from vrl.models.loader import assert_rollout_quantization_applied
+
+    fp8_policy = nn.Sequential(Fp8Linear(nn.Linear(16, 16)))
+    with pytest.raises(RuntimeError, match="0 nvfp4 quantized linear"):
+        assert_rollout_quantization_applied(
+            SimpleNamespace(transformer=fp8_policy),
+            _rollout_spec("nvfp4"),
+        )
 
 
 def test_backstop_noop_when_no_quantization_requested():
     from vrl.models.loader import assert_rollout_quantization_applied
 
-    assert_rollout_quantization_applied(
-        SimpleNamespace(transformer=None), SimpleNamespace(rollout_quantization=None)
-    )
+    assert_rollout_quantization_applied(SimpleNamespace(transformer=None), _rollout_spec(None))
 
 
 # --- runtime wiring: the swap reaches the rollout builder from precision (CPU) --
@@ -506,32 +493,53 @@ def test_apply_rollout_quantization_dispatches_by_scheme():
 
     model = _FakeModel()
     # bf16/fp16/fp32 rollout: a load-time dtype, nothing to swap
-    apply_rollout_quantization(model, SimpleNamespace(rollout_quantization=None))
+    apply_rollout_quantization(model, _rollout_spec(None))
     assert model.recipes == []
     # an unimplemented scheme must NOT silently no-op (that was the old footgun) — raise
     with pytest.raises(NotImplementedError, match="no rollout swap"):
-        apply_rollout_quantization(model, SimpleNamespace(rollout_quantization="int8"))
+        apply_rollout_quantization(model, _rollout_spec("int8"))
     assert model.recipes == []
     # fp8: the swap fires
-    apply_rollout_quantization(model, SimpleNamespace(rollout_quantization="fp8"))
+    apply_rollout_quantization(model, _rollout_spec("fp8"))
     assert model.recipes == ["rowwise"]
 
 
-def test_extract_runtime_spec_derives_fp8_from_precision_rollout():
+def test_resolve_model_build_derives_fp8_from_precision_rollout():
     from omegaconf import OmegaConf
 
-    from vrl.models.runtime_config import extract_runtime_spec
+    from vrl.models.model_build import resolve_model_build
 
     fp8_cfg = OmegaConf.create(
-        {"model": {"path": "x"}, "precision": {"forward": "bf16", "rollout": "fp8"}}
+        {
+            "model": {"path": "x"},
+            "precision": {
+                "training": {"dtype": "bf16"},
+                "rollout": {
+                    "dtype": "bf16",
+                    "quantization": {"format": "fp8"},
+                },
+            },
+        }
     )
-    spec = extract_runtime_spec(fp8_cfg, "cuda", torch.bfloat16, task_variant="t2i")
-    assert spec.rollout_quantization == "fp8"
-    assert spec.dtype is torch.bfloat16  # storage stays the bf16 master
+    build = resolve_model_build(fp8_cfg, "cuda")
+    assert build.rollout is not None
+    assert build.rollout.quantization_format == "fp8"
+    assert build.rollout.autocast_dtype is torch.bfloat16
+    assert build.parameter_dtype is torch.bfloat16  # this family uses a bf16 source master
 
-    bf16_cfg = OmegaConf.create({"model": {"path": "x"}, "precision": "bf16"})
-    spec2 = extract_runtime_spec(bf16_cfg, "cuda", torch.bfloat16, task_variant="t2i")
-    assert spec2.rollout_quantization is None
+    bf16_cfg = OmegaConf.create(
+        {
+            "model": {"path": "x"},
+            "precision": {
+                "training": {"dtype": "bf16"},
+                "rollout": {"dtype": "bf16"},
+            },
+        }
+    )
+    plain_build = resolve_model_build(bf16_cfg, "cuda")
+    assert plain_build.rollout is not None
+    assert plain_build.rollout.quantization_format is None
+    assert plain_build.rollout.autocast_dtype is torch.bfloat16
 
 
 @requires_fp8

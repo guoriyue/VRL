@@ -16,20 +16,20 @@ import torch
 
 
 @dataclass(frozen=True, slots=True)
-class TinyPipelineSpec:
+class TinyPipelineFixture:
     """Pinned tiny HF pipeline fixture."""
 
-    repo: str
+    repo_id: str
     revision: str
 
 
-_TINY_PIPELINES = {
-    "wan-t2v": TinyPipelineSpec(
-        repo="hf-internal-testing/tiny-wan-pipe",
+_TINY_PIPELINE_FIXTURES = {
+    "wan-t2v": TinyPipelineFixture(
+        repo_id="hf-internal-testing/tiny-wan-pipe",
         revision="8a97b5eb008dd10f4ac0d3f55d41f4acb3d65021",
     ),
-    "sd3": TinyPipelineSpec(
-        repo="hf-internal-testing/tiny-sd3-pipe",
+    "sd3": TinyPipelineFixture(
+        repo_id="hf-internal-testing/tiny-sd3-pipe",
         revision="309fbef85960712c84ff0793d3594951235fff9b",
     ),
 }
@@ -39,10 +39,10 @@ class TinyPipelineUnavailable(RuntimeError):
     """Raised when a tiny pipeline cannot be fetched (offline / Hub down)."""
 
 
-def archs_with_tiny_pipe() -> tuple[str, ...]:
+def architectures_with_tiny_pipeline() -> tuple[str, ...]:
     """Architecture keys that have a ~1 MB tiny HF pipeline (for parametrize)."""
 
-    return tuple(_TINY_PIPELINES)
+    return tuple(_TINY_PIPELINE_FIXTURES)
 
 
 def load_tiny_pipeline(name: str, **from_pretrained: Any) -> Any:
@@ -55,14 +55,14 @@ def load_tiny_pipeline(name: str, **from_pretrained: Any) -> Any:
     cleanly in offline CI.
     """
 
-    spec = _TINY_PIPELINES[name]
+    fixture = _TINY_PIPELINE_FIXTURES[name]
     from_pretrained.setdefault("torch_dtype", torch.float32)
-    from_pretrained.setdefault("revision", spec.revision)
+    from_pretrained.setdefault("revision", fixture.revision)
 
     import requests.exceptions
     from diffusers import DiffusionPipeline
 
     try:
-        return DiffusionPipeline.from_pretrained(spec.repo, **from_pretrained)
+        return DiffusionPipeline.from_pretrained(fixture.repo_id, **from_pretrained)
     except (requests.exceptions.RequestException, OSError) as exc:
-        raise TinyPipelineUnavailable(f"{spec.repo}: {exc}") from exc
+        raise TinyPipelineUnavailable(f"{fixture.repo_id}: {exc}") from exc

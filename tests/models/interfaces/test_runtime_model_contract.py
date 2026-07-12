@@ -95,12 +95,12 @@ class _DiffusionModelBaseStub(DiffusionModelBase):
         return latents
 
     @classmethod
-    def from_spec(cls, spec):
-        del spec
+    def from_build(cls, build):
+        del build
         return cls()
 
-    def apply_lora(self, spec):
-        del spec
+    def apply_lora(self, build):
+        del build
 
     def apply_full_finetune(self):
         return None

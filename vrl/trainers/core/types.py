@@ -82,6 +82,11 @@ class DebugConfig:
 
     # First-step log-prob round-trip check (collected old_lp vs fresh_lp).
     first_step: bool = field(default=False)
+    max_abs_logprob_diff: float = field(default=0.01)
+
+    def __post_init__(self) -> None:
+        if float(self.max_abs_logprob_diff) < 0:
+            raise ValueError("trainer.debug.max_abs_logprob_diff must be >= 0")
 
 
 @dataclass(slots=True)
@@ -177,8 +182,8 @@ class TrainerConfig:
     Each field also declares its YAML home in ``metadata={"yaml": ...}``:
     a section name for scalars (the YAML key equals the field name), a dotted
     section path for nested config dataclasses, or ``"bridged"`` for values
-    computed by ``build_trainer_config`` (the precision policy expands one
-    ``precision:`` key into the four precision fields). The builder derives the
+    computed by ``build_trainer_config`` (the precision policy projects into
+    the two trainer-side precision fields). The builder derives the
     whole layout from this metadata — there is no separate layout table to
     maintain, and a field without metadata fails loudly at build time.
     """
@@ -273,7 +278,7 @@ class TrainerConfig:
     # --- precision (bridged from the unified precision policy) ---
     # The replay/training forward dtype (canonical fp32/bf16/fp16); the trainer
     # autocasts to it (AMP), so the forward is mixed, not uniformly this dtype.
-    # Empty -> fp32 ("no"). Production always bridges this from precision.train;
+    # Empty -> fp32 ("no"). Production bridges this from precision.training.dtype;
     # bare construction (tests) defaults to fp32.
     train_precision: str = field(default="", metadata={"yaml": "bridged"})
     # off | full | selective (or bool: true=full, false=off). Activation
@@ -285,12 +290,11 @@ class TrainerConfig:
     # larger batches than off -- the MFU-preferred mode for large-batch runs that
     # OOM without checkpointing (measured: SPRINT_training_mfu_selective_checkpointing).
     gradient_checkpointing: bool | str = field(default=False, metadata={"yaml": "actor"})
-    # Rollout (generation) compute precision. Empty -> treated as same as
-    # compute. The drift guard compares this against the compute precision to
-    # decide whether to enforce parity.
+    # Rollout execution signature (for example bf16 or bf16+fp8). Empty ->
+    # treated as the training precision. The drift guard compares the two to
+    # decide whether to enforce parity without adding rollout-only build fields
+    # to TrainerConfig.
     rollout_precision: str = field(default="", metadata={"yaml": "bridged"})
-    # Math precision used by replay log-prob arithmetic, bridged for guard reports.
-    math_precision: str = field(default="fp32", metadata={"yaml": "bridged"})
 
     # --- lifecycle ---
     save_freq: int = field(default=50, metadata={"yaml": "trainer"})

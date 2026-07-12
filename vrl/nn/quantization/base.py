@@ -1,10 +1,8 @@
-"""Shared base for quantized linear schemes.
+"""Shared ownership contract for rollout-side quantized linear schemes.
 
-Every rollout quantization scheme — ``Fp8Linear`` / ``Fp4Linear`` today and
-future ``Int8Linear`` siblings — subclasses :class:`QuantizedLinear`. This is the
-single contract the rest of the stack keys off: the rollout backstop guard reads
-each module's :attr:`quantization_scheme` instead of maintaining a per-scheme type
-list, so a newly added scheme is covered when it implements this contract.
+Every rollout quantization scheme subclasses :class:`QuantizedLinear`. Runtime
+guards identify the exact requested scheme through ``quantization_scheme`` while
+master cleanup and device moves remain scheme-neutral.
 """
 
 from __future__ import annotations
@@ -16,17 +14,13 @@ from torch import nn
 
 
 class QuantizedLinear(nn.Module):
-    """Marker base for a low-precision drop-in ``nn.Linear`` replacement.
+    """Base for a low-precision drop-in ``nn.Linear`` replacement.
 
-    Subclasses implement the quantized forward and declare their derived cache
-    buffers through :attr:`cache_buffer_names`. The base owns ``Module._apply``
-    because packed FP4/FP8 caches must move devices without being cast by
-    ``module.to(dtype=...)``. When a master exists, caches are rebuilt from the
-    moved/cast master; master-free rollout caches preserve their exact dtypes.
-
-    Every scheme also implements ``drop_master() -> int`` (free the
-    high-precision master, return bytes freed), so
-    :func:`drop_quantized_masters` covers it without a per-scheme type list.
+    Subclasses declare their derived caches through ``cache_buffer_names``.
+    ``Module.to(dtype=...)`` must never cast packed FP4/FP8 caches into the model's
+    base dtype: when a source master exists, caches are rebuilt from the moved
+    master; master-free rollout caches move as raw bytes and preserve their exact
+    format.
     """
 
     quantization_scheme: str
@@ -34,10 +28,12 @@ class QuantizedLinear(nn.Module):
 
     def _requantize_weight(self) -> None:
         """Rebuild derived low-precision buffers from ``self.weight``."""
+
         raise NotImplementedError
 
     def drop_master(self) -> int:
-        """Free the high-precision master and return the released bytes."""
+        """Free the high-precision source master and return released bytes."""
+
         raise NotImplementedError
 
     @staticmethod
@@ -45,12 +41,7 @@ class QuantizedLinear(nn.Module):
         tensor: torch.Tensor,
         fn: Callable[[torch.Tensor], torch.Tensor],
     ) -> torch.Tensor:
-        """Apply a module move while shielding a packed cache from dtype casts.
-
-        ``Module.to(device, dtype=...)`` casts floating buffers. Viewing the
-        cache as bytes makes the same closure move its storage without changing
-        its format; restoring the original view preserves FP4/FP8/FP32 exactly.
-        """
+        """Apply a module move while shielding a packed cache from dtype casts."""
 
         original_shape = tensor.shape
         original_dtype = tensor.dtype
@@ -58,11 +49,11 @@ class QuantizedLinear(nn.Module):
         return fn(raw).view(original_dtype).reshape(original_shape)
 
     def _apply(self, fn, recurse: bool = True):
-        """Move/cast masters normally and keep quantized caches format-stable."""
+        """Move/cast source masters normally and keep derived caches format-stable."""
 
         caches = {name: self._buffers[name] for name in self.cache_buffer_names}
-        # ``nn.Module._apply`` skips ``None`` buffers. This prevents shell FP4
-        # copy failures and the more dangerous silent FP8 -> bf16 cache cast.
+        # ``nn.Module._apply`` skips ``None`` buffers. Hiding caches prevents an
+        # FP8 -> BF16 cast and avoids unsupported copy kernels for packed FP4.
         for name in caches:
             self._buffers[name] = None
         try:

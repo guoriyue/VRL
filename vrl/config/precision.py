@@ -1,39 +1,19 @@
-"""Unified precision policy: one config surface for all dtype axes.
+"""Resolve public precision config into role-specific runtime policy.
 
-A run's public precision is one training-forward dtype plus protected math/frozen
-defaults:
+``dtype`` is the ordinary parameter/autocast precision for a role. Selective
+quantization is a separate kernel policy layered on that dtype: FP8 replaces
+eligible attention/MLP Linears, while experimental NVFP4 conservatively replaces
+eligible MLP Linears only. Unswapped operations keep the role dtype.
 
-- ``train``    : trainer replay transformer forward dtype; the generation rollout
-                 forward follows it unless ``rollout`` overrides it
-- ``math``     : the numerically-sensitive algorithm math *outside* the
-                 transformer (the SDE step / log-probability / loss reductions,
-                 e.g. ``sde_step_with_logprob``). torch autocast keeps such ops
-                 in fp32 automatically for the NN; this axis is the same idea,
-                 region-level, for our custom math autocast doesn't cover.
-- ``frozen``   : frozen text encoders / VAE
+Rollout dtype defaults to training dtype. Prompt-encoder dtype defaults to the
+resolved rollout dtype; the canonical base preset explicitly selects fp16 to
+preserve its established memory policy. VAE precision is family-owned and is
+not represented by this prompt-encoder axis. Diffusion math defaults to fp32.
 
-Users normally set a scalar (``precision: fp16`` → rollout/replay forward both
-use fp16, ``math`` stays fp32). A mapping may override ``math`` or ``frozen``, and
-it must still set one shared ``train`` dtype.
-
-A mapping may also set an explicit ``rollout`` dtype that differs from
-``train``. This is the **experimental** split: it is the only way to express an
-fp8/fp4 rollout against a bf16/fp32 replay, which is inherently a rollout-vs-replay
-precision-correction problem (the collection-time logprob no longer equals the
-replay logprob). fp8/fp4 are rollout-only: the scalar form (``precision: fp8``)
-and the ``train``/``math`` axes reject them, because a sub-byte replay/training
-forward has no stable gradient path. The split is reachable only by deliberately
-writing ``{train: bf16, rollout: fp8}``. An optional ``rollout_recipe`` picks the
-quantization kernel recipe (fp8: ``rowwise`` default / ``tensorwise`` /
-``blockwise`` via vLLM's block kernel). The trainer config builder then derives
-the correction path automatically: rollout-recorded logprobs are used as the old
-policy anchor, drift metrics are reported, TIS/RS are enabled, and the guard
-fails only on catastrophic/non-finite drift unless the user provides an explicit
-expert ``trainer.precision_*`` block.
-
-This module is torch-free (config layer): it resolves precision *policy* only.
-Consumers materialize a canonical axis name into a ``torch.dtype`` via
-:func:`vrl.models.dtypes.resolve_torch_dtype`.
+Training quantization is part of the structural schema so the eventual training
+runtime will use the same role shape, but policy resolution fails until a real
+autograd-capable consumer exists. This module remains torch-free; runtime
+boundaries materialize dtype tokens through ``vrl.models.dtypes``.
 """
 
 from __future__ import annotations
@@ -44,23 +24,70 @@ from typing import Any
 
 _MISSING = object()
 
-# Quantized names are a protocol boundary shared by validation and derived
-# storage/swap properties. Keep the vocabulary in one place so adding a scheme
-# cannot make it legal in one branch but silently plain-dtype in another.
-_QUANTIZED = ("fp8", "fp4")
-# ``no`` remains a tolerated spelling for low-level parser boundaries, but live
-# YAML should use the canonical top-level names.
-_CANONICAL = ("fp32", "bf16", "fp16", *_QUANTIZED)
+# Protocol vocabularies are a real config boundary. Keep recipe compatibility in
+# one deliberately isolated table so config resolution, defaults, and error text
+# cannot drift when a new format lands.
+_PLAIN_DTYPES = ("fp32", "bf16", "fp16")
 
 
-def _is_quantized(value: str) -> bool:
-    """Whether a precision token names a rollout GEMM scheme, not a storage dtype."""
+@dataclass(frozen=True, slots=True)
+class _QuantizationFormatRules:
+    allowed_recipes: tuple[str, ...]
+    default_recipe: str | None
 
-    return value in _QUANTIZED
+
+_QUANTIZATION_FORMAT_RULES = {
+    "fp8": _QuantizationFormatRules(
+        allowed_recipes=("rowwise", "tensorwise", "blockwise"),
+        default_recipe="rowwise",
+    ),
+    # NVFP4 is the complete two-level scaling scheme, not an FP8-style recipe.
+    "nvfp4": _QuantizationFormatRules(allowed_recipes=(), default_recipe=None),
+}
+_PRECISION_TOKENS = (*_PLAIN_DTYPES, *_QUANTIZATION_FORMAT_RULES)
+
+
+# These dataclasses define the public YAML shape consumed by the unknown-key
+# walker. The parser below owns behavior, while schema keys are derived from this
+# source instead of repeated as hand-maintained allowed-key tuples.
+@dataclass(frozen=True, slots=True)
+class DTypePrecisionConfig:
+    dtype: Any
+
+
+@dataclass(frozen=True, slots=True)
+class QuantizationConfig:
+    format: Any
+    recipe: Any = None
+
+
+@dataclass(frozen=True, slots=True)
+class TrainingPrecisionConfig:
+    dtype: Any
+    quantization: QuantizationConfig | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class PromptEncodersPrecisionConfig:
+    dtype: Any
+
+
+@dataclass(frozen=True, slots=True)
+class RolloutPrecisionConfig:
+    dtype: Any = None
+    quantization: QuantizationConfig | None = None
+    prompt_encoders: PromptEncodersPrecisionConfig | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class PrecisionConfig:
+    training: TrainingPrecisionConfig
+    rollout: RolloutPrecisionConfig | None = None
+    diffusion_math: DTypePrecisionConfig | None = None
 
 
 def normalize_precision(value: Any, *, default: str = "fp32") -> str:
-    """Map a precision token to a canonical name (``fp32``/``bf16``/``fp16``/``fp8``/``fp4``)."""
+    """Normalize a known precision token at a config or tool boundary."""
 
     if value is None:
         return default
@@ -69,164 +96,230 @@ def normalize_precision(value: Any, *, default: str = "fp32") -> str:
         return default
     if token == "no":
         return "fp32"
-    if token not in _CANONICAL:
+    if token not in _PRECISION_TOKENS:
         raise ValueError(
-            f"precision must be one of {_CANONICAL} (or legacy 'no'); got {value!r}",
+            f"precision must be one of {_PRECISION_TOKENS} (or legacy 'no'); got {value!r}",
+        )
+    return token
+
+
+def _normalize_plain_dtype(value: Any, *, path: str) -> str:
+    token = normalize_precision(value)
+    if token not in _PLAIN_DTYPES:
+        raise ValueError(
+            f"{path} must be one of {_PLAIN_DTYPES}; got {token!r}. FP8/NVFP4 "
+            "belongs under a `quantization.format` key, not a `dtype` key.",
         )
     return token
 
 
 @dataclass(frozen=True, slots=True)
-class PrecisionPolicy:
-    """Resolved precision for the four dtype axes (canonical string names)."""
+class QuantizationPolicy:
+    """Selective low-precision kernel policy layered on a role's base dtype."""
 
-    train: str
-    rollout: str
-    math: str
-    frozen: str
-    # Quantization kernel recipe for a quantized (fp8/fp4) rollout, or None for
-    # the scheme default (fp8: "rowwise"). Only legal alongside a quantized
-    # rollout — on a plain-dtype rollout it would be a silent no-op knob. The
-    # recipe vocabulary is owned by the kernel layer (Fp8Linear raises on an
-    # unknown recipe), not duplicated here. "blockwise" is additionally rejected
-    # when model.torch_compile is on (build-time guard in
-    # apply_rollout_quantization: the vLLM kernel graph-breaks inductor and the
-    # compiled forward is ~10x slower than eager).
-    rollout_recipe: str | None = None
+    format: str
+    recipe: str | None = None
 
     def __post_init__(self) -> None:
-        for axis in (self.train, self.rollout, self.math, self.frozen):
-            if axis not in _CANONICAL:
-                raise ValueError(f"invalid precision axis value: {axis!r}")
-        if _is_quantized(self.train):
+        format_name = str(self.format).lower().strip()
+        recipe = str(self.recipe).lower().strip() if self.recipe is not None else None
+        if format_name == "fp4":
             raise ValueError(
-                f"precision.train={self.train!r} is invalid: fp8/fp4 is a "
-                "rollout-only quantized GEMM dtype. The replay/training forward "
-                "must stay fp32/bf16/fp16 for stable gradients. Use "
-                f"`{{train: bf16, rollout: {self.train}}}`.",
+                "quantization.format='fp4' was replaced by the precise scheme name "
+                "'nvfp4'; use `format: nvfp4` without a recipe.",
             )
-        if _is_quantized(self.math):
+        format_rules = _QUANTIZATION_FORMAT_RULES.get(format_name)
+        if format_rules is None:
             raise ValueError(
-                f"precision.math={self.math!r} is invalid: the SDE/logprob/loss "
-                "math axis must stay fp32/bf16/fp16, never sub-byte.",
+                "quantization.format must be one of "
+                f"{tuple(_QUANTIZATION_FORMAT_RULES)}; got {self.format!r}",
             )
-        if _is_quantized(self.frozen):
+        if recipe is None:
+            recipe = format_rules.default_recipe
+        elif recipe not in format_rules.allowed_recipes:
+            if not format_rules.allowed_recipes:
+                raise ValueError(
+                    f"quantization.format={format_name!r} does not accept a recipe; "
+                    "remove the `recipe` key.",
+                )
             raise ValueError(
-                f"precision.frozen={self.frozen!r} is invalid: frozen text encoders "
-                "and VAEs use a storage dtype and have no fp8/fp4 quantized path.",
+                f"quantization.recipe={recipe!r} is invalid for format "
+                f"{format_name!r}; expected one of {format_rules.allowed_recipes}.",
             )
-        if self.rollout_recipe is not None and self.rollout_quantization is None:
+        object.__setattr__(self, "format", format_name)
+        object.__setattr__(self, "recipe", recipe)
+
+
+@dataclass(frozen=True, slots=True)
+class RolePrecision:
+    """Base dtype plus optional selective quantization for one runtime role."""
+
+    dtype: str
+    quantization: QuantizationPolicy | None = None
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "dtype",
+            _normalize_plain_dtype(self.dtype, path="precision role dtype"),
+        )
+        if self.quantization is not None and not isinstance(
+            self.quantization,
+            QuantizationPolicy,
+        ):
+            raise TypeError("role quantization must be a QuantizationPolicy or None")
+
+    @property
+    def label(self) -> str:
+        """Stable execution label containing both base dtype and kernel policy."""
+
+        if self.quantization is None:
+            return self.dtype
+        return f"{self.dtype}+{self.quantization.format}"
+
+
+@dataclass(frozen=True, slots=True)
+class PrecisionPolicy:
+    """Resolved precision for both roles, protected math, and prompt encoders."""
+
+    training: RolePrecision
+    rollout: RolePrecision
+    diffusion_math: str
+    prompt_encoder_dtype: str
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.training, RolePrecision):
+            raise TypeError("precision.training must resolve to RolePrecision")
+        if not isinstance(self.rollout, RolePrecision):
+            raise TypeError("precision.rollout must resolve to RolePrecision")
+        object.__setattr__(
+            self,
+            "diffusion_math",
+            _normalize_plain_dtype(
+                self.diffusion_math,
+                path="precision.diffusion_math.dtype",
+            ),
+        )
+        object.__setattr__(
+            self,
+            "prompt_encoder_dtype",
+            _normalize_plain_dtype(
+                self.prompt_encoder_dtype,
+                path="precision.rollout.prompt_encoders.dtype",
+            ),
+        )
+        if self.training.quantization is not None:
             raise ValueError(
-                f"precision.rollout_recipe={self.rollout_recipe!r} requires a "
-                f"quantized rollout (fp8/fp4); rollout={self.rollout!r} is a plain "
-                "dtype with no kernel recipe, so the knob would silently do nothing.",
+                "precision.training.quantization is unavailable: the trainer has no "
+                "quantized Linear forward/backward consumer. Remove the block until "
+                "that runtime is implemented; VRL will not accept a silent no-op.",
             )
 
     @property
-    def rollout_quantization(self) -> str | None:
-        """Rollout GEMM scheme, or ``None`` when rollout uses a storage dtype."""
+    def stages_match(self) -> bool:
+        """Whether rollout and replay use the same dtype and kernel policy."""
 
-        return self.rollout if _is_quantized(self.rollout) else None
-
-    @property
-    def rollout_storage_precision(self) -> str:
-        """Storage dtype token used to load the rollout model's master weights."""
-
-        return self.train if self.rollout_quantization is not None else self.rollout
-
-
-def precision_bridge_fields(policy: PrecisionPolicy) -> dict[str, str]:
-    """The TrainerConfig fields bridged from a resolved precision policy.
-
-    Single source for the policy -> derived-fields expansion so the trainer
-    builder (dict payload) and the online recipe (TrainerConfig attrs) cannot
-    drift. ``train_precision`` is the replay/training forward dtype; rollout and
-    math are exposed separately so the precision drift guard can prove both
-    sides stayed aligned.
-    """
-    return {
-        "train_precision": policy.train,
-        "rollout_precision": policy.rollout,
-        "math_precision": policy.math,
-    }
-
-
-def _frozen_default(rollout: str) -> str:
-    # Frozen modules (encoders/VAE) live on the rollout/generation side; keep the
-    # historical "fp32 run -> fp16 frozen (save memory)" behavior, otherwise
-    # follow the rollout storage dtype. A sub-byte rollout (fp8/fp4) quantizes
-    # only the policy GEMM; the frozen encoders/VAE have no quantized path, so
-    # default them to fp16 rather than an unusable fp8/fp4 storage dtype.
-    if _is_quantized(rollout):
-        return "fp16"
-    return "fp16" if rollout == "fp32" else rollout
-
-
-def _policy_from_train(
-    train: str,
-    *,
-    rollout: str | None = None,
-    math: str = "fp32",
-    frozen: str | None = None,
-) -> PrecisionPolicy:
-    rollout = rollout or train
-    frozen = frozen or _frozen_default(rollout)
-    return PrecisionPolicy(train=train, rollout=rollout, math=math, frozen=frozen)
+        return self.training == self.rollout
 
 
 def resolve_precision_policy(cfg: Any) -> PrecisionPolicy:
-    """Resolve the precision policy from a run config.
-
-    A public config must use the top-level ``precision`` block. The returned
-    policy still exposes ``train`` and ``rollout`` internally so trainer/debug
-    code can report both sides, but they are deliberately derived from the same
-    forward dtype.
-    """
+    """Resolve the required nested top-level ``precision`` block."""
 
     block = _select(cfg, "precision", _MISSING)
     if block is _MISSING:
         raise ValueError(
-            "top-level `precision` is required. Use `precision: fp16`, "
-            "`precision: bf16`, or `precision: fp32`.",
+            "top-level `precision` is required. Configure "
+            "`precision.training.dtype`; add a `precision.rollout` block only "
+            "for a rollout-specific override.",
         )
-    return _from_precision_block(block)
-
-
-def _from_precision_block(block: Any) -> PrecisionPolicy:
-    # Unknown keys inside a precision mapping are reported by the whole-tree
-    # walker (vrl.config.unknown_keys); this parser only reads the known axes.
     if isinstance(block, (str, bool)):
-        scalar = normalize_precision(block)
-        if _is_quantized(scalar):
-            raise ValueError(
-                f"precision: {scalar!r} is invalid as a scalar: fp8/fp4 is a "
-                "rollout-only quantized GEMM dtype and a scalar would set the "
-                "replay forward to it too. Use the mapping form "
-                f"`precision: {{train: bf16, rollout: {scalar}}}`.",
-            )
-        return _policy_from_train(scalar)
-    train = normalize_precision(_select(block, "train", "fp32"))
-    # `rollout` is the experimental split (fp8/fp4 rollout vs bf16/fp32 replay);
-    # absent, it follows `train` so the common path stays single-dtype.
-    rollout_raw = _select(block, "rollout", None)
-    rollout = normalize_precision(rollout_raw) if rollout_raw is not None else train
-    math = normalize_precision(_select(block, "math", "fp32"))
-    frozen_raw = _select(block, "frozen", None)
-    frozen = (
-        normalize_precision(frozen_raw) if frozen_raw is not None else _frozen_default(rollout)
+        raise ValueError(
+            "scalar `precision` is no longer supported because it hides the "
+            "difference between base dtype and quantization. Use "
+            "`precision: {training: {dtype: bf16}}`.",
+        )
+    _reject_legacy_keys(block)
+
+    training = _parse_role(block, "training")
+    rollout = _parse_role(block, "rollout", dtype_default=training.dtype)
+    math_raw = _select(block, "diffusion_math.dtype", "fp32")
+    prompt_encoder_raw = _select(
+        block,
+        "rollout.prompt_encoders.dtype",
+        rollout.dtype,
     )
-    # Kernel recipe for the quantized rollout (e.g. fp8 "rowwise"/"blockwise").
-    # Passed through as-is: PrecisionPolicy rejects it on a non-quantized rollout,
-    # the swap layer (Fp8Linear) rejects an unknown recipe token.
-    recipe_raw = _select(block, "rollout_recipe", None)
-    rollout_recipe = str(recipe_raw).lower().strip() if recipe_raw is not None else None
     return PrecisionPolicy(
-        train=train,
+        training=training,
         rollout=rollout,
-        math=math,
-        frozen=frozen,
-        rollout_recipe=rollout_recipe,
+        diffusion_math=_normalize_plain_dtype(
+            math_raw,
+            path="precision.diffusion_math.dtype",
+        ),
+        prompt_encoder_dtype=_normalize_plain_dtype(
+            prompt_encoder_raw,
+            path="precision.rollout.prompt_encoders.dtype",
+        ),
     )
+
+
+def _parse_role(
+    block: Any,
+    role: str,
+    *,
+    dtype_default: Any = _MISSING,
+) -> RolePrecision:
+    dtype_raw = _select(block, f"{role}.dtype", dtype_default)
+    if dtype_raw is _MISSING:
+        raise ValueError(f"precision.{role}.dtype is required")
+    quantization_raw = _select(block, f"{role}.quantization", None)
+    quantization = None
+    if quantization_raw is not None:
+        format_raw = _select(quantization_raw, "format", _MISSING)
+        if format_raw is _MISSING:
+            raise ValueError(f"precision.{role}.quantization.format is required")
+        recipe_raw = _select(quantization_raw, "recipe", None)
+        quantization = QuantizationPolicy(
+            format=str(format_raw),
+            recipe=str(recipe_raw) if recipe_raw is not None else None,
+        )
+    return RolePrecision(
+        dtype=_normalize_plain_dtype(dtype_raw, path=f"precision.{role}.dtype"),
+        quantization=quantization,
+    )
+
+
+def _reject_legacy_keys(block: Any) -> None:
+    legacy_paths = (
+        "train",
+        "math",
+        "frozen",
+        "frozen_components",
+        "rollout_recipe",
+        "rollout.frozen_components",
+    )
+    present = [
+        f"precision.{path}"
+        for path in legacy_paths
+        if _select(block, path, _MISSING) is not _MISSING
+    ]
+    rollout = _select(block, "rollout", None)
+    if (
+        rollout is not None
+        and not isinstance(rollout, Mapping)
+        and not hasattr(
+            rollout,
+            "get",
+        )
+    ):
+        present.append("precision.rollout")
+    if present:
+        names = ", ".join(present)
+        raise ValueError(
+            f"legacy precision key(s) are no longer supported: {names}. Use "
+            "precision.training.dtype, precision.rollout.dtype, "
+            "precision.rollout.quantization, precision.diffusion_math.dtype, "
+            "and precision.rollout.prompt_encoders.dtype.",
+        )
 
 
 def _select(obj: Any, path: str, default: Any = None) -> Any:
@@ -249,8 +342,10 @@ def _select(obj: Any, path: str, default: Any = None) -> Any:
 
 
 __all__ = [
+    "PrecisionConfig",
     "PrecisionPolicy",
+    "QuantizationPolicy",
+    "RolePrecision",
     "normalize_precision",
-    "precision_bridge_fields",
     "resolve_precision_policy",
 ]

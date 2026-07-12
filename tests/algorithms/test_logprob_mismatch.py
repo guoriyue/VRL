@@ -73,6 +73,39 @@ def test_nonfinite_drift_is_flagged() -> None:
     assert stats.finite is False
 
 
+def test_aggregate_weights_means_but_preserves_max_and_finite() -> None:
+    aggregate = LogprobMismatchStats.aggregate(
+        [
+            LogprobMismatchStats(
+                logprob_abs_diff_mean=0.1,
+                logprob_abs_diff_max=0.2,
+                ratio_abs_dev_mean=0.3,
+                ratio_abs_dev_max=0.4,
+                mismatch_kl=-0.1,
+                mismatch_k3_kl=0.01,
+            ),
+            LogprobMismatchStats(
+                logprob_abs_diff_mean=0.5,
+                logprob_abs_diff_max=0.9,
+                ratio_abs_dev_mean=0.7,
+                ratio_abs_dev_max=1.1,
+                mismatch_kl=-0.3,
+                mismatch_k3_kl=0.03,
+                finite=False,
+            ),
+        ],
+        weights=[1.0, 3.0],
+    )
+
+    assert aggregate.logprob_abs_diff_mean == pytest.approx(0.4)
+    assert aggregate.logprob_abs_diff_max == pytest.approx(0.9)
+    assert aggregate.ratio_abs_dev_mean == pytest.approx(0.6)
+    assert aggregate.ratio_abs_dev_max == pytest.approx(1.1)
+    assert aggregate.mismatch_kl == pytest.approx(-0.25)
+    assert aggregate.mismatch_k3_kl == pytest.approx(0.025)
+    assert aggregate.finite is False
+
+
 # ---------------------------------------------------------------------------
 # Reject-sampling (RS) config validation
 # ---------------------------------------------------------------------------
@@ -101,7 +134,9 @@ class TestRejectSampleConfig:
 
     def test_inverted_band_rejected(self) -> None:
         with pytest.raises(ValueError, match=r"rs_log_ratio_low.*<.*rs_log_ratio_high"):
-            PrecisionCorrectionConfig(rs_mode="seq_mean_k1", rs_log_ratio_low=1.0, rs_log_ratio_high=0.0)
+            PrecisionCorrectionConfig(
+                rs_mode="seq_mean_k1", rs_log_ratio_low=1.0, rs_log_ratio_high=0.0
+            )
 
     def test_recompute_on_is_not_implemented_not_silent_noop(self) -> None:
         with pytest.raises(NotImplementedError, match="recompute_old_logprob"):
@@ -128,7 +163,9 @@ class TestRejectSampleMask:
     @staticmethod
     def _cfg(mode: str) -> PrecisionCorrectionConfig:
         return PrecisionCorrectionConfig(
-            rs_mode=mode, rs_log_ratio_low=LN_HALF, rs_log_ratio_high=LN_TWO,
+            rs_mode=mode,
+            rs_log_ratio_low=LN_HALF,
+            rs_log_ratio_high=LN_TWO,
         )
 
     def test_off_returns_none(self) -> None:
@@ -179,7 +216,7 @@ class TestRejectSampleMask:
         valid = torch.tensor([[1.0, 1.0, 0.0]])
         keep_masked = apply_rejection_sample_mask(log_ratio, self._cfg("seq_mean_k1"), mask=valid)
         keep_unmasked = apply_rejection_sample_mask(log_ratio, self._cfg("seq_mean_k1"))
-        assert keep_masked.squeeze(-1).item() == 1.0   # padding ignored → mean 0
+        assert keep_masked.squeeze(-1).item() == 1.0  # padding ignored → mean 0
         assert keep_unmasked.squeeze(-1).item() == 0.0  # padding counted → rejected
 
     def test_seq_max_padding_does_not_trigger_rejection(self) -> None:
@@ -201,6 +238,6 @@ class TestCombineKeepMasks:
 
     def test_intersection_broadcasts(self) -> None:
         token = torch.tensor([[1.0, 1.0, 1.0], [1.0, 1.0, 1.0]])  # (B, L)
-        rs = torch.tensor([[1.0], [0.0]])                         # (B, 1)
+        rs = torch.tensor([[1.0], [0.0]])  # (B, 1)
         out = combine_keep_masks(token, rs)
         assert out.tolist() == [[1.0, 1.0, 1.0], [0.0, 0.0, 0.0]]

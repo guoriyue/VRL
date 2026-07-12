@@ -6,7 +6,7 @@ processor, and compares BF16, default rowwise FP8, and MLP-only NVFP4 at the
 current 512px recipe shape (CLIP 77 + T5 128 text tokens). Effective batches 2
 and 32 represent one and sixteen samples after batched CFG respectively.
 
-``--target-profile`` can instead force FP8 and FP4 onto the identical MLP-only
+``--target-profile`` can instead force FP8 and NVFP4 onto the identical MLP-only
 or attention+MLP path/shape manifest. This is an experimental comparison seam;
 it does not change either scheme's production targeting default.
 
@@ -23,7 +23,7 @@ Usage:
         vrl.scripts.perf.quantized_sd3_forward_profile --compile
     TORCHINDUCTOR_COMPILE_THREADS=1 python -m \
         vrl.scripts.perf.quantized_sd3_forward_profile --compile \
-        --target-profile attention_mlp --schemes bf16 fp8 fp4
+        --target-profile attention_mlp --schemes bf16 fp8 nvfp4
 """
 
 from __future__ import annotations
@@ -45,8 +45,8 @@ from vrl.nn.quantization import (
     QuantizedLinear,
     drop_quantized_masters,
     nvfp4_available,
-    swap_linears_to_fp4,
     swap_linears_to_fp8,
+    swap_linears_to_nvfp4,
 )
 from vrl.scripts.perf.common.fp8_math import relative_l1_drift
 
@@ -55,15 +55,20 @@ def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--model", default="stabilityai/stable-diffusion-3.5-medium")
     parser.add_argument("--batches", type=int, nargs="+", default=[2, 32])
-    parser.add_argument("--schemes", nargs="+", choices=("bf16", "fp8", "fp4"), default=None)
+    parser.add_argument(
+        "--schemes",
+        nargs="+",
+        choices=("bf16", "fp8", "nvfp4"),
+        default=None,
+    )
     parser.add_argument(
         "--target-profile",
         choices=("scheme_default", *(profile.value for profile in LinearTargetProfile)),
         default="scheme_default",
         help=(
             "Linear scope shared by every quantized scheme. scheme_default preserves "
-            "production FP8=attention_mlp and FP4=mlp_only; an explicit profile makes "
-            "the runner fail unless FP8 and FP4 swap the exact same path/shape manifest."
+            "production FP8=attention_mlp and NVFP4=mlp_only; an explicit profile makes "
+            "the runner fail unless FP8 and NVFP4 swap the exact same path/shape manifest."
         ),
     )
     parser.add_argument(
@@ -86,7 +91,7 @@ def _parse_args() -> argparse.Namespace:
         help="Allow Hugging Face downloads; the default requires a local checkpoint.",
     )
     args = parser.parse_args()
-    args.schemes = args.schemes or ["bf16", "fp8", "fp4"]
+    args.schemes = args.schemes or ["bf16", "fp8", "nvfp4"]
     if args.schemes[0] != "bf16":
         raise SystemExit("--schemes must start with bf16 so quantized drift has a reference")
     if any(batch < 1 for batch in args.batches):
@@ -226,7 +231,9 @@ def _resolve_target_profile(
         return LinearTargetProfile(requested)
     if scheme == "fp8":
         return LinearTargetProfile.ATTENTION_MLP
-    return LinearTargetProfile.MLP_ONLY
+    if scheme == "nvfp4":
+        return LinearTargetProfile.MLP_ONLY
+    raise ValueError(f"unsupported profile scheme {scheme!r}")
 
 
 def _apply_scheme(
@@ -240,7 +247,9 @@ def _apply_scheme(
         raise ValueError(f"quantized scheme {scheme!r} requires a target profile")
     if scheme == "fp8":
         return swap_linears_to_fp8(model, target_profile=target_profile)
-    return swap_linears_to_fp4(model, target_profile=target_profile)
+    if scheme == "nvfp4":
+        return swap_linears_to_nvfp4(model, target_profile=target_profile)
+    raise ValueError(f"unsupported quantized scheme {scheme!r}")
 
 
 def _target_manifest(
@@ -367,7 +376,7 @@ def _profile_scheme(
     result = {
         "scheme": scheme,
         "profile": target_profile.value if target_profile is not None else "bf16",
-        "recipe": "rowwise" if scheme == "fp8" else "nvfp4" if scheme == "fp4" else "bf16",
+        "recipe": ("rowwise" if scheme == "fp8" else None if scheme == "nvfp4" else "bf16"),
         "swapped_linears": len(swapped),
         "swapped_weights": swapped_weights,
         "target_manifest_sha256": _manifest_sha256(manifest) if manifest else None,
@@ -399,22 +408,22 @@ def _add_relative_speedups(results: list[dict[str, Any]]) -> None:
         for row in result["rows"]:
             row["speedup_vs_bf16"] = bf16_latency[row["batch"]] / row["median_ms"]
     fp8_result = next((result for result in results if result["scheme"] == "fp8"), None)
-    fp4_result = next((result for result in results if result["scheme"] == "fp4"), None)
-    if fp8_result is None or fp4_result is None:
+    nvfp4_result = next((result for result in results if result["scheme"] == "nvfp4"), None)
+    if fp8_result is None or nvfp4_result is None:
         return
-    if fp8_result.get("profile") != fp4_result.get("profile") or fp8_result.get(
+    if fp8_result.get("profile") != nvfp4_result.get("profile") or fp8_result.get(
         "target_manifest_sha256"
-    ) != fp4_result.get("target_manifest_sha256"):
+    ) != nvfp4_result.get("target_manifest_sha256"):
         return
     fp8_latency = latency_by_scheme["fp8"]
-    fp4_latency = latency_by_scheme["fp4"]
+    nvfp4_latency = latency_by_scheme["nvfp4"]
     for result in results:
-        if result["scheme"] == "fp4":
+        if result["scheme"] == "nvfp4":
             for row in result["rows"]:
                 row["speedup_vs_fp8"] = fp8_latency[row["batch"]] / row["median_ms"]
         elif result["scheme"] == "fp8":
             for row in result["rows"]:
-                row["speedup_vs_fp4"] = fp4_latency[row["batch"]] / row["median_ms"]
+                row["speedup_vs_nvfp4"] = nvfp4_latency[row["batch"]] / row["median_ms"]
 
 
 def _print_report(results: list[dict[str, Any]]) -> None:
@@ -447,13 +456,13 @@ def _print_report(results: list[dict[str, Any]]) -> None:
                 f"reserved={row['reserved_gib']:.3f}GiB cold={row['cold_start_s']:.2f}s "
                 f"{accuracy_text}"
             )
-    fp4_result = next((result for result in results if result["scheme"] == "fp4"), None)
-    if fp4_result is not None and all("speedup_vs_fp8" in row for row in fp4_result["rows"]):
-        for row in fp4_result["rows"]:
+    nvfp4_result = next((result for result in results if result["scheme"] == "nvfp4"), None)
+    if nvfp4_result is not None and all("speedup_vs_fp8" in row for row in nvfp4_result["rows"]):
+        for row in nvfp4_result["rows"]:
             print(
-                f"  MATCHED B={row['batch']:>2}: fp4_vs_fp8="
+                f"  MATCHED B={row['batch']:>2}: nvfp4_vs_fp8="
                 f"{row['speedup_vs_fp8']:.3f}x "
-                "(>1 means FP4 is faster)"
+                "(>1 means NVFP4 is faster)"
             )
     print("RESULT_JSON=" + json.dumps(results, sort_keys=True))
 
@@ -462,8 +471,10 @@ def main() -> None:
     args = _parse_args()
     if not torch.cuda.is_available():
         raise SystemExit("this profile requires CUDA")
-    if "fp4" in args.schemes and not nvfp4_available():
-        raise SystemExit("fp4 profiling requires a Blackwell-class GPU")
+    if "nvfp4" in args.schemes and not nvfp4_available():
+        raise SystemExit(
+            "nvfp4 profiling requires an NVFP4-capable CUDA build and Blackwell-class GPU",
+        )
     torch.manual_seed(0)
     print(
         f"device={torch.cuda.get_device_name(0)} capability={torch.cuda.get_device_capability()} "

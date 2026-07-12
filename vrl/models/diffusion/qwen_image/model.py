@@ -41,14 +41,13 @@ from vrl.models.diffusion.common import (
     DiffusionBackboneInput,
     DiffusionBackboneRunnerBase,
     DiffusionBranch,
-    LatentDecodeSpec,
-    LatentDecodeTransform,
+    LatentDecodePlan,
     expand_batch_timestep,
     pack_eval_timestep,
 )
 from vrl.models.diffusion.common.lora import LoraModelMixin
 from vrl.models.diffusion.common.tensors import require_tensor
-from vrl.models.dtypes import resolve_torch_dtype
+from vrl.models.interfaces.runtime import ModelBuild
 
 
 @dataclass
@@ -91,7 +90,8 @@ class QwenImageModel(LoraModelMixin, DiffusersPipelineModelBase, DiffusionBackbo
             mask = request.extra.get("encoder_hidden_states_mask")
         else:
             embeds = require_tensor(
-                request.negative_prompt_embeds, "negative_prompt_embeds",
+                request.negative_prompt_embeds,
+                "negative_prompt_embeds",
             )
             mask = request.extra.get("negative_encoder_hidden_states_mask")
         extra_kwargs = {
@@ -143,14 +143,14 @@ class QwenImageModel(LoraModelMixin, DiffusersPipelineModelBase, DiffusionBackbo
     # -- backend ownership (called by runtime, not by collectors) -------
 
     @classmethod
-    def from_spec(cls, spec: Any) -> QwenImageModel:
+    def from_build(cls, build: ModelBuild) -> QwenImageModel:
         """Load the diffusers Qwen-Image pipeline + freeze non-trainable modules."""
         from diffusers import QwenImagePipeline
 
-        model_dtype = resolve_torch_dtype(spec.dtype)
-        frozen_dtype, load_kwargs = diffusers_pipeline_dtypes(spec, model_dtype)
+        model_dtype = build.parameter_dtype
+        prompt_encoder_dtype, load_kwargs = diffusers_pipeline_dtypes(build, model_dtype)
         pipeline = QwenImagePipeline.from_pretrained(
-            spec.model_name_or_path,
+            build.model_name_or_path,
             **load_kwargs,
         )
         pipeline.vae.requires_grad_(False)
@@ -161,11 +161,11 @@ class QwenImageModel(LoraModelMixin, DiffusersPipelineModelBase, DiffusionBackbo
         text_encoder = getattr(pipeline, "text_encoder", None)
         if text_encoder is not None:
             text_encoder.requires_grad_(False)
-            text_encoder.to("cpu", dtype=frozen_dtype)
-        pipeline.vae.to(spec.device, dtype=torch.float32)
+            text_encoder.to("cpu", dtype=prompt_encoder_dtype)
+        pipeline.vae.to(build.device, dtype=torch.float32)
         return cls(
             pipeline=pipeline,
-            device=spec.device,
+            device=build.device,
         )
 
     def _set_dynamic_timesteps(self, num_steps: int, image_seq_len: int, device: Any) -> Any:
@@ -209,7 +209,7 @@ class QwenImageModel(LoraModelMixin, DiffusersPipelineModelBase, DiffusionBackbo
         guidance_scale = kwargs.get("guidance_scale", 4.0)
         do_cfg = guidance_scale > 1.0 and negative_prompt is not None
         pipe = self.pipeline
-        # The frozen Qwen2.5-VL encoder lives on CPU (see from_spec); run encode
+        # The frozen Qwen2.5-VL encoder lives on CPU (see from_build); run encode
         # there, then move embeds onto the transformer device for the denoise forward.
         enc_device = self._encoder_device()
         td = self.transformer.dtype
@@ -223,8 +223,7 @@ class QwenImageModel(LoraModelMixin, DiffusersPipelineModelBase, DiffusionBackbo
         result: dict[str, Any] = {
             "prompt_embeds": prompt_embeds.to(self.device, dtype=td),
             "prompt_embeds_mask": (
-                None if prompt_embeds_mask is None
-                else prompt_embeds_mask.to(self.device)
+                None if prompt_embeds_mask is None else prompt_embeds_mask.to(self.device)
             ),
         }
         if do_cfg:
@@ -235,10 +234,12 @@ class QwenImageModel(LoraModelMixin, DiffusersPipelineModelBase, DiffusionBackbo
                 device=enc_device,
             )
             result["negative_prompt_embeds"] = negative_prompt_embeds.to(
-                self.device, dtype=td,
+                self.device,
+                dtype=td,
             )
             result["negative_prompt_embeds_mask"] = (
-                None if negative_prompt_embeds_mask is None
+                None
+                if negative_prompt_embeds_mask is None
                 else negative_prompt_embeds_mask.to(self.device)
             )
         return result
@@ -271,10 +272,7 @@ class QwenImageModel(LoraModelMixin, DiffusersPipelineModelBase, DiffusionBackbo
         negative_prompt_embeds = encoded.get("negative_prompt_embeds")
         negative_prompt_embeds_mask = encoded.get("negative_prompt_embeds_mask")
 
-        seed = (
-            request.seed if request.seed is not None
-            else random.randint(0, sys.maxsize)
-        )
+        seed = request.seed if request.seed is not None else random.randint(0, sys.maxsize)
         generator = torch.Generator(device=device)
         generator.manual_seed(seed)
 
@@ -293,7 +291,9 @@ class QwenImageModel(LoraModelMixin, DiffusersPipelineModelBase, DiffusionBackbo
 
         # Dynamic-shifting timesteps depend on the packed image sequence length.
         timesteps = self._set_dynamic_timesteps(
-            request.num_steps, latents.shape[1], device,
+            request.num_steps,
+            latents.shape[1],
+            device,
         )
 
         self._decode_height = int(request.height)
@@ -346,8 +346,7 @@ class QwenImageModel(LoraModelMixin, DiffusersPipelineModelBase, DiffusionBackbo
                 dtype=td,
             )
         negative_embeds = (
-            None if state.negative_prompt_embeds is None
-            else state.negative_prompt_embeds.to(td)
+            None if state.negative_prompt_embeds is None else state.negative_prompt_embeds.to(td)
         )
         output = DiffusionBackboneCaller(
             self.transformer,
@@ -418,8 +417,8 @@ class QwenImageModel(LoraModelMixin, DiffusersPipelineModelBase, DiffusionBackbo
             negative_prompt_embeds=replay_tensors.get("negative_prompt_embeds"),
             negative_prompt_embeds_mask=replay_tensors.get("negative_prompt_embeds_mask"),
             guidance_scale=batch_context["guidance_scale"],
-            do_cfg=batch_context["cfg"] and replay_tensors.get("negative_prompt_embeds")
-            is not None,
+            do_cfg=batch_context["cfg"]
+            and replay_tensors.get("negative_prompt_embeds") is not None,
             guidance_embeds=batch_context["guidance_embeds"],
             height=batch_context["height"],
             width=batch_context["width"],
@@ -440,12 +439,8 @@ class QwenImageModel(LoraModelMixin, DiffusersPipelineModelBase, DiffusionBackbo
         height = self._decode_height
         width = self._decode_width
         z_dim = vae.config.z_dim
-        latents_mean = (
-            torch.tensor(vae.config.latents_mean).view(1, z_dim, 1, 1, 1)
-        )
-        latents_std = (
-            torch.tensor(vae.config.latents_std).view(1, z_dim, 1, 1, 1)
-        )
+        latents_mean = torch.tensor(vae.config.latents_mean).view(1, z_dim, 1, 1, 1)
+        latents_std = torch.tensor(vae.config.latents_std).view(1, z_dim, 1, 1, 1)
 
         def _transform(chunk: torch.Tensor) -> torch.Tensor:
             unpacked = pipe._unpack_latents(chunk, height, width, vae_scale_factor)
@@ -455,11 +450,11 @@ class QwenImageModel(LoraModelMixin, DiffusersPipelineModelBase, DiffusionBackbo
             return unpacked * std + mean
 
         decoder = ChunkedLatentDecoder(
-            LatentDecodeSpec(
-                transform=LatentDecodeTransform(_transform),
+            LatentDecodePlan(
+                prepare_latents=_transform,
                 vae_decode=lambda chunk: vae.decode(chunk, return_dict=False)[0],
                 # Video VAE returns [B, C, 1, H, W]; drop the temporal frame.
-                match_num_frames=lambda decoded: decoded[:, :, 0],
+                prepare_decoded=lambda decoded: decoded[:, :, 0],
                 postprocess=lambda image: pipe.image_processor.postprocess(
                     image,
                     output_type="pt",
@@ -473,7 +468,6 @@ class QwenImageModel(LoraModelMixin, DiffusersPipelineModelBase, DiffusionBackbo
 
 class QwenImageReplayModel(DiffusersReplayModelBase, QwenImageModel):
     """Replay-only Qwen-Image model that owns no prompt encoders, VAE, or pipeline."""
-
 
 
 __all__ = ["QwenImageModel", "QwenImageReplayModel", "QwenImageSamplingState"]

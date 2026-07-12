@@ -60,13 +60,16 @@ class DiffusionFamilyBuild:
     A family whose runtime construction is pure data — no per-call code such
     as variant resolution (wan), artifact resolution (anima), or adapter hooks
     (flux NFT) — records its build inputs here and points ``runtime_builder``
-    / ``runtime_spec_extractor`` at the generic functions in
+    / ``model_build_resolver`` at the generic functions in
     ``vrl.models.diffusion.build``. Such a family ships NO builder functions:
     its ``runtime.py`` holds only the capability constant and the chunk
     executor. Families with per-call code keep their own thin stubs instead.
     """
 
     model_cls: str
+    # Display/provenance-only diffusion variant. Runtime behavior is selected by
+    # ``FamilyCapability.task``; bundle metadata reads this registry value
+    # directly instead of copying it through ``ModelBuild``.
     task_variant: str
     memory_owner: str
     # Replay recipe; None marks a family whose replay builder stays hand-written
@@ -75,6 +78,10 @@ class DiffusionFamilyBuild:
     replay_cls: str | None = None
     transformer_classname: str | None = None
     scheduler_classname: str | None = None
+    # Base transformer parameter dtype required by the model family, independent
+    # of rollout/replay autocast. Keep this on the build descriptor only for a
+    # genuine model invariant; ordinary families inherit the training dtype.
+    base_parameter_dtype: str | None = None
     # LoRA-only family: the generic builders fail loud BEFORE paying the
     # transformer load. The per-family WHY belongs in a comment on the entry
     # (and in the model's own apply_full_finetune error), not in runtime data.
@@ -90,9 +97,8 @@ class ARFamilyBuild:
     config_cls: str
     config_builder: str
     default_model_path: str
-    # Optional family-only projection from non-model config into RuntimeBuildSpec.
-    spec_enricher: str | None = None
-
+    # Optional family-only projection from non-model config into ModelBuild.
+    build_enricher: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -104,7 +110,7 @@ class RolloutFamilyEntry:
     collector: CollectorMetadata
     executor_cls: str
     runtime_builder: str
-    runtime_spec_extractor: str
+    model_build_resolver: str
     gatherer: GathererMetadata
     capability: FamilyCapability
     aliases: tuple[str, ...] = ()
@@ -136,7 +142,7 @@ def _diffusion_entry(
     task: str,
     aliases: tuple[str, ...],
     runtime_builder: str,
-    runtime_spec_extractor: str,
+    model_build_resolver: str,
     request_prefix: str,
     default_task_type: str,
     executor_cls: str | None = None,
@@ -161,16 +167,13 @@ def _diffusion_entry(
         ),
         executor_cls=executor_cls,
         runtime_builder=runtime_builder,
-        runtime_spec_extractor=runtime_spec_extractor,
+        model_build_resolver=model_build_resolver,
         build=build,
         replay_runtime_builder=replay_runtime_builder,
         gatherer=GathererMetadata(
             import_path="vrl.generation.diffusion.gather:DiffusionChunkGatherer",
         ),
-        capability=diffusion_family_capability(
-            family,
-            task,
-        ),
+        capability=diffusion_family_capability(family, task),
     )
 
 
@@ -180,7 +183,7 @@ register_rollout_family(
         task="t2i",
         aliases=(),
         runtime_builder="vrl.models.diffusion.build:build_family_runtime_bundle",
-        runtime_spec_extractor="vrl.models.diffusion.build:extract_family_runtime_spec",
+        model_build_resolver="vrl.models.diffusion.build:resolve_family_model_build",
         request_prefix="sd3_5",
         default_task_type="text_to_image",
         build=DiffusionFamilyBuild(
@@ -199,7 +202,7 @@ register_rollout_family(
         task="t2i",
         aliases=("flux_1_dev",),
         runtime_builder="vrl.models.diffusion.build:build_family_runtime_bundle",
-        runtime_spec_extractor="vrl.models.diffusion.build:extract_family_runtime_spec",
+        model_build_resolver="vrl.models.diffusion.build:resolve_family_model_build",
         request_prefix="flux",
         default_task_type="text_to_image",
         build=DiffusionFamilyBuild(
@@ -219,9 +222,9 @@ register_rollout_family(
         aliases=("qwen-image",),
         # Descriptor-driven family: the generic functions in
         # vrl.models.diffusion.build read the recipe below, so qwen_image ships
-        # no per-family builder/extractor functions.
+        # no per-family builder/resolver functions.
         runtime_builder="vrl.models.diffusion.build:build_family_runtime_bundle",
-        runtime_spec_extractor="vrl.models.diffusion.build:extract_family_runtime_spec",
+        model_build_resolver="vrl.models.diffusion.build:resolve_family_model_build",
         request_prefix="qwen_image",
         default_task_type="text_to_image",
         build=DiffusionFamilyBuild(
@@ -240,7 +243,7 @@ register_rollout_family(
         task="t2i",
         aliases=("sana_1600m",),
         runtime_builder="vrl.models.diffusion.build:build_family_runtime_bundle",
-        runtime_spec_extractor="vrl.models.diffusion.build:extract_family_runtime_spec",
+        model_build_resolver="vrl.models.diffusion.build:resolve_family_model_build",
         request_prefix="sana",
         default_task_type="text_to_image",
         build=DiffusionFamilyBuild(
@@ -249,6 +252,9 @@ register_rollout_family(
             transformer_classname="SanaTransformer2DModel",
             task_variant="t2i",
             memory_owner="SANA DC-AE",
+            # SANA linear attention is mantissa-sensitive: fp16 parameters are
+            # required even when bf16 autocast supplies forward activation range.
+            base_parameter_dtype="fp16",
         ),
     ),
 )
@@ -259,7 +265,7 @@ register_rollout_family(
         task="t2i",
         aliases=("lumina_image_2",),
         runtime_builder="vrl.models.diffusion.build:build_family_runtime_bundle",
-        runtime_spec_extractor="vrl.models.diffusion.build:extract_family_runtime_spec",
+        model_build_resolver="vrl.models.diffusion.build:resolve_family_model_build",
         request_prefix="lumina2",
         default_task_type="text_to_image",
         build=DiffusionFamilyBuild(
@@ -278,7 +284,7 @@ register_rollout_family(
         task="t2v",
         aliases=("hunyuanvideo",),
         runtime_builder="vrl.models.diffusion.build:build_family_runtime_bundle",
-        runtime_spec_extractor="vrl.models.diffusion.build:extract_family_runtime_spec",
+        model_build_resolver="vrl.models.diffusion.build:resolve_family_model_build",
         request_prefix="hunyuan_video",
         default_task_type="text_to_video",
         build=DiffusionFamilyBuild(
@@ -297,7 +303,7 @@ register_rollout_family(
         task="t2v",
         aliases=("mochi_1",),
         runtime_builder="vrl.models.diffusion.build:build_family_runtime_bundle",
-        runtime_spec_extractor="vrl.models.diffusion.build:extract_family_runtime_spec",
+        model_build_resolver="vrl.models.diffusion.build:resolve_family_model_build",
         request_prefix="mochi",
         default_task_type="text_to_video",
         build=DiffusionFamilyBuild(
@@ -316,7 +322,7 @@ register_rollout_family(
         task="t2i",
         aliases=("hunyuanimage_2_1",),
         runtime_builder="vrl.models.diffusion.build:build_family_runtime_bundle",
-        runtime_spec_extractor="vrl.models.diffusion.build:extract_family_runtime_spec",
+        model_build_resolver="vrl.models.diffusion.build:resolve_family_model_build",
         request_prefix="hunyuan_image",
         default_task_type="text_to_image",
         build=DiffusionFamilyBuild(
@@ -335,7 +341,7 @@ register_rollout_family(
         task="t2i",
         aliases=("pixart",),
         runtime_builder="vrl.models.diffusion.build:build_family_runtime_bundle",
-        runtime_spec_extractor="vrl.models.diffusion.build:extract_family_runtime_spec",
+        model_build_resolver="vrl.models.diffusion.build:resolve_family_model_build",
         request_prefix="pixart_sigma",
         default_task_type="text_to_image",
         build=DiffusionFamilyBuild(
@@ -358,7 +364,7 @@ register_rollout_family(
         task="t2v",
         aliases=("cogvideox_2b", "cogvideox_5b"),
         runtime_builder="vrl.models.diffusion.build:build_family_runtime_bundle",
-        runtime_spec_extractor="vrl.models.diffusion.build:extract_family_runtime_spec",
+        model_build_resolver="vrl.models.diffusion.build:resolve_family_model_build",
         request_prefix="cogvideox",
         default_task_type="text_to_video",
         build=DiffusionFamilyBuild(
@@ -384,7 +390,7 @@ register_rollout_family(
         # dual-stage transformer_2 late-load lives in the replay model's
         # prepare_replay, so replay is generic too.
         runtime_builder="vrl.models.diffusion.build:build_family_runtime_bundle",
-        runtime_spec_extractor="vrl.models.diffusion.build:extract_family_runtime_spec",
+        model_build_resolver="vrl.models.diffusion.build:resolve_family_model_build",
         request_prefix="wan_2_1",
         default_task_type="text_to_video",
         build=DiffusionFamilyBuild(
@@ -406,7 +412,7 @@ register_rollout_family(
         aliases=("wan_i2v",),
         executor_cls="vrl.models.diffusion.wan_2_1.runtime:Wan_2_1I2VChunkExecutor",
         runtime_builder="vrl.models.diffusion.build:build_family_runtime_bundle",
-        runtime_spec_extractor="vrl.models.diffusion.build:extract_family_runtime_spec",
+        model_build_resolver="vrl.models.diffusion.build:resolve_family_model_build",
         request_prefix="wan_2_1_i2v",
         default_task_type="image_to_video",
         build=DiffusionFamilyBuild(
@@ -427,7 +433,7 @@ register_rollout_family(
         aliases=("cosmos", "cosmos_predict2"),
         executor_cls="vrl.models.diffusion.cosmos.predict2.runtime:CosmosChunkExecutor",
         runtime_builder="vrl.models.diffusion.build:build_family_runtime_bundle",
-        runtime_spec_extractor="vrl.models.diffusion.build:extract_family_runtime_spec",
+        model_build_resolver="vrl.models.diffusion.build:resolve_family_model_build",
         request_prefix="cosmos-predict2",
         default_task_type="video2world",
         build=DiffusionFamilyBuild(
@@ -446,20 +452,15 @@ register_rollout_family(
         task="t2w",
         aliases=("cosmos_predict2_5",),
         executor_cls=(
-            "vrl.models.diffusion.cosmos.predict2_5.runtime:"
-            "CosmosPredict25ChunkExecutor"
+            "vrl.models.diffusion.cosmos.predict2_5.runtime:CosmosPredict25ChunkExecutor"
         ),
         runtime_builder="vrl.models.diffusion.build:build_family_runtime_bundle",
-        runtime_spec_extractor="vrl.models.diffusion.build:extract_family_runtime_spec",
+        model_build_resolver="vrl.models.diffusion.build:resolve_family_model_build",
         request_prefix="cosmos-predict2.5",
         default_task_type="text_to_video",
         build=DiffusionFamilyBuild(
-            model_cls=(
-                "vrl.models.diffusion.cosmos.predict2_5.model:CosmosPredict25Model"
-            ),
-            replay_cls=(
-                "vrl.models.diffusion.cosmos.predict2_5.model:CosmosPredict25ReplayModel"
-            ),
+            model_cls=("vrl.models.diffusion.cosmos.predict2_5.model:CosmosPredict25Model"),
+            replay_cls=("vrl.models.diffusion.cosmos.predict2_5.model:CosmosPredict25ReplayModel"),
             transformer_classname="CosmosTransformer3DModel",
             # Upstream ships UniPC; replay must recompute log-probs under the
             # same schedule the rollout sampled with.
@@ -480,7 +481,7 @@ register_rollout_family(
         aliases=("cosmos3_omni", "cosmos_omni"),
         executor_cls="vrl.models.diffusion.cosmos.cosmos3.runtime:Cosmos3ChunkExecutor",
         runtime_builder="vrl.models.diffusion.build:build_family_runtime_bundle",
-        runtime_spec_extractor="vrl.models.diffusion.build:extract_family_runtime_spec",
+        model_build_resolver="vrl.models.diffusion.build:resolve_family_model_build",
         request_prefix="cosmos3",
         default_task_type="text_to_video",
         build=DiffusionFamilyBuild(
@@ -500,7 +501,7 @@ register_rollout_family(
         task="t2i",
         aliases=("anima", "cosmos_anima"),
         runtime_builder="vrl.models.diffusion.build:build_family_runtime_bundle",
-        runtime_spec_extractor="vrl.models.diffusion.build:extract_family_runtime_spec",
+        model_build_resolver="vrl.models.diffusion.build:resolve_family_model_build",
         request_prefix="anima",
         default_task_type="text_to_image",
         build=DiffusionFamilyBuild(
@@ -521,7 +522,7 @@ register_rollout_family(
         aliases=("joyai_echo",),
         executor_cls="vrl.models.diffusion.echo.runtime:EchoChunkExecutor",
         runtime_builder="vrl.models.diffusion.build:build_family_runtime_bundle",
-        runtime_spec_extractor="vrl.models.diffusion.build:extract_family_runtime_spec",
+        model_build_resolver="vrl.models.diffusion.build:resolve_family_model_build",
         request_prefix="echo",
         default_task_type="text_to_video",
         build=DiffusionFamilyBuild(
@@ -539,7 +540,7 @@ _JANUS_PRO_BUILD = ARFamilyBuild(
     model_cls="vrl.models.ar.janus_pro.model:JanusProModel",
     replay_cls="vrl.models.ar.janus_pro.model:JanusProReplayModel",
     config_cls="vrl.models.ar.janus_pro.model:JanusProConfig",
-    config_builder="vrl.models.ar.janus_pro.runtime:janus_config_from_runtime_spec",
+    config_builder="vrl.models.ar.janus_pro.runtime:janus_config_from_build",
     default_model_path="deepseek-ai/Janus-Pro-1B",
 )
 
@@ -556,7 +557,7 @@ register_rollout_family(
         executor_cls="vrl.models.ar.janus_pro.runtime:JanusProChunkExecutor",
         runtime_builder="vrl.models.ar.build:build_family_ar_runtime_bundle",
         replay_runtime_builder="vrl.models.ar.build:build_family_ar_replay_runtime_bundle",
-        runtime_spec_extractor="vrl.models.ar.build:extract_family_ar_runtime_spec",
+        model_build_resolver="vrl.models.ar.build:resolve_family_ar_model_build",
         gatherer=GathererMetadata(
             import_path="vrl.generation.ar.executor:ARDiscreteChunkGatherer",
         ),
@@ -578,7 +579,7 @@ register_rollout_family(
         executor_cls="vrl.models.ar.janus_pro.runtime:JanusProR1ChunkExecutor",
         runtime_builder="vrl.models.ar.build:build_family_ar_runtime_bundle",
         replay_runtime_builder="vrl.models.ar.build:build_family_ar_replay_runtime_bundle",
-        runtime_spec_extractor="vrl.models.ar.build:extract_family_ar_runtime_spec",
+        model_build_resolver="vrl.models.ar.build:resolve_family_ar_model_build",
         gatherer=GathererMetadata(
             import_path="vrl.models.ar.janus_pro.runtime:JanusProR1ChunkGatherer",
         ),
@@ -601,7 +602,7 @@ register_rollout_family(
         executor_cls="vrl.models.ar.nextstep_1.runtime:NextStep1ChunkExecutor",
         runtime_builder="vrl.models.ar.build:build_family_ar_runtime_bundle",
         replay_runtime_builder="vrl.models.ar.build:build_family_ar_replay_runtime_bundle",
-        runtime_spec_extractor="vrl.models.ar.build:extract_family_ar_runtime_spec",
+        model_build_resolver="vrl.models.ar.build:resolve_family_ar_model_build",
         gatherer=GathererMetadata(
             import_path="vrl.models.ar.nextstep_1.runtime:NextStep1ChunkGatherer",
         ),
@@ -610,11 +611,9 @@ register_rollout_family(
             model_cls="vrl.models.ar.nextstep_1.model:NextStep1Model",
             replay_cls="vrl.models.ar.nextstep_1.model:NextStep1ReplayModel",
             config_cls="vrl.models.ar.nextstep_1.model:NextStep1Config",
-            config_builder=(
-                "vrl.models.ar.nextstep_1.runtime:nextstep_config_from_runtime_spec"
-            ),
+            config_builder=("vrl.models.ar.nextstep_1.runtime:nextstep_config_from_build"),
             default_model_path="stepfun-ai/NextStep-1.1",
-            spec_enricher="vrl.models.ar.nextstep_1.runtime:enrich_nextstep_runtime_spec",
+            build_enricher="vrl.models.ar.nextstep_1.runtime:enrich_nextstep_build",
         ),
     ),
 )
@@ -632,7 +631,7 @@ register_rollout_family(
         executor_cls="vrl.models.ar.emu3.runtime:Emu3ChunkExecutor",
         runtime_builder="vrl.models.ar.build:build_family_ar_runtime_bundle",
         replay_runtime_builder="vrl.models.ar.build:build_family_ar_replay_runtime_bundle",
-        runtime_spec_extractor="vrl.models.ar.build:extract_family_ar_runtime_spec",
+        model_build_resolver="vrl.models.ar.build:resolve_family_ar_model_build",
         gatherer=GathererMetadata(
             import_path="vrl.generation.ar.executor:ARDiscreteChunkGatherer",
         ),
@@ -641,7 +640,7 @@ register_rollout_family(
             model_cls="vrl.models.ar.emu3.model:Emu3Model",
             replay_cls="vrl.models.ar.emu3.model:Emu3ReplayModel",
             config_cls="vrl.models.ar.emu3.model:Emu3Config",
-            config_builder="vrl.models.ar.emu3.runtime:emu3_config_from_runtime_spec",
+            config_builder="vrl.models.ar.emu3.runtime:emu3_config_from_build",
             default_model_path="BAAI/Emu3-Gen-hf",
         ),
     ),
@@ -660,7 +659,7 @@ register_rollout_family(
         executor_cls="vrl.models.ar.glm_image.runtime:GlmImageChunkExecutor",
         runtime_builder="vrl.models.ar.build:build_family_ar_runtime_bundle",
         replay_runtime_builder="vrl.models.ar.build:build_family_ar_replay_runtime_bundle",
-        runtime_spec_extractor="vrl.models.ar.build:extract_family_ar_runtime_spec",
+        model_build_resolver="vrl.models.ar.build:resolve_family_ar_model_build",
         gatherer=GathererMetadata(
             import_path="vrl.generation.ar.executor:ARDiscreteChunkGatherer",
         ),
@@ -669,7 +668,7 @@ register_rollout_family(
             model_cls="vrl.models.ar.glm_image.model:GlmImageModel",
             replay_cls="vrl.models.ar.glm_image.model:GlmImageReplayModel",
             config_cls="vrl.models.ar.glm_image.model:GlmImageConfig",
-            config_builder="vrl.models.ar.glm_image.runtime:glm_image_config_from_runtime_spec",
+            config_builder="vrl.models.ar.glm_image.runtime:glm_image_config_from_build",
             default_model_path="zai-org/GLM-Image",
         ),
     ),
@@ -688,7 +687,7 @@ register_rollout_family(
         executor_cls="vrl.models.ar.llamagen.runtime:LlamaGenChunkExecutor",
         runtime_builder="vrl.models.ar.build:build_family_ar_runtime_bundle",
         replay_runtime_builder="vrl.models.ar.build:build_family_ar_replay_runtime_bundle",
-        runtime_spec_extractor="vrl.models.ar.build:extract_family_ar_runtime_spec",
+        model_build_resolver="vrl.models.ar.build:resolve_family_ar_model_build",
         gatherer=GathererMetadata(
             import_path="vrl.generation.ar.executor:ARDiscreteChunkGatherer",
         ),
@@ -697,7 +696,7 @@ register_rollout_family(
             model_cls="vrl.models.ar.llamagen.model:LlamaGenModel",
             replay_cls="vrl.models.ar.llamagen.model:LlamaGenReplayModel",
             config_cls="vrl.models.ar.llamagen.model:LlamaGenConfig",
-            config_builder="vrl.models.ar.llamagen.runtime:llamagen_config_from_runtime_spec",
+            config_builder="vrl.models.ar.llamagen.runtime:llamagen_config_from_build",
             default_model_path="peizesun/llamagen_t2i",
         ),
     ),
@@ -739,7 +738,6 @@ def build_ray_generation_inputs_for_family(
     cfg: Any,
     family: str,
     *,
-    weight_dtype: Any,
     executor_kwargs: Mapping[str, Any] | None = None,
     policy_version: int = 0,
 ) -> RayGenerationLaunchInputs:
@@ -748,7 +746,6 @@ def build_ray_generation_inputs_for_family(
     return RayGenerationLauncher.build_inputs(
         cfg,
         get_rollout_family_entry(family),
-        weight_dtype=weight_dtype,
         executor_kwargs=executor_kwargs,
         policy_version=policy_version,
     )

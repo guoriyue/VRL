@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import dataclasses
 import logging
+import math
 from collections.abc import Callable, Mapping, Sequence
 from typing import Any
 
@@ -72,7 +73,65 @@ def select_guard_timesteps(timestep_indices: Sequence[int], max_checks: int) -> 
     return [ordered[i] for i in picks]
 
 
-def run_precision_drift_guard(
+def _drift_record_key(record: Mapping[str, Any]) -> tuple[bool, bool, float, float, float]:
+    """Order complete records without combining fields from different producers."""
+
+    def relative(value: Any, limit: Any) -> float:
+        measured = float(value)
+        threshold = float(limit)
+        if not math.isfinite(measured):
+            return float("inf")
+        if threshold > 0:
+            return measured / threshold
+        return float("inf") if measured > 0 else 0.0
+
+    stats = record.get("worst_stats") or {}
+    abs_score = relative(
+        stats.get("logprob_abs_diff_max", 0.0),
+        record.get("max_abs_log_ratio", 0.0),
+    )
+    ratio_score = relative(
+        stats.get("ratio_abs_dev_max", 0.0),
+        record.get("max_ratio_abs_dev", 0.0),
+    )
+    finite = bool(stats.get("finite", True))
+    return (
+        bool(record.get("violated", False)),
+        not finite,
+        max(abs_score, ratio_score),
+        abs_score,
+        ratio_score,
+    )
+
+
+def _select_distributed_worst_record(record: dict[str, Any]) -> dict[str, Any]:
+    """All-gather and select one whole rank record on every process.
+
+    A field-wise max would fabricate a record whose timestep and mean statistics
+    came from one rank while its maxima came from another. Ranking complete records
+    keeps provenance coherent; ties retain the lower-rank all-gather order.
+    """
+
+    import torch.distributed as dist
+
+    if not (dist.is_available() and dist.is_initialized() and dist.get_world_size() > 1):
+        return record
+
+    world_size = int(dist.get_world_size())
+    local = dict(record)
+    local["worst_rank"] = int(dist.get_rank())
+    local["world_size"] = world_size
+    gathered: list[Any] = [None] * world_size
+    dist.all_gather_object(gathered, local)
+    if not all(isinstance(item, Mapping) for item in gathered):
+        raise RuntimeError("precision drift all-gather returned a non-record payload")
+    selected = max(gathered, key=_drift_record_key)
+    result = dict(selected)
+    result["violated"] = any(bool(item.get("violated", False)) for item in gathered)
+    return result
+
+
+def measure_precision_drift(
     config: PrecisionDriftGuardConfig,
     *,
     train_precision: str,
@@ -81,13 +140,14 @@ def run_precision_drift_guard(
     timestep_indices: Sequence[int],
     evaluate_fn: Callable[[int], Any],
     metadata: Mapping[str, Any] | None = None,
-    logger: logging.Logger | None = None,
 ) -> dict[str, Any] | None:
-    """Check first-step parity across a few timesteps; warn or fail on drift.
+    """Measure first-step precision drift without choosing process-wide failure.
 
     ``evaluate_fn(timestep_idx)`` returns a ``TrajectorySignalBatch``-like object with
     ``.primary.log_prob`` (fresh replay) and ``.primary.old_log_prob`` (rollout
-    behavior). Returns a record dict (also suitable for jsonl) or ``None`` when off.
+    behavior). Under distributed training every rank must call this function; it
+    all-gathers complete records and returns the same worst-rank record everywhere
+    before the caller applies warn/fail enforcement.
     """
 
     mode = resolve_guard_mode(
@@ -101,21 +161,30 @@ def run_precision_drift_guard(
     train_label = _normalize(train_precision)
     rollout_label = _normalize(rollout_precision)
     math_label = _normalize(math_precision)
-    log = logger or _logger
     worst: LogprobMismatchStats | None = None
     worst_timestep = -1
+    worst_key: tuple[bool, bool, float, float, float] | None = None
     violated = False
     for timestep in select_guard_timesteps(timestep_indices, config.max_timestep_checks):
         primary = evaluate_fn(timestep).primary
         stats = compute_logprob_mismatch_stats(primary.log_prob, primary.old_log_prob)
-        if (
+        stats_violated = (
             stats.ratio_abs_dev_max > config.max_ratio_abs_dev
             or stats.logprob_abs_diff_max > config.max_abs_log_ratio
             or (config.fail_on_nonfinite and not stats.finite)
-        ):
+        )
+        if stats_violated:
             violated = True
-        if worst is None or stats.ratio_abs_dev_max > worst.ratio_abs_dev_max:
+        candidate = {
+            "violated": stats_violated,
+            "max_abs_log_ratio": config.max_abs_log_ratio,
+            "max_ratio_abs_dev": config.max_ratio_abs_dev,
+            "worst_stats": dataclasses.asdict(stats),
+        }
+        candidate_key = _drift_record_key(candidate)
+        if worst_key is None or candidate_key > worst_key:
             worst, worst_timestep = stats, timestep
+            worst_key = candidate_key
 
     record: dict[str, Any] = {
         "event": "precision_drift_guard",
@@ -141,21 +210,60 @@ def run_precision_drift_guard(
         for key, value in metadata_dict.items():
             if isinstance(value, (str, bool, int, float)) or value is None:
                 record.setdefault(key, value)
-    if violated:
-        message = (
-            "precision drift guard: rollout-vs-replay logprob parity exceeded "
-            f"threshold (train={train_label}, rollout={rollout_label}, "
-            f"math={math_label}); worst timestep={worst_timestep} "
-            f"abs_log_diff_max={worst.logprob_abs_diff_max:.3e} "
-            f"ratio_abs_dev_max={worst.ratio_abs_dev_max:.3e} "
-            f"(limits abs_log_ratio={config.max_abs_log_ratio:.1e} "
-            f"ratio_abs_dev={config.max_ratio_abs_dev:.1e}, finite={worst.finite})"
-            if worst is not None
-            else "precision drift guard: parity exceeded threshold"
-        )
-        if mode == "fail":
-            raise PrecisionDriftError(message)
-        log.warning(message)
+    return _select_distributed_worst_record(record)
+
+
+def enforce_precision_drift(
+    record: Mapping[str, Any] | None,
+    *,
+    logger: logging.Logger | None = None,
+) -> None:
+    """Apply one already-resolved precision-drift verdict."""
+
+    if record is None or not bool(record.get("violated", False)):
+        return
+    worst = record.get("worst_stats") or {}
+    message = (
+        "precision drift guard: rollout-vs-replay logprob parity exceeded "
+        f"threshold (train={record.get('train_precision')}, "
+        f"rollout={record.get('rollout_precision')}, "
+        f"math={record.get('math_precision')}); "
+        f"worst rank={record.get('worst_rank', 0)} "
+        f"worst timestep={record.get('worst_timestep')} "
+        f"abs_log_diff_max={float(worst.get('logprob_abs_diff_max', float('nan'))):.3e} "
+        f"ratio_abs_dev_max={float(worst.get('ratio_abs_dev_max', float('nan'))):.3e} "
+        f"(limits abs_log_ratio={float(record.get('max_abs_log_ratio', 0.0)):.1e} "
+        f"ratio_abs_dev={float(record.get('max_ratio_abs_dev', 0.0)):.1e}, "
+        f"finite={worst.get('finite')})"
+    )
+    if record.get("mode") == "fail":
+        raise PrecisionDriftError(message)
+    (logger or _logger).warning(message)
+
+
+def run_precision_drift_guard(
+    config: PrecisionDriftGuardConfig,
+    *,
+    train_precision: str,
+    rollout_precision: str,
+    math_precision: str,
+    timestep_indices: Sequence[int],
+    evaluate_fn: Callable[[int], Any],
+    metadata: Mapping[str, Any] | None = None,
+    logger: logging.Logger | None = None,
+) -> dict[str, Any] | None:
+    """Single-process facade: measure, then immediately warn or fail."""
+
+    record = measure_precision_drift(
+        config,
+        train_precision=train_precision,
+        rollout_precision=rollout_precision,
+        math_precision=math_precision,
+        timestep_indices=timestep_indices,
+        evaluate_fn=evaluate_fn,
+        metadata=metadata,
+    )
+    enforce_precision_drift(record, logger=logger)
     return record
 
 
@@ -166,6 +274,8 @@ def _normalize(precision: str) -> str:
 
 __all__ = [
     "PrecisionDriftError",
+    "enforce_precision_drift",
+    "measure_precision_drift",
     "resolve_guard_mode",
     "run_precision_drift_guard",
     "select_guard_timesteps",

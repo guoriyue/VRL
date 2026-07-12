@@ -181,10 +181,15 @@ def test_iter_blocks_fails_without_no_split_modules() -> None:
         list(iter_blocks(net))
 
 
-def test_mixed_precision_policy_actor_uses_bf16_params_fp32_reduce() -> None:
-    policy = mixed_precision_policy("actor")
-    assert policy.param_dtype == torch.bfloat16
+def test_mixed_precision_policy_actor_uses_resolved_params_fp32_reduce() -> None:
+    policy = mixed_precision_policy("actor", parameter_dtype=torch.float16)
+    assert policy.param_dtype == torch.float16
     assert policy.reduce_dtype == torch.float32
+
+
+def test_mixed_precision_policy_actor_requires_resolved_parameter_dtype() -> None:
+    with pytest.raises(ValueError, match="resolved parameter dtype"):
+        mixed_precision_policy("actor")
 
 
 def test_mixed_precision_policy_rejects_unknown() -> None:

@@ -1,8 +1,8 @@
-"""Runtime build spec and runtime bundle (CONTRACT.md, SPRINT_model_refactor.md §5.1, §5.3.E).
+"""Model build inputs and runtime bundle (CONTRACT.md, SPRINT_model_refactor.md §5.1, §5.3.E).
 
 These two dataclasses are the only sanctioned interface between training scripts
 and family-adjacent builders. Scripts must not import family model classes
-directly; builders consume a ``RuntimeBuildSpec`` and return a ``RuntimeBundle``.
+directly; builders consume a ``ModelBuild`` and return a ``RuntimeBundle``.
 """
 
 from __future__ import annotations
@@ -25,7 +25,7 @@ MEMORY_POLICY_METADATA_KEY = "memory_policy"
 MODEL_MEMORY_SECTIONS: tuple[str, ...] = ("vae_decode",)
 
 # Single source of truth for the model_config compile block that the
-# ``RuntimeBuildSpec.torch_compile`` property below consumes.
+# ``ModelBuild.torch_compile`` property below consumes.
 TORCH_COMPILE_MODEL_KEY = "torch_compile"
 
 # The trainer and Ray rollout worker load different runtime surfaces: rollout
@@ -58,9 +58,87 @@ def bundle_loads_full_generation_modules(bundle: Any) -> bool:
     return bool(metadata.get(LOADS_FULL_GENERATION_MODULES_KEY, False))
 
 
+@dataclass(frozen=True, slots=True)
+class RolloutBuildOptions:
+    """Generation-only precision and lifecycle inputs for a rollout model.
+
+    ``autocast_dtype`` is deliberately distinct from ``quantization_format``. A plain
+    fp32/bf16/fp16 rollout uses that dtype directly, while an FP8 rollout swaps
+    selected GEMMs and still needs a real autocast dtype for attention, norms,
+    residuals, and every linear that was not swapped. NVFP4 follows the same
+    layered contract but conservatively swaps MLP linears only.
+
+    ``prompt_encoder_dtype`` names the generation-only encoder precision policy
+    the runtime actually consumes. VAEs remain family-owned fp32 fidelity boundaries;
+    putting their dtype under this option would advertise a knob they ignore.
+
+    Replay builds carry ``rollout=None`` instead of hauling these fields through
+    a path that must never quantize or load generation-only prompt encoders.
+    """
+
+    autocast_dtype: Any
+    prompt_encoder_dtype: Any
+    quantization_format: str | None = None
+    quantization_recipe: str | None = None
+    base_weight_sync: bool = True
+
+    def __post_init__(self) -> None:
+        from vrl.models.dtypes import (
+            dtype_to_precision_token,
+            dtype_to_wire_name,
+            resolve_torch_dtype,
+        )
+
+        autocast_dtype = resolve_torch_dtype(self.autocast_dtype)
+        autocast_name = dtype_to_wire_name(autocast_dtype)
+        try:
+            dtype_to_precision_token(autocast_dtype)
+        except ValueError as error:
+            raise ValueError(
+                "rollout autocast dtype must be fp16, bf16, or fp32; "
+                f"got {autocast_name!r}. FP8 and NVFP4 are selective GEMM "
+                "formats; neither is an outer torch.autocast dtype.",
+            ) from error
+        object.__setattr__(self, "autocast_dtype", autocast_dtype)
+        prompt_encoder_dtype = resolve_torch_dtype(self.prompt_encoder_dtype)
+        prompt_encoder_name = dtype_to_wire_name(prompt_encoder_dtype)
+        try:
+            dtype_to_precision_token(prompt_encoder_dtype)
+        except ValueError as error:
+            raise ValueError(
+                "rollout prompt encoder dtype must be fp16, bf16, or fp32; "
+                f"got {prompt_encoder_name!r}",
+            ) from error
+        object.__setattr__(self, "prompt_encoder_dtype", prompt_encoder_dtype)
+
+        recipe = (
+            str(self.quantization_recipe).lower().strip()
+            if self.quantization_recipe is not None
+            else None
+        )
+        if recipe is not None and self.quantization_format is None:
+            raise ValueError(
+                "rollout quantization_recipe requires quantization_format",
+            )
+        quantization_format = None
+        if self.quantization_format is not None:
+            from vrl.config.precision import QuantizationPolicy
+
+            quantization = QuantizationPolicy(
+                format=str(self.quantization_format),
+                recipe=recipe,
+            )
+            quantization_format = quantization.format
+            recipe = quantization.recipe
+        if not isinstance(self.base_weight_sync, bool):
+            raise TypeError("rollout base_weight_sync must be a bool")
+        object.__setattr__(self, "quantization_format", quantization_format)
+        object.__setattr__(self, "quantization_recipe", recipe)
+
+
 @dataclass
-class RuntimeBuildSpec:
-    """Runtime-only slice of the whole RL config.
+class ModelBuild:
+    """Model-construction slice of the whole RL config.
 
     Builders take this, not the whole RL cfg. Reward / algorithm / trainer /
     dataset / logging cadence are explicitly out of scope.
@@ -68,7 +146,7 @@ class RuntimeBuildSpec:
     ``model_config`` / ``sampling_config`` carry the runtime-relevant config
     blocks (``cfg.model`` / ``cfg.sampling``) wholesale as deep-converted plain
     dicts. The read properties below expose the common curated views so
-    consumers read ``spec.memory`` / ``spec.lora`` / ``spec.num_steps`` directly
+    consumers read ``build.memory`` / ``build.lora`` / ``build.num_steps`` directly
     instead of re-deriving from the raw block. They centralize the lora /
     scheduler / memory / compile transforms in one place, so no read-time logic
     is duplicated per family. Family-specific fields (e.g. anima checkpoint
@@ -78,50 +156,70 @@ class RuntimeBuildSpec:
 
     model_name_or_path: str
     device: Any
-    dtype: Any
-    # Canonical rollout family name, set by the registry-descriptor extractor
-    # (vrl.models.diffusion.build:extract_family_runtime_spec) so the generic
+    # Resolved base transformer parameter dtype. A family build descriptor may pin
+    # this independently of rollout autocast (SANA: fp16 parameters, bf16 forward).
+    parameter_dtype: Any
+    # Canonical rollout family name, set by the registry-backed resolver
+    # (vrl.models.diffusion.build:resolve_family_model_build) so the generic
     # builders can look the family's build recipe up worker-side. None on the
     # legacy per-family builder path, which binds its model class in code.
     family: str | None = None
-    # Diffusion t2v/i2v axis only. AR families must NOT reuse this field; they
-    # carry their trajectory variant in ``ar_task`` so a single field never holds
-    # two disjoint enums (t2v/i2v vs ar_t2i/ar_t2i_r1).
-    task_variant: str | None = None
-    # AR trajectory variant (``ar_t2i`` / ``ar_t2i_r1``). Selects the AR family
-    # capability and replay shape; serialized across the Ray launch contract
-    # alongside ``task_variant`` (both ride through ``asdict``).
-    ar_task: str | None = None
     model_config: dict[str, Any] | None = None
     sampling_config: dict[str, Any] | None = None
-    # ``frozen`` precision axis as a ``torch.dtype`` (encoders / VAE). Like
-    # ``dtype``, it is a real dtype in memory and serialized to a name-string
-    # across the Ray launch contract. None -> the family's historical derivation
-    # (fp16 when the model runs fp32).
-    frozen_dtype: Any = None
-    # Rollout-only quantized GEMM token derived from ``precision.rollout``
-    # ("fp8"/"fp4"), or None. The runtime builder swaps the transformer's big
-    # linears to fp8 when this is "fp8" (storage stays the bf16 master ``dtype``).
-    rollout_quantization: str | None = None
-    # Kernel recipe for the quantized rollout (``precision.rollout_recipe``), or
-    # None for the scheme default (fp8: "rowwise"). Consumed by
-    # ``apply_rollout_quantization``; only ever set alongside a quantized rollout
-    # (the precision resolver rejects it otherwise).
-    rollout_quantization_recipe: str | None = None
-    # Whether base weights will ever be synced INTO this rollout model. True
-    # for trainer-driven rollouts (full-finetune sync loads base weights;
-    # LoRA sync loads adapters — the quantizer already distinguishes via
-    # use_lora). Sync-free contexts (generation probes, eval-only runs) set
-    # False so fp8 can drop the bf16 masters BEFORE the device move — the
-    # difference between a 17B rollout fitting a 32GB card or not.
-    # Consumed by vrl.models.loader.apply_rollout_quantization.
-    rollout_weight_sync: bool = True
+    # Full-generation build inputs. ``None`` is the replay contract: replay owns
+    # only differentiable policy modules and must not react to rollout FP8/frozen
+    # component settings. A nested primitive mapping is accepted only for the Ray
+    # wire boundary and normalized immediately in ``__post_init__``.
+    rollout: RolloutBuildOptions | Mapping[str, Any] | None = None
+
+    def __post_init__(self) -> None:
+        from vrl.models.dtypes import (
+            dtype_to_precision_token,
+            dtype_to_wire_name,
+            resolve_torch_dtype,
+        )
+
+        self.parameter_dtype = resolve_torch_dtype(self.parameter_dtype)
+        parameter_name = dtype_to_wire_name(self.parameter_dtype)
+        try:
+            dtype_to_precision_token(self.parameter_dtype)
+        except ValueError as error:
+            raise ValueError(
+                "runtime parameter dtype must be fp16, bf16, or fp32; "
+                f"got {parameter_name!r}. FP8 and NVFP4 are selective rollout "
+                "quantization formats; neither is parameter storage.",
+            ) from error
+        if isinstance(self.rollout, Mapping):
+            self.rollout = RolloutBuildOptions(**dict(self.rollout))
+        elif self.rollout is not None and not isinstance(self.rollout, RolloutBuildOptions):
+            raise TypeError(
+                "ModelBuild.rollout must be RolloutBuildOptions, a mapping, or None",
+            )
+
+    def require_rollout(self) -> RolloutBuildOptions:
+        """Return rollout build inputs or fail at the role boundary."""
+
+        if not isinstance(self.rollout, RolloutBuildOptions):
+            raise ValueError(
+                "rollout runtime construction requires ModelBuild.rollout; "
+                "resolve the build through a rollout resolver",
+            )
+        return self.rollout
+
+    def require_replay(self) -> None:
+        """Reject generation-only state on a trainer replay build."""
+
+        if self.rollout is not None:
+            raise ValueError(
+                "replay runtime construction requires ModelBuild.rollout=None; "
+                "resolve the build through a replay resolver",
+            )
 
     @property
     def use_lora(self) -> bool:
         """Whether the family should attach a LoRA adapter.
 
-        ``False`` fallback when the block is absent (safe for fake test specs);
+        ``False`` fallback when the block is absent (safe for fake test builds);
         every real experiment config sets ``model.use_lora`` explicitly.
         """
         return bool((self.model_config or {}).get("use_lora", False))

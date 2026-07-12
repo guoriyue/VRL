@@ -6,12 +6,19 @@ import contextlib
 from collections.abc import Mapping, Sequence
 from typing import Any
 
+import torch
+
 from vrl.generation.launch_contract import GenerationRuntimeLaunchContract
 from vrl.generation.protocols import ChunkResult
 from vrl.generation.ray.worker import RayGenerationWorker
 from vrl.generation.types import GenerationOutput, GenerationRequest, GenerationSampleRow
 from vrl.models.ar.capabilities import ar_discrete_family_capability
-from vrl.models.interfaces import ReplayResult, RuntimeBuildSpec, RuntimeBundle
+from vrl.models.interfaces import (
+    ModelBuild,
+    ReplayResult,
+    RolloutBuildOptions,
+    RuntimeBundle,
+)
 
 
 class _TinyRuntimeModel:
@@ -55,8 +62,12 @@ class _TinyChunkExecutor:
         )
 
 
-def build_tiny_runtime_bundle(spec: RuntimeBuildSpec) -> RuntimeBundle:
-    assert str(spec.device) == "cpu"
+def build_tiny_runtime_bundle(build: ModelBuild) -> RuntimeBundle:
+    assert str(build.device) == "cpu"
+    assert build.parameter_dtype is torch.float16
+    assert isinstance(build.rollout, RolloutBuildOptions)
+    assert build.rollout.autocast_dtype is torch.bfloat16
+    assert build.rollout.prompt_encoder_dtype is torch.float32
     return RuntimeBundle(
         model=_TinyRuntimeModel(),
         trainable_modules={},
@@ -74,7 +85,14 @@ def _launch_contract() -> GenerationRuntimeLaunchContract:
         model_build={
             "model_name_or_path": "unit-test",
             "device": "cpu",
-            "dtype": "float32",
+            "parameter_dtype": "float16",
+            "rollout": {
+                "autocast_dtype": "bfloat16",
+                "prompt_encoder_dtype": "float32",
+                "quantization_format": None,
+                "quantization_recipe": None,
+                "base_weight_sync": False,
+            },
         },
         runtime_builder=(
             "tests.generation.ray.test_ray_resident_session:build_tiny_runtime_bundle"

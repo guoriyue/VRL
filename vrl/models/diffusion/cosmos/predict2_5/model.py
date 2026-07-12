@@ -20,8 +20,7 @@ from vrl.models.diffusion.common import (
     DiffusionBackboneCaller,
     DiffusionBackboneInput,
     DiffusionBranch,
-    LatentDecodeSpec,
-    LatentDecodeTransform,
+    LatentDecodePlan,
     align_replay_tensor,
     replay_tensor,
     shared_replay_tensor,
@@ -37,6 +36,7 @@ from vrl.models.diffusion.common.lora import (
 )
 from vrl.models.diffusion.common.tensors import require_tensor
 from vrl.models.diffusion.cosmos import CosmosReplayForward
+from vrl.models.interfaces.runtime import ModelBuild
 
 
 @dataclass(slots=True)
@@ -56,7 +56,9 @@ class CosmosPredict25DiffusionBackboneRunner:
         extra = request.extra
         embeds = request.prompt_embeds
         if branch == "uncond":
-            embeds = require_tensor(request.negative_prompt_embeds, "Cosmos Predict2.5 negative_prompt_embeds")
+            embeds = require_tensor(
+                request.negative_prompt_embeds, "Cosmos Predict2.5 negative_prompt_embeds"
+            )
         hidden_states, timestep, gt_velocity = self._prepare_branch(
             latents=request.hidden_states,
             cond_latent=extra["cond_latent"],
@@ -80,9 +82,7 @@ class CosmosPredict25DiffusionBackboneRunner:
         branch: DiffusionBranch,
         raw_output: torch.Tensor,
     ) -> torch.Tensor:
-        return branch.metadata["gt_velocity"] + raw_output * (
-            1 - request.extra["cond_mask"]
-        )
+        return branch.metadata["gt_velocity"] + raw_output * (1 - request.extra["cond_mask"])
 
     def finalize_noise_pred(
         self,
@@ -106,9 +106,7 @@ class CosmosPredict25DiffusionBackboneRunner:
             self.conditional_frame_timestep,
         )
         hidden_states = cond_mask * cond_latent + (1 - cond_mask) * latents
-        timestep = cond_indicator * condition_timestep + (
-            1 - cond_indicator
-        ) * self.sigma
+        timestep = cond_indicator * condition_timestep + (1 - cond_indicator) * self.sigma
         gt_velocity = (latents - cond_latent) * cond_mask
         return hidden_states, timestep, gt_velocity
 
@@ -128,7 +126,7 @@ class _NoOpCosmosSafetyChecker:
 
 def _load_pipeline_without_text_encoder(
     pipeline_cls: Any,
-    spec: Any,
+    build: ModelBuild,
     *,
     revision: str | None,
 ) -> Any:
@@ -139,19 +137,19 @@ def _load_pipeline_without_text_encoder(
         load_kwargs["revision"] = revision
 
     transformer = CosmosTransformer3DModel.from_pretrained(
-        spec.model_name_or_path,
+        build.model_name_or_path,
         subfolder="transformer",
-        torch_dtype=spec.dtype,
+        torch_dtype=build.parameter_dtype,
         **load_kwargs,
     )
     vae = AutoencoderKLWan.from_pretrained(
-        spec.model_name_or_path,
+        build.model_name_or_path,
         subfolder="vae",
         torch_dtype=torch.float32,
         **load_kwargs,
     )
     scheduler = UniPCMultistepScheduler.from_pretrained(
-        spec.model_name_or_path,
+        build.model_name_or_path,
         subfolder="scheduler",
         **load_kwargs,
     )
@@ -195,19 +193,19 @@ class CosmosPredict25Model(CosmosReplayForward, DiffusersPipelineModelBase):
         self.synthetic_prompt_embeds = bool(synthetic_prompt_embeds)
 
     @classmethod
-    def from_spec(cls, spec: Any) -> CosmosPredict25Model:
+    def from_build(cls, build: ModelBuild) -> CosmosPredict25Model:
         import diffusers.pipelines.cosmos.pipeline_cosmos2_5_predict as _predict_mod
         from diffusers import Cosmos2_5_PredictBasePipeline
 
-        kwargs: dict[str, Any] = {"torch_dtype": spec.dtype}
-        revision = (spec.model_config or {}).get("revision") or None
+        kwargs: dict[str, Any] = {"torch_dtype": build.parameter_dtype}
+        revision = (build.model_config or {}).get("revision") or None
         if revision:
             kwargs["revision"] = revision
-        skip_text_encoder = bool((spec.model_config or {}).get("skip_text_encoder", False))
+        skip_text_encoder = bool((build.model_config or {}).get("skip_text_encoder", False))
         if skip_text_encoder:
             pipeline = _load_pipeline_without_text_encoder(
                 Cosmos2_5_PredictBasePipeline,
-                spec,
+                build,
                 revision=revision,
             )
         else:
@@ -215,7 +213,7 @@ class CosmosPredict25Model(CosmosReplayForward, DiffusersPipelineModelBase):
             _predict_mod.CosmosSafetyChecker = _NoOpCosmosSafetyChecker
             try:
                 pipeline = Cosmos2_5_PredictBasePipeline.from_pretrained(
-                    spec.model_name_or_path,
+                    build.model_name_or_path,
                     **kwargs,
                 )
             finally:
@@ -224,17 +222,17 @@ class CosmosPredict25Model(CosmosReplayForward, DiffusersPipelineModelBase):
         pipeline.set_progress_bar_config(disable=True)
         if hasattr(pipeline, "vae"):
             pipeline.vae.requires_grad_(False)
-            pipeline.vae.to(spec.device, dtype=torch.float32)
+            pipeline.vae.to(build.device, dtype=torch.float32)
         if getattr(pipeline, "text_encoder", None) is not None:
             pipeline.text_encoder.requires_grad_(False)
-            pipeline.text_encoder.to(spec.device, dtype=spec.dtype)
+            pipeline.text_encoder.to(build.device, dtype=build.parameter_dtype)
         return cls(
             pipeline=pipeline,
-            device=spec.device,
+            device=build.device,
             synthetic_prompt_embeds=skip_text_encoder,
         )
 
-    def apply_lora(self, spec: Any) -> None:
+    def apply_lora(self, build: ModelBuild) -> None:
         # Single attach path for BOTH the driver and the replay subclass: at
         # entry self.transformer is the raw, unwrapped transformer in either case
         # (the replay model has no pipeline), so this is defined once and
@@ -248,11 +246,11 @@ class CosmosPredict25Model(CosmosReplayForward, DiffusersPipelineModelBase):
         base = self.transformer
         base.requires_grad_(False)
         base.to(self.device)
-        lora_config = spec.lora
-        if spec.lora_path:
+        lora_config = build.lora
+        if build.lora_path:
             transformer = PeftModel.from_pretrained(
                 base,
-                spec.lora_path,
+                build.lora_path,
                 is_trainable=True,
                 adapter_name="default",
             )
@@ -260,7 +258,9 @@ class CosmosPredict25Model(CosmosReplayForward, DiffusersPipelineModelBase):
             if lora_config is None:
                 raise ValueError("Cosmos Predict2.5 requires lora_config when no lora_path is set")
             transformer = get_peft_model(
-                base, _build_lora_config(lora_config), adapter_name="default",
+                base,
+                _build_lora_config(lora_config),
+                adapter_name="default",
             )
 
         # NFT's forward-only "previous" mirror: seed it from default and freeze
@@ -269,7 +269,9 @@ class CosmosPredict25Model(CosmosReplayForward, DiffusersPipelineModelBase):
         # re-runs only the copy, which is why these stay separate primitives.
         if "previous" not in getattr(transformer, "peft_config", {}):
             if lora_config is None:
-                raise ValueError("Cosmos Predict2.5 requires lora_config to build the `previous` adapter")
+                raise ValueError(
+                    "Cosmos Predict2.5 requires lora_config to build the `previous` adapter"
+                )
             transformer.add_adapter("previous", _build_lora_config(lora_config))
         _copy_adapter_weights(transformer, src="default", dst="previous")
         _freeze_adapter_params(transformer, "previous")
@@ -559,10 +561,7 @@ class CosmosPredict25Model(CosmosReplayForward, DiffusersPipelineModelBase):
         x = (video.to(pipe.vae.dtype) * 2.0 - 1.0).to(self.device)
         with torch.no_grad():
             encoded = torch.cat(
-                [
-                    pipe.vae.encode(sample.unsqueeze(0)).latent_dist.mode()
-                    for sample in x
-                ],
+                [pipe.vae.encode(sample.unsqueeze(0)).latent_dist.mode() for sample in x],
                 dim=0,
             )
         latents_mean = pipe.latents_mean.to(encoded.device, encoded.dtype)
@@ -575,15 +574,15 @@ class CosmosPredict25Model(CosmosReplayForward, DiffusersPipelineModelBase):
         latents_std = pipe.latents_std.to(latents.device, latents.dtype)
         frame_count = int((latents.shape[2] - 1) * pipe.vae_scale_factor_temporal + 1)
         decoder = ChunkedLatentDecoder(
-            LatentDecodeSpec(
-                transform=LatentDecodeTransform(
-                    lambda chunk: (chunk * latents_std + latents_mean).to(pipe.vae.dtype),
+            LatentDecodePlan(
+                prepare_latents=lambda chunk: (chunk * latents_std + latents_mean).to(
+                    pipe.vae.dtype,
                 ),
                 vae_decode=lambda chunk: pipe.vae.decode(
                     chunk,
                     return_dict=False,
                 )[0],
-                match_num_frames=lambda video: pipe._match_num_frames(
+                prepare_decoded=lambda video: pipe._match_num_frames(
                     video,
                     frame_count,
                 ),
@@ -652,6 +651,7 @@ class CosmosPredict25ReplayModel(DiffusersReplayModelBase, CosmosPredict25Model)
             "padding_mask": padding_mask,
             "return_dict": False,
         }
+
 
 __all__ = [
     "CosmosPredict25Model",

@@ -8,7 +8,10 @@ from typing import TYPE_CHECKING, Any, get_type_hints
 
 from omegaconf import DictConfig, OmegaConf
 
-from vrl.config.precision import precision_bridge_fields, resolve_precision_policy
+from vrl.config.precision import (
+    PrecisionPolicy,
+    resolve_precision_policy,
+)
 from vrl.config.validation import (
     path_exists,
     require,
@@ -26,12 +29,10 @@ def build_precision_split_safety_configs() -> tuple[
     PrecisionCorrectionConfig,
     PrecisionDriftGuardConfig,
 ]:
-    """Construct the correction and catastrophic guard used for a precision split.
+    """Build the production correction and guard policy for a precision split.
 
-    This is the single typed source of truth shared by trainer config resolution
-    and hardware validation probes. Keeping the probe on these exact objects
-    prevents a stale hard-coded TIS cap or guard threshold from validating a
-    different policy than production runs.
+    Hardware validation probes consume this same typed source so a measured gate
+    cannot silently validate thresholds different from live training.
     """
 
     from vrl.algorithms.logprob_mismatch import PrecisionCorrectionConfig
@@ -53,7 +54,7 @@ def build_precision_split_safety_configs() -> tuple[
 
 def _apply_rollout_precision_defaults(
     cfg: DictConfig,
-    precision: Any,
+    precision: PrecisionPolicy,
     payload: dict[str, Any],
 ) -> None:
     """Derive safe rollout/replay precision policy from the public precision intent.
@@ -64,7 +65,7 @@ def _apply_rollout_precision_defaults(
     guard. Explicit expert blocks are still respected.
     """
 
-    if precision.rollout == precision.train:
+    if precision.stages_match:
         return
 
     correction, guard = build_precision_split_safety_configs()
@@ -169,7 +170,11 @@ def _validate_yaml_home(field_name: str, home: str) -> None:
         )
 
 
-def build_trainer_config(cfg: DictConfig):
+def build_trainer_config(
+    cfg: DictConfig,
+    *,
+    precision: PrecisionPolicy | None = None,
+):
     """Slice merged YAML into ``TrainerConfig``.
 
     The layout is derived from each field's ``metadata={"yaml": ...}`` on the
@@ -240,9 +245,12 @@ def build_trainer_config(cfg: DictConfig):
     if missing:
         raise ValueError("config missing required key(s): " + ", ".join(sorted(missing)))
 
-    # The unified precision policy expands into four fields.
-    precision = resolve_precision_policy(cfg)
-    payload.update(precision_bridge_fields(precision))
+    # Resolve the public policy once; trainer fields are its runtime projection.
+    precision = precision or resolve_precision_policy(cfg)
+    payload.update(
+        train_precision=precision.training.label,
+        rollout_precision=precision.rollout.label,
+    )
     _apply_rollout_precision_defaults(cfg, precision, payload)
 
     return TrainerConfig(**payload)
@@ -333,9 +341,11 @@ def build_configs(cfg: DictConfig) -> dict[str, Any]:
     """Bundle typed configs for downstream training scripts."""
 
     validate_training_config(cfg)
+    precision = resolve_precision_policy(cfg)
     out: dict[str, Any] = {
-        "trainer": build_trainer_config(cfg),
+        "trainer": build_trainer_config(cfg, precision=precision),
         "algorithm": build_algorithm_config(cfg),
+        "precision": precision,
         "raw": cfg,
     }
     if "reward" in cfg:

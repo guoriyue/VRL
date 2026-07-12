@@ -2,10 +2,14 @@
 
 from __future__ import annotations
 
+import sys
+from types import SimpleNamespace
+
 import pytest
 import torch
 from torch import nn
 
+import vrl.scripts.perf.quantized_sd3_forward_profile as profile_runner
 from vrl.nn.quantization import LinearTargetProfile
 from vrl.scripts.perf.quantized_sd3_forward_profile import (
     _accuracy,
@@ -58,33 +62,38 @@ class _MatchedTargetModel(nn.Module):
         (LinearTargetProfile.ATTENTION_MLP, ["attn.to_q", "mlp.up"]),
     ],
 )
-def test_fp8_and_fp4_build_identical_explicit_target_manifests(
+def test_fp8_and_nvfp4_build_identical_explicit_target_manifests(
     profile: LinearTargetProfile,
     expected_paths: list[str],
 ) -> None:
     fp8_model = _MatchedTargetModel()
-    fp4_model = _MatchedTargetModel()
+    nvfp4_model = _MatchedTargetModel()
 
     fp8_paths = _apply_scheme(fp8_model, "fp8", profile)
-    fp4_paths = _apply_scheme(fp4_model, "fp4", profile)
+    nvfp4_paths = _apply_scheme(nvfp4_model, "nvfp4", profile)
     fp8_manifest = _target_manifest(fp8_model, fp8_paths)
-    fp4_manifest = _target_manifest(fp4_model, fp4_paths)
+    nvfp4_manifest = _target_manifest(nvfp4_model, nvfp4_paths)
 
     assert fp8_paths == expected_paths
-    assert fp4_paths == expected_paths
-    _require_matching_manifest("fp8", fp8_manifest, "fp4", fp4_manifest)
-    assert _manifest_sha256(fp8_manifest) == _manifest_sha256(fp4_manifest)
+    assert nvfp4_paths == expected_paths
+    _require_matching_manifest("fp8", fp8_manifest, "nvfp4", nvfp4_manifest)
+    assert _manifest_sha256(fp8_manifest) == _manifest_sha256(nvfp4_manifest)
 
 
 def test_manifest_mismatch_fails_loud() -> None:
     fp8_manifest = (("attn.to_q", 1024, 1024), ("mlp.up", 1024, 1024))
-    fp4_manifest = (("mlp.up", 1024, 1024),)
+    nvfp4_manifest = (("mlp.up", 1024, 1024),)
 
     with pytest.raises(RuntimeError, match=r"only_fp8=.*attn\.to_q"):
-        _require_matching_manifest("fp8", fp8_manifest, "fp4", fp4_manifest)
+        _require_matching_manifest("fp8", fp8_manifest, "nvfp4", nvfp4_manifest)
 
 
-def test_relative_speedups_include_direct_fp4_vs_fp8_ratio() -> None:
+def test_apply_scheme_rejects_legacy_fp4_name() -> None:
+    with pytest.raises(ValueError, match="unsupported quantized scheme 'fp4'"):
+        _apply_scheme(_MatchedTargetModel(), "fp4", LinearTargetProfile.MLP_ONLY)
+
+
+def test_relative_speedups_include_direct_nvfp4_vs_fp8_ratio() -> None:
     results = [
         {"scheme": "bf16", "rows": [{"batch": 32, "median_ms": 100.0}]},
         {
@@ -94,7 +103,7 @@ def test_relative_speedups_include_direct_fp4_vs_fp8_ratio() -> None:
             "rows": [{"batch": 32, "median_ms": 80.0}],
         },
         {
-            "scheme": "fp4",
+            "scheme": "nvfp4",
             "profile": "mlp_only",
             "target_manifest_sha256": "same",
             "rows": [{"batch": 32, "median_ms": 50.0}],
@@ -104,6 +113,7 @@ def test_relative_speedups_include_direct_fp4_vs_fp8_ratio() -> None:
     _add_relative_speedups(results)
 
     assert results[1]["rows"][0]["speedup_vs_bf16"] == pytest.approx(1.25)
+    assert results[1]["rows"][0]["speedup_vs_nvfp4"] == pytest.approx(0.625)
     assert results[2]["rows"][0]["speedup_vs_bf16"] == pytest.approx(2.0)
     assert results[2]["rows"][0]["speedup_vs_fp8"] == pytest.approx(1.6)
 
@@ -118,9 +128,9 @@ def test_unmatched_scopes_do_not_report_direct_format_speedup() -> None:
             "rows": [{"batch": 32, "median_ms": 80.0}],
         },
         {
-            "scheme": "fp4",
+            "scheme": "nvfp4",
             "profile": "mlp_only",
-            "target_manifest_sha256": "fp4",
+            "target_manifest_sha256": "nvfp4",
             "rows": [{"batch": 32, "median_ms": 50.0}],
         },
     ]
@@ -128,3 +138,28 @@ def test_unmatched_scopes_do_not_report_direct_format_speedup() -> None:
     _add_relative_speedups(results)
 
     assert "speedup_vs_fp8" not in results[2]["rows"][0]
+
+
+def test_profile_cli_rejects_legacy_fp4_name(monkeypatch) -> None:
+    monkeypatch.setattr(sys, "argv", ["quantized_sd3_forward_profile", "--schemes", "bf16", "fp4"])
+
+    with pytest.raises(SystemExit) as exc_info:
+        profile_runner._parse_args()
+
+    assert exc_info.value.code != 0
+
+
+def test_explicit_nvfp4_profile_fails_when_hardware_is_unavailable(monkeypatch) -> None:
+    monkeypatch.setattr(
+        profile_runner,
+        "_parse_args",
+        lambda: SimpleNamespace(schemes=["bf16", "nvfp4"]),
+    )
+    monkeypatch.setattr(profile_runner.torch.cuda, "is_available", lambda: True)
+    monkeypatch.setattr(profile_runner, "nvfp4_available", lambda: False)
+
+    with pytest.raises(SystemExit) as exc_info:
+        profile_runner.main()
+
+    assert exc_info.value.code != 0
+    assert "NVFP4-capable" in str(exc_info.value)

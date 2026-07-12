@@ -14,7 +14,6 @@ defaults:
   - /dataset/pickapic_v2
   - /reward/pickscore
 
-precision: bf16
 
 actor:
   optim:

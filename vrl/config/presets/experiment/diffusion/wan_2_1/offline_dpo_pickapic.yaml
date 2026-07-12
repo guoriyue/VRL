@@ -6,7 +6,9 @@ defaults:
   - /sampling/denoise/20_step_cfg_4_5
   - /dataset/pickapic_v2
 
-precision: bf16
+precision:
+  training:
+    dtype: bf16
 
 # DPO is offline preference learning over images replicated to T frames.
 # Default to single-frame "image-style" DPO; bump num_frames for true video pairs.

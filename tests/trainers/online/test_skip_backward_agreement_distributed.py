@@ -23,7 +23,8 @@ from torch import nn
 
 from tests.trainers.online._collector_control import CollectorControlFake
 from tests.trainers.online._helpers import _trajectory_signals
-from vrl.algorithms.types import TrainStepMetrics
+from vrl.algorithms.logprob_mismatch import LogprobMismatchStats
+from vrl.algorithms.types import InitialReplayStats, PolicyUpdateStats, TrainStepMetrics
 from vrl.rollouts.batch import RolloutBatch
 from vrl.trainers.core.types import DebugConfig, EMAConfig, OptimConfig, TrainerConfig
 from vrl.trainers.online import trainer as trainer_module
@@ -33,6 +34,9 @@ from vrl.trainers.online.trainer import (
     TrainingBatch,
     _all_ranks_have_work,
     _balanced_training_sample_chunks,
+    _distributed_initial_replay_stats,
+    _distributed_parity_verdict,
+    _ReplayMetrics,
 )
 
 # (rank0_has_work, rank1_has_work) -> the agreed result both ranks must return.
@@ -99,6 +103,134 @@ def test_skip_backward_decision_is_unanimous(local_flags: list[bool], expected: 
 def test_falls_back_to_local_without_process_group() -> None:
     assert _all_ranks_have_work(True, torch.device("cpu")) is True
     assert _all_ranks_have_work(False, torch.device("cpu")) is False
+
+
+def test_zero_weight_initial_replay_is_fully_neutral() -> None:
+    resolved, has_measurements = _distributed_initial_replay_stats(
+        InitialReplayStats(
+            clip_fraction=float("nan"),
+            active_clip_fraction=float("inf"),
+            logprob_abs_diff_max=float("inf"),
+            finite=False,
+        ),
+        local_weight=0.0,
+        device=torch.device("cpu"),
+    )
+
+    assert has_measurements is False
+    assert resolved == InitialReplayStats()
+
+
+def _run_parity_rank(rank: int, world_size: int, port: int, q: mp.Queue) -> None:
+    os.environ["MASTER_ADDR"] = "127.0.0.1"
+    os.environ["MASTER_PORT"] = str(port)
+    dist.init_process_group(backend="gloo", rank=rank, world_size=world_size)
+    try:
+        finite_result = _distributed_parity_verdict(
+            local_finite=True,
+            local_max_abs_diff=(0.1, 0.9)[rank],
+            limit=0.5,
+            device=torch.device("cpu"),
+        )
+        nonfinite_result = _distributed_parity_verdict(
+            local_finite=(rank == 0),
+            local_max_abs_diff=(0.1, 0.9)[rank],
+            limit=1.0,
+            device=torch.device("cpu"),
+        )
+        initial_replay, initial_has_measurements = _distributed_initial_replay_stats(
+            InitialReplayStats(
+                clip_fraction=(0.2, 0.8)[rank],
+                active_clip_fraction=(0.1, 0.4)[rank],
+                logprob_abs_diff_max=(0.1, 0.9)[rank],
+            ),
+            local_weight=(1.0, 3.0)[rank],
+            device=torch.device("cpu"),
+        )
+        mixed_aggregate = _ReplayMetrics()
+        if rank == 0:
+            mixed_aggregate.add(
+                TrainStepMetrics(
+                    update=PolicyUpdateStats(
+                        clip_fraction=0.2,
+                        active_clip_fraction=0.1,
+                    ),
+                    logprob_mismatch=LogprobMismatchStats(
+                        logprob_abs_diff_max=0.1,
+                    ),
+                ),
+                weight=1.0,
+                capture_initial_replay=True,
+            )
+        mixed_local, mixed_weight = mixed_aggregate.initial_replay_snapshot()
+        mixed_rank_replay, mixed_has_measurements = _distributed_initial_replay_stats(
+            mixed_local,
+            local_weight=mixed_weight,
+            device=torch.device("cpu"),
+        )
+
+        empty_local, empty_weight = _ReplayMetrics().initial_replay_snapshot()
+        empty_rank_replay, empty_has_measurements = _distributed_initial_replay_stats(
+            empty_local,
+            local_weight=empty_weight,
+            device=torch.device("cpu"),
+        )
+        q.put(
+            (
+                rank,
+                finite_result,
+                nonfinite_result,
+                initial_replay,
+                initial_has_measurements,
+                mixed_rank_replay,
+                mixed_has_measurements,
+                empty_rank_replay,
+                empty_has_measurements,
+            )
+        )
+    finally:
+        dist.destroy_process_group()
+
+
+def test_parity_verdict_is_rank_consistent() -> None:
+    ctx = mp.get_context("spawn")
+    q: mp.Queue = ctx.Queue()
+    port = _free_port()
+    procs = [ctx.Process(target=_run_parity_rank, args=(r, 2, port, q)) for r in range(2)]
+    for process in procs:
+        process.start()
+    results = [q.get(timeout=50) for _ in range(2)]
+    for process in procs:
+        process.join(timeout=10)
+        assert process.exitcode == 0
+
+    for (
+        _rank,
+        finite_result,
+        nonfinite_result,
+        initial_replay,
+        initial_has_measurements,
+        mixed_rank_replay,
+        mixed_has_measurements,
+        empty_rank_replay,
+        empty_has_measurements,
+    ) in results:
+        assert finite_result == pytest.approx((True, 0.9, False))
+        assert nonfinite_result[0] is False
+        assert nonfinite_result[1] == float("inf")
+        assert nonfinite_result[2] is False
+        assert initial_replay.clip_fraction == pytest.approx(0.65)
+        assert initial_replay.active_clip_fraction == pytest.approx(0.325)
+        assert initial_replay.logprob_abs_diff_max == pytest.approx(0.9)
+        assert initial_replay.finite is True
+        assert initial_has_measurements is True
+        assert mixed_has_measurements is True
+        assert mixed_rank_replay.finite is True
+        assert mixed_rank_replay.clip_fraction == pytest.approx(0.2)
+        assert mixed_rank_replay.active_clip_fraction == pytest.approx(0.1)
+        assert mixed_rank_replay.logprob_abs_diff_max == pytest.approx(0.1)
+        assert empty_has_measurements is False
+        assert empty_rank_replay == InitialReplayStats()
 
 
 def test_replay_planner_pads_to_global_slot_count(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -274,7 +406,7 @@ def _run_replay_loop_rank(
                 rank,
                 len(evaluate_calls),
                 len(backward_calls),
-                len(trainer._update_agg_metrics["loss"]),
+                len(trainer._update_agg_metrics.losses),
                 sum(1 for value in backward_calls if value == 0.0),
             )
         )

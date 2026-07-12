@@ -24,13 +24,14 @@ from vrl.generation.diffusion import (
 from vrl.generation.diffusion.layout import VideoGenerationRequest
 from vrl.generation.execution.chunks import SampleChunk
 from vrl.generation.types import GenerationRequest
-from vrl.models.dtypes import resolve_torch_dtype
-from vrl.models.interfaces.runtime import RuntimeBuildSpec, RuntimeBundle
+from vrl.models.interfaces.runtime import ModelBuild, RuntimeBundle
 from vrl.utils.logging import init_logger
 
 logger = init_logger(__name__)
-def _gemma_path_from_spec(spec: RuntimeBuildSpec) -> str:
-    gemma_path = (spec.model_config or {}).get("gemma_path")
+
+
+def _gemma_path_from_build(build: ModelBuild) -> str:
+    gemma_path = (build.model_config or {}).get("gemma_path")
     if not gemma_path:
         raise ValueError(
             "Echo requires model.gemma_path (the Gemma-3-12B encoder directory)",
@@ -38,7 +39,7 @@ def _gemma_path_from_spec(spec: RuntimeBuildSpec) -> str:
     return str(gemma_path)
 
 
-def build_echo_replay_runtime_bundle(spec: RuntimeBuildSpec) -> RuntimeBundle:
+def build_echo_replay_runtime_bundle(build: ModelBuild) -> RuntimeBundle:
     """Build the trainer replay bundle: Echo's velocity transformer only."""
 
     from diffusers import FlowMatchEulerDiscreteScheduler
@@ -49,21 +50,21 @@ def build_echo_replay_runtime_bundle(spec: RuntimeBuildSpec) -> RuntimeBundle:
         _resolve_gemma_dir,
     )
 
-    logger.info("Building echo replay runtime bundle from %s", spec.model_name_or_path)
+    logger.info("Building echo replay runtime bundle from %s", build.model_name_or_path)
     from ltx_distillation.models.ltx_wrapper import create_ltx2_wrapper
 
-    dtype = resolve_torch_dtype(spec.dtype)
-    device = torch.device(spec.device) if spec.device is not None else torch.device("cpu")
-    sampling = getattr(spec, "sampling_config", None) or {}
+    dtype = build.parameter_dtype
+    device = torch.device(build.device) if build.device is not None else torch.device("cpu")
+    sampling = getattr(build, "sampling_config", None) or {}
     echo = create_ltx2_wrapper(
-        checkpoint_path=_resolve_echo_checkpoint(spec.model_name_or_path),
-        gemma_path=_resolve_gemma_dir(_gemma_path_from_spec(spec)),
+        checkpoint_path=_resolve_echo_checkpoint(build.model_name_or_path),
+        gemma_path=_resolve_gemma_dir(_gemma_path_from_build(build)),
         device=device,
         dtype=dtype,
         video_height=int(sampling.get("height", 512)),
         video_width=int(sampling.get("width", 768)),
     )
-    # Same flow-matching scheduler as the rollout side (model.py from_spec): Echo's
+    # Same flow-matching scheduler as the rollout side (model.py from_build): Echo's
     # released DMD few-step sampler is bypassed; RL drives the velocity field with
     # the standard flow-matching SDE. num_train_timesteps=1000 is Echo/LTX's
     # train-time discretization (sigma = t / num_train_timesteps), and it MUST match the
@@ -78,15 +79,13 @@ def build_echo_replay_runtime_bundle(spec: RuntimeBuildSpec) -> RuntimeBundle:
     # stored timestep -> sigma via scheduler.sigmas; populate the schedule (the
     # rollout side does this in prepare_sampling, but the trainer reads
     # bundle.scheduler directly).
-    num_steps = spec.num_steps
+    num_steps = build.num_steps
     if num_steps is not None:
         model.set_num_steps(num_steps)
 
     from vrl.models.diffusion.build import assemble_replay_bundle
 
-    return assemble_replay_bundle(model, spec, family="echo")
-
-
+    return assemble_replay_bundle(model, build, family="echo")
 
 
 class EchoChunkExecutor(DiffusionChunkExecutorBase):
@@ -119,6 +118,7 @@ class EchoChunkExecutor(DiffusionChunkExecutorBase):
     ) -> dict[str, Any]:
         del generation_request, video_request, params
         return self.model.encode_prompt(chunk.prompt)
+
 
 __all__ = [
     "EchoChunkExecutor",

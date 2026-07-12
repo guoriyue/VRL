@@ -10,7 +10,7 @@ HunyuanImage specifics vs Qwen-Image (the reference t2i CFG family):
   a byT5 glyph encoder produces a second embed/mask pair (zero-filled by the
   pipeline when the prompt carries no quoted glyph text). The transformer
   merges both streams internally, so all four tensors ride each branch call.
-- Both encoders are parked on CPU by ``from_spec``: the 16.6 GB Qwen2.5-VL
+- Both encoders are parked on CPU by ``from_build``: the 16.6 GB Qwen2.5-VL
   follows the Qwen-Image offload discipline, and the pipeline's
   ``encode_prompt`` runs BOTH encoders on a single ``device`` argument (see
   ``HunyuanImagePipeline.encode_prompt``), so the 0.9 GB byT5 shares the CPU
@@ -61,14 +61,13 @@ from vrl.models.diffusion.common import (
     DiffusionBackboneInput,
     DiffusionBackboneRunnerBase,
     DiffusionBranch,
-    LatentDecodeSpec,
-    LatentDecodeTransform,
+    LatentDecodePlan,
     expand_batch_timestep,
     pack_eval_timestep,
 )
 from vrl.models.diffusion.common.lora import LoraModelMixin
 from vrl.models.diffusion.common.tensors import require_tensor
-from vrl.models.dtypes import resolve_torch_dtype
+from vrl.models.interfaces.runtime import ModelBuild
 
 
 @dataclass
@@ -113,7 +112,8 @@ class HunyuanImageModel(LoraModelMixin, DiffusersPipelineModelBase, DiffusionBac
             mask_2 = request.extra["encoder_attention_mask_2"]
         else:
             embeds = require_tensor(
-                request.negative_prompt_embeds, "negative_prompt_embeds",
+                request.negative_prompt_embeds,
+                "negative_prompt_embeds",
             )
             mask = request.extra["negative_encoder_attention_mask"]
             embeds_2 = request.extra["negative_encoder_hidden_states_2"]
@@ -133,14 +133,14 @@ class HunyuanImageModel(LoraModelMixin, DiffusersPipelineModelBase, DiffusionBac
     # -- backend ownership (called by runtime, not by collectors) -------
 
     @classmethod
-    def from_spec(cls, spec: Any) -> HunyuanImageModel:
+    def from_build(cls, build: ModelBuild) -> HunyuanImageModel:
         """Load the diffusers HunyuanImage pipeline + freeze non-trainable modules."""
         from diffusers import HunyuanImagePipeline
 
-        model_dtype = resolve_torch_dtype(spec.dtype)
-        frozen_dtype, load_kwargs = diffusers_pipeline_dtypes(spec, model_dtype)
+        model_dtype = build.parameter_dtype
+        prompt_encoder_dtype, load_kwargs = diffusers_pipeline_dtypes(build, model_dtype)
         pipeline = HunyuanImagePipeline.from_pretrained(
-            spec.model_name_or_path,
+            build.model_name_or_path,
             **load_kwargs,
         )
         pipeline.vae.requires_grad_(False)
@@ -155,11 +155,11 @@ class HunyuanImageModel(LoraModelMixin, DiffusersPipelineModelBase, DiffusionBac
             encoder = getattr(pipeline, encoder_name, None)
             if encoder is not None:
                 encoder.requires_grad_(False)
-                encoder.to("cpu", dtype=frozen_dtype)
-        pipeline.vae.to(spec.device, dtype=torch.float32)
+                encoder.to("cpu", dtype=prompt_encoder_dtype)
+        pipeline.vae.to(build.device, dtype=torch.float32)
         return cls(
             pipeline=pipeline,
-            device=spec.device,
+            device=build.device,
         )
 
     def _encoder_device(self) -> Any:
@@ -197,7 +197,7 @@ class HunyuanImageModel(LoraModelMixin, DiffusersPipelineModelBase, DiffusionBac
         guidance_scale = kwargs.get("guidance_scale", 3.5)
         do_cfg = guidance_scale > 1.0 and negative_prompt is not None
         pipe = self.pipeline
-        # Both frozen encoders live on CPU (see from_spec); run encode there,
+        # Both frozen encoders live on CPU (see from_build); run encode there,
         # then move embeds onto the transformer device for the denoise forward.
         enc_device = self._encoder_device()
         td = self.transformer.dtype
@@ -211,9 +211,7 @@ class HunyuanImageModel(LoraModelMixin, DiffusersPipelineModelBase, DiffusionBac
                 num_images_per_prompt=1,
             )
 
-        prompt_embeds, prompt_embeds_mask, prompt_embeds_2, prompt_embeds_mask_2 = (
-            _encode(prompt)
-        )
+        prompt_embeds, prompt_embeds_mask, prompt_embeds_2, prompt_embeds_mask_2 = _encode(prompt)
         result: dict[str, Any] = {
             "prompt_embeds": prompt_embeds.to(self.device, dtype=td),
             "prompt_embeds_mask": prompt_embeds_mask.to(self.device),
@@ -228,13 +226,15 @@ class HunyuanImageModel(LoraModelMixin, DiffusersPipelineModelBase, DiffusionBac
                 negative_prompt_embeds_mask_2,
             ) = _encode(negative_prompt)
             result["negative_prompt_embeds"] = negative_prompt_embeds.to(
-                self.device, dtype=td,
+                self.device,
+                dtype=td,
             )
             result["negative_prompt_embeds_mask"] = negative_prompt_embeds_mask.to(
                 self.device,
             )
             result["negative_prompt_embeds_2"] = negative_prompt_embeds_2.to(
-                self.device, dtype=td,
+                self.device,
+                dtype=td,
             )
             result["negative_prompt_embeds_mask_2"] = negative_prompt_embeds_mask_2.to(
                 self.device,
@@ -265,10 +265,7 @@ class HunyuanImageModel(LoraModelMixin, DiffusersPipelineModelBase, DiffusionBac
         pipe.scheduler.set_timesteps(sigmas=sigmas, device=device)
         timesteps = pipe.scheduler.timesteps
 
-        seed = (
-            request.seed if request.seed is not None
-            else random.randint(0, sys.maxsize)
-        )
+        seed = request.seed if request.seed is not None else random.randint(0, sys.maxsize)
         generator = torch.Generator(device=device)
         generator.manual_seed(seed)
 
@@ -317,7 +314,8 @@ class HunyuanImageModel(LoraModelMixin, DiffusersPipelineModelBase, DiffusionBac
         latent_input = state.latents.to(td)
         # Raw scheduler t expanded to batch (pipeline parity: no /1000).
         timestep_batch = expand_batch_timestep(t, bsz).to(
-            device=latent_input.device, dtype=td,
+            device=latent_input.device,
+            dtype=td,
         )
         guidance = None
         if state.guidance_embeds:
@@ -330,8 +328,7 @@ class HunyuanImageModel(LoraModelMixin, DiffusersPipelineModelBase, DiffusionBac
                 dtype=td,
             )
         negative_embeds = (
-            None if state.negative_prompt_embeds is None
-            else state.negative_prompt_embeds.to(td)
+            None if state.negative_prompt_embeds is None else state.negative_prompt_embeds.to(td)
         )
         output = DiffusionBackboneCaller(
             self.transformer,
@@ -351,7 +348,8 @@ class HunyuanImageModel(LoraModelMixin, DiffusersPipelineModelBase, DiffusionBac
                     "encoder_attention_mask_2": state.prompt_embeds_mask_2,
                     "negative_encoder_attention_mask": state.negative_prompt_embeds_mask,
                     "negative_encoder_hidden_states_2": (
-                        None if state.negative_prompt_embeds_2 is None
+                        None
+                        if state.negative_prompt_embeds_2 is None
                         else state.negative_prompt_embeds_2.to(td)
                     ),
                     "negative_encoder_attention_mask_2": state.negative_prompt_embeds_mask_2,
@@ -433,10 +431,8 @@ class HunyuanImageModel(LoraModelMixin, DiffusersPipelineModelBase, DiffusionBac
         vae = pipe.vae
         scaling_factor = vae.config.scaling_factor
         decoder = ChunkedLatentDecoder(
-            LatentDecodeSpec(
-                transform=LatentDecodeTransform(
-                    lambda chunk: chunk.to(vae.dtype) / scaling_factor,
-                ),
+            LatentDecodePlan(
+                prepare_latents=(lambda chunk: chunk.to(vae.dtype) / scaling_factor,),
                 vae_decode=lambda chunk: vae.decode(chunk, return_dict=False)[0],
                 postprocess=lambda image: pipe.image_processor.postprocess(
                     image,
@@ -451,7 +447,6 @@ class HunyuanImageModel(LoraModelMixin, DiffusersPipelineModelBase, DiffusionBac
 
 class HunyuanImageReplayModel(DiffusersReplayModelBase, HunyuanImageModel):
     """Replay-only HunyuanImage model owning no prompt encoders, VAE, or pipeline."""
-
 
 
 __all__ = [

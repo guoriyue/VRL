@@ -12,11 +12,18 @@ from vrl.rollouts.evaluators.base import Evaluator
 class TestAdvantageAndMetrics:
     """Groups tests for advantage and metrics."""
 
-    def _make_cea_trainer(self, rewards: list[float]):
+    def _make_cea_trainer(
+        self,
+        rewards: list[float],
+        *,
+        ppo_epochs: int = 1,
+        emit_diagnostics: bool = False,
+        gradient_accumulation_steps: int = 0,
+    ):
         import torch
         import torch.nn as nn
 
-        from vrl.algorithms.types import TrainStepMetrics
+        from vrl.algorithms.types import PolicyUpdateStats, TrainStepMetrics
         from vrl.rollouts.batch import RolloutBatch
         from vrl.trainers.core.types import DebugConfig, EMAConfig, OptimConfig, TrainerConfig
         from vrl.trainers.online import OnlineTrainer
@@ -29,6 +36,9 @@ class TestAdvantageAndMetrics:
                 kl_coef = 0.0
 
             config = _Config()
+
+            def __init__(self) -> None:
+                self.loss_calls = 0
 
             def compute_advantages_from_tensors(self, rewards, group_ids):
                 advantages = torch.zeros_like(rewards)
@@ -44,12 +54,22 @@ class TestAdvantageAndMetrics:
 
             def compute_loss(self, inputs):
                 signals, _advantages, old_log_probs = _algorithm_inputs(inputs)
+                self.loss_calls += 1
                 loss = signals.log_prob.mean()
                 metrics = TrainStepMetrics(
                     loss=loss.item(),
                     policy_loss=loss.item(),
-                    approx_kl=float(old_log_probs.mean().item()),
+                    update=PolicyUpdateStats(
+                        approx_kl=float(old_log_probs.mean().item()),
+                    ),
                 )
+                if emit_diagnostics:
+                    call = float(self.loss_calls)
+                    metrics.update.clip_fraction = call
+                    metrics.update.active_clip_fraction = call / 10.0
+                    metrics.weighted_kl_loss = call / 100.0
+                    metrics.update.tis_clip_fraction = call / 20.0
+                    metrics.update.rs_seq_masked_fraction = call / 40.0
                 return loss, metrics
 
         class _Collector(CollectorControlFake):
@@ -82,6 +102,9 @@ class TestAdvantageAndMetrics:
                 )
 
         class _Evaluator(Evaluator):
+            def __init__(self) -> None:
+                self.calls = 0
+
             def evaluate(
                 self,
                 model,
@@ -91,7 +114,13 @@ class TestAdvantageAndMetrics:
                 signal_request=None,
             ):
                 batch_size = batch.rewards.shape[0]
-                log_prob = model.weight.view(1).expand(batch_size)
+                self.calls += 1
+                old = torch.full(
+                    (batch_size,),
+                    float(timestep_idx),
+                    device=model.weight.device,
+                )
+                log_prob = old + self.calls / 1000.0 + model.weight.view(1) * 0.0
                 return _trajectory_signals(batch, log_prob, timestep_idx)
 
         model = nn.Linear(1, 1, bias=False)
@@ -107,6 +136,8 @@ class TestAdvantageAndMetrics:
                 prompts_per_batch=1,
                 timestep_fraction=1.0,
                 total_epochs=1,
+                ppo_epochs=ppo_epochs,
+                gradient_accumulation_steps=gradient_accumulation_steps,
                 drop_zero_advantage=False,
                 output_dir="outputs/",
                 optim=OptimConfig(lr=0.01),
@@ -141,7 +172,101 @@ class TestAdvantageAndMetrics:
         trainer = self._make_cea_trainer([0.0, 1.0])
         metrics = asyncio.run(trainer.step(["prompt-a"]))
 
-        assert metrics.approx_kl == pytest.approx(0.5)
+        assert metrics.update.approx_kl == pytest.approx(0.5)
+
+    def test_cea_metrics_capture_only_the_first_optimizer_boundary(self) -> None:
+        """Initial replay covers every timestep before the first optimizer boundary."""
+        import asyncio
+        from dataclasses import replace
+
+        trainer = self._make_cea_trainer(
+            [0.0, 1.0],
+            emit_diagnostics=True,
+            gradient_accumulation_steps=1,
+        )
+        batch = asyncio.run(trainer.collect_training_batch(["prompt-a"]))
+        two_boundaries = replace(
+            batch,
+            batches=batch.batches * 2,
+            advantages=batch.advantages * 2,
+        )
+        metrics = asyncio.run(trainer.train_on_rollout_batch(two_boundaries))
+
+        # Each boundary evaluates two sample chunks x two timesteps. Calls 1..4
+        # precede the first optimizer step; calls 5..8 are the second boundary.
+        assert metrics.update.clip_fraction == pytest.approx(4.5)
+        assert metrics.initial_replay.clip_fraction == pytest.approx(2.5)
+        assert metrics.update.active_clip_fraction == pytest.approx(0.45)
+        assert metrics.initial_replay.active_clip_fraction == pytest.approx(0.25)
+        assert metrics.logprob_mismatch.logprob_abs_diff_max == pytest.approx(
+            0.008,
+            abs=1e-6,
+        )
+        assert metrics.initial_replay.logprob_abs_diff_max == pytest.approx(
+            0.004,
+            abs=1e-6,
+        )
+        assert metrics.initial_replay.finite is True
+        assert metrics.weighted_kl_loss == pytest.approx(0.045)
+        assert metrics.update.tis_clip_fraction == pytest.approx(0.225)
+        assert metrics.update.rs_seq_masked_fraction == pytest.approx(0.1125)
+
+    def test_replay_metrics_follow_uneven_sample_chunk_weights(self) -> None:
+        """An 8+2 split represents 80%+20% of the optimized group, not 50%+50%."""
+        import torch
+
+        from vrl.algorithms.logprob_mismatch import LogprobMismatchStats
+        from vrl.algorithms.types import PolicyUpdateStats, TrainStepMetrics
+        from vrl.rollouts.batch import RolloutBatch
+        from vrl.trainers.online.trainer import _ReplayMetrics, _training_sample_chunks
+
+        batch = RolloutBatch(
+            observations=torch.zeros(10, 1, 1),
+            actions=torch.zeros(10, 1, 1),
+            rewards=torch.zeros(10),
+            dones=torch.ones(10, dtype=torch.bool),
+            group_ids=torch.zeros(10, dtype=torch.long),
+        )
+        chunks = _training_sample_chunks(batch, torch.ones(10), samples_per_chunk=8)
+        assert [chunk.loss_weight for chunk in chunks] == pytest.approx([0.8, 0.2])
+
+        aggregate = _ReplayMetrics()
+        for value, chunk in zip((1.0, 9.0), chunks, strict=True):
+            aggregate.add(
+                TrainStepMetrics(
+                    loss=value,
+                    policy_loss=value,
+                    update=PolicyUpdateStats(clip_fraction=value),
+                    logprob_mismatch=LogprobMismatchStats(
+                        logprob_abs_diff_mean=value,
+                        logprob_abs_diff_max=value,
+                    ),
+                ),
+                weight=chunk.loss_weight,
+                capture_initial_replay=True,
+            )
+
+        initial_replay, initial_weight = aggregate.initial_replay_snapshot()
+        metrics = aggregate.build(
+            reward_mean=0.0,
+            reward_std=0.0,
+            reward_components={},
+            advantage_mean=0.0,
+            adv_saturation=0.0,
+            adv_zero_rate=0.0,
+            group_size=10.0,
+            trained_prompt_num=1,
+            phase_times={},
+            initial_replay=initial_replay,
+        )
+
+        assert initial_weight == pytest.approx(1.0)
+        assert metrics.loss == pytest.approx(2.6)
+        assert metrics.update.clip_fraction == pytest.approx(2.6)
+        assert metrics.logprob_mismatch.logprob_abs_diff_mean == pytest.approx(2.6)
+        assert metrics.logprob_mismatch.logprob_abs_diff_max == pytest.approx(9.0)
+        assert metrics.initial_replay.clip_fraction == pytest.approx(2.6)
+        assert metrics.initial_replay.logprob_abs_diff_max == pytest.approx(9.0)
 
     def test_zero_advantage_samples_do_not_get_epsilon_gradient(self) -> None:
         """All-zero advantages should skip backward instead of inventing gradients."""

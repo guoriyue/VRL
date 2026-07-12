@@ -64,8 +64,7 @@ def _quantize_nvfp4_kernel(
     block_scale_e4m3 = block_scale.to(tl.float8e4nv)
     effective_scale = block_scale_e4m3.to(tl.float32) * tensor_scale
 
-    # cuBLAS 128x4 scale swizzle. Logical scale [row, block_id] maps to
-    # [row_block, col_block, inner_row_32, row_quadrant*4 + inner_col].
+    # Logical scale [row, block_id] maps into cuBLAS's 128x4 blocked layout.
     row_in_tile = row % SCALE_ROW_TILE
     swizzled_row_width = SCALE_ROW_TILE // SCALE_INNER_ROWS * SCALE_COL_TILE
     scale_offsets = (
@@ -84,8 +83,8 @@ def _quantize_nvfp4_kernel(
     )
     scaled = tl.clamp(scaled, -FP4_MAX, FP4_MAX)
     magnitude = tl.abs(scaled)
-    # Strict comparisons select the lower code at a midpoint. Add one only
-    # where the lower E2M1 code is odd to implement round-to-nearest-even.
+    # Strict comparisons select the lower code at a midpoint; advance only odd
+    # lower codes to implement round-to-nearest-even.
     codes = (
         (magnitude > BOUND_0).to(tl.int32)
         + (magnitude > BOUND_1).to(tl.int32)

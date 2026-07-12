@@ -19,7 +19,7 @@ class OnlineRecipeDefinition:
     # Trainer-side replay bundle builder. The rollout (generation) model is
     # built inside the Ray workers from the registry launch contract, so the
     # driver never builds a rollout bundle of its own.
-    build_replay_bundle: Callable[[DictConfig, Any, Any], Any]
+    build_replay_bundle: Callable[[DictConfig, Any], Any]
     reference_model_getter: Callable[[Any, DictConfig], Any | None] | None = None
     export_modules_getter: Callable[[Any, DictConfig], dict[str, Any] | None] | None = None
     after_bundle_built: Callable[[Any, DictConfig], None] | None = None

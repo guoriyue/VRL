@@ -45,14 +45,13 @@ from vrl.models.diffusion.common import (
     DiffusionBackboneInput,
     DiffusionBackboneRunnerBase,
     DiffusionBranch,
-    LatentDecodeSpec,
-    LatentDecodeTransform,
+    LatentDecodePlan,
     expand_batch_timestep,
     pack_eval_timestep,
 )
 from vrl.models.diffusion.common.lora import LoraModelMixin
 from vrl.models.diffusion.common.tensors import require_tensor
-from vrl.models.dtypes import resolve_torch_dtype
+from vrl.models.interfaces.runtime import ModelBuild
 
 
 @dataclass
@@ -89,7 +88,8 @@ class SanaModel(LoraModelMixin, DiffusersPipelineModelBase, DiffusionBackboneRun
             mask = request.extra.get("encoder_attention_mask")
         else:
             embeds = require_tensor(
-                request.negative_prompt_embeds, "negative_prompt_embeds",
+                request.negative_prompt_embeds,
+                "negative_prompt_embeds",
             )
             mask = request.extra.get("negative_encoder_attention_mask")
         return DiffusionBranch(
@@ -102,22 +102,17 @@ class SanaModel(LoraModelMixin, DiffusersPipelineModelBase, DiffusionBackboneRun
     # -- backend ownership (called by runtime, not by collectors) -------
 
     @classmethod
-    def from_spec(cls, spec: Any) -> SanaModel:
+    def from_build(cls, build: ModelBuild) -> SanaModel:
         """Load the diffusers SANA pipeline + freeze non-trainable modules."""
         from diffusers import SanaPipeline
 
-        model_dtype = resolve_torch_dtype(spec.dtype)
-        if model_dtype == torch.bfloat16:
-            # SANA's linear attention is mantissa-sensitive: bf16 (7-bit
-            # mantissa) corrupts the prediction into confetti artifacts while
-            # fp16 (10-bit) is clean — bisected empirically against the
-            # official fp16-variant recipe at identical seed/steps (2026-07-08)
-            # and consistent with the checkpoint shipping an fp16 variant.
-            # Map the 16-bit intent onto the numerically working half format.
-            model_dtype = torch.float16
-        frozen_dtype, load_kwargs = diffusers_pipeline_dtypes(spec, model_dtype)
+        # The SANA family build pins base transformer parameters to fp16. Forward
+        # autocast is a separate precision-policy axis, so rollout and replay
+        # receive one consistent parameter dtype without a user-facing model knob.
+        model_dtype = build.parameter_dtype
+        prompt_encoder_dtype, load_kwargs = diffusers_pipeline_dtypes(build, model_dtype)
         pipeline = SanaPipeline.from_pretrained(
-            spec.model_name_or_path,
+            build.model_name_or_path,
             **load_kwargs,
         )
         pipeline.vae.requires_grad_(False)
@@ -126,9 +121,9 @@ class SanaModel(LoraModelMixin, DiffusersPipelineModelBase, DiffusionBackboneRun
             # Gemma-2-2B is small enough to co-reside with the 1.6B DiT; keep
             # it on-device (no CPU offload dance like Qwen-Image's 15 GB VL).
             text_encoder.requires_grad_(False)
-            text_encoder.to(spec.device, dtype=frozen_dtype)
+            text_encoder.to(build.device, dtype=prompt_encoder_dtype)
         # DC-AE decodes in fp32 for output fidelity regardless of denoiser dtype.
-        pipeline.vae.to(spec.device, dtype=torch.float32)
+        pipeline.vae.to(build.device, dtype=torch.float32)
         # SANA is rectified-flow native; diffusers ships DPMSolverMultistep for
         # fast inference, but flow-matching GRPO's per-step SDE log-prob needs a
         # FlowMatchEuler scheduler on BOTH sides. The replay bundle already loads
@@ -146,7 +141,7 @@ class SanaModel(LoraModelMixin, DiffusersPipelineModelBase, DiffusionBackboneRun
         )
         return cls(
             pipeline=pipeline,
-            device=spec.device,
+            device=build.device,
         )
 
     # -- encode_prompt -------------------------------------------------
@@ -186,14 +181,14 @@ class SanaModel(LoraModelMixin, DiffusersPipelineModelBase, DiffusionBackboneRun
         result: dict[str, Any] = {
             "prompt_embeds": prompt_embeds.to(td),
             "prompt_attention_mask": (
-                None if prompt_attention_mask is None
-                else prompt_attention_mask.to(self.device)
+                None if prompt_attention_mask is None else prompt_attention_mask.to(self.device)
             ),
         }
         if do_cfg and negative_prompt_embeds is not None:
             result["negative_prompt_embeds"] = negative_prompt_embeds.to(td)
             result["negative_prompt_attention_mask"] = (
-                None if negative_prompt_attention_mask is None
+                None
+                if negative_prompt_attention_mask is None
                 else negative_prompt_attention_mask.to(self.device)
             )
         return result
@@ -220,10 +215,7 @@ class SanaModel(LoraModelMixin, DiffusersPipelineModelBase, DiffusionBackboneRun
         pipe.scheduler.set_timesteps(request.num_steps, device=device)
         timesteps = pipe.scheduler.timesteps
 
-        seed = (
-            request.seed if request.seed is not None
-            else random.randint(0, sys.maxsize)
-        )
+        seed = request.seed if request.seed is not None else random.randint(0, sys.maxsize)
         generator = torch.Generator(device=device)
         generator.manual_seed(seed)
 
@@ -272,12 +264,10 @@ class SanaModel(LoraModelMixin, DiffusersPipelineModelBase, DiffusionBackboneRun
             getattr(self.transformer.config, "timestep_scale", 1.0),
         )
         timestep_batch = (
-            expand_batch_timestep(t, bsz).to(device=latent_input.device, dtype=td)
-            * timestep_scale
+            expand_batch_timestep(t, bsz).to(device=latent_input.device, dtype=td) * timestep_scale
         )
         negative_embeds = (
-            None if state.negative_prompt_embeds is None
-            else state.negative_prompt_embeds.to(td)
+            None if state.negative_prompt_embeds is None else state.negative_prompt_embeds.to(td)
         )
         output = DiffusionBackboneCaller(
             self.transformer,
@@ -320,9 +310,7 @@ class SanaModel(LoraModelMixin, DiffusersPipelineModelBase, DiffusionBackboneRun
         if state.negative_prompt_embeds is not None:
             tensors["negative_prompt_embeds"] = state.negative_prompt_embeds
         if state.negative_prompt_attention_mask is not None:
-            tensors["negative_prompt_attention_mask"] = (
-                state.negative_prompt_attention_mask
-            )
+            tensors["negative_prompt_attention_mask"] = state.negative_prompt_attention_mask
         return tensors
 
     def restore_eval_state(
@@ -358,10 +346,8 @@ class SanaModel(LoraModelMixin, DiffusersPipelineModelBase, DiffusionBackboneRun
         vae = pipe.vae
         scaling_factor = vae.config.scaling_factor
         decoder = ChunkedLatentDecoder(
-            LatentDecodeSpec(
-                transform=LatentDecodeTransform(
-                    lambda chunk: chunk.to(vae.dtype) / scaling_factor,
-                ),
+            LatentDecodePlan(
+                prepare_latents=(lambda chunk: chunk.to(vae.dtype) / scaling_factor,),
                 vae_decode=lambda chunk: vae.decode(chunk, return_dict=False)[0],
                 postprocess=lambda image: pipe.image_processor.postprocess(
                     image,
@@ -376,7 +362,6 @@ class SanaModel(LoraModelMixin, DiffusersPipelineModelBase, DiffusionBackboneRun
 
 class SanaReplayModel(DiffusersReplayModelBase, SanaModel):
     """Replay-only SANA model that owns no prompt encoder, VAE, or pipeline."""
-
 
 
 __all__ = ["SanaModel", "SanaReplayModel", "SanaSamplingState"]

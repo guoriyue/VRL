@@ -16,7 +16,6 @@ from vrl.generation.execution.types import (
 )
 from vrl.generation.launch_contract import GenerationRuntimeLaunchContract
 from vrl.generation.protocols import GenerationChunkExecutor
-from vrl.models.dtypes import resolve_torch_dtype
 from vrl.models.interfaces import require_runtime_model
 from vrl.utils.config import import_from_path
 from vrl.utils.cuda_memory import (
@@ -267,8 +266,7 @@ class GenerationWorkerCore:
                 "move_frozen_components(...)"
             )
 
-    # Instance-assignable test seams over the shared parking bookkeeping in
-    # vrl.utils.cuda_memory; the worker measures its process-current GPU.
+    # Instance-assignable test seams over shared parking bookkeeping.
     @classmethod
     def _gpu_used_bytes(cls) -> int:
         return gpu_used_bytes()
@@ -745,23 +743,23 @@ class GenerationWorkerCore:
                 "executor_cls import paths",
             )
 
-        from vrl.models.interfaces.runtime import RuntimeBuildSpec
+        from vrl.models.interfaces.runtime import ModelBuild
 
         build_runtime_bundle = import_from_path(str(builder_path))
         executor_cls = import_from_path(str(executor_path))
-        spec = RuntimeBuildSpec(
-            **self._normalize_runtime_build_payload(
+        build = ModelBuild(
+            **self._normalize_model_build_payload(
                 launch_contract.model_build_payload(),
             ),
         )
-        bundle = build_runtime_bundle(spec)
+        bundle = build_runtime_bundle(build)
         model = require_runtime_model(bundle.model, owner="RuntimeBundle.model")
-        # Family- and scheme-agnostic backstop: if precision.rollout asks for a
-        # quantized rollout (fp8/fp4/...) but this family's builder forgot to swap,
-        # the model would silently run bf16 — fail loudly instead.
+        # Family- and scheme-agnostic backstop: if rollout quantization asks for a
+        # quantized rollout (FP8/NVFP4/...) but this family's builder forgot to swap,
+        # the model would silently run at its base dtype — fail loudly instead.
         from vrl.models.loader import assert_rollout_quantization_applied
 
-        assert_rollout_quantization_applied(model, spec)
+        assert_rollout_quantization_applied(model, build)
         built = executor_cls(model, **dict(launch_contract.executor_kwargs))
         # Registry-descriptor families declare no executor capability of their
         # own — the registry entry is the single construction site, and it
@@ -844,7 +842,7 @@ class GenerationWorkerCore:
             return "cpu"
 
     @classmethod
-    def _normalize_runtime_build_payload(
+    def _normalize_model_build_payload(
         cls,
         payload: dict[str, Any],
     ) -> dict[str, Any]:
@@ -854,12 +852,8 @@ class GenerationWorkerCore:
             import torch
 
             normalized["device"] = torch.device(device)
-        dtype = normalized.get("dtype")
-        if isinstance(dtype, str):
-            normalized["dtype"] = resolve_torch_dtype(dtype)
-        frozen_dtype = normalized.get("frozen_dtype")
-        if isinstance(frozen_dtype, str):
-            normalized["frozen_dtype"] = resolve_torch_dtype(frozen_dtype)
+        # ModelBuild and RolloutBuildOptions normalize the parameter and
+        # nested rollout dtypes while reconstructing the primitive Ray payload.
         return normalized
 
     @classmethod

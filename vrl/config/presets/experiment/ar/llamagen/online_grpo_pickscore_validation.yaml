@@ -10,7 +10,6 @@ defaults:
   - /reward/pickscore
   - /dataset/drawbench_train_192
 
-precision: bf16
 
 algorithm:
   kl_coef: 0.01

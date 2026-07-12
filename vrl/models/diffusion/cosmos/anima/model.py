@@ -25,15 +25,14 @@ from vrl.models.diffusion import (
 )
 from vrl.models.diffusion.common import (
     ChunkedLatentDecoder,
-    LatentDecodeSpec,
-    LatentDecodeTransform,
+    LatentDecodePlan,
     align_replay_tensor,
     shared_replay_tensor,
 )
 from vrl.models.diffusion.common.lora import LoraModelMixin
 from vrl.models.diffusion.cosmos import CosmosReplayForward
 from vrl.models.diffusion.cosmos.anima.adapter import AnimaLLMAdapter
-from vrl.models.dtypes import resolve_torch_dtype
+from vrl.models.interfaces.runtime import ModelBuild
 
 
 @dataclass
@@ -76,16 +75,16 @@ class AnimaModel(CosmosReplayForward, LoraModelMixin, DiffusionModelBase):
         self._dtype = dtype
 
     @classmethod
-    def from_spec(cls, spec: Any) -> AnimaModel:
+    def from_build(cls, build: ModelBuild) -> AnimaModel:
         """Load Anima's transformer, Qwen3 encoder, and VAE from local files.
 
         Resolves the single-file artifact paths in place first (explicit path >
         checkpoint-root relative file > HF hub cache search), mutating
-        ``spec.model_config`` so downstream readers (bundle provenance, the
+        ``build.model_config`` so downstream readers (bundle provenance, the
         replay path) see the resolved locations.
         """
-        model_config = spec.model_config or {}
-        root = str(spec.model_name_or_path or "").strip()
+        model_config = build.model_config or {}
+        root = str(build.model_name_or_path or "").strip()
         for path_field, file_field in (
             ("transformer_path", "transformer_file"),
             ("text_encoder_path", "text_encoder_file"),
@@ -106,8 +105,8 @@ class AnimaModel(CosmosReplayForward, LoraModelMixin, DiffusionModelBase):
         from safetensors.torch import load_file
         from transformers import Qwen2Tokenizer, Qwen3Model, T5TokenizerFast
 
-        paths = spec.model_config or {}
-        dtype = resolve_torch_dtype(spec.dtype)
+        paths = build.model_config or {}
+        dtype = build.parameter_dtype
 
         transformer_checkpoint = load_file(paths["transformer_path"], device="cpu")
         transformer = _load_anima_transformer(transformer_checkpoint, dtype=dtype)
@@ -150,10 +149,10 @@ class AnimaModel(CosmosReplayForward, LoraModelMixin, DiffusionModelBase):
         llm_adapter.requires_grad_(False)
         vae.requires_grad_(False)
 
-        transformer.to(spec.device, dtype=dtype)
-        text_encoder.to(spec.device, dtype=dtype)
-        llm_adapter.to(spec.device, dtype=dtype)
-        vae.to(spec.device, dtype=torch.float32)
+        transformer.to(build.device, dtype=dtype)
+        text_encoder.to(build.device, dtype=dtype)
+        llm_adapter.to(build.device, dtype=dtype)
+        vae.to(build.device, dtype=torch.float32)
 
         return cls(
             transformer=transformer,
@@ -164,12 +163,12 @@ class AnimaModel(CosmosReplayForward, LoraModelMixin, DiffusionModelBase):
             image_processor=VaeImageProcessor(vae_scale_factor=8),
             qwen_tokenizer=qwen_tokenizer,
             t5_tokenizer=t5_tokenizer,
-            device=spec.device,
+            device=build.device,
             dtype=dtype,
         )
 
-    def _lora_dtype(self, spec: Any) -> Any:
-        del spec
+    def _lora_dtype(self, build: ModelBuild) -> Any:
+        del build
         return self._dtype
 
     def apply_full_finetune(self) -> None:
@@ -397,8 +396,8 @@ class AnimaModel(CosmosReplayForward, LoraModelMixin, DiffusionModelBase):
             return x / latents_std + latents_mean
 
         decoder = ChunkedLatentDecoder(
-            LatentDecodeSpec(
-                transform=LatentDecodeTransform(_transform),
+            LatentDecodePlan(
+                prepare_latents=_transform,
                 vae_decode=lambda chunk: self.vae.decode(
                     chunk,
                     return_dict=False,

@@ -36,7 +36,11 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--frames", type=int, default=1)
     parser.add_argument("--guidance-scale", type=float, default=4.5)
     parser.add_argument("--seed", type=int, default=42)
-    parser.add_argument("--dtype", default="bfloat16")
+    parser.add_argument(
+        "--dtype",
+        default="bfloat16",
+        help="outer rollout autocast dtype; family-owned parameter storage still wins",
+    )
     parser.add_argument(
         "--device",
         default=None,
@@ -54,8 +58,8 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--quantize",
         default=None,
-        choices=["fp8"],
-        help="rollout-only GEMM quantization (precision.rollout equivalent)",
+        choices=["fp8", "nvfp4"],
+        help="selective rollout GEMM quantization",
     )
     parser.add_argument("--check-replay", action="store_true")
     parser.add_argument(
@@ -71,6 +75,45 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _resolve_probe_model_build(args: argparse.Namespace, family: str, device: Any) -> Any:
+    """Project CLI inputs through the production model-build resolver.
+
+    The family descriptor owns parameter storage while the public precision
+    policy owns autocast, prompt-encoder precision, and quantized rollout behavior.
+    Reusing that boundary keeps this direct probe from growing a second dtype
+    policy that can drift from Ray workers.
+    """
+
+    from dataclasses import replace
+
+    from omegaconf import OmegaConf
+
+    from vrl.models.diffusion.build import resolve_family_model_build
+    from vrl.models.dtypes import dtype_to_precision_token, resolve_torch_dtype
+
+    autocast_precision = dtype_to_precision_token(resolve_torch_dtype(args.dtype))
+    precision: dict[str, Any] = {"training": {"dtype": autocast_precision}}
+    if args.quantize is not None:
+        precision["rollout"] = {"quantization": {"format": args.quantize}}
+    cfg = OmegaConf.create(
+        {
+            "model": {
+                "family": family,
+                "path": args.path,
+                "use_lora": False,
+                # Probe-scale decode safety: tiled/sliced VAE decode keeps the
+                # decode inside whatever VRAM the resident transformer left over.
+                "memory": {"vae_decode": {"tiling": True, "slicing": True}},
+            },
+            "sampling": {"num_steps": args.steps},
+            "precision": precision,
+        },
+    )
+    build = resolve_family_model_build(cfg, device)
+    build.rollout = replace(build.require_rollout(), base_weight_sync=False)
+    return build
+
+
 def main() -> None:
     args = _build_arg_parser().parse_args()
 
@@ -79,7 +122,6 @@ def main() -> None:
     from vrl.generation.diffusion.layout import VideoGenerationRequest
     from vrl.math.diffusion.flow_matching import sde_step_with_logprob
     from vrl.models.diffusion.build import build_family_runtime_bundle
-    from vrl.models.interfaces.runtime import RuntimeBuildSpec
     from vrl.rollouts.families.registry import (
         get_rollout_family_entry,
         normalize_rollout_family,
@@ -87,32 +129,19 @@ def main() -> None:
 
     family = normalize_rollout_family(args.family)
     entry = get_rollout_family_entry(family)
+    if entry.capability.trajectory_kind != "diffusion":
+        raise SystemExit(
+            f"--family {family} is an AR family; this probe drives the "
+            "diffusion denoise loop only (use the AR entrypoints instead)",
+        )
     device = torch.device(
         args.device
         if args.device is not None
         else ("cuda" if torch.cuda.is_available() else "cpu"),
     )
-    dtype = getattr(torch, args.dtype)
-
-    spec = RuntimeBuildSpec(
-        model_name_or_path=args.path,
-        device=device,
-        dtype=dtype,
-        family=family,
-        task_variant=entry.build.task_variant if entry.build else None,
-        rollout_quantization=args.quantize,
-        rollout_weight_sync=False,  # the probe never syncs weights
-        model_config={
-            "path": args.path,
-            "use_lora": False,
-            # Probe-scale decode safety: tiled/sliced VAE decode keeps the
-            # decode inside whatever VRAM the resident transformer left over.
-            "memory": {"vae_decode": {"tiling": True, "slicing": True}},
-        },
-        sampling_config={"num_steps": args.steps},
-    )
+    build = _resolve_probe_model_build(args, family, device)
     print(f"[probe] building {family} bundle from {args.path} ...")
-    bundle = build_family_runtime_bundle(spec)
+    bundle = build_family_runtime_bundle(build)
     model = bundle.model
 
     encode_kwargs: dict[str, Any] = {"guidance_scale": args.guidance_scale}
@@ -151,7 +180,12 @@ def main() -> None:
     first_step: dict[str, Any] = {}
     logprobs = []
     for step_idx in range(args.steps):
-        out = model.forward_step(state, step_idx)
+        with torch.amp.autocast(
+            device.type,
+            dtype=model.autocast_dtype,
+            enabled=(device.type == "cuda" and model.autocast_dtype != torch.float32),
+        ):
+            out = model.forward_step(state, step_idx)
         timestep = state.timesteps[step_idx]
         sde = sde_step_with_logprob(
             state.scheduler,
@@ -211,7 +245,12 @@ def main() -> None:
             first_step["latents"],
             0,
         )
-        out = model.forward_step(restored, 0)
+        with torch.amp.autocast(
+            device.type,
+            dtype=model.autocast_dtype,
+            enabled=(device.type == "cuda" and model.autocast_dtype != torch.float32),
+        ):
+            out = model.forward_step(restored, 0)
         pred_err = (out["noise_pred"].float() - first_step["noise_pred"].float()).abs().max()
         sde = sde_step_with_logprob(
             state.scheduler,

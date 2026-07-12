@@ -156,7 +156,7 @@ def test_flow_dppo_masks_only_gap_widening_updates() -> None:
     algo = FlowDPPO(FlowDPPOConfig(kl_mask_threshold=0.0, add_kl_coefficient=False))
     _loss, metrics = algo.compute_loss(_input(sig, adv))
     # Exactly the two gap-widening samples (0 and 1) are dropped.
-    assert metrics.clip_fraction == pytest.approx(0.5)
+    assert metrics.update.clip_fraction == pytest.approx(0.5)
 
 
 def test_flow_dppo_zero_drift_keeps_everything() -> None:
@@ -176,7 +176,7 @@ def test_flow_dppo_zero_drift_keeps_everything() -> None:
     )
     algo = FlowDPPO(FlowDPPOConfig(kl_mask_threshold=1e-9))
     _loss, metrics = algo.compute_loss(_input(sig, torch.tensor([1.0, -1.0, 1.0])))
-    assert metrics.clip_fraction == pytest.approx(0.0)
+    assert metrics.update.clip_fraction == pytest.approx(0.0)
 
 
 def test_flow_dppo_unit_variance_branch_has_no_std_dev_t_denominator() -> None:
@@ -194,7 +194,7 @@ def test_flow_dppo_unit_variance_branch_has_no_std_dev_t_denominator() -> None:
     )
     algo = FlowDPPO(FlowDPPOConfig(kl_mask_threshold=1.0, add_kl_coefficient=False))
     _loss, metrics = algo.compute_loss(_input(sig, torch.tensor([1.0])))
-    assert metrics.clip_fraction == pytest.approx(1.0)  # masked
+    assert metrics.update.clip_fraction == pytest.approx(1.0)  # masked
 
 
 def test_flow_dppo_requires_old_prev_sample_mean() -> None:
@@ -226,7 +226,8 @@ def test_flow_dppo_truncates_precision_weight_into_loss() -> None:
     )
     algo = FlowDPPO(FlowDPPOConfig(kl_mask_threshold=float("inf")))
     algo.precision_correction = PrecisionCorrectionConfig(
-        tis_mode="truncate", tis_imp_weight_cap=1.5,
+        tis_mode="truncate",
+        tis_imp_weight_cap=1.5,
     )
     loss, _ = algo.compute_loss(_input(sig, torch.tensor([1.0])))
     assert loss.item() == pytest.approx(-1.5, rel=1e-5)  # capped, not ~-20
@@ -247,10 +248,12 @@ def test_flow_dppo_rs_rejects_out_of_band_precision_drift() -> None:
     )
     algo = FlowDPPO(FlowDPPOConfig(kl_mask_threshold=float("inf")))
     algo.precision_correction = PrecisionCorrectionConfig(
-        rs_mode="seq_mean_k1", rs_log_ratio_low=-1.0, rs_log_ratio_high=1.0,
+        rs_mode="seq_mean_k1",
+        rs_log_ratio_low=-1.0,
+        rs_log_ratio_high=1.0,
     )
     _loss, metrics = algo.compute_loss(_input(sig, torch.ones(n)))
-    assert metrics.rs_seq_masked_fraction == pytest.approx(0.25)
+    assert metrics.update.rs_seq_masked_fraction == pytest.approx(0.25)
 
 
 def test_flow_dppo_default_precision_correction_is_noop() -> None:
@@ -271,7 +274,8 @@ def test_flow_dppo_default_precision_correction_is_noop() -> None:
         _input(sig, adv),
     )
     assert loss.item() == pytest.approx((-adv * torch.exp(log_prob)).mean().item(), rel=1e-6)
-    assert m.tis_clip_fraction == 0.0 and m.rs_seq_masked_fraction == 0.0
+    assert m.update.tis_clip_fraction == 0.0
+    assert m.update.rs_seq_masked_fraction == 0.0
 
 
 def test_grpo_guard_rs_rejects_out_of_band_precision_drift() -> None:
@@ -290,10 +294,12 @@ def test_grpo_guard_rs_rejects_out_of_band_precision_drift() -> None:
     )
     algo = GRPOGuard()
     algo.precision_correction = PrecisionCorrectionConfig(
-        rs_mode="seq_mean_k1", rs_log_ratio_low=-1.0, rs_log_ratio_high=1.0,
+        rs_mode="seq_mean_k1",
+        rs_log_ratio_low=-1.0,
+        rs_log_ratio_high=1.0,
     )
     _loss, metrics = algo.compute_loss(_input(sig, torch.ones(n)))
-    assert metrics.rs_seq_masked_fraction == pytest.approx(0.25)
+    assert metrics.update.rs_seq_masked_fraction == pytest.approx(0.25)
 
 
 def test_trust_region_losses_fail_fast_without_dt() -> None:

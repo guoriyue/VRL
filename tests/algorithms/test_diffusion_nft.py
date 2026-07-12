@@ -211,13 +211,16 @@ def _build_batch(
     )
 
 
-def _default_forward(model: _NFTModel, xt: torch.Tensor, prompt_embeds: torch.Tensor,
-                     timestep: torch.Tensor) -> torch.Tensor:
+def _default_forward(
+    model: _NFTModel, xt: torch.Tensor, prompt_embeds: torch.Tensor, timestep: torch.Tensor
+) -> torch.Tensor:
     """Run the trainable (default-adapter) forward on a known xt."""
 
     model.transformer.set_adapter("default")
     return model.transformer(
-        hidden_states=xt, timestep=timestep, encoder_hidden_states=prompt_embeds,
+        hidden_states=xt,
+        timestep=timestep,
+        encoder_hidden_states=prompt_embeds,
         return_dict=False,
     )[0]
 
@@ -250,7 +253,10 @@ def _step_distances(*, advantage: float) -> tuple[float, float, torch.Tensor]:
     before = float((_default_forward(model, xt, prompt_embeds, t_raw).detach() - target).norm())
 
     loss, _ = DiffusionNFT(cfg).compute_batch_timestep_loss(
-        model, batch, 0, torch.tensor([advantage]),
+        model,
+        batch,
+        0,
+        torch.tensor([advantage]),
     )
     trainable = [p for p in model.transformer.parameters() if p.requires_grad]
     opt = torch.optim.SGD(trainable, lr=50.0)
@@ -261,6 +267,35 @@ def _step_distances(*, advantage: float) -> tuple[float, float, torch.Tensor]:
 
     after = float((_default_forward(model, xt, prompt_embeds, t_raw).detach() - target).norm())
     return before, after, grad
+
+
+def test_nft_returns_only_objective_owned_step_metrics() -> None:
+    """The trainer, not the NFT objective, owns batch and optimizer diagnostics."""
+
+    torch.manual_seed(321)
+    model = _build_model()
+    batch = _build_batch(
+        x0=torch.randn(_LATENT_SHAPE),
+        noise=torch.randn(_LATENT_SHAPE),
+        prompt_embeds=torch.randn(_BATCH, _TEXT_LEN, _TEXT_DIM),
+        timestep=500.0,
+    )
+
+    _, metrics = DiffusionNFT(DiffusionNFTConfig()).compute_batch_timestep_loss(
+        model,
+        batch,
+        0,
+        torch.full((_BATCH,), 5.0),
+    )
+
+    # approx_kl is the historical CSV view of this exact reference-prediction
+    # penalty, so it must reuse the computed KL scalar rather than run another MSE.
+    assert metrics.update.approx_kl == metrics.kl_penalty
+    assert metrics.advantage_mean == 0.0
+    assert metrics.grad_norm == 0.0
+    assert metrics.adv_zero_rate == 0.0
+    assert metrics.adv_saturation == 0.0
+    assert metrics.phase_times == {}
 
 
 def test_positive_advantage_trains_toward_reconstruction() -> None:
@@ -330,7 +365,8 @@ def test_after_optimizer_step_syncs_previous_adapter() -> None:
     assert not torch.allclose(named[a_name], named[d_name])
 
     DiffusionNFT(DiffusionNFTConfig(weight_copy_decay=0.0)).after_optimizer_step(
-        model, global_step=7,
+        model,
+        global_step=7,
     )
     assert torch.allclose(named[a_name], named[d_name])
 
@@ -377,7 +413,10 @@ def test_edm_scale_timestep_grid_fails_loudly() -> None:
 
     with pytest.raises(RuntimeError, match="EDM-scale"):
         DiffusionNFT(DiffusionNFTConfig()).compute_batch_timestep_loss(
-            model, batch, 0, torch.tensor([1.0]),
+            model,
+            batch,
+            0,
+            torch.tensor([1.0]),
         )
 
 
@@ -400,10 +439,16 @@ def test_lr_zero_reward_channel_is_inert() -> None:
     batch = _build_batch(x0=x0, noise=noise, prompt_embeds=prompt_embeds, timestep=500.0)
 
     loss_pos, metrics_pos = nft.compute_batch_timestep_loss(
-        model, batch, 0, torch.tensor([5.0]),
+        model,
+        batch,
+        0,
+        torch.tensor([5.0]),
     )
     loss_neg, metrics_neg = nft.compute_batch_timestep_loss(
-        model, batch, 0, torch.tensor([-5.0]),
+        model,
+        batch,
+        0,
+        torch.tensor([-5.0]),
     )
 
     assert metrics_pos.policy_loss == metrics_neg.policy_loss

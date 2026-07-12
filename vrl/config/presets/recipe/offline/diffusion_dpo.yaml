@@ -5,7 +5,9 @@ defaults:
 # DPO has its own synchronous trainer surface. Do not inherit the online actor /
 # trainer presets: EMA, PPO epochs, rollout orchestration, and total_epochs have
 # no DPO consumers.
-precision: ???
+precision:
+  training:
+    dtype: ???
 
 actor:
   optim:

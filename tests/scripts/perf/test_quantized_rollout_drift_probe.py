@@ -77,3 +77,19 @@ def test_precision_guard_failure_exits_nonzero(monkeypatch, capsys) -> None:
 
     assert exc_info.value.code == 1
     assert "FAILED: ratio exceeded limit" in capsys.readouterr().out
+
+
+def test_drift_probe_rejects_legacy_fp4_scheme() -> None:
+    with pytest.raises(ValueError, match="scheme must be fp8 or nvfp4"):
+        drift_probe.main(scheme="fp4")
+
+
+def test_explicit_nvfp4_probe_fails_when_hardware_is_unavailable(monkeypatch) -> None:
+    monkeypatch.setattr(drift_probe.torch.cuda, "is_available", lambda: True)
+    monkeypatch.setattr(drift_probe, "nvfp4_available", lambda: False)
+
+    with pytest.raises(SystemExit) as exc_info:
+        drift_probe.main(scheme="nvfp4")
+
+    assert exc_info.value.code != 0
+    assert "NVFP4-capable" in str(exc_info.value)

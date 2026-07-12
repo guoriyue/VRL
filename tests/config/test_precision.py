@@ -12,10 +12,16 @@ from tests.config.test_load_all_experiments import _experiment_names
 from vrl.config.loading import load_config
 from vrl.config.precision import (
     PrecisionPolicy,
+    QuantizationPolicy,
+    RolePrecision,
     normalize_precision,
     resolve_precision_policy,
 )
-from vrl.models.dtypes import resolve_torch_dtype
+from vrl.models.dtypes import (
+    dtype_to_precision_token,
+    dtype_to_wire_name,
+    resolve_torch_dtype,
+)
 
 
 def _cfg(precision=None, mixed_precision=None, bf16=None):
@@ -42,6 +48,8 @@ def _cfg(precision=None, mixed_precision=None, bf16=None):
         ("bf16", "bf16"),
         ("fp32", "fp32"),
         ("fp16", "fp16"),
+        ("fp8", "fp8"),
+        ("nvfp4", "nvfp4"),
         ("no", "fp32"),  # the one legacy spelling we still accept
         (None, "fp32"),
         ("", "fp32"),
@@ -67,44 +75,141 @@ def test_resolve_torch_dtype():
     assert resolve_torch_dtype("fp16") is torch.float16
 
 
-# -- scalar / dict block ----------------------------------------------
+def test_dtype_to_wire_name_is_not_a_public_config_token():
+    """Wire serialization uses stable torch names, not precision-policy spellings."""
+    assert dtype_to_wire_name(torch.bfloat16) == "bfloat16"
+    assert dtype_to_wire_name("fp16") == "float16"
+    assert dtype_to_wire_name("torch.float32") == "float32"
 
 
-def test_scalar_bf16_expands_all_compute_axes():
-    """Checks scalar bf16 expands all compute axes."""
-    p = resolve_precision_policy(_cfg(precision="bf16"))
-    assert p == PrecisionPolicy(train="bf16", rollout="bf16", math="fp32", frozen="bf16")
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        (torch.float32, "fp32"),
+        ("bfloat16", "bf16"),
+        ("half", "fp16"),
+    ],
+)
+def test_dtype_to_precision_token_uses_the_public_plain_vocabulary(value, expected):
+    assert dtype_to_precision_token(value) == expected
 
 
-def test_scalar_fp32_keeps_frozen_fp16():
-    """Checks scalar FP32 keeps frozen FP16."""
-    p = resolve_precision_policy(_cfg(precision="fp32"))
-    assert p == PrecisionPolicy(train="fp32", rollout="fp32", math="fp32", frozen="fp16")
+@pytest.mark.parametrize("value", ["fp8", "fp4"])
+def test_dtype_to_precision_token_rejects_rollout_quantization(value):
+    with pytest.raises(ValueError, match="not a plain public precision token"):
+        dtype_to_precision_token(value)
 
 
-def test_rollout_split_is_honored_legacy_forward_still_flagged():
-    """`rollout` is the experimental split key: it overrides the training-forward
-    dtype on the rollout side (train/replay stays on `train`). The dropped legacy
-    `forward` key is still reported by the whole-tree walker; `rollout` is not."""
+# -- nested public policy ---------------------------------------------
+
+
+def _plain_precision(dtype: str = "bf16") -> dict:
+    return {
+        "training": {"dtype": dtype},
+        "rollout": {"dtype": dtype},
+    }
+
+
+def test_nested_bf16_resolves_role_dtypes_and_protected_defaults():
+    p = resolve_precision_policy(
+        _cfg(precision={"training": {"dtype": "bf16"}}),
+    )
+    assert p == PrecisionPolicy(
+        training=RolePrecision(dtype="bf16"),
+        rollout=RolePrecision(dtype="bf16"),
+        diffusion_math="fp32",
+        prompt_encoder_dtype="bf16",
+    )
+    assert p.stages_match is True
+
+
+def test_rollout_quantization_inherits_training_base_dtype():
+    p = resolve_precision_policy(
+        _cfg(
+            precision={
+                "training": {"dtype": "bf16"},
+                "rollout": {"quantization": {"format": "fp8"}},
+            },
+        ),
+    )
+
+    assert p.rollout.dtype == "bf16"
+    assert p.rollout.label == "bf16+fp8"
+
+
+def test_prompt_encoders_default_to_rollout_dtype_even_for_fp32():
+    p = resolve_precision_policy(_cfg(precision=_plain_precision("fp32")))
+    assert p.prompt_encoder_dtype == "fp32"
+
+
+def test_diffusion_math_and_prompt_encoders_can_be_explicit():
+    block = _plain_precision()
+    block["diffusion_math"] = {"dtype": "bf16"}
+    block["rollout"]["prompt_encoders"] = {"dtype": "fp16"}
+    p = resolve_precision_policy(_cfg(precision=block))
+    assert p.diffusion_math == "bf16"
+    assert p.prompt_encoder_dtype == "fp16"
+
+
+def test_base_preset_keeps_prompt_encoders_aligned_with_rollout():
+    cfg = load_config("experiment/diffusion/sd3_5/online_grpo_ocr")
+    p = resolve_precision_policy(cfg)
+    assert p.rollout.dtype == "bf16"
+    assert p.prompt_encoder_dtype == "bf16"
+
+
+@pytest.mark.parametrize("scalar", ["bf16", "fp32", "fp8", False])
+def test_scalar_precision_is_rejected_with_migration_path(scalar):
+    with pytest.raises(ValueError, match="scalar `precision` is no longer supported"):
+        resolve_precision_policy(_cfg(precision=scalar))
+
+
+@pytest.mark.parametrize(
+    "block",
+    [
+        {"train": "bf16", "rollout": "fp8"},
+        {"training": {"dtype": "bf16"}, "rollout": "fp16"},
+        {"train": "bf16", "math": "fp32", "frozen": "fp16"},
+        {"training": {"dtype": "bf16"}, "frozen_components": "fp16"},
+        {
+            "training": {"dtype": "bf16"},
+            "rollout": {"frozen_components": {"dtype": "fp16"}},
+        },
+        {"training": {"dtype": "bf16"}, "rollout_recipe": "rowwise"},
+    ],
+)
+def test_legacy_precision_keys_are_rejected(block):
+    with pytest.raises(ValueError, match="legacy precision key"):
+        resolve_precision_policy(_cfg(precision=block))
+
+
+def test_nested_unknown_keys_are_reported_at_full_path():
     from omegaconf import OmegaConf
 
     from vrl.config.unknown_keys import find_unknown_keys
 
-    block = {"train": "bf16", "rollout": "fp32", "forward": "fp16"}
-    p = resolve_precision_policy(_cfg(precision=block))
-    assert p.train == "bf16"  # replay/training forward follows `train`
-    assert p.rollout == "fp32"  # explicit rollout override is honored (the split)
+    block = _plain_precision()
+    block["rollout"]["quantization"] = {
+        "format": "fp8",
+        "recipe": "rowwise",
+        "typo": True,
+    }
+    block["forward"] = "fp16"
     unknown = find_unknown_keys(OmegaConf.create({"precision": block}))
-    assert "precision.forward" in unknown  # dropped legacy key still flagged
-    assert "precision.rollout" not in unknown  # now a valid override
+    assert unknown == [
+        "precision.forward",
+        "precision.rollout.quantization.typo",
+    ]
 
 
-def test_math_protected_unless_explicit():
-    """Checks math protected unless explicit."""
-    p = resolve_precision_policy(_cfg(precision={"train": "bf16", "math": "bf16"}))
-    assert p.math == "bf16"  # only when explicitly asked
-    assert p.train == "bf16"
-    assert p.rollout == "bf16"
+def test_prompt_encoder_keys_are_derived_from_precision_config_dataclasses():
+    from omegaconf import OmegaConf
+
+    from vrl.config.unknown_keys import find_unknown_keys
+
+    block = _plain_precision()
+    block["rollout"]["prompt_encoders"] = {"dtype": "fp16"}
+    assert find_unknown_keys(OmegaConf.create({"precision": block})) == []
 
 
 # -- removed legacy config --------------------------------------------
@@ -116,69 +221,117 @@ def test_top_level_precision_is_required():
         resolve_precision_policy(_cfg())
 
 
-# -- fp8/fp4 rollout split (the quantized-rollout precision axis) ------------
+# -- role dtype versus selective quantization -------------------------
 
 
-def test_fp8_rollout_split_keeps_replay_bf16_and_frozen_fp16():
-    """{train: bf16, rollout: fp8} → bf16 replay, fp8 rollout, fp16 frozen, fp32 math."""
-    p = resolve_precision_policy(_cfg(precision={"train": "bf16", "rollout": "fp8"}))
-    assert p == PrecisionPolicy(train="bf16", rollout="fp8", math="fp32", frozen="fp16")
-
-
-def test_fp4_rollout_split_allowed():
-    """fp4 is a valid rollout-axis token (Blackwell)."""
-    p = resolve_precision_policy(_cfg(precision={"train": "bf16", "rollout": "fp4"}))
-    assert p.rollout == "fp4"
-    assert p.train == "bf16"
-    assert p.rollout_quantization == "fp4"
-    assert p.rollout_storage_precision == "bf16"
-
-
-@pytest.mark.parametrize("token", ["fp8", "fp4"])
-def test_scalar_subbyte_precision_rejected(token):
-    """A scalar fp8/fp4 would set the replay forward sub-byte — rejected."""
-    with pytest.raises(ValueError, match="rollout-only"):
-        resolve_precision_policy(_cfg(precision=token))
-
-
-@pytest.mark.parametrize("token", ["fp8", "fp4"])
-@pytest.mark.parametrize("axis", ["train", "math", "frozen"])
-def test_subbyte_on_non_rollout_axis_rejected(axis, token):
-    """fp8/fp4 is only valid on the rollout axis, never a storage/math axis."""
-    with pytest.raises(ValueError, match="invalid"):
-        resolve_precision_policy(_cfg(precision={axis: token, "rollout": token}))
-
-
-def test_rollout_recipe_parsed_with_quantized_rollout():
-    """rollout_recipe rides along with an fp8 rollout; absent → None (scheme default)."""
-    p = resolve_precision_policy(
-        _cfg(precision={"train": "bf16", "rollout": "fp8", "rollout_recipe": "blockwise"}),
+def test_fp8_rollout_split_keeps_bf16_base_and_prompt_default():
+    block = _plain_precision()
+    block["rollout"]["quantization"] = {"format": "fp8", "recipe": "rowwise"}
+    p = resolve_precision_policy(_cfg(precision=block))
+    assert p.training == RolePrecision(dtype="bf16")
+    assert p.rollout == RolePrecision(
+        dtype="bf16",
+        quantization=QuantizationPolicy(format="fp8", recipe="rowwise"),
     )
-    assert p.rollout_recipe == "blockwise"
-    p = resolve_precision_policy(_cfg(precision={"train": "bf16", "rollout": "fp8"}))
-    assert p.rollout_recipe is None
-    p = resolve_precision_policy(_cfg(precision="bf16"))
-    assert p.rollout_recipe is None
+    assert p.prompt_encoder_dtype == "bf16"
+    assert p.diffusion_math == "fp32"
+    assert p.rollout.label == "bf16+fp8"
+    assert p.stages_match is False
 
 
-def test_rollout_recipe_without_quantized_rollout_rejected():
-    """A recipe on a plain-dtype rollout would be a silent no-op knob — rejected."""
-    with pytest.raises(ValueError, match="rollout_recipe"):
-        resolve_precision_policy(
-            _cfg(precision={"train": "bf16", "rollout_recipe": "blockwise"}),
-        )
+def test_quantized_role_label_preserves_its_base_dtype():
+    block = _plain_precision()
+    block["rollout"] = {
+        "dtype": "fp16",
+        "quantization": {"format": "fp8"},
+    }
+
+    p = resolve_precision_policy(_cfg(precision=block))
+
+    assert p.rollout.label == "fp16+fp8"
 
 
-def test_rollout_recipe_key_known_to_walker():
-    """precision.rollout_recipe is a declared block key, not an unknown-key warning."""
-    from omegaconf import OmegaConf
+def test_nvfp4_rollout_is_a_recipe_free_selective_policy():
+    block = _plain_precision()
+    block["rollout"]["quantization"] = {"format": "nvfp4"}
+    p = resolve_precision_policy(_cfg(precision=block))
+    assert p.rollout.quantization == QuantizationPolicy(format="nvfp4")
+    assert p.rollout.quantization.recipe is None
+    assert p.rollout.label == "bf16+nvfp4"
+    assert p.stages_match is False
 
-    from vrl.config.unknown_keys import find_unknown_keys
 
-    block = {"train": "bf16", "rollout": "fp8", "rollout_recipe": "blockwise"}
-    assert "precision.rollout_recipe" not in find_unknown_keys(
-        OmegaConf.create({"precision": block})
-    )
+def test_legacy_generic_fp4_format_has_a_migration_error():
+    block = _plain_precision()
+    block["rollout"]["quantization"] = {"format": "fp4"}
+    with pytest.raises(ValueError, match="use `format: nvfp4`"):
+        resolve_precision_policy(_cfg(precision=block))
+
+
+@pytest.mark.parametrize("recipe", ["nvfp4", "rowwise", "tensorwise", "blockwise"])
+def test_nvfp4_rejects_every_recipe(recipe):
+    block = _plain_precision()
+    block["rollout"]["quantization"] = {
+        "format": "nvfp4",
+        "recipe": recipe,
+    }
+    with pytest.raises(ValueError, match="does not accept a recipe"):
+        resolve_precision_policy(_cfg(precision=block))
+
+
+@pytest.mark.parametrize("recipe", ["rowwise", "tensorwise", "blockwise"])
+def test_fp8_accepts_only_declared_recipes(recipe):
+    block = _plain_precision()
+    block["rollout"]["quantization"] = {"format": "fp8", "recipe": recipe}
+    p = resolve_precision_policy(_cfg(precision=block))
+    assert p.rollout.quantization == QuantizationPolicy(format="fp8", recipe=recipe)
+
+
+def test_fp8_omitted_recipe_resolves_to_rowwise():
+    block = _plain_precision()
+    block["rollout"]["quantization"] = {"format": "fp8"}
+    p = resolve_precision_policy(_cfg(precision=block))
+    assert p.rollout.quantization == QuantizationPolicy(format="fp8", recipe="rowwise")
+
+
+def test_fp8_rejects_unknown_recipe_during_config_resolution():
+    block = _plain_precision()
+    block["rollout"]["quantization"] = {"format": "fp8", "recipe": "nvfp4"}
+    with pytest.raises(ValueError, match="invalid for format 'fp8'"):
+        resolve_precision_policy(_cfg(precision=block))
+
+
+@pytest.mark.parametrize("format_name", ["fp8", "nvfp4"])
+@pytest.mark.parametrize("role", ["training", "rollout"])
+def test_quantization_format_is_rejected_in_dtype_position(role, format_name):
+    block = _plain_precision()
+    block[role]["dtype"] = format_name
+    with pytest.raises(ValueError, match=r"belongs under a `quantization\.format` key"):
+        resolve_precision_policy(_cfg(precision=block))
+
+
+@pytest.mark.parametrize(
+    "quantization",
+    [
+        {"format": "fp8", "recipe": "rowwise"},
+        {"format": "nvfp4"},
+    ],
+)
+def test_training_quantization_parses_but_fails_without_runtime(quantization):
+    block = _plain_precision()
+    block["training"]["quantization"] = quantization
+    with pytest.raises(ValueError, match=r"training\.quantization is unavailable"):
+        resolve_precision_policy(_cfg(precision=block))
+
+
+def test_quantization_requires_format():
+    block = _plain_precision()
+    block["rollout"]["quantization"] = {"recipe": "rowwise"}
+    with pytest.raises(
+        ValueError,
+        match=r"precision\.rollout\.quantization\.format is required",
+    ):
+        resolve_precision_policy(_cfg(precision=block))
 
 
 @pytest.mark.parametrize(
@@ -191,7 +344,7 @@ def test_rollout_recipe_key_known_to_walker():
     ],
 )
 def test_resolve_torch_dtype_subbyte(spelling, torch_name):
-    """Sub-byte spellings resolve to the matching torch dtype (torch 2.11 has them)."""
+    """Wire dtype parsing is independent from FP4 policy availability."""
     assert resolve_torch_dtype(spelling) is getattr(torch, torch_name)
 
 
@@ -231,9 +384,11 @@ def test_online_recipe_equivalence(experiment):
     cfg = load_config(f"experiment/{experiment}")
     policy = resolve_precision_policy(cfg)
 
-    assert policy.train == policy.rollout
-    assert resolve_torch_dtype(policy.train) is resolve_torch_dtype(policy.rollout)
+    assert policy.training == policy.rollout
+    assert resolve_torch_dtype(policy.training.dtype) is resolve_torch_dtype(
+        policy.rollout.dtype,
+    )
     assert "mixed_precision" not in cfg.actor
     assert "bf16" not in cfg.actor
     # math is always protected at fp32.
-    assert policy.math == "fp32"
+    assert policy.diffusion_math == "fp32"

@@ -27,6 +27,7 @@ from vrl.rollouts.evaluators.types import SegmentSignal, TrajectorySignalBatch
 
 class TestAdvantageInheritance:
     """Groups tests for advantage inheritance."""
+
     def test_matches_diffusion_grpo(self) -> None:
         """Checks that matches diffusion GRPO."""
         from vrl.algorithms.grpo.continuous import GRPO, GRPOConfig
@@ -36,10 +37,12 @@ class TestAdvantageInheritance:
         groups = torch.tensor([0, 0, 0, 1, 1, 1])
 
         diff_adv = GRPO(GRPOConfig(global_std=False)).compute_advantages_from_tensors(
-            rewards, groups,
+            rewards,
+            groups,
         )
         tok_adv = TokenGRPO(TokenGRPOConfig(global_std=False)).compute_advantages_from_tensors(
-            rewards, groups,
+            rewards,
+            groups,
         )
         assert torch.allclose(diff_adv, tok_adv)
 
@@ -79,6 +82,7 @@ def _inputs(
 
 class TestPerTokenLoss:
     """Groups tests for per token loss."""
+
     def test_zero_loss_when_ratio_one_no_kl(self) -> None:
         """new_lp == old_lp → ratio == 1; positive advantage → loss = -adv."""
         old_lp = torch.zeros(2, 4)
@@ -91,8 +95,8 @@ class TestPerTokenLoss:
     def test_positive_advantage_decreases_loss_when_logprob_up(self) -> None:
         """Checks positive advantage decreases loss when logprob up."""
         old_lp = torch.zeros(2, 4)
-        new_lp = old_lp + 0.1     # log-prob went up
-        adv = torch.ones(2)        # positive advantage
+        new_lp = old_lp + 0.1  # log-prob went up
+        adv = torch.ones(2)  # positive advantage
         algo = TokenGRPO(TokenGRPOConfig(kl_coef=0.0, clip_ratio=1.0))  # disable clip
         loss, _ = algo.compute_loss(_inputs(new_lp, old_lp, adv))
         # ratio = exp(0.1) > 1; -adv * ratio < -1
@@ -101,11 +105,12 @@ class TestPerTokenLoss:
     def test_clip_activates(self) -> None:
         """Checks CLIp activates."""
         old_lp = torch.zeros(1, 4)
-        new_lp = old_lp + 5.0     # huge ratio
+        new_lp = old_lp + 5.0  # huge ratio
         adv = torch.ones(1)
         algo = TokenGRPO(TokenGRPOConfig(kl_coef=0.0, clip_ratio=0.2))
         _loss, metrics = algo.compute_loss(_inputs(new_lp, old_lp, adv))
-        assert metrics.clip_fraction == 1.0   # all 4 tokens clipped
+        assert metrics.update.clip_fraction == 1.0  # all 4 tokens clipped
+        assert metrics.update.active_clip_fraction == 1.0
 
 
 # ---------------------------------------------------------------------------
@@ -115,12 +120,13 @@ class TestPerTokenLoss:
 
 class TestMask:
     """Groups tests for mask."""
+
     def test_zero_mask_zeros_loss(self) -> None:
         """Checks zero mask zeros loss."""
         old_lp = torch.zeros(2, 4)
         new_lp = old_lp + 1.0
         adv = torch.ones(2)
-        mask = torch.zeros_like(new_lp)        # mask everything out
+        mask = torch.zeros_like(new_lp)  # mask everything out
         algo = TokenGRPO(TokenGRPOConfig(kl_coef=0.0))
         loss, _ = algo.compute_loss(_inputs(new_lp, old_lp, adv, mask=mask))
         # mask sum is clamped to 1.0 to avoid NaN, but per_token_loss * 0 = 0
@@ -155,12 +161,13 @@ class TestTokenTIS:
         adv = torch.tensor([5.0])
         algo = TokenGRPO(TokenGRPOConfig(kl_coef=0.0))
         algo.precision_correction = PrecisionCorrectionConfig(
-            tis_mode="mask", tis_imp_weight_cap=2.0,
+            tis_mode="mask",
+            tis_imp_weight_cap=2.0,
         )
         loss, metrics = algo.compute_loss(_inputs(new_lp, old_lp, adv))
         # only token1 (ratio 1, adv 5) survives → -adv*1 = -5
         assert loss.item() == pytest.approx(-5.0)
-        assert metrics.tis_clip_fraction == pytest.approx(0.5)
+        assert metrics.update.tis_clip_fraction == pytest.approx(0.5)
 
     def test_off_mode_is_noop(self) -> None:
         old_lp = torch.zeros(1, 4)
@@ -173,7 +180,7 @@ class TestTokenTIS:
         off_algo.precision_correction = PrecisionCorrectionConfig(tis_mode="off")
         off, m = off_algo.compute_loss(_inputs(new_lp, old_lp, adv))
         assert off.item() == pytest.approx(base.item())
-        assert m.tis_clip_fraction == 0.0
+        assert m.update.tis_clip_fraction == 0.0
 
 
 class TestTokenRejectSampling:
@@ -197,7 +204,7 @@ class TestTokenRejectSampling:
         algo = self._algo(rs_mode="seq_max_k1")
         loss, m = algo.compute_loss(_inputs(new_lp, old_lp, torch.tensor([5.0])))
         assert loss.item() == pytest.approx(0.0)  # whole sequence masked out
-        assert m.rs_seq_masked_fraction == pytest.approx(1.0)
+        assert m.update.rs_seq_masked_fraction == pytest.approx(1.0)
 
     def test_seq_mean_keeps_offsetting_steps(self) -> None:
         # steps ln3 and ln(1/3): mean 0 in band → kept under seq_mean (rejected under max).
@@ -206,7 +213,7 @@ class TestTokenRejectSampling:
         _, m = self._algo(rs_mode="seq_mean_k1").compute_loss(
             _inputs(new_lp, old_lp, torch.tensor([5.0])),
         )
-        assert m.rs_seq_masked_fraction == pytest.approx(0.0)
+        assert m.update.rs_seq_masked_fraction == pytest.approx(0.0)
 
     def test_rs_and_tis_fold_into_eff_mask(self) -> None:
         # token0 ratio e^ln3=3 → TIS(mask,cap2) drops token0; seq mean=ln3/2<ln2 keeps seq.
@@ -216,8 +223,8 @@ class TestTokenRejectSampling:
         loss, m = algo.compute_loss(_inputs(new_lp, old_lp, torch.tensor([5.0])))
         # only token1 survives (TIS dropped token0; RS kept the sequence) → -adv*1 = -5
         assert loss.item() == pytest.approx(-5.0)
-        assert m.tis_clip_fraction == pytest.approx(0.5)
-        assert m.rs_seq_masked_fraction == pytest.approx(0.0)
+        assert m.update.tis_clip_fraction == pytest.approx(0.5)
+        assert m.update.rs_seq_masked_fraction == pytest.approx(0.0)
 
     def test_rs_reduction_respects_token_mask(self) -> None:
         # padded token (mask 0) carries a huge log-ratio; seq_mean must ignore it.
@@ -227,7 +234,7 @@ class TestTokenRejectSampling:
         _, m = self._algo(rs_mode="seq_mean_k1").compute_loss(
             _inputs(new_lp, old_lp, torch.tensor([5.0]), mask=valid),
         )
-        assert m.rs_seq_masked_fraction == pytest.approx(0.0)  # padding excluded → kept
+        assert m.update.rs_seq_masked_fraction == pytest.approx(0.0)  # padding excluded → kept
 
 
 # ---------------------------------------------------------------------------
@@ -237,6 +244,7 @@ class TestTokenRejectSampling:
 
 class TestKL:
     """Groups tests for KL."""
+
     def test_kl_enabled_requires_ref_logprob(self) -> None:
         """Checks KL enabled requires ref logprob."""
         new_lp = torch.zeros(1, 2)
@@ -251,10 +259,11 @@ class TestKL:
         ref_lp = torch.zeros(1, 4)
         old_lp = torch.zeros(1, 4)
         adv = torch.zeros(1)
-        algo = TokenGRPO(TokenGRPOConfig(kl_coef=1.0, kl_estimator="k1"))
+        algo = TokenGRPO(TokenGRPOConfig(kl_coef=0.25, kl_estimator="k1"))
         _, m = algo.compute_loss(_inputs(new_lp, old_lp, adv, ref_lp=ref_lp))
         # k1 = log_ratio = 0.5
         assert m.kl_penalty == pytest.approx(0.5, abs=1e-5)
+        assert m.weighted_kl_loss == pytest.approx(0.125, abs=1e-5)
 
     def test_k3_nonnegative(self) -> None:
         """Checks k3 nonnegative."""
@@ -306,6 +315,7 @@ class TestKL:
 
 class TestShapeValidation:
     """Groups tests for shape validation."""
+
     def test_mismatched_logprob_shape(self) -> None:
         """Checks mismatched logprob shape."""
         new_lp = torch.zeros(2, 4)

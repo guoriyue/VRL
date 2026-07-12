@@ -148,16 +148,10 @@ def _tensor_bytes(value: object, *, seen: set[int]) -> int:
 def _torch_dtype(name: TrajectoryStorageDType) -> Any | None:
     if name == "preserve":
         return None
-    import torch
 
-    # name->torch object lookup (torch is a lazy import, so it can't live in the
-    # Literal). Keys must cover ``_VALID_DTYPES - {"preserve"}``; a missing key
-    # raises KeyError loudly here rather than failing silently.
-    return {
-        "float32": torch.float32,
-        "float16": torch.float16,
-        "bfloat16": torch.bfloat16,
-    }[name]
+    from vrl.models.dtypes import resolve_torch_dtype
+
+    return resolve_torch_dtype(name)
 
 
 def _is_torch_tensor(value: object) -> bool:

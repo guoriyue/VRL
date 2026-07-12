@@ -59,7 +59,7 @@ class RealCheckpointCase:
     reference_image_cfg_path: str | None = None
     use_config_reward: bool = False
     replay_runtime_builder: str | None = None
-    replay_runtime_spec_extractor: str | None = None
+    replay_model_build_resolver: str | None = None
     synthetic_replay_rollout: bool = False
     # Sample->replay log-prob parity bound (GRPO ratio==1 invariant). With
     # ppo_epochs=1 the optimizer steps after the whole timestep loop, so every
@@ -120,7 +120,8 @@ CASES: tuple[RealCheckpointCase, ...] = (
         ),
         overrides=(
             "model.torch_compile.enable=false",
-            "precision=bf16",
+            "precision.training.dtype=bf16",
+            "precision.rollout.dtype=bf16",
             "actor.gradient_accumulation_steps=0",
             "algorithm.kl_coef=0.0",
             "algorithm.kl_reward_coef=0.0",
@@ -162,7 +163,8 @@ CASES: tuple[RealCheckpointCase, ...] = (
             overrides=(
                 f"/recipe/online=flow_matching_{_recipe}",
                 "model.torch_compile.enable=false",
-                "precision=bf16",
+                "precision.training.dtype=bf16",
+                "precision.rollout.dtype=bf16",
                 "actor.gradient_accumulation_steps=0",
                 # No ref model in this harness; only DanceGRPO exposes GRPO's
                 # reference-KL coefficient and therefore needs it disabled.
@@ -351,8 +353,8 @@ CASES: tuple[RealCheckpointCase, ...] = (
         replay_runtime_builder=(
             "vrl.models.diffusion.cosmos.anima.runtime:build_anima_replay_runtime_bundle"
         ),
-        replay_runtime_spec_extractor=(
-            "vrl.models.diffusion.cosmos.anima.runtime:extract_anima_replay_runtime_spec"
+        replay_model_build_resolver=(
+            "vrl.models.diffusion.cosmos.anima.runtime:resolve_anima_replay_model_build"
         ),
         synthetic_replay_rollout=True,
     ),
@@ -392,8 +394,8 @@ CASES: tuple[RealCheckpointCase, ...] = (
         replay_runtime_builder=(
             "vrl.models.diffusion.cosmos.anima.runtime:build_anima_replay_runtime_bundle"
         ),
-        replay_runtime_spec_extractor=(
-            "vrl.models.diffusion.cosmos.anima.runtime:extract_anima_replay_runtime_spec"
+        replay_model_build_resolver=(
+            "vrl.models.diffusion.cosmos.anima.runtime:resolve_anima_replay_model_build"
         ),
         synthetic_replay_rollout=True,
     ),
@@ -655,9 +657,9 @@ def test_real_checkpoint_online_rl_updates_trainable_weights(
             # before the EDM sigma-domain fix while every metric here still
             # looked alive. Synthetic-replay cases fabricate old log-probs and
             # are excluded.
-            assert metrics.logprob_abs_diff_mean < case.logprob_parity_tol, (
+            assert metrics.logprob_mismatch.logprob_abs_diff_mean < case.logprob_parity_tol, (
                 f"{case.case_id}: replay log-prob diverged from collection "
-                f"(mean {metrics.logprob_abs_diff_mean:.6f} >= "
+                f"(mean {metrics.logprob_mismatch.logprob_abs_diff_mean:.6f} >= "
                 f"{case.logprob_parity_tol}) — broken sample/replay parity"
             )
         if case.use_config_reward:
@@ -737,14 +739,12 @@ def _build_runtime_bundle(
     device: torch.device,
     dtype: torch.dtype,
 ) -> Any:
-    extractor_path = case.replay_runtime_spec_extractor or entry.runtime_spec_extractor
+    resolver_path = case.replay_model_build_resolver or entry.model_build_resolver
     builder_path = case.replay_runtime_builder or entry.runtime_builder
-    extractor = import_from_path(extractor_path)
+    resolver = import_from_path(resolver_path)
     builder = import_from_path(builder_path)
-    spec = extractor(cfg, device, dtype)
-    if entry.family == "janus_pro_r1":
-        spec.ar_task = "ar_t2i_r1"
-    return builder(spec)
+    build = resolver(cfg, device, parameter_dtype_override=dtype)
+    return builder(build)
 
 
 def _build_executor(

@@ -6,7 +6,6 @@ model:
   family: nextstep_1
   path: stepfun-ai/NextStep-1.1
   vae_path: stepfun-ai/NextStep-1-f8ch16-Tokenizer
-  dtype: bfloat16
 
   use_lora: true
   lora:

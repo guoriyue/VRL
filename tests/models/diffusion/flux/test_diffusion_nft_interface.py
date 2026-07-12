@@ -193,7 +193,7 @@ def _peft_default_only_model() -> FluxReplayModel:
     return FluxReplayModel(transformer=peft_t, scheduler=None, device="cpu")
 
 
-def _spec() -> SimpleNamespace:
+def _build() -> SimpleNamespace:
     return SimpleNamespace(
         lora={"rank": 4, "alpha": 8, "target_modules": _TINY_WAN_LORA_TARGETS},
     )
@@ -205,7 +205,7 @@ def test_attach_previous_policy_adapter_builds_frozen_mirror() -> None:
     model = _peft_default_only_model()
     assert "previous" not in model.transformer.peft_config
 
-    model.attach_previous_policy_adapter(_spec())
+    model.attach_previous_policy_adapter(_build())
 
     assert "previous" in model.transformer.peft_config
     prev = {n: p for n, p in model.transformer.named_parameters() if ".previous." in n}
@@ -214,8 +214,7 @@ def test_attach_previous_policy_adapter_builds_frozen_mirror() -> None:
     assert all(not p.requires_grad for p in prev.values())
     # at least one default param stays trainable (the optimized adapter).
     trainable = [
-        n for n, p in model.transformer.named_parameters()
-        if ".default." in n and p.requires_grad
+        n for n, p in model.transformer.named_parameters() if ".default." in n and p.requires_grad
     ]
     assert trainable
     # seeded == default: a default lora_A and its previous twin match after attach.
@@ -229,7 +228,7 @@ def test_sync_previous_policy_adapter_refreshes_from_default() -> None:
     """sync(decay=0) re-copies the trained ``default`` weights into ``previous``."""
 
     model = _peft_default_only_model()
-    model.attach_previous_policy_adapter(_spec())
+    model.attach_previous_policy_adapter(_build())
     named = dict(model.transformer.named_parameters())
     a_name = next(n for n in named if ".previous." in n and "lora_A" in n)
     d_name = a_name.replace(".previous.", ".default.")

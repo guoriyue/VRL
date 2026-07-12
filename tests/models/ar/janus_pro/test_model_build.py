@@ -10,14 +10,14 @@ from omegaconf import OmegaConf
 
 from vrl.generation import GenerationRequest
 from vrl.generation.execution.chunks import SampleChunk
-from vrl.models.ar.build import extract_family_ar_runtime_spec
+from vrl.models.ar.build import resolve_family_ar_model_build
 from vrl.models.ar.janus_pro.runtime import (
     JanusProChunkExecutor,
 )
 
 
-def test_janus_runtime_spec_does_not_expose_decode_strategy() -> None:
-    """Checks Janus runtime spec does not expose decode strategy."""
+def test_janus_model_build_does_not_expose_decode_strategy() -> None:
+    """Checks the Janus model build does not expose decode strategy."""
     cfg = OmegaConf.create(
         {
             "model": {
@@ -25,7 +25,7 @@ def test_janus_runtime_spec_does_not_expose_decode_strategy() -> None:
                 "path": "deepseek-ai/Janus-Pro-1B",
                 "use_lora": False,
             },
-            "precision": "fp32",
+            "precision": {"training": {"dtype": "fp32"}, "rollout": {"dtype": "fp32"}},
             "sampling": {
                 "guidance_scale": 5.0,
                 "temperature": 1.0,
@@ -35,11 +35,28 @@ def test_janus_runtime_spec_does_not_expose_decode_strategy() -> None:
         }
     )
 
-    spec = extract_family_ar_runtime_spec(cfg, device="cpu", weight_dtype="float32")
+    build = resolve_family_ar_model_build(cfg, device="cpu")
 
-    assert spec.sampling_config is not None
-    assert "ar_decode_strategy" not in spec.sampling_config
-    assert spec.sampling_config["ar_scheduler_batch_size"] == 2
+    assert build.sampling_config is not None
+    assert "ar_decode_strategy" not in build.sampling_config
+    assert build.sampling_config["ar_scheduler_batch_size"] == 2
+
+
+def test_ar_runtime_rejects_duplicate_model_dtype() -> None:
+    cfg = OmegaConf.create(
+        {
+            "model": {
+                "family": "janus_pro",
+                "path": "deepseek-ai/Janus-Pro-1B",
+                "dtype": "bfloat16",
+            },
+            "precision": {"training": {"dtype": "fp16"}, "rollout": {"dtype": "fp16"}},
+            "sampling": {},
+        },
+    )
+
+    with pytest.raises(ValueError, match=r"model\.dtype.*top-level precision"):
+        resolve_family_ar_model_build(cfg, device="cpu")
 
 
 def test_janus_executor_parse_sampling_params_reads_scheduler_batch_size() -> None:

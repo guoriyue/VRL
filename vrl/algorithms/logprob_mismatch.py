@@ -27,32 +27,62 @@ import torch
 
 @dataclass(frozen=True, slots=True)
 class LogprobMismatchStats:
-    """Reduced stats on ``fresh_log_prob - old_log_prob`` (all fp32 scalars)."""
+    """Reduced stats on ``fresh_log_prob - old_log_prob`` (all fp32 scalars).
 
+    Pass-zero ``finite`` and max values feed the pre-optimizer parity gate. The
+    remaining values are observation/provenance metrics flattened only at the CSV
+    boundary.
+    """
+
+    # Display/provenance-only: CSV and offline precision probes.
     logprob_abs_diff_mean: float = 0.0
+    # Behavior-consumed by the unchanged-policy parity gate.
     logprob_abs_diff_max: float = 0.0
+    # Display/provenance-only: CSV and offline precision probes.
     ratio_abs_dev_mean: float = 0.0
+    # Behavior-consumed by the precision drift guard.
     ratio_abs_dev_max: float = 0.0
+    # Display/provenance-only divergence diagnostics.
     mismatch_kl: float = 0.0
     mismatch_k3_kl: float = 0.0
+    # Behavior-consumed by parity and precision drift gates.
     finite: bool = True
 
-    def to_metrics_kwargs(self) -> dict[str, float]:
-        """The six mismatch metrics as ``TrainStepMetrics`` kwargs.
+    @classmethod
+    def aggregate(
+        cls,
+        values: list[LogprobMismatchStats],
+        weights: list[float] | None = None,
+    ) -> LogprobMismatchStats:
+        """Aggregate weighted observations without losing max/finite semantics."""
 
-        One mapping point so a new mismatch metric is wired here, not re-copied
-        field-by-field at every TrainStepMetrics call site. ``finite`` is
-        deliberately excluded — it is a precision-guard signal (read by
-        ``precision_guard``), not a logged training metric.
-        """
-        return {
-            "logprob_abs_diff_mean": self.logprob_abs_diff_mean,
-            "logprob_abs_diff_max": self.logprob_abs_diff_max,
-            "ratio_abs_dev_mean": self.ratio_abs_dev_mean,
-            "ratio_abs_dev_max": self.ratio_abs_dev_max,
-            "mismatch_kl": self.mismatch_kl,
-            "mismatch_k3_kl": self.mismatch_k3_kl,
-        }
+        if not values:
+            return cls()
+        resolved_weights = [1.0] * len(values) if weights is None else list(weights)
+        if len(resolved_weights) != len(values):
+            raise ValueError("LogprobMismatchStats values/weights length mismatch")
+        total_weight = sum(resolved_weights)
+        if total_weight <= 0:
+            return cls()
+
+        def mean(name: str) -> float:
+            return (
+                sum(
+                    float(getattr(value, name)) * weight
+                    for value, weight in zip(values, resolved_weights, strict=True)
+                )
+                / total_weight
+            )
+
+        return cls(
+            logprob_abs_diff_mean=mean("logprob_abs_diff_mean"),
+            logprob_abs_diff_max=max(value.logprob_abs_diff_max for value in values),
+            ratio_abs_dev_mean=mean("ratio_abs_dev_mean"),
+            ratio_abs_dev_max=max(value.ratio_abs_dev_max for value in values),
+            mismatch_kl=mean("mismatch_kl"),
+            mismatch_k3_kl=mean("mismatch_k3_kl"),
+            finite=all(value.finite for value in values),
+        )
 
 
 def compute_logprob_mismatch_stats(

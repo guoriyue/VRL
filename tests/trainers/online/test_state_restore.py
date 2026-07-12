@@ -142,14 +142,13 @@ class _ResumeAlgorithm:
         return rewards - rewards.mean()
 
     def compute_loss(self, inputs):
-        signals, advantages, old_log_probs = _algorithm_inputs(inputs)
+        signals, advantages, _old_log_probs = _algorithm_inputs(inputs)
         from vrl.algorithms.types import TrainStepMetrics
 
         loss = signals.log_prob.mean() + advantages.mean() * 0.0
         return loss, TrainStepMetrics(
             loss=loss.item(),
             policy_loss=loss.item(),
-            approx_kl=float(old_log_probs.mean().item()),
         )
 
 

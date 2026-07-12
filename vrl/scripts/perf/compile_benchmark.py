@@ -41,6 +41,7 @@ from typing import Any
 
 import torch
 
+from vrl.models.dtypes import resolve_torch_dtype
 from vrl.scripts.perf.common.synthetic_diffusion import build_synthetic_inputs
 from vrl.scripts.perf.common.timing import cuda_median_ms, kernel_launches_per_step
 from vrl.utils.logging import init_logger
@@ -107,7 +108,11 @@ def _run_cell(
     torch.cuda.reset_peak_memory_stats(device)
 
     model, kwargs = build_synthetic_inputs(
-        family, batch=batch, device=device, dtype=dtype, layers=layers,
+        family,
+        batch=batch,
+        device=device,
+        dtype=dtype,
+        layers=layers,
         concat_padding_mask=concat_padding_mask,
     )
 
@@ -150,8 +155,11 @@ def _run_cell(
     del model, runner, kwargs
     torch.cuda.empty_cache()
     return CellResult(
-        path=path, compiled=compiled, latency_ms=latency,
-        launches_per_step=launches, peak_mem_mb=peak_mb,
+        path=path,
+        compiled=compiled,
+        latency_ms=latency,
+        launches_per_step=launches,
+        peak_mem_mb=peak_mb,
     )
 
 
@@ -189,7 +197,11 @@ def _run_parity_cell(
     torch.cuda.empty_cache()
 
     model, kwargs = build_synthetic_inputs(
-        family, batch=batch, device=device, dtype=dtype, layers=layers,
+        family,
+        batch=batch,
+        device=device,
+        dtype=dtype,
+        layers=layers,
         concat_padding_mask=concat_padding_mask,
     )
 
@@ -314,35 +326,53 @@ def main() -> None:
     parser.add_argument("--dtype", default="bf16", choices=["fp32", "bf16", "fp16"])
     parser.add_argument("--batch", type=int, default=2, help="2 == cond+uncond CFG pair")
     parser.add_argument(
-        "--layers", type=int, default=None,
+        "--layers",
+        type=int,
+        default=None,
         help="override transformer depth (default: production; small value = fast smoke)",
     )
-    parser.add_argument("--mode", default="default", help="torch.compile mode (runtime uses 'default')")
-    parser.add_argument("--warmup", type=int, default=8, help="steps before timing (absorbs compilation)")
+    parser.add_argument(
+        "--mode", default="default", help="torch.compile mode (runtime uses 'default')"
+    )
+    parser.add_argument(
+        "--warmup", type=int, default=8, help="steps before timing (absorbs compilation)"
+    )
     parser.add_argument("--iters", type=int, default=20, help="timed steps (median taken)")
     parser.add_argument(
-        "--paths", default="rollout,train",
+        "--paths",
+        default="rollout,train",
         help="comma list of paths to measure: rollout,train",
     )
     parser.add_argument(
-        "--no-concat-padding-mask", dest="concat_padding_mask", action="store_false",
+        "--no-concat-padding-mask",
+        dest="concat_padding_mask",
+        action="store_false",
         help="cosmos only: skip the torchvision padding-mask resize (no GEMM impact)",
     )
     parser.add_argument(
-        "--parity", action="store_true",
+        "--parity",
+        action="store_true",
         help="numeric eager-vs-compiled parity (max |Δ| output/grad) instead of timing",
     )
     args = parser.parse_args()
 
     device = torch.device(args.device)
     if device.type != "cuda":
-        raise SystemExit("compile_benchmark needs --device cuda (latency/launch counts are GPU-only)")
-    dtype = {"fp32": torch.float32, "bf16": torch.bfloat16, "fp16": torch.float16}[args.dtype]
+        raise SystemExit(
+            "compile_benchmark needs --device cuda (latency/launch counts are GPU-only)"
+        )
+    dtype = resolve_torch_dtype(args.dtype)
     paths = [p.strip() for p in args.paths.split(",") if p.strip()]
 
     logger.info(
         "compile A/B: family=%s device=%s dtype=%s batch=%d layers=%s mode=%s paths=%s",
-        args.family, device, dtype, args.batch, args.layers, args.mode, paths,
+        args.family,
+        device,
+        dtype,
+        args.batch,
+        args.layers,
+        args.mode,
+        paths,
     )
 
     if args.parity:
@@ -351,8 +381,13 @@ def main() -> None:
             logger.info("running parity cell: path=%s", path)
             parity.append(
                 _run_parity_cell(
-                    path=path, family=args.family, batch=args.batch, device=device,
-                    dtype=dtype, layers=args.layers, mode=args.mode,
+                    path=path,
+                    family=args.family,
+                    batch=args.batch,
+                    device=device,
+                    dtype=dtype,
+                    layers=args.layers,
+                    mode=args.mode,
                     concat_padding_mask=args.concat_padding_mask,
                 )
             )
@@ -365,10 +400,17 @@ def main() -> None:
             logger.info("running cell: path=%s compile=%s", path, compiled)
             results.append(
                 _run_cell(
-                    path=path, compiled=compiled, family=args.family, batch=args.batch,
-                    device=device, dtype=dtype, layers=args.layers, mode=args.mode,
+                    path=path,
+                    compiled=compiled,
+                    family=args.family,
+                    batch=args.batch,
+                    device=device,
+                    dtype=dtype,
+                    layers=args.layers,
+                    mode=args.mode,
                     concat_padding_mask=args.concat_padding_mask,
-                    warmup=args.warmup, iters=args.iters,
+                    warmup=args.warmup,
+                    iters=args.iters,
                 )
             )
 

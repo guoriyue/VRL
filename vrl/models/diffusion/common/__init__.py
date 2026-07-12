@@ -16,8 +16,7 @@ from vrl.models.diffusion.common.cfg import (
 )
 from vrl.models.diffusion.common.latent_decode import (
     ChunkedLatentDecoder,
-    LatentDecodeSpec,
-    LatentDecodeTransform,
+    LatentDecodePlan,
 )
 from vrl.models.diffusion.common.tensors import (
     align_replay_tensor,
@@ -39,8 +38,7 @@ __all__ = [
     "DiffusionBackboneRunnerBase",
     "DiffusionBranch",
     "DiffusionBranchBatch",
-    "LatentDecodeSpec",
-    "LatentDecodeTransform",
+    "LatentDecodePlan",
     "align_replay_tensor",
     "broadcast_spatial_timestep",
     "combine_cfg",

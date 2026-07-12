@@ -7,9 +7,6 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field, fields
 from typing import Any
 
-_FORBIDDEN_LIVE_OBJECT_KEYS = frozenset({"executor", "policy", "pipeline"})
-_SCALAR_TYPES = (str, int, float, bool, type(None))
-
 
 @dataclass(frozen=True, slots=True)
 class GenerationRuntimeLaunchContract:
@@ -74,14 +71,6 @@ class GenerationRuntimeLaunchContract:
 
     @classmethod
     def from_dict(cls, value: Mapping[str, Any]) -> GenerationRuntimeLaunchContract:
-        forbidden = sorted(_FORBIDDEN_LIVE_OBJECT_KEYS.intersection(value))
-        if forbidden:
-            keys = ", ".join(repr(key) for key in forbidden)
-            raise ValueError(
-                "GenerationRuntimeLaunchContract cannot include live object keys: "
-                f"{keys}. Use runtime_builder and executor_cls import paths instead.",
-            )
-
         field_names = {field.name for field in fields(cls)}
         unknown = sorted(set(value).difference(field_names))
         if unknown:
@@ -144,7 +133,7 @@ class GenerationRuntimeLaunchContract:
 
     @classmethod
     def _validate_serializable_config(cls, value: Any, path: str) -> None:
-        if isinstance(value, _SCALAR_TYPES):
+        if value is None or isinstance(value, (str, int, float)):
             return
 
         if cls._is_torch_tensor(value):
@@ -159,9 +148,7 @@ class GenerationRuntimeLaunchContract:
         if isinstance(value, Mapping):
             for key, inner in value.items():
                 if not isinstance(key, str):
-                    raise TypeError(
-                        f"{path} keys must be strings, got {type(key).__name__}"
-                    )
+                    raise TypeError(f"{path} keys must be strings, got {type(key).__name__}")
                 cls._validate_serializable_config(inner, f"{path}.{key}")
             return
 
@@ -198,10 +185,7 @@ class GenerationRuntimeLaunchContract:
     @staticmethod
     def _is_diffusers_pipeline(value: Any) -> bool:
         value_type = type(value)
-        return (
-            value_type.__module__.startswith("diffusers.")
-            and "Pipeline" in value_type.__name__
-        )
+        return value_type.__module__.startswith("diffusers.") and "Pipeline" in value_type.__name__
 
 
 __all__ = ["GenerationRuntimeLaunchContract"]

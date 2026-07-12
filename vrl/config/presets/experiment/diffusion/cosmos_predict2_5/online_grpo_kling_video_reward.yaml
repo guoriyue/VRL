@@ -24,7 +24,6 @@ defaults:
   - /reward/kling_video_reward
   - /dataset/videophy
 
-precision: bf16
 
 # Compile-both: same rationale as the NFT sibling — rollout and train replay run
 # the SAME compiled kernel, so compile adds zero rollout/train logprob drift

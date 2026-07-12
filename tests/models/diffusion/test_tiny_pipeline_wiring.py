@@ -21,14 +21,14 @@ import torch
 
 from tests.models.diffusion.registry import (
     TinyPipelineUnavailable,
-    archs_with_tiny_pipe,
+    architectures_with_tiny_pipeline,
     load_tiny_pipeline,
 )
 from vrl.models.diffusion.sd3_5.model import SD3_5Model, SD3SamplingState
 from vrl.models.diffusion.wan_2_1.model import WanT2VDiffusersModel, WanT2VSamplingState
 
 
-@pytest.mark.parametrize("arch", archs_with_tiny_pipe())
+@pytest.mark.parametrize("arch", architectures_with_tiny_pipeline())
 def test_tiny_pipeline_assembles_real_components(arch: str) -> None:
     """Checks tiny pipeline assembles real components."""
     try:

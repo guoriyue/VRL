@@ -25,25 +25,27 @@ from vrl.generation.diffusion import (
 from vrl.generation.diffusion.layout import VideoGenerationRequest
 from vrl.generation.execution.chunks import SampleChunk
 from vrl.generation.types import GenerationRequest
-from vrl.models.interfaces.runtime import RuntimeBuildSpec, RuntimeBundle
+from vrl.models.interfaces.runtime import ModelBuild, RuntimeBundle
 from vrl.utils.logging import init_logger
 
 logger = init_logger(__name__)
-def build_cosmos3_replay_runtime_bundle(spec: RuntimeBuildSpec) -> RuntimeBundle:
+
+
+def build_cosmos3_replay_runtime_bundle(build: ModelBuild) -> RuntimeBundle:
     from vrl.models.diffusion.cosmos.cosmos3.model import Cosmos3Model, Cosmos3ReplayModel
 
-    logger.info("Building cosmos3 replay runtime bundle from %s", spec.model_name_or_path)
-    # Reuse from_spec's pipeline loader, then wrap pipeline-shell in the replay model
+    logger.info("Building cosmos3 replay runtime bundle from %s", build.model_name_or_path)
+    # Reuse from_build's pipeline loader, then wrap pipeline-shell in the replay model
     # (it needs the segment builders to rebuild packed_static at recompute time).
-    driver = Cosmos3Model.from_spec(spec)
+    driver = Cosmos3Model.from_build(build)
     model = Cosmos3ReplayModel(
         pipeline_shell=driver.pipeline,
         scheduler=driver.scheduler,
-        device=spec.device,
+        device=build.device,
     )
     from vrl.models.diffusion.build import assemble_replay_bundle
 
-    return assemble_replay_bundle(model, spec, family="cosmos3")
+    return assemble_replay_bundle(model, build, family="cosmos3")
 
 
 class Cosmos3ChunkExecutor(DiffusionChunkExecutorBase):

@@ -9,7 +9,7 @@ import torch
 
 from vrl.algorithms.grpo.token import TokenGRPO, TokenGRPOConfig
 from vrl.algorithms.trajectory import AlgorithmInput
-from vrl.algorithms.types import TrainStepMetrics
+from vrl.algorithms.types import PolicyUpdateStats, TrainStepMetrics
 from vrl.rollouts.evaluators.types import TrajectorySignalBatch
 
 
@@ -52,12 +52,11 @@ class MultiSegmentTokenGRPO(TokenGRPO):
         signals = inputs.signals
 
         total_loss: torch.Tensor | None = None
-        metric_values: dict[str, list[float]] = {
-            "policy_loss": [],
-            "kl_penalty": [],
-            "clip_fraction": [],
-            "approx_kl": [],
-        }
+        policy_losses: list[float] = []
+        kl_penalties: list[float] = []
+        weighted_kl_losses: list[float] = []
+        update_stats: list[PolicyUpdateStats] = []
+        metric_weights: list[float] = []
         total_weight = 0.0
         train_segments = dict(self.config.train_segments or {})
         weights = dict(self.config.segment_weights or {})
@@ -103,10 +102,11 @@ class MultiSegmentTokenGRPO(TokenGRPO):
             weighted = loss * weight
             total_loss = weighted if total_loss is None else total_loss + weighted
             total_weight += weight
-            metric_values["policy_loss"].append(metrics.policy_loss * weight)
-            metric_values["kl_penalty"].append(metrics.kl_penalty * weight)
-            metric_values["clip_fraction"].append(metrics.clip_fraction * weight)
-            metric_values["approx_kl"].append(metrics.approx_kl * weight)
+            policy_losses.append(metrics.policy_loss)
+            kl_penalties.append(metrics.kl_penalty)
+            weighted_kl_losses.append(metrics.weighted_kl_loss)
+            update_stats.append(metrics.update)
+            metric_weights.append(weight)
 
         if total_loss is None or total_weight <= 0:
             zero = signals.primary.log_prob.sum() * 0.0
@@ -114,16 +114,18 @@ class MultiSegmentTokenGRPO(TokenGRPO):
 
         total_loss = total_loss / total_weight
 
-        def _weighted_avg(key: str) -> float:
-            values = metric_values[key]
+        def _weighted_avg(values: list[float]) -> float:
             if not values:
                 return 0.0
-            return sum(values) / total_weight
+            return (
+                sum(value * weight for value, weight in zip(values, metric_weights, strict=True))
+                / total_weight
+            )
 
         return total_loss, TrainStepMetrics(
             loss=float(total_loss.item()),
-            policy_loss=_weighted_avg("policy_loss"),
-            kl_penalty=_weighted_avg("kl_penalty"),
-            clip_fraction=_weighted_avg("clip_fraction"),
-            approx_kl=_weighted_avg("approx_kl"),
+            policy_loss=_weighted_avg(policy_losses),
+            kl_penalty=_weighted_avg(kl_penalties),
+            weighted_kl_loss=_weighted_avg(weighted_kl_losses),
+            update=PolicyUpdateStats.weighted_mean(update_stats, metric_weights),
         )

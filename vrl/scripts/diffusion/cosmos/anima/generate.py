@@ -18,8 +18,9 @@ from vrl.config.loading import load_config
 from vrl.generation.diffusion.layout import VideoGenerationRequest
 from vrl.models.diffusion.build import (
     build_family_runtime_bundle,
-    extract_family_runtime_spec,
+    resolve_family_model_build,
 )
+from vrl.models.dtypes import resolve_torch_dtype
 from vrl.trainers.data import load_prompt_manifest
 from vrl.trainers.precision import torch_dtype_for_trainer_precision
 from vrl.utils.media import to_pil_image
@@ -173,7 +174,13 @@ def main(argv: list[str] | None = None) -> None:
     device = _resolve_device(args.device, torch)
     dtype = _resolve_dtype(args.dtype, cfg, device=device, torch=torch)
     logger.info("Building Anima runtime on device=%s dtype=%s", device, dtype)
-    bundle = build_family_runtime_bundle(extract_family_runtime_spec(cfg, device, dtype))
+    bundle = build_family_runtime_bundle(
+        resolve_family_model_build(
+            cfg,
+            device,
+            parameter_dtype_override=dtype,
+        ),
+    )
     model = bundle.model.eval()
 
     rows: list[dict[str, Any]] = []
@@ -287,14 +294,7 @@ def _resolve_device(device_arg: str, torch: Any) -> Any:
 
 def _resolve_dtype(dtype_arg: str, cfg: DictConfig, *, device: Any, torch: Any) -> Any:
     if dtype_arg != "auto":
-        return {
-            "fp32": torch.float32,
-            "float32": torch.float32,
-            "fp16": torch.float16,
-            "float16": torch.float16,
-            "bf16": torch.bfloat16,
-            "bfloat16": torch.bfloat16,
-        }[dtype_arg]
+        return resolve_torch_dtype(dtype_arg)
 
     trainer_config = build_configs(cfg)["trainer"]
     dtype = torch_dtype_for_trainer_precision(trainer_config, torch)

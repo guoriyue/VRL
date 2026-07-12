@@ -1,4 +1,4 @@
-"""AR rollout fp8 quantization: trunk swaps, heads/embeddings stay.
+"""AR rollout quantization: policy trunks swap, heads/embeddings stay.
 
 Uses a tiny REAL Emu3 model (config-init, no weights) so the exclusion rules
 are checked against genuine HF module paths, not a fake that restates them.
@@ -65,10 +65,10 @@ def test_ar_quantize_rollout_fp8_swaps_trunk_not_heads() -> None:
     del torch
 
 
-def test_ar_quantize_rollout_fp4_targets_mlp_not_attention_or_heads() -> None:
+def test_ar_quantize_rollout_nvfp4_targets_mlp_not_attention_or_heads() -> None:
     model = _tiny_emu3_model()
 
-    swapped = model.quantize_rollout_fp4()
+    swapped = model.quantize_rollout_nvfp4()
 
     assert swapped
     assert all("mlp" in path for path in swapped)
@@ -76,14 +76,16 @@ def test_ar_quantize_rollout_fp4_targets_mlp_not_attention_or_heads() -> None:
     assert all("head" not in path and "embed" not in path for path in swapped)
 
 
-@pytest.mark.parametrize("scheme,linear_type", [("fp8", Fp8Linear), ("fp4", Fp4Linear)])
-def test_ar_worker_guard_scans_language_model_for_all_schemes(
-    scheme: str,
+@pytest.mark.parametrize(
+    ("format_name", "linear_type"),
+    [("fp8", Fp8Linear), ("nvfp4", Fp4Linear)],
+)
+def test_ar_worker_guard_requires_the_requested_format(
+    format_name: str,
     linear_type: type[QuantizedLinear],
 ) -> None:
     """AR models expose language_model, not diffusion's transformer attribute."""
-    from types import SimpleNamespace
-
+    from vrl.models.interfaces.runtime import ModelBuild, RolloutBuildOptions
     from vrl.models.loader import assert_rollout_quantization_applied
 
     class _ArPolicy(nn.Module):
@@ -93,47 +95,152 @@ def test_ar_worker_guard_scans_language_model_for_all_schemes(
                 linear_type(nn.Linear(64, 64, bias=False)),
             )
 
-    assert_rollout_quantization_applied(
-        _ArPolicy(),
-        SimpleNamespace(rollout_quantization=scheme, ar_task="ar_t2i"),
+    build = ModelBuild(
+        model_name_or_path="fake/repo",
+        device="cpu",
+        parameter_dtype="bf16",
+        rollout=RolloutBuildOptions(
+            autocast_dtype="bf16",
+            prompt_encoder_dtype="bf16",
+            quantization_format=format_name,
+        ),
+    )
+    assert_rollout_quantization_applied(_ArPolicy(), build)
+
+
+def test_ar_worker_guard_rejects_a_different_quantization_format() -> None:
+    from vrl.models.interfaces.runtime import ModelBuild, RolloutBuildOptions
+    from vrl.models.loader import assert_rollout_quantization_applied
+
+    model = nn.Module()
+    model.language_model = nn.Sequential(Fp8Linear(nn.Linear(64, 64, bias=False)))
+    build = ModelBuild(
+        model_name_or_path="fake/repo",
+        device="cpu",
+        parameter_dtype="bf16",
+        rollout=RolloutBuildOptions(
+            autocast_dtype="bf16",
+            prompt_encoder_dtype="bf16",
+            quantization_format="nvfp4",
+        ),
     )
 
+    with pytest.raises(RuntimeError, match="0 nvfp4 quantized linear"):
+        assert_rollout_quantization_applied(model, build)
 
-def test_ar_builder_applies_rollout_quantization_and_replay_does_not() -> None:
+
+def test_ar_builder_rejects_unsupported_nvfp4_before_quantization_mutation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from vrl.models.ar.build import build_ar_runtime_bundle
+    from vrl.models.ar.capabilities import ar_discrete_family_capability
+    from vrl.models.interfaces.runtime import ModelBuild, RolloutBuildOptions
+
+    class _ArPolicy(nn.Module):
+        def __init__(self) -> None:
+            super().__init__()
+            self.language_model = nn.Linear(64, 64, bias=False)
+            self.quantize_calls = 0
+
+        def quantize_rollout_nvfp4(self) -> list[str]:
+            self.quantize_calls += 1
+            return ["language_model"]
+
+    monkeypatch.setattr("vrl.nn.quantization.nvfp4_available", lambda _device: False)
+    model = _ArPolicy()
+    build = ModelBuild(
+        model_name_or_path="fake/repo",
+        device="cpu",
+        parameter_dtype="bf16",
+        rollout=RolloutBuildOptions(
+            autocast_dtype="bf16",
+            prompt_encoder_dtype="bf16",
+            quantization_format="nvfp4",
+        ),
+    )
+
+    with pytest.raises(RuntimeError, match="NVFP4-capable CUDA target"):
+        build_ar_runtime_bundle(
+            build,
+            model=model,
+            capability=ar_discrete_family_capability("emu3", "ar_t2i"),
+        )
+
+    assert model.quantize_calls == 0
+
+
+@pytest.mark.parametrize("format_name", ["fp8", "nvfp4"])
+def test_ar_builder_applies_rollout_quantization_and_replay_does_not(
+    format_name: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """The shared AR builder quantizes rollout bundles only."""
     from vrl.models.ar.build import build_ar_runtime_bundle
     from vrl.models.ar.capabilities import ar_discrete_family_capability
-    from vrl.models.interfaces.runtime import RuntimeBuildSpec
+    from vrl.models.interfaces.runtime import ModelBuild, RolloutBuildOptions
+    from vrl.models.loader import assert_rollout_quantization_applied
 
     capability = ar_discrete_family_capability("emu3", "ar_t2i")
 
-    def _spec(quant: str | None) -> RuntimeBuildSpec:
-        return RuntimeBuildSpec(
+    if format_name == "nvfp4":
+        monkeypatch.setattr("vrl.nn.quantization.nvfp4_available", lambda _device: True)
+
+    def _build(
+        quantization_format: str | None,
+        *,
+        for_rollout: bool = True,
+    ) -> ModelBuild:
+        return ModelBuild(
             model_name_or_path="fake/repo",
             device="cpu",
-            dtype="float32",
-            ar_task="ar_t2i",
+            parameter_dtype="float32",
             model_config={"path": "fake/repo", "use_lora": False},
-            rollout_quantization=quant,
+            rollout=(
+                RolloutBuildOptions(
+                    autocast_dtype="float32",
+                    prompt_encoder_dtype="float16",
+                    quantization_format=quantization_format,
+                )
+                if for_rollout
+                else None
+            ),
         )
 
     rollout_model = _tiny_emu3_model()
-    build_ar_runtime_bundle(_spec("fp8"), model=rollout_model, capability=capability)
+    rollout_build = _build(format_name)
+    build_ar_runtime_bundle(rollout_build, model=rollout_model, capability=capability)
     assert any(isinstance(m, QuantizedLinear) for m in rollout_model.language_model.modules()), (
         "rollout bundle did not quantize"
     )
+    # The common worker backstop must inspect the AR policy core, not assume the
+    # diffusion-only ``model.transformer`` shape.
+    assert_rollout_quantization_applied(rollout_model, rollout_build)
+
+    with pytest.raises(
+        RuntimeError,
+        match=rf"rollout policy core has 0 {format_name} quantized",
+    ):
+        assert_rollout_quantization_applied(_tiny_emu3_model(), _build(format_name))
 
     replay_model = _tiny_emu3_model()
     build_ar_runtime_bundle(
-        _spec("fp8"),
+        _build(None, for_rollout=False),
         model=replay_model,
         capability=capability,
         replay=True,
     )
     assert not any(
         isinstance(m, QuantizedLinear) for m in replay_model.language_model.modules()
-    ), "replay bundle must keep the bf16 master unquantized"
+    ), "replay bundle must keep its base-precision parameters unquantized"
+
+    with pytest.raises(ValueError, match="replay runtime construction"):
+        build_ar_runtime_bundle(
+            _build(format_name),
+            model=_tiny_emu3_model(),
+            capability=capability,
+            replay=True,
+        )
 
     plain_model = _tiny_emu3_model()
-    build_ar_runtime_bundle(_spec(None), model=plain_model, capability=capability)
+    build_ar_runtime_bundle(_build(None), model=plain_model, capability=capability)
     assert not any(isinstance(m, QuantizedLinear) for m in plain_model.language_model.modules())

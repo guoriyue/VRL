@@ -176,9 +176,15 @@ def main() -> None:
     # The exact builder path the rollout workers import — same model, same
     # weights, same latent space as the run this shard will regularize.
     build = import_from_path(entry.runtime_builder)
-    extract = import_from_path(entry.runtime_spec_extractor)
+    resolve_build = import_from_path(entry.model_build_resolver)
     weight_dtype = torch.bfloat16 if device.type == "cuda" else torch.float32
-    bundle = build(extract(cfg, device, weight_dtype))
+    bundle = build(
+        resolve_build(
+            cfg,
+            device,
+            parameter_dtype_override=weight_dtype,
+        ),
+    )
     model = bundle.model
     encode = getattr(model, "encode_video_to_latents", None)
     if not callable(encode):

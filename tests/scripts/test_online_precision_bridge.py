@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from pathlib import Path
 
 import pytest
@@ -10,11 +11,10 @@ from omegaconf import OmegaConf
 
 from tests.config.test_load_all_experiments import _experiment_names
 from vrl.algorithms.logprob_mismatch import PrecisionCorrectionConfig
-from vrl.config.builders import build_configs, build_precision_split_safety_configs
+from vrl.config.builders import build_configs
 from vrl.config.loading import load_config
 from vrl.config.precision import resolve_precision_policy
 from vrl.models.dtypes import resolve_torch_dtype
-from vrl.scripts.common.online import _apply_precision_policy, _rollout_weight_dtype
 from vrl.trainers.core.types import PrecisionDriftGuardConfig
 from vrl.trainers.precision import torch_dtype_for_trainer_precision
 
@@ -30,25 +30,23 @@ def test_bridge_uses_aligned_public_precision(experiment):
     """Checks bridge derives trainer precision from public precision."""
     cfg = load_config(f"experiment/{experiment}")
     trainer_config = build_configs(cfg)["trainer"]
-    _apply_precision_policy(cfg, trainer_config)
     policy = resolve_precision_policy(cfg)
-    assert trainer_config.train_precision == policy.train
-    assert trainer_config.rollout_precision == policy.rollout
-    assert policy.train == policy.rollout
+    assert trainer_config.train_precision == policy.training.dtype
+    assert trainer_config.rollout_precision == policy.rollout.label
+    assert policy.training == policy.rollout
     assert torch_dtype_for_trainer_precision(trainer_config, torch) is resolve_torch_dtype(
-        policy.train,
+        policy.training.dtype,
     )
 
 
 def test_precision_block_drives_trainer():
     """Checks precision block drives trainer."""
     cfg = load_config("experiment/diffusion/sd3_5/online_grpo_ocr")
-    cfg = OmegaConf.merge(cfg, OmegaConf.create({"precision": "fp32"}))
+    cfg = _with_precision("diffusion/sd3_5/online_grpo_ocr", _plain_policy("fp32"))
     assert torch_dtype_for_trainer_precision(build_configs(cfg)["trainer"], torch) is torch.float32
 
-    cfg = OmegaConf.merge(cfg, OmegaConf.create({"precision": "bf16"}))
+    cfg = _with_precision("diffusion/sd3_5/online_grpo_ocr", _plain_policy("bf16"))
     trainer_config = build_configs(cfg)["trainer"]
-    _apply_precision_policy(cfg, trainer_config)
     assert trainer_config.train_precision == "bf16"
     assert torch_dtype_for_trainer_precision(trainer_config, torch) is torch.bfloat16
 
@@ -56,62 +54,55 @@ def test_precision_block_drives_trainer():
 def test_fp16_precision_block_drives_trainer_and_rollout():
     """Checks scalar fp16 drives both replay compute and rollout precision."""
     cfg = load_config("experiment/diffusion/sd3_5/online_grpo_ocr")
-    cfg = OmegaConf.merge(cfg, OmegaConf.create({"precision": "fp16"}))
+    cfg = OmegaConf.merge(cfg, OmegaConf.create({"precision": _plain_policy("fp16")}))
 
-    trainer_config = build_configs(cfg)["trainer"]
-    _apply_precision_policy(cfg, trainer_config)
+    built = build_configs(cfg)
+    trainer_config = built["trainer"]
 
     assert trainer_config.train_precision == "fp16"
     assert trainer_config.rollout_precision == "fp16"
-    assert trainer_config.math_precision == "fp32"
+    assert built["precision"].diffusion_math == "fp32"
     assert torch_dtype_for_trainer_precision(trainer_config, torch) is torch.float16
 
 
-@pytest.mark.parametrize("rollout", ["fp8", "fp4"])
-def test_quantized_rollout_loads_train_dtype_master(rollout):
-    """FP8/FP4 select a GEMM swap while rollout model storage stays bf16."""
-    policy = resolve_precision_policy(
-        OmegaConf.create({"precision": {"train": "bf16", "rollout": rollout}}),
-    )
-
-    assert policy.rollout_quantization == rollout
-    assert _rollout_weight_dtype(policy) is torch.bfloat16
-
-
-def test_plain_rollout_loads_its_own_dtype():
-    """A non-quantized rollout remains a normal model storage dtype."""
-    policy = resolve_precision_policy(
-        OmegaConf.create({"precision": {"train": "bf16", "rollout": "fp16"}}),
-    )
-
-    assert policy.rollout_quantization is None
-    assert _rollout_weight_dtype(policy) is torch.float16
-
-
-def test_rollout_precision_split_auto_derives_correction_policy():
+@pytest.mark.parametrize(
+    ("format_name", "expected_label"),
+    [("fp8", "bf16+fp8"), ("nvfp4", "bf16+nvfp4")],
+)
+def test_rollout_precision_split_auto_derives_correction_policy(
+    format_name: str,
+    expected_label: str,
+):
     """A low-precision rollout split is a user intent; correction is derived."""
     cfg = _with_precision(
         "diffusion/sd3_5/online_grpo_ocr",
-        {"train": "bf16", "rollout": "fp8"},
+        _rollout_quantization_policy(format_name),
     )
 
     trainer_config = build_configs(cfg)["trainer"]
 
     assert trainer_config.train_precision == "bf16"
-    assert trainer_config.rollout_precision == "fp8"
+    assert trainer_config.rollout_precision == expected_label
     # The auto split-precision policy is whatever the builder helper installs;
     # assert the whole struct equals that single source, not a per-field copy of
     # its constants (which would falsely fail on any retune of the policy).
-    correction, guard = build_precision_split_safety_configs()
-    assert trainer_config.precision_correction == correction
-    assert trainer_config.precision_drift_guard == guard
+    assert trainer_config.precision_correction == PrecisionCorrectionConfig(
+        tis_mode="truncate",
+        rs_mode="seq_mean_k1",
+    )
+    assert trainer_config.precision_drift_guard == PrecisionDriftGuardConfig(
+        mode="fail",
+        max_abs_log_ratio=math.log(10.0),
+        max_ratio_abs_dev=9.0,
+        fail_on_nonfinite=True,
+    )
 
 
 def test_no_split_means_no_auto_correction_policy() -> None:
     """rollout == train: the builder early-returns and installs no auto policy."""
     cfg = _with_precision(
         "diffusion/sd3_5/online_grpo_ocr",
-        {"train": "bf16", "rollout": "bf16"},
+        _plain_policy("bf16"),
     )
 
     trainer_config = build_configs(cfg)["trainer"]
@@ -126,7 +117,7 @@ def test_explicit_precision_correction_is_respected_on_rollout_split():
     """Expert correction blocks override the auto split-precision defaults."""
     cfg = _with_precision(
         "diffusion/sd3_5/online_grpo_ocr",
-        {"train": "bf16", "rollout": "fp8"},
+        _rollout_fp8_policy(),
     )
     cfg = OmegaConf.merge(
         cfg,
@@ -153,6 +144,23 @@ def _with_precision(experiment, block):
     return OmegaConf.merge(cfg, OmegaConf.create({"precision": block}))
 
 
+def _plain_policy(dtype: str) -> dict:
+    return {
+        "training": {"dtype": dtype},
+        "rollout": {"dtype": dtype},
+    }
+
+
+def _rollout_fp8_policy() -> dict:
+    return _rollout_quantization_policy("fp8")
+
+
+def _rollout_quantization_policy(format_name: str) -> dict:
+    block = _plain_policy("bf16")
+    block["rollout"]["quantization"] = {"format": format_name}
+    return block
+
+
 @pytest.mark.parametrize("math,expected", [("fp32", torch.float32), ("bf16", torch.bfloat16)])
 def test_math_axis_resolves_to_dtype(math, expected):
     # P2: the `math` axis resolves to the evaluator's log-prob math dtype.
@@ -160,11 +168,11 @@ def test_math_axis_resolves_to_dtype(math, expected):
     from vrl.config.precision import resolve_precision_policy
     from vrl.models.dtypes import resolve_torch_dtype
 
-    cfg = _with_precision("diffusion/sd3_5/online_grpo_ocr", {"train": "fp32", "math": math})
-    assert resolve_torch_dtype(resolve_precision_policy(cfg).math) is expected
-    trainer_config = build_configs(cfg)["trainer"]
-    _apply_precision_policy(cfg, trainer_config)
-    assert trainer_config.math_precision == math
+    block = _plain_policy("fp32")
+    block["diffusion_math"] = {"dtype": math}
+    cfg = _with_precision("diffusion/sd3_5/online_grpo_ocr", block)
+    assert resolve_torch_dtype(resolve_precision_policy(cfg).diffusion_math) is expected
+    assert build_configs(cfg)["precision"].diffusion_math == math
 
 
 def test_precision_drift_guard_config_is_bridged_from_yaml():
@@ -194,7 +202,8 @@ def test_online_metrics_csv_includes_logprob_mismatch_metrics(tmp_path):
     """Mismatch + continuous-async diagnostics are written as regular CSV columns."""
     from types import SimpleNamespace
 
-    from vrl.algorithms.types import TrainStepMetrics
+    from vrl.algorithms.logprob_mismatch import LogprobMismatchStats
+    from vrl.algorithms.types import InitialReplayStats, PolicyUpdateStats, TrainStepMetrics
     from vrl.scripts.common.online import OnlineRecipeRun
 
     csv_path = tmp_path / "metrics.csv"
@@ -216,12 +225,25 @@ def test_online_metrics_csv_includes_logprob_mismatch_metrics(tmp_path):
         TrainStepMetrics(
             loss=1.0,
             policy_loss=2.0,
-            logprob_abs_diff_mean=0.1,
-            logprob_abs_diff_max=0.2,
-            ratio_abs_dev_mean=0.3,
-            ratio_abs_dev_max=0.4,
-            mismatch_kl=-0.5,
-            mismatch_k3_kl=0.6,
+            weighted_kl_loss=0.025,
+            update=PolicyUpdateStats(
+                active_clip_fraction=0.15,
+                tis_clip_fraction=0.09,
+                rs_seq_masked_fraction=0.11,
+            ),
+            initial_replay=InitialReplayStats(
+                clip_fraction=0.16,
+                active_clip_fraction=0.07,
+                logprob_abs_diff_max=0.008,
+            ),
+            logprob_mismatch=LogprobMismatchStats(
+                logprob_abs_diff_mean=0.1,
+                logprob_abs_diff_max=0.2,
+                ratio_abs_dev_mean=0.3,
+                ratio_abs_dev_max=0.4,
+                mismatch_kl=-0.5,
+                mismatch_k3_kl=0.6,
+            ),
             phase_times={
                 "continuous.stale_policy_versions": 1.0,
                 "continuous.queue_ready_groups": 3.0,
@@ -234,6 +256,9 @@ def test_online_metrics_csv_includes_logprob_mismatch_metrics(tmp_path):
 
     header, row = csv_path.read_text().splitlines()
     assert "logprob_abs_diff_mean" in header
+    assert "weighted_kl_loss" in header
+    assert "pre_update_logprob_abs_diff_max" in header
+    assert "tis_clip_fraction" in header
     assert "ratio_abs_dev_max" in header
     assert "mismatch_k3_kl" in header
     assert "continuous_stale_versions" in header
@@ -243,6 +268,13 @@ def test_online_metrics_csv_includes_logprob_mismatch_metrics(tmp_path):
     # Assert the numeric value landed in the right column, not the CSV float
     # format width (.6f / .4f zero-padding is a display detail, not a contract).
     assert float(values["logprob_abs_diff_mean"]) == pytest.approx(0.1)
+    assert float(values["weighted_kl_loss"]) == pytest.approx(0.025)
+    assert float(values["active_clip_fraction"]) == pytest.approx(0.15)
+    assert float(values["pre_update_clip_fraction"]) == pytest.approx(0.16)
+    assert float(values["pre_update_active_clip_fraction"]) == pytest.approx(0.07)
+    assert float(values["pre_update_logprob_abs_diff_max"]) == pytest.approx(0.008)
+    assert float(values["tis_clip_fraction"]) == pytest.approx(0.09)
+    assert float(values["rs_seq_masked_fraction"]) == pytest.approx(0.11)
     assert float(values["ratio_abs_dev_max"]) == pytest.approx(0.4)
     assert float(values["mismatch_kl"]) == pytest.approx(-0.5)
     # Continuous-async diagnostics sourced from TrainStepMetrics.phase_times.
@@ -255,17 +287,56 @@ def test_online_metrics_csv_includes_logprob_mismatch_metrics(tmp_path):
 
 
 @pytest.mark.parametrize(
-    "frozen,expected",
+    "prompt_encoder,expected",
     [("fp16", torch.float16), ("bf16", torch.bfloat16)],
 )
-def test_frozen_axis_in_runtime_spec(frozen, expected):
-    # P1b: the frozen axis rides the spec as a real torch.dtype (like `dtype`).
-    """Checks frozen axis in runtime spec."""
-    # sd3_5 is a registry-descriptor family: its spec comes from the generic
-    # extractor (family resolved from cfg.model.family).
-    from vrl.models.diffusion.build import extract_family_runtime_spec
+def test_prompt_encoder_axis_in_model_build(prompt_encoder, expected):
+    """Prompt-encoder precision reaches the runtime as a real torch dtype."""
+    # sd3_5 is a registry-descriptor family: its build comes from the generic
+    # resolver (family resolved from cfg.model.family).
+    from vrl.models.diffusion.build import resolve_family_model_build
 
-    cfg = _with_precision("diffusion/sd3_5/online_grpo_ocr", {"train": "fp32", "frozen": frozen})
-    spec = extract_family_runtime_spec(cfg, torch.device("cpu"), torch.float32)
-    assert spec.family == "sd3_5"
-    assert spec.frozen_dtype is expected
+    block = _plain_policy("fp32")
+    block["rollout"]["prompt_encoders"] = {"dtype": prompt_encoder}
+    cfg = _with_precision("diffusion/sd3_5/online_grpo_ocr", block)
+    build = resolve_family_model_build(cfg, torch.device("cpu"))
+    assert build.family == "sd3_5"
+    assert build.rollout is not None
+    assert build.rollout.prompt_encoder_dtype is expected
+
+
+def test_family_parameter_dtype_is_derived_from_runtime_role() -> None:
+    """Replay follows train while rollout follows the plain rollout precision."""
+    from vrl.models.diffusion.build import resolve_family_model_build
+
+    cfg = _with_precision(
+        "diffusion/sd3_5/online_grpo_ocr",
+        {
+            "training": {"dtype": "bf16"},
+            "rollout": {"dtype": "fp16"},
+        },
+    )
+
+    rollout = resolve_family_model_build(cfg, torch.device("cpu"))
+    replay = resolve_family_model_build(
+        cfg,
+        torch.device("cpu"),
+        for_rollout=False,
+    )
+
+    assert rollout.parameter_dtype is torch.float16
+    assert replay.parameter_dtype is torch.bfloat16
+
+
+def test_direct_tool_parameter_dtype_override_is_explicit() -> None:
+    """Non-production tools may override storage dtype only through a named argument."""
+    from vrl.models.diffusion.build import resolve_family_model_build
+
+    cfg = _with_precision("diffusion/sd3_5/online_grpo_ocr", _plain_policy("bf16"))
+    build = resolve_family_model_build(
+        cfg,
+        torch.device("cpu"),
+        parameter_dtype_override="fp32",
+    )
+
+    assert build.parameter_dtype is torch.float32

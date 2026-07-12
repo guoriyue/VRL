@@ -1,4 +1,4 @@
-"""Download-free ``from_spec`` loading test for Cosmos Predict2 Video2World.
+"""Download-free ``from_build`` loading test for Cosmos Predict2 Video2World.
 
 Mirrors ``tests/models/diffusion/sd3_5/test_model_loading.py``: monkeypatch the
 diffusers pipeline ``from_pretrained`` to return a fake pipeline (no Hub fetch,
@@ -11,7 +11,7 @@ does not exercise:
     weights, then restored afterwards;
   * diffusers' ``from_pretrained`` disables autograd globally, which the wrapper
     re-enables via ``torch.set_grad_enabled(True)``;
-  * frozen modules (vae fp32, text_encoder spec dtype) are staged to the spec
+  * frozen modules (vae fp32, text_encoder build dtype) are staged to the build
     device and have grad disabled.
 
 ``transformers`` is a declared dependency of this repo but is not installed in
@@ -85,10 +85,10 @@ def _ensure_transformers_importable() -> None:
     sys.modules["transformers"] = stub
 
 
-def test_cosmos_predict2_from_spec_swaps_safety_checker_and_re_enables_grad(
+def test_cosmos_predict2_from_build_swaps_safety_checker_and_re_enables_grad(
     monkeypatch,
 ) -> None:
-    """Cosmos Predict2 ``from_spec`` swaps the safety checker, re-enables grad, stages frozen modules."""
+    """Cosmos Predict2 ``from_build`` swaps the safety checker, re-enables grad, stages frozen modules."""
     _ensure_transformers_importable()
 
     import diffusers.pipelines.cosmos.pipeline_cosmos2_video2world as v2w_mod
@@ -118,9 +118,9 @@ def test_cosmos_predict2_from_spec_swaps_safety_checker_and_re_enables_grad(
         staticmethod(fake_from_pretrained),
     )
 
-    spec = SimpleNamespace(
+    build = SimpleNamespace(
         model_name_or_path="nvidia/Cosmos-Predict2-2B-Video2World",
-        dtype=torch.bfloat16,
+        parameter_dtype=torch.bfloat16,
         device="cuda:0",
     )
 
@@ -128,7 +128,7 @@ def test_cosmos_predict2_from_spec_swaps_safety_checker_and_re_enables_grad(
     # after diffusers' loader disables it globally. Keep that process-global
     # state true after the test so downstream trainer tests are not affected.
     try:
-        model = CosmosPredict2Model.from_spec(spec)
+        model = CosmosPredict2Model.from_build(build)
 
         # Wrapper wraps the fake pipeline and forwards only the model name + dtype.
         assert model.pipeline is pipeline
@@ -154,8 +154,8 @@ def test_cosmos_predict2_from_spec_swaps_safety_checker_and_re_enables_grad(
         # Grad re-enable: from_pretrained turned grad off, wrapper turns it on.
         assert torch.is_grad_enabled() is True
 
-        # Frozen-module staging: vae fp32 + text_encoder spec dtype, both frozen
-        # and moved to the spec device; progress bar disabled.
+        # Frozen-module staging: vae fp32 + text_encoder build dtype, both frozen
+        # and moved to the build device; progress bar disabled.
         assert pipeline.progress_bar_disabled is True
         assert pipeline.vae.requires_grad_enabled is False
         assert pipeline.vae.to_calls == [("cuda:0", torch.float32)]

@@ -48,14 +48,13 @@ from vrl.models.diffusion.common import (
     DiffusionBackboneInput,
     DiffusionBackboneRunnerBase,
     DiffusionBranch,
-    LatentDecodeSpec,
-    LatentDecodeTransform,
+    LatentDecodePlan,
     expand_batch_timestep,
     pack_eval_timestep,
 )
 from vrl.models.diffusion.common.lora import LoraModelMixin
 from vrl.models.diffusion.common.tensors import require_tensor
-from vrl.models.dtypes import resolve_torch_dtype
+from vrl.models.interfaces.runtime import ModelBuild
 from vrl.nn.layers.attention.joint import SD3JointAttentionProcessor
 
 
@@ -130,14 +129,14 @@ class SD3_5Model(LoraModelMixin, DiffusersPipelineModelBase, DiffusionBackboneRu
     # -- backend ownership (called by runtime, not by collectors) -------
 
     @classmethod
-    def from_spec(cls, spec: Any) -> SD3_5Model:
+    def from_build(cls, build: ModelBuild) -> SD3_5Model:
         """Load the diffusers SD3.5 pipeline + freeze non-trainable modules."""
         from diffusers import StableDiffusion3Pipeline
 
-        model_dtype = resolve_torch_dtype(spec.dtype)
-        frozen_dtype, load_kwargs = diffusers_pipeline_dtypes(spec, model_dtype)
+        model_dtype = build.parameter_dtype
+        prompt_encoder_dtype, load_kwargs = diffusers_pipeline_dtypes(build, model_dtype)
         pipeline = StableDiffusion3Pipeline.from_pretrained(
-            spec.model_name_or_path,
+            build.model_name_or_path,
             **load_kwargs,
         )
         pipeline.vae.requires_grad_(False)
@@ -148,13 +147,13 @@ class SD3_5Model(LoraModelMixin, DiffusersPipelineModelBase, DiffusionBackboneRu
         ):
             if enc is not None:
                 enc.requires_grad_(False)
-                enc.to(spec.device, dtype=frozen_dtype)
-        pipeline.vae.to(spec.device, dtype=torch.float32)
-        # getattr: bare/test specs may omit ``memory`` (same fallback contract
-        # as ``frozen_dtype`` above).
+                enc.to(build.device, dtype=prompt_encoder_dtype)
+        pipeline.vae.to(build.device, dtype=torch.float32)
+        # getattr: bare/test builds may omit ``memory`` (same fallback contract
+        # as ``prompt_encoder_dtype`` above).
         return cls(
             pipeline=pipeline,
-            device=spec.device,
+            device=build.device,
         )
 
     # -- encode_prompt -------------------------------------------------
@@ -228,10 +227,7 @@ class SD3_5Model(LoraModelMixin, DiffusersPipelineModelBase, DiffusionBackboneRu
         pipe.scheduler.set_timesteps(request.num_steps, device=device)
         timesteps = pipe.scheduler.timesteps
 
-        seed = (
-            request.seed if request.seed is not None
-            else random.randint(0, sys.maxsize)
-        )
+        seed = request.seed if request.seed is not None else random.randint(0, sys.maxsize)
         generator = torch.Generator(device=device)
         generator.manual_seed(seed)
 
@@ -392,10 +388,9 @@ class SD3_5Model(LoraModelMixin, DiffusersPipelineModelBase, DiffusionBackboneRu
         scaling_factor = pipe.vae.config.scaling_factor
         shift_factor = getattr(pipe.vae.config, "shift_factor", 0.0) or 0.0
         decoder = ChunkedLatentDecoder(
-            LatentDecodeSpec(
-                transform=LatentDecodeTransform(
-                    lambda chunk: chunk.to(pipe.vae.dtype) / scaling_factor
-                    + shift_factor,
+            LatentDecodePlan(
+                prepare_latents=lambda chunk: (
+                    chunk.to(pipe.vae.dtype) / scaling_factor + shift_factor
                 ),
                 vae_decode=lambda chunk: pipe.vae.decode(
                     chunk,

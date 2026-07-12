@@ -19,6 +19,7 @@ from omegaconf.errors import MissingMandatoryValue
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
 from vrl.algorithms.logprob_mismatch import PrecisionCorrectionConfig
+from vrl.config.precision import PrecisionConfig
 from vrl.config.unknown_keys import OPEN, ConfigBlock
 from vrl.models.interfaces.runtime import MODEL_MEMORY_SECTIONS
 from vrl.ray.resources import (
@@ -285,7 +286,7 @@ class SamplingConfig(ConfigBase):
     # (read from the request dict; default "vllm_paged"). Declared here so the
     # allowed set is the type and the key is registered (no false unknown-key warning).
     attention_backend: Literal["vllm_paged", "torch_native"] = "vllm_paged"
-    # Key registry: parsed by family layout/runtime-spec extractors.
+    # Key registry: parsed by family layout/model-build resolvers.
     ar_scheduler_batch_size: Any = None
     # do-CFG boolean switch (whether to apply classifier-free guidance at all);
     # distinct from guidance_scale (the float strength). Diffusion models AND it
@@ -337,7 +338,6 @@ class ModelConfig(ConfigBase):
     model_config = ConfigDict(extra="allow")
 
     family: str | None = None
-    dtype: Any = None
     # readers: models/interfaces/runtime.py + family runtime.py lora blocks
     lora: Annotated[
         Any,
@@ -395,6 +395,7 @@ class CosmosPredict2ModelConfig(ModelConfig):
     """Cosmos Predict2 Video2World model keys."""
 
     model_config = ConfigDict(extra="ignore")
+
 
 class CosmosPredict25ModelConfig(ModelConfig):
     """Cosmos Predict2.5 model keys."""
@@ -774,11 +775,11 @@ class RootConfig(ConfigBase):
     trainer: TrainerSection | None = None
     actor: ActorSection | None = None
     distributed: DistributedSection | None = None
-    # reader: vrl/config/precision.py (scalar form skips the block walk).
-    # `rollout` is the experimental fp8/fp4-rollout split (rollout != train).
-    precision: Annotated[
-        Any, ConfigBlock(("train", "rollout", "math", "frozen", "rollout_recipe"))
-    ] = None
+    # reader: vrl/config/precision.py. Keep Any here so the resolver owns precise
+    # migration and availability errors; ConfigBlock derives every known nested
+    # key from PrecisionConfig rather than duplicating a hand-maintained tuple.
+    precision: Annotated[Any, ConfigBlock(PrecisionConfig)] = None
+
     @model_validator(mode="after")
     def _cross_field_validate(self) -> RootConfig:
         _validate_model_config_for_family(self.model)

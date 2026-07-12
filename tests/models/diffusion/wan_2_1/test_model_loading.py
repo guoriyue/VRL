@@ -1,4 +1,4 @@
-"""Download-free ``from_spec`` loading test for Wan 2.1 Image-to-Video.
+"""Download-free ``from_build`` loading test for Wan 2.1 Image-to-Video.
 
 Mirrors ``tests/models/diffusion/sd3_5/test_model_loading.py``: monkeypatch the
 diffusers pipeline ``from_pretrained`` to return a fake pipeline (no Hub fetch,
@@ -6,15 +6,15 @@ no real weights) and assert the loader-constructed state, NOT literal YAML
 config values. The Wan I2V wrapper has a load-time branch the sd3 test does not
 exercise: single-GPU offload mode is selected from the ``model.offload_mode`` config
 key
-(``WanI2VDiffusersModel.from_spec`` in ``vrl/models/diffusion/wan_2_1/model.py``):
+(``WanI2VDiffusersModel.from_build`` in ``vrl/models/diffusion/wan_2_1/model.py``):
 
   * ``offload_mode: sequential`` -> ``pipeline.enable_sequential_cpu_offload(gpu_id=...)``
     and frozen modules are NOT eagerly staged to the device (accelerate streams
     them per layer);
   * ``offload_mode: model`` -> ``pipeline.enable_model_cpu_offload(gpu_id=...)``,
     likewise no eager staging;
-  * ``offload_mode: none`` -> vae fp32 + text_encoder/image_encoder spec-dtype staged to
-    the spec device.
+  * ``offload_mode: none`` -> vae fp32 + text_encoder/image_encoder build dtype staged to
+    the build device.
 
 In every branch the generation-only modules (vae / text_encoder / image_encoder)
 are frozen and the progress bar is disabled. Wan 2.2 A14B dual-stage pipelines
@@ -102,24 +102,24 @@ def _assert_frozen_and_loaded(pipeline: _FakePipeline, calls: list[dict[str, Any
         assert module.requires_grad_enabled is False
 
 
-def test_wan_i2v_from_spec_sequential_cpu_offload(monkeypatch) -> None:
-    """Sequential-offload branch calls enable_sequential_cpu_offload with the spec gpu and skips eager staging."""
+def test_wan_i2v_from_build_sequential_cpu_offload(monkeypatch) -> None:
+    """Sequential-offload branch uses the build GPU and skips eager staging."""
     from vrl.models.diffusion.wan_2_1.model import WanI2VDiffusersModel
 
     pipeline, calls = _patch_from_pretrained(monkeypatch)
 
-    spec = SimpleNamespace(
+    build = SimpleNamespace(
         model_name_or_path="Wan-AI/Wan2.1-I2V-14B-480P-Diffusers",
-        dtype=torch.bfloat16,
+        parameter_dtype=torch.bfloat16,
         device=torch.device("cuda:3"),
         model_config={"offload_mode": "sequential"},
     )
 
-    model = WanI2VDiffusersModel.from_spec(spec)
+    model = WanI2VDiffusersModel.from_build(build)
 
     assert model.pipeline is pipeline
     _assert_frozen_and_loaded(pipeline, calls)
-    # gpu_id is taken from the spec device index.
+    # gpu_id is taken from the build device index.
     assert pipeline.sequential_offload_gpu == 3
     assert pipeline.model_offload_gpu is None
     # accelerate streams the frozen modules per layer -> no eager .to(device).
@@ -128,20 +128,20 @@ def test_wan_i2v_from_spec_sequential_cpu_offload(monkeypatch) -> None:
     assert pipeline.image_encoder.to_calls == []
 
 
-def test_wan_i2v_from_spec_model_cpu_offload(monkeypatch) -> None:
-    """Model-offload branch calls enable_model_cpu_offload with the spec gpu and skips eager staging."""
+def test_wan_i2v_from_build_model_cpu_offload(monkeypatch) -> None:
+    """Model-offload branch uses the build GPU and skips eager staging."""
     from vrl.models.diffusion.wan_2_1.model import WanI2VDiffusersModel
 
     pipeline, calls = _patch_from_pretrained(monkeypatch)
 
-    spec = SimpleNamespace(
+    build = SimpleNamespace(
         model_name_or_path="Wan-AI/Wan2.1-I2V-14B-480P-Diffusers",
-        dtype=torch.bfloat16,
+        parameter_dtype=torch.bfloat16,
         device=torch.device("cuda:2"),
         model_config={"offload_mode": "model"},
     )
 
-    model = WanI2VDiffusersModel.from_spec(spec)
+    model = WanI2VDiffusersModel.from_build(build)
 
     assert model.pipeline is pipeline
     _assert_frozen_and_loaded(pipeline, calls)
@@ -152,49 +152,49 @@ def test_wan_i2v_from_spec_model_cpu_offload(monkeypatch) -> None:
     assert pipeline.image_encoder.to_calls == []
 
 
-def test_wan_i2v_from_spec_no_offload_stages_frozen_modules(monkeypatch) -> None:
-    """No-offload branch stages vae fp32 + text/image encoders at spec dtype, no offload hooks."""
+def test_wan_i2v_from_build_no_offload_stages_frozen_modules(monkeypatch) -> None:
+    """No-offload stages VAE fp32 plus encoders at the build dtype, without hooks."""
     from vrl.models.diffusion.wan_2_1.model import WanI2VDiffusersModel
 
     pipeline, calls = _patch_from_pretrained(monkeypatch)
 
-    spec = SimpleNamespace(
+    build = SimpleNamespace(
         model_name_or_path="Wan-AI/Wan2.1-I2V-14B-480P-Diffusers",
-        dtype=torch.bfloat16,
+        parameter_dtype=torch.bfloat16,
         device=torch.device("cuda:0"),
         model_config={},
     )
 
-    model = WanI2VDiffusersModel.from_spec(spec)
+    model = WanI2VDiffusersModel.from_build(build)
 
     assert model.pipeline is pipeline
     _assert_frozen_and_loaded(pipeline, calls)
     assert pipeline.sequential_offload_gpu is None
     assert pipeline.model_offload_gpu is None
-    # vae stays fp32; text/image encoders ride the spec dtype.
-    assert pipeline.vae.to_calls == [(spec.device, torch.float32)]
-    assert pipeline.text_encoder.to_calls == [(spec.device, torch.bfloat16)]
-    assert pipeline.image_encoder.to_calls == [(spec.device, torch.bfloat16)]
+    # vae stays fp32; text/image encoders ride the build dtype.
+    assert pipeline.vae.to_calls == [(build.device, torch.float32)]
+    assert pipeline.text_encoder.to_calls == [(build.device, torch.bfloat16)]
+    assert pipeline.image_encoder.to_calls == [(build.device, torch.bfloat16)]
 
 
-def test_wan_i2v_from_spec_rejects_legacy_offload_keys(monkeypatch) -> None:
+def test_wan_i2v_from_build_rejects_legacy_offload_keys(monkeypatch) -> None:
     """Legacy offload bools fail loud instead of becoming no-op runtime keys."""
     from vrl.models.diffusion.wan_2_1.model import WanI2VDiffusersModel
 
     _patch_from_pretrained(monkeypatch)
 
-    spec = SimpleNamespace(
+    build = SimpleNamespace(
         model_name_or_path="Wan-AI/Wan2.1-I2V-14B-480P-Diffusers",
-        dtype=torch.bfloat16,
+        parameter_dtype=torch.bfloat16,
         device=torch.device("cuda:0"),
         model_config={"enable_model_cpu_offload": True},
     )
 
     with pytest.raises(ValueError, match=r"model\.enable_model_cpu_offload"):
-        WanI2VDiffusersModel.from_spec(spec)
+        WanI2VDiffusersModel.from_build(build)
 
 
-def test_wan_i2v_from_spec_accepts_dual_stage_pipeline(monkeypatch) -> None:
+def test_wan_i2v_from_build_accepts_dual_stage_pipeline(monkeypatch) -> None:
     """Wan 2.2 A14B dual-stage pipelines train the low-noise transformer by default."""
     from vrl.models.diffusion.wan_2_1.model import WanI2VDiffusersModel
 
@@ -202,21 +202,21 @@ def test_wan_i2v_from_spec_accepts_dual_stage_pipeline(monkeypatch) -> None:
     pipeline.config = SimpleNamespace(boundary_ratio=0.5, expand_timesteps=False)
     pipeline.transformer_2 = _FakeModule()
 
-    spec = SimpleNamespace(
+    build = SimpleNamespace(
         model_name_or_path="Wan-AI/Wan2.1-I2V-14B-480P-Diffusers",
-        dtype=torch.bfloat16,
+        parameter_dtype=torch.bfloat16,
         device=torch.device("cuda:0"),
         model_config={},
     )
 
-    model = WanI2VDiffusersModel.from_spec(spec)
+    model = WanI2VDiffusersModel.from_build(build)
 
     assert model.boundary_ratio == 0.5
     assert model.transformer_2 is pipeline.transformer_2
     assert model.trainable_modules == {"transformer_2": pipeline.transformer_2}
 
 
-def test_wan_i2v_from_spec_rejects_expand_timesteps_pipeline(monkeypatch) -> None:
+def test_wan_i2v_from_build_rejects_expand_timesteps_pipeline(monkeypatch) -> None:
     """Wan 2.2 5B expand-timesteps pipelines still need a separate runner contract."""
     from vrl.models.diffusion.wan_2_1.model import WanI2VDiffusersModel
 
@@ -224,12 +224,12 @@ def test_wan_i2v_from_spec_rejects_expand_timesteps_pipeline(monkeypatch) -> Non
     pipeline.config = SimpleNamespace(boundary_ratio=0.5, expand_timesteps=True)
     pipeline.transformer_2 = _FakeModule()
 
-    spec = SimpleNamespace(
+    build = SimpleNamespace(
         model_name_or_path="Wan-AI/Wan2.2-I2V-5B-Diffusers",
-        dtype=torch.bfloat16,
+        parameter_dtype=torch.bfloat16,
         device=torch.device("cuda:0"),
         model_config={},
     )
 
     with pytest.raises(NotImplementedError, match="expand_timesteps"):
-        WanI2VDiffusersModel.from_spec(spec)
+        WanI2VDiffusersModel.from_build(build)

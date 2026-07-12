@@ -53,14 +53,13 @@ from vrl.models.diffusion.common import (
     DiffusionBackboneInput,
     DiffusionBackboneRunnerBase,
     DiffusionBranch,
-    LatentDecodeSpec,
-    LatentDecodeTransform,
+    LatentDecodePlan,
     expand_batch_timestep,
     pack_eval_timestep,
 )
 from vrl.models.diffusion.common.lora import LoraModelMixin
 from vrl.models.diffusion.common.tensors import require_tensor
-from vrl.models.dtypes import resolve_torch_dtype
+from vrl.models.interfaces.runtime import ModelBuild
 
 # 512/1024-MS checkpoints train without micro-conditioning, but the
 # transformer forward still requires the dict when config.sample_size == 128;
@@ -132,7 +131,8 @@ class PixArtSigmaModel(LoraModelMixin, DiffusersPipelineModelBase, DiffusionBack
             mask = request.extra.get("encoder_attention_mask")
         else:
             embeds = require_tensor(
-                request.negative_prompt_embeds, "negative_prompt_embeds",
+                request.negative_prompt_embeds,
+                "negative_prompt_embeds",
             )
             mask = request.extra.get("negative_encoder_attention_mask")
         return DiffusionBranch(
@@ -166,14 +166,14 @@ class PixArtSigmaModel(LoraModelMixin, DiffusersPipelineModelBase, DiffusionBack
     # -- backend ownership (called by runtime, not by collectors) -------
 
     @classmethod
-    def from_spec(cls, spec: Any) -> PixArtSigmaModel:
+    def from_build(cls, build: ModelBuild) -> PixArtSigmaModel:
         """Load the diffusers PixArt-Sigma pipeline + freeze non-trainable modules."""
         from diffusers import PixArtSigmaPipeline
 
-        model_dtype = resolve_torch_dtype(spec.dtype)
-        frozen_dtype, load_kwargs = diffusers_pipeline_dtypes(spec, model_dtype)
+        model_dtype = build.parameter_dtype
+        prompt_encoder_dtype, load_kwargs = diffusers_pipeline_dtypes(build, model_dtype)
         pipeline = PixArtSigmaPipeline.from_pretrained(
-            spec.model_name_or_path,
+            build.model_name_or_path,
             **load_kwargs,
         )
         pipeline.vae.requires_grad_(False)
@@ -181,11 +181,11 @@ class PixArtSigmaModel(LoraModelMixin, DiffusersPipelineModelBase, DiffusionBack
         if text_encoder is not None:
             # T5-XXL (~9.5 GB bf16); park on CPU (Qwen-Image discipline).
             text_encoder.requires_grad_(False)
-            text_encoder.to("cpu", dtype=frozen_dtype)
-        pipeline.vae.to(spec.device, dtype=torch.float32)
+            text_encoder.to("cpu", dtype=prompt_encoder_dtype)
+        pipeline.vae.to(build.device, dtype=torch.float32)
         return cls(
             pipeline=pipeline,
-            device=spec.device,
+            device=build.device,
         )
 
     def _encoder_device(self) -> Any:
@@ -235,16 +235,17 @@ class PixArtSigmaModel(LoraModelMixin, DiffusersPipelineModelBase, DiffusionBack
         result: dict[str, Any] = {
             "prompt_embeds": prompt_embeds.to(self.device, dtype=td),
             "prompt_attention_mask": (
-                None if prompt_attention_mask is None
-                else prompt_attention_mask.to(self.device)
+                None if prompt_attention_mask is None else prompt_attention_mask.to(self.device)
             ),
         }
         if do_cfg and negative_prompt_embeds is not None:
             result["negative_prompt_embeds"] = negative_prompt_embeds.to(
-                self.device, dtype=td,
+                self.device,
+                dtype=td,
             )
             result["negative_prompt_attention_mask"] = (
-                None if negative_prompt_attention_mask is None
+                None
+                if negative_prompt_attention_mask is None
                 else negative_prompt_attention_mask.to(self.device)
             )
         return result
@@ -273,14 +274,13 @@ class PixArtSigmaModel(LoraModelMixin, DiffusersPipelineModelBase, DiffusionBack
         negative_prompt_attention_mask = encoded.get("negative_prompt_attention_mask")
 
         scheduler = pixart_ddim_scheduler(
-            pipe.scheduler.config, request.num_steps, device,
+            pipe.scheduler.config,
+            request.num_steps,
+            device,
         )
         timesteps = scheduler.timesteps
 
-        seed = (
-            request.seed if request.seed is not None
-            else random.randint(0, sys.maxsize)
-        )
+        seed = request.seed if request.seed is not None else random.randint(0, sys.maxsize)
         generator = torch.Generator(device=device)
         generator.manual_seed(seed)
 
@@ -331,8 +331,7 @@ class PixArtSigmaModel(LoraModelMixin, DiffusersPipelineModelBase, DiffusionBack
             device=latent_input.device,
         )
         negative_embeds = (
-            None if state.negative_prompt_embeds is None
-            else state.negative_prompt_embeds.to(td)
+            None if state.negative_prompt_embeds is None else state.negative_prompt_embeds.to(td)
         )
         output = DiffusionBackboneCaller(
             self.transformer,
@@ -375,9 +374,7 @@ class PixArtSigmaModel(LoraModelMixin, DiffusersPipelineModelBase, DiffusionBack
         if state.negative_prompt_embeds is not None:
             tensors["negative_prompt_embeds"] = state.negative_prompt_embeds
         if state.negative_prompt_attention_mask is not None:
-            tensors["negative_prompt_attention_mask"] = (
-                state.negative_prompt_attention_mask
-            )
+            tensors["negative_prompt_attention_mask"] = state.negative_prompt_attention_mask
         return tensors
 
     def restore_eval_state(
@@ -415,11 +412,8 @@ class PixArtSigmaModel(LoraModelMixin, DiffusersPipelineModelBase, DiffusionBack
         # SDXL VAE ships no shift_factor; read it defensively like sd3.
         shift_factor = getattr(vae.config, "shift_factor", 0.0) or 0.0
         decoder = ChunkedLatentDecoder(
-            LatentDecodeSpec(
-                transform=LatentDecodeTransform(
-                    lambda chunk: chunk.to(vae.dtype) / scaling_factor
-                    + shift_factor,
-                ),
+            LatentDecodePlan(
+                prepare_latents=lambda chunk: chunk.to(vae.dtype) / scaling_factor + shift_factor,
                 vae_decode=lambda chunk: vae.decode(chunk, return_dict=False)[0],
                 postprocess=lambda image: pipe.image_processor.postprocess(
                     image,
@@ -435,8 +429,7 @@ class PixArtSigmaModel(LoraModelMixin, DiffusersPipelineModelBase, DiffusionBack
 class PixArtSigmaReplayModel(DiffusersReplayModelBase, PixArtSigmaModel):
     """Replay-only PixArt-Sigma model that owns no prompt encoder, VAE, or pipeline."""
 
-
-    def prepare_replay(self, spec: Any) -> None:
+    def prepare_replay(self, build: ModelBuild) -> None:
         """Standardize the replay scheduler onto the rollout's DDIM ladder.
 
         The generic replay loader builds the scheduler from the shipped config
@@ -444,16 +437,17 @@ class PixArtSigmaReplayModel(DiffusersReplayModelBase, PixArtSigmaModel):
         the ddim log-prob math live on the DDIM ladder the rollout used; the
         replay scheduler must carry the same timestep/alphas_cumprod table.
         """
-        num_steps = spec.num_steps
+        num_steps = build.num_steps
         # A scheduler without .config is a hand-injected test double — only
         # real diffusers schedulers carry the shipped beta config that needs
         # standardizing.
         config = getattr(self._scheduler, "config", None)
         if num_steps is not None and config is not None:
             self._scheduler = pixart_ddim_scheduler(
-                config, int(num_steps), spec.device,
+                config,
+                int(num_steps),
+                build.device,
             )
-
 
 
 __all__ = [

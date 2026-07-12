@@ -116,11 +116,7 @@ class NextStep1Model(ARModelBase):
         super().__init__()
         self.config = config
 
-        torch_dtype = {
-            "bfloat16": torch.bfloat16,
-            "float16": torch.float16,
-            "float32": torch.float32,
-        }[config.dtype]
+        torch_dtype = resolve_torch_dtype(config.dtype)
         self.dtype = torch_dtype
         self._device = torch.device(config.device)
 

@@ -16,7 +16,7 @@ from vrl.models.ar.glm_image.model import (
     glm_image_token_num,
 )
 from vrl.models.ar.glm_image.runner import GlmImageTokenRunner
-from vrl.models.interfaces.runtime import RuntimeBuildSpec
+from vrl.models.interfaces.runtime import ModelBuild
 
 GLM_IMAGE_FAMILY_CAPABILITY = ar_discrete_family_capability("glm_image", "ar_t2i")
 
@@ -32,9 +32,9 @@ _GLM_IMAGE_LORA_DEFAULTS: dict[str, Any] = {
 }
 
 
-def glm_image_config_from_runtime_spec(spec: RuntimeBuildSpec) -> dict[str, Any]:
-    sampling_config = spec.sampling_config or {}
-    config = ar_model_config_base(spec, _GLM_IMAGE_LORA_DEFAULTS)
+def glm_image_config_from_build(build: ModelBuild) -> dict[str, Any]:
+    sampling_config = build.sampling_config or {}
+    config = ar_model_config_base(build, _GLM_IMAGE_LORA_DEFAULTS)
 
     for key in (
         "temperature",
@@ -167,12 +167,8 @@ class GlmImageChunkExecutor(ARDiscreteChunkExecutorBase):
                 "height": image_height,
                 "width": image_width,
                 "prompts": repeated_prompts,
-                "num_inference_steps": (
-                    None if decode_steps is None else int(decode_steps)
-                ),
-                "guidance_scale": (
-                    None if decode_guidance is None else float(decode_guidance)
-                ),
+                "num_inference_steps": (None if decode_steps is None else int(decode_steps)),
+                "guidance_scale": (None if decode_guidance is None else float(decode_guidance)),
             },
             prompt_input_ids=prompt_ids,
             prompt_attention_mask=prompt_mask,
@@ -197,5 +193,5 @@ class GlmImageChunkExecutor(ARDiscreteChunkExecutorBase):
 __all__ = [
     "GLM_IMAGE_FAMILY_CAPABILITY",
     "GlmImageChunkExecutor",
-    "glm_image_config_from_runtime_spec",
+    "glm_image_config_from_build",
 ]

@@ -325,7 +325,7 @@ class ReferenceConditionedChunks:
     """Reference-image threading for per-chunk encode/prepare.
 
     Cosmos Predict2 Video2World and Wan 2.1 I2V condition every chunk on a
-    reference image carried by its GenerationInput. The two executors had
+    reference image carried by its ``GenerationInput``. The two executors had
     copy-pasted these
     hooks; ``build_chunk_encoded`` stays family-specific because the encoded
     payloads genuinely differ (Wan carries ``image_embeds``).
@@ -379,8 +379,7 @@ class ReferenceConditionedChunks:
         ref = request.inputs[chunk.prompt_index].reference_image
         if ref is None:
             raise ValueError(
-                f"{request.family} requires reference_image for prompt "
-                f"index {chunk.prompt_index}",
+                f"{request.family} requires reference_image for prompt index {chunk.prompt_index}",
             )
         return load_reference_image(ref)
 
@@ -772,14 +771,18 @@ class DiffusionChunkExecutorBase(
         )
 
         prompt_embeds = encoded.get("prompt_embeds")
-        transformer_dtype = (
-            prompt_embeds.dtype if isinstance(prompt_embeds, torch.Tensor) else state.latents.dtype
-        )
-        if getattr(state.latents.device, "type", None) == "cuda" and transformer_dtype in (
+        autocast_dtype = getattr(model, "autocast_dtype", None)
+        if autocast_dtype is None:
+            autocast_dtype = (
+                prompt_embeds.dtype
+                if isinstance(prompt_embeds, torch.Tensor)
+                else state.latents.dtype
+            )
+        if getattr(state.latents.device, "type", None) == "cuda" and autocast_dtype in (
             torch.float16,
             torch.bfloat16,
         ):
-            autocast_ctx = torch.amp.autocast("cuda", dtype=transformer_dtype)
+            autocast_ctx = torch.amp.autocast("cuda", dtype=autocast_dtype)
             rollout_autocast_enabled = True
         else:
             autocast_ctx = nullcontext()
@@ -938,7 +941,7 @@ class DiffusionChunkExecutorBase(
                     else 0
                 ),
                 "diffusion_denoise_mode": config.denoise_mode,
-                "diffusion_rollout_transformer_dtype": _dtype_label(transformer_dtype),
+                "diffusion_rollout_autocast_dtype": _dtype_label(autocast_dtype),
                 "diffusion_rollout_autocast_enabled": rollout_autocast_enabled,
                 **(teacache.counters() if teacache is not None else {}),
             },
@@ -991,8 +994,8 @@ class DiffusionChunkExecutorBase(
         context = dict(model.export_batch_context(state))
         context.setdefault("denoise_mode", config.denoise_mode)
         context.setdefault(
-            "rollout_transformer_dtype",
-            denoise_result.engine_counters.get("diffusion_rollout_transformer_dtype"),
+            "rollout_autocast_dtype",
+            denoise_result.engine_counters.get("diffusion_rollout_autocast_dtype"),
         )
         context.setdefault(
             "rollout_autocast_enabled",

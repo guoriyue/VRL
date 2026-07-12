@@ -107,11 +107,15 @@ def test_generate_records_the_batch_seed_for_every_sample(monkeypatch, tmp_path)
             return self
 
     monkeypatch.setattr(generate, "load_config", lambda *_args, **_kwargs: cfg)
-    monkeypatch.setattr(generate, "extract_family_runtime_spec", lambda *_args: object())
+    monkeypatch.setattr(
+        generate,
+        "resolve_family_model_build",
+        lambda *_args, **_kwargs: object(),
+    )
     monkeypatch.setattr(
         generate,
         "build_family_runtime_bundle",
-        lambda _spec: SimpleNamespace(model=_Model()),
+        lambda _build: SimpleNamespace(model=_Model()),
     )
     monkeypatch.setattr(
         generate,

@@ -1,4 +1,4 @@
-"""Are fp8/fp4 linears actually faster than bf16 at DiT shapes? (the gate)
+"""Are FP8/NVFP4 linears actually faster than BF16 at DiT shapes? (the gate)
 
 WHY: before wiring a low-precision linear into the rollout engine, confirm the
 premise — that the production module, *including* per-call dynamic activation
@@ -7,9 +7,9 @@ actually runs. On consumer Blackwell (sm_120), quantization can eat the
 tensor-core win, so this is measured rather than inferred from GEMM-only timing.
 
 WHAT: for each (M, K, N), it times a bf16 `nn.Linear` and the default production
-`Fp8Linear` recipe (rowwise). On MLP rows, where the live FP4 targeting policy
+`Fp8Linear` recipe (rowwise). On MLP rows, where the live NVFP4 targeting policy
 actually swaps modules, it also times `Fp4Linear`. It reports speedup and output
-drift per shape, then evaluates fp8 and fp4 independently. A supported scheme
+drift per shape, then evaluates FP8 and NVFP4 independently. A supported scheme
 that misses the net-speed gate makes the command fail, so a negative result
 cannot be hidden behind another scheme's positive verdict.
 
@@ -52,34 +52,36 @@ def _summarize(
     return passed
 
 
-def main(*, schemes: tuple[str, ...] = ("fp8", "fp4")) -> None:
+def main(*, schemes: tuple[str, ...] = ("fp8", "nvfp4")) -> None:
     """Benchmark the requested schemes; the canonical CLI runs both by default."""
 
     schemes = tuple(dict.fromkeys(schemes))
-    unknown = sorted(set(schemes) - {"fp8", "fp4"})
+    unknown = sorted(set(schemes) - {"fp8", "nvfp4"})
     if not schemes or unknown:
-        raise ValueError(f"schemes must be a non-empty fp8/fp4 subset; got {schemes!r}")
+        raise ValueError(f"schemes must be a non-empty fp8/nvfp4 subset; got {schemes!r}")
     if not torch.cuda.is_available():
         raise SystemExit("needs a CUDA device with fp8 support (Hopper/Blackwell)")
+    if "nvfp4" in schemes and not nvfp4_available():
+        raise SystemExit(
+            "nvfp4 benchmarking requires an NVFP4-capable CUDA build and Blackwell-class GPU",
+        )
     torch.manual_seed(0)
     dev = "cuda"
     run_fp8 = "fp8" in schemes
-    run_fp4 = "fp4" in schemes and nvfp4_available()
+    run_nvfp4 = "nvfp4" in schemes
     print(f"== {'/'.join(schemes)} vs bf16 linear on {torch.cuda.get_device_name(0)} ==")
     recipes = []
     if run_fp8:
         recipes.append("fp8=rowwise(default)")
-    if "fp4" in schemes:
-        recipes.append("fp4=nvfp4")
+    if run_nvfp4:
+        recipes.append("nvfp4")
     print(f"M=tokens*batch, K=in, N=out; {', '.join(recipes)}; includes activation quant")
-    if "fp4" in schemes and not run_fp4:
-        print("(nvfp4 _scaled_mm unavailable on this device/build — fp4 columns skipped)")
     print()
     header = f"{'projection':>10} | {'shape (M,K,N)':>22} | {'bf16 ms':>8}"
     if run_fp8:
         header += f" | {'fp8 ms':>8} | {'speedup':>7} | {'drift':>8}"
-    if run_fp4:
-        header += f" | {'fp4 ms':>8} | {'fp4 spd':>7} | {'fp4 drift':>9}"
+    if run_nvfp4:
+        header += f" | {'nvfp4 ms':>9} | {'nvfp4 spd':>10} | {'nvfp4 drift':>12}"
     print(header)
     print("-" * len(header))
 
@@ -96,8 +98,8 @@ def main(*, schemes: tuple[str, ...] = ("fp8", "fp4")) -> None:
 
     fp8_speedups: list[float] = []
     fp8_drifts: list[float] = []
-    fp4_speedups: list[float] = []
-    fp4_drifts: list[float] = []
+    nvfp4_speedups: list[float] = []
+    nvfp4_drifts: list[float] = []
     for projection, m, k, n in shapes:
         lin = nn.Linear(k, n, bias=True).cuda().to(torch.bfloat16)
         x = torch.randn(m, k, device=dev, dtype=torch.bfloat16)
@@ -118,20 +120,22 @@ def main(*, schemes: tuple[str, ...] = ("fp8", "fp4")) -> None:
             fp8_speedups.append(fp8_speedup)
             fp8_drifts.append(fp8_drift)
             row += f" | {fp8_ms:8.4f} | {fp8_speedup:6.2f}x | {fp8_drift:8.4f}"
-        if run_fp4 and projection.startswith("mlp_"):
-            fp4_lin = Fp4Linear(lin)
+        if run_nvfp4 and projection.startswith("mlp_"):
+            nvfp4_linear = Fp4Linear(lin)
             with torch.no_grad():
-                q4 = fp4_lin(x)
-                fp4_ms = cuda_mean_ms(
-                    lambda fp4_lin=fp4_lin, x=x: fp4_lin(x), iters=100, warmup=25
+                q4 = nvfp4_linear(x)
+                nvfp4_ms = cuda_mean_ms(
+                    lambda nvfp4_linear=nvfp4_linear, x=x: nvfp4_linear(x),
+                    iters=100,
+                    warmup=25,
                 )
-            fp4_speedup = bf16_ms / fp4_ms
-            fp4_drift = relative_l1_drift(q4, ref)
-            fp4_speedups.append(fp4_speedup)
-            fp4_drifts.append(fp4_drift)
-            row += f" | {fp4_ms:8.4f} | {fp4_speedup:6.2f}x | {fp4_drift:9.4f}"
-        elif run_fp4:
-            row += f" | {'-':>8} | {'-':>7} | {'-':>9}"
+            nvfp4_speedup = bf16_ms / nvfp4_ms
+            nvfp4_drift = relative_l1_drift(q4, ref)
+            nvfp4_speedups.append(nvfp4_speedup)
+            nvfp4_drifts.append(nvfp4_drift)
+            row += f" | {nvfp4_ms:9.4f} | {nvfp4_speedup:9.2f}x | {nvfp4_drift:12.4f}"
+        elif run_nvfp4:
+            row += f" | {'-':>9} | {'-':>10} | {'-':>12}"
         print(row)
 
     print("-" * len(header))
@@ -139,11 +143,11 @@ def main(*, schemes: tuple[str, ...] = ("fp8", "fp4")) -> None:
     results: dict[str, bool] = {}
     if run_fp8:
         results["fp8"] = _summarize("fp8", fp8_speedups, fp8_drifts, min_speedup=1.05)
-    if run_fp4:
-        results["fp4"] = _summarize(
-            "fp4 (MLP-only)",
-            fp4_speedups,
-            fp4_drifts,
+    if run_nvfp4:
+        results["nvfp4"] = _summarize(
+            "nvfp4 (MLP-only)",
+            nvfp4_speedups,
+            nvfp4_drifts,
             min_speedup=1.05,
         )
     failed = [scheme for scheme, passed in results.items() if not passed]

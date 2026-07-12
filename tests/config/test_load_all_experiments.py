@@ -66,7 +66,7 @@ def test_build_trainer_config_reports_all_missing_required_keys() -> None:
             "actor": {},
             "trainer": {},
             "rollout": {},
-            "precision": "bf16",
+            "precision": {"training": {"dtype": "bf16"}, "rollout": {"dtype": "bf16"}},
         },
     )
 

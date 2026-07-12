@@ -1,18 +1,20 @@
 """fp8 dynamic-quantization linear for the rollout (generation) forward.
 
 The real ``torch._scaled_mm`` path that lets the rollout DiT run its big policy
-GEMMs (attention QKV/out, MLP) in fp8-e4m3 while keeping a bf16 master weight and
-bf16-accumulated output. This is the kernel the rollout engine swaps in when
-``precision.rollout=fp8`` (SPRINT_fp8_rollout_gemm_kernel.md); training/replay is
-untouched (still bf16/fp32).
+GEMMs (attention QKV/out, MLP) in fp8-e4m3 while keeping a source-dtype master
+weight and a bf16/fp16 output matching the surrounding activation. This is the kernel the rollout engine swaps
+in when ``precision.rollout.quantization.format=fp8``
+(SPRINT_fp8_rollout_gemm_kernel.md);
+training/replay is untouched and keeps its configured base precision.
 
 Why a module swap (not a dtype cast): fp8 is not a drop-in dtype — a plain
 ``nn.Linear`` on float8 storage raises ``"addmm_cuda" not implemented for
 Float8_e4m3fn``. The GEMM must explicitly quantize both operands with a scale,
-call ``_scaled_mm``, and accumulate in bf16. :class:`Fp8Linear` wraps exactly that
-and is a drop-in replacement for ``nn.Linear`` in the forward.
+call ``_scaled_mm``, and request a supported bf16/fp16 output dtype.
+:class:`Fp8Linear` wraps exactly that and is a drop-in replacement for
+``nn.Linear`` in the forward.
 
-Recipe: a train-dtype master weight is kept and quantized to the fp8 cache at
+Recipe: a source-dtype master weight is kept and quantized to the fp8 cache at
 construction and again after each weight-sync (full fine-tune overwrites it every
 step); the activation is quantized per forward.
 
@@ -27,7 +29,6 @@ step); the activation is quantized per forward.
   deep_gemm check + ctypes pynvml call; measured 45 breaks / compiled ~10x
   slower than eager on SD3.5), so the loader refuses blockwise + torch_compile.
 
-All accumulate in bf16.
 """
 
 from __future__ import annotations
@@ -63,10 +64,10 @@ def vllm_block_fp8_available() -> bool:
 class Fp8Linear(QuantizedLinear):
     """Drop-in ``nn.Linear`` replacement running the matmul in fp8-e4m3.
 
-    Keeps a train-dtype master ``weight`` (so RL weight-sync loads normally) plus a
-    derived fp8 cache; quantizes the activation dynamically each forward and runs
-    ``torch._scaled_mm`` with bf16 accumulation. The bias (if any) stays in the
-    original dtype and is added after the GEMM.
+    Keeps a source-dtype master ``weight`` (so RL weight-sync loads normally)
+    plus a derived fp8 cache; quantizes the activation dynamically each forward
+    and runs ``torch._scaled_mm`` with a bf16/fp16 output. The bias (if any)
+    stays in the original dtype and is added after the GEMM.
     """
 
     quantization_scheme = "fp8"
@@ -85,7 +86,7 @@ class Fp8Linear(QuantizedLinear):
         ):
             recipe = "rowwise"
         self.recipe = recipe
-        # Keep the train-dtype master weight under its original ``.weight`` key so RL
+        # Keep the source-dtype master under its original ``.weight`` key so RL
         # weight-sync (full fine-tune syncs the base weights every step) can load
         # updated weights normally; the fp8 cache is re-derived after each load
         # (_load_from_state_dict). LoRA rollouts sync adapters, not the base, so
@@ -106,7 +107,7 @@ class Fp8Linear(QuantizedLinear):
         self._requantize_weight()
 
     def _requantize_weight(self) -> None:
-        """Re-derive the fp8 weight + scale from the master (after a sync)."""
+        """Re-derive the fp8 weight + scale from the source master after a sync."""
         w = self.weight.data
         if self.recipe == "blockwise":
             n, k = w.shape
@@ -120,7 +121,7 @@ class Fp8Linear(QuantizedLinear):
         self.weight_scale = scale
 
     def drop_master(self) -> int:
-        """Free the train-dtype master, keeping only the fp8 cache (+scales).
+        """Free the source-dtype master, keeping only the fp8 cache (+scales).
 
         Valid whenever weight-sync never loads base weights into this module:
         LoRA rollouts sync adapters only, and probes/inference sync nothing.
@@ -137,7 +138,7 @@ class Fp8Linear(QuantizedLinear):
         if self.weight is None and f"{prefix}weight" in state_dict:
             raise RuntimeError(
                 "cannot load base weights into a master-free Fp8Linear "
-                f"({prefix.rstrip('.')}): the train-dtype master was dropped "
+                f"({prefix.rstrip('.')}): the source master was dropped "
                 "(drop_master). Master-free is for adapter-only/frozen "
                 "rollouts; full-finetune weight-sync must keep the master.",
             )
@@ -166,8 +167,8 @@ class Fp8Linear(QuantizedLinear):
             weight_scale = self.weight_scale
         x_fp8 = (x_2d.to(torch.bfloat16) / x_scale).to(torch.float8_e4m3fn)
         # _scaled_mm rowwise only emits bf16/fp16; DiT layers fed fp32 activations
-        # (adaLN / pooled-projection paths) would otherwise be rejected. Accumulate
-        # in bf16 and cast back to the input dtype so the swap is transparent.
+        # (adaLN / pooled-projection paths) would otherwise be rejected. Use bf16
+        # output there and cast back to the input dtype so the swap is transparent.
         gemm_dtype = x.dtype if x.dtype in (torch.bfloat16, torch.float16) else torch.bfloat16
         out = torch._scaled_mm(
             x_fp8,
@@ -225,12 +226,10 @@ def swap_linears_to_fp8(
 ) -> list[str]:
     """Replace big ``nn.Linear`` modules under ``root`` with :class:`Fp8Linear` in place.
 
-    Quantizes a Linear only when its dotted path matches no ``exclude`` substring
-    AND belongs to ``target_profile`` AND both in/out features are ``>= min_features``
-    (small Linears are cheap and quantizing them only adds drift). The production
-    target remains ``attention_mlp``; ``mlp_only`` exists for matched-scope hardware
-    comparisons. Default ``rowwise`` is the validated path; ``blockwise`` opts into
-    vLLM's kernel and needs more GPU headroom. Returns the dotted paths swapped.
+    Quantizes a Linear only when its dotted path matches no ``exclude`` substring,
+    belongs to ``target_profile``, and both dimensions meet ``min_features``.
+    ``attention_mlp`` remains the production FP8 profile; ``mlp_only`` provides a
+    matched-scope comparison with conservative NVFP4 targeting.
     """
 
     target_profile = LinearTargetProfile(target_profile)

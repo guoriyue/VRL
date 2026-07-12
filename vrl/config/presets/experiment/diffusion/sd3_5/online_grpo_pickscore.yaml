@@ -7,7 +7,6 @@ defaults:
   - /dataset/pickscore_sfw
   - /reward/pickscore
 
-precision: bf16
 
 sampling:
   max_sequence_length: 128

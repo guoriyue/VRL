@@ -7,7 +7,7 @@ comes from ``resolve_online_family``, which also maps algorithm-selected
 variants (janus_pro + token_grpo_multisegment -> janus_pro_r1) that plain
 ``model.family`` normalization would miss.
 The replay bundle builder comes from the rollout family registry:
-``replay_runtime_builder`` + ``runtime_spec_extractor`` (the same extractor
+``replay_runtime_builder`` + ``model_build_resolver`` (the same resolver
 string the Ray workers import for the rollout side).
 
 Mirrors ``vrl/scripts/diffusion/train.py`` (the registry-descriptor diffusion
@@ -50,7 +50,7 @@ async def train_ar_grpo(cfg: DictConfig) -> None:
     )
 
 
-def _build_replay_bundle(cfg: DictConfig, device: Any, weight_dtype: Any) -> Any:
+def _build_replay_bundle(cfg: DictConfig, device: Any) -> Any:
     from vrl.rollouts.families.registry import get_rollout_family_entry
     from vrl.scripts.common.factory import resolve_online_family
     from vrl.utils.config import import_from_path
@@ -62,8 +62,8 @@ def _build_replay_bundle(cfg: DictConfig, device: Any, weight_dtype: Any) -> Any
             "the generic AR entrypoint needs it for the trainer replay bundle",
         )
     build_replay = import_from_path(entry.replay_runtime_builder)
-    extract = import_from_path(entry.runtime_spec_extractor)
-    return build_replay(extract(cfg, device, weight_dtype))
+    resolve_build = import_from_path(entry.model_build_resolver)
+    return build_replay(resolve_build(cfg, device, for_rollout=False))
 
 
 __all__ = ["train_ar_grpo"]

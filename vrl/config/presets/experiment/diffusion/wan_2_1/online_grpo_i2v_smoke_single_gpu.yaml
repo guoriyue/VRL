@@ -16,7 +16,6 @@ defaults:
   - /dataset/videophy_i2v
   - _self_
 
-precision: bf16
 
 model:
   offload_mode: sequential

@@ -495,10 +495,19 @@ class FSDPStrategy(Strategy):
         # when a group already exists (the CPU gloo test fixture pre-inits one).
         backend = "gloo" if self.context.device.type == "cpu" else "nccl"
         init_training_process_group(self.context, backend=backend)
+        parameter_dtype = getattr(handle, "dtype", None)
+        if not isinstance(parameter_dtype, torch.dtype):
+            try:
+                parameter_dtype = next(handle.parameters()).dtype
+            except StopIteration as exc:
+                raise ValueError("FSDP trainable handle has no parameters") from exc
         wrapped = apply_fsdp(
             handle,
             mesh=self._ensure_mesh(),
-            mp_policy=mixed_precision_policy(self._precision_policy),
+            mp_policy=mixed_precision_policy(
+                self._precision_policy,
+                parameter_dtype=parameter_dtype,
+            ),
             reshard_after_forward=self._reshard_after_forward,
         )
         set_transformer(wrapped)

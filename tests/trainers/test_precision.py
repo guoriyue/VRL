@@ -34,5 +34,12 @@ def test_torch_dtype_uses_fp16_only_when_explicit() -> None:
 
 def test_true_precision_is_rejected_as_ambiguous() -> None:
     """Checks true precision is rejected as ambiguous."""
-    with pytest.raises(ValueError, match="ambiguous"):
+    with pytest.raises(ValueError, match="AMP mixed precision") as exc_info:
         normalize_mixed_precision(True)
+    assert "actor.mixed_precision" not in str(exc_info.value)
+
+
+def test_invalid_precision_uses_source_neutral_amp_protocol_language() -> None:
+    with pytest.raises(ValueError, match="AMP mixed precision") as exc_info:
+        normalize_mixed_precision("int8")
+    assert "actor.mixed_precision" not in str(exc_info.value)

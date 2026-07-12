@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import contextlib
-from collections import defaultdict
 
 import pytest
 import torch
@@ -17,6 +16,7 @@ from vrl.rollouts.batch import RolloutBatch
 from vrl.rollouts.evaluators.base import Evaluator
 from vrl.trainers.core.types import EMAConfig, OptimConfig, TrainerConfig
 from vrl.trainers.online import OnlineTrainer
+from vrl.trainers.online.trainer import _ReplayMetrics
 from vrl.trajectory import build_diffusion_trajectory
 
 _B, _T = 2, 4
@@ -189,7 +189,7 @@ def test_sft_backward_uses_group_scale_not_timestep_scale(tmp_path) -> None:
     batch = _batch(trainer.evaluator.scheduler)
     backward_losses: list[torch.Tensor] = []
     trainer._backward = backward_losses.append
-    agg: dict[str, list[float]] = defaultdict(list)
+    agg = _ReplayMetrics()
 
     trainer._backward_sft_regularizer(
         batch,
@@ -200,7 +200,7 @@ def test_sft_backward_uses_group_scale_not_timestep_scale(tmp_path) -> None:
         agg=agg,
     )
 
-    metric = trainer._weighted_sft_metric(agg)
+    metric = agg.sft_loss
     assert len(backward_losses) == 1
     torch.testing.assert_close(
         backward_losses[0].detach(),
@@ -216,7 +216,7 @@ def test_sft_dummy_slot_runs_zero_weight_backward_without_metric(tmp_path) -> No
     )
     backward_losses: list[torch.Tensor] = []
     trainer._backward = backward_losses.append
-    agg: dict[str, list[float]] = defaultdict(list)
+    agg = _ReplayMetrics()
 
     trainer._backward_sft_regularizer(
         _batch(trainer.evaluator.scheduler),
@@ -230,4 +230,4 @@ def test_sft_dummy_slot_runs_zero_weight_backward_without_metric(tmp_path) -> No
     assert len(trainer.model.forward_calls) == 1
     assert len(backward_losses) == 1
     assert float(backward_losses[0].detach()) == 0.0
-    assert trainer._weighted_sft_metric(agg) == 0.0
+    assert agg.sft_loss == 0.0

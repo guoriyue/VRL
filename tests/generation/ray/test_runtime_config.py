@@ -21,7 +21,7 @@ from vrl.generation.ray.launcher import RayGenerationLauncher
 from vrl.generation.ray.utils import all_workers_support_versioned_slots
 from vrl.models.ar.capabilities import ar_discrete_family_capability
 from vrl.models.diffusion.capabilities import diffusion_family_capability
-from vrl.models.interfaces import RuntimeBuildSpec
+from vrl.models.interfaces import ModelBuild, RolloutBuildOptions
 
 
 class _CudaPolicy:
@@ -38,19 +38,25 @@ class _Bundle:
     trainable_modules: dict[str, Any]
 
 
-def extract_fake_runtime_spec(cfg: Any, device: str, weight_dtype: str) -> RuntimeBuildSpec:
+def resolve_fake_model_build(cfg: Any, device: str) -> ModelBuild:
     model_node = OmegaConf.select(cfg, "model")
     model_config = (
         OmegaConf.to_container(model_node, resolve=True) if OmegaConf.is_config(model_node) else {}
     )
-    return RuntimeBuildSpec(
+    return ModelBuild(
         model_name_or_path="unit-test",
         device=device,
-        dtype=weight_dtype,
+        parameter_dtype=torch.bfloat16,
         model_config=model_config,
         sampling_config={
             "num_steps": 1,
         },
+        # The fake extractor deliberately uses a different autocast dtype from
+        # parameter storage so this fixture verifies both cross Ray intact.
+        rollout=RolloutBuildOptions(
+            autocast_dtype=torch.float32,
+            prompt_encoder_dtype=torch.float16,
+        ),
     )
 
 
@@ -63,15 +69,51 @@ def _launch_contract() -> GenerationRuntimeLaunchContract:
     )
 
 
+def test_launch_contract_rejects_live_object_key_through_schema() -> None:
+    payload = _launch_contract().to_dict()
+    payload["executor"] = object()
+
+    with pytest.raises(ValueError, match=r"unsupported.*executor"):
+        GenerationRuntimeLaunchContract.from_dict(payload)
+
+
+def test_launch_contract_accepts_primitive_config_leaves() -> None:
+    contract = GenerationRuntimeLaunchContract(
+        family="unit",
+        task="test",
+        runtime_builder="tests.fake:build",
+        executor_cls="tests.fake:Executor",
+        model_config={
+            "text": "value",
+            "integer": 1,
+            "number": 1.5,
+            "enabled": True,
+            "optional": None,
+        },
+    )
+
+    assert contract.model_config["enabled"] is True
+    assert contract.model_config["optional"] is None
+
+
+def test_launch_contract_rejects_callable_config_leaf() -> None:
+    with pytest.raises(TypeError, match="callable"):
+        GenerationRuntimeLaunchContract(
+            family="unit",
+            task="test",
+            runtime_builder="tests.fake:build",
+            executor_cls="tests.fake:Executor",
+            executor_kwargs={"factory": lambda: None},
+        )
+
+
 def _build_inputs_entry(capability: Any | None = None) -> Any:
     return SimpleNamespace(
         family="sd3_5",
         task="t2i",
         runtime_builder=("tests.generation.ray.test_rollout_launcher:build_tiny_runtime_bundle"),
         executor_cls="tests.generation.ray.test_rollout_launcher:_TinyChunkExecutor",
-        runtime_spec_extractor=(
-            "tests.generation.ray.test_runtime_config:extract_fake_runtime_spec"
-        ),
+        model_build_resolver=("tests.generation.ray.test_runtime_config:resolve_fake_model_build"),
         gatherer=SimpleNamespace(
             import_path="tests.generation.ray.test_rollout_launcher:_Gatherer",
             kwargs={},
@@ -286,12 +328,13 @@ def test_ray_build_inputs_uses_model_compile_config_as_single_source() -> None:
             },
         ),
         _build_inputs_entry(),
-        weight_dtype="bfloat16",
     )
 
     model_build = launch_inputs.launch_contract.model_build
     assert model_build["device"] == "cpu"
-    assert model_build["dtype"] == "bfloat16"
+    assert model_build["parameter_dtype"] == "bfloat16"
+    assert model_build["rollout"]["autocast_dtype"] == "float32"
+    assert model_build["rollout"]["prompt_encoder_dtype"] == "float16"
     assert model_build["model_config"]["marker"] == "driver-config"
     assert model_build["model_config"]["torch_compile"] == {
         "enable": True,
@@ -304,7 +347,6 @@ def test_ray_build_inputs_preserves_disabled_model_compile_config() -> None:
     launch_inputs = RayGenerationLauncher.build_inputs(
         _build_inputs_cfg(),
         _build_inputs_entry(),
-        weight_dtype="bfloat16",
     )
 
     model_config = launch_inputs.launch_contract.model_build["model_config"]
@@ -313,6 +355,34 @@ def test_ray_build_inputs_preserves_disabled_model_compile_config() -> None:
         "enable": False,
         "mode": "default",
     }
+
+
+def test_ray_build_inputs_threads_resolved_base_weight_sync() -> None:
+    """The rollout lifecycle, not model YAML, owns master-weight retention."""
+    cfg = _build_inputs_cfg()
+    cfg.distributed.rollout = {"sync_trainable_state": False}
+
+    launch_inputs = RayGenerationLauncher.build_inputs(
+        cfg,
+        _build_inputs_entry(),
+    )
+
+    rollout = launch_inputs.launch_contract.model_build["rollout"]
+    assert rollout["base_weight_sync"] is False
+
+
+def test_ray_build_inputs_marks_lora_as_adapter_only_sync() -> None:
+    """LoRA sync never needs retained base-precision masters on the rollout."""
+    cfg = _build_inputs_cfg()
+    cfg.model.use_lora = True
+
+    launch_inputs = RayGenerationLauncher.build_inputs(
+        cfg,
+        _build_inputs_entry(),
+    )
+
+    rollout = launch_inputs.launch_contract.model_build["rollout"]
+    assert rollout["base_weight_sync"] is False
 
 
 def test_ray_build_inputs_rejects_model_compile_on_family_without_capability() -> None:
@@ -326,7 +396,6 @@ def test_ray_build_inputs_rejects_model_compile_on_family_without_capability() -
                 },
             ),
             _build_inputs_entry(ar_discrete_family_capability("janus_pro", "ar_t2i")),
-            weight_dtype="bfloat16",
         )
 
 
