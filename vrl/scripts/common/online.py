@@ -14,7 +14,11 @@ import torch
 from omegaconf import DictConfig, OmegaConf
 
 from vrl.config.builders import build_configs
-from vrl.config.precision import precision_bridge_fields, resolve_precision_policy
+from vrl.config.precision import (
+    PrecisionPolicy,
+    precision_bridge_fields,
+    resolve_precision_policy,
+)
 from vrl.generation.ray.launcher import RayGenerationLauncher
 from vrl.models.dtypes import resolve_torch_dtype
 from vrl.models.interfaces import require_runtime_model
@@ -193,6 +197,12 @@ def _apply_precision_policy(cfg: DictConfig, trainer_config: Any) -> None:
     policy = resolve_precision_policy(cfg)
     for field_name, value in precision_bridge_fields(policy).items():
         setattr(trainer_config, field_name, value)
+
+
+def _rollout_weight_dtype(policy: PrecisionPolicy) -> Any:
+    """Resolve the rollout model's storage dtype, preserving quantized masters."""
+
+    return resolve_torch_dtype(policy.rollout_storage_precision)
 
 
 def _log_rollout_memory_plan(trainer_config: Any) -> None:
@@ -765,16 +775,9 @@ async def run_online_recipe(
     # the generation (rollout) model can use a different ``rollout`` dtype.
     weight_dtype = torch_dtype_for_trainer_precision(trainer_config, torch)
     policy = resolve_precision_policy(cfg)
-    rollout_precision = policy.rollout
-    if rollout_precision == "fp8":
-        # fp8 rollout is a quantized GEMM, not float8 storage: the rollout
-        # model loads its bf16 master and the runtime builder swaps the big
-        # linears to Fp8Linear (torch._scaled_mm). So storage stays the compute
-        # (bf16) dtype; the swap is driven by
-        # spec.rollout_quantization (extract_runtime_spec).
-        rollout_weight_dtype = resolve_torch_dtype(policy.train)
-    else:
-        rollout_weight_dtype = resolve_torch_dtype(rollout_precision)
+    # Quantized rollout GEMMs still load master weights in the training dtype;
+    # extract_runtime_spec carries the separate swap token to the runtime builder.
+    rollout_weight_dtype = _rollout_weight_dtype(policy)
     examples = load_prompt_examples_from_config(cfg.data)
     _resolve_reference_artifacts(examples, cfg)
     log_host_memory("before_trainer_bundle_build", log=logger)

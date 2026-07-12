@@ -130,6 +130,8 @@ def test_fp4_rollout_split_allowed():
     p = resolve_precision_policy(_cfg(precision={"train": "bf16", "rollout": "fp4"}))
     assert p.rollout == "fp4"
     assert p.train == "bf16"
+    assert p.rollout_quantization == "fp4"
+    assert p.rollout_storage_precision == "bf16"
 
 
 @pytest.mark.parametrize("token", ["fp8", "fp4"])
@@ -139,11 +141,12 @@ def test_scalar_subbyte_precision_rejected(token):
         resolve_precision_policy(_cfg(precision=token))
 
 
-@pytest.mark.parametrize("axis", ["train", "math"])
-def test_subbyte_on_train_or_math_rejected(axis):
-    """fp8/fp4 is only valid on the rollout axis, never train/math."""
+@pytest.mark.parametrize("token", ["fp8", "fp4"])
+@pytest.mark.parametrize("axis", ["train", "math", "frozen"])
+def test_subbyte_on_non_rollout_axis_rejected(axis, token):
+    """fp8/fp4 is only valid on the rollout axis, never a storage/math axis."""
     with pytest.raises(ValueError, match="invalid"):
-        resolve_precision_policy(_cfg(precision={axis: "fp8", "rollout": "fp8"}))
+        resolve_precision_policy(_cfg(precision={axis: token, "rollout": token}))
 
 
 def test_rollout_recipe_parsed_with_quantized_rollout():
@@ -173,7 +176,9 @@ def test_rollout_recipe_key_known_to_walker():
     from vrl.config.unknown_keys import find_unknown_keys
 
     block = {"train": "bf16", "rollout": "fp8", "rollout_recipe": "blockwise"}
-    assert "precision.rollout_recipe" not in find_unknown_keys(OmegaConf.create({"precision": block}))
+    assert "precision.rollout_recipe" not in find_unknown_keys(
+        OmegaConf.create({"precision": block})
+    )
 
 
 @pytest.mark.parametrize(
@@ -214,11 +219,7 @@ def test_legacy_actor_precision_keys_warn_via_schema(caplog):
 # cosmos_predict2_5/online_nft_motion_physics). "online" == every experiment
 # whose final path component is not an `offline_*` recipe.
 def _online_recipes() -> list[str]:
-    return [
-        name
-        for name in _experiment_names()
-        if not Path(name).name.startswith("offline_")
-    ]
+    return [name for name in _experiment_names() if not Path(name).name.startswith("offline_")]
 
 
 _ONLINE_RECIPES = _online_recipes()

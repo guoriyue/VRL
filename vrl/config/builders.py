@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import MISSING, fields, is_dataclass
-from typing import Any, get_type_hints
+from typing import TYPE_CHECKING, Any, get_type_hints
 
 from omegaconf import DictConfig, OmegaConf
 
@@ -16,6 +16,39 @@ from vrl.config.validation import (
     validate_reward_config,
     validate_training_config,
 )
+
+if TYPE_CHECKING:
+    from vrl.algorithms.logprob_mismatch import PrecisionCorrectionConfig
+    from vrl.trainers.core.types import PrecisionDriftGuardConfig
+
+
+def build_precision_split_safety_configs() -> tuple[
+    PrecisionCorrectionConfig,
+    PrecisionDriftGuardConfig,
+]:
+    """Construct the correction and catastrophic guard used for a precision split.
+
+    This is the single typed source of truth shared by trainer config resolution
+    and hardware validation probes. Keeping the probe on these exact objects
+    prevents a stale hard-coded TIS cap or guard threshold from validating a
+    different policy than production runs.
+    """
+
+    from vrl.algorithms.logprob_mismatch import PrecisionCorrectionConfig
+    from vrl.trainers.core.types import PrecisionDriftGuardConfig
+
+    return (
+        PrecisionCorrectionConfig(
+            tis_mode="truncate",
+            rs_mode="seq_mean_k1",
+        ),
+        PrecisionDriftGuardConfig(
+            mode="fail",
+            max_abs_log_ratio=math.log(10.0),
+            max_ratio_abs_dev=9.0,
+            fail_on_nonfinite=True,
+        ),
+    )
 
 
 def _apply_rollout_precision_defaults(
@@ -34,21 +67,12 @@ def _apply_rollout_precision_defaults(
     if precision.rollout == precision.train:
         return
 
-    from vrl.algorithms.logprob_mismatch import PrecisionCorrectionConfig
-    from vrl.trainers.core.types import PrecisionDriftGuardConfig
+    correction, guard = build_precision_split_safety_configs()
 
     if not path_exists(cfg, "trainer.precision_correction"):
-        payload["precision_correction"] = PrecisionCorrectionConfig(
-            tis_mode="truncate",
-            rs_mode="seq_mean_k1",
-        )
+        payload["precision_correction"] = correction
     if not path_exists(cfg, "trainer.precision_drift_guard"):
-        payload["precision_drift_guard"] = PrecisionDriftGuardConfig(
-            mode="fail",
-            max_abs_log_ratio=math.log(10.0),
-            max_ratio_abs_dev=9.0,
-            fail_on_nonfinite=True,
-        )
+        payload["precision_drift_guard"] = guard
 
 
 def _dataclass_field_names(cls: type[Any]) -> set[str]:

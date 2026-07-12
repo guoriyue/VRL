@@ -66,12 +66,12 @@ def build_diffusion_runtime_bundle(
 
     # Quantization/knob ordering is path-dependent, both directions forced:
     # - LoRA path: PEFT only wraps plain nn.Linear, so LoRA attaches on CPU
-    #   BEFORE the fp8 swap. Quantization then drops unsynced bf16 masters and
+    #   BEFORE the low-precision swap. Quantization then drops unsynced masters and
     #   only the compact policy moves to GPU. This ordering is what lets a 17B
     #   LoRA+fp8 rollout avoid a >32GB bf16 construction peak.
     # - Full path: apply_full_finetune owns the .to(device) move, so the swap
     #   must run BEFORE it — quantize on CPU, move the halved weights (a 17B
-    #   bf16 transformer never fits a 32GB card, its fp8 form does). Rollout
+    #   bf16 transformer never fits a 32GB card, its quantized form does). Rollout
     #   workers never backprop, so requires_grad on swapped modules is inert.
     if spec.use_lora:
         model.apply_lora(spec)
@@ -257,8 +257,7 @@ def _check_requires_lora(entry, spec: RuntimeBuildSpec) -> None:
 
     if entry.build.requires_lora and not spec.use_lora:
         raise RuntimeError(
-            f"rollout family {entry.family!r} is LoRA-only; "
-            "set model.use_lora=true.",
+            f"rollout family {entry.family!r} is LoRA-only; set model.use_lora=true.",
         )
 
 

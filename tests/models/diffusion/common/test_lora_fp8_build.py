@@ -11,6 +11,7 @@ import sys
 from types import ModuleType, SimpleNamespace
 from typing import Any
 
+import pytest
 import torch
 from torch import nn
 
@@ -128,3 +129,70 @@ def test_shared_builder_drops_master_before_quantized_lora_gpu_move(monkeypatch)
     )
 
     assert events == ["attach", "quantize", "drop", "move"]
+
+
+@pytest.mark.parametrize("scheme", ["fp8", "fp4"])
+def test_full_finetune_dtype_move_preserves_quantized_cache(scheme: str, monkeypatch) -> None:
+    """The shared full path swaps on CPU before a model-owned dtype move."""
+
+    from vrl.nn.quantization import Fp4Linear, Fp8Linear
+
+    if scheme == "fp4":
+        # This structural test intentionally keeps the fake policy on CPU so it
+        # can isolate Module._apply cache handling. Production hardware rejection
+        # is covered separately in test_fp4_loader_rejects_unsupported_target.
+        monkeypatch.setattr("vrl.nn.quantization.fp4.nvfp4_available", lambda _device: True)
+
+    class _Policy:
+        def __init__(self) -> None:
+            self.transformer = nn.Sequential(
+                nn.Linear(64, 64, bias=False).to(torch.bfloat16),
+            )
+            self.device = "cpu"
+            self.scheduler = object()
+            self.raw_handle = object()
+
+        @classmethod
+        def from_spec(cls, _spec: Any) -> _Policy:
+            return cls()
+
+        @property
+        def trainable_modules(self) -> dict[str, Any]:
+            return {"transformer": self.transformer}
+
+        def quantize_rollout_fp8(self, recipe: str = "rowwise") -> list[str]:
+            assert recipe == "rowwise"
+            self.transformer[0] = Fp8Linear(self.transformer[0])
+            return ["0"]
+
+        def quantize_rollout_fp4(self) -> list[str]:
+            self.transformer[0] = Fp4Linear(self.transformer[0])
+            return ["0"]
+
+        def apply_full_finetune(self) -> None:
+            self.transformer.to(self.device, dtype=torch.bfloat16)
+
+        def generation_memory_targets(self) -> dict[str, Any]:
+            return {}
+
+    spec = RuntimeBuildSpec(
+        model_name_or_path="fake",
+        device="cpu",
+        dtype=torch.bfloat16,
+        rollout_quantization=scheme,
+        model_config={"use_lora": False},
+    )
+
+    bundle = build_diffusion_runtime_bundle(
+        spec,
+        model_cls=_Policy,
+        capability=SimpleNamespace(family="fake"),
+        memory_owner="fake VAE",
+    )
+
+    quantized = bundle.model.transformer[0]
+    if scheme == "fp8":
+        assert quantized.weight_fp8.dtype is torch.float8_e4m3fn
+    else:
+        assert quantized.weight_fp4.dtype is torch.float4_e2m1fn_x2
+        assert quantized.weight_scale.dtype is torch.float8_e4m3fn

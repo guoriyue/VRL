@@ -351,6 +351,21 @@ class DiffusionModelBase(nn.Module, ABC):
 
         return swap_linears_to_fp8(self.transformer, recipe=recipe)
 
+    def quantize_rollout_fp4(self) -> list[str]:
+        """Swap the transformer's big policy GEMMs to nvfp4 in place (rollout only).
+
+        The conservative production ``nvfp4`` profile targets big MLP linears
+        only; attention remains in the master dtype pending a real rollout -> BF16
+        replay SDE/reward gate. Embeddings, the noise-pred head, and norm-feeding
+        linears also stay in the master dtype. Rollout-only: trainer replay is
+        never quantized. Call before ``torch_compile_transformer`` so inductor sees
+        the fp4 modules.
+        """
+
+        from vrl.nn.quantization import swap_linears_to_fp4
+
+        return swap_linears_to_fp4(self.transformer)
+
     def set_num_steps(self, n: int) -> None:  # pragma: no cover
         raise NotImplementedError
 

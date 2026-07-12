@@ -12,7 +12,7 @@ Float8_e4m3fn``. The GEMM must explicitly quantize both operands with a scale,
 call ``_scaled_mm``, and accumulate in bf16. :class:`Fp8Linear` wraps exactly that
 and is a drop-in replacement for ``nn.Linear`` in the forward.
 
-Recipe: a bf16 master weight is kept and quantized to the fp8 cache at
+Recipe: a train-dtype master weight is kept and quantized to the fp8 cache at
 construction and again after each weight-sync (full fine-tune overwrites it every
 step); the activation is quantized per forward.
 
@@ -36,37 +36,15 @@ import torch
 from torch import nn
 
 from vrl.nn.quantization.base import QuantizedLinear
-
-# fp8-e4m3 max representable magnitude; the amax scale maps a tensor's peak onto it.
-FP8_E4M3_MAX = 448.0
-# Block size for the ``blockwise`` recipe (standard 128).
-FP8_BLOCK = 128
-
-# Module-path substrings whose nn.Linear must stay in bf16: the small,
-# numerically sensitive layers (embeddings, the final noise-pred head, anything
-# feeding a norm / AdaLN modulation, timestep projections). Quantizing these
-# trades accuracy for ~no speed (they are tiny). Matched against the dotted path
-# within the transformer; size filtering (min_features) skips the rest.
-# AdaLN modulation is named per-backbone: flux/sd3.5 fold it into ``norm*.linear``
-# (caught by ``norm``), but qwen-image exposes it as ``img_mod``/``txt_mod`` and
-# its text-conditioning input as ``txt_in`` — none of which contain ``norm``, so
-# they must be listed explicitly or they would be silently quantized (the
-# modulation drives every block's scale/shift/gate — the most precision-sensitive
-# GEMM in the stack).
-DEFAULT_EXCLUDE: tuple[str, ...] = (
-    "norm",
-    "embed",
-    "proj_out",
-    "time_",
-    "_mod",
-    "txt_in",
+from vrl.nn.quantization.formats import FP8_E4M3_MAX
+from vrl.nn.quantization.targeting import (
+    DEFAULT_EXCLUDE,
+    LinearTargetProfile,
+    matches_linear_target,
 )
 
-# Language-model trunks add their vocabulary heads: quantizing the head
-# corrupts the very logits the AR log-probs are computed from (lm_head /
-# janus's gen_head are caught by "head"; llamagen's vendored GPT names its
-# head "output").
-LM_EXCLUDE: tuple[str, ...] = (*DEFAULT_EXCLUDE, "head", "output")
+# Block size for the ``blockwise`` recipe (standard 128).
+FP8_BLOCK = 128
 
 
 def _amax_scale(t: torch.Tensor, dim: int | None) -> torch.Tensor:
@@ -85,11 +63,14 @@ def vllm_block_fp8_available() -> bool:
 class Fp8Linear(QuantizedLinear):
     """Drop-in ``nn.Linear`` replacement running the matmul in fp8-e4m3.
 
-    Keeps a bf16 master ``weight`` (so RL weight-sync loads normally) plus a
+    Keeps a train-dtype master ``weight`` (so RL weight-sync loads normally) plus a
     derived fp8 cache; quantizes the activation dynamically each forward and runs
     ``torch._scaled_mm`` with bf16 accumulation. The bias (if any) stays in the
     original dtype and is added after the GEMM.
     """
+
+    quantization_scheme = "fp8"
+    cache_buffer_names = ("weight_fp8", "weight_scale")
 
     def __init__(self, linear: nn.Linear, *, recipe: str = "rowwise") -> None:
         super().__init__()
@@ -104,25 +85,28 @@ class Fp8Linear(QuantizedLinear):
         ):
             recipe = "rowwise"
         self.recipe = recipe
-        # Keep the bf16 master weight under its original ``.weight`` key so RL
+        # Keep the train-dtype master weight under its original ``.weight`` key so RL
         # weight-sync (full fine-tune syncs the base weights every step) can load
         # updated weights normally; the fp8 cache is re-derived after each load
         # (_load_from_state_dict). LoRA rollouts sync adapters, not the base, so
         # this only matters for full fine-tune — but it makes the swap correct for
         # both. Inference-only use just pays the one init-time quantization.
         self.weight = nn.Parameter(
-            linear.weight.data.clone(), requires_grad=linear.weight.requires_grad,
+            linear.weight.data.clone(),
+            requires_grad=linear.weight.requires_grad,
         )
         # Bias is cheap and sensitive; keep it in the master dtype, add post-GEMM.
         self.bias = linear.bias
         # fp8 cache (non-persistent: derived from `weight`, never in the state_dict
         # so the trainable-key check sees exactly `weight`).
-        self.register_buffer("weight_fp8", torch.empty(0, dtype=torch.float8_e4m3fn), persistent=False)
+        self.register_buffer(
+            "weight_fp8", torch.empty(0, dtype=torch.float8_e4m3fn), persistent=False
+        )
         self.register_buffer("weight_scale", torch.empty(0), persistent=False)
         self._requantize_weight()
 
     def _requantize_weight(self) -> None:
-        """Re-derive the fp8 weight + scale from the bf16 master (after a sync)."""
+        """Re-derive the fp8 weight + scale from the master (after a sync)."""
         w = self.weight.data
         if self.recipe == "blockwise":
             n, k = w.shape
@@ -136,7 +120,7 @@ class Fp8Linear(QuantizedLinear):
         self.weight_scale = scale
 
     def drop_master(self) -> int:
-        """Free the bf16 master, keeping only the fp8 cache (+scales).
+        """Free the train-dtype master, keeping only the fp8 cache (+scales).
 
         Valid whenever weight-sync never loads base weights into this module:
         LoRA rollouts sync adapters only, and probes/inference sync nothing.
@@ -153,7 +137,7 @@ class Fp8Linear(QuantizedLinear):
         if self.weight is None and f"{prefix}weight" in state_dict:
             raise RuntimeError(
                 "cannot load base weights into a master-free Fp8Linear "
-                f"({prefix.rstrip('.')}): the bf16 master was dropped "
+                f"({prefix.rstrip('.')}): the train-dtype master was dropped "
                 "(drop_master). Master-free is for adapter-only/frozen "
                 "rollouts; full-finetune weight-sync must keep the master.",
             )
@@ -219,8 +203,12 @@ class Fp8Linear(QuantizedLinear):
             ) from exc
         x_fp8, x_scale = per_token_group_quant_fp8(x_bf16, FP8_BLOCK)
         return w8a8_triton_block_scaled_mm(
-            x_fp8, self.weight_fp8, x_scale, self.weight_scale,
-            [FP8_BLOCK, FP8_BLOCK], output_dtype=torch.bfloat16,
+            x_fp8,
+            self.weight_fp8,
+            x_scale,
+            self.weight_scale,
+            [FP8_BLOCK, FP8_BLOCK],
+            output_dtype=torch.bfloat16,
         )
 
     def extra_repr(self) -> str:
@@ -233,17 +221,19 @@ def swap_linears_to_fp8(
     recipe: str = "rowwise",
     exclude: tuple[str, ...] = DEFAULT_EXCLUDE,
     min_features: int = 1024,
+    target_profile: LinearTargetProfile | str = LinearTargetProfile.ATTENTION_MLP,
 ) -> list[str]:
     """Replace big ``nn.Linear`` modules under ``root`` with :class:`Fp8Linear` in place.
 
     Quantizes a Linear only when its dotted path matches no ``exclude`` substring
-    AND both in/out features are ``>= min_features`` (small Linears are cheap and
-    quantizing them only adds drift). Default ``rowwise`` (torch, dep-free, modest
-    memory — the validated path); pass ``recipe="blockwise"`` to opt into vLLM's
-    faster/more-accurate block kernel (needs more GPU headroom). Returns the dotted
-    paths swapped.
+    AND belongs to ``target_profile`` AND both in/out features are ``>= min_features``
+    (small Linears are cheap and quantizing them only adds drift). The production
+    target remains ``attention_mlp``; ``mlp_only`` exists for matched-scope hardware
+    comparisons. Default ``rowwise`` is the validated path; ``blockwise`` opts into
+    vLLM's kernel and needs more GPU headroom. Returns the dotted paths swapped.
     """
 
+    target_profile = LinearTargetProfile(target_profile)
     swapped: list[str] = []
     for parent_path, parent in root.named_modules():
         for child_name, child in list(parent.named_children()):
@@ -251,6 +241,8 @@ def swap_linears_to_fp8(
                 continue
             path = f"{parent_path}.{child_name}" if parent_path else child_name
             if any(token in path for token in exclude):
+                continue
+            if not matches_linear_target(path, target_profile):
                 continue
             if child.in_features < min_features or child.out_features < min_features:
                 continue

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import math
 from pathlib import Path
 
 import pytest
@@ -11,11 +10,11 @@ from omegaconf import OmegaConf
 
 from tests.config.test_load_all_experiments import _experiment_names
 from vrl.algorithms.logprob_mismatch import PrecisionCorrectionConfig
-from vrl.config.builders import build_configs
+from vrl.config.builders import build_configs, build_precision_split_safety_configs
 from vrl.config.loading import load_config
 from vrl.config.precision import resolve_precision_policy
 from vrl.models.dtypes import resolve_torch_dtype
-from vrl.scripts.common.online import _apply_precision_policy
+from vrl.scripts.common.online import _apply_precision_policy, _rollout_weight_dtype
 from vrl.trainers.core.types import PrecisionDriftGuardConfig
 from vrl.trainers.precision import torch_dtype_for_trainer_precision
 
@@ -68,6 +67,27 @@ def test_fp16_precision_block_drives_trainer_and_rollout():
     assert torch_dtype_for_trainer_precision(trainer_config, torch) is torch.float16
 
 
+@pytest.mark.parametrize("rollout", ["fp8", "fp4"])
+def test_quantized_rollout_loads_train_dtype_master(rollout):
+    """FP8/FP4 select a GEMM swap while rollout model storage stays bf16."""
+    policy = resolve_precision_policy(
+        OmegaConf.create({"precision": {"train": "bf16", "rollout": rollout}}),
+    )
+
+    assert policy.rollout_quantization == rollout
+    assert _rollout_weight_dtype(policy) is torch.bfloat16
+
+
+def test_plain_rollout_loads_its_own_dtype():
+    """A non-quantized rollout remains a normal model storage dtype."""
+    policy = resolve_precision_policy(
+        OmegaConf.create({"precision": {"train": "bf16", "rollout": "fp16"}}),
+    )
+
+    assert policy.rollout_quantization is None
+    assert _rollout_weight_dtype(policy) is torch.float16
+
+
 def test_rollout_precision_split_auto_derives_correction_policy():
     """A low-precision rollout split is a user intent; correction is derived."""
     cfg = _with_precision(
@@ -82,16 +102,9 @@ def test_rollout_precision_split_auto_derives_correction_policy():
     # The auto split-precision policy is whatever the builder helper installs;
     # assert the whole struct equals that single source, not a per-field copy of
     # its constants (which would falsely fail on any retune of the policy).
-    assert trainer_config.precision_correction == PrecisionCorrectionConfig(
-        tis_mode="truncate",
-        rs_mode="seq_mean_k1",
-    )
-    assert trainer_config.precision_drift_guard == PrecisionDriftGuardConfig(
-        mode="fail",
-        max_abs_log_ratio=math.log(10.0),
-        max_ratio_abs_dev=9.0,
-        fail_on_nonfinite=True,
-    )
+    correction, guard = build_precision_split_safety_configs()
+    assert trainer_config.precision_correction == correction
+    assert trainer_config.precision_drift_guard == guard
 
 
 def test_no_split_means_no_auto_correction_policy() -> None:

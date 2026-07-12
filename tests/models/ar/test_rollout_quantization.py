@@ -7,8 +7,9 @@ are checked against genuine HF module paths, not a fake that restates them.
 from __future__ import annotations
 
 import pytest
+from torch import nn
 
-from vrl.nn.quantization import QuantizedLinear
+from vrl.nn.quantization import Fp4Linear, Fp8Linear, QuantizedLinear
 
 
 def _tiny_emu3_model():
@@ -34,7 +35,10 @@ def _tiny_emu3_model():
     torch.manual_seed(0)
     hf_model = Emu3ForConditionalGeneration(hf_config)
     config = Emu3Config(
-        model_path="tiny-emu3", dtype="float32", device="cpu", use_lora=False,
+        model_path="tiny-emu3",
+        dtype="float32",
+        device="cpu",
+        use_lora=False,
     )
     return Emu3Model(config, emu3=hf_model, processor=_stub_processor())
 
@@ -61,6 +65,40 @@ def test_ar_quantize_rollout_fp8_swaps_trunk_not_heads() -> None:
     del torch
 
 
+def test_ar_quantize_rollout_fp4_targets_mlp_not_attention_or_heads() -> None:
+    model = _tiny_emu3_model()
+
+    swapped = model.quantize_rollout_fp4()
+
+    assert swapped
+    assert all("mlp" in path for path in swapped)
+    assert not any("self_attn" in path for path in swapped)
+    assert all("head" not in path and "embed" not in path for path in swapped)
+
+
+@pytest.mark.parametrize("scheme,linear_type", [("fp8", Fp8Linear), ("fp4", Fp4Linear)])
+def test_ar_worker_guard_scans_language_model_for_all_schemes(
+    scheme: str,
+    linear_type: type[QuantizedLinear],
+) -> None:
+    """AR models expose language_model, not diffusion's transformer attribute."""
+    from types import SimpleNamespace
+
+    from vrl.models.loader import assert_rollout_quantization_applied
+
+    class _ArPolicy(nn.Module):
+        def __init__(self) -> None:
+            super().__init__()
+            self.language_model = nn.Sequential(
+                linear_type(nn.Linear(64, 64, bias=False)),
+            )
+
+    assert_rollout_quantization_applied(
+        _ArPolicy(),
+        SimpleNamespace(rollout_quantization=scheme, ar_task="ar_t2i"),
+    )
+
+
 def test_ar_builder_applies_rollout_quantization_and_replay_does_not() -> None:
     """The shared AR builder quantizes rollout bundles only."""
     from vrl.models.ar.build import build_ar_runtime_bundle
@@ -81,13 +119,16 @@ def test_ar_builder_applies_rollout_quantization_and_replay_does_not() -> None:
 
     rollout_model = _tiny_emu3_model()
     build_ar_runtime_bundle(_spec("fp8"), model=rollout_model, capability=capability)
-    assert any(
-        isinstance(m, QuantizedLinear) for m in rollout_model.language_model.modules()
-    ), "rollout bundle did not quantize"
+    assert any(isinstance(m, QuantizedLinear) for m in rollout_model.language_model.modules()), (
+        "rollout bundle did not quantize"
+    )
 
     replay_model = _tiny_emu3_model()
     build_ar_runtime_bundle(
-        _spec("fp8"), model=replay_model, capability=capability, replay=True,
+        _spec("fp8"),
+        model=replay_model,
+        capability=capability,
+        replay=True,
     )
     assert not any(
         isinstance(m, QuantizedLinear) for m in replay_model.language_model.modules()
@@ -95,6 +136,4 @@ def test_ar_builder_applies_rollout_quantization_and_replay_does_not() -> None:
 
     plain_model = _tiny_emu3_model()
     build_ar_runtime_bundle(_spec(None), model=plain_model, capability=capability)
-    assert not any(
-        isinstance(m, QuantizedLinear) for m in plain_model.language_model.modules()
-    )
+    assert not any(isinstance(m, QuantizedLinear) for m in plain_model.language_model.modules())

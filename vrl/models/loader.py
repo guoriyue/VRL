@@ -78,7 +78,7 @@ def load_flow_match_scheduler(
 
 
 def apply_rollout_quantization(model: Any, spec: Any) -> int:
-    """Swap the rollout transformer's big GEMMs to the configured low-precision scheme.
+    """Swap the rollout policy's big GEMMs to the configured low-precision scheme.
 
     Reads the scheme off ``precision.rollout`` (``spec.rollout_quantization``) and
     dispatches to its swap — fp8 today, fp4/int8 as siblings. Quantization is
@@ -95,12 +95,36 @@ def apply_rollout_quantization(model: Any, spec: Any) -> int:
     if not scheme:  # bf16/fp16/fp32 rollout — a load-time dtype, not a swap
         return 0
     recipe = getattr(spec, "rollout_quantization_recipe", None)
+    if scheme == "fp8":
+        effective_recipe = recipe or "rowwise"
+    elif scheme == "fp4":
+        if recipe not in (None, "nvfp4"):
+            raise ValueError(
+                f"precision.rollout_recipe={recipe!r} is not an fp4 recipe: fp4 has "
+                "a single 'nvfp4' recipe (rowwise/tensorwise/blockwise are fp8).",
+            )
+        target_device = getattr(spec, "device", None)
+        if target_device is not None:
+            from vrl.nn.quantization.fp4 import nvfp4_available
+
+            if not nvfp4_available(target_device):
+                raise RuntimeError(
+                    "precision.rollout='fp4' requires an NVFP4-capable CUDA target "
+                    f"(Blackwell-class, compute capability >= 10.0); got {target_device!r}.",
+                )
+        effective_recipe = recipe or "nvfp4"
+    else:
+        raise NotImplementedError(
+            f"precision.rollout={scheme!r} has no rollout swap yet (fp8/fp4 only); "
+            "add a quantize_rollout_* method + dispatch branch for the new scheme.",
+        )
     # blockwise delegates to vLLM's triton kernel, whose wrapper dynamo cannot
     # trace (lru_cache'd deep_gemm check + ctypes pynvml call): measured 45 graph
     # breaks on SD3.5 and a compiled forward ~10x SLOWER than eager
     # (SPRINT_rollout_optimization_layer item 2). Refuse the combination instead
     # of silently shipping the regression.
-    if recipe == "blockwise" and getattr(spec, "torch_compile", None):
+    compile_config = getattr(spec, "torch_compile", None)
+    if effective_recipe == "blockwise" and compile_config:
         raise ValueError(
             "precision.rollout_recipe='blockwise' is incompatible with "
             "model.torch_compile (the vLLM block kernel graph-breaks inductor; the "
@@ -108,16 +132,14 @@ def apply_rollout_quantization(model: Any, spec: Any) -> int:
             "(compile-clean) or disable model.torch_compile.",
         )
     if scheme == "fp8":
-        swapped = model.quantize_rollout_fp8(recipe=recipe or "rowwise")
+        swapped = model.quantize_rollout_fp8(recipe=effective_recipe)
     else:
-        raise NotImplementedError(
-            f"precision.rollout={scheme!r} has no rollout swap yet (only fp8); add a "
-            "quantize_rollout_* method + dispatch branch for the new scheme.",
-        )
+        swapped = model.quantize_rollout_fp4()
     if not swapped:
+        target = "MLP" if scheme == "fp4" else "attention/MLP"
         raise RuntimeError(
             f"precision.rollout={scheme!r} but the swap matched 0 linears — the "
-            "transformer has no quantizable attention/MLP linears (check the exclude "
+            f"policy has no quantizable {target} linears (check the exclude "
             "list / min_features). It would be a no-op.",
         )
     syncs_base = getattr(spec, "rollout_weight_sync", True) and not getattr(
@@ -127,20 +149,22 @@ def apply_rollout_quantization(model: Any, spec: Any) -> int:
     )
     if not syncs_base:
         # Base weights will never be synced into this rollout (LoRA syncs
-        # adapters; sync-free contexts sync nothing), so the bf16 masters are
-        # dead weight — drop them BEFORE the device move (a 17B fp8 rollout
-        # halves instead of gaining a cache on top of the master).
+        # adapters; sync-free contexts sync nothing), so the high-precision
+        # masters are dead weight — drop them BEFORE the device move (a 17B
+        # quantized rollout shrinks instead of retaining cache + master).
         from vrl.nn.quantization import drop_quantized_masters
 
         freed = drop_quantized_masters(model)
         logging.getLogger(__name__).info(
-            "fp8 rollout without base-weight sync: dropped bf16 masters (%.1f GiB freed)",
+            "%s rollout without base-weight sync: dropped master weights (%.1f GiB freed)",
+            scheme,
             freed / 2**30,
         )
     logging.getLogger(__name__).info(
-        "%s rollout (recipe=%s): quantized %d transformer linears",
+        "%s rollout (recipe=%s, profile=%s): quantized %d policy linears",
         scheme,
-        recipe or "rowwise",
+        effective_recipe,
+        "mlp_only" if scheme == "fp4" else "attention_mlp",
         len(swapped),
     )
     return len(swapped)
@@ -151,11 +175,11 @@ def assert_rollout_quantization_applied(model: Any, spec: Any) -> None:
 
     Family- and scheme-agnostic — called once at rollout-worker policy load, after
     the family builder ran. If the builder forgot to apply the swap (e.g. a newly
-    added family), the model would silently run bf16 despite ``precision.rollout``
-    asking for fp8/fp4/etc.; this turns that into a loud startup failure instead of
-    a fake knob. Counts *any* ``QuantizedLinear`` (fp8 today, fp4/int8 as they
-    land) so new schemes are covered without editing this guard. Unwraps a
-    ``torch.compile`` wrapper to count the real modules.
+    added family), or installed a different scheme, the model would silently run
+    the wrong policy despite ``precision.rollout`` asking for fp8/fp4/etc. This
+    turns that into a loud startup failure instead of a fake knob. Scheme identity
+    lives on ``QuantizedLinear`` subclasses, so future schemes need no loader-side
+    type table. Compiled modules expose their originals through normal traversal.
     """
 
     scheme = getattr(spec, "rollout_quantization", None)
@@ -163,18 +187,35 @@ def assert_rollout_quantization_applied(model: Any, spec: Any) -> None:
         return
     from vrl.nn.quantization import QuantizedLinear
 
-    transformer = getattr(model, "transformer", None)
-    transformer = getattr(transformer, "_orig_mod", transformer)  # unwrap torch.compile
-    count = (
-        sum(1 for m in transformer.modules() if isinstance(m, QuantizedLinear))
-        if transformer is not None
-        else 0
+    # Most family models are nn.Module instances. A few runtime facades are plain
+    # objects that own one or more modules, so scan every direct module attribute
+    # instead of assuming diffusion's ``model.transformer`` shape. Compiled
+    # modules register ``_orig_mod`` as a child, so normal module traversal also
+    # reaches the underlying quantized linears.
+    if hasattr(model, "modules"):
+        module_roots = [model]
+    else:
+        module_roots = []
+        for value in getattr(model, "__dict__", {}).values():
+            candidate = getattr(value, "_orig_mod", value)
+            if hasattr(candidate, "modules"):
+                module_roots.append(candidate)
+    count = sum(
+        1
+        for root in module_roots
+        for module in root.modules()
+        if isinstance(module, QuantizedLinear) and module.quantization_scheme == scheme
     )
     if count == 0:
+        family = (
+            getattr(spec, "family", None)
+            or getattr(spec, "ar_task", None)
+            or getattr(spec, "task_variant", None)
+        )
         raise RuntimeError(
-            f"precision.rollout={scheme!r} requested but the rollout transformer has "
-            f"0 quantized linear modules (family={getattr(spec, 'task_variant', None)!r}). "
-            "The family runtime builder did not apply the rollout quantization swap "
+            f"precision.rollout={scheme!r} requested but the rollout model has "
+            f"0 {scheme} quantized linear modules (family={family!r}). "
+            "The family runtime builder did not apply the requested rollout quantization swap "
             f"(e.g. apply_rollout_quantization), so {scheme} would silently run in bf16. Wire "
             "the swap into that builder (after LoRA/full-finetune, before compile).",
         )

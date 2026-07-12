@@ -44,11 +44,19 @@ from typing import Any
 
 _MISSING = object()
 
-# The canonical precision names. ``no`` remains a tolerated spelling for low-level
-# parser boundaries, but live YAML should use top-level ``precision: fp32``. fp8/fp4
-# are rollout-only quantized GEMM dtypes (Hopper/Blackwell); they are valid policy
-# tokens but only meaningful on the ``rollout`` axis (see module docstring).
-_CANONICAL = ("fp32", "bf16", "fp16", "fp8", "fp4")
+# Quantized names are a protocol boundary shared by validation and derived
+# storage/swap properties. Keep the vocabulary in one place so adding a scheme
+# cannot make it legal in one branch but silently plain-dtype in another.
+_QUANTIZED = ("fp8", "fp4")
+# ``no`` remains a tolerated spelling for low-level parser boundaries, but live
+# YAML should use the canonical top-level names.
+_CANONICAL = ("fp32", "bf16", "fp16", *_QUANTIZED)
+
+
+def _is_quantized(value: str) -> bool:
+    """Whether a precision token names a rollout GEMM scheme, not a storage dtype."""
+
+    return value in _QUANTIZED
 
 
 def normalize_precision(value: Any, *, default: str = "fp32") -> str:
@@ -90,12 +98,41 @@ class PrecisionPolicy:
         for axis in (self.train, self.rollout, self.math, self.frozen):
             if axis not in _CANONICAL:
                 raise ValueError(f"invalid precision axis value: {axis!r}")
-        if self.rollout_recipe is not None and self.rollout not in ("fp8", "fp4"):
+        if _is_quantized(self.train):
+            raise ValueError(
+                f"precision.train={self.train!r} is invalid: fp8/fp4 is a "
+                "rollout-only quantized GEMM dtype. The replay/training forward "
+                "must stay fp32/bf16/fp16 for stable gradients. Use "
+                f"`{{train: bf16, rollout: {self.train}}}`.",
+            )
+        if _is_quantized(self.math):
+            raise ValueError(
+                f"precision.math={self.math!r} is invalid: the SDE/logprob/loss "
+                "math axis must stay fp32/bf16/fp16, never sub-byte.",
+            )
+        if _is_quantized(self.frozen):
+            raise ValueError(
+                f"precision.frozen={self.frozen!r} is invalid: frozen text encoders "
+                "and VAEs use a storage dtype and have no fp8/fp4 quantized path.",
+            )
+        if self.rollout_recipe is not None and self.rollout_quantization is None:
             raise ValueError(
                 f"precision.rollout_recipe={self.rollout_recipe!r} requires a "
                 f"quantized rollout (fp8/fp4); rollout={self.rollout!r} is a plain "
                 "dtype with no kernel recipe, so the knob would silently do nothing.",
             )
+
+    @property
+    def rollout_quantization(self) -> str | None:
+        """Rollout GEMM scheme, or ``None`` when rollout uses a storage dtype."""
+
+        return self.rollout if _is_quantized(self.rollout) else None
+
+    @property
+    def rollout_storage_precision(self) -> str:
+        """Storage dtype token used to load the rollout model's master weights."""
+
+        return self.train if self.rollout_quantization is not None else self.rollout
 
 
 def precision_bridge_fields(policy: PrecisionPolicy) -> dict[str, str]:
@@ -120,7 +157,7 @@ def _frozen_default(rollout: str) -> str:
     # follow the rollout storage dtype. A sub-byte rollout (fp8/fp4) quantizes
     # only the policy GEMM; the frozen encoders/VAE have no quantized path, so
     # default them to fp16 rather than an unusable fp8/fp4 storage dtype.
-    if rollout in ("fp8", "fp4"):
+    if _is_quantized(rollout):
         return "fp16"
     return "fp16" if rollout == "fp32" else rollout
 
@@ -160,7 +197,7 @@ def _from_precision_block(block: Any) -> PrecisionPolicy:
     # walker (vrl.config.unknown_keys); this parser only reads the known axes.
     if isinstance(block, (str, bool)):
         scalar = normalize_precision(block)
-        if scalar in ("fp8", "fp4"):
+        if _is_quantized(scalar):
             raise ValueError(
                 f"precision: {scalar!r} is invalid as a scalar: fp8/fp4 is a "
                 "rollout-only quantized GEMM dtype and a scalar would set the "
@@ -173,27 +210,22 @@ def _from_precision_block(block: Any) -> PrecisionPolicy:
     # absent, it follows `train` so the common path stays single-dtype.
     rollout_raw = _select(block, "rollout", None)
     rollout = normalize_precision(rollout_raw) if rollout_raw is not None else train
-    if train in ("fp8", "fp4"):
-        raise ValueError(
-            f"precision.train={train!r} is invalid: fp8/fp4 is a rollout-only "
-            "quantized GEMM dtype. The replay/training forward must stay fp32/bf16/"
-            "fp16 for stable gradients. Use `{train: bf16, rollout: fp8}`.",
-        )
     math = normalize_precision(_select(block, "math", "fp32"))
-    if math in ("fp8", "fp4"):
-        raise ValueError(
-            f"precision.math={math!r} is invalid: the SDE/logprob/loss math axis "
-            "must stay fp32/bf16/fp16, never sub-byte.",
-        )
     frozen_raw = _select(block, "frozen", None)
-    frozen = normalize_precision(frozen_raw) if frozen_raw is not None else _frozen_default(rollout)
+    frozen = (
+        normalize_precision(frozen_raw) if frozen_raw is not None else _frozen_default(rollout)
+    )
     # Kernel recipe for the quantized rollout (e.g. fp8 "rowwise"/"blockwise").
     # Passed through as-is: PrecisionPolicy rejects it on a non-quantized rollout,
     # the swap layer (Fp8Linear) rejects an unknown recipe token.
     recipe_raw = _select(block, "rollout_recipe", None)
     rollout_recipe = str(recipe_raw).lower().strip() if recipe_raw is not None else None
     return PrecisionPolicy(
-        train=train, rollout=rollout, math=math, frozen=frozen, rollout_recipe=rollout_recipe,
+        train=train,
+        rollout=rollout,
+        math=math,
+        frozen=frozen,
+        rollout_recipe=rollout_recipe,
     )
 
 

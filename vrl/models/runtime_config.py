@@ -48,9 +48,8 @@ def extract_runtime_spec(
     policy = resolve_precision_policy(cfg)
     frozen_dtype = resolve_torch_dtype(policy.frozen)
     # fp8/fp4 rollout is a quantized GEMM, not a storage dtype: ``dtype`` stays the
-    # bf16 master (set by the caller) and the builder swaps linears to fp8 from
-    # this token. None for the usual bf16/fp16/fp32 rollout.
-    rollout_quantization = policy.rollout if policy.rollout in ("fp8", "fp4") else None
+    # bf16 master (set by the caller) and the builder swaps linears from this
+    # scheme token. None for the usual bf16/fp16/fp32 rollout.
     return RuntimeBuildSpec(
         model_name_or_path=str(path),
         device=device,
@@ -61,7 +60,7 @@ def extract_runtime_spec(
         model_config=model_config,
         sampling_config=sampling_config,
         frozen_dtype=frozen_dtype,
-        rollout_quantization=rollout_quantization,
+        rollout_quantization=policy.rollout_quantization,
         rollout_quantization_recipe=policy.rollout_recipe,
     )
 
