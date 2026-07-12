@@ -21,6 +21,7 @@ import torch.distributed as dist
 import torch.multiprocessing as mp
 from torch import nn
 
+from tests.trainers.online._collector_control import CollectorControlFake
 from tests.trainers.online._helpers import _trajectory_signals
 from vrl.algorithms.types import TrainStepMetrics
 from vrl.rollouts.batch import RolloutBatch
@@ -227,7 +228,7 @@ def _run_replay_loop_rank(
             model.weight.fill_(1.0)
         trainer = OnlineTrainer(
             algorithm=_Algorithm(),
-            collector=object(),
+            collector=CollectorControlFake(),
             evaluator=_Evaluator(),
             model=model,
             config=TrainerConfig(
@@ -265,6 +266,7 @@ def _run_replay_loop_rank(
             pre_filter_reward_mean=0.0,
             pre_filter_reward_std=0.0,
             pre_filter_adv_mean=1.0,
+            reward_components={},
         )
         asyncio.run(trainer.backward_on_training_batch(batch, total_groups=1))
         q.put(
@@ -285,8 +287,7 @@ def test_replay_loop_balances_evaluate_and_backward_counts_under_gloo() -> None:
     q: mp.Queue = ctx.Queue()
     port = _free_port()
     procs = [
-        ctx.Process(target=_run_replay_loop_rank, args=(r, 2, port, [8, 3], q))
-        for r in range(2)
+        ctx.Process(target=_run_replay_loop_rank, args=(r, 2, port, [8, 3], q)) for r in range(2)
     ]
     for p in procs:
         p.start()

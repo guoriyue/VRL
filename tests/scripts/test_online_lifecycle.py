@@ -60,10 +60,6 @@ class _FakeModel:
 class _FakeReward:
     def __init__(self, state: dict[str, Any]) -> None:
         self._state = state
-        self.last_components: dict[str, list[float]] = {}
-
-    def reset_components(self) -> None:
-        self._state["reward_resets"] += 1
 
     async def shutdown(self) -> None:
         self._state["reward_shutdowns"] += 1
@@ -71,9 +67,12 @@ class _FakeReward:
 
 
 class _FakeCollector:
-    def __init__(self, state: dict[str, Any]) -> None:
+    def __init__(self, state: dict[str, Any], reward: _FakeReward) -> None:
         self._state = state
+        self._reward = reward
         self._runtime: Any | None = None
+        self._runtime_shutdown_complete = False
+        self._reward_shutdown_complete = False
 
     def set_runtime(self, runtime: Any) -> None:
         self._runtime = runtime
@@ -86,11 +85,16 @@ class _FakeCollector:
     async def shutdown(self) -> None:
         self._state["collector_shutdowns"] += 1
         self._state["shutdown_order"].append("collector")
+        if not self._runtime_shutdown_complete:
+            shutdown = getattr(self._runtime, "shutdown", None)
+            if shutdown is not None:
+                await shutdown()
+            self._runtime_shutdown_complete = True
+        if not self._reward_shutdown_complete:
+            await self._reward.shutdown()
+            self._reward_shutdown_complete = True
         if self._state.get("collector_shutdown_raises"):
             raise RuntimeError("collector shutdown boom")
-        shutdown = getattr(self._runtime, "shutdown", None)
-        if shutdown is not None:
-            await shutdown()
 
 
 class _FakeRuntime:
@@ -103,12 +107,14 @@ class _FakeRuntime:
 
 
 class _FakeSchedule:
-    def __init__(self, state: dict[str, Any]) -> None:
+    def __init__(self, state: dict[str, Any], collector: Any) -> None:
         self._state = state
+        self._collector = collector
 
     async def shutdown(self) -> None:
         self._state["schedule_shutdowns"] += 1
         self._state["shutdown_order"].append("schedule")
+        await self._collector.shutdown()
 
 
 class _FakeLauncher:
@@ -144,10 +150,10 @@ class _FakePlacementOwner:
 
 class _FakeTrainer:
     def __init__(self, state: dict[str, Any], *args: Any, **kwargs: Any) -> None:
-        del args, kwargs
+        del args
         self._state = state
         self.state = SimpleNamespace(global_step=0)
-        self.rollout_schedule = _FakeSchedule(state)
+        self.rollout_schedule = _FakeSchedule(state, kwargs["collector"])
 
     async def step(self, example_batch: list[Any]) -> Any:
         del example_batch
@@ -164,7 +170,6 @@ def _state() -> dict[str, Any]:
         "collector_shutdowns": 0,
         "runtime_shutdowns": 0,
         "schedule_shutdowns": 0,
-        "reward_resets": 0,
         "reward_shutdowns": 0,
         "owner_creates": 0,
         "owner_shutdowns": 0,
@@ -185,6 +190,7 @@ def _trainer_config(tmp_path: Any) -> SimpleNamespace:
         prompts_per_batch=1,
         n_samples_per_prompt=1,
         save_freq=0,
+        rollout_orchestration=SimpleNamespace(schedule_mode="strict_on_policy"),
     )
 
 
@@ -210,6 +216,29 @@ def _definition() -> OnlineRecipeDefinition:
     )
 
 
+def test_owned_ray_session_retries_shutdown_before_committing_closed() -> None:
+    class _Ray:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def shutdown(self) -> None:
+            self.calls += 1
+            if self.calls == 1:
+                raise RuntimeError("ray shutdown transport failed")
+
+    ray_api = _Ray()
+    session = online._RayClusterSession(ray=ray_api, shutdown_on_exit=True)
+
+    with pytest.raises(RuntimeError, match="ray shutdown transport failed"):
+        session.shutdown()
+    assert session._closed is False
+
+    session.shutdown()
+    session.shutdown()
+    assert session._closed is True
+    assert ray_api.calls == 2
+
+
 def _install_common_fakes(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Any,
@@ -217,8 +246,18 @@ def _install_common_fakes(
 ) -> _FakeReward:
     trainer_config = _trainer_config(tmp_path)
     reward = _FakeReward(state)
-    collector = _FakeCollector(state)
-    resources = SimpleNamespace(cross_node=False)
+    collector = _FakeCollector(state, reward)
+    resources = SimpleNamespace(
+        cross_node=False,
+        lifecycle=SimpleNamespace(
+            handoff=SimpleNamespace(
+                release_rollout_before_train=False,
+                release_rollout_before_reward=False,
+                release_trainer_before_reward=False,
+                release_reward_after_score=False,
+            ),
+        ),
+    )
 
     monkeypatch.setattr(online, "_preflight_production_video_reward", lambda cfg: None)
     monkeypatch.setattr(online, "build_configs", lambda cfg: {"trainer": trainer_config})
@@ -237,7 +276,9 @@ def _install_common_fakes(
         "reward_torch_device",
         lambda resources, *, trainer_device: "cpu",
     )
-    monkeypatch.setattr(online, "torch_dtype_for_trainer_precision", lambda trainer, torch: torch.float32)
+    monkeypatch.setattr(
+        online, "torch_dtype_for_trainer_precision", lambda trainer, torch: torch.float32
+    )
     monkeypatch.setattr(
         online,
         "resolve_precision_policy",
@@ -278,7 +319,9 @@ def _install_common_fakes(
         ),
     )
     monkeypatch.setattr(online, "RayGenerationLauncher", lambda: _FakeLauncher(state))
-    monkeypatch.setattr(online, "OnlineTrainer", lambda *args, **kwargs: _FakeTrainer(state, *args, **kwargs))
+    monkeypatch.setattr(
+        online, "OnlineTrainer", lambda *args, **kwargs: _FakeTrainer(state, *args, **kwargs)
+    )
     monkeypatch.setattr(online, "build_runtime_weight_syncer", lambda *args, **kwargs: object())
     monkeypatch.setattr(online, "save_resolved_config", lambda *args, **kwargs: None)
     monkeypatch.setattr(
@@ -372,6 +415,59 @@ def test_require_supported_online_strategy_allows_ddp() -> None:
         device=torch.device("cuda:0"),
     )
     online._require_supported_online_strategy(ctx)  # no raise
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("release_rollout_before_train", "release_trainer_before_reward"),
+    [(True, False), (False, True)],
+)
+async def test_shared_gpu_parking_capability_fails_before_model_or_ray_launch(
+    monkeypatch,
+    tmp_path,
+    release_rollout_before_train,
+    release_trainer_before_reward,
+) -> None:
+    state = _state()
+    _install_common_fakes(monkeypatch, tmp_path, state)
+    resources = SimpleNamespace(
+        cross_node=False,
+        lifecycle=SimpleNamespace(
+            handoff=SimpleNamespace(
+                release_rollout_before_train=release_rollout_before_train,
+                release_rollout_before_reward=False,
+                release_trainer_before_reward=release_trainer_before_reward,
+                release_reward_after_score=release_trainer_before_reward,
+            ),
+        ),
+    )
+    monkeypatch.setattr(online, "resolve_distributed_resources", lambda _cfg: resources)
+    monkeypatch.setattr(
+        online,
+        "validate_reward_memory_parking_from_cfg",
+        lambda *_args, **_kwargs: None,
+    )
+
+    class _UnsupportedStrategy:
+        def validate_training_state_parking(self) -> None:
+            raise NotImplementedError("Use disjoint rollout GPUs")
+
+    monkeypatch.setattr(online, "build_strategy", lambda _cfg, _context: _UnsupportedStrategy())
+    model_builds = 0
+
+    def _build(*_args, **_kwargs):
+        nonlocal model_builds
+        model_builds += 1
+        return SimpleNamespace(model=_FakeModel(), scheduler=object(), trainable_modules={})
+
+    definition = OnlineRecipeDefinition(family="sd3_5", build_replay_bundle=_build)
+
+    with pytest.raises(NotImplementedError, match="Use disjoint rollout GPUs"):
+        await online.run_online_recipe(_cfg(), definition)
+
+    assert model_builds == 0
+    assert state["owner_creates"] == 0
+    assert state["launches"] == 0
 
 
 @pytest.mark.slow_test
@@ -533,9 +629,9 @@ async def test_run_online_recipe_shutdown_errors_do_not_hide_training_error(
     with pytest.raises(RuntimeError, match="train boom"):
         await online.run_online_recipe(_cfg(), _definition())
 
-    assert state["collector_shutdowns"] == 1
+    assert state["collector_shutdowns"] == 2
     assert state["reward_shutdowns"] == 1
-    assert state["owner_shutdowns"] == 1
+    assert state["owner_shutdowns"] == 2
 
 
 @pytest.mark.slow_test
@@ -549,9 +645,98 @@ async def test_run_online_recipe_shutdown_errors_after_success_run_all_cleanups(
     state["collector_shutdown_raises"] = True
     _install_common_fakes(monkeypatch, tmp_path, state)
 
-    with pytest.raises(RuntimeError, match="collector shutdown failed"):
+    with pytest.raises(RuntimeError, match="rollout_schedule shutdown failed"):
         await online.run_online_recipe(_cfg(), _definition())
 
-    assert state["collector_shutdowns"] == 1
+    assert state["collector_shutdowns"] == 2
     assert state["reward_shutdowns"] == 1
     assert state["owner_shutdowns"] == 1
+
+
+@pytest.mark.asyncio
+async def test_terminal_schedule_is_the_only_collector_shutdown_owner() -> None:
+    calls: list[str] = []
+
+    class _Collector:
+        async def shutdown(self) -> None:
+            calls.append("collector")
+
+    collector = _Collector()
+
+    class _Schedule:
+        async def shutdown(self) -> None:
+            calls.append("schedule")
+            await collector.shutdown()
+
+    class _StandaloneReward:
+        async def shutdown(self) -> None:
+            calls.append("standalone_reward")
+
+    class _Strategy:
+        def shutdown(self, *, restore_parked: bool = True) -> None:
+            calls.append(f"strategy:{restore_parked}")
+
+    await online._shutdown_online_recipe_runtime(
+        rollout_schedule=_Schedule(),
+        collector=collector,
+        reward_fn=_StandaloneReward(),
+        placement_owner=None,
+        strategy=_Strategy(),
+        ray_session=None,
+        run_error=None,
+    )
+
+    assert calls == ["schedule", "collector", "strategy:True"]
+
+
+@pytest.mark.asyncio
+async def test_terminal_placement_and_ray_cleanup_retry_once() -> None:
+    class _FlakyCleanup:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def shutdown(self) -> None:
+            self.calls += 1
+            if self.calls == 1:
+                raise RuntimeError("transient cleanup failure")
+
+    placement = _FlakyCleanup()
+    ray_session = _FlakyCleanup()
+
+    await online._shutdown_online_recipe_runtime(
+        rollout_schedule=None,
+        collector=None,
+        reward_fn=None,
+        placement_owner=placement,
+        strategy=None,
+        ray_session=ray_session,
+        run_error=None,
+    )
+
+    assert placement.calls == 2
+    assert ray_session.calls == 2
+
+
+@pytest.mark.asyncio
+async def test_failed_role_cleanup_abandons_parked_restore_but_cleans_strategy() -> None:
+    restore_permissions: list[bool] = []
+
+    class _FailingSchedule:
+        async def shutdown(self) -> None:
+            raise RuntimeError("rollout cleanup failed")
+
+    class _Strategy:
+        def shutdown(self, *, restore_parked: bool = True) -> None:
+            restore_permissions.append(restore_parked)
+
+    await online._shutdown_online_recipe_runtime(
+        rollout_schedule=_FailingSchedule(),
+        collector=object(),
+        reward_fn=None,
+        placement_owner=None,
+        strategy=_Strategy(),
+        ray_session=None,
+        run_error=RuntimeError("training failed"),
+    )
+
+    assert restore_permissions == [False]

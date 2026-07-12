@@ -29,6 +29,9 @@ from vrl.config.validation import (
     validate_reward_config,
     validate_training_config,
 )
+from vrl.ray.resources import resolve_distributed_resources
+from vrl.rollouts.orchestration import validate_rollout_schedule_topology
+from vrl.scripts.common.factory import validate_reward_memory_parking_from_cfg
 
 
 def _experiment_names() -> list[str]:
@@ -231,6 +234,66 @@ def test_all_experiments_load_and_validate() -> None:
         validate_training_config(cfg)
 
 
+def test_all_online_experiments_pass_static_launch_preflight() -> None:
+    """Every active online recipe has a valid schedule and reward topology.
+
+    Explicit ``dedicated`` pools describe a hardware-gated topology. For those
+    recipes only, supply the minimum synthetic visible-device budget derived
+    from the role requests; all auto/shared recipes keep the host's normal
+    single-GPU resolution so phase-parking coverage is not accidentally lost.
+    """
+
+    def requested_gpus(node, *, default: int) -> int:
+        num_gpus = node.get("num_gpus", "auto")
+        if num_gpus not in (None, "auto"):
+            return int(num_gpus)
+        num_workers = node.get("num_workers", "auto")
+        if num_workers != "auto":
+            return int(float(num_workers) * float(node.get("gpus_per_worker", 1.0)))
+        return default
+
+    failures = []
+    for name in _experiment_names():
+        cfg = load_config(f"experiment/{name}")
+        if str(cfg.algorithm.kind) == "diffusion_dpo":
+            continue
+
+        resources_cfg = cfg.distributed.resources
+        rollout_pool = str(resources_cfg.rollout.get("gpu_pool", "auto"))
+        reward_pool = str(resources_cfg.get("reward", {}).get("gpu_pool", "auto"))
+        if (
+            "dedicated" in {rollout_pool, reward_pool}
+            and resources_cfg.get("visible_devices", "auto") == "auto"
+        ):
+            trainer_gpus = requested_gpus(resources_cfg.trainer, default=1)
+            rollout_gpus = requested_gpus(resources_cfg.rollout, default=1)
+            reward_cfg = resources_cfg.get("reward", {})
+            reward_gpus = requested_gpus(reward_cfg, default=0)
+            required = trainer_gpus
+            if rollout_pool != "trainer":
+                required += rollout_gpus
+            if reward_pool == "dedicated":
+                required += reward_gpus
+            resources_cfg.visible_devices = list(range(required))
+
+        try:
+            built = build_configs(cfg)
+            resources = resolve_distributed_resources(cfg)
+            validate_rollout_schedule_topology(
+                built["trainer"].rollout_orchestration,
+                resources,
+            )
+            validate_reward_memory_parking_from_cfg(
+                cfg,
+                resources=resources,
+                built=built,
+            )
+        except Exception as error:  # report the full active surface in one failure
+            failures.append(f"{name}: {type(error).__name__}: {error}")
+
+    assert failures == []
+
+
 def test_validate_rejects_compile_with_gradient_checkpointing() -> None:
     """compile x grad-ckpt must fail at config load, not as a mid-run dynamo crash.
 
@@ -327,41 +390,7 @@ def test_rollout_orchestration_group_override_uses_rollout_namespace() -> None:
         **OmegaConf.to_container(orchestration, resolve=True),
     )
     assert typed.schedule_mode == "continuous"
-
-
-
-def test_sd35_single_gpu_async_debug_uses_persistent_colocated_rollout() -> None:
-    """Checks the single-GPU async debug recipe opts into colocated continuous rollout."""
-    from vrl.ray.resources import resolve_distributed_resources
-
-    cfg = load_config(
-        "experiment/diffusion/sd3_5/online_grpo_ocr_single_gpu_async_debug",
-        overrides=["distributed.resources.visible_devices=[0]"],
-    )
-
-    assert cfg.trainer.rollout_orchestration.schedule_mode == "continuous"
-    assert cfg.trainer.rollout_orchestration.require_separate_gpus is False
-    assert cfg.trainer.rollout_orchestration.continuous.max_stale_policy_versions == 1
-    assert cfg.distributed.resources.allow_overlap is True
-    # Resident colocation is declared with gpu_pool=trainer + memory_fraction on the
-    # resources rollout node; release scheduling is derived from the resolved
-    # topology, not spelled in YAML. Assert the derived/lifecycle result, not the
-    # raw input key.
-    assert cfg.distributed.resources.rollout.gpu_pool == "trainer"
-    # Resource resolution is a static topology test. Give it one synthetic
-    # visible ordinal so the assertion is identical on CPU CI and GPU hosts;
-    # no CUDA runtime or device allocation belongs in a config test.
-    cfg.distributed.resources.visible_devices = [0]
-    resolved = resolve_distributed_resources(cfg)
-    # memory_fraction passes through resolve_distributed_resources unchanged, so
-    # pinning == 0.55 only echoes the YAML. Assert the resolver's real invariant
-    # instead — it validates 0 < fraction <= 1 (vrl/ray/resources.py:302).
-    assert resolved.rollout_gpu_memory_fraction is not None
-    assert 0.0 < resolved.rollout_gpu_memory_fraction <= 1.0
-    # resident lifecycle is DERIVED from gpu_pool=trainer + memory_fraction (not YAML) — keep.
-    assert resolved.lifecycle.rollout.mode == "resident"
-    # height/width and the batch sizes are declarative debug-recipe YAML; load+validate
-    # coverage is in test_all_experiments_load_and_validate. No literal pins.
+    assert typed.continuous.max_stale_policy_versions >= 1
 
 
 def test_algorithm_config_dispatches_representative_kinds() -> None:

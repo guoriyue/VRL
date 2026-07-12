@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import gc
 from collections.abc import Callable, Mapping
 from typing import Any
 
@@ -12,6 +13,7 @@ from vrl.generation.capabilities import (
 from vrl.generation.execution.types import (
     ChunkExecutionEnvelope,
     ChunkExecutionResult,
+    WorkerMemoryParkingSnapshot,
 )
 from vrl.generation.launch_contract import GenerationRuntimeLaunchContract
 from vrl.generation.protocols import GenerationChunkExecutor
@@ -23,6 +25,7 @@ from vrl.utils.logging import init_logger
 from vrl.utils.profiling import TorchProfilerConfig
 
 logger = init_logger(__name__)
+
 
 class GenerationWorkerCore:
     """Own one generation executor and execute plan-aware chunks."""
@@ -57,37 +60,53 @@ class GenerationWorkerCore:
         # own "weights" tag = the offloaded (not discarded) slice of a sleeping
         # engine, keeping semantics identical to verl-omni's level-1.
         self._cumem: CumemPool | None = None
+        # A parking proof compares post-sleep physical usage with the usage that
+        # existed before this worker loaded its model. CUDA contexts and shared
+        # libraries make zero an invalid universal baseline.
+        self._parking_baseline_gpu_used_bytes: int | None = None
+        # CPU fallback destroys the model's original device information when it
+        # calls model.to("cpu"). Presence of this value also means that path is
+        # parked; CuMem keeps the equivalent state in CumemPool.asleep.
+        self._parking_restore_device: Any | None = None
 
     def load_policy(self) -> None:
         """Build the family executor from the serialized launch contract."""
 
         if self.executor is not None:
+            if self._parking_requested():
+                self._require_complete_parking_declaration()
+                self._require_complete_parking_backend()
             return
-        from vrl.utils.cuda_memory import cap_cuda_memory_fraction
         from vrl.utils.memory import log_host_memory
 
-        # Cap the allocator before the model loads so a colocated worker leaves the
-        # trainer its share of the shared GPU (no-op when unset / dedicated GPU).
-        cap_cuda_memory_fraction(self.launch_contract.extra.get("gpu_memory_fraction"))
+        if self._parking_requested():
+            self._require_complete_parking_declaration()
+            self._parking_baseline_gpu_used_bytes = self._gpu_used_bytes()
+        self._parking_restore_device = None
         log_host_memory(f"generation_worker:{self.worker_id}:before_load_policy", log=logger)
         self.executor = self._build_executor_maybe_pooled()
         self.capability = self._check_executor_capability(self.executor)
+        if self._parking_requested():
+            self._require_complete_parking_backend()
         log_host_memory(f"generation_worker:{self.worker_id}:after_load_policy", log=logger)
 
     def _build_executor_maybe_pooled(self) -> GenerationChunkExecutor:
         """Build the executor, pooling the model in CuMemAllocator when requested.
 
-        A sleep-offload worker (``extra["sleep_offload"]``, set by the lease for the
-        colocated-trainer timeshare) allocates the whole model inside vLLM's
+        A sleep-offload diffusion worker (``extra["sleep_offload"]``, set by the
+        colocated-trainer lease) allocates the whole model inside vLLM's
         CuMemAllocator pool, so ``sleep``/``wake`` release and restore the GPU
-        *physical* pages via CUDA virtual memory — virtual addresses stay mapped, so
-        wake needs no cudaMalloc and incurs no fragmentation (the naive
-        ``to(cpu)``+``empty_cache``+``to(gpu)`` path pays both). Falls back to a
-        plain build when offload is not requested or cumem is unavailable (CPU box,
-        vLLM not installed), so non-colocated and AR workers are unaffected.
+        *physical* pages via CUDA virtual memory. AR remains on the verified CPU
+        fallback because GLM-Image's temporary decode path calls ``empty_cache``;
+        doing that inside vLLM's pluggable allocator scope is unsupported. The
+        worker rejects families or executor shapes that have not declared and
+        implemented complete fallback parking instead of accepting a no-op.
         """
 
-        if not self.launch_contract.extra.get("sleep_offload"):
+        if (
+            not self.launch_contract.extra.get("sleep_offload")
+            or self.capability.trajectory_kind != "diffusion"
+        ):
             return self._build_executor()
         pool = CumemPool.try_create(tag="weights")
         if pool is None:
@@ -100,10 +119,21 @@ class GenerationWorkerCore:
     def release_policy(self) -> None:
         """Drop loaded model state so the worker releases CUDA memory before exit."""
 
+        pool = self._cumem
+        if pool is not None and pool.asleep:
+            # Tagged tensors must be mapped before they are destroyed; otherwise
+            # the allocator keeps their CPU backups and retained MemPool alive.
+            pool.wake()
         self.executor = None
         release_cuda_memory(gc_collect=True, ipc_collect=True)
+        if pool is not None:
+            pool.close()
+            self._cumem = None
+            release_cuda_memory(gc_collect=True, ipc_collect=True)
+        self._parking_baseline_gpu_used_bytes = None
+        self._parking_restore_device = None
 
-    def sleep(self) -> None:
+    def sleep(self) -> WorkerMemoryParkingSnapshot:
         """Offload the loaded model to host RAM, freeing the GPU without discarding it.
 
         Level-1 offload-and-restore (cf. vLLM ``sleep_level=1``): unlike
@@ -118,27 +148,72 @@ class GenerationWorkerCore:
         """
 
         if self.executor is None:
-            return
-        if self._cumem is not None:
+            if self._parking_requested():
+                raise RuntimeError(
+                    f"generation worker {self.worker_id!r} cannot park before policy load",
+                )
+            used_bytes = self._gpu_used_bytes()
+            snapshot = WorkerMemoryParkingSnapshot(
+                worker_id=self.worker_id,
+                backend="cpu_only",
+                baseline_gpu_used_bytes=used_bytes,
+                loaded_gpu_used_bytes=used_bytes,
+                residual_gpu_used_bytes=used_bytes,
+                residual_bytes_limit=0,
+            )
+            snapshot.validate()
+            return snapshot
+        if self._parking_requested():
+            self._require_complete_parking_declaration()
+        self._require_complete_parking_backend()
+        # This is provenance for the operation being attempted, not durable
+        # worker state. Sampling here includes generation-time caches allocated
+        # after load_policy() returned.
+        loaded_bytes = self._gpu_used_bytes()
+        pool = self._cumem
+        if pool is not None:
             # cumem owns the whole pooled model (transformer + frozen components);
             # one call offloads every tagged allocation to host RAM and releases the
-            # physical pages, no per-module .to() or empty_cache needed.
-            self._cumem.sleep()
-            return
-        model = getattr(self.executor, "model", None)
-        if model is None:
-            return
-        # Remember where to restore to: capture before the CPU move so a custom
-        # ``device`` property that does not track ``nn.Module.to`` still reports the
-        # GPU the model lived on.
-        self._sleep_device = self._executor_device(self.executor)
-        move = getattr(model, "to", None)
-        if callable(move):
-            move("cpu")
-        move_frozen = getattr(model, "move_frozen_components", None)
-        if callable(move_frozen):
-            move_frozen("cpu")
-        release_cuda_memory(gc_collect=True, ipc_collect=True)
+            # physical pages, no per-module .to() round trip needed.
+            if not pool.asleep:
+                pool.sleep()
+            self._release_cuda_memory_for_parking()
+            backend = "cumem"
+        else:
+            model = self.executor.model
+            restore_device = self._parking_restore_device
+            if restore_device is None:
+                # Capture before the CPU move: afterwards model.device can no
+                # longer tell wake() which CUDA device owned the model.
+                restore_device = self._executor_device(self.executor)
+                self._parking_restore_device = restore_device
+                model.to("cpu")
+                move_frozen = getattr(model, "move_frozen_components", None)
+                if callable(move_frozen):
+                    move_frozen("cpu")
+            self._release_cuda_memory_for_parking()
+            backend = (
+                "cpu_offload" if str(restore_device).startswith("cuda") else "cpu_only"
+            )
+
+        residual_bytes = self._gpu_used_bytes()
+        baseline_bytes = self._parking_baseline_gpu_used_bytes
+        if baseline_bytes is None:
+            if self._parking_requested() or residual_bytes:
+                raise RuntimeError(
+                    f"generation worker {self.worker_id!r} has no pre-load GPU "
+                    "parking baseline; load it with sleep_offload enabled",
+                )
+            baseline_bytes = 0
+        snapshot = WorkerMemoryParkingSnapshot(
+            worker_id=self.worker_id,
+            backend=backend,
+            baseline_gpu_used_bytes=baseline_bytes,
+            loaded_gpu_used_bytes=loaded_bytes,
+            residual_gpu_used_bytes=residual_bytes,
+        )
+        snapshot.validate()
+        return snapshot
 
     def wake(self) -> None:
         """Restore a slept model from host RAM onto its GPU (no disk reload).
@@ -152,18 +227,90 @@ class GenerationWorkerCore:
         if model is None:
             self.load_policy()
             return
-        if self._cumem is not None:
+        pool = self._cumem
+        if pool is not None:
             # Restore the pooled model's physical pages from host RAM at the same
             # virtual addresses — the tensors stay valid cuda tensors throughout.
-            self._cumem.wake()
+            pool.wake()
             return
-        device = getattr(self, "_sleep_device", None) or self._executor_device(self.executor)
+        device = self._parking_restore_device
+        if device is None:
+            return
         move = getattr(model, "to", None)
         if callable(move):
             move(device)
         move_frozen = getattr(model, "move_frozen_components", None)
         if callable(move_frozen):
             move_frozen(device)
+        self._parking_restore_device = None
+
+    def _parking_requested(self) -> bool:
+        return bool(self.launch_contract.extra.get("sleep_offload"))
+
+    def _require_complete_parking_declaration(self) -> None:
+        """Reject a shared-GPU family that has no complete parking contract."""
+
+        if not self.capability.supports_complete_memory_parking:
+            raise RuntimeError(
+                f"generation family {self.family!r} does not declare complete "
+                "memory parking support",
+            )
+
+    def _require_complete_parking_backend(self) -> None:
+        """Validate the concrete executor path before a shared-GPU run proceeds."""
+
+        if self._cumem is not None:
+            return
+        executor = self.executor
+        model = getattr(executor, "model", None)
+        if model is None or not callable(getattr(model, "to", None)):
+            raise RuntimeError(
+                f"generation worker {self.worker_id!r} cannot completely park "
+                f"{type(executor).__name__}: CPU fallback requires executor.model.to(...)"
+            )
+        if self.capability.trajectory_kind == "diffusion" and not callable(
+            getattr(model, "move_frozen_components", None),
+        ):
+            raise RuntimeError(
+                f"generation worker {self.worker_id!r} cannot completely park "
+                f"{type(model).__name__}: diffusion CPU fallback requires "
+                "move_frozen_components(...)"
+            )
+
+    @staticmethod
+    def _cuda_available() -> bool:
+        try:
+            import torch
+
+            return bool(torch.cuda.is_available())
+        except ImportError:
+            return False
+
+    @classmethod
+    def _gpu_used_bytes(cls) -> int:
+        """Driver-level physical memory in use on this worker's current GPU."""
+
+        if not cls._cuda_available():
+            return 0
+        import torch
+
+        torch.cuda.synchronize()
+        free_bytes, total_bytes = torch.cuda.mem_get_info()
+        return int(total_bytes - free_bytes)
+
+    @classmethod
+    def _release_cuda_memory_for_parking(cls) -> None:
+        """Strict CUDA cleanup: any failure invalidates the phase handoff."""
+
+        gc.collect()
+        if not cls._cuda_available():
+            return
+        import torch
+
+        torch.cuda.synchronize()
+        torch.cuda.empty_cache()
+        torch.cuda.ipc_collect()
+        torch.cuda.synchronize()
 
     def update_weights(self, state_ref: Any, policy_version: int) -> int:
         """Install weights and return the policy version as the commit ACK.
@@ -254,10 +401,7 @@ class GenerationWorkerCore:
                     output=None,
                     metrics=self._chunk_metrics(envelope, runtime_debug=runtime_debug),
                     policy_version=expected_version,
-                    error=(
-                        "trainable-state slot evicted for "
-                        f"policy_version={expected_version}"
-                    ),
+                    error=(f"trainable-state slot evicted for policy_version={expected_version}"),
                     stale_slot=True,
                 )
         elif expected_version is not None and self._policy_version != expected_version:
@@ -310,7 +454,6 @@ class GenerationWorkerCore:
         request: Any,
         *,
         max_samples: int,
-        memory_fraction: float | None = None,
         execute_steps: int = 2,
         margin: float = 0.05,
         knee_threshold: float = 0.05,
@@ -323,11 +466,10 @@ class GenerationWorkerCore:
         n=min(4, max) give a two-point affine fit of peak bytes (demand is
         affine in n); the fitted candidate is then CONFIRMED with one real trial
         because the allocator layer (segment rounding, fragmentation) is not.
-        The budget is the CONTRACT value ``memory_fraction x total``, not
-        instantaneous free memory — at probe time a colocated trainer has not
-        restored its weights yet, so free memory overestimates what rollout may
-        keep. Trial timing feeds a knee rule: growth that no longer improves
-        ms/sample is refused (no memory risk for a flat throughput return).
+        The rollout owns its GPU for this phase, so the probe budgets against the
+        device total rather than instantaneous free memory. Trial timing feeds a
+        knee rule: growth that no longer improves ms/sample is refused (no memory
+        risk for a flat throughput return).
         Probe outputs are discarded; trainable state / policy_version untouched.
         """
 
@@ -362,9 +504,8 @@ class GenerationWorkerCore:
                     "chunk stages; samples_per_chunk: auto is diffusion-only",
                 )
 
-        fraction = 1.0 if memory_fraction is None else float(memory_fraction)
         _, total_bytes = torch.cuda.mem_get_info()
-        contract_bytes = int(fraction * total_bytes)
+        budget_bytes = int(total_bytes)
 
         def run_trial(n: int, *, timed_label: str) -> dict[str, Any]:
             probe_sampling = {**dict(request.sampling), "samples_per_chunk": n}
@@ -417,9 +558,7 @@ class GenerationWorkerCore:
                 return {"n": n, "oom": True, "label": timed_label}
             wall_s = time.perf_counter() - started
             memory = chunk_result.memory
-            reading = (
-                ChunkMemoryReading.from_metrics(memory) if memory is not None else None
-            )
+            reading = ChunkMemoryReading.from_metrics(memory) if memory is not None else None
             del chunk_result, denoised, prepared, prompt_output, prompt_input
             torch.cuda.synchronize()
             torch.cuda.empty_cache()
@@ -445,7 +584,7 @@ class GenerationWorkerCore:
         if warmup["oom"]:
             raise RuntimeError(
                 "chunk-size probe: a single sample does not fit on this worker "
-                f"(contract budget {contract_bytes / 2**30:.1f} GiB); the recipe "
+                f"(phase budget {budget_bytes / 2**30:.1f} GiB); the recipe "
                 "shape is too large for this GPU",
             )
         trials.append(warmup)
@@ -463,7 +602,7 @@ class GenerationWorkerCore:
                 final = self._bisect_chunk_probe(run_trial, trials, 1, n_high)
             else:
                 usable_bytes = int(
-                    contract_bytes * (1.0 - margin) - high["non_torch_bytes"],
+                    budget_bytes * (1.0 - margin) - high["non_torch_bytes"],
                 )
                 fit = AffinePeakFit.from_trials(
                     1,
@@ -478,21 +617,21 @@ class GenerationWorkerCore:
                     trials.append(confirm)
                     if confirm["oom"]:
                         final = self._bisect_chunk_probe(
-                            run_trial, trials, n_high, candidate,
+                            run_trial,
+                            trials,
+                            n_high,
+                            candidate,
                         )
                     else:
                         final = candidate
                         # Knee rule: growing past n_high must still buy
                         # throughput, otherwise the extra memory risk is free.
-                        improvement = 1.0 - (
-                            confirm["per_sample_s"] / high["per_sample_s"]
-                        )
+                        improvement = 1.0 - (confirm["per_sample_s"] / high["per_sample_s"])
                         if improvement < knee_threshold:
                             final = n_high
         return {
             "samples_per_chunk": int(final),
-            "budget_bytes": contract_bytes,
-            "memory_fraction": fraction,
+            "budget_bytes": budget_bytes,
             "trials": trials,
         }
 
@@ -583,14 +722,17 @@ class GenerationWorkerCore:
                     f"{type(self.executor).__name__} must implement "
                     "forward_chunk_plan(...) for distributed chunk execution",
                 )
-            with capture_torch_trace(
-                self._profiler_config,
-                output_dir=self._profiler_output_dir,
-                step=step,
-                device=device,
-                worker_name=worker_name,
-                trace_subdir=f"generation/{self.worker_id}",
-            ), profile_range("engine.forward_chunk"):
+            with (
+                capture_torch_trace(
+                    self._profiler_config,
+                    output_dir=self._profiler_output_dir,
+                    step=step,
+                    device=device,
+                    worker_name=worker_name,
+                    trace_subdir=f"generation/{self.worker_id}",
+                ),
+                profile_range("engine.forward_chunk"),
+            ):
                 return forward_chunk_plan(request, chunk)
         except Exception:
             logger.exception("generation chunk execution failed")
@@ -711,6 +853,19 @@ class GenerationWorkerCore:
             raise ValueError(
                 "executor trajectory capability does not match launch contract: "
                 f"{declared.trajectory_kind} != {self.capability.trajectory_kind}",
+            )
+        if (
+            declared.supports_reference_conditioning
+            != self.capability.supports_reference_conditioning
+            or declared.supports_complete_memory_parking
+            != self.capability.supports_complete_memory_parking
+        ):
+            raise ValueError(
+                "executor feature capability does not match launch contract: "
+                f"reference={declared.supports_reference_conditioning} != "
+                f"reference={self.capability.supports_reference_conditioning}; "
+                f"parking={declared.supports_complete_memory_parking} != "
+                f"parking={self.capability.supports_complete_memory_parking}",
             )
         return declared
 

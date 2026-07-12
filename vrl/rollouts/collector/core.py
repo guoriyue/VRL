@@ -7,10 +7,13 @@ import time
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
+import torch
+
 if TYPE_CHECKING:
     from vrl.ray.resources import RayLifecyclePlan
 
 from vrl.generation import GenerationOutput, GenerationRuntime
+from vrl.rewards.base import RewardCleanupError
 from vrl.rollouts.batch import RolloutBatch
 from vrl.rollouts.collector.artifacts import (
     release_reward_artifact_if_needed,
@@ -49,7 +52,6 @@ class RolloutCollector:
     def __init__(
         self,
         *,
-        model: Any | None,
         config: Any,
         family: str,
         task: str,
@@ -58,22 +60,26 @@ class RolloutCollector:
         runtime: GenerationRuntime | None = None,
         lifecycle: RayLifecyclePlan | None = None,
     ) -> None:
-        self.model = model
         self.config = config
         self.family = family
         self.task = task
         self.request_builder = request_builder
         self.reward_scorer = reward_scorer
-        self._runtime = runtime
+        self._runtime: GenerationRuntime | None = None
+        if runtime is not None:
+            self.set_runtime(runtime)
         # Topology-derived handoff policy (vrl/ray/resources.py). None means no
         # shared GPU, so rollout never offloads before reward. Read here instead
         # of asking the runtime, which is now just transport.
         self._lifecycle = lifecycle
+        self._reward_phase_started = False
+        self._reward_shutdown_complete = False
 
     def set_runtime(self, runtime: GenerationRuntime) -> None:
-        if not callable(getattr(runtime, "generate", None)):
+        if not isinstance(runtime, GenerationRuntime):
             raise TypeError(
-                "generation runtime must implement async generate(request) -> GenerationOutput",
+                "generation runtime must implement the complete GenerationRuntime "
+                "protocol (activate/generate/offload/shutdown/topology)",
             )
         self._runtime = runtime
 
@@ -87,25 +93,61 @@ class RolloutCollector:
         return self._runtime
 
     async def shutdown(self) -> None:
-        shutdown = getattr(self._runtime, "shutdown", None)
-        if shutdown is not None:
-            await shutdown()
-        self._runtime = None
+        """Release generation before waking/destroying the reward owner."""
+
+        errors: list[BaseException] = []
+        runtime = self._runtime
+        if runtime is not None:
+            try:
+                await runtime.shutdown()
+            except BaseException as error:
+                errors.append(error)
+            else:
+                self._runtime = None
+        if errors:
+            # A slept reward pool must not remap pages while rollout ownership is
+            # unknown. Retain it asleep and let the next shutdown retry finish
+            # generation first.
+            raise errors[0]
+        if not self._reward_shutdown_complete:
+            try:
+                await self.reward_scorer.shutdown()
+            except BaseException as error:
+                errors.append(error)
+            else:
+                self._reward_shutdown_complete = True
+        if errors:
+            raise errors[0]
 
     async def activate_runtime(self) -> None:
-        activate = getattr(self._runtime, "activate", None)
-        if callable(activate):
-            await activate()
+        await self.runtime.activate()
 
     async def offload_runtime_memory(self) -> None:
-        offload = getattr(self._runtime, "offload", None)
-        if callable(offload):
-            await offload()
+        errors: list[BaseException] = []
+        try:
+            await self._offload_runtime_transport()
+        except BaseException as error:
+            errors.append(error)
+        if self._requires_reward_memory_release() and self._reward_phase_started:
+            # Phase-final gate: actively invoke the idempotent park operation.
+            # This retries a first sleep failure from score_many and never lets
+            # a cached proof from an earlier request authorize trainer restore.
+            try:
+                await self.reward_scorer.park_memory(
+                    required=True,
+                )
+            except BaseException as error:
+                errors.append(error)
+        if len(errors) == 1:
+            raise errors[0]
+        if errors:
+            raise RewardCleanupError(
+                "rollout and reward memory parking both failed",
+                errors,
+            )
 
-    async def release_runtime_memory(self) -> None:
-        """Compatibility facade for the former release terminology."""
-
-        await self.offload_runtime_memory()
+    async def _offload_runtime_transport(self) -> None:
+        await self.runtime.offload()
 
     async def collect(
         self,
@@ -133,9 +175,12 @@ class RolloutCollector:
         """
 
         collector_request = self.request_builder.build(prompts, int(group_size), dict(kwargs))
+        # A new generation phase has not activated reward memory yet. This also
+        # prevents a previous iteration's proof from authorizing a later handoff.
+        self._reward_phase_started = False
 
         profile = os.environ.get("VRL_PROFILE") == "1"
-        phase_t = _sync_time() if profile else None
+        phase_t = _wall_time() if profile else None
 
         output = await self.runtime.generate(collector_request.request)
         if output.error:
@@ -150,7 +195,7 @@ class RolloutCollector:
             profile=profile,
         )
         if profile and phase_t is not None:
-            unscored.phases["collect.engine_generate"] = _sync_time() - phase_t
+            unscored.phases["collect.engine_generate"] = _wall_time() - phase_t
         return unscored
 
     async def score_rollouts(self, unscored: list[UnscoredRollout]) -> list[RolloutBatch]:
@@ -167,14 +212,17 @@ class RolloutCollector:
         if self._should_release_runtime_before_reward_model():
             # Shared single-GPU reward runs park rollout model memory before the
             # in-process reward model takes over the physical GPU.
-            await self.offload_runtime_memory()
+            await self._offload_runtime_transport()
 
         contexts = []
         builders = []
         for rollout in unscored:
             context = RolloutBatchBuildContext(
                 metadata=dict(rollout.collector_request.metadata),
-                device=getattr(self.model, "device", None),
+                # Collector/continuous-owner output is host-owned. The trainer
+                # moves the completed batch to its device later; creating reward
+                # tensors here on the trainer GPU would race backward.
+                device="cpu",
                 kl_reward_coef=float(cfg_get(self.config, "kl_reward_coef", 0.0)),
                 reward_view_name=_reward_view_name(self.config),
                 trajectory_storage_policy=trajectory_storage_policy_from_cfg(
@@ -188,31 +236,52 @@ class RolloutCollector:
             builders.append(TrajectoryRolloutBatchBuilder(rollout.output, context))
 
         profile = any(rollout.profile for rollout in unscored)
-        phase_t = _sync_time() if profile else None
+        phase_t = _wall_time() if profile else None
+        require_reward_release = self._requires_reward_memory_release()
+        self._reward_phase_started = require_reward_release
+        reward_inputs = [
+            builder.reward_scoring_input(rollout.collector_request.metadata)
+            for builder, rollout in zip(builders, unscored, strict=True)
+        ]
         with record_function("collector.reward_score"):
-            rewards = await self.reward_scorer.score_many(
-                [
-                    builder.reward_scoring_input(rollout.collector_request.metadata)
-                    for builder, rollout in zip(builders, unscored, strict=True)
-                ],
+            score_result = await (
+                self.reward_scorer.score_many_with_components(
+                    reward_inputs,
+                    require_memory_release=True,
+                )
+                if require_reward_release
+                else self.reward_scorer.score_many_with_components(reward_inputs)
             )
-        reward_timing_ms = dict(
-            getattr(self.reward_scorer, "last_reward_timing_ms", {}) or {},
-        )
+        reward_timing_ms = dict(score_result.timing_ms)
         if reward_timing_ms:
             unscored[0].reward_timing_ms.update(reward_timing_ms)
-        reward_score_s = _sync_time() - phase_t if phase_t is not None else None
+        reward_score_s = _wall_time() - phase_t if phase_t is not None else None
 
-        build_t = _sync_time() if profile else None
+        build_t = _wall_time() if profile else None
         batches: list[RolloutBatch] = []
+        component_offset = 0
         for builder, context, rollout, group_rewards in zip(
             builders,
             contexts,
             unscored,
-            rewards,
+            score_result.scores,
             strict=True,
         ):
             batch = builder.build(group_rewards)
+            component_stop = component_offset + int(group_rewards.shape[0])
+            if score_result.components:
+                # Raw component values travel with their exact rollout rows.
+                # A continuous producer may already be scoring a future group
+                # when this batch is consumed, so trainer metrics must never
+                # read a mutable last-result cache from the shared reward model.
+                batch.extras["reward_components"] = {
+                    name: torch.tensor(
+                        values[component_offset:component_stop],
+                        dtype=torch.float32,
+                    )
+                    for name, values in score_result.components.items()
+                }
+            component_offset = component_stop
             release_reward_artifact_if_needed(batch, context.reward_artifact_policy)
             release_reward_artifact_if_needed(rollout.output, context.reward_artifact_policy)
             batches.append(batch)
@@ -223,7 +292,7 @@ class RolloutCollector:
             # phases stay on the rollouts (caller-owned) so concurrent collects
             # never share mutable collector state.
             unscored[0].phases["collect.reward_score"] = reward_score_s
-            unscored[0].phases["collect.batch_build"] = _sync_time() - build_t
+            unscored[0].phases["collect.batch_build"] = _wall_time() - build_t
         return batches
 
     def _should_release_runtime_before_reward_model(self) -> bool:
@@ -235,17 +304,31 @@ class RolloutCollector:
             return False
         return lifecycle.handoff.release_rollout_before_reward
 
+    def _requires_reward_memory_release(self) -> bool:
+        lifecycle = self._lifecycle
+        if lifecycle is None:
+            return False
+        return lifecycle.handoff.release_reward_after_score
+
     @property
     def requires_runtime_offload_before_reward(self) -> bool:
         """Whether scoring introduces a mid-iteration GPU handoff."""
 
         return self._should_release_runtime_before_reward_model()
 
+    @property
+    def requires_driver_model_offload_for_reward(self) -> bool:
+        """Whether reward scoring borrows the trainer's in-process GPU."""
+
+        lifecycle = self._lifecycle
+        if lifecycle is None:
+            return False
+        return lifecycle.handoff.release_trainer_before_reward
+
 
 def build_rollout_collector(
     family: str,
     *,
-    model: Any | None,
     reward_fn: Any | None,
     config: RolloutConfig | None = None,
     runtime: GenerationRuntime | None = None,
@@ -264,7 +347,6 @@ def build_rollout_collector(
         raise ValueError(f"{entry.family} collector registry entry is incomplete")
 
     return RolloutCollector(
-        model=model,
         config=config,
         family=entry.family,
         task=entry.task,
@@ -288,11 +370,9 @@ def _reward_view_name(config: Any) -> str | None:
     return str(value) if value else None
 
 
-def _sync_time() -> float:
-    import torch
+def _wall_time() -> float:
+    """Owner-safe timing that never synchronizes the trainer's CUDA device."""
 
-    if torch.cuda.is_available():
-        torch.cuda.synchronize()
     return time.perf_counter()
 
 

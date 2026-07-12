@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+from tests.trainers.online._collector_control import CollectorControlFake
 from tests.trainers.online._helpers import _algorithm_inputs, _trajectory_signals
 from vrl.rollouts.evaluators.base import Evaluator
 
 
 class TestTrainableState:
     """Groups tests for trainable state."""
+
     def test_initial_rollout_weight_sync_happens_before_collect(self) -> None:
         """Checks initial rollout weight sync happens before collect."""
         import asyncio
@@ -58,7 +60,7 @@ class TestTrainableState:
 
         syncer = _Syncer()
 
-        class _Collector:
+        class _Collector(CollectorControlFake):
             async def score_rollouts(self, pendings):
                 return list(pendings)
 
@@ -77,7 +79,9 @@ class TestTrainableState:
         class _Evaluator(Evaluator):
             def evaluate(self, model, batch, timestep_idx, **kw):
                 del kw
-                return _trajectory_signals(batch, model.weight.view(1).expand(batch.rewards.shape[0]), timestep_idx)
+                return _trajectory_signals(
+                    batch, model.weight.view(1).expand(batch.rewards.shape[0]), timestep_idx
+                )
 
         model = nn.Linear(1, 1, bias=False)
         with torch.no_grad():
@@ -126,7 +130,7 @@ class TestTrainableState:
 
             config = _Config()
 
-        class _Collector:
+        class _Collector(CollectorControlFake):
             async def score_rollouts(self, pendings):
                 return list(pendings)
 
@@ -164,4 +168,3 @@ class TestTrainableState:
                 ),
                 device="cpu",
             )
-

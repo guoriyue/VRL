@@ -440,8 +440,7 @@ CASES: tuple[RealCheckpointCase, ...] = (
     tuple(
         case
         for case in CASES
-        if case.case_id
-        in {"sd3_5_dance_grpo", "sd3_5_flow_dppo", "sd3_5_grpo_guard"}
+        if case.case_id in {"sd3_5_dance_grpo", "sd3_5_flow_dppo", "sd3_5_grpo_guard"}
     ),
     ids=lambda case: case.case_id,
 )
@@ -472,6 +471,10 @@ class _DirectExecutorGenerationRuntime:
         self.executor = executor
         self.current_policy_version = 0
 
+    @property
+    def requires_driver_model_offload(self) -> bool:
+        return False
+
     async def activate(self) -> None:
         return None
 
@@ -486,12 +489,18 @@ class _DirectExecutorGenerationRuntime:
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
 
+    async def shutdown(self) -> None:
+        return None
+
     def is_colocated(self) -> bool:
         return False
 
 
 class _SyntheticDiffusionReplayCollector:
     """Collector that exercises replay training without full generation assets."""
+
+    requires_runtime_offload_before_reward = False
+    requires_driver_model_offload_for_reward = False
 
     def __init__(
         self,
@@ -534,6 +543,10 @@ class _SyntheticDiffusionReplayCollector:
 
 class _StaticPolicyRuntime:
     current_policy_version = 0
+    requires_driver_model_offload = False
+
+    def is_colocated(self) -> bool:
+        return False
 
 
 @pytest.mark.e2e
@@ -599,7 +612,6 @@ def test_real_checkpoint_online_rl_updates_trainable_weights(
             )
             collector = build_collector_from_cfg(
                 cfg,
-                model=bundle.model,
                 reward_fn=reward_fn,
                 family=entry,
                 collector_config=collector_config,
@@ -648,12 +660,15 @@ def test_real_checkpoint_online_rl_updates_trainable_weights(
                 f"{case.logprob_parity_tol}) — broken sample/replay parity"
             )
         if case.use_config_reward:
-            _assert_local_reward_artifacts(tmp_path, reward_fn)
+            _assert_local_reward_artifacts(tmp_path, metrics)
     finally:
-        if reward_fn is not None:
-            asyncio.run(_shutdown_if_present(reward_fn))
         if collector is not None:
             asyncio.run(collector.shutdown())
+        elif reward_fn is not None:
+            # Once constructed, the collector is the reward runtime's sole
+            # terminal owner. The standalone fallback is only for failures
+            # before that ownership transfer completes.
+            asyncio.run(_shutdown_if_present(reward_fn))
         del trainer, collector, reward_fn, bundle
         gc.collect()
         if torch.cuda.is_available():
@@ -668,7 +683,6 @@ def _common_training_overrides(tmp_path: Path) -> tuple[str, ...]:
         "trainer.debug.first_step=false",
         "trainer.profile=false",
         "trainer.torch_profiler.enabled=false",
-        "trainer.rollout_orchestration.require_separate_gpus=false",
         "actor.ppo_epochs=1",
         "actor.gradient_checkpointing=false",
         "actor.timestep_fraction=1.0",
@@ -699,10 +713,10 @@ def _local_reward_overrides(tmp_path: Path) -> tuple[str, ...]:
     )
 
 
-def _assert_local_reward_artifacts(tmp_path: Path, reward_fn: Any) -> None:
-    components = getattr(reward_fn, "last_components", {})
+def _assert_local_reward_artifacts(tmp_path: Path, metrics: Any) -> None:
+    components = metrics.reward_components
     assert "kling_video_reward" in components
-    assert len(components["kling_video_reward"]) >= 2
+    assert isinstance(components["kling_video_reward"], float)
     assert (tmp_path / "reward_artifacts" / "manifest.jsonl").exists()
     assert (tmp_path / "reward_debug" / "kling_video_reward_results.jsonl").exists()
 

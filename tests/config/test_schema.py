@@ -258,9 +258,8 @@ def test_legacy_sync_trainable_state_string_rejected() -> None:
 def test_rollout_keys_are_registered_not_unknown() -> None:
     """distributed.rollout.* per-worker runtime keys are known to the walker.
 
-    Colocation no longer lives here: it moved to
-    distributed.resources.rollout.gpu_pool=trainer + memory_fraction, so the removed
-    distributed.rollout.colocate block is now (correctly) an unknown key."""
+    Colocation lives at distributed.resources.rollout.gpu_pool=trainer, so the
+    removed distributed.rollout.colocate block is correctly an unknown key."""
     from vrl.config.unknown_keys import find_unknown_keys
 
     cfg = _minimal_grpo_cfg(
@@ -276,6 +275,24 @@ def test_rollout_keys_are_registered_not_unknown() -> None:
     )
     unknown = find_unknown_keys(cfg)
     assert not [k for k in unknown if k.startswith("distributed.rollout")]
+
+
+def test_removed_rollout_memory_fraction_is_unknown() -> None:
+    """The removed bounded-resident input is absent from the key registry."""
+    from vrl.config.unknown_keys import find_unknown_keys
+
+    cfg = _minimal_grpo_cfg(
+        distributed={
+            "resources": {
+                "rollout": {
+                    "gpu_pool": "trainer",
+                    "memory_fraction": 0.4,
+                },
+            },
+        },
+    )
+
+    assert "distributed.resources.rollout.memory_fraction" in find_unknown_keys(cfg)
 
 
 @pytest.mark.parametrize("removed_key", ["placement_strategy", "max_inflight_batches"])

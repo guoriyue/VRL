@@ -1,4 +1,4 @@
-"""In-process continuous rollout producer.
+"""Owner-loop continuous rollout producer.
 
 A background ``asyncio`` task keeps a bounded number of ``RolloutCollector``
 collect jobs in flight, stamps each completed group with the policy version it
@@ -29,8 +29,8 @@ from vrl.rollouts.orchestration.continuous.types import (
     ContinuousRolloutProducerState,
     estimate_batch_bytes,
 )
-from vrl.rollouts.orchestration.rollout_runtime import RolloutRuntimeCoordinator
 from vrl.rollouts.orchestration.prompt_collection import collect_prompt_batches
+from vrl.rollouts.orchestration.rollout_runtime import RolloutRuntimeCoordinator
 from vrl.utils.stats import RolloutStats
 
 _CPU = torch.device("cpu")
@@ -82,13 +82,17 @@ class ContinuousRolloutProducer:
 
     # -- lifecycle ------------------------------------------------------
 
-    async def start(self) -> dict[str, float]:
-        phase_times: dict[str, float] = {}
-        await self.lifecycle.ensure_initial_weights(phase_times)
-        await self.lifecycle.activate_rollout_runtime(phase_times)
+    async def start(self) -> None:
+        """Start cadence after the owner has committed initial weights.
+
+        Runtime activation and weight ownership do not belong to this mechanism.
+        Production continuous runtimes are resident on disjoint GPUs, while the
+        dedicated owner commits the main-thread snapshot before starting this
+        loop.
+        """
+
         self.state.running = True
         self._loop_task = asyncio.create_task(self._run())
-        return phase_times
 
     def update_prompts(self, prompts: list[Any], *, prompt_set_id: int) -> None:
         # Producer swaps its prompt source for future submissions. In-flight
@@ -160,6 +164,18 @@ class ContinuousRolloutProducer:
                 await asyncio.sleep(self.poll_interval_s)
         except asyncio.CancelledError:  # pragma: no cover - cooperative shutdown
             raise
+        except BaseException as error:
+            # A cadence/control failure is not a retryable collect error: this
+            # task is the only admission loop, so record a behavior-consumed root
+            # that makes the waiting consumer quarantine the owner immediately.
+            self.state.running = False
+            self.state.error_count += 1
+            self.state.last_error = repr(error)
+            self.state.fatal_error = error
+            logger.error(
+                "continuous rollout producer control loop failed",
+                exc_info=(type(error), error, error.__traceback__),
+            )
 
     def _admit(self) -> None:
         while True:
@@ -271,12 +287,12 @@ class ContinuousRolloutProducer:
         # version was stamped at submit time, but current_version moved while it
         # was in flight. Dropping it here avoids queuing work the consumer would
         # discard at admission anyway, and keeps the wasted generation visible
-        # via discarded_stale_count. This is algorithm-agnostic: max_stale=0
-        # (e.g. DiffusionNFT) drops every group whose policy was superseded mid
-        # flight; a wider window (GRPO) only drops groups past that window.
+        # via discarded_stale_count. This is algorithm-agnostic: a narrower
+        # window drops groups sooner, while a wider window retains bounded lag.
         # too_stale() returns False for absent versions (no gating) and for
         # future items (staleness < 0, a bug), so those still flow to the
-        # consumer, which fails fast on them.
+        # consumer, which fails fast on them. A zero window is retained only for
+        # isolated mechanism tests; production continuous config requires >= 1.
         current_version = self.lifecycle.current_policy_version()
         if self.scheduler.discard_prompt_set_at_receipt(
             int(result["prompt_set_id"]),

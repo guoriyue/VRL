@@ -33,6 +33,8 @@ class OCRReward(RewardFunction):
     OCR-detected text and target to disk for reward-hacking audit.
     """
 
+    execution_device_source = "cpu_only"
+
     def __init__(self, device: str = "cuda", debug_dir: str | None = None) -> None:
         # Build eagerly so debug_dir creation fires now and tests can inject a
         # fake engine via ``reward._engine`` (proxied to the model below).
@@ -43,7 +45,8 @@ class OCRReward(RewardFunction):
             score_key="ocr",
             runtime=LocalRewardRuntime(model=model),
             artifact_builder=lambda rollouts: RewardFunction.build_inmemory_artifacts(
-                rollouts, media_type="image",
+                rollouts,
+                media_type="image",
             ),
         )
 

@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+from tests.trainers.online._collector_control import CollectorControlFake
 from tests.trainers.online._helpers import _algorithm_inputs, _trajectory_signals
 from vrl.rollouts.evaluators.base import Evaluator
 
 
 class TestRewardUpdateFlow:
     """Groups tests for reward update flow."""
+
     def test_cea_step_forwards_prompt_example_kwargs(self) -> None:
         """PromptExample fields should be forwarded as kwargs to collector.collect()."""
         import asyncio
@@ -52,7 +54,7 @@ class TestRewardUpdateFlow:
                     approx_kl=0.0,
                 )
 
-        class _CapturingCollector:
+        class _CapturingCollector(CollectorControlFake):
             async def score_rollouts(self, pendings):
                 return list(pendings)
 
@@ -71,7 +73,9 @@ class TestRewardUpdateFlow:
         class _Evaluator(Evaluator):
             def evaluate(self, model, batch, timestep_idx, **kw):
                 batch_size = batch.rewards.shape[0]
-                return _trajectory_signals(batch, model.weight.view(1).expand(batch_size), timestep_idx)
+                return _trajectory_signals(
+                    batch, model.weight.view(1).expand(batch_size), timestep_idx
+                )
 
         import torch.nn as nn
 
@@ -158,7 +162,7 @@ class TestRewardUpdateFlow:
                     approx_kl=float(old_log_probs.mean().item()),
                 )
 
-        class _Collector:
+        class _Collector(CollectorControlFake):
             async def score_rollouts(self, pendings):
                 return list(pendings)
 
@@ -191,7 +195,9 @@ class TestRewardUpdateFlow:
                 evaluate_group_ids.append(
                     [int(x) for x in batch.group_ids.detach().cpu().tolist()]
                 )
-                return _trajectory_signals(batch, model.weight.view(1).expand(batch.rewards.shape[0]), timestep_idx)
+                return _trajectory_signals(
+                    batch, model.weight.view(1).expand(batch.rewards.shape[0]), timestep_idx
+                )
 
         model = nn.Linear(1, 1, bias=False)
         with torch.no_grad():
@@ -262,7 +268,7 @@ class TestRewardUpdateFlow:
                 del model
                 after_step_calls.append(global_step)
 
-        class _Collector:
+        class _Collector(CollectorControlFake):
             async def score_rollouts(self, pendings):
                 return list(pendings)
 
@@ -290,11 +296,9 @@ class TestRewardUpdateFlow:
         class _Evaluator(Evaluator):
             def evaluate(self, model, batch, timestep_idx, **kw):
                 del kw
-                return _trajectory_signals(batch, model.weight.view(1).expand(batch.rewards.shape[0]), timestep_idx)
-
-        class _Reward:
-            def reset_components(self):
-                pass
+                return _trajectory_signals(
+                    batch, model.weight.view(1).expand(batch.rewards.shape[0]), timestep_idx
+                )
 
         model = nn.Linear(1, 1, bias=False)
         with torch.no_grad():
@@ -323,7 +327,6 @@ class TestRewardUpdateFlow:
         asyncio.run(
             _run_streaming_optimizer_update(
                 trainer,
-                _Reward(),
                 ["prompt-a", "prompt-b", "prompt-c", "prompt-d"],
                 gradient_accumulation_steps=4,
                 prompts_per_batch=4,
@@ -401,15 +404,10 @@ class TestRewardUpdateFlow:
             async def finish_optimizer_update(self, **kwargs):
                 return kwargs
 
-        class _Reward:
-            def reset_components(self):
-                pass
-
         trainer = _Trainer()
         asyncio.run(
             _run_streaming_optimizer_update(
                 trainer,
-                _Reward(),
                 ["prompt-a", "prompt-b"],
                 gradient_accumulation_steps=2,
                 prompts_per_batch=2,
@@ -435,10 +433,6 @@ class TestRewardUpdateFlow:
 
         recorded_grads: list[float] = []
 
-        class _Reward:
-            def reset_components(self):
-                pass
-
         class _Algorithm:
             class _Config:
                 global_std = False
@@ -458,7 +452,7 @@ class TestRewardUpdateFlow:
                 loss = signals.log_prob.mean()
                 return loss, TrainStepMetrics(loss=loss.item(), policy_loss=loss.item())
 
-        class _Collector:
+        class _Collector(CollectorControlFake):
             async def score_rollouts(self, pendings):
                 return list(pendings)
 
@@ -485,7 +479,9 @@ class TestRewardUpdateFlow:
         class _Evaluator(Evaluator):
             def evaluate(self, model, batch, timestep_idx, **kw):
                 del kw
-                return _trajectory_signals(batch, model.weight.view(1).expand(batch.rewards.shape[0]), timestep_idx)
+                return _trajectory_signals(
+                    batch, model.weight.view(1).expand(batch.rewards.shape[0]), timestep_idx
+                )
 
         model = nn.Linear(1, 1, bias=False)
         with torch.no_grad():
@@ -523,7 +519,6 @@ class TestRewardUpdateFlow:
         asyncio.run(
             _run_streaming_optimizer_update(
                 trainer,
-                _Reward(),
                 ["prompt-a", "prompt-b", "prompt-c", "prompt-d"],
                 gradient_accumulation_steps=4,
                 prompts_per_batch=4,
@@ -569,7 +564,7 @@ class TestRewardUpdateFlow:
                 loss = signals.log_prob.mean()
                 return loss, TrainStepMetrics(loss=loss.item(), policy_loss=loss.item())
 
-        class _Collector:
+        class _Collector(CollectorControlFake):
             async def score_rollouts(self, pendings):
                 return list(pendings)
 
@@ -593,11 +588,9 @@ class TestRewardUpdateFlow:
         class _Evaluator(Evaluator):
             def evaluate(self, model, batch, timestep_idx, **kw):
                 del kw
-                return _trajectory_signals(batch, model.weight.view(1).expand(batch.rewards.shape[0]), timestep_idx)
-
-        class _Reward:
-            def reset_components(self):
-                pass
+                return _trajectory_signals(
+                    batch, model.weight.view(1).expand(batch.rewards.shape[0]), timestep_idx
+                )
 
         def _make_trainer(gas: int) -> OnlineTrainer:
             model = nn.Linear(1, 1, bias=False)
@@ -631,7 +624,6 @@ class TestRewardUpdateFlow:
         asyncio.run(
             _run_streaming_optimizer_update(
                 trainer_stream,
-                _Reward(),
                 list(prompts),
                 gradient_accumulation_steps=4,
                 prompts_per_batch=4,
@@ -643,7 +635,9 @@ class TestRewardUpdateFlow:
         assert trainer_stream.state.global_step == 1
         # Same accumulated gradient + one SGD step from identical init weights.
         assert torch.allclose(
-            trainer_full.model.weight, trainer_stream.model.weight, atol=1e-6,
+            trainer_full.model.weight,
+            trainer_stream.model.weight,
+            atol=1e-6,
         )
 
 
@@ -693,7 +687,7 @@ def test_replay_samples_per_chunk_splits_backward_and_preserves_gradient(monkeyp
             loss = signals.log_prob.mean()
             return loss, TrainStepMetrics(loss=loss.item(), policy_loss=loss.item())
 
-    class _Collector:
+    class _Collector(CollectorControlFake):
         async def score_rollouts(self, pendings):
             return list(pendings)
 
@@ -719,10 +713,6 @@ def test_replay_samples_per_chunk_splits_backward_and_preserves_gradient(monkeyp
             self.calls.append(int(batch.rewards.shape[0]))
             log_prob = model.weight.reshape(()) * batch.rewards
             return _trajectory_signals(batch, log_prob, timestep_idx)
-
-    class _Reward:
-        def reset_components(self):
-            pass
 
     def _make_trainer(
         replay_samples_per_chunk: int,
@@ -779,7 +769,6 @@ def test_replay_samples_per_chunk_splits_backward_and_preserves_gradient(monkeyp
             asyncio.run(
                 _run_streaming_optimizer_update(
                     trainer,
-                    _Reward(),
                     ["prompt"],
                     gradient_accumulation_steps=1,
                     prompts_per_batch=1,
@@ -953,7 +942,7 @@ def test_fixed_replay_chunk_remains_available_to_distributed_strategies() -> Non
         )
         trainer = OnlineTrainer(
             algorithm=_Algorithm(),
-            collector=object(),
+            collector=CollectorControlFake(),
             evaluator=None,
             model=nn.Linear(1, 1),
             config=TrainerConfig(

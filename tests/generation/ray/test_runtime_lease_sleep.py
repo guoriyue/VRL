@@ -8,10 +8,17 @@ from typing import Any
 
 import pytest
 
+from vrl.generation.execution.types import (
+    DistributedWorkerHandle,
+    WorkerMemoryParkingSnapshot,
+)
 from vrl.generation.launch_contract import GenerationRuntimeLaunchContract
 from vrl.generation.ray.launch_inputs import RayGenerationLaunchInputs
 from vrl.generation.ray.lifecycle_fsm import RuntimeLifecycleError, RuntimePhase
-from vrl.generation.ray.runtime import RayGenerationRuntime, _PolicySnapshot
+from vrl.generation.ray.runtime import (
+    RayGenerationRuntime,
+    _PolicySnapshot,
+)
 from vrl.trainers.weight_sync import build_runtime_weight_syncer
 
 
@@ -75,7 +82,6 @@ class _BlockingSleepInner(_FakeInner):
 def _on_demand_resources(*, colocated: bool = True) -> SimpleNamespace:
     return SimpleNamespace(
         colocated=colocated,
-        rollout_gpu_memory_fraction=None,
         lifecycle=SimpleNamespace(
             rollout=SimpleNamespace(mode="on_demand"),
         ),
@@ -123,6 +129,134 @@ def _set_desired_policy(
     assert state is not None
     state.desired_policy = _PolicySnapshot(state_ref, policy_version)
     runtime.current_policy_version = policy_version
+
+
+def _parking_snapshot(
+    worker_id: str = "rollout-0",
+    *,
+    residual_bytes: int = 0,
+) -> WorkerMemoryParkingSnapshot:
+    return WorkerMemoryParkingSnapshot(
+        worker_id=worker_id,
+        backend="cpu_offload",
+        baseline_gpu_used_bytes=0,
+        loaded_gpu_used_bytes=1024,
+        residual_gpu_used_bytes=residual_bytes,
+        residual_bytes_limit=0,
+    )
+
+
+class _ResolvedRef:
+    def __init__(self, value: Any) -> None:
+        self.value = value
+
+    def __await__(self):
+        async def resolve() -> Any:
+            if isinstance(self.value, BaseException):
+                raise self.value
+            return self.value
+
+        return resolve().__await__()
+
+
+class _RemoteResult:
+    def __init__(self, value: Any) -> None:
+        self.value = value
+        self.calls = 0
+
+    def remote(self) -> _ResolvedRef:
+        self.calls += 1
+        return _ResolvedRef(self.value)
+
+
+class _ParkingActor:
+    def __init__(self, report: Any) -> None:
+        self.sleep = _RemoteResult(report)
+        self.wake = _RemoteResult(None)
+
+
+def _parking_runtime(*reports: Any) -> RayGenerationRuntime:
+    workers = [
+        DistributedWorkerHandle(
+            worker_id=f"rollout-{index}",
+            actor=_ParkingActor(report),
+        )
+        for index, report in enumerate(reports)
+    ]
+    return RayGenerationRuntime(SimpleNamespace(), owned_workers=workers)
+
+
+@pytest.mark.asyncio
+async def test_runtime_validates_complete_worker_parking_evidence() -> None:
+    runtime = _parking_runtime(
+        _parking_snapshot("rollout-0"),
+        _parking_snapshot("rollout-1"),
+    )
+
+    snapshots = await runtime.sleep_workers()
+
+    assert tuple(snapshot.worker_id for snapshot in snapshots) == (
+        "rollout-0",
+        "rollout-1",
+    )
+
+
+@pytest.mark.asyncio
+async def test_runtime_rejects_mismatched_worker_parking_evidence() -> None:
+    runtime = _parking_runtime(_parking_snapshot("another-worker"))
+
+    with pytest.raises(RuntimeError, match="mismatched worker memory-parking report"):
+        await runtime.sleep_workers()
+
+
+@pytest.mark.asyncio
+async def test_runtime_rejects_worker_gpu_residual() -> None:
+    runtime = _parking_runtime(_parking_snapshot(residual_bytes=1))
+
+    with pytest.raises(RuntimeError, match="incomplete cpu_offload memory parking"):
+        await runtime.sleep_workers()
+
+
+@pytest.mark.asyncio
+async def test_runtime_requires_every_worker_parking_rpc_to_succeed() -> None:
+    runtime = _parking_runtime(
+        _parking_snapshot("rollout-0"),
+        RuntimeError("worker sleep failed"),
+    )
+
+    with pytest.raises(RuntimeError, match="worker sleep failed"):
+        await runtime.sleep_workers()
+
+
+@pytest.mark.asyncio
+async def test_runtime_rejects_missing_worker_actor_before_parking() -> None:
+    runtime = RayGenerationRuntime(
+        SimpleNamespace(),
+        owned_workers=[DistributedWorkerHandle(worker_id="rollout-0")],
+    )
+
+    with pytest.raises(RuntimeError, match="generation workers have no actor"):
+        await runtime.sleep_workers()
+
+
+@pytest.mark.asyncio
+async def test_runtime_rejects_duplicate_worker_ids_before_parking() -> None:
+    runtime = RayGenerationRuntime(
+        SimpleNamespace(),
+        owned_workers=[
+            DistributedWorkerHandle(
+                worker_id="rollout-0",
+                actor=_ParkingActor(_parking_snapshot("rollout-0")),
+            ),
+            DistributedWorkerHandle(
+                worker_id="rollout-0",
+                actor=_ParkingActor(_parking_snapshot("rollout-0")),
+            ),
+        ],
+    )
+
+    with pytest.raises(RuntimeError, match="duplicate generation worker ids"):
+        await runtime.sleep_workers()
 
 
 def test_on_demand_factory_stamps_contract_for_cumem_offload() -> None:
@@ -335,9 +469,10 @@ async def test_update_cleanup_failure_retains_inner_for_retry() -> None:
     inner = _FailingInner()
     state.inner_runtime = inner
 
-    with pytest.raises(RuntimeError, match="worker cleanup failed") as caught:
+    with pytest.raises(RuntimeError, match="worker update failed") as caught:
         await runtime.update_weights("W2", 2)
-    assert caught.value.__cause__ is update_error
+    assert caught.value is update_error
+    assert runtime.lifecycle.failure is update_error
     assert runtime.lifecycle.phase is RuntimePhase.SHUTTING_DOWN
     assert state.inner_runtime is inner
 
@@ -390,6 +525,43 @@ async def test_offload_failure_runs_terminal_cleanup() -> None:
     assert runtime.lifecycle.phase is RuntimePhase.TERMINATED
     assert state.inner_runtime is None
     assert inner.calls == ["shutdown"]
+
+
+@pytest.mark.asyncio
+async def test_offload_cleanup_failure_retains_inner_for_shutdown_retry() -> None:
+    runtime = _on_demand_runtime()
+    state = runtime._on_demand
+    assert state is not None
+    offload_error = RuntimeError("sleep failed")
+    cleanup_error = RuntimeError("worker cleanup failed")
+
+    class _FailingInner(_FakeInner):
+        shutdown_calls = 0
+
+        async def sleep_workers(self) -> None:
+            raise offload_error
+
+        async def shutdown(self) -> None:
+            self.shutdown_calls += 1
+            if self.shutdown_calls == 1:
+                raise cleanup_error
+            self.calls.append("shutdown")
+
+    inner = _FailingInner()
+    state.inner_runtime = inner
+
+    with pytest.raises(RuntimeError, match="worker cleanup failed") as caught:
+        await runtime.offload()
+    assert caught.value is cleanup_error
+    assert caught.value.__cause__ is offload_error
+    assert runtime.lifecycle.failure is offload_error
+    assert runtime.lifecycle.phase is RuntimePhase.SHUTTING_DOWN
+    assert state.inner_runtime is inner
+
+    await runtime.shutdown()
+    assert inner.shutdown_calls == 2
+    assert state.inner_runtime is None
+    assert runtime.lifecycle.phase is RuntimePhase.TERMINATED
 
 
 @pytest.mark.asyncio

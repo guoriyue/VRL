@@ -31,7 +31,7 @@ from vrl.trainers.core.types import TrainerConfig, TrainState
 from vrl.trainers.online.ema import EMAModuleWrapper
 from vrl.trainers.online.precision_guard import run_precision_drift_guard
 from vrl.trainers.precision import normalize_mixed_precision
-from vrl.trainers.strategy import SingleProcessStrategy, Strategy
+from vrl.trainers.strategy import SingleProcessStrategy, Strategy, TrainingMemoryState
 from vrl.trainers.weight_sync import TrainableStateGetter, WeightSyncer
 from vrl.utils.model_diagnostics import (
     parameter_state_summary,
@@ -334,6 +334,41 @@ class TrainingBatch:
     pre_filter_reward_mean: float
     pre_filter_reward_std: float
     pre_filter_adv_mean: float
+    reward_components: dict[str, list[float]]
+
+
+def _rollout_reward_components(
+    batches: list[RolloutBatch],
+) -> dict[str, list[float]]:
+    """Extract batch-aligned component scores before sample filtering."""
+
+    components: dict[str, list[float]] = {}
+    for batch in batches:
+        payload = batch.extras.get("reward_components")
+        if payload is None:
+            continue
+        if not isinstance(payload, Mapping):
+            raise TypeError("rollout reward_components must be a mapping")
+        batch_size = int(batch.rewards.shape[0])
+        for raw_name, raw_values in payload.items():
+            name = str(raw_name)
+            if isinstance(raw_values, torch.Tensor):
+                values = raw_values.detach().cpu().reshape(-1).tolist()
+            else:
+                values = list(raw_values)
+            if len(values) != batch_size:
+                raise ValueError(
+                    "rollout reward component/sample mismatch: "
+                    f"component={name!r}, scores={len(values)}, expected={batch_size}",
+                )
+            components.setdefault(name, []).extend(float(value) for value in values)
+    return components
+
+
+def _mean_reward_components(
+    components: Mapping[str, list[float]],
+) -> dict[str, float]:
+    return {name: sum(values) / len(values) for name, values in components.items() if values}
 
 
 @dataclass(frozen=True, slots=True)
@@ -509,8 +544,8 @@ class OnlineTrainer(Trainer):
         self.rollout_schedule = build_rollout_schedule(
             self.config.rollout_orchestration,
             collector=self.collector,
-            model=self.model,
-            device=self.device,
+            strategy=self._strategy,
+            training_state_getter=self._training_memory_state,
             weight_syncer=self.weight_syncer,
             sync_state_getter=self.sync_state_getter,
             weights_initialized=lambda: self._rollout_weights_initialized,
@@ -537,10 +572,9 @@ class OnlineTrainer(Trainer):
         byte-equivalent to plain GRPO — the documented flat-curve root cause. Fail
         fast instead of silently training a no-op mechanism.
 
-        A continuous schedule only creates a moving ratio when it actually
-        permits stale behavior-policy versions. Its default
-        ``max_stale_policy_versions=0`` is behavior-equivalent to strict
-        on-policy execution and must be rejected at one epoch as well.
+        Continuous always permits a bounded behavior-policy lag; its typed
+        configuration rejects a zero-version window because that execution is
+        the ``strict_on_policy`` schedule.
         """
         if not bool(getattr(self.algorithm, "requires_active_trust_region", False)):
             return
@@ -590,6 +624,18 @@ class OnlineTrainer(Trainer):
 
     def _set_rollout_weights_initialized(self, value: bool) -> None:
         self._rollout_weights_initialized = bool(value)
+
+    def _training_memory_state(self) -> TrainingMemoryState:
+        """Resolve the trainer-owned objects live at the rollout phase boundary."""
+
+        return TrainingMemoryState(
+            model=self.model,
+            ref_model=self.ref_model,
+            optimizer=self._optimizer,
+            ema=self._ema,
+            grad_scaler=self._grad_scaler,
+            device=self.device,
+        )
 
     # ------------------------------------------------------------------
     # Accelerator-aware backward/step helpers
@@ -743,6 +789,7 @@ class OnlineTrainer(Trainer):
             runtime_debug=runtime_debug_collect,
         )
         all_batches: list[RolloutBatch] = iteration.batches
+        reward_components = _rollout_reward_components(all_batches)
 
         # 2. Compute advantages (per-prompt normalization).
         # Rewards are concatenated across all collected batches, normalized
@@ -819,6 +866,7 @@ class OnlineTrainer(Trainer):
             pre_filter_reward_mean=pre_filter_reward_mean,
             pre_filter_reward_std=pre_filter_reward_std,
             pre_filter_adv_mean=pre_filter_adv_mean,
+            reward_components=reward_components,
         )
 
     @staticmethod
@@ -857,11 +905,7 @@ class OnlineTrainer(Trainer):
     # ------------------------------------------------------------------
 
     def begin_optimizer_update(self) -> None:
-        """Start one streaming optimizer update: reset grads + metric accumulator.
-
-        The recipe pairs this with ``reward_fn.reset_components()`` once per
-        update (the trainer holds no reward_fn reference).
-        """
+        """Start one streaming optimizer update: reset grads + metric accumulator."""
         self._update_optimizer = self._ensure_optimizer()
         self._update_ema = self._ensure_ema()
         self.model.train()
@@ -961,6 +1005,7 @@ class OnlineTrainer(Trainer):
         adv_saturation: float,
         group_size: float,
         trained_prompt_num: int,
+        reward_components: dict[str, float],
     ) -> TrainStepMetrics:
         """Clip + optimizer.step + EMA/NFT (once) and build the one update's metrics.
 
@@ -999,6 +1044,7 @@ class OnlineTrainer(Trainer):
             kl_penalty=avg("kl_penalty"),
             reward_mean=reward_mean,
             reward_std=reward_std,
+            reward_components=reward_components,
             advantage_mean=adv_mean,
             clip_fraction=avg("clip_fraction"),
             approx_kl=avg("approx_kl"),
@@ -1050,6 +1096,7 @@ class OnlineTrainer(Trainer):
         pre_filter_reward_mean = batch.pre_filter_reward_mean
         pre_filter_reward_std = batch.pre_filter_reward_std
         pre_filter_adv_mean = batch.pre_filter_adv_mean
+        reward_components = _mean_reward_components(batch.reward_components)
 
         # 3. Train loop — gradient accumulation across per-prompt batches.
         self.model.train()
@@ -1083,6 +1130,7 @@ class OnlineTrainer(Trainer):
                 kl_penalty=0.0,
                 reward_mean=reward_mean,
                 reward_std=reward_std,
+                reward_components=reward_components,
                 advantage_mean=pre_filter_adv_mean,
                 clip_fraction=0.0,
                 approx_kl=0.0,
@@ -1413,6 +1461,7 @@ class OnlineTrainer(Trainer):
             kl_penalty=avg("kl_penalty"),
             reward_mean=reward_mean,
             reward_std=reward_std,
+            reward_components=reward_components,
             advantage_mean=adv_mean,
             clip_fraction=avg("clip_fraction"),
             approx_kl=avg("approx_kl"),

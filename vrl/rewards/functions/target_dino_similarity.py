@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from vrl.rewards.base import RewardFunction
+from vrl.rewards.base import RewardFunction, resolve_reward_component_device
 from vrl.rewards.models.target_dino_similarity import TargetDinoSimilarityModel
 from vrl.rewards.runtime import LocalRewardRuntime
 
@@ -21,7 +21,12 @@ class TargetDinoSimilarityReward(RewardFunction):
     ) -> None:
         cfg = dict(worker_config or {})
         if device:
-            cfg.setdefault("device", device)
+            configured_device = str(cfg.get("device", "")).strip()
+            _, effective_device = resolve_reward_component_device(
+                resolved_device=str(device),
+                overrides=[("worker_config.device", configured_device)],
+            )
+            cfg["device"] = effective_device
         model = TargetDinoSimilarityModel(cfg)
         super().__init__(
             reward_name=reward_name,

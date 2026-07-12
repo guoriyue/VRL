@@ -4,11 +4,13 @@ from __future__ import annotations
 
 import pytest
 
+from tests.trainers.online._collector_control import CollectorControlFake
 from tests.trainers.online._helpers import _algorithm_inputs, _trajectory_signals
 
 
 class TestOnlineTrainerResumeState:
     """Groups tests for online trainer resume state."""
+
     def test_load_state_dict_initializes_and_restores_optimizer_state(self) -> None:
         """Checks load state dict initializes and restores optimizer state."""
         import torch
@@ -151,7 +153,7 @@ class _ResumeAlgorithm:
         )
 
 
-class _ResumeCollector:
+class _ResumeCollector(CollectorControlFake):
     async def score_rollouts(self, pendings):
         return list(pendings)
 
@@ -185,7 +187,9 @@ class _ResumeEvaluator:
     def evaluate(self, model, batch, timestep_idx, **kw):
         del kw
 
-        return _trajectory_signals(batch, model.weight.view(1).expand(batch.rewards.shape[0]), timestep_idx)
+        return _trajectory_signals(
+            batch, model.weight.view(1).expand(batch.rewards.shape[0]), timestep_idx
+        )
 
 
 class _Syncer:
@@ -226,9 +230,11 @@ def _make_resume_trainer(
         model=model,
         weight_syncer=weight_syncer,
         sync_state_getter=(
-            lambda: {"linear.weight": model.weight.detach().clone()}
-            if weight_syncer is not None
-            else None
+            lambda: (
+                {"linear.weight": model.weight.detach().clone()}
+                if weight_syncer is not None
+                else None
+            )
         ),
         config=TrainerConfig(
             prompts_per_batch=1,

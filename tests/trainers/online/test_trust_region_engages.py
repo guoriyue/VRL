@@ -15,6 +15,7 @@ import pytest
 import torch
 import torch.nn as nn
 
+from tests.trainers.online._collector_control import CollectorControlFake
 from tests.trainers.online._helpers import _trajectory_signals
 from vrl.algorithms.grpo.continuous import GRPO, FlowDPPO, GRPOGuard
 from vrl.rollouts.batch import RolloutBatch
@@ -29,7 +30,7 @@ from vrl.trainers.core.types import (
 from vrl.trainers.online import OnlineTrainer
 
 
-class _Collector:
+class _Collector(CollectorControlFake):
     async def score_rollouts(self, pendings):
         return list(pendings)
 
@@ -62,7 +63,7 @@ def _build_trainer(
     algorithm,
     ppo_epochs: int = 1,
     schedule_mode: str = "strict_on_policy",
-    max_stale_policy_versions: int = 0,
+    max_stale_policy_versions: int = 1,
 ) -> OnlineTrainer:
     model = nn.Linear(1, 1, bias=False)
     with torch.no_grad():
@@ -124,14 +125,9 @@ def test_plain_grpo_single_epoch_is_allowed(tmp_path) -> None:
     assert trainer is not None
 
 
-def test_continuous_without_staleness_rejects_single_epoch_trust_region(tmp_path) -> None:
-    with pytest.raises(ValueError, match="staleness"):
-        _build_trainer(
-            tmp_path,
-            algorithm=FlowDPPO(),
-            schedule_mode="continuous",
-            max_stale_policy_versions=0,
-        )
+def test_continuous_zero_staleness_is_rejected_by_typed_config() -> None:
+    with pytest.raises(ValueError, match=r"max_stale_policy_versions must be >= 1"):
+        ContinuousRolloutConfig(max_stale_policy_versions=0)
 
 
 def test_continuous_with_staleness_allows_single_epoch_trust_region(tmp_path) -> None:

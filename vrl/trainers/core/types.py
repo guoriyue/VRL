@@ -84,7 +84,6 @@ class DebugConfig:
     first_step: bool = field(default=False)
 
 
-
 @dataclass(slots=True)
 class PrecisionDriftGuardConfig:
     """Rollout-vs-replay logprob parity guard (precision/backend drift).
@@ -121,16 +120,15 @@ class PrecisionDriftGuardConfig:
 class ContinuousRolloutConfig:
     """Tuning for ``mode='continuous'`` (producer/ready-queue/consumer).
 
-    Defaults are the safe, strict-equivalent Phase A profile: a single in-flight
-    group, no staleness, and no off-policy training. Raising
-    ``max_stale_policy_versions``/``max_ready_groups``/``max_inflight_groups``
-    turns on bounded off-policy prefetch (the cross-node throughput mode).
+    Continuous execution is bounded off-policy prefetch by definition. A
+    zero-version window is serial strict-on-policy execution and belongs to the
+    ``strict_on_policy`` schedule instead of a second continuous submode.
     """
 
     max_inflight_groups: int = field(default=1)
     max_ready_groups: int = field(default=2)
     max_ready_bytes_mb: int = field(default=8192)
-    max_stale_policy_versions: int = field(default=0)
+    max_stale_policy_versions: int = field(default=1)
     wait_timeout_s: float = field(default=300.0)
     queue_poll_interval_s: float = field(default=0.05)
     # Consecutive producer failures with ZERO completions the consumer tolerates
@@ -145,8 +143,8 @@ class ContinuousRolloutConfig:
             raise ValueError("continuous.max_inflight_groups must be >= 1")
         if int(self.max_ready_groups) < 1:
             raise ValueError("continuous.max_ready_groups must be >= 1")
-        if int(self.max_stale_policy_versions) < 0:
-            raise ValueError("continuous.max_stale_policy_versions must be >= 0")
+        if int(self.max_stale_policy_versions) < 1:
+            raise ValueError("continuous.max_stale_policy_versions must be >= 1")
         if int(self.fail_fast_errors) < 0:
             raise ValueError("continuous.fail_fast_errors must be >= 0")
 
@@ -156,7 +154,6 @@ class RolloutOrchestrationConfig:
     """RL rollout schedule configuration."""
 
     schedule_mode: str = field(default="strict_on_policy")
-    require_separate_gpus: bool = field(default=True)
     continuous: ContinuousRolloutConfig = field(default_factory=ContinuousRolloutConfig)
 
     def __post_init__(self) -> None:

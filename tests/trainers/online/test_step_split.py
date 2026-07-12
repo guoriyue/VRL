@@ -14,6 +14,7 @@ import asyncio
 import torch
 import torch.nn as nn
 
+from tests.trainers.online._collector_control import CollectorControlFake
 from tests.trainers.online._helpers import _algorithm_inputs, _trajectory_signals
 from vrl.algorithms.types import TrainStepMetrics
 from vrl.rollouts.batch import RolloutBatch
@@ -42,7 +43,7 @@ class _Algorithm:
         return loss, TrainStepMetrics(loss=loss.item(), policy_loss=loss.item())
 
 
-class _Collector:
+class _Collector(CollectorControlFake):
     async def score_rollouts(self, pendings):
         return list(pendings)
 

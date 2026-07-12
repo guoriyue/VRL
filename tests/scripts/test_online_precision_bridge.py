@@ -23,11 +23,7 @@ from vrl.trainers.precision import torch_dtype_for_trainer_precision
 # truth in test_load_all_experiments) rather than hand-maintaining a subset —
 # the old hand list had drifted and only exercised four recipes. "online" ==
 # every experiment whose final path component is not an `offline_*` recipe.
-_RECIPES = [
-    name
-    for name in _experiment_names()
-    if not Path(name).name.startswith("offline_")
-]
+_RECIPES = [name for name in _experiment_names() if not Path(name).name.startswith("offline_")]
 
 
 @pytest.mark.parametrize("experiment", _RECIPES)
@@ -47,7 +43,7 @@ def test_bridge_uses_aligned_public_precision(experiment):
 
 def test_precision_block_drives_trainer():
     """Checks precision block drives trainer."""
-    cfg = load_config("experiment/diffusion/sd3_5/online_grpo_geneval")
+    cfg = load_config("experiment/diffusion/sd3_5/online_grpo_ocr")
     cfg = OmegaConf.merge(cfg, OmegaConf.create({"precision": "fp32"}))
     assert torch_dtype_for_trainer_precision(build_configs(cfg)["trainer"], torch) is torch.float32
 
@@ -195,7 +191,7 @@ def test_online_metrics_csv_includes_logprob_mismatch_metrics(tmp_path):
     run = OnlineRecipeRun(
         stack=SimpleNamespace(
             component_names=(),
-            reward_fn=SimpleNamespace(last_components={}),
+            reward_fn=SimpleNamespace(),
         ),
         csv_path=csv_path,
         rng=None,
@@ -246,7 +242,8 @@ def test_online_metrics_csv_includes_logprob_mismatch_metrics(tmp_path):
 
 
 @pytest.mark.parametrize(
-    "frozen,expected", [("fp16", torch.float16), ("bf16", torch.bfloat16)],
+    "frozen,expected",
+    [("fp16", torch.float16), ("bf16", torch.bfloat16)],
 )
 def test_frozen_axis_in_runtime_spec(frozen, expected):
     # P1b: the frozen axis rides the spec as a real torch.dtype (like `dtype`).

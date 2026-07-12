@@ -4,10 +4,10 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from vrl.rewards.base import RewardFunction
+from vrl.rewards.base import CumemRewardFunction
 
 
-class PickScoreReward(RewardFunction):
+class PickScoreReward(CumemRewardFunction):
     """PickScore v1 (CLIP ViT-H/14), normalised by /26 to roughly [0, 1]."""
 
     def __init__(

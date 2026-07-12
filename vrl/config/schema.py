@@ -685,9 +685,9 @@ class RolloutWorkerSection(ConfigBase):
 
     reader: vrl/generation/ray/config.py RayGenerationConfig.from_cfg (worker
     runtime knobs). Release scheduling and colocation are NOT declared here:
-    colocation lives in distributed.resources.rollout.gpu_pool=trainer +
-    memory_fraction (mirrors reward.gpu_pool), and release scheduling is derived
-    from GPU topology. chunk_placement_strategy is a user-facing allow-list
+    colocation lives in distributed.resources.rollout.gpu_pool=trainer (mirrors
+    reward.gpu_pool), and release scheduling is derived from GPU topology.
+    chunk_placement_strategy is a user-facing allow-list
     Literal: RayGenerationConfig is a plain dataclass whose annotations do not
     enforce, so this typed boundary is where a bad value is rejected (the runtime
     ChunkPlacementPolicy guard stays the wire-boundary check). sync_trainable_state
@@ -717,16 +717,7 @@ class DistributedSection(ConfigBase):
             ("visible_devices", "trainer", "rollout", "reward", "allow_overlap", "cross_node"),
             {
                 "trainer": ConfigBlock(RoleResourceConfig),
-                # memory_fraction is a public input key (resident-colocation GPU cap)
-                # parsed in vrl/ray/resources.py _parse_rollout_pool into the flat
-                # rollout_gpu_memory_fraction; it is not a stored field on
-                # RolloutResourceConfig, so name it here alongside the derived keys.
-                "rollout": ConfigBlock(
-                    (
-                        *(f.name for f in dataclass_fields(RolloutResourceConfig)),
-                        "memory_fraction",
-                    ),
-                ),
+                "rollout": ConfigBlock(RolloutResourceConfig),
                 # gpu_pool is the field; share_with_rollout is the legacy compat
                 # key mapped to it at parse time (vrl/ray/resources.py
                 # _parse_reward_gpu_pool), so both are accepted here.
@@ -744,8 +735,8 @@ class DistributedSection(ConfigBase):
     # bad values here at parse time. Colocation lives in resources.rollout.gpu_pool.
     rollout: RolloutWorkerSection | None = None
     # reader: vrl/ray/resources.py reward runtime block. Ray reward actor-pool
-    # knobs were removed; reward release is derived from topology and heavy
-    # in-process rewards use reward.kwargs.<name>.sleep_offload.
+    # knobs were removed; reward release and CuMem parking are derived from
+    # topology rather than selected by an independent YAML lifecycle key.
     reward: Annotated[
         Any,
         ConfigBlock(("cpus_per_worker",)),
@@ -884,9 +875,7 @@ class RootConfig(ConfigBase):
                 )
 
         if self.rollout is not None and self.rollout.model_fields_set:
-            fields = ", ".join(
-                f"rollout.{name}" for name in sorted(self.rollout.model_fields_set)
-            )
+            fields = ", ".join(f"rollout.{name}" for name in sorted(self.rollout.model_fields_set))
             raise ValueError(
                 f"diffusion_dpo does not consume config field(s): {fields}",
             )

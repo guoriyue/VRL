@@ -18,6 +18,7 @@ from vrl.scripts.common.factory import (
     build_algorithm_and_evaluator_from_cfg,
     build_reward_from_cfg,
     build_rollout_config_from_cfg,
+    validate_reward_memory_parking_from_cfg,
 )
 
 
@@ -114,17 +115,19 @@ def test_wan_empty_lora_preserves_base_policy_initially() -> None:
     assert lora_config.get("init_lora_weights", True) is True
 
 
-def test_sana_aesthetic_builds_zero_weight_pickscore_observer() -> None:
-    """Checks the SANA objective scores PickScore without optimizing it."""
+def test_sana_aesthetic_keeps_cpu_observation_only_pickscore() -> None:
+    """PickScore is logged on CPU but contributes zero optimization weight."""
     cfg = load_config("experiment/diffusion/sana/online_grpo_aesthetic")
     built = build_configs(cfg)
 
-    reward = build_reward_from_cfg(cfg, built=built, device="cpu")
+    reward = build_reward_from_cfg(cfg, built=built, device="cuda:0")
 
     assert [(name, weight) for name, weight, _ in reward.rewards] == [
         ("aesthetic", 1.0),
         ("pickscore", 0.0),
     ]
+    pickscore = reward.rewards[1][2]
+    assert pickscore.runtime._worker_config["device"] == "cpu"
 
 
 def test_reward_factory_passes_the_selected_local_device(monkeypatch) -> None:
@@ -139,12 +142,14 @@ def test_reward_factory_passes_the_selected_local_device(monkeypatch) -> None:
         score_dict,
         device="cuda",
         reward_kwargs=None,
+        memory_parking_required=None,
     ):
         del cls
         captured.update(
             score_dict=dict(score_dict),
             device=device,
             reward_kwargs=dict(reward_kwargs or {}),
+            memory_parking_required=memory_parking_required,
         )
         return sentinel
 
@@ -161,6 +166,7 @@ def test_reward_factory_passes_the_selected_local_device(monkeypatch) -> None:
         "score_dict": {"fake": 1.0},
         "device": "cuda:2",
         "reward_kwargs": {"fake": {"marker": True}},
+        "memory_parking_required": None,
     }
 
 
@@ -171,4 +177,144 @@ def test_reward_factory_rejects_an_all_zero_objective() -> None:
             OmegaConf.create({}),
             built={"reward": ({"pickscore": 0.0}, {})},
             device="cpu",
+        )
+
+
+def _shared_reward_cfg(component: str) -> object:
+    return OmegaConf.create(
+        {
+            "distributed": {
+                "resources": {
+                    "visible_devices": [0],
+                    "trainer": {"devices": [0]},
+                    "rollout": {
+                        "devices": [0],
+                        "gpus_per_worker": 1,
+                        "gpu_pool": "trainer",
+                    },
+                },
+            },
+            "reward": {"components": {component: 1.0}, "kwargs": {component: {}}},
+        },
+    )
+
+
+def test_shared_reward_capability_fails_before_component_construction(monkeypatch) -> None:
+    """An unsupported trainer-shared reward fails before its model constructor."""
+    from vrl.rewards.functions.geneval import GenEvalReward
+
+    constructed = False
+
+    def fail_if_constructed(self, *args, **kwargs):
+        del self, args, kwargs
+        nonlocal constructed
+        constructed = True
+        raise AssertionError("component construction must not run")
+
+    monkeypatch.setattr(GenEvalReward, "__init__", fail_if_constructed)
+    cfg = _shared_reward_cfg("geneval")
+
+    with pytest.raises(ValueError, match="geneval"):
+        build_reward_from_cfg(
+            cfg,
+            built={"reward": ({"geneval": 1.0}, {"geneval": {}})},
+            device="cuda:0",
+        )
+
+    assert constructed is False
+
+
+def test_shared_reward_topology_automatically_enables_parking(monkeypatch) -> None:
+    """The lifecycle flag, not a YAML sleep knob, drives runtime parking."""
+    from vrl.rewards.functions.registry import MultiReward
+
+    captured: dict[str, object] = {}
+    sentinel = object()
+
+    def fake_from_dict(
+        cls,
+        score_dict,
+        device="cuda",
+        reward_kwargs=None,
+        memory_parking_required=None,
+    ):
+        del cls
+        captured.update(
+            score_dict=dict(score_dict),
+            device=device,
+            reward_kwargs=dict(reward_kwargs or {}),
+            memory_parking_required=memory_parking_required,
+        )
+        return sentinel
+
+    monkeypatch.setattr(MultiReward, "from_dict", classmethod(fake_from_dict))
+    cfg = _shared_reward_cfg("aesthetic")
+
+    reward = build_reward_from_cfg(
+        cfg,
+        built={"reward": ({"aesthetic": 1.0}, {"aesthetic": {}})},
+        device="cuda:0",
+    )
+
+    assert reward is sentinel
+    assert captured["memory_parking_required"] is True
+
+
+def test_reward_preflight_rejects_yaml_lifecycle_override() -> None:
+    """Resource topology is the only public reward lifecycle source."""
+
+    cfg = _shared_reward_cfg("aesthetic")
+    built = {
+        "reward": (
+            {"aesthetic": 1.0},
+            {"aesthetic": {"sleep_offload": True}},
+        ),
+    }
+    from vrl.ray.resources import resolve_distributed_resources
+
+    with pytest.raises(ValueError, match="sleep_offload is topology-derived"):
+        validate_reward_memory_parking_from_cfg(
+            cfg,
+            resources=resolve_distributed_resources(cfg),
+            built=built,
+        )
+
+    with pytest.raises(ValueError, match="sleep_offload is topology-derived"):
+        build_reward_from_cfg(OmegaConf.create({}), built=built, device="cuda:0")
+
+
+def test_factory_rejects_driver_device_outside_reward_resource_topology() -> None:
+    """The factory cannot replace resolved CUDA ownership with a CPU runtime."""
+    cfg = _shared_reward_cfg("aesthetic")
+
+    with pytest.raises(ValueError, match="execution-device source of truth"):
+        build_reward_from_cfg(
+            cfg,
+            built={"reward": ({"aesthetic": 1.0}, {"aesthetic": {}})},
+            device="cpu",
+        )
+
+    cpu_cfg = OmegaConf.create(
+        {
+            "distributed": {
+                "resources": {
+                    "visible_devices": [0, 1],
+                    "trainer": {"devices": [0]},
+                    "rollout": {"devices": [1], "gpus_per_worker": 1},
+                    "reward": {
+                        "devices": [],
+                        "num_gpus": 0,
+                        "gpus_per_worker": 0,
+                        "num_workers": 1,
+                    },
+                },
+            },
+            "reward": {"components": {"ocr": 1.0}, "kwargs": {"ocr": {}}},
+        },
+    )
+    with pytest.raises(ValueError, match="execution-device source of truth"):
+        build_reward_from_cfg(
+            cpu_cfg,
+            built={"reward": ({"ocr": 1.0}, {"ocr": {}})},
+            device="cuda:0",
         )

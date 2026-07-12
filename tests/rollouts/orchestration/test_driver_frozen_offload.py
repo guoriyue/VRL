@@ -11,7 +11,10 @@ from __future__ import annotations
 from types import SimpleNamespace
 from typing import Any
 
+import torch
+
 from vrl.rollouts.orchestration.rollout_runtime import RolloutRuntimeCoordinator
+from vrl.trainers.strategy import SingleProcessStrategy, TrainingMemoryState
 
 
 class _FakeDriverModel:
@@ -33,10 +36,35 @@ def _coordinator(model: _FakeDriverModel) -> RolloutRuntimeCoordinator:
     # A runtime that advertises colocation-driven driver offload; cuda-typed
     # device so should_offload_driver_model_for_rollout() is True on a CPU box.
     runtime = SimpleNamespace(requires_driver_model_offload=True, current_policy_version=None)
+    strategy = SingleProcessStrategy()
+    state = TrainingMemoryState(
+        model=model,  # type: ignore[arg-type]
+        ref_model=None,
+        optimizer=None,
+        ema=None,
+        grad_scaler=None,
+        device=torch.device("cuda"),
+    )
+
+    class _CollectorControl:
+        def __init__(self, runtime: Any) -> None:
+            self.runtime = runtime
+            self.requires_runtime_offload_before_reward = False
+            self.requires_driver_model_offload_for_reward = False
+
+        async def activate_runtime(self) -> None:
+            return None
+
+        async def offload_runtime_memory(self) -> None:
+            return None
+
+        async def shutdown(self) -> None:
+            return None
+
     return RolloutRuntimeCoordinator(
-        collector=SimpleNamespace(runtime=runtime),
-        model=model,
-        device=SimpleNamespace(type="cuda"),
+        collector=_CollectorControl(runtime),
+        strategy=strategy,
+        training_state_getter=lambda: state,
         weight_syncer=None,
         sync_state_getter=None,
         weights_initialized=lambda: True,
@@ -49,11 +77,11 @@ def test_offload_and_restore_move_frozen_components() -> None:
     lifecycle = _coordinator(model)
     phases: dict[str, float] = {}
 
-    assert lifecycle.offload_driver_model_for_rollout(phases) is True
-    assert model.to_calls == ["cpu"]
-    assert model.frozen_calls == ["cpu"]  # frozen components parked, not left resident
+    assert lifecycle.park_training_state_for_rollout(phases) is True
+    assert model.to_calls == [torch.device("cpu")]
+    assert model.frozen_calls == [torch.device("cpu")]  # frozen components parked
 
-    lifecycle.restore_driver_model_after_rollout(phases)
+    lifecycle.restore_training_state_after_rollout(phases)
     assert model.to_calls[-1].type == "cuda"
     assert model.frozen_calls[-1].type == "cuda"  # frozen components restored
 
@@ -63,7 +91,7 @@ def test_model_without_frozen_hook_is_unaffected() -> None:
     model = _FakeDriverModel(with_frozen_hook=False)
     lifecycle = _coordinator(model)
 
-    assert lifecycle.offload_driver_model_for_rollout({}) is True
-    lifecycle.restore_driver_model_after_rollout({})
-    assert model.to_calls == ["cpu", model.to_calls[-1]]  # only the model.to moves
+    assert lifecycle.park_training_state_for_rollout({}) is True
+    lifecycle.restore_training_state_after_rollout({})
+    assert model.to_calls == [torch.device("cpu"), torch.device("cuda")]
     assert model.frozen_calls == []

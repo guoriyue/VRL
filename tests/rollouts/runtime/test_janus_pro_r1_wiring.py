@@ -91,7 +91,6 @@ def test_r1_collector_uses_r1_task_request_and_trajectory_batch() -> None:
     )
     collector = build_rollout_collector(
         "janus_pro_r1",
-        model=None,
         reward_fn=None,
         config=rollout_config,
     )

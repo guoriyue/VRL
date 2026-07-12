@@ -10,6 +10,11 @@
 # exactly what makes full-param viable here (NFT's previous-policy snapshot is an
 # adapter and has no full-param path yet).
 #
+# STATUS: capability-gated, not currently runnable. FSDP shared-GPU phase leasing
+# now fails before model/Ray launch because collective-safe DTensor + optimizer +
+# live-gradient parking is not implemented. This config remains a future acceptance
+# shape; use a disjoint rollout GPU pool for a runnable FSDP job today.
+#
 # Same symmetric colocated topology as the LoRA fsdp_2x1 variant (per-rank-local
 # Ray + colocated rollout/reward; only training collectives cross the network).
 #

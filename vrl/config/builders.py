@@ -107,9 +107,7 @@ def _section_payload_and_missing(
         keys = ", ".join(f"{path}.{key}" for key in unknown)
         raise ValueError(f"unknown {cls.__name__} key(s): {keys}")
     payload = {key: value for key, value in raw.items() if key in allowed}
-    missing = sorted(
-        f"{path}.{name}" for name in _required_field_names(cls) - set(payload)
-    )
+    missing = sorted(f"{path}.{name}" for name in _required_field_names(cls) - set(payload))
     return payload, missing
 
 
@@ -168,6 +166,18 @@ def build_trainer_config(cfg: DictConfig):
             "for Cosmos Predict2.5 + Kling use "
             "`python -m vrl.scripts.eval.cosmos_predict25_kling_eval`.",
         )
+    orchestration_block = (
+        getattr(trainer_block, "rollout_orchestration", None)
+        if trainer_block is not None
+        else None
+    )
+    if orchestration_block is not None and "require_separate_gpus" in orchestration_block:
+        raise ValueError(
+            "trainer.rollout_orchestration.require_separate_gpus was removed: "
+            "rollout topology is derived from resolved GPU ownership. Shared GPUs "
+            "use strict_on_policy with distributed.resources.rollout.gpu_pool=trainer; "
+            "continuous requires disjoint trainer and rollout GPUs.",
+        )
 
     hints = get_type_hints(TrainerConfig)
     payload: dict[str, Any] = {}
@@ -188,7 +198,9 @@ def build_trainer_config(cfg: DictConfig):
         field_cls = hints[f.name]
         if is_dataclass(field_cls):
             section_payload, section_missing = _section_payload_and_missing(
-                field_cls, cfg, home,
+                field_cls,
+                cfg,
+                home,
             )
             if section_missing:
                 missing.extend(section_missing)
@@ -273,11 +285,14 @@ def build_reward_config(cfg: DictConfig) -> tuple[dict[str, float], dict[str, di
     validate_reward_config(cfg)
     reward = cfg.reward
 
-    components = OmegaConf.to_container(
-        reward.components,
-        resolve=True,
-        throw_on_missing=True,
-    ) or {}
+    components = (
+        OmegaConf.to_container(
+            reward.components,
+            resolve=True,
+            throw_on_missing=True,
+        )
+        or {}
+    )
     weights = {name: float(weight) for name, weight in components.items()}
 
     raw_kwargs = reward.get("kwargs", None)

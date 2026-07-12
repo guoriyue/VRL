@@ -100,6 +100,10 @@ class ContinuousRolloutProducerState:
     max_tick_gap_s: float = 0.0
     error_count: int = 0
     last_error: str | None = None
+    # Behavior-consumed terminal failure from the producer control loop itself.
+    # Per-request collect failures remain retryable counters; this field means
+    # cadence has stopped and the consumer must fail immediately.
+    fatal_error: BaseException | None = None
 
 
 __all__ = [

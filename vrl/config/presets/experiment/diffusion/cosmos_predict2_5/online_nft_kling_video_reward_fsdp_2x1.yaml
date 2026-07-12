@@ -22,6 +22,12 @@
 # slower than DDP for this fits-on-one-card LoRA model; the value is correctness +
 # readiness, not throughput.
 #
+# STATUS: capability-gated, not currently runnable. Shared-GPU phase leasing now
+# requires collective-safe parking for DTensor parameters, optimizer/EMA/scaler
+# state, and live gradients. FSDPStrategy rejects this topology before model or Ray
+# launch until that implementation exists. Keep this as the canonical future 2x1
+# acceptance shape; current runnable FSDP jobs need disjoint rollout GPUs.
+#
 # Launch (run on BOTH servers; same --master_addr = server A's reachable IP):
 #   # server A (rank 0, the output node):
 #   HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 \

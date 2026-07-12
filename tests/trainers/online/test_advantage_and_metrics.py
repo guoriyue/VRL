@@ -4,12 +4,14 @@ from __future__ import annotations
 
 import pytest
 
+from tests.trainers.online._collector_control import CollectorControlFake
 from tests.trainers.online._helpers import _algorithm_inputs, _trajectory_signals
 from vrl.rollouts.evaluators.base import Evaluator
 
 
 class TestAdvantageAndMetrics:
     """Groups tests for advantage and metrics."""
+
     def _make_cea_trainer(self, rewards: list[float]):
         import torch
         import torch.nn as nn
@@ -50,7 +52,7 @@ class TestAdvantageAndMetrics:
                 )
                 return loss, metrics
 
-        class _Collector:
+        class _Collector(CollectorControlFake):
             def __init__(self, reward_values: list[float]) -> None:
                 self._reward_values = reward_values
                 self._cursor = 0
@@ -58,7 +60,6 @@ class TestAdvantageAndMetrics:
             async def score_rollouts(self, pendings):
 
                 return list(pendings)
-
 
             async def collect_unscored(self, prompts, **kwargs):
                 group_size = int(kwargs["group_size"])
@@ -72,6 +73,11 @@ class TestAdvantageAndMetrics:
                     rewards=torch.tensor(rewards, dtype=torch.float32),
                     dones=torch.ones(group_size, dtype=torch.bool),
                     group_ids=torch.zeros(group_size, dtype=torch.long),
+                    extras={
+                        "reward_components": {
+                            "observer": torch.tensor(rewards, dtype=torch.float32) + 10.0,
+                        },
+                    },
                     prompts=list(prompts) * group_size,
                 )
 
@@ -124,6 +130,9 @@ class TestAdvantageAndMetrics:
 
         # Advantages are computed purely from current group — no stale history
         assert second_step.advantage_mean == pytest.approx(0.0, abs=1e-3)
+        # Component metrics belong to the consumed second batch only. The first
+        # step's observations must not accumulate on a shared reward object.
+        assert second_step.reward_components == {"observer": pytest.approx(10.5)}
 
     def test_cea_metrics_propagate_approx_kl(self) -> None:
         """CEA aggregation should not silently drop approx_kl."""
@@ -170,7 +179,7 @@ class TestAdvantageAndMetrics:
                 self.loss_calls += 1
                 return torch.tensor(0.0, requires_grad=True), TrainStepMetrics()
 
-        class _Collector:
+        class _Collector(CollectorControlFake):
             async def score_rollouts(self, pendings):
                 return list(pendings)
 
@@ -256,4 +265,3 @@ class TestAdvantageAndMetrics:
         assert metrics.grad_norm == 0.0
         assert metrics.group_size == 2.0
         assert metrics.trained_prompt_num == 1
-

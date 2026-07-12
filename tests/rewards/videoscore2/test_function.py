@@ -109,7 +109,7 @@ async def test_missing_score_key_fails_fast(tmp_path: Path) -> None:
 
 def test_rejects_removed_pool_execution(tmp_path: Path) -> None:
     """The removed pool execution fails loud with the migration hint."""
-    with pytest.raises(ValueError, match="sleep_offload"):
+    with pytest.raises(ValueError, match="resource topology"):
         VideoScore2Reward(
             execution="pool",
             reward_name="videoscore2",

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import gc
 import itertools
 from typing import Any
 
@@ -10,8 +11,10 @@ def _cumem_allocator() -> Any | None:
     """Return the process-wide vLLM CuMemAllocator, or None when unavailable.
 
     None on a CPU box or when vLLM is not importable. The allocator is a
-    per-process singleton; callers hold a :class:`CumemPool` tag slice of it
-    rather than the raw allocator. Single mock point for tests.
+    per-process singleton; callers hold a :class:`CumemPool` tagged handle
+    rather than the raw allocator. Tags control backup/discard during one
+    process-wide sleep; they do not isolate sleep operations. Single mock point
+    for tests.
     """
 
     try:
@@ -25,17 +28,16 @@ def _cumem_allocator() -> Any | None:
 
 
 class CumemPool:
-    """One tagged slice of the process-wide vLLM CuMemAllocator.
+    """Tagged handle over the process-wide vLLM CuMemAllocator.
 
-    The allocator is a per-process singleton whose sleep/wake act on TAGS, so
-    every owner (the rollout executor, each heavyweight reward) holds its own
-    tag: waking one owner's pages never drags another owner's back onto the
-    GPU. Build the owner's model inside :meth:`building` so every CUDA
-    allocation it makes lands in the tagged pool; :meth:`sleep` then copies
-    the physical pages to pinned host RAM and unmaps them while the virtual
-    addresses stay valid — the model needs no ``.to()``, and :meth:`wake`
-    remaps without cudaMalloc, immune to fragmentation (probe-measured ~6x
-    faster than a naive ``.to()`` round trip at 14GB scale).
+    A tag selects which pages receive a CPU backup; it is not an independently
+    sleepable allocator slice. ``CuMemAllocator.sleep`` walks and unmaps every
+    registered pointer, discarding pages outside ``offload_tags``. Therefore a
+    process may have only one independently parked owner unless a higher-level
+    coordinator performs one process-wide sleep with all backup tags together.
+    Build the owner's model inside :meth:`building` so its CUDA allocations get
+    the backup tag; :meth:`sleep` then copies those pages to pinned host RAM and
+    unmaps the process-wide allocator while virtual addresses stay valid.
 
     Note: pooled physical pages come from CUDA virtual memory, NOT torch's
     caching allocator — a co-resident phase must ``empty_cache`` before this
@@ -48,6 +50,8 @@ class CumemPool:
         self._allocator = allocator
         self.tag = tag
         self.asleep = False
+        self._building_claimed = False
+        self._closed = False
 
     @classmethod
     def try_create(cls, tag: str | None = None) -> CumemPool | None:
@@ -71,23 +75,73 @@ class CumemPool:
         return pool
 
     def building(self) -> Any:
-        """Context manager: allocations made inside land in this pool's tag."""
+        """Return the tag's one-shot model-construction allocation scope.
 
+        vLLM creates a new ``torch.cuda.MemPool`` on every
+        ``use_memory_pool`` call. Re-entering the same tag while tensors from its
+        first pool are alive can abort the process inside PyTorch rather than
+        raise Python. Keep the dependency's supported shape: one scope for model
+        construction, then normal execution plus a physical residual check.
+        """
+
+        if self._closed:
+            raise RuntimeError(f"CuMemPool tag {self.tag!r} is closed")
+        if self._building_claimed:
+            raise RuntimeError(
+                f"CuMemPool tag {self.tag!r} model-building scope is one-shot",
+            )
+        self._building_claimed = True
         return self._allocator.use_memory_pool(tag=self.tag)
 
     def sleep(self) -> None:
-        """Offload this tag's physical pages to pinned host RAM, free the GPU."""
+        """Sleep the process-wide allocator, backing up only this handle's tag."""
 
+        if self._closed:
+            raise RuntimeError(f"CuMemPool tag {self.tag!r} is closed")
         self._allocator.sleep(offload_tags=(self.tag,))
         self.asleep = True
 
     def wake(self) -> None:
-        """Remap this tag's pages back onto the GPU (no-op when not asleep)."""
+        """Remap this handle's backed-up tag (no-op when not asleep)."""
 
+        if self._closed:
+            return
         if not self.asleep:
             return
         self._allocator.wake_up(tags=[self.tag])
         self.asleep = False
+
+    def close(self) -> None:
+        """Drop vLLM's retained MemPool after all tagged tensors are gone.
+
+        This is a terminal-only adapter for the installed vLLM API. Its public
+        ``use_memory_pool`` context retains the created ``torch.cuda.MemPool`` in
+        ``allocator_and_pools`` but exposes no close operation; leaving that
+        registry entry alive keeps freed model pages mapped indefinitely. Guard
+        the one required internal seam explicitly so a vLLM layout change fails
+        closed instead of silently leaking GPU ownership.
+        """
+
+        if self._closed:
+            return
+        if self.asleep:
+            raise RuntimeError(
+                f"CuMemPool tag {self.tag!r} must be awake before terminal close",
+            )
+        retained_pools = getattr(self._allocator, "allocator_and_pools", None)
+        if not isinstance(retained_pools, dict):
+            raise RuntimeError(
+                "installed vLLM CuMemAllocator does not expose the retained-pool "
+                "registry required for terminal release",
+            )
+        retained = retained_pools.pop(self.tag, None)
+        if retained is None:
+            raise RuntimeError(
+                f"vLLM retained no CuMem pool for terminal tag {self.tag!r}",
+            )
+        self._closed = True
+        del retained
+        gc.collect()
 
 
 def is_cuda_out_of_memory(exc: BaseException) -> bool:
@@ -114,32 +168,6 @@ def empty_cuda_cache() -> None:
     try:
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
-    except Exception:
-        return
-
-
-def cap_cuda_memory_fraction(fraction: float | None) -> None:
-    """Hard-cap this process's CUDA allocator to ``fraction`` of the current device.
-
-    Bounds the caching allocator so a colocated rollout worker cannot grow its
-    reservation into memory the trainer needs on a shared GPU (the shared-GPU
-    ``gpu_memory_utilization`` role). ``None`` leaves the allocator uncapped, which
-    is correct for a worker that owns a dedicated GPU. Best-effort: a CPU-only or
-    torch-less worker is a no-op.
-    """
-
-    if fraction is None:
-        return
-    if not 0.0 < fraction <= 1.0:
-        raise ValueError(f"gpu_memory_fraction must be in (0, 1], got {fraction}")
-    try:
-        import torch
-    except Exception:
-        return
-    try:
-        if not torch.cuda.is_available():
-            return
-        torch.cuda.set_per_process_memory_fraction(float(fraction), torch.cuda.current_device())
     except Exception:
         return
 
@@ -175,7 +203,6 @@ def release_cuda_memory(
 
 __all__ = [
     "CumemPool",
-    "cap_cuda_memory_fraction",
     "empty_cuda_cache",
     "is_cuda_out_of_memory",
     "release_cuda_memory",

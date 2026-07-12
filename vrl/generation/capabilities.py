@@ -21,14 +21,14 @@ class FamilyCapability:
 
     Every field has a non-logging consumer: family/task/trajectory validate the
     worker launch contract, reference conditioning changes launch inputs, and
-    Torch compile support gates the requested runtime configuration.
+    complete memory parking gates shared-GPU worker activation.
     """
 
     family: str
     task: str
     trajectory_kind: TrajectoryKind
     supports_reference_conditioning: bool = False
-    supports_torch_compile: bool = False
+    supports_complete_memory_parking: bool = False
 
     def __post_init__(self) -> None:
         if not self.family:
@@ -43,7 +43,7 @@ class FamilyCapability:
             "task": self.task,
             "trajectory_kind": self.trajectory_kind,
             "supports_reference_conditioning": self.supports_reference_conditioning,
-            "supports_torch_compile": self.supports_torch_compile,
+            "supports_complete_memory_parking": self.supports_complete_memory_parking,
         }
 
     @classmethod
@@ -60,7 +60,9 @@ class FamilyCapability:
             supports_reference_conditioning=bool(
                 value.get("supports_reference_conditioning", False),
             ),
-            supports_torch_compile=bool(value.get("supports_torch_compile", False)),
+            supports_complete_memory_parking=bool(
+                value.get("supports_complete_memory_parking", False),
+            ),
         )
 
 
@@ -86,4 +88,8 @@ def _trajectory_kind(value: Any) -> TrajectoryKind:
     raise ValueError(f"unsupported trajectory_kind: {value!r}")
 
 
-__all__ = ["FamilyCapability", "TrajectoryKind", "family_capability_from_value"]
+__all__ = [
+    "FamilyCapability",
+    "TrajectoryKind",
+    "family_capability_from_value",
+]

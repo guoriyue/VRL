@@ -17,7 +17,7 @@ from vrl.rollouts.collector.artifacts import (
 from vrl.rollouts.collector.config import RolloutConfig, build_rollout_config_from_cfg
 from vrl.rollouts.collector.core import RolloutCollector
 from vrl.rollouts.collector.requests import CollectorRequest
-from vrl.rollouts.collector.rewards import RewardScoringInput
+from vrl.rollouts.collector.rewards import RewardScoreBatch, RewardScoringInput
 from vrl.trajectory import (
     build_ar_continuous_trajectory,
     build_ar_discrete_trajectory,
@@ -44,6 +44,12 @@ class _RequestBuilder:
 
 
 class _Runtime:
+    current_policy_version = 0
+    requires_driver_model_offload = False
+
+    async def activate(self) -> None:
+        return None
+
     async def generate(self, request: GenerationRequest) -> GenerationOutput:
         batch_size = len(request.prompts) * request.samples_per_prompt
         sample_rows = _sample_rows(request)
@@ -70,6 +76,15 @@ class _Runtime:
             trajectory=trajectory,
         )
 
+    async def offload(self) -> None:
+        return None
+
+    async def shutdown(self) -> None:
+        return None
+
+    def is_colocated(self) -> bool:
+        return False
+
 
 class _RewardScorer:
     def __init__(self) -> None:
@@ -83,7 +98,20 @@ class _RewardScorer:
         self,
         requests: list[RewardScoringInput],
     ) -> list[torch.Tensor]:
-        return [await self.score(request) for request in requests]
+        return (await self.score_many_with_components(requests)).scores
+
+    async def score_many_with_components(
+        self,
+        requests: list[RewardScoringInput],
+    ) -> RewardScoreBatch:
+        return RewardScoreBatch(
+            scores=[await self.score(request) for request in requests],
+            components={},
+            timing_ms={},
+        )
+
+    async def shutdown(self) -> None:
+        return None
 
 
 @pytest.mark.asyncio
@@ -91,7 +119,6 @@ async def test_collector_releases_generation_output_after_reward_scoring() -> No
     """Checks collector releases generation output after reward scoring."""
     scorer = _RewardScorer()
     collector = RolloutCollector(
-        model=None,
         config=RolloutConfig(
             family="unit",
             values={"reward_artifact": {"keep_after_reward": False}},

@@ -72,6 +72,11 @@ reward:
     target_dino_similarity: 0.80
     kling_video_reward: 0.20
   kwargs:
+    # A shared GPU can have one verifiable CuMem reward owner. Keep the 7B
+    # Kling model on that lease and run the small DINO anchor on CPU.
+    target_dino_similarity:
+      worker_config:
+        device: cpu
     kling_video_reward:
       artifact_format: mp4
       score_key: visual_quality+motion_quality

@@ -38,6 +38,7 @@ def _on_demand_runtime(
                 handoff=PhaseHandoffPolicy(
                     release_rollout_before_train=True,
                     release_rollout_before_reward=True,
+                    release_trainer_before_reward=False,
                     release_reward_after_score=False,
                 ),
             ),

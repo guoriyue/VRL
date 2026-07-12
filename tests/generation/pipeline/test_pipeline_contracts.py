@@ -37,7 +37,6 @@ def test_pipeline_topology_normalizes_stage_configs() -> None:
                     "runtime": {
                         "batch_size": 16,
                         "max_inflight": 2,
-                        "memory_fraction": 0.6,
                     },
                     "metadata": {"note": "deliberate annotations live here"},
                 },
@@ -62,7 +61,6 @@ def test_pipeline_topology_normalizes_stage_configs() -> None:
     assert denoise.gpu_ids == (0,)
     assert denoise.runtime.batch_size == 16
     assert denoise.runtime.max_inflight == 2
-    assert denoise.runtime.memory_fraction == 0.6
     assert denoise.metadata == {"note": "deliberate annotations live here"}
     assert decode.terminal is True
     assert decode.runtime.batch_size == 1
@@ -242,9 +240,7 @@ def test_ray_pipeline_runner_routes_across_actor_handles() -> None:
     )
 
     result = asyncio.run(
-        runner.execute(
-            PipelineStagePayload(request_id="req-1", stage="denoise", data=[])
-        )
+        runner.execute(PipelineStagePayload(request_id="req-1", stage="denoise", data=[]))
     )
 
     assert result.error is None

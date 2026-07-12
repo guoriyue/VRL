@@ -113,7 +113,6 @@ def _resource_cfg(
     trainer_devices: list[int],
     rollout_devices: list[int],
     allow_overlap: bool = False,
-    colocate: float | None = None,
 ):
     rollout_runtime: dict[str, Any] = {"cpus_per_worker": 1}
     rollout_resource: dict[str, Any] = {
@@ -121,12 +120,6 @@ def _resource_cfg(
         "gpus_per_worker": 1,
         "num_workers": len(rollout_devices),
     }
-    # Resident colocation: the single authoritative grammar is gpu_pool=trainer +
-    # memory_fraction on the resources rollout node (the legacy
-    # distributed.rollout.colocate block was removed).
-    if colocate is not None:
-        rollout_resource["gpu_pool"] = "trainer"
-        rollout_resource["memory_fraction"] = colocate
     return OmegaConf.create(
         {
             "distributed": {
@@ -322,35 +315,6 @@ def test_ray_build_inputs_preserves_disabled_model_compile_config() -> None:
     }
 
 
-def test_ray_build_inputs_carries_gpu_memory_fraction_to_worker_contract() -> None:
-    """Checks the colocate GPU budget reaches the worker contract."""
-    cfg = _resource_cfg(
-        trainer_devices=[0],
-        rollout_devices=[0],
-        allow_overlap=True,
-        colocate=0.4,
-    )
-
-    launch_inputs = RayGenerationLauncher.build_inputs(
-        cfg,
-        _build_inputs_entry(),
-        weight_dtype="bfloat16",
-    )
-
-    assert launch_inputs.launch_contract.extra["gpu_memory_fraction"] == 0.4
-
-
-def test_ray_build_inputs_omits_gpu_memory_fraction_when_unset() -> None:
-    """Checks no budget key is sent when the cap is unset (dedicated-GPU worker)."""
-    launch_inputs = RayGenerationLauncher.build_inputs(
-        _build_inputs_cfg(),
-        _build_inputs_entry(),
-        weight_dtype="bfloat16",
-    )
-
-    assert "gpu_memory_fraction" not in launch_inputs.launch_contract.extra
-
-
 def test_ray_build_inputs_rejects_model_compile_on_family_without_capability() -> None:
     """Checks model.torch_compile fails fast on rollout families that cannot compile."""
     with pytest.raises(ValueError, match="does not support torch compile"):
@@ -452,20 +416,3 @@ def test_ray_backend_allows_split_driver_cuda_when_devices_do_not_overlap() -> N
     assert config.resources.trainer_devices == (0,)
     assert config.resources.rollout_devices == (1,)
     assert config.allow_driver_gpu_overlap is False
-
-
-def test_ray_backend_colocate_keeps_worker_resident() -> None:
-    """Checks colocate keeps the colocated rollout worker resident."""
-    config = RayGenerationConfig.from_cfg(
-        _resource_cfg(
-            trainer_devices=[0],
-            rollout_devices=[0],
-            allow_overlap=True,
-            colocate=0.45,
-        ),
-    ).validate_driver_state(driver_policy=_CudaPolicy())
-
-    assert config.allow_driver_gpu_overlap is True
-    assert config.resources.lifecycle.rollout.mode == "resident"
-    assert config.resources.rollout_gpu_memory_fraction is not None
-    assert config.resources.rollout_gpu_memory_fraction == 0.45

@@ -8,7 +8,7 @@ import uuid
 from collections.abc import Callable, Mapping
 from dataclasses import asdict
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, ClassVar, Literal
 
 from vrl.rewards.inference import (
     MediaType,
@@ -16,10 +16,65 @@ from vrl.rewards.inference import (
     RewardInferenceRequest,
     RewardInferenceResult,
     RewardInferenceRuntime,
+    RewardMemoryParkingRuntime,
+    RewardMemoryParkingSpec,
+    RewardMemoryReleaseProof,
 )
 from vrl.rewards.types import RewardRollout
 
 ArtifactBuilder = Callable[[list[RewardRollout]], list[RewardInferenceArtifact]]
+
+# Protocol boundary measured on RTX 5090: the first CUDA scoring kernel leaves a
+# 2 MiB runtime allocation outside vLLM's one-shot model pool. Keep a bounded
+# 4 MiB allowance; model/cache pages beyond it still fail the physical proof.
+_REWARD_CUDA_RUNTIME_RESIDUAL_BYTES = 4 * 1024 * 1024
+
+
+def resolve_reward_component_device(
+    *,
+    resolved_device: str,
+    overrides: list[tuple[str, Any]],
+) -> tuple[Literal["cpu_only", "configured_gpu"], str]:
+    """Apply a component CPU downgrade without weakening GPU ownership."""
+
+    resolved = str(resolved_device or "").strip().lower()
+    configured = [
+        (key, str(value).strip().lower()) for key, value in overrides if str(value or "").strip()
+    ]
+    distinct = {value for _, value in configured}
+    if len(distinct) > 1:
+        raise ValueError(
+            f"reward component device overrides disagree: {configured}",
+        )
+    effective = configured[0][1] if configured else resolved
+    key = configured[0][0] if configured else "resolved device"
+    if resolved.startswith("cuda"):
+        if effective.startswith("cuda") and effective != resolved:
+            raise ValueError(
+                f"reward {key}={effective!r} conflicts with the distributed-resources "
+                f"CUDA device {resolved_device!r}. Remove the component override; "
+                "distributed.resources owns the CUDA ordinal.",
+            )
+        # A component may explicitly downgrade from its GPU ownership ceiling to
+        # CPU. It then creates no CuMem owner and can coexist with one GPU reward.
+    elif effective.startswith("cuda"):
+        raise ValueError(
+            f"reward {key}={effective!r} requests CUDA, but distributed resources "
+            f"resolved {resolved_device!r}. CPU resources cannot launch a CUDA reward.",
+        )
+    kind: Literal["cpu_only", "configured_gpu"] = (
+        "configured_gpu" if effective.startswith("cuda") else "cpu_only"
+    )
+    return kind, effective
+
+
+class RewardCleanupError(RuntimeError):
+    """One reward operation accumulated multiple release/teardown failures."""
+
+    def __init__(self, message: str, errors: list[BaseException]) -> None:
+        self.errors = tuple(errors)
+        details = "; ".join(f"{type(error).__name__}: {error}" for error in errors)
+        super().__init__(f"{message}: {details}")
 
 
 class RewardFunction:
@@ -29,6 +84,57 @@ class RewardFunction:
     an inference runtime plus artifact builder to reuse the standard model-backed
     scoring path.
     """
+
+    # None is fail-closed. A specialized base class supplies a contract only
+    # when all model-owned CUDA state is built in the tagged runtime pool.
+    memory_parking: ClassVar[RewardMemoryParkingSpec | None] = None
+    execution_device_source: ClassVar[Literal["cpu_only", "configured"]] = "configured"
+    # Most reward constructors expose the selected device as ``device``;
+    # exceptional schemas (for example NSFW's classifier_device) override it.
+    execution_device_config_key: ClassVar[str | None] = "device"
+
+    @classmethod
+    def resolve_execution_device_kind(
+        cls,
+        *,
+        device: str,
+        kwargs: Mapping[str, Any],
+    ) -> Literal["cpu_only", "configured_gpu"]:
+        """Resolve execution independently from the model's parking capability."""
+
+        effective = cls.resolve_execution_device(device=device, kwargs=kwargs)
+        return "configured_gpu" if effective.startswith("cuda") else "cpu_only"
+
+    @classmethod
+    def resolve_execution_device(
+        cls,
+        *,
+        device: str,
+        kwargs: Mapping[str, Any],
+    ) -> str:
+        """Return the concrete child device under the resource ownership ceiling."""
+
+        if cls.execution_device_source == "cpu_only":
+            return "cpu"
+
+        configured_devices: list[tuple[str, Any]] = []
+        if cls.execution_device_config_key is not None:
+            configured_devices.append(
+                (
+                    cls.execution_device_config_key,
+                    kwargs.get(cls.execution_device_config_key),
+                ),
+            )
+        worker_config = kwargs.get("worker_config")
+        if isinstance(worker_config, Mapping):
+            configured_devices.append(
+                ("worker_config.device", worker_config.get("device")),
+            )
+        _, effective = resolve_reward_component_device(
+            resolved_device=device,
+            overrides=configured_devices,
+        )
+        return effective
 
     @staticmethod
     def build_inmemory_artifacts(
@@ -78,6 +184,24 @@ class RewardFunction:
         self._debug_basename = debug_basename
         self.last_results: list[RewardInferenceResult] = []
         self.last_timing_ms: dict[str, float] = {}
+        self._last_reward_request_id: str | None = None
+
+    async def park_memory(self) -> tuple[RewardMemoryReleaseProof, ...]:
+        """Park this reward runtime, retrying the runtime's current request."""
+
+        runtime = self.runtime
+        if not isinstance(runtime, RewardMemoryParkingRuntime):
+            return ()
+        if not runtime.requires_memory_parking:
+            return ()
+        request_id = self._last_reward_request_id
+        if request_id is None:
+            # This component never activated its model (for example an earlier
+            # sibling failed). There is no GPU lease to release.
+            return ()
+        proof = await runtime.park_memory()
+        proof.validate(request_id=request_id)
+        return (proof,)
 
     async def score(self, rollout: RewardRollout) -> float:
         """Score a single rollout."""
@@ -150,6 +274,7 @@ class RewardFunction:
         debug_dir: str = "",
         device: str | None = None,
         sleep_offload: bool = False,
+        memory_parking_residual_bytes_limit: int = 0,
         worker_config: Mapping[str, Any] | None = None,
         runtime: Any | None = None,
     ) -> None:
@@ -174,9 +299,8 @@ class RewardFunction:
             raise ValueError(
                 f"reward.kwargs.{config_key}.execution={execution!r} is no longer "
                 "supported: the Ray reward pool was removed and rewards score "
-                "in-process. Drop the key (inline is the default); for a "
-                "heavyweight model on a shared GPU set "
-                f"reward.kwargs.{config_key}.sleep_offload=true instead.",
+                "in-process. Drop the key (inline is the default); shared-GPU "
+                "parking is derived from distributed resource topology.",
             )
 
         resolved_reward_name = str(
@@ -205,9 +329,7 @@ class RewardFunction:
             # otherwise fold worker_config.model_name (deprecated alias) or a
             # top-level reward_name that looks like a HF repo (contains "/")
             # — a bare reward_name stays a logical tag, not a model id.
-            reward_name_repo = (
-                resolved_reward_name if "/" in resolved_reward_name else ""
-            )
+            reward_name_repo = resolved_reward_name if "/" in resolved_reward_name else ""
             reward_model_name = str(
                 worker_cfg.get("reward_model_name")
                 or worker_cfg.get("model_name")  # deprecated alias
@@ -221,15 +343,22 @@ class RewardFunction:
                     worker_cfg["reward_model_name"] = reward_model_name
                 worker_cfg["model_factory"] = model_factory
                 if not str(worker_cfg.get("reward_model_version", "")).strip():
-                    worker_cfg["reward_model_version"] = (
-                        reward_model_name or model_path
-                    )
-            # An explicit worker_config.device wins; otherwise the resolved
-            # reward device from the caller (MultiReward.from_dict / factory).
-            if device is not None and not str(worker_cfg.get("device", "")).strip():
-                worker_cfg["device"] = str(device)
+                    worker_cfg["reward_model_version"] = reward_model_name or model_path
+            # Resource resolution is the device source of truth. A nested model
+            # override would split lifecycle ownership from real CUDA execution,
+            # so reject it even when this helper is called outside MultiReward.
+            if device is not None:
+                configured_device = str(worker_cfg.get("device", "")).strip()
+                _, effective_device = resolve_reward_component_device(
+                    resolved_device=str(device),
+                    overrides=[("worker_config.device", configured_device)],
+                )
+                worker_cfg["device"] = effective_device
             if sleep_offload:
                 worker_cfg["sleep_offload"] = True
+                worker_cfg["memory_parking_residual_bytes_limit"] = int(
+                    memory_parking_residual_bytes_limit,
+                )
             runtime = LocalRewardRuntime(worker_cfg)
 
         RewardFunction.__init__(
@@ -274,16 +403,35 @@ class RewardFunction:
                 "artifact_materialization_ms": materialization_ms,
             },
         )
+        self._last_reward_request_id = request.request_id
         inference_started = time.perf_counter()
         # Contract enforcement lives at this seam, not inside each runtime, so
         # every RewardInferenceRuntime (including injected test fakes) gets the
         # same result/artifact mismatch guard and request-order re-sort.
         from vrl.rewards.inference import validate_reward_results
 
-        results = validate_reward_results(
-            request,
-            await runtime.score_batch(request),
-        )
+        score_error: BaseException | None = None
+        raw_results: list[RewardInferenceResult] | None = None
+        try:
+            raw_results = await runtime.score_batch(request)
+        except BaseException as error:
+            score_error = error
+        park_error: BaseException | None = None
+        try:
+            await self.park_memory()
+        except BaseException as error:
+            park_error = error
+        if score_error is not None and park_error is not None:
+            raise RewardCleanupError(
+                "reward scoring and memory parking both failed",
+                [score_error, park_error],
+            )
+        if score_error is not None:
+            raise score_error
+        if park_error is not None:
+            raise park_error
+        assert raw_results is not None
+        results = validate_reward_results(request, raw_results)
         inference_total_ms = (time.perf_counter() - inference_started) * 1000.0
         total_latency_ms = (time.perf_counter() - total_started) * 1000.0
         self.last_results = list(results)
@@ -335,6 +483,14 @@ class RewardFunction:
                 handle.write(json.dumps(asdict(result), sort_keys=True) + "\n")
 
 
+class CumemRewardFunction(RewardFunction):
+    """Reward whose model allocations support verified tagged-pool parking."""
+
+    memory_parking: ClassVar[RewardMemoryParkingSpec] = RewardMemoryParkingSpec(
+        residual_bytes_limit=_REWARD_CUDA_RUNTIME_RESIDUAL_BYTES,
+    )
+
+
 _IMAGE_SUFFIXES = frozenset({".bmp", ".gif", ".jpeg", ".jpg", ".png", ".ppm", ".webp"})
 
 
@@ -384,19 +540,22 @@ def decode_artifact_frames(artifact: Any, num_frames: int | None = None) -> Any:
 
 def _max_result_timing(results: list[RewardInferenceResult], field: str) -> float:
     values = [
-        float(value)
-        for result in results
-        if (value := getattr(result, field, None)) is not None
+        float(value) for result in results if (value := getattr(result, field, None)) is not None
     ]
     return max(values, default=0.0)
 
 
 def _sum_result_timing(results: list[RewardInferenceResult], field: str) -> float:
     return sum(
-        float(value)
-        for result in results
-        if (value := getattr(result, field, None)) is not None
+        float(value) for result in results if (value := getattr(result, field, None)) is not None
     )
 
 
-__all__ = ["ArtifactBuilder", "RewardFunction", "decode_artifact_frames"]
+__all__ = [
+    "ArtifactBuilder",
+    "CumemRewardFunction",
+    "RewardCleanupError",
+    "RewardFunction",
+    "decode_artifact_frames",
+    "resolve_reward_component_device",
+]

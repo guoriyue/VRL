@@ -1,6 +1,6 @@
 """PhyMotion human-dynamics reward function (disk artifacts + in-process runtime).
 
-A plain ``RewardFunction`` on the disk-artifact path whose runtime delegates to an
+A ``CumemRewardFunction`` on the disk-artifact path whose runtime delegates to an
 external PhyMotion environment (SMPL + MuJoCo) via a configured command (see
 ``vrl.rewards.models.phymotion.PhyMotionModel``). Returns
 ``kinematic_plausibility`` / ``contact_balance`` / ``dynamic_feasibility`` /
@@ -15,12 +15,12 @@ from __future__ import annotations
 
 from typing import Any
 
-from vrl.rewards.base import RewardFunction
+from vrl.rewards.base import CumemRewardFunction
 
 _PHYMOTION_MODEL = "vrl.rewards.models.phymotion:PhyMotionModel"
 
 
-class PhyMotionReward(RewardFunction):
+class PhyMotionReward(CumemRewardFunction):
     """PhyMotion human-dynamics reward via an external scorer, run in-process."""
 
     def __init__(self, **kwargs: Any) -> None:

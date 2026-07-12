@@ -1,6 +1,6 @@
 """Cosmos3 reasoner reward function (disk artifacts + in-process runtime).
 
-A plain ``RewardFunction`` on the disk-artifact path (see
+A ``CumemRewardFunction`` on the disk-artifact path (see
 ``_init_disk_artifact_reward``) whose runtime loads the Cosmos3 reasoner (Qwen3-VL
 understanding tower) and returns ``task_success`` / ``contact_realism`` /
 ``temporal_consistency`` / ``physical_plausibility`` / ``overall`` per artifact.
@@ -17,12 +17,12 @@ from __future__ import annotations
 
 from typing import Any
 
-from vrl.rewards.base import RewardFunction
+from vrl.rewards.base import CumemRewardFunction
 
 _COSMOS3_REASONER_MODEL = "vrl.rewards.models.cosmos3_reasoner:Cosmos3ReasonerRewardModel"
 
 
-class Cosmos3ReasonerReward(RewardFunction):
+class Cosmos3ReasonerReward(CumemRewardFunction):
     """Cosmos3-reasoner reward scored in-process from disk artifacts."""
 
     def __init__(self, **kwargs: Any) -> None:

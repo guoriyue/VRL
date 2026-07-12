@@ -44,3 +44,8 @@ reward:
   components:
     aesthetic: 1.0
     pickscore: 0.0
+  kwargs:
+    # Observation-only guard. Keep it on CPU so aesthetic remains the single
+    # shared-GPU CuMem owner; weight 0 excludes it from the optimization reward.
+    pickscore:
+      device: cpu

@@ -1,6 +1,13 @@
 # Symmetric colocated DDP (2 servers x 1 GPU) variant of the Cosmos Predict2.5 +
 # Kling DiffusionNFT run (SPRINT_symmetric_colocated_ddp.md).
 #
+# STATUS: capability-gated, not currently runnable. Shared-GPU phase leasing now
+# requires complete collective parking of DDP reducer buckets, optimizer/EMA/scaler
+# state, and live gradients. DDPStrategy rejects this topology before model or Ray
+# launch until that collective parking implementation exists. This file remains the
+# canonical future acceptance shape; use disjoint rollout GPUs for a runnable DDP
+# job today.
+#
 # Every server runs ONE torchrun rank = 1 DDP train replica + the base recipe's
 # single-GPU colocated rollout (and Kling reward) time-sharing its local GPU, all
 # reading the SAME policy version. Only the gradient all-reduce crosses servers
@@ -49,8 +56,8 @@ distributed:
     rollout:
       # Each rank colocates its rollout worker on its own (trainer) GPU — state the
       # intent explicitly via the gpu_pool grammar rather than relying on the base
-      # preset's allow_overlap fallback. On-demand (no memory_fraction); add one to
-      # make the worker resident (skips the per-cycle model reload, caps its share).
+      # preset's allow_overlap fallback. Shared roles always use on-demand phase
+      # handoff; the actor processes stay alive while their GPU state parks.
       gpu_pool: trainer
     reward:
       # 2 GPUs total (1 per rank), so there is no spare card to dedicate: the Kling

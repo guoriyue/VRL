@@ -11,14 +11,9 @@ reward:
     kling_video_reward: 1.0
   kwargs:
     kling_video_reward:
-      # Park the 7B reward model off-GPU between scores (in-process sleep/wake,
-      # same semantics as the rollout lease): on a shared/single GPU the card
-      # belongs to rollout+trainer outside scoring. cumem-only (vLLM required):
-      # the model builds inside a tagged CumemPool, sleep releases physical
-      # pages, wake remaps without cudaMalloc. Profiled at 14GB weight scale:
-      # 0.7s/cycle vs 4.4s naive .to() round trip vs ~8s per-step actor reload
-      # the old Ray pool paid; bit-exact across sleep/wake, fragmentation-immune.
-      sleep_offload: true
+      # GPU lifecycle comes only from distributed resource topology. Dedicated
+      # reward GPUs stay resident; sharing with trainer/rollout automatically
+      # injects the verified CuMem phase lease and release proof.
       reward_name: kling_video_reward   # logical tag (request label)
       score_key: overall_reward
       media_type: video

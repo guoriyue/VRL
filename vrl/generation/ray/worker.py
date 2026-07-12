@@ -8,6 +8,7 @@ from typing import Any
 from vrl.generation.execution.types import (
     ChunkExecutionEnvelope,
     ChunkExecutionResult,
+    WorkerMemoryParkingSnapshot,
 )
 from vrl.generation.execution.worker import GenerationWorkerCore
 from vrl.generation.launch_contract import GenerationRuntimeLaunchContract
@@ -42,8 +43,8 @@ class RayGenerationWorker:
     def release_policy(self) -> None:
         self.core.release_policy()
 
-    def sleep(self) -> None:
-        self.core.sleep()
+    def sleep(self) -> WorkerMemoryParkingSnapshot:
+        return self.core.sleep()
 
     def wake(self) -> None:
         self.core.wake()
@@ -68,13 +69,11 @@ class RayGenerationWorker:
         request: Any,
         *,
         max_samples: int,
-        memory_fraction: float | None = None,
     ) -> dict[str, Any]:
         """Startup chunk-size probe; see GenerationWorkerCore.probe_chunk_size."""
         return self.core.probe_chunk_size(
             request,
             max_samples=max_samples,
-            memory_fraction=memory_fraction,
         )
 
     def execute_request_pipelined(
@@ -96,5 +95,6 @@ class RayGenerationWorker:
             node_ip = "unknown"
             gpu_ids = []
         return {"worker_id": self.worker_id, "node_ip": node_ip, "gpu_ids": gpu_ids}
+
 
 __all__ = ["RayGenerationWorker"]

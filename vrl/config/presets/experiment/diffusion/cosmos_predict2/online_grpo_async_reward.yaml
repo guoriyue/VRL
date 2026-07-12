@@ -17,9 +17,8 @@
 # trainer; reward.gpu_pool=dedicated then takes a spare disjoint from rollout.
 #   - 1 GPU: does NOT resolve. rollout=dedicated has no non-overlapping spare and
 #     resolve_distributed_resources raises ("Not enough non-overlapping rollout
-#     GPUs"). The single-GPU resident trick lives in the opposite recipe,
-#     sd3_5/online_grpo_ocr_single_gpu_async_debug.yaml (gpu_pool=trainer +
-#     memory_fraction pins rollout resident on the trainer card).
+#     GPUs"). Continuous rollout requires a disjoint rollout GPU; shared-GPU
+#     recipes use strict phase handoff instead.
 #   - 2 GPUs: does NOT resolve. `dedicated` means disjoint from BOTH trainer and
 #     rollout, so there is no reward GPU left and resource resolution fails. Use
 #     3+ GPUs for the no-contention layout this recipe declares, or explicitly
@@ -85,7 +84,6 @@ trainer:
   debug: {first_step: true}
 
   rollout_orchestration:
-    require_separate_gpus: true       # trainer/rollout/reward are disjoint GPUs here
     continuous:
       max_inflight_groups: 2          # >=2: keep rollout(N+1) producing while reward(N) scores
       max_ready_groups: 4

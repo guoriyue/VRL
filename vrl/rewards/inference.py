@@ -6,7 +6,7 @@ import math
 import time
 from collections.abc import Mapping
 from dataclasses import dataclass, field
-from typing import Any, Literal, Protocol, get_args
+from typing import Any, Literal, Protocol, get_args, runtime_checkable
 
 # Valid artifact media kinds. ``MediaType`` is the single source of truth; the
 # disk artifact store (vrl.rewards.artifacts) imports MEDIA_TYPES, and both it
@@ -179,6 +179,66 @@ class RewardInferenceRuntime(Protocol):
     async def shutdown(self) -> None: ...
 
 
+@dataclass(frozen=True, slots=True)
+class RewardMemoryParkingSpec:
+    """Pre-construction contract for a verifiable reward parking runtime."""
+
+    residual_bytes_limit: int = 0
+
+    def __post_init__(self) -> None:
+        if self.residual_bytes_limit < 0:
+            raise ValueError("reward parking residual_bytes_limit must be >= 0")
+
+
+@dataclass(frozen=True, slots=True)
+class RewardMemoryReleaseProof:
+    """Evidence that one reward request finished with GPU memory parked."""
+
+    request_id: str
+    released: bool
+    baseline_gpu_used_bytes: int = 0
+    residual_gpu_used_bytes: int = 0
+    residual_bytes_limit: int = 0
+
+    def validate(self, *, request_id: str) -> None:
+        if self.request_id != request_id:
+            raise RuntimeError(
+                "reward memory release proof belongs to a different request: "
+                f"expected={request_id!r}, actual={self.request_id!r}",
+            )
+        if not self.released:
+            raise RuntimeError(
+                f"reward GPU memory was not released for request {request_id!r}",
+            )
+        if (
+            min(
+                self.baseline_gpu_used_bytes,
+                self.residual_gpu_used_bytes,
+                self.residual_bytes_limit,
+            )
+            < 0
+        ):
+            raise ValueError("reward memory release proof byte counts must be >= 0")
+        allowed = self.baseline_gpu_used_bytes + self.residual_bytes_limit
+        if self.residual_gpu_used_bytes > allowed:
+            raise RuntimeError(
+                "incomplete reward memory parking for request "
+                f"{request_id!r}: residual={self.residual_gpu_used_bytes} "
+                f"baseline={self.baseline_gpu_used_bytes} "
+                f"limit={self.residual_bytes_limit}",
+            )
+
+
+@runtime_checkable
+class RewardMemoryParkingRuntime(Protocol):
+    """Runtime boundary for retryable, verifiable reward GPU parking."""
+
+    @property
+    def requires_memory_parking(self) -> bool: ...
+
+    async def park_memory(self) -> RewardMemoryReleaseProof: ...
+
+
 def validate_reward_results(
     request: RewardInferenceRequest,
     results: list[RewardInferenceResult],
@@ -281,6 +341,8 @@ __all__ = [
     "RewardInferenceRequest",
     "RewardInferenceResult",
     "RewardInferenceRuntime",
+    "RewardMemoryParkingRuntime",
+    "RewardMemoryReleaseProof",
     "score_artifacts_with_model",
     "validate_reward_results",
 ]

@@ -31,9 +31,7 @@ def test_family_registry_covers_current_rollout_families() -> None:
     for family in families:
         entry = FAMILY_REGISTRY[family]
         expected_model_prefix = (
-            "vrl.models.diffusion."
-            if entry.collector.kind == "diffusion"
-            else "vrl.models.ar."
+            "vrl.models.diffusion." if entry.collector.kind == "diffusion" else "vrl.models.ar."
         )
         assert entry.family == family
         assert entry.task
@@ -160,10 +158,7 @@ def test_request_sampling_is_projected_from_resolved_yaml_config() -> None:
 def test_registry_keeps_return_artifacts_as_wiring_metadata() -> None:
     """Checks registry keeps return artifacts as wiring metadata."""
     for family in FAMILY_REGISTRY:
-        assert (
-            FAMILY_REGISTRY[family].collector.return_artifacts
-            == _default_return_artifacts
-        )
+        assert FAMILY_REGISTRY[family].collector.return_artifacts == _default_return_artifacts
 
 
 def test_migrated_collectors_build_direct_trajectory_collectors() -> None:
@@ -171,7 +166,6 @@ def test_migrated_collectors_build_direct_trajectory_collectors() -> None:
     for family in FAMILY_REGISTRY:
         collector = build_rollout_collector(
             family,
-            model=None,
             reward_fn=None,
             config=RolloutConfig(
                 family=family,
@@ -201,9 +195,7 @@ def test_ar_families_declare_importable_replay_builders() -> None:
     from vrl.rollouts.families.registry import FAMILY_REGISTRY
     from vrl.utils.config import import_from_path
 
-    ar_families = [
-        entry for entry in FAMILY_REGISTRY.values() if entry.task.startswith("ar_")
-    ]
+    ar_families = [entry for entry in FAMILY_REGISTRY.values() if entry.task.startswith("ar_")]
     assert len(ar_families) >= 6
     for entry in ar_families:
         assert entry.replay_runtime_builder, f"{entry.family} lacks replay_runtime_builder"
@@ -225,9 +217,7 @@ def test_diffusion_families_resolve_a_replay_path() -> None:
     from vrl.utils.config import import_from_path
 
     diffusion_families = [
-        entry
-        for entry in FAMILY_REGISTRY.values()
-        if entry.collector.kind == "diffusion"
+        entry for entry in FAMILY_REGISTRY.values() if entry.collector.kind == "diffusion"
     ]
     assert len(diffusion_families) >= 10
     for entry in diffusion_families:

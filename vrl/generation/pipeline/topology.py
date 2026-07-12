@@ -23,7 +23,6 @@ class PipelineStageRuntimePolicy:
     max_inflight: int = 1
     max_batch_wait_ms: int = 0
     max_batch_cost: int | None = None
-    memory_fraction: float | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
@@ -35,8 +34,6 @@ class PipelineStageRuntimePolicy:
             raise ValueError("stage max_batch_wait_ms must be >= 0")
         if self.max_batch_cost is not None and self.max_batch_cost < 1:
             raise ValueError("stage max_batch_cost must be >= 1 when set")
-        if self.memory_fraction is not None and not 0.0 < self.memory_fraction <= 1.0:
-            raise ValueError("stage memory_fraction must be in (0, 1] when set")
 
     @classmethod
     def from_value(
@@ -146,8 +143,7 @@ class PipelineTopology:
             missing = sorted(set(stage.next_stages) - known)
             if missing:
                 raise ValueError(
-                    f"stage {stage.name!r} references missing next stage(s): "
-                    f"{', '.join(missing)}",
+                    f"stage {stage.name!r} references missing next stage(s): {', '.join(missing)}",
                 )
         if not any(stage.terminal for stage in self.stages):
             raise ValueError("pipeline topology requires at least one terminal stage")
@@ -162,7 +158,7 @@ class PipelineTopology:
             if name in done:
                 return
             if name in in_progress:
-                cycle = (*path[path.index(name):], name)
+                cycle = (*path[path.index(name) :], name)
                 raise ValueError(
                     f"pipeline topology has a cycle: {' -> '.join(cycle)}",
                 )

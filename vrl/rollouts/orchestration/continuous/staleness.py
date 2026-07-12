@@ -12,7 +12,12 @@ from dataclasses import dataclass
 
 @dataclass(slots=True)
 class StalenessPolicy:
-    """Bound on how far an item's policy version may trail the trainer."""
+    """Bound on how far an item's policy version may trail the trainer.
+
+    A zero window remains useful for isolated scheduler/consumer invariant tests,
+    but production ``ContinuousRolloutConfig`` rejects it: zero-staleness runs
+    use the strict-on-policy schedule.
+    """
 
     max_stale_policy_versions: int = 0
 

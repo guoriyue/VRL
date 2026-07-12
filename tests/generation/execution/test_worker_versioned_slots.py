@@ -137,8 +137,8 @@ def test_update_weights_installs_versioned_slots_without_overwrite() -> None:
     model = _SlotModel()
     core = _core(model)
 
-    core.update_weights({"transformer.w": "v1"}, 1)
-    core.update_weights({"transformer.w": "v2"}, 2)
+    assert core.update_weights({"transformer.w": "v1"}, 1) == 1
+    assert core.update_weights({"transformer.w": "v2"}, 2) == 2
 
     assert core._uses_versioned_slots is True
     assert model.has_trainable_state(1) and model.has_trainable_state(2)
@@ -152,7 +152,7 @@ def test_update_weights_plain_model_loads_in_place() -> None:
     model = _PlainModel()
     core = _core(model)
 
-    core.update_weights({"transformer.w": "v1"}, 1)
+    assert core.update_weights({"transformer.w": "v1"}, 1) == 1
 
     assert core._uses_versioned_slots is False
     assert model.load_calls == [{"transformer.w": "v1"}]

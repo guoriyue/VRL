@@ -10,6 +10,7 @@ import torch
 import torch.nn as nn
 from diffusers import FlowMatchEulerDiscreteScheduler
 
+from tests.trainers.online._collector_control import CollectorControlFake
 from vrl.algorithms.grpo.continuous import GRPO, GRPOConfig
 from vrl.generation.types import GenerationRequest, GenerationSampleRow
 from vrl.rollouts.batch import RolloutBatch
@@ -24,7 +25,7 @@ _PROMPTS = ["a red fox", "a blue car"]
 _TARGET_VIDEO = "targets/training.mp4"
 
 
-class _Collector:
+class _Collector(CollectorControlFake):
     async def score_rollouts(self, pendings):
         return list(pendings)
 
@@ -70,7 +71,7 @@ def _sample_rows() -> list[GenerationSampleRow]:
 
 def _batch(scheduler) -> RolloutBatch:
     observations = torch.randn(_B, _T, *_LATENT)
-    timesteps = scheduler.timesteps[: _T].unsqueeze(0).expand(_B, _T).clone()
+    timesteps = scheduler.timesteps[:_T].unsqueeze(0).expand(_B, _T).clone()
     request = GenerationRequest(
         request_id="r",
         family="cosmos-predict2",

@@ -8,7 +8,10 @@ import logging
 from dataclasses import dataclass, replace
 from typing import Any
 
-from vrl.generation.execution.types import DistributedWorkerHandle
+from vrl.generation.execution.types import (
+    DistributedWorkerHandle,
+    WorkerMemoryParkingSnapshot,
+)
 from vrl.generation.launch_contract import GenerationRuntimeLaunchContract
 from vrl.generation.protocols import GenerationRuntime
 from vrl.generation.ray.config import RayGenerationConfig
@@ -18,8 +21,8 @@ from vrl.generation.ray.lifecycle_fsm import RuntimeLifecycle, RuntimePhase
 from vrl.generation.ray.weight_sync import GenerationWeightSync
 from vrl.generation.types import GenerationOutput, GenerationRequest
 from vrl.ray.dependencies import require_ray
-from vrl.ray.resource_cleanup import kill_actors, remove_placement_group
 from vrl.ray.placement import RolePlacement
+from vrl.ray.resource_cleanup import kill_actors
 
 logger = logging.getLogger(__name__)
 
@@ -55,10 +58,9 @@ class _OnDemandRuntimeState:
 class RayGenerationRuntime(GenerationRuntime):
     """Collector-facing Ray generation runtime.
 
-    Resident workers remain GPU-active for split-GPU throughput and bounded
-    colocated debug. Shared-GPU workers launch lazily, remain alive across phase
-    handoffs, and park their model in host RAM while the trainer or in-process
-    reward uses the physical GPU.
+    Resident workers remain GPU-active on dedicated GPUs. Shared-GPU workers
+    launch lazily, remain alive across phase handoffs, and park their model in
+    host RAM while the trainer or in-process reward uses the physical GPU.
     """
 
     def __init__(
@@ -87,7 +89,7 @@ class RayGenerationRuntime(GenerationRuntime):
         self.supports_non_draining_weight_sync = False
         # Resolved by the startup chunk-size probe on the first request that
         # carries sampling.samples_per_chunk == "auto"; a run-level constant
-        # (same shape + same contract budget), so sleep/wake and recovery relaunch
+        # (same shape + same phase budget), so sleep/wake and recovery relaunch
         # never re-probe.
         self._probed_samples_per_chunk: int | None = None
 
@@ -243,7 +245,6 @@ class RayGenerationRuntime(GenerationRuntime):
                 "samples_per_chunk: auto found no generation workers to probe",
             )
         max_samples = max(1, int(request.samples_per_prompt))
-        fraction = self._rollout_memory_fraction()
         refs = []
         local_results: list[dict[str, Any]] = []
         for worker in workers:
@@ -255,13 +256,9 @@ class RayGenerationRuntime(GenerationRuntime):
                 )
             remote = getattr(probe, "remote", None)
             if callable(remote):
-                refs.append(
-                    remote(request, max_samples=max_samples, memory_fraction=fraction),
-                )
+                refs.append(remote(request, max_samples=max_samples))
             else:
-                local_results.append(
-                    probe(request, max_samples=max_samples, memory_fraction=fraction),
-                )
+                local_results.append(probe(request, max_samples=max_samples))
         if refs:
             ray = require_ray()
             local_results.extend(
@@ -270,10 +267,9 @@ class RayGenerationRuntime(GenerationRuntime):
         resolved = min(int(result["samples_per_chunk"]) for result in local_results)
         for result in local_results:
             logger.info(
-                "chunk-size probe: n=%d (budget=%.0fMB fraction=%.2f trials=%s)",
+                "chunk-size probe: n=%d (budget=%.0fMB trials=%s)",
                 int(result["samples_per_chunk"]),
                 result["budget_bytes"] / 2**20,
-                result["memory_fraction"],
                 [
                     (
                         trial["label"],
@@ -287,19 +283,6 @@ class RayGenerationRuntime(GenerationRuntime):
             )
         self._probed_samples_per_chunk = resolved
         return resolved
-
-    def _rollout_memory_fraction(self) -> float | None:
-        """Contract GPU share for rollout (colocated trainer timeshare), if known.
-
-        The probe must budget against this contract, not instantaneous free
-        memory: at probe time a colocated trainer has not restored its weights
-        yet, so free memory overestimates what rollout may keep.
-        """
-
-        state = self._on_demand
-        if state is None or state.config.resources is None:
-            return None
-        return state.config.resources.rollout_gpu_memory_fraction
 
     def is_colocated(self) -> bool:
         state = self._on_demand
@@ -361,8 +344,18 @@ class RayGenerationRuntime(GenerationRuntime):
         try:
             await self.shutdown()
         except BaseException as cleanup_error:
-            if cleanup_error is not error:
-                raise cleanup_error from error
+            # The failed install/ACK is the transaction's root cause. Cleanup is
+            # retryable by the schedule owner, so it must never replace that
+            # first failure at the trainer boundary.
+            logger.error(
+                "generation quarantine cleanup failed after weight update error %r",
+                error,
+                exc_info=(
+                    type(cleanup_error),
+                    cleanup_error,
+                    cleanup_error.__traceback__,
+                ),
+            )
 
     def _commit_policy_state(
         self,
@@ -521,9 +514,7 @@ class RayGenerationRuntime(GenerationRuntime):
         if not self._owned_workers:
             return None
         ray = require_ray()
-        doomed = [
-            worker.actor for worker in self._owned_workers if worker.actor is not None
-        ]
+        doomed = [worker.actor for worker in self._owned_workers if worker.actor is not None]
         logger.info(
             "runtime shutdown: killing %d owned worker actor(s)",
             len(doomed),
@@ -557,7 +548,7 @@ class RayGenerationRuntime(GenerationRuntime):
             ) from failures[0]
         return None
 
-    async def sleep_workers(self) -> None:
+    async def sleep_workers(self) -> tuple[WorkerMemoryParkingSnapshot, ...]:
         """Offload every owned worker's model to host RAM, freeing the GPU.
 
         The workers stay alive (process + placement bundle retained); only their
@@ -565,29 +556,53 @@ class RayGenerationRuntime(GenerationRuntime):
         offload would otherwise hold the GPU a colocated trainer is about to use.
         """
         if not self._owned_workers:
-            return None
-        ray = require_ray()
-        refs = [
-            worker.actor.sleep.remote()
-            for worker in self._owned_workers
-            if worker.actor is not None
-        ]
-        if refs:
-            await asyncio.to_thread(ray.get, refs, timeout=120)
-        return None
+            return ()
+        missing_actor_ids = tuple(
+            worker.worker_id for worker in self._owned_workers if worker.actor is None
+        )
+        if missing_actor_ids:
+            raise RuntimeError(
+                f"generation workers have no actor: {missing_actor_ids}",
+            )
+        active_workers = tuple(
+            worker for worker in self._owned_workers if worker.actor is not None
+        )
+        worker_ids = tuple(worker.worker_id for worker in active_workers)
+        if len(set(worker_ids)) != len(worker_ids):
+            raise RuntimeError(f"duplicate generation worker ids: {worker_ids}")
+        refs = [worker.actor.sleep.remote() for worker in active_workers]
+        values = (
+            await asyncio.wait_for(asyncio.gather(*refs), timeout=120)
+            if refs
+            else []
+        )
+        snapshots: list[WorkerMemoryParkingSnapshot] = []
+        for worker, value in zip(active_workers, values, strict=True):
+            if not isinstance(value, WorkerMemoryParkingSnapshot):
+                raise TypeError(
+                    f"worker {worker.worker_id!r} returned invalid memory-parking "
+                    f"report {type(value).__name__}",
+                )
+            if value.worker_id != worker.worker_id:
+                raise RuntimeError(
+                    "mismatched worker memory-parking report: "
+                    f"expected={worker.worker_id!r} actual={value.worker_id!r}",
+                )
+            value.validate()
+            snapshots.append(value)
+        return tuple(snapshots)
 
     async def wake_workers(self) -> None:
         """Restore every owned worker's model from host RAM back onto its GPU."""
         if not self._owned_workers:
             return None
-        ray = require_ray()
         refs = [
             worker.actor.wake.remote()
             for worker in self._owned_workers
             if worker.actor is not None
         ]
         if refs:
-            await asyncio.to_thread(ray.get, refs, timeout=120)
+            await asyncio.wait_for(asyncio.gather(*refs), timeout=120)
         return None
 
     def _active_runtime(self) -> RayGenerationRuntime:

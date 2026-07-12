@@ -11,14 +11,20 @@ def diffusion_family_capability(
     *,
     supports_reference_conditioning: bool = False,
 ) -> FamilyCapability:
-    """Capability template for diffusion timestep rollouts."""
+    """Capability template for diffusion timestep rollouts.
+
+    Every production diffusion model inherits ``DiffusionModelBase``: registered
+    state follows ``nn.Module.to`` and unregistered pipeline components follow its
+    ``move_frozen_components`` contract. Worker startup checks those methods again,
+    and the post-sleep physical snapshot is the behavioral backstop.
+    """
 
     return FamilyCapability(
         family=family,
         task=task,
         trajectory_kind="diffusion",
         supports_reference_conditioning=supports_reference_conditioning,
-        supports_torch_compile=True,
+        supports_complete_memory_parking=True,
     )
 
 

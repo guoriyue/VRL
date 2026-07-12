@@ -125,10 +125,12 @@ rollout:
 distributed:
   resources:
     reward:
-      gpu_pool: rollout               # reward time-shares the rollout GPU -> topology derives
-                                      # release_rollout_before_reward=True. Without it reward=[]
-                                      # and the worker keeps ~23GiB resident while inline dino/RAFT
-                                      # score 93f videos on the driver -> OOM at the collect handoff
+      # DINOv2 and RAFT support CPU execution but cannot prove complete GPU
+      # parking. Explicit CPU ownership keeps the single-GPU handoff sound.
+      num_gpus: 0
+      devices: []
+      gpus_per_worker: 0.0
+      num_workers: 1
   rollout:
     pipelined: true
 

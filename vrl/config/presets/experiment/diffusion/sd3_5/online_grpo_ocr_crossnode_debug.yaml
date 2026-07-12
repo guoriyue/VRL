@@ -7,8 +7,7 @@
 #
 # Usage:
 #   RAY_ADDRESS=<head>:6379 CUDA_VISIBLE_DEVICES=0 vrl-train \
-#     --config experiment/diffusion/sd3_5/online_grpo_ocr_crossnode_debug \
-#     trainer.rollout_orchestration.continuous.max_stale_policy_versions=1
+#     --config experiment/diffusion/sd3_5/online_grpo_ocr_crossnode_debug
 #
 # See SPRINT_continuous_rollout_debug_harness.md for gate definitions.
 defaults:
@@ -59,8 +58,8 @@ trainer:
   rollout_orchestration:
     continuous:
       # Allow up to 4 groups in flight so the rollout actor stays busy across
-      # multiple steps. Raise max_stale_policy_versions=1 at launch time to
-      # enable real overlap (default 0 = behavior-equivalent to on-policy).
+      # multiple steps. A one-version window enables bounded overlap while
+      # keeping admission tied to the latest committed policy.
       max_inflight_groups: 4
       max_ready_groups: 16
-      max_stale_policy_versions: 0
+      max_stale_policy_versions: 1

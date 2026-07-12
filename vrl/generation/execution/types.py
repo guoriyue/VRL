@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Literal, get_args
 
 from vrl.generation.execution.chunks import SampleChunk
 from vrl.generation.protocols import ChunkResult
@@ -28,6 +28,51 @@ class DistributedWorkerHandle:
 
     worker_id: str
     actor: Any | None = None
+
+
+ParkingBackend = Literal["cpu_only", "cpu_offload", "cumem"]
+
+
+@dataclass(frozen=True, slots=True)
+class WorkerMemoryParkingSnapshot:
+    """Physical-memory evidence returned by one worker after parking.
+
+    The baseline is captured before policy load, so an unavoidable CUDA context
+    or library footprint is not mistaken for leaked model state. The runtime
+    validates every field before handing a shared GPU to the trainer.
+    """
+
+    worker_id: str
+    backend: ParkingBackend
+    baseline_gpu_used_bytes: int
+    # display/provenance-only: records the physical footprint before parking so
+    # an incomplete-parking error shows what the worker attempted to release.
+    loaded_gpu_used_bytes: int
+    residual_gpu_used_bytes: int
+    residual_bytes_limit: int = 0
+
+    def validate(self) -> None:
+        if not self.worker_id:
+            raise ValueError("parking snapshot worker_id must be non-empty")
+        if self.backend not in get_args(ParkingBackend):
+            raise ValueError(f"unsupported parking backend: {self.backend!r}")
+        values = {
+            "baseline_gpu_used_bytes": self.baseline_gpu_used_bytes,
+            "loaded_gpu_used_bytes": self.loaded_gpu_used_bytes,
+            "residual_gpu_used_bytes": self.residual_gpu_used_bytes,
+            "residual_bytes_limit": self.residual_bytes_limit,
+        }
+        for name, value in values.items():
+            if value < 0:
+                raise ValueError(f"parking snapshot {name} must be >= 0")
+        allowed = self.baseline_gpu_used_bytes + self.residual_bytes_limit
+        if self.residual_gpu_used_bytes > allowed:
+            raise RuntimeError(
+                f"worker {self.worker_id!r} incomplete {self.backend} memory parking: "
+                f"loaded={self.loaded_gpu_used_bytes} residual="
+                f"{self.residual_gpu_used_bytes} baseline="
+                f"{self.baseline_gpu_used_bytes} limit={self.residual_bytes_limit}",
+            )
 
 
 @dataclass(frozen=True, slots=True)
@@ -65,5 +110,7 @@ __all__ = [
     "ChunkExecutionEnvelope",
     "ChunkExecutionResult",
     "DistributedWorkerHandle",
+    "ParkingBackend",
     "StaleSlotDiscard",
+    "WorkerMemoryParkingSnapshot",
 ]

@@ -19,8 +19,7 @@ from vrl.utils.logging import init_logger
 logger = init_logger(__name__)
 
 DRIVER_CUDA_OWNERSHIP_ERROR = (
-    "Driver CUDA device overlaps rollout devices without an explicit colocate "
-    "configuration."
+    "Driver CUDA device overlaps rollout devices without an explicit colocate configuration."
 )
 
 
@@ -48,9 +47,8 @@ class RayGenerationConfig:
     # an omitted value previously meant silent stale-policy training. The syncer is
     # only built on the online launch path, so this never affects eval.
     sync_trainable_state: bool = True
-    # The full resolved plan. Lifecycle/memory details (resident colocation,
-    # gpu_memory_fraction) are read from it directly -- not mirrored onto flat
-    # fields, which the resolver already validates and this object already carries.
+    # The full resolved lifecycle/placement plan; the resolver validates it once
+    # and this object carries that source of truth without flat mirrors.
     resources: ResolvedDistributedResources | None = None
 
     def __post_init__(self) -> None:
@@ -164,9 +162,7 @@ def validate_colocated_replay_memory(
 
 def _is_colocated_gpu_rollout(config: RayGenerationConfig) -> bool:
     return bool(
-        config.allow_driver_gpu_overlap
-        and config.num_workers >= 1
-        and config.gpus_per_worker > 0
+        config.allow_driver_gpu_overlap and config.num_workers >= 1 and config.gpus_per_worker > 0
     )
 
 
@@ -193,9 +189,9 @@ def _validate_driver_cuda_ownership(
         raise ValueError(
             "Driver loaded rollout policy on CUDA, but no distributed.resources "
             "plan is available to prove rollout devices do not overlap. "
-            "Provide distributed.resources for split runs, or for resident "
-            "single-GPU debug set distributed.resources.rollout.gpu_pool=trainer "
-            "+ memory_fraction: <0..1>.",
+            "Provide distributed.resources for split runs, or set "
+            "distributed.resources.rollout.gpu_pool=trainer for time-shared "
+            "single-GPU colocation.",
         )
 
     overlap = driver_cuda_devices & set(resources.rollout_devices)
@@ -208,25 +204,17 @@ def _validate_driver_cuda_ownership(
         raise ValueError(
             f"Trainer device cuda:{overlap_list[0]} overlaps rollout devices "
             f"{rollout_devices}, but resources.allow_overlap=false. "
-            "Use CUDA_VISIBLE_DEVICES=0,1,2,3 with auto split for throughput, or "
-            "for resident single-GPU debug set "
-            "distributed.resources.rollout.gpu_pool=trainer + memory_fraction: <0..1>.",
+            "Use CUDA_VISIBLE_DEVICES=0,1,2,3 with auto split for throughput, or set "
+            "distributed.resources.rollout.gpu_pool=trainer for time-shared colocation.",
         )
 
-    # Read the topology-derived lifecycle plan directly, not a flat config mirror:
-    # an overlapping driver/rollout GPU is safe only when the worker is released
-    # after collect (on_demand) or is a resident colocated worker.
-    if (
-        resources.lifecycle.rollout.mode != "on_demand"
-        and resources.rollout_gpu_memory_fraction is None
-    ):
+    # Keep a runtime-boundary backstop in addition to resource resolution: an
+    # overlapping driver/rollout GPU is safe only when phases hand it over.
+    if resources.lifecycle.rollout.mode != "on_demand":
         raise ValueError(
             f"Trainer device cuda:{overlap_list[0]} overlaps rollout devices "
-            f"{rollout_devices}, but the rollout worker is neither released after "
-            "collect nor a resident colocated worker. Release is derived "
-            "automatically from a shared-GPU topology; for an intentionally "
-            "resident colocated debug worker set "
-            "distributed.resources.rollout.gpu_pool=trainer + memory_fraction: <0..1>.",
+            f"{rollout_devices}, but the resolved rollout lifecycle is not on_demand. "
+            "Shared trainer/rollout GPUs must hand ownership over between phases.",
         )
 
 

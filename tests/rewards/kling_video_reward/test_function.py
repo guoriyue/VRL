@@ -127,7 +127,7 @@ async def test_video_reward_rejects_missing_runtime_results(tmp_path: Path) -> N
 
 def test_video_reward_rejects_removed_pool_execution(tmp_path: Path) -> None:
     """Checks video reward fails loud on the removed pool execution."""
-    with pytest.raises(ValueError, match="sleep_offload"):
+    with pytest.raises(ValueError, match="resource topology"):
         KlingVideoReward(
             execution="pool",
             reward_name="kling_video_reward",
@@ -139,5 +139,3 @@ def test_video_reward_rejects_removed_pool_execution(tmp_path: Path) -> None:
 def test_video_reward_config_accepts_ray_runtime() -> None:
     """Checks video reward config accepts Ray runtime."""
     validate_reward_config(_video_reward_config())
-
-

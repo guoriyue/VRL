@@ -122,7 +122,6 @@ def test_janus_collector_has_no_forward_step() -> None:
     """Collectors expose collect(); train-time replay lives on the model."""
     collector = build_rollout_collector(
         "janus_pro",
-        model=_build_stub_model(),
         reward_fn=None,
         config=RolloutConfig(
             family="janus_pro",

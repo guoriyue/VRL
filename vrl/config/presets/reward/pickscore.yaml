@@ -4,6 +4,8 @@ reward:
     pickscore: 1.0
   kwargs:
     pickscore:
+      # Optional CPU downgrade under the resource-resolved device ceiling.
+      device: null
       processor_name: laion/CLIP-ViT-H-14-laion2B-s32B-b79K
       model_name: yuvalkirstain/PickScore_v1
       dtype: float32

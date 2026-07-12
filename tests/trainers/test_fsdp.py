@@ -346,7 +346,9 @@ def test_fsdp_export_then_load_trainable_state_round_trip(cpu_process_group) -> 
     strategy = FSDPStrategy(_cpu_fsdp_context(), precision_policy="none")
     src = _shard(_ToyTransformer())
     with torch.no_grad():
-        load_full_state_dict(src, {k: torch.full_like(v, 3.0) for k, v in gather_full_state_dict(src).items()})
+        load_full_state_dict(
+            src, {k: torch.full_like(v, 3.0) for k, v in gather_full_state_dict(src).items()}
+        )
 
     snapshot = strategy.export_trainable_state(_Bundle(src))
     assert set(snapshot) == {"transformer"}
@@ -438,6 +440,11 @@ def test_build_strategy_fsdp_reads_knobs() -> None:
     assert strategy._reshard_after_forward is False
 
 
+def test_fsdp_rejects_shared_gpu_training_state_parking_preflight() -> None:
+    with pytest.raises(NotImplementedError, match="Use disjoint rollout GPUs"):
+        FSDPStrategy(_cpu_fsdp_context()).validate_training_state_parking()
+
+
 def test_fsdp_shutdown_releases_training_process_group(monkeypatch) -> None:
     calls: list[bool] = []
     monkeypatch.setattr(
@@ -471,9 +478,7 @@ def test_build_strategy_fsdp_rejects_train_compile() -> None:
     # torch.compile (inductor) is unsound with FSDP2 reshard-after-forward all-gathers;
     # the build_strategy §10 gate must reject it.
     with pytest.raises(NotImplementedError, match="torch_compile"):
-        build_strategy(
-            {"model": {"torch_compile": {"enable": True}}}, _cpu_fsdp_context()
-        )
+        build_strategy({"model": {"torch_compile": {"enable": True}}}, _cpu_fsdp_context())
 
 
 # ── gathered HF-adapter export (save_pretrained under FSDP2) ─────────────────

@@ -73,6 +73,11 @@ reward:
     videocon_physics:
       artifact_format: mp4
       score_key: physical_commonsense
+      # CuMem sleep is process-wide, so only Kling owns the shared GPU lease.
+      # Keep the second 7B judge explicit and independent on CPU; this favors
+      # correctness over reward throughput until a remote process boundary exists.
+      worker_config:
+        device: cpu
 
 production:
   kling_video_reward:

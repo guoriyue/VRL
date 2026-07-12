@@ -218,7 +218,6 @@ def test_model_torch_compile_applies_to_all_diffusion_rollout_families(
     )
 
     assert entry.capability.trajectory_kind == "diffusion"
-    assert entry.capability.supports_torch_compile is True
     assert inputs.launch_contract.model_build is not None
     model_config = inputs.launch_contract.model_build["model_config"]
     assert model_config["torch_compile"] == {

@@ -13,8 +13,8 @@
 # - num_steps 10 with the SDE window [0,10): every step trainable, ~3.5x faster
 #   generation than 35; 10-step output eyeballed coherent (outputs/_overfit_preflight).
 # - memory floor (all three measured on this card): samples_per_chunk 1,
-#   trajectory_storage.device cpu, reward gpu_pool rollout (rollout vacates
-#   before inline dino/RAFT scoring).
+#   trajectory_storage.device cpu, and explicit CPU DINO/RAFT scoring. These
+#   two local rewards cannot publish a complete GPU-memory release proof.
 # - eval cadence that can actually be judged (the Jun-30 lesson: a run whose
 #   eval series never materializes cannot be called "moved" or "not moved"):
 #   freq 2, 16 fixed prompts x 4 samples = n=64 per point, fixed seed.
@@ -99,7 +99,12 @@ rollout:
 distributed:
   resources:
     reward:
-      gpu_pool: rollout               # rollout vacates before inline dino/RAFT scoring
+      # DINOv2 and RAFT support CPU execution but cannot prove complete GPU
+      # parking. CPU scoring preserves the single-GPU phase lease contract.
+      num_gpus: 0
+      devices: []
+      gpus_per_worker: 0.0
+      num_workers: 1
   rollout:
     pipelined: true
 

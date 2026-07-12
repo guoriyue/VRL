@@ -12,7 +12,9 @@ clip and full-state export, a real ``barrier`` — lands in
 
 from __future__ import annotations
 
+import gc
 from collections.abc import Iterable, Mapping
+from dataclasses import dataclass
 from typing import Any, Protocol
 
 import torch
@@ -20,6 +22,47 @@ from torch import nn
 
 from vrl.trainers.distributed import DistributedTrainingContext
 from vrl.utils.config import cfg_path
+from vrl.utils.cuda_memory import empty_cuda_cache
+
+
+@dataclass(frozen=True, slots=True)
+class TrainingMemoryState:
+    """Live trainer-owned state that must leave a shared GPU for rollout.
+
+    The trainer builds this value at the start of every rollout phase.  Keeping
+    object discovery there is important: optimizer and EMA state are lazy, and
+    streaming accumulation can add live gradients between two rollout phases.
+    The strategy owns *how* those objects move; rollout orchestration must never
+    inspect their internals.
+    """
+
+    model: nn.Module
+    ref_model: nn.Module | None
+    optimizer: torch.optim.Optimizer | None
+    ema: Any | None
+    grad_scaler: Any | None
+    device: torch.device
+
+
+@dataclass(slots=True)
+class _ModuleRestore:
+    module: Any
+    device: torch.device
+
+
+@dataclass(slots=True)
+class _TensorRestore:
+    tensor: torch.Tensor
+    device: torch.device
+
+
+@dataclass(slots=True)
+class _ParkedTrainingState:
+    state: TrainingMemoryState
+    key: tuple[int, int, int, int, int, str]
+    modules: list[_ModuleRestore]
+    tensors: list[_TensorRestore]
+    ema_device: Any | None
 
 
 class Strategy(Protocol):
@@ -77,12 +120,24 @@ class Strategy(Protocol):
         """Load a checkpoint-facing optimizer state back (re-shard under FSDP)."""
         ...
 
+    def validate_training_state_parking(self) -> None:
+        """Fail before collection when this strategy cannot park shared-GPU state."""
+        ...
+
+    def park_training_state(self, state: TrainingMemoryState) -> None:
+        """Move all live trainer-owned CUDA state out of the rollout GPU."""
+        ...
+
+    def restore_training_state(self, state: TrainingMemoryState) -> None:
+        """Restore the state previously parked by ``park_training_state``."""
+        ...
+
     def barrier(self) -> None:
         """Synchronize all training ranks (no-op for single process)."""
         ...
 
-    def shutdown(self) -> None:
-        """Release process-wide resources owned by this strategy."""
+    def shutdown(self, *, restore_parked: bool = True) -> None:
+        """Release resources, restoring parked GPU state only when ownership is safe."""
         ...
 
 
@@ -96,6 +151,7 @@ class SingleProcessStrategy(Strategy):
 
     def __init__(self, context: DistributedTrainingContext | None = None) -> None:
         self.context = context or _single_process_context()
+        self._parked_training_state: _ParkedTrainingState | None = None
 
     def prepare_model(self, model: Any) -> Any:
         # Single process trains the model as-is; the seam exists so FSDP2 can wrap
@@ -121,9 +177,9 @@ class SingleProcessStrategy(Strategy):
         return export_trainable_state(bundle)
 
     def export_rollout_state(self, bundle: Any) -> dict[str, Any]:
-        from vrl.trainers.weight_sync import build_trainable_state_sync_getter
+        from vrl.trainers.weight_sync import build_trainable_state_sync_getter, to_cpu_snapshot
 
-        return build_trainable_state_sync_getter(bundle)()
+        return to_cpu_snapshot(build_trainable_state_sync_getter(bundle)())
 
     def load_trainable_state(self, bundle: Any, state: dict[str, Any]) -> None:
         from vrl.trainers.checkpointing import load_trainable_state
@@ -147,11 +203,208 @@ class SingleProcessStrategy(Strategy):
         del model
         optimizer.load_state_dict(state)
 
+    def validate_training_state_parking(self) -> None:
+        return None
+
+    def park_training_state(self, state: TrainingMemoryState) -> None:
+        """Park model, optimizer, EMA, scaler, and live gradients on CPU.
+
+        Tensor objects are moved in place so optimizer/EMA/scaler aliases remain
+        valid.  A single identity set spans every owner, preventing a tensor that
+        appears through two live structures from being moved twice.
+        """
+
+        self.validate_training_state_parking()
+        if not isinstance(state, TrainingMemoryState):
+            raise TypeError("training state parking requires TrainingMemoryState")
+        key = _training_state_key(state)
+        if self._parked_training_state is not None:
+            if self._parked_training_state.key == key:
+                return
+            raise RuntimeError(
+                "cannot park different training state before restoring the current phase"
+            )
+
+        parked = _ParkedTrainingState(
+            state=state,
+            key=key,
+            modules=[],
+            tensors=[],
+            ema_device=getattr(state.ema, "device", None),
+        )
+        self._parked_training_state = parked
+        seen_objects: set[int] = set()
+        seen_tensors: set[int] = set()
+        try:
+            for module in (state.model, state.ref_model):
+                if module is None or id(module) in seen_objects:
+                    continue
+                seen_objects.add(id(module))
+                parked.modules.append(
+                    _ModuleRestore(module=module, device=_module_device(module, state.device)),
+                )
+                seen_tensors.update(_module_tensor_ids(module))
+                _move_module(module, torch.device("cpu"))
+
+            if state.optimizer is not None:
+                _move_tensor_tree_in_place(
+                    state.optimizer.state,
+                    torch.device("cpu"),
+                    seen=seen_tensors,
+                    restores=parked.tensors,
+                )
+            if state.ema is not None:
+                _move_tensor_tree_in_place(
+                    getattr(state.ema, "ema_parameters", ()),
+                    torch.device("cpu"),
+                    seen=seen_tensors,
+                    restores=parked.tensors,
+                )
+                _move_tensor_tree_in_place(
+                    getattr(state.ema, "temp_stored_parameters", ()),
+                    torch.device("cpu"),
+                    seen=seen_tensors,
+                    restores=parked.tensors,
+                )
+                if hasattr(state.ema, "device"):
+                    state.ema.device = torch.device("cpu")
+            if state.grad_scaler is not None:
+                for attr in ("_scale", "_growth_tracker", "_per_optimizer_states"):
+                    _move_tensor_tree_in_place(
+                        getattr(state.grad_scaler, attr, None),
+                        torch.device("cpu"),
+                        seen=seen_tensors,
+                        restores=parked.tensors,
+                    )
+            _release_training_cuda_memory()
+        except BaseException:
+            try:
+                self._restore_parked_training_state(parked)
+            except BaseException as rollback_error:
+                raise RuntimeError(
+                    "training-state parking failed and rollback could not restore the trainer",
+                ) from rollback_error
+            self._parked_training_state = None
+            raise
+
+    def restore_training_state(self, state: TrainingMemoryState) -> None:
+        parked = self._parked_training_state
+        if parked is None:
+            return
+        same_state = parked.key == _training_state_key(state)
+        self._restore_parked_training_state(parked)
+        self._parked_training_state = None
+        if not same_state:
+            raise RuntimeError("trainer-owned state changed while its GPU memory was parked")
+
+    def _restore_parked_training_state(self, parked: _ParkedTrainingState) -> None:
+        for module in parked.modules:
+            _move_module(module.module, module.device)
+        for restore in reversed(parked.tensors):
+            _move_tensor_data(restore.tensor, restore.device)
+        ema = parked.state.ema
+        if ema is not None and hasattr(ema, "device"):
+            ema.device = parked.ema_device
+        empty_cuda_cache()
+
     def barrier(self) -> None:
         return None
 
-    def shutdown(self) -> None:
-        return None
+    def shutdown(self, *, restore_parked: bool = True) -> None:
+        if self._parked_training_state is not None and restore_parked:
+            self.restore_training_state(self._parked_training_state.state)
+        elif self._parked_training_state is not None:
+            # Terminal role cleanup could not prove the shared GPU was released.
+            # Drop only this adapter's restore ticket; the live objects deliberately
+            # remain on CPU until process exit instead of racing another GPU owner.
+            self._parked_training_state = None
+
+
+def _training_state_key(state: TrainingMemoryState) -> tuple[int, int, int, int, int, str]:
+    return (
+        id(state.model),
+        id(state.ref_model),
+        id(state.optimizer),
+        id(state.ema),
+        id(state.grad_scaler),
+        str(state.device),
+    )
+
+
+def _module_device(module: Any, fallback: torch.device) -> torch.device:
+    for tensor in _module_tensors(module):
+        return torch.device(tensor.device)
+    return torch.device(fallback)
+
+
+def _module_tensors(module: Any) -> Iterable[torch.Tensor]:
+    parameters = getattr(module, "parameters", None)
+    if callable(parameters):
+        for parameter in parameters():
+            if isinstance(parameter, torch.Tensor):
+                yield parameter
+                if parameter.grad is not None:
+                    yield parameter.grad
+    buffers = getattr(module, "buffers", None)
+    if callable(buffers):
+        yield from (buffer for buffer in buffers() if isinstance(buffer, torch.Tensor))
+
+
+def _module_tensor_ids(module: Any) -> set[int]:
+    return {id(tensor) for tensor in _module_tensors(module)}
+
+
+def _move_module(module: Any, device: torch.device) -> None:
+    move = getattr(module, "to", None)
+    if not callable(move):
+        raise TypeError(f"training module {type(module).__name__} does not expose to(device)")
+    move(device)
+    move_frozen = getattr(module, "move_frozen_components", None)
+    if callable(move_frozen):
+        move_frozen(device)
+
+
+def _move_tensor_tree_in_place(
+    value: Any,
+    device: torch.device,
+    *,
+    seen: set[int],
+    restores: list[_TensorRestore],
+) -> None:
+    if isinstance(value, torch.Tensor):
+        tensor_id = id(value)
+        if tensor_id in seen:
+            return
+        seen.add(tensor_id)
+        original_device = torch.device(value.device)
+        if original_device != device:
+            restores.append(_TensorRestore(tensor=value, device=original_device))
+            _move_tensor_data(value, device)
+        return
+    if isinstance(value, Mapping):
+        for child in value.values():
+            _move_tensor_tree_in_place(child, device, seen=seen, restores=restores)
+        return
+    if isinstance(value, (list, tuple, set)):
+        for child in value:
+            _move_tensor_tree_in_place(child, device, seen=seen, restores=restores)
+
+
+def _move_tensor_data(tensor: torch.Tensor, device: torch.device) -> None:
+    if torch.device(tensor.device) == device:
+        return
+    tensor.data = tensor.data.to(device=device)
+
+
+def _release_training_cuda_memory() -> None:
+    """Release trainer allocator pages; any CUDA failure invalidates the handoff."""
+
+    gc.collect()
+    if not torch.cuda.is_available():
+        return
+    torch.cuda.synchronize()
+    torch.cuda.empty_cache()
+    torch.cuda.synchronize()
 
 
 def _single_transformer_handle(model: Any) -> tuple[Any, Any]:
@@ -286,10 +539,16 @@ class FSDPStrategy(Strategy):
         from vrl.trainers.weight_sync import require_trainable_modules, to_cpu
 
         modules = require_trainable_modules(bundle)
-        return {name: to_cpu(self._gather_unwrapped(module)[1]) for name, module in modules.items()}
+        return {
+            name: to_cpu(self._gather_unwrapped(module)[1]) for name, module in modules.items()
+        }
 
     def export_rollout_state(self, bundle: Any) -> dict[str, Any]:
-        from vrl.trainers.weight_sync import require_trainable_modules, select_trainable_state
+        from vrl.trainers.weight_sync import (
+            require_trainable_modules,
+            select_trainable_state,
+            to_cpu_snapshot,
+        )
 
         modules = require_trainable_modules(bundle)
         state: dict[str, Any] = {}
@@ -301,7 +560,7 @@ class FSDPStrategy(Strategy):
             state.update(select_trainable_state(inner, str(module_name), full))
         if not state:
             raise ValueError("trainable module state is empty")
-        return state
+        return to_cpu_snapshot(state)
 
     def load_trainable_state(self, bundle: Any, state: dict[str, Any]) -> None:
         from vrl.trainers.fsdp import load_full_state_dict
@@ -336,13 +595,27 @@ class FSDPStrategy(Strategy):
 
         load_full_optimizer_state_dict(model, optimizer, state)
 
+    def validate_training_state_parking(self) -> None:
+        raise NotImplementedError(
+            "shared-GPU on-demand rollout is not supported with FSDP: DTensor model, "
+            "optimizer, EMA, GradScaler, and live-gradient parking has not been "
+            "implemented collectively. Use disjoint rollout GPUs.",
+        )
+
+    def park_training_state(self, state: TrainingMemoryState) -> None:
+        self.validate_training_state_parking()
+
+    def restore_training_state(self, state: TrainingMemoryState) -> None:
+        self.validate_training_state_parking()
+
     def barrier(self) -> None:
         import torch.distributed as dist
 
         if dist.is_initialized():
             dist.barrier()
 
-    def shutdown(self) -> None:
+    def shutdown(self, *, restore_parked: bool = True) -> None:
+        del restore_parked
         from vrl.trainers.fsdp import shutdown_training_process_group
 
         shutdown_training_process_group()
@@ -428,9 +701,10 @@ class DDPStrategy(Strategy):
         # all-gather path drops the PEFT LoRA keys for a *replicated* (non-sharded)
         # module, so select_trainable_state() then reports every lora_A/lora_B param
         # "missing" and the first weight sync raises. The ws=1 CPU test never hit that
-        # path (gather is a no-op at ws=1); the real 2x1 NCCL run did. cpu-offload to
-        # match the rollout payload contract (the FSDP path uses cpu_offload=True).
-        full = {key: value.detach().to("cpu") for key, value in inner.state_dict().items()}
+        # path (gather is a no-op at ws=1); the real 2x1 NCCL run did. Callers perform
+        # their own CPU conversion: checkpoint export uses ``to_cpu`` and rollout
+        # export uses the stronger non-aliasing ``to_cpu_snapshot`` contract.
+        full = {key: value.detach() for key, value in inner.state_dict().items()}
         return inner, full
 
     def export_trainable_state(self, bundle: Any) -> dict[str, dict[str, Any]]:
@@ -438,12 +712,15 @@ class DDPStrategy(Strategy):
 
         modules = require_trainable_modules(bundle)
         return {
-            name: to_cpu(self._unwrapped_full_state(module)[1])
-            for name, module in modules.items()
+            name: to_cpu(self._unwrapped_full_state(module)[1]) for name, module in modules.items()
         }
 
     def export_rollout_state(self, bundle: Any) -> dict[str, Any]:
-        from vrl.trainers.weight_sync import require_trainable_modules, select_trainable_state
+        from vrl.trainers.weight_sync import (
+            require_trainable_modules,
+            select_trainable_state,
+            to_cpu_snapshot,
+        )
 
         modules = require_trainable_modules(bundle)
         state: dict[str, Any] = {}
@@ -452,7 +729,7 @@ class DDPStrategy(Strategy):
             state.update(select_trainable_state(inner, str(module_name), full))
         if not state:
             raise ValueError("trainable module state is empty")
-        return state
+        return to_cpu_snapshot(state)
 
     def load_trainable_state(self, bundle: Any, state: dict[str, Any]) -> None:
         from vrl.trainers.fsdp import load_full_state_dict
@@ -482,13 +759,27 @@ class DDPStrategy(Strategy):
         del model
         optimizer.load_state_dict(state)
 
+    def validate_training_state_parking(self) -> None:
+        raise NotImplementedError(
+            "shared-GPU on-demand rollout is not supported with DDP: reducer buckets, "
+            "optimizer, EMA, GradScaler, and live-gradient parking has not been "
+            "implemented collectively. Use disjoint rollout GPUs.",
+        )
+
+    def park_training_state(self, state: TrainingMemoryState) -> None:
+        self.validate_training_state_parking()
+
+    def restore_training_state(self, state: TrainingMemoryState) -> None:
+        self.validate_training_state_parking()
+
     def barrier(self) -> None:
         import torch.distributed as dist
 
         if dist.is_initialized():
             dist.barrier()
 
-    def shutdown(self) -> None:
+    def shutdown(self, *, restore_parked: bool = True) -> None:
+        del restore_parked
         from vrl.trainers.fsdp import shutdown_training_process_group
 
         shutdown_training_process_group()
@@ -509,8 +800,12 @@ def build_strategy(cfg: Any, context: DistributedTrainingContext) -> Strategy:
         _assert_fsdp_config_supported(cfg)
         return FSDPStrategy(
             context,
-            mesh_dims=list(cfg_path(cfg, "distributed.training.fsdp.mesh", ["dp_shard"]) or ["dp_shard"]),
-            precision_policy=str(cfg_path(cfg, "distributed.training.fsdp.precision_policy", "actor")),
+            mesh_dims=list(
+                cfg_path(cfg, "distributed.training.fsdp.mesh", ["dp_shard"]) or ["dp_shard"]
+            ),
+            precision_policy=str(
+                cfg_path(cfg, "distributed.training.fsdp.precision_policy", "actor")
+            ),
             reshard_after_forward=bool(
                 cfg_path(cfg, "distributed.training.fsdp.reshard_after_forward", True),
             ),
@@ -562,4 +857,11 @@ def _single_process_context() -> DistributedTrainingContext:
     )
 
 
-__all__ = ["DDPStrategy", "FSDPStrategy", "SingleProcessStrategy", "Strategy", "build_strategy"]
+__all__ = [
+    "DDPStrategy",
+    "FSDPStrategy",
+    "SingleProcessStrategy",
+    "Strategy",
+    "TrainingMemoryState",
+    "build_strategy",
+]

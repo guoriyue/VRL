@@ -29,6 +29,10 @@ pytestmark = pytest.mark.slow_test if pytest is not None else ()
 class _TinyRuntimeModel:
     device = "cpu"
 
+    def to(self, device: Any) -> _TinyRuntimeModel:
+        self.device = str(device)
+        return self
+
     def replay_forward(self, batch: Any, timestep_idx: int = 0, **kwargs: Any) -> ReplayResult:
         raise NotImplementedError("Ray launcher test never calls replay_forward")
 
@@ -219,8 +223,8 @@ def test_owner_placement_runtime_does_not_own_placement_group() -> None:
         ray.shutdown()
 
 
-def test_launcher_marks_explicit_colocated_persistent_runtime() -> None:
-    """Launcher preserves the colocated bit for single-GPU continuous debug."""
+def test_launcher_preserves_explicit_colocation_protocol_signal() -> None:
+    """Direct runtime construction preserves the is_colocated safety signal."""
     ray = pytest.importorskip("ray")
     import vrl.generation.ray.launcher as launcher_mod
 

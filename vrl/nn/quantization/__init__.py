@@ -12,12 +12,11 @@ not the per-scheme module.
 
 from __future__ import annotations
 
-from vrl.nn.quantization.base import QuantizedLinear
+from vrl.nn.quantization.base import QuantizedLinear, drop_quantized_masters
 from vrl.nn.quantization.fp8 import (
     DEFAULT_EXCLUDE,
     LM_EXCLUDE,
     Fp8Linear,
-    drop_fp8_masters,
     swap_linears_to_fp8,
     vllm_block_fp8_available,
 )
@@ -27,7 +26,7 @@ __all__ = [
     "LM_EXCLUDE",
     "Fp8Linear",
     "QuantizedLinear",
-    "drop_fp8_masters",
+    "drop_quantized_masters",
     "swap_linears_to_fp8",
     "vllm_block_fp8_available",
 ]

@@ -6,6 +6,11 @@ These pin the behaviors the trainer relies on:
 - items carry the policy version captured at submission time;
 - the consumer honors the staleness bound and aggregates per-item
   collect phase timings into the iteration.
+
+Some cases use ``StalenessPolicy(0)`` to pin the mechanism's exact boundary.
+That value is intentionally unreachable from production continuous config,
+which requires at least one stale policy version; zero-staleness execution uses
+the strict-on-policy schedule.
 """
 
 from __future__ import annotations
@@ -167,6 +172,38 @@ async def test_failed_reward_scoring_never_enqueues() -> None:
         await producer.stop()
 
 
+@pytest.mark.asyncio
+async def test_control_loop_failure_reaches_consumer_without_timeout() -> None:
+    collector = _GatedCollector()
+    queue = ContinuousRolloutQueue(max_items=4)
+    producer = _producer(collector, queue)
+
+    def fail_admission() -> None:
+        raise RuntimeError("admission invariant broke")
+
+    producer._admit = fail_admission
+    await producer.start()
+    try:
+        await _wait_until(lambda: producer.state.fatal_error is not None)
+        consumer = _consumer(queue, max_stale=0)
+
+        with pytest.raises(RuntimeError, match="producer control loop failed") as caught:
+            await consumer.drain_for_iteration(
+                rollout_id=0,
+                min_groups=1,
+                current_version=1,
+                mode=RolloutScheduleMode.CONTINUOUS,
+                wait_timeout_s=60.0,
+                poll_interval_s=0.001,
+                producer_state=producer.state,
+            )
+
+        assert caught.value.__cause__ is producer.state.fatal_error
+        assert "admission invariant broke" in str(caught.value.__cause__)
+    finally:
+        await producer.stop()
+
+
 # ------------------------------------------------------- weight-sync drain
 
 
@@ -314,8 +351,7 @@ async def test_items_carry_policy_version_captured_at_submission() -> None:
 
 @pytest.mark.asyncio
 async def test_producer_discards_group_too_stale_at_receipt() -> None:
-    """max_stale=0 (e.g. DiffusionNFT): a group whose policy was superseded mid
-    flight is dropped at receipt, not queued for the consumer to drop later."""
+    """At the mechanism-only zero bound, a superseded group drops at receipt."""
     collector = _GatedCollector()
     collector.allow_generate.clear()
     queue = ContinuousRolloutQueue(max_items=4)

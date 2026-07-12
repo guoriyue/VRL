@@ -266,10 +266,6 @@ class RayGenerationLauncher:
         resolved_executor_kwargs.update(dict(executor_kwargs or {}))
         runtime_extra = _runtime_extra(cfg)
         runtime_extra["family_capability"] = entry.capability.to_dict()
-        resources = ray_config.resources
-        if resources is not None and resources.rollout_gpu_memory_fraction is not None:
-            # Worker-side allocator cap for colocated rollout (applied in load_policy).
-            runtime_extra["gpu_memory_fraction"] = resources.rollout_gpu_memory_fraction
         _validate_model_compile_supported(cfg, entry)
         runtime_build_payload = _runtime_build_payload(runtime_build)
 
@@ -347,7 +343,7 @@ def _validate_model_compile_supported(cfg: Any, entry: Any) -> None:
 
     if not bool(cfg_path(cfg, "model.torch_compile.enable", False)):
         return
-    if not entry.capability.supports_torch_compile:
+    if entry.capability.trajectory_kind != "diffusion":
         raise ValueError(
             f"{entry.family} does not support torch compile but model.torch_compile.enable is set",
         )

@@ -13,7 +13,7 @@ def test_family_capability_round_trip_preserves_runtime_decisions() -> None:
         task="i2v",
         trajectory_kind="diffusion",
         supports_reference_conditioning=True,
-        supports_torch_compile=True,
+        supports_complete_memory_parking=True,
     )
 
     assert FamilyCapability.from_value(capability.to_dict()) == capability

@@ -6,8 +6,8 @@ two counters (``len(inflight) < max_inflight_groups`` *and*
 enforced its own item/byte caps and could silently evict an item the producer
 had already counted as admitted. Staleness was reactive only — the producer
 stamped a version at submit time and the consumer/queue dropped groups that had
-gone stale *after* they were generated, so a deep prefetch queue under
-``max_stale=0`` kept generating work that was guaranteed to be thrown away.
+gone stale *after* they were generated, so a deep queue could keep generating
+work that was guaranteed to be thrown away at the configured window.
 
 ``RolloutScheduler`` makes one component own *every policy-version decision*
 across the pipeline, while the producer/queue/consumer keep their *mechanisms*
@@ -184,11 +184,7 @@ class RolloutScheduler:
     ) -> int:
         """Drop ready items from prior prompt sets so they cannot block admission."""
 
-        to_drop = [
-            item
-            for item in queue.snapshot()
-            if item.prompt_set_id != int(prompt_set_id)
-        ]
+        to_drop = [item for item in queue.snapshot() if item.prompt_set_id != int(prompt_set_id)]
         if to_drop:
             queue.remove(to_drop)
             queue.note_dropped_prompt_set(len(to_drop))
@@ -266,14 +262,10 @@ class RolloutScheduler:
         # Newest first so an in-bound fresh version always wins over a stale one.
         versions = sorted(
             by_version.keys(),
-            key=lambda v: (-1 if v is None else int(v)),
+            key=lambda v: -1 if v is None else int(v),
             reverse=True,
         )
-        return [
-            version
-            for version in versions
-            if self._staleness.admit(version, current_version)
-        ]
+        return [version for version in versions if self._staleness.admit(version, current_version)]
 
     @staticmethod
     def _take_distinct(

@@ -6,9 +6,6 @@ import logging
 from collections.abc import Callable
 from typing import Any, Protocol
 
-import torch
-import torch.nn as nn
-
 from vrl.rollouts.orchestration.continuous import ContinuousRolloutSchedule
 from vrl.rollouts.orchestration.rollout_runtime import RolloutRuntimeCoordinator
 from vrl.rollouts.orchestration.strict_on_policy import StrictOnPolicyRolloutSchedule
@@ -39,8 +36,8 @@ def build_rollout_schedule(
     config: Any,
     *,
     collector: Any,
-    model: nn.Module,
-    device: torch.device,
+    strategy: Any,
+    training_state_getter: Callable[[], Any],
     weight_syncer: Any | None,
     sync_state_getter: Callable[[], dict[str, Any]] | None,
     weights_initialized: Callable[[], bool],
@@ -53,7 +50,7 @@ def build_rollout_schedule(
     capability (a plain bool, not the algorithm object, so the rollout layer
     stays free of any ``vrl.algorithms`` import): GRPO-family algorithms carry an
     importance-sampling correction and tolerate a bounded version lag, while
-    likelihood-free objectives (DiffusionNFT) do not and require max_stale=0. The
+    likelihood-free objectives (DiffusionNFT) must use ``strict_on_policy``. The
     staleness *mechanism* is algorithm-agnostic; only this soundness bound is
     per-algorithm, so it is validated here rather than special-cased in the
     producer/consumer.
@@ -65,8 +62,8 @@ def build_rollout_schedule(
 
     lifecycle = RolloutRuntimeCoordinator(
         collector=collector,
-        model=model,
-        device=device,
+        strategy=strategy,
+        training_state_getter=training_state_getter,
         weight_syncer=weight_syncer,
         sync_state_getter=sync_state_getter,
         weights_initialized=weights_initialized,
@@ -82,6 +79,36 @@ def build_rollout_schedule(
             algorithm_tolerates_off_policy_staleness=(algorithm_tolerates_off_policy_staleness),
         )
     raise AssertionError(f"unreachable rollout schedule mode: {mode}")
+
+
+def validate_rollout_schedule_topology(config: Any, resources: Any) -> None:
+    """Reject a schedule whose phase semantics contradict resolved GPU ownership.
+
+    The online entrypoint calls this after resource resolution and before model or
+    Ray construction. Runtime guards remain necessary for direct schedule users,
+    but they are too late to be the primary configuration boundary.
+    """
+
+    mode = RolloutScheduleMode(
+        getattr(config, "schedule_mode", RolloutScheduleMode.STRICT_ON_POLICY.value),
+    )
+    if mode is not RolloutScheduleMode.CONTINUOUS:
+        return
+    if bool(resources.colocated):
+        raise ValueError(
+            "continuous rollout requires disjoint trainer and rollout GPUs; "
+            "use strict_on_policy with gpu_pool=trainer for shared-GPU phase handoff",
+        )
+    if bool(resources.lifecycle.handoff.release_rollout_before_reward):
+        raise ValueError(
+            "continuous rollout cannot hand the rollout GPU to reward scoring "
+            "mid-iteration; use a dedicated reward GPU or strict_on_policy",
+        )
+    if bool(resources.lifecycle.handoff.release_trainer_before_reward):
+        raise ValueError(
+            "continuous rollout cannot run reward scoring on the trainer GPU while "
+            "backward overlaps; use a CPU/dedicated reward or strict_on_policy",
+        )
 
 
 def _build_continuous_schedule(
@@ -111,46 +138,34 @@ def _build_continuous_schedule(
     max_ready_groups = int(cont.max_ready_groups)
     max_stale_policy_versions = int(cont.max_stale_policy_versions)
 
-    # Per-algorithm soundness gate. A likelihood-free algorithm has no way to
-    # reweight off-policy samples, so a non-zero staleness window does not just
-    # add variance — it silently biases the objective. Fail fast instead of
-    # producing a quietly-wrong run; GRPO-family algorithms pass through.
-    if max_stale_policy_versions > 0 and not algorithm_tolerates_off_policy_staleness:
+    if max_stale_policy_versions < 1:
+        raise ValueError(
+            "continuous rollout requires max_stale_policy_versions >= 1; "
+            "use strict_on_policy for a zero-staleness serial run",
+        )
+
+    # A likelihood-free algorithm has no way to reweight off-policy samples, so
+    # production continuous execution is unsound for it. Zero staleness is not a
+    # continuous submode: that behavior belongs to strict_on_policy.
+    if not algorithm_tolerates_off_policy_staleness:
         raise ValueError(
             "rollout_orchestration.continuous.max_stale_policy_versions="
             f"{max_stale_policy_versions} is unsound for this algorithm: it is "
             "likelihood-free (no importance-sampling correction), so it can only "
-            "train on strictly on-policy rollouts. Set max_stale_policy_versions=0 "
-            "(serial/on-policy), or use a GRPO-family algorithm for async "
-            "off-policy prefetch.",
+            "train on strictly on-policy rollouts. Use schedule_mode='strict_on_policy', "
+            "or use a GRPO-family algorithm for continuous off-policy prefetch.",
         )
 
-    # Make "is this actually async?" self-reporting at startup. With
-    # max_stale=0 the consumer rejects every prior-version group, so continuous
-    # silently degrades to strict_on_policy — no off-policy prefetch, no
-    # rollout/train overlap — despite the mode flag (see module docstring of
-    # continuous/schedule.py). Warn rather than let the run look async when it
-    # is serial.
-    if max_stale_policy_versions <= 0:
-        logger.warning(
-            "continuous rollout with max_stale_policy_versions=0 is "
-            "behavior-equivalent to strict_on_policy: off-policy prefetch is "
-            "OFF and rollout/train do not overlap. Set "
-            "rollout_orchestration.continuous.max_stale_policy_versions>=1 to "
-            "enable async prefetch.",
-        )
-    else:
-        logger.info(
-            "continuous async prefetch ENABLED: max_stale_policy_versions=%d, "
-            "max_ready_groups=%d, max_inflight_groups=%d",
-            max_stale_policy_versions,
-            max_ready_groups,
-            max_inflight_groups,
-        )
+    logger.info(
+        "continuous async prefetch ENABLED: max_stale_policy_versions=%d, "
+        "max_ready_groups=%d, max_inflight_groups=%d",
+        max_stale_policy_versions,
+        max_ready_groups,
+        max_inflight_groups,
+    )
 
     return ContinuousRolloutSchedule(
         lifecycle=lifecycle,
-        require_separate_gpus=bool(getattr(config, "require_separate_gpus", True)),
         max_inflight_groups=max_inflight_groups,
         max_ready_groups=max_ready_groups,
         max_ready_bytes_mb=int(cont.max_ready_bytes_mb),
@@ -161,4 +176,8 @@ def _build_continuous_schedule(
     )
 
 
-__all__ = ["RolloutSchedule", "build_rollout_schedule"]
+__all__ = [
+    "RolloutSchedule",
+    "build_rollout_schedule",
+    "validate_rollout_schedule_topology",
+]

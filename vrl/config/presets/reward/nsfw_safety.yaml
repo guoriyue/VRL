@@ -1,4 +1,14 @@
 # NSFW classifier penalty. This reward only returns zero or negative scores.
+distributed:
+  resources:
+    reward:
+      # classifier_device below is CPU; mirror that at the resource boundary so
+      # lifecycle resolution never invents a trainer-GPU reward lease.
+      devices: []
+      num_gpus: 0
+      gpus_per_worker: 0.0
+      num_workers: 1
+
 reward:
   components:
     nsfw_safety: 1.0

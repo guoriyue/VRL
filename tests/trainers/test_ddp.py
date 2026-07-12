@@ -140,6 +140,11 @@ def test_build_strategy_returns_ddp_strategy() -> None:
     assert strategy._find_unused_parameters is True
 
 
+def test_ddp_rejects_shared_gpu_training_state_parking_preflight() -> None:
+    with pytest.raises(NotImplementedError, match="Use disjoint rollout GPUs"):
+        DDPStrategy(_cpu_ddp_context()).validate_training_state_parking()
+
+
 def test_ddp_shutdown_releases_training_process_group(monkeypatch) -> None:
     calls: list[bool] = []
     monkeypatch.setattr(

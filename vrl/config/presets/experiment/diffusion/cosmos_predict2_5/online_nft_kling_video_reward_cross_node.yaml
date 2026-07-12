@@ -3,8 +3,8 @@
 #
 #   node A (head/driver) : the single_process trainer AND the in-process Kling
 #                          reward model. Its GPU is held OUT of Ray's scheduling
-#                          pool (`ray start --head --num-gpus=0`); Kling parks via
-#                          sleep_offload after scoring so training can reclaim it.
+#                          pool (`ray start --head --num-gpus=0`); topology injects
+#                          a CuMem phase lease so training reclaims it after score.
 #   node B (worker)      : the rollout worker on node B's one GPU
 #                          (`ray start --address=<head>:6379 --num-gpus=1`).
 #

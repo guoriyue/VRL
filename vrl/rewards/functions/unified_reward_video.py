@@ -1,6 +1,6 @@
 """UnifiedReward-2.0 video reward function (disk artifacts + in-process runtime).
 
-A plain ``RewardFunction`` on the disk-artifact path whose runtime loads
+A ``CumemRewardFunction`` on the disk-artifact path whose runtime loads
 ``CodeGoat24/UnifiedReward-2.0-qwen-7b`` and returns ``alignment`` / ``physics``
 / ``style`` / ``overall`` per artifact. This file only pins the model factory and
 the UnifiedReward defaults; transport and disk-vs-in-memory wiring are shared.
@@ -14,12 +14,12 @@ from __future__ import annotations
 
 from typing import Any
 
-from vrl.rewards.base import RewardFunction
+from vrl.rewards.base import CumemRewardFunction
 
 _UNIFIED_REWARD_VIDEO_MODEL = "vrl.rewards.models.unified_reward_video:UnifiedRewardVideoModel"
 
 
-class UnifiedRewardVideoReward(RewardFunction):
+class UnifiedRewardVideoReward(CumemRewardFunction):
     """UnifiedReward-2.0 video judge scored in-process from disk artifacts."""
 
     def __init__(self, **kwargs: Any) -> None:

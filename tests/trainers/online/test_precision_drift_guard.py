@@ -8,6 +8,7 @@ from types import SimpleNamespace
 import pytest
 import torch
 
+from tests.trainers.online._collector_control import CollectorControlFake
 from vrl.trainers.core.types import PrecisionDriftGuardConfig
 from vrl.trainers.online.precision_guard import (
     PrecisionDriftError,
@@ -48,14 +49,8 @@ def _run(config, *, train, rollout, evaluate_fn, **kw):
 
 
 def test_auto_enables_fail_for_rollout_compute_mismatch() -> None:
-    assert (
-        resolve_guard_mode("auto", train_precision="fp32", rollout_precision="bf16")
-        == "fail"
-    )
-    assert (
-        resolve_guard_mode("auto", train_precision="fp32", rollout_precision="fp16")
-        == "fail"
-    )
+    assert resolve_guard_mode("auto", train_precision="fp32", rollout_precision="bf16") == "fail"
+    assert resolve_guard_mode("auto", train_precision="fp32", rollout_precision="fp16") == "fail"
 
 
 def test_auto_is_off_for_same_dtype() -> None:
@@ -222,7 +217,7 @@ def test_online_trainer_precision_guard_fails_before_optimizer_when_ratio_drifts
             loss = torch.tensor(0.0, requires_grad=True)
             return loss, TrainStepMetrics()
 
-    class _Collector:
+    class _Collector(CollectorControlFake):
         async def score_rollouts(self, pendings):
             return list(pendings)
 

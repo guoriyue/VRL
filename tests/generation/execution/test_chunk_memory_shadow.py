@@ -255,22 +255,20 @@ def test_probe_bisects_when_confirm_ooms(fake_cuda: None) -> None:
     assert any(t["oom"] for t in result["trials"])
 
 
-def test_probe_budgets_against_contract_not_physical_fit(fake_cuda: None) -> None:
+def test_probe_budgets_against_whole_phase_gpu(fake_cuda: None) -> None:
     core = _probe_core(_ProbeExecutor())
 
-    # Contract fraction 0.5 -> 16GB budget: (16-10)//2 = 3, even though the
-    # n=4 fit anchor ran fine on the physically empty GPU (the colocated
-    # trainer restores later; free memory would have overestimated).
+    # Shared roles hand the GPU over before this probe, so rollout owns the whole
+    # 32GB device for the phase rather than a persistent fractional share.
     result = core.probe_chunk_size(
         _request(),
         max_samples=10,
-        memory_fraction=0.5,
         margin=0.0,
         knee_threshold=-1.0,
     )
 
-    assert result["samples_per_chunk"] == 3
-    assert result["budget_bytes"] == 16 * GB
+    assert result["samples_per_chunk"] == 10
+    assert result["budget_bytes"] == 32 * GB
 
 
 def test_probe_requires_cuda_and_single_sample_fit(
@@ -292,12 +290,11 @@ def test_probe_fails_loud_when_one_sample_ooms(fake_cuda: None) -> None:
 
 
 def _probe_worker(worker_id: str, answer: int, calls: list[str]) -> Any:
-    def probe(request: Any, *, max_samples: int, memory_fraction: Any) -> dict[str, Any]:
+    def probe(request: Any, *, max_samples: int) -> dict[str, Any]:
         calls.append(worker_id)
         return {
             "samples_per_chunk": answer,
             "budget_bytes": 32 * GB,
-            "memory_fraction": 1.0,
             "trials": [],
         }
 

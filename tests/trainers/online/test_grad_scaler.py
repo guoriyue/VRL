@@ -14,6 +14,7 @@ import pytest
 import torch
 import torch.nn as nn
 
+from tests.trainers.online._collector_control import CollectorControlFake
 from tests.trainers.online._helpers import _algorithm_inputs, _trajectory_signals
 from vrl.algorithms.types import TrainStepMetrics
 from vrl.rollouts.batch import RolloutBatch
@@ -30,10 +31,10 @@ from vrl.trainers.strategy import SingleProcessStrategy
 @pytest.mark.parametrize(
     ("mixed_precision", "device", "accelerator", "expected"),
     [
-        ("fp16", "cuda", None, True),   # the one path that needs scaling
-        ("fp16", "cpu", None, False),   # fp16 autocast only resolves on cuda
+        ("fp16", "cuda", None, True),  # the one path that needs scaling
+        ("fp16", "cpu", None, False),  # fp16 autocast only resolves on cuda
         ("bf16", "cuda", None, False),  # bf16 has fp32 range — no underflow
-        ("no", "cuda", None, False),    # fp32 — nothing to scale
+        ("no", "cuda", None, False),  # fp32 — nothing to scale
         ("fp16", "cuda", object(), False),  # accelerator self-manages a scaler
     ],
 )
@@ -96,9 +97,9 @@ def test_unscale_runs_before_clip(monkeypatch) -> None:
 @pytest.mark.parametrize(
     ("inf_grad", "growth_interval", "expected_stepped"),
     [
-        (True, 2000, False),   # inf grad -> real backoff (1024 -> 512), step skipped
-        (False, 2000, True),   # finite, scale unchanged -> stepped
-        (False, 1, True),      # finite, scale grows (1024 -> 2048) -> stepped
+        (True, 2000, False),  # inf grad -> real backoff (1024 -> 512), step skipped
+        (False, 2000, True),  # finite, scale unchanged -> stepped
+        (False, 1, True),  # finite, scale grows (1024 -> 2048) -> stepped
     ],
 )
 def test_clip_and_step_reports_skipped(
@@ -145,7 +146,7 @@ class _Algorithm:
         self.after_step_calls.append(global_step)
 
 
-class _Collector:
+class _Collector(CollectorControlFake):
     async def score_rollouts(self, pendings):
         return list(pendings)
 

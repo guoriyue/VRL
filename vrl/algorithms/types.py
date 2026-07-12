@@ -14,6 +14,10 @@ class TrainStepMetrics:
     kl_penalty: float = 0.0
     reward_mean: float = 0.0
     reward_std: float = 0.0
+    # Batch-owned raw reward observations summarized by the trainer. Keeping
+    # them on the metric result prevents continuous prefetch from replacing a
+    # shared reward model's last-call state before this step is logged.
+    reward_components: dict[str, float] = field(default_factory=dict)
     advantage_mean: float = 0.0
     clip_fraction: float = 0.0
     approx_kl: float = 0.0
@@ -39,6 +43,6 @@ class TrainStepMetrics:
     adv_saturation: float = 0.0
     adv_zero_rate: float = 0.0
     # Per-prompt grouping diagnostics, derived from the batch group_ids.
-    group_size: float = 0.0          # avg samples per unique prompt in batch
-    trained_prompt_num: int = 0      # unique prompts in this batch
+    group_size: float = 0.0  # avg samples per unique prompt in batch
+    trained_prompt_num: int = 0  # unique prompts in this batch
     phase_times: dict[str, float] = field(default_factory=dict)

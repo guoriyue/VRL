@@ -41,6 +41,7 @@ class PolicyVersionProvider(Protocol):
     current_policy_version: int | None
 
 
+@runtime_checkable
 class GenerationRuntime(Protocol):
     """Generation runtime consumed by rollout collectors.
 
@@ -52,6 +53,11 @@ class GenerationRuntime(Protocol):
     """
 
     current_policy_version: int | None
+
+    @property
+    def requires_driver_model_offload(self) -> bool:
+        """Whether shared ownership requires parking trainer state for generation."""
+        ...
 
     async def activate(self) -> None:
         """Launch or wake workers and install the latest desired policy."""
@@ -66,6 +72,10 @@ class GenerationRuntime(Protocol):
         physical GPU memory at a handoff and restore it during the next activate;
         terminal actor destruction remains the responsibility of shutdown().
         """
+        ...
+
+    async def shutdown(self) -> None:
+        """Close admission and release every runtime-owned worker/resource."""
         ...
 
     def is_colocated(self) -> bool:

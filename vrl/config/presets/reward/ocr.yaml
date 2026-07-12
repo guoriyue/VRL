@@ -1,4 +1,15 @@
 # OCR reward for text-in-image/video alignment.
+distributed:
+  resources:
+    reward:
+      # PaddleOCR is explicitly CPU-only. Declaring the execution device here
+      # keeps resource topology authoritative instead of inferring it from the
+      # reward class name.
+      devices: []
+      num_gpus: 0
+      gpus_per_worker: 0.0
+      num_workers: 1
+
 reward:
   components:
     ocr: 1.0

@@ -6,23 +6,17 @@
 #
 # This preset uses `allow_overlap: true` (the `auto` rollout pool): on a 1-GPU box
 # trainer and rollout both land on GPU 0 (colocated); on a box WITH a spare GPU,
-# `auto` prefers the spare (disaggregated). To FORCE colocation regardless of spares,
-# or to make the rollout resident, use the per-role `gpu_pool` grammar (mirrors
-# reward.gpu_pool) — see SPRINT_gpu_pool_grammar_unification.md:
+# `auto` prefers the spare (disaggregated). To FORCE colocation regardless of
+# spares, use the per-role `gpu_pool` grammar (mirrors reward.gpu_pool):
 #
 #   distributed:
 #     resources:
 #       rollout:
 #         gpu_pool: trainer        # borrow the trainer GPU = colocated (no allow_overlap needed)
-#         memory_fraction: 0.4     # optional: resident worker capped at 40%; omit = on-demand
 #
-# on_demand vs persistent are DERIVED, not literal keys:
-#   on_demand (no memory_fraction): between phases the rollout worker is released and
-#     the trainer model offloads to CPU during collect, so each phase owns ~the whole
-#     GPU and NO memory split is needed. Cost: the worker reloads the model each cycle.
-#   persistent/resident (memory_fraction set): the worker STAYS on the GPU (no reload)
-#     but shares memory with the trainer, so memory_fraction caps its share.
-# Rule of thumb: keep on_demand; go resident only if the per-cycle reload is too slow.
+# Shared trainer/rollout GPUs always use on-demand phase handoff: the trainer parks
+# during collect and the rollout worker parks before training, so each phase owns
+# the whole GPU. Actors/processes stay alive; only their GPU state moves.
 distributed:
   resources:
     visible_devices: auto

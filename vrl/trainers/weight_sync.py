@@ -217,3 +217,18 @@ def to_cpu(value: Any) -> Any:
         lambda leaf: leaf.detach().cpu(),
         is_leaf=lambda v: isinstance(v, torch.Tensor),
     )
+
+
+def to_cpu_snapshot(value: Any) -> Any:
+    """Return detached CPU tensors whose storage cannot alias the live model.
+
+    A plain ``detach().cpu()`` aliases storage when the trainer already lives on
+    CPU.  Continuous weight owners may push later from another thread/process, so
+    the prepared payload must remain stable if training mutates the live weights.
+    """
+
+    return map_tensor_tree(
+        value,
+        lambda leaf: leaf.detach().to(device="cpu", copy=True),
+        is_leaf=lambda v: isinstance(v, torch.Tensor),
+    )

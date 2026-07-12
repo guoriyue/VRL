@@ -2,15 +2,14 @@
 # into a bounded ready queue; the trainer drains one homogeneous-policy
 # iteration per step.
 #
-# Safe Phase A profile (this file): max_stale_policy_versions=0 and a small
-# queue make this behavior-equivalent to strict_on_policy. The real payoff is
+# Continuous is the bounded-staleness path (default window: one policy version).
+# Use strict_on_policy for a zero-staleness serial run. The primary deployment is
 # cross-node (trainer GPU on the head node, rollout GPU on a remote Ray worker):
 #
 #   RAY_ADDRESS=<head-ip>:6379 CUDA_VISIBLE_DEVICES=0 python -m vrl.scripts.train \
 #     --config experiment/diffusion/sd3_5/online_grpo_ocr \
 #     /base/distributed=ray_rollout_cross_node \
 #     /base/rollout/orchestration=continuous \
-#     trainer.rollout_orchestration.continuous.max_stale_policy_versions=1 \
 #     trainer.rollout_orchestration.continuous.max_inflight_groups=4 \
 #     trainer.rollout_orchestration.continuous.max_ready_groups=16
 #
@@ -24,7 +23,7 @@
 # Admission and weight-sync ordering are owned by the continuous schedule state
 # machine; there is no independent queue-capacity or barrier knob.
 # Queue/staleness tuning defaults (max_inflight_groups, max_ready_groups,
-# max_ready_bytes_mb, max_stale_policy_versions=0 Phase A,
+# max_ready_bytes_mb, max_stale_policy_versions=1,
 # wait_timeout_s, queue_poll_interval_s) live on ContinuousRolloutConfig in
 # vrl/trainers/core/types.py — set them via dotlist as in the recipe above.
 trainer:

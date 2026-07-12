@@ -10,7 +10,7 @@ from vrl.generation.ray.config import (
     RayGenerationConfig,
     validate_colocated_replay_memory,
 )
-from vrl.utils.cuda_memory import cap_cuda_memory_fraction, is_cuda_out_of_memory
+from vrl.utils.cuda_memory import is_cuda_out_of_memory
 from vrl.utils.memory import HostMemorySnapshot, format_host_memory
 
 
@@ -19,18 +19,6 @@ def test_format_host_memory_omits_unknown_fields() -> None:
     snapshot = HostMemorySnapshot(rss_mb=10.0, available_mb=None, total_mb=None)
 
     assert format_host_memory(snapshot) == "rss=10.0MiB"
-
-
-def test_cap_cuda_memory_fraction_validates_range() -> None:
-    """Checks the allocator cap rejects fractions outside (0, 1]."""
-    for bad in (0.0, -0.1, 1.5):
-        with pytest.raises(ValueError, match=r"\(0, 1\]"):
-            cap_cuda_memory_fraction(bad)
-
-
-def test_cap_cuda_memory_fraction_none_is_noop() -> None:
-    """Checks an unset cap is a no-op (dedicated-GPU / CPU worker)."""
-    cap_cuda_memory_fraction(None)
 
 
 def test_cuda_oom_detection_prefers_the_typed_exception() -> None:

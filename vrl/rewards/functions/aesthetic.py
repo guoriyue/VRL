@@ -4,10 +4,10 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from vrl.rewards.base import RewardFunction
+from vrl.rewards.base import CumemRewardFunction
 
 
-class AestheticReward(RewardFunction):
+class AestheticReward(CumemRewardFunction):
     """Aesthetic score (CLIP ViT-L/14 + MLP head)."""
 
     def __init__(

@@ -27,9 +27,11 @@ from vrl.ray.resources import (
     trainer_torch_device,
 )
 from vrl.rollouts.families import build_ray_generation_inputs_for_family
+from vrl.rollouts.orchestration import validate_rollout_schedule_topology
 from vrl.scripts.common.factory import (
     build_collector_from_cfg,
     build_online_recipe_components,
+    validate_reward_memory_parking_from_cfg,
 )
 from vrl.scripts.common.types import (
     OnlineRecipeDefinition,
@@ -81,9 +83,9 @@ class _RayClusterSession:
     def shutdown(self) -> None:
         if self._closed:
             return
-        self._closed = True
         if self.shutdown_on_exit:
             self.ray.shutdown()
+        self._closed = True
 
 
 def _initialize_ray_cluster(
@@ -133,8 +135,7 @@ def _initialize_ray_cluster(
     import signal
 
     previous_handlers = {
-        signum: signal.getsignal(signum)
-        for signum in (signal.SIGINT, signal.SIGTERM)
+        signum: signal.getsignal(signum) for signum in (signal.SIGINT, signal.SIGTERM)
     }
     try:
         context = ray.init(address=address)
@@ -145,14 +146,9 @@ def _initialize_ray_cluster(
     address_info = getattr(context, "address_info", None)
     if not isinstance(address_info, Mapping):
         address_info = {}
-    resolved_address = (
-        address_info.get("gcs_address")
-        or address_info.get("address")
-        or address
-    )
+    resolved_address = address_info.get("gcs_address") or address_info.get("address") or address
     logger.info(
-        "Ray cluster session: ownership=%s driver_pid=%d address=%s session_dir=%s "
-        "ray_version=%s",
+        "Ray cluster session: ownership=%s driver_pid=%d address=%s session_dir=%s ray_version=%s",
         ownership,
         os.getpid(),
         resolved_address,
@@ -394,7 +390,6 @@ def _check_host_memory_budget(
 
 async def _run_streaming_optimizer_update(
     trainer: OnlineTrainer,
-    reward_fn: Any,
     example_batch: list[Any],
     *,
     gradient_accumulation_steps: int,
@@ -417,12 +412,9 @@ async def _run_streaming_optimizer_update(
     over budget (SPRINT_memory_budgeted_microbatch T2).
     """
     micro = prompts_per_batch // gradient_accumulation_steps
-    microbatches = [
-        example_batch[k : k + micro] for k in range(0, len(example_batch), micro)
-    ]
+    microbatches = [example_batch[k : k + micro] for k in range(0, len(example_batch), micro)]
     total_groups = int(prompts_per_batch)
 
-    reward_fn.reset_components()
     trainer.begin_optimizer_update()
 
     phase_times: dict[str, float] = {}
@@ -430,6 +422,7 @@ async def _run_streaming_optimizer_update(
     weight_total = 0
     trained_prompt_num = 0
     group_size = float(n_samples_per_prompt)
+    reward_component_values: dict[str, list[float]] = {}
     for mb_index, microbatch in enumerate(microbatches):
         batch = await trainer.collect_training_batch(microbatch)
         try:
@@ -454,6 +447,8 @@ async def _run_streaming_optimizer_update(
             trained_prompt_num += int(batch.trained_prompt_num)
             if batch.group_size:
                 group_size = float(batch.group_size)
+            for name, values in getattr(batch, "reward_components", {}).items():
+                reward_component_values.setdefault(name, []).extend(values)
             mb_phase = trainer._step_stats(batch.iteration, batch.timer).as_phase_dict()
             for key, value in mb_phase.items():
                 phase_times[key] = phase_times.get(key, 0.0) + value
@@ -473,6 +468,11 @@ async def _run_streaming_optimizer_update(
         adv_saturation=adv_sat_w / weight_total,
         group_size=group_size,
         trained_prompt_num=trained_prompt_num,
+        reward_components={
+            name: sum(values) / len(values)
+            for name, values in reward_component_values.items()
+            if values
+        },
     )
 
 
@@ -531,13 +531,10 @@ class OnlineRecipeRun:
         prepare_metrics_csv(self.csv_path, header + "\n", resume=self.resume)
 
     def write_metric_row(self, epoch: int, metrics: Any) -> None:
-        reward_fn = self.stack.reward_fn
         component_names = self.stack.component_names
-        last = getattr(reward_fn, "last_components", {}) or {}
+        current = getattr(metrics, "reward_components", {}) or {}
         component_means = {
-            name: (sum(last.get(name, [])) / len(last.get(name, [])))
-            if last.get(name)
-            else float("nan")
+            name: float(current[name]) if name in current else float("nan")
             for name in component_names
         }
         # Continuous async diagnostics live in TrainStepMetrics.phase_times (attached
@@ -570,19 +567,24 @@ class OnlineRecipeRun:
             "continuous_weight_sync_pause_s": phases.get("continuous.weight_sync_pause_s", 0.0),
             "continuous_producer_max_gap_s": phases.get("continuous.producer_max_tick_gap_s", 0.0),
             "continuous_producer_discarded_stale": phases.get(
-                "continuous.producer_discarded_stale", 0.0,
+                "continuous.producer_discarded_stale",
+                0.0,
             ),
             "continuous_post_sync_dropped_stale": phases.get(
-                "continuous.post_sync_dropped_stale", 0.0,
+                "continuous.post_sync_dropped_stale",
+                0.0,
             ),
             "continuous_weight_sync_barrier_mode": phases.get(
-                "continuous.weight_sync_barrier_mode", 0.0,
+                "continuous.weight_sync_barrier_mode",
+                0.0,
             ),
             "continuous_predicted_admit_staleness": phases.get(
-                "continuous.predicted_admit_staleness", 0.0,
+                "continuous.predicted_admit_staleness",
+                0.0,
             ),
             "continuous_admit_blocked_on_staleness": phases.get(
-                "continuous.admit_blocked_on_staleness", 0.0,
+                "continuous.admit_blocked_on_staleness",
+                0.0,
             ),
             **{f"r_{name}": component_means[name] for name in component_names},
         }
@@ -625,7 +627,6 @@ class OnlineRecipeRun:
                 )
                 + "\n",
             )
-
 
     def save_checkpoint(self, path: Path, *, epoch: int) -> None:
         stack = self.stack
@@ -737,6 +738,8 @@ async def run_online_recipe(
     )
 
     resources = resolve_distributed_resources(cfg)
+    validate_rollout_schedule_topology(trainer_config.rollout_orchestration, resources)
+    validate_reward_memory_parking_from_cfg(cfg, resources=resources, built=built)
     logger.info(format_distributed_resource_plan(resources))
     device = torch.device(trainer_torch_device(resources))
     # Resolve the training process identity (rank/device) and fail-fast on
@@ -744,6 +747,15 @@ async def run_online_recipe(
     # model / Ray runtime.
     training_context = resolve_training_context(cfg, device=device)
     _require_supported_online_strategy(training_context)
+    # Construct the strategy before any model or Ray actor. Shared-GPU on-demand
+    # execution needs complete trainer-state parking; distributed strategies must
+    # reject that topology here instead of failing after expensive launch work.
+    strategy = build_strategy(cfg, training_context)
+    if (
+        resources.lifecycle.handoff.release_rollout_before_train
+        or resources.lifecycle.handoff.release_trainer_before_reward
+    ):
+        strategy.validate_training_state_parking()
     # Under ddp every torchrun rank owns a distinct GPU: resolve_training_context
     # returns cuda:<local_rank>, which overrides the resolver's (rank-agnostic)
     # trainer device so the trainer model, rollout, and weight sync all land on
@@ -800,7 +812,6 @@ async def run_online_recipe(
     collector: Any | None = None
     reward_fn: Any | None = None
     trainer: OnlineTrainer | None = None
-    strategy: Any | None = None
     run_error: BaseException | None = None
     try:
         ray_session = _initialize_ray_cluster(resources, ray)
@@ -823,7 +834,6 @@ async def run_online_recipe(
         collector = build_collector_from_cfg(
             cfg,
             family=components.family_entry,
-            model=model,
             reward_fn=components.reward_fn,
             collector_config=components.collector_config,
         )
@@ -850,14 +860,10 @@ async def run_online_recipe(
             if definition.reference_model_getter is not None
             else None
         )
-        # The strategy is the single owner of trainable-state export for both
-        # rollout weight sync and checkpointing. build_strategy maps the resolved
-        # context to the concrete strategy (single_process / ddp / fsdp); each
-        # gathers a full, unwrapped, policy-facing state so the recipe below never
-        # changes shape with the strategy. prepare_model (called once in the
-        # trainer) creates the process group, binds this rank's device, and wraps
-        # the trainable transformer (DDP replicate / FSDP2 fully_shard).
-        strategy = build_strategy(cfg, training_context)
+        # The strategy built during preflight is the single owner of trainable-state
+        # export for both rollout weight sync and checkpointing. prepare_model
+        # (called once in the trainer) creates any process group and wraps the
+        # trainable transformer only after topology/capability validation passed.
         trainer = OnlineTrainer(
             algorithm=components.algorithm,
             collector=collector,
@@ -979,7 +985,6 @@ async def run_online_recipe(
                 # RAM does not have to hold the whole batch at once.
                 metrics = await _run_streaming_optimizer_update(
                     trainer,
-                    components.reward_fn,
                     example_batch,
                     gradient_accumulation_steps=gradient_accumulation_steps,
                     prompts_per_batch=int(trainer_config.prompts_per_batch),
@@ -989,7 +994,6 @@ async def run_online_recipe(
                     ),
                 )
             else:
-                components.reward_fn.reset_components()
                 metrics = await trainer.step(example_batch)
             if is_primary:
                 run.write_metric_row(epoch, metrics)
@@ -1014,9 +1018,7 @@ async def run_online_recipe(
     finally:
         await _shutdown_online_recipe_runtime(
             rollout_schedule=(
-                getattr(trainer, "rollout_schedule", None)
-                if trainer is not None
-                else None
+                getattr(trainer, "rollout_schedule", None) if trainer is not None else None
             ),
             collector=collector,
             reward_fn=reward_fn,
@@ -1055,25 +1057,73 @@ async def _shutdown_online_recipe_runtime(
 ) -> None:
     shutdown_errors: list[tuple[str, Exception]] = []
 
-    async def _run_shutdown(name: str, target: Any, method_name: str = "shutdown") -> None:
+    async def _run_shutdown(
+        name: str,
+        target: Any,
+        method_name: str = "shutdown",
+        *,
+        attempts: int = 1,
+        call_kwargs: Mapping[str, Any] | None = None,
+    ) -> bool:
+        if target is None:
+            return True
         shutdown = getattr(target, method_name, None)
-        if shutdown is None:
-            return
-        try:
-            result = shutdown()
-            if inspect.isawaitable(result):
-                await result
-        except Exception as exc:
-            shutdown_errors.append((name, exc))
+        if not callable(shutdown):
+            error = TypeError(f"{name} does not expose callable {method_name}()")
+            shutdown_errors.append((name, error))
+            return False
+        last_error: Exception | None = None
+        for _attempt in range(max(1, int(attempts))):
+            try:
+                result = shutdown(**dict(call_kwargs or {}))
+                if inspect.isawaitable(result):
+                    await result
+                return True
+            except Exception as exc:
+                last_error = exc
+        assert last_error is not None
+        shutdown_errors.append((name, last_error))
+        return False
 
-    # Stop background producers before their collector/runtime/placement targets.
-    await _run_shutdown("rollout_schedule", rollout_schedule)
-    await _run_shutdown("collector", collector)
-    await _run_shutdown("reward_fn", reward_fn)
-    await _run_shutdown("placement_owner", placement_owner)
-    await _run_shutdown("strategy", strategy)
+    # One owner releases the whole rollout pipeline, including reward runtimes.
+    # A schedule keeps continuous teardown on its owner loop and lets strict park
+    # the trainer before a shared reward pool is woken and destroyed. Construction
+    # failures fall back to the collector; only a failure before collector creation
+    # may shut down the standalone reward directly.
+    if rollout_schedule is not None:
+        pipeline_released = await _run_shutdown(
+            "rollout_schedule",
+            rollout_schedule,
+            attempts=2,
+        )
+    elif collector is not None:
+        pipeline_released = await _run_shutdown(
+            "collector",
+            collector,
+            attempts=2,
+        )
+    else:
+        pipeline_released = await _run_shutdown(
+            "reward_fn",
+            reward_fn,
+            attempts=2,
+        )
+    rollout_released = pipeline_released
+    reward_released = pipeline_released
+    await _run_shutdown("placement_owner", placement_owner, attempts=2)
+
+    # Distributed strategies must still destroy their process groups after a role
+    # cleanup failure. Single-process cleanup receives the ownership proof and
+    # abandons (rather than restores) a parked trainer when the shared GPU remains
+    # unknown.
+    await _run_shutdown(
+        "strategy",
+        strategy,
+        attempts=2,
+        call_kwargs={"restore_parked": rollout_released and reward_released},
+    )
     # Ray is last: every handle-based actor/PG cleanup above needs the connection.
-    await _run_shutdown("ray_session", ray_session)
+    await _run_shutdown("ray_session", ray_session, attempts=2)
 
     if not shutdown_errors:
         return

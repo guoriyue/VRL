@@ -38,6 +38,11 @@ reward:
     videocon_physics:
       artifact_format: mp4
       score_key: physical_commonsense
+      # CuMem sleep is process-wide, so only Kling owns the shared GPU lease.
+      # VideoCon remains part of the objective but executes explicitly on CPU;
+      # this is a correctness-first throughput trade-off.
+      worker_config:
+        device: cpu
 
 production:
   kling_video_reward:

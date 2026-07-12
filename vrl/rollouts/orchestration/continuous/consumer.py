@@ -116,7 +116,13 @@ class ContinuousRolloutConsumer:
         enriched timeout message.
         """
 
-        if producer_state is None or self.fail_fast_errors == 0:
+        if producer_state is None:
+            return
+        if producer_state.fatal_error is not None:
+            raise RuntimeError(
+                "continuous rollout producer control loop failed",
+            ) from producer_state.fatal_error
+        if self.fail_fast_errors == 0:
             return
         fresh_errors = producer_state.error_count - start_errors
         fresh_completions = producer_state.completed_count - start_completed
@@ -191,9 +197,7 @@ class ContinuousRolloutConsumer:
                 "consume_policy_version": (
                     None if current_version is None else int(current_version)
                 ),
-                "stale_policy_versions": (
-                    None if staleness is None else int(staleness)
-                ),
+                "stale_policy_versions": (None if staleness is None else int(staleness)),
                 "continuous_item_age_s": float(item_age_s),
             },
         )

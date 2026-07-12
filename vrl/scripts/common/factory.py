@@ -10,7 +10,7 @@ from omegaconf import DictConfig, OmegaConf
 from vrl.config.builders import build_configs
 from vrl.config.precision import resolve_precision_policy
 from vrl.models.dtypes import resolve_torch_dtype
-from vrl.ray.resources import resolve_distributed_resources
+from vrl.ray.resources import resolve_distributed_resources, reward_torch_device
 from vrl.rollouts.collector import build_rollout_collector
 from vrl.rollouts.collector.config import (
     build_rollout_config_from_cfg as build_collector_rollout_config_from_cfg,
@@ -25,6 +25,22 @@ from vrl.utils.config import cfg_get
 
 class UnsupportedOnlineRecipeError(ValueError):
     """Raised when a YAML config targets a non-online or unsupported recipe."""
+
+
+def _validate_topology_derived_reward_kwargs(
+    reward_kwargs: dict[str, Any],
+) -> None:
+    """Reject public knobs whose values come from resolved GPU ownership."""
+
+    for name, kwargs in reward_kwargs.items():
+        extra = dict(kwargs or {})
+        for key in ("sleep_offload", "memory_parking_residual_bytes_limit"):
+            if key in extra:
+                raise ValueError(
+                    f"reward.kwargs.{name}.{key} is topology-derived and cannot "
+                    "be set in YAML; remove it and select shared or dedicated "
+                    "reward GPU ownership under distributed.resources.reward",
+                )
 
 
 @dataclass(frozen=True, slots=True)
@@ -90,9 +106,9 @@ def build_reward_from_cfg(
 ) -> Any:
     """Build the online reward function from the shared config loader output.
 
-    Rewards score in-process; a heavyweight model on a shared GPU opts into
-    sleep/wake parking via ``reward.kwargs.<name>.sleep_offload`` in YAML, so
-    no Ray resource kwargs are injected here.
+    Rewards score in-process. GPU ownership decides parking: a shared reward is
+    automatically pooled and must publish a release proof; a dedicated reward
+    stays resident. YAML does not choose lifecycle behavior.
     """
 
     built = built or build_configs(cfg)
@@ -103,11 +119,76 @@ def build_reward_from_cfg(
     reward_weights, reward_kwargs = built["reward"]
     if not any(weight > 0 for weight in reward_weights.values()):
         raise ValueError("At least one reward component must have weight > 0.")
+    _validate_topology_derived_reward_kwargs(dict(reward_kwargs))
     from vrl.rewards.functions.registry import MultiReward
+
+    memory_parking_required: bool | None = None
+    if OmegaConf.select(cfg, "distributed.resources", default=None) is not None:
+        resources = resolve_distributed_resources(cfg)
+        expected_device = reward_torch_device(resources)
+        if str(device).strip().lower() != expected_device.strip().lower():
+            raise ValueError(
+                f"reward device {str(device)!r} conflicts with distributed resources "
+                f"resolved device {expected_device!r}; resource topology is the "
+                "execution-device source of truth.",
+            )
+        validate_reward_memory_parking_from_cfg(
+            cfg,
+            resources=resources,
+            built=built,
+            device=str(device),
+        )
+        memory_parking_required = bool(
+            resources.lifecycle.handoff.release_reward_after_score,
+        )
 
     return MultiReward.from_dict(
         reward_weights,
         device=str(device),
+        reward_kwargs=reward_kwargs,
+        memory_parking_required=memory_parking_required,
+    )
+
+
+def validate_reward_memory_parking_from_cfg(
+    cfg: DictConfig,
+    *,
+    resources: Any,
+    built: dict[str, Any] | None = None,
+    device: str | None = None,
+) -> None:
+    """Validate shared reward parking without constructing a reward model."""
+
+    if built is not None and "reward" in built:
+        reward_kwargs = built["reward"][1]
+        names = tuple(str(name) for name in built["reward"][0])
+    else:
+        raw_kwargs = OmegaConf.select(cfg, "reward.kwargs", default={})
+        reward_kwargs = (
+            OmegaConf.to_container(raw_kwargs, resolve=True)
+            if OmegaConf.is_config(raw_kwargs)
+            else raw_kwargs
+        )
+        components = OmegaConf.select(cfg, "reward.components", default={})
+        plain = (
+            OmegaConf.to_container(components, resolve=True)
+            if OmegaConf.is_config(components)
+            else components
+        )
+        names = tuple(str(name) for name in dict(plain or {}))
+    reward_kwargs = dict(reward_kwargs or {})
+    _validate_topology_derived_reward_kwargs(reward_kwargs)
+    if not bool(resources.lifecycle.handoff.release_reward_after_score):
+        return
+    if not names:
+        return
+    from vrl.rewards.functions.registry import (
+        validate_reward_memory_parking_components,
+    )
+
+    validate_reward_memory_parking_components(
+        names,
+        device=str(device or reward_torch_device(resources)),
         reward_kwargs=reward_kwargs,
     )
 
@@ -213,9 +294,7 @@ def build_algorithm_and_evaluator_from_cfg(
                 f"got {type(algorithm_config).__name__}",
             )
         segment_flags = dict(_cfg_select(cfg, "algorithm.train_segments", {}) or {})
-        enabled_segments = tuple(
-            name for name, enabled in segment_flags.items() if bool(enabled)
-        )
+        enabled_segments = tuple(name for name, enabled in segment_flags.items() if bool(enabled))
         return AlgorithmEvaluatorPair(
             algorithm=MultiSegmentTokenGRPO(algorithm_config),
             evaluator=MultiSegmentTokenLogProbEvaluator(enabled_segments=enabled_segments),
@@ -249,7 +328,6 @@ def build_algorithm_and_evaluator_from_cfg(
 def build_collector_from_cfg(
     cfg: DictConfig,
     *,
-    model: Any,
     reward_fn: Any,
     family: str | RolloutFamilyEntry | None = None,
     collector_config: Any | None = None,
@@ -267,7 +345,6 @@ def build_collector_from_cfg(
         lifecycle = resolve_distributed_resources(cfg).lifecycle
     return build_rollout_collector(
         entry.family,
-        model=model,
         reward_fn=reward_fn,
         config=collector_config,
         runtime=runtime,

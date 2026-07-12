@@ -12,6 +12,8 @@ from vrl.rewards.runtime import LocalRewardRuntime
 class NSFWSafetyReward(RewardFunction):
     """Non-positive NSFW penalty; aggregates per-rollout via the model's batch hook."""
 
+    execution_device_config_key = "classifier_device"
+
     def __init__(
         self,
         device: str = "cuda",
@@ -30,7 +32,8 @@ class NSFWSafetyReward(RewardFunction):
             score_key="nsfw_safety",
             runtime=LocalRewardRuntime(model=model),
             artifact_builder=lambda rollouts: RewardFunction.build_inmemory_artifacts(
-                rollouts, media_type="image",
+                rollouts,
+                media_type="image",
             ),
         )
 

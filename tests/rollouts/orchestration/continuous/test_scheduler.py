@@ -5,6 +5,10 @@ in-flight cap, a single item budget spanning in-flight + ready, the ready byte
 budget (now visible to admission), and the admit-time predicted-version
 staleness throttle. The producer/queue keep their mechanisms; this is the
 decision owner.
+
+Zero-bound cases below exercise the scheduler mechanism only. Production
+continuous config requires a window of at least one policy version; a zero
+window selects the strict-on-policy schedule instead.
 """
 
 from __future__ import annotations
@@ -38,7 +42,9 @@ def _scheduler(
 
 def _admit(sched: RolloutScheduler, inflight: int, ready: int, ready_bytes: int = 0):
     return sched.can_admit(
-        inflight_count=inflight, ready_items=ready, ready_bytes=ready_bytes,
+        inflight_count=inflight,
+        ready_items=ready,
+        ready_bytes=ready_bytes,
     )
 
 
@@ -139,7 +145,10 @@ def test_throttle_stops_admission_at_one_iteration_when_max_stale_zero() -> None
     # max_stale=0: a group submitted once a full iteration is already pending
     # would land stale=1 and be discarded at receipt, so do not generate it.
     sched = _scheduler(
-        max_inflight_groups=8, capacity=100, groups_per_iteration=4, max_stale=0,
+        max_inflight_groups=8,
+        capacity=100,
+        groups_per_iteration=4,
+        max_stale=0,
     )
     # 3 pending: predicted 0, still admits (filling the first iteration).
     assert _admit(sched, inflight=2, ready=1).admit is True
@@ -152,7 +161,10 @@ def test_throttle_stops_admission_at_one_iteration_when_max_stale_zero() -> None
 def test_throttle_window_scales_with_max_stale() -> None:
     # max_stale=1 admits up to two iterations of lookahead, then stops.
     sched = _scheduler(
-        max_inflight_groups=8, capacity=100, groups_per_iteration=4, max_stale=1,
+        max_inflight_groups=8,
+        capacity=100,
+        groups_per_iteration=4,
+        max_stale=1,
     )
     # 7 pending: predicted 1 <= 1 -> still admits.
     assert _admit(sched, inflight=4, ready=3).admit is True
@@ -164,7 +176,10 @@ def test_throttle_never_starves_a_full_iteration() -> None:
     # The throttle must let exactly one whole iteration accumulate before it
     # binds, so the consumer can always assemble a homogeneous iteration.
     sched = _scheduler(
-        max_inflight_groups=100, capacity=100, groups_per_iteration=4, max_stale=0,
+        max_inflight_groups=100,
+        capacity=100,
+        groups_per_iteration=4,
+        max_stale=0,
     )
     # Admission stays open for the first full iteration (0..3 pending).
     for pending in range(4):
@@ -180,7 +195,10 @@ def test_inflight_cap_checked_before_budgets() -> None:
     # When several constraints bind at once, the reported reason is the first in
     # the documented order (inflight -> item -> byte -> staleness).
     sched = _scheduler(
-        max_inflight_groups=1, capacity=1, groups_per_iteration=1, max_stale=0,
+        max_inflight_groups=1,
+        capacity=1,
+        groups_per_iteration=1,
+        max_stale=0,
     )
     assert _admit(sched, inflight=1, ready=1).reason == "inflight_full"
 
@@ -209,7 +227,9 @@ def test_select_drains_distinct_groups_at_one_version() -> None:
     queue.put(_item(group_key=1, version=1))
 
     selected = _scheduler(max_stale=0).select_iteration(
-        queue, min_groups=2, current_version=1,
+        queue,
+        min_groups=2,
+        current_version=1,
     )
     assert selected is not None
     version, items = selected
@@ -224,7 +244,9 @@ def test_select_waits_until_full_set_present() -> None:
     # Only one of two required groups present yet.
     assert (
         _scheduler(max_stale=0).select_iteration(
-            queue, min_groups=2, current_version=1,
+            queue,
+            min_groups=2,
+            current_version=1,
         )
         is None
     )
@@ -275,10 +297,7 @@ def test_select_only_serves_the_requested_prompt_set() -> None:
 
     # The new prompt set (id=1) has no items yet -> nothing to train, even though
     # a full version-1 iteration of the OLD set is sitting in the queue.
-    assert (
-        sched.select_iteration(queue, min_groups=2, current_version=1, prompt_set_id=1)
-        is None
-    )
+    assert sched.select_iteration(queue, min_groups=2, current_version=1, prompt_set_id=1) is None
     # The old set's items are untouched (not consumed, not mixed).
     assert queue.size() == 2
 
@@ -287,7 +306,10 @@ def test_select_only_serves_the_requested_prompt_set() -> None:
     queue.put(_item(group_key=0, version=1, prompt_set_id=1))
     queue.put(_item(group_key=1, version=1, prompt_set_id=1))
     selected = sched.select_iteration(
-        queue, min_groups=2, current_version=1, prompt_set_id=1,
+        queue,
+        min_groups=2,
+        current_version=1,
+        prompt_set_id=1,
     )
     assert selected is not None
     _version, items = selected

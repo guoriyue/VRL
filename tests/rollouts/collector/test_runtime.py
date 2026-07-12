@@ -9,13 +9,19 @@ import torch
 
 from vrl.generation import GenerationOutput, GenerationRequest, GenerationSampleRow
 from vrl.ray.resources import ActorLeasePolicy, PhaseHandoffPolicy, RayLifecyclePlan
+from vrl.rewards.base import RewardCleanupError
+from vrl.rewards.inference import RewardMemoryReleaseProof
 from vrl.rollouts.collector.batch_builder import (
     RolloutBatchBuildContext,
     TrajectoryRolloutBatchBuilder,
 )
 from vrl.rollouts.collector.core import RolloutCollector
 from vrl.rollouts.collector.requests import CollectorRequest
-from vrl.rollouts.collector.rewards import RewardScorer, RewardScoringInput
+from vrl.rollouts.collector.rewards import (
+    RewardScoreBatch,
+    RewardScorer,
+    RewardScoringInput,
+)
 from vrl.rollouts.orchestration.prompt_collection import collect_prompt_batches
 from vrl.trajectory import RewardView, build_ar_discrete_trajectory
 from vrl.utils.stats import RolloutStats
@@ -46,9 +52,22 @@ class _RequestBuilder:
 
 
 class _Runtime:
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        *,
+        fail_offload: bool = False,
+        shutdown_failures: int = 0,
+    ) -> None:
         self.requests: list[GenerationRequest] = []
         self.events: list[str] = []
+        self.fail_offload = fail_offload
+        self.current_policy_version = 0
+        self.requires_driver_model_offload = False
+        self.shutdown_failures = shutdown_failures
+        self.shutdown_calls = 0
+
+    async def activate(self) -> None:
+        return None
 
     async def generate(self, request: GenerationRequest) -> GenerationOutput:
         self.requests.append(request)
@@ -80,12 +99,36 @@ class _Runtime:
 
     async def offload(self) -> None:
         self.events.append("offload")
+        if self.fail_offload:
+            raise RuntimeError("rollout offload failed")
+
+    async def shutdown(self) -> None:
+        self.shutdown_calls += 1
+        if self.shutdown_calls <= self.shutdown_failures:
+            raise RuntimeError("runtime shutdown failed")
+
+    def is_colocated(self) -> bool:
+        return False
 
 
 class _RewardScorer:
-    def __init__(self, runtime: _Runtime | None = None) -> None:
+    def __init__(
+        self,
+        runtime: _Runtime | None = None,
+        *,
+        fail_park: bool = False,
+    ) -> None:
         self.calls: list[dict[str, Any]] = []
         self.runtime = runtime
+        self.fail_park = fail_park
+        self.shutdown_failures = 0
+        self.shutdown_calls = 0
+        self.last_memory_release_proofs: tuple[RewardMemoryReleaseProof, ...] = ()
+
+    async def shutdown(self) -> None:
+        self.shutdown_calls += 1
+        if self.shutdown_calls <= self.shutdown_failures:
+            raise RuntimeError("reward shutdown failed")
 
     async def score(
         self,
@@ -106,8 +149,41 @@ class _RewardScorer:
     async def score_many(
         self,
         requests: list[RewardScoringInput],
+        *,
+        require_memory_release: bool = False,
     ) -> list[torch.Tensor]:
-        return [await self.score(request) for request in requests]
+        result = await self.score_many_with_components(
+            requests,
+            require_memory_release=require_memory_release,
+        )
+        return result.scores
+
+    async def score_many_with_components(
+        self,
+        requests: list[RewardScoringInput],
+        *,
+        require_memory_release: bool = False,
+    ) -> RewardScoreBatch:
+        scores = [await self.score(request) for request in requests]
+        self.last_memory_release_proofs = ()
+        if require_memory_release:
+            await self.park_memory(required=True)
+        return RewardScoreBatch(scores=scores, components={}, timing_ms={})
+
+    async def park_memory(
+        self,
+        *,
+        required: bool,
+    ) -> tuple[RewardMemoryReleaseProof, ...]:
+        assert required is True
+        if self.runtime is not None:
+            self.runtime.events.append("reward_park")
+        if self.fail_park:
+            raise RuntimeError("reward park failed")
+        self.last_memory_release_proofs = (
+            RewardMemoryReleaseProof(request_id="collector-score", released=True),
+        )
+        return self.last_memory_release_proofs
 
 
 def _collector(
@@ -117,7 +193,6 @@ def _collector(
     lifecycle: RayLifecyclePlan | None = None,
 ) -> RolloutCollector:
     return RolloutCollector(
-        model=None,
         config=object(),
         family="unit",
         task="collect",
@@ -136,6 +211,45 @@ def test_collector_requires_runtime_before_collect() -> None:
 
     with pytest.raises(RuntimeError, match="runtime is not initialized"):
         asyncio.run(collector.collect(["p0"], group_size=1))
+
+
+def test_collector_rejects_incomplete_runtime_control_protocol() -> None:
+    class _GenerateOnlyRuntime:
+        async def generate(self, request: GenerationRequest) -> GenerationOutput:
+            raise NotImplementedError
+
+    with pytest.raises(TypeError, match="complete GenerationRuntime protocol"):
+        _collector(runtime=_GenerateOnlyRuntime())  # type: ignore[arg-type]
+
+
+@pytest.mark.asyncio
+async def test_collector_shutdown_retries_in_safe_runtime_then_reward_order() -> None:
+    runtime = _Runtime(shutdown_failures=1)
+    reward_scorer = _RewardScorer()
+    reward_scorer.shutdown_failures = 1
+    collector = _collector(runtime=runtime, reward_scorer=reward_scorer)
+
+    with pytest.raises(RuntimeError, match="runtime shutdown failed"):
+        await collector.shutdown()
+    assert runtime.shutdown_calls == 1
+    assert reward_scorer.shutdown_calls == 0
+    assert collector._runtime is runtime
+    assert collector._reward_shutdown_complete is False
+
+    with pytest.raises(RuntimeError, match="reward shutdown failed"):
+        await collector.shutdown()
+    assert runtime.shutdown_calls == 2
+    assert reward_scorer.shutdown_calls == 1
+    assert collector._runtime is None
+    assert collector._reward_shutdown_complete is False
+
+    await collector.shutdown()
+    await collector.shutdown()
+
+    assert runtime.shutdown_calls == 2
+    assert reward_scorer.shutdown_calls == 2
+    assert collector._runtime is None
+    assert collector._reward_shutdown_complete is True
 
 
 def test_collector_routes_request_through_runtime_reward_and_trajectory_batch() -> None:
@@ -167,6 +281,26 @@ def test_collector_routes_request_through_runtime_reward_and_trajectory_batch() 
     assert batch.training_view is not None
 
 
+@pytest.mark.asyncio
+async def test_profiled_collector_builds_cpu_batch_without_trainer_cuda_sync(
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("VRL_PROFILE", "1")
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: True)
+
+    def reject_trainer_sync(*_args: Any, **_kwargs: Any) -> None:
+        raise AssertionError("collector touched the trainer CUDA device")
+
+    monkeypatch.setattr(torch.cuda, "synchronize", reject_trainer_sync)
+    collector = _collector(runtime=_Runtime(), reward_scorer=_RewardScorer())
+
+    batch = await collector.collect(["p0"], group_size=1)
+
+    assert batch.rewards.device.type == "cpu"
+    assert batch.dones.device.type == "cpu"
+    assert batch.group_ids.device.type == "cpu"
+
+
 def test_collector_offloads_runtime_memory_before_reward_scoring() -> None:
     """Checks collector offloads runtime memory before reward scoring."""
     import asyncio
@@ -181,6 +315,7 @@ def test_collector_offloads_runtime_memory_before_reward_scoring() -> None:
         handoff=PhaseHandoffPolicy(
             release_rollout_before_train=True,
             release_rollout_before_reward=True,
+            release_trainer_before_reward=True,
             release_reward_after_score=True,
         ),
     )
@@ -191,8 +326,17 @@ def test_collector_offloads_runtime_memory_before_reward_scoring() -> None:
     )
 
     asyncio.run(collector.collect(["p0"], group_size=1))
+    asyncio.run(collector.offload_runtime_memory())
 
-    assert runtime.events == ["generate", "offload", "score"]
+    assert runtime.events == [
+        "generate",
+        "offload",
+        "score",
+        "reward_park",
+        "offload",
+        "reward_park",
+    ]
+    assert collector.requires_driver_model_offload_for_reward is True
 
 
 def test_collector_does_not_offload_runtime_before_independent_reward() -> None:
@@ -209,6 +353,7 @@ def test_collector_does_not_offload_runtime_before_independent_reward() -> None:
         handoff=PhaseHandoffPolicy(
             release_rollout_before_train=False,
             release_rollout_before_reward=False,
+            release_trainer_before_reward=False,
             release_reward_after_score=False,
         ),
     )
@@ -221,6 +366,133 @@ def test_collector_does_not_offload_runtime_before_independent_reward() -> None:
     asyncio.run(collector.collect(["p0"], group_size=1))
 
     assert runtime.events == ["generate", "score"]
+    assert collector.requires_driver_model_offload_for_reward is False
+
+
+def test_collector_blocks_trainer_handoff_when_reward_release_proof_fails() -> None:
+    """A failed reward park remains terminal even after rollout itself parks."""
+    import asyncio
+
+    class _FailingRewardScorer(_RewardScorer):
+        async def score_many_with_components(
+            self,
+            requests: list[RewardScoringInput],
+            *,
+            require_memory_release: bool = False,
+        ) -> RewardScoreBatch:
+            await super().score_many_with_components(
+                requests,
+                require_memory_release=False,
+            )
+            assert require_memory_release is True
+            raise RuntimeError("reward park failed")
+
+    runtime = _Runtime()
+    lifecycle = RayLifecyclePlan(
+        rollout=ActorLeasePolicy(mode="on_demand"),
+        reward=ActorLeasePolicy(mode="on_demand"),
+        handoff=PhaseHandoffPolicy(
+            release_rollout_before_train=True,
+            release_rollout_before_reward=True,
+            release_trainer_before_reward=True,
+            release_reward_after_score=True,
+        ),
+    )
+    collector = _collector(
+        runtime=runtime,
+        reward_scorer=_FailingRewardScorer(runtime, fail_park=True),
+        lifecycle=lifecycle,
+    )
+
+    with pytest.raises(RuntimeError, match="reward park failed"):
+        asyncio.run(collector.collect(["p0"], group_size=1))
+    with pytest.raises(RuntimeError, match="reward park failed"):
+        asyncio.run(collector.offload_runtime_memory())
+
+    assert runtime.events == [
+        "generate",
+        "offload",
+        "score",
+        "offload",
+        "reward_park",
+    ]
+
+
+def test_collector_phase_final_gate_retries_reward_parking() -> None:
+    """The final rollout offload retries a transient reward park failure."""
+    import asyncio
+
+    class _FlakyRewardScorer(_RewardScorer):
+        def __init__(self, runtime: _Runtime) -> None:
+            super().__init__(runtime)
+            self.park_attempts = 0
+
+        async def park_memory(
+            self,
+            *,
+            required: bool,
+        ) -> tuple[RewardMemoryReleaseProof, ...]:
+            self.park_attempts += 1
+            if self.runtime is not None:
+                self.runtime.events.append("reward_park")
+            if self.park_attempts == 1:
+                raise RuntimeError("transient reward park failure")
+            return await super().park_memory(required=required)
+
+    runtime = _Runtime()
+    scorer = _FlakyRewardScorer(runtime)
+    lifecycle = RayLifecyclePlan(
+        rollout=ActorLeasePolicy(mode="on_demand"),
+        reward=ActorLeasePolicy(mode="on_demand"),
+        handoff=PhaseHandoffPolicy(
+            release_rollout_before_train=True,
+            release_rollout_before_reward=True,
+            release_trainer_before_reward=True,
+            release_reward_after_score=True,
+        ),
+    )
+    collector = _collector(runtime=runtime, reward_scorer=scorer, lifecycle=lifecycle)
+
+    with pytest.raises(RuntimeError, match="transient reward park failure"):
+        asyncio.run(collector.collect(["p0"], group_size=1))
+
+    asyncio.run(collector.offload_runtime_memory())
+
+    assert scorer.park_attempts == 2
+    assert scorer.last_memory_release_proofs[0].released is True
+
+
+@pytest.mark.parametrize("reward_park_fails", [False, True])
+def test_collector_attempts_reward_park_after_rollout_offload_failure(
+    reward_park_fails: bool,
+) -> None:
+    """Rollout failure cannot skip reward cleanup; dual failures aggregate."""
+    import asyncio
+
+    runtime = _Runtime(fail_offload=True)
+    scorer = _RewardScorer(runtime, fail_park=reward_park_fails)
+    lifecycle = RayLifecyclePlan(
+        rollout=ActorLeasePolicy(mode="on_demand"),
+        reward=ActorLeasePolicy(mode="on_demand"),
+        handoff=PhaseHandoffPolicy(
+            release_rollout_before_train=True,
+            release_rollout_before_reward=True,
+            release_trainer_before_reward=True,
+            release_reward_after_score=True,
+        ),
+    )
+    collector = _collector(runtime=runtime, reward_scorer=scorer, lifecycle=lifecycle)
+    collector._reward_phase_started = True
+
+    if reward_park_fails:
+        with pytest.raises(RewardCleanupError) as error:
+            asyncio.run(collector.offload_runtime_memory())
+        assert len(error.value.errors) == 2
+    else:
+        with pytest.raises(RuntimeError, match="rollout offload failed"):
+            asyncio.run(collector.offload_runtime_memory())
+
+    assert runtime.events == ["offload", "reward_park"]
 
 
 def test_reward_scoring_input_rejects_prompt_output_mismatch() -> None:
@@ -288,7 +560,35 @@ def test_reward_scorer_score_many_uses_one_call_and_splits_per_group() -> None:
     assert rewards[1].tolist() == [2.0, 3.0, 4.0]
 
     assert asyncio.run(scorer.score_many([])) == []
-    assert scorer.last_reward_timing_ms == {}
+
+
+def test_collector_attaches_components_to_their_exact_rollout_groups() -> None:
+    """Prefetched reward observations travel with the batch they describe."""
+    import asyncio
+
+    class _ComponentReward:
+        async def score_batch_with_components(self, rollouts):
+            scores = [float(index) for index in range(len(rollouts))]
+            return scores, {"observer": [value + 10.0 for value in scores]}
+
+    collector = _collector(
+        runtime=_Runtime(),
+        reward_scorer=RewardScorer(_ComponentReward()),
+    )
+
+    async def _collect_two_groups():
+        pending = [
+            await collector.collect_unscored(["p0"], group_size=2),
+            await collector.collect_unscored(["p1"], group_size=3),
+        ]
+        return await collector.score_rollouts(pending)
+
+    first, second = asyncio.run(_collect_two_groups())
+
+    assert first.rewards.tolist() == [0.0, 1.0]
+    assert first.extras["reward_components"]["observer"].tolist() == [10.0, 11.0]
+    assert second.rewards.tolist() == [2.0, 3.0, 4.0]
+    assert second.extras["reward_components"]["observer"].tolist() == [12.0, 13.0, 14.0]
 
 
 def test_collect_prompt_batches_folds_reward_timing_into_stats() -> None:
@@ -311,7 +611,6 @@ def test_collect_prompt_batches_folds_reward_timing_into_stats() -> None:
 
     reward_fn = _TimedReward()
     collector = RolloutCollector(
-        model=None,
         config=object(),
         family="unit",
         task="collect",

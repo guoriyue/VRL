@@ -20,6 +20,7 @@ from vrl.generation.execution.types import (
     ChunkExecutionEnvelope,
     ChunkExecutionResult,
     DistributedWorkerHandle,
+    WorkerMemoryParkingSnapshot,
 )
 from vrl.generation.execution.worker import GenerationWorkerCore
 
@@ -34,6 +35,7 @@ __all__ = [
     "EnginePlan",
     "GenerationWorkerCore",
     "SampleChunk",
+    "WorkerMemoryParkingSnapshot",
     "build_engine_plan",
     "build_prompt_chunks",
     "build_sample_rows",

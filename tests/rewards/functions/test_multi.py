@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import pytest
 
-from vrl.rewards.base import RewardFunction
+from vrl.rewards.base import RewardCleanupError, RewardFunction
 from vrl.rewards.functions.registry import MultiReward
+from vrl.rewards.runtime import LocalRewardRuntime
 from vrl.rewards.types import RewardRollout, RewardTrajectory
 
 
@@ -18,6 +19,7 @@ def _make_rollout(prompt: str) -> RewardRollout:
 
 class _QueuedBatchReward(RewardFunction):
     def __init__(self, batches: list[list[float]]) -> None:
+        super().__init__()
         self.batches = list(batches)
 
     async def score(self, rollout: RewardRollout) -> float:
@@ -31,6 +33,7 @@ class _QueuedBatchReward(RewardFunction):
 
 class _TimedBatchReward(RewardFunction):
     def __init__(self, scores: list[float], timing_ms: dict[str, float], tag: str) -> None:
+        super().__init__()
         self.scores = list(scores)
         self.timing_ms = dict(timing_ms)
         self.tag = tag
@@ -48,8 +51,8 @@ class _TimedBatchReward(RewardFunction):
 
 
 @pytest.mark.asyncio
-async def test_multi_reward_accumulates_components_until_reset() -> None:
-    """Checks multi reward accumulates components until reset."""
+async def test_multi_reward_returns_components_for_each_scoring_call() -> None:
+    """Component observations stay aligned to their own score batch."""
     reward = MultiReward(
         [
             ("ocr", 1.0, _QueuedBatchReward([[0.1, 0.2], [0.3]])),
@@ -57,18 +60,21 @@ async def test_multi_reward_accumulates_components_until_reset() -> None:
         ]
     )
 
-    first = await reward.score_batch([_make_rollout("a"), _make_rollout("b")])
-    second = await reward.score_batch([_make_rollout("c")])
+    first, first_components = await reward.score_batch_with_components(
+        [_make_rollout("a"), _make_rollout("b")],
+    )
+    second, second_components = await reward.score_batch_with_components(
+        [_make_rollout("c")],
+    )
 
     assert first == pytest.approx([0.6, 1.2])
     assert second == pytest.approx([1.8])
-    assert set(reward.last_components) == {"ocr", "aesthetic"}
-    assert reward.last_components["ocr"] == pytest.approx([0.1, 0.2, 0.3])
-    assert reward.last_components["aesthetic"] == pytest.approx([1.0, 2.0, 3.0])
-
-    reward.reset_components()
-
-    assert reward.last_components == {}
+    assert first_components == pytest.approx(
+        {"ocr": [0.1, 0.2], "aesthetic": [1.0, 2.0]},
+    )
+    assert second_components == pytest.approx(
+        {"ocr": [0.3], "aesthetic": [3.0]},
+    )
 
 
 @pytest.mark.asyncio
@@ -81,10 +87,12 @@ async def test_zero_weight_component_is_scored_without_changing_total() -> None:
         ],
     )
 
-    scores = await reward.score_batch([_make_rollout("a"), _make_rollout("b")])
+    scores, components = await reward.score_batch_with_components(
+        [_make_rollout("a"), _make_rollout("b")],
+    )
 
     assert scores == pytest.approx([2.0, 3.0])
-    assert reward.last_components == pytest.approx(
+    assert components == pytest.approx(
         {"train": [2.0, 3.0], "observe": [0.7, 0.8]},
     )
 
@@ -134,3 +142,213 @@ async def test_multi_reward_aggregates_inference_observations() -> None:
             "inference_ms": 10.0,
         },
     )
+
+
+@pytest.mark.asyncio
+async def test_multi_reward_parks_every_child_after_score_failure() -> None:
+    """A failed component cannot skip parking later component runtimes."""
+
+    events: list[str] = []
+
+    class _Child(RewardFunction):
+        def __init__(self, name: str, *, fail_score: bool = False) -> None:
+            super().__init__()
+            self.name = name
+            self.fail_score = fail_score
+
+        async def score_batch(self, rollouts: list[RewardRollout]) -> list[float]:
+            events.append(f"score:{self.name}")
+            if self.fail_score:
+                raise RuntimeError(f"score failed:{self.name}")
+            return [1.0] * len(rollouts)
+
+        async def park_memory(self):
+            events.append(f"park:{self.name}")
+            return ()
+
+    reward = MultiReward(
+        [
+            ("first", 1.0, _Child("first", fail_score=True)),
+            ("second", 1.0, _Child("second")),
+        ],
+    )
+
+    with pytest.raises(RuntimeError, match="score failed:first"):
+        await reward.score_batch([_make_rollout("a")])
+
+    assert events == ["score:first", "park:first", "park:second"]
+
+
+@pytest.mark.asyncio
+async def test_multi_reward_aggregates_parking_and_shutdown_failures() -> None:
+    """Parking and shutdown each attempt every child before reporting errors."""
+
+    events: list[str] = []
+
+    class _Child(RewardFunction):
+        def __init__(self, name: str) -> None:
+            super().__init__()
+            self.name = name
+
+        async def park_memory(self):
+            events.append(f"park:{self.name}")
+            raise RuntimeError(f"park failed:{self.name}")
+
+        async def shutdown(self) -> None:
+            events.append(f"shutdown:{self.name}")
+            raise RuntimeError(f"shutdown failed:{self.name}")
+
+    reward = MultiReward(
+        [("first", 1.0, _Child("first")), ("second", 1.0, _Child("second"))],
+    )
+
+    with pytest.raises(RewardCleanupError) as park_group:
+        await reward.park_memory()
+    assert len(park_group.value.errors) == 2
+    with pytest.raises(RewardCleanupError) as shutdown_group:
+        await reward.shutdown()
+    assert len(shutdown_group.value.errors) == 2
+    assert events == [
+        "park:first",
+        "park:second",
+        "shutdown:first",
+        "shutdown:second",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_multi_reward_shutdown_retries_only_failed_children() -> None:
+    """A partial composite cleanup never double-shuts a completed sibling."""
+
+    events: list[str] = []
+
+    class _Child(RewardFunction):
+        def __init__(self, name: str, *, fail_once: bool = False) -> None:
+            super().__init__()
+            self.name = name
+            self.fail_once = fail_once
+
+        async def shutdown(self) -> None:
+            events.append(f"shutdown:{self.name}")
+            if self.fail_once:
+                self.fail_once = False
+                raise RuntimeError(f"shutdown failed:{self.name}")
+
+    reward = MultiReward(
+        [
+            ("completed", 1.0, _Child("completed")),
+            ("retry", 1.0, _Child("retry", fail_once=True)),
+        ],
+    )
+
+    with pytest.raises(RewardCleanupError) as first:
+        await reward.shutdown()
+    assert len(first.value.errors) == 1
+    assert events == ["shutdown:completed", "shutdown:retry"]
+
+    await reward.shutdown()
+    await reward.shutdown()
+
+    assert events == [
+        "shutdown:completed",
+        "shutdown:retry",
+        "shutdown:retry",
+    ]
+
+
+def test_factory_parking_policy_distinguishes_cpu_and_dedicated_rewards() -> None:
+    """CPU-only and dedicated rewards stay resident without a parking pool."""
+    cpu_reward = MultiReward.from_dict(
+        {"ocr": 1.0},
+        device="cpu",
+        memory_parking_required=False,
+    )
+    dedicated_reward = MultiReward.from_dict(
+        {"aesthetic": 1.0},
+        device="cuda:1",
+        reward_kwargs={"aesthetic": {"sleep_offload": True}},
+        memory_parking_required=False,
+    )
+
+    cpu_runtime = cpu_reward.rewards[0][2].runtime
+    dedicated_runtime = dedicated_reward.rewards[0][2].runtime
+    assert isinstance(cpu_runtime, LocalRewardRuntime)
+    assert isinstance(dedicated_runtime, LocalRewardRuntime)
+    assert cpu_runtime.requires_memory_parking is False
+    assert dedicated_runtime.requires_memory_parking is False
+
+
+def test_shared_parking_allows_one_gpu_reward_with_cpu_sibling() -> None:
+    """CPU siblings do not create a second process-wide CuMem owner."""
+    reward = MultiReward.from_dict(
+        {"aesthetic": 1.0, "ocr": 1.0},
+        device="cuda:0",
+        memory_parking_required=True,
+    )
+
+    runtimes = {name: fn.runtime for name, _, fn in reward.rewards}
+    functions = {name: fn for name, _, fn in reward.rewards}
+    assert runtimes["aesthetic"].requires_memory_parking is True
+    assert runtimes["ocr"].requires_memory_parking is False
+    assert functions["ocr"]._model._device == "cpu"
+
+
+def test_shared_parking_rejects_multiple_gpu_reward_components() -> None:
+    """CuMem tags cannot make multiple reward pools independently sleepable."""
+    with pytest.raises(ValueError, match="at most one configured GPU"):
+        MultiReward.from_dict(
+            {"aesthetic": 1.0, "pickscore": 1.0},
+            device="cuda:0",
+            memory_parking_required=True,
+        )
+
+
+@pytest.mark.parametrize(
+    ("resolved_device", "component_device"),
+    [("cpu", "cuda:0"), ("cuda:0", "cuda:1")],
+)
+def test_component_device_cannot_override_resource_device(
+    resolved_device: str,
+    component_device: str,
+) -> None:
+    """CPU resources cannot escalate to CUDA or change a CUDA ordinal."""
+    with pytest.raises(ValueError, match=r"distributed resources|CUDA device"):
+        MultiReward.from_dict(
+            {"kling_video_reward": 1.0},
+            device=resolved_device,
+            reward_kwargs={
+                "kling_video_reward": {
+                    "worker_config": {"device": component_device},
+                },
+            },
+            memory_parking_required=False,
+        )
+
+
+def test_gpu_resource_allows_component_cpu_downgrade() -> None:
+    """A CPU sibling consumes no GPU lease under a CUDA ownership ceiling."""
+    reward = MultiReward.from_dict(
+        {"aesthetic": 1.0, "kling_video_reward": 1.0},
+        device="cuda:0",
+        reward_kwargs={
+            "kling_video_reward": {"worker_config": {"device": "cpu"}},
+        },
+        memory_parking_required=True,
+    )
+
+    runtimes = {name: fn.runtime for name, _, fn in reward.rewards}
+    runtime = runtimes["kling_video_reward"]
+    assert isinstance(runtime, LocalRewardRuntime)
+    assert runtime._worker_config["device"] == "cpu"
+    assert runtime.requires_memory_parking is False
+    assert runtimes["aesthetic"].requires_memory_parking is True
+
+
+def test_from_dict_validates_zero_weight_observation_components() -> None:
+    """Observation-only scorers are live, so a typo must fail validation."""
+
+    with pytest.raises(KeyError, match="Unknown reward function"):
+        MultiReward.from_dict(
+            {"not_a_registered_reward": 0.0, "aesthetic": 1.0},
+            device="cpu",
+        )
