@@ -22,11 +22,10 @@ class MotionDynamicsReward(RewardFunction):
         cfg = dict(worker_config or {})
         if device:
             configured_device = str(cfg.get("device", "")).strip()
-            _, effective_device = resolve_reward_component_device(
+            cfg["device"] = resolve_reward_component_device(
                 resolved_device=str(device),
                 overrides=[("worker_config.device", configured_device)],
             )
-            cfg["device"] = effective_device
         model = MotionDynamicsModel(cfg)
         super().__init__(
             reward_name=reward_name,

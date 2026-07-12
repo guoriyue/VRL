@@ -25,15 +25,21 @@ _COSMOS3_REASONER_MODEL = "vrl.rewards.models.cosmos3_reasoner:Cosmos3ReasonerRe
 class Cosmos3ReasonerReward(CumemRewardFunction):
     """Cosmos3-reasoner reward scored in-process from disk artifacts."""
 
-    def __init__(self, **kwargs: Any) -> None:
+    def __init__(
+        self,
+        *,
+        reward_name: str = "nvidia/Cosmos3-Nano",
+        score_key: str = "task_success",
+        artifact_format: str = "mp4",
+        **kwargs: Any,
+    ) -> None:
         self._init_disk_artifact_reward(
             model_factory=_COSMOS3_REASONER_MODEL,
-            config_key="cosmos3_reasoner",
             request_prefix="cosmos3_reasoner",
             debug_basename="cosmos3_reasoner",
-            default_reward_name="nvidia/Cosmos3-Nano",
-            default_score_key="task_success",
-            default_artifact_format="mp4",
+            reward_name=reward_name,
+            score_key=score_key,
+            artifact_format=artifact_format,
             **kwargs,
         )
 

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Literal
+from typing import Any
 
 from vrl.rewards.base import RewardFunction
 from vrl.rewards.models.nsfw_safety import NSFWSafetyRewardModel
@@ -12,18 +12,13 @@ from vrl.rewards.runtime import LocalRewardRuntime
 class NSFWSafetyReward(RewardFunction):
     """Non-positive NSFW penalty; aggregates per-rollout via the model's batch hook."""
 
-    execution_device_config_key = "classifier_device"
+    device_config_key = "classifier_device"
 
     def __init__(
         self,
         device: str = "cuda",
-        execution: Literal["inline"] = "inline",
         **kwargs: Any,
     ) -> None:
-        if str(execution) != "inline":
-            raise ValueError(
-                "nsfw_safety reward currently supports execution='inline' only",
-            )
         # Build eagerly so config validation (threshold/penalty_scale/...) fires now.
         model = NSFWSafetyRewardModel({"device": device, **kwargs})
         self._model = model

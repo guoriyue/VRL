@@ -1,8 +1,8 @@
-"""PickScore preference reward (model-backed; local or ray transport)."""
+"""PickScore preference reward (model-backed, scored in-process)."""
 
 from __future__ import annotations
 
-from typing import Any, Literal
+from typing import Any
 
 from vrl.rewards.base import CumemRewardFunction
 
@@ -16,7 +16,6 @@ class PickScoreReward(CumemRewardFunction):
         dtype: str = "float32",
         processor_name: str = "laion/CLIP-ViT-H-14-laion2B-s32B-b79K",
         model_name: str = "yuvalkirstain/PickScore_v1",
-        execution: Literal["inline"] = "inline",
         **kwargs: Any,
     ) -> None:
         worker_config = {
@@ -31,7 +30,6 @@ class PickScoreReward(CumemRewardFunction):
             score_key="pickscore",
             model_factory="vrl.rewards.models.pickscore:pickscore_reward_model",
             worker_config=worker_config,
-            execution=execution,
         )
 
 

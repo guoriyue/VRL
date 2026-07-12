@@ -22,15 +22,21 @@ _UNIFIED_REWARD_VIDEO_MODEL = "vrl.rewards.models.unified_reward_video:UnifiedRe
 class UnifiedRewardVideoReward(CumemRewardFunction):
     """UnifiedReward-2.0 video judge scored in-process from disk artifacts."""
 
-    def __init__(self, **kwargs: Any) -> None:
+    def __init__(
+        self,
+        *,
+        reward_name: str = "CodeGoat24/UnifiedReward-2.0-qwen-7b@main",
+        score_key: str = "overall",
+        artifact_format: str = "mp4",
+        **kwargs: Any,
+    ) -> None:
         self._init_disk_artifact_reward(
             model_factory=_UNIFIED_REWARD_VIDEO_MODEL,
-            config_key="unified_reward_video",
             request_prefix="unified-reward-video",
             debug_basename="unified_reward_video",
-            default_reward_name="CodeGoat24/UnifiedReward-2.0-qwen-7b@main",
-            default_score_key="overall",
-            default_artifact_format="mp4",
+            reward_name=reward_name,
+            score_key=score_key,
+            artifact_format=artifact_format,
             **kwargs,
         )
 

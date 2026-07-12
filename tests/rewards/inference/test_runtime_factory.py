@@ -8,6 +8,7 @@ from vrl.rewards.functions.kling_video_reward import (
     _KLING_VIDEO_REWARD_MODEL,
     KlingVideoReward,
 )
+from vrl.rewards.functions.pickscore import PickScoreReward
 from vrl.rewards.inference import (
     RewardInferenceArtifact,
     RewardInferenceRequest,
@@ -46,6 +47,15 @@ def test_runtime_requires_model_factory() -> None:
     )
     with pytest.raises(ValueError, match="model_factory"):
         asyncio.run(runtime.score_batch(request))
+
+
+def test_model_backed_reward_builds_local_runtime_directly() -> None:
+    reward = PickScoreReward(device="cpu")
+
+    assert isinstance(reward.runtime, LocalRewardRuntime)
+    assert reward.runtime._worker_config["model_factory"] == (
+        "vrl.rewards.models.pickscore:pickscore_reward_model"
+    )
 
 
 def test_video_reward_derives_internal_model_factory_from_reward_name(tmp_path) -> None:

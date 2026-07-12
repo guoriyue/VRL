@@ -107,7 +107,6 @@ def test_config_validates() -> None:
                 "components": {"unified_reward_video": 1.0},
                 "kwargs": {
                     "unified_reward_video": {
-                        "execution": "pool",
                         "reward_name": "unified_reward_video",
                         "score_key": "overall",
                         "worker_config": {"reward_model_name": "CodeGoat24/UnifiedReward-2.0-qwen-7b@main"},

@@ -15,6 +15,7 @@ flow_grpo references:
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import Any
 
 from vrl.rewards.base import RewardFunction
@@ -33,7 +34,10 @@ class OCRReward(RewardFunction):
     OCR-detected text and target to disk for reward-hacking audit.
     """
 
-    execution_device_source = "cpu_only"
+    @classmethod
+    def resolve_execution_device(cls, *, device: str, kwargs: Mapping[str, Any]) -> str:
+        """PaddleOCR runs CPU-only; never claim the resource-resolved GPU."""
+        return "cpu"
 
     def __init__(self, device: str = "cuda", debug_dir: str | None = None) -> None:
         # Build eagerly so debug_dir creation fires now and tests can inject a

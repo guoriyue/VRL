@@ -5,12 +5,11 @@ from __future__ import annotations
 import gc
 import importlib
 from collections.abc import Mapping
-from typing import Any, Literal
+from typing import Any
 
 from vrl.rewards.inference import (
     RewardInferenceRequest,
     RewardInferenceResult,
-    RewardInferenceRuntime,
     RewardMemoryReleaseProof,
     score_artifacts_with_model,
 )
@@ -213,26 +212,6 @@ class LocalRewardRuntime:
             torch.cuda.synchronize(target)
 
 
-def make_reward_runtime(
-    execution: Literal["inline"],
-    *,
-    model_factory: str,
-    worker_config: Mapping[str, Any] | None = None,
-) -> RewardInferenceRuntime:
-    """Build the in-process reward runtime for a given model factory."""
-
-    worker_cfg = {**dict(worker_config or {}), "model_factory": str(model_factory)}
-    runtime = str(execution or "inline")
-    if runtime == "inline":
-        return LocalRewardRuntime(worker_cfg)
-    raise ValueError(
-        f"unsupported execution={execution!r}: the Ray reward pool was removed "
-        "and rewards score in-process. Drop the key (inline is the default); "
-        "shared-GPU parking is derived from distributed resource topology.",
-    )
-
-
 __all__ = [
     "LocalRewardRuntime",
-    "make_reward_runtime",
 ]

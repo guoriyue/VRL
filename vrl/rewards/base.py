@@ -8,7 +8,7 @@ import uuid
 from collections.abc import Callable, Mapping
 from dataclasses import asdict
 from pathlib import Path
-from typing import Any, ClassVar, Literal
+from typing import Any, ClassVar
 
 from vrl.rewards.inference import (
     MediaType,
@@ -34,7 +34,7 @@ def resolve_reward_component_device(
     *,
     resolved_device: str,
     overrides: list[tuple[str, Any]],
-) -> tuple[Literal["cpu_only", "configured_gpu"], str]:
+) -> str:
     """Apply a component CPU downgrade without weakening GPU ownership."""
 
     resolved = str(resolved_device or "").strip().lower()
@@ -62,10 +62,7 @@ def resolve_reward_component_device(
             f"reward {key}={effective!r} requests CUDA, but distributed resources "
             f"resolved {resolved_device!r}. CPU resources cannot launch a CUDA reward.",
         )
-    kind: Literal["cpu_only", "configured_gpu"] = (
-        "configured_gpu" if effective.startswith("cuda") else "cpu_only"
-    )
-    return kind, effective
+    return effective
 
 
 class RewardCleanupError(RuntimeError):
@@ -88,22 +85,9 @@ class RewardFunction:
     # None is fail-closed. A specialized base class supplies a contract only
     # when all model-owned CUDA state is built in the tagged runtime pool.
     memory_parking: ClassVar[RewardMemoryParkingSpec | None] = None
-    execution_device_source: ClassVar[Literal["cpu_only", "configured"]] = "configured"
     # Most reward constructors expose the selected device as ``device``;
     # exceptional schemas (for example NSFW's classifier_device) override it.
-    execution_device_config_key: ClassVar[str | None] = "device"
-
-    @classmethod
-    def resolve_execution_device_kind(
-        cls,
-        *,
-        device: str,
-        kwargs: Mapping[str, Any],
-    ) -> Literal["cpu_only", "configured_gpu"]:
-        """Resolve execution independently from the model's parking capability."""
-
-        effective = cls.resolve_execution_device(device=device, kwargs=kwargs)
-        return "configured_gpu" if effective.startswith("cuda") else "cpu_only"
+    device_config_key: ClassVar[str] = "device"
 
     @classmethod
     def resolve_execution_device(
@@ -114,27 +98,18 @@ class RewardFunction:
     ) -> str:
         """Return the concrete child device under the resource ownership ceiling."""
 
-        if cls.execution_device_source == "cpu_only":
-            return "cpu"
-
-        configured_devices: list[tuple[str, Any]] = []
-        if cls.execution_device_config_key is not None:
-            configured_devices.append(
-                (
-                    cls.execution_device_config_key,
-                    kwargs.get(cls.execution_device_config_key),
-                ),
-            )
+        configured_devices: list[tuple[str, Any]] = [
+            (cls.device_config_key, kwargs.get(cls.device_config_key)),
+        ]
         worker_config = kwargs.get("worker_config")
         if isinstance(worker_config, Mapping):
             configured_devices.append(
                 ("worker_config.device", worker_config.get("device")),
             )
-        _, effective = resolve_reward_component_device(
+        return resolve_reward_component_device(
             resolved_device=device,
             overrides=configured_devices,
         )
-        return effective
 
     @staticmethod
     def build_inmemory_artifacts(
@@ -233,21 +208,18 @@ class RewardFunction:
         score_key: str,
         model_factory: str,
         worker_config: Mapping[str, Any],
-        execution: Literal["inline"],
         media_type: MediaType = "image",
     ) -> None:
         """Initialize a RewardFunction backed by a RewardModel factory."""
 
-        from vrl.rewards.runtime import make_reward_runtime
+        from vrl.rewards.runtime import LocalRewardRuntime
 
         RewardFunction.__init__(
             self,
             reward_name=reward_name,
             score_key=score_key,
-            runtime=make_reward_runtime(
-                execution,
-                model_factory=model_factory,
-                worker_config=worker_config,
+            runtime=LocalRewardRuntime(
+                {**dict(worker_config), "model_factory": str(model_factory)},
             ),
             artifact_builder=lambda rollouts: RewardFunction.build_inmemory_artifacts(
                 rollouts,
@@ -259,18 +231,13 @@ class RewardFunction:
         self,
         *,
         model_factory: str,
-        config_key: str,
         request_prefix: str,
         debug_basename: str,
-        execution: Literal["inline"] = "inline",
-        reward_name: str | None = None,
-        score_key: str | None = None,
+        reward_name: str = "",
+        score_key: str = "",
         media_type: MediaType = "video",
         artifact_dir: str = "outputs/reward_artifacts",
-        artifact_format: str | None = None,
-        default_reward_name: str = "",
-        default_score_key: str = "",
-        default_artifact_format: str = "tensor",
+        artifact_format: str = "tensor",
         debug_dir: str = "",
         device: str | None = None,
         sleep_offload: bool = False,
@@ -285,9 +252,10 @@ class RewardFunction:
         via ``VideoRewardArtifactStore`` and scored in-process, instead of passed
         in-memory. ``sleep_offload`` parks the model on CPU between scores (the
         rollout/trainer own the GPU then), mirroring the rollout lease's
-        sleep/wake. ``model_factory`` / ``config_key`` / ``request_prefix`` /
-        ``debug_basename`` and the ``default_*`` values are the only per-reward
-        differences; everything else is shared wiring, so no concrete reward
+        sleep/wake. ``model_factory`` / ``request_prefix`` / ``debug_basename``
+        are the only per-reward differences (concrete rewards set their own
+        ``reward_name`` / ``score_key`` / ``artifact_format`` defaults before
+        delegating); everything else is shared wiring, so no concrete reward
         copies this body. ``runtime`` injects a ready ``RewardInferenceRuntime``
         (tests); it wins over the factory-built one.
         """
@@ -295,27 +263,11 @@ class RewardFunction:
         from vrl.rewards.artifacts import VideoRewardArtifactStore
         from vrl.rewards.runtime import LocalRewardRuntime
 
-        if str(execution) != "inline":
-            raise ValueError(
-                f"reward.kwargs.{config_key}.execution={execution!r} is no longer "
-                "supported: the Ray reward pool was removed and rewards score "
-                "in-process. Drop the key (inline is the default); shared-GPU "
-                "parking is derived from distributed resource topology.",
-            )
-
-        resolved_reward_name = str(
-            reward_name if reward_name is not None else default_reward_name,
-        )
-        resolved_score_key = str(score_key if score_key is not None else default_score_key)
-        resolved_format = str(
-            artifact_format if artifact_format is not None else default_artifact_format,
-        )
-
         self.media_type = str(media_type)
         self.artifact_store = VideoRewardArtifactStore(
             artifact_dir,
             media_type=self.media_type,
-            artifact_format=resolved_format,
+            artifact_format=str(artifact_format),
         )
 
         if runtime is None:
@@ -329,7 +281,7 @@ class RewardFunction:
             # otherwise fold worker_config.model_name (deprecated alias) or a
             # top-level reward_name that looks like a HF repo (contains "/")
             # — a bare reward_name stays a logical tag, not a model id.
-            reward_name_repo = resolved_reward_name if "/" in resolved_reward_name else ""
+            reward_name_repo = reward_name if "/" in reward_name else ""
             reward_model_name = str(
                 worker_cfg.get("reward_model_name")
                 or worker_cfg.get("model_name")  # deprecated alias
@@ -349,11 +301,10 @@ class RewardFunction:
             # so reject it even when this helper is called outside MultiReward.
             if device is not None:
                 configured_device = str(worker_cfg.get("device", "")).strip()
-                _, effective_device = resolve_reward_component_device(
+                worker_cfg["device"] = resolve_reward_component_device(
                     resolved_device=str(device),
                     overrides=[("worker_config.device", configured_device)],
                 )
-                worker_cfg["device"] = effective_device
             if sleep_offload:
                 worker_cfg["sleep_offload"] = True
                 worker_cfg["memory_parking_residual_bytes_limit"] = int(
@@ -363,8 +314,8 @@ class RewardFunction:
 
         RewardFunction.__init__(
             self,
-            reward_name=resolved_reward_name,
-            score_key=resolved_score_key,
+            reward_name=str(reward_name),
+            score_key=str(score_key),
             runtime=runtime,
             artifact_builder=self.artifact_store.materialize,
             request_metadata={"media_type": self.media_type},

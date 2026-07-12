@@ -23,15 +23,21 @@ _VIDEOSCORE2_MODEL = "vrl.rewards.models.videoscore2:VideoScore2Model"
 class VideoScore2Reward(CumemRewardFunction):
     """VideoScore2 reward scored in-process from disk artifacts."""
 
-    def __init__(self, **kwargs: Any) -> None:
+    def __init__(
+        self,
+        *,
+        reward_name: str = "TIGER-Lab/VideoScore2@main",
+        score_key: str = "physical_common_sense",
+        artifact_format: str = "mp4",
+        **kwargs: Any,
+    ) -> None:
         self._init_disk_artifact_reward(
             model_factory=_VIDEOSCORE2_MODEL,
-            config_key="videoscore2",
             request_prefix="videoscore2",
             debug_basename="videoscore2",
-            default_reward_name="TIGER-Lab/VideoScore2@main",
-            default_score_key="physical_common_sense",
-            default_artifact_format="mp4",
+            reward_name=reward_name,
+            score_key=score_key,
+            artifact_format=artifact_format,
             **kwargs,
         )
 

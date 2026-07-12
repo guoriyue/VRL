@@ -344,6 +344,16 @@ def test_gpu_resource_allows_component_cpu_downgrade() -> None:
     assert runtimes["aesthetic"].requires_memory_parking is True
 
 
+def test_from_dict_rejects_removed_pool_execution() -> None:
+    """A stale reward.kwargs execution key fails loud with the migration hint."""
+    with pytest.raises(ValueError, match="resource topology"):
+        MultiReward.from_dict(
+            {"kling_video_reward": 1.0},
+            device="cpu",
+            reward_kwargs={"kling_video_reward": {"execution": "pool"}},
+        )
+
+
 def test_from_dict_validates_zero_weight_observation_components() -> None:
     """Observation-only scorers are live, so a typo must fail validation."""
 

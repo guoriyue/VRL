@@ -107,17 +107,6 @@ async def test_missing_score_key_fails_fast(tmp_path: Path) -> None:
         await reward.score_batch([_rollout(torch.ones(1, 2, 2, 2))])
 
 
-def test_rejects_removed_pool_execution(tmp_path: Path) -> None:
-    """The removed pool execution fails loud with the migration hint."""
-    with pytest.raises(ValueError, match="resource topology"):
-        VideoScore2Reward(
-            execution="pool",
-            reward_name="videoscore2",
-            score_key="physical_common_sense",
-            artifact_dir=str(tmp_path),
-        )
-
-
 def test_config_accepts_videoscore2() -> None:
     """The shipped component shape validates."""
     cfg = OmegaConf.create(
@@ -126,7 +115,6 @@ def test_config_accepts_videoscore2() -> None:
                 "components": {"videoscore2": 1.0},
                 "kwargs": {
                     "videoscore2": {
-                        "execution": "pool",
                         "reward_name": "videoscore2",
                         "score_key": "physical_common_sense",
                         "worker_config": {"reward_model_name": "TIGER-Lab/VideoScore2@main"},

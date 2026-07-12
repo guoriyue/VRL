@@ -84,10 +84,11 @@ class MultiReward(RewardFunction):
         self,
         rewards: list[tuple[str, float, RewardFunction]],
     ) -> None:
+        super().__init__()
         self.rewards = rewards
-        self.last_results: list[Any] = []
-        self.last_timing_ms: dict[str, float] = {}
-        self.last_memory_release_proofs: list[RewardMemoryReleaseProof] = []
+        # Composite teardown is retryable: remember children whose shutdown
+        # already succeeded so a retry reaches only the ones that actually
+        # failed instead of double-shutting siblings.
         self._shutdown_completed_children: set[int] = set()
 
     async def shutdown(self) -> None:
@@ -101,9 +102,6 @@ class MultiReward(RewardFunction):
             except BaseException as error:
                 errors.append(error)
             else:
-                # Composite teardown is retryable. Commit each successful child
-                # independently so a later retry reaches only children whose
-                # cleanup actually failed instead of double-shutting siblings.
                 self._shutdown_completed_children.add(child_id)
         if errors:
             raise RewardCleanupError("reward shutdown failures", errors)
@@ -137,6 +135,13 @@ class MultiReward(RewardFunction):
             reward_cls = reward_classes[name]
             # `or {}`: a bare YAML key (kwargs: <name>:) parses as None.
             extra = dict(reward_kwargs.get(name) or {})
+            if "execution" in extra:
+                raise ValueError(
+                    f"reward.kwargs.{name}.execution is no longer supported: the "
+                    "Ray reward pool was removed and rewards score in-process. "
+                    "Drop the key; shared-GPU parking is derived from distributed "
+                    "resource topology.",
+                )
             component_device = reward_cls.resolve_execution_device(
                 device=device,
                 kwargs=extra,
@@ -145,10 +150,7 @@ class MultiReward(RewardFunction):
             # device argument; remove a component override after it has served as
             # the CPU-downgrade input.
             extra.pop("device", None)
-            execution_kind = (
-                "configured_gpu" if component_device.startswith("cuda") else "cpu_only"
-            )
-            if memory_parking_required is True and execution_kind == "configured_gpu":
+            if memory_parking_required is True and component_device.startswith("cuda"):
                 # GPU ownership comes from topology. A shared reward cannot rely
                 # on every preset remembering an independent parking knob.
                 parking = reward_cls.memory_parking
@@ -188,7 +190,8 @@ class MultiReward(RewardFunction):
     ) -> tuple[list[float], dict[str, list[float]]]:
         """Return totals and batch-aligned raw components from one call."""
 
-        self._reset_last_inference_observations()
+        self.last_results = []
+        self.last_timing_ms = {}
         totals = [0.0] * len(rollouts)
         components: dict[str, list[float]] = {}
         operation_error: BaseException | None = None
@@ -201,19 +204,21 @@ class MultiReward(RewardFunction):
                     totals[i] += weight * s
         except BaseException as error:
             operation_error = error
-        cleanup_error = await self._park_all_memory()
+        _, cleanup_error = await self._park_all_memory()
         _raise_operation_and_cleanup(operation_error, cleanup_error)
         return totals, components
 
     async def park_memory(self) -> tuple[RewardMemoryReleaseProof, ...]:
         """Actively park every component; never infer release from cached state."""
 
-        error = await self._park_all_memory()
+        proofs, error = await self._park_all_memory()
         if error is not None:
             raise error
-        return tuple(self.last_memory_release_proofs)
+        return proofs
 
-    async def _park_all_memory(self) -> BaseException | None:
+    async def _park_all_memory(
+        self,
+    ) -> tuple[tuple[RewardMemoryReleaseProof, ...], BaseException | None]:
         proofs: list[RewardMemoryReleaseProof] = []
         errors: list[BaseException] = []
         for name, _, fn in self.rewards:
@@ -222,15 +227,9 @@ class MultiReward(RewardFunction):
             except BaseException as error:
                 errors.append(RuntimeError(f"reward component {name!r} failed to park"))
                 errors[-1].__cause__ = error
-        self.last_memory_release_proofs = proofs
         if errors:
-            return RewardCleanupError("reward memory parking failures", errors)
-        return None
-
-    def _reset_last_inference_observations(self) -> None:
-        self.last_results = []
-        self.last_timing_ms = {}
-        self.last_memory_release_proofs = []
+            return tuple(proofs), RewardCleanupError("reward memory parking failures", errors)
+        return tuple(proofs), None
 
     def _append_inference_observations(self, fn: RewardFunction) -> None:
         self.last_results.extend(list(getattr(fn, "last_results", []) or []))
@@ -251,13 +250,12 @@ def validate_reward_memory_parking_components(
     gpu_components = [
         name
         for name in names
-        if (
-            get_reward(name).resolve_execution_device_kind(
-                device=device,
-                kwargs=dict(kwargs_by_name.get(name) or {}),
-            )
-            == "configured_gpu"
+        if get_reward(name)
+        .resolve_execution_device(
+            device=device,
+            kwargs=dict(kwargs_by_name.get(name) or {}),
         )
+        .startswith("cuda")
     ]
     if not gpu_components:
         raise ValueError(

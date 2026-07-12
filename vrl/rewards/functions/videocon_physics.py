@@ -23,15 +23,21 @@ _VIDEOCON_PHYSICS_MODEL = "vrl.rewards.models.videocon_physics:VideoConPhysicsMo
 class VideoConPhysicsReward(CumemRewardFunction):
     """VideoCon-Physics reward scored in-process from disk artifacts."""
 
-    def __init__(self, **kwargs: Any) -> None:
+    def __init__(
+        self,
+        *,
+        reward_name: str = "videophysics/videocon_physics@main",
+        score_key: str = "physical_commonsense",
+        artifact_format: str = "mp4",
+        **kwargs: Any,
+    ) -> None:
         self._init_disk_artifact_reward(
             model_factory=_VIDEOCON_PHYSICS_MODEL,
-            config_key="videocon_physics",
             request_prefix="videocon-physics",
             debug_basename="videocon_physics",
-            default_reward_name="videophysics/videocon_physics@main",
-            default_score_key="physical_commonsense",
-            default_artifact_format="mp4",
+            reward_name=reward_name,
+            score_key=score_key,
+            artifact_format=artifact_format,
             **kwargs,
         )
 

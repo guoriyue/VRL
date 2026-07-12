@@ -1,8 +1,8 @@
-"""Aesthetic reward (model-backed; local or ray transport)."""
+"""Aesthetic reward (model-backed, scored in-process)."""
 
 from __future__ import annotations
 
-from typing import Any, Literal
+from typing import Any
 
 from vrl.rewards.base import CumemRewardFunction
 
@@ -15,7 +15,6 @@ class AestheticReward(CumemRewardFunction):
         device: str = "cuda",
         dtype: str = "float32",
         model_name: str = "openai/clip-vit-large-patch14",
-        execution: Literal["inline"] = "inline",
         **kwargs: Any,
     ) -> None:
         worker_config = {
@@ -29,7 +28,6 @@ class AestheticReward(CumemRewardFunction):
             score_key="aesthetic",
             model_factory="vrl.rewards.models.aesthetic:aesthetic_reward_model",
             worker_config=worker_config,
-            execution=execution,
         )
 
 

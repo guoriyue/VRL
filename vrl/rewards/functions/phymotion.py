@@ -23,15 +23,21 @@ _PHYMOTION_MODEL = "vrl.rewards.models.phymotion:PhyMotionModel"
 class PhyMotionReward(CumemRewardFunction):
     """PhyMotion human-dynamics reward via an external scorer, run in-process."""
 
-    def __init__(self, **kwargs: Any) -> None:
+    def __init__(
+        self,
+        *,
+        reward_name: str = "phymotion",
+        score_key: str = "overall",
+        artifact_format: str = "mp4",
+        **kwargs: Any,
+    ) -> None:
         self._init_disk_artifact_reward(
             model_factory=_PHYMOTION_MODEL,
-            config_key="phymotion",
             request_prefix="phymotion",
             debug_basename="phymotion",
-            default_reward_name="phymotion",
-            default_score_key="overall",
-            default_artifact_format="mp4",
+            reward_name=reward_name,
+            score_key=score_key,
+            artifact_format=artifact_format,
             **kwargs,
         )
 
