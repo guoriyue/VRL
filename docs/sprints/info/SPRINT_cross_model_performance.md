@@ -96,6 +96,16 @@ active 段（`sm_util > 50%`）统计：
 只有约 18-26%，tensor core 与 DRAM 都约 20-31%。这是小 shape / fragmented kernel
 的指纹。下一档先加 denoise chunk，再用 OOM retry / VAE tiling 兜住容量边界。
 
+> **⚠️ 2026-07-12 纠正：上面这段的最后一句读错了。** 18-26% 的 occupancy **不是**
+> "小 shape / 还有头空间"的指纹，而是 **tensor-core GEMM 的正常指纹**（每线程占大量
+> 寄存器/shared memory，按设计每 SM 只驻留很少 warp）。真机反证：同卡两副本 + MPS 时
+> occupancy 29.2%→33.1%、DRAM 32.7%→38.5%（第二个进程的 kernel 确实被塞进了 SM），
+> **吞吐只涨 3%** —— occupancy 上去了吞吐没上去，说明它根本不是限制量。
+> 判"填没填满"只能看**吞吐随 batch 的标度**（SD3.5 ms/fwd 69.1@b4 → 264.7@b16 ≈ 线性
+> = compute-bound）或共置 A/B，不能看 occupancy 读数。本表的数据本身有效，失效的是那句
+> 推论；也解释了当时"加 batch 但 occupancy 纹丝不动（18→19%、20→20%）"为什么不是异常。
+> 详见 `docs/sprints/info/SPRINT_gpu_saturation_and_mps_colocation.md` §0.2。
+
 | 改动 | 文件 | 依据 / 边界 |
 | --- | --- | --- |
 | sd3_5 `n/sample_batch_size` 8→16 | sd3_5 三个实验 yaml | 旧 b16 风险来自 VAE decode；`model.memory.vae_decode.tiling=true` 已接上，chunk OOM 仍会自动 split |

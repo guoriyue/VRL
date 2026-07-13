@@ -11703,6 +11703,9 @@ ocr = [
 optim8bit = [
     { name = "bitsandbytes" },
 ]
+perf = [
+    { name = "nvidia-ml-py" },
+]
 pose = [
     { name = "huggingface-hub", version = "0.36.2", source = { registry = "https://pypi.org/simple" }, marker = "(extra == 'extra-9-visual-rl-ar-vllm' and extra == 'extra-9-visual-rl-cosmos') or (extra == 'extra-9-visual-rl-cosmos' and extra == 'extra-9-visual-rl-videoeval') or (extra == 'extra-9-visual-rl-pose' and extra == 'extra-9-visual-rl-pose-gpu') or (extra == 'extra-9-visual-rl-ar-vllm' and extra != 'extra-9-visual-rl-pose' and extra == 'extra-9-visual-rl-reward') or (extra == 'extra-9-visual-rl-ar-vllm' and extra != 'extra-9-visual-rl-pose' and extra == 'extra-9-visual-rl-videoeval') or (extra != 'extra-9-visual-rl-ar-vllm' and extra == 'extra-9-visual-rl-pose' and extra == 'extra-9-visual-rl-videoeval') or (extra != 'extra-9-visual-rl-pose' and extra == 'extra-9-visual-rl-reward' and extra == 'extra-9-visual-rl-videoeval') or (extra == 'extra-9-visual-rl-ar-vllm' and extra == 'extra-9-visual-rl-pose' and extra != 'extra-9-visual-rl-pose-gpu' and extra == 'extra-9-visual-rl-reward') or (extra != 'extra-9-visual-rl-cosmos' and extra == 'extra-9-visual-rl-pose' and extra != 'extra-9-visual-rl-reward' and extra == 'extra-9-visual-rl-videoeval')" },
     { name = "huggingface-hub", version = "1.23.0", source = { registry = "https://pypi.org/simple" }, marker = "(extra == 'extra-9-visual-rl-ar-vllm' and extra == 'extra-9-visual-rl-cosmos') or (extra == 'extra-9-visual-rl-ar-vllm' and extra == 'extra-9-visual-rl-pose') or (extra == 'extra-9-visual-rl-ar-vllm' and extra == 'extra-9-visual-rl-reward') or (extra == 'extra-9-visual-rl-ar-vllm' and extra == 'extra-9-visual-rl-videoeval') or (extra == 'extra-9-visual-rl-cosmos' and extra == 'extra-9-visual-rl-pose') or (extra == 'extra-9-visual-rl-cosmos' and extra == 'extra-9-visual-rl-videoeval') or (extra == 'extra-9-visual-rl-pose' and extra == 'extra-9-visual-rl-pose-gpu') or (extra == 'extra-9-visual-rl-pose' and extra == 'extra-9-visual-rl-reward') or (extra == 'extra-9-visual-rl-pose' and extra != 'extra-9-visual-rl-videoeval') or (extra == 'extra-9-visual-rl-reward' and extra == 'extra-9-visual-rl-videoeval')" },
@@ -11761,6 +11764,7 @@ requires-dist = [
     { name = "imageio-ffmpeg", specifier = ">=0.5.0" },
     { name = "numpy", specifier = ">=1.26.0" },
     { name = "nvidia-cudnn-cu12", marker = "extra == 'pose-gpu'", specifier = ">=9.0.0" },
+    { name = "nvidia-ml-py", marker = "extra == 'perf'", specifier = ">=12.0.0" },
     { name = "omegaconf", specifier = ">=2.3.0" },
     { name = "onnxruntime", marker = "extra == 'pose'", specifier = ">=1.16.0" },
     { name = "onnxruntime-gpu", marker = "extra == 'pose-gpu'", specifier = ">=1.24.0" },
@@ -11792,7 +11796,7 @@ requires-dist = [
     { name = "vbench", marker = "extra == 'videoeval'", specifier = "==0.1.5" },
     { name = "vllm", marker = "extra == 'ar-vllm'", specifier = ">=0.21.0,<0.22" },
 ]
-provides-extras = ["cosmos", "reward", "reward-service", "data", "ocr", "pose", "pose-gpu", "ar-vllm", "videoeval", "optim8bit"]
+provides-extras = ["cosmos", "reward", "reward-service", "data", "ocr", "pose", "pose-gpu", "ar-vllm", "videoeval", "optim8bit", "perf"]
 
 [package.metadata.requires-dev]
 lint = [{ name = "ruff", specifier = ">=0.4.0" }]
