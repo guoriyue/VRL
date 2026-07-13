@@ -280,7 +280,6 @@ def build_configs(cfg: DictConfig) -> dict[str, Any]:
         "trainer": build_trainer_config(cfg, precision=precision),
         "algorithm": build_algorithm_config(cfg),
         "precision": precision,
-        "raw": cfg,
     }
     if "reward" in cfg:
         out["reward"] = build_reward_config(cfg)

@@ -6,9 +6,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Any
 
-from omegaconf import DictConfig, OmegaConf
-
-from vrl.utils.config import cfg_get, to_builtin_deep
+from vrl.utils.config import cfg_path, to_builtin_deep
 
 
 @dataclass(frozen=True, slots=True)
@@ -54,21 +52,15 @@ def build_rollout_config_from_cfg(
     _merge_flat_section_values(values, cfg, "rollout")
     _merge_sde_values(values, cfg)
     _merge_flat_section_values(values, cfg, "sampling")
-    _copy_first_present(values, cfg, "kl_reward_coef", ("algorithm.kl_reward_coef",))
-    _copy_first_present(
-        values,
-        cfg,
-        "final_image_policy",
-        ("rollout.final_image_policy",),
-    )
-    _copy_first_present(
+    _copy_value(values, cfg, "kl_reward_coef", "algorithm.kl_reward_coef")
+    _copy_value(
         values,
         cfg,
         "train_segments",
-        ("algorithm.train_segments",),
+        "algorithm.train_segments",
     )
-    _copy_first_present(values, cfg, "trajectory_storage", ("rollout.trajectory_storage",))
-    _copy_first_present(values, cfg, "reward_artifact", ("rollout.reward_artifact",))
+    _copy_value(values, cfg, "trajectory_storage", "rollout.trajectory_storage")
+    _copy_value(values, cfg, "reward_artifact", "rollout.reward_artifact")
     _add_derived_values(values)
     return RolloutConfig(family=family, values=values)
 
@@ -102,17 +94,15 @@ def _merge_sde_values(values: dict[str, Any], cfg: Any) -> None:
             )
 
 
-def _copy_first_present(
+def _copy_value(
     values: dict[str, Any],
     cfg: Any,
     name: str,
-    paths: tuple[str, ...],
+    path: str,
 ) -> None:
-    for path in paths:
-        value = _cfg_select(cfg, path, _MISSING)
-        if value is not _MISSING and value is not None:
-            values[name] = _normalize_config_value(name, value)
-            return
+    value = cfg_path(cfg, path, _MISSING)
+    if value is not _MISSING and value is not None:
+        values[name] = _normalize_config_value(name, value)
 
 
 def _add_derived_values(values: dict[str, Any]) -> None:
@@ -131,24 +121,13 @@ def _normalize_config_value(name: str, value: Any) -> Any:
 
 
 def _cfg_mapping(cfg: Any, path: str) -> dict[str, Any]:
-    value = _cfg_select(cfg, path, _MISSING)
+    value = cfg_path(cfg, path, _MISSING)
     if value is _MISSING or value is None:
         return {}
     value = to_builtin_deep(value)
     if isinstance(value, Mapping):
         return {str(key): inner for key, inner in value.items()}
     raise ValueError(f"{path} config must be a mapping")
-
-
-def _cfg_select(cfg: Any, path: str, default: Any) -> Any:
-    if isinstance(cfg, DictConfig):
-        return OmegaConf.select(cfg, path, default=default)
-    node = cfg
-    for key in path.split("."):
-        node = cfg_get(node, key, _MISSING)
-        if node is _MISSING:
-            return default
-    return node
 
 
 _MISSING = object()
