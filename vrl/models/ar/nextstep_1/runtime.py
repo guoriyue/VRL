@@ -10,7 +10,6 @@ import torch
 
 from vrl.generation.ar import ARChunkExecutorBase, ARRequestLayout, ARSamplingParams
 from vrl.generation.ar.decode_loop import ARDecodeLoop
-from vrl.generation.capabilities import FamilyCapability
 from vrl.generation.execution.chunks import SampleChunk
 from vrl.generation.types import (
     GenerationMetrics,
@@ -19,12 +18,9 @@ from vrl.generation.types import (
     GenerationSampleRow,
 )
 from vrl.models.ar.build import ar_model_config_base
-from vrl.models.ar.capabilities import ar_continuous_family_capability
 from vrl.models.ar.nextstep_1.runner import NextStep1ARModelRunner
 from vrl.models.interfaces.runtime import ModelBuild
 from vrl.trajectory import build_ar_continuous_trajectory
-
-NEXTSTEP_1_FAMILY_CAPABILITY = ar_continuous_family_capability("nextstep_1", "ar_t2i")
 
 
 def enrich_nextstep_build(build: ModelBuild, cfg: Any) -> None:
@@ -119,7 +115,6 @@ class NextStep1ChunkExecutor(ARChunkExecutorBase):
     _runner_cls = NextStep1ARModelRunner
     _runner_attention_family = "nextstep_1"
     task: str = "ar_t2i"
-    family_capability: FamilyCapability = NEXTSTEP_1_FAMILY_CAPABILITY
     default_image_token_num: int | None = None
     default_image_size: int | None = None
 

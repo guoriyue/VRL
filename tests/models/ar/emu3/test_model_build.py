@@ -6,11 +6,7 @@ from omegaconf import OmegaConf
 
 from vrl.models.ar.build import resolve_family_ar_model_build
 from vrl.models.ar.emu3.runner import Emu3TokenRunner
-from vrl.models.ar.emu3.runtime import (
-    EMU3_FAMILY_CAPABILITY,
-    Emu3ChunkExecutor,
-    emu3_config_from_build,
-)
+from vrl.models.ar.emu3.runtime import Emu3ChunkExecutor, emu3_config_from_build
 
 
 def test_resolve_model_build_defaults_to_gen_hf_checkpoint() -> None:
@@ -63,14 +59,10 @@ def test_resolve_model_build_carries_sampling_and_lora_overrides() -> None:
     assert "image_size" not in config
 
 
-def test_executor_declares_family_capability_and_runner() -> None:
+def test_executor_declares_identity_and_runner() -> None:
     executor = Emu3ChunkExecutor(model=object())
 
     assert executor.family == "emu3"
     assert executor.task == "ar_t2i"
-    assert executor.capability() is EMU3_FAMILY_CAPABILITY
-    assert EMU3_FAMILY_CAPABILITY.family == "emu3"
-    assert EMU3_FAMILY_CAPABILITY.task == "ar_t2i"
-    assert EMU3_FAMILY_CAPABILITY.trajectory_kind == "ar_discrete"
     assert executor._runner_cls is Emu3TokenRunner
     assert executor._runner_attention_family == "emu3"

@@ -85,7 +85,7 @@ def build_echo_replay_runtime_bundle(build: ModelBuild) -> RuntimeBundle:
 
     from vrl.models.diffusion.build import assemble_replay_bundle
 
-    return assemble_replay_bundle(model, build, family="echo")
+    return assemble_replay_bundle(model, build)
 
 
 class EchoChunkExecutor(DiffusionChunkExecutorBase):

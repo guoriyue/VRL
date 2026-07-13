@@ -129,7 +129,7 @@ def main() -> None:
 
     family = normalize_rollout_family(args.family)
     entry = get_rollout_family_entry(family)
-    if entry.capability.trajectory_kind != "diffusion":
+    if entry.collector.kind != "diffusion":
         raise SystemExit(
             f"--family {family} is an AR family; this probe drives the "
             "diffusion denoise loop only (use the AR entrypoints instead)",

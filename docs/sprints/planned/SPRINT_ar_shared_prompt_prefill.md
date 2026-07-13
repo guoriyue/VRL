@@ -6,7 +6,7 @@
 （文本推理 / 长 system prompt / janus_pro_r1 多段）ROI 才显著。先量再做。
 
 > 方法：逐跳核实了 `vrl/models/ar/{janus_pro,nextstep_1}/{runtime,runner}.py`、
-> `vrl/models/ar/paged_attention_helpers.py`、`vrl/models/ar/capabilities.py`，以及 rollout 侧的
+> `vrl/models/ar/paged_attention_helpers.py`、`vrl/rollouts/families/registry.py`，以及 rollout 侧的
 > 同-prompt 分组（`SampleChunk` + `n_samples_per_prompt`）。
 
 ---
@@ -42,13 +42,12 @@ prompt**。`prefill_forwards=2` 只是 cond+uncond 两次前向调用的计数�
 
 `vrl/models/ar/paged_attention_helpers.py` 只是「shared paged-attention helpers reused by runners」
 ——共享的是**代码**，不是**KV**。没有 radix/prefix-hash/cache-hit 逻辑，所以相同 prompt 前缀不会被
-自动复用。`capabilities.py:53` 的 `cache_kinds=("kv_cache","prompt_embed_cache","token_buffer")` 是
-**容量声明**，不是跨样本前缀共享机制。
+自动复用。实际 paged KV cache 由每个 decode lane 独立持有；代码中没有 cache-kind registry 或
+跨样本前缀共享机制。
 
 ### 1.3 已经做对的部分（别重复造）
 
 - **decode 已 K-batched**：K 个 lane 逐 token 一起解（paged attention），decode 不冗余。
-- **prompt embed 缓存**：`prompt_embed_cache` 让编码层不重复编（但 prefill 的 attention KV 仍按 K 行算）。
 
 所以**唯一的冗余是 prompt 段的 attention prefill 被算了 K 遍**，decode（贵的部分）不冗余。
 
@@ -129,6 +128,7 @@ prompt**。`prefill_forwards=2` 只是 cond+uncond 两次前向调用的计数�
 - prefill 单点：`janus_pro/runner.py:74-93,158-`（`_prefill_ar_prompt_paged`）；
   `nextstep_1/runner.py:93-134,239-247`（`_prefill_paged`）。
 - 无前缀去重：`vrl/models/ar/paged_attention_helpers.py`。
-- AR 能力/缓存声明：`vrl/models/ar/capabilities.py:34,53,75`。
+- AR family/task 分类：`vrl/rollouts/families/registry.py`；KV-cache 状态与推进：
+  `vrl/models/ar/paged_attention_helpers.py` 及各 family runner。
 - rollout 同-prompt 分组（算法无关，K=group size）：`SampleChunk`（`generation/execution/chunks.py`）
   + `n_samples_per_prompt`（`configs/base/rollout/ar_*.yaml`、`config/schema.py:234`）。

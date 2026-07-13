@@ -11,16 +11,11 @@ from vrl.generation.ar import (
     ARDiscreteChunkExecutorBase,
     ARSamplingParams,
 )
-from vrl.generation.capabilities import FamilyCapability
 from vrl.generation.execution.chunks import SampleChunk
 from vrl.generation.types import GenerationRequest
 from vrl.models.ar.build import ar_model_config_base
-from vrl.models.ar.capabilities import ar_discrete_family_capability
 from vrl.models.ar.llamagen.runner import LlamaGenARModelRunner
 from vrl.models.interfaces.runtime import ModelBuild
-
-LLAMAGEN_FAMILY_CAPABILITY = ar_discrete_family_capability("llamagen", "ar_t2i")
-
 
 # LlamaGen LoRA defaults: the vendored GPT uses fused llama-style projection
 # names (wqkv / wo), not per-head q_proj/k_proj/v_proj. Applied at read time so
@@ -74,7 +69,6 @@ class LlamaGenChunkExecutor(ARDiscreteChunkExecutorBase):
     _runner_cls = LlamaGenARModelRunner
     _runner_attention_family = "llamagen"
     task: str = "ar_t2i"
-    family_capability: FamilyCapability = LLAMAGEN_FAMILY_CAPABILITY
     default_image_token_num: int | None = 256
     default_image_size: int | None = 256
     default_max_text_length: int | None = 120
@@ -210,7 +204,6 @@ class LlamaGenChunkExecutor(ARDiscreteChunkExecutorBase):
 
 
 __all__ = [
-    "LLAMAGEN_FAMILY_CAPABILITY",
     "LlamaGenChunkExecutor",
     "llamagen_config_from_build",
 ]

@@ -16,7 +16,17 @@ from vrl.rollouts.families import (
     normalize_rollout_family,
     registered_rollout_families,
 )
-from vrl.rollouts.families.registry import _default_return_artifacts
+from vrl.rollouts.families.registry import CollectorMetadata, _default_return_artifacts
+
+
+@pytest.mark.parametrize("kind", ["diffusion", "ar_discrete", "ar_continuous", "ar_r1"])
+def test_collector_metadata_accepts_declared_kinds(kind: str) -> None:
+    assert CollectorMetadata(kind=kind).kind == kind  # type: ignore[arg-type]
+
+
+def test_collector_metadata_rejects_unknown_kind() -> None:
+    with pytest.raises(ValueError, match="unsupported collector kind"):
+        CollectorMetadata(kind="typo")  # type: ignore[arg-type]
 
 
 def test_family_name_import_does_not_load_runtime_registry() -> None:

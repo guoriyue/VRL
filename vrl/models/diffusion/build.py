@@ -12,9 +12,6 @@ descriptor import strings lazily to avoid a registry import cycle.
 
 from __future__ import annotations
 
-from collections.abc import Callable
-
-from vrl.generation.capabilities import FamilyCapability
 from vrl.models.diffusion.common.vae_decode_memory import (
     apply_generation_memory_policy,
 )
@@ -40,9 +37,7 @@ def build_diffusion_runtime_bundle(
     build: ModelBuild,
     *,
     model_cls: type,
-    capability: FamilyCapability,
     memory_owner: str,
-    extra_metadata: Callable[[object, ModelBuild], dict[str, object]] | None = None,
 ) -> RuntimeBundle:
     """Generic rollout bundle: load the family model and apply the shared policy.
 
@@ -55,12 +50,6 @@ def build_diffusion_runtime_bundle(
     model knowledge and live in the family's ``apply_lora`` override, not in
     builder hooks.
 
-    Capability flags are NOT re-published on the bundle: the registry entry's
-    capability is the single stored copy and reaches the worker via the launch
-    contract.
-
-    ``extra_metadata(model, build)`` returns family metadata merged over the
-    generic keys (e.g. cosmos predict2's ``reference_image``).
     """
 
     rollout = build.require_rollout()
@@ -109,14 +98,9 @@ def build_diffusion_runtime_bundle(
         model.set_num_steps(num_steps)
     # If None, caller (e.g. DPO trainer) will set scheduler timesteps itself.
 
-    # The functional keys are the full/minimal-generation marker
-    # (colocated-RAM guard) and memory_policy; the rest is provenance.
+    # Runtime metadata contains only values with production consumers: the
+    # full-generation marker (colocated-RAM guard) and memory policy.
     metadata: dict[str, object] = {
-        **_provenance_metadata(
-            build,
-            capability.family,
-            task_variant=capability.task,
-        ),
         **full_generation_bundle_metadata(),
         **apply_generation_memory_policy(
             model,
@@ -124,8 +108,6 @@ def build_diffusion_runtime_bundle(
             owner=memory_owner,
         ),
     }
-    if extra_metadata is not None:
-        metadata.update(extra_metadata(model, build))
     return RuntimeBundle(
         model=model,
         trainable_modules=model.trainable_modules,
@@ -140,9 +122,7 @@ def build_diffusion_replay_runtime_bundle(
     *,
     replay_cls: type,
     transformer_classname: str,
-    capability: FamilyCapability,
     scheduler_classname: str | None = None,
-    extra_metadata: Callable[[object, ModelBuild], dict[str, object]] | None = None,
 ) -> RuntimeBundle:
     """Generic replay bundle for single-transformer diffusion families.
 
@@ -159,8 +139,6 @@ def build_diffusion_replay_runtime_bundle(
     (a ``DiffusionModelBase`` no-op) so a family can finish replay-only setup
     with the build inputs in hand — FLUX sets its dynamic-shift timesteps there.
 
-    ``extra_metadata`` follows the rollout builder's contract (family metadata
-    merged over generic keys).
     """
 
     build.require_replay()
@@ -175,24 +153,14 @@ def build_diffusion_replay_runtime_bundle(
     )
 
     model.prepare_replay(build)
-    return assemble_replay_bundle(
-        model,
-        build,
-        family=capability.family,
-        task_variant=capability.task,
-        extra_metadata=extra_metadata,
-    )
+    return assemble_replay_bundle(model, build)
 
 
 def assemble_replay_bundle(
     model: object,
     build: ModelBuild,
-    *,
-    family: str,
-    task_variant: str | None = None,
-    extra_metadata: Callable[[object, ModelBuild], dict[str, object]] | None = None,
 ) -> RuntimeBundle:
-    """Shared replay-bundle assembly: training knobs + provenance + bundle.
+    """Shared replay-bundle assembly: training knobs + behavior metadata.
 
     One construction site for the lora/full-finetune + compile tail — the
     generic replay builder AND the hand-written-construction families (anima,
@@ -210,49 +178,13 @@ def assemble_replay_bundle(
     if compile_cfg.get("enable"):
         model.torch_compile_transformer(compile_cfg["mode"])
 
-    metadata: dict[str, object] = {
-        **_provenance_metadata(build, family, task_variant=task_variant),
-        **minimal_replay_bundle_metadata(),
-    }
-    if extra_metadata is not None:
-        metadata.update(extra_metadata(model, build))
     return RuntimeBundle(
         model=model,
         trainable_modules=model.trainable_modules,
         scheduler=model.scheduler,
         raw_handle=None,
-        metadata=metadata,
+        metadata=minimal_replay_bundle_metadata(),
     )
-
-
-def _provenance_metadata(
-    build: ModelBuild,
-    family: str,
-    *,
-    task_variant: str | None = None,
-) -> dict[str, object]:
-    """Single construction site for the provenance keys on both bundle kinds.
-
-    The family registry remains the source of truth for the display-only task
-    variant; ``ModelBuild`` must not carry a duplicate field that no runtime
-    branch consumes.
-    """
-
-    from vrl.rollouts.families.registry import get_rollout_family_entry
-
-    if task_variant is None:
-        entry = get_rollout_family_entry(family)
-        task_variant = (
-            entry.build.task_variant if entry.build is not None else entry.capability.task
-        )
-
-    return {
-        "model_path": build.model_name_or_path,
-        "family": family,
-        "task_variant": task_variant,
-        "parameter_dtype": str(build.parameter_dtype),
-        "use_lora": build.use_lora,
-    }
 
 
 # -- registry-descriptor path (families with NO builder functions) -----------
@@ -370,7 +302,6 @@ def build_family_runtime_bundle(build: ModelBuild) -> RuntimeBundle:
     return build_diffusion_runtime_bundle(
         build,
         model_cls=import_from_path(recipe.model_cls),
-        capability=entry.capability,
         memory_owner=recipe.memory_owner,
     )
 
@@ -409,7 +340,6 @@ def build_family_replay_runtime_bundle(build: ModelBuild) -> RuntimeBundle:
         replay_cls=import_from_path(recipe.replay_cls),
         transformer_classname=recipe.transformer_classname,
         scheduler_classname=recipe.scheduler_classname,
-        capability=entry.capability,
     )
 
 

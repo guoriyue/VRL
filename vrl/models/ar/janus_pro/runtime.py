@@ -15,7 +15,6 @@ from vrl.generation.ar import (
     ARSamplingParams,
 )
 from vrl.generation.ar.decode_loop import ARDecodeLoop, call_with_supported_kwargs
-from vrl.generation.capabilities import FamilyCapability
 from vrl.generation.execution.chunks import SampleChunk
 from vrl.generation.types import (
     GenerationMetrics,
@@ -24,7 +23,6 @@ from vrl.generation.types import (
     GenerationSampleRow,
 )
 from vrl.models.ar.build import ar_model_config_base
-from vrl.models.ar.capabilities import ar_discrete_family_capability
 from vrl.models.ar.janus_pro import JANUS_R1_SEGMENTS
 from vrl.models.ar.janus_pro.runner import JanusProARModelRunner
 from vrl.models.interfaces.runtime import ModelBuild
@@ -32,14 +30,6 @@ from vrl.trajectory import build_ar_multisegment_trajectory
 from vrl.utils.logging import init_logger
 
 logger = init_logger(__name__)
-
-JANUS_PRO_FAMILY_CAPABILITY = ar_discrete_family_capability("janus_pro", "ar_t2i")
-JANUS_PRO_R1_FAMILY_CAPABILITY = ar_discrete_family_capability(
-    "janus_pro_r1",
-    "ar_t2i_r1",
-    trajectory_kind="multisegment",
-)
-
 
 # Janus LoRA defaults mirror the upstream Janus-Pro RL recipe; applied at read
 # time so the carried ``model.lora`` block only needs the values it overrides.
@@ -113,7 +103,6 @@ class JanusProChunkExecutor(ARDiscreteChunkExecutorBase):
     _runner_cls = JanusProARModelRunner
     _runner_attention_family = "janus_pro"
     task: str = "ar_t2i"
-    family_capability: FamilyCapability = JANUS_PRO_FAMILY_CAPABILITY
 
     def __init__(self, model: Any) -> None:
         """Construct the executor.
@@ -253,7 +242,6 @@ class JanusProR1ChunkExecutor(JanusProChunkExecutor):
 
     family: str = "janus_pro_r1"
     task: str = "ar_t2i_r1"
-    family_capability: FamilyCapability = JANUS_PRO_R1_FAMILY_CAPABILITY
 
     def forward_chunk_plan(
         self,

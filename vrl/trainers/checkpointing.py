@@ -365,23 +365,19 @@ def restore_training_checkpoint(
     *,
     trainer: Any,
     bundle: Any,
+    family: str,
     strict: bool = True,
 ) -> None:
     """Restore model trainable modules and trainer state from checkpoint."""
 
     if checkpoint is None:
         return
+    if strict and not family:
+        raise ValueError("strict checkpoint restore requires a non-empty family")
     checkpoint_family = checkpoint.payload.get("family")
-    bundle_family = getattr(bundle, "metadata", {}).get("family")
-    if (
-        strict
-        and checkpoint_family
-        and bundle_family
-        and str(checkpoint_family) != str(bundle_family)
-    ):
+    if strict and checkpoint_family and str(checkpoint_family) != str(family):
         raise ValueError(
-            f"checkpoint family mismatch: checkpoint={checkpoint_family!r}, "
-            f"bundle={bundle_family!r}",
+            f"checkpoint family mismatch: checkpoint={checkpoint_family!r}, runtime={family!r}",
         )
     load_trainable_state(bundle, checkpoint.trainable_state, strict=strict)
     trainer.load_state_dict(checkpoint.trainer_state, strict=strict)

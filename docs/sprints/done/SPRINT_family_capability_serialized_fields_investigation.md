@@ -1,5 +1,11 @@
 # SPRINT: `FamilyCapability` 序列化字段调查（done，调查 → 删除）
 
+> Superseded on 2026-07-12: the remaining three-field `FamilyCapability`
+> duplicated registry identity and collector classification, so the whole seam
+> was removed. The Ray launch contract now carries only the behavior-consumed
+> `generation_kind` (`diffusion` or `ar`), while executor `family`/`task` are
+> checked directly against the contract.
+
 状态：done（2026-06-21）。调查结论：6 个「经 `to_dict()` 跨 Ray 边界但无 in-process 读者」的字段，逐一追踪序列化下游消费后**全部证实为真死**（序列化了但 worker / placement 侧从不按 key 读回）——遂全部删除。验证：`ruff` 全绿，`pytest tests/generation/test_capabilities.py tests/generation/execution/ tests/generation/ray/test_oom_split.py` **24 passed**，`to_dict`/`from_value` 往返 + `with_runtime_caps` 冒烟通过。
 范围：`vrl/generation/capabilities.py` 的 `FamilyCapability` 5 字段 + `ExecutionStageCapability.metadata`。
 来源：dead-dataclass-hunt 把 5 个 `FamilyCapability` 字段标为 display-only 死字段，但「机械可删」被证伪——必须先查序列化边界消费，见 §0。承接 [[SPRINT_segment_signal_dead_field_cleanup]]。

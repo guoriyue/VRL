@@ -94,7 +94,7 @@
    - `vrl/rollouts/families/registry.py`：echo/cosmos3/anima 三条 entry 设 `replay_runtime_builder` dotted string（复用 AR 侧既有字段，**不**在 DiffusionFamilyBuild 加新字段）；更新字段 docstring（不再 AR-only）与 :74-75 过时 wan 注释。
    - `vrl/models/diffusion/build.py::build_family_replay_runtime_bundle`：`replay_cls is None` 时若 entry 有 builder 则 `import_from_path(...)(build)`（`_check_requires_lora` 先行），否则保留响亮 ValueError。
    - 删零调用方 `build_echo_replay_runtime_bundle_from_cfg`、`build_cosmos3_replay_runtime_bundle_from_cfg` 及 `__all__` 条目；anima 的 `resolve_anima_replay_model_build` 不动（e2e 字符串引用契约）。
-   - 同文件加双调用方 `_provenance_metadata(build, family)`（5 键 dict 唯一构造点，"audited 2026-07-02" 注释随行搬），:102-107 与 :198-204 改用；`assemble_replay_bundle` docstring 收窄为 "REPLAY-side ... tail"。**明确拒绝**统一 rollout/replay 的 lora+compile tail（rollout 侧量化交织在分支两臂内、顺序有文档化路径依赖——不是重复）。
+   - 删除 bundle 上无生产消费者的 provenance metadata；checkpoint strict-resume 的 family guard 显式接收 resolved family，不再从 bundle metadata 复制 registry identity。`assemble_replay_bundle` docstring 收窄为 "REPLAY-side ... tail"。**明确拒绝**统一 rollout/replay 的 lora+compile tail（rollout 侧量化交织在分支两臂内、顺序有文档化路径依赖——不是重复）。
    - 测试：扩展 `tests/rollouts/runtime/test_family_registry.py` 断言每个 diffusion family 解析出 replay 路径（`replay_cls` 或可导入的 `replay_runtime_builder`）——这就是本该抓住回归的测试。**落地前先 `git fetch` 复查 registry.py/build.py**（记忆：另一进程在并行 reconcile 本树）。
 2. **AR runtime LoRA 默认值折叠 5 份**（发现 #12）：`vrl/models/ar/build.py` 加 `ar_model_config_base(build, lora_defaults)`（base dict + use_lora 合并 + 5 个类型化 lora_* 键）；5 个 family runtime 各替换为一行调用，**保留各家 `_*_LORA_DEFAULTS` dict**（llamagen 的 wqkv/wo 真有差异）；删 janus 的 `_resolve_lora_block`；重指 `interfaces/runtime.py:112` 与 `model_build.py:79` 两处文档引用。
 3. **scripts/diffusion 六份 lazy builder + wan T2V 重复入口**（发现 #30 + #31，同文件合并）：

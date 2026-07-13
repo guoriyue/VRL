@@ -257,7 +257,8 @@ resident 拿全额稳态加速;release-after-collect 的每周期重编译也因
 - `vrl/models/diffusion/cosmos/predict2_5/model.py:245-246` — `torch.compile(pipeline.transformer, mode=mode, fullgraph=False)`
 - `vrl/models/interfaces/runtime.py:123-128` — `ModelBuild.torch_compile` reads the single `model.torch_compile` source
 - `vrl/generation/ray/launcher.py` — `model.torch_compile.enable` unsupported-family fail-fast gate
-- `vrl/models/diffusion/capabilities.py` — diffusion families declare `supports_torch_compile=True`
+- `vrl/generation/ray/launcher.py:_validate_model_compile_supported` — compile support derives from
+  the registry entry's diffusion collector kind; no second capability table exists
 
 **测量**
 - `vrl/ray/actor_pool.py:140-150` — per-chunk `execution_s` / `queue_wait_s`（first/later 来源）

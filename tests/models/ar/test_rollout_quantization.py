@@ -133,7 +133,6 @@ def test_ar_builder_rejects_unsupported_nvfp4_before_quantization_mutation(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from vrl.models.ar.build import build_ar_runtime_bundle
-    from vrl.models.ar.capabilities import ar_discrete_family_capability
     from vrl.models.interfaces.runtime import ModelBuild, RolloutBuildOptions
 
     class _ArPolicy(nn.Module):
@@ -163,7 +162,6 @@ def test_ar_builder_rejects_unsupported_nvfp4_before_quantization_mutation(
         build_ar_runtime_bundle(
             build,
             model=model,
-            capability=ar_discrete_family_capability("emu3", "ar_t2i"),
         )
 
     assert model.quantize_calls == 0
@@ -176,11 +174,8 @@ def test_ar_builder_applies_rollout_quantization_and_replay_does_not(
 ) -> None:
     """The shared AR builder quantizes rollout bundles only."""
     from vrl.models.ar.build import build_ar_runtime_bundle
-    from vrl.models.ar.capabilities import ar_discrete_family_capability
     from vrl.models.interfaces.runtime import ModelBuild, RolloutBuildOptions
     from vrl.models.loader import assert_rollout_quantization_applied
-
-    capability = ar_discrete_family_capability("emu3", "ar_t2i")
 
     if format_name == "nvfp4":
         monkeypatch.setattr("vrl.nn.quantization.nvfp4_available", lambda _device: True)
@@ -208,7 +203,10 @@ def test_ar_builder_applies_rollout_quantization_and_replay_does_not(
 
     rollout_model = _tiny_emu3_model()
     rollout_build = _build(format_name)
-    build_ar_runtime_bundle(rollout_build, model=rollout_model, capability=capability)
+    build_ar_runtime_bundle(
+        rollout_build,
+        model=rollout_model,
+    )
     assert any(isinstance(m, QuantizedLinear) for m in rollout_model.language_model.modules()), (
         "rollout bundle did not quantize"
     )
@@ -226,7 +224,6 @@ def test_ar_builder_applies_rollout_quantization_and_replay_does_not(
     build_ar_runtime_bundle(
         _build(None, for_rollout=False),
         model=replay_model,
-        capability=capability,
         replay=True,
     )
     assert not any(
@@ -237,10 +234,12 @@ def test_ar_builder_applies_rollout_quantization_and_replay_does_not(
         build_ar_runtime_bundle(
             _build(format_name),
             model=_tiny_emu3_model(),
-            capability=capability,
             replay=True,
         )
 
     plain_model = _tiny_emu3_model()
-    build_ar_runtime_bundle(_build(None), model=plain_model, capability=capability)
+    build_ar_runtime_bundle(
+        _build(None),
+        model=plain_model,
+    )
     assert not any(isinstance(m, QuantizedLinear) for m in plain_model.language_model.modules())

@@ -1,29 +1,18 @@
 """Canonical rollout family registry.
 
 YAML owns experiment values and defaults. This registry owns rollout wiring:
-runtime construction, gatherer construction, collector kind, and capability
-metadata.
+runtime construction, gatherer construction, and collector kind.
 """
 
 from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass, field, replace
-from typing import Any, Literal
+from typing import Any, Literal, get_args
 
-from vrl.generation.capabilities import FamilyCapability
 from vrl.generation.diffusion.executor import GENERIC_DIFFUSION_EXECUTOR
 from vrl.generation.ray.launch_inputs import RayGenerationLaunchInputs
 from vrl.generation.ray.launcher import RayGenerationLauncher
-from vrl.models.ar.emu3.runtime import EMU3_FAMILY_CAPABILITY
-from vrl.models.ar.glm_image.runtime import GLM_IMAGE_FAMILY_CAPABILITY
-from vrl.models.ar.janus_pro.runtime import (
-    JANUS_PRO_FAMILY_CAPABILITY,
-    JANUS_PRO_R1_FAMILY_CAPABILITY,
-)
-from vrl.models.ar.llamagen.runtime import LLAMAGEN_FAMILY_CAPABILITY
-from vrl.models.ar.nextstep_1.runtime import NEXTSTEP_1_FAMILY_CAPABILITY
-from vrl.models.diffusion.capabilities import diffusion_family_capability
 from vrl.rollouts.family_names import (
     normalize_rollout_family,
     rollout_family_aliases,
@@ -49,6 +38,10 @@ class CollectorMetadata:
     return_artifacts: tuple[str, ...] = ()
     metadata_key: str | None = None
 
+    def __post_init__(self) -> None:
+        if self.kind not in get_args(CollectorKind):
+            raise ValueError(f"unsupported collector kind: {self.kind!r}")
+
 
 @dataclass(frozen=True, slots=True)
 class GathererMetadata:
@@ -67,15 +60,11 @@ class DiffusionFamilyBuild:
     (flux NFT) — records its build inputs here and points ``runtime_builder``
     / ``model_build_resolver`` at the generic functions in
     ``vrl.models.diffusion.build``. Such a family ships NO builder functions:
-    its ``runtime.py`` holds only the capability constant and the chunk
-    executor. Families with per-call code keep their own thin stubs instead.
+    its ``runtime.py`` holds only the chunk executor. Families with per-call
+    code keep their own thin stubs instead.
     """
 
     model_cls: str
-    # Display/provenance-only diffusion variant. Runtime behavior is selected by
-    # ``FamilyCapability.task``; bundle metadata reads this registry value
-    # directly instead of copying it through ``ModelBuild``.
-    task_variant: str
     memory_owner: str
     # Replay recipe; None marks a family whose replay builder stays hand-written
     # (echo/cosmos3/anima) — the generic replay builder then dispatches to the
@@ -117,7 +106,6 @@ class RolloutFamilyEntry:
     runtime_builder: str
     model_build_resolver: str
     gatherer: GathererMetadata
-    capability: FamilyCapability
     aliases: tuple[str, ...] = ()
     build: DiffusionFamilyBuild | None = None
     ar_build: ARFamilyBuild | None = None
@@ -184,7 +172,6 @@ def _diffusion_entry(
         gatherer=GathererMetadata(
             import_path="vrl.generation.diffusion.gather:DiffusionChunkGatherer",
         ),
-        capability=diffusion_family_capability(family, task),
     )
 
 
@@ -200,7 +187,6 @@ register_rollout_family(
             model_cls="vrl.models.diffusion.sd3_5.model:SD3_5Model",
             replay_cls="vrl.models.diffusion.sd3_5.model:SD3_5ReplayModel",
             transformer_classname="SD3Transformer2DModel",
-            task_variant="t2i",
             memory_owner="SD3.5 VAE",
         ),
     ),
@@ -216,7 +202,6 @@ register_rollout_family(
         default_task_type="text_to_image",
         build=DiffusionFamilyBuild(
             model_cls="vrl.models.diffusion.flux.model:FluxModel",
-            task_variant="t2i",
             memory_owner="FLUX VAE",
             replay_cls="vrl.models.diffusion.flux.model:FluxReplayModel",
             transformer_classname="FluxTransformer2DModel",
@@ -239,7 +224,6 @@ register_rollout_family(
             model_cls="vrl.models.diffusion.qwen_image.model:QwenImageModel",
             replay_cls="vrl.models.diffusion.qwen_image.model:QwenImageReplayModel",
             transformer_classname="QwenImageTransformer2DModel",
-            task_variant="t2i",
             memory_owner="Qwen-Image VAE",
         ),
     ),
@@ -257,7 +241,6 @@ register_rollout_family(
             model_cls="vrl.models.diffusion.sana.model:SanaModel",
             replay_cls="vrl.models.diffusion.sana.model:SanaReplayModel",
             transformer_classname="SanaTransformer2DModel",
-            task_variant="t2i",
             memory_owner="SANA DC-AE",
             # SANA linear attention is mantissa-sensitive: fp16 parameters are
             # required even when bf16 autocast supplies forward activation range.
@@ -278,7 +261,6 @@ register_rollout_family(
             model_cls="vrl.models.diffusion.lumina2.model:Lumina2Model",
             replay_cls="vrl.models.diffusion.lumina2.model:Lumina2ReplayModel",
             transformer_classname="Lumina2Transformer2DModel",
-            task_variant="t2i",
             memory_owner="Lumina2 VAE",
         ),
     ),
@@ -296,7 +278,6 @@ register_rollout_family(
             model_cls="vrl.models.diffusion.hunyuan_video.model:HunyuanVideoModel",
             replay_cls="vrl.models.diffusion.hunyuan_video.model:HunyuanVideoReplayModel",
             transformer_classname="HunyuanVideoTransformer3DModel",
-            task_variant="t2v",
             memory_owner="HunyuanVideo VAE",
         ),
     ),
@@ -314,7 +295,6 @@ register_rollout_family(
             model_cls="vrl.models.diffusion.mochi.model:MochiModel",
             replay_cls="vrl.models.diffusion.mochi.model:MochiReplayModel",
             transformer_classname="MochiTransformer3DModel",
-            task_variant="t2v",
             memory_owner="Mochi VAE",
         ),
     ),
@@ -332,7 +312,6 @@ register_rollout_family(
             model_cls="vrl.models.diffusion.hunyuan_image.model:HunyuanImageModel",
             replay_cls="vrl.models.diffusion.hunyuan_image.model:HunyuanImageReplayModel",
             transformer_classname="HunyuanImageTransformer2DModel",
-            task_variant="t2i",
             memory_owner="HunyuanImage VAE",
         ),
     ),
@@ -354,7 +333,6 @@ register_rollout_family(
             # shipped beta config survives into prepare_replay, which rebuilds
             # the rollout's DDIM ladder via pixart_ddim_scheduler.
             scheduler_classname="DDIMScheduler",
-            task_variant="t2i",
             memory_owner="PixArt VAE",
         ),
     ),
@@ -375,7 +353,6 @@ register_rollout_family(
             # v-prediction DDPM family: replay recomputes log-probs on the
             # same ladder the rollout sampled (sde_type=ddim).
             scheduler_classname="CogVideoXDDIMScheduler",
-            task_variant="t2v",
             memory_owner="CogVideoX VAE",
         ),
     ),
@@ -399,7 +376,6 @@ register_rollout_family(
             transformer_classname="WanTransformer3DModel",
             # Replay recomputes log-probs on the schedule the rollout sampled.
             scheduler_classname="UniPCMultistepScheduler",
-            task_variant="t2v",
             memory_owner="Wan VAE",
         ),
     ),
@@ -419,7 +395,6 @@ register_rollout_family(
             replay_cls="vrl.models.diffusion.wan_2_1.model:WanI2VReplayModel",
             transformer_classname="WanTransformer3DModel",
             scheduler_classname="UniPCMultistepScheduler",
-            task_variant="i2v",
             memory_owner="Wan VAE",
         ),
     ),
@@ -436,7 +411,6 @@ register_rollout_family(
         default_task_type="video2world",
         build=DiffusionFamilyBuild(
             model_cls="vrl.models.diffusion.cosmos.predict2.model:CosmosPredict2Model",
-            task_variant="video2world",
             memory_owner="Cosmos Predict2 VAE",
             replay_cls="vrl.models.diffusion.cosmos.predict2.model:CosmosPredict2ReplayModel",
             transformer_classname="CosmosTransformer3DModel",
@@ -462,7 +436,6 @@ register_rollout_family(
             # Upstream ships UniPC; replay must recompute log-probs under the
             # same schedule the rollout sampled with.
             scheduler_classname="UniPCMultistepScheduler",
-            task_variant="text2world",
             memory_owner="Cosmos Predict2.5 VAE",
             # DiffusionNFT needs the trainable default + frozen previous
             # adapters, which only exist on the LoRA path.
@@ -482,7 +455,6 @@ register_rollout_family(
         default_task_type="text_to_video",
         build=DiffusionFamilyBuild(
             model_cls="vrl.models.diffusion.cosmos.cosmos3.model:Cosmos3Model",
-            task_variant="text2world",
             memory_owner="Cosmos3 VAE",
         ),
         replay_runtime_builder=(
@@ -501,7 +473,6 @@ register_rollout_family(
         default_task_type="text_to_image",
         build=DiffusionFamilyBuild(
             model_cls="vrl.models.diffusion.cosmos.anima.model:AnimaModel",
-            task_variant="t2i",
             memory_owner="Anima VAE",
         ),
         replay_runtime_builder=(
@@ -521,7 +492,6 @@ register_rollout_family(
         default_task_type="text_to_video",
         build=DiffusionFamilyBuild(
             model_cls="vrl.models.diffusion.echo.model:EchoModel",
-            task_variant="text2video",
             memory_owner="Echo video VAE",
         ),
         replay_runtime_builder=(
@@ -554,7 +524,6 @@ register_rollout_family(
         gatherer=GathererMetadata(
             import_path="vrl.generation.ar.executor:ARDiscreteChunkGatherer",
         ),
-        capability=JANUS_PRO_FAMILY_CAPABILITY,
         ar_build=_JANUS_PRO_BUILD,
     ),
 )
@@ -575,7 +544,6 @@ register_rollout_family(
         gatherer=GathererMetadata(
             import_path="vrl.models.ar.janus_pro.runtime:JanusProR1ChunkGatherer",
         ),
-        capability=JANUS_PRO_R1_FAMILY_CAPABILITY,
         ar_build=_JANUS_PRO_BUILD,
     ),
 )
@@ -597,7 +565,6 @@ register_rollout_family(
         gatherer=GathererMetadata(
             import_path="vrl.models.ar.nextstep_1.runtime:NextStep1ChunkGatherer",
         ),
-        capability=NEXTSTEP_1_FAMILY_CAPABILITY,
         ar_build=ARFamilyBuild(
             model_cls="vrl.models.ar.nextstep_1.model:NextStep1Model",
             replay_cls="vrl.models.ar.nextstep_1.model:NextStep1ReplayModel",
@@ -625,7 +592,6 @@ register_rollout_family(
         gatherer=GathererMetadata(
             import_path="vrl.generation.ar.executor:ARDiscreteChunkGatherer",
         ),
-        capability=EMU3_FAMILY_CAPABILITY,
         ar_build=ARFamilyBuild(
             model_cls="vrl.models.ar.emu3.model:Emu3Model",
             replay_cls="vrl.models.ar.emu3.model:Emu3ReplayModel",
@@ -652,7 +618,6 @@ register_rollout_family(
         gatherer=GathererMetadata(
             import_path="vrl.generation.ar.executor:ARDiscreteChunkGatherer",
         ),
-        capability=GLM_IMAGE_FAMILY_CAPABILITY,
         ar_build=ARFamilyBuild(
             model_cls="vrl.models.ar.glm_image.model:GlmImageModel",
             replay_cls="vrl.models.ar.glm_image.model:GlmImageReplayModel",
@@ -679,7 +644,6 @@ register_rollout_family(
         gatherer=GathererMetadata(
             import_path="vrl.generation.ar.executor:ARDiscreteChunkGatherer",
         ),
-        capability=LLAMAGEN_FAMILY_CAPABILITY,
         ar_build=ARFamilyBuild(
             model_cls="vrl.models.ar.llamagen.model:LlamaGenModel",
             replay_cls="vrl.models.ar.llamagen.model:LlamaGenReplayModel",
@@ -733,7 +697,6 @@ __all__ = [
     "FAMILY_REGISTRY",
     "CollectorKind",
     "CollectorMetadata",
-    "FamilyCapability",
     "GathererMetadata",
     "RayGenerationLaunchInputs",
     "RolloutFamilyEntry",

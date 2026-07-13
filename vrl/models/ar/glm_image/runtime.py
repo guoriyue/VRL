@@ -7,19 +7,14 @@ from typing import Any
 import torch
 
 from vrl.generation.ar import ARChunkInputs, ARDiscreteChunkExecutorBase
-from vrl.generation.capabilities import FamilyCapability
 from vrl.generation.execution.chunks import SampleChunk
 from vrl.generation.types import GenerationRequest
 from vrl.models.ar.build import ar_model_config_base
-from vrl.models.ar.capabilities import ar_discrete_family_capability
 from vrl.models.ar.glm_image.model import (
     glm_image_token_num,
 )
 from vrl.models.ar.glm_image.runner import GlmImageTokenRunner
 from vrl.models.interfaces.runtime import ModelBuild
-
-GLM_IMAGE_FAMILY_CAPABILITY = ar_discrete_family_capability("glm_image", "ar_t2i")
-
 
 # GLM-Image LoRA defaults; applied at read time so the carried ``model.lora``
 # block only needs the values it overrides (same shape as the emu3 stub).
@@ -85,7 +80,6 @@ class GlmImageChunkExecutor(ARDiscreteChunkExecutorBase):
     _runner_cls = GlmImageTokenRunner
     _runner_attention_family = "glm_image"
     task: str = "ar_t2i"
-    family_capability: FamilyCapability = GLM_IMAGE_FAMILY_CAPABILITY
 
     def __init__(self, model: Any) -> None:
         """Construct the executor.
@@ -191,7 +185,6 @@ class GlmImageChunkExecutor(ARDiscreteChunkExecutorBase):
 
 
 __all__ = [
-    "GLM_IMAGE_FAMILY_CAPABILITY",
     "GlmImageChunkExecutor",
     "glm_image_config_from_build",
 ]

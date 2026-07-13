@@ -75,7 +75,6 @@ register_rollout_family(
             model_cls="vrl.models.diffusion.my_model.model:MyModel",
             replay_cls="vrl.models.diffusion.my_model.model:MyReplayModel",
             transformer_classname="MyTransformer2DModel",
-            task_variant="t2i",
             memory_owner="MyModel VAE",
         ),
     ),
@@ -84,7 +83,7 @@ register_rollout_family(
 
 Use the canonical family name in `cfg.model.family`. Functional conditioning
 such as a reference image or video belongs on each `GenerationInput`; it is not
-a family capability or executor-constructor setting. Set `scheduler_classname`
+registry metadata or an executor-constructor setting. Set `scheduler_classname`
 when replay must load a scheduler other than the shared flow-match scheduler.
 Set `requires_lora=True` only when the model implementation genuinely rejects
 full-parameter training.

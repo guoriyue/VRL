@@ -115,6 +115,15 @@ def test_algorithm_keys_are_scoped_to_selected_kind(kind: str, foreign_field: st
     assert find_unknown_keys(cfg) == [f"algorithm.{foreign_field}"]
 
 
+@pytest.mark.parametrize("family", ["wan_2_1", "echo"])
+def test_removed_task_variant_is_an_unknown_model_key(family: str) -> None:
+    """A deleted no-op knob must not remain accepted by family schemas."""
+    from vrl.config.unknown_keys import find_unknown_keys
+
+    cfg = OmegaConf.create({"model": {"family": family, "task_variant": "unused"}})
+    assert find_unknown_keys(cfg) == ["model.task_variant"]
+
+
 def test_algorithm_unknown_key_selector_defers_invalid_kind_to_schema() -> None:
     from vrl.config.unknown_keys import find_unknown_keys
 

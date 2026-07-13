@@ -15,7 +15,6 @@ import pytest
 import torch
 from torch import nn
 
-from vrl.generation.capabilities import FamilyCapability
 from vrl.models.diffusion.build import build_diffusion_runtime_bundle
 from vrl.models.diffusion.common.lora import LoraModelMixin
 from vrl.models.interfaces.runtime import ModelBuild, RolloutBuildOptions
@@ -179,11 +178,6 @@ def test_shared_builder_drops_master_before_quantized_lora_gpu_move(monkeypatch)
     build_diffusion_runtime_bundle(
         build,
         model_cls=_Policy,
-        capability=FamilyCapability(
-            family="fake",
-            task="t2i",
-            trajectory_kind="diffusion",
-        ),
         memory_owner="fake VAE",
     )
 
@@ -280,11 +274,6 @@ def test_full_finetune_dtype_move_preserves_quantized_cache(
     bundle = build_diffusion_runtime_bundle(
         build,
         model_cls=_Policy,
-        capability=FamilyCapability(
-            family="fake",
-            task="t2i",
-            trajectory_kind="diffusion",
-        ),
         memory_owner="fake VAE",
     )
 

@@ -18,14 +18,10 @@ from vrl.models.ar.llamagen.model import (
     LlamaGenModel,
     LlamaGenReplayModel,
 )
-from vrl.models.ar.llamagen.runtime import (
-    LLAMAGEN_FAMILY_CAPABILITY,
-    LlamaGenChunkExecutor,
-)
+from vrl.models.ar.llamagen.runtime import LlamaGenChunkExecutor
 
 __all__ = [
     "LLAMAGEN_CAPTION_TOKEN_NUM",
-    "LLAMAGEN_FAMILY_CAPABILITY",
     "LLAMAGEN_IMAGE_TOKEN_NUM",
     "LLAMAGEN_IMAGE_VOCAB_SIZE",
     "LlamaGenChunkExecutor",

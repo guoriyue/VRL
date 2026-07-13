@@ -7,20 +7,15 @@ from typing import Any
 import torch
 
 from vrl.generation.ar import ARChunkInputs, ARDiscreteChunkExecutorBase
-from vrl.generation.capabilities import FamilyCapability
 from vrl.generation.execution.chunks import SampleChunk
 from vrl.generation.types import GenerationRequest
 from vrl.models.ar.build import ar_model_config_base
-from vrl.models.ar.capabilities import ar_discrete_family_capability
 from vrl.models.ar.emu3.model import (
     emu3_forced_token_schedule,
     emu3_grid_token_num,
 )
 from vrl.models.ar.emu3.runner import Emu3TokenRunner
 from vrl.models.interfaces.runtime import ModelBuild
-
-EMU3_FAMILY_CAPABILITY = ar_discrete_family_capability("emu3", "ar_t2i")
-
 
 # Emu3 LoRA defaults; applied at read time so the carried ``model.lora`` block
 # only needs the values it overrides (same shape as the janus/nextstep stubs).
@@ -76,7 +71,6 @@ class Emu3ChunkExecutor(ARDiscreteChunkExecutorBase):
     _runner_cls = Emu3TokenRunner
     _runner_attention_family = "emu3"
     task: str = "ar_t2i"
-    family_capability: FamilyCapability = EMU3_FAMILY_CAPABILITY
 
     def __init__(self, model: Any) -> None:
         """Construct the executor.
@@ -192,7 +186,6 @@ class Emu3ChunkExecutor(ARDiscreteChunkExecutorBase):
 
 
 __all__ = [
-    "EMU3_FAMILY_CAPABILITY",
     "Emu3ChunkExecutor",
     "emu3_config_from_build",
 ]

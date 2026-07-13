@@ -14,7 +14,6 @@ from __future__ import annotations
 
 from typing import Any
 
-from vrl.generation.capabilities import FamilyCapability
 from vrl.models.dtypes import dtype_to_wire_name
 from vrl.models.interfaces.runtime import (
     ModelBuild,
@@ -134,7 +133,6 @@ def build_ar_runtime_bundle(
     build: ModelBuild,
     *,
     model: Any,
-    capability: FamilyCapability,
     replay: bool = False,
 ) -> RuntimeBundle:
     """Assemble the canonical AR bundle around a family-constructed model.
@@ -166,13 +164,9 @@ def build_ar_runtime_bundle(
         trainable_modules={"model": model},
         scheduler=None,
         raw_handle=None if replay else model,
-        metadata={
-            "model_path": build.model_name_or_path,
-            "family": capability.family,
-            "ar_task": capability.task,
-            "use_lora": build.use_lora,
-            **(minimal_replay_bundle_metadata() if replay else full_generation_bundle_metadata()),
-        },
+        metadata=(
+            minimal_replay_bundle_metadata() if replay else full_generation_bundle_metadata()
+        ),
     )
 
 
@@ -209,7 +203,6 @@ def _build_family_ar_bundle(
     return build_ar_runtime_bundle(
         build,
         model=model_cls(config_cls(**config)),
-        capability=entry.capability,
         replay=replay,
     )
 

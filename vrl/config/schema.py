@@ -411,7 +411,6 @@ class WanModelConfig(ModelConfig):
 
     boundary_ratio: Any = None
     offload_mode: Literal["none", "model", "sequential"] = "none"
-    task_variant: Any = None
     trainable_transformers: Any = None
 
 
@@ -486,7 +485,6 @@ class EchoModelConfig(ModelConfig):
     model_config = ConfigDict(extra="ignore")
 
     gemma_path: Any = None
-    task_variant: Any = None
 
 
 class FluxModelConfig(ModelConfig):

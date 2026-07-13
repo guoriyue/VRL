@@ -8,11 +8,7 @@ from omegaconf import OmegaConf
 from vrl.generation.types import GenerationRequest
 from vrl.models.ar.build import resolve_family_ar_model_build
 from vrl.models.ar.glm_image.runner import GlmImageTokenRunner
-from vrl.models.ar.glm_image.runtime import (
-    GLM_IMAGE_FAMILY_CAPABILITY,
-    GlmImageChunkExecutor,
-    glm_image_config_from_build,
-)
+from vrl.models.ar.glm_image.runtime import GlmImageChunkExecutor, glm_image_config_from_build
 
 
 def test_resolve_model_build_defaults_to_glm_image_checkpoint() -> None:
@@ -71,15 +67,11 @@ def test_resolve_model_build_carries_sampling_and_lora_overrides() -> None:
     assert "guidance_scale" not in config
 
 
-def test_executor_declares_family_capability_and_runner() -> None:
+def test_executor_declares_identity_and_runner() -> None:
     executor = GlmImageChunkExecutor(model=object())
 
     assert executor.family == "glm_image"
     assert executor.task == "ar_t2i"
-    assert executor.capability() is GLM_IMAGE_FAMILY_CAPABILITY
-    assert GLM_IMAGE_FAMILY_CAPABILITY.family == "glm_image"
-    assert GLM_IMAGE_FAMILY_CAPABILITY.task == "ar_t2i"
-    assert GLM_IMAGE_FAMILY_CAPABILITY.trajectory_kind == "ar_discrete"
     assert executor._runner_cls is GlmImageTokenRunner
     assert executor._runner_attention_family == "glm_image"
 

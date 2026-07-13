@@ -47,11 +47,13 @@ def test_same_cause_circuit_breaker_stops(tmp_path) -> None:
         + "n = int(attempts.read_text()) + 1 if attempts.exists() else 1\n"
         + "attempts.write_text(str(n))\n"
         + "(out / 'run_verdict.json').write_text(json.dumps("
-        "{'verdict': 'failed', 'error_class': 'ValueError'}))\n"
-        + "raise SystemExit(1)\n",
+        "{'verdict': 'failed', 'error_class': 'ValueError'}))\n" + "raise SystemExit(1)\n",
     )
     supervisor = RunSupervisor(
-        command=command, output_dir=out, same_cause_limit=2, sleep=lambda _: None,
+        command=command,
+        output_dir=out,
+        same_cause_limit=2,
+        sleep=lambda _: None,
     )
     assert supervisor.run() == 1
     assert attempts_file.read_text() == "2"  # stopped at the breaker, not later
@@ -80,7 +82,10 @@ def test_missing_verdict_is_a_distinct_failure_class(tmp_path) -> None:
     # Child dies without unwinding: no verdict file is ever written.
     command = _child_script(tmp_path, "import os, signal\nos.kill(os.getpid(), signal.SIGKILL)\n")
     supervisor = RunSupervisor(
-        command=command, output_dir=out, same_cause_limit=2, sleep=lambda _: None,
+        command=command,
+        output_dir=out,
+        same_cause_limit=2,
+        sleep=lambda _: None,
     )
     exit_code = supervisor.run()
     assert exit_code != 0  # breaker tripped on consecutive no-verdict deaths
@@ -101,7 +106,6 @@ def test_restart_resumes_from_latest_complete_checkpoint(tmp_path) -> None:
     class _Bundle:
         def __init__(self) -> None:
             self.trainable_modules = {"module": nn.Linear(1, 1, bias=False)}
-            self.metadata = {"family": "unit"}
 
     save_training_checkpoint(
         out / "checkpoint-4",
@@ -140,7 +144,10 @@ def test_stop_kills_whole_child_process_group(tmp_path) -> None:
         + "time.sleep(600)\n",
     )
     supervisor = RunSupervisor(
-        command=command, output_dir=out, term_grace_seconds=3.0, sleep=lambda _: None,
+        command=command,
+        output_dir=out,
+        term_grace_seconds=3.0,
+        sleep=lambda _: None,
     )
     result: list[int] = []
     runner = threading.Thread(target=lambda: result.append(supervisor.run()))

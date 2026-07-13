@@ -45,7 +45,7 @@ def build_cosmos3_replay_runtime_bundle(build: ModelBuild) -> RuntimeBundle:
     )
     from vrl.models.diffusion.build import assemble_replay_bundle
 
-    return assemble_replay_bundle(model, build, family="cosmos3")
+    return assemble_replay_bundle(model, build)
 
 
 class Cosmos3ChunkExecutor(DiffusionChunkExecutorBase):

@@ -287,6 +287,7 @@ def train_wan_2_1_dpo(cfg: DictConfig) -> None:
             resume_checkpoint,
             trainer=trainer,
             bundle=bundle,
+            family="wan_2_1",
             strict=resume_strict,
         )
         logger.info(

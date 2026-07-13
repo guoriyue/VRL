@@ -9,7 +9,6 @@ from typing import Any
 import torch
 
 from vrl.generation.ar.layout import ARRequestLayout
-from vrl.generation.capabilities import FamilyCapability
 from vrl.generation.execution.chunks import SampleChunk
 from vrl.generation.protocols import GenerationChunkExecutor
 from vrl.generation.types import (
@@ -25,8 +24,8 @@ class ARChunkExecutorBase(
 ):
     """Base helpers for AR family executors.
 
-    Owns the request-level plumbing (``plan`` / ``forward_plan`` /
-    ``capability``), mirroring ``DiffusionChunkExecutorBase``: the full-request
+    Owns the request-level plumbing (``plan`` / ``forward_plan``), mirroring
+    ``DiffusionChunkExecutorBase``: the full-request
     path IS the production chunk path plus the family gatherer, so there is a
     single trajectory/metrics assembly line. Subclasses still own tokenization
     details, sampling math, decoding, and family-specific output packing
@@ -36,7 +35,6 @@ class ARChunkExecutorBase(
     family: str
     task: str
     model: Any
-    family_capability: FamilyCapability | None = None
     default_image_token_num: int | None = None
     default_image_size: int | None = None
     default_max_text_length: int | None = None
@@ -56,13 +54,6 @@ class ARChunkExecutorBase(
         )
 
     # -- request-level plumbing (shared; families own the chunk step) ----
-
-    def capability(self) -> FamilyCapability:
-        if self.family_capability is None:
-            raise RuntimeError(
-                f"{type(self).__name__} must declare family_capability explicitly",
-            )
-        return self.family_capability
 
     def plan(
         self,
@@ -88,6 +79,7 @@ class ARChunkExecutorBase(
         production the way the old hand-rolled full-batch implementations did.
         """
         from vrl.generation.execution.chunks import run_sample_chunks_with_oom_retry
+
         chunks = run_sample_chunks_with_oom_retry(
             engine_plan.chunks,
             lambda chunk: self.forward_chunk_plan(request, chunk),
@@ -103,8 +95,7 @@ class ARChunkExecutorBase(
 
         if self._runner_cls is None or self._runner_attention_family is None:
             raise RuntimeError(
-                f"{type(self).__name__} must declare _runner_cls and "
-                "_runner_attention_family",
+                f"{type(self).__name__} must declare _runner_cls and _runner_attention_family",
             )
         sampling = request.sampling
         return self._runner_cls(

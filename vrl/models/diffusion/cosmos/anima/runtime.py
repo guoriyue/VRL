@@ -13,8 +13,6 @@ from vrl.utils.logging import init_logger
 
 logger = init_logger(__name__)
 
-ANIMA_FAMILY = "cosmos-predict2-anima"
-
 
 def resolve_anima_replay_model_build(
     cfg: Any,
@@ -77,7 +75,7 @@ def build_anima_replay_runtime_bundle(build: ModelBuild) -> RuntimeBundle:
 
     from vrl.models.diffusion.build import assemble_replay_bundle
 
-    return assemble_replay_bundle(model, build, family=ANIMA_FAMILY)
+    return assemble_replay_bundle(model, build)
 
 
 def load_anima_transformer(build: ModelBuild) -> Any:
@@ -103,7 +101,6 @@ def load_anima_transformer(build: ModelBuild) -> Any:
 
 
 __all__ = [
-    "ANIMA_FAMILY",
     "build_anima_replay_runtime_bundle",
     "load_anima_transformer",
     "resolve_anima_replay_model_build",

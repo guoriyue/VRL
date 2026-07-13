@@ -908,6 +908,7 @@ async def run_online_recipe(
                 resume_checkpoint,
                 trainer=trainer,
                 bundle=bundle,
+                family=components.family,
                 strict=trainer_config.resume_strict,
             )
             logger.info(

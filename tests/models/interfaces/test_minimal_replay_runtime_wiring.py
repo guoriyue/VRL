@@ -273,7 +273,6 @@ def test_registry_descriptor_replay_builder_returns_minimal_bundle(
         assert loaded_builds[-1].parameter_dtype is torch.float16
     assert bundle.raw_handle is None
     assert set(bundle.trainable_modules) == {"transformer"}
-    assert bundle.metadata["family"] == family
     with pytest.raises(RuntimeError, match="pipeline"):
         _ = bundle.model.pipeline
 
@@ -547,41 +546,35 @@ def test_anima_artifact_resolution_fails_loud_when_hub_fetch_fails(
 
 
 @pytest.mark.parametrize(
-    ("family", "ar_task", "model_module_path", "model_attr"),
+    ("family", "model_module_path", "model_attr"),
     [
         (
             "janus_pro",
-            "ar_t2i",
             "vrl.models.ar.janus_pro.model",
             "JanusProReplayModel",
         ),
         (
             "janus_pro_r1",
-            "ar_t2i_r1",
             "vrl.models.ar.janus_pro.model",
             "JanusProReplayModel",
         ),
         (
             "nextstep_1",
-            "ar_t2i",
             "vrl.models.ar.nextstep_1.model",
             "NextStep1ReplayModel",
         ),
         (
             "emu3",
-            "ar_t2i",
             "vrl.models.ar.emu3.model",
             "Emu3ReplayModel",
         ),
         (
             "glm_image",
-            "ar_t2i",
             "vrl.models.ar.glm_image.model",
             "GlmImageReplayModel",
         ),
         (
             "llamagen",
-            "ar_t2i",
             "vrl.models.ar.llamagen.model",
             "LlamaGenReplayModel",
         ),
@@ -590,7 +583,6 @@ def test_anima_artifact_resolution_fails_loud_when_hub_fetch_fails(
 def test_ar_replay_builders_return_minimal_bundles(
     monkeypatch: pytest.MonkeyPatch,
     family: str,
-    ar_task: str,
     model_module_path: str,
     model_attr: str,
 ) -> None:
@@ -607,35 +599,30 @@ def test_ar_replay_builders_return_minimal_bundles(
     assert bundle_loads_full_generation_modules(bundle) is False
     assert bundle.raw_handle is None
     assert set(bundle.trainable_modules) == {"model"}
-    assert bundle.metadata["family"] == family
-    assert bundle.metadata["ar_task"] == ar_task
 
 
 @pytest.mark.parametrize(
-    ("family", "ar_task", "model_module_path", "model_attr"),
+    ("family", "model_module_path", "model_attr"),
     [
-        ("janus_pro", "ar_t2i", "vrl.models.ar.janus_pro.model", "JanusProModel"),
+        ("janus_pro", "vrl.models.ar.janus_pro.model", "JanusProModel"),
         (
             "janus_pro_r1",
-            "ar_t2i_r1",
             "vrl.models.ar.janus_pro.model",
             "JanusProModel",
         ),
         (
             "nextstep_1",
-            "ar_t2i",
             "vrl.models.ar.nextstep_1.model",
             "NextStep1Model",
         ),
-        ("emu3", "ar_t2i", "vrl.models.ar.emu3.model", "Emu3Model"),
-        ("glm_image", "ar_t2i", "vrl.models.ar.glm_image.model", "GlmImageModel"),
-        ("llamagen", "ar_t2i", "vrl.models.ar.llamagen.model", "LlamaGenModel"),
+        ("emu3", "vrl.models.ar.emu3.model", "Emu3Model"),
+        ("glm_image", "vrl.models.ar.glm_image.model", "GlmImageModel"),
+        ("llamagen", "vrl.models.ar.llamagen.model", "LlamaGenModel"),
     ],
 )
 def test_ar_rollout_builders_follow_registry_descriptors(
     monkeypatch: pytest.MonkeyPatch,
     family: str,
-    ar_task: str,
     model_module_path: str,
     model_attr: str,
 ) -> None:
@@ -656,8 +643,6 @@ def test_ar_rollout_builders_follow_registry_descriptors(
 
     assert bundle_loads_full_generation_modules(bundle) is True
     assert bundle.raw_handle is bundle.model
-    assert bundle.metadata["family"] == family
-    assert bundle.metadata["ar_task"] == ar_task
 
 
 def test_bundle_metadata_drives_consumer_down_opposite_branches() -> None:

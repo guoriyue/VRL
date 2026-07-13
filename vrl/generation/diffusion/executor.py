@@ -10,7 +10,6 @@ from typing import Any
 
 import torch
 
-from vrl.generation.capabilities import FamilyCapability
 from vrl.generation.diffusion.gather import DiffusionChunkGatherer
 from vrl.generation.diffusion.layout import (
     DiffusionRequestLayout,
@@ -398,7 +397,6 @@ class DiffusionChunkExecutorBase(
     default_max_sequence_length: int = 512
     sde_type: str = "flow_grpo"
     include_max_sequence_length_extra: bool = True
-    family_capability: FamilyCapability | None = None
 
     # -- protocol ------------------------------------------------------
 
@@ -411,11 +409,6 @@ class DiffusionChunkExecutorBase(
             default_max_sequence_length=self.default_max_sequence_length,
             sde_type=self.sde_type,
         )
-
-    def capability(self) -> FamilyCapability:
-        if self.family_capability is None:
-            raise RuntimeError(f"{type(self).__name__} must declare family_capability explicitly")
-        return self.family_capability
 
     def plan(
         self,
@@ -1146,7 +1139,7 @@ class DiffusionChunkExecutor(DiffusionChunkExecutorBase):
     it declares a ``model.executor`` block in its model config yaml and
     dispatches here; the launcher reads that block wholesale into these
     constructor kwargs (family/task come from the registry entry, the worker
-    injects ``family_capability`` from the launch contract). Families with real
+    injects family/task from the launch contract). Families with real
     per-chunk tensor logic (cosmos predict2/2.5, cosmos3, echo, wan i2v) keep
     their own subclass.
     """

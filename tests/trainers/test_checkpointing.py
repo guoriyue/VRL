@@ -41,6 +41,7 @@ def test_training_checkpoint_round_trips_trainer_and_trainable_modules(tmp_path)
         checkpoint,
         trainer=trainer,
         bundle=restored,
+        family="unit",
         strict=True,
     )
 
@@ -51,14 +52,7 @@ def test_training_checkpoint_round_trips_trainer_and_trainable_modules(tmp_path)
 
 
 def test_restore_training_checkpoint_rejects_family_mismatch(tmp_path) -> None:
-    """The family guard fires when a checkpoint is resumed into a foreign bundle.
-
-    Regression for the previously-dead guard: family builders now write
-    ``family`` into ``RuntimeBundle.metadata`` (same value space as the
-    checkpoint payload), so loading e.g. a Janus checkpoint into a Wan bundle
-    raises instead of silently short-circuiting because ``bundle_family`` was
-    always ``None``.
-    """
+    """The explicit runtime family rejects a checkpoint from another family."""
     trainer = _Trainer()
     source = _Bundle()
     save_training_checkpoint(
@@ -71,13 +65,12 @@ def test_restore_training_checkpoint_rejects_family_mismatch(tmp_path) -> None:
     )
 
     checkpoint = load_training_checkpoint(tmp_path / "checkpoint-janus")
-    foreign = _Bundle()
-    foreign.metadata = {"family": "wan_2_1"}
     with pytest.raises(ValueError, match="family mismatch"):
         restore_training_checkpoint(
             checkpoint,
             trainer=trainer,
-            bundle=foreign,
+            bundle=_Bundle(),
+            family="wan_2_1",
             strict=True,
         )
 
@@ -380,7 +373,6 @@ class _Bundle:
 
         self.module = nn.Linear(1, 1, bias=False)
         self.trainable_modules = {"module": self.module}
-        self.metadata = {"family": "unit"}
 
 
 def test_checkpoint_publish_is_atomic(tmp_path) -> None:
