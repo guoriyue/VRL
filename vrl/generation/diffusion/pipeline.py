@@ -9,13 +9,15 @@ run_denoise_stage / run_decode_stage) into these stages, and the concurrent
 multi-payload pipelining (bounded queues / backpressure), are the follow-on steps
 documented in ``docs/sprints/parked/SPRINT_diffusion_rollout_stage_pipeline.md``.
 
-Per-stage ``gpu_ids`` is the load-bearing knob for the multi-GPU win: place
-``denoise`` and ``reward`` on DIFFERENT GPUs and their tensor-core compute runs
-truly in parallel (throughput = 1/max(stage), not the sum). On ONE GPU the stages'
-compute serializes on the shared tensor cores (measured: compute∥compute is
-neutral); the single-GPU win is only the inter-stage copy+CPU overlap (measured
-~20% for compute∥(copy+CPU)). Defaults leave ``gpu_ids`` empty = inherit the
-rollout GPU (today's single-card behavior, bit-identical).
+Per-stage ``gpu_ids`` is the load-bearing knob for the multi-GPU win: two stages
+on DIFFERENT GPUs run their tensor-core compute truly in parallel (throughput =
+1/max(stage), not the sum). On ONE GPU the stages' compute serializes on the
+shared tensor cores (measured: compute∥compute is neutral); the single-GPU win is
+only the inter-stage copy+CPU overlap (measured ~20% for compute∥(copy+CPU)).
+Defaults leave ``gpu_ids`` empty = inherit the rollout GPU (today's single-card
+behavior, bit-identical). The full-rollout variant that appends a terminal
+``reward`` stage (denoise ∥ reward across GPUs) is part of the parked sprint
+above — reward today is scored separately in the collector.
 """
 
 from __future__ import annotations
@@ -31,27 +33,21 @@ PROMPT_ENCODE = "prompt_encode"
 PREPARE = "prepare"
 DENOISE = "denoise"
 DECODE = "decode"
-REWARD = "reward"
 
 
 def build_diffusion_pipeline_topology(
     *,
     gpu_ids: dict[str, tuple[int, ...]] | None = None,
-    include_reward: bool = True,
 ) -> PipelineTopology:
-    """Build the linear diffusion rollout stage graph.
+    """Build the linear diffusion generation stage graph (decode terminal).
 
     ``gpu_ids`` optionally pins a stage onto specific GPU ordinals (the multi-GPU
     per-stage placement). Omitted/empty = the stage inherits the rollout GPU, so a
     single-card run is unchanged. The graph is intentionally linear (one
     ``next_stages`` each) — both runners currently support a single successor, and
-    diffusion rollout has no fan-out.
-
-    ``include_reward=True`` is the full rollout pipeline (encode -> prepare ->
-    denoise -> decode -> reward(terminal)). ``include_reward=False`` is the
-    EXECUTOR generation pipeline (decode terminal) — reward is scored separately in
-    the collector (the ≥2-GPU async-reward path), and the single-GPU chunk overlap
-    lives entirely in these four generation stages.
+    diffusion rollout has no fan-out. Reward is scored separately in the collector
+    (the ≥2-GPU async-reward path); the single-GPU chunk overlap lives entirely in
+    these four generation stages.
     """
 
     placement = gpu_ids or {}
@@ -67,32 +63,19 @@ def build_diffusion_pipeline_topology(
             gpu_ids=placement.get(PREPARE, ()),
         ),
         # denoise: the GPU-bound DiT loop. The largest stage; on multi-GPU it owns
-        # its own card(s) so reward(N) can score on another while denoise(N+1) runs.
+        # its own card(s) so another stage can run on a different card meanwhile.
         PipelineStage(
             name=DENOISE,
             next_stages=(DECODE,),
             gpu_ids=placement.get(DENOISE, ()),
         ),
-        # decode: VAE latents -> pixels. Terminal for the executor-only pipeline;
-        # routes to reward when the full rollout pipeline is requested.
+        # decode: VAE latents -> pixels, terminal for the generation pipeline.
         PipelineStage(
             name=DECODE,
-            next_stages=(REWARD,) if include_reward else (),
-            terminal=not include_reward,
+            terminal=True,
             gpu_ids=placement.get(DECODE, ()),
         ),
     ]
-    if include_reward:
-        # reward: off the policy/log-prob path (frozen reward model), so it is the
-        # cleanest stage to split onto a dedicated GPU and overlap with the next
-        # group's denoise (the measured 14% reward-stage hide).
-        stages.append(
-            PipelineStage(
-                name=REWARD,
-                terminal=True,
-                gpu_ids=placement.get(REWARD, ()),
-            ),
-        )
     return PipelineTopology(stages=tuple(stages), entry_stage=PROMPT_ENCODE)
 
 
@@ -132,7 +115,7 @@ def run_chunk_through_pipeline(executor: Any, request: Any, chunk: Any) -> Any:
             executor.run_decode_stage(payload.data),
         )
 
-    topology = build_diffusion_pipeline_topology(include_reward=False)
+    topology = build_diffusion_pipeline_topology()
     runner = SerialPipelineRunner(
         topology,
         {
@@ -274,7 +257,6 @@ __all__ = [
     "DENOISE",
     "PREPARE",
     "PROMPT_ENCODE",
-    "REWARD",
     "build_diffusion_pipeline_topology",
     "forward_chunks_pipelined",
     "run_chunk_through_pipeline",
