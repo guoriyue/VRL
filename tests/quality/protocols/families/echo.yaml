@@ -1,0 +1,4 @@
+extends: video.yaml
+model_identities:
+  - path: jdopensource/JoyAI-Echo
+    revision: 4187f9a53c6eff3a76c51e79bd27f70d10f7591b

@@ -12,6 +12,7 @@ from vrl.rollouts.families.registry import (
     normalize_rollout_family,
     register_rollout_family,
     registered_rollout_families,
+    resolve_rollout_family_from_config,
 )
 
 __all__ = [
@@ -26,4 +27,5 @@ __all__ = [
     "normalize_rollout_family",
     "register_rollout_family",
     "registered_rollout_families",
+    "resolve_rollout_family_from_config",
 ]

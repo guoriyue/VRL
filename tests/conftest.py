@@ -13,6 +13,8 @@ Two collection-time gates live here:
   because local Ray smoke tests and multi-node/GPU distributed tests have very
   different resource profiles.
 - ``optional``: skipped unless ``--optional`` is passed (verbatim vLLM behavior).
+- ``quality_gate``: test-owned artifact preflight; it skips unless an exact
+  config and evidence manifest are supplied on the pytest command line.
 """
 
 from __future__ import annotations
@@ -40,6 +42,22 @@ def pytest_addoption(parser):
         action="store_true",
         default=False,
         help="run distributed test",
+    )
+    quality = parser.getgroup("inference quality")
+    quality.addoption(
+        "--quality-config",
+        default=None,
+        help="bundled config or YAML path for the opt-in inference artifact test",
+    )
+    quality.addoption(
+        "--quality-evidence",
+        default=None,
+        help="native/production/replay evidence manifest for the opt-in test",
+    )
+    quality.addoption(
+        "--quality-checkpoint",
+        default=None,
+        help="optional checkpoint.pt path bound to checkpoint evidence",
     )
 
 

@@ -1,0 +1,7 @@
+extends: video.yaml
+model_identities:
+  - path: THUDM/CogVideoX-2b
+    revision: 1137dacfc2c9c012bed6a0793f4ecf2ca8e7ba01
+  - path: THUDM/CogVideoX-5b
+    revision: 8fc5b281006c82b82d34fd2543d2f0ebb4e7e321
+protocol_overrides: {min_native_similarity: 0.90}

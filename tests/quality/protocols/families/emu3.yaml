@@ -1,0 +1,5 @@
+extends: ar_image.yaml
+model_identities:
+  - path: BAAI/Emu3-Gen-hf
+    revision: 062069a3301d7c62c6c93a55c9722efb9321f5f3
+protocol_overrides: {min_native_similarity: 0.90}

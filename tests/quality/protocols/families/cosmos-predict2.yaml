@@ -1,0 +1,6 @@
+extends: conditioned_video.yaml
+model_identities:
+  - path: nvidia/Cosmos-Predict2-2B-Video2World
+    revision: f50c09f5d8ab133a90cac3f4886a6471e9ba3f18
+  - path: checkpoints/cosmos-predict2-2b-480p-16fps-diffusers
+protocol_overrides: {min_native_similarity: 0.90}

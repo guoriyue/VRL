@@ -99,6 +99,7 @@ Add model defaults and at least one experiment under the packaged preset tree:
 ```text
 vrl/config/presets/model/diffusion/my_model.yaml
 vrl/config/presets/experiment/diffusion/my_model/online_grpo_<reward>.yaml
+tests/quality/protocols/families/my_model.yaml
 ```
 
 Mirror
@@ -125,6 +126,8 @@ Add family tests that cover:
 - rollout-to-replay tensor/context projection;
 - backbone parity when the family wraps an upstream transformer;
 - any custom executor branch, if the generic executor is insufficient.
+- a test-owned inference profile for every supported checkpoint identity,
+  native vs production comparison mode, and true/false corruption cases.
 
 Run the CPU-safe structural gates before any real-model experiment:
 
@@ -132,6 +135,7 @@ Run the CPU-safe structural gates before any real-model experiment:
 CUDA_VISIBLE_DEVICES="" uv run --no-sync python -m vrl.config.lint
 CUDA_VISIBLE_DEVICES="" uv run --no-sync pytest \
   tests/rollouts/runtime/test_family_registry.py \
+  tests/quality \
   tests/models/interfaces -q
 ```
 
@@ -148,6 +152,10 @@ status.
 - [ ] `model.py` implements generation and replay state projection.
 - [ ] the replay class owns no generation-only modules.
 - [ ] one registry entry uses `DiffusionFamilyBuild` and the shared builders.
+- [ ] the test-owned quality profile names every supported immutable checkpoint
+      identity without adding quality state to the production registry.
+- [ ] every independent model dependency (text encoder, tokenizer, VAE) has
+      its own revision field; never reuse the primary repository's commit.
 - [ ] no family `runtime.py` or executor exists without real custom semantics.
 - [ ] model and experiment presets live under `vrl/config/presets/`.
 - [ ] `FAMILY_MODEL_CLASSES` and family-specific tests cover both model classes.

@@ -1,0 +1,5 @@
+extends: video.yaml
+model_identities:
+  - path: nvidia/Cosmos3-Nano
+    revision: 411f42a8fdfb8c5b2583cb8786e0938f49796eaa
+protocol_overrides: {min_native_similarity: 0.90}

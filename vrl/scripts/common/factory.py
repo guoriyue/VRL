@@ -16,7 +16,7 @@ from vrl.rollouts.collector.config import build_rollout_config_from_cfg
 from vrl.rollouts.families import (
     RolloutFamilyEntry,
     get_rollout_family_entry,
-    normalize_rollout_family,
+    resolve_rollout_family_from_config,
 )
 from vrl.utils.config import cfg_get
 
@@ -64,16 +64,9 @@ class OnlineRecipeFactoryOutput:
 
 
 def resolve_online_family(cfg: DictConfig) -> str:
-    """Resolve a merged training config to the canonical online rollout family."""
+    """Public recipe facade over the registry-owned family selection rule."""
 
-    raw_family = OmegaConf.select(cfg, "model.family", default=None)
-    if raw_family is None:
-        raise ValueError("config missing required field: model.family")
-    family = normalize_rollout_family(str(raw_family))
-    algorithm_kind = str(OmegaConf.select(cfg, "algorithm.kind", default=""))
-    if family == "janus_pro" and algorithm_kind == "token_grpo_multisegment":
-        return "janus_pro_r1"
-    return family
+    return resolve_rollout_family_from_config(cfg)
 
 
 def build_reward_from_cfg(

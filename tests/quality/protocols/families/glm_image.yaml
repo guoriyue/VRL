@@ -1,0 +1,5 @@
+extends: ar_image.yaml
+model_identities:
+  - path: zai-org/GLM-Image
+    revision: 2c433cc0cbc293bde2ac8ca9624f279b5d23fcf4
+protocol_overrides: {min_native_similarity: 0.90}

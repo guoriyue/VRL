@@ -1,0 +1,5 @@
+extends: ar_image.yaml
+model_identities:
+  - path: stepfun-ai/NextStep-1.1
+    revision: 05486ff90769ad32109d219fd4659d41671a770a
+protocol_overrides: {min_native_similarity: 0.90}

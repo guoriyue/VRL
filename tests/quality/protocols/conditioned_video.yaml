@@ -1,0 +1,20 @@
+name: conditioned-video-v1
+media_kind: video
+min_samples: 2
+min_native_similarity: 0.0
+min_alignment_margin: 0.01
+max_replay_abs_error: 0.01
+requires_condition_delta: true
+min_condition_delta: 0.01
+required_segments: []
+required_corruptions:
+  - solid_color
+  - color_blocks
+  - blur
+  - confetti
+  - temporal_shuffle
+  - static_frozen
+  - repeat
+  - reverse
+  - flicker
+  - condition_swap

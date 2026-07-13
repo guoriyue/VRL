@@ -670,6 +670,26 @@ def get_rollout_family_entry(family: str) -> RolloutFamilyEntry:
         ) from exc
 
 
+def resolve_rollout_family_from_config(cfg: Any) -> str:
+    """Resolve the canonical family selected jointly by model and algorithm.
+
+    Janus R1 shares the base checkpoint/model config with Janus-Pro, but its
+    multisegment algorithm selects a different executor/gatherer protocol. This
+    decision belongs beside the registry so training and preflight cannot drift.
+    """
+
+    from omegaconf import OmegaConf
+
+    raw_family = OmegaConf.select(cfg, "model.family", default=None)
+    if raw_family is None:
+        raise ValueError("config missing required field: model.family")
+    family = normalize_rollout_family(str(raw_family))
+    algorithm_kind = str(OmegaConf.select(cfg, "algorithm.kind", default=""))
+    if family == "janus_pro" and algorithm_kind == "token_grpo_multisegment":
+        return "janus_pro_r1"
+    return family
+
+
 def registered_rollout_families() -> tuple[str, ...]:
     """Return canonical rollout family keys."""
 
@@ -705,4 +725,5 @@ __all__ = [
     "normalize_rollout_family",
     "register_rollout_family",
     "registered_rollout_families",
+    "resolve_rollout_family_from_config",
 ]

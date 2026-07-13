@@ -1,0 +1,5 @@
+extends: image.yaml
+model_identities:
+  - path: black-forest-labs/FLUX.1-dev
+    revision: 3de623fc3c33e44ffbe2bad470d0f45bccf2eb21
+protocol_overrides: {min_native_similarity: 0.90}

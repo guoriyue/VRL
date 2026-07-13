@@ -1,0 +1,5 @@
+extends: image.yaml
+model_identities:
+  - path: Alpha-VLLM/Lumina-Image-2.0
+    revision: 53504abd8178b30685b6c4c7a4cd181ff78b73e9
+protocol_overrides: {min_native_similarity: 0.90}

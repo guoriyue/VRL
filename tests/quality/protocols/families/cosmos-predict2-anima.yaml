@@ -1,0 +1,4 @@
+extends: image.yaml
+model_identities:
+  - path: circlestone-labs/Anima
+    revision: 53eec3898af698b2cf2a11379021fc9c5465d228

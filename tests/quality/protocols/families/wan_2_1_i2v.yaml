@@ -1,0 +1,7 @@
+extends: conditioned_video.yaml
+model_identities:
+  - path: Wan-AI/Wan2.1-I2V-14B-480P-Diffusers
+    revision: b184e23a8a16b20f108f727c902e769e873ffc73
+  - path: Wan-AI/Wan2.2-I2V-A14B-Diffusers
+    revision: 596658fd9ca6b7b71d5057529bbf319ecbc61d74
+protocol_overrides: {min_native_similarity: 0.90}
