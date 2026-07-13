@@ -2,4 +2,3 @@
 sampling:
   num_steps: 20
   guidance_scale: 5.0
-  cfg: true

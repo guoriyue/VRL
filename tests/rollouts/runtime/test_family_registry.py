@@ -109,7 +109,6 @@ def test_rollout_config_is_projected_from_yaml() -> None:
                 "guidance_scale": 7.0,
                 "max_sequence_length": 512,
                 "fps": 16,
-                "cfg": True,
             },
             "rollout": {
                 "samples_per_chunk": 8,
@@ -145,7 +144,6 @@ def test_request_sampling_is_projected_from_resolved_yaml_config() -> None:
                 "num_steps": 35,
                 "guidance_scale": 7.0,
                 "fps": 16,
-                "cfg": True,
             },
             "rollout": {
                 "n_samples_per_prompt": 4,

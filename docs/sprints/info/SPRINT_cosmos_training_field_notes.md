@@ -17,6 +17,7 @@ To launch a correct, stable Cosmos Predict2.5 run on this box:
 # prerequisites (one-time)
 pip install qwen-vl-utils decord          # reward backend + video reader (UNDECLARED in pyproject)
 # HF cache must live on local NVMe instance store, NOT the EBS root volume
+# guidance_scale > 1 enables mandatory CFG.
 
 CUDA_VISIBLE_DEVICES=0 \
 HF_HOME=/mnt/nvme/hf \                      # NVMe cache: model load 15min -> 7s
@@ -25,7 +26,7 @@ PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True \
 python -u -m vrl.scripts.train \
   --config experiment/diffusion/cosmos_predict2_5/online_nft_video_reward \
   /sampling/video=480p_49f \
-  sampling.num_steps=10 sampling.guidance_scale=7.0 sampling.cfg=true \   # CFG is MANDATORY
+  sampling.num_steps=10 sampling.guidance_scale=7.0 \
   rollout.n=3 rollout.sample_batch_size=2 \
   trainer.total_epochs=50 trainer.output_dir=outputs/<name> \
   trainer.save_freq=20 trainer.log_freq=1

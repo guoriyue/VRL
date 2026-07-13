@@ -63,7 +63,6 @@ sampling:
   # docs/sprints/planned/SPRINT_ppo_update_cycle_speedup.md P0. Curves generated
   # at guidance 7 are NOT comparable — re-baseline.
   guidance_scale: 0.0
-  cfg: false
 
 actor:
   optim:

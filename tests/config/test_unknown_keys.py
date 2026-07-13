@@ -81,6 +81,11 @@ def test_removed_sampling_r1_duplicate_is_unknown() -> None:
     assert find_unknown_keys(cfg) == ["sampling.r1"]
 
 
+def test_removed_sampling_cfg_knob_is_unknown() -> None:
+    cfg = OmegaConf.create({"sampling": {"cfg": False, "guidance_scale": 1.0}})
+    assert find_unknown_keys(cfg) == ["sampling.cfg"]
+
+
 def test_removed_model_dtype_is_unknown() -> None:
     cfg = OmegaConf.create({"model": {"family": "sd3_5", "dtype": "bf16"}})
     assert find_unknown_keys(cfg) == ["model.dtype"]

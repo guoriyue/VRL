@@ -3,4 +3,3 @@
 sampling:
   num_steps: 10
   guidance_scale: 6.0
-  cfg: false

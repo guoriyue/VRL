@@ -95,7 +95,6 @@ CASES: tuple[RealCheckpointCase, ...] = (
             "rollout.sde.window_range=[0,1]",
             "sampling.num_steps=1",
             "sampling.guidance_scale=1.0",
-            "sampling.cfg=false",
             "sampling.height=128",
             "sampling.width=128",
             "sampling.num_frames=1",
@@ -134,7 +133,6 @@ CASES: tuple[RealCheckpointCase, ...] = (
             "rollout.sde.window_range=[0,1]",
             "sampling.num_steps=1",
             "sampling.guidance_scale=1.0",
-            "sampling.cfg=false",
             "sampling.height=128",
             "sampling.width=128",
             "sampling.max_sequence_length=64",
@@ -179,7 +177,6 @@ CASES: tuple[RealCheckpointCase, ...] = (
                 "rollout.sde.window_range=[0,1]",
                 "sampling.num_steps=1",
                 "sampling.guidance_scale=1.0",
-                "sampling.cfg=false",
                 "sampling.height=128",
                 "sampling.width=128",
                 "sampling.max_sequence_length=64",
@@ -263,7 +260,6 @@ CASES: tuple[RealCheckpointCase, ...] = (
             "rollout.sde.window_range=[0,1]",
             "sampling.num_steps=2",
             "sampling.guidance_scale=1.0",
-            "sampling.cfg=false",
             "sampling.height=128",
             "sampling.width=128",
             "sampling.num_frames=5",
@@ -307,7 +303,6 @@ CASES: tuple[RealCheckpointCase, ...] = (
             "rollout.sde.window_range=[0,1]",
             "sampling.num_steps=2",
             "sampling.guidance_scale=1.0",
-            "sampling.cfg=false",
             "sampling.height=128",
             "sampling.width=128",
             "sampling.num_frames=1",
@@ -344,7 +339,6 @@ CASES: tuple[RealCheckpointCase, ...] = (
             "rollout.sde.window_range=[0,1]",
             "sampling.num_steps=1",
             "sampling.guidance_scale=1.0",
-            "sampling.cfg=false",
             "sampling.height=128",
             "sampling.width=128",
             "sampling.max_sequence_length=64",
@@ -385,7 +379,6 @@ CASES: tuple[RealCheckpointCase, ...] = (
             "rollout.sde.window_range=[0,1]",
             "sampling.num_steps=1",
             "sampling.guidance_scale=1.0",
-            "sampling.cfg=false",
             "sampling.height=128",
             "sampling.width=128",
             "sampling.max_sequence_length=64",
@@ -804,7 +797,6 @@ def _synthetic_diffusion_replay_batch(
             "num_frames": 1,
             "num_steps": num_steps,
             "guidance_scale": float(cfg.sampling.guidance_scale),
-            "cfg": bool(cfg.sampling.cfg),
         },
         return_artifacts={"trajectory"},
         policy_version=None if policy_version is None else int(policy_version),
@@ -845,7 +837,8 @@ def _synthetic_diffusion_replay_batch(
     }
     context = {
         "guidance_scale": float(cfg.sampling.guidance_scale),
-        "cfg": bool(cfg.sampling.cfg),
+        # Same derivation the families use at rollout (do_cfg = guidance > 1).
+        "cfg": float(cfg.sampling.guidance_scale) > 1.0,
         "model_family": case.family,
     }
     timesteps = model.scheduler.timesteps[:num_steps].to(device)

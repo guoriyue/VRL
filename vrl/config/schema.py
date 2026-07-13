@@ -312,10 +312,6 @@ class SamplingConfig(ConfigBase):
     attention_backend: Literal["vllm_paged", "torch_native"] = "vllm_paged"
     # Key registry: parsed by family layout/model-build resolvers.
     ar_scheduler_batch_size: Any = None
-    # do-CFG boolean switch (whether to apply classifier-free guidance at all);
-    # distinct from guidance_scale (the float strength). Diffusion models AND it
-    # with guidance_scale > 1.0 to derive their internal do_cfg flag.
-    cfg: Any = None
     # Frozen GLM-Image DiT decode knobs (rollout postprocess, never trained);
     # reader: glm_image prepare_chunk_inputs.
     decode_guidance_scale: Any = None
@@ -349,8 +345,8 @@ class SamplingConfig(ConfigBase):
     # (cogvideox, pixart_sigma), "cps" the pixel-space CPS variant.
     sde_type: Literal["flow_grpo", "ddim", "cps"] = "flow_grpo"
     temperature: Any = None
-    # AR nucleus/top-k filtering (readers: llamagen and glm_image
-    # prepare_chunk_inputs; checkpoint defaults apply when unset).
+    # AR nucleus/top-k filtering (top_k: llamagen only; top_p: llamagen and
+    # glm_image prepare_chunk_inputs; checkpoint defaults apply when unset).
     top_k: Any = None
     top_p: Any = None
     width: Any = None
