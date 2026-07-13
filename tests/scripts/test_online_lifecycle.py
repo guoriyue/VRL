@@ -124,6 +124,13 @@ class _FakeLauncher:
     def __init__(self, state: dict[str, Any]) -> None:
         self._state = state
 
+    def build_inputs(self, *args: Any, **kwargs: Any) -> Any:
+        del args, kwargs
+        return SimpleNamespace(
+            launch_contract=object(),
+            gatherer=object(),
+        )
+
     def launch_from_cfg(self, *args: Any, **kwargs: Any) -> _FakeRuntime:
         del args, kwargs
         self._state["launches"] += 1
@@ -203,15 +210,14 @@ def _cfg() -> Any:
             "data": {"sampler": {"type": "random_without_replacement"}},
             "distributed": {"rollout": {"cpus_per_worker": 0.5}},
             "algorithm": {"kl_coef": 0.0},
-            "model": {"use_lora": False},
+            "model": {"family": "sd3_5", "use_lora": False},
         },
     )
 
 
 def _definition() -> OnlineRecipeDefinition:
     return OnlineRecipeDefinition(
-        family="sd3_5",
-        build_replay_bundle=lambda cfg, device: SimpleNamespace(
+        build_replay_bundle=lambda build: SimpleNamespace(
             model=_FakeModel(),
             scheduler=object(),
             trainable_modules={},
@@ -270,7 +276,11 @@ def _install_common_fakes(
     monkeypatch.setattr(
         online,
         "build_configs",
-        lambda cfg: {"trainer": trainer_config, "precision": precision},
+        lambda cfg: {
+            "trainer": trainer_config,
+            "precision": precision,
+            "reward": ({"kling_video_reward": 1.0}, {}),
+        },
     )
     monkeypatch.setattr(online, "load_training_checkpoint_from_config", lambda cfg: None)
     monkeypatch.setattr(
@@ -287,6 +297,13 @@ def _install_common_fakes(
         lambda resources, *, trainer_device: "cpu",
     )
     monkeypatch.setattr(online, "load_prompt_examples_from_config", lambda cfg: ["prompt"])
+    monkeypatch.setattr(
+        online,
+        "resolve_entry_model_build",
+        lambda entry, cfg, device, **kwargs: SimpleNamespace(
+            family=str(cfg.model.family),
+        ),
+    )
     monkeypatch.setattr(online, "log_host_memory", lambda *args, **kwargs: None)
     monkeypatch.setattr(
         online,
@@ -297,10 +314,6 @@ def _install_common_fakes(
         online,
         "build_online_recipe_components",
         lambda *args, **kwargs: SimpleNamespace(
-            built={"reward": ({"kling_video_reward": 1.0}, {})},
-            trainer_config=trainer_config,
-            family="sd3_5",
-            family_entry="sd3_5",
             collector_config=object(),
             reward_fn=reward,
             algorithm=object(),
@@ -311,14 +324,6 @@ def _install_common_fakes(
         online,
         "build_collector_from_cfg",
         lambda *args, **kwargs: collector,
-    )
-    monkeypatch.setattr(
-        online,
-        "build_ray_generation_inputs_for_family",
-        lambda *args, **kwargs: SimpleNamespace(
-            launch_contract=object(),
-            gatherer=object(),
-        ),
     )
     monkeypatch.setattr(online, "RayGenerationLauncher", lambda: _FakeLauncher(state))
     monkeypatch.setattr(
@@ -462,7 +467,7 @@ async def test_shared_gpu_parking_capability_fails_before_model_or_ray_launch(
         model_builds += 1
         return SimpleNamespace(model=_FakeModel(), scheduler=object(), trainable_modules={})
 
-    definition = OnlineRecipeDefinition(family="sd3_5", build_replay_bundle=_build)
+    definition = OnlineRecipeDefinition(build_replay_bundle=_build)
 
     with pytest.raises(NotImplementedError, match="Use disjoint rollout GPUs"):
         await online.run_online_recipe(_cfg(), definition)

@@ -45,6 +45,7 @@ def resolve_fake_model_build(cfg: Any, device: str) -> ModelBuild:
         model_name_or_path="unit-test",
         device=device,
         parameter_dtype=torch.bfloat16,
+        family=str(model_config["family"]),
         model_config=model_config,
         sampling_config={
             "num_steps": 1,
@@ -194,6 +195,7 @@ def _build_inputs_cfg(
     model_torch_compile: dict[str, Any] | None = None,
 ) -> Any:
     model_config = {
+        "family": "sd3_5",
         "marker": "driver-config",
         "torch_compile": model_torch_compile
         or {
@@ -368,6 +370,14 @@ def test_ray_build_inputs_preserves_disabled_model_compile_config() -> None:
         "enable": False,
         "mode": "default",
     }
+
+
+def test_ray_build_inputs_rejects_config_and_registry_family_mismatch() -> None:
+    entry = _build_inputs_entry()
+    entry.family = "sana"
+
+    with pytest.raises(ValueError, match=r"model_build='sd3_5'.*entry='sana'"):
+        RayGenerationLauncher.build_inputs(_build_inputs_cfg(), entry)
 
 
 def test_ray_build_inputs_threads_resolved_base_weight_sync() -> None:

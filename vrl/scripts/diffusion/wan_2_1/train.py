@@ -30,7 +30,6 @@ async def train_wan_2_1_i2v_grpo(cfg: DictConfig) -> None:
     await run_online_recipe(
         cfg,
         OnlineRecipeDefinition(
-            family="wan_2_1_i2v",
             build_replay_bundle=build_replay_bundle,
             after_bundle_built=enable_transformer_gradient_checkpointing,
             reference_model_getter=default_reference_model,

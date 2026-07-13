@@ -15,6 +15,7 @@ from vrl.config.builders import build_configs
 from vrl.config.loading import load_config
 from vrl.models.diffusion.build import resolve_family_model_build
 from vrl.rollouts.collector.config import build_rollout_config_from_cfg
+from vrl.rollouts.families import get_rollout_family_entry
 from vrl.scripts.common.factory import (
     build_algorithm_and_evaluator_from_cfg,
     build_reward_from_cfg,
@@ -35,7 +36,7 @@ def test_diffusion_grpo_evaluator_uses_resolved_rollout_sde_config() -> None:
 
     pair = build_algorithm_and_evaluator_from_cfg(
         cfg,
-        family="wan_2_1",
+        family_entry=get_rollout_family_entry("wan_2_1"),
         built=build_configs(cfg),
         collector_config=collector_config,
         scheduler=object(),
@@ -65,7 +66,7 @@ def test_diffusion_factory_accepts_each_kind_exact_config_type(
 
     pair = build_algorithm_and_evaluator_from_cfg(
         cfg,
-        family="sd3_5",
+        family_entry=get_rollout_family_entry("sd3_5"),
         built=build_configs(cfg),
         collector_config=build_rollout_config_from_cfg(cfg, family="sd3_5"),
         scheduler=object(),
@@ -95,7 +96,7 @@ def test_diffusion_factory_rejects_a_sibling_config_type(
     with pytest.raises(TypeError, match=expected_name):
         build_algorithm_and_evaluator_from_cfg(
             cfg,
-            family="sd3_5",
+            family_entry=get_rollout_family_entry("sd3_5"),
             built={"algorithm": wrong_config},
             scheduler=object(),
         )
@@ -133,8 +134,6 @@ def test_sana_aesthetic_keeps_cpu_observation_only_pickscore() -> None:
 
 def test_sana_family_pins_fp16_parameters_under_bf16_forward() -> None:
     """SANA owns its parameter invariant without exposing a model dtype knob."""
-    from vrl.rollouts.families import get_rollout_family_entry
-
     cfg = load_config("experiment/diffusion/sana/online_grpo_aesthetic")
     built = build_configs(cfg)
     build = resolve_family_model_build(cfg, torch.device("cpu"))
@@ -214,7 +213,11 @@ def test_token_objective_rejects_unused_math_precision_override() -> None:
     built = build_configs(cfg)
 
     with pytest.raises(ValueError, match=r"precision\.diffusion_math\.dtype.*diffusion log-prob"):
-        build_algorithm_and_evaluator_from_cfg(cfg, built=built, family="emu3")
+        build_algorithm_and_evaluator_from_cfg(
+            cfg,
+            built=built,
+            family_entry=get_rollout_family_entry("emu3"),
+        )
 
 
 def test_reward_factory_passes_the_selected_local_device(monkeypatch) -> None:

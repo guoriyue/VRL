@@ -1,18 +1,16 @@
-"""Rollout family registry and launch input wiring."""
+"""Rollout family registry and external-name normalization."""
 
 from vrl.rollouts.families.registry import (
     FAMILY_REGISTRY,
     CollectorKind,
     CollectorMetadata,
     GathererMetadata,
-    RayGenerationLaunchInputs,
     RolloutFamilyEntry,
-    build_ray_generation_inputs_for_family,
     get_rollout_family_entry,
     normalize_rollout_family,
     register_rollout_family,
     registered_rollout_families,
-    resolve_rollout_family_from_config,
+    resolve_entry_model_build,
 )
 
 __all__ = [
@@ -20,12 +18,10 @@ __all__ = [
     "CollectorKind",
     "CollectorMetadata",
     "GathererMetadata",
-    "RayGenerationLaunchInputs",
     "RolloutFamilyEntry",
-    "build_ray_generation_inputs_for_family",
     "get_rollout_family_entry",
     "normalize_rollout_family",
     "register_rollout_family",
     "registered_rollout_families",
-    "resolve_rollout_family_from_config",
+    "resolve_entry_model_build",
 ]

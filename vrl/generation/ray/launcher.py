@@ -255,7 +255,9 @@ class RayGenerationLauncher:
         ray_config = RayGenerationConfig.from_cfg(cfg)
 
         runtime_device = "cuda" if ray_config.gpus_per_worker > 0 else "cpu"
-        build = _resolve_model_build(
+        from vrl.rollouts.families.registry import resolve_entry_model_build
+
+        build = resolve_entry_model_build(
             entry,
             cfg,
             runtime_device,
@@ -293,15 +295,6 @@ class RayGenerationLauncher:
                 **entry.gatherer.kwargs,
             ),
         )
-
-
-def _resolve_model_build(
-    entry: Any,
-    cfg: Any,
-    device: str,
-) -> Any:
-    resolver = import_from_path(entry.model_build_resolver)
-    return resolver(cfg, device)
 
 
 def _build_executor_kwargs(entry: Any, cfg: Any) -> dict[str, Any]:

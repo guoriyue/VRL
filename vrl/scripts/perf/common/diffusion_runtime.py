@@ -18,15 +18,19 @@ def build_model(cfg, device, dtype):
 
     from vrl.rollouts.families import (
         get_rollout_family_entry,
-        normalize_rollout_family,
+        resolve_entry_model_build,
     )
     from vrl.utils.config import import_from_path
 
     cfg.model.use_lora = True
-    entry = get_rollout_family_entry(normalize_rollout_family(cfg.model.family))
-    resolve_build = import_from_path(entry.model_build_resolver)
+    entry = get_rollout_family_entry(str(cfg.model.family))
     build_bundle = import_from_path(entry.runtime_builder)
-    build = resolve_build(cfg, device, parameter_dtype_override=dtype)
+    build = resolve_entry_model_build(
+        entry,
+        cfg,
+        device,
+        parameter_dtype_override=dtype,
+    )
     return build_bundle(build).model
 
 

@@ -11,7 +11,6 @@ from tests.quality.preflight import (
     ASSET_ROOT,
     family_profile_path,
     load_quality_profile,
-    resolve_quality_family,
 )
 from vrl.config.loading import list_bundled_configs, load_config
 from vrl.rollouts.families import FAMILY_REGISTRY
@@ -115,11 +114,11 @@ def test_external_model_dependencies_are_immutably_pinned(
     assert load_config(config_name).model[field] == revision
 
 
-def test_algorithm_selected_janus_r1_uses_its_multisegment_profile() -> None:
+def test_explicit_janus_r1_family_uses_its_multisegment_profile() -> None:
     cfg = OmegaConf.create(
         {
             "model": {
-                "family": "janus_pro",
+                "family": "janus_pro_r1",
                 "path": "deepseek-ai/Janus-Pro-1B",
                 "revision": "960ab33191f61342a4c60ae74d8dc356a39fafcb",
             },
@@ -129,7 +128,7 @@ def test_algorithm_selected_janus_r1_uses_its_multisegment_profile() -> None:
 
     profile, protocol = load_quality_profile(cfg)
 
-    assert resolve_quality_family(cfg) == "janus_pro_r1"
+    assert cfg.model.family == "janus_pro_r1"
     assert profile.extends == "ar_multisegment_image.yaml"
     assert profile.model_identities[0].revision == cfg.model.revision
     assert protocol.required_segments == ("initial_image", "selfcheck", "final_image")

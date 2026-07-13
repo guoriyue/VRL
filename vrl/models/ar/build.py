@@ -70,17 +70,14 @@ def resolve_family_ar_model_build(
 ) -> ModelBuild:
     """Resolve one AR family build from its declarative registry recipe."""
 
-    from vrl.rollouts.families.registry import (
-        get_rollout_family_entry,
-        normalize_rollout_family,
-    )
+    from vrl.rollouts.families.registry import get_rollout_family_entry
     from vrl.utils.config import import_from_path
 
     model = cfg.get("model") if hasattr(cfg, "get") else None
-    family = normalize_rollout_family(str((model or {}).get("family") or ""))
+    family = (model or {}).get("family")
     if not family:
         raise ValueError("AR model-build resolution requires model.family")
-    entry = get_rollout_family_entry(family)
+    entry = get_rollout_family_entry(str(family))
     recipe = entry.ar_build
     if recipe is None:
         raise ValueError(f"rollout family {family!r} has no AR build descriptor")

@@ -27,7 +27,6 @@ async def train_flux_diffusion_nft(cfg: DictConfig) -> None:
     await run_online_recipe(
         cfg,
         OnlineRecipeDefinition(
-            family="flux",
             build_replay_bundle=build_replay_bundle,
             after_bundle_built=enable_transformer_gradient_checkpointing,
             export_modules_getter=export_transformer_lora,

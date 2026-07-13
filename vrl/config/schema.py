@@ -30,6 +30,7 @@ from vrl.ray.resources import (
     RoleResourceConfig,
     RolloutResourceConfig,
 )
+from vrl.rollouts.family_names import normalize_rollout_family
 from vrl.trainers.core.types import (
     DebugConfig,
     EMAConfig,
@@ -523,8 +524,6 @@ _model_config_variant_classes: tuple[type[ModelConfig], ...] = tuple(
 
 
 def _model_config_class_for_family(family: Any) -> type[ModelConfig]:
-    from vrl.rollouts.family_names import normalize_rollout_family
-
     canonical = normalize_rollout_family(str(family or ""))
     return _model_config_classes_by_family.get(canonical, ModelConfig)
 
@@ -809,6 +808,9 @@ class RootConfig(ConfigBase):
 
         kind = algo.kind
         rollout = self.rollout
+        model_family = normalize_rollout_family(
+            (self.model.family or "") if self.model else "",
+        )
 
         if kind == "diffusion_dpo":
             self._validate_offline_dpo_surface()
@@ -852,17 +854,24 @@ class RootConfig(ConfigBase):
             raise ValueError("config missing required field: rollout.sde.type")
 
         # token_grpo: nextstep_1 family requires rollout.noise_level
-        if kind == "token_grpo":
-            model_family = self.model.family if self.model else None
-            if model_family == "nextstep_1" and (rollout is None or rollout.noise_level is None):
-                raise ValueError("config missing required field: rollout.noise_level")
+        if (
+            kind == "token_grpo"
+            and model_family == "nextstep_1"
+            and (rollout is None or rollout.noise_level is None)
+        ):
+            raise ValueError("config missing required field: rollout.noise_level")
 
-        # token_grpo_multisegment: janus_pro only; final_image_policy from rollout
+        if model_family == "janus_pro_r1" and kind != "token_grpo_multisegment":
+            raise ValueError(
+                "model.family=janus_pro_r1 requires algorithm.kind=token_grpo_multisegment",
+            )
+
+        # token_grpo_multisegment: explicit Janus R1 protocol; final_image_policy
+        # remains owned by rollout.
         if kind == "token_grpo_multisegment":
-            model_family = (self.model.family or "") if self.model else ""
-            if model_family != "janus_pro":
+            if model_family != "janus_pro_r1":
                 raise ValueError(
-                    "token_grpo_multisegment currently requires model.family=janus_pro"
+                    "token_grpo_multisegment currently requires model.family=janus_pro_r1",
                 )
             # Single source: final_image_policy lives on rollout only. Validate it
             # here as a legality check (the collector reads rollout.final_image_policy).

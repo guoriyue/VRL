@@ -88,6 +88,11 @@ when replay must load a scheduler other than the shared flow-match scheduler.
 Set `requires_lora=True` only when the model implementation genuinely rejects
 full-parameter training.
 
+If one checkpoint supports multiple runtime protocols, each experiment must
+still name the exact registry entry (for example, `janus_pro_r1`, not
+`janus_pro` plus an algorithm-based inference rule). The algorithm validates
+compatibility; it never rewrites the configured family.
+
 `executor_cls` is intentionally absent above, so `_diffusion_entry` selects the
 shared `DiffusionChunkExecutor`. Add a family executor only when its body performs
 family-specific work; a renamed pass-through executor is not an extension point.

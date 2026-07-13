@@ -609,13 +609,13 @@ def test_real_checkpoint_online_rl_updates_trainable_weights(
             collector = build_collector_from_cfg(
                 cfg,
                 reward_fn=reward_fn,
-                family=entry,
+                family_entry=entry,
                 collector_config=collector_config,
                 runtime=_DirectExecutorGenerationRuntime(executor),
             )
         pair = build_algorithm_and_evaluator_from_cfg(
             cfg,
-            family=entry,
+            family_entry=entry,
             built=built,
             collector_config=collector_config,
             scheduler=bundle.scheduler,

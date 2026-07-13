@@ -7,6 +7,11 @@
 registry 走）。`expected_gatherer` / `family` 字面量按非目标保留。pytest 全绿、ruff 全绿。
 范围：把 rollout runtime 接线测试里**手抄的 canonical task 字面量**（`t2i` / `ar_t2i` / `ar_t2i_r1` 等）改成从已绑定的 `RolloutFamilyEntry.task` 派生。这些测试已经把 entry 取在手里（`get_rollout_family_entry(family)`），且 `runtime_builder` / `executor_cls` 已经是对着 `entry.*` 比的 —— 唯独 `task` 还在断言一份冻结副本。registry 是 task 词表的唯一真源，registry 里改名一个家族的 canonical task，这些字面量就得手改、否则假性 fail。优先级：medium。
 
+> Follow-up (2026-07-12): the forwarding
+> `build_ray_generation_inputs_for_family` facade was removed. Callers now pass
+> the already-resolved entry directly to `RayGenerationLauncher.build_inputs`;
+> the `entry.task` source-of-truth conclusion remains unchanged.
+
 > 这是 `tests/` 反 frozen-snapshot 系列的一员：与 [[SPRINT_test_registry-family-list-snapshot]]（`registered_rollout_families()` 字面 key 列表 = `tuple(FAMILY_REGISTRY)`，wan_2_2-missing 那一类）、[[SPRINT_test_literal-config-assertions]] 同源。本 sprint 只收口 `task` 字段这一条主题，**两个**测试文件。
 
 ## 0. Core Decision（先看这一段）
@@ -20,7 +25,7 @@ task=entry.task,
     task=entry.task,
 ```
 
-`build_ray_generation_inputs_for_family` 也是把同一个 entry 交给 launcher，`launch_contract.task` 同样从 entry 出。也就是说，**被测代码读的就是 `entry.task`**；测试若另写一份字面量，等于让两份 copy 比对——一旦 registry 改 task 名，被测代码自动跟上、字面量却不跟，测试为「非行为原因」red。
+当时的 `build_ray_generation_inputs_for_family` 也只是把同一个 entry 交给 launcher，`launch_contract.task` 同样从 entry 出。也就是说，**被测代码读的就是 `entry.task`**；测试若另写一份字面量，等于让两份 copy 比对——一旦 registry 改 task 名，被测代码自动跟上、字面量却不跟，测试为「非行为原因」red。
 
 这跟 `registered_rollout_families() == tuple(FAMILY_REGISTRY)` 的 wan_2_2-missing bug 是同一个反模式：手抄一份 registry 已机械派生的东西。修法是统一——**删字面量，断言 `== entry.task`**，复用测试里已 fetch 的 entry，与同文件已有的 `runtime_builder` / `executor_cls` 断言保持同形。
 

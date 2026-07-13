@@ -6,6 +6,11 @@ defaults:
   - /reward/ocr
   - /dataset/ocr
 
+model:
+  # The checkpoint is shared with Janus-Pro, but R1 selects a distinct
+  # executor/gatherer/trajectory contract and must name that registry entry.
+  family: janus_pro_r1
+
 actor:
   optim:
     lr: 1.0e-4
@@ -22,4 +27,3 @@ trainer:
 rollout:
   n_samples_per_prompt: 2
   prompts_per_batch: 1
-

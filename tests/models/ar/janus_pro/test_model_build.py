@@ -8,12 +8,22 @@ import pytest
 import torch
 from omegaconf import OmegaConf
 
+from vrl.config.loading import load_config
 from vrl.generation import GenerationRequest
 from vrl.generation.execution.chunks import SampleChunk
 from vrl.models.ar.build import resolve_family_ar_model_build
 from vrl.models.ar.janus_pro.runtime import (
     JanusProChunkExecutor,
 )
+
+
+def test_janus_r1_replay_build_keeps_the_explicit_runtime_family() -> None:
+    cfg = load_config("experiment/ar/janus_pro/online_r1_grpo_ocr")
+
+    build = resolve_family_ar_model_build(cfg, device="cpu", for_rollout=False)
+
+    assert cfg.model.family == "janus_pro_r1"
+    assert build.family == cfg.model.family
 
 
 def test_janus_model_build_does_not_expose_decode_strategy() -> None:

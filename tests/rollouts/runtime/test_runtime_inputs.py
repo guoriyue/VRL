@@ -10,14 +10,11 @@ from vrl.config.loading import load_config
 from vrl.generation.ar.executor import ARDiscreteChunkGatherer
 from vrl.generation.diffusion import DiffusionChunkGatherer
 from vrl.generation.protocols import GenerationChunkExecutor
+from vrl.generation.ray import RayGenerationLauncher, RayGenerationLaunchInputs
 from vrl.models.ar.janus_pro.runtime import JanusProR1ChunkGatherer
 from vrl.models.ar.nextstep_1.runtime import NextStep1ChunkGatherer
 from vrl.rollouts.collector.config import build_rollout_config_from_cfg
-from vrl.rollouts.families import (
-    RayGenerationLaunchInputs,
-    build_ray_generation_inputs_for_family,
-    get_rollout_family_entry,
-)
+from vrl.rollouts.families import get_rollout_family_entry
 
 
 @pytest.mark.parametrize(
@@ -98,15 +95,16 @@ def test_rollout_runtime_inputs_are_serializable_and_registry_backed(
     )
     entry = get_rollout_family_entry(family)
 
-    inputs = build_ray_generation_inputs_for_family(
+    inputs = RayGenerationLauncher.build_inputs(
         cfg,
-        family,
+        entry,
         executor_kwargs={"samples_per_chunk": 2},
     )
 
     assert isinstance(inputs, RayGenerationLaunchInputs)
     assert pickle.loads(pickle.dumps(inputs.launch_contract)) == inputs.launch_contract
     assert inputs.launch_contract.family == family
+    assert inputs.launch_contract.model_build["family"] == inputs.launch_contract.family
     # registry is the single source of truth for the canonical task string
     assert inputs.launch_contract.task == entry.task
     assert inputs.launch_contract.policy_version == 0
@@ -134,9 +132,9 @@ def test_diffusion_launch_contract_uses_resolved_config_parameter_dtype() -> Non
         ],
     )
 
-    inputs = build_ray_generation_inputs_for_family(
+    inputs = RayGenerationLauncher.build_inputs(
         cfg,
-        "sd3_5",
+        get_rollout_family_entry("sd3_5"),
     )
 
     assert isinstance(inputs, RayGenerationLaunchInputs)
@@ -161,9 +159,9 @@ def test_sana_launch_contract_carries_parameter_and_rollout_precision() -> None:
         ],
     )
 
-    inputs = build_ray_generation_inputs_for_family(
+    inputs = RayGenerationLauncher.build_inputs(
         cfg,
-        "sana",
+        get_rollout_family_entry("sana"),
     )
 
     model_build = inputs.launch_contract.model_build
@@ -202,9 +200,9 @@ def test_sana_fp8_rollout_keeps_bf16_outer_autocast() -> None:
         },
     }
 
-    inputs = build_ray_generation_inputs_for_family(
+    inputs = RayGenerationLauncher.build_inputs(
         cfg,
-        "sana",
+        get_rollout_family_entry("sana"),
     )
 
     model_build = inputs.launch_contract.model_build
@@ -233,9 +231,9 @@ def test_generation_chunk_auto_reaches_ray_runtime_without_executor_coercion() -
         ],
     )
 
-    inputs = build_ray_generation_inputs_for_family(
+    inputs = RayGenerationLauncher.build_inputs(
         cfg,
-        "sd3_5",
+        get_rollout_family_entry("sd3_5"),
     )
 
     assert "samples_per_chunk" not in inputs.launch_contract.executor_kwargs
@@ -281,9 +279,9 @@ def test_model_torch_compile_applies_to_all_diffusion_rollout_families(
     )
     entry = get_rollout_family_entry(family)
 
-    inputs = build_ray_generation_inputs_for_family(
+    inputs = RayGenerationLauncher.build_inputs(
         cfg,
-        family,
+        entry,
     )
 
     assert entry.collector.kind == "diffusion"
@@ -309,9 +307,9 @@ def test_explicit_executor_kwargs_override_registry_defaults() -> None:
         ],
     )
 
-    inputs = build_ray_generation_inputs_for_family(
+    inputs = RayGenerationLauncher.build_inputs(
         cfg,
-        "sd3_5",
+        get_rollout_family_entry("sd3_5"),
         executor_kwargs={"samples_per_chunk": 3},
     )
 

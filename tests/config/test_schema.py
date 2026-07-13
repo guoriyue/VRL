@@ -629,8 +629,8 @@ def test_diffusion_nft_requires_valid_sde_type() -> None:
         parse_config(cfg)
 
 
-def test_token_grpo_multisegment_requires_janus_pro_family() -> None:
-    """Checks token GRPO multisegment requires Janus pro family."""
+def test_token_grpo_multisegment_requires_explicit_janus_r1_family() -> None:
+    """The algorithm cannot silently turn base Janus into the R1 protocol."""
     cfg = OmegaConf.create(
         {
             "algorithm": {"kind": "token_grpo_multisegment"},
@@ -640,11 +640,11 @@ def test_token_grpo_multisegment_requires_janus_pro_family() -> None:
                 "preprocessing": {},
                 "sampler": {"type": "random_without_replacement"},
             },
-            "model": {"family": "other_model"},
+            "model": {"family": "janus_pro"},
             "rollout": {"final_image_policy": "always_generate"},
         }
     )
-    with pytest.raises(ValueError, match="janus_pro"):
+    with pytest.raises(ValueError, match="janus_pro_r1"):
         parse_config(cfg)
 
 
@@ -659,11 +659,30 @@ def test_token_grpo_multisegment_final_image_policy_single_source() -> None:
                 "preprocessing": {},
                 "sampler": {"type": "random_without_replacement"},
             },
-            "model": {"family": "janus_pro"},
+            "model": {"family": "janus_pro_r1"},
             "rollout": {"final_image_policy": "always_generate"},
         }
     )
     assert parse_config(cfg).rollout.final_image_policy == "always_generate"
+
+
+def test_janus_r1_family_requires_multisegment_algorithm() -> None:
+    cfg = OmegaConf.create(
+        {
+            "algorithm": {"kind": "token_grpo"},
+            "data": {
+                "loader": "prompt_manifest",
+                "manifest": "x",
+                "preprocessing": {},
+                "sampler": {"type": "random_without_replacement"},
+            },
+            "model": {"family": "janus_r1"},
+            "rollout": {},
+        }
+    )
+
+    with pytest.raises(ValueError, match="token_grpo_multisegment"):
+        parse_config(cfg)
 
 
 def test_production_video_reward_structural_rules() -> None:

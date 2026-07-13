@@ -8,6 +8,8 @@ from typing import Any
 
 from omegaconf import DictConfig
 
+from vrl.models.interfaces import ModelBuild, RuntimeBundle
+
 CollectorKwargsGetter = Callable[[DictConfig, Sequence[Any]], dict[str, Any]]
 
 
@@ -15,11 +17,10 @@ CollectorKwargsGetter = Callable[[DictConfig, Sequence[Any]], dict[str, Any]]
 class OnlineRecipeDefinition:
     """Family-specific hooks kept outside the common online recipe glue."""
 
-    family: str
-    # Trainer-side replay bundle builder. The rollout (generation) model is
-    # built inside the Ray workers from the registry launch contract, so the
-    # driver never builds a rollout bundle of its own.
-    build_replay_bundle: Callable[[DictConfig, Any], Any]
+    # Trainer-side builder for the config-resolved replay ModelBuild. The
+    # rollout (generation) model is built inside Ray workers from the registry
+    # launch contract, so the driver never builds a rollout bundle of its own.
+    build_replay_bundle: Callable[[ModelBuild], RuntimeBundle]
     reference_model_getter: Callable[[Any, DictConfig], Any | None] | None = None
     export_modules_getter: Callable[[Any, DictConfig], dict[str, Any] | None] | None = None
     after_bundle_built: Callable[[Any, DictConfig], None] | None = None

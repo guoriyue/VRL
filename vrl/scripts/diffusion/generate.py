@@ -122,13 +122,10 @@ def main() -> None:
     from vrl.generation.diffusion.layout import VideoGenerationRequest
     from vrl.math.diffusion.flow_matching import sde_step_with_logprob
     from vrl.models.diffusion.build import build_family_runtime_bundle
-    from vrl.rollouts.families.registry import (
-        get_rollout_family_entry,
-        normalize_rollout_family,
-    )
+    from vrl.rollouts.families.registry import get_rollout_family_entry
 
-    family = normalize_rollout_family(args.family)
-    entry = get_rollout_family_entry(family)
+    entry = get_rollout_family_entry(args.family)
+    family = entry.family
     if entry.collector.kind != "diffusion":
         raise SystemExit(
             f"--family {family} is an AR family; this probe drives the "

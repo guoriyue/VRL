@@ -137,15 +137,15 @@ def main() -> None:
     from vrl.config.loading import load_config
     from vrl.rollouts.families.registry import (
         get_rollout_family_entry,
-        normalize_rollout_family,
+        resolve_entry_model_build,
     )
     from vrl.trainers.data import load_prompt_examples_from_config
     from vrl.trainers.data.sft_latents import save_sft_latents
     from vrl.utils.config import import_from_path
 
     cfg = load_config(f"experiment/{args.experiment}")
-    family = normalize_rollout_family(str(cfg.model.family))
-    entry = get_rollout_family_entry(family)
+    entry = get_rollout_family_entry(str(cfg.model.family))
+    family = entry.family
 
     device = torch.device(
         args.device
@@ -176,10 +176,10 @@ def main() -> None:
     # The exact builder path the rollout workers import — same model, same
     # weights, same latent space as the run this shard will regularize.
     build = import_from_path(entry.runtime_builder)
-    resolve_build = import_from_path(entry.model_build_resolver)
     weight_dtype = torch.bfloat16 if device.type == "cuda" else torch.float32
     bundle = build(
-        resolve_build(
+        resolve_entry_model_build(
+            entry,
             cfg,
             device,
             parameter_dtype_override=weight_dtype,

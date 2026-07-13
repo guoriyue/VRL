@@ -59,7 +59,7 @@
 |---|---|---|
 | experiment recipe | `configs/experiment/diffusion/wan_2_1/online_grpo_physics_i2v.yaml` | 组合 `/model/.../i2v_14b` + `/reward/kling_video_reward` + `/reward/videocon_physics` + `/dataset/videophy_i2v`；`entrypoint=...wan_2_1.train:train_wan_2_1_i2v_grpo` |
 | 入口分发 | `vrl/scripts/train.py` | 解析 `trainer.entrypoint`（`module:function`）动态 import 调用 |
-| 族训练 | `vrl/scripts/diffusion/wan_2_1/train.py` | `train_wan_2_1_i2v_grpo` → `run_online_recipe(family='wan_2_1_i2v', collector_kwargs_getter=_i2v_collector_kwargs)`；`_i2v_collector_kwargs` 校验每行 `reference_image` |
+| 族训练 | `vrl/scripts/diffusion/wan_2_1/train.py` | `train_wan_2_1_i2v_grpo` → `run_online_recipe(...)`；`model.family` 选择 `wan_2_1_i2v` registry entry，`_i2v_collector_kwargs` 校验每行 `reference_image` |
 | 注册表选 executor | `vrl/rollouts/families/registry.py` | `wan_2_1_i2v`（task=i2v, `supports_reference_conditioning=True`）→ `Wan_2_1I2VChunkExecutor`，打开 `include_reference_image` |
 | 采样（首帧条件） | `vrl/generation/diffusion/executor.py` | `ReferenceConditionedChunks` load 首帧；共享 `run_denoise_steps`：`forward_step → sde_step_with_logprob` 逐步记 GRPO 轨迹 |
 | I2V 模型 | `vrl/models/diffusion/wan_2_1/{model,runner}.py` | 首帧 → CLIP `image_embeds` + 潜空间 `condition`；`runner` 通道拼接 `cat([latents, condition], dim=1)`；无 `reference_image` 直接 raise |

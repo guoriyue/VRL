@@ -21,6 +21,11 @@ defaults:
   - /reward/aesthetic
   - /dataset/drawbench_train_192
 
+model:
+  # The checkpoint is shared with Janus-Pro, but R1 selects a distinct
+  # executor/gatherer/trajectory contract and must name that registry entry.
+  family: janus_pro_r1
+
 algorithm:
   # clip_ratio inherits the AR-safe 0.2 from /base/algorithm/grpo; kl_coef
   # mirrors the proven non-R1 AR baseline (online_grpo_ocr).

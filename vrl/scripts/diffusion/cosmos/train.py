@@ -24,7 +24,6 @@ async def train_cosmos_predict2_grpo(cfg: DictConfig) -> None:
     await run_online_recipe(
         cfg,
         OnlineRecipeDefinition(
-            family="cosmos-predict2",
             build_replay_bundle=build_replay_bundle,
             after_bundle_built=_after_bundle_built,
             reference_model_getter=default_reference_model,
@@ -46,7 +45,6 @@ async def train_cosmos_predict25_grpo(cfg: DictConfig) -> None:
     await run_online_recipe(
         cfg,
         OnlineRecipeDefinition(
-            family="cosmos-predict2.5",
             build_replay_bundle=build_replay_bundle,
             after_bundle_built=_after_bundle_built,
             reference_model_getter=default_reference_model,
@@ -61,7 +59,6 @@ async def train_cosmos_predict25_diffusion_nft(cfg: DictConfig) -> None:
     await run_online_recipe(
         cfg,
         OnlineRecipeDefinition(
-            family="cosmos-predict2.5",
             build_replay_bundle=build_replay_bundle,
             after_bundle_built=_after_bundle_built,
             export_modules_getter=export_transformer_lora,

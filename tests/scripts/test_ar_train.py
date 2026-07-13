@@ -1,4 +1,4 @@
-"""Family resolution tests for the generic AR GRPO entrypoint."""
+"""Family ownership tests for the generic AR GRPO entrypoint."""
 
 from __future__ import annotations
 
@@ -11,40 +11,39 @@ from omegaconf import OmegaConf
 import vrl.scripts.ar.train as ar_train
 
 
-def _cfg(algorithm_kind: str) -> Any:
+def _cfg(family: str, algorithm_kind: str) -> Any:
     return OmegaConf.create(
         {
-            "model": {"family": "janus_pro"},
+            "model": {"family": family},
             "algorithm": {"kind": algorithm_kind},
         },
     )
 
 
 @pytest.mark.parametrize(
-    ("algorithm_kind", "expected_family"),
+    ("family", "algorithm_kind"),
     [
-        # The shipped R1 recipe keeps model.family=janus_pro and selects the
-        # r1 variant through algorithm.kind — the entrypoint must hand the
-        # resolved family to the recipe, or the factory's multisegment guard
-        # rejects the run before launch.
-        ("token_grpo_multisegment", "janus_pro_r1"),
-        ("token_grpo", "janus_pro"),
+        ("janus_pro_r1", "token_grpo_multisegment"),
+        ("janus_pro", "token_grpo"),
     ],
 )
-def test_train_ar_grpo_hands_resolved_online_family_to_recipe(
+def test_train_ar_grpo_keeps_family_owned_by_config(
     monkeypatch: pytest.MonkeyPatch,
+    family: str,
     algorithm_kind: str,
-    expected_family: str,
 ) -> None:
-    """Checks train_ar_grpo resolves the online family, not just model.family."""
-    captured: dict[str, str] = {}
+    """The recipe definition must not duplicate or rewrite model.family."""
+    captured: dict[str, object] = {}
 
     async def fake_run_online_recipe(cfg: Any, definition: Any) -> None:
-        del cfg
-        captured["family"] = definition.family
+        captured["family"] = str(cfg.model.family)
+        captured["definition_has_family"] = hasattr(definition, "family")
 
     monkeypatch.setattr(ar_train, "run_online_recipe", fake_run_online_recipe)
 
-    asyncio.run(ar_train.train_ar_grpo(_cfg(algorithm_kind)))
+    asyncio.run(ar_train.train_ar_grpo(_cfg(family, algorithm_kind)))
 
-    assert captured["family"] == expected_family
+    assert captured == {
+        "family": family,
+        "definition_has_family": False,
+    }

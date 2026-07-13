@@ -3,6 +3,11 @@
 **Date:** 2026-07-10
 **Status:** DONE
 
+> Follow-up (2026-07-12): item 7's algorithm-selected family inference was
+> removed. R1 experiments now declare `model.family: janus_pro_r1` explicitly;
+> the runner resolves that one config value once and never rewrites family from
+> `algorithm.kind`.
+
 ## Goal
 
 Remove repeated AR runtime construction and discrete-token loop bookkeeping

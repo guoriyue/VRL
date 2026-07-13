@@ -14,10 +14,9 @@ YAML wiring: ``trainer.entrypoint: vrl.scripts.diffusion.train:train_diffusion_g
 
 from __future__ import annotations
 
-from typing import Any
-
 from omegaconf import DictConfig
 
+from vrl.models.interfaces import ModelBuild, RuntimeBundle
 from vrl.scripts.common.online import (
     default_reference_model,
     enable_transformer_gradient_checkpointing,
@@ -30,13 +29,9 @@ from vrl.scripts.common.types import OnlineRecipeDefinition
 async def train_diffusion_grpo(cfg: DictConfig) -> None:
     """Run GRPO training for any registry-descriptor diffusion family."""
 
-    from vrl.rollouts.families.registry import normalize_rollout_family
-
-    family = normalize_rollout_family(str(cfg.model.family))
     await run_online_recipe(
         cfg,
         OnlineRecipeDefinition(
-            family=family,
             build_replay_bundle=build_replay_bundle,
             after_bundle_built=enable_transformer_gradient_checkpointing,
             reference_model_getter=default_reference_model,
@@ -45,17 +40,12 @@ async def train_diffusion_grpo(cfg: DictConfig) -> None:
     )
 
 
-def build_replay_bundle(cfg: DictConfig, device: Any) -> Any:
+def build_replay_bundle(build: ModelBuild) -> RuntimeBundle:
     """Lazy-import boundary over the generic descriptor-driven replay builder."""
 
-    from vrl.models.diffusion.build import (
-        build_family_replay_runtime_bundle,
-        resolve_family_model_build,
-    )
+    from vrl.models.diffusion.build import build_family_replay_runtime_bundle
 
-    return build_family_replay_runtime_bundle(
-        resolve_family_model_build(cfg, device, for_rollout=False),
-    )
+    return build_family_replay_runtime_bundle(build)
 
 
 __all__ = ["build_replay_bundle", "train_diffusion_grpo"]

@@ -6,13 +6,10 @@ runtime construction, gatherer construction, and collector kind.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
 from dataclasses import dataclass, field, replace
 from typing import Any, Literal, get_args
 
 from vrl.generation.diffusion.executor import GENERIC_DIFFUSION_EXECUTOR
-from vrl.generation.ray.launch_inputs import RayGenerationLaunchInputs
-from vrl.generation.ray.launcher import RayGenerationLauncher
 from vrl.rollouts.family_names import (
     normalize_rollout_family,
     rollout_family_aliases,
@@ -670,24 +667,27 @@ def get_rollout_family_entry(family: str) -> RolloutFamilyEntry:
         ) from exc
 
 
-def resolve_rollout_family_from_config(cfg: Any) -> str:
-    """Resolve the canonical family selected jointly by model and algorithm.
+def resolve_entry_model_build(
+    entry: RolloutFamilyEntry,
+    cfg: Any,
+    device: Any,
+    **resolver_kwargs: Any,
+) -> Any:
+    """Resolve and validate the model build bound to one registry entry."""
 
-    Janus R1 shares the base checkpoint/model config with Janus-Pro, but its
-    multisegment algorithm selects a different executor/gatherer protocol. This
-    decision belongs beside the registry so training and preflight cannot drift.
-    """
+    from vrl.utils.config import import_from_path
 
-    from omegaconf import OmegaConf
-
-    raw_family = OmegaConf.select(cfg, "model.family", default=None)
-    if raw_family is None:
-        raise ValueError("config missing required field: model.family")
-    family = normalize_rollout_family(str(raw_family))
-    algorithm_kind = str(OmegaConf.select(cfg, "algorithm.kind", default=""))
-    if family == "janus_pro" and algorithm_kind == "token_grpo_multisegment":
-        return "janus_pro_r1"
-    return family
+    build = import_from_path(entry.model_build_resolver)(
+        cfg,
+        device,
+        **resolver_kwargs,
+    )
+    if build.family != entry.family:
+        raise ValueError(
+            "model build family mismatch between config and registry entry: "
+            f"model_build={build.family!r}, entry={entry.family!r}",
+        )
+    return build
 
 
 def registered_rollout_families() -> tuple[str, ...]:
@@ -696,34 +696,15 @@ def registered_rollout_families() -> tuple[str, ...]:
     return tuple(FAMILY_REGISTRY)
 
 
-def build_ray_generation_inputs_for_family(
-    cfg: Any,
-    family: str,
-    *,
-    executor_kwargs: Mapping[str, Any] | None = None,
-    policy_version: int = 0,
-) -> RayGenerationLaunchInputs:
-    """Build Ray generation launch inputs for a registered rollout family."""
-
-    return RayGenerationLauncher.build_inputs(
-        cfg,
-        get_rollout_family_entry(family),
-        executor_kwargs=executor_kwargs,
-        policy_version=policy_version,
-    )
-
-
 __all__ = [
     "FAMILY_REGISTRY",
     "CollectorKind",
     "CollectorMetadata",
     "GathererMetadata",
-    "RayGenerationLaunchInputs",
     "RolloutFamilyEntry",
-    "build_ray_generation_inputs_for_family",
     "get_rollout_family_entry",
     "normalize_rollout_family",
     "register_rollout_family",
     "registered_rollout_families",
-    "resolve_rollout_family_from_config",
+    "resolve_entry_model_build",
 ]

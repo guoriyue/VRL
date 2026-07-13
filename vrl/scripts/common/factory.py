@@ -13,11 +13,7 @@ from vrl.models.dtypes import resolve_torch_dtype
 from vrl.ray.resources import resolve_distributed_resources, reward_torch_device
 from vrl.rollouts.collector import build_rollout_collector
 from vrl.rollouts.collector.config import build_rollout_config_from_cfg
-from vrl.rollouts.families import (
-    RolloutFamilyEntry,
-    get_rollout_family_entry,
-    resolve_rollout_family_from_config,
-)
+from vrl.rollouts.families import RolloutFamilyEntry
 from vrl.utils.config import cfg_get
 
 
@@ -53,20 +49,10 @@ class AlgorithmEvaluatorPair:
 class OnlineRecipeFactoryOutput:
     """Typed objects built from YAML and the canonical rollout family registry."""
 
-    built: dict[str, Any]
-    trainer_config: Any
-    family: str
-    family_entry: RolloutFamilyEntry
     collector_config: Any
     reward_fn: Any
     algorithm: Any
     evaluator: Any | None
-
-
-def resolve_online_family(cfg: DictConfig) -> str:
-    """Public recipe facade over the registry-owned family selection rule."""
-
-    return resolve_rollout_family_from_config(cfg)
 
 
 def build_reward_from_cfg(
@@ -168,7 +154,7 @@ def validate_reward_memory_parking_from_cfg(
 def build_algorithm_and_evaluator_from_cfg(
     cfg: DictConfig,
     *,
-    family: str | RolloutFamilyEntry | None = None,
+    family_entry: RolloutFamilyEntry,
     built: dict[str, Any] | None = None,
     collector_config: Any | None = None,
     scheduler: Any | None = None,
@@ -176,7 +162,6 @@ def build_algorithm_and_evaluator_from_cfg(
     """Build the algorithm/evaluator pair for a strict online recipe."""
 
     built = built or build_configs(cfg)
-    entry = _entry_from_family(cfg, family)
     algorithm_config = built["algorithm"]
     kind = str(OmegaConf.select(cfg, "algorithm.kind", default=""))
     diffusion_logprob_kinds = {"grpo", "dance_grpo", "flow_dppo", "grpo_guard"}
@@ -217,7 +202,7 @@ def build_algorithm_and_evaluator_from_cfg(
         }[kind]
         if not isinstance(algorithm_config, expected_config_type):
             raise TypeError(
-                f"{entry.family} {kind} expects {expected_config_type.__name__}, got "
+                f"{family_entry.family} {kind} expects {expected_config_type.__name__}, got "
                 f"{type(algorithm_config).__name__}",
             )
         if kind == "flow_dppo":
@@ -227,7 +212,7 @@ def build_algorithm_and_evaluator_from_cfg(
         else:
             algorithm = GRPO(algorithm_config)
         collector_config = collector_config or build_rollout_config_from_cfg(
-            cfg, family=entry.family
+            cfg, family=family_entry.family
         )
         math_dtype = resolve_torch_dtype(precision.diffusion_math)
         return AlgorithmEvaluatorPair(
@@ -249,10 +234,10 @@ def build_algorithm_and_evaluator_from_cfg(
 
         if not isinstance(algorithm_config, TokenGRPOConfig):
             raise TypeError(
-                f"{entry.family} token GRPO expects TokenGRPOConfig, got "
+                f"{family_entry.family} token GRPO expects TokenGRPOConfig, got "
                 f"{type(algorithm_config).__name__}",
             )
-        if entry.collector.kind == "ar_continuous":
+        if family_entry.collector.kind == "ar_continuous":
             from vrl.rollouts.evaluators.ar import ContinuousTokenLogProbEvaluator
 
             evaluator = ContinuousTokenLogProbEvaluator()
@@ -269,7 +254,7 @@ def build_algorithm_and_evaluator_from_cfg(
         )
         from vrl.rollouts.evaluators.ar import MultiSegmentTokenLogProbEvaluator
 
-        if entry.family != "janus_pro_r1":
+        if family_entry.family != "janus_pro_r1":
             raise UnsupportedOnlineRecipeError(
                 "token_grpo_multisegment currently requires rollout family janus_pro_r1",
             )
@@ -278,7 +263,7 @@ def build_algorithm_and_evaluator_from_cfg(
                 "multi-segment token GRPO expects MultiSegmentTokenGRPOConfig, "
                 f"got {type(algorithm_config).__name__}",
             )
-        segment_flags = dict(_cfg_select(cfg, "algorithm.train_segments", {}) or {})
+        segment_flags = dict(algorithm_config.train_segments or {})
         enabled_segments = tuple(name for name, enabled in segment_flags.items() if bool(enabled))
         return AlgorithmEvaluatorPair(
             algorithm=MultiSegmentTokenGRPO(algorithm_config),
@@ -294,7 +279,7 @@ def build_algorithm_and_evaluator_from_cfg(
             TokenGRPOConfig,
         ):
             raise TypeError(
-                f"{entry.family} DiffusionNFT expects DiffusionNFTConfig, got "
+                f"{family_entry.family} DiffusionNFT expects DiffusionNFTConfig, got "
                 f"{type(algorithm_config).__name__}",
             )
         return AlgorithmEvaluatorPair(
@@ -314,14 +299,16 @@ def build_collector_from_cfg(
     cfg: DictConfig,
     *,
     reward_fn: Any,
-    family: str | RolloutFamilyEntry | None = None,
+    family_entry: RolloutFamilyEntry,
     collector_config: Any | None = None,
     runtime: Any | None = None,
 ) -> Any:
     """Build a rollout collector through the canonical family registry."""
 
-    entry = _entry_from_family(cfg, family)
-    collector_config = collector_config or build_rollout_config_from_cfg(cfg, family=entry.family)
+    collector_config = collector_config or build_rollout_config_from_cfg(
+        cfg,
+        family=family_entry.family,
+    )
     # Topology-derived release policy so the collector reads its own handoff
     # rather than asking the runtime. Absent for in-process runs with no
     # distributed.resources, where there is no shared GPU to hand off.
@@ -329,7 +316,7 @@ def build_collector_from_cfg(
     if OmegaConf.select(cfg, "distributed.resources", default=None) is not None:
         lifecycle = resolve_distributed_resources(cfg).lifecycle
     return build_rollout_collector(
-        entry.family,
+        family_entry.family,
         reward_fn=reward_fn,
         config=collector_config,
         runtime=runtime,
@@ -340,16 +327,15 @@ def build_collector_from_cfg(
 def build_online_recipe_components(
     cfg: DictConfig,
     *,
+    family_entry: RolloutFamilyEntry,
     reward_device: str = "cuda",
-    family: str | RolloutFamilyEntry | None = None,
     scheduler: Any | None = None,
     built: dict[str, Any] | None = None,
 ) -> OnlineRecipeFactoryOutput:
     """Build config-derived online recipe components without loading a model."""
 
     built = built or build_configs(cfg)
-    entry = _entry_from_family(cfg, family)
-    collector_config = build_rollout_config_from_cfg(cfg, family=entry.family)
+    collector_config = build_rollout_config_from_cfg(cfg, family=family_entry.family)
     reward_fn = build_reward_from_cfg(
         cfg,
         built=built,
@@ -357,42 +343,17 @@ def build_online_recipe_components(
     )
     pair = build_algorithm_and_evaluator_from_cfg(
         cfg,
-        family=entry,
+        family_entry=family_entry,
         built=built,
         collector_config=collector_config,
         scheduler=scheduler,
     )
     return OnlineRecipeFactoryOutput(
-        built=built,
-        trainer_config=built["trainer"],
-        family=entry.family,
-        family_entry=entry,
         collector_config=collector_config,
         reward_fn=reward_fn,
         algorithm=pair.algorithm,
         evaluator=pair.evaluator,
     )
-
-
-def _entry_from_family(
-    cfg: DictConfig,
-    family: str | RolloutFamilyEntry | None,
-) -> RolloutFamilyEntry:
-    if isinstance(family, RolloutFamilyEntry):
-        return family
-    return get_rollout_family_entry(family or resolve_online_family(cfg))
-
-
-def _cfg_select(cfg: DictConfig, path: str, default: Any) -> Any:
-    value = OmegaConf.select(cfg, path, default=default)
-    if isinstance(value, (dict, list, tuple)):
-        return value
-    if value is default:
-        return default
-    container = value
-    if hasattr(value, "_metadata"):
-        container = OmegaConf.to_container(value, resolve=True)
-    return container
 
 
 __all__ = [
@@ -403,5 +364,4 @@ __all__ = [
     "build_collector_from_cfg",
     "build_online_recipe_components",
     "build_reward_from_cfg",
-    "resolve_online_family",
 ]

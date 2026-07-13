@@ -263,9 +263,8 @@ def test_all_online_experiments_pass_static_launch_preflight() -> None:
         reward_pool = str(resources_cfg.get("reward", {}).get("gpu_pool", "auto"))
         if resources_cfg.get("visible_devices", "auto") == "auto":
             required = 1
-            requires_disjoint_devices = (
-                "dedicated" in {rollout_pool, reward_pool}
-                or bool(resources_cfg.get("cross_node", False))
+            requires_disjoint_devices = "dedicated" in {rollout_pool, reward_pool} or bool(
+                resources_cfg.get("cross_node", False)
             )
             if requires_disjoint_devices:
                 trainer_gpus = requested_gpus(resources_cfg.trainer, default=1)
@@ -409,6 +408,19 @@ def test_algorithm_config_dispatches_representative_kinds() -> None:
         cfg = load_config(f"experiment/{name}")
         algo_cfg = build_algorithm_config(cfg)
         assert isinstance(algo_cfg, expected_type)
+
+
+def test_janus_experiments_declare_the_exact_runtime_family() -> None:
+    expected = {
+        "ar/janus_pro/online_grpo_ocr": "janus_pro",
+        "ar/janus_pro/online_grpo_aesthetic": "janus_pro",
+        "ar/janus_pro/online_r1_grpo_ocr": "janus_pro_r1",
+        "ar/janus_pro/online_r1_grpo_aesthetic": "janus_pro_r1",
+    }
+
+    for name, family in expected.items():
+        cfg = load_config(f"experiment/{name}")
+        assert cfg.model.family == family
 
 
 def test_algorithm_dispatch_is_stable_per_kind() -> None:

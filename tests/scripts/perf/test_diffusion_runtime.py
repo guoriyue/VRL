@@ -17,7 +17,7 @@ def test_build_model_passes_dtype_as_named_parameter_override(monkeypatch) -> No
     cfg = SimpleNamespace(model=SimpleNamespace(family="sd3_5", use_lora=False))
     device = torch.device("cpu")
     dtype = torch.bfloat16
-    resolved_build = object()
+    resolved_build = SimpleNamespace(family="sd3_5")
     model = object()
     calls: dict[str, object] = {}
 
@@ -35,10 +35,10 @@ def test_build_model_passes_dtype_as_named_parameter_override(monkeypatch) -> No
         return SimpleNamespace(model=model)
 
     entry = SimpleNamespace(
+        family="sd3_5",
         model_build_resolver="test:resolve_build",
         runtime_builder="test:build_bundle",
     )
-    monkeypatch.setattr(families, "normalize_rollout_family", lambda family: family)
     monkeypatch.setattr(families, "get_rollout_family_entry", lambda _family: entry)
     monkeypatch.setattr(
         config_utils,

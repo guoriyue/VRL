@@ -14,6 +14,7 @@ import torch
 from omegaconf import DictConfig, OmegaConf
 
 from vrl.config.builders import build_configs
+from vrl.config.validation import require
 from vrl.generation.ray.launcher import RayGenerationLauncher
 from vrl.models.interfaces import require_runtime_model
 from vrl.ray.dependencies import require_ray
@@ -24,7 +25,10 @@ from vrl.ray.resources import (
     reward_torch_device,
     trainer_torch_device,
 )
-from vrl.rollouts.families import build_ray_generation_inputs_for_family
+from vrl.rollouts.families import (
+    get_rollout_family_entry,
+    resolve_entry_model_build,
+)
 from vrl.rollouts.orchestration import validate_rollout_schedule_topology
 from vrl.scripts.common.factory import (
     build_collector_from_cfg,
@@ -752,6 +756,7 @@ async def run_online_recipe(
 
     _preflight_production_video_reward(cfg)
     built = build_configs(cfg)
+    family_entry = get_rollout_family_entry(str(require(cfg, "model.family")))
     trainer_config = built["trainer"]
     _log_rollout_memory_plan(trainer_config)
     _warn_global_std_streaming_divergence(cfg, trainer_config)
@@ -800,13 +805,19 @@ async def run_online_recipe(
     examples = load_prompt_examples_from_config(cfg.data)
     _resolve_reference_artifacts(examples, cfg)
     log_host_memory("before_trainer_bundle_build", log=logger)
-    bundle = definition.build_replay_bundle(cfg, device)
+    replay_build = resolve_entry_model_build(
+        family_entry,
+        cfg,
+        device,
+        for_rollout=False,
+    )
+    bundle = definition.build_replay_bundle(replay_build)
     log_host_memory("after_trainer_bundle_build", log=logger)
     if definition.after_bundle_built is not None:
         definition.after_bundle_built(bundle, cfg)
     model = require_runtime_model(
         bundle.model,
-        owner=f"{definition.family}.bundle.model",
+        owner=f"{family_entry.family}.bundle.model",
     )
     # Scheduler feeds the flow-matching evaluator when the family bundle has one.
     scheduler = getattr(bundle, "scheduler", None)
@@ -835,7 +846,7 @@ async def run_online_recipe(
         placement_owner.create()
         components = build_online_recipe_components(
             cfg,
-            family=definition.family,
+            family_entry=family_entry,
             reward_device=reward_device,
             scheduler=scheduler,
             built=built,
@@ -852,18 +863,19 @@ async def run_online_recipe(
         )
         collector = build_collector_from_cfg(
             cfg,
-            family=components.family_entry,
+            family_entry=family_entry,
             reward_fn=components.reward_fn,
             collector_config=components.collector_config,
         )
-        runtime_inputs = build_ray_generation_inputs_for_family(
+        generation_launcher = RayGenerationLauncher()
+        runtime_inputs = generation_launcher.build_inputs(
             cfg,
-            components.family,
+            family_entry,
             executor_kwargs=dict(rollout_executor_kwargs),
         )
         log_host_memory("before_rollout_backend_build", log=logger)
         collector.set_runtime(
-            RayGenerationLauncher().launch_from_cfg(
+            generation_launcher.launch_from_cfg(
                 cfg,
                 driver_bundle=bundle,
                 launch_contract=runtime_inputs.launch_contract,
@@ -900,7 +912,10 @@ async def run_online_recipe(
             config=trainer_config,
             device=device,
             strategy=strategy,
-            sft_latents=_load_sft_latents_from_config(cfg, definition.family),
+            sft_latents=_load_sft_latents_from_config(
+                cfg,
+                family_entry.family,
+            ),
         )
 
         if resume_checkpoint is not None:
@@ -908,7 +923,7 @@ async def run_online_recipe(
                 resume_checkpoint,
                 trainer=trainer,
                 bundle=bundle,
-                family=components.family,
+                family=family_entry.family,
                 strict=trainer_config.resume_strict,
             )
             logger.info(
@@ -928,7 +943,7 @@ async def run_online_recipe(
         if is_primary:
             save_resolved_config(cfg, output_dir, resumed=resume_checkpoint is not None)
 
-        component_names = tuple(components.built["reward"][0].keys())
+        component_names = tuple(built["reward"][0].keys())
 
         rng = torch.Generator().manual_seed(trainer_config.seed)
         start_epoch = resume_checkpoint.next_epoch if resume_checkpoint is not None else 0
@@ -947,7 +962,7 @@ async def run_online_recipe(
             reward_fn=components.reward_fn,
             trainer=trainer,
             strategy=strategy,
-            family=components.family,
+            family=family_entry.family,
             component_names=component_names,
         )
         # Execution controller for this run: owns the metrics-CSV paths, prompt
@@ -965,7 +980,7 @@ async def run_online_recipe(
 
         logger.info(
             "Starting %s online recipe: epochs=%d examples=%d n=%d",
-            components.family,
+            family_entry.family,
             trainer_config.total_epochs,
             len(examples),
             trainer_config.n_samples_per_prompt,
