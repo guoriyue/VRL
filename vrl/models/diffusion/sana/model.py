@@ -130,14 +130,16 @@ class SanaModel(LoraModelMixin, DiffusersPipelineModelBase, DiffusionBackboneRun
         # FlowMatchEuler (build.py, no scheduler_classname); the rollout was still
         # on DPMSolver, so rollout timesteps never matched replay's and
         # index_for_timestep(t) returned empty at the first-step parity check.
-        # Swap rollout to FlowMatchEuler via from_config so it matches replay
-        # exactly (from_config keeps shift at its default 1.0 — diffusers does not
-        # map SANA's `flow_shift` config key onto `shift`, and the replay loader
-        # lands on the same 1.0, so the two schedules are identical).
+        # Swap rollout to FlowMatchEuler for per-step log-prob. SANA's shipped
+        # DPM config calls this value ``flow_shift``; FlowMatch calls it ``shift``.
+        # Passing it explicitly preserves the checkpoint's shift=3 instead of
+        # silently accepting FlowMatch's default shift=1 (the color-block bug).
         from diffusers import FlowMatchEulerDiscreteScheduler
 
+        scheduler_config = dict(pipeline.scheduler.config)
         pipeline.scheduler = FlowMatchEulerDiscreteScheduler.from_config(
-            dict(pipeline.scheduler.config),
+            scheduler_config,
+            shift=float(scheduler_config.get("flow_shift", 1.0)),
         )
         return cls(
             pipeline=pipeline,

@@ -62,10 +62,12 @@ class LlamaGenConfig:
     """
 
     model_path: str = LLAMAGEN_HF_REPO
+    revision: str | None = None
     gpt_ckpt: str = LLAMAGEN_GPT_CKPT
     vq_ckpt: str = LLAMAGEN_VQ_CKPT
     gpt_model: str = "GPT-XL"
     t5_path: str = LLAMAGEN_T5_PATH
+    t5_revision: str | None = None
     dtype: str = "bfloat16"
     device: str = "cuda"
 
@@ -487,7 +489,12 @@ class LlamaGenReplayModel(ARReplayRolloutStubs, LlamaGenModel):
 # ---------------------------------------------------------------------------
 
 
-def _resolve_checkpoint_file(model_path: str, filename: str) -> str:
+def _resolve_checkpoint_file(
+    model_path: str,
+    filename: str,
+    *,
+    revision: str | None,
+) -> str:
     """Local dir join or HF hub download for one LlamaGen ``.pt`` file."""
     if os.path.isdir(model_path):
         path = os.path.join(model_path, filename)
@@ -496,7 +503,7 @@ def _resolve_checkpoint_file(model_path: str, filename: str) -> str:
         return path
     from huggingface_hub import hf_hub_download
 
-    return hf_hub_download(model_path, filename=filename)
+    return hf_hub_download(model_path, filename=filename, revision=revision)
 
 
 def _checkpoint_weights(checkpoint: Any, *, label: str) -> Any:
@@ -539,7 +546,11 @@ def _load_llamagen_gpt(config: LlamaGenConfig) -> nn.Module:
         class_dropout_prob=0.0,
     )
 
-    ckpt_path = _resolve_checkpoint_file(config.model_path, config.gpt_ckpt)
+    ckpt_path = _resolve_checkpoint_file(
+        config.model_path,
+        config.gpt_ckpt,
+        revision=config.revision,
+    )
     # weights_only=False: upstream training checkpoints bundle non-tensor
     # metadata (argparse args) that strict weights-only loading rejects; the
     # file identity is pinned by config (repo + filename).
@@ -567,7 +578,11 @@ def _load_llamagen_vq(config: LlamaGenConfig) -> nn.Module:
         codebook_size=LLAMAGEN_IMAGE_VOCAB_SIZE,
         codebook_embed_dim=int(config.codebook_embed_dim),
     )
-    ckpt_path = _resolve_checkpoint_file(config.model_path, config.vq_ckpt)
+    ckpt_path = _resolve_checkpoint_file(
+        config.model_path,
+        config.vq_ckpt,
+        revision=config.revision,
+    )
     checkpoint = torch.load(ckpt_path, map_location="cpu", weights_only=False)
     vq.load_state_dict(_checkpoint_weights(checkpoint, label="LlamaGen VQ"))
     del checkpoint
@@ -585,8 +600,13 @@ def _load_t5_encoder(config: LlamaGenConfig) -> tuple[nn.Module, Any]:
     """
     from transformers import AutoTokenizer, T5EncoderModel
 
-    tokenizer = AutoTokenizer.from_pretrained(config.t5_path)
-    encoder = T5EncoderModel.from_pretrained(config.t5_path, torch_dtype=torch.float32)
+    revision_kwargs = {"revision": config.t5_revision} if config.t5_revision else {}
+    tokenizer = AutoTokenizer.from_pretrained(config.t5_path, **revision_kwargs)
+    encoder = T5EncoderModel.from_pretrained(
+        config.t5_path,
+        torch_dtype=torch.float32,
+        **revision_kwargs,
+    )
     return encoder.eval(), tokenizer
 
 

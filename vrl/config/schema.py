@@ -376,6 +376,8 @@ class ModelConfig(ConfigBase):
     # model.memory sections (today only vae_decode, which self-validates strictly)
     memory: Annotated[Any, ConfigBlock(MODEL_MEMORY_SECTIONS)] = None
     path: Any = None
+    # Immutable Hub snapshot used by full-pipeline rollout and component replay.
+    revision: Any = None
     torch_compile: Annotated[Any, ConfigBlock(("enable", "mode"))] = None
     use_lora: Any = None
     # model.executor: pure-data chunk-executor config for families using the
@@ -421,7 +423,6 @@ class CosmosPredict25ModelConfig(ModelConfig):
 
     model_config = ConfigDict(extra="ignore")
 
-    revision: Any = None
     skip_text_encoder: Any = None
 
 
@@ -431,8 +432,10 @@ class CosmosAnimaModelConfig(ModelConfig):
     model_config = ConfigDict(extra="ignore")
 
     qwen_tokenizer_path: Any = None
+    qwen_tokenizer_revision: Any = None
     scheduler_shift: Any = None
     t5_tokenizer_path: Any = None
+    t5_tokenizer_revision: Any = None
     text_encoder_file: Any = None
     text_encoder_path: Any = None
     transformer_file: Any = None
@@ -457,6 +460,7 @@ class NextStep1ModelConfig(ModelConfig):
 
     freeze_vae: Any = None
     vae_path: Any = None
+    vae_revision: Any = None
 
 
 class LlamaGenModelConfig(ModelConfig):
@@ -467,6 +471,7 @@ class LlamaGenModelConfig(ModelConfig):
     gpt_ckpt: Any = None
     gpt_model: Any = None
     t5_path: Any = None
+    t5_revision: Any = None
     vq_ckpt: Any = None
 
 
@@ -481,6 +486,7 @@ class EchoModelConfig(ModelConfig):
     model_config = ConfigDict(extra="ignore")
 
     gemma_path: Any = None
+    gemma_revision: Any = None
 
 
 class FluxModelConfig(ModelConfig):

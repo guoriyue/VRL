@@ -6,6 +6,19 @@ from __future__ import annotations
 from typing import Any
 
 
+def model_revision_kwargs(build: Any) -> dict[str, str]:
+    """Return the immutable model snapshot argument for every upstream loader."""
+
+    return model_config_revision_kwargs(build, "revision")
+
+
+def model_config_revision_kwargs(build: Any, field: str) -> dict[str, str]:
+    """Return an optional revision kwarg owned by one model-config repository."""
+
+    revision = (getattr(build, "model_config", None) or {}).get(field)
+    return {"revision": str(revision)} if revision else {}
+
+
 def load_diffusers_transformer(
     build: Any,
     class_name: str,
@@ -16,10 +29,7 @@ def load_diffusers_transformer(
 
     import diffusers
 
-    load_kwargs: dict[str, Any] = {}
-    revision = (getattr(build, "model_config", None) or {}).get("revision")
-    if revision:
-        load_kwargs["revision"] = revision
+    load_kwargs = model_revision_kwargs(build)
     transformer_cls = getattr(diffusers, class_name)
     return transformer_cls.from_pretrained(
         build.model_name_or_path,
@@ -39,10 +49,7 @@ def load_diffusers_scheduler(
 
     import diffusers
 
-    load_kwargs: dict[str, Any] = {}
-    revision = (getattr(build, "model_config", None) or {}).get("revision")
-    if revision:
-        load_kwargs["revision"] = revision
+    load_kwargs = model_revision_kwargs(build)
     scheduler_cls = getattr(diffusers, class_name)
     scheduler = scheduler_cls.from_pretrained(
         build.model_name_or_path,
@@ -68,11 +75,23 @@ def load_flow_match_scheduler(
 ) -> Any:
     """Load the lightweight FlowMatch scheduler needed for replay log-prob math."""
 
-    return load_diffusers_scheduler(
+    scheduler = load_diffusers_scheduler(
         build,
         "FlowMatchEulerDiscreteScheduler",
         subfolder=subfolder,
     )
+    flow_shift = getattr(scheduler.config, "flow_shift", None)
+    if flow_shift is None:
+        return scheduler
+    # SANA stores the rectified-flow shift under the DPM-facing ``flow_shift``
+    # name. Rebuild the lightweight replay scheduler with the same value used by
+    # the rollout conversion instead of FlowMatch's unrelated default shift=1.
+    scheduler_cls = type(scheduler)
+    rebuilt = scheduler_cls.from_config(dict(scheduler.config), shift=float(flow_shift))
+    num_steps = build.num_steps
+    if num_steps is not None:
+        rebuilt.set_timesteps(int(num_steps), device=getattr(build, "device", None))
+    return rebuilt
 
 
 def validate_rollout_quantization_support(build: Any) -> None:
@@ -234,5 +253,7 @@ __all__ = [
     "load_diffusers_scheduler",
     "load_diffusers_transformer",
     "load_flow_match_scheduler",
+    "model_config_revision_kwargs",
+    "model_revision_kwargs",
     "validate_rollout_quantization_support",
 ]

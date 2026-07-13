@@ -43,7 +43,11 @@ from vrl.models.interfaces.runtime import ModelBuild
 _LATENT_CHANNELS = 128
 
 
-def _resolve_echo_checkpoint(path_or_repo: str) -> str:
+def _resolve_echo_checkpoint(
+    path_or_repo: str,
+    *,
+    revision: str | None = None,
+) -> str:
     """Local path to the Echo safetensors, fetched into the HF cache if a repo id.
 
     Same convention as wan/sd3 configs (an HF repo id): the merged release lands
@@ -58,10 +62,19 @@ def _resolve_echo_checkpoint(path_or_repo: str) -> str:
     from huggingface_hub import hf_hub_download
 
     # The single merged release artifact (transformer + VAEs + vocoder).
-    return hf_hub_download(path_or_repo, "JoyAI-Echo-release.safetensors")
+    load_kwargs = {"revision": revision} if revision else {}
+    return hf_hub_download(
+        path_or_repo,
+        "JoyAI-Echo-release.safetensors",
+        **load_kwargs,
+    )
 
 
-def _resolve_gemma_dir(path_or_repo: str) -> str:
+def _resolve_gemma_dir(
+    path_or_repo: str,
+    *,
+    revision: str | None = None,
+) -> str:
     """Local dir of the Gemma encoder, fetched into the HF cache if a repo id."""
 
     from pathlib import Path
@@ -70,9 +83,11 @@ def _resolve_gemma_dir(path_or_repo: str) -> str:
         return path_or_repo
     from huggingface_hub import snapshot_download
 
+    load_kwargs = {"revision": revision} if revision else {}
     return snapshot_download(
-        path_or_repo,
+        repo_id=path_or_repo,
         allow_patterns=["*.safetensors", "*.json", "*.model", "tokenizer*", "*.txt"],
+        **load_kwargs,
     )
 
 
@@ -219,8 +234,16 @@ class EchoModel(LoraModelMixin, DiffusionModelBase):
             raise ValueError(
                 "Echo requires model.gemma_path (a Gemma-3-12B HF repo id or local dir)",
             )
-        checkpoint = _resolve_echo_checkpoint(build.model_name_or_path)
-        gemma_path = _resolve_gemma_dir(gemma_ref)
+        from vrl.models.loader import model_config_revision_kwargs, model_revision_kwargs
+
+        checkpoint = _resolve_echo_checkpoint(
+            build.model_name_or_path,
+            **model_revision_kwargs(build),
+        )
+        gemma_path = _resolve_gemma_dir(
+            gemma_ref,
+            **model_config_revision_kwargs(build, "gemma_revision"),
+        )
 
         # Sampling resolution sizes the wrapper's RoPE/patch grid; the rollout
         # request can override per call, but the wrapper wants a build-time

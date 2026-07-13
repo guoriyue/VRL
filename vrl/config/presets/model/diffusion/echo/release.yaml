@@ -8,7 +8,9 @@
 model:
   family: echo
   path: jdopensource/JoyAI-Echo
+  revision: 4187f9a53c6eff3a76c51e79bd27f70d10f7591b
   gemma_path: google/gemma-3-12b-it
+  gemma_revision: 96b6f1eccf38110c56df3a15bffe176da04bfd80
 
   use_lora: true
   lora:

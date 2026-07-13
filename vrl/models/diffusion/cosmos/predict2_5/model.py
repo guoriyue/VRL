@@ -132,9 +132,7 @@ def _load_pipeline_without_text_encoder(
 ) -> Any:
     from diffusers import AutoencoderKLWan, CosmosTransformer3DModel, UniPCMultistepScheduler
 
-    load_kwargs: dict[str, Any] = {}
-    if revision:
-        load_kwargs["revision"] = revision
+    load_kwargs: dict[str, Any] = {"revision": revision} if revision else {}
 
     transformer = CosmosTransformer3DModel.from_pretrained(
         build.model_name_or_path,
@@ -197,10 +195,13 @@ class CosmosPredict25Model(CosmosReplayForward, DiffusersPipelineModelBase):
         import diffusers.pipelines.cosmos.pipeline_cosmos2_5_predict as _predict_mod
         from diffusers import Cosmos2_5_PredictBasePipeline
 
-        kwargs: dict[str, Any] = {"torch_dtype": build.parameter_dtype}
-        revision = (build.model_config or {}).get("revision") or None
-        if revision:
-            kwargs["revision"] = revision
+        from vrl.models.loader import model_revision_kwargs
+
+        kwargs: dict[str, Any] = {
+            "torch_dtype": build.parameter_dtype,
+            **model_revision_kwargs(build),
+        }
+        revision = kwargs.get("revision")
         skip_text_encoder = bool((build.model_config or {}).get("skip_text_encoder", False))
         if skip_text_encoder:
             pipeline = _load_pipeline_without_text_encoder(

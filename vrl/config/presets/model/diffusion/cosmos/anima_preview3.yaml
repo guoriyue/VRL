@@ -4,11 +4,14 @@
 model:
   family: cosmos-predict2-anima
   path: circlestone-labs/Anima
+  revision: 53eec3898af698b2cf2a11379021fc9c5465d228
   transformer_file: split_files/diffusion_models/anima-preview3-base.safetensors
   text_encoder_file: split_files/text_encoders/qwen_3_06b_base.safetensors
   vae_file: split_files/vae/qwen_image_vae.safetensors
   qwen_tokenizer_path: Qwen/Qwen2.5-0.5B
+  qwen_tokenizer_revision: 060db6499f32faf8b98477b0a26969ef7d8b9987
   t5_tokenizer_path: google-t5/t5-base
+  t5_tokenizer_revision: a9723ea7f1b39c1eae772870f3b547bf6ef7e6c1
   scheduler_shift: 3.0
 
   memory:

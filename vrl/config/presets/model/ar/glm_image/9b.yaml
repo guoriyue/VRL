@@ -8,6 +8,7 @@
 model:
   family: glm_image
   path: zai-org/GLM-Image
+  revision: 2c433cc0cbc293bde2ac8ca9624f279b5d23fcf4
 
   use_lora: true
   lora:

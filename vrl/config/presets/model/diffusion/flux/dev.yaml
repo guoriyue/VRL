@@ -5,6 +5,7 @@ model:
   executor:
     chunk_passthrough_keys: [text_ids]
   path: black-forest-labs/FLUX.1-dev
+  revision: 3de623fc3c33e44ffbe2bad470d0f45bccf2eb21
 
   memory:
     # Sliced/tiled VAE decode: the image VAE conv stack OOMs on batched decode

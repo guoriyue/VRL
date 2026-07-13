@@ -45,6 +45,7 @@ model:
     alpha: 32
     target_modules: [to_q, to_k, to_v, to_out.0]
   path: checkpoints/cosmos-predict2-2b-480p-16fps-diffusers
+  revision: null
   torch_compile:
     enable: false                     # incompatible with gradient_checkpointing
 

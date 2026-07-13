@@ -17,7 +17,12 @@ from __future__ import annotations
 from typing import Any
 
 
-def resolve_hf_checkpoint_dir(model_path: str, *, subfolder: str | None = None) -> str:
+def resolve_hf_checkpoint_dir(
+    model_path: str,
+    *,
+    subfolder: str | None = None,
+    revision: str | None = None,
+) -> str:
     """Local dir passthrough, else the HF snapshot dir (downloading if needed)."""
     import os
 
@@ -26,7 +31,7 @@ def resolve_hf_checkpoint_dir(model_path: str, *, subfolder: str | None = None) 
     else:
         from huggingface_hub import snapshot_download
 
-        base = snapshot_download(model_path)
+        base = snapshot_download(model_path, revision=revision)
     return os.path.join(base, subfolder) if subfolder else base
 
 

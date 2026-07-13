@@ -61,7 +61,9 @@ class NextStep1Config:
     """
 
     model_path: str = "stepfun-ai/NextStep-1.1"
+    revision: str | None = None
     vae_path: str = "stepfun-ai/NextStep-1-f8ch16-Tokenizer"
+    vae_revision: str | None = None
     dtype: str = "bfloat16"
     device: str = "cuda"
 
@@ -156,9 +158,20 @@ class NextStep1Model(ARModelBase):
         """
         from gen_pipeline import NextStepPipeline  # type: ignore[import-not-found]
 
+        from vrl.models.ar.loader import resolve_hf_checkpoint_dir
+
+        model_path = resolve_hf_checkpoint_dir(
+            self.config.model_path,
+            revision=self.config.revision,
+        )
+        vae_path = resolve_hf_checkpoint_dir(
+            self.config.vae_path,
+            revision=self.config.vae_revision,
+        )
+
         return NextStepPipeline(
-            model_name_or_path=self.config.model_path,
-            vae_name_or_path=self.config.vae_path,
+            model_name_or_path=model_path,
+            vae_name_or_path=vae_path,
             device=str(self.device),
             dtype=self.dtype,
             enable_gradient_checkpointing=self.config.gradient_checkpointing,
@@ -444,8 +457,15 @@ def _load_nextstep_replay_model(config: NextStep1Config) -> Any:
 
     from nextstep_model import NextStep  # type: ignore[import-not-found]
 
-    model = NextStep.from_pretrained(
+    from vrl.models.ar.loader import resolve_hf_checkpoint_dir
+
+    model_path = resolve_hf_checkpoint_dir(
         config.model_path,
+        revision=config.revision,
+    )
+
+    model = NextStep.from_pretrained(
+        model_path,
         torch_dtype=resolve_torch_dtype(config.dtype),
         enable_gradient_checkpointing=config.gradient_checkpointing,
     )

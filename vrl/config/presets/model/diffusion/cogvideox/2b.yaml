@@ -6,6 +6,7 @@ model:
     num_frames: 49
     max_sequence_length: 226
   path: THUDM/CogVideoX-2b
+  revision: 1137dacfc2c9c012bed6a0793f4ecf2ca8e7ba01
 
   memory:
     vae_decode:

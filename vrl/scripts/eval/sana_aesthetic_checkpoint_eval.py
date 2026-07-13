@@ -51,7 +51,7 @@ SAMPLES_RELATIVE_PATH = Path("sana_aesthetic_eval/samples.jsonl")
 EVAL_BASE_SEED = 20260710
 EVAL_SAMPLES_PER_PROMPT = 2
 CANONICAL_CONFIG_NAME = "experiment/diffusion/sana/online_grpo_aesthetic"
-CANONICAL_PROTOCOL_SHA256 = "c1d3814771ce756e9ce0e412f09e6486e72edf26bb66e67c09f8556d1995beea"
+CANONICAL_PROTOCOL_SHA256 = "28732eded40cd7412db76f08eff085036215008467d538be98dfa98b6fca6dec"
 # Frozen protocol-asset identities. These hashes name two concrete datasets;
 # they are not a duplicated prompt taxonomy or a user-facing config table.
 TRAIN_MANIFEST_SHA256 = "86580c8136a4b6d9fc6bbcc6d8e8e172b15fca6b5c6c956cc770255d8011de56"

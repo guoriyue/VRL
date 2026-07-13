@@ -194,6 +194,8 @@ class CosmosPredict2Model(CosmosReplayForward, LoraModelMixin, DiffusersPipeline
         import diffusers.pipelines.cosmos.pipeline_cosmos2_video2world as _v2w_mod
         from diffusers import Cosmos2VideoToWorldPipeline
 
+        from vrl.models.loader import model_revision_kwargs
+
         class _PassthroughSafetyChecker:
             def to(self, device: Any) -> _PassthroughSafetyChecker:
                 return self
@@ -210,6 +212,7 @@ class CosmosPredict2Model(CosmosReplayForward, LoraModelMixin, DiffusersPipeline
             pipeline = Cosmos2VideoToWorldPipeline.from_pretrained(
                 build.model_name_or_path,
                 torch_dtype=build.parameter_dtype,
+                **model_revision_kwargs(build),
             )
         finally:
             _v2w_mod.CosmosSafetyChecker = _orig

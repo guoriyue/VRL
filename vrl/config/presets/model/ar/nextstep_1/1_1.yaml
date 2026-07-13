@@ -5,7 +5,9 @@
 model:
   family: nextstep_1
   path: stepfun-ai/NextStep-1.1
+  revision: 05486ff90769ad32109d219fd4659d41671a770a
   vae_path: stepfun-ai/NextStep-1-f8ch16-Tokenizer
+  vae_revision: 31c24c8c751e87b02d56ae6a5fe658e7da0b8388
 
   use_lora: true
   lora:

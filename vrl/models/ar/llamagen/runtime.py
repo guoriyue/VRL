@@ -38,7 +38,7 @@ def llamagen_config_from_build(build: ModelBuild) -> dict[str, Any]:
         if key in sampling_config:
             config[key] = sampling_config[key]
 
-    for key in ("gpt_ckpt", "vq_ckpt", "gpt_model", "t5_path"):
+    for key in ("gpt_ckpt", "vq_ckpt", "gpt_model", "t5_path", "t5_revision"):
         # ``None`` means "unset" in YAML; defer to LlamaGenConfig's own default.
         value = model_config.get(key)
         if value is not None:

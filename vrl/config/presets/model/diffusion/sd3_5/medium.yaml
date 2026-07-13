@@ -5,6 +5,7 @@ model:
   executor:
     max_sequence_length: 128
   path: stabilityai/stable-diffusion-3.5-medium
+  revision: b940f670f0eda2d07fbb75229e779da1ad11eb80
 
   memory:
     # Sliced/tiled VAE decode: b16 chunks OOM in the image VAE conv stack

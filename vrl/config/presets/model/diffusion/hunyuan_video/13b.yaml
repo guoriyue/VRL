@@ -7,6 +7,7 @@ model:
     num_frames: 17
     max_sequence_length: 256
   path: hunyuanvideo-community/HunyuanVideo
+  revision: e8c2aaa66fe3742a32c11a6766aecbf07c56e773
 
   memory:
     vae_decode:

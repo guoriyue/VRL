@@ -158,9 +158,12 @@ class WanT2VDiffusersModel(
         """Load the diffusers WanPipeline + freeze non-trainable modules."""
         from diffusers import WanPipeline
 
+        from vrl.models.loader import model_revision_kwargs
+
         pipeline = WanPipeline.from_pretrained(
             build.model_name_or_path,
             torch_dtype=build.parameter_dtype,
+            **model_revision_kwargs(build),
         )
         _validate_wan_pipeline(pipeline, task="Wan T2V")
         pipeline.vae.requires_grad_(False)
@@ -656,9 +659,12 @@ class WanI2VDiffusersModel(WanT2VDiffusersModel):
         """Load WanImageToVideoPipeline + freeze generation-only modules."""
         from diffusers import WanImageToVideoPipeline
 
+        from vrl.models.loader import model_revision_kwargs
+
         pipeline = WanImageToVideoPipeline.from_pretrained(
             build.model_name_or_path,
             torch_dtype=build.parameter_dtype,
+            **model_revision_kwargs(build),
         )
         _validate_wan_pipeline(pipeline, task="Wan I2V")
         pipeline.set_progress_bar_config(disable=True)

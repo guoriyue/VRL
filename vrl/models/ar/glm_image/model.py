@@ -82,6 +82,7 @@ class GlmImageConfig:
     """Hyper-parameters for the GLM-Image wrapper (defaults target the 9B AR)."""
 
     model_path: str = "zai-org/GLM-Image"
+    revision: str | None = None
     dtype: str = "bfloat16"           # "bfloat16" | "float16" | "float32"
 
     # LoRA — GLM-Image's text trunk uses LLaMA-style projection names.
@@ -839,7 +840,9 @@ def _load_glm_image_from_pretrained(config: GlmImageConfig) -> tuple[Any, Any]:
 
     dtype = resolve_torch_dtype(config.dtype)
     processor = GlmImageProcessor.from_pretrained(
-        config.model_path, subfolder=GLM_IMAGE_PROCESSOR_SUBFOLDER,
+        config.model_path,
+        subfolder=GLM_IMAGE_PROCESSOR_SUBFOLDER,
+        revision=config.revision,
     )
     # The prefill runner reads the last-position hidden state as "next token
     # context"; the checkpoint tokenizer already configures left padding, but
@@ -849,6 +852,7 @@ def _load_glm_image_from_pretrained(config: GlmImageConfig) -> tuple[Any, Any]:
         config.model_path,
         subfolder=GLM_IMAGE_AR_SUBFOLDER,
         dtype=dtype,
+        revision=config.revision,
     )
     glm = glm.to(device=config.device).eval()
     return glm, processor
@@ -875,22 +879,38 @@ def _load_glm_image_decode_pipeline(config: GlmImageConfig) -> Any:
     dtype = resolve_torch_dtype(config.dtype)
     path = config.model_path
     pipe = GlmImagePipeline(
-        tokenizer=AutoTokenizer.from_pretrained(path, subfolder="tokenizer"),
+        tokenizer=AutoTokenizer.from_pretrained(
+            path,
+            subfolder="tokenizer",
+            revision=config.revision,
+        ),
         processor=GlmImageProcessor.from_pretrained(
             path, subfolder=GLM_IMAGE_PROCESSOR_SUBFOLDER,
+            revision=config.revision,
         ),
         text_encoder=T5EncoderModel.from_pretrained(
             path, subfolder="text_encoder", dtype=dtype,
+            revision=config.revision,
         ),
         vision_language_encoder=None,
         # diffusers models take ``torch_dtype`` (transformers 5 renamed its
         # kwarg to ``dtype``; diffusers 0.37 has not).
-        vae=AutoencoderKL.from_pretrained(path, subfolder="vae", torch_dtype=dtype),
+        vae=AutoencoderKL.from_pretrained(
+            path,
+            subfolder="vae",
+            torch_dtype=dtype,
+            revision=config.revision,
+        ),
         transformer=GlmImageTransformer2DModel.from_pretrained(
-            path, subfolder="transformer", torch_dtype=dtype,
+            path,
+            subfolder="transformer",
+            torch_dtype=dtype,
+            revision=config.revision,
         ),
         scheduler=FlowMatchEulerDiscreteScheduler.from_pretrained(
-            path, subfolder="scheduler",
+            path,
+            subfolder="scheduler",
+            revision=config.revision,
         ),
     )
     for module in (pipe.text_encoder, pipe.vae, pipe.transformer):
@@ -915,12 +935,18 @@ def _load_glm_image_replay_core_from_pretrained(
 
     dtype = resolve_torch_dtype(config.dtype)
     model_config = AutoConfig.from_pretrained(
-        config.model_path, subfolder=GLM_IMAGE_AR_SUBFOLDER,
+        config.model_path,
+        subfolder=GLM_IMAGE_AR_SUBFOLDER,
+        revision=config.revision,
     )
     core = GlmImageReplayCore(model_config)
     load_replay_core_checkpoint(
         core,
-        resolve_hf_checkpoint_dir(config.model_path, subfolder=GLM_IMAGE_AR_SUBFOLDER),
+        resolve_hf_checkpoint_dir(
+            config.model_path,
+            subfolder=GLM_IMAGE_AR_SUBFOLDER,
+            revision=config.revision,
+        ),
         owner="GLM-Image",
     )
     return core.to(device=config.device, dtype=dtype).eval()

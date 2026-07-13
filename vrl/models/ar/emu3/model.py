@@ -65,6 +65,7 @@ class Emu3Config:
     """Hyper-parameters for the Emu3 wrapper (defaults target Emu3-Gen ~9B)."""
 
     model_path: str = "BAAI/Emu3-Gen-hf"
+    revision: str | None = None
     dtype: str = "bfloat16"           # "bfloat16" | "float16" | "float32"
 
     # LoRA — Emu3's text model uses LLaMA-style projection names.
@@ -709,7 +710,7 @@ def _load_emu3_from_pretrained(config: Emu3Config) -> tuple[Any, Any]:
     from transformers import Emu3ForConditionalGeneration, Emu3Processor
 
     dtype = resolve_torch_dtype(config.dtype)
-    processor = Emu3Processor.from_pretrained(config.model_path)
+    processor = Emu3Processor.from_pretrained(config.model_path, revision=config.revision)
     # The prefill runner reads the last-position hidden state as "next token
     # context", so padded prompts must be LEFT-padded (GPT2 tokenizers default
     # to right padding).
@@ -717,6 +718,7 @@ def _load_emu3_from_pretrained(config: Emu3Config) -> tuple[Any, Any]:
     emu3 = Emu3ForConditionalGeneration.from_pretrained(
         config.model_path,
         dtype=dtype,
+        revision=config.revision,
     )
     emu3 = emu3.to(device=config.device).eval()
     return emu3, processor
@@ -733,13 +735,13 @@ def _load_emu3_replay_core_from_pretrained(config: Emu3Config) -> Emu3ReplayCore
     from transformers import AutoConfig
 
     dtype = resolve_torch_dtype(config.dtype)
-    model_config = AutoConfig.from_pretrained(config.model_path)
+    model_config = AutoConfig.from_pretrained(config.model_path, revision=config.revision)
     core = Emu3ReplayCore(model_config)
     from vrl.models.ar.loader import load_replay_core_checkpoint, resolve_hf_checkpoint_dir
 
     load_replay_core_checkpoint(
         core,
-        resolve_hf_checkpoint_dir(config.model_path),
+        resolve_hf_checkpoint_dir(config.model_path, revision=config.revision),
         owner="Emu3",
     )
     return core.to(device=config.device, dtype=dtype).eval()

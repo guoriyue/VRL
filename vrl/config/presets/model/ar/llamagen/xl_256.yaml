@@ -6,6 +6,7 @@
 model:
   family: llamagen
   path: peizesun/llamagen_t2i
+  revision: 276f5c5a3d915b922899a03f1912605531574747
 
   # Checkpoint files inside `path` (HF repo or local dir) and the frozen text
   # encoder. Defaults match LlamaGenConfig; listed here for discoverability.
@@ -13,6 +14,7 @@ model:
   vq_ckpt: vq_ds16_t2i.pt
   gpt_model: GPT-XL
   t5_path: google/flan-t5-xl
+  t5_revision: 7d6315df2c2fb742f0f5b556879d730926ca9001
 
   use_lora: true
   lora:

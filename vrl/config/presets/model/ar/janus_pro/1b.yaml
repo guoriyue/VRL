@@ -4,6 +4,7 @@
 model:
   family: janus_pro
   path: deepseek-ai/Janus-Pro-1B
+  revision: 960ab33191f61342a4c60ae74d8dc356a39fafcb
 
   use_lora: true
   lora:

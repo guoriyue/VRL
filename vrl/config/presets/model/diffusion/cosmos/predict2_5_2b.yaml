@@ -7,7 +7,7 @@
 model:
   family: cosmos-predict2.5
   path: nvidia/Cosmos-Predict2.5-2B
-  revision: diffusers/base/post-trained
+  revision: 0d37c7498f54cee3c599d438d895a0a4a8608064
   skip_text_encoder: false
 
   use_lora: true

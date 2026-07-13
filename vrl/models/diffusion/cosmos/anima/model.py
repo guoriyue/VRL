@@ -83,8 +83,13 @@ class AnimaModel(CosmosReplayForward, LoraModelMixin, DiffusionModelBase):
         ``build.model_config`` so downstream readers (bundle provenance, the
         replay path) see the resolved locations.
         """
+        from vrl.models.loader import model_config_revision_kwargs, model_revision_kwargs
+
         model_config = build.model_config or {}
         root = str(build.model_name_or_path or "").strip()
+        # These three artifacts share model.path and therefore one immutable
+        # revision. The tokenizer paths below are independent repositories.
+        revision_kwargs = model_revision_kwargs(build)
         for path_field, file_field in (
             ("transformer_path", "transformer_file"),
             ("text_encoder_path", "text_encoder_file"),
@@ -95,6 +100,7 @@ class AnimaModel(CosmosReplayForward, LoraModelMixin, DiffusionModelBase):
                 explicit_path=model_config.get(path_field, ""),
                 relative_file=model_config.get(file_field, ""),
                 field_name=path_field,
+                **revision_kwargs,
             )
             if resolved:
                 model_config[path_field] = resolved
@@ -136,12 +142,14 @@ class AnimaModel(CosmosReplayForward, LoraModelMixin, DiffusionModelBase):
         qwen_tokenizer = Qwen2Tokenizer.from_pretrained(
             paths["qwen_tokenizer_path"],
             local_files_only=True,
+            **model_config_revision_kwargs(build, "qwen_tokenizer_revision"),
         )
         if qwen_tokenizer.pad_token is None:
             qwen_tokenizer.pad_token = qwen_tokenizer.eos_token
         t5_tokenizer = T5TokenizerFast.from_pretrained(
             paths["t5_tokenizer_path"],
             local_files_only=True,
+            **model_config_revision_kwargs(build, "t5_tokenizer_revision"),
         )
 
         transformer.requires_grad_(False)
@@ -572,6 +580,7 @@ def _resolve_artifact(
     explicit_path: str,
     relative_file: str,
     field_name: str,
+    revision: str | None = None,
 ) -> str:
     """Resolve one single-file checkpoint artifact.
 
@@ -590,7 +599,12 @@ def _resolve_artifact(
     from huggingface_hub import hf_hub_download
 
     try:
-        return hf_hub_download(repo_id=root, filename=relative_file)
+        load_kwargs = {"revision": revision} if revision else {}
+        return hf_hub_download(
+            repo_id=root,
+            filename=relative_file,
+            **load_kwargs,
+        )
     except Exception as exc:
         raise ValueError(
             f"model.path={root!r} is not a local root and {relative_file!r} "

@@ -79,6 +79,7 @@ class JanusProConfig:
     """
 
     model_path: str = "deepseek-ai/Janus-Pro-1B"
+    revision: str | None = None
     dtype: str = "bfloat16"  # "bfloat16" | "float16" | "float32"
 
     # LoRA
@@ -1153,11 +1154,15 @@ def _load_janus_from_pretrained(config: JanusProConfig) -> tuple[Any, Any]:
 
     dtype = resolve_torch_dtype(config.dtype)
 
-    processor = VLChatProcessor.from_pretrained(config.model_path)
+    processor = VLChatProcessor.from_pretrained(
+        config.model_path,
+        revision=config.revision,
+    )
     mmgpt = AutoModelForCausalLM.from_pretrained(
         config.model_path,
         trust_remote_code=config.trust_remote_code,
         torch_dtype=dtype,
+        revision=config.revision,
     )
     assert isinstance(mmgpt, MultiModalityCausalLM), (
         f"Loaded model {type(mmgpt).__name__} is not MultiModalityCausalLM"
@@ -1184,13 +1189,14 @@ def _load_janus_replay_core_from_pretrained(config: JanusProConfig) -> JanusProR
     model_config = AutoConfig.from_pretrained(
         config.model_path,
         trust_remote_code=config.trust_remote_code,
+        revision=config.revision,
     )
     core = JanusProReplayCore(model_config)
     from vrl.models.ar.loader import load_replay_core_checkpoint, resolve_hf_checkpoint_dir
 
     load_replay_core_checkpoint(
         core,
-        resolve_hf_checkpoint_dir(config.model_path),
+        resolve_hf_checkpoint_dir(config.model_path, revision=config.revision),
         owner="Janus",
     )
     return core.to(device=config.device, dtype=dtype).eval()

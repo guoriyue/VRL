@@ -6,6 +6,7 @@
 model:
   family: cosmos3
   path: nvidia/Cosmos3-Nano
+  revision: 411f42a8fdfb8c5b2583cb8786e0938f49796eaa
   use_lora: true
   lora:
     rank: 32

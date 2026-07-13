@@ -48,6 +48,7 @@ defaults:
 model:
   use_lora: false                     # FULL-PARAMETER (-> apply_full_finetune); 480p full-param needs FSDP/multi-GPU
   path: checkpoints/cosmos-predict2-2b-480p-16fps-diffusers   # 480p-native weights (720p weights = garbage at 480p)
+  revision: null
   torch_compile:
     enable: false
 

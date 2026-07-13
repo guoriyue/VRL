@@ -7,6 +7,7 @@ defaults:
 
 model:
   path: checkpoints/cosmos-predict2-2b-480p-16fps-diffusers
+  revision: null
 sampling:
   num_frames: 93                        # 33f is OOD for the 480P weights (artifacts)
 trainer:

@@ -2,6 +2,7 @@
 model:
   family: wan_2_1_i2v
   path: Wan-AI/Wan2.2-I2V-A14B-Diffusers
+  revision: 596658fd9ca6b7b71d5057529bbf319ecbc61d74
   boundary_ratio: 0.9
   trainable_transformers:
     - transformer_2

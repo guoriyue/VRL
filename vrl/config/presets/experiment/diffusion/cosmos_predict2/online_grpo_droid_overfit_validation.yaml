@@ -67,6 +67,7 @@ model:
     target_modules: [to_q, to_k, to_v, to_out.0]
   # Converted native-480P transformer (see online_grpo_droid_full_target_480p header).
   path: checkpoints/cosmos-predict2-2b-480p-16fps-diffusers
+  revision: null
   # Compile OFF: incompatible with gradient_checkpointing (predict2_2b defaults it on).
   torch_compile:
     enable: false

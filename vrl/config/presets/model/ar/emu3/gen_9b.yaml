@@ -6,6 +6,7 @@
 model:
   family: emu3
   path: BAAI/Emu3-Gen-hf
+  revision: 062069a3301d7c62c6c93a55c9722efb9321f5f3
 
   use_lora: true
   lora:

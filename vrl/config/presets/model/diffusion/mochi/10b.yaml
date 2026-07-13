@@ -5,6 +5,7 @@ model:
     num_frames: 19
     max_sequence_length: 256
   path: genmo/mochi-1-preview
+  revision: 14be5fcea23095ed330cb214647916a451e38b6e
 
   memory:
     vae_decode:

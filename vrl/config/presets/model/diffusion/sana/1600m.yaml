@@ -5,6 +5,7 @@ model:
   executor:
     max_sequence_length: 300
   path: Efficient-Large-Model/Sana_1600M_1024px_diffusers
+  revision: d1b54936033cd7d45410ecadd692c5c502a19a38
 
   use_lora: true
   lora:

@@ -84,6 +84,7 @@ def load_anima_transformer(build: ModelBuild) -> Any:
     from vrl.models.diffusion.cosmos.anima.model import (
         _load_anima_transformer,
     )
+    from vrl.models.loader import model_revision_kwargs
 
     model_config = build.model_config or {}
     path = model_config.get("transformer_path") or _resolve_artifact(
@@ -91,6 +92,7 @@ def load_anima_transformer(build: ModelBuild) -> Any:
         explicit_path="",
         relative_file=model_config.get("transformer_file", ""),
         field_name="transformer_path",
+        **model_revision_kwargs(build),
     )
     if not path:
         raise ValueError("Anima replay model build is missing transformer_path")

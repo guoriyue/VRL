@@ -5,6 +5,7 @@ model:
   executor:
     max_sequence_length: 1024
   path: Qwen/Qwen-Image
+  revision: 75e0b4be04f60ec59a75f475837eced720f823b6
 
   memory:
     # Video VAE decode is memory-heavy; tile + slice per-image at scale.

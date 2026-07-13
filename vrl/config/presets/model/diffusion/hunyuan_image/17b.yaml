@@ -8,6 +8,7 @@ model:
   executor:
     max_sequence_length: 1000
   path: hunyuanvideo-community/HunyuanImage-2.1-Diffusers
+  revision: 7e7b7a177de58591aeaffca0929f4765003d7ced
 
   memory:
     # 32x image VAE decode at 2K-native scale is memory-heavy; tile + slice.

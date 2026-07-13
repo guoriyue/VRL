@@ -2,6 +2,7 @@
 model:
   family: wan
   path: Wan-AI/Wan2.1-T2V-14B-Diffusers
+  revision: 38ec498cb3208fb688890f8cc7e94ede2cbd7f68
 
   memory:
     vae_decode:

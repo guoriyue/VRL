@@ -53,12 +53,20 @@ def build_echo_replay_runtime_bundle(build: ModelBuild) -> RuntimeBundle:
     logger.info("Building echo replay runtime bundle from %s", build.model_name_or_path)
     from ltx_distillation.models.ltx_wrapper import create_ltx2_wrapper
 
+    from vrl.models.loader import model_config_revision_kwargs, model_revision_kwargs
+
     dtype = build.parameter_dtype
     device = torch.device(build.device) if build.device is not None else torch.device("cpu")
     sampling = getattr(build, "sampling_config", None) or {}
     echo = create_ltx2_wrapper(
-        checkpoint_path=_resolve_echo_checkpoint(build.model_name_or_path),
-        gemma_path=_resolve_gemma_dir(_gemma_path_from_build(build)),
+        checkpoint_path=_resolve_echo_checkpoint(
+            build.model_name_or_path,
+            **model_revision_kwargs(build),
+        ),
+        gemma_path=_resolve_gemma_dir(
+            _gemma_path_from_build(build),
+            **model_config_revision_kwargs(build, "gemma_revision"),
+        ),
         device=device,
         dtype=dtype,
         video_height=int(sampling.get("height", 512)),

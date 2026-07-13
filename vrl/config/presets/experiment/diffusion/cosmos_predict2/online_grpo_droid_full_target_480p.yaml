@@ -28,6 +28,7 @@ model:
   use_lora: false
   # Converted native-480P transformer + shared 720P vae/text_encoder/tokenizer/scheduler (see header).
   path: checkpoints/cosmos-predict2-2b-480p-16fps-diffusers
+  revision: null
   # Compile OFF: it cannot combine with gradient_checkpointing (torch.compile traces
   # torch.utils.checkpoint into an InternalTorchDynamoError — see activation_checkpointing.py),
   # and at 480p_93f full-param we NEED grad-ckpt for memory, so we take the eager+checkpointing
