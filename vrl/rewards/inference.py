@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import hashlib
 import math
 import time
 from collections.abc import Mapping
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, Literal, Protocol, get_args, runtime_checkable
 
 # Valid artifact media kinds. ``MediaType`` is the single source of truth; the
@@ -13,6 +15,22 @@ from typing import Any, Literal, Protocol, get_args, runtime_checkable
 # and the runtime check derive from this type instead of re-listing the literals.
 MediaType = Literal["image", "video"]
 MEDIA_TYPES = frozenset(get_args(MediaType))
+
+
+def sha256_file(path: str | Path) -> str:
+    """Canonical ``RewardInferenceArtifact.sha256`` digest of one file.
+
+    The artifact writer (vrl.rewards.artifacts) and the reward service's wire
+    validator must hash identically or shared-filesystem integrity checks fail;
+    this is the one implementation both sides use. Chunked read instead of
+    ``hashlib.file_digest`` because requires-python is 3.10.
+    """
+
+    digest = hashlib.sha256()
+    with Path(path).open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 @dataclass(frozen=True, slots=True)
@@ -414,6 +432,7 @@ __all__ = [
     "RewardMemoryParkingRuntime",
     "RewardMemoryReleaseProof",
     "score_artifacts_with_model",
+    "sha256_file",
     "validate_reward_parking_residual",
     "validate_reward_results",
 ]

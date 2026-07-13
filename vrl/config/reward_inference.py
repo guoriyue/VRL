@@ -11,6 +11,29 @@ from urllib.parse import urlparse
 from vrl.utils.config import cfg_get
 
 
+def validate_http_origin(url: str, *, context: str) -> str:
+    """Validate one operator-service origin URL and return it normalized.
+
+    The trainer-side client and this config are the two producers of service
+    base URLs; both must enforce the same shape (absolute http(s) origin, no
+    credentials/query/fragment/path) or their accepted inputs drift apart.
+    """
+
+    origin = str(url).strip()
+    parsed = urlparse(origin)
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        raise ValueError(
+            f"{context} must be an absolute http(s) origin URL, got {url!r}",
+        )
+    if parsed.username or parsed.password or parsed.query or parsed.fragment:
+        raise ValueError(
+            f"{context} cannot contain credentials, query, or fragment",
+        )
+    if parsed.path not in {"", "/"}:
+        raise ValueError(f"{context} must be an origin URL without a path")
+    return origin.rstrip("/")
+
+
 @dataclass(frozen=True, slots=True)
 class RewardInferenceConfig:
     """Where one reward component executes.
@@ -36,7 +59,6 @@ class RewardInferenceConfig:
             raise ValueError("reward inference.timeout_s must be a finite number > 0")
         endpoint = self.endpoint.strip()
         expected_model = self.expected_model.strip()
-        object.__setattr__(self, "endpoint", endpoint)
         object.__setattr__(self, "timeout_s", timeout_s)
         object.__setattr__(self, "expected_model", expected_model)
         if self.kind == "in_process":
@@ -44,20 +66,10 @@ class RewardInferenceConfig:
                 raise ValueError(
                     "reward inference.kind=in_process cannot set endpoint or expected_model",
                 )
+            object.__setattr__(self, "endpoint", endpoint)
             return
-        parsed = urlparse(endpoint)
-        if parsed.scheme not in {"http", "https"} or not parsed.netloc:
-            raise ValueError(
-                "reward inference.kind=http requires an absolute http(s) endpoint",
-            )
-        if parsed.username or parsed.password or parsed.query or parsed.fragment:
-            raise ValueError(
-                "reward inference.endpoint cannot contain credentials, query, or fragment",
-            )
-        if parsed.path not in {"", "/"}:
-            raise ValueError(
-                "reward inference.endpoint must be an origin URL without a path",
-            )
+        endpoint = validate_http_origin(endpoint, context="reward inference.endpoint")
+        object.__setattr__(self, "endpoint", endpoint)
         if not expected_model:
             raise ValueError(
                 "reward inference.kind=http requires expected_model for startup identity validation",
@@ -112,4 +124,5 @@ __all__ = [
     "RewardInferenceConfig",
     "parse_reward_inference_config",
     "reward_inference_configs_from_cfg",
+    "validate_http_origin",
 ]

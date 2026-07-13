@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
 import json
 import uuid
 from dataclasses import asdict
@@ -11,7 +10,12 @@ from typing import Any, Literal, get_args
 
 import torch
 
-from vrl.rewards.inference import MEDIA_TYPES, MediaType, RewardInferenceArtifact
+from vrl.rewards.inference import (
+    MEDIA_TYPES,
+    MediaType,
+    RewardInferenceArtifact,
+    sha256_file,
+)
 from vrl.rewards.types import RewardRollout
 from vrl.trainers.data.artifacts import (
     DEFAULT_ARTIFACT_FIELDS,
@@ -125,7 +129,7 @@ class VideoRewardArtifactStore:
                 trajectory_id=rollout.trajectory_id,
                 policy_version=rollout.policy_version,
                 size_bytes=size_bytes,
-                sha256=_sha256_file(path),
+                sha256=sha256_file(path),
                 metadata={
                     "shape": list(tensor.shape),
                     "dtype": str(tensor.dtype),
@@ -165,14 +169,6 @@ def _validate_media_shape(tensor: torch.Tensor, media_type: str) -> None:
 def _fps(metadata: dict[str, Any]) -> float:
     value = metadata.get("video_fps", metadata.get("fps", 8.0))
     return float(value) if value is not None else 8.0
-
-
-def _sha256_file(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as handle:
-        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
 
 
 def _artifact_provenance(metadata: dict[str, Any]) -> dict[str, Any]:

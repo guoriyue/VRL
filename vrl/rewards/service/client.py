@@ -6,7 +6,7 @@ import asyncio
 import json
 from contextlib import suppress
 from typing import TYPE_CHECKING, Any
-from urllib.parse import quote, urlsplit
+from urllib.parse import quote
 
 import aiohttp
 
@@ -44,32 +44,27 @@ class HttpRewardRuntime:
         timeout_s: float = 1800.0,
         expected_model: str = "",
     ) -> None:
-        from vrl.config.reward_inference import RewardInferenceConfig
+        from vrl.config.reward_inference import (
+            RewardInferenceConfig,
+            validate_http_origin,
+        )
 
         if isinstance(service, RewardInferenceConfig):
             if service.kind != "http":
                 raise ValueError("HttpRewardRuntime requires inference.kind=http")
+            # Validated and normalized by the config's own __post_init__.
             service_url = service.endpoint
             timeout_s = service.timeout_s
             expected_model = service.expected_model
         else:
-            service_url = str(service)
-
-        parsed = urlsplit(service_url.strip())
-        if parsed.scheme not in {"http", "https"} or not parsed.netloc:
-            raise ValueError(
-                f"reward service endpoint must be an absolute http(s) URL, got {service_url!r}",
+            service_url = validate_http_origin(
+                str(service),
+                context="reward service endpoint",
             )
-        if parsed.query or parsed.fragment or parsed.username or parsed.password:
-            raise ValueError(
-                "reward service endpoint cannot contain credentials, query, or fragment",
-            )
-        if parsed.path not in {"", "/"}:
-            raise ValueError("reward service endpoint must be an origin URL without a path")
         if timeout_s <= 0:
             raise ValueError("reward service timeout_s must be > 0")
 
-        self._base_url = service_url.rstrip("/")
+        self._base_url = service_url
         self._timeout = aiohttp.ClientTimeout(total=float(timeout_s))
         self._expected_model = str(expected_model).strip()
         self._session: aiohttp.ClientSession | None = None

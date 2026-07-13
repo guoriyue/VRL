@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-import hashlib
 import json
 import signal
 import threading
@@ -17,7 +16,7 @@ from typing import TYPE_CHECKING, Any
 
 from aiohttp import web
 
-from vrl.rewards.inference import validate_reward_results
+from vrl.rewards.inference import sha256_file, validate_reward_results
 from vrl.rewards.service.owner import RewardRuntimeOwner
 from vrl.rewards.service.protocol import (
     RewardServiceErrorCode,
@@ -534,18 +533,14 @@ class RewardService:
                     f"actual={actual_size}",
                     request_id=request.request_id,
                 )
-            digest = hashlib.sha256()
             try:
-                with resolved.open("rb") as artifact_file:
-                    for chunk in iter(lambda: artifact_file.read(1024 * 1024), b""):
-                        digest.update(chunk)
+                actual_sha256 = sha256_file(resolved)
             except OSError as error:
                 raise RewardServiceProtocolError(
                     RewardServiceErrorCode.PATH_NOT_ALLOWED,
                     f"reward artifact could not be read: {artifact.path!r}",
                     request_id=request.request_id,
                 ) from error
-            actual_sha256 = digest.hexdigest()
             if actual_sha256 != artifact.sha256:
                 raise RewardServiceProtocolError(
                     RewardServiceErrorCode.PATH_NOT_ALLOWED,
@@ -602,21 +597,21 @@ class RewardService:
             raise RuntimeError(f"reward service shutdown failed: {summary}") from errors[0]
 
     @staticmethod
-    def _json_response(status: int, body: dict[str, Any]) -> web.Response:
+    def _json_response(
+        status: int,
+        body: dict[str, Any],
+        headers: Mapping[str, str] | None = None,
+    ) -> web.Response:
         return web.json_response(
             body,
             status=status,
+            headers=headers,
             dumps=lambda value: json.dumps(value, allow_nan=False, separators=(",", ":")),
         )
 
     def _error_response(self, error: RewardServiceProtocolError) -> web.Response:
         headers = {"Retry-After": "1"} if error.code is RewardServiceErrorCode.OVERLOADED else None
-        return web.json_response(
-            error_to_wire(error),
-            status=error.status_code,
-            headers=headers,
-            dumps=lambda value: json.dumps(value, allow_nan=False, separators=(",", ":")),
-        )
+        return self._json_response(error.status_code, error_to_wire(error), headers=headers)
 
 
 def _load_service(config_path: Path) -> RewardService:
