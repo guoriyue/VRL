@@ -161,8 +161,4 @@ def test_step_counters_report_native_cache() -> None:
         },
     )
     output = runner.step_ar(init.state, step)
-    counters = output.result.debug_counters
-    assert counters["ar_kv_cache_enabled"] is True
-    assert counters["ar_paged_attention_enabled"] is False
-    assert counters["ar_prefill_forwards"] == 1
     assert set(output.updated_row_lanes) == {"cond_logits", "uncond_logits"}

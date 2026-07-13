@@ -26,7 +26,6 @@ import torch.nn as nn
 from vrl.generation.ar.decode_loop import (
     ARStepBatch,
     ARStepOutput,
-    ARStepResult,
 )
 from vrl.models.utils import disable_adapter_on, load_weights_into
 
@@ -108,9 +107,6 @@ class ARDiscreteTokenState:
     token_ids: torch.Tensor
     logprobs: torch.Tensor
     total_token_num: int
-    prefill_forwards: int = 0
-    decode_forwards: int = 0
-    decode_tokens: int = 0
 
 
 class ARDiscreteTokenRunner:
@@ -118,8 +114,8 @@ class ARDiscreteTokenRunner:
 
     Families still own prefill, sampling, and cache advancement. This base owns
     only the engine contract that was identical across paged-CFG, GLM-Image,
-    and LlamaGen: validate the scheduled rows, run one family step, report the
-    common counters, and return ``(token_ids, logprobs)`` at finalization.
+    and LlamaGen: validate the scheduled rows, run one family step, and return
+    ``(token_ids, logprobs)`` at finalization.
     """
 
     family: str = ""
@@ -137,15 +133,6 @@ class ARDiscreteTokenRunner:
         self._validate_ar_step_batch(state, batch)
         cache_updates, row_updates = self._sample_ar_step(state, batch)
         return ARStepOutput(
-            result=ARStepResult(
-                debug_counters={
-                    "ar_kv_cache_enabled": True,
-                    "ar_paged_attention_enabled": self._paged_attention_enabled(state),
-                    "ar_prefill_forwards": state.prefill_forwards,
-                    "ar_decode_forwards": state.decode_forwards,
-                    "ar_decode_tokens": state.decode_tokens,
-                },
-            ),
             updated_cache_lanes=cache_updates,
             updated_row_lanes=row_updates,
         )
@@ -180,10 +167,6 @@ class ARDiscreteTokenRunner:
         batch: ARStepBatch,
     ) -> None:
         del state, batch
-
-    def _paged_attention_enabled(self, state: ARDiscreteTokenState) -> bool:
-        del state
-        return False
 
     def _sample_ar_step(
         self,

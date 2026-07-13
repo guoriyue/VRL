@@ -42,9 +42,6 @@ def test_diffusion_rollout_batch_builder_applies_storage_policy() -> None:
     assert batch.observations.dtype == torch.float16
     assert batch.actions.dtype == torch.float16
     assert batch.trajectory is output.trajectory
-    assert output.metrics is not None
-    assert output.metrics.engine_counters["diffusion_storage_device"] == "cpu"
-    assert output.metrics.engine_counters["diffusion_storage_dtype"] == "float16"
 
 
 def _chunk() -> DiffusionChunkResult:

@@ -9,7 +9,6 @@ from typing import Any
 import torch
 
 from vrl.generation import GenerationOutput
-from vrl.generation.diffusion.metrics import record_diffusion_storage_policy
 from vrl.rollouts.batch import RolloutBatch
 from vrl.rollouts.collector.artifacts import RewardArtifactPolicy
 from vrl.rollouts.collector.rewards import RewardScoringInput
@@ -54,7 +53,6 @@ class TrajectoryRolloutBatchBuilder:
             context.trajectory_storage_policy,
         )
         self.output.trajectory = self.trajectory
-        record_diffusion_storage_policy(output, context.trajectory_storage_policy)
 
     def reward_scoring_input(
         self,

@@ -87,8 +87,6 @@ def test_decode_loop_produces_codebook_raster_end_to_end() -> None:
     assert (token_ids >= 0).all()
     assert (token_ids < TINY_CODEBOOK).all()
     assert (logprobs < 0).all()
-    assert result.engine_counters["ar_prefill_forwards"] == 1
-    assert result.engine_counters["ar_decode_forwards"] == TOTAL - 1
 
 
 def test_rollout_logprobs_match_teacher_forced_replay() -> None:

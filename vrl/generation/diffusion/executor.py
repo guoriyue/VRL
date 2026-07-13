@@ -95,6 +95,8 @@ class DiffusionDenoiseResult:
     # Partial ChunkMemoryReading fields (denoise phase); decode_denoise_result
     # completes it with the decode-phase peak. None off-CUDA.
     memory: dict[str, int] | None = None
+    # Mixed boundary: autocast keys feed replay context; remaining entries are
+    # display/provenance-only counters emitted through runtime debug metrics.
     engine_counters: dict[str, Any] = field(default_factory=dict)
 
 
@@ -169,11 +171,14 @@ class DiffusionChunkResult:
     video: Any
     replay_tensors: dict[str, Any]
     context: dict[str, Any]
+    # Display/provenance-only: emitted through per-chunk runtime debug metrics.
     peak_memory_mb: float | None = None
     # Completed ChunkMemoryReading fields for byte-admission shadow telemetry
     # (see vrl/generation/execution/chunk_placement.py). None off-CUDA.
     memory: dict[str, int] | None = None
+    # Display/provenance-only: emitted through per-chunk runtime debug metrics.
     stage_durations: dict[str, float] = field(default_factory=dict)
+    # Display/provenance-only: emitted through per-chunk runtime debug metrics.
     engine_counters: dict[str, Any] = field(default_factory=dict)
 
 
@@ -976,7 +981,6 @@ class DiffusionChunkExecutorBase(
                 "ref_noise_pred": denoise_result.ref_noise_preds,
             }
         context = dict(model.export_batch_context(state))
-        context.setdefault("denoise_mode", config.denoise_mode)
         context.setdefault(
             "rollout_autocast_dtype",
             denoise_result.engine_counters.get("diffusion_rollout_autocast_dtype"),

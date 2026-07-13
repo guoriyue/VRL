@@ -10,20 +10,6 @@ if TYPE_CHECKING:
 
 
 @dataclass(slots=True)
-class GenerationMetrics:
-    """Runtime-only generation metrics.
-
-    These metrics describe engine execution. Reward and trainer metrics stay
-    outside this module.
-    """
-
-    peak_memory_mb: float | None = None
-    num_steps: int | None = None
-    chunks: int = 0
-    engine_counters: dict[str, Any] = field(default_factory=dict)
-
-
-@dataclass(slots=True)
 class GenerationInput:
     """One prompt and its functional conditioning inputs."""
 
@@ -143,14 +129,11 @@ class GenerationOutput:
     output: Any
     trajectory: TrajectoryBatch | None = None
     extra: dict[str, Any] = field(default_factory=dict)
-    metrics: GenerationMetrics | None = None
-    peak_memory_mb: float = 0.0
     error: str | None = None
 
 
 __all__ = [
     "GenerationInput",
-    "GenerationMetrics",
     "GenerationOutput",
     "GenerationRequest",
     "GenerationSampleRow",

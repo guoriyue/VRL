@@ -10,7 +10,6 @@ from vrl.generation.ar.decode_loop import (
     ARDecodeLoop,
     ARStepBatch,
     ARStepOutput,
-    ARStepResult,
     ARTokenLoopInit,
 )
 from vrl.generation.types import GenerationRequest, GenerationSampleRow
@@ -68,7 +67,6 @@ class _DeterministicARContractRunner:
             )
         )
         return ARStepOutput(
-            result=ARStepResult(),
             updated_cache_lanes={"kv": kv + 10.0},
             updated_row_lanes={"hidden": hidden + 1.0},
         )
@@ -91,15 +89,13 @@ def test_ar_decode_loop_schedules_contract_cache_lanes() -> None:
         scheduler_batch_size=2,
     ).run()
 
+    assert result.finalized == {}
     assert runner.step_inputs == [
         ([0, 1], 0, [0.0, 1.0], [10.0, 20.0]),
         ([2], 0, [2.0], [30.0]),
         ([0, 1], 1, [10.0, 11.0], [11.0, 21.0]),
         ([2], 1, [12.0], [31.0]),
     ]
-    assert result.scheduler_batches == 4
-    assert result.engine_counters["ar_scheduled_decode_loop_enabled"] is True
-    assert result.engine_counters["ar_scheduler_batches"] == 4
 
 
 def test_ar_decode_loop_requires_family_hooks() -> None:

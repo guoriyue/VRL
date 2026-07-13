@@ -130,7 +130,6 @@ class LlamaGenARModelRunner(ARDiscreteTokenRunner):
                 top_p=float(top_p),
                 total_token_num=int(image_token_num),
                 caption_len=int(caption_len),
-                prefill_forwards=1,
             ),
             row_lanes={
                 "cond_logits": last[:batch_size],
@@ -175,7 +174,6 @@ class LlamaGenARModelRunner(ARDiscreteTokenRunner):
         )
         state.token_ids[:, position] = sampled
         state.logprobs[:, position] = lp
-        state.decode_tokens += len(batch.row_indices)
 
         if position + 1 >= state.total_token_num:
             return {}, {}
@@ -230,7 +228,6 @@ class LlamaGenARModelRunner(ARDiscreteTokenRunner):
         )
         logits, _ = trunk(idx=x_combined, cond_idx=None, input_pos=input_pos)
         last = logits[:, -1].float()
-        state.decode_forwards += 1
         return {
             "cond_logits": last[:batch_size],
             "uncond_logits": last[batch_size:],

@@ -17,7 +17,6 @@ from vrl.generation.ar import (
 from vrl.generation.ar.decode_loop import ARDecodeLoop, call_with_supported_kwargs
 from vrl.generation.execution.chunks import SampleChunk
 from vrl.generation.types import (
-    GenerationMetrics,
     GenerationOutput,
     GenerationRequest,
     GenerationSampleRow,
@@ -169,8 +168,6 @@ class JanusProChunkExecutor(ARDiscreteChunkExecutorBase):
                 "temperature": temperature,
                 "image_token_num": params.image_token_num,
             },
-            # Two branch prefills: cond and uncond run as separate forwards.
-            prefill_forwards=2,
         )
 
     # -- internals -----------------------------------------------------
@@ -234,6 +231,7 @@ class JanusProR1ChunkResult:
     selfcheck: torch.Tensor
     segments: dict[str, dict[str, Any]]
     context: dict[str, Any]
+    # Display/provenance-only: emitted through per-chunk runtime debug metrics.
     peak_memory_mb: float | None = None
 
 
@@ -271,7 +269,6 @@ class JanusProR1ChunkExecutor(JanusProChunkExecutor):
             record_function("engine.cache_write"),
         ):
             chunk_specs = self.layout.chunk_sample_rows(request, chunk)
-            scheduler_batches: list[int] = []
             result = call_with_supported_kwargs(
                 self.model.generate_with_refine,
                 prompt_ids,
@@ -289,7 +286,6 @@ class JanusProR1ChunkExecutor(JanusProChunkExecutor):
                     request=request,
                     sample_rows=chunk_specs,
                     params=params,
-                    scheduler_batches=scheduler_batches,
                 ),
             )
 
@@ -301,7 +297,7 @@ class JanusProR1ChunkExecutor(JanusProChunkExecutor):
             final_image=result["final_image"],
             selfcheck=result["selfcheck"],
             segments=result["segments"],
-            context={**result["context"], "ar_decode_loop_enabled": True},
+            context=dict(result["context"]),
             peak_memory_mb=self.layout.peak_memory_mb(),
         )
 
@@ -319,7 +315,6 @@ class JanusProR1ChunkExecutor(JanusProChunkExecutor):
         request: GenerationRequest,
         sample_rows: Sequence[GenerationSampleRow],
         params: ARSamplingParams,
-        scheduler_batches: list[int],
     ) -> Any:
         """Build an R1 image sampler backed by the shared AR decode loop driver."""
 
@@ -347,7 +342,6 @@ class JanusProR1ChunkExecutor(JanusProChunkExecutor):
                 init_args=(cond_embeds, uncond_embeds, cond_mask, uncond_mask),
                 init_kwargs=kwargs,
             ).run()
-            scheduler_batches.append(decode_result.scheduler_batches)
             return decode_result.finalized
 
         return sample
@@ -408,23 +402,6 @@ class JanusProR1ChunkGatherer:
             primary_segment="final_image",
             context=dict(ordered[0].context),
         )
-        peak_mem_mb = self.layout.max_peak_memory_mb(ordered)
-        num_steps = _segment_token_steps(segment_extra)
-        metrics = GenerationMetrics(
-            num_steps=num_steps,
-            chunks=len(ordered),
-            peak_memory_mb=peak_mem_mb,
-            engine_counters={
-                "ar_decode_loop_enabled": True,
-                "ar_prefill_forwards": 2,
-                "ar_decode_forwards": max(num_steps - 1, 0),
-                "ar_decode_tokens": len(sample_rows) * num_steps,
-                "ar_scheduler_enabled": False,
-                "ar_scheduler_batch_size": request.sampling.get("ar_scheduler_batch_size"),
-                "ar_scheduler_batches": None,
-            },
-        )
-
         return GenerationOutput(
             request_id=request.request_id,
             family=request.family,
@@ -434,8 +411,6 @@ class JanusProR1ChunkGatherer:
             output=cat["final_image"],
             trajectory=trajectory,
             extra={},
-            metrics=metrics,
-            peak_memory_mb=peak_mem_mb or 0.0,
         )
 
 
@@ -504,10 +479,6 @@ def _cat_segment_extra(
             "cfg": first["cfg"],
         }
     return out
-
-
-def _segment_token_steps(segments: dict[str, dict[str, Any]]) -> int:
-    return sum(int(segment["token_ids"].shape[1]) for segment in segments.values())
 
 
 __all__ = [

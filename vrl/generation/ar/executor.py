@@ -12,7 +12,6 @@ from vrl.generation.ar.layout import ARRequestLayout
 from vrl.generation.execution.chunks import SampleChunk
 from vrl.generation.protocols import GenerationChunkExecutor
 from vrl.generation.types import (
-    GenerationMetrics,
     GenerationOutput,
     GenerationRequest,
     GenerationSampleRow,
@@ -183,10 +182,6 @@ class ARChunkInputs:
     uncond_input_ids: torch.Tensor
     uncond_attention_mask: torch.Tensor
     context: dict[str, Any]
-    # Prefill forward count this family's runner performs per chunk (2 for a
-    # separate cond+uncond CFG prefill, 1 for combined/single-branch). Pure
-    # telemetry: surfaces as the ``ar_prefill_forwards`` engine counter.
-    prefill_forwards: int
 
 
 @dataclass(slots=True)
@@ -207,7 +202,7 @@ class ARDiscreteChunkResult:
     uncond_input_ids: torch.Tensor
     uncond_attention_mask: torch.Tensor
     context: dict[str, Any]
-    prefill_forwards: int
+    # Display/provenance-only: emitted through per-chunk runtime debug metrics.
     peak_memory_mb: float | None = None
 
 
@@ -301,8 +296,7 @@ class ARDiscreteChunkExecutorBase(ARChunkExecutorBase):
             prompt_attention_mask=inputs.prompt_attention_mask,
             uncond_input_ids=inputs.uncond_input_ids,
             uncond_attention_mask=inputs.uncond_attention_mask,
-            context={**inputs.context, "ar_decode_loop_enabled": True},
-            prefill_forwards=inputs.prefill_forwards,
+            context=dict(inputs.context),
             peak_memory_mb=self.layout.peak_memory_mb(),
         )
 
@@ -352,25 +346,7 @@ class ARDiscreteChunkGatherer:
             row_fields=fields,
         )
         cat = layout.cat_chunk_fields(ordered_ar_chunks, fields)
-        peak_mem_mb = layout.max_peak_memory_mb(ordered_ar_chunks)
-        # The produced token count IS the step count — knob-derived (janus,
-        # llamagen) and grid-derived (emu3, glm_image) families alike.
-        image_token_num = int(cat["token_ids"].shape[1])
         chunk_context = dict(ordered_ar_chunks[0].context)
-        metrics = GenerationMetrics(
-            num_steps=image_token_num,
-            chunks=len(ordered_ar_chunks),
-            peak_memory_mb=peak_mem_mb,
-            engine_counters={
-                "ar_decode_loop_enabled": True,
-                "ar_prefill_forwards": int(ordered_ar_chunks[0].prefill_forwards),
-                "ar_decode_forwards": max(image_token_num - 1, 0),
-                "ar_decode_tokens": len(sample_rows) * image_token_num,
-                "ar_scheduler_enabled": False,
-                "ar_scheduler_batch_size": request.sampling.get("ar_scheduler_batch_size"),
-                "ar_scheduler_batches": None,
-            },
-        )
         trajectory = build_ar_discrete_trajectory(
             request=request,
             sample_rows=list(sample_rows),
@@ -393,8 +369,6 @@ class ARDiscreteChunkGatherer:
             output=cat["output"],
             trajectory=trajectory,
             extra={},
-            metrics=metrics,
-            peak_memory_mb=peak_mem_mb or 0.0,
         )
 
 

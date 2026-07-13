@@ -12,7 +12,6 @@ from vrl.generation.ar import ARChunkExecutorBase, ARRequestLayout, ARSamplingPa
 from vrl.generation.ar.decode_loop import ARDecodeLoop
 from vrl.generation.execution.chunks import SampleChunk
 from vrl.generation.types import (
-    GenerationMetrics,
     GenerationOutput,
     GenerationRequest,
     GenerationSampleRow,
@@ -86,6 +85,7 @@ class NextStep1ARChunkResult:
     uncond_input_ids: torch.Tensor
     uncond_attention_mask: torch.Tensor
     context: dict[str, Any]
+    # Display/provenance-only: emitted through per-chunk runtime debug metrics.
     peak_memory_mb: float | None = None
 
 
@@ -212,7 +212,6 @@ class NextStep1ChunkExecutor(ARChunkExecutorBase):
                 "noise_level": noise_level,
                 "image_token_num": params.image_token_num,
                 "image_size": params.image_size,
-                "ar_decode_loop_enabled": True,
             },
             peak_memory_mb=peak_mem_mb,
         )
@@ -290,23 +289,7 @@ class NextStep1ChunkGatherer:
             row_fields=fields,
         )
         cat = self.layout.cat_chunk_fields(ordered_ar_chunks, fields)
-        peak_mem_mb = self.layout.max_peak_memory_mb(ordered_ar_chunks)
-        image_token_num = int(request.sampling["image_token_num"])
         trajectory_context = dict(ordered_ar_chunks[0].context)
-        metrics = GenerationMetrics(
-            num_steps=image_token_num,
-            chunks=len(ordered_ar_chunks),
-            peak_memory_mb=peak_mem_mb,
-            engine_counters={
-                "ar_decode_loop_enabled": True,
-                "ar_prefill_forwards": 1,
-                "ar_decode_forwards": max(image_token_num - 1, 0),
-                "ar_decode_tokens": len(sample_rows) * image_token_num,
-                "ar_scheduler_enabled": False,
-                "ar_scheduler_batch_size": request.sampling.get("ar_scheduler_batch_size"),
-                "ar_scheduler_batches": None,
-            },
-        )
         trajectory = build_ar_continuous_trajectory(
             request=request,
             sample_rows=list(sample_rows),
@@ -331,8 +314,6 @@ class NextStep1ChunkGatherer:
             output=cat["output"],
             trajectory=trajectory,
             extra={},
-            metrics=metrics,
-            peak_memory_mb=peak_mem_mb or 0.0,
         )
 
 

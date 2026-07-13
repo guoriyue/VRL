@@ -154,8 +154,6 @@ class Emu3ChunkExecutor(ARDiscreteChunkExecutorBase):
                 "image_width": width,
                 "image_token_num": total_token_num,
             },
-            # Two branch prefills: cond and uncond run as separate forwards.
-            prefill_forwards=2,
         )
 
     def chunk_token_mask(

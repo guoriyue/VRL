@@ -222,12 +222,6 @@ class DiffusionRequestLayout:
             )
         return ordered
 
-    def max_peak_memory_mb(self, chunks: Sequence[Any]) -> float | None:
-        """Return the maximum non-null peak memory metric across chunk results."""
-
-        peaks = [chunk.peak_memory_mb for chunk in chunks if chunk.peak_memory_mb is not None]
-        return max(peaks) if peaks else None
-
     def select_sde_window(
         self,
         sde_window_size: int,

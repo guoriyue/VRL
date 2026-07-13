@@ -193,7 +193,6 @@ class PagedCFGTokenRunner(ARDiscreteTokenRunner):
                 temperature=temperature,
                 paged_cond_states=list(cond_prefill.sequence_states),
                 paged_uncond_states=list(uncond_prefill.sequence_states),
-                prefill_forwards=2,
                 **(state_kwargs or {}),
             ),
             cache_lanes={},
@@ -236,10 +235,6 @@ class PagedCFGTokenRunner(ARDiscreteTokenRunner):
             cond_logits, sampled, temperature=state.temperature,
         )
 
-    def _paged_attention_enabled(self, state: ARDiscreteTokenState) -> bool:
-        assert isinstance(state, PagedCFGARState)
-        return state.paged_cond_states is not None
-
     def _prefill_ar_prompt_paged(
         self,
         inputs_embeds: torch.Tensor,
@@ -272,7 +267,6 @@ class PagedCFGTokenRunner(ARDiscreteTokenRunner):
     ) -> tuple[dict[str, Any], dict[str, Any]]:
         row_indices = batch.row_indices
         position = batch.position
-        batch_size = len(row_indices)
         rows = torch.tensor(row_indices, dtype=torch.long, device=state.token_ids.device)
         cond_hidden = batch.row_lanes["cond_last_hidden"]
         uncond_hidden = batch.row_lanes["uncond_last_hidden"]
@@ -290,7 +284,7 @@ class PagedCFGTokenRunner(ARDiscreteTokenRunner):
                 sampled=sampled,
             )
 
-        state.decode_tokens += batch_size
+
         return cache_updates, row_updates
 
     def _advance_after_sample(
@@ -340,7 +334,7 @@ class PagedCFGTokenRunner(ARDiscreteTokenRunner):
             updated_states[batch_size:],
         )
         hidden = normalize_paged_last_hidden(output.last_hidden)
-        state.decode_forwards += 1
+
         return (
             {},
             {

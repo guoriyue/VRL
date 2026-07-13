@@ -120,7 +120,6 @@ class GlmImageTokenRunner(ARDiscreteTokenRunner):
                 base_position_schedule=base_schedule,
                 prompt_valid_lens=prompt_valid_lens,
                 kv_rows=kv_rows,
-                prefill_forwards=1,
             ),
             cache_lanes={},
             row_lanes={
@@ -172,7 +171,6 @@ class GlmImageTokenRunner(ARDiscreteTokenRunner):
         sampled, lp = self._sample_image_token(state, hidden)
         state.token_ids[rows, position] = sampled
         state.logprobs[rows, position] = lp
-        state.decode_tokens += len(row_indices)
 
         if position + 1 >= state.total_token_num:
             return {}, {}
@@ -249,7 +247,6 @@ class GlmImageTokenRunner(ARDiscreteTokenRunner):
             ar_split_rows(past, batch_size),
         )
         hidden = normalize_paged_last_hidden(outputs.last_hidden_state)
-        state.decode_forwards += 1
         return {
             "cond_last_hidden": hidden,
             "cond_attn": next_attn,

@@ -157,13 +157,6 @@ class TokenScheduler:
 
 
 @dataclass(slots=True)
-class ARStepResult:
-    """One scheduled AR token step."""
-
-    debug_counters: dict[str, Any] = field(default_factory=dict)
-
-
-@dataclass(slots=True)
 class ARTokenLoopInit:
     """Model-provided payload for the scheduled AR decode loop."""
 
@@ -189,7 +182,6 @@ class ARStepBatch:
 class ARStepOutput:
     """Model output for one scheduled AR token step."""
 
-    result: ARStepResult
     updated_cache_lanes: Mapping[str, Any] = field(default_factory=dict)
     updated_row_lanes: Mapping[str, Any] = field(default_factory=dict)
 
@@ -281,8 +273,6 @@ class ARDecodeResult:
     """Result of one scheduled AR decode loop."""
 
     finalized: Any
-    scheduler_batches: int
-    engine_counters: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(slots=True)
@@ -325,20 +315,12 @@ class ARDecodeLoop:
         scheduler = TokenScheduler(max_batch_size=self._max_batch_size(sequences))
         scheduler.add_many(sequences)
 
-        scheduler_batches = 0
-        decode_tokens = 0
-        engine_counters: dict[str, Any] = {
-            "ar_scheduled_decode_loop_enabled": True,
-            "ar_scheduler_batch_size": self.scheduler_batch_size,
-        }
         call_step_kwargs = dict(self.step_kwargs or {})
 
         while True:
             batch = scheduler.pop_batch()
             if batch is None:
                 break
-            scheduler_batches += 1
-            decode_tokens += len(batch.sequences)
             step_batch = envelope.build_step_batch(batch.sequences)
             step_output = call_with_supported_kwargs(
                 self.runner.step_ar,
@@ -352,22 +334,11 @@ class ARDecodeLoop:
                     f"got {type(step_output).__name__}",
                 )
             envelope.apply_step_output(step_batch, step_output)
-            result = step_output.result
-            debug_counters = getattr(result, "debug_counters", None)
-            if debug_counters:
-                engine_counters.update(dict(debug_counters))
             for sequence in batch.sequences:
                 sequence.advance()
             scheduler.push_back_unfinished(batch)
 
-        finalized = self.runner.finalize_ar(state)
-        engine_counters.setdefault("ar_decode_tokens", decode_tokens)
-        engine_counters["ar_scheduler_batches"] = scheduler_batches
-        return ARDecodeResult(
-            finalized=finalized,
-            scheduler_batches=scheduler_batches,
-            engine_counters=engine_counters,
-        )
+        return ARDecodeResult(finalized=self.runner.finalize_ar(state))
 
     def _max_batch_size(self, sequences: Sequence[ActiveSequence]) -> int:
         max_batch_size = int(self.scheduler_batch_size or len(sequences))
@@ -438,7 +409,6 @@ __all__ = [
     "ARSequenceKey",
     "ARStepBatch",
     "ARStepOutput",
-    "ARStepResult",
     "ARTokenLoopEnvelope",
     "ARTokenLoopInit",
     "ActiveSequence",

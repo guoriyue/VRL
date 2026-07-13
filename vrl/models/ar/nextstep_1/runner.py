@@ -10,7 +10,6 @@ import torch
 from vrl.generation.ar.decode_loop import (
     ARStepBatch,
     ARStepOutput,
-    ARStepResult,
     ARTokenLoopInit,
 )
 from vrl.math.ar.flow_matching import flow_sample_with_logprob
@@ -41,9 +40,6 @@ class NextStep1ARState:
     generator: torch.Generator | None = None
     paged_cond_states: list[Any] | None = None
     paged_uncond_states: list[Any] | None = None
-    prefill_forwards: int = 0
-    decode_forwards: int = 0
-    decode_tokens: int = 0
 
 
 class NextStep1ARModelRunner:
@@ -131,7 +127,6 @@ class NextStep1ARModelRunner:
                 generator=generator,
                 paged_cond_states=paged_cond_states,
                 paged_uncond_states=paged_uncond_states,
-                prefill_forwards=1 + int(uncond_embeds is not None),
             ),
             cache_lanes=cache_lanes,
             row_lanes=row_lanes,
@@ -153,15 +148,6 @@ class NextStep1ARModelRunner:
             generator=generator,
         )
         return ARStepOutput(
-            result=ARStepResult(
-                debug_counters={
-                    "ar_kv_cache_enabled": True,
-                    "ar_paged_attention_enabled": state.paged_cond_states is not None,
-                    "ar_prefill_forwards": state.prefill_forwards,
-                    "ar_decode_forwards": state.decode_forwards,
-                    "ar_decode_tokens": state.decode_tokens,
-                },
-            ),
             updated_cache_lanes=cache_updates,
             updated_row_lanes=row_updates,
         )
@@ -222,7 +208,6 @@ class NextStep1ARModelRunner:
             batch=batch,
             token=token,
         )
-        state.decode_tokens += batch_size
         return cache_updates, row_updates
 
     def _prefill_paged(
@@ -301,9 +286,6 @@ class NextStep1ARModelRunner:
                 updated_states[batch_size:],
             )
             row_updates["c_uncond"] = hidden[batch_size:]
-            state.decode_forwards += 2
-        else:
-            state.decode_forwards += 1
         return {}, row_updates
 
 __all__ = [

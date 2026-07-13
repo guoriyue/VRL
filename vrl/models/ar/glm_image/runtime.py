@@ -177,10 +177,8 @@ class GlmImageChunkExecutor(ARDiscreteChunkExecutorBase):
                 "image_width": image_width,
                 "image_token_num": total_token_num,
             },
-            # One single-branch prefill (no CFG uncond branch). Every
-            # generated position is a free codebook draw, so the default
-            # all-ones token mask is correct.
-            prefill_forwards=1,
+            # Every generated position is a free codebook draw, so the
+            # default all-ones token mask is correct.
         )
 
 

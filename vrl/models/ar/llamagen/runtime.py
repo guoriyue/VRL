@@ -159,9 +159,6 @@ class LlamaGenChunkExecutor(ARDiscreteChunkExecutorBase):
                 "image_token_num": params.image_token_num,
                 "uncond_source": "caption_embedder_uncond_embedding",
             },
-            # One combined [cond | uncond] prefill forward (vs Janus' two
-            # branch prefills).
-            prefill_forwards=1,
         )
 
     # -- internals -----------------------------------------------------

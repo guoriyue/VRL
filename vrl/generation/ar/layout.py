@@ -198,16 +198,6 @@ class ARRequestLayout:
             for field in fields
         }
 
-    def max_peak_memory_mb(self, chunks: Sequence[ARChunkResult]) -> float | None:
-        """Return the maximum non-null peak memory metric across chunk results."""
-
-        peaks = [
-            chunk.peak_memory_mb
-            for chunk in chunks
-            if chunk.peak_memory_mb is not None
-        ]
-        return max(peaks) if peaks else None
-
     def align_pair(
         self,
         a_ids: torch.Tensor,

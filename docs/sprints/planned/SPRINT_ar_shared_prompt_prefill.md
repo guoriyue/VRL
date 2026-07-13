@@ -35,7 +35,7 @@ init_ar(cond_embeds, uncond_embeds, ...)                 # K 行一起 prefill
 
 `runner.init_ar`（`janus_pro/runner.py:74-93`）`batch_size = cond_inputs_embeds.shape[0]`（= K），
 `_prefill_ar_prompt_paged(cond_inputs_embeds, ...)` 对**整批 K 行**做 prefill，每行都是**同一个
-prompt**。`prefill_forwards=2` 只是 cond+uncond 两次前向调用的计数，**每次前向内部仍在为 K 个相同行
+prompt**。当前 prefill 仍执行 cond+uncond 两次 branch forward，**每次前向内部仍在为 K 个相同行
 各算一遍 prompt KV**。
 
 ### 1.2 paged backend 没有前缀去重
@@ -91,14 +91,13 @@ prompt**。`prefill_forwards=2` 只是 cond+uncond 两次前向调用的计数�
 ## 4. 实现计划
 
 ### P0 — profiling gate（先量，别盲做）
-- 用现有 `ar_prefill_forwards` / `ar_decode_forwards` / stage `engine.prefill` 计时（runner debug
-  counters 已有），在目标 AR recipe 上量 **prefill 占总 rollout wall-clock 的比例**。
+- 用 stage `engine.prefill` 计时，在目标 AR recipe 上量 **prefill 占总 rollout wall-clock 的比例**。
 - 验收：占比 < 15% → **不做**（记录结论，关闭）；≥ 15% → 进 P1。
 
 ### P1 — 共享前缀 prefill（方案 A，compute-once）
 - `runtime`：chunk 路径不再 `[chunk.prompt] * sample_count`；传单 prompt + `sample_count`。
-- `runner.init_ar`：prefill 单行 cond/uncond，KV fan-out 到 K decode lane；`prefill_forwards` 仍=2
-  但**前向的 batch 维从 K 降到 1**。
+- `runner.init_ar`：prefill 单行 cond/uncond，KV fan-out 到 K decode lane；cond/uncond 两次
+  branch forward 不变，但**前向的 batch 维从 K 降到 1**，验收直接比较 `engine.prefill` 墙钟。
 - 正确性红线：K 个 lane 的 decode 结果**逐位等于**现状（同 noise/seed/temperature），logprob 不变
   （rollout logprob 是训练的 old_log_prob，必须 bit-parity，否则 GRPO ratio 漂）。
 - CPU 单测：1 行 prefill + K lane decode 的 token_ids/logprobs == K 行 prefill 的现状输出。

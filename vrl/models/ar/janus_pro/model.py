@@ -805,7 +805,6 @@ class JanusProModel(ARModelBase):
                 "prompt_attention_mask": prompt_attention_mask,
                 "uncond_input_ids": uncond_input_ids,
                 "uncond_attention_mask": uncond_attention_mask,
-                "ar_kv_cache_enabled": True,
             },
         }
 

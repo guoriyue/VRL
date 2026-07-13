@@ -58,20 +58,12 @@ def test_diffusion_chunk_gatherer_gathers_without_model_object() -> None:
     output = gatherer.gather_chunks(request, sample_rows, _diffusion_chunks(context))
 
     assert output.output.device.type == "cpu"
-    assert output.metrics is not None
-    assert output.metrics.num_steps == 2
-    assert output.metrics.chunks == 2
     assert output.trajectory is not None
     assert "trajectory" not in output.extra
-    assert output.metrics.engine_counters["diffusion_num_denoise_steps"] == 2
-    assert output.metrics.engine_counters["diffusion_video_bytes"] == (
-        output.output.numel() * output.output.element_size()
-    )
     assert output.trajectory.segments["denoise"].distribution == "flow_matching"
     assert output.trajectory.axes["sample"].length == 2
     assert output.trajectory.axes["denoise"].length == 2
     assert torch.equal(output.output[:, 0, 0, 0], torch.tensor([1.0, 2.0]))
-    assert output.metrics.peak_memory_mb == 20.0
 
 
 def test_diffusion_chunk_gatherer_orders_prompt_major_chunks() -> None:
