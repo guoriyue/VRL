@@ -118,6 +118,7 @@ def test_wan_empty_lora_preserves_base_policy_initially() -> None:
 def test_sana_aesthetic_keeps_cpu_observation_only_pickscore() -> None:
     """PickScore is logged on CPU but contributes zero optimization weight."""
     cfg = load_config("experiment/diffusion/sana/online_grpo_aesthetic")
+    cfg.distributed.resources.visible_devices = [0]
     built = build_configs(cfg)
 
     reward = build_reward_from_cfg(cfg, built=built, device="cuda:0")
