@@ -23,12 +23,12 @@ from vrl.config.builders import build_configs
 from vrl.config.loading import load_config
 from vrl.generation import GenerationOutput, GenerationRequest, build_sample_rows
 from vrl.generation.execution.planner import build_engine_plan
+from vrl.rollouts.collector.config import build_rollout_config_from_cfg
 from vrl.rollouts.families import RolloutFamilyEntry, get_rollout_family_entry
 from vrl.scripts.common.factory import (
     build_algorithm_and_evaluator_from_cfg,
     build_collector_from_cfg,
     build_reward_from_cfg,
-    build_rollout_config_from_cfg,
 )
 from vrl.trainers.online import OnlineTrainer
 from vrl.trainers.precision import torch_dtype_for_trainer_precision
@@ -597,7 +597,7 @@ def test_real_checkpoint_online_rl_updates_trainable_weights(
         trainer_config = built["trainer"]
         dtype = torch_dtype_for_trainer_precision(trainer_config, torch)
         bundle = _build_runtime_bundle(case, entry, cfg, device, dtype)
-        collector_config = build_rollout_config_from_cfg(cfg, entry)
+        collector_config = build_rollout_config_from_cfg(cfg, family=entry.family)
         if case.synthetic_replay_rollout:
             collector = _SyntheticDiffusionReplayCollector(
                 model=bundle.model,

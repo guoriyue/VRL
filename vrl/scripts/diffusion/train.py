@@ -49,10 +49,13 @@ def build_replay_bundle(cfg: DictConfig, device: Any) -> Any:
     """Lazy-import boundary over the generic descriptor-driven replay builder."""
 
     from vrl.models.diffusion.build import (
-        build_family_replay_runtime_bundle_from_cfg,
+        build_family_replay_runtime_bundle,
+        resolve_family_model_build,
     )
 
-    return build_family_replay_runtime_bundle_from_cfg(cfg, device)
+    return build_family_replay_runtime_bundle(
+        resolve_family_model_build(cfg, device, for_rollout=False),
+    )
 
 
 __all__ = ["build_replay_bundle", "train_diffusion_grpo"]

@@ -289,7 +289,9 @@ class RayGenerationLauncher:
                 executor_cls=entry.executor_cls,
                 extra=runtime_extra,
             ),
-            gatherer=_build_gatherer(entry),
+            gatherer=import_from_path(entry.gatherer.import_path)(
+                **entry.gatherer.kwargs,
+            ),
         )
 
 
@@ -300,11 +302,6 @@ def _resolve_model_build(
 ) -> Any:
     resolver = import_from_path(entry.model_build_resolver)
     return resolver(cfg, device)
-
-
-def _build_gatherer(entry: Any) -> ChunkGatherer:
-    gatherer_cls = import_from_path(entry.gatherer.import_path)
-    return gatherer_cls(**entry.gatherer.kwargs)
 
 
 def _build_executor_kwargs(entry: Any, cfg: Any) -> dict[str, Any]:

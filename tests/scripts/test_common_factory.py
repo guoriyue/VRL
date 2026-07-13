@@ -14,10 +14,10 @@ from vrl.algorithms.grpo.continuous import (
 from vrl.config.builders import build_configs
 from vrl.config.loading import load_config
 from vrl.models.diffusion.build import resolve_family_model_build
+from vrl.rollouts.collector.config import build_rollout_config_from_cfg
 from vrl.scripts.common.factory import (
     build_algorithm_and_evaluator_from_cfg,
     build_reward_from_cfg,
-    build_rollout_config_from_cfg,
     validate_reward_memory_parking_from_cfg,
 )
 
@@ -31,7 +31,7 @@ def test_diffusion_grpo_evaluator_uses_resolved_rollout_sde_config() -> None:
             "rollout.sde.type=cps",
         ],
     )
-    collector_config = build_rollout_config_from_cfg(cfg, "wan_2_1")
+    collector_config = build_rollout_config_from_cfg(cfg, family="wan_2_1")
 
     pair = build_algorithm_and_evaluator_from_cfg(
         cfg,
@@ -67,7 +67,7 @@ def test_diffusion_factory_accepts_each_kind_exact_config_type(
         cfg,
         family="sd3_5",
         built=build_configs(cfg),
-        collector_config=build_rollout_config_from_cfg(cfg, "sd3_5"),
+        collector_config=build_rollout_config_from_cfg(cfg, family="sd3_5"),
         scheduler=object(),
     )
 

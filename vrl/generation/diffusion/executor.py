@@ -447,20 +447,11 @@ class DiffusionChunkExecutorBase(
         if base.seed is not None:
             req_kwargs["seed"] = base.seed
 
-        extra = self.build_video_request_extra(params)
-        if extra:
-            req_kwargs["extra"] = extra
+        if self.include_max_sequence_length_extra:
+            req_kwargs["extra"] = {
+                "max_sequence_length": params.base.max_sequence_length,
+            }
         return VideoGenerationRequest(**req_kwargs)
-
-    def build_video_request_extra(
-        self,
-        params: DiffusionSamplingParams,
-    ) -> dict[str, Any]:
-        """Return family-neutral request.extra payload."""
-
-        if not self.include_max_sequence_length_extra:
-            return {}
-        return {"max_sequence_length": params.base.max_sequence_length}
 
     def build_denoise_config(
         self,

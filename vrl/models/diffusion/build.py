@@ -343,24 +343,11 @@ def build_family_replay_runtime_bundle(build: ModelBuild) -> RuntimeBundle:
     )
 
 
-def build_family_replay_runtime_bundle_from_cfg(cfg, device) -> RuntimeBundle:
-    """Whole-cfg convenience for the trainer path: cfg -> build -> replay bundle."""
-
-    return build_family_replay_runtime_bundle(
-        resolve_family_model_build(
-            cfg,
-            device,
-            for_rollout=False,
-        ),
-    )
-
-
 __all__ = [
     "assemble_replay_bundle",
     "build_diffusion_replay_runtime_bundle",
     "build_diffusion_runtime_bundle",
     "build_family_replay_runtime_bundle",
-    "build_family_replay_runtime_bundle_from_cfg",
     "build_family_runtime_bundle",
     "resolve_family_model_build",
 ]

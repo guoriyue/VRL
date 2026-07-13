@@ -12,9 +12,7 @@ from vrl.config.precision import resolve_precision_policy
 from vrl.models.dtypes import resolve_torch_dtype
 from vrl.ray.resources import resolve_distributed_resources, reward_torch_device
 from vrl.rollouts.collector import build_rollout_collector
-from vrl.rollouts.collector.config import (
-    build_rollout_config_from_cfg as build_collector_rollout_config_from_cfg,
-)
+from vrl.rollouts.collector.config import build_rollout_config_from_cfg
 from vrl.rollouts.families import (
     RolloutFamilyEntry,
     get_rollout_family_entry,
@@ -76,26 +74,6 @@ def resolve_online_family(cfg: DictConfig) -> str:
     if family == "janus_pro" and algorithm_kind == "token_grpo_multisegment":
         return "janus_pro_r1"
     return family
-
-
-def build_rollout_config_from_cfg(
-    cfg: DictConfig,
-    family: str | RolloutFamilyEntry | None = None,
-) -> Any:
-    """Build resolved rollout config from YAML."""
-
-    entry = _entry_from_family(cfg, family)
-    return _rollout_config_for_entry(cfg, entry)
-
-
-def _rollout_config_for_entry(
-    cfg: DictConfig,
-    entry: RolloutFamilyEntry,
-) -> Any:
-    return build_collector_rollout_config_from_cfg(
-        cfg,
-        family=entry.family,
-    )
 
 
 def build_reward_from_cfg(
@@ -255,7 +233,9 @@ def build_algorithm_and_evaluator_from_cfg(
             algorithm = GRPOGuard(algorithm_config)
         else:
             algorithm = GRPO(algorithm_config)
-        collector_config = collector_config or _rollout_config_for_entry(cfg, entry)
+        collector_config = collector_config or build_rollout_config_from_cfg(
+            cfg, family=entry.family
+        )
         math_dtype = resolve_torch_dtype(precision.diffusion_math)
         return AlgorithmEvaluatorPair(
             algorithm=algorithm,
@@ -348,7 +328,7 @@ def build_collector_from_cfg(
     """Build a rollout collector through the canonical family registry."""
 
     entry = _entry_from_family(cfg, family)
-    collector_config = collector_config or _rollout_config_for_entry(cfg, entry)
+    collector_config = collector_config or build_rollout_config_from_cfg(cfg, family=entry.family)
     # Topology-derived release policy so the collector reads its own handoff
     # rather than asking the runtime. Absent for in-process runs with no
     # distributed.resources, where there is no shared GPU to hand off.
@@ -376,7 +356,7 @@ def build_online_recipe_components(
 
     built = built or build_configs(cfg)
     entry = _entry_from_family(cfg, family)
-    collector_config = _rollout_config_for_entry(cfg, entry)
+    collector_config = build_rollout_config_from_cfg(cfg, family=entry.family)
     reward_fn = build_reward_from_cfg(
         cfg,
         built=built,
@@ -430,6 +410,5 @@ __all__ = [
     "build_collector_from_cfg",
     "build_online_recipe_components",
     "build_reward_from_cfg",
-    "build_rollout_config_from_cfg",
     "resolve_online_family",
 ]
