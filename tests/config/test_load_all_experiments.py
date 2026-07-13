@@ -237,10 +237,10 @@ def test_all_experiments_load_and_validate() -> None:
 def test_all_online_experiments_pass_static_launch_preflight() -> None:
     """Every active online recipe has a valid schedule and reward topology.
 
-    Explicit ``dedicated`` pools describe a hardware-gated topology. For those
-    recipes only, supply the minimum synthetic visible-device budget derived
-    from the role requests; all auto/shared recipes keep the host's normal
-    single-GPU resolution so phase-parking coverage is not accidentally lost.
+    Explicit ``dedicated`` pools and cross-node recipes describe disjoint GPU
+    topology, so supply the synthetic budget derived from their role requests.
+    Other auto/shared recipes get one synthetic device: ``make verify`` hides
+    CUDA, while this static test must still exercise single-GPU parking.
     """
 
     def requested_gpus(node, *, default: int) -> int:
@@ -261,19 +261,22 @@ def test_all_online_experiments_pass_static_launch_preflight() -> None:
         resources_cfg = cfg.distributed.resources
         rollout_pool = str(resources_cfg.rollout.get("gpu_pool", "auto"))
         reward_pool = str(resources_cfg.get("reward", {}).get("gpu_pool", "auto"))
-        if (
-            "dedicated" in {rollout_pool, reward_pool}
-            and resources_cfg.get("visible_devices", "auto") == "auto"
-        ):
-            trainer_gpus = requested_gpus(resources_cfg.trainer, default=1)
-            rollout_gpus = requested_gpus(resources_cfg.rollout, default=1)
-            reward_cfg = resources_cfg.get("reward", {})
-            reward_gpus = requested_gpus(reward_cfg, default=0)
-            required = trainer_gpus
-            if rollout_pool != "trainer":
-                required += rollout_gpus
-            if reward_pool == "dedicated":
-                required += reward_gpus
+        if resources_cfg.get("visible_devices", "auto") == "auto":
+            required = 1
+            requires_disjoint_devices = (
+                "dedicated" in {rollout_pool, reward_pool}
+                or bool(resources_cfg.get("cross_node", False))
+            )
+            if requires_disjoint_devices:
+                trainer_gpus = requested_gpus(resources_cfg.trainer, default=1)
+                rollout_gpus = requested_gpus(resources_cfg.rollout, default=1)
+                reward_cfg = resources_cfg.get("reward", {})
+                reward_gpus = requested_gpus(reward_cfg, default=0)
+                required = trainer_gpus
+                if rollout_pool != "trainer":
+                    required += rollout_gpus
+                if reward_pool == "dedicated":
+                    required += reward_gpus
             resources_cfg.visible_devices = list(range(required))
 
         try:
