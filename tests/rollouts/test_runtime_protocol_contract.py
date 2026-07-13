@@ -50,6 +50,7 @@ def _on_demand_runtime(
             launch_contract=GenerationRuntimeLaunchContract(
                 family="test",
                 task="test",
+                generation_kind="ar",
                 runtime_builder="tests:runtime_builder",
                 executor_cls="tests:executor_cls",
             ),

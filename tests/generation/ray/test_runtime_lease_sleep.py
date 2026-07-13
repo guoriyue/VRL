@@ -92,6 +92,7 @@ def _launch_contract(*, policy_version: int = 0) -> GenerationRuntimeLaunchContr
     return GenerationRuntimeLaunchContract(
         family="sd3_5",
         task="t2i",
+        generation_kind="diffusion",
         policy_version=policy_version,
         runtime_builder="tests:runtime_builder",
         executor_cls="tests:executor_cls",

@@ -5,10 +5,6 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping
 from typing import Any
 
-from vrl.generation.capabilities import (
-    FamilyCapability,
-    family_capability_from_value,
-)
 from vrl.generation.execution.types import (
     ChunkExecutionEnvelope,
     ChunkExecutionResult,
@@ -41,7 +37,7 @@ class GenerationWorkerCore:
         metadata_provider: Callable[[], Mapping[str, Any]] | None = None,
     ) -> None:
         self.worker_id = worker_id
-        self.launch_contract = self._normalize_launch_contract(launch_contract)
+        self.launch_contract = GenerationRuntimeLaunchContract.from_value(launch_contract)
         self.family = self.launch_contract.family
         self.executor: GenerationChunkExecutor | None = None
         self._policy_version: int | None = self.launch_contract.policy_version
@@ -50,12 +46,16 @@ class GenerationWorkerCore:
         # the slot for each request's stamped version instead of comparing against
         # one global version (which is what makes a non-draining sync safe).
         self._uses_versioned_slots = False
-        self._profiler_config = self._profiler_config_from_contract(self.launch_contract)
+        profiler_config = self.launch_contract.extra.get("torch_profiler", {})
+        self._profiler_config = (
+            TorchProfilerConfig(**dict(profiler_config))
+            if isinstance(profiler_config, Mapping)
+            else TorchProfilerConfig()
+        )
         self._profiler_output_dir = str(
             self.launch_contract.extra.get("profiler_output_dir", "outputs/"),
         )
         self._profiler_step = 0
-        self.capability = self._capability_from_contract(self.launch_contract)
         self._metadata_provider = metadata_provider or self._fallback_metadata
         # Set to a CumemPool when load_policy pools the model for sleep-offload
         # (extra["sleep_offload"]); sleep()/wake() then release/restore GPU physical
@@ -63,14 +63,12 @@ class GenerationWorkerCore:
         # own "weights" tag = the offloaded (not discarded) slice of a sleeping
         # engine, keeping semantics identical to verl-omni's level-1.
         self._cumem: CumemPool | None = None
-        # A parking proof compares post-sleep physical usage with the usage that
-        # existed before this worker loaded its model. CUDA contexts and shared
-        # libraries make zero an invalid universal baseline.
-        self._parking_baseline_gpu_used_bytes: int | None = None
-        # CPU fallback destroys the model's original device information when it
-        # calls model.to("cpu"). Presence of this value also means that path is
-        # parked; CuMem keeps the equivalent state in CumemPool.asleep.
-        self._parking_restore_device: Any | None = None
+        # The pre-load physical footprint is the only valid residual baseline;
+        # CUDA contexts and shared libraries make zero incorrect in general.
+        self._preload_gpu_used_bytes: int | None = None
+        # CPU offload needs one local state value: the original device is both the
+        # wake target and proof that the two-part model move committed.
+        self._cpu_parked_device: Any | None = None
 
     def load_policy(self) -> None:
         """Build the family executor from the serialized launch contract."""
@@ -82,13 +80,31 @@ class GenerationWorkerCore:
         from vrl.utils.memory import log_host_memory
 
         if self._parking_requested():
-            self._parking_baseline_gpu_used_bytes = self._gpu_used_bytes()
-        self._parking_restore_device = None
+            self._preload_gpu_used_bytes = self._gpu_used_bytes()
+        self._cpu_parked_device = None
         log_host_memory(f"generation_worker:{self.worker_id}:before_load_policy", log=logger)
-        self.executor = self._build_executor_maybe_pooled()
-        self.capability = self._check_executor_capability(self.executor)
-        if self._parking_requested():
-            self._require_complete_parking_backend()
+        try:
+            self.executor = self._build_executor_maybe_pooled()
+            if (
+                self.executor.family != self.launch_contract.family
+                or self.executor.task != self.launch_contract.task
+            ):
+                raise ValueError(
+                    "executor identity does not match launch contract: "
+                    f"{self.executor.family}/{self.executor.task} != "
+                    f"{self.launch_contract.family}/{self.launch_contract.task}",
+                )
+            if self._parking_requested():
+                self._require_complete_parking_backend()
+        except BaseException as load_error:
+            try:
+                self.release_policy()
+            except BaseException as release_error:
+                raise RuntimeError(
+                    "generation policy load and cleanup both failed: "
+                    f"load={load_error!r}; cleanup={release_error!r}",
+                ) from release_error
+            raise
         log_host_memory(f"generation_worker:{self.worker_id}:after_load_policy", log=logger)
 
     def _build_executor_maybe_pooled(self) -> GenerationChunkExecutor:
@@ -104,16 +120,24 @@ class GenerationWorkerCore:
         implemented complete fallback parking instead of accepting a no-op.
         """
 
-        if (
-            not self.launch_contract.extra.get("sleep_offload")
-            or self.capability.trajectory_kind != "diffusion"
-        ):
+        if not self._parking_requested() or self.launch_contract.generation_kind != "diffusion":
             return self._build_executor()
         pool = CumemPool.try_create(tag="weights")
         if pool is None:
             return self._build_executor()
-        with pool.building():
-            executor = self._build_executor()
+        try:
+            with pool.building():
+                executor = self._build_executor()
+        except BaseException as build_error:
+            release_cuda_memory(gc_collect=True, ipc_collect=True)
+            try:
+                pool.close()
+            except BaseException as close_error:
+                raise RuntimeError(
+                    "generation pooled build and cleanup both failed: "
+                    f"build={build_error!r}; cleanup={close_error!r}",
+                ) from close_error
+            raise
         self._cumem = pool
         return executor
 
@@ -131,8 +155,8 @@ class GenerationWorkerCore:
             pool.close()
             self._cumem = None
             release_cuda_memory(gc_collect=True, ipc_collect=True)
-        self._parking_baseline_gpu_used_bytes = None
-        self._parking_restore_device = None
+        self._preload_gpu_used_bytes = None
+        self._cpu_parked_device = None
 
     def sleep(self) -> WorkerMemoryParkingSnapshot:
         """Offload the loaded model to host RAM, freeing the GPU without discarding it.
@@ -181,21 +205,42 @@ class GenerationWorkerCore:
             backend = "cumem"
         else:
             model = self.executor.model
-            restore_device = self._parking_restore_device
+            restore_device = self._cpu_parked_device
             if restore_device is None:
                 # Capture before the CPU move: afterwards model.device can no
                 # longer tell wake() which CUDA device owned the model.
                 restore_device = self._executor_device(self.executor)
-                self._parking_restore_device = restore_device
-                model.to("cpu")
                 move_frozen = getattr(model, "move_frozen_components", None)
-                if callable(move_frozen):
-                    move_frozen("cpu")
+                try:
+                    model.to("cpu")
+                    if callable(move_frozen):
+                        move_frozen("cpu")
+                except BaseException as move_error:
+                    # Do not commit a parked sentinel until BOTH registered and
+                    # unregistered modules moved. Best-effort rollback keeps a
+                    # retry from reporting a false successful handoff.
+                    rollback_errors: list[BaseException] = []
+                    try:
+                        model.to(restore_device)
+                    except BaseException as rollback_error:
+                        rollback_errors.append(rollback_error)
+                    if callable(move_frozen):
+                        try:
+                            move_frozen(restore_device)
+                        except BaseException as rollback_error:
+                            rollback_errors.append(rollback_error)
+                    if rollback_errors:
+                        raise RuntimeError(
+                            "generation CPU parking and rollback both failed: "
+                            f"move={move_error!r}; rollback={rollback_errors!r}",
+                        ) from rollback_errors[0]
+                    raise
+                self._cpu_parked_device = restore_device
             self._release_cuda_memory_for_parking()
             backend = "cpu_offload" if str(restore_device).startswith("cuda") else "cpu_only"
 
         residual_bytes = self._gpu_used_bytes()
-        baseline_bytes = self._parking_baseline_gpu_used_bytes
+        baseline_bytes = self._preload_gpu_used_bytes
         if baseline_bytes is None:
             if self._parking_requested() or residual_bytes:
                 raise RuntimeError(
@@ -231,7 +276,7 @@ class GenerationWorkerCore:
             # virtual addresses — the tensors stay valid cuda tensors throughout.
             pool.wake()
             return
-        device = self._parking_restore_device
+        device = self._cpu_parked_device
         if device is None:
             return
         move = getattr(model, "to", None)
@@ -240,7 +285,7 @@ class GenerationWorkerCore:
         move_frozen = getattr(model, "move_frozen_components", None)
         if callable(move_frozen):
             move_frozen(device)
-        self._parking_restore_device = None
+        self._cpu_parked_device = None
 
     def _parking_requested(self) -> bool:
         return bool(self.launch_contract.extra.get("sleep_offload"))
@@ -257,7 +302,7 @@ class GenerationWorkerCore:
                 f"generation worker {self.worker_id!r} cannot completely park "
                 f"{type(executor).__name__}: CPU fallback requires executor.model.to(...)"
             )
-        if self.capability.trajectory_kind == "diffusion" and not callable(
+        if self.launch_contract.generation_kind == "diffusion" and not callable(
             getattr(model, "move_frozen_components", None),
         ):
             raise RuntimeError(
@@ -724,15 +769,6 @@ class GenerationWorkerCore:
             metrics.update(_chunk_output_debug_metrics(chunk_output))
         return metrics
 
-    @staticmethod
-    def _normalize_launch_contract(
-        launch_contract: GenerationRuntimeLaunchContract | Mapping[str, Any],
-    ) -> GenerationRuntimeLaunchContract:
-        contract = GenerationRuntimeLaunchContract.from_value(launch_contract)
-        if contract.family is None:
-            raise ValueError("GenerationRuntimeLaunchContract.family is required")
-        return contract
-
     def _build_executor(self) -> GenerationChunkExecutor:
         launch_contract = self.launch_contract
         builder_path = launch_contract.runtime_builder
@@ -747,11 +783,15 @@ class GenerationWorkerCore:
 
         build_runtime_bundle = import_from_path(str(builder_path))
         executor_cls = import_from_path(str(executor_path))
-        build = ModelBuild(
-            **self._normalize_model_build_payload(
-                launch_contract.model_build_payload(),
-            ),
-        )
+        build_payload = launch_contract.model_build_payload()
+        device = build_payload.get("device")
+        if isinstance(device, str):
+            import torch
+
+            build_payload["device"] = torch.device(device)
+        # ModelBuild and RolloutBuildOptions normalize parameter and nested rollout
+        # dtypes while reconstructing the primitive Ray payload.
+        build = ModelBuild(**build_payload)
         bundle = build_runtime_bundle(build)
         model = require_runtime_model(bundle.model, owner="RuntimeBundle.model")
         # Family- and scheme-agnostic backstop: if rollout quantization asks for a
@@ -761,72 +801,7 @@ class GenerationWorkerCore:
 
         assert_rollout_quantization_applied(model, build)
         built = executor_cls(model, **dict(launch_contract.executor_kwargs))
-        # Registry-descriptor families declare no executor capability of their
-        # own — the registry entry is the single construction site, and it
-        # arrives here via the launch contract. Families that still declare
-        # keep theirs (the declared-vs-contract cross-check below covers them).
-        if getattr(built, "family_capability", None) is None:
-            built.family_capability = self._capability_from_contract(launch_contract)
         return _require_chunked_executor(built)
-
-    @staticmethod
-    def _profiler_config_from_contract(
-        launch_contract: GenerationRuntimeLaunchContract,
-    ) -> TorchProfilerConfig:
-        raw = launch_contract.extra.get("torch_profiler", {})
-        if isinstance(raw, Mapping):
-            return TorchProfilerConfig(**dict(raw))
-        return TorchProfilerConfig()
-
-    @staticmethod
-    def _capability_from_contract(
-        launch_contract: GenerationRuntimeLaunchContract,
-    ) -> FamilyCapability:
-        capability = family_capability_from_value(
-            launch_contract.extra.get("family_capability"),
-        )
-        if capability is not None:
-            return capability
-        raise ValueError(
-            "GenerationRuntimeLaunchContract.extra['family_capability'] is required "
-            "for distributed generation",
-        )
-
-    def _check_executor_capability(
-        self,
-        executor: GenerationChunkExecutor,
-    ) -> FamilyCapability:
-        """Cross-check a declared executor capability against the contract.
-
-        The registry capability arrives via the launch contract and is the
-        single source; a family that also declares its own constant must agree
-        with it (a mismatch means driver/worker code skew — fail loud).
-        """
-
-        declared = self._declared_executor_capability(executor)
-        if declared is None:
-            return self.capability
-        if declared.family != self.capability.family or declared.task != self.capability.task:
-            raise ValueError(
-                "executor capability does not match launch contract: "
-                f"{declared.family}/{declared.task} != "
-                f"{self.capability.family}/{self.capability.task}",
-            )
-        if declared.trajectory_kind != self.capability.trajectory_kind:
-            raise ValueError(
-                "executor trajectory capability does not match launch contract: "
-                f"{declared.trajectory_kind} != {self.capability.trajectory_kind}",
-            )
-        return declared
-
-    @staticmethod
-    def _declared_executor_capability(
-        executor: GenerationChunkExecutor,
-    ) -> FamilyCapability | None:
-        method = getattr(executor, "capability", None)
-        if callable(method):
-            return family_capability_from_value(method())
-        return None
 
     @staticmethod
     def _executor_device(executor: Any) -> Any:
@@ -840,21 +815,6 @@ class GenerationWorkerCore:
             return torch.device("cuda" if torch.cuda.is_available() else "cpu")
         except Exception:
             return "cpu"
-
-    @classmethod
-    def _normalize_model_build_payload(
-        cls,
-        payload: dict[str, Any],
-    ) -> dict[str, Any]:
-        normalized = dict(payload)
-        device = normalized.get("device")
-        if isinstance(device, str):
-            import torch
-
-            normalized["device"] = torch.device(device)
-        # ModelBuild and RolloutBuildOptions normalize the parameter and
-        # nested rollout dtypes while reconstructing the primitive Ray payload.
-        return normalized
 
     @classmethod
     def _to_cpu(cls, value: Any) -> Any:

@@ -25,7 +25,6 @@ import torch
 
 from vrl.generation.execution.worker import GenerationWorkerCore
 from vrl.generation.launch_contract import GenerationRuntimeLaunchContract
-from vrl.models.diffusion.capabilities import diffusion_family_capability
 
 
 class _SleepModel:
@@ -104,13 +103,13 @@ def _core(
     *,
     sleep_offload: bool = False,
 ) -> GenerationWorkerCore:
-    capability = diffusion_family_capability("sd3_5", "t2i")
-    extra: dict[str, Any] = {"family_capability": capability.to_dict()}
+    extra: dict[str, Any] = {}
     if sleep_offload:
         extra["sleep_offload"] = True
     contract = GenerationRuntimeLaunchContract(
         family="sd3_5",
         task="t2i",
+        generation_kind="diffusion",
         policy_version=1,
         runtime_builder=f"{_MODULE}:_unused_builder",
         executor_cls=f"{_MODULE}:_Executor",
@@ -123,7 +122,7 @@ def _core(
     # probes explicitly.
     core._gpu_used_bytes = lambda: 0  # type: ignore[method-assign]
     core._release_cuda_memory_for_parking = lambda: None  # type: ignore[method-assign]
-    core._parking_baseline_gpu_used_bytes = 0
+    core._preload_gpu_used_bytes = 0
     return core
 
 
@@ -264,6 +263,23 @@ def test_load_policy_pools_model_when_sleep_offload_and_cumem_available(monkeypa
     assert core._cumem._allocator is fake
 
 
+def test_failed_pooled_build_closes_retained_pool(monkeypatch) -> None:
+    import vrl.utils.cuda_memory as cuda_memory_mod
+
+    fake = _FakeCuMem()
+    monkeypatch.setattr(cuda_memory_mod, "_cumem_allocator", lambda: fake)
+    core = _core(None, sleep_offload=True)
+    core._build_executor = lambda: (_ for _ in ()).throw(  # type: ignore[method-assign]
+        RuntimeError("build failed"),
+    )
+
+    with pytest.raises(RuntimeError, match="build failed"):
+        core._build_executor_maybe_pooled()
+
+    assert "weights" not in fake.allocator_and_pools
+    assert core._cumem is None
+
+
 def test_load_policy_falls_back_when_cumem_unavailable(monkeypatch) -> None:
     import vrl.utils.cuda_memory as cuda_memory_mod
 
@@ -291,6 +307,8 @@ def test_load_policy_does_not_pool_without_sleep_offload(monkeypatch) -> None:
 
     assert called == []  # allocator never consulted
     assert core._cumem is None
+
+
 def test_ar_cpu_fallback_does_not_enter_cumem_pool(monkeypatch) -> None:
     """AR decode may call empty_cache, which is incompatible with the pool scope."""
     import vrl.utils.cuda_memory as cuda_memory_mod
@@ -298,7 +316,7 @@ def test_ar_cpu_fallback_does_not_enter_cumem_pool(monkeypatch) -> None:
     called: list[bool] = []
     monkeypatch.setattr(cuda_memory_mod, "_cumem_allocator", lambda: called.append(True))
     core = _core(None, sleep_offload=True)
-    core.capability = replace(core.capability, trajectory_kind="ar_discrete")
+    core.launch_contract = replace(core.launch_contract, generation_kind="ar")
     sentinel = object()
     core._build_executor = lambda: sentinel  # type: ignore[method-assign]
 
@@ -319,6 +337,9 @@ def test_cpu_fallback_rejects_executor_without_movable_model(monkeypatch) -> Non
     with pytest.raises(RuntimeError, match=r"requires executor\.model\.to"):
         core.load_policy()
 
+    assert core.executor is None
+    assert core._preload_gpu_used_bytes is None
+
 
 def test_diffusion_cpu_fallback_requires_frozen_component_parking(monkeypatch) -> None:
     import vrl.generation.execution.worker as worker_module
@@ -335,6 +356,26 @@ def test_diffusion_cpu_fallback_requires_frozen_component_parking(monkeypatch) -
     with pytest.raises(RuntimeError, match="requires move_frozen_components"):
         core.load_policy()
 
+    assert core.executor is None
+    assert core._preload_gpu_used_bytes is None
+
+
+def test_executor_identity_failure_rolls_back_loaded_policy(monkeypatch) -> None:
+    import vrl.generation.execution.worker as worker_module
+
+    class _WrongExecutor(_Executor):
+        family = "wrong"
+
+    core = _core(None, sleep_offload=True)
+    monkeypatch.setattr(worker_module.CumemPool, "try_create", lambda tag=None: None)
+    core._build_executor = lambda: _WrongExecutor(_SleepModel())  # type: ignore[method-assign]
+
+    with pytest.raises(ValueError, match="executor identity does not match"):
+        core.load_policy()
+
+    assert core.executor is None
+    assert core._preload_gpu_used_bytes is None
+
 
 def test_sleep_move_failure_is_not_swallowed() -> None:
     class _FailingModel(_SleepModel):
@@ -343,13 +384,91 @@ def test_sleep_move_failure_is_not_swallowed() -> None:
 
     core = _core(_FailingModel())
 
-    with pytest.raises(RuntimeError, match="move to cpu failed"):
+    with pytest.raises(RuntimeError, match="parking and rollback both failed"):
         core.sleep()
+
+    assert core._cpu_parked_device is None
+
+
+def test_sleep_move_failure_does_not_commit_false_parked_state() -> None:
+    class _FailOnceModel(_SleepModel):
+        def __init__(self) -> None:
+            super().__init__()
+            self.failed = False
+
+        def to(self, device: Any) -> _SleepModel:
+            self.to_calls.append(device)
+            if device == "cpu" and not self.failed:
+                self.failed = True
+                raise RuntimeError("first CPU move failed")
+            return self
+
+    model = _FailOnceModel()
+    core = _core(model)
+
+    with pytest.raises(RuntimeError, match="first CPU move failed"):
+        core.sleep()
+
+    assert core._cpu_parked_device is None
+    snapshot = core.sleep()
+    assert snapshot.backend == "cpu_offload"
+    assert model.to_calls == ["cpu", "cuda:0", "cpu"]
+
+
+def test_frozen_move_failure_rolls_back_before_retry() -> None:
+    class _FailOnceFrozenModel(_SleepModel):
+        def __init__(self) -> None:
+            super().__init__()
+            self.failed = False
+
+        def move_frozen_components(self, device: Any) -> None:
+            self.frozen_calls.append(device)
+            if device == "cpu" and not self.failed:
+                self.failed = True
+                raise RuntimeError("first frozen CPU move failed")
+
+    model = _FailOnceFrozenModel()
+    core = _core(model)
+
+    with pytest.raises(RuntimeError, match="first frozen CPU move failed"):
+        core.sleep()
+
+    assert core._cpu_parked_device is None
+    snapshot = core.sleep()
+    assert snapshot.backend == "cpu_offload"
+    assert model.to_calls == ["cpu", "cuda:0", "cpu"]
+    assert model.frozen_calls == ["cpu", "cuda:0", "cpu"]
+
+
+def test_wake_failure_keeps_cpu_parked_state_for_retry() -> None:
+    class _FailOnceFrozenWakeModel(_SleepModel):
+        def __init__(self) -> None:
+            super().__init__()
+            self.failed = False
+
+        def move_frozen_components(self, device: Any) -> None:
+            self.frozen_calls.append(device)
+            if device == "cuda:0" and not self.failed:
+                self.failed = True
+                raise RuntimeError("first frozen wake failed")
+
+    model = _FailOnceFrozenWakeModel()
+    core = _core(model)
+    core.sleep()
+
+    with pytest.raises(RuntimeError, match="first frozen wake failed"):
+        core.wake()
+
+    assert core._cpu_parked_device == "cuda:0"
+    core.wake()
+    assert core._cpu_parked_device is None
+    assert model.to_calls == ["cpu", "cuda:0", "cuda:0"]
+    assert model.frozen_calls == ["cpu", "cuda:0", "cuda:0"]
 
 
 def test_sleep_rejects_residual_above_preload_baseline(monkeypatch) -> None:
     core = _core(_SleepModel())
-    core._parking_baseline_gpu_used_bytes = 0
+    core._preload_gpu_used_bytes = 0
     readings = iter((1024, 1))
     monkeypatch.setattr(core, "_gpu_used_bytes", lambda: next(readings))
 
@@ -362,7 +481,7 @@ def test_sleep_rejects_residual_above_preload_baseline(monkeypatch) -> None:
 
 @pytest.mark.gpu
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is unavailable")
-def test_cuda_cpu_fallback_returns_to_preload_physical_baseline() -> None:
+def test_cuda_cpu_fallback_returns_to_preload_process_baseline() -> None:
     class _TinyCudaModel(torch.nn.Module):
         def __init__(self) -> None:
             super().__init__()
@@ -376,14 +495,19 @@ def test_cuda_cpu_fallback_returns_to_preload_physical_baseline() -> None:
             del device
 
     core = _core(None)
-    core._gpu_used_bytes = lambda: GenerationWorkerCore._gpu_used_bytes()  # type: ignore[method-assign]
+    # The production proof intentionally measures the whole device and fails
+    # closed if any process grows during handoff. This real-CUDA mechanism test
+    # isolates the pytest process because desktop GPU clients can legitimately
+    # change the device-wide reading between the two samples; the preceding
+    # deterministic test covers strict device-wide residual rejection.
+    core._gpu_used_bytes = lambda: int(torch.cuda.memory_reserved())  # type: ignore[method-assign]
     core._release_cuda_memory_for_parking = (  # type: ignore[method-assign]
         lambda: GenerationWorkerCore._release_cuda_memory_for_parking()
     )
     baseline = core._gpu_used_bytes()
     model = _TinyCudaModel()
     core.executor = _Executor(model)
-    core._parking_baseline_gpu_used_bytes = baseline
+    core._preload_gpu_used_bytes = baseline
 
     snapshot = core.sleep()
 
@@ -412,8 +536,8 @@ def test_release_policy_wakes_and_closes_cumem_pool(monkeypatch) -> None:
     assert "weights" not in fake.allocator_and_pools
     assert core.executor is None
     assert core._cumem is None
-    assert core._parking_baseline_gpu_used_bytes is None
-    assert core._parking_restore_device is None
+    assert core._preload_gpu_used_bytes is None
+    assert core._cpu_parked_device is None
 
 
 @pytest.mark.gpu

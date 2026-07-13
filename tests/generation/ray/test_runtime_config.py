@@ -19,8 +19,6 @@ from vrl.generation.ray.config import (
 )
 from vrl.generation.ray.launcher import RayGenerationLauncher
 from vrl.generation.ray.utils import all_workers_support_versioned_slots
-from vrl.models.ar.capabilities import ar_discrete_family_capability
-from vrl.models.diffusion.capabilities import diffusion_family_capability
 from vrl.models.interfaces import ModelBuild, RolloutBuildOptions
 
 
@@ -64,6 +62,7 @@ def _launch_contract() -> GenerationRuntimeLaunchContract:
     return GenerationRuntimeLaunchContract(
         family="janus_pro",
         task="ar_t2i",
+        generation_kind="ar",
         runtime_builder=("tests.generation.ray.test_rollout_launcher:build_tiny_runtime_bundle"),
         executor_cls="tests.generation.ray.test_rollout_launcher:_TinyChunkExecutor",
     )
@@ -81,6 +80,7 @@ def test_launch_contract_accepts_primitive_config_leaves() -> None:
     contract = GenerationRuntimeLaunchContract(
         family="unit",
         task="test",
+        generation_kind="ar",
         runtime_builder="tests.fake:build",
         executor_cls="tests.fake:Executor",
         model_config={
@@ -101,13 +101,25 @@ def test_launch_contract_rejects_callable_config_leaf() -> None:
         GenerationRuntimeLaunchContract(
             family="unit",
             task="test",
+            generation_kind="ar",
             runtime_builder="tests.fake:build",
             executor_cls="tests.fake:Executor",
             executor_kwargs={"factory": lambda: None},
         )
 
 
-def _build_inputs_entry(capability: Any | None = None) -> Any:
+def test_launch_contract_rejects_unknown_generation_kind() -> None:
+    with pytest.raises(ValueError, match="unsupported generation_kind"):
+        GenerationRuntimeLaunchContract(
+            family="unit",
+            task="test",
+            generation_kind="video",  # type: ignore[arg-type]
+            runtime_builder="tests.fake:build",
+            executor_cls="tests.fake:Executor",
+        )
+
+
+def _build_inputs_entry(collector_kind: str = "diffusion") -> Any:
     return SimpleNamespace(
         family="sd3_5",
         task="t2i",
@@ -118,7 +130,7 @@ def _build_inputs_entry(capability: Any | None = None) -> Any:
             import_path="tests.generation.ray.test_rollout_launcher:_Gatherer",
             kwargs={},
         ),
-        capability=capability or diffusion_family_capability("sd3_5", "t2i"),
+        collector=SimpleNamespace(kind=collector_kind),
     )
 
 
@@ -331,6 +343,7 @@ def test_ray_build_inputs_uses_model_compile_config_as_single_source() -> None:
     )
 
     model_build = launch_inputs.launch_contract.model_build
+    assert launch_inputs.launch_contract.generation_kind == "diffusion"
     assert model_build["device"] == "cpu"
     assert model_build["parameter_dtype"] == "bfloat16"
     assert model_build["rollout"]["autocast_dtype"] == "float32"
@@ -385,7 +398,7 @@ def test_ray_build_inputs_marks_lora_as_adapter_only_sync() -> None:
     assert rollout["base_weight_sync"] is False
 
 
-def test_ray_build_inputs_rejects_model_compile_on_family_without_capability() -> None:
+def test_ray_build_inputs_rejects_model_compile_for_ar_family() -> None:
     """Checks model.torch_compile fails fast on rollout families that cannot compile."""
     with pytest.raises(ValueError, match="does not support torch compile"):
         RayGenerationLauncher.build_inputs(
@@ -395,8 +408,17 @@ def test_ray_build_inputs_rejects_model_compile_on_family_without_capability() -
                     "mode": "default",
                 },
             ),
-            _build_inputs_entry(ar_discrete_family_capability("janus_pro", "ar_t2i")),
+            _build_inputs_entry("ar_discrete"),
         )
+
+
+def test_ray_build_inputs_marks_ar_generation_kind() -> None:
+    launch_inputs = RayGenerationLauncher.build_inputs(
+        _build_inputs_cfg(),
+        _build_inputs_entry("ar_discrete"),
+    )
+
+    assert launch_inputs.launch_contract.generation_kind == "ar"
 
 
 @pytest.mark.parametrize(

@@ -27,7 +27,6 @@ from vrl.generation.execution.worker import GenerationWorkerCore
 from vrl.generation.launch_contract import GenerationRuntimeLaunchContract
 from vrl.generation.ray.runtime import RayGenerationRuntime
 from vrl.generation.types import GenerationRequest
-from vrl.models.diffusion.capabilities import diffusion_family_capability
 
 GB = 1024**3
 
@@ -164,14 +163,13 @@ def _unused_builder(spec: Any) -> Any:  # pragma: no cover - executor is injecte
 
 
 def _probe_core(executor: Any) -> GenerationWorkerCore:
-    capability = diffusion_family_capability("sd3_5", "t2i")
     contract = GenerationRuntimeLaunchContract(
         family="sd3_5",
         task="t2i",
+        generation_kind="diffusion",
         policy_version=1,
         runtime_builder=f"{__name__}:_unused_builder",
         executor_cls=f"{__name__}:_ProbeExecutor",
-        extra={"family_capability": capability.to_dict()},
     )
     core = GenerationWorkerCore("rollout-0", contract)
     core.executor = executor
@@ -358,14 +356,13 @@ class _MemoryExecutor:
 
 
 def test_worker_forwards_chunk_memory_without_runtime_debug() -> None:
-    capability = diffusion_family_capability("sd3_5", "t2i")
     contract = GenerationRuntimeLaunchContract(
         family="sd3_5",
         task="t2i",
+        generation_kind="diffusion",
         policy_version=1,
         runtime_builder=f"{__name__}:_unused_builder",
         executor_cls=f"{__name__}:_MemoryExecutor",
-        extra={"family_capability": capability.to_dict()},
     )
     core = GenerationWorkerCore("rollout-0", contract)
     core.executor = _MemoryExecutor()

@@ -12,7 +12,6 @@ from vrl.generation.launch_contract import GenerationRuntimeLaunchContract
 from vrl.generation.protocols import ChunkResult
 from vrl.generation.ray.worker import RayGenerationWorker
 from vrl.generation.types import GenerationOutput, GenerationRequest, GenerationSampleRow
-from vrl.models.ar.capabilities import ar_discrete_family_capability
 from vrl.models.interfaces import (
     ModelBuild,
     ReplayResult,
@@ -77,10 +76,10 @@ def build_tiny_runtime_bundle(build: ModelBuild) -> RuntimeBundle:
 
 
 def _launch_contract() -> GenerationRuntimeLaunchContract:
-    capability = ar_discrete_family_capability("janus_pro", "ar_t2i")
     return GenerationRuntimeLaunchContract(
         family="janus_pro",
         task="ar_t2i",
+        generation_kind="ar",
         policy_version=1,
         model_build={
             "model_name_or_path": "unit-test",
@@ -98,7 +97,6 @@ def _launch_contract() -> GenerationRuntimeLaunchContract:
             "tests.generation.ray.test_ray_resident_session:build_tiny_runtime_bundle"
         ),
         executor_cls="tests.generation.ray.test_ray_resident_session:_TinyChunkExecutor",
-        extra={"family_capability": capability.to_dict()},
     )
 
 

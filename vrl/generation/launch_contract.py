@@ -5,7 +5,9 @@ from __future__ import annotations
 import pickle
 from collections.abc import Mapping
 from dataclasses import dataclass, field, fields
-from typing import Any
+from typing import Any, Literal, get_args
+
+GenerationKind = Literal["diffusion", "ar"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -17,8 +19,9 @@ class GenerationRuntimeLaunchContract:
     live executor, policy, or pipeline objects through this boundary.
     """
 
-    family: str | None = None
-    task: str | None = None
+    family: str
+    task: str
+    generation_kind: GenerationKind
     model_config: dict[str, Any] = field(default_factory=dict)
     executor_kwargs: dict[str, Any] = field(default_factory=dict)
     policy_version: int | None = None
@@ -28,6 +31,12 @@ class GenerationRuntimeLaunchContract:
     extra: dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
+        if not self.family:
+            raise ValueError("GenerationRuntimeLaunchContract.family must be non-empty")
+        if not self.task:
+            raise ValueError("GenerationRuntimeLaunchContract.task must be non-empty")
+        if self.generation_kind not in get_args(GenerationKind):
+            raise ValueError(f"unsupported generation_kind: {self.generation_kind!r}")
         object.__setattr__(
             self,
             "model_config",
@@ -86,6 +95,7 @@ class GenerationRuntimeLaunchContract:
         return {
             "family": self.family,
             "task": self.task,
+            "generation_kind": self.generation_kind,
             "model_config": dict(self.model_config),
             "executor_kwargs": dict(self.executor_kwargs),
             "policy_version": self.policy_version,
@@ -188,4 +198,4 @@ class GenerationRuntimeLaunchContract:
         return value_type.__module__.startswith("diffusers.") and "Pipeline" in value_type.__name__
 
 
-__all__ = ["GenerationRuntimeLaunchContract"]
+__all__ = ["GenerationKind", "GenerationRuntimeLaunchContract"]

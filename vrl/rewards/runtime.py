@@ -61,7 +61,7 @@ class InProcessRewardRuntime:
         self._model = model
         self._pool: CumemPool | None = None
         self._last_request_id: str | None = None
-        self._parking_baseline_gpu_used_bytes: int | None = None
+        self._preload_gpu_used_bytes: int | None = None
         self._parking_residual_bytes_limit = int(
             self._worker_config.get("memory_parking_residual_bytes_limit", 0),
         )
@@ -102,7 +102,7 @@ class InProcessRewardRuntime:
             # A failure therefore leaves this branch retryable on the next call.
             pool.sleep()
         self._release_cuda_memory_for_parking()
-        baseline_bytes = self._parking_baseline_gpu_used_bytes
+        baseline_bytes = self._preload_gpu_used_bytes
         if baseline_bytes is None:
             raise RuntimeError("reward runtime has no pre-load GPU parking baseline")
         proof = RewardMemoryReleaseProof(
@@ -129,7 +129,7 @@ class InProcessRewardRuntime:
                 # Build inside the pool so every CUDA allocation the factory
                 # makes (from_pretrained, .to(device), buffers) is tagged and
                 # sleep/wake can release/restore it wholesale.
-                self._parking_baseline_gpu_used_bytes = self._gpu_used_bytes()
+                self._preload_gpu_used_bytes = self._gpu_used_bytes()
                 self._pool = CumemPool.require()
                 with self._pool.building():
                     self._model = factory(self._worker_config)
@@ -176,7 +176,7 @@ class InProcessRewardRuntime:
         # path additionally proves the release against its pre-load baseline.
         self._release_cuda_memory_for_parking()
         if pool is not None:
-            baseline_bytes = self._parking_baseline_gpu_used_bytes
+            baseline_bytes = self._preload_gpu_used_bytes
             if baseline_bytes is None:
                 raise RuntimeError("reward runtime has no pre-load shutdown baseline")
             # A failure retains the pool/baseline so terminal cleanup can retry
@@ -189,7 +189,7 @@ class InProcessRewardRuntime:
             )
         self._pool = None
         self._last_request_id = None
-        self._parking_baseline_gpu_used_bytes = None
+        self._preload_gpu_used_bytes = None
 
     # Instance-assignable test seams over the shared parking bookkeeping in
     # vrl.utils.cuda_memory; rewards measure their configured device only.

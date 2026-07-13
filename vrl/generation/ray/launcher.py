@@ -274,7 +274,6 @@ class RayGenerationLauncher:
         resolved_executor_kwargs = _build_executor_kwargs(entry, cfg)
         resolved_executor_kwargs.update(dict(executor_kwargs or {}))
         runtime_extra = _runtime_extra(cfg)
-        runtime_extra["family_capability"] = entry.capability.to_dict()
         _validate_model_compile_supported(cfg, entry)
         model_build_payload = _model_build_payload(build)
 
@@ -282,6 +281,7 @@ class RayGenerationLauncher:
             launch_contract=GenerationRuntimeLaunchContract(
                 family=entry.family,
                 task=entry.task,
+                generation_kind=("diffusion" if entry.collector.kind == "diffusion" else "ar"),
                 model_build=model_build_payload,
                 executor_kwargs=resolved_executor_kwargs,
                 policy_version=policy_version,
@@ -312,7 +312,7 @@ def _build_executor_kwargs(entry: Any, cfg: Any) -> dict[str, Any]:
 
     kwargs: dict[str, Any] = {}
     # Diffusion executors take a chunk batch size; AR executors do not.
-    if entry.capability.trajectory_kind == "diffusion":
+    if entry.collector.kind == "diffusion":
         samples_per_chunk = cfg_path(cfg, "rollout.samples_per_chunk", None)
         # ``auto`` belongs to the request and is resolved by RayGenerationRuntime
         # before dispatch. Do not feed it to the executor constructor, whose
@@ -348,7 +348,7 @@ def _validate_model_compile_supported(cfg: Any, entry: Any) -> None:
 
     if not bool(cfg_path(cfg, "model.torch_compile.enable", False)):
         return
-    if entry.capability.trajectory_kind != "diffusion":
+    if entry.collector.kind != "diffusion":
         raise ValueError(
             f"{entry.family} does not support torch compile but model.torch_compile.enable is set",
         )
