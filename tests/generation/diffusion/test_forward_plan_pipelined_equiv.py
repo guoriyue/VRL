@@ -82,6 +82,7 @@ def _request(num_samples: int) -> GenerationRequest:
         task="t2i",
         inputs=["p"],
         samples_per_prompt=num_samples,
+        sampling={"samples_per_chunk": 2},
     )
 
 
@@ -96,7 +97,7 @@ def test_forward_plan_pipelined_matches_serial_forward_plan() -> None:
     request = _request(6)
     sample_rows = build_sample_rows(request)
     plan = _plan(request, sample_rows)
-    assert len(plan.chunks) >= 1
+    assert len(plan.chunks) >= 2
 
     serial = DiffusionChunkExecutorBase.forward_plan(ex, request, sample_rows, plan)
     pipelined = DiffusionChunkExecutorBase.forward_plan_pipelined(ex, request, sample_rows, plan)

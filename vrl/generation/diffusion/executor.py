@@ -507,7 +507,7 @@ class DiffusionChunkExecutorBase(
         stream) overlaps chunk N's teardown (the GPU->CPU result copy + host
         packing, on a copy stream), hiding the per-chunk copy+CPU boundary behind
         the next chunk's denoise. BIT-EXACT to forward_plan: same per-chunk stage
-        methods (via run_chunk_through_pipeline), value-preserving side-stream copy,
+        methods (via forward_chunk_plan), value-preserving side-stream copy,
         and the SAME order-preserving gather_chunks — so the gathered output is
         identical; only the wall-clock changes.
 

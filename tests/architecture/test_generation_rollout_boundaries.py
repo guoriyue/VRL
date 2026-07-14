@@ -142,19 +142,18 @@ def test_generation_ray_adapter_stays_lean() -> None:
         "executor.py",
         "launcher.py",
         "runtime.py",
-        "pipeline_runner.py",
-        "stage_worker.py",
         "weight_sync.py",
         "worker.py",
     }
     assert required <= _module_filenames(ray_root)
+    for speculative_stage_adapter in ("pipeline_runner.py", "stage_worker.py"):
+        assert not (ray_root / speculative_stage_adapter).exists()
+    assert not (VRL_ROOT / "generation" / "pipeline").exists()
     ray_adapter_files = (
         ray_root / "config.py",
         ray_root / "executor.py",
         ray_root / "launcher.py",
         ray_root / "runtime.py",
-        ray_root / "pipeline_runner.py",
-        ray_root / "stage_worker.py",
         ray_root / "worker.py",
         ray_root / "weight_sync.py",
     )
