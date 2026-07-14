@@ -1,12 +1,15 @@
 # SPRINT: torch.compile × rollout worker 生命周期（Cosmos Predict2.5 RL）（planned）
 
-状态：superseded（2026-07-11，由
+状态：superseded and archived（2026-07-11，由
 `docs/sprints/planned/SPRINT_miles_phase_lease_and_one_continuous.md` 取代）。
 
 > 本文保留 2026-06-17 的 compile 测量结果作为历史证据，但其 colocated-persistent 产品前提已
 > 删除。当前 shared trainer/rollout GPU 只允许 on-demand phase lease；role
 > `memory_fraction` 与 resident shared lifecycle 不再是可实施方案。Split-GPU resident compile
-> 结论仍有效。
+> 结论仍有效。The current on-demand runtime keeps actors alive and parks/wakes
+> model memory; references below to rebuilding workers, `with_release_after_collect`,
+> flat lifecycle mirrors, and `vrl/models/model_build.py` describe the superseded
+> implementation rather than the current code.
 
 原 sprint 是**测量 +
 生命周期正确性**,不动调度架构。聚焦 **Cosmos Predict2.5 + Kling RL**(不是旧的 Predict2)。
@@ -65,7 +68,7 @@ launcher 据 `resources.lifecycle.rollout.mode == "on_demand"` 决定走 `with_r
 
 ```text
 predict2_5_2b.yaml  model.torch_compile.enable  (当前 false)
-  └─ resolve_model_build: model_config = plain_mapping(cfg.model)        model_build.py:43
+  └─ RolloutFamilyEntry.resolve_model_build projects cfg.model             registry.py
   └─ ModelBuild.torch_compile：enable 为假返回 None                  interfaces/runtime.py:112-117
   └─ build_cosmos_predict25_runtime_bundle：enable 真才调               cosmos/predict2_5/runtime.py:77-78
   └─ CosmosPredict25Model.torch_compile_transformer(mode)              cosmos/predict2_5/model.py:245-246
@@ -251,14 +254,16 @@ resident 拿全额稳态加速;release-after-collect 的每周期重编译也因
 
 **Predict2.5 compile 接线**
 - `configs/model/diffusion/cosmos/predict2_5_2b.yaml:29-31` — `torch_compile.enable: false`
-- `vrl/models/model_build.py:43` — model block 发给 worker
+- `vrl/rollouts/families/registry.py:RolloutFamilyEntry.resolve_model_build` —
+  project the model block once for replay or rollout
 - `vrl/models/interfaces/runtime.py:112-117` — `ModelBuild.torch_compile`（enable 门控）
 - `vrl/models/diffusion/cosmos/predict2_5/runtime.py:77-78` — 调 `torch_compile_transformer`
 - `vrl/models/diffusion/cosmos/predict2_5/model.py:245-246` — `torch.compile(pipeline.transformer, mode=mode, fullgraph=False)`
 - `vrl/models/interfaces/runtime.py:123-128` — `ModelBuild.torch_compile` reads the single `model.torch_compile` source
 - `vrl/generation/ray/launcher.py` — `model.torch_compile.enable` unsupported-family fail-fast gate
-- `vrl/generation/ray/launcher.py:_validate_model_compile_supported` — compile support derives from
-  the registry entry's diffusion collector kind; no second capability table exists
+- `vrl/generation/ray/launcher.py:RayGenerationLauncher.launch_from_cfg` —
+  compile support derives from the registry entry's diffusion collector kind;
+  no second capability table exists
 
 **测量**
 - `vrl/ray/actor_pool.py:140-150` — per-chunk `execution_s` / `queue_wait_s`（first/later 来源）

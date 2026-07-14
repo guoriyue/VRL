@@ -518,7 +518,7 @@ vrl/generation/ray/launcher.py
   Generic Ray worker launch payload applies entry.compile metadata and overrides
   only launch_contract.model_build.model_config["torch_compile"].
 
-vrl/rollouts/families/registry.py
+vrl/families/registry.py
   Diffusion entries declare RolloutCompileMetadata(
       config_path="rollout.denoise_compile",
       target="transformer",

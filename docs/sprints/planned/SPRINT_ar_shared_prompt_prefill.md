@@ -6,7 +6,7 @@
 （文本推理 / 长 system prompt / janus_pro_r1 多段）ROI 才显著。先量再做。
 
 > 方法：逐跳核实了 `vrl/models/ar/{janus_pro,nextstep_1}/{runtime,runner}.py`、
-> `vrl/models/ar/paged_attention_helpers.py`、`vrl/rollouts/families/registry.py`，以及 rollout 侧的
+> `vrl/models/ar/paged_attention_helpers.py`、`vrl/families/registry.py`，以及 rollout 侧的
 > 同-prompt 分组（`SampleChunk` + `n_samples_per_prompt`）。
 
 ---
@@ -127,7 +127,7 @@ prompt**。当前 prefill 仍执行 cond+uncond 两次 branch forward，**每次
 - prefill 单点：`janus_pro/runner.py:74-93,158-`（`_prefill_ar_prompt_paged`）；
   `nextstep_1/runner.py:93-134,239-247`（`_prefill_paged`）。
 - 无前缀去重：`vrl/models/ar/paged_attention_helpers.py`。
-- AR family/task 分类：`vrl/rollouts/families/registry.py`；KV-cache 状态与推进：
+- AR family/task 分类：`vrl/families/registry.py`；KV-cache 状态与推进：
   `vrl/models/ar/paged_attention_helpers.py` 及各 family runner。
 - rollout 同-prompt 分组（算法无关，K=group size）：`SampleChunk`（`generation/execution/chunks.py`）
   + `n_samples_per_prompt`（`configs/base/rollout/ar_*.yaml`、`config/schema.py:234`）。

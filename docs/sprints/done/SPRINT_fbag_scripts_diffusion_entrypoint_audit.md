@@ -5,6 +5,14 @@
 config-resolve 全 preset 冒烟（`tests/config/test_load_all_experiments.py` 33/33）确认每个
 entrypoint 字符串仍解析。逐入口判决见 §4，验证见 §5。
 
+> Superseded (2026-07-12): reference-input validation is now derived from the
+> registry task, and algorithm selection comes only from `algorithm.kind`.
+> The canonical live entrypoint is now `train_diffusion_online`; the per-Flux,
+> per-Wan-I2V, per-Cosmos, and algorithm-named wrappers discussed below were
+> deleted. A 2026-07-13 form-3 follow-up also inlined DPO's two-line
+> `_trainable_forward_model` into `wan_forward`; the earlier “no form-3 hit”
+> verdict was too broad. The body remains historical evidence.
+
 > 这是 function-bag 审计暴露出的**范围漏洞**,不是一条具体缺陷。sweep agent 判定
 > `vrl/scripts/{perf,eval,data}` 是正确的一次性生命周期,但 `vrl/scripts/diffusion/` 被错分。
 

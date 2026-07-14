@@ -63,7 +63,7 @@ controller + generator 多策略信用分配与交替训练
 | multi-segment AR replay/loss | `vrl/trajectory/builders.py`、`vrl/algorithms/grpo/multisegment.py` | Janus 最小闭环的训练地基 |
 | Janus 三段闭环 | `vrl/models/ar/janus_pro/model.py::generate_with_refine` | 第一条可证伪 agentic pilot |
 | policy-versioned rollout orchestration | `vrl/rollouts/orchestration/` | 未来每个 trainable policy 的版本纪律 |
-| family-neutral generator registry | `vrl/rollouts/families/registry.py` | tool adapter 选择 generator family 的来源 |
+| family-neutral generator registry | `vrl/families/registry.py` | tool adapter 选择 generator family 的来源 |
 
 ### 缺失，不能假装已有
 

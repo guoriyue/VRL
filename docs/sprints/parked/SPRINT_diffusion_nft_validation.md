@@ -152,3 +152,7 @@ entrypoint 指向新的 flux NFT 入口，`total_epochs≈256`（论文 256 更�
   `configs/experiment/diffusion/cosmos_predict2_5/online_nft_kling_video_reward.yaml`
 - 奖励/数据：`vrl/rewards/functions/geneval.py`、`configs/reward/geneval.yaml`（`import_path` 需填）、
   `configs/dataset/geneval.yaml`（fallback：`configs/reward/pickscore.yaml` + `/dataset/pickscore_sfw`）
+> Superseded (2026-07-12): Flux NFT now uses
+> `vrl.scripts.diffusion.train:train_diffusion_online`; `algorithm.kind` is the
+> sole algorithm dispatch source. The deleted Flux-specific wrapper remains
+> mentioned below only as historical context.

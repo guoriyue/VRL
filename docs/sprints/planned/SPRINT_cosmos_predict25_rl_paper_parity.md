@@ -79,9 +79,11 @@ rbs=1、n=3 时组内只有 3 个样本、每步只有 1 个 prompt——advanta
    cosmos GRPO 是 `cosmos_predict2/online_grpo_{kling_video_reward,v2w_reference}.yaml`——**predict2_2b
    家族**(不是 predict2.5),且 v2w 那个是 **Video2World + per-sample 参考图条件**(`/dataset/video_world_v2w`、
    `reference_mode: per_sample`),走另一个数据/入口。
-   **→ 已落地（2026-07-08）**:入口 `train_cosmos_predict25_grpo`(`vrl/scripts/diffusion/cosmos/train.py`,
-   t2w、无 reference 接线)+ family recipe `configs/recipe/online/cosmos_predict25_grpo.yaml` + 实验
-   `configs/experiment/diffusion/cosmos_predict2_5/online_grpo_kling_video_reward.yaml`(paper-shaped:
+   **→ Implemented (2026-07-08; entrypoint consolidated 2026-07-13):** the current
+   entrypoint is `vrl.scripts.diffusion.train:train_diffusion_online`; family/task
+   behavior comes from the registry. The family recipe is
+   `vrl/config/presets/recipe/online/cosmos_predict25_grpo.yaml`, with experiment
+   `vrl/config/presets/experiment/diffusion/cosmos_predict2_5/online_grpo_kling_video_reward.yaml` (paper-shaped:
    n=8×rbs=32、512p_93f、20步no-CFG、timestep_fraction 0.5→10 切片、256 updates;有意偏差已在配置头注明:
    LoRA 1e-4 替 full-param 3e-5、ppo_epochs=4 替单 pass、无 diffusion-loss 正则)。config 校验套件过
    (`tests/config/test_load_all_experiments.py` 31 passed)。**跑起来仍需多卡/大卡显存**(见 §4),

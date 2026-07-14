@@ -120,5 +120,5 @@ logprob drift ≤ 0.01（P3）；若真漂，回退 compile-neither（不要回 
 - `configs/model/diffusion/{cosmos/anima_preview3,wan_2_1/i2v_14b,wan_2_2/a14b,wan_2_2/i2v_a14b}.yaml` — defer 注释
 - `vrl/models/interfaces/runtime.py` `ModelBuild.torch_compile` — model 块 → worker（rollout 继承的来源）
 - `vrl/models/diffusion/{base,cosmos/predict2_5/model,wan_2_1/model}.py` `torch_compile_transformer`
-- 配套：`docs/sprints/planned/SPRINT_compile_rollout_lifecycle.md`（§4.3 加速 / §4.4 parity / P3）、
+- 配套：`docs/sprints/done/SPRINT_compile_rollout_lifecycle.md`（§4.3 加速 / §4.4 parity / P3）、
   `docs/sprints/info/SPRINT_cosmos_generation_compile_bottleneck.md`（生成侧 1.68×）

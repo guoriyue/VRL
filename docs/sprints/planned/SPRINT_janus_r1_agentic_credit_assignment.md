@@ -140,7 +140,9 @@ A_refined = group_normalize(r_refined - stop_gradient(r_initial))
 - runtime 返回 raw initial/refined candidates、selected artifact 与 selection mask。
 - agentic schema 的 gatherer 构建三个真实 sampled segments；selected artifact 为 non-trainable decoded fact；
   legacy schema 在迁移裁决前保持原输出。
-- reward view 能按名字取 initial/refined/selected，不改变现有单 reward 默认路径。
+- 当前 collector 只接受 trajectory 中恰好一个 scoring view，并不支持按名字选择。
+  本 phase 若继续，必须新增显式、类型化的 initial/refined/selected reward-view 契约，
+  同时保持现有单 view 快路径不变；不能假设旧 `reward_view` config 仍然存在。
 - accepted-initial 样本不再把 initial action 复制成一个虚假的 final action。
 
 **Gate 1：**固定 seed 下，重构前后的 `GenerationOutput.output` 与 selected tokens 逐位一致；raw refined
@@ -184,7 +186,8 @@ reward recipe 做 ablation。若 generator 更新提高 candidate reward 却破�
 
 - `janus_pro/model.py`：保留 raw refined action/artifact，并分开 selected artifact。
 - `janus_pro/runtime.py`：gather 真实 action segments 与 selection facts。
-- `trajectory/builders.py` / reward view helper：支持命名候选 artifact，保持默认 selected view。
+- `trajectory/builders.py` / collector batch builder：新增命名候选 artifact 与显式 reward-view
+  选择契约，保持当前“恰好一个 view”的默认路径。
 - trainer batch/advantage helpers：支持按 segment 的 named advantages。
 - config：新增显式 opt-in 的 agentic pilot recipe/schema，默认旧 recipe 不变。
 - tests：truth table、replay parity、credit sign、neutral tie、chunk/select/stack。

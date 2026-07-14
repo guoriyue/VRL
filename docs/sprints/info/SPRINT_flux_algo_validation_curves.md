@@ -24,8 +24,9 @@
 
 ## 运行配置
 
-入口：dance/guard/dppo 走 `vrl.scripts.diffusion.flux.train:train_flux_grpo`，
-NFT 走 `train_flux_diffusion_nft`（含未提交的 flux NFT 接口移植：`FluxModel` 组合
+入口：dance/guard/dppo/NFT 均走
+`vrl.scripts.diffusion.train:train_diffusion_online`；algorithm 由 `algorithm.kind`
+唯一分派（NFT 的模型接口仍由 `FluxModel` 组合
 `PreviousPolicyAdapterMixin` + `diffusion_nft_prepare_transformer_input`）。
 config：`experiment/diffusion/flux/online_{dance_grpo_aesthetic,grpo_guard_pickscore,flow_dppo_pickscore,diffusion_nft_pickscore}_validation`。
 

@@ -1,5 +1,11 @@
 # SPRINT: Wan 2.1 I2V 14B GRPO proof run（图生视频 RL 落地验证）
 
+> Superseded wiring note (2026-07-13): Wan I2V now uses
+> `vrl.scripts.diffusion.train:train_diffusion_online`. Reference-image
+> validation is derived from the registry `i2v` task in the common runner; the
+> former family train wrapper and `supports_reference_conditioning` capability
+> no longer exist. Historical details below remain as run provenance.
+
 状态：**parked（2026-07-09 复核）**。§6 核心契约已在真权重上验证 PASS；
 单卡 GRPO 被 16.4B transformer 的驻留需求结构性阻塞。触发条件：至少两卡且 replay
 分片路径可用，完成剩余 multi-GPU train step。
@@ -60,7 +66,7 @@
 | experiment recipe | `configs/experiment/diffusion/wan_2_1/online_grpo_physics_i2v.yaml` | 组合 `/model/.../i2v_14b` + `/reward/kling_video_reward` + `/reward/videocon_physics` + `/dataset/videophy_i2v`；`entrypoint=...wan_2_1.train:train_wan_2_1_i2v_grpo` |
 | 入口分发 | `vrl/scripts/train.py` | 解析 `trainer.entrypoint`（`module:function`）动态 import 调用 |
 | 族训练 | `vrl/scripts/diffusion/wan_2_1/train.py` | `train_wan_2_1_i2v_grpo` → `run_online_recipe(...)`；`model.family` 选择 `wan_2_1_i2v` registry entry，`_i2v_collector_kwargs` 校验每行 `reference_image` |
-| 注册表选 executor | `vrl/rollouts/families/registry.py` | `wan_2_1_i2v`（task=i2v, `supports_reference_conditioning=True`）→ `Wan_2_1I2VChunkExecutor`，打开 `include_reference_image` |
+| 注册表选 executor | `vrl/families/registry.py` | `wan_2_1_i2v`（task=i2v, `supports_reference_conditioning=True`）→ `Wan_2_1I2VChunkExecutor`，打开 `include_reference_image` |
 | 采样（首帧条件） | `vrl/generation/diffusion/executor.py` | `ReferenceConditionedChunks` load 首帧；共享 `run_denoise_steps`：`forward_step → sde_step_with_logprob` 逐步记 GRPO 轨迹 |
 | I2V 模型 | `vrl/models/diffusion/wan_2_1/{model,runner}.py` | 首帧 → CLIP `image_embeds` + 潜空间 `condition`；`runner` 通道拼接 `cat([latents, condition], dim=1)`；无 `reference_image` 直接 raise |
 | 奖励 | `vrl/rewards/functions/{kling_video_reward,videocon_physics}.py` | 本地 HF 视频奖励，Ray pool，mp4；权重 `motion_quality 0.3 / physical_commonsense 0.7` |
@@ -164,7 +170,7 @@ canonical `data/external/videophy_i2v/manifests/{train,eval}.jsonl` 冒充正式
   `configs/model/diffusion/wan_2_1/i2v_14b.yaml`、`configs/dataset/videophy_i2v.yaml`
 - 入口 / 族训练：`vrl/scripts/train.py`、`vrl/scripts/diffusion/wan_2_1/train.py`（`train_wan_2_1_i2v_grpo`、
   `_i2v_collector_kwargs`）
-- I2V 条件链：`vrl/rollouts/families/registry.py`（`wan_2_1_i2v`）、
+- I2V 条件链：`vrl/families/registry.py`（`wan_2_1_i2v`）、
   `vrl/generation/diffusion/executor.py`（`ReferenceConditionedChunks` / `run_denoise_steps`）、
   `vrl/models/diffusion/wan_2_1/{model,runner}.py`（`reference_image` raise / `export_replay_tensors` /
   `restore_eval_state` / `cat([latents, condition])` / `enable_sequential_cpu_offload`）

@@ -114,7 +114,7 @@ rollout:
   sde: { window_range: [0, 10] }
 
 trainer:
-  entrypoint: vrl.scripts.diffusion.flux.train:train_flux_grpo
+  entrypoint: vrl.scripts.diffusion.train:train_diffusion_online
   output_dir: outputs/flux_flow_dppo_geneval_validation
   total_epochs: 300
   save_freq: 50

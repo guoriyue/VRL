@@ -11,7 +11,7 @@ checkpoint 后必须退出训练进程，在无 Ray 的独立进程中比较 bas
 
 本 sprint 完成时必须同时满足：
 
-1. `RolloutFamilyEntry` 的每个 canonical entry 都有非可选 quality binding；registry coverage test 从 typed registry
+1. `ModelFamilyEntry` 的每个 canonical entry 都有非可选 quality binding；registry coverage test 从 typed registry
    派生 family 集合，不维护第二份硬编码清单。
 2. `vrl-train` 在导入 family trainer 前完成 base gate；YAML、dotlist、直接恢复和 supervisor 均不能关闭或跳过。
 3. fresh run、已有 checkpoint、checkpoint 缺 report、report 指纹过期、FAIL report 等恢复状态均有明确转移。
@@ -32,7 +32,7 @@ checkpoint 后必须退出训练进程，在无 Ray 的独立进程中比较 bas
 
 ### 1.1 唯一 family source of truth
 
-`vrl/rollouts/families/registry.py` 当前注册 23 个 canonical entry：
+`vrl/families/registry.py` 当前注册 23 个 canonical entry：
 
 - T2I：`sd3_5`、`flux`、`qwen_image`、`sana`、`lumina2`、`hunyuan_image`、`pixart_sigma`、
   `cosmos-predict2-anima`。
@@ -72,7 +72,7 @@ alias 不是新的 coverage 单位；checkpoint/model identity 才是。CogVideo
 
 ### 2.1 Registry 强制绑定，不加可选开关
 
-在 `RolloutFamilyEntry` 增加非默认、非可选的 `quality: QualityGateBinding`。最小 binding 只记录真实边界：
+在 `ModelFamilyEntry` 增加非默认、非可选的 `quality: QualityGateBinding`。最小 binding 只记录真实边界：
 
 ```python
 @dataclass(frozen=True, slots=True)
@@ -315,7 +315,7 @@ checkpoint。早期 checkpoint 不要求 reward 显著上升，但必须满足�
 
 ### 修改
 
-- `vrl/rollouts/families/registry.py`：非可选 quality binding；从 registry 校验全量 coverage。
+- `vrl/families/registry.py`：非可选 quality binding；从 registry 校验全量 coverage。
 - `vrl/scripts/train.py`：phase orchestrator，在 trainer import 前 gate。
 - `vrl/scripts/supervise.py`：识别 phase、non-retryable quality verdict 和 gate resume。
 - `vrl/scripts/common/online.py`：只发布 gate checkpoint/typed phase result。

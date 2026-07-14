@@ -1,6 +1,6 @@
 # SPRINT: Grab-bag file audit — 低内聚文件结构整治
 
-**日期**: 2026-07-10  **状态**: EXECUTED（2026-07-10，全部 4 个 sprint 落地）
+**日期**: 2026-07-10  **状态**: EXECUTED and archived（2026-07-10，全部 4 个 sprint 落地）
 **验证**: 全量 pytest 1630 passed / 0 failed（基线 1629：-1 删除的 prefix-cache 测试，+1 diffusion replay 回归测试，+1 artifact_data_root 断言）；ruff 与 config lint 全绿；flow_matching 重构做了 HEAD-vs-新版位精确 probe（CFG 开/关、sample+replay 全等）。
 
 **执行修正（与原计划的差异）**:
@@ -96,7 +96,7 @@
    - 删零调用方 `build_echo_replay_runtime_bundle_from_cfg`、`build_cosmos3_replay_runtime_bundle_from_cfg` 及 `__all__` 条目；anima 的 `resolve_anima_replay_model_build` 不动（e2e 字符串引用契约）。
    - 删除 bundle 上无生产消费者的 provenance metadata；checkpoint strict-resume 的 family guard 显式接收 resolved family，不再从 bundle metadata 复制 registry identity。`assemble_replay_bundle` docstring 收窄为 "REPLAY-side ... tail"。**明确拒绝**统一 rollout/replay 的 lora+compile tail（rollout 侧量化交织在分支两臂内、顺序有文档化路径依赖——不是重复）。
    - 测试：扩展 `tests/rollouts/runtime/test_family_registry.py` 断言每个 diffusion family 解析出 replay 路径（`replay_cls` 或可导入的 `replay_runtime_builder`）——这就是本该抓住回归的测试。**落地前先 `git fetch` 复查 registry.py/build.py**（记忆：另一进程在并行 reconcile 本树）。
-2. **AR runtime LoRA 默认值折叠 5 份**（发现 #12）：`vrl/models/ar/build.py` 加 `ar_model_config_base(build, lora_defaults)`（base dict + use_lora 合并 + 5 个类型化 lora_* 键）；5 个 family runtime 各替换为一行调用，**保留各家 `_*_LORA_DEFAULTS` dict**（llamagen 的 wqkv/wo 真有差异）；删 janus 的 `_resolve_lora_block`；重指 `interfaces/runtime.py:112` 与 `model_build.py:79` 两处文档引用。
+2. **AR runtime LoRA 默认值折叠 5 份**（发现 #12）：`vrl/models/ar/build.py` 加 `ar_model_config_base(build, lora_defaults)`（base dict + use_lora 合并 + 5 个类型化 lora_* 键）；5 个 family runtime 各替换为一行调用，**保留各家 `_*_LORA_DEFAULTS` dict**（llamagen 的 wqkv/wo 真有差异）；删 janus 的 `_resolve_lora_block`；共享 model-build projection 后续已并入 `RolloutFamilyEntry.resolve_model_build`。
 3. **scripts/diffusion 六份 lazy builder + wan T2V 重复入口**（发现 #30 + #31，同文件合并）：
    - `diffusion/train.py`：`_build_bundle`/`_build_replay_bundle` → 公有 `build_bundle`/`build_replay_bundle`（唯一合法 lazy-import 副本）；删 `_after_bundle_built`，直接传 `enable_transformer_gradient_checkpointing`。
    - cosmos/train.py 删四个 builder 改 import 共享对（**保留**自家 `_after_bundle_built`——`require_method=False` 是真实家族行为）；flux、wan 同理删本地对与 wrapper。

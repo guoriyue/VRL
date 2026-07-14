@@ -119,7 +119,8 @@ trajectory and reward-curve gates before promoting NVFP4 out of experimental.
 
 ## 引用
 
-- 插座：`vrl/config/precision.py`、`vrl/models/model_build.py:53`、
+- 插座：`vrl/config/precision.py`、
+  `vrl/families/registry.py:ModelFamilyEntry.resolve_model_build`、
   `vrl/models/loader.py`、`vrl/generation/execution/worker.py:654`
 - kernel 基座：`vrl/nn/quantization/fp8.py`（Fp8Linear：master/cache/重量化/drop_master）
 - 验收工具：`vrl/scripts/perf/fp8_linear_benchmark.py`、

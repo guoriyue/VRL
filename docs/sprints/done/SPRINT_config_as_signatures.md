@@ -5,6 +5,10 @@ model config）/ P4（schema 派生或退役）作为未来扩展未启动（def
 `SPRINT_config_unknown_key_warning.md` §2 预留的重启条件之二（"正在系统性
 补全 schema 字段——为了类型化本身"），是该 parked follow-up 的正式继任。
 
+> **2026-07-13 后续更正：**下文把 `reward_view` 判为活 config 消费链的结论已经失效。
+> collector 现在不再接受按名字选择 scoring view；trajectory 必须恰好提供一个 view，零个或多个
+> 都会失败。旧 `reward_view` config 投影和 `_reward_view_name` 已整体删除，不应恢复为局部内联。
+
 落地摘要（实施时与设计的偏差均有审计依据）：
 
 ```text

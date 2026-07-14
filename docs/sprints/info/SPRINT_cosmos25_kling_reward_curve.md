@@ -13,7 +13,7 @@
 
 ## 运行配置
 
-入口 `vrl.scripts.diffusion.cosmos.train:train_cosmos_predict25_diffusion_nft`，config
+Entrypoint `vrl.scripts.diffusion.train:train_diffusion_online`, config
 `experiment/diffusion/cosmos_predict2_5/online_nft_kling_video_reward`，override：
 
 ```

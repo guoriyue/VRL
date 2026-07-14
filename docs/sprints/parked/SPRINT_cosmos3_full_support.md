@@ -88,7 +88,7 @@ MR0 (probe) ✅done → MR1 (bump diffusers + load) → MR2 (cosmos3 family) →
 
 新建 `vrl/models/diffusion/cosmos/cosmos3/{model,runner,runtime}.py`，**包住 diffusers 的 `Cosmos3OmniDiffusersPipeline`**（像 predict2 包 `Cosmos2VideoToWorldPipeline`）：
 - `model.py`：`Cosmos3Model(DiffusionModelBase)` + `Cosmos3SamplingState`。`from_build` 载 pipeline；`encode_prompt` 走 pipeline 的 tokenization 出 input_ids；`prepare_sampling` 建 **cond/uncond `packed_static`**（§1.2 的难点：把 pipeline `__call__` 内联的 pack 装配抽出来复用）；`forward_step` 每步 splice `vision_timesteps`+latents → `transformer(**pack)` → `preds_vision`(velocity)，返回 `{noise_pred, noise_pred_cond, noise_pred_uncond}`，CFG+logprob 交给 executor。
-- `register_rollout_family(family="cosmos3", diffusion 分支)`（`vrl/rollouts/families/registry.py`）+ `configs/model/diffusion/cosmos/cosmos3_nano.yaml`。
+- `register_rollout_family(family="cosmos3", diffusion 分支)`（`vrl/families/registry.py`）+ `configs/model/diffusion/cosmos/cosmos3_nano.yaml`。
 - **复用**：`DiffusionModelBase`、executor SDE-logprob 循环（`vrl/generation/diffusion/executor.py`）、loader、gatherer、CFG caller。
 - **gate**：family executor 出一个非 RL T2V clip（与 MR1 pipeline 输出一致）。
 
@@ -140,7 +140,7 @@ audio / action 塔不做；action 走 `SPRINT_physical_ai_model_support.md` 的 
 
 - diffusers 生成器源（git-main）：`pipelines/cosmos/pipeline_cosmos3_omni.py`、`models/transformers/transformer_cosmos3.py`
 - logprob 数学参考：`~/Desktop/cosmos-rl/cosmos_rl/policy/trainer/wfm_trainer.py:464-490`（Predict2.5 WFM，只借公式）
-- 本仓库复用：`vrl/algorithms/flow_matching`、`vrl/models/diffusion/cosmos/predict2/*`、`vrl/generation/diffusion/executor.py`、`vrl/rollouts/families/registry.py`
+- 本仓库复用：`vrl/algorithms/flow_matching`、`vrl/models/diffusion/cosmos/predict2/*`、`vrl/generation/diffusion/executor.py`、`vrl/families/registry.py`
 - 探针：`vrl/scripts/eval/cosmos3_nano_generator_probe.py`
 - 承接/下游：`SPRINT_physical_ai_model_support.md`、`SPRINT_cosmos_robotic_data_factory_domain_rl.md`(reward + 数据)、`SPRINT_multi_gpu_training.md`(16B 多卡)
 - 模型：`nvidia/Cosmos3-Nano`(16B)，HF collection https://huggingface.co/collections/nvidia/cosmos3

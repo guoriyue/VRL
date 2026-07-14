@@ -632,7 +632,8 @@ inline fixed eval 新建 callback。现有 `ensure_initial_weights()` 仍必须�
 保留 `RayGenerationRuntime.activate()/offload()` 与 desired-policy coalescing；它们当前的职责
 边界是正确的。补强 worker contract：
 
-- backend 声明 `supports_complete_memory_parking`；
+- validate the concrete loaded executor/model during worker startup; do not add
+  another family capability flag for parking support;
 - sleep 后返回结构化 residual snapshot，而不是仅凭 RPC 成功；
 - residual snapshot 与 backend-declared baseline/上限比较，超限直接判定 parking 失败；
 - CuMem 路径覆盖 build-time 与 generation-time 长寿命 allocation；

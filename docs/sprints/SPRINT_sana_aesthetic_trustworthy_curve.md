@@ -277,9 +277,10 @@ quantized-backward/FSDP 方案并跑过至少一个 backward 后才解锁。
   tunable defaults or a duplicated prompt vocabulary; prompt text remains in the
   manifests. The frozen canonical digest must not be derived from the live config,
   because that would make its drift gate tautological.
-- Keep `_build_probe_spec` as the direct-probe CLI-to-runtime adapter. Its single
-  caller is intentional: routing through `resolve_family_model_build` prevents
-  the probe from owning another dtype policy.
+- Keep `_resolve_probe_model_build` as the direct-probe CLI-to-runtime adapter.
+  Its single caller is intentional: routing through the selected registry
+  entry's `resolve_model_build` method prevents the probe from owning another
+  dtype policy.
 - Keep the evaluator's small report serializers and validators in the same
   SANA-specific module. Writer and reader share them as one protocol boundary;
   splitting them into thin facade files would add navigation without removing
@@ -297,9 +298,6 @@ Remaining convergence items (non-blocking):
   non-diffusers families. Wan, Cosmos Predict2.5, and AR loaders keep family-local
   FP32 VAE/T5 choices. Genuine family invariants should move into registry
   descriptors; other families should consume `build.rollout.prompt_encoder_dtype`.
-- `resolve_model_build` resolves the same public precision policy again. The
-  result is deterministic and cannot drift, so passing the already-resolved
-  policy through the launcher is cleanup rather than a correctness blocker.
 
 ## 参考
 

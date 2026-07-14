@@ -153,5 +153,5 @@ vrl 代码路径（本轮逐跳核实）：
 - `vrl/models/diffusion/base.py:30-`（`DiffusionModelBase` 未重写 `to()`）
 
 相关 sprint：
-- [[SPRINT_compile_rollout_lifecycle]]（`docs/sprints/planned/SPRINT_compile_rollout_lifecycle.md`）
+- [[SPRINT_compile_rollout_lifecycle]]（`docs/sprints/done/SPRINT_compile_rollout_lifecycle.md`）
 - [[SPRINT_framework_lessons_vrl]]（`docs/sprints/reading/SPRINT_framework_lessons_vrl.md`）
