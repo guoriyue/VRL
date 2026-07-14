@@ -8,6 +8,7 @@ import torch
 import torch.nn as nn
 
 from tests.models.ar.fixtures import build_stub_janus_model
+from vrl.families.registry import get_model_family_entry
 from vrl.generation import GenerationRequest, GenerationSampleRow
 from vrl.models.ar.janus_pro.model import (
     JANUS_IMAGE_VOCAB_SIZE,
@@ -16,7 +17,7 @@ from vrl.models.ar.janus_pro.model import (
 from vrl.models.interfaces import ReplayResult
 from vrl.rollouts.batch import RolloutBatch
 from vrl.rollouts.collector import build_rollout_collector
-from vrl.rollouts.collector.config import RolloutConfig
+from vrl.rollouts.collector.config import RolloutCollectorConfig
 from vrl.trajectory import build_ar_discrete_trajectory, build_training_view
 
 HIDDEN = 32
@@ -121,10 +122,9 @@ def _discrete_batch() -> RolloutBatch:
 def test_janus_collector_has_no_forward_step() -> None:
     """Collectors expose collect(); train-time replay lives on the model."""
     collector = build_rollout_collector(
-        "janus_pro",
+        get_model_family_entry("janus_pro"),
         reward_fn=None,
-        config=RolloutConfig(
-            family="janus_pro",
+        config=RolloutCollectorConfig(
             values={
                 "n_samples_per_prompt": 1,
                 "guidance_scale": 5.0,

@@ -4,10 +4,10 @@ from pathlib import Path
 
 from omegaconf import OmegaConf
 
-from vrl.rollouts.collector.config import RolloutConfig
+from vrl.families.registry import get_model_family_entry
+from vrl.rollouts.collector.config import RolloutCollectorConfig
 from vrl.rollouts.collector.requests import GenerationRequestBuilder
 from vrl.scripts.common.online import _resolve_reference_artifacts
-from vrl.scripts.diffusion.cosmos.train import _predict2_collector_kwargs
 from vrl.trainers.data import load_prompt_manifest
 from vrl.trainers.data.artifacts import (
     require_reference_images,
@@ -40,13 +40,8 @@ def test_resolved_reference_image_flows_to_collector_metadata(tmp_path: Path) ->
         data_root=tmp_path,
     )
     builder = GenerationRequestBuilder(
-        family="cosmos-predict2",
-        task="v2w",
-        request_prefix="cosmos",
-        config=RolloutConfig(family="cosmos-predict2", values={"num_steps": 1}),
-        return_artifacts=("trajectory",),
-        default_task_type="video2world",
-        metadata_key="rollout_metadata",
+        entry=get_model_family_entry("cosmos-predict2"),
+        config=RolloutCollectorConfig(values={"num_steps": 1}),
     )
 
     collector_request = builder.build(
@@ -103,27 +98,3 @@ def test_cosmos_per_sample_reference_uses_artifact_data_root(tmp_path: Path) -> 
         (tmp_path / "video_world" / "references" / "ref.ppm").resolve(),
     )
     assert "reference_image" not in examples[0].metadata
-
-
-def test_cosmos_predict2_collector_uses_prompts_per_batch_config(
-    monkeypatch,
-    tmp_path: Path,
-) -> None:
-    """Checks Cosmos predict2 collector uses rollout batch size config."""
-    manifest = _write_reference_manifest(tmp_path)
-    monkeypatch.setenv("VRL_DATA_ROOT", str(tmp_path))
-    examples = load_prompt_manifest(manifest)
-    cfg = OmegaConf.create(
-        {
-            "data": {
-                "manifest": manifest.as_posix(),
-                "preprocessing": {"conditioning": "reference_image"},
-            },
-        },
-    )
-
-    _resolve_reference_artifacts(examples, cfg)
-    kwargs = _predict2_collector_kwargs(cfg, examples)
-
-    assert kwargs == {}
-    assert examples[0].reference_image.endswith("ref.ppm")

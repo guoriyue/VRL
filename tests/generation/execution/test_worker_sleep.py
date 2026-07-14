@@ -16,7 +16,6 @@ import contextlib
 import subprocess
 import sys
 import textwrap
-from dataclasses import replace
 from types import SimpleNamespace
 from typing import Any
 
@@ -25,6 +24,16 @@ import torch
 
 from vrl.generation.execution.worker import GenerationWorkerCore
 from vrl.generation.launch_contract import GenerationRuntimeLaunchContract
+
+
+@pytest.fixture(autouse=True)
+def _isolate_cuda_parking_probes(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep CPU fakes independent of CUDA activity on the pytest host."""
+
+    import vrl.generation.execution.worker as worker_module
+
+    monkeypatch.setattr(worker_module, "gpu_used_bytes", lambda: 0)
+    monkeypatch.setattr(worker_module, "release_cuda_memory_for_parking", lambda: None)
 
 
 class _SleepModel:
@@ -91,37 +100,20 @@ class _FakeCuMem:
         self.wake_calls.append(tags)
 
 
-def _unused_builder(spec: Any) -> Any:  # pragma: no cover - executor is injected
-    raise RuntimeError("builder must not run; the test injects core.executor directly")
-
-
-_MODULE = "tests.generation.execution.test_worker_sleep"
-
-
 def _core(
     model: Any | None,
     *,
     sleep_offload: bool = False,
+    family: str = "sd3_5",
 ) -> GenerationWorkerCore:
-    extra: dict[str, Any] = {}
-    if sleep_offload:
-        extra["sleep_offload"] = True
     contract = GenerationRuntimeLaunchContract(
-        family="sd3_5",
-        task="t2i",
-        generation_kind="diffusion",
+        family=family,
+        model_build={},
         policy_version=1,
-        runtime_builder=f"{_MODULE}:_unused_builder",
-        executor_cls=f"{_MODULE}:_Executor",
-        extra=extra,
+        sleep_offload=sleep_offload,
     )
     core = GenerationWorkerCore("rollout-0", contract)
     core.executor = _Executor(model) if model is not None else None
-    # CPU fake: never inspect or mutate a real GPU merely because this unit test
-    # happens to run on a CUDA host. The isolated CUDA twin below restores the real
-    # probes explicitly.
-    core._gpu_used_bytes = lambda: 0  # type: ignore[method-assign]
-    core._release_cuda_memory_for_parking = lambda: None  # type: ignore[method-assign]
     core._preload_gpu_used_bytes = 0
     return core
 
@@ -315,8 +307,7 @@ def test_ar_cpu_fallback_does_not_enter_cumem_pool(monkeypatch) -> None:
 
     called: list[bool] = []
     monkeypatch.setattr(cuda_memory_mod, "_cumem_allocator", lambda: called.append(True))
-    core = _core(None, sleep_offload=True)
-    core.launch_contract = replace(core.launch_contract, generation_kind="ar")
+    core = _core(None, sleep_offload=True, family="janus_pro")
     sentinel = object()
     core._build_executor = lambda: sentinel  # type: ignore[method-assign]
 
@@ -467,10 +458,12 @@ def test_wake_failure_keeps_cpu_parked_state_for_retry() -> None:
 
 
 def test_sleep_rejects_residual_above_preload_baseline(monkeypatch) -> None:
+    import vrl.generation.execution.worker as worker_module
+
     core = _core(_SleepModel())
     core._preload_gpu_used_bytes = 0
     readings = iter((1024, 1))
-    monkeypatch.setattr(core, "_gpu_used_bytes", lambda: next(readings))
+    monkeypatch.setattr(worker_module, "gpu_used_bytes", lambda: next(readings))
 
     with pytest.raises(
         RuntimeError,
@@ -481,7 +474,10 @@ def test_sleep_rejects_residual_above_preload_baseline(monkeypatch) -> None:
 
 @pytest.mark.gpu
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is unavailable")
-def test_cuda_cpu_fallback_returns_to_preload_process_baseline() -> None:
+def test_cuda_cpu_fallback_returns_to_preload_process_baseline(monkeypatch) -> None:
+    import vrl.generation.execution.worker as worker_module
+    from vrl.utils.cuda_memory import release_cuda_memory_for_parking
+
     class _TinyCudaModel(torch.nn.Module):
         def __init__(self) -> None:
             super().__init__()
@@ -500,11 +496,17 @@ def test_cuda_cpu_fallback_returns_to_preload_process_baseline() -> None:
     # isolates the pytest process because desktop GPU clients can legitimately
     # change the device-wide reading between the two samples; the preceding
     # deterministic test covers strict device-wide residual rejection.
-    core._gpu_used_bytes = lambda: int(torch.cuda.memory_reserved())  # type: ignore[method-assign]
-    core._release_cuda_memory_for_parking = (  # type: ignore[method-assign]
-        lambda: GenerationWorkerCore._release_cuda_memory_for_parking()
+    monkeypatch.setattr(
+        worker_module,
+        "gpu_used_bytes",
+        lambda: int(torch.cuda.memory_reserved()),
     )
-    baseline = core._gpu_used_bytes()
+    monkeypatch.setattr(
+        worker_module,
+        "release_cuda_memory_for_parking",
+        release_cuda_memory_for_parking,
+    )
+    baseline = worker_module.gpu_used_bytes()
     model = _TinyCudaModel()
     core.executor = _Executor(model)
     core._preload_gpu_used_bytes = baseline

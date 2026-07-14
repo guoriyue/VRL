@@ -1,5 +1,5 @@
 # CogVideoX-2b + aesthetic GRPO — first-landing validation recipe.
-# Non-flow family: sampling.sde_type=ddim routes rollout/replay log-probs
+# Non-flow family: rollout.sde.type=ddim routes rollout/replay log-probs
 # through the DDIM eta-SDE (vrl/math/diffusion/ddim.py).
 defaults:
   - /recipe/online/flow_matching_grpo
@@ -12,7 +12,6 @@ defaults:
 
 sampling:
   max_sequence_length: 226
-  sde_type: ddim
 
 actor:
   optim:
@@ -20,6 +19,8 @@ actor:
   gradient_accumulation_steps: 4
 
 rollout:
+  sde:
+    type: ddim
   n_samples_per_prompt: 8
   prompts_per_batch: 4
   samples_per_chunk: 2

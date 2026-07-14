@@ -5,8 +5,8 @@ from __future__ import annotations
 import pytest
 from omegaconf import OmegaConf
 
+from vrl.families.registry import get_model_family_entry
 from vrl.generation import GenerationRequest
-from vrl.models.ar.build import resolve_family_ar_model_build
 from vrl.models.ar.llamagen.runtime import (
     LlamaGenChunkExecutor,
     llamagen_config_from_build,
@@ -40,13 +40,16 @@ def test_resolve_model_build_defaults() -> None:
             "precision": {"training": {"dtype": "fp32"}, "rollout": {"dtype": "fp32"}},
         },
     )
-    build = resolve_family_ar_model_build(cfg, device="cpu")
+    build = get_model_family_entry("llamagen").resolve_model_build(cfg, device="cpu")
     assert build.model_name_or_path == "peizesun/llamagen_t2i"
 
 
 def test_config_from_build_uses_fused_projection_lora_targets() -> None:
     """The vendored GPT has wqkv/wo, not q_proj/k_proj/v_proj."""
-    build = resolve_family_ar_model_build(_cfg(), device="cpu")
+    build = get_model_family_entry("llamagen").resolve_model_build(
+        _cfg(),
+        device="cpu",
+    )
     config = llamagen_config_from_build(build)
     assert config["lora_target_modules"] == ("wqkv", "wo")
     assert config["guidance_scale"] == 7.5

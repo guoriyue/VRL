@@ -591,7 +591,7 @@ def test_generation_uses_adapter_off_baseline_then_loads_checkpoints_in_order(
     monkeypatch,
     tmp_path,
 ) -> None:
-    import vrl.models.diffusion.build as diffusion_build
+    import vrl.families.registry as model_families
     import vrl.utils.media as media
 
     events: list[str] = []
@@ -615,10 +615,15 @@ def test_generation_uses_adapter_off_baseline_then_loads_checkpoints_in_order(
 
     model = FakeModel()
     bundle = SimpleNamespace(model=model)
-    monkeypatch.setattr(
-        diffusion_build, "resolve_family_model_build", lambda *args, **kwargs: object()
+    entry = SimpleNamespace(
+        resolve_model_build=lambda *args, **kwargs: object(),
+        build_rollout=lambda build: bundle,
     )
-    monkeypatch.setattr(diffusion_build, "build_family_runtime_bundle", lambda build: bundle)
+    monkeypatch.setattr(
+        model_families,
+        "get_model_family_entry",
+        lambda _family: entry,
+    )
     monkeypatch.setattr(
         checkpoint_eval,
         "load_training_checkpoint",
@@ -669,7 +674,7 @@ def test_generation_uses_adapter_off_baseline_then_loads_checkpoints_in_order(
     ]
 
     generated = checkpoint_eval._generate_images(
-        OmegaConf.create({}),
+        OmegaConf.create({"model": {"family": "sana"}}),
         targets,
         ["fox"],
         output_dir=tmp_path / "eval",

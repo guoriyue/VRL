@@ -5,8 +5,8 @@ from __future__ import annotations
 import pytest
 from omegaconf import OmegaConf
 
+from vrl.families.registry import get_model_family_entry
 from vrl.generation.types import GenerationRequest
-from vrl.models.ar.build import resolve_family_ar_model_build
 from vrl.models.ar.glm_image.runner import GlmImageTokenRunner
 from vrl.models.ar.glm_image.runtime import GlmImageChunkExecutor, glm_image_config_from_build
 
@@ -20,7 +20,7 @@ def test_resolve_model_build_defaults_to_glm_image_checkpoint() -> None:
         },
     )
 
-    build = resolve_family_ar_model_build(cfg, device="cpu")
+    build = get_model_family_entry("glm_image").resolve_model_build(cfg, device="cpu")
 
     assert build.model_name_or_path == "zai-org/GLM-Image"
 
@@ -47,7 +47,7 @@ def test_resolve_model_build_carries_sampling_and_lora_overrides() -> None:
         }
     )
 
-    build = resolve_family_ar_model_build(cfg, device="cpu")
+    build = get_model_family_entry("glm_image").resolve_model_build(cfg, device="cpu")
     config = glm_image_config_from_build(build)
 
     assert build.model_name_or_path == "/ckpt/glm-image"

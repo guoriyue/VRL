@@ -5,6 +5,7 @@ import sys
 import pytest
 import torch
 
+from vrl.families.registry import get_model_family_entry
 from vrl.scripts.diffusion import generate
 
 
@@ -31,7 +32,11 @@ def test_probe_model_build_uses_family_parameter_and_public_precision_policy() -
         ],
     )
 
-    build = generate._resolve_probe_model_build(args, "sana", torch.device("cpu"))
+    build = generate._resolve_probe_model_build(
+        args,
+        get_model_family_entry("sana"),
+        torch.device("cpu"),
+    )
 
     assert build.parameter_dtype is torch.float16
     rollout = build.require_rollout()
@@ -58,7 +63,11 @@ def test_probe_model_build_derives_quantization_from_autocast_precision(
         ],
     )
 
-    build = generate._resolve_probe_model_build(args, "sana", torch.device("cpu"))
+    build = generate._resolve_probe_model_build(
+        args,
+        get_model_family_entry("sana"),
+        torch.device("cpu"),
+    )
 
     assert build.parameter_dtype is torch.float16
     rollout = build.require_rollout()

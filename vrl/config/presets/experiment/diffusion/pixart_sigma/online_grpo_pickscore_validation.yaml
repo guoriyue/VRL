@@ -1,5 +1,5 @@
 # PixArt-Sigma XL-2 512-MS + PickScore GRPO — first-landing validation recipe.
-# Non-flow family: sampling.sde_type=ddim routes rollout/replay log-probs
+# Non-flow family: rollout.sde.type=ddim routes rollout/replay log-probs
 # through the DDIM eta-SDE (vrl/math/diffusion/ddim.py); the family builds the
 # DDIM from the shipped DPM-Solver beta config (pixart_ddim_scheduler).
 defaults:
@@ -13,7 +13,6 @@ defaults:
 
 sampling:
   max_sequence_length: 300
-  sde_type: ddim
 
 actor:
   optim:
@@ -21,6 +20,8 @@ actor:
   gradient_accumulation_steps: 4
 
 rollout:
+  sde:
+    type: ddim
   n_samples_per_prompt: 16
   prompts_per_batch: 8
   samples_per_chunk: 16

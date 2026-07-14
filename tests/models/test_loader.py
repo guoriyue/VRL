@@ -13,6 +13,7 @@ def test_full_pipeline_propagates_revision_like_component_loader() -> None:
         model_name_or_path="org/model",
         device="cpu",
         parameter_dtype=torch.float16,
+        family="sd3_5",
         model_config={"revision": "immutable-revision"},
     )
 
@@ -26,6 +27,7 @@ def test_full_pipeline_omits_absent_revision() -> None:
         model_name_or_path="org/model",
         device="cpu",
         parameter_dtype=torch.float16,
+        family="sd3_5",
         model_config={},
     )
 
@@ -79,7 +81,10 @@ def test_flow_match_replay_keeps_native_shift_config(monkeypatch) -> None:
 def test_model_config_revision_kwargs_omit_absent_dependency_revision() -> None:
     from vrl.models.loader import model_config_revision_kwargs
 
-    assert model_config_revision_kwargs(
-        SimpleNamespace(model_config={}),
-        "tokenizer_revision",
-    ) == {}
+    assert (
+        model_config_revision_kwargs(
+            SimpleNamespace(model_config={}),
+            "tokenizer_revision",
+        )
+        == {}
+    )

@@ -12,10 +12,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass, fields, replace
 from typing import Any
 
-from vrl.models.interfaces.runtime import (
-    MEMORY_POLICY_METADATA_KEY,
-    MODEL_MEMORY_SECTIONS,
-)
+from vrl.models.interfaces.runtime import MODEL_MEMORY_SECTIONS
 from vrl.utils.config import plain_mapping
 
 
@@ -44,8 +41,7 @@ def vae_decode_memory_from_config(
     if unknown:
         expected = ", ".join(sorted(_VAE_DECODE_KEYS))
         raise ValueError(
-            f"unknown model.memory.vae_decode key(s): {', '.join(unknown)}; "
-            f"expected {expected}",
+            f"unknown model.memory.vae_decode key(s): {', '.join(unknown)}; expected {expected}",
         )
 
     updates = {key: bool(value) for key, value in raw.items()}
@@ -57,23 +53,13 @@ def configure_memory_mechanisms(
     mem: VaeDecodeMemory,
     *,
     owner: str,
-) -> tuple[str, ...]:
+) -> None:
     """Apply memory mechanisms to one target; fail on unsupported requests."""
 
-    applied: list[str] = []
     if mem.tiling:
         _call_required(target, "enable_tiling", owner=owner)
-        applied.append("tiling")
     if mem.slicing:
         _call_required(target, "enable_slicing", owner=owner)
-        applied.append("slicing")
-    return tuple(applied)
-
-
-# Metadata prefixes are a downstream contract (bundle metadata + tests):
-# the historical vae_decode target reports as ``vae_tiling`` / ``vae_slicing``.
-# New targets default to their own name as prefix.
-_METADATA_PREFIX = {"vae_decode": "vae"}
 
 
 def apply_generation_memory_policy(
@@ -81,17 +67,15 @@ def apply_generation_memory_policy(
     *,
     memory_config: Mapping[str, Any] | None,
     owner: str,
-) -> dict[str, dict[str, bool]]:
-    """Apply ``model.memory`` to the model's declared targets; return metadata.
+) -> None:
+    """Apply ``model.memory`` to the model's declared generation targets.
 
     ``model.memory`` is target-keyed: every section name must match a key in
     the model's ``generation_memory_targets()`` (today ``vae_decode``; future
     targets — encoders, transformer offload — appear here without policy
     changes). Family models declare WHAT can be configured; this policy owns
-    HOW and WHEN. Runtime builders call it once after model construction and
-    attach the returned metadata to the bundle. A section naming a target the
-    model does not expose (including typos) is a config error, never a silent
-    no-op.
+    HOW and WHEN. Runtime builders call it once after model construction. A
+    section naming an unknown target is a config error, never a silent no-op.
     """
 
     targets = model.generation_memory_targets()
@@ -110,21 +94,14 @@ def apply_generation_memory_policy(
             f"target(s): {exposed}",
         )
 
-    metadata: dict[str, bool] = {}
     for target_name in sorted(targets):
-        mem = vae_decode_memory_from_config(configured.get(target_name))
-        applied: tuple[str, ...] = ()
-        if target_name in configured:
-            applied = configure_memory_mechanisms(
-                targets[target_name],
-                mem,
-                owner=f"{owner}:{target_name}",
-            )
-        prefix = _METADATA_PREFIX.get(target_name, target_name)
-        applied_set = set(applied)
-        metadata[f"{prefix}_tiling"] = bool(mem.tiling and "tiling" in applied_set)
-        metadata[f"{prefix}_slicing"] = bool(mem.slicing and "slicing" in applied_set)
-    return {MEMORY_POLICY_METADATA_KEY: {"model_build": metadata}}
+        if target_name not in configured:
+            continue
+        configure_memory_mechanisms(
+            targets[target_name],
+            vae_decode_memory_from_config(configured[target_name]),
+            owner=f"{owner}:{target_name}",
+        )
 
 
 def _call_required(target: Any, method_name: str, *, owner: str) -> None:

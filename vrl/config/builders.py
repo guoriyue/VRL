@@ -16,7 +16,6 @@ from vrl.config.precision import (
 from vrl.config.validation import (
     path_exists,
     require,
-    resolve_algorithm_kind,
     validate_reward_config,
     validate_training_config,
 )
@@ -236,7 +235,7 @@ def build_algorithm_config(cfg: DictConfig):
 
     if "algorithm" not in cfg:
         raise ValueError("config missing `algorithm` section")
-    kind = resolve_algorithm_kind(cfg.algorithm)
+    kind = str(require(cfg, "algorithm.kind"))
     cls = algorithm_config_class(kind)
     return cls(**_dataclass_payload(cls, cfg.algorithm))
 

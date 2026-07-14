@@ -46,7 +46,7 @@ rollout:
     type: cps
 
 trainer:
-  entrypoint: vrl.scripts.diffusion.wan_2_1.train:train_wan_2_1_i2v_grpo
+  entrypoint: vrl.scripts.diffusion.train:train_diffusion_online
   total_epochs: 2   # proof/smoke run only (validate replay contract + reward signal)
   output_dir: outputs/wan_2_2_i2v_a14b_physics_smoke
   save_freq: 2

@@ -30,15 +30,6 @@ from vrl.utils.logging import init_logger
 logger = init_logger(__name__)
 
 
-def _gemma_path_from_build(build: ModelBuild) -> str:
-    gemma_path = (build.model_config or {}).get("gemma_path")
-    if not gemma_path:
-        raise ValueError(
-            "Echo requires model.gemma_path (the Gemma-3-12B encoder directory)",
-        )
-    return str(gemma_path)
-
-
 def build_echo_replay_runtime_bundle(build: ModelBuild) -> RuntimeBundle:
     """Build the trainer replay bundle: Echo's velocity transformer only."""
 
@@ -58,13 +49,18 @@ def build_echo_replay_runtime_bundle(build: ModelBuild) -> RuntimeBundle:
     dtype = build.parameter_dtype
     device = torch.device(build.device) if build.device is not None else torch.device("cpu")
     sampling = getattr(build, "sampling_config", None) or {}
+    gemma_path = (build.model_config or {}).get("gemma_path")
+    if not gemma_path:
+        raise ValueError(
+            "Echo requires model.gemma_path (the Gemma-3-12B encoder directory)",
+        )
     echo = create_ltx2_wrapper(
         checkpoint_path=_resolve_echo_checkpoint(
             build.model_name_or_path,
             **model_revision_kwargs(build),
         ),
         gemma_path=_resolve_gemma_dir(
-            _gemma_path_from_build(build),
+            str(gemma_path),
             **model_config_revision_kwargs(build, "gemma_revision"),
         ),
         device=device,

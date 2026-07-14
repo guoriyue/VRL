@@ -48,11 +48,8 @@ def _on_demand_runtime(
         config,
         RayGenerationLaunchInputs(
             launch_contract=GenerationRuntimeLaunchContract(
-                family="test",
-                task="test",
-                generation_kind="ar",
-                runtime_builder="tests:runtime_builder",
-                executor_cls="tests:executor_cls",
+                family="sd3_5",
+                model_build={},
             ),
             gatherer=object(),
         ),

@@ -7,18 +7,10 @@ from typing import Any
 
 from omegaconf import DictConfig, OmegaConf
 
-from vrl.config.builders import build_configs
-from vrl.config.precision import resolve_precision_policy
+from vrl.families.registry import ModelFamilyEntry
 from vrl.models.dtypes import resolve_torch_dtype
-from vrl.ray.resources import resolve_distributed_resources, reward_torch_device
-from vrl.rollouts.collector import build_rollout_collector
-from vrl.rollouts.collector.config import build_rollout_config_from_cfg
-from vrl.rollouts.families import RolloutFamilyEntry
+from vrl.ray.resources import reward_torch_device
 from vrl.utils.config import cfg_get
-
-
-class UnsupportedOnlineRecipeError(ValueError):
-    """Raised when a YAML config targets a non-online or unsupported recipe."""
 
 
 def _validate_topology_derived_reward_kwargs(
@@ -45,20 +37,10 @@ class AlgorithmEvaluatorPair:
     evaluator: Any | None
 
 
-@dataclass(frozen=True, slots=True)
-class OnlineRecipeFactoryOutput:
-    """Typed objects built from YAML and the canonical rollout family registry."""
-
-    collector_config: Any
-    reward_fn: Any
-    algorithm: Any
-    evaluator: Any | None
-
-
-def build_reward_from_cfg(
-    cfg: DictConfig,
+def build_reward(
     *,
-    built: dict[str, Any] | None = None,
+    built: dict[str, Any],
+    resources: Any | None,
     device: str = "cuda",
 ) -> Any:
     """Build the online reward function from the shared config loader output.
@@ -69,9 +51,8 @@ def build_reward_from_cfg(
     local parking policy. YAML selects transport, not lifecycle behavior.
     """
 
-    built = built or build_configs(cfg)
     if "reward" not in built:
-        raise UnsupportedOnlineRecipeError(
+        raise ValueError(
             "online recipe requires a reward section; diffusion_dpo is offline-only",
         )
     reward_weights, reward_kwargs = built["reward"]
@@ -81,8 +62,7 @@ def build_reward_from_cfg(
     from vrl.rewards.functions.registry import MultiReward
 
     memory_parking_required: bool | None = None
-    if OmegaConf.select(cfg, "distributed.resources", default=None) is not None:
-        resources = resolve_distributed_resources(cfg)
+    if resources is not None:
         expected_device = reward_torch_device(resources)
         if str(device).strip().lower() != expected_device.strip().lower():
             raise ValueError(
@@ -90,8 +70,7 @@ def build_reward_from_cfg(
                 f"resolved device {expected_device!r}; resource topology is the "
                 "execution-device source of truth.",
             )
-        validate_reward_memory_parking_from_cfg(
-            cfg,
+        validate_reward_memory_parking(
             resources=resources,
             built=built,
             device=str(device),
@@ -108,32 +87,20 @@ def build_reward_from_cfg(
     )
 
 
-def validate_reward_memory_parking_from_cfg(
-    cfg: DictConfig,
+def validate_reward_memory_parking(
     *,
     resources: Any,
-    built: dict[str, Any] | None = None,
+    built: dict[str, Any],
     device: str | None = None,
 ) -> None:
     """Validate shared reward parking without constructing a reward model."""
 
-    if built is not None and "reward" in built:
+    if "reward" in built:
         reward_kwargs = built["reward"][1]
         names = tuple(str(name) for name in built["reward"][0])
     else:
-        raw_kwargs = OmegaConf.select(cfg, "reward.kwargs", default={})
-        reward_kwargs = (
-            OmegaConf.to_container(raw_kwargs, resolve=True)
-            if OmegaConf.is_config(raw_kwargs)
-            else raw_kwargs
-        )
-        components = OmegaConf.select(cfg, "reward.components", default={})
-        plain = (
-            OmegaConf.to_container(components, resolve=True)
-            if OmegaConf.is_config(components)
-            else components
-        )
-        names = tuple(str(name) for name in dict(plain or {}))
+        reward_kwargs = {}
+        names = ()
     reward_kwargs = dict(reward_kwargs or {})
     _validate_topology_derived_reward_kwargs(reward_kwargs)
     if not bool(resources.lifecycle.handoff.release_reward_after_score):
@@ -154,21 +121,17 @@ def validate_reward_memory_parking_from_cfg(
 def build_algorithm_and_evaluator_from_cfg(
     cfg: DictConfig,
     *,
-    family_entry: RolloutFamilyEntry,
-    built: dict[str, Any] | None = None,
-    collector_config: Any | None = None,
+    family_entry: ModelFamilyEntry,
+    built: dict[str, Any],
+    collector_config: Any,
     scheduler: Any | None = None,
 ) -> AlgorithmEvaluatorPair:
     """Build the algorithm/evaluator pair for a strict online recipe."""
 
-    built = built or build_configs(cfg)
     algorithm_config = built["algorithm"]
     kind = str(OmegaConf.select(cfg, "algorithm.kind", default=""))
     diffusion_logprob_kinds = {"grpo", "dance_grpo", "flow_dppo", "grpo_guard"}
-    # Production callers pass the complete build result. Unit-level callers may
-    # inject only an algorithm config to exercise type rejection; resolve the
-    # same public source directly in that narrow path.
-    precision = built.get("precision") or resolve_precision_policy(cfg)
+    precision = built["precision"]
     if precision.diffusion_math != "fp32" and kind not in diffusion_logprob_kinds:
         raise ValueError(
             "precision.diffusion_math.dtype overrides are supported only by "
@@ -211,9 +174,6 @@ def build_algorithm_and_evaluator_from_cfg(
             algorithm = GRPOGuard(algorithm_config)
         else:
             algorithm = GRPO(algorithm_config)
-        collector_config = collector_config or build_rollout_config_from_cfg(
-            cfg, family=family_entry.family
-        )
         math_dtype = resolve_torch_dtype(precision.diffusion_math)
         return AlgorithmEvaluatorPair(
             algorithm=algorithm,
@@ -237,7 +197,7 @@ def build_algorithm_and_evaluator_from_cfg(
                 f"{family_entry.family} token GRPO expects TokenGRPOConfig, got "
                 f"{type(algorithm_config).__name__}",
             )
-        if family_entry.collector.kind == "ar_continuous":
+        if family_entry.collector_kind == "ar_continuous":
             from vrl.rollouts.evaluators.ar import ContinuousTokenLogProbEvaluator
 
             evaluator = ContinuousTokenLogProbEvaluator()
@@ -255,8 +215,8 @@ def build_algorithm_and_evaluator_from_cfg(
         from vrl.rollouts.evaluators.ar import MultiSegmentTokenLogProbEvaluator
 
         if family_entry.family != "janus_pro_r1":
-            raise UnsupportedOnlineRecipeError(
-                "token_grpo_multisegment currently requires rollout family janus_pro_r1",
+            raise ValueError(
+                "token_grpo_multisegment currently requires model family janus_pro_r1",
             )
         if not isinstance(algorithm_config, MultiSegmentTokenGRPOConfig):
             raise TypeError(
@@ -288,80 +248,16 @@ def build_algorithm_and_evaluator_from_cfg(
         )
 
     if kind == "diffusion_dpo":
-        raise UnsupportedOnlineRecipeError(
+        raise ValueError(
             "diffusion_dpo is an offline recipe and is not supported by common online recipe",
         )
 
-    raise UnsupportedOnlineRecipeError(f"unsupported online algorithm.kind: {kind!r}")
-
-
-def build_collector_from_cfg(
-    cfg: DictConfig,
-    *,
-    reward_fn: Any,
-    family_entry: RolloutFamilyEntry,
-    collector_config: Any | None = None,
-    runtime: Any | None = None,
-) -> Any:
-    """Build a rollout collector through the canonical family registry."""
-
-    collector_config = collector_config or build_rollout_config_from_cfg(
-        cfg,
-        family=family_entry.family,
-    )
-    # Topology-derived release policy so the collector reads its own handoff
-    # rather than asking the runtime. Absent for in-process runs with no
-    # distributed.resources, where there is no shared GPU to hand off.
-    lifecycle = None
-    if OmegaConf.select(cfg, "distributed.resources", default=None) is not None:
-        lifecycle = resolve_distributed_resources(cfg).lifecycle
-    return build_rollout_collector(
-        family_entry.family,
-        reward_fn=reward_fn,
-        config=collector_config,
-        runtime=runtime,
-        lifecycle=lifecycle,
-    )
-
-
-def build_online_recipe_components(
-    cfg: DictConfig,
-    *,
-    family_entry: RolloutFamilyEntry,
-    reward_device: str = "cuda",
-    scheduler: Any | None = None,
-    built: dict[str, Any] | None = None,
-) -> OnlineRecipeFactoryOutput:
-    """Build config-derived online recipe components without loading a model."""
-
-    built = built or build_configs(cfg)
-    collector_config = build_rollout_config_from_cfg(cfg, family=family_entry.family)
-    reward_fn = build_reward_from_cfg(
-        cfg,
-        built=built,
-        device=reward_device,
-    )
-    pair = build_algorithm_and_evaluator_from_cfg(
-        cfg,
-        family_entry=family_entry,
-        built=built,
-        collector_config=collector_config,
-        scheduler=scheduler,
-    )
-    return OnlineRecipeFactoryOutput(
-        collector_config=collector_config,
-        reward_fn=reward_fn,
-        algorithm=pair.algorithm,
-        evaluator=pair.evaluator,
-    )
+    raise ValueError(f"unsupported online algorithm.kind: {kind!r}")
 
 
 __all__ = [
     "AlgorithmEvaluatorPair",
-    "OnlineRecipeFactoryOutput",
-    "UnsupportedOnlineRecipeError",
     "build_algorithm_and_evaluator_from_cfg",
-    "build_collector_from_cfg",
-    "build_online_recipe_components",
-    "build_reward_from_cfg",
+    "build_reward",
+    "validate_reward_memory_parking",
 ]

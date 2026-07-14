@@ -46,6 +46,8 @@ def test_removed_boundary_packages_stay_removed() -> None:
     assert not (VRL_ROOT / "distributed").exists()
     assert not (VRL_ROOT / "runtime").exists()
     assert not (VRL_ROOT / "generation" / "runtime").exists()
+    assert not (VRL_ROOT / "rollouts" / "families").exists()
+    assert not (VRL_ROOT / "rollouts" / "family_names.py").exists()
 
 
 def test_shared_ray_substrate_stays_domain_neutral() -> None:
@@ -114,7 +116,14 @@ def test_reward_inference_is_a_single_domain_module() -> None:
 def test_reward_function_implementations_live_under_functions() -> None:
     """Checks reward function implementations live under functions."""
     rewards_root = VRL_ROOT / "rewards"
-    required_root = {"__init__.py", "artifacts.py", "base.py", "inference.py", "runtime.py", "types.py"}
+    required_root = {
+        "__init__.py",
+        "artifacts.py",
+        "base.py",
+        "inference.py",
+        "runtime.py",
+        "types.py",
+    }
     assert required_root <= _module_filenames(rewards_root)
 
     functions = _module_filenames(rewards_root / "functions")

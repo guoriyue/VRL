@@ -135,16 +135,14 @@ def main() -> None:
     from omegaconf import OmegaConf
 
     from vrl.config.loading import load_config
-    from vrl.rollouts.families.registry import (
-        get_rollout_family_entry,
-        resolve_entry_model_build,
+    from vrl.families.registry import (
+        get_model_family_entry,
     )
     from vrl.trainers.data import load_prompt_examples_from_config
     from vrl.trainers.data.sft_latents import save_sft_latents
-    from vrl.utils.config import import_from_path
 
     cfg = load_config(f"experiment/{args.experiment}")
-    entry = get_rollout_family_entry(str(cfg.model.family))
+    entry = get_model_family_entry(str(cfg.model.family))
     family = entry.family
 
     device = torch.device(
@@ -173,13 +171,10 @@ def main() -> None:
         allow_absolute=allow_absolute,
     )
 
-    # The exact builder path the rollout workers import — same model, same
-    # weights, same latent space as the run this shard will regularize.
-    build = import_from_path(entry.runtime_builder)
+    # Use the same resolved family entry and build path as rollout workers.
     weight_dtype = torch.bfloat16 if device.type == "cuda" else torch.float32
-    bundle = build(
-        resolve_entry_model_build(
-            entry,
+    bundle = entry.build_rollout(
+        entry.resolve_model_build(
             cfg,
             device,
             parameter_dtype_override=weight_dtype,

@@ -139,15 +139,6 @@ def test_algorithm_dispatch_covers_schema_kind_vocabulary() -> None:
     assert all(algorithm_config_class(kind) for kind in kinds)
 
 
-def test_resolve_algorithm_kind_remains_a_public_validation_api() -> None:
-    from vrl.config import validation
-
-    assert "resolve_algorithm_kind" in validation.__all__
-    assert validation.resolve_algorithm_kind(OmegaConf.create({"kind": "grpo"})) == "grpo"
-    with pytest.raises(ValueError, match=r"algorithm\.kind required"):
-        validation.resolve_algorithm_kind(OmegaConf.create({}))
-
-
 # ── rollout / sampling string-setting Literals ────────────────────────────────
 
 

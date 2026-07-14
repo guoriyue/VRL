@@ -8,7 +8,7 @@ defaults:
   - /recipe/online/diffusion_grpo
 
 trainer:
-  entrypoint: vrl.scripts.diffusion.cosmos.train:train_cosmos_predict25_grpo
+  entrypoint: vrl.scripts.diffusion.train:train_diffusion_online
 
 algorithm:
   # cosmos/wan video GRPO wants a tighter clip than the diffusion default (1e-4);

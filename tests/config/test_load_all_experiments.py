@@ -31,7 +31,7 @@ from vrl.config.validation import (
 )
 from vrl.ray.resources import resolve_distributed_resources
 from vrl.rollouts.orchestration import validate_rollout_schedule_topology
-from vrl.scripts.common.factory import validate_reward_memory_parking_from_cfg
+from vrl.scripts.common.factory import validate_reward_memory_parking
 
 
 def _experiment_names() -> list[str]:
@@ -285,8 +285,7 @@ def test_all_online_experiments_pass_static_launch_preflight() -> None:
                 built["trainer"].rollout_orchestration,
                 resources,
             )
-            validate_reward_memory_parking_from_cfg(
-                cfg,
+            validate_reward_memory_parking(
                 resources=resources,
                 built=built,
             )
@@ -758,7 +757,7 @@ def test_invalid_algorithm_kind_fails_fast() -> None:
         build_algorithm_config(cfg)
 
     cfg = OmegaConf.create({"algorithm": {"kind": "qpo"}})
-    with pytest.raises(ValueError, match=r"unknown algorithm\.kind"):
+    with pytest.raises(ValueError, match="unsupported algorithm kind"):
         build_algorithm_config(cfg)
 
 

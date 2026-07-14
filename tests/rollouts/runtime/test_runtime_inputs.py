@@ -3,18 +3,63 @@
 from __future__ import annotations
 
 import pickle
+from types import SimpleNamespace
+from typing import Any
+from unittest.mock import patch
 
 import pytest
 
 from vrl.config.loading import load_config
+from vrl.families.registry import ModelFamilyEntry, get_model_family_entry
 from vrl.generation.ar.executor import ARDiscreteChunkGatherer
 from vrl.generation.diffusion import DiffusionChunkGatherer
 from vrl.generation.protocols import GenerationChunkExecutor
 from vrl.generation.ray import RayGenerationLauncher, RayGenerationLaunchInputs
+from vrl.generation.ray.config import RayGenerationConfig
 from vrl.models.ar.janus_pro.runtime import JanusProR1ChunkGatherer
 from vrl.models.ar.nextstep_1.runtime import NextStep1ChunkGatherer
+from vrl.ray.placement import RolePlacement
+from vrl.ray.resources import resolve_distributed_resources
 from vrl.rollouts.collector.config import build_rollout_config_from_cfg
-from vrl.rollouts.families import get_rollout_family_entry
+
+
+def _capture_launch_inputs(
+    cfg: Any,
+    entry: ModelFamilyEntry,
+) -> RayGenerationLaunchInputs:
+    """Intercept the public launch boundary without starting Ray actors."""
+
+    captured: list[RayGenerationLaunchInputs] = []
+
+    def capture_launch(
+        _launcher: RayGenerationLauncher,
+        _config: RayGenerationConfig,
+        launch_inputs: RayGenerationLaunchInputs,
+        *,
+        placement: RolePlacement,
+    ) -> RayGenerationLaunchInputs:
+        assert isinstance(placement, RolePlacement)
+        captured.append(launch_inputs)
+        return launch_inputs
+
+    with patch.object(RayGenerationLauncher, "launch", new=capture_launch):
+        result = RayGenerationLauncher(init_ray=False).launch_from_cfg(
+            cfg,
+            resources=resolve_distributed_resources(cfg),
+            entry=entry,
+            driver_bundle=SimpleNamespace(
+                model=SimpleNamespace(device="cpu"),
+                trainable_modules={},
+            ),
+            placement=RolePlacement(
+                placement_group=object(),
+                bundle_indices=(),
+                expected_gpu_ids=(),
+            ),
+        )
+
+    assert captured == [result]
+    return captured[0]
 
 
 @pytest.mark.parametrize(
@@ -91,30 +136,24 @@ def test_rollout_runtime_inputs_are_serializable_and_registry_backed(
             "distributed.resources.reward.num_gpus=0",
             "distributed.resources.reward.gpus_per_worker=0",
             "distributed.rollout.cpus_per_worker=1",
+            "rollout.samples_per_chunk=2",
         ],
     )
-    entry = get_rollout_family_entry(family)
+    entry = get_model_family_entry(family)
 
-    inputs = RayGenerationLauncher.build_inputs(
-        cfg,
-        entry,
-        executor_kwargs={"samples_per_chunk": 2},
-    )
+    inputs = _capture_launch_inputs(cfg, entry)
 
     assert isinstance(inputs, RayGenerationLaunchInputs)
     assert pickle.loads(pickle.dumps(inputs.launch_contract)) == inputs.launch_contract
     assert inputs.launch_contract.family == family
-    assert inputs.launch_contract.model_build["family"] == inputs.launch_contract.family
-    # registry is the single source of truth for the canonical task string
-    assert inputs.launch_contract.task == entry.task
+    # Family identity lives once in the outer contract; worker-side executor
+    # wiring comes from the registry, while this nested payload is per-run data.
+    assert "family" not in inputs.launch_contract.model_build
     assert inputs.launch_contract.policy_version == 0
-    assert inputs.launch_contract.runtime_builder == entry.runtime_builder
-    assert inputs.launch_contract.executor_cls == entry.executor_cls
-    # Generic-executor families also carry their model.executor yaml block
-    # (family/task/num_frames/...) in executor_kwargs; families with their own
-    # executor carry only the cfg-derived kwargs. Both must thread the
-    # cfg-derived samples_per_chunk.
-    assert inputs.launch_contract.executor_kwargs["samples_per_chunk"] == 2
+    if entry.collector_kind == "diffusion":
+        assert inputs.launch_contract.executor_kwargs["samples_per_chunk"] == 2
+    else:
+        assert "samples_per_chunk" not in inputs.launch_contract.executor_kwargs
     assert isinstance(inputs.gatherer, expected_gatherer)
     assert not isinstance(inputs.gatherer, GenerationChunkExecutor)
 
@@ -132,13 +171,12 @@ def test_diffusion_launch_contract_uses_resolved_config_parameter_dtype() -> Non
         ],
     )
 
-    inputs = RayGenerationLauncher.build_inputs(
+    inputs = _capture_launch_inputs(
         cfg,
-        get_rollout_family_entry("sd3_5"),
+        get_model_family_entry("sd3_5"),
     )
 
     assert isinstance(inputs, RayGenerationLaunchInputs)
-    assert inputs.launch_contract.model_build is not None
     assert inputs.launch_contract.model_build["device"] == "cuda"
     assert inputs.launch_contract.model_build["parameter_dtype"] == "bfloat16"
     assert inputs.launch_contract.model_build["rollout"]["autocast_dtype"] == "bfloat16"
@@ -159,13 +197,12 @@ def test_sana_launch_contract_carries_parameter_and_rollout_precision() -> None:
         ],
     )
 
-    inputs = RayGenerationLauncher.build_inputs(
+    inputs = _capture_launch_inputs(
         cfg,
-        get_rollout_family_entry("sana"),
+        get_model_family_entry("sana"),
     )
 
     model_build = inputs.launch_contract.model_build
-    assert model_build is not None
     assert model_build["parameter_dtype"] == "float16"
     assert model_build["rollout"] == {
         "autocast_dtype": "bfloat16",
@@ -200,13 +237,12 @@ def test_sana_fp8_rollout_keeps_bf16_outer_autocast() -> None:
         },
     }
 
-    inputs = RayGenerationLauncher.build_inputs(
+    inputs = _capture_launch_inputs(
         cfg,
-        get_rollout_family_entry("sana"),
+        get_model_family_entry("sana"),
     )
 
     model_build = inputs.launch_contract.model_build
-    assert model_build is not None
     assert model_build["parameter_dtype"] == "float16"
     assert model_build["rollout"]["autocast_dtype"] == "bfloat16"
     assert model_build["rollout"]["prompt_encoder_dtype"] == "bfloat16"
@@ -231,16 +267,13 @@ def test_generation_chunk_auto_reaches_ray_runtime_without_executor_coercion() -
         ],
     )
 
-    inputs = RayGenerationLauncher.build_inputs(
+    inputs = _capture_launch_inputs(
         cfg,
-        get_rollout_family_entry("sd3_5"),
+        get_model_family_entry("sd3_5"),
     )
 
     assert "samples_per_chunk" not in inputs.launch_contract.executor_kwargs
-    assert (
-        build_rollout_config_from_cfg(cfg, family="sd3_5").request_sampling()["samples_per_chunk"]
-        == "auto"
-    )
+    assert build_rollout_config_from_cfg(cfg).request_sampling()["samples_per_chunk"] == "auto"
 
 
 @pytest.mark.parametrize(
@@ -277,15 +310,14 @@ def test_model_torch_compile_applies_to_all_diffusion_rollout_families(
             "model.torch_compile.mode=default",
         ],
     )
-    entry = get_rollout_family_entry(family)
+    entry = get_model_family_entry(family)
 
-    inputs = RayGenerationLauncher.build_inputs(
+    inputs = _capture_launch_inputs(
         cfg,
         entry,
     )
 
-    assert entry.collector.kind == "diffusion"
-    assert inputs.launch_contract.model_build is not None
+    assert entry.collector_kind == "diffusion"
     model_config = inputs.launch_contract.model_build["model_config"]
     assert model_config["torch_compile"] == {
         "enable": True,
@@ -293,8 +325,8 @@ def test_model_torch_compile_applies_to_all_diffusion_rollout_families(
     }
 
 
-def test_explicit_executor_kwargs_override_registry_defaults() -> None:
-    """Checks explicit executor kwargs override registry defaults."""
+def test_executor_kwargs_use_configured_chunk_size() -> None:
+    """The public config is the only chunk-size input to the launch contract."""
     cfg = load_config(
         "experiment/diffusion/sd3_5/online_grpo_ocr",
         overrides=[
@@ -307,14 +339,10 @@ def test_explicit_executor_kwargs_override_registry_defaults() -> None:
         ],
     )
 
-    inputs = RayGenerationLauncher.build_inputs(
+    inputs = _capture_launch_inputs(
         cfg,
-        get_rollout_family_entry("sd3_5"),
-        executor_kwargs={"samples_per_chunk": 3},
+        get_model_family_entry("sd3_5"),
     )
 
     assert isinstance(inputs, RayGenerationLaunchInputs)
-    # Explicit executor_kwargs override the cfg-derived value (3, not the
-    # rollout.samples_per_chunk=8 above); the generic executor's config keys
-    # ride alongside.
-    assert inputs.launch_contract.executor_kwargs["samples_per_chunk"] == 3
+    assert inputs.launch_contract.executor_kwargs["samples_per_chunk"] == 8

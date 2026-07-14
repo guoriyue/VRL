@@ -3,14 +3,17 @@ from __future__ import annotations
 import torch
 
 from vrl.config.loading import load_config
+from vrl.families.registry import get_model_family_entry
 from vrl.generation import GenerationOutput, GenerationRequest, GenerationSampleRow
 from vrl.rollouts.collector import build_rollout_collector
 from vrl.rollouts.collector.batch_builder import (
     RolloutBatchBuildContext,
     TrajectoryRolloutBatchBuilder,
 )
-from vrl.rollouts.collector.config import RolloutConfig, build_rollout_config_from_cfg
-from vrl.rollouts.families import get_rollout_family_entry
+from vrl.rollouts.collector.config import (
+    RolloutCollectorConfig,
+    build_rollout_config_from_cfg,
+)
 from vrl.trajectory import build_ar_multisegment_trajectory
 
 
@@ -60,7 +63,7 @@ def test_r1_train_segments_derive_from_algorithm_config() -> None:
     cfg.algorithm.train_segments.initial_image = False
     cfg.algorithm.train_segments.selfcheck_text = True
 
-    rollout = build_rollout_config_from_cfg(cfg, family="janus_pro_r1")
+    rollout = build_rollout_config_from_cfg(cfg)
 
     assert rollout.get("train_segments") == {
         "initial_image": False,
@@ -71,8 +74,7 @@ def test_r1_train_segments_derive_from_algorithm_config() -> None:
 
 def test_r1_collector_uses_r1_task_request_and_trajectory_batch() -> None:
     """Checks R1 collector uses R1 task request and trajectory batch."""
-    rollout_config = RolloutConfig(
-        family="janus_pro_r1",
+    rollout_config = RolloutCollectorConfig(
         values={
             "n_samples_per_prompt": 2,
             "guidance_scale": 5.0,
@@ -90,15 +92,13 @@ def test_r1_collector_uses_r1_task_request_and_trajectory_batch() -> None:
         },
     )
     collector = build_rollout_collector(
-        "janus_pro_r1",
+        get_model_family_entry("janus_pro_r1"),
         reward_fn=None,
         config=rollout_config,
     )
     plan = collector.request_builder.build(["draw text"], 2)
 
-    entry = get_rollout_family_entry("janus_pro_r1")
-    assert collector.family == "janus_pro_r1"
-    assert collector.task == entry.task
+    entry = get_model_family_entry("janus_pro_r1")
     assert plan.request.family == "janus_pro_r1"
     assert plan.request.task == entry.task
     assert plan.request.sampling["max_reflect_len"] == 32

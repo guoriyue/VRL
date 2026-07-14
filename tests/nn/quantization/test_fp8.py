@@ -507,7 +507,7 @@ def test_apply_rollout_quantization_dispatches_by_scheme():
 def test_resolve_model_build_derives_fp8_from_precision_rollout():
     from omegaconf import OmegaConf
 
-    from vrl.models.model_build import resolve_model_build
+    from vrl.families.registry import get_model_family_entry
 
     fp8_cfg = OmegaConf.create(
         {
@@ -521,7 +521,8 @@ def test_resolve_model_build_derives_fp8_from_precision_rollout():
             },
         }
     )
-    build = resolve_model_build(fp8_cfg, "cuda")
+    entry = get_model_family_entry("sd3_5")
+    build = entry.resolve_model_build(fp8_cfg, "cuda")
     assert build.rollout is not None
     assert build.rollout.quantization_format == "fp8"
     assert build.rollout.autocast_dtype is torch.bfloat16
@@ -536,7 +537,7 @@ def test_resolve_model_build_derives_fp8_from_precision_rollout():
             },
         }
     )
-    plain_build = resolve_model_build(bf16_cfg, "cuda")
+    plain_build = entry.resolve_model_build(bf16_cfg, "cuda")
     assert plain_build.rollout is not None
     assert plain_build.rollout.quantization_format is None
     assert plain_build.rollout.autocast_dtype is torch.bfloat16

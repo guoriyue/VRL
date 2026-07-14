@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import Iterable, Mapping
 from dataclasses import asdict, dataclass, field, replace
 from typing import Any
 
@@ -14,7 +13,7 @@ from vrl.generation.execution import (
     DistributedWorkerHandle,
 )
 from vrl.generation.launch_contract import GenerationRuntimeLaunchContract
-from vrl.generation.protocols import ChunkGatherer, GenerationRuntime
+from vrl.generation.protocols import GenerationRuntime
 from vrl.generation.ray.config import RayGenerationConfig
 from vrl.generation.ray.executor import RayGenerationExecutor
 from vrl.generation.ray.launch_inputs import RayGenerationLaunchInputs
@@ -30,7 +29,7 @@ from vrl.models.dtypes import dtype_to_wire_name
 from vrl.ray.actor_group import RayActorGroup
 from vrl.ray.dependencies import require_ray
 from vrl.ray.placement import RolePlacement
-from vrl.utils.config import cfg_path, import_from_path, to_builtin_deep
+from vrl.utils.config import cfg_path, to_builtin_deep
 
 logger = logging.getLogger(__name__)
 
@@ -48,9 +47,8 @@ class RayGenerationLauncher:
 
     def launch(
         self,
-        config: RayGenerationConfig | Mapping[str, Any],
-        launch_contract: GenerationRuntimeLaunchContract | Mapping[str, Any],
-        gatherer: ChunkGatherer,
+        config: RayGenerationConfig,
+        launch_inputs: RayGenerationLaunchInputs,
         *,
         placement: RolePlacement,
     ) -> RayGenerationRuntime:
@@ -62,12 +60,18 @@ class RayGenerationLauncher:
         the group; the owner does that once at run shutdown.
         """
 
-        rollout_config = RayGenerationConfig.from_cfg(config)
-
-        contract = GenerationRuntimeLaunchContract.from_value(launch_contract)
-        if not contract.family:
-            raise ValueError("GenerationRuntimeLaunchContract.family is required")
-        chunk_gatherer = require_chunk_gatherer(gatherer)
+        if not isinstance(config, RayGenerationConfig):
+            raise TypeError(
+                f"config must be a RayGenerationConfig, got {type(config).__name__}",
+            )
+        if not isinstance(launch_inputs, RayGenerationLaunchInputs):
+            raise TypeError(
+                "launch_inputs must be RayGenerationLaunchInputs, "
+                f"got {type(launch_inputs).__name__}",
+            )
+        rollout_config = config
+        contract = launch_inputs.launch_contract
+        chunk_gatherer = require_chunk_gatherer(launch_inputs.gatherer)
 
         ray = require_ray()
         if self.init_ray and not ray.is_initialized():
@@ -154,9 +158,8 @@ class RayGenerationLauncher:
 
     async def launch_async(
         self,
-        config: RayGenerationConfig | Mapping[str, Any],
-        launch_contract: GenerationRuntimeLaunchContract | Mapping[str, Any],
-        gatherer: ChunkGatherer,
+        config: RayGenerationConfig,
+        launch_inputs: RayGenerationLaunchInputs,
         *,
         placement: RolePlacement,
     ) -> RayGenerationRuntime:
@@ -174,8 +177,7 @@ class RayGenerationLauncher:
         return await asyncio.to_thread(
             self.launch,
             config,
-            launch_contract,
-            gatherer,
+            launch_inputs,
             placement=placement,
         )
 
@@ -183,85 +185,21 @@ class RayGenerationLauncher:
         self,
         cfg: Any,
         *,
-        driver_bundle: Any | None = None,
-        driver_policy: Any | None = None,
-        trainable_modules: Mapping[str, Any] | Iterable[Any] | None = None,
-        launch_contract: Any | None = None,
-        gatherer: Any | None = None,
-        placement: RolePlacement | None = None,
+        resources: Any,
+        entry: Any,
+        driver_bundle: Any,
+        placement: RolePlacement,
     ) -> GenerationRuntime:
         """Build the Ray generation runtime from training config and launch inputs."""
 
-        config = RayGenerationConfig.from_cfg(cfg).validate_driver_state(
-            driver_bundle=driver_bundle,
-            driver_policy=driver_policy,
-            trainable_modules=trainable_modules,
-        )
-        resolved_contract = (
-            launch_contract
-            if launch_contract is not None
-            else cfg_path(
-                cfg,
-                "distributed.rollout.launch_contract",
-                None,
-            )
-        )
-        if resolved_contract is not None and gatherer is not None:
-            if placement is None:
-                raise ValueError(
-                    "RayGenerationLauncher.launch_from_cfg requires placement: "
-                    "rollout workers schedule into the run-level placement group "
-                    "built by a GlobalRayPlacementOwner.",
-                )
-            # On-demand vs resident comes from the topology-derived lifecycle
-            # plan (resources.lifecycle), the single source of truth. Without a
-            # resolved plan (hand-built configs in tests) default to resident.
-            resources = config.resources
-            rollout_on_demand = (
-                resources is not None and resources.lifecycle.rollout.mode == "on_demand"
-            )
-            if rollout_on_demand:
-                return RayGenerationRuntime.with_on_demand_activation(
-                    config,
-                    RayGenerationLaunchInputs(
-                        launch_contract=resolved_contract,
-                        gatherer=gatherer,
-                    ),
-                    placement=placement,
-                )
-            return self.launch(
-                config,
-                resolved_contract,
-                gatherer,
-                placement=placement,
-            )
-
-        raise ValueError(
-            "Ray generation launch requires launch_contract plus gatherer so "
-            "RayGenerationLauncher can construct workers through the "
-            "runtime_builder+executor_cls path.",
-        )
-
-    @staticmethod
-    def build_inputs(
-        cfg: Any,
-        entry: Any,
-        *,
-        executor_kwargs: Mapping[str, Any] | None = None,
-        policy_version: int = 0,
-    ) -> RayGenerationLaunchInputs:
-        """Build Ray generation launch inputs from a resolved family entry."""
-
-        ray_config = RayGenerationConfig.from_cfg(cfg)
-
-        runtime_device = "cuda" if ray_config.gpus_per_worker > 0 else "cpu"
-        from vrl.rollouts.families.registry import resolve_entry_model_build
-
-        build = resolve_entry_model_build(
-            entry,
+        config = RayGenerationConfig.from_cfg(
             cfg,
-            runtime_device,
+            resources=resources,
+        ).validate_driver_state(
+            driver_bundle=driver_bundle,
         )
+        runtime_device = "cuda" if config.gpus_per_worker > 0 else "cpu"
+        build = entry.resolve_model_build(cfg, runtime_device)
         # The lifecycle resolver, not the model config, owns whether rollout
         # workers will receive trainable-state updates. Thread that resolved fact
         # into the one build option that needs it before the Ray payload is frozen.
@@ -271,38 +209,51 @@ class RayGenerationLauncher:
                 # Full-finetune sync replaces base parameters; LoRA sync only
                 # sends adapters. Resolve that lifecycle fact once here so the
                 # quantizer does not have to reinterpret model configuration.
-                base_weight_sync=(ray_config.sync_trainable_state and not build.use_lora),
+                base_weight_sync=(config.sync_trainable_state and not build.use_lora),
             )
-        resolved_executor_kwargs = _build_executor_kwargs(entry, cfg)
-        resolved_executor_kwargs.update(dict(executor_kwargs or {}))
-        runtime_extra = _runtime_extra(cfg)
-        _validate_model_compile_supported(cfg, entry)
-        model_build_payload = _model_build_payload(build)
-
-        return RayGenerationLaunchInputs(
+        if bool(cfg_path(cfg, "model.torch_compile.enable", False)) and (
+            entry.collector_kind != "diffusion"
+        ):
+            raise ValueError(
+                f"{entry.family} does not support torch compile but "
+                "model.torch_compile.enable is set",
+            )
+        launch_inputs = RayGenerationLaunchInputs(
             launch_contract=GenerationRuntimeLaunchContract(
                 family=entry.family,
-                task=entry.task,
-                generation_kind=("diffusion" if entry.collector.kind == "diffusion" else "ar"),
-                model_build=model_build_payload,
-                executor_kwargs=resolved_executor_kwargs,
-                policy_version=policy_version,
-                runtime_builder=entry.runtime_builder,
-                executor_cls=entry.executor_cls,
-                extra=runtime_extra,
+                model_build=_model_build_payload(build),
+                executor_kwargs=_build_executor_kwargs(entry, cfg),
+                policy_version=0,
+                torch_profiler=_runtime_profiler(cfg),
             ),
-            gatherer=import_from_path(entry.gatherer.import_path)(
-                **entry.gatherer.kwargs,
-            ),
+            gatherer=entry.new_gatherer(),
+        )
+        # On-demand vs resident comes from the topology-derived lifecycle plan
+        # (resources.lifecycle), the single source of truth. Hand-built configs
+        # without a resolved plan default to resident.
+        resources = config.resources
+        rollout_on_demand = (
+            resources is not None and resources.lifecycle.rollout.mode == "on_demand"
+        )
+        if rollout_on_demand:
+            return RayGenerationRuntime.with_on_demand_activation(
+                config,
+                launch_inputs,
+                placement=placement,
+            )
+        return self.launch(
+            config,
+            launch_inputs,
+            placement=placement,
         )
 
 
 def _build_executor_kwargs(entry: Any, cfg: Any) -> dict[str, Any]:
-    from vrl.generation.diffusion.executor import GENERIC_DIFFUSION_EXECUTOR
+    from vrl.families.registry import GENERIC_DIFFUSION_EXECUTOR
 
     kwargs: dict[str, Any] = {}
     # Diffusion executors take a chunk batch size; AR executors do not.
-    if entry.collector.kind == "diffusion":
+    if entry.collector_kind == "diffusion":
         samples_per_chunk = cfg_path(cfg, "rollout.samples_per_chunk", None)
         # ``auto`` belongs to the request and is resolved by RayGenerationRuntime
         # before dispatch. Do not feed it to the executor constructor, whose
@@ -315,13 +266,14 @@ def _build_executor_kwargs(entry: Any, cfg: Any) -> dict[str, Any]:
     # own executor hardcode these as class attrs and skip this.
     if entry.executor_cls == GENERIC_DIFFUSION_EXECUTOR:
         kwargs.update(dict(cfg_path(cfg, "model.executor", {}) or {}))
-        kwargs["family"] = entry.family
-        kwargs["task"] = entry.task
     return kwargs
 
 
 def _model_build_payload(build: Any) -> dict[str, Any]:
     payload = asdict(build)
+    # Family is the launch contract identity and is restored worker-side. Do not
+    # serialize it again inside the nested model-build payload.
+    payload.pop("family", None)
     payload["device"] = str(payload["device"])
     payload["parameter_dtype"] = dtype_to_wire_name(payload["parameter_dtype"])
     rollout = payload.get("rollout")
@@ -333,30 +285,17 @@ def _model_build_payload(build: Any) -> dict[str, Any]:
     return payload
 
 
-def _validate_model_compile_supported(cfg: Any, entry: Any) -> None:
-    """Fail fast when the single public compile knob is set for unsupported families."""
-
-    if not bool(cfg_path(cfg, "model.torch_compile.enable", False)):
-        return
-    if entry.collector.kind != "diffusion":
-        raise ValueError(
-            f"{entry.family} does not support torch compile but model.torch_compile.enable is set",
-        )
-
-
-def _runtime_extra(cfg: Any) -> dict[str, Any]:
+def _runtime_profiler(cfg: Any) -> dict[str, Any]:
     profiler_cfg = cfg_path(cfg, "rollout.torch_profiler", None)
     if profiler_cfg is None:
         return {}
     profiler = to_builtin_deep(profiler_cfg)
     if not isinstance(profiler, dict):
         return {}
-    return {
-        "torch_profiler": profiler,
-        # trainer.output_dir is required (??? in base yaml, enforced at load
-        # time) — no silent fallback that would shadow the contract.
-        "profiler_output_dir": str(cfg_path(cfg, "trainer.output_dir")),
-    }
+    # trainer.output_dir is required (??? in base yaml, enforced at load time),
+    # so profiler output has no independent fallback or duplicate wire key.
+    profiler["output_dir"] = str(cfg_path(cfg, "trainer.output_dir"))
+    return profiler
 
 
 __all__ = [

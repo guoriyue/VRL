@@ -1,7 +1,7 @@
 """Family-agnostic rollout probe for registry-descriptor diffusion families.
 
-Builds the family bundle straight from the registry descriptor (the same
-``build_family_runtime_bundle`` path the worker uses), runs the PRODUCTION
+Builds the family bundle through the registry entry (the same ``build_rollout``
+path the worker uses), runs the PRODUCTION
 denoise loop — ``forward_step`` + ``sde_step_with_logprob``, the exact math
 the generation executor runs — decodes, and reports output statistics. With
 ``--check-replay`` it additionally runs the first-step logprob parity check in
@@ -75,7 +75,7 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def _resolve_probe_model_build(args: argparse.Namespace, family: str, device: Any) -> Any:
+def _resolve_probe_model_build(args: argparse.Namespace, entry: Any, device: Any) -> Any:
     """Project CLI inputs through the production model-build resolver.
 
     The family descriptor owns parameter storage while the public precision
@@ -88,7 +88,6 @@ def _resolve_probe_model_build(args: argparse.Namespace, family: str, device: An
 
     from omegaconf import OmegaConf
 
-    from vrl.models.diffusion.build import resolve_family_model_build
     from vrl.models.dtypes import dtype_to_precision_token, resolve_torch_dtype
 
     autocast_precision = dtype_to_precision_token(resolve_torch_dtype(args.dtype))
@@ -98,7 +97,7 @@ def _resolve_probe_model_build(args: argparse.Namespace, family: str, device: An
     cfg = OmegaConf.create(
         {
             "model": {
-                "family": family,
+                "family": entry.family,
                 "path": args.path,
                 "use_lora": False,
                 # Probe-scale decode safety: tiled/sliced VAE decode keeps the
@@ -109,7 +108,7 @@ def _resolve_probe_model_build(args: argparse.Namespace, family: str, device: An
             "precision": precision,
         },
     )
-    build = resolve_family_model_build(cfg, device)
+    build = entry.resolve_model_build(cfg, device)
     build.rollout = replace(build.require_rollout(), base_weight_sync=False)
     return build
 
@@ -119,14 +118,13 @@ def main() -> None:
 
     import torch
 
+    from vrl.families.registry import get_model_family_entry
     from vrl.generation.diffusion.layout import VideoGenerationRequest
     from vrl.math.diffusion.flow_matching import sde_step_with_logprob
-    from vrl.models.diffusion.build import build_family_runtime_bundle
-    from vrl.rollouts.families.registry import get_rollout_family_entry
 
-    entry = get_rollout_family_entry(args.family)
+    entry = get_model_family_entry(args.family)
     family = entry.family
-    if entry.collector.kind != "diffusion":
+    if entry.collector_kind != "diffusion":
         raise SystemExit(
             f"--family {family} is an AR family; this probe drives the "
             "diffusion denoise loop only (use the AR entrypoints instead)",
@@ -136,9 +134,9 @@ def main() -> None:
         if args.device is not None
         else ("cuda" if torch.cuda.is_available() else "cpu"),
     )
-    build = _resolve_probe_model_build(args, family, device)
+    build = _resolve_probe_model_build(args, entry, device)
     print(f"[probe] building {family} bundle from {args.path} ...")
-    bundle = build_family_runtime_bundle(build)
+    bundle = entry.build_rollout(build)
     model = bundle.model
 
     encode_kwargs: dict[str, Any] = {"guidance_scale": args.guidance_scale}

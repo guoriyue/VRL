@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import gc
 import weakref
+from types import SimpleNamespace
 
 import pytest
 import torch
@@ -157,23 +158,18 @@ def test_generate_all_releases_model_before_rebuilding(monkeypatch, tmp_path) ->
         return bundle
 
     monkeypatch.setattr(eval_script, "_release_cuda", gc.collect)
-    monkeypatch.setattr(
-        eval_script,
-        "resolve_family_model_build",
-        lambda cfg, device, **kwargs: object(),
+    entry = SimpleNamespace(
+        resolve_model_build=lambda cfg, device, **kwargs: object(),
+        build_rollout=fake_build_runtime_bundle,
     )
-    monkeypatch.setattr(
-        eval_script,
-        "build_family_runtime_bundle",
-        fake_build_runtime_bundle,
-    )
+    monkeypatch.setattr(eval_script, "get_model_family_entry", lambda _family: entry)
     monkeypatch.setattr(
         eval_script, "_load_checkpoint_into_bundle", lambda bundle, checkpoint: None
     )
     monkeypatch.setattr(eval_script, "_generate_checkpoint_videos", lambda *args, **kwargs: [])
 
     videos = eval_script._generate_all(
-        OmegaConf.create({}),
+        OmegaConf.create({"model": {"family": "cosmos-predict2.5"}}),
         [
             eval_script.CheckpointTarget("base", tmp_path / "base"),
             eval_script.CheckpointTarget("trained", tmp_path / "trained"),

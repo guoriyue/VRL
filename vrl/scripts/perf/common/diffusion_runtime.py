@@ -16,63 +16,42 @@ _PROMPT = "a physical scene, high quality"
 def build_model(cfg, device, dtype):
     """Build any registered diffusion family's rollout model from its config."""
 
-    from vrl.rollouts.families import (
-        get_rollout_family_entry,
-        resolve_entry_model_build,
+    from vrl.families.registry import (
+        get_model_family_entry,
     )
-    from vrl.utils.config import import_from_path
 
     cfg.model.use_lora = True
-    entry = get_rollout_family_entry(str(cfg.model.family))
-    build_bundle = import_from_path(entry.runtime_builder)
-    build = resolve_entry_model_build(
-        entry,
+    entry = get_model_family_entry(str(cfg.model.family))
+    build = entry.resolve_model_build(
         cfg,
         device,
         parameter_dtype_override=dtype,
     )
-    return build_bundle(build).model
-
-
-def _sampling_request(cfg) -> VideoGenerationRequest:
-    sampling = cfg.sampling
-    num_frames = int(sampling.get("num_frames", sampling.get("frame_count", 1)))
-    return VideoGenerationRequest(
-        prompt=_PROMPT,
-        negative_prompt=None,
-        width=int(sampling.width),
-        height=int(sampling.height),
-        frame_count=num_frames,
-        num_steps=int(sampling.num_steps),
-        guidance_scale=float(sampling.guidance_scale),
-        seed=0,
-        extra={"max_sequence_length": int(sampling.max_sequence_length)},
-    )
-
-
-def _encode_prompt(model, cfg):
-    sampling = cfg.sampling
-    return model.encode_prompt(
-        [_PROMPT],
-        None,
-        guidance_scale=float(sampling.guidance_scale),
-        max_sequence_length=int(sampling.max_sequence_length),
-    )
+    return entry.build_rollout(build).model
 
 
 def prepare_sampling_state(model, cfg):
     """Encode the shared prompt and prepare the model's sampling state."""
 
-    return model.prepare_sampling(_sampling_request(cfg), _encode_prompt(model, cfg))
-
-
-def park_frozen_components(model) -> None:
-    """Move frozen encoders / VAE to CPU when the probe only times denoise."""
-
-    move_frozen = getattr(model, "move_frozen_components", None)
-    if callable(move_frozen):
-        move_frozen(torch.device("cpu"))
-        torch.cuda.empty_cache()
+    sampling = cfg.sampling
+    request = VideoGenerationRequest(
+        prompt=_PROMPT,
+        negative_prompt=None,
+        width=int(sampling.width),
+        height=int(sampling.height),
+        frame_count=int(sampling.get("num_frames", sampling.get("frame_count", 1))),
+        num_steps=int(sampling.num_steps),
+        guidance_scale=float(sampling.guidance_scale),
+        seed=0,
+        extra={"max_sequence_length": int(sampling.max_sequence_length)},
+    )
+    prompt = model.encode_prompt(
+        [_PROMPT],
+        None,
+        guidance_scale=float(sampling.guidance_scale),
+        max_sequence_length=int(sampling.max_sequence_length),
+    )
+    return model.prepare_sampling(request, prompt)
 
 
 def make_step_fn(model, cfg, device, dtype, teacache=None):
@@ -80,7 +59,10 @@ def make_step_fn(model, cfg, device, dtype, teacache=None):
 
     sampling = cfg.sampling
     state = prepare_sampling_state(model, cfg)
-    park_frozen_components(model)
+    move_frozen = getattr(model, "move_frozen_components", None)
+    if callable(move_frozen):
+        move_frozen(torch.device("cpu"))
+        torch.cuda.empty_cache()
     cache_state = (
         TeaCacheState(teacache, int(sampling.num_steps)) if teacache is not None else None
     )

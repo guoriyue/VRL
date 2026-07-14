@@ -207,14 +207,15 @@ def test_online_metrics_csv_includes_logprob_mismatch_metrics(tmp_path):
     from vrl.scripts.common.online import OnlineRecipeRun
 
     csv_path = tmp_path / "metrics.csv"
-    # The metrics-CSV side effects now live on OnlineRecipeRun; the controller
-    # reads component_names / reward_fn off its stack, so a minimal
-    # SimpleNamespace stack is enough to exercise the row formatting.
+    # The metrics-CSV side effects live on the run controller. Unused training
+    # owners can be inert objects for this row-formatting test.
     run = OnlineRecipeRun(
-        stack=SimpleNamespace(
-            component_names=(),
-            reward_fn=SimpleNamespace(),
-        ),
+        bundle=SimpleNamespace(),
+        trainer=SimpleNamespace(),
+        strategy=SimpleNamespace(),
+        family="sd3_5",
+        component_names=(),
+        export_modules=None,
         csv_path=csv_path,
         rng=None,
         resume=False,
@@ -294,12 +295,15 @@ def test_prompt_encoder_axis_in_model_build(prompt_encoder, expected):
     """Prompt-encoder precision reaches the runtime as a real torch dtype."""
     # sd3_5 is a registry-descriptor family: its build comes from the generic
     # resolver (family resolved from cfg.model.family).
-    from vrl.models.diffusion.build import resolve_family_model_build
+    from vrl.families.registry import get_model_family_entry
 
     block = _plain_policy("fp32")
     block["rollout"]["prompt_encoders"] = {"dtype": prompt_encoder}
     cfg = _with_precision("diffusion/sd3_5/online_grpo_ocr", block)
-    build = resolve_family_model_build(cfg, torch.device("cpu"))
+    build = get_model_family_entry("sd3_5").resolve_model_build(
+        cfg,
+        torch.device("cpu"),
+    )
     assert build.family == "sd3_5"
     assert build.rollout is not None
     assert build.rollout.prompt_encoder_dtype is expected
@@ -307,7 +311,7 @@ def test_prompt_encoder_axis_in_model_build(prompt_encoder, expected):
 
 def test_family_parameter_dtype_is_derived_from_runtime_role() -> None:
     """Replay follows train while rollout follows the plain rollout precision."""
-    from vrl.models.diffusion.build import resolve_family_model_build
+    from vrl.families.registry import get_model_family_entry
 
     cfg = _with_precision(
         "diffusion/sd3_5/online_grpo_ocr",
@@ -317,8 +321,9 @@ def test_family_parameter_dtype_is_derived_from_runtime_role() -> None:
         },
     )
 
-    rollout = resolve_family_model_build(cfg, torch.device("cpu"))
-    replay = resolve_family_model_build(
+    entry = get_model_family_entry("sd3_5")
+    rollout = entry.resolve_model_build(cfg, torch.device("cpu"))
+    replay = entry.resolve_model_build(
         cfg,
         torch.device("cpu"),
         for_rollout=False,
@@ -330,10 +335,10 @@ def test_family_parameter_dtype_is_derived_from_runtime_role() -> None:
 
 def test_direct_tool_parameter_dtype_override_is_explicit() -> None:
     """Non-production tools may override storage dtype only through a named argument."""
-    from vrl.models.diffusion.build import resolve_family_model_build
+    from vrl.families.registry import get_model_family_entry
 
     cfg = _with_precision("diffusion/sd3_5/online_grpo_ocr", _plain_policy("bf16"))
-    build = resolve_family_model_build(
+    build = get_model_family_entry("sd3_5").resolve_model_build(
         cfg,
         torch.device("cpu"),
         parameter_dtype_override="fp32",

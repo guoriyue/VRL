@@ -3,33 +3,22 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any
 
 from vrl.utils.config import cfg_path, to_builtin_deep
 
 
 @dataclass(frozen=True, slots=True)
-class RolloutConfig:
+class RolloutCollectorConfig:
     """Resolved rollout config projected from user YAML configs."""
 
-    family: str
-    values: dict[str, Any] = field(default_factory=dict)
+    values: dict[str, Any]
 
     def get(self, name: str, default: Any = None) -> Any:
         """Return a resolved config value or ``default`` when absent."""
 
         return self.values.get(name, default)
-
-    def require(self, name: str) -> Any:
-        """Return a resolved config value or fail with a clear family-scoped error."""
-
-        try:
-            return self.values[name]
-        except KeyError as exc:
-            raise ValueError(
-                f"{self.family} rollout config missing required field {name!r}",
-            ) from exc
 
     def request_sampling(self) -> dict[str, Any]:
         """Return config values that should be serialized into an engine request."""
@@ -41,16 +30,19 @@ class RolloutConfig:
         }
 
 
-def build_rollout_config_from_cfg(
-    cfg: Any,
-    *,
-    family: str,
-) -> RolloutConfig:
-    """Resolve one rollout family's config from YAML."""
+def build_rollout_config_from_cfg(cfg: Any) -> RolloutCollectorConfig:
+    """Project rollout and sampling values from merged YAML."""
 
     values: dict[str, Any] = {}
     _merge_flat_section_values(values, cfg, "rollout")
-    _merge_sde_values(values, cfg)
+    sde_values = _cfg_mapping(cfg, "rollout.sde")
+    for source_key, target_key in {
+        "type": "sde_type",
+        "window_size": "sde_window_size",
+        "window_range": "sde_window_range",
+    }.items():
+        if source_key in sde_values and sde_values[source_key] is not None:
+            values[target_key] = to_builtin_deep(sde_values[source_key])
     _merge_flat_section_values(values, cfg, "sampling")
     _copy_value(values, cfg, "kl_reward_coef", "algorithm.kl_reward_coef")
     _copy_value(
@@ -60,9 +52,12 @@ def build_rollout_config_from_cfg(
         "algorithm.train_segments",
     )
     _copy_value(values, cfg, "trajectory_storage", "rollout.trajectory_storage")
-    _copy_value(values, cfg, "reward_artifact", "rollout.reward_artifact")
-    _add_derived_values(values)
-    return RolloutConfig(family=family, values=values)
+    has_sde_values = any(
+        name in values for name in ("sde_type", "sde_window_size", "sde_window_range")
+    )
+    if "kl_reward_coef" in values and has_sde_values:
+        values["return_kl"] = float(values.get("kl_reward_coef", 0.0)) > 0.0
+    return RolloutCollectorConfig(values=values)
 
 
 def _merge_flat_section_values(
@@ -73,25 +68,15 @@ def _merge_flat_section_values(
     section_values = _cfg_mapping(cfg, section)
     for key, value in section_values.items():
         name = str(key)
-        normalized = _normalize_config_value(name, value)
+        normalized = to_builtin_deep(value)
         if isinstance(normalized, dict):
             continue
-        values[name] = normalized
-
-
-def _merge_sde_values(values: dict[str, Any], cfg: Any) -> None:
-    sde_values = _cfg_mapping(cfg, "rollout.sde")
-    aliases = {
-        "type": "sde_type",
-        "window_size": "sde_window_size",
-        "window_range": "sde_window_range",
-    }
-    for source_key, target_key in aliases.items():
-        if source_key in sde_values and sde_values[source_key] is not None:
-            values[target_key] = _normalize_config_value(
-                target_key,
-                sde_values[source_key],
+        if name in values:
+            raise ValueError(
+                f"rollout request key {name!r} has multiple config owners; "
+                f"remove the duplicate from {section}",
             )
+        values[name] = normalized
 
 
 def _copy_value(
@@ -102,22 +87,7 @@ def _copy_value(
 ) -> None:
     value = cfg_path(cfg, path, _MISSING)
     if value is not _MISSING and value is not None:
-        values[name] = _normalize_config_value(name, value)
-
-
-def _add_derived_values(values: dict[str, Any]) -> None:
-    has_sde_sampling = any(
-        name in values for name in ("sde_type", "sde_window_size", "sde_window_range")
-    )
-    if "kl_reward_coef" in values and has_sde_sampling:
-        values["return_kl"] = float(values.get("kl_reward_coef", 0.0)) > 0.0
-
-
-def _normalize_config_value(name: str, value: Any) -> Any:
-    value = to_builtin_deep(value)
-    if name == "sde_window_range":
-        return tuple(value)
-    return value
+        values[name] = to_builtin_deep(value)
 
 
 def _cfg_mapping(cfg: Any, path: str) -> dict[str, Any]:
@@ -133,14 +103,15 @@ def _cfg_mapping(cfg: Any, path: str) -> dict[str, Any]:
 _MISSING = object()
 
 _REQUEST_SAMPLING_EXCLUDES = {
+    "host_memory_budget_fraction",
     "kl_reward_coef",
+    "microbatch_size",
     "n_samples_per_prompt",
-    "reward_view",
     "prompts_per_batch",
 }
 
 
 __all__ = [
-    "RolloutConfig",
+    "RolloutCollectorConfig",
     "build_rollout_config_from_cfg",
 ]

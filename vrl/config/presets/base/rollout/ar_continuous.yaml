@@ -5,4 +5,3 @@ rollout:
   n_samples_per_prompt: 4
   prompts_per_batch: 4
   noise_level: 1.0              # final-step Gaussian std multiplier (SDE-from-ODE)
-  max_text_length: 256

@@ -1,7 +1,7 @@
 """Rollout collector construction for RL training."""
 
 from vrl.rollouts.collector.config import (
-    RolloutConfig,
+    RolloutCollectorConfig,
     build_rollout_config_from_cfg,
 )
 from vrl.rollouts.collector.core import (
@@ -11,7 +11,7 @@ from vrl.rollouts.collector.core import (
 
 __all__ = [
     "RolloutCollector",
-    "RolloutConfig",
+    "RolloutCollectorConfig",
     "build_rollout_collector",
     "build_rollout_config_from_cfg",
 ]

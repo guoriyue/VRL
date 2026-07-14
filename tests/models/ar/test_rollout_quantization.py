@@ -12,6 +12,35 @@ from torch import nn
 from vrl.nn.quantization import Fp4Linear, Fp8Linear, QuantizedLinear
 
 
+def _build_emu3_bundle(
+    monkeypatch: pytest.MonkeyPatch,
+    build,
+    model,
+    *,
+    replay: bool = False,
+):
+    """Exercise the production registry build with a test-owned tiny model."""
+
+    from vrl.families.registry import get_model_family_entry
+    from vrl.utils import config as config_utils
+
+    entry = get_model_family_entry("emu3")
+    recipe = entry.family_build
+    target_model_cls = recipe.replay_cls if replay else recipe.model_cls
+
+    def import_test_object(path: str):
+        if path == recipe.config_builder:
+            return lambda _build: {}
+        if path == recipe.config_cls:
+            return lambda **_kwargs: object()
+        if path == target_model_cls:
+            return lambda _config: model
+        raise AssertionError(f"unexpected import path: {path}")
+
+    monkeypatch.setattr(config_utils, "import_from_path", import_test_object)
+    return entry.build_replay(build) if replay else entry.build_rollout(build)
+
+
 def _tiny_emu3_model():
     """Tiny real Emu3 with a trunk WIDE enough to pass the fp8 size gate.
 
@@ -99,6 +128,7 @@ def test_ar_worker_guard_requires_the_requested_format(
         model_name_or_path="fake/repo",
         device="cpu",
         parameter_dtype="bf16",
+        family="emu3",
         rollout=RolloutBuildOptions(
             autocast_dtype="bf16",
             prompt_encoder_dtype="bf16",
@@ -118,6 +148,7 @@ def test_ar_worker_guard_rejects_a_different_quantization_format() -> None:
         model_name_or_path="fake/repo",
         device="cpu",
         parameter_dtype="bf16",
+        family="emu3",
         rollout=RolloutBuildOptions(
             autocast_dtype="bf16",
             prompt_encoder_dtype="bf16",
@@ -132,7 +163,6 @@ def test_ar_worker_guard_rejects_a_different_quantization_format() -> None:
 def test_ar_builder_rejects_unsupported_nvfp4_before_quantization_mutation(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from vrl.models.ar.build import build_ar_runtime_bundle
     from vrl.models.interfaces.runtime import ModelBuild, RolloutBuildOptions
 
     class _ArPolicy(nn.Module):
@@ -151,6 +181,7 @@ def test_ar_builder_rejects_unsupported_nvfp4_before_quantization_mutation(
         model_name_or_path="fake/repo",
         device="cpu",
         parameter_dtype="bf16",
+        family="emu3",
         rollout=RolloutBuildOptions(
             autocast_dtype="bf16",
             prompt_encoder_dtype="bf16",
@@ -159,10 +190,7 @@ def test_ar_builder_rejects_unsupported_nvfp4_before_quantization_mutation(
     )
 
     with pytest.raises(RuntimeError, match="NVFP4-capable CUDA target"):
-        build_ar_runtime_bundle(
-            build,
-            model=model,
-        )
+        _build_emu3_bundle(monkeypatch, build, model)
 
     assert model.quantize_calls == 0
 
@@ -173,7 +201,6 @@ def test_ar_builder_applies_rollout_quantization_and_replay_does_not(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """The shared AR builder quantizes rollout bundles only."""
-    from vrl.models.ar.build import build_ar_runtime_bundle
     from vrl.models.interfaces.runtime import ModelBuild, RolloutBuildOptions
     from vrl.models.loader import assert_rollout_quantization_applied
 
@@ -189,6 +216,7 @@ def test_ar_builder_applies_rollout_quantization_and_replay_does_not(
             model_name_or_path="fake/repo",
             device="cpu",
             parameter_dtype="float32",
+            family="emu3",
             model_config={"path": "fake/repo", "use_lora": False},
             rollout=(
                 RolloutBuildOptions(
@@ -203,10 +231,7 @@ def test_ar_builder_applies_rollout_quantization_and_replay_does_not(
 
     rollout_model = _tiny_emu3_model()
     rollout_build = _build(format_name)
-    build_ar_runtime_bundle(
-        rollout_build,
-        model=rollout_model,
-    )
+    _build_emu3_bundle(monkeypatch, rollout_build, rollout_model)
     assert any(isinstance(m, QuantizedLinear) for m in rollout_model.language_model.modules()), (
         "rollout bundle did not quantize"
     )
@@ -221,9 +246,10 @@ def test_ar_builder_applies_rollout_quantization_and_replay_does_not(
         assert_rollout_quantization_applied(_tiny_emu3_model(), _build(format_name))
 
     replay_model = _tiny_emu3_model()
-    build_ar_runtime_bundle(
+    _build_emu3_bundle(
+        monkeypatch,
         _build(None, for_rollout=False),
-        model=replay_model,
+        replay_model,
         replay=True,
     )
     assert not any(
@@ -231,15 +257,13 @@ def test_ar_builder_applies_rollout_quantization_and_replay_does_not(
     ), "replay bundle must keep its base-precision parameters unquantized"
 
     with pytest.raises(ValueError, match="replay runtime construction"):
-        build_ar_runtime_bundle(
+        _build_emu3_bundle(
+            monkeypatch,
             _build(format_name),
-            model=_tiny_emu3_model(),
+            _tiny_emu3_model(),
             replay=True,
         )
 
     plain_model = _tiny_emu3_model()
-    build_ar_runtime_bundle(
-        _build(None),
-        model=plain_model,
-    )
+    _build_emu3_bundle(monkeypatch, _build(None), plain_model)
     assert not any(isinstance(m, QuantizedLinear) for m in plain_model.language_model.modules())

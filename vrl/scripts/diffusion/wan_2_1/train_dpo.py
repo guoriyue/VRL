@@ -164,9 +164,7 @@ def train_wan_2_1_dpo(cfg: DictConfig) -> None:
     from vrl.algorithms.dpo import DiffusionDPOConfig
     from vrl.config.builders import build_algorithm_config
     from vrl.config.validation import optional_none, require, validate_training_config
-    from vrl.models.diffusion.wan_2_1.runtime import (
-        build_wan_2_1_runtime_bundle_from_cfg,
-    )
+    from vrl.families.registry import get_model_family_entry
     from vrl.trainers.data import collate_preference, load_pickapic
     from vrl.trainers.offline import (
         OfflineDPOTrainer,
@@ -217,8 +215,16 @@ def train_wan_2_1_dpo(cfg: DictConfig) -> None:
     device = torch.device(trainer_torch_device(resources))
     weight_dtype = resolve_torch_dtype(precision.training.dtype)
 
-    # 1. Runtime via family runtime (no diffusers import here)
-    bundle = build_wan_2_1_runtime_bundle_from_cfg(cfg, device, weight_dtype)
+    # DPO needs the full family bundle because its VAE and text encoder prepare
+    # preference pairs. Registry selection and model projection stay identical
+    # to generation; only the downstream optimizer makes this a training path.
+    family_entry = get_model_family_entry(str(require(cfg, "model.family")))
+    build = family_entry.resolve_model_build(
+        cfg,
+        device,
+        parameter_dtype_override=weight_dtype,
+    )
+    bundle = family_entry.build_rollout(build)
     wan_model = bundle.model
     pipeline = bundle.raw_handle
     transformer = wan_model.transformer

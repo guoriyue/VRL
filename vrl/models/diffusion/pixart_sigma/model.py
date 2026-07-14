@@ -8,7 +8,7 @@ The generation helper flow mirrors every diffusion family:
 PixArt-Sigma specifics vs SANA (the reference single-encoder t2i family):
 - NOT flow-matching: an epsilon-prediction DDPM ladder. Rollout/replay
   log-probs run through ``sde_type="ddim"`` (``vrl/math/diffusion/ddim.py``)
-  — experiments MUST set ``sampling.sde_type: ddim``.
+  — experiments MUST set ``rollout.sde.type: ddim``.
 - The checkpoint ships a ``DPMSolverMultistepScheduler`` — a multi-step ODE
   solver with NO per-step Gaussian, unusable for RL log-probs. The family
   therefore constructs a ``DDIMScheduler`` from the shipped beta config in
@@ -187,16 +187,6 @@ class PixArtSigmaModel(LoraModelMixin, DiffusersPipelineModelBase, DiffusionBack
             pipeline=pipeline,
             device=build.device,
         )
-
-    def _encoder_device(self) -> Any:
-        """Device the frozen T5 encoder lives on (CPU when offloaded)."""
-        enc = getattr(self.pipeline, "text_encoder", None)
-        if enc is not None:
-            try:
-                return next(enc.parameters()).device
-            except StopIteration:
-                pass
-        return self.device
 
     # -- encode_prompt -------------------------------------------------
 

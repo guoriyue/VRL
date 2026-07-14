@@ -18,12 +18,9 @@ from omegaconf import DictConfig, OmegaConf
 
 from vrl.config.builders import build_configs
 from vrl.config.loading import load_config
+from vrl.families.registry import get_model_family_entry
 from vrl.generation.diffusion.layout import VideoGenerationRequest
 from vrl.math.diffusion.flow_matching import sde_step_with_logprob
-from vrl.models.diffusion.build import (
-    build_family_runtime_bundle,
-    resolve_family_model_build,
-)
 from vrl.models.dtypes import resolve_torch_dtype
 from vrl.rewards.inference import RewardInferenceArtifact, RewardInferenceRequest
 from vrl.rewards.models.kling_video_reward import KlingVideoRewardModel
@@ -305,6 +302,7 @@ def _generate_all(
 ) -> list[GeneratedVideo]:
     generated: list[GeneratedVideo] = []
     bundle: Any | None = None
+    entry = get_model_family_entry(str(cfg.model.family))
     try:
         for target in checkpoint_targets:
             if bundle is None or not keep_model_between_checkpoints:
@@ -313,12 +311,12 @@ def _generate_all(
                     "Building Cosmos Predict2.5 generation bundle for %s",
                     target.label,
                 )
-                build = resolve_family_model_build(
+                build = entry.resolve_model_build(
                     cfg,
                     device,
                     parameter_dtype_override=dtype,
                 )
-                bundle = build_family_runtime_bundle(build)
+                bundle = entry.build_rollout(build)
             _load_checkpoint_into_bundle(bundle, target)
             model = bundle.model.eval()
             try:

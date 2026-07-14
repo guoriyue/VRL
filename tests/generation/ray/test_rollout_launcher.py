@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import asyncio
-import contextlib
-from collections.abc import Mapping, Sequence
+from collections.abc import Sequence
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
@@ -19,53 +19,9 @@ from vrl.generation.ray.config import RayGenerationConfig
 from vrl.generation.ray.launch_inputs import RayGenerationLaunchInputs
 from vrl.generation.ray.runtime import RayGenerationRuntime
 from vrl.generation.types import GenerationOutput, GenerationRequest, GenerationSampleRow
-from vrl.models.interfaces import ModelBuild, ReplayResult, RuntimeBundle
 
 # Every test here spins up Ray (~seconds each) — slow by nature, run nightly not per-PR.
 pytestmark = pytest.mark.slow_test if pytest is not None else ()
-
-
-class _TinyRuntimeModel:
-    device = "cpu"
-
-    def to(self, device: Any) -> _TinyRuntimeModel:
-        self.device = str(device)
-        return self
-
-    def replay_forward(self, batch: Any, timestep_idx: int = 0, **kwargs: Any) -> ReplayResult:
-        raise NotImplementedError("Ray launcher test never calls replay_forward")
-
-    def disable_adapter(self) -> contextlib.AbstractContextManager[None]:
-        return contextlib.nullcontext()
-
-    def load_trainable_state(self, state_dict: Mapping[str, Any]) -> None:
-        self.loaded_state = dict(state_dict)
-
-
-class _TinyChunkExecutor:
-    family = "janus_pro"
-    task = "ar_t2i"
-
-    def __init__(self, model: _TinyRuntimeModel) -> None:
-        self.model = model
-
-    def forward_chunk_plan(self, *args: Any, **kwargs: Any) -> ChunkResult:
-        raise NotImplementedError("Ray launcher test only verifies worker construction")
-
-    def gather_chunks(
-        self,
-        request: GenerationRequest,
-        sample_rows: Sequence[GenerationSampleRow],
-        chunks: Sequence[ChunkResult],
-    ) -> GenerationOutput:
-        return GenerationOutput(
-            request_id=request.request_id,
-            family=request.family,
-            task=request.task,
-            prompts=list(request.prompts),
-            sample_rows=list(sample_rows),
-            output=list(chunks),
-        )
 
 
 class _Gatherer:
@@ -85,29 +41,102 @@ class _Gatherer:
         )
 
 
-def build_tiny_runtime_bundle(build: ModelBuild) -> RuntimeBundle:
-    assert str(build.device) == "cpu"
-    return RuntimeBundle(
-        model=_TinyRuntimeModel(),
-        trainable_modules={},
-        scheduler=None,
-        raw_handle=None,
+def _worker_setup_hook(repo_root: str) -> Any:
+    """Return a by-value hook that installs a tiny canonical family in workers."""
+
+    def install() -> None:
+        import contextlib
+        import sys
+        from dataclasses import replace
+
+        # Ray workers do not inherit pytest's cwd-based import path. Put this
+        # checkout first so the actor cannot accidentally load another editable
+        # VRL checkout from the developer environment.
+        sys.path.insert(0, repo_root)
+
+        import vrl.families.registry as registry
+        from vrl.models.interfaces import RuntimeBundle
+
+        class TinyRuntimeModel:
+            device = "cpu"
+
+            def to(self, device: Any) -> TinyRuntimeModel:
+                self.device = str(device)
+                return self
+
+            def replay_forward(self, batch: Any, timestep_idx: int = 0, **kwargs: Any) -> Any:
+                raise NotImplementedError("Ray launcher test never calls replay_forward")
+
+            def disable_adapter(self) -> contextlib.AbstractContextManager[None]:
+                return contextlib.nullcontext()
+
+            def load_trainable_state(self, state_dict: dict[str, Any]) -> None:
+                self.loaded_state = dict(state_dict)
+
+        class TinyChunkExecutor:
+            family = "janus_pro"
+            task = "ar_t2i"
+
+            def __init__(self, model: TinyRuntimeModel) -> None:
+                self.model = model
+
+            def forward_chunk_plan(self, *args: Any, **kwargs: Any) -> Any:
+                raise NotImplementedError(
+                    "Ray launcher test only verifies worker construction",
+                )
+
+            def gather_chunks(self, *args: Any, **kwargs: Any) -> Any:
+                raise NotImplementedError(
+                    "Ray launcher test only verifies worker construction",
+                )
+
+        def build_tiny_rollout(_entry: Any, build: Any) -> RuntimeBundle:
+            assert str(build.device) == "cpu"
+            return RuntimeBundle(
+                model=TinyRuntimeModel(),
+                trainable_modules={},
+                scheduler=None,
+                raw_handle=None,
+            )
+
+        # The hook executes before worker imports the launch contract. Publishing
+        # the test executor on an importable production module lets canonical
+        # registry dispatch stay intact without any compatibility fields.
+        registry._RayLauncherTestExecutor = TinyChunkExecutor
+        entry = registry.FAMILY_REGISTRY["janus_pro"]
+        registry.FAMILY_REGISTRY["janus_pro"] = replace(
+            entry,
+            executor_cls="vrl.families.registry:_RayLauncherTestExecutor",
+        )
+        registry.ModelFamilyEntry.build_rollout = build_tiny_rollout
+
+    return install
+
+
+def _init_ray(ray: Any) -> None:
+    ray.shutdown()
+    repo_root = str(Path(__file__).resolve().parents[3])
+    ray.init(
+        ignore_reinit_error=True,
+        include_dashboard=False,
+        num_cpus=2,
+        log_to_driver=False,
+        runtime_env={"worker_process_setup_hook": _worker_setup_hook(repo_root)},
     )
 
 
-def _launch_contract() -> GenerationRuntimeLaunchContract:
-    return GenerationRuntimeLaunchContract(
-        family="janus_pro",
-        task="ar_t2i",
-        generation_kind="ar",
-        policy_version=7,
-        model_build={
-            "model_name_or_path": "unit-test",
-            "device": "cpu",
-            "parameter_dtype": "float32",
-        },
-        runtime_builder=("tests.generation.ray.test_rollout_launcher:build_tiny_runtime_bundle"),
-        executor_cls="tests.generation.ray.test_rollout_launcher:_TinyChunkExecutor",
+def _launch_inputs() -> RayGenerationLaunchInputs:
+    return RayGenerationLaunchInputs(
+        launch_contract=GenerationRuntimeLaunchContract(
+            family="janus_pro",
+            model_build={
+                "model_name_or_path": "unit-test",
+                "device": "cpu",
+                "parameter_dtype": "float32",
+            },
+            policy_version=7,
+        ),
+        gatherer=_Gatherer(),
     )
 
 
@@ -116,8 +145,7 @@ def test_ray_generation_launcher_builds_worker_runtime_with_embedded_ray() -> No
     ray = pytest.importorskip("ray")
     import vrl.generation.ray.launcher as launcher_mod
 
-    ray.shutdown()
-    ray.init(ignore_reinit_error=True, include_dashboard=False, num_cpus=2, log_to_driver=False)
+    _init_ray(ray)
     owner = _cpu_rollout_owner(ray)
     runtime: RayGenerationRuntime | None = None
     try:
@@ -129,8 +157,7 @@ def test_ray_generation_launcher_builds_worker_runtime_with_embedded_ray() -> No
                 sync_trainable_state=False,
                 chunk_placement_strategy="dynamic",
             ),
-            _launch_contract(),
-            _Gatherer(),
+            _launch_inputs(),
             placement=owner.rollout_placement,
         )
 
@@ -188,8 +215,7 @@ def test_owner_placement_runtime_does_not_own_placement_group() -> None:
     ray = pytest.importorskip("ray")
     import vrl.generation.ray.launcher as launcher_mod
 
-    ray.shutdown()
-    ray.init(ignore_reinit_error=True, include_dashboard=False, num_cpus=2, log_to_driver=False)
+    _init_ray(ray)
     owner = _cpu_rollout_owner(ray)
     runtime: RayGenerationRuntime | None = None
     try:
@@ -200,8 +226,7 @@ def test_owner_placement_runtime_does_not_own_placement_group() -> None:
                 cpus_per_worker=0.5,
                 sync_trainable_state=False,
             ),
-            _launch_contract(),
-            _Gatherer(),
+            _launch_inputs(),
             placement=owner.rollout_placement,
         )
 
@@ -226,8 +251,7 @@ def test_launcher_preserves_explicit_colocation_protocol_signal() -> None:
     ray = pytest.importorskip("ray")
     import vrl.generation.ray.launcher as launcher_mod
 
-    ray.shutdown()
-    ray.init(ignore_reinit_error=True, include_dashboard=False, num_cpus=2, log_to_driver=False)
+    _init_ray(ray)
     owner = _cpu_rollout_owner(ray)
     runtime: RayGenerationRuntime | None = None
     try:
@@ -239,8 +263,7 @@ def test_launcher_preserves_explicit_colocation_protocol_signal() -> None:
                 allow_driver_gpu_overlap=True,
                 sync_trainable_state=False,
             ),
-            _launch_contract(),
-            _Gatherer(),
+            _launch_inputs(),
             placement=owner.rollout_placement,
         )
 
@@ -256,8 +279,7 @@ def test_phase_handoff_keeps_actor_and_owner_placement() -> None:
     """A shared-GPU handoff parks its actor without dropping the owner PG."""
     ray = pytest.importorskip("ray")
 
-    ray.shutdown()
-    ray.init(ignore_reinit_error=True, include_dashboard=False, num_cpus=2, log_to_driver=False)
+    _init_ray(ray)
     owner = _cpu_rollout_owner(ray)
     runtime = RayGenerationRuntime.with_on_demand_activation(
         RayGenerationConfig(
@@ -272,10 +294,7 @@ def test_phase_handoff_keeps_actor_and_owner_placement() -> None:
                 ),
             ),
         ),
-        RayGenerationLaunchInputs(
-            launch_contract=_launch_contract(),
-            gatherer=_Gatherer(),
-        ),
+        _launch_inputs(),
         placement=owner.rollout_placement,
     )
     try:

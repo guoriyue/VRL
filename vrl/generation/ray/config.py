@@ -11,16 +11,11 @@ from typing import Any, Literal
 from vrl.models.interfaces.runtime import bundle_loads_full_generation_modules
 from vrl.ray.resources import (
     ResolvedDistributedResources,
-    resolve_distributed_resources,
 )
 from vrl.utils.config import cfg_get
 from vrl.utils.logging import init_logger
 
 logger = init_logger(__name__)
-
-DRIVER_CUDA_OWNERSHIP_ERROR = (
-    "Driver CUDA device overlaps rollout devices without an explicit colocate configuration."
-)
 
 
 @dataclass(slots=True)
@@ -62,19 +57,14 @@ class RayGenerationConfig:
             raise ValueError("max_inflight_chunks_per_worker must be >= 1")
 
     @classmethod
-    def from_cfg(cls, cfg: Any) -> RayGenerationConfig:
-        """Build Ray generation config from a full training cfg."""
-        if isinstance(cfg, cls):
-            return cfg
-
-        distributed = cfg_get(cfg, "distributed", _MISSING)
-        if distributed is _MISSING:
-            raise ValueError("distributed.resources is required")
-
-        resources_node = cfg_get(distributed, "resources", _MISSING)
-        if resources_node is _MISSING:
-            raise ValueError("distributed.resources is required")
-        resources = resolve_distributed_resources(cfg)
+    def from_cfg(
+        cls,
+        cfg: Any,
+        *,
+        resources: ResolvedDistributedResources,
+    ) -> RayGenerationConfig:
+        """Build Ray execution settings using the run's resolved resources."""
+        distributed = cfg_get(cfg, "distributed", {})
         rollout = cfg_get(distributed, "rollout", {})
 
         return cls(
@@ -108,23 +98,16 @@ class RayGenerationConfig:
     def validate_driver_state(
         self,
         *,
-        driver_bundle: Any | None = None,
-        driver_policy: Any | None = None,
-        trainable_modules: Mapping[str, Any] | Iterable[Any] | None = None,
+        driver_bundle: Any,
     ) -> RayGenerationConfig:
         """Validate driver CUDA ownership before Ray rollout actors are launched."""
 
-        driver_cuda_devices = _driver_cuda_devices(
-            driver_bundle=driver_bundle,
-            driver_policy=driver_policy,
-            trainable_modules=trainable_modules,
-        )
+        driver_cuda_devices = _driver_cuda_devices(driver_bundle)
         _validate_driver_cuda_ownership(self, driver_cuda_devices)
-        if driver_bundle is not None:
-            validate_colocated_replay_memory(
-                bundle=driver_bundle,
-                rollout_config=self,
-            )
+        validate_colocated_replay_memory(
+            bundle=driver_bundle,
+            rollout_config=self,
+        )
         return self
 
 
@@ -142,7 +125,11 @@ def validate_colocated_replay_memory(
     once those loaders exist.
     """
 
-    if not _is_colocated_gpu_rollout(rollout_config):
+    if not (
+        rollout_config.allow_driver_gpu_overlap
+        and rollout_config.num_workers >= 1
+        and rollout_config.gpus_per_worker > 0
+    ):
         return
     if not bundle_loads_full_generation_modules(bundle):
         return
@@ -154,21 +141,15 @@ def validate_colocated_replay_memory(
         "family-specific minimal replay loader before enabling strict guard."
     )
     if strict is None:
-        strict = _env_flag("VRL_STRICT_REPLAY_MEMORY_GUARD")
+        strict = os.environ.get("VRL_STRICT_REPLAY_MEMORY_GUARD", "").strip().lower() in {
+            "1",
+            "true",
+            "yes",
+            "on",
+        }
     if strict:
         raise ValueError(message)
     (log or logger).warning(message)
-
-
-def _is_colocated_gpu_rollout(config: RayGenerationConfig) -> bool:
-    return bool(
-        config.allow_driver_gpu_overlap and config.num_workers >= 1 and config.gpus_per_worker > 0
-    )
-
-
-def _env_flag(name: str) -> bool:
-    value = os.environ.get(name, "")
-    return value.strip().lower() in {"1", "true", "yes", "on"}
 
 
 def _validate_driver_cuda_ownership(
@@ -218,27 +199,16 @@ def _validate_driver_cuda_ownership(
         )
 
 
-def _driver_cuda_devices(
-    *,
-    driver_bundle: Any | None,
-    driver_policy: Any | None,
-    trainable_modules: Mapping[str, Any] | Iterable[Any] | None,
-) -> set[int]:
-    policy = driver_policy
-    if policy is None and driver_bundle is not None:
-        policy = getattr(driver_bundle, "model", None)
-
-    has_policy_device, device = _get_device(policy)
+def _driver_cuda_devices(driver_bundle: Any) -> set[int]:
+    has_policy_device, device = _get_device(getattr(driver_bundle, "model", None))
     if has_policy_device:
         parsed = _cuda_device_index(device)
         return set() if parsed is None else {parsed}
 
-    modules = trainable_modules
-    if modules is None and driver_bundle is not None:
-        modules = getattr(driver_bundle, "trainable_modules", None)
-
     devices: set[int] = set()
-    for parameter_device in _iter_parameter_devices(modules):
+    for parameter_device in _iter_parameter_devices(
+        getattr(driver_bundle, "trainable_modules", None),
+    ):
         parsed = _cuda_device_index(parameter_device)
         if parsed is not None:
             devices.add(parsed)
@@ -310,11 +280,7 @@ def _cuda_device_index(device: Any) -> int | None:
         return 0
 
 
-_MISSING = object()
-
-
 __all__ = [
-    "DRIVER_CUDA_OWNERSHIP_ERROR",
     "RayGenerationConfig",
     "validate_colocated_replay_memory",
 ]

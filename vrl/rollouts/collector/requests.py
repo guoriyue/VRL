@@ -6,7 +6,17 @@ import uuid
 from collections.abc import Mapping
 from typing import Any, NamedTuple
 
+from vrl.families.registry import ModelFamilyEntry
 from vrl.generation import GenerationInput, GenerationRequest
+from vrl.rollouts.collector.config import RolloutCollectorConfig
+
+_DEFAULT_TASK_TYPE_BY_FAMILY_TASK = {
+    "t2i": "text_to_image",
+    "t2v": "text_to_video",
+    "t2w": "text_to_video",
+    "i2v": "image_to_video",
+    "v2w": "video2world",
+}
 
 
 class CollectorRequest(NamedTuple):
@@ -27,23 +37,11 @@ class GenerationRequestBuilder:
     def __init__(
         self,
         *,
-        family: str,
-        task: str,
-        request_prefix: str,
-        config: Any,
-        return_artifacts: tuple[str, ...],
-        default_task_type: str | None = None,
-        metadata_key: str | None = None,
+        entry: ModelFamilyEntry,
+        config: RolloutCollectorConfig,
     ) -> None:
-        if not return_artifacts:
-            raise ValueError(f"{family} request builder requires return_artifacts")
-        self.family = family
-        self.task = task
-        self.request_prefix = request_prefix
+        self.entry = entry
         self.config = config
-        self.return_artifacts = return_artifacts
-        self.default_task_type = default_task_type
-        self.metadata_key = metadata_key
 
     def build(
         self,
@@ -56,7 +54,10 @@ class GenerationRequestBuilder:
         runtime_debug: bool = False,
         policy_version: int | None = None,
     ) -> CollectorRequest:
-        sampling = self._sampling()
+        sampling = {
+            str(field_name): list(value) if isinstance(value, tuple) else value
+            for field_name, value in self.config.request_sampling().items()
+        }
         if seed is not None:
             sampling["seed"] = seed
         sampling.update(dict(request_overrides or {}))
@@ -66,7 +67,8 @@ class GenerationRequestBuilder:
             group_metadata.setdefault("video_fps", sampling["fps"])
 
         resolved_inputs = [self._resolve_input(item, group_metadata) for item in inputs]
-        if self.default_task_type is not None and resolved_inputs:
+        default_task_type = _DEFAULT_TASK_TYPE_BY_FAMILY_TASK.get(self.entry.task)
+        if default_task_type is not None and resolved_inputs:
             first = resolved_inputs[0]
             group_metadata["task_type"] = first.task_type
             if first.reference_image is not None:
@@ -79,9 +81,9 @@ class GenerationRequestBuilder:
             request_metadata["_runtime_debug"] = True
 
         request = GenerationRequest(
-            request_id=f"{self.request_prefix}-{uuid.uuid4()}",
-            family=self.family,
-            task=self.task,
+            request_id=f"{self.entry.family}-{uuid.uuid4()}",
+            family=self.entry.family,
+            task=self.entry.task,
             inputs=list(resolved_inputs),
             # GenerationRequest names this `samples_per_prompt` (generation-domain
             # wording); the value is the collector's `group_size` — the GRPO group,
@@ -90,7 +92,7 @@ class GenerationRequestBuilder:
             # its layer; distinct from any external evaluation sampling policy.
             samples_per_prompt=group_size,
             sampling=sampling,
-            return_artifacts=set(self.return_artifacts),
+            return_artifacts={"output", "trajectory"},
             metadata=request_metadata,
             policy_version=policy_version,
         )
@@ -113,31 +115,15 @@ class GenerationRequestBuilder:
             input_metadata.setdefault("video_fps", group_metadata["video_fps"])
         # Some engines expect their per-sample metadata under a family-specific
         # key (e.g. nextstep_1's "rollout_metadata").
-        if self.metadata_key is not None:
-            input_metadata = {self.metadata_key: input_metadata}
+        if self.entry.collector_kind == "ar_continuous":
+            input_metadata = {"rollout_metadata": input_metadata}
         return GenerationInput(
             prompt=item.prompt,
-            task_type=item.task_type or self.default_task_type,
+            task_type=item.task_type or _DEFAULT_TASK_TYPE_BY_FAMILY_TASK.get(self.entry.task),
             reference_image=item.reference_image,
             reference_video=item.reference_video,
             metadata=input_metadata,
         )
-
-    def _sampling(self) -> dict[str, Any]:
-        request_sampling = getattr(self.config, "request_sampling", None)
-        if callable(request_sampling):
-            raw_sampling = request_sampling()
-        else:
-            raw_sampling = getattr(self.config, "values", None)
-        if not isinstance(raw_sampling, Mapping):
-            raise TypeError(
-                f"{type(self.config).__name__} must expose "
-                "request_sampling() or values",
-            )
-        return {
-            str(field_name): list(value) if isinstance(value, tuple) else value
-            for field_name, value in raw_sampling.items()
-        }
 
 
 __all__ = [

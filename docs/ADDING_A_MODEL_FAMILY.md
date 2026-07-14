@@ -26,10 +26,11 @@ boundary, such as reference-conditioning payload preparation or a custom staged
 executor. Wan I2V and the Cosmos families are examples. Do not add thin wrapper
 builders that only forward constants to `vrl.models.diffusion.build`.
 
-AR families currently have a different execution shape. They keep `model.py`,
-`runner.py`, and `runtime.py` because their token-loop state, executor, and runtime
-assembly are family-specific. Mirror the nearest AR family instead of applying
-the diffusion descriptor snippet below.
+AR families have a different execution shape. They keep `model.py`, `runner.py`,
+and `runtime.py` because their token-loop state, executor, and model-config
+projection are family-specific. Bundle assembly and model-build resolution are
+shared through `ARFamilyBuild`; mirror the nearest AR descriptor instead of
+adding forwarding builders.
 
 ## 2. Implement the diffusion model contract
 
@@ -59,23 +60,17 @@ Do not add algorithm code for a model family.
 
 ## 3. Register a descriptor-driven diffusion family
 
-Add one `_diffusion_entry` in `vrl/rollouts/families/registry.py`:
+Add one `_diffusion_entry` in `vrl/families/registry.py`:
 
 ```python
-register_rollout_family(
+_register_model_family(
     _diffusion_entry(
         family="my_model",
         task="t2i",
-        aliases=(),
-        runtime_builder="vrl.models.diffusion.build:build_family_runtime_bundle",
-        model_build_resolver="vrl.models.diffusion.build:resolve_family_model_build",
-        request_prefix="my_model",
-        default_task_type="text_to_image",
         build=DiffusionFamilyBuild(
             model_cls="vrl.models.diffusion.my_model.model:MyModel",
             replay_cls="vrl.models.diffusion.my_model.model:MyReplayModel",
             transformer_classname="MyTransformer2DModel",
-            memory_owner="MyModel VAE",
         ),
     ),
 )
@@ -87,6 +82,10 @@ registry metadata or an executor-constructor setting. Set `scheduler_classname`
 when replay must load a scheduler other than the shared flow-match scheduler.
 Set `requires_lora=True` only when the model implementation genuinely rejects
 full-parameter training.
+
+External aliases live only in `vrl/families/names.py`. Add one there when
+an existing public spelling must remain accepted; do not copy aliases onto the
+runtime entry.
 
 If one checkpoint supports multiple runtime protocols, each experiment must
 still name the exact registry entry (for example, `janus_pro_r1`, not
@@ -120,9 +119,9 @@ vrl-train --config experiment/diffusion/my_model/online_grpo_<reward>
 
 ## 5. Extend the contract matrix and tests
 
-Add the rollout and replay model import paths to `FAMILY_MODEL_CLASSES` in
-`tests/models/interfaces/__init__.py`. Its key set is checked against the registry,
-so forgetting this step fails loudly.
+The shared protocol matrix in `tests/models/interfaces/__init__.py` derives
+rollout and replay model classes from the registry descriptor. A standard
+descriptor family therefore needs no second hand-maintained class table.
 
 Add family tests that cover:
 

@@ -31,8 +31,9 @@ import pytest
 import torch
 
 from vrl.config.loading import list_bundled_configs, load_config
+from vrl.families.names import normalize_model_family
+from vrl.families.registry import FAMILY_REGISTRY
 from vrl.math.diffusion.flow_matching import sde_step_with_logprob
-from vrl.rollouts.families import FAMILY_REGISTRY, normalize_rollout_family
 
 _NUM_STEPS = 10
 _BATCH = 2
@@ -52,7 +53,7 @@ def _echo_scheduler():
 
 
 def _diffusion_families() -> list[str]:
-    return [f for f, e in FAMILY_REGISTRY.items() if e.collector.kind == "diffusion"]
+    return [f for f, e in FAMILY_REGISTRY.items() if e.collector_kind == "diffusion"]
 
 
 def _model_repos_by_family() -> dict[str, set[str]]:
@@ -65,7 +66,7 @@ def _model_repos_by_family() -> dict[str, set[str]]:
         repo_id = model.get("path")
         if declared is None or repo_id is None:
             continue
-        family = normalize_rollout_family(str(declared))
+        family = normalize_model_family(str(declared))
         out.setdefault(family, set()).add(str(repo_id))
     return out
 
@@ -123,8 +124,7 @@ def _parity_cases() -> list[object]:
     for family in sorted(_diffusion_families()):
         sde_types = ("ddim",) if family in _DDIM_FAMILIES else ("flow_grpo", "cps")
         cases.extend(
-            pytest.param(family, sde_type, id=f"{family}-{sde_type}")
-            for sde_type in sde_types
+            pytest.param(family, sde_type, id=f"{family}-{sde_type}") for sde_type in sde_types
         )
     return cases
 

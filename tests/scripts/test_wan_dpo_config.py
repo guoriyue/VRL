@@ -8,6 +8,7 @@ from vrl.algorithms.dpo import DiffusionDPOConfig
 from vrl.config.loading import load_config
 from vrl.scripts.diffusion.wan_2_1.train_dpo import (
     _build_offline_dpo_trainer_config,
+    train_wan_2_1_dpo,
 )
 
 
@@ -108,3 +109,50 @@ def test_offline_dpo_recipe_does_not_inherit_online_only_state() -> None:
     assert "total_epochs" not in cfg.trainer
     assert "rollout_orchestration" not in cfg.trainer
     assert "rollout" not in cfg
+
+
+def test_offline_dpo_builds_its_full_model_through_the_family_registry(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    cfg = load_config("experiment/diffusion/wan_2_1/offline_dpo_pickapic")
+    captured: dict[str, object] = {}
+
+    class _ReachedRegistryBoundary(RuntimeError):
+        pass
+
+    class _Entry:
+        def resolve_model_build(
+            self,
+            received_cfg: object,
+            device: object,
+            *,
+            parameter_dtype_override: object,
+        ) -> object:
+            captured.update(
+                cfg=received_cfg,
+                device=device,
+                parameter_dtype_override=parameter_dtype_override,
+            )
+            raise _ReachedRegistryBoundary
+
+    import vrl.families.registry as registry
+    from vrl.scripts.diffusion.wan_2_1 import train_dpo
+
+    def _entry_for(family: str) -> _Entry:
+        captured["family"] = family
+        return _Entry()
+
+    monkeypatch.setattr(
+        registry,
+        "get_model_family_entry",
+        _entry_for,
+    )
+    monkeypatch.setattr(train_dpo, "resolve_distributed_resources", lambda _cfg: object())
+    monkeypatch.setattr(train_dpo, "format_distributed_resource_plan", lambda _plan: "")
+    monkeypatch.setattr(train_dpo, "trainer_torch_device", lambda _plan: "cpu")
+
+    with pytest.raises(_ReachedRegistryBoundary):
+        train_wan_2_1_dpo(cfg)
+
+    assert captured["family"] == "wan"
+    assert captured["cfg"] is cfg

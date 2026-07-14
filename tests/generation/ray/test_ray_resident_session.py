@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import contextlib
 from collections.abc import Mapping, Sequence
+from dataclasses import replace
 from typing import Any
 
+import pytest
 import torch
 
 from vrl.generation.launch_contract import GenerationRuntimeLaunchContract
@@ -75,12 +77,32 @@ def build_tiny_runtime_bundle(build: ModelBuild) -> RuntimeBundle:
     )
 
 
+def _build_tiny_rollout(_entry: Any, build: ModelBuild) -> RuntimeBundle:
+    return build_tiny_runtime_bundle(build)
+
+
+def _install_tiny_family(monkeypatch: pytest.MonkeyPatch) -> None:
+    import vrl.families.registry as registry
+
+    entry = registry.FAMILY_REGISTRY["janus_pro"]
+    monkeypatch.setitem(
+        registry.FAMILY_REGISTRY,
+        "janus_pro",
+        replace(
+            entry,
+            executor_cls=("tests.generation.ray.test_ray_resident_session:_TinyChunkExecutor"),
+        ),
+    )
+    monkeypatch.setattr(
+        registry.ModelFamilyEntry,
+        "build_rollout",
+        _build_tiny_rollout,
+    )
+
+
 def _launch_contract() -> GenerationRuntimeLaunchContract:
     return GenerationRuntimeLaunchContract(
         family="janus_pro",
-        task="ar_t2i",
-        generation_kind="ar",
-        policy_version=1,
         model_build={
             "model_name_or_path": "unit-test",
             "device": "cpu",
@@ -93,15 +115,15 @@ def _launch_contract() -> GenerationRuntimeLaunchContract:
                 "base_weight_sync": False,
             },
         },
-        runtime_builder=(
-            "tests.generation.ray.test_ray_resident_session:build_tiny_runtime_bundle"
-        ),
-        executor_cls="tests.generation.ray.test_ray_resident_session:_TinyChunkExecutor",
+        policy_version=1,
     )
 
 
-def test_ray_generation_worker_load_policy_is_idempotent() -> None:
+def test_ray_generation_worker_load_policy_is_idempotent(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """Checks Ray generation worker load policy is idempotent."""
+    _install_tiny_family(monkeypatch)
     _TinyChunkExecutor.build_count = 0
     worker = RayGenerationWorker("rollout-0", _launch_contract())
 
@@ -113,10 +135,13 @@ def test_ray_generation_worker_load_policy_is_idempotent() -> None:
     assert worker.executor is first_executor
 
 
-def test_ray_generation_worker_rebuilds_executor_after_release() -> None:
+def test_ray_generation_worker_rebuilds_executor_after_release(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     # The resident-session contract: a released worker tears down its executor and
     # rebuilds a fresh one on the next load_policy (not the cached idempotent path).
     """Checks Ray generation worker rebuilds executor after release."""
+    _install_tiny_family(monkeypatch)
     _TinyChunkExecutor.build_count = 0
     worker = RayGenerationWorker("rollout-0", _launch_contract())
 

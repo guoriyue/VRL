@@ -24,13 +24,13 @@ from vrl.config.algorithm import algorithm_config_class
 from vrl.config.precision import PrecisionConfig
 from vrl.config.reward_inference import parse_reward_inference_config
 from vrl.config.unknown_keys import OPEN, ConfigBlock
+from vrl.families.names import normalize_model_family
 from vrl.models.interfaces.runtime import MODEL_MEMORY_SECTIONS
 from vrl.ray.resources import (
     RewardResourceConfig,
     RoleResourceConfig,
     RolloutResourceConfig,
 )
-from vrl.rollouts.family_names import normalize_rollout_family
 from vrl.trainers.core.types import (
     DebugConfig,
     EMAConfig,
@@ -195,7 +195,7 @@ class DataConfig(ConfigBase):
         # preprocessing.format (image_caption_jsonl is the only image-caption
         # schema; everything else is the plain prompt manifest). pickapic_preference
         # cannot be derived and must be set explicitly. Keep this rule in sync with
-        # _load_prompt_examples_from_config in vrl/trainers/data/prompts.py.
+        # load_prompt_examples_from_config in vrl/trainers/data/prompts.py.
         # Explicit values (enforced by the Literal type) are unchanged.
         if self.loader is None:
             fmt = (self.preprocessing or {}).get("format", "")
@@ -255,14 +255,15 @@ class DataConfig(ConfigBase):
 
 class SdeConfig(ConfigBase):
     """Typed rollout.sde block. ``type`` is the user-facing allow-list, replacing
-    the hand-written {flow_grpo, cps} membership checks previously duplicated in the
+    hand-written membership checks previously duplicated in the
     schema cross-validator, layout, and flow_matching. The layout request-boundary
     guard stays for over-the-wire request dicts; ``window_*`` stay permissive.
 
-    ``type`` names the reverse-SDE log-prob distribution (flow_grpo vs cps); it is
-    orthogonal to ``denoise_mode`` (native/sde), which owns the word ``sde``."""
+    ``type`` names the replay/sampling transition distribution (flow_grpo, ddim,
+    or cps); it is orthogonal to ``denoise_mode`` (native/sde), which owns the
+    word ``sde``."""
 
-    type: Literal["flow_grpo", "cps"]
+    type: Literal["flow_grpo", "ddim", "cps"]
     window_size: Any = None
     window_range: Any = None
 
@@ -286,8 +287,6 @@ class RolloutConfig(ConfigBase):
     # reader: vrl/generation/diffusion/layout.py _parse_denoise_mode (request boundary).
     # Allowed set is the type; the layout guard stays for over-the-wire request dicts.
     denoise_mode: Literal["native", "sde"] | None = None
-    max_reflect_len: Any = None
-    max_text_length: Any = None
     # reader: vrl/generation/diffusion/layout.py — opt-in to storing each denoise
     # step's rollout proposal mean for trust-region replay (flow_dppo/grpo_guard).
     return_prev_sample_mean: Any = None
@@ -301,7 +300,6 @@ class RolloutConfig(ConfigBase):
     # resolves it before the first request (SPRINT_chunk_size_probe; Ray-only,
     # the planner rejects "auto" on other runtimes); null = samples_per_prompt.
     samples_per_chunk: Any = None
-    temperature: Any = None
     torch_profiler: Annotated[Any, ConfigBlock(TorchProfilerConfig)] = None
     trajectory_storage: Annotated[Any, ConfigBlock(TrajectoryStoragePolicy)] = None
 
@@ -335,16 +333,8 @@ class SamplingConfig(ConfigBase):
     # llamagen additionally requires it == cls_token_num).
     max_text_length: Any = None
     ratio: Any = None
-    # AR families declare noise_level under sampling; the collector flat-merges
-    # it into rollout values. Same knob as rollout.noise_level (the canonical
-    # owner the cross-field validator enforces for token_grpo + nextstep_1).
-    noise_level: Any = None
     num_frames: Any = None
     num_steps: Any = None
-    # reader: generation/diffusion/layout.py (request-sampling parse) routes
-    # rollout/replay log-prob math; "ddim" is the epsilon/v-pred family path
-    # (cogvideox, pixart_sigma), "cps" the pixel-space CPS variant.
-    sde_type: Literal["flow_grpo", "ddim", "cps"] = "flow_grpo"
     temperature: Any = None
     # AR nucleus/top-k filtering (top_k: llamagen only; top_p: llamagen and
     # glm_image prepare_chunk_inputs; checkpoint defaults apply when unset).
@@ -501,7 +491,7 @@ class FluxModelConfig(ModelConfig):
 
 
 # Keyed by CANONICAL rollout-family name only. Aliases ("wan", "cosmos",
-# "janus_r1", ...) are owned by vrl/rollouts/family_names.py — lookups
+# "janus_r1", ...) are owned by vrl/families/names.py — lookups
 # normalize through it, so a new declared alias works here for free.
 _model_config_classes_by_family: dict[str, type[ModelConfig]] = {
     "sd3_5": SD3ModelConfig,
@@ -524,7 +514,7 @@ _model_config_variant_classes: tuple[type[ModelConfig], ...] = tuple(
 
 
 def _model_config_class_for_family(family: Any) -> type[ModelConfig]:
-    canonical = normalize_rollout_family(str(family or ""))
+    canonical = normalize_model_family(str(family or ""))
     return _model_config_classes_by_family.get(canonical, ModelConfig)
 
 
@@ -808,7 +798,7 @@ class RootConfig(ConfigBase):
 
         kind = algo.kind
         rollout = self.rollout
-        model_family = normalize_rollout_family(
+        model_family = normalize_model_family(
             (self.model.family or "") if self.model else "",
         )
 

@@ -40,17 +40,6 @@ import torch
 from vrl.math.diffusion.flow_matching import sde_step_with_logprob
 
 
-def _resolve_model_build(args: argparse.Namespace) -> object:
-    from vrl.models.interfaces.runtime import ModelBuild
-
-    return ModelBuild(
-        model_name_or_path=args.model_path,
-        device=torch.device("cuda"),
-        parameter_dtype=torch.bfloat16,
-        model_config={"offload_mode": args.offload},
-    )
-
-
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--model-path", default="Wan-AI/Wan2.1-I2V-14B-480P-Diffusers")
@@ -80,17 +69,34 @@ def main() -> None:
     )
     args = parser.parse_args()
 
+    from omegaconf import OmegaConf
     from PIL import Image
 
+    from vrl.families.registry import get_model_family_entry
     from vrl.generation.diffusion.layout import VideoGenerationRequest
-    from vrl.models.diffusion.wan_2_1.model import WanI2VDiffusersModel
 
     out_dir = Path(args.out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
 
     print(f"[load] {args.model_path} (offload={args.offload})", flush=True)
     t0 = time.time()
-    model = WanI2VDiffusersModel.from_build(_resolve_model_build(args))
+    entry = get_model_family_entry("wan_2_1_i2v")
+    build = entry.resolve_model_build(
+        OmegaConf.create(
+            {
+                "model": {
+                    "family": "wan_2_1_i2v",
+                    "path": args.model_path,
+                    "use_lora": False,
+                    "offload_mode": args.offload,
+                },
+                "sampling": {"num_steps": args.steps},
+                "precision": {"training": {"dtype": "bf16"}},
+            },
+        ),
+        torch.device("cuda"),
+    )
+    model = entry.build_rollout(build).model
     print(f"[load] done in {time.time() - t0:.0f}s", flush=True)
 
     image = Image.open(args.image).convert("RGB")

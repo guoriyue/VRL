@@ -13,7 +13,7 @@ from tests.quality.preflight import (
     load_quality_profile,
 )
 from vrl.config.loading import list_bundled_configs, load_config
-from vrl.rollouts.families import FAMILY_REGISTRY
+from vrl.families.registry import FAMILY_REGISTRY
 
 
 def test_every_registry_entry_has_one_test_owned_profile() -> None:

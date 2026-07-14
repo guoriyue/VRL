@@ -4,7 +4,4 @@
 rollout:
   n_samples_per_prompt: 2
   prompts_per_batch: 1
-  temperature: 0.9
-  max_text_length: 256
-  max_reflect_len: 80
   final_image_policy: always_generate  # always_generate | use_selfcheck

@@ -12,7 +12,6 @@ from vrl.models.diffusion.common.vae_decode_memory import (
     configure_memory_mechanisms,
     vae_decode_memory_from_config,
 )
-from vrl.models.interfaces.runtime import MEMORY_POLICY_METADATA_KEY
 
 
 class _FakeVAE:
@@ -31,9 +30,8 @@ def test_configure_memory_mechanisms_calls_declared_methods() -> None:
     vae = _FakeVAE()
     mem = VaeDecodeMemory(tiling=True, slicing=True)
 
-    applied = configure_memory_mechanisms(vae, mem, owner="test VAE")
+    configure_memory_mechanisms(vae, mem, owner="test VAE")
 
-    assert applied == ("tiling", "slicing")
     assert vae.calls == ["enable_tiling", "enable_slicing"]
 
 
@@ -73,48 +71,32 @@ def test_apply_generation_memory_policy_from_config() -> None:
     """Policy resolves the model's vae_decode target and applies knobs."""
     vae = _FakeVAE()
 
-    metadata = apply_generation_memory_policy(
+    apply_generation_memory_policy(
         _FakeModel(vae),
         memory_config={"vae_decode": {"tiling": True, "slicing": False}},
         owner="test VAE",
     )
 
     assert vae.calls == ["enable_tiling"]
-    assert metadata == {
-        MEMORY_POLICY_METADATA_KEY: {
-            "model_build": {
-                "vae_tiling": True,
-                "vae_slicing": False,
-            },
-        },
-    }
 
 
 def test_apply_generation_memory_policy_has_no_python_defaults() -> None:
     """Checks the policy applies nothing when config carries nothing."""
     vae = _FakeVAE()
 
-    metadata = apply_generation_memory_policy(
+    apply_generation_memory_policy(
         _FakeModel(vae),
         memory_config=None,
         owner="test VAE",
     )
 
     assert vae.calls == []
-    assert metadata == {
-        MEMORY_POLICY_METADATA_KEY: {
-            "model_build": {
-                "vae_tiling": False,
-                "vae_slicing": False,
-            },
-        },
-    }
 
 
-def test_wan_runtime_bundle_records_model_build_memory_metadata(
+def test_wan_runtime_bundle_applies_model_build_memory_policy(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Checks Wan runtime bundle records model build memory metadata."""
+    """Checks the Wan runtime applies its model-build memory policy."""
     from vrl.models.interfaces.runtime import ModelBuild, RolloutBuildOptions
 
     class _FakeModel:
@@ -137,14 +119,14 @@ def test_wan_runtime_bundle_records_model_build_memory_metadata(
         def set_num_steps(self, _num_steps: int) -> None:
             return None
 
-    # wan is a per-entry descriptor family now: the generic builder resolves
-    # WanT2VDiffusersModel from the registry recipe, so patch the model class.
-    from vrl.models.diffusion import build as _shared_build
+    # Wan is a descriptor family: its registry entry resolves the shared builder
+    # and model class, so the test follows the same boundary as production.
+    from vrl.families.registry import get_model_family_entry
     from vrl.models.diffusion.wan_2_1 import model as _wan_model
 
     monkeypatch.setattr(_wan_model, "WanT2VDiffusersModel", _FakeModel)
 
-    bundle = _shared_build.build_family_runtime_bundle(
+    bundle = get_model_family_entry("wan_2_1").build_rollout(
         ModelBuild(
             model_name_or_path="fake/model",
             device="cpu",
@@ -159,64 +141,49 @@ def test_wan_runtime_bundle_records_model_build_memory_metadata(
         ),
     )
 
-    assert bundle.metadata[MEMORY_POLICY_METADATA_KEY]["model_build"] == {
-        "vae_tiling": True,
-        "vae_slicing": True,
-    }
+    assert bundle.model.vae.calls == ["enable_tiling", "enable_slicing"]
 
 
 @pytest.mark.parametrize(
     (
-        "runtime_module_name",
         "model_module_name",
         "model_class_name",
-        "build_fn_name",
         "build_family",
     ),
     [
         # sd3_5 is a registry-descriptor family: the generic builder resolves
         # its model class from the registry recipe, keyed by build.family.
         (
-            "vrl.models.diffusion.build",
             "vrl.models.diffusion.sd3_5.model",
             "SD3_5Model",
-            "build_family_runtime_bundle",
             "sd3_5",
         ),
         (
-            "vrl.models.diffusion.build",
             "vrl.models.diffusion.cosmos.predict2.model",
             "CosmosPredict2Model",
-            "build_family_runtime_bundle",
             "cosmos-predict2",
         ),
         # predict2_5 is also a registry-descriptor family (LoRA-only, so the
         # shared fake build below carries a minimal lora block).
         (
-            "vrl.models.diffusion.build",
             "vrl.models.diffusion.cosmos.predict2_5.model",
             "CosmosPredict25Model",
-            "build_family_runtime_bundle",
             "cosmos-predict2.5",
         ),
         (
-            "vrl.models.diffusion.build",
             "vrl.models.diffusion.sana.model",
             "SanaModel",
-            "build_family_runtime_bundle",
             "sana",
         ),
     ],
 )
-def test_full_generation_runtime_bundles_record_model_build_memory_metadata(
+def test_full_generation_runtime_bundles_apply_model_build_memory_policy(
     monkeypatch: pytest.MonkeyPatch,
-    runtime_module_name: str,
     model_module_name: str,
     model_class_name: str,
-    build_fn_name: str,
-    build_family: str | None,
+    build_family: str,
 ) -> None:
-    """Checks full-generation runtime bundles report VAE memory policy."""
+    """Checks full-generation runtime bundles apply VAE memory policy."""
     from vrl.models.interfaces.runtime import ModelBuild, RolloutBuildOptions
 
     loaded_builds: list[ModelBuild] = []
@@ -248,11 +215,12 @@ def test_full_generation_runtime_bundles_record_model_build_memory_metadata(
         def apply_lora(self, _build: Any) -> None:
             return None
 
-    runtime_module = importlib.import_module(runtime_module_name)
     model_module = importlib.import_module(model_module_name)
     monkeypatch.setattr(model_module, model_class_name, _FakeModel)
 
-    bundle = getattr(runtime_module, build_fn_name)(
+    from vrl.families.registry import get_model_family_entry
+
+    bundle = get_model_family_entry(build_family).build_rollout(
         ModelBuild(
             model_name_or_path="fake/model",
             device="cpu",
@@ -273,10 +241,7 @@ def test_full_generation_runtime_bundles_record_model_build_memory_metadata(
         ),
     )
 
-    assert bundle.metadata[MEMORY_POLICY_METADATA_KEY]["model_build"] == {
-        "vae_tiling": True,
-        "vae_slicing": False,
-    }
+    assert bundle.model.vae.calls == ["enable_tiling"]
     assert loaded_builds
     if build_family == "sana":
         assert loaded_builds[-1].parameter_dtype is torch.float16
@@ -288,26 +253,21 @@ def test_declared_section_without_target_is_skipped_not_applied() -> None:
     Namespace validity is owned once by MODEL_MEMORY_SECTIONS (shared with the
     schema lint); only a genuinely unknown section name (typo) fails. A real
     generation model always exposes its VAE target, so this target-less path is
-    defensive — it must not fabricate metadata for a mechanism it never ran.
+    defensive — it must not call a mechanism on a target the model does not own.
     """
-    metadata = apply_generation_memory_policy(
+    apply_generation_memory_policy(
         _FakeModel(vae=None),
         memory_config={"vae_decode": {"tiling": True}},
         owner="test VAE",
     )
 
-    assert metadata == {MEMORY_POLICY_METADATA_KEY: {"model_build": {}}}
-
 
 def test_targetless_model_passes_when_nothing_configured() -> None:
-    metadata = apply_generation_memory_policy(
+    apply_generation_memory_policy(
         _FakeModel(vae=None),
         memory_config=None,
         owner="test VAE",
     )
-    # A model with no targets reports no per-target keys — fabricating
-    # vae_tiling for a model that owns no VAE would be a lie in telemetry.
-    assert metadata == {MEMORY_POLICY_METADATA_KEY: {"model_build": {}}}
 
 
 def test_family_loaders_do_not_apply_memory_policy() -> None:
@@ -334,11 +294,8 @@ def test_family_loaders_do_not_apply_memory_policy() -> None:
 def test_runtime_builders_apply_generation_memory_policy() -> None:
     """Every full-generation runtime builder routes through the shared policy.
 
-    Routing is satisfied by calling ``apply_generation_memory_policy``
-    directly, by delegating to the shared ``build_diffusion_runtime_bundle``
-    (which applies it), or by shipping no builder functions at all (a
-    registry-descriptor family — the generic builder routes for it). The
-    shared builder is the single home of the call and is pinned separately.
+    Registry-descriptor families ship no family builder functions. Their shared
+    ``build_family_runtime_bundle`` is the single home of the policy call.
     """
 
     from pathlib import Path
@@ -359,11 +316,7 @@ def test_runtime_builders_apply_generation_memory_policy() -> None:
         # Replay builders own no VAE and never apply the policy; only files
         # that still define a full-generation (rollout) builder must route.
         defines_rollout_builder = any("replay" not in name for name in builder_names)
-        if (
-            defines_rollout_builder
-            and "apply_generation_memory_policy" not in source
-            and "build_diffusion_runtime_bundle" not in source
-        ):
+        if defines_rollout_builder and "apply_generation_memory_policy" not in source:
             missing.append(str(path))
     assert not missing, f"runtime builders missing the shared policy call: {missing}"
 
@@ -380,8 +333,8 @@ def test_unknown_memory_section_fails_loud() -> None:
         )
 
 
-def test_future_targets_apply_and_report_with_own_prefix() -> None:
-    """Targets beyond vae_decode flow through the same policy untouched."""
+def test_future_targets_apply_through_the_same_policy() -> None:
+    """Targets beyond vae_decode flow through the same policy unchanged."""
 
     class _TwoTargetModel:
         def __init__(self) -> None:
@@ -392,7 +345,7 @@ def test_future_targets_apply_and_report_with_own_prefix() -> None:
             return {"vae_decode": self.vae, "image_encoder": self.encoder}
 
     model = _TwoTargetModel()
-    metadata = apply_generation_memory_policy(
+    apply_generation_memory_policy(
         model,
         memory_config={
             "vae_decode": {"tiling": True},
@@ -403,9 +356,3 @@ def test_future_targets_apply_and_report_with_own_prefix() -> None:
 
     assert model.vae.calls == ["enable_tiling"]
     assert model.encoder.calls == ["enable_slicing"]
-    assert metadata[MEMORY_POLICY_METADATA_KEY]["model_build"] == {
-        "vae_tiling": True,
-        "vae_slicing": False,
-        "image_encoder_tiling": False,
-        "image_encoder_slicing": True,
-    }

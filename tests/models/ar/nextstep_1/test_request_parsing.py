@@ -6,11 +6,11 @@ import pytest
 import torch
 from omegaconf import OmegaConf
 
+from vrl.families.registry import get_model_family_entry
 from vrl.generation import GenerationRequest
 from vrl.generation.ar import ARRequestLayout
 from vrl.generation.ar.decode_loop import ActiveSequence
 from vrl.generation.execution.ids import build_sample_rows
-from vrl.models.ar.build import resolve_family_ar_model_build
 from vrl.models.ar.nextstep_1.runtime import (
     NextStep1ARChunkResult,
     NextStep1ChunkGatherer,
@@ -71,19 +71,65 @@ def test_ar_layout_requires_shape_sampling_fields() -> None:
             ARRequestLayout().parse_sampling_params(request)
 
 
-def test_descriptor_resolver_carries_actor_gradient_checkpointing() -> None:
+@pytest.mark.parametrize(
+    ("mode", "expected"),
+    [("off", False), ("full", True)],
+)
+def test_replay_build_resolves_gradient_checkpointing_mode(
+    mode: str,
+    expected: bool,
+) -> None:
     cfg = OmegaConf.create(
         {
             "model": {"family": "nextstep_1", "use_lora": False},
             "precision": {"training": {"dtype": "fp32"}, "rollout": {"dtype": "fp32"}},
-            "actor": {"gradient_checkpointing": True},
+            "actor": {"gradient_checkpointing": mode},
         },
     )
 
-    build = resolve_family_ar_model_build(cfg, "cpu")
+    build = get_model_family_entry("nextstep_1").resolve_model_build(
+        cfg,
+        "cpu",
+        for_rollout=False,
+    )
 
     assert build.family == "nextstep_1"
-    assert build.model_config["gradient_checkpointing"] is True
+    assert build.model_config["gradient_checkpointing"] is expected
+
+
+def test_replay_build_rejects_selective_gradient_checkpointing() -> None:
+    cfg = OmegaConf.create(
+        {
+            "model": {"family": "nextstep_1", "use_lora": False},
+            "precision": {"training": {"dtype": "fp32"}, "rollout": {"dtype": "fp32"}},
+            "actor": {"gradient_checkpointing": "selective"},
+        },
+    )
+
+    with pytest.raises(ValueError, match="does not support selective"):
+        get_model_family_entry("nextstep_1").resolve_model_build(
+            cfg,
+            "cpu",
+            for_rollout=False,
+        )
+
+
+def test_rollout_build_disables_gradient_checkpointing() -> None:
+    cfg = OmegaConf.create(
+        {
+            "model": {"family": "nextstep_1", "use_lora": False},
+            "precision": {"training": {"dtype": "fp32"}, "rollout": {"dtype": "fp32"}},
+            "actor": {"gradient_checkpointing": "full"},
+        },
+    )
+
+    build = get_model_family_entry("nextstep_1").resolve_model_build(
+        cfg,
+        "cpu",
+        for_rollout=True,
+    )
+
+    assert build.model_config["gradient_checkpointing"] is False
 
 
 def test_nextstep_gather_derives_reward_image_from_canonical_output() -> None:

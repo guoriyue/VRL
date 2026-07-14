@@ -11,8 +11,7 @@ from vrl.scripts.perf.common.diffusion_runtime import build_model
 
 def test_build_model_passes_dtype_as_named_parameter_override(monkeypatch) -> None:
     """The probe override must not depend on the resolver's argument order."""
-    import vrl.rollouts.families as families
-    import vrl.utils.config as config_utils
+    import vrl.families.registry as families
 
     cfg = SimpleNamespace(model=SimpleNamespace(family="sd3_5", use_lora=False))
     device = torch.device("cpu")
@@ -36,18 +35,10 @@ def test_build_model_passes_dtype_as_named_parameter_override(monkeypatch) -> No
 
     entry = SimpleNamespace(
         family="sd3_5",
-        model_build_resolver="test:resolve_build",
-        runtime_builder="test:build_bundle",
+        resolve_model_build=resolve_build,
+        build_rollout=build_bundle,
     )
-    monkeypatch.setattr(families, "get_rollout_family_entry", lambda _family: entry)
-    monkeypatch.setattr(
-        config_utils,
-        "import_from_path",
-        lambda path: {
-            "test:resolve_build": resolve_build,
-            "test:build_bundle": build_bundle,
-        }[path],
-    )
+    monkeypatch.setattr(families, "get_model_family_entry", lambda _family: entry)
 
     assert build_model(cfg, device, dtype) is model
     assert calls == {

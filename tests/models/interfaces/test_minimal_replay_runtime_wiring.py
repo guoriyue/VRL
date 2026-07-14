@@ -35,6 +35,7 @@ def test_model_build_rejects_subbyte_parameter_storage(dtype: str) -> None:
             model_name_or_path="fake/repo",
             device="cpu",
             parameter_dtype=dtype,
+            family="sd3_5",
         )
 
 
@@ -93,6 +94,7 @@ def test_model_build_reconstructs_nested_rollout_payload() -> None:
         model_name_or_path="fake/repo",
         device="cpu",
         parameter_dtype="fp16",
+        family="sd3_5",
         rollout={
             "autocast_dtype": "bf16",
             "prompt_encoder_dtype": "fp32",
@@ -113,7 +115,7 @@ def test_model_build_reconstructs_nested_rollout_payload() -> None:
 def test_model_build_resolver_projects_nvfp4_over_the_rollout_base_dtype() -> None:
     from omegaconf import OmegaConf
 
-    from vrl.models.model_build import resolve_model_build
+    from vrl.families.registry import get_model_family_entry
 
     cfg = OmegaConf.create(
         {
@@ -129,7 +131,11 @@ def test_model_build_resolver_projects_nvfp4_over_the_rollout_base_dtype() -> No
         },
     )
 
-    build = resolve_model_build(cfg, "cuda", for_rollout=True)
+    build = get_model_family_entry("sd3_5").resolve_model_build(
+        cfg,
+        "cuda",
+        for_rollout=True,
+    )
     rollout = build.require_rollout()
 
     assert build.parameter_dtype is torch.bfloat16
@@ -200,6 +206,7 @@ def _build(**overrides: Any) -> ModelBuild:
         "model_name_or_path": "fake/repo",
         "device": "cpu",
         "parameter_dtype": torch.float32,
+        "family": "sd3_5",
         "model_config": model_config,
         "sampling_config": dict(scheduler_config),
     }
@@ -234,6 +241,7 @@ def test_registry_descriptor_replay_builder_returns_minimal_bundle(
     ``DiffusionFamilyBuild`` recipe drives the generic builder, keyed by
     ``build.family``. Behavioral contract matches the per-family builders above.
     """
+    from vrl.families.registry import get_model_family_entry
     from vrl.models.diffusion import build as _shared_build
 
     loaded_builds: list[ModelBuild] = []
@@ -260,7 +268,8 @@ def test_registry_descriptor_replay_builder_returns_minimal_bundle(
         lambda *_args, **_kwargs: _TinyScheduler(),
     )
 
-    bundle = _shared_build.build_family_replay_runtime_bundle(
+    entry = get_model_family_entry(family)
+    bundle = entry.build_replay(
         _build(
             family=family,
             parameter_dtype=torch.float16 if family == "sana" else torch.float32,
@@ -276,21 +285,21 @@ def test_registry_descriptor_replay_builder_returns_minimal_bundle(
     with pytest.raises(RuntimeError, match="pipeline"):
         _ = bundle.model.pipeline
 
-    # A build without family fails loud instead of guessing.
-    with pytest.raises(ValueError, match=r"build\.family"):
-        _shared_build.build_family_replay_runtime_bundle(_build())
+    # ModelBuild rejects a missing identity before any registry dispatch.
+    with pytest.raises(ValueError, match=r"ModelBuild\.family"):
+        _build(family="")
 
 
 @pytest.mark.parametrize(
-    "builder_name",
-    ["build_family_runtime_bundle", "build_family_replay_runtime_bundle"],
+    "entry_method",
+    ["build_rollout", "build_replay"],
 )
-def test_sana_builders_enforce_family_parameter_dtype(builder_name: str) -> None:
+def test_sana_builders_enforce_family_parameter_dtype(entry_method: str) -> None:
     """Manual builds cannot bypass the SANA parameter invariant."""
-    from vrl.models.diffusion import build as _shared_build
+    from vrl.families.registry import get_model_family_entry
 
     with pytest.raises(ValueError, match=r"sana.*requires base parameter dtype.*fp16"):
-        getattr(_shared_build, builder_name)(
+        getattr(get_model_family_entry("sana"), entry_method)(
             _build(family="sana", parameter_dtype=torch.bfloat16),
         )
 
@@ -299,6 +308,7 @@ def test_wan_replay_builder_uses_wan_pipeline_scheduler_class(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """The wan descriptor's scheduler_classname drives the generic replay loader."""
+    from vrl.families.registry import get_model_family_entry
     from vrl.models.diffusion import build as _shared_build
 
     scheduler_classes: list[str] = []
@@ -314,7 +324,9 @@ def test_wan_replay_builder_uses_wan_pipeline_scheduler_class(
     )
     monkeypatch.setattr(_shared_build, "load_diffusers_scheduler", fake_scheduler_loader)
 
-    bundle = _shared_build.build_family_replay_runtime_bundle(_build(family="wan_2_1"))
+    bundle = get_model_family_entry("wan_2_1").build_replay(
+        _build(family="wan_2_1"),
+    )
 
     assert scheduler_classes == ["UniPCMultistepScheduler"]
     assert bundle.scheduler.timesteps.tolist() == [1.0]
@@ -324,6 +336,7 @@ def test_wan_i2v_replay_builder_uses_i2v_replay_model(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """The i2v registry entry's replay_cls selects the I2V replay model."""
+    from vrl.families.registry import get_model_family_entry
     from vrl.models.diffusion import build as _shared_build
     from vrl.models.diffusion.wan_2_1.model import WanI2VReplayModel
 
@@ -338,7 +351,7 @@ def test_wan_i2v_replay_builder_uses_i2v_replay_model(
         lambda *_args, **_kwargs: _TinyScheduler(),
     )
 
-    bundle = _shared_build.build_family_replay_runtime_bundle(
+    bundle = get_model_family_entry("wan_2_1_i2v").build_replay(
         _build(family="wan_2_1_i2v"),
     )
 
@@ -351,6 +364,7 @@ def test_wan_dual_stage_replay_builder_loads_low_noise_transformer(
 ) -> None:
     """Wan 2.2 dual-stage: prepare_replay late-loads transformer_2 and trains it."""
     import vrl.models.loader as _loader
+    from vrl.families.registry import get_model_family_entry
     from vrl.models.diffusion import build as _shared_build
 
     loaded_subfolders: list[str] = []
@@ -374,7 +388,7 @@ def test_wan_dual_stage_replay_builder_loads_low_noise_transformer(
         lambda *_args, **_kwargs: _TinyScheduler(),
     )
 
-    bundle = _shared_build.build_family_replay_runtime_bundle(
+    bundle = get_model_family_entry("wan_2_1_i2v").build_replay(
         _build(
             family="wan_2_1_i2v",
             extra={
@@ -397,6 +411,7 @@ def test_cosmos_predict25_replay_builder_keeps_diffusion_nft_surface(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Checks Cosmos predict25 replay builder keeps diffusion NFT surface."""
+    from vrl.families.registry import get_model_family_entry
     from vrl.models.diffusion import build as _shared_build
     from vrl.models.diffusion.cosmos import predict2_5
 
@@ -418,7 +433,7 @@ def test_cosmos_predict25_replay_builder_keeps_diffusion_nft_surface(
         lambda self, _build: self.transformer.requires_grad_(True),
     )
 
-    bundle = _shared_build.build_family_replay_runtime_bundle(
+    bundle = get_model_family_entry("cosmos-predict2.5").build_replay(
         _build(
             family="cosmos-predict2.5",
             use_lora=True,
@@ -447,6 +462,7 @@ def test_anima_replay_builder_uses_only_transformer_checkpoint(
 
     bundle = runtime.build_anima_replay_runtime_bundle(
         _build(
+            family="cosmos-predict2-anima",
             extra={
                 "transformer_path": "/tmp/anima-preview3-base.safetensors",
                 "scheduler_shift": 3.0,
@@ -475,10 +491,7 @@ def test_anima_empty_prompts_are_replaced_before_tokenization() -> None:
 def test_anima_model_build_uses_explicit_local_paths() -> None:
     """Checks the Anima model build uses explicit local paths."""
     from vrl.config.loading import load_config
-    from vrl.models.diffusion.build import resolve_family_model_build
-    from vrl.models.diffusion.cosmos.anima.runtime import (
-        resolve_anima_replay_model_build,
-    )
+    from vrl.families.registry import get_model_family_entry
 
     cfg = load_config(
         "experiment/diffusion/anima_preview3/online_grpo_aesthetic",
@@ -494,8 +507,9 @@ def test_anima_model_build_uses_explicit_local_paths() -> None:
         ],
     )
 
-    full = resolve_family_model_build(cfg, "cpu")
-    replay = resolve_anima_replay_model_build(cfg, "cpu")
+    entry = get_model_family_entry("cosmos-predict2-anima")
+    full = entry.resolve_model_build(cfg, "cpu")
+    replay = entry.resolve_model_build(cfg, "cpu", for_rollout=False)
 
     assert isinstance(full.rollout, RolloutBuildOptions)
     assert replay.rollout is None
@@ -512,7 +526,7 @@ def test_anima_artifact_resolution_fails_loud_when_hub_fetch_fails(
 ) -> None:
     """Hub-fetch failure surfaces the config knob, not a raw download error."""
     from vrl.config.loading import load_config
-    from vrl.models.diffusion.cosmos.anima.runtime import resolve_anima_replay_model_build
+    from vrl.families.registry import get_model_family_entry
 
     cfg = load_config(
         "experiment/diffusion/anima_preview3/online_grpo_aesthetic",
@@ -521,7 +535,11 @@ def test_anima_artifact_resolution_fails_loud_when_hub_fetch_fails(
             "model.use_lora=false",
         ],
     )
-    build = resolve_anima_replay_model_build(cfg, "cpu")
+    build = get_model_family_entry("cosmos-predict2-anima").resolve_model_build(
+        cfg,
+        "cpu",
+        for_rollout=False,
+    )
 
     # Resolution delegates to hf_hub_download (auto-fetch, same contract as
     # from_pretrained); when the hub fetch fails the error names the config
@@ -587,12 +605,12 @@ def test_ar_replay_builders_return_minimal_bundles(
     model_attr: str,
 ) -> None:
     """Checks AR replay builders return minimal bundles."""
-    from vrl.models.ar.build import build_family_ar_replay_runtime_bundle
+    from vrl.families.registry import get_model_family_entry
 
     model_module = __import__(model_module_path, fromlist=[model_attr])
     monkeypatch.setattr(model_module, model_attr, _TinyRuntimeModel)
 
-    bundle = build_family_ar_replay_runtime_bundle(
+    bundle = get_model_family_entry(family).build_replay(
         _build(family=family),
     )
 
@@ -626,12 +644,12 @@ def test_ar_rollout_builders_follow_registry_descriptors(
     model_module_path: str,
     model_attr: str,
 ) -> None:
-    from vrl.models.ar.build import build_family_ar_runtime_bundle
+    from vrl.families.registry import get_model_family_entry
 
     model_module = __import__(model_module_path, fromlist=[model_attr])
     monkeypatch.setattr(model_module, model_attr, _TinyRuntimeModel)
 
-    bundle = build_family_ar_runtime_bundle(
+    bundle = get_model_family_entry(family).build_rollout(
         _build(
             family=family,
             rollout=RolloutBuildOptions(

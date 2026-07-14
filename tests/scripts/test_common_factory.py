@@ -13,13 +13,13 @@ from vrl.algorithms.grpo.continuous import (
 )
 from vrl.config.builders import build_configs
 from vrl.config.loading import load_config
-from vrl.models.diffusion.build import resolve_family_model_build
+from vrl.families.registry import DiffusionFamilyBuild, get_model_family_entry
+from vrl.ray.resources import resolve_distributed_resources
 from vrl.rollouts.collector.config import build_rollout_config_from_cfg
-from vrl.rollouts.families import get_rollout_family_entry
 from vrl.scripts.common.factory import (
     build_algorithm_and_evaluator_from_cfg,
-    build_reward_from_cfg,
-    validate_reward_memory_parking_from_cfg,
+    build_reward,
+    validate_reward_memory_parking,
 )
 
 
@@ -32,11 +32,11 @@ def test_diffusion_grpo_evaluator_uses_resolved_rollout_sde_config() -> None:
             "rollout.sde.type=cps",
         ],
     )
-    collector_config = build_rollout_config_from_cfg(cfg, family="wan_2_1")
+    collector_config = build_rollout_config_from_cfg(cfg)
 
     pair = build_algorithm_and_evaluator_from_cfg(
         cfg,
-        family_entry=get_rollout_family_entry("wan_2_1"),
+        family_entry=get_model_family_entry("wan_2_1"),
         built=build_configs(cfg),
         collector_config=collector_config,
         scheduler=object(),
@@ -66,9 +66,9 @@ def test_diffusion_factory_accepts_each_kind_exact_config_type(
 
     pair = build_algorithm_and_evaluator_from_cfg(
         cfg,
-        family_entry=get_rollout_family_entry("sd3_5"),
+        family_entry=get_model_family_entry("sd3_5"),
         built=build_configs(cfg),
-        collector_config=build_rollout_config_from_cfg(cfg, family="sd3_5"),
+        collector_config=build_rollout_config_from_cfg(cfg),
         scheduler=object(),
     )
 
@@ -92,12 +92,15 @@ def test_diffusion_factory_rejects_a_sibling_config_type(
         "experiment/diffusion/sd3_5/online_grpo_ocr",
         overrides=[f"/recipe/online={recipe}"],
     )
+    built = build_configs(cfg)
+    built["algorithm"] = wrong_config
 
     with pytest.raises(TypeError, match=expected_name):
         build_algorithm_and_evaluator_from_cfg(
             cfg,
-            family_entry=get_rollout_family_entry("sd3_5"),
-            built={"algorithm": wrong_config},
+            family_entry=get_model_family_entry("sd3_5"),
+            built=built,
+            collector_config=build_rollout_config_from_cfg(cfg),
             scheduler=object(),
         )
 
@@ -106,7 +109,10 @@ def test_wan_empty_lora_preserves_base_policy_initially() -> None:
     """Checks Wan empty LoRA preserves base policy initially."""
     cfg = load_config("experiment/diffusion/wan_2_1/online_grpo_physics")
 
-    build = resolve_family_model_build(cfg, torch.device("cpu"))
+    build = get_model_family_entry("wan_2_1").resolve_model_build(
+        cfg,
+        torch.device("cpu"),
+    )
 
     assert build.use_lora is True
     lora_config = build.lora
@@ -122,7 +128,11 @@ def test_sana_aesthetic_keeps_cpu_observation_only_pickscore() -> None:
     cfg.distributed.resources.visible_devices = [0]
     built = build_configs(cfg)
 
-    reward = build_reward_from_cfg(cfg, built=built, device="cuda:0")
+    reward = build_reward(
+        built=built,
+        resources=resolve_distributed_resources(cfg),
+        device="cuda:0",
+    )
 
     assert [(name, weight) for name, weight, _ in reward.rewards] == [
         ("aesthetic", 1.0),
@@ -136,11 +146,11 @@ def test_sana_family_pins_fp16_parameters_under_bf16_forward() -> None:
     """SANA owns its parameter invariant without exposing a model dtype knob."""
     cfg = load_config("experiment/diffusion/sana/online_grpo_aesthetic")
     built = build_configs(cfg)
-    build = resolve_family_model_build(cfg, torch.device("cpu"))
+    entry = get_model_family_entry("sana")
+    build = entry.resolve_model_build(cfg, torch.device("cpu"))
 
-    entry = get_rollout_family_entry("sana")
-    assert entry.build is not None
-    assert entry.build.base_parameter_dtype == "fp16"
+    assert isinstance(entry.family_build, DiffusionFamilyBuild)
+    assert entry.family_build.base_parameter_dtype == "fp16"
     assert cfg.model.get("dtype") is None
     # Structural invariants, not preset literals: rollout must follow the
     # train forward precision (no split), and the replay chunk must mirror the
@@ -181,7 +191,10 @@ def test_sana_rejects_redundant_or_conflicting_model_dtype(
     cfg.model.dtype = configured_dtype
 
     with pytest.raises(ValueError, match=r"model\.dtype is not configurable.*sana"):
-        resolve_family_model_build(cfg, torch.device("cpu"))
+        get_model_family_entry("sana").resolve_model_build(
+            cfg,
+            torch.device("cpu"),
+        )
 
 
 def test_ordinary_diffusion_family_rejects_duplicate_model_dtype() -> None:
@@ -189,14 +202,17 @@ def test_ordinary_diffusion_family_rejects_duplicate_model_dtype() -> None:
     cfg.model.dtype = "fp16"
 
     with pytest.raises(ValueError, match=r"model\.dtype.*top-level precision"):
-        resolve_family_model_build(cfg, torch.device("cpu"))
+        get_model_family_entry("sd3_5").resolve_model_build(
+            cfg,
+            torch.device("cpu"),
+        )
 
 
 def test_sana_family_invariant_rejects_direct_tool_parameter_override() -> None:
     cfg = load_config("experiment/diffusion/sana/online_grpo_aesthetic")
 
     with pytest.raises(ValueError, match=r"parameter_dtype_override.*conflicts"):
-        resolve_family_model_build(
+        get_model_family_entry("sana").resolve_model_build(
             cfg,
             torch.device("cpu"),
             parameter_dtype_override="bf16",
@@ -216,7 +232,8 @@ def test_token_objective_rejects_unused_math_precision_override() -> None:
         build_algorithm_and_evaluator_from_cfg(
             cfg,
             built=built,
-            family_entry=get_rollout_family_entry("emu3"),
+            family_entry=get_model_family_entry("emu3"),
+            collector_config=build_rollout_config_from_cfg(cfg),
         )
 
 
@@ -245,9 +262,9 @@ def test_reward_factory_passes_the_selected_local_device(monkeypatch) -> None:
 
     monkeypatch.setattr(MultiReward, "from_dict", classmethod(fake_from_dict))
 
-    reward = build_reward_from_cfg(
-        OmegaConf.create({}),
+    reward = build_reward(
         built={"reward": ({"fake": 1.0}, {"fake": {"marker": True}})},
+        resources=None,
         device="cuda:2",
     )
 
@@ -263,9 +280,9 @@ def test_reward_factory_passes_the_selected_local_device(monkeypatch) -> None:
 def test_reward_factory_rejects_an_all_zero_objective() -> None:
     """Checks observation-only components cannot replace the training objective."""
     with pytest.raises(ValueError, match="At least one reward component"):
-        build_reward_from_cfg(
-            OmegaConf.create({}),
+        build_reward(
             built={"reward": ({"pickscore": 0.0}, {})},
+            resources=None,
             device="cpu",
         )
 
@@ -305,9 +322,9 @@ def test_shared_reward_capability_fails_before_component_construction(monkeypatc
     cfg = _shared_reward_cfg("geneval")
 
     with pytest.raises(ValueError, match="geneval"):
-        build_reward_from_cfg(
-            cfg,
+        build_reward(
             built={"reward": ({"geneval": 1.0}, {"geneval": {}})},
+            resources=resolve_distributed_resources(cfg),
             device="cuda:0",
         )
 
@@ -340,9 +357,9 @@ def test_shared_reward_topology_automatically_enables_parking(monkeypatch) -> No
     monkeypatch.setattr(MultiReward, "from_dict", classmethod(fake_from_dict))
     cfg = _shared_reward_cfg("aesthetic")
 
-    reward = build_reward_from_cfg(
-        cfg,
+    reward = build_reward(
         built={"reward": ({"aesthetic": 1.0}, {"aesthetic": {}})},
+        resources=resolve_distributed_resources(cfg),
         device="cuda:0",
     )
 
@@ -360,17 +377,14 @@ def test_reward_preflight_rejects_yaml_lifecycle_override() -> None:
             {"aesthetic": {"sleep_offload": True}},
         ),
     }
-    from vrl.ray.resources import resolve_distributed_resources
-
     with pytest.raises(ValueError, match="sleep_offload is topology-derived"):
-        validate_reward_memory_parking_from_cfg(
-            cfg,
+        validate_reward_memory_parking(
             resources=resolve_distributed_resources(cfg),
             built=built,
         )
 
     with pytest.raises(ValueError, match="sleep_offload is topology-derived"):
-        build_reward_from_cfg(OmegaConf.create({}), built=built, device="cuda:0")
+        build_reward(built=built, resources=None, device="cuda:0")
 
 
 def test_factory_rejects_driver_device_outside_reward_resource_topology() -> None:
@@ -378,9 +392,9 @@ def test_factory_rejects_driver_device_outside_reward_resource_topology() -> Non
     cfg = _shared_reward_cfg("aesthetic")
 
     with pytest.raises(ValueError, match="execution-device source of truth"):
-        build_reward_from_cfg(
-            cfg,
+        build_reward(
             built={"reward": ({"aesthetic": 1.0}, {"aesthetic": {}})},
+            resources=resolve_distributed_resources(cfg),
             device="cpu",
         )
 
@@ -403,8 +417,8 @@ def test_factory_rejects_driver_device_outside_reward_resource_topology() -> Non
         },
     )
     with pytest.raises(ValueError, match="execution-device source of truth"):
-        build_reward_from_cfg(
-            cpu_cfg,
+        build_reward(
             built={"reward": ({"ocr": 1.0}, {"ocr": {}})},
+            resources=resolve_distributed_resources(cpu_cfg),
             device="cuda:0",
         )

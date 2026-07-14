@@ -4,6 +4,6 @@ sampling:
   image_size: 256
   image_token_num: 1024
   num_steps: 20
-  noise_level: 1.0
   guidance_scale: 4.5
+  max_text_length: 256
   ar_scheduler_batch_size: null

@@ -15,7 +15,6 @@ import pytest
 import torch
 from torch import nn
 
-from vrl.models.diffusion.build import build_diffusion_runtime_bundle
 from vrl.models.diffusion.common.lora import LoraModelMixin
 from vrl.models.interfaces.runtime import ModelBuild, RolloutBuildOptions
 
@@ -49,6 +48,20 @@ def _build(*, quantization_format: str | None) -> SimpleNamespace:
         lora_path=None,
         lora={"rank": 2, "alpha": 2, "target_modules": ["proj"]},
     )
+
+
+def _build_sd35_rollout(
+    monkeypatch: pytest.MonkeyPatch,
+    build: ModelBuild,
+    model_cls: type[Any],
+) -> Any:
+    """Build through the production registry while replacing checkpoint I/O."""
+
+    from vrl.families.registry import get_model_family_entry
+    from vrl.models.diffusion.sd3_5 import model as sd35_model
+
+    monkeypatch.setattr(sd35_model, "SD3_5Model", model_cls)
+    return get_model_family_entry("sd3_5").build_rollout(build)
 
 
 @pytest.mark.parametrize("quantization_format", ["fp8", "nvfp4"])
@@ -87,7 +100,7 @@ def test_fp8_config_replay_build_does_not_defer_device_move(monkeypatch) -> None
     """Replay owns no rollout options even when collection uses fp8."""
     from omegaconf import OmegaConf
 
-    from vrl.models.model_build import resolve_model_build
+    from vrl.families.registry import get_model_family_entry
 
     events: list[str] = []
     fake_peft = ModuleType("peft")
@@ -111,7 +124,7 @@ def test_fp8_config_replay_build_does_not_defer_device_move(monkeypatch) -> None
             },
         },
     )
-    build = resolve_model_build(
+    build = get_model_family_entry("sd3_5").resolve_model_build(
         cfg,
         "cpu",
         for_rollout=False,
@@ -162,6 +175,7 @@ def test_shared_builder_drops_master_before_quantized_lora_gpu_move(monkeypatch)
         model_name_or_path="fake",
         device="cpu",
         parameter_dtype=torch.float16,
+        family="sd3_5",
         rollout=RolloutBuildOptions(
             autocast_dtype=torch.bfloat16,
             prompt_encoder_dtype=torch.bfloat16,
@@ -175,11 +189,7 @@ def test_shared_builder_drops_master_before_quantized_lora_gpu_move(monkeypatch)
         sampling_config={"num_steps": 1},
     )
 
-    build_diffusion_runtime_bundle(
-        build,
-        model_cls=_Policy,
-        memory_owner="fake VAE",
-    )
+    _build_sd35_rollout(monkeypatch, build, _Policy)
 
     assert events == ["attach", "quantize", "drop", "move"]
 
@@ -203,6 +213,7 @@ def test_nvfp4_hardware_guard_runs_before_quantization_mutation(
         model_name_or_path="fake",
         device="cpu",
         parameter_dtype=torch.bfloat16,
+        family="sd3_5",
         rollout=RolloutBuildOptions(
             autocast_dtype=torch.bfloat16,
             prompt_encoder_dtype=torch.bfloat16,
@@ -263,6 +274,7 @@ def test_full_finetune_dtype_move_preserves_quantized_cache(
         model_name_or_path="fake",
         device="cpu",
         parameter_dtype=torch.bfloat16,
+        family="sd3_5",
         rollout=RolloutBuildOptions(
             autocast_dtype=torch.bfloat16,
             prompt_encoder_dtype=torch.bfloat16,
@@ -271,11 +283,7 @@ def test_full_finetune_dtype_move_preserves_quantized_cache(
         model_config={"use_lora": False},
     )
 
-    bundle = build_diffusion_runtime_bundle(
-        build,
-        model_cls=_Policy,
-        memory_owner="fake VAE",
-    )
+    bundle = _build_sd35_rollout(monkeypatch, build, _Policy)
 
     quantized = bundle.model.transformer[0]
     if quantization_format == "fp8":

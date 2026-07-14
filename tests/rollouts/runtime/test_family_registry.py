@@ -1,32 +1,37 @@
-"""Tests for canonical rollout family registry metadata."""
+"""Tests for canonical model-family registry behavior."""
 
 from __future__ import annotations
 
 import subprocess
 import sys
+from dataclasses import replace
 
 import pytest
 from omegaconf import OmegaConf
 
-from vrl.rollouts.collector import build_rollout_collector
-from vrl.rollouts.collector.config import RolloutConfig, build_rollout_config_from_cfg
-from vrl.rollouts.families import (
-    FAMILY_REGISTRY,
-    get_rollout_family_entry,
-    normalize_rollout_family,
-    registered_rollout_families,
+from vrl.families.names import (
+    _FAMILY_BY_ALIAS,
+    normalize_model_family,
 )
-from vrl.rollouts.families.registry import CollectorMetadata, _default_return_artifacts
+from vrl.families.registry import (
+    FAMILY_REGISTRY,
+    ARFamilyBuild,
+    DiffusionFamilyBuild,
+    get_model_family_entry,
+)
+from vrl.rollouts.collector import build_rollout_collector
+from vrl.rollouts.collector.config import (
+    RolloutCollectorConfig,
+    build_rollout_config_from_cfg,
+)
+from vrl.utils.config import import_from_path
 
 
-@pytest.mark.parametrize("kind", ["diffusion", "ar_discrete", "ar_continuous", "ar_r1"])
-def test_collector_metadata_accepts_declared_kinds(kind: str) -> None:
-    assert CollectorMetadata(kind=kind).kind == kind  # type: ignore[arg-type]
+def test_family_entry_rejects_a_collector_kind_build_mismatch() -> None:
+    entry = get_model_family_entry("sana")
 
-
-def test_collector_metadata_rejects_unknown_kind() -> None:
-    with pytest.raises(ValueError, match="unsupported collector kind"):
-        CollectorMetadata(kind="typo")  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="does not match its family build"):
+        replace(entry, collector_kind="ar_discrete")
 
 
 def test_family_name_import_does_not_load_runtime_registry() -> None:
@@ -35,8 +40,8 @@ def test_family_name_import_does_not_load_runtime_registry() -> None:
             sys.executable,
             "-c",
             (
-                "import sys; import vrl.rollouts.family_names; "
-                "assert 'vrl.rollouts.families.registry' not in sys.modules"
+                "import sys; import vrl.families.names; "
+                "assert 'vrl.families.registry' not in sys.modules"
             ),
         ],
         check=False,
@@ -47,58 +52,32 @@ def test_family_name_import_does_not_load_runtime_registry() -> None:
     assert result.returncode == 0, result.stderr
 
 
-def test_family_registry_covers_current_rollout_families() -> None:
-    """Every registered family carries structurally valid dispatch wiring.
+def test_family_registry_entries_have_complete_protocol_wiring() -> None:
+    assert FAMILY_REGISTRY
+    assert len(FAMILY_REGISTRY) == len(set(FAMILY_REGISTRY))
 
-    Asserts the *shape* each entry must satisfy (modality-consistent import
-    paths, non-empty task/prefix, importable gatherer) rather than a hand-copied
-    list of family names — a new family is covered automatically and adding one
-    cannot pass without valid wiring.
-    """
-    families = registered_rollout_families()
-    assert families  # registry must not be empty
-    assert len(set(families)) == len(families)  # no duplicate keys
-
-    for family in families:
-        entry = FAMILY_REGISTRY[family]
-        expected_model_prefix = (
-            "vrl.models.diffusion." if entry.collector.kind == "diffusion" else "vrl.models.ar."
-        )
+    for family, entry in FAMILY_REGISTRY.items():
         assert entry.family == family
         assert entry.task
-        assert entry.collector.request_prefix
-        # A diffusion family's executor is either family-specific (under
-        # vrl.models.diffusion) or the shared generic DiffusionChunkExecutor
-        # (family-agnostic infra under vrl.generation.diffusion); both are
-        # modality-consistent. AR families all ship their own executor.
-        if entry.collector.kind == "diffusion":
+        assert callable(entry.new_gatherer().gather_chunks)
+        if entry.collector_kind == "diffusion":
+            assert isinstance(entry.family_build, DiffusionFamilyBuild)
             assert entry.executor_cls.startswith(
                 ("vrl.models.diffusion.", "vrl.generation.diffusion."),
             )
         else:
-            assert entry.executor_cls.startswith(expected_model_prefix)
-            assert entry.ar_build is not None
-            assert entry.build is None
-        assert entry.runtime_builder.startswith(expected_model_prefix)
-        assert entry.model_build_resolver.startswith(expected_model_prefix)
-        assert ":" in entry.gatherer.import_path
+            assert isinstance(entry.family_build, ARFamilyBuild)
+            assert entry.executor_cls.startswith("vrl.models.ar.")
 
 
 def test_family_aliases_resolve_to_canonical_entries() -> None:
-    """Every naming-table alias resolves back to its runtime registry entry."""
-    seen = 0
-    for family, entry in FAMILY_REGISTRY.items():
-        # The canonical name itself must resolve to its own entry.
-        assert normalize_rollout_family(family) == family
-        for alias in entry.aliases:
-            assert normalize_rollout_family(alias) == family
-            assert get_rollout_family_entry(alias) is entry
-            seen += 1
-    assert seen > 0  # guard: the registry must actually declare aliases
+    assert _FAMILY_BY_ALIAS
+    for alias, family in _FAMILY_BY_ALIAS.items():
+        assert normalize_model_family(alias) == family
+        assert get_model_family_entry(alias) is FAMILY_REGISTRY[family]
 
 
 def test_rollout_config_is_projected_from_yaml() -> None:
-    """Checks rollout config is projected from YAML."""
     cfg = OmegaConf.create(
         {
             "sampling": {
@@ -119,139 +98,105 @@ def test_rollout_config_is_projected_from_yaml() -> None:
                     "window_size": 0,
                     "window_range": [0, 10],
                 },
+                "trajectory_storage": {"device": "cpu", "dtype": "float16"},
             },
             "algorithm": {"kl_reward_coef": 0.25},
         },
     )
 
-    rollout_config = build_rollout_config_from_cfg(cfg, family="cosmos-predict2")
+    rollout = build_rollout_config_from_cfg(cfg)
 
-    assert rollout_config.require("width") == 1280
-    assert rollout_config.require("num_steps") == 35
-    assert rollout_config.require("samples_per_chunk") == 8
-    assert rollout_config.require("sde_window_range") == (0, 10)
-    assert rollout_config.require("return_kl") is True
+    assert rollout.values["width"] == 1280
+    assert rollout.values["num_steps"] == 35
+    assert rollout.values["samples_per_chunk"] == 8
+    assert rollout.values["sde_window_range"] == [0, 10]
+    assert rollout.values["return_kl"] is True
+    assert rollout.values["trajectory_storage"] == {
+        "device": "cpu",
+        "dtype": "float16",
+    }
 
 
-def test_request_sampling_is_projected_from_resolved_yaml_config() -> None:
-    """Checks request sampling is projected from resolved YAML config."""
+def test_request_sampling_excludes_driver_only_rollout_values() -> None:
     cfg = OmegaConf.create(
         {
-            "sampling": {
-                "width": 1280,
-                "height": 704,
-                "num_frames": 93,
-                "num_steps": 35,
-                "guidance_scale": 7.0,
-                "fps": 16,
-            },
+            "sampling": {"width": 1280, "num_frames": 93, "fps": 16},
             "rollout": {
                 "n_samples_per_prompt": 4,
                 "prompts_per_batch": 1,
+                "microbatch_size": 1,
+                "host_memory_budget_fraction": 0.8,
                 "samples_per_chunk": 8,
-                "reward_view": "image",
-                "noise_level": 1.0,
-                "same_latent": False,
-                "sde": {
-                    "type": "flow_grpo",
-                    "window_size": 0,
-                    "window_range": [0, 10],
-                },
+                "sde": {"type": "flow_grpo", "window_range": [0, 10]},
             },
             "algorithm": {"kl_reward_coef": 0.0},
         },
     )
 
-    sampling = build_rollout_config_from_cfg(
-        cfg,
-        family="cosmos-predict2",
-    ).request_sampling()
+    sampling = build_rollout_config_from_cfg(cfg).request_sampling()
 
     assert sampling["width"] == 1280
-    assert sampling["num_frames"] == 93
-    assert sampling["fps"] == 16
     assert sampling["samples_per_chunk"] == 8
     assert sampling["sde_type"] == "flow_grpo"
-    assert sampling["sde_window_range"] == (0, 10)
+    assert sampling["sde_window_range"] == [0, 10]
     assert sampling["return_kl"] is False
-    assert "kl_reward_coef" not in sampling
-    assert "n" not in sampling
-    assert "reward_view" not in sampling
-    assert "prompts_per_batch" not in sampling
+    for driver_key in (
+        "host_memory_budget_fraction",
+        "kl_reward_coef",
+        "microbatch_size",
+        "n_samples_per_prompt",
+        "prompts_per_batch",
+    ):
+        assert driver_key not in sampling
 
 
-def test_registry_keeps_return_artifacts_as_wiring_metadata() -> None:
-    """Checks registry keeps return artifacts as wiring metadata."""
-    for family in FAMILY_REGISTRY:
-        assert FAMILY_REGISTRY[family].collector.return_artifacts == _default_return_artifacts
-
-
-def test_migrated_collectors_build_direct_trajectory_collectors() -> None:
-    """Checks migrated collectors build direct trajectory collectors."""
-    for family in FAMILY_REGISTRY:
+def test_all_registry_entries_build_collectors_from_the_same_entry() -> None:
+    for entry in FAMILY_REGISTRY.values():
         collector = build_rollout_collector(
-            family,
+            entry,
             reward_fn=None,
-            config=RolloutConfig(
-                family=family,
-                values={
-                    "n_samples_per_prompt": 1,
-                    "samples_per_chunk": 1,
-                },
+            config=RolloutCollectorConfig(
+                values={"n_samples_per_prompt": 1, "samples_per_chunk": 1},
             ),
         )
-        assert collector.family == family
+        assert collector.request_builder.entry is entry
         assert callable(collector.collect)
 
 
 def test_unknown_family_raises_clear_error() -> None:
-    """Checks unknown family raises clear error."""
-    with pytest.raises(ValueError, match="unsupported rollout family"):
-        get_rollout_family_entry("not_a_family")
+    with pytest.raises(ValueError, match="unsupported model family"):
+        get_model_family_entry("not_a_family")
 
 
-def test_ar_families_declare_importable_replay_builders() -> None:
-    """Every AR family must resolve through the generic AR GRPO entrypoint.
-
-    train_ar_grpo (vrl/scripts/ar/train.py) builds the trainer replay bundle
-    from the entry's replay_runtime_builder string; a missing or misspelled
-    declaration would only surface at training launch otherwise.
-    """
-    from vrl.rollouts.families.registry import FAMILY_REGISTRY
-    from vrl.utils.config import import_from_path
-
-    ar_families = [entry for entry in FAMILY_REGISTRY.values() if entry.task.startswith("ar_")]
-    assert len(ar_families) >= 6
-    for entry in ar_families:
-        assert entry.replay_runtime_builder, f"{entry.family} lacks replay_runtime_builder"
-        assert callable(import_from_path(entry.replay_runtime_builder))
-        assert callable(import_from_path(entry.runtime_builder))
-        assert callable(import_from_path(entry.model_build_resolver))
-
-
-def test_diffusion_families_resolve_a_replay_path() -> None:
-    """Every diffusion family must resolve a trainer replay bundle path.
-
-    The generic replay builder (vrl/models/diffusion/build.py) either loads
-    ``build.replay_cls`` or dispatches to the entry's hand-written
-    ``replay_runtime_builder`` (echo/cosmos3/anima). A family with neither
-    would only fail at training launch — this is the regression the
-    echo/cosmos3/anima wiring gap slipped through.
-    """
-    from vrl.rollouts.families.registry import FAMILY_REGISTRY
-    from vrl.utils.config import import_from_path
-
-    diffusion_families = [
-        entry for entry in FAMILY_REGISTRY.values() if entry.collector.kind == "diffusion"
+def test_ar_family_build_descriptors_are_importable() -> None:
+    ar_entries = [
+        entry for entry in FAMILY_REGISTRY.values() if entry.collector_kind != "diffusion"
     ]
-    assert len(diffusion_families) >= 10
-    for entry in diffusion_families:
-        assert entry.build is not None, f"{entry.family} lacks a build descriptor"
-        if entry.build.replay_cls is not None:
-            assert callable(import_from_path(entry.build.replay_cls))
+    assert len(ar_entries) >= 6
+    for entry in ar_entries:
+        build = entry.family_build
+        assert isinstance(build, ARFamilyBuild)
+        for path in (
+            build.model_cls,
+            build.replay_cls,
+            build.config_cls,
+            build.config_builder,
+        ):
+            assert callable(import_from_path(path))
+
+
+def test_diffusion_family_build_descriptors_have_one_replay_path() -> None:
+    diffusion_entries = [
+        entry for entry in FAMILY_REGISTRY.values() if entry.collector_kind == "diffusion"
+    ]
+    assert len(diffusion_entries) >= 10
+    for entry in diffusion_entries:
+        build = entry.family_build
+        assert isinstance(build, DiffusionFamilyBuild)
+        if build.replay_cls is not None:
+            assert callable(import_from_path(build.replay_cls))
+            assert build.transformer_classname
+            assert build.replay_runtime_builder is None
         else:
-            assert entry.replay_runtime_builder, (
-                f"{entry.family} has neither build.replay_cls nor "
-                "replay_runtime_builder — its trainer replay path is broken"
-            )
-            assert callable(import_from_path(entry.replay_runtime_builder))
+            assert build.replay_runtime_builder
+            assert callable(import_from_path(build.replay_runtime_builder))

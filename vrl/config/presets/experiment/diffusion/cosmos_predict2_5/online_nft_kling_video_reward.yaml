@@ -63,7 +63,7 @@ rollout:
   # block (compile-both): the rollout worker inherits the model block.
 
 trainer:
-  entrypoint: vrl.scripts.diffusion.cosmos.train:train_cosmos_predict25_diffusion_nft
+  entrypoint: vrl.scripts.diffusion.train:train_diffusion_online
   output_dir: outputs/cosmos_predict2_5_2b_diffusionnft
   # Paper §4.2.2: "trained for 256 steps with a batch size of 32." Each epoch
   # here = one optimizer update over the prompts_per_batch=32 target batch, so

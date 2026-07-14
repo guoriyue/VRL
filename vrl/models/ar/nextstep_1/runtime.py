@@ -21,20 +21,6 @@ from vrl.models.ar.nextstep_1.runner import NextStep1ARModelRunner
 from vrl.models.interfaces.runtime import ModelBuild
 from vrl.trajectory import build_ar_continuous_trajectory
 
-
-def enrich_nextstep_build(build: ModelBuild, cfg: Any) -> None:
-    """Carry the actor-owned gradient-checkpointing knob into model config."""
-
-    # gradient_checkpointing lives under cfg.actor (outside the model block the
-    # uniform extractor carries), so fold it into model_config here for the
-    # NextStep config builder to read alongside the other model knobs.
-    actor = cfg.get("actor") if hasattr(cfg, "get") else None
-    if actor is not None:
-        gc = actor.get("gradient_checkpointing") if hasattr(actor, "get") else None
-        if gc is not None and build.model_config is not None:
-            build.model_config["gradient_checkpointing"] = bool(gc)
-
-
 # NextStep LoRA defaults mirror the upstream recipe; applied at read time so the
 # carried ``model.lora`` block only needs the values it overrides.
 _NEXTSTEP_LORA_DEFAULTS: dict[str, Any] = {
@@ -321,6 +307,5 @@ __all__ = [
     "NextStep1ARChunkResult",
     "NextStep1ChunkExecutor",
     "NextStep1ChunkGatherer",
-    "enrich_nextstep_build",
     "nextstep_config_from_build",
 ]

@@ -13,8 +13,6 @@ from typing import Any
 
 from vrl.models.interfaces.replay import RuntimeModel
 
-MEMORY_POLICY_METADATA_KEY = "memory_policy"
-
 # Single source of truth for valid ``model.memory`` subsection names, shared by
 # the config schema's unknown-key lint and the generation memory policy's typo
 # check. Today only ``vae_decode`` (sliced/tiled VAE decode, applied on the
@@ -143,9 +141,10 @@ class ModelBuild:
     Builders take this, not the whole RL cfg. Reward / algorithm / trainer /
     dataset / logging cadence are explicitly out of scope.
 
-    ``model_config`` / ``sampling_config`` carry the runtime-relevant config
-    blocks (``cfg.model`` / ``cfg.sampling``) wholesale as deep-converted plain
-    dicts. The read properties below expose the common curated views so
+    ``model_config`` carries the model-owned remainder of ``cfg.model`` after
+    registry identity, checkpoint path, and executor settings are separated;
+    ``sampling_config`` carries ``cfg.sampling``. The read properties expose
+    common curated views so
     consumers read ``build.memory`` / ``build.lora`` / ``build.num_steps`` directly
     instead of re-deriving from the raw block. They centralize the lora /
     scheduler / memory / compile transforms in one place, so no read-time logic
@@ -159,11 +158,9 @@ class ModelBuild:
     # Resolved base transformer parameter dtype. A family build descriptor may pin
     # this independently of rollout autocast (SANA: fp16 parameters, bf16 forward).
     parameter_dtype: Any
-    # Canonical rollout family name, set by the registry-backed resolver
-    # (vrl.models.diffusion.build:resolve_family_model_build) so the generic
-    # builders can look the family's build recipe up worker-side. None on the
-    # legacy per-family builder path, which binds its model class in code.
-    family: str | None = None
+    # Canonical registry identity. Both driver replay and Ray rollout builds
+    # require it; the worker restores it from the launch contract.
+    family: str
     model_config: dict[str, Any] | None = None
     sampling_config: dict[str, Any] | None = None
     # Full-generation build inputs. ``None`` is the replay contract: replay owns
@@ -179,6 +176,8 @@ class ModelBuild:
             resolve_torch_dtype,
         )
 
+        if not isinstance(self.family, str) or not self.family:
+            raise ValueError("ModelBuild.family must be a non-empty string")
         self.parameter_dtype = resolve_torch_dtype(self.parameter_dtype)
         parameter_name = dtype_to_wire_name(self.parameter_dtype)
         try:

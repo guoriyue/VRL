@@ -32,13 +32,20 @@ class GenerationWorkerCore:
     def __init__(
         self,
         worker_id: str,
-        launch_contract: GenerationRuntimeLaunchContract | Mapping[str, Any],
+        launch_contract: GenerationRuntimeLaunchContract,
         *,
         metadata_provider: Callable[[], Mapping[str, Any]] | None = None,
     ) -> None:
         self.worker_id = worker_id
-        self.launch_contract = GenerationRuntimeLaunchContract.from_value(launch_contract)
-        self.family = self.launch_contract.family
+        if not isinstance(launch_contract, GenerationRuntimeLaunchContract):
+            raise TypeError(
+                "launch_contract must be a GenerationRuntimeLaunchContract, "
+                f"got {type(launch_contract).__name__}",
+            )
+        self.launch_contract = launch_contract
+        from vrl.families.registry import get_model_family_entry
+
+        self.family_entry = get_model_family_entry(launch_contract.family)
         self.executor: GenerationChunkExecutor | None = None
         self._policy_version: int | None = self.launch_contract.policy_version
         # Flipped on once a model that supports versioned trainable-state slots
@@ -46,19 +53,14 @@ class GenerationWorkerCore:
         # the slot for each request's stamped version instead of comparing against
         # one global version (which is what makes a non-draining sync safe).
         self._uses_versioned_slots = False
-        profiler_config = self.launch_contract.extra.get("torch_profiler", {})
-        self._profiler_config = (
-            TorchProfilerConfig(**dict(profiler_config))
-            if isinstance(profiler_config, Mapping)
-            else TorchProfilerConfig()
+        self._profiler_config = TorchProfilerConfig(
+            **dict(self.launch_contract.torch_profiler),
         )
-        self._profiler_output_dir = str(
-            self.launch_contract.extra.get("profiler_output_dir", "outputs/"),
-        )
+        self._profiler_output_dir = self._profiler_config.output_dir or "outputs/"
         self._profiler_step = 0
         self._metadata_provider = metadata_provider or self._fallback_metadata
         # Set to a CumemPool when load_policy pools the model for sleep-offload
-        # (extra["sleep_offload"]); sleep()/wake() then release/restore GPU physical
+        # (launch_contract.sleep_offload); sleep()/wake() then release/restore GPU physical
         # pages through it instead of the naive to(cpu)/to(gpu) round trip. vLLM's
         # own "weights" tag = the offloaded (not discarded) slice of a sleeping
         # engine, keeping semantics identical to verl-omni's level-1.
@@ -74,27 +76,27 @@ class GenerationWorkerCore:
         """Build the family executor from the serialized launch contract."""
 
         if self.executor is not None:
-            if self._parking_requested():
+            if self.launch_contract.sleep_offload:
                 self._require_complete_parking_backend()
             return
         from vrl.utils.memory import log_host_memory
 
-        if self._parking_requested():
-            self._preload_gpu_used_bytes = self._gpu_used_bytes()
+        if self.launch_contract.sleep_offload:
+            self._preload_gpu_used_bytes = gpu_used_bytes()
         self._cpu_parked_device = None
         log_host_memory(f"generation_worker:{self.worker_id}:before_load_policy", log=logger)
         try:
             self.executor = self._build_executor_maybe_pooled()
             if (
-                self.executor.family != self.launch_contract.family
-                or self.executor.task != self.launch_contract.task
+                self.executor.family != self.family_entry.family
+                or self.executor.task != self.family_entry.task
             ):
                 raise ValueError(
                     "executor identity does not match launch contract: "
                     f"{self.executor.family}/{self.executor.task} != "
-                    f"{self.launch_contract.family}/{self.launch_contract.task}",
+                    f"{self.family_entry.family}/{self.family_entry.task}",
                 )
-            if self._parking_requested():
+            if self.launch_contract.sleep_offload:
                 self._require_complete_parking_backend()
         except BaseException as load_error:
             try:
@@ -110,7 +112,7 @@ class GenerationWorkerCore:
     def _build_executor_maybe_pooled(self) -> GenerationChunkExecutor:
         """Build the executor, pooling the model in CuMemAllocator when requested.
 
-        A sleep-offload diffusion worker (``extra["sleep_offload"]``, set by the
+        A sleep-offload diffusion worker (``launch_contract.sleep_offload``, set by the
         colocated-trainer lease) allocates the whole model inside vLLM's
         CuMemAllocator pool, so ``sleep``/``wake`` release and restore the GPU
         *physical* pages via CUDA virtual memory. AR remains on the verified CPU
@@ -120,7 +122,10 @@ class GenerationWorkerCore:
         implemented complete fallback parking instead of accepting a no-op.
         """
 
-        if not self._parking_requested() or self.launch_contract.generation_kind != "diffusion":
+        if (
+            not self.launch_contract.sleep_offload
+            or self.family_entry.collector_kind != "diffusion"
+        ):
             return self._build_executor()
         pool = CumemPool.try_create(tag="weights")
         if pool is None:
@@ -173,11 +178,11 @@ class GenerationWorkerCore:
         """
 
         if self.executor is None:
-            if self._parking_requested():
+            if self.launch_contract.sleep_offload:
                 raise RuntimeError(
                     f"generation worker {self.worker_id!r} cannot park before policy load",
                 )
-            used_bytes = self._gpu_used_bytes()
+            used_bytes = gpu_used_bytes()
             snapshot = WorkerMemoryParkingSnapshot(
                 worker_id=self.worker_id,
                 backend="cpu_only",
@@ -188,12 +193,12 @@ class GenerationWorkerCore:
             )
             snapshot.validate()
             return snapshot
-        if self._parking_requested():
+        if self.launch_contract.sleep_offload:
             self._require_complete_parking_backend()
         # This is provenance for the operation being attempted, not durable
         # worker state. Sampling here includes generation-time caches allocated
         # after load_policy() returned.
-        loaded_bytes = self._gpu_used_bytes()
+        loaded_bytes = gpu_used_bytes()
         pool = self._cumem
         if pool is not None:
             # cumem owns the whole pooled model (transformer + frozen components);
@@ -201,7 +206,7 @@ class GenerationWorkerCore:
             # physical pages, no per-module .to() round trip needed.
             if not pool.asleep:
                 pool.sleep()
-            self._release_cuda_memory_for_parking()
+            release_cuda_memory_for_parking()
             backend = "cumem"
         else:
             model = self.executor.model
@@ -236,13 +241,13 @@ class GenerationWorkerCore:
                         ) from rollback_errors[0]
                     raise
                 self._cpu_parked_device = restore_device
-            self._release_cuda_memory_for_parking()
+            release_cuda_memory_for_parking()
             backend = "cpu_offload" if str(restore_device).startswith("cuda") else "cpu_only"
 
-        residual_bytes = self._gpu_used_bytes()
+        residual_bytes = gpu_used_bytes()
         baseline_bytes = self._preload_gpu_used_bytes
         if baseline_bytes is None:
-            if self._parking_requested() or residual_bytes:
+            if self.launch_contract.sleep_offload or residual_bytes:
                 raise RuntimeError(
                     f"generation worker {self.worker_id!r} has no pre-load GPU "
                     "parking baseline; load it with sleep_offload enabled",
@@ -287,9 +292,6 @@ class GenerationWorkerCore:
             move_frozen(device)
         self._cpu_parked_device = None
 
-    def _parking_requested(self) -> bool:
-        return bool(self.launch_contract.extra.get("sleep_offload"))
-
     def _require_complete_parking_backend(self) -> None:
         """Validate the concrete executor path before a shared-GPU run proceeds."""
 
@@ -302,7 +304,7 @@ class GenerationWorkerCore:
                 f"generation worker {self.worker_id!r} cannot completely park "
                 f"{type(executor).__name__}: CPU fallback requires executor.model.to(...)"
             )
-        if self.launch_contract.generation_kind == "diffusion" and not callable(
+        if self.family_entry.collector_kind == "diffusion" and not callable(
             getattr(model, "move_frozen_components", None),
         ):
             raise RuntimeError(
@@ -310,15 +312,6 @@ class GenerationWorkerCore:
                 f"{type(model).__name__}: diffusion CPU fallback requires "
                 "move_frozen_components(...)"
             )
-
-    # Instance-assignable test seams over shared parking bookkeeping.
-    @classmethod
-    def _gpu_used_bytes(cls) -> int:
-        return gpu_used_bytes()
-
-    @classmethod
-    def _release_cuda_memory_for_parking(cls) -> None:
-        return release_cuda_memory_for_parking()
 
     def update_weights(self, state_ref: Any, policy_version: int) -> int:
         """Install weights and return the policy version as the commit ACK.
@@ -719,7 +712,7 @@ class GenerationWorkerCore:
         step = self._profiler_step
         self._profiler_step += 1
         worker_name = (
-            f"{self.worker_id}_{self.family}_{self.launch_contract.task}_"
+            f"{self.worker_id}_{self.family_entry.family}_{self.family_entry.task}_"
             f"policy{self._policy_version}_chunk{chunk.prompt_index}_{chunk.sample_start}"
         )
         try:
@@ -771,19 +764,11 @@ class GenerationWorkerCore:
 
     def _build_executor(self) -> GenerationChunkExecutor:
         launch_contract = self.launch_contract
-        builder_path = launch_contract.runtime_builder
-        executor_path = launch_contract.executor_cls
-        if builder_path is None or executor_path is None:
-            raise ValueError(
-                "GenerationRuntimeLaunchContract requires runtime_builder and "
-                "executor_cls import paths",
-            )
-
         from vrl.models.interfaces.runtime import ModelBuild
 
-        build_runtime_bundle = import_from_path(str(builder_path))
-        executor_cls = import_from_path(str(executor_path))
-        build_payload = launch_contract.model_build_payload()
+        executor_cls = import_from_path(self.family_entry.executor_cls)
+        build_payload = dict(launch_contract.model_build)
+        build_payload["family"] = self.family_entry.family
         device = build_payload.get("device")
         if isinstance(device, str):
             import torch
@@ -792,7 +777,7 @@ class GenerationWorkerCore:
         # ModelBuild and RolloutBuildOptions normalize parameter and nested rollout
         # dtypes while reconstructing the primitive Ray payload.
         build = ModelBuild(**build_payload)
-        bundle = build_runtime_bundle(build)
+        bundle = self.family_entry.build_rollout(build)
         model = require_runtime_model(bundle.model, owner="RuntimeBundle.model")
         # Family- and scheme-agnostic backstop: if rollout quantization asks for a
         # quantized rollout (FP8/NVFP4/...) but this family's builder forgot to swap,
@@ -800,7 +785,15 @@ class GenerationWorkerCore:
         from vrl.models.loader import assert_rollout_quantization_applied
 
         assert_rollout_quantization_applied(model, build)
-        built = executor_cls(model, **dict(launch_contract.executor_kwargs))
+        executor_kwargs = dict(launch_contract.executor_kwargs)
+        from vrl.families.registry import GENERIC_DIFFUSION_EXECUTOR
+
+        if self.family_entry.executor_cls == GENERIC_DIFFUSION_EXECUTOR:
+            executor_kwargs.update(
+                family=self.family_entry.family,
+                task=self.family_entry.task,
+            )
+        built = executor_cls(model, **executor_kwargs)
         return _require_chunked_executor(built)
 
     @staticmethod

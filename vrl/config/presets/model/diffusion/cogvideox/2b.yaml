@@ -1,5 +1,5 @@
 # CogVideoX-2b (v-prediction DDPM DiT) — checkpoint, LoRA.
-# Non-flow family: pair with sampling.sde_type: ddim (validated at rollout).
+# Non-flow family: pair with rollout.sde.type: ddim (validated at rollout).
 model:
   family: cogvideox
   executor:

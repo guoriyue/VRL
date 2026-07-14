@@ -38,7 +38,7 @@
 
 1. **去噪轨迹 rollout 编排** — `vrl/rollouts/orchestration/continuous/`(producer/queue/consumer + staleness)+ `vrl/generation/diffusion/executor.py`(逐步去噪、每步记 `log_prob/prev_sample_mean/std_dev_t`)+ `vrl/trainers/weight_sync.py`(version-stamped 权重同步)。多步轨迹捕获 + 每步 replay 重算 old_log_prob,是 AR-token rollout 根本没有的形状。
 2. **统一模型族契约** — `vrl/models/interfaces/replay.py`（`RuntimeModel.replay_forward`）+
-   `vrl/rollouts/families/registry.py`。registry 当前有 **23 个 canonical entry（17 diffusion +
+   `vrl/families/registry.py`。registry 当前有 **23 个 canonical entry（17 diffusion +
    6 AR，含任务变体）**，都藏在同一个 replay 契约后面。标准 diffusion 接入是
    **model module + descriptor entry + bundled presets + contract tests**，trainer/algorithm 零改动。
 3. **diffusion 专属 RL 数学** — `vrl/algorithms/grpo/continuous.py` + `diffusion_nft.py` + `vrl/math/diffusion/flow_matching.py`。Flow-DPPO 的隐空间非对称 KL 信赖域、DiffusionNFT 的 likelihood-free 严格 on-policy、连续 log-prob 上的 TIS/RS 精度漂移校正——这些和类别 RL **数学上不兼容**,不是换 config 能搬的。

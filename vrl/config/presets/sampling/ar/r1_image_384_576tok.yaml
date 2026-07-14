@@ -4,5 +4,6 @@ sampling:
   image_size: 384
   guidance_scale: 5.0
   temperature: 0.9
+  max_text_length: 256
   ar_scheduler_batch_size: null
   max_reflect_len: 80

@@ -10,7 +10,6 @@ import torch
 
 from vrl.generation import GenerationOutput
 from vrl.rollouts.batch import RolloutBatch
-from vrl.rollouts.collector.artifacts import RewardArtifactPolicy
 from vrl.rollouts.collector.rewards import RewardScoringInput
 from vrl.trajectory import (
     RewardView,
@@ -31,11 +30,9 @@ class RolloutBatchBuildContext:
     metadata: dict[str, Any]
     device: Any | None = None
     kl_reward_coef: float = 0.0
-    reward_view_name: str | None = None
     trajectory_storage_policy: TrajectoryStoragePolicy = field(
         default_factory=TrajectoryStoragePolicy,
     )
-    reward_artifact_policy: RewardArtifactPolicy = field(default_factory=RewardArtifactPolicy)
 
 
 class TrajectoryRolloutBatchBuilder:
@@ -246,15 +243,6 @@ class TrajectoryRolloutBatchBuilder:
 
     def _reward_view(self) -> RewardView:
         reward_views = self.trajectory.reward_views
-        requested = self.context.reward_view_name
-        if requested:
-            view = reward_views.get(requested)
-            if view is None:
-                raise RuntimeError(
-                    f"TrajectoryBatch {self.trajectory.request_id!r} has no "
-                    f"reward view {requested!r}; available={sorted(reward_views)}",
-                )
-            return view
         if len(reward_views) == 1:
             return next(iter(reward_views.values()))
         if not reward_views:
@@ -263,7 +251,7 @@ class TrajectoryRolloutBatchBuilder:
             )
         raise RuntimeError(
             f"TrajectoryBatch {self.trajectory.request_id!r} has multiple reward "
-            "views; set RolloutBatchBuildContext.reward_view_name",
+            "views; every generated trajectory must declare exactly one scoring view",
         )
 
     def _tensor_value_from_ref(self, ref: str) -> Any:

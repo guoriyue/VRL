@@ -26,7 +26,7 @@ from tests.quality.io import (
     source_tree_sha256,
 )
 from vrl.config.validation import require
-from vrl.rollouts.family_names import normalize_rollout_family
+from vrl.families.names import normalize_model_family
 
 ASSET_ROOT = Path(__file__).with_name("protocols")
 
@@ -38,7 +38,7 @@ def family_profile_path(family: str) -> Path:
 
 
 def load_quality_profile(cfg: DictConfig) -> tuple[QualityProfile, QualityProtocol]:
-    family = normalize_rollout_family(str(require(cfg, "model.family")))
+    family = normalize_model_family(str(require(cfg, "model.family")))
     profile_path = family_profile_path(family)
     profile_raw = _read_yaml_mapping(profile_path)
     profile = QualityProfile.from_mapping(profile_raw)
@@ -96,7 +96,7 @@ def evaluate_inference_preflight(
 ) -> dict[str, Any]:
     """Evaluate one evidence manifest in-process and return a pytest-friendly report."""
 
-    family = normalize_rollout_family(str(require(cfg, "model.family")))
+    family = normalize_model_family(str(require(cfg, "model.family")))
     profile, protocol = load_quality_profile(cfg)
     manifest_path = Path(evidence_path).expanduser().resolve()
     manifest = read_json_object(manifest_path)

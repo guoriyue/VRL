@@ -324,7 +324,7 @@ async def test_async_launcher_initializes_on_caller_then_loads_off_loop(monkeypa
 
     monkeypatch.setattr(launcher_module, "require_ray", lambda: _RayApi)
     monkeypatch.setattr(launcher_module.RayGenerationLauncher, "launch", launch)
-    result = await launcher.launch_async(None, None, None, placement=None)
+    result = await launcher.launch_async(None, None, placement=None)
 
     assert result == "runtime"
     assert init_threads == [caller_thread]

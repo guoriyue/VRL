@@ -91,11 +91,8 @@ def _on_demand_resources(*, colocated: bool = True) -> SimpleNamespace:
 def _launch_contract(*, policy_version: int = 0) -> GenerationRuntimeLaunchContract:
     return GenerationRuntimeLaunchContract(
         family="sd3_5",
-        task="t2i",
-        generation_kind="diffusion",
+        model_build={},
         policy_version=policy_version,
-        runtime_builder="tests:runtime_builder",
-        executor_cls="tests:executor_cls",
     )
 
 
@@ -264,7 +261,7 @@ def test_on_demand_factory_stamps_contract_for_cumem_offload() -> None:
     runtime = _on_demand_runtime(gpus_per_worker=1.0)
     state = runtime._on_demand
     assert state is not None
-    assert state.launch_inputs.launch_contract.extra["sleep_offload"] is True
+    assert state.launch_inputs.launch_contract.sleep_offload is True
 
 
 def test_on_demand_weight_sync_capability_does_not_require_active_workers() -> None:

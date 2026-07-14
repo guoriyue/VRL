@@ -9,7 +9,7 @@ CogVideoX specifics vs Wan (the reference video family):
 - NOT flow-matching: a v-prediction DDPM ladder (CogVideoXDDIMScheduler with
   snr_shift + zero-SNR rescale). Rollout/replay log-probs run through
   ``sde_type="ddim"`` (``vrl/math/diffusion/ddim.py``) — experiments MUST set
-  ``sampling.sde_type: ddim``; ``prepare_sampling`` fails loud when the
+  ``rollout.sde.type: ddim``; ``prepare_sampling`` fails loud when the
   scheduler carries ``clip_sample=True`` (the Gaussian ignores clipping).
 - Latents are ``[B, F, C, H, W]`` — the FRAME axis precedes channels — and
   ``prepare_latents`` takes ``num_frames`` third, not last. The layout rides
@@ -174,16 +174,6 @@ class CogVideoXModel(LoraModelMixin, DiffusersPipelineModelBase, DiffusionBackbo
             pipeline=pipeline,
             device=build.device,
         )
-
-    def _encoder_device(self) -> Any:
-        """Device the frozen T5 encoder lives on (CPU when offloaded)."""
-        enc = getattr(self.pipeline, "text_encoder", None)
-        if enc is not None:
-            try:
-                return next(enc.parameters()).device
-            except StopIteration:
-                pass
-        return self.device
 
     # -- encode_prompt -------------------------------------------------
 

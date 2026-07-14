@@ -1,4 +1,4 @@
-"""Lightweight canonical names and aliases for rollout families.
+"""Lightweight canonical names and aliases for model families.
 
 This module is the naming boundary shared by config validation and the full
 runtime registry. It deliberately contains no model, Ray, or generation
@@ -11,7 +11,7 @@ from __future__ import annotations
 from collections.abc import Iterable
 
 # Deliberately isolated protocol taxonomy. Runtime wiring remains in
-# families/registry.py; this table owns only stable external names.
+# registry.py; this table owns only stable external names.
 _ALIASES_BY_FAMILY: dict[str, tuple[str, ...]] = {
     "flux": ("flux_1_dev",),
     "qwen_image": ("qwen-image",),
@@ -44,7 +44,7 @@ def _index_aliases() -> dict[str, str]:
         for alias in aliases:
             if alias in indexed:
                 raise ValueError(
-                    f"duplicate rollout family alias {alias!r}: {indexed[alias]!r} and {family!r}",
+                    f"duplicate model family alias {alias!r}: {indexed[alias]!r} and {family!r}",
                 )
             indexed[alias] = family
     return indexed
@@ -53,33 +53,26 @@ def _index_aliases() -> dict[str, str]:
 _FAMILY_BY_ALIAS = _index_aliases()
 
 
-def normalize_rollout_family(family: str) -> str:
+def normalize_model_family(family: str) -> str:
     """Return the canonical family name for a known alias."""
 
     text = str(family)
     return _FAMILY_BY_ALIAS.get(text, text)
 
 
-def rollout_family_aliases(family: str) -> tuple[str, ...]:
-    """Return the declared aliases for one canonical family."""
-
-    return _ALIASES_BY_FAMILY.get(str(family), ())
-
-
-def validate_rollout_family_aliases(canonical_families: Iterable[str]) -> None:
+def validate_model_family_aliases(canonical_families: Iterable[str]) -> None:
     """Validate naming-table targets and collisions against a runtime registry."""
 
     canonical = frozenset(str(family) for family in canonical_families)
     missing = sorted(set(_ALIASES_BY_FAMILY) - canonical)
     if missing:
-        raise ValueError(f"rollout family aliases target unregistered families: {missing}")
+        raise ValueError(f"model family aliases target unregistered families: {missing}")
     conflicts = sorted(set(_FAMILY_BY_ALIAS) & canonical)
     if conflicts:
-        raise ValueError(f"rollout family aliases collide with canonical names: {conflicts}")
+        raise ValueError(f"model family aliases collide with canonical names: {conflicts}")
 
 
 __all__ = [
-    "normalize_rollout_family",
-    "rollout_family_aliases",
-    "validate_rollout_family_aliases",
+    "normalize_model_family",
+    "validate_model_family_aliases",
 ]

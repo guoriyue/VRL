@@ -4,5 +4,3 @@
 rollout:
   n_samples_per_prompt: 8
   prompts_per_batch: 8
-  temperature: 1.0
-  max_text_length: 256

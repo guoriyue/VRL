@@ -1,5 +1,5 @@
 # PixArt-Sigma XL-2 512-MS (epsilon DDPM DiT + SDXL KL-VAE) — checkpoint, LoRA.
-# Non-flow family: pair with sampling.sde_type: ddim (the family rebuilds a
+# Non-flow family: pair with rollout.sde.type: ddim (the family rebuilds a
 # DDIMScheduler from the shipped DPM-Solver beta config for RL log-probs).
 model:
   family: pixart_sigma

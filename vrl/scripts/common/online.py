@@ -15,6 +15,9 @@ from omegaconf import DictConfig, OmegaConf
 
 from vrl.config.builders import build_configs
 from vrl.config.validation import require
+from vrl.families.registry import (
+    get_model_family_entry,
+)
 from vrl.generation.ray.launcher import RayGenerationLauncher
 from vrl.models.interfaces import require_runtime_model
 from vrl.ray.dependencies import require_ray
@@ -25,19 +28,13 @@ from vrl.ray.resources import (
     reward_torch_device,
     trainer_torch_device,
 )
-from vrl.rollouts.families import (
-    get_rollout_family_entry,
-    resolve_entry_model_build,
-)
+from vrl.rollouts.collector import build_rollout_collector
+from vrl.rollouts.collector.config import build_rollout_config_from_cfg
 from vrl.rollouts.orchestration import validate_rollout_schedule_topology
 from vrl.scripts.common.factory import (
-    build_collector_from_cfg,
-    build_online_recipe_components,
-    validate_reward_memory_parking_from_cfg,
-)
-from vrl.scripts.common.types import (
-    OnlineRecipeDefinition,
-    OnlineRecipeStack,
+    build_algorithm_and_evaluator_from_cfg,
+    build_reward,
+    validate_reward_memory_parking,
 )
 from vrl.trainers.activation_checkpointing import (
     enable_transformer_gradient_checkpointing,
@@ -278,7 +275,7 @@ def _warn_global_std_streaming_divergence(cfg: Any, trainer_config: Any) -> None
     )
 
 
-def default_reference_model(bundle: Any, cfg: Any) -> Any | None:
+def _default_reference_model(bundle: Any, cfg: Any) -> Any | None:
     """Reference model for KL: the (LoRA) policy itself when use_lora and kl_coef>0, else None."""
 
     # Convention for config reads in this module: keys that family configs
@@ -317,7 +314,7 @@ def _load_sft_latents_from_config(cfg: DictConfig, family: str) -> dict[str, Any
     )
 
 
-def export_transformer_lora(bundle: Any, cfg: DictConfig) -> dict[str, Any] | None:
+def _export_transformer_lora(bundle: Any, cfg: DictConfig) -> dict[str, Any] | None:
     """Export diffusion transformer LoRA weights when configured."""
 
     if not bool(OmegaConf.select(cfg, "model.use_lora", default=False)):
@@ -331,13 +328,13 @@ def export_transformer_lora(bundle: Any, cfg: DictConfig) -> dict[str, Any] | No
         return {LORA_WEIGHTS_NAME: exportable[0]}
     if len(exportable) > 1:
         raise ValueError(
-            "export_transformer_lora only supports one exportable transformer; "
+            "diffusion LoRA export only supports one exportable transformer; "
             "set model.trainable_transformers to a single module before exporting",
         )
     return None
 
 
-def export_language_model_lora(bundle: Any, cfg: DictConfig) -> dict[str, Any] | None:
+def _export_language_model_lora(bundle: Any, cfg: DictConfig) -> dict[str, Any] | None:
     """Export AR language-model LoRA weights when configured."""
 
     if bool(OmegaConf.select(cfg, "model.use_lora", default=False)):
@@ -468,26 +465,23 @@ async def _run_streaming_optimizer_update(
 class OnlineRecipeRun:
     """Execution controller for one ``run_online_recipe`` invocation.
 
-    Holds the wired runtime (``stack``) plus the per-run execution state the
-    recipe loop mutates: the two metrics-CSV paths, the prompt-sampling RNG, and
-    whether this is a resume. The metrics-CSV and checkpoint side effects live
-    here as methods so the loop calls ``run.write_metric_row(epoch, metrics)``
-    instead of threading ``csv_path`` / ``reward_fn`` / ``component_names`` /
-    ``rng`` through free functions on every call.
-
-    This is NOT a second owner of ``stack``'s fields -- component_names,
-    reward_fn, trainer, definition, etc. are all read through ``self.stack``.
-    ``OnlineRecipeStack`` holds the wired runtime objects; ``OnlineRecipeRun``
-    is the IO/execution controller layered on top of it.
+    Owns the wired training objects and the per-run CSV/checkpoint state. These
+    fields used to sit in a one-owner nested wrapper; keeping them
+    here makes the controller the single source of its own checkpoint inputs.
     """
 
-    stack: OnlineRecipeStack
+    bundle: Any
+    trainer: Any
+    strategy: Any
+    family: str
+    component_names: tuple[str, ...]
+    export_modules: dict[str, Any] | None
     csv_path: Path
     rng: Any
     resume: bool
 
     def prepare_metrics_csv(self) -> None:
-        component_cols = ",".join(f"r_{name}" for name in self.stack.component_names)
+        component_cols = ",".join(f"r_{name}" for name in self.component_names)
         header = (
             "epoch,loss,policy_loss,sft_loss,kl_penalty,weighted_kl_loss,"
             "reward_mean,reward_std,"
@@ -523,7 +517,7 @@ class OnlineRecipeRun:
         prepare_metrics_csv(self.csv_path, header + "\n", resume=self.resume)
 
     def write_metric_row(self, epoch: int, metrics: Any) -> None:
-        component_names = self.stack.component_names
+        component_names = self.component_names
         current = getattr(metrics, "reward_components", {}) or {}
         component_means = {
             name: float(current[name]) if name in current else float("nan")
@@ -637,33 +631,27 @@ class OnlineRecipeRun:
             )
 
     def save_checkpoint(self, path: Path, *, epoch: int) -> None:
-        stack = self.stack
         # Called on EVERY rank: save_training_checkpoint runs the trainable-state
         # gather (a collective under FSDP2) on all ranks and writes files on the
         # primary only. The save_pretrained HF-adapter artifact (export_modules)
         # works under fsdp too: save_training_checkpoint detects DTensor-sharded
         # export modules and feeds them the gathered full state it already
         # collected for checkpoint.pt, so the adapter artifact is clean.
-        context = stack.strategy.context
-        export_modules = (
-            stack.definition.export_modules_getter(stack.bundle, stack.cfg)
-            if stack.definition.export_modules_getter is not None
-            else None
-        )
+        context = self.strategy.context
         save_training_checkpoint(
             path,
-            trainer=stack.trainer,
-            bundle=stack.bundle,
-            family=stack.family,
+            trainer=self.trainer,
+            bundle=self.bundle,
+            family=self.family,
             progress={
                 "completed_epoch": epoch,
                 "next_epoch": epoch,
-                "global_step": stack.trainer.state.global_step,
+                "global_step": self.trainer.state.global_step,
             },
             rng_state=capture_rng_state(prompt_generator=self.rng),
-            export_modules=export_modules,
-            export_ema=getattr(stack.trainer, "_ema", None),
-            strategy=stack.strategy,
+            export_modules=self.export_modules,
+            export_ema=getattr(self.trainer, "_ema", None),
+            strategy=self.strategy,
             is_primary=context.is_primary,
         )
         # Barrier so non-primary ranks wait for rank0 to FINISH writing before any
@@ -674,7 +662,7 @@ class OnlineRecipeRun:
         # unloadable checkpoint. In-loop saves happened to survive only because the
         # next epoch's collective implicitly synced the ranks; the final save has no
         # such follow-on, so make the wait explicit for every save.
-        stack.strategy.barrier()
+        self.strategy.barrier()
 
 
 def _prepare_metrics_csv_rank_consistent(
@@ -750,13 +738,12 @@ def _resolve_reference_artifacts(examples: list[Any], cfg: DictConfig) -> None:
 
 async def run_online_recipe(
     cfg: DictConfig,
-    definition: OnlineRecipeDefinition,
 ) -> None:
     """Run a family online training job through shared recipe glue."""
 
     _preflight_production_video_reward(cfg)
     built = build_configs(cfg)
-    family_entry = get_rollout_family_entry(str(require(cfg, "model.family")))
+    family_entry = get_model_family_entry(str(require(cfg, "model.family")))
     trainer_config = built["trainer"]
     _log_rollout_memory_plan(trainer_config)
     _warn_global_std_streaming_divergence(cfg, trainer_config)
@@ -773,7 +760,7 @@ async def run_online_recipe(
 
     resources = resolve_distributed_resources(cfg)
     validate_rollout_schedule_topology(trainer_config.rollout_orchestration, resources)
-    validate_reward_memory_parking_from_cfg(cfg, resources=resources, built=built)
+    validate_reward_memory_parking(resources=resources, built=built)
     logger.info(format_distributed_resource_plan(resources))
     device = torch.device(trainer_torch_device(resources))
     # Resolve the training process identity (rank/device) and fail-fast on
@@ -804,17 +791,39 @@ async def run_online_recipe(
     )
     examples = load_prompt_examples_from_config(cfg.data)
     _resolve_reference_artifacts(examples, cfg)
+    if family_entry.task in {"i2v", "v2w"}:
+        conditioning = OmegaConf.select(
+            cfg,
+            "data.preprocessing.conditioning",
+            default=None,
+        )
+        if conditioning != "reference_image":
+            raise ValueError(
+                f"{family_entry.family} requires data.preprocessing.conditioning=reference_image",
+            )
+        from vrl.trainers.data.artifacts import require_reference_images
+
+        require_reference_images(
+            examples,
+            manifest_path=Path(
+                str(OmegaConf.select(cfg, "data.manifest", default="manifest")),
+            ),
+            default_reference_image=OmegaConf.select(
+                cfg,
+                "data.preprocessing.reference_image",
+                default=None,
+            ),
+        )
     log_host_memory("before_trainer_bundle_build", log=logger)
-    replay_build = resolve_entry_model_build(
-        family_entry,
+    replay_build = family_entry.resolve_model_build(
         cfg,
         device,
         for_rollout=False,
     )
-    bundle = definition.build_replay_bundle(replay_build)
+    bundle = family_entry.build_replay(replay_build)
     log_host_memory("after_trainer_bundle_build", log=logger)
-    if definition.after_bundle_built is not None:
-        definition.after_bundle_built(bundle, cfg)
+    if family_entry.collector_kind == "diffusion":
+        enable_transformer_gradient_checkpointing(bundle, cfg)
     model = require_runtime_model(
         bundle.model,
         owner=f"{family_entry.family}.bundle.model",
@@ -844,50 +853,46 @@ async def run_online_recipe(
         if resources.cross_node:
             cross_node_preflight(ray, resources)
         placement_owner.create()
-        components = build_online_recipe_components(
+        collector_config = build_rollout_config_from_cfg(cfg)
+        reward_fn = build_reward(
+            built=built,
+            resources=resources,
+            device=reward_device,
+        )
+        algorithm_and_evaluator = build_algorithm_and_evaluator_from_cfg(
             cfg,
             family_entry=family_entry,
-            reward_device=reward_device,
-            scheduler=scheduler,
             built=built,
+            collector_config=collector_config,
+            scheduler=scheduler,
         )
-        reward_fn = components.reward_fn
         # An unreachable or wrong-identity external reward service must fail
         # here, before the expensive rollout backend launch — not after the
         # first generation batch reaches scoring.
         await reward_fn.preflight()
-        rollout_executor_kwargs = (
-            definition.collector_kwargs_getter(cfg, examples)
-            if definition.collector_kwargs_getter is not None
-            else {}
-        )
-        collector = build_collector_from_cfg(
-            cfg,
-            family_entry=family_entry,
-            reward_fn=components.reward_fn,
-            collector_config=components.collector_config,
+        collector = build_rollout_collector(
+            family_entry,
+            reward_fn=reward_fn,
+            config=collector_config,
+            lifecycle=resources.lifecycle,
         )
         generation_launcher = RayGenerationLauncher()
-        runtime_inputs = generation_launcher.build_inputs(
-            cfg,
-            family_entry,
-            executor_kwargs=dict(rollout_executor_kwargs),
-        )
         log_host_memory("before_rollout_backend_build", log=logger)
         collector.set_runtime(
             generation_launcher.launch_from_cfg(
                 cfg,
+                resources=resources,
+                entry=family_entry,
                 driver_bundle=bundle,
-                launch_contract=runtime_inputs.launch_contract,
-                gatherer=runtime_inputs.gatherer,
                 placement=placement_owner.rollout_placement,
             ),
         )
         log_host_memory("after_rollout_backend_build", log=logger)
 
         ref_model = (
-            definition.reference_model_getter(bundle, cfg)
-            if definition.reference_model_getter is not None
+            _default_reference_model(bundle, cfg)
+            if family_entry.collector_kind == "diffusion"
+            and str(cfg.algorithm.kind) != "diffusion_nft"
             else None
         )
         # The strategy built during preflight is the single owner of trainable-state
@@ -895,9 +900,9 @@ async def run_online_recipe(
         # (called once in the trainer) creates any process group and wraps the
         # trainable transformer only after topology/capability validation passed.
         trainer = OnlineTrainer(
-            algorithm=components.algorithm,
+            algorithm=algorithm_and_evaluator.algorithm,
             collector=collector,
-            evaluator=components.evaluator,
+            evaluator=algorithm_and_evaluator.evaluator,
             model=model,
             ref_model=ref_model,
             weight_syncer=build_runtime_weight_syncer(
@@ -955,23 +960,18 @@ async def run_online_recipe(
         if resume_checkpoint is not None:
             restore_rng_state(resume_checkpoint.rng_state, prompt_generator=rng)
 
-        stack = OnlineRecipeStack(
-            cfg=cfg,
-            definition=definition,
+        export_modules = (
+            _export_transformer_lora(bundle, cfg)
+            if family_entry.collector_kind == "diffusion"
+            else _export_language_model_lora(bundle, cfg)
+        )
+        run = OnlineRecipeRun(
             bundle=bundle,
-            reward_fn=components.reward_fn,
             trainer=trainer,
             strategy=strategy,
             family=family_entry.family,
             component_names=component_names,
-        )
-        # Execution controller for this run: owns the metrics-CSV paths, prompt
-        # RNG, and resume flag, and carries the metrics/checkpoint IO as methods so
-        # the loop below stops threading csv_path / reward_fn / component_names /
-        # rng through free helpers. Holds `stack` (single owner of the wired
-        # runtime).
-        run = OnlineRecipeRun(
-            stack=stack,
+            export_modules=export_modules,
             csv_path=output_dir / "metrics.csv",
             rng=rng,
             resume=resume_checkpoint is not None,
@@ -1172,9 +1172,5 @@ async def _shutdown_online_recipe_runtime(
 
 
 __all__ = [
-    "default_reference_model",
-    "enable_transformer_gradient_checkpointing",
-    "export_language_model_lora",
-    "export_transformer_lora",
     "run_online_recipe",
 ]

@@ -194,8 +194,6 @@ def _collector(
 ) -> RolloutCollector:
     return RolloutCollector(
         config=object(),
-        family="unit",
-        task="collect",
         request_builder=_RequestBuilder(),
         reward_scorer=reward_scorer or _RewardScorer(),
         runtime=runtime,
@@ -717,8 +715,6 @@ def test_collect_prompt_batches_folds_reward_timing_into_stats() -> None:
     reward_fn = _TimedReward()
     collector = RolloutCollector(
         config=object(),
-        family="unit",
-        task="collect",
         request_builder=_RequestBuilder(),
         reward_scorer=RewardScorer(reward_fn),
         runtime=_Runtime(),
@@ -769,26 +765,16 @@ def test_reward_view_selection_fails_fast_when_ambiguous() -> None:
             RolloutBatchBuildContext(metadata={}),
         ).reward_outputs()
 
-    selected = TrajectoryRolloutBatchBuilder(
-        output,
-        RolloutBatchBuildContext(metadata={}, reward_view_name="image"),
-    ).reward_outputs()
-
-    assert selected.shape[0] == len(output.sample_rows)
-
 
 def test_collector_forwards_reference_metadata_to_request() -> None:
     """Checks collector forwards reference metadata to request."""
-    from vrl.rollouts.collector.config import RolloutConfig
+    from vrl.families.registry import get_model_family_entry
+    from vrl.rollouts.collector.config import RolloutCollectorConfig
     from vrl.rollouts.collector.requests import GenerationRequestBuilder
 
     builder = GenerationRequestBuilder(
-        family="cosmos",
-        task="v2w",
-        request_prefix="cosmos",
-        config=RolloutConfig(family="cosmos", values={"num_steps": 1}),
-        return_artifacts=("trajectory",),
-        default_task_type="video2world",
+        entry=get_model_family_entry("cosmos-predict2"),
+        config=RolloutCollectorConfig(values={"num_steps": 1}),
     )
 
     collector_request = builder.build(
@@ -802,16 +788,13 @@ def test_collector_forwards_reference_metadata_to_request() -> None:
 
 def test_collector_forwards_target_metadata_to_request() -> None:
     """Checks collector forwards target artifact metadata to rewards."""
-    from vrl.rollouts.collector.config import RolloutConfig
+    from vrl.families.registry import get_model_family_entry
+    from vrl.rollouts.collector.config import RolloutCollectorConfig
     from vrl.rollouts.collector.requests import GenerationRequestBuilder
 
     builder = GenerationRequestBuilder(
-        family="cosmos",
-        task="v2w",
-        request_prefix="cosmos",
-        config=RolloutConfig(family="cosmos", values={"num_steps": 1}),
-        return_artifacts=("trajectory",),
-        default_task_type="video2world",
+        entry=get_model_family_entry("cosmos-predict2"),
+        config=RolloutCollectorConfig(values={"num_steps": 1}),
     )
 
     targets = {"target_image": "/tmp/target.png", "target_video": "/tmp/target.mp4"}
@@ -882,7 +865,7 @@ def test_reward_outputs_reconstructs_uint8_wire_video_exactly() -> None:
 
     reconstructed = TrajectoryRolloutBatchBuilder(
         output,
-        RolloutBatchBuildContext(metadata={}, reward_view_name="image"),
+        RolloutBatchBuildContext(metadata={}),
     ).reward_outputs()
 
     assert reconstructed.dtype == torch.float32

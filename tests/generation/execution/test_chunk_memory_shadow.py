@@ -158,18 +158,11 @@ class _ProbeExecutor:
         raise NotImplementedError
 
 
-def _unused_builder(spec: Any) -> Any:  # pragma: no cover - executor is injected
-    raise RuntimeError("builder must not run; the test injects core.executor directly")
-
-
 def _probe_core(executor: Any) -> GenerationWorkerCore:
     contract = GenerationRuntimeLaunchContract(
         family="sd3_5",
-        task="t2i",
-        generation_kind="diffusion",
+        model_build={},
         policy_version=1,
-        runtime_builder=f"{__name__}:_unused_builder",
-        executor_cls=f"{__name__}:_ProbeExecutor",
     )
     core = GenerationWorkerCore("rollout-0", contract)
     core.executor = executor
@@ -358,11 +351,8 @@ class _MemoryExecutor:
 def test_worker_forwards_chunk_memory_without_runtime_debug() -> None:
     contract = GenerationRuntimeLaunchContract(
         family="sd3_5",
-        task="t2i",
-        generation_kind="diffusion",
+        model_build={},
         policy_version=1,
-        runtime_builder=f"{__name__}:_unused_builder",
-        executor_cls=f"{__name__}:_MemoryExecutor",
     )
     core = GenerationWorkerCore("rollout-0", contract)
     core.executor = _MemoryExecutor()

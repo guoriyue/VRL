@@ -21,77 +21,6 @@ from vrl.models.interfaces.runtime import (
     full_generation_bundle_metadata,
     minimal_replay_bundle_metadata,
 )
-from vrl.models.model_build import resolve_model_build
-
-
-def resolve_ar_model_build(
-    cfg: Any,
-    device: Any,
-    *,
-    family: str,
-    default_model_path: str,
-    for_rollout: bool = True,
-    parameter_dtype_override: Any | None = None,
-) -> ModelBuild:
-    """Resolve AR model-construction fields from a whole RL cfg.
-
-    The AR families share this exact preamble: read the model block, take
-    parameter precision from the unified top-level precision bridge, and fall
-    back to the family's canonical checkpoint when ``model.path`` is unset. A family
-    stub supplies only its family and default path; family-specific
-    post-processing (NextStep's gradient-checkpointing fold-in) stays in the
-    stub.
-    """
-
-    model_config = cfg.get("model") if hasattr(cfg, "get") else None
-    model_path = (model_config or {}).get("path") if model_config is not None else None
-    configured_dtype = (model_config or {}).get("dtype") if model_config is not None else None
-    if configured_dtype is not None:
-        raise ValueError(
-            "model.dtype is not configurable for AR families; remove it and use "
-            "the top-level precision block so rollout and replay cannot diverge",
-        )
-    return resolve_model_build(
-        cfg,
-        device,
-        family=family,
-        model_name_or_path=model_path or default_model_path,
-        for_rollout=for_rollout,
-        parameter_dtype_override=parameter_dtype_override,
-    )
-
-
-def resolve_family_ar_model_build(
-    cfg: Any,
-    device: Any,
-    *,
-    for_rollout: bool = True,
-    parameter_dtype_override: Any | None = None,
-) -> ModelBuild:
-    """Resolve one AR family build from its declarative registry recipe."""
-
-    from vrl.rollouts.families.registry import get_rollout_family_entry
-    from vrl.utils.config import import_from_path
-
-    model = cfg.get("model") if hasattr(cfg, "get") else None
-    family = (model or {}).get("family")
-    if not family:
-        raise ValueError("AR model-build resolution requires model.family")
-    entry = get_rollout_family_entry(str(family))
-    recipe = entry.ar_build
-    if recipe is None:
-        raise ValueError(f"rollout family {family!r} has no AR build descriptor")
-    build = resolve_ar_model_build(
-        cfg,
-        device,
-        family=entry.family,
-        default_model_path=recipe.default_model_path,
-        for_rollout=for_rollout,
-        parameter_dtype_override=parameter_dtype_override,
-    )
-    if recipe.build_enricher is not None:
-        import_from_path(recipe.build_enricher)(build, cfg)
-    return build
 
 
 def ar_model_config_base(
@@ -127,24 +56,27 @@ def ar_model_config_base(
     return config
 
 
-def build_ar_runtime_bundle(
+def build_family_ar_bundle(
     build: ModelBuild,
     *,
-    model: Any,
-    replay: bool = False,
+    replay: bool,
+    entry: Any,
 ) -> RuntimeBundle:
-    """Assemble the canonical AR bundle around a family-constructed model.
+    from vrl.utils.config import import_from_path
 
-    ``replay=True`` selects the trainer-side shape: no raw handle, chunked
-    execution off, and minimal bundle metadata (the replay model loads no
-    generation-only modules). The rollout shape exposes the model as its own
-    raw handle and advertises chunked execution.
+    if build.family != entry.family:
+        raise ValueError(
+            f"AR build family {build.family!r} does not match entry {entry.family!r}",
+        )
+    from vrl.families.registry import ARFamilyBuild
 
-    Rollout-only quantization (FP8 attention+MLP or NVFP4 MLP-only) applies
-    here under the same contract as the diffusion builder; the replay core
-    keeps its configured base-precision parameters.
-    """
-
+    recipe = entry.family_build
+    if not isinstance(recipe, ARFamilyBuild):
+        raise ValueError(f"model family {entry.family!r} has no AR build descriptor")
+    config = import_from_path(recipe.config_builder)(build)
+    config_cls = import_from_path(recipe.config_cls)
+    model_cls = import_from_path(recipe.replay_cls if replay else recipe.model_cls)
+    model = model_cls(config_cls(**config))
     if replay:
         build.require_replay()
     else:
@@ -168,48 +100,7 @@ def build_ar_runtime_bundle(
     )
 
 
-def build_family_ar_runtime_bundle(build: ModelBuild) -> RuntimeBundle:
-    """Build a rollout AR model from the registry descriptor."""
-
-    return _build_family_ar_bundle(build, replay=False)
-
-
-def build_family_ar_replay_runtime_bundle(build: ModelBuild) -> RuntimeBundle:
-    """Build a replay-only AR model from the registry descriptor."""
-
-    build.require_replay()
-    return _build_family_ar_bundle(build, replay=True)
-
-
-def _build_family_ar_bundle(
-    build: ModelBuild,
-    *,
-    replay: bool,
-) -> RuntimeBundle:
-    from vrl.rollouts.families.registry import get_rollout_family_entry
-    from vrl.utils.config import import_from_path
-
-    if not build.family:
-        raise ValueError("descriptor-driven AR build requires build.family")
-    entry = get_rollout_family_entry(build.family)
-    recipe = entry.ar_build
-    if recipe is None:
-        raise ValueError(f"rollout family {entry.family!r} has no AR build descriptor")
-    config = import_from_path(recipe.config_builder)(build)
-    config_cls = import_from_path(recipe.config_cls)
-    model_cls = import_from_path(recipe.replay_cls if replay else recipe.model_cls)
-    return build_ar_runtime_bundle(
-        build,
-        model=model_cls(config_cls(**config)),
-        replay=replay,
-    )
-
-
 __all__ = [
     "ar_model_config_base",
-    "build_ar_runtime_bundle",
-    "build_family_ar_replay_runtime_bundle",
-    "build_family_ar_runtime_bundle",
-    "resolve_ar_model_build",
-    "resolve_family_ar_model_build",
+    "build_family_ar_bundle",
 ]

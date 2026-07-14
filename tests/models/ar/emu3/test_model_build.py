@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from omegaconf import OmegaConf
 
-from vrl.models.ar.build import resolve_family_ar_model_build
+from vrl.families.registry import get_model_family_entry
 from vrl.models.ar.emu3.runner import Emu3TokenRunner
 from vrl.models.ar.emu3.runtime import Emu3ChunkExecutor, emu3_config_from_build
 
@@ -18,7 +18,7 @@ def test_resolve_model_build_defaults_to_gen_hf_checkpoint() -> None:
         },
     )
 
-    build = resolve_family_ar_model_build(cfg, device="cpu")
+    build = get_model_family_entry("emu3").resolve_model_build(cfg, device="cpu")
 
     assert build.model_name_or_path == "BAAI/Emu3-Gen-hf"
 
@@ -43,7 +43,7 @@ def test_resolve_model_build_carries_sampling_and_lora_overrides() -> None:
         }
     )
 
-    build = resolve_family_ar_model_build(cfg, device="cpu")
+    build = get_model_family_entry("emu3").resolve_model_build(cfg, device="cpu")
     config = emu3_config_from_build(build)
 
     assert build.model_name_or_path == "/ckpt/emu3-gen"

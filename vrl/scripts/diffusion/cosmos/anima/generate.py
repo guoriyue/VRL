@@ -15,11 +15,8 @@ from PIL import Image
 
 from vrl.config.builders import build_configs
 from vrl.config.loading import load_config
+from vrl.families.registry import get_model_family_entry
 from vrl.generation.diffusion.layout import VideoGenerationRequest
-from vrl.models.diffusion.build import (
-    build_family_runtime_bundle,
-    resolve_family_model_build,
-)
 from vrl.models.dtypes import resolve_torch_dtype
 from vrl.trainers.data import load_prompt_manifest
 from vrl.trainers.precision import torch_dtype_for_trainer_precision
@@ -174,12 +171,9 @@ def main(argv: list[str] | None = None) -> None:
     device = _resolve_device(args.device, torch)
     dtype = _resolve_dtype(args.dtype, cfg, device=device, torch=torch)
     logger.info("Building Anima runtime on device=%s dtype=%s", device, dtype)
-    bundle = build_family_runtime_bundle(
-        resolve_family_model_build(
-            cfg,
-            device,
-            parameter_dtype_override=dtype,
-        ),
+    entry = get_model_family_entry(str(cfg.model.family))
+    bundle = entry.build_rollout(
+        entry.resolve_model_build(cfg, device, parameter_dtype_override=dtype),
     )
     model = bundle.model.eval()
 

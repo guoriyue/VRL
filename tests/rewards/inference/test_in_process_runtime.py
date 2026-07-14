@@ -156,6 +156,7 @@ async def test_sleep_offload_uses_cumem_pool(monkeypatch) -> None:
 
 @pytest.mark.asyncio
 async def test_reward_parking_rejects_default_allocator_residual(monkeypatch) -> None:
+    import vrl.rewards.runtime as reward_runtime_module
     import vrl.utils.cuda_memory as cuda_memory_mod
 
     allocator = _FakeCumemAllocator()
@@ -168,8 +169,16 @@ async def test_reward_parking_rejects_default_allocator_residual(monkeypatch) ->
         },
     )
     readings = iter((100, 101))
-    runtime._gpu_used_bytes = lambda: next(readings)  # type: ignore[method-assign]
-    runtime._release_cuda_memory_for_parking = lambda: None  # type: ignore[method-assign]
+    monkeypatch.setattr(
+        reward_runtime_module,
+        "gpu_used_bytes",
+        lambda _device: next(readings),
+    )
+    monkeypatch.setattr(
+        reward_runtime_module,
+        "release_cuda_memory_for_parking",
+        lambda _device: None,
+    )
 
     await runtime.score_batch(_parking_request())
 
@@ -218,6 +227,7 @@ async def test_reward_memory_parking_retries_after_sleep_failure(monkeypatch) ->
 @pytest.mark.asyncio
 async def test_dedicated_reward_runtime_stays_resident(monkeypatch) -> None:
     """A dedicated runtime never creates or sleeps a parking pool."""
+    import vrl.rewards.runtime as reward_runtime_module
     import vrl.utils.cuda_memory as cuda_memory_mod
 
     allocator = _FakeCumemAllocator()
@@ -239,7 +249,11 @@ async def test_dedicated_reward_runtime_stays_resident(monkeypatch) -> None:
         nonlocal cleanup_calls
         cleanup_calls += 1
 
-    runtime._release_cuda_memory_for_parking = release_device_cache  # type: ignore[method-assign]
+    monkeypatch.setattr(
+        reward_runtime_module,
+        "release_cuda_memory_for_parking",
+        lambda _device: release_device_cache(),
+    )
     await runtime.shutdown()
 
     assert cleanup_calls == 1

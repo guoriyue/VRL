@@ -10,7 +10,6 @@ from omegaconf import OmegaConf
 
 from vrl.models.interfaces import ReplayResult
 from vrl.scripts.common import online
-from vrl.scripts.common.types import OnlineRecipeDefinition
 
 ray = pytest.importorskip("ray")
 
@@ -60,6 +59,7 @@ class _FakeModel:
 class _FakeReward:
     def __init__(self, state: dict[str, Any]) -> None:
         self._state = state
+        self.task = str(state.get("family_task", "t2i"))
 
     async def preflight(self) -> None:
         return None
@@ -124,13 +124,6 @@ class _FakeLauncher:
     def __init__(self, state: dict[str, Any]) -> None:
         self._state = state
 
-    def build_inputs(self, *args: Any, **kwargs: Any) -> Any:
-        del args, kwargs
-        return SimpleNamespace(
-            launch_contract=object(),
-            gatherer=object(),
-        )
-
     def launch_from_cfg(self, *args: Any, **kwargs: Any) -> _FakeRuntime:
         del args, kwargs
         self._state["launches"] += 1
@@ -184,6 +177,7 @@ def _state() -> dict[str, Any]:
         "owner_creates": 0,
         "owner_shutdowns": 0,
         "launches": 0,
+        "model_builds": 0,
         "trainer_steps": 0,
         "checkpoint_paths": [],
         "shutdown_order": [],
@@ -199,6 +193,7 @@ def _trainer_config(tmp_path: Any) -> SimpleNamespace:
         seed=0,
         prompts_per_batch=1,
         n_samples_per_prompt=1,
+        gradient_accumulation_steps=0,
         save_freq=0,
         rollout_orchestration=SimpleNamespace(schedule_mode="strict_on_policy"),
     )
@@ -209,20 +204,33 @@ def _cfg() -> Any:
         {
             "data": {"sampler": {"type": "random_without_replacement"}},
             "distributed": {"rollout": {"cpus_per_worker": 0.5}},
-            "algorithm": {"kl_coef": 0.0},
+            "algorithm": {"kind": "grpo", "kl_coef": 0.0},
             "model": {"family": "sd3_5", "use_lora": False},
         },
     )
 
 
-def _definition() -> OnlineRecipeDefinition:
-    return OnlineRecipeDefinition(
-        build_replay_bundle=lambda build: SimpleNamespace(
+class _FakeFamilyEntry:
+    family = "sd3_5"
+    task = "t2i"
+    collector_kind = "diffusion"
+
+    def __init__(self, state: dict[str, Any]) -> None:
+        self._state = state
+        self.task = str(state.get("family_task", "t2i"))
+
+    def resolve_model_build(self, cfg: Any, device: Any, **kwargs: Any) -> Any:
+        del cfg, device, kwargs
+        self._state["model_builds"] += 1
+        return SimpleNamespace(family=self.family)
+
+    def build_replay(self, build: Any) -> Any:
+        del build
+        return SimpleNamespace(
             model=_FakeModel(),
             scheduler=object(),
             trainable_modules={},
-        ),
-    )
+        )
 
 
 def test_owned_ray_session_retries_shutdown_before_committing_closed() -> None:
@@ -269,6 +277,11 @@ def _install_common_fakes(
     )
 
     monkeypatch.setattr(online, "_preflight_production_video_reward", lambda cfg: None)
+    monkeypatch.setattr(
+        online,
+        "get_model_family_entry",
+        lambda family: _FakeFamilyEntry(state),
+    )
     precision = SimpleNamespace(
         rollout="float32",
         rollout_base_precision="float32",
@@ -297,12 +310,11 @@ def _install_common_fakes(
         lambda resources, *, trainer_device: "cpu",
     )
     monkeypatch.setattr(online, "load_prompt_examples_from_config", lambda cfg: ["prompt"])
+    monkeypatch.setattr(online, "require_runtime_model", lambda model, **kwargs: model)
     monkeypatch.setattr(
         online,
-        "resolve_entry_model_build",
-        lambda entry, cfg, device, **kwargs: SimpleNamespace(
-            family=str(cfg.model.family),
-        ),
+        "enable_transformer_gradient_checkpointing",
+        lambda *args, **kwargs: None,
     )
     monkeypatch.setattr(online, "log_host_memory", lambda *args, **kwargs: None)
     monkeypatch.setattr(
@@ -310,19 +322,17 @@ def _install_common_fakes(
         "GlobalRayPlacementOwner",
         lambda *args, **kwargs: _FakePlacementOwner(state, *args, **kwargs),
     )
+    monkeypatch.setattr(online, "validate_reward_memory_parking", lambda *args, **kwargs: None)
+    monkeypatch.setattr(online, "build_rollout_config_from_cfg", lambda cfg: object())
+    monkeypatch.setattr(online, "build_reward", lambda *args, **kwargs: reward)
     monkeypatch.setattr(
         online,
-        "build_online_recipe_components",
-        lambda *args, **kwargs: SimpleNamespace(
-            collector_config=object(),
-            reward_fn=reward,
-            algorithm=object(),
-            evaluator=None,
-        ),
+        "build_algorithm_and_evaluator_from_cfg",
+        lambda *args, **kwargs: SimpleNamespace(algorithm=object(), evaluator=None),
     )
     monkeypatch.setattr(
         online,
-        "build_collector_from_cfg",
+        "build_rollout_collector",
         lambda *args, **kwargs: collector,
     )
     monkeypatch.setattr(online, "RayGenerationLauncher", lambda: _FakeLauncher(state))
@@ -356,7 +366,7 @@ async def test_run_online_recipe_shutdowns_owner_after_success(monkeypatch, tmp_
     # the post-run is_initialized() check stands in for the trailing "ray" entry.
     ray.shutdown()
 
-    await online.run_online_recipe(_cfg(), _definition())
+    await online.run_online_recipe(_cfg())
 
     assert state["owner_creates"] == 1
     assert state["trainer_steps"] == 1
@@ -451,7 +461,7 @@ async def test_shared_gpu_parking_capability_fails_before_model_or_ray_launch(
     monkeypatch.setattr(online, "resolve_distributed_resources", lambda _cfg: resources)
     monkeypatch.setattr(
         online,
-        "validate_reward_memory_parking_from_cfg",
+        "validate_reward_memory_parking",
         lambda *_args, **_kwargs: None,
     )
 
@@ -460,19 +470,31 @@ async def test_shared_gpu_parking_capability_fails_before_model_or_ray_launch(
             raise NotImplementedError("Use disjoint rollout GPUs")
 
     monkeypatch.setattr(online, "build_strategy", lambda _cfg, _context: _UnsupportedStrategy())
-    model_builds = 0
-
-    def _build(*_args, **_kwargs):
-        nonlocal model_builds
-        model_builds += 1
-        return SimpleNamespace(model=_FakeModel(), scheduler=object(), trainable_modules={})
-
-    definition = OnlineRecipeDefinition(build_replay_bundle=_build)
 
     with pytest.raises(NotImplementedError, match="Use disjoint rollout GPUs"):
-        await online.run_online_recipe(_cfg(), definition)
+        await online.run_online_recipe(_cfg())
 
-    assert model_builds == 0
+    assert state["model_builds"] == 0
+    assert state["owner_creates"] == 0
+    assert state["launches"] == 0
+
+
+@pytest.mark.asyncio
+async def test_reference_conditioned_task_fails_before_model_or_ray_launch(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    state = _state()
+    state["family_task"] = "v2w"
+    _install_common_fakes(monkeypatch, tmp_path, state)
+
+    with pytest.raises(
+        ValueError,
+        match=r"data\.preprocessing\.conditioning=reference_image",
+    ):
+        await online.run_online_recipe(_cfg())
+
+    assert state["model_builds"] == 0
     assert state["owner_creates"] == 0
     assert state["launches"] == 0
 
@@ -500,7 +522,7 @@ async def test_rollout_sync_getter_routes_through_strategy(
 
     monkeypatch.setattr(online, "OnlineTrainer", _capture)
 
-    await online.run_online_recipe(_cfg(), _definition())
+    await online.run_online_recipe(_cfg())
 
     from vrl.trainers.strategy import SingleProcessStrategy
 
@@ -529,7 +551,7 @@ async def test_run_online_recipe_shutdowns_owner_after_create_failure(
     _install_common_fakes(monkeypatch, tmp_path, state)
 
     with pytest.raises(RuntimeError, match="owner create boom"):
-        await online.run_online_recipe(_cfg(), _definition())
+        await online.run_online_recipe(_cfg())
 
     assert state["owner_creates"] == 1
     assert state["owner_shutdowns"] == 1
@@ -552,7 +574,7 @@ async def test_run_online_recipe_shutdowns_owner_after_rollout_launch_failure(
     _install_common_fakes(monkeypatch, tmp_path, state)
 
     with pytest.raises(RuntimeError, match="launch boom"):
-        await online.run_online_recipe(_cfg(), _definition())
+        await online.run_online_recipe(_cfg())
 
     assert state["owner_creates"] == 1
     assert state["collector_shutdowns"] == 1
@@ -574,20 +596,20 @@ async def test_run_online_recipe_shutdowns_owner_after_component_build_failure(
     if failure == "reward":
         monkeypatch.setattr(
             online,
-            "build_online_recipe_components",
+            "build_reward",
             lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("reward build boom")),
         )
         message = "reward build boom"
     else:
         monkeypatch.setattr(
             online,
-            "build_collector_from_cfg",
+            "build_rollout_collector",
             lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("collector build boom")),
         )
         message = "collector build boom"
 
     with pytest.raises(RuntimeError, match=message):
-        await online.run_online_recipe(_cfg(), _definition())
+        await online.run_online_recipe(_cfg())
 
     assert state["owner_creates"] == 1
     assert state["owner_shutdowns"] == 1
@@ -613,7 +635,7 @@ async def test_run_online_recipe_shutdowns_owner_after_final_checkpoint_failure(
     monkeypatch.setattr(online.OnlineRecipeRun, "save_checkpoint", raise_checkpoint)
 
     with pytest.raises(RuntimeError, match="save boom"):
-        await online.run_online_recipe(_cfg(), _definition())
+        await online.run_online_recipe(_cfg())
 
     assert state["collector_shutdowns"] == 1
     assert state["reward_shutdowns"] == 1
@@ -634,7 +656,7 @@ async def test_run_online_recipe_shutdown_errors_do_not_hide_training_error(
     _install_common_fakes(monkeypatch, tmp_path, state)
 
     with pytest.raises(RuntimeError, match="train boom"):
-        await online.run_online_recipe(_cfg(), _definition())
+        await online.run_online_recipe(_cfg())
 
     assert state["collector_shutdowns"] == 2
     assert state["reward_shutdowns"] == 1
@@ -653,7 +675,7 @@ async def test_run_online_recipe_shutdown_errors_after_success_run_all_cleanups(
     _install_common_fakes(monkeypatch, tmp_path, state)
 
     with pytest.raises(RuntimeError, match="rollout_schedule shutdown failed"):
-        await online.run_online_recipe(_cfg(), _definition())
+        await online.run_online_recipe(_cfg())
 
     assert state["collector_shutdowns"] == 2
     assert state["reward_shutdowns"] == 1

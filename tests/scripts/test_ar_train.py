@@ -32,18 +32,14 @@ def test_train_ar_grpo_keeps_family_owned_by_config(
     family: str,
     algorithm_kind: str,
 ) -> None:
-    """The recipe definition must not duplicate or rewrite model.family."""
+    """The generic entrypoint passes config through without a family wrapper."""
     captured: dict[str, object] = {}
 
-    async def fake_run_online_recipe(cfg: Any, definition: Any) -> None:
+    async def fake_run_online_recipe(cfg: Any) -> None:
         captured["family"] = str(cfg.model.family)
-        captured["definition_has_family"] = hasattr(definition, "family")
 
     monkeypatch.setattr(ar_train, "run_online_recipe", fake_run_online_recipe)
 
     asyncio.run(ar_train.train_ar_grpo(_cfg(family, algorithm_kind)))
 
-    assert captured == {
-        "family": family,
-        "definition_has_family": False,
-    }
+    assert captured == {"family": family}

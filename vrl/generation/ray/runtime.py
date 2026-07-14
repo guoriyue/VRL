@@ -12,7 +12,6 @@ from vrl.generation.execution.types import (
     DistributedWorkerHandle,
     WorkerMemoryParkingSnapshot,
 )
-from vrl.generation.launch_contract import GenerationRuntimeLaunchContract
 from vrl.generation.protocols import GenerationRuntime
 from vrl.generation.ray.config import RayGenerationConfig
 from vrl.generation.ray.executor import RayGenerationExecutor
@@ -107,14 +106,12 @@ class RayGenerationRuntime(GenerationRuntime):
             raise ValueError(
                 "with_on_demand_activation requires a resolved on-demand rollout lifecycle plan",
             )
-        contract = GenerationRuntimeLaunchContract.from_value(
-            launch_inputs.launch_contract,
-        )
+        contract = launch_inputs.launch_contract
         sleep_contract = contract
         if config.gpus_per_worker > 0:
             sleep_contract = replace(
                 contract,
-                extra={**contract.extra, "sleep_offload": True},
+                sleep_offload=True,
             )
 
         runtime = cls(
@@ -133,22 +130,6 @@ class RayGenerationRuntime(GenerationRuntime):
         )
         runtime.current_policy_version = contract.policy_version
         return runtime
-
-    @classmethod
-    def with_release_after_collect(
-        cls,
-        config: RayGenerationConfig,
-        launch_inputs: RayGenerationLaunchInputs,
-        *,
-        placement: RolePlacement,
-    ) -> RayGenerationRuntime:
-        """Compatibility facade for the former release-after-collect factory."""
-
-        return cls.with_on_demand_activation(
-            config,
-            launch_inputs,
-            placement=placement,
-        )
 
     @property
     def requires_driver_model_offload(self) -> bool:
@@ -322,7 +303,8 @@ class RayGenerationRuntime(GenerationRuntime):
                     await self._quarantine_after_update_failure(error)
                     raise
                 state.active_policy_version = snapshot.policy_version
-            self._commit_policy_state(state, snapshot)
+            state.desired_policy = snapshot
+            self.current_policy_version = snapshot.policy_version
             return
 
         if self.weight_sync is None:
@@ -356,16 +338,6 @@ class RayGenerationRuntime(GenerationRuntime):
                     cleanup_error.__traceback__,
                 ),
             )
-
-    def _commit_policy_state(
-        self,
-        state: _OnDemandRuntimeState,
-        snapshot: _PolicySnapshot,
-    ) -> None:
-        """Publish desired state and version as one accepted snapshot."""
-
-        state.desired_policy = snapshot
-        self.current_policy_version = snapshot.policy_version
 
     async def offload(self) -> None:
         """Park explicitly idle on-demand workers between GPU phases.
@@ -418,11 +390,6 @@ class RayGenerationRuntime(GenerationRuntime):
         if self.lifecycle.phase is RuntimePhase.SHUTTING_DOWN:
             await self.shutdown()
         return None
-
-    async def release(self) -> None:
-        """Compatibility facade for callers using the former release name."""
-
-        await self.offload()
 
     def _offload_finished(self, task: asyncio.Task[None]) -> None:
         if self._offload_task is task:
@@ -571,11 +538,7 @@ class RayGenerationRuntime(GenerationRuntime):
         if len(set(worker_ids)) != len(worker_ids):
             raise RuntimeError(f"duplicate generation worker ids: {worker_ids}")
         refs = [worker.actor.sleep.remote() for worker in active_workers]
-        values = (
-            await asyncio.wait_for(asyncio.gather(*refs), timeout=120)
-            if refs
-            else []
-        )
+        values = await asyncio.wait_for(asyncio.gather(*refs), timeout=120) if refs else []
         snapshots: list[WorkerMemoryParkingSnapshot] = []
         for worker, value in zip(active_workers, values, strict=True):
             if not isinstance(value, WorkerMemoryParkingSnapshot):
@@ -652,8 +615,7 @@ class RayGenerationRuntime(GenerationRuntime):
 
             candidate = await RayGenerationLauncher().launch_async(
                 state.config,
-                state.launch_inputs.launch_contract,
-                state.launch_inputs.gatherer,
+                state.launch_inputs,
                 placement=state.placement,
             )
             try:

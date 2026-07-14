@@ -21,14 +21,15 @@ from omegaconf import OmegaConf
 from tests import ci_envs
 from vrl.config.builders import build_configs
 from vrl.config.loading import load_config
+from vrl.families.registry import ModelFamilyEntry, get_model_family_entry
 from vrl.generation import GenerationOutput, GenerationRequest, build_sample_rows
 from vrl.generation.execution.planner import build_engine_plan
+from vrl.ray.resources import resolve_distributed_resources
+from vrl.rollouts.collector import build_rollout_collector
 from vrl.rollouts.collector.config import build_rollout_config_from_cfg
-from vrl.rollouts.families import RolloutFamilyEntry, get_rollout_family_entry
 from vrl.scripts.common.factory import (
     build_algorithm_and_evaluator_from_cfg,
-    build_collector_from_cfg,
-    build_reward_from_cfg,
+    build_reward,
 )
 from vrl.trainers.online import OnlineTrainer
 from vrl.trainers.precision import torch_dtype_for_trainer_precision
@@ -58,8 +59,6 @@ class RealCheckpointCase:
     min_cuda_memory_gib: float
     reference_image_cfg_path: str | None = None
     use_config_reward: bool = False
-    replay_runtime_builder: str | None = None
-    replay_model_build_resolver: str | None = None
     synthetic_replay_rollout: bool = False
     # Sample->replay log-prob parity bound (GRPO ratio==1 invariant). With
     # ppo_epochs=1 the optimizer steps after the whole timestep loop, so every
@@ -213,7 +212,7 @@ CASES: tuple[RealCheckpointCase, ...] = (
             "actor.drop_zero_advantage=false",
             "rollout.n_samples_per_prompt=2",
             "rollout.prompts_per_batch=1",
-            "rollout.max_text_length=64",
+            "sampling.max_text_length=64",
             "sampling.image_token_num=4",
             "sampling.image_size=64",
             "sampling.guidance_scale=1.0",
@@ -344,12 +343,6 @@ CASES: tuple[RealCheckpointCase, ...] = (
             "sampling.max_sequence_length=64",
         ),
         min_cuda_memory_gib=28.0,
-        replay_runtime_builder=(
-            "vrl.models.diffusion.cosmos.anima.runtime:build_anima_replay_runtime_bundle"
-        ),
-        replay_model_build_resolver=(
-            "vrl.models.diffusion.cosmos.anima.runtime:resolve_anima_replay_model_build"
-        ),
         synthetic_replay_rollout=True,
     ),
     RealCheckpointCase(
@@ -384,12 +377,6 @@ CASES: tuple[RealCheckpointCase, ...] = (
             "sampling.max_sequence_length=64",
         ),
         min_cuda_memory_gib=28.0,
-        replay_runtime_builder=(
-            "vrl.models.diffusion.cosmos.anima.runtime:build_anima_replay_runtime_bundle"
-        ),
-        replay_model_build_resolver=(
-            "vrl.models.diffusion.cosmos.anima.runtime:resolve_anima_replay_model_build"
-        ),
         synthetic_replay_rollout=True,
     ),
     RealCheckpointCase(
@@ -415,12 +402,12 @@ CASES: tuple[RealCheckpointCase, ...] = (
             "actor.drop_zero_advantage=false",
             "rollout.n_samples_per_prompt=2",
             "rollout.prompts_per_batch=1",
-            "rollout.max_text_length=64",
+            "sampling.max_text_length=64",
             "rollout.noise_level=1.0",
             "sampling.image_token_num=4",
             "sampling.image_size=64",
             "sampling.num_steps=1",
-            "sampling.noise_level=1.0",
+            "rollout.noise_level=1.0",
             "sampling.guidance_scale=1.0",
             "sampling.attention_backend=torch_native",
             "sampling.use_ar_scheduler=false",
@@ -579,7 +566,7 @@ def test_real_checkpoint_online_rl_updates_trainable_weights(
     monkeypatch.setenv("HF_HUB_OFFLINE", "1")
     monkeypatch.setenv("TRANSFORMERS_OFFLINE", "1")
 
-    entry = get_rollout_family_entry(case.family)
+    entry = get_model_family_entry(case.family)
     bundle: Any | None = None
     collector: Any | None = None
     trainer: OnlineTrainer | None = None
@@ -590,7 +577,7 @@ def test_real_checkpoint_online_rl_updates_trainable_weights(
         trainer_config = built["trainer"]
         dtype = torch_dtype_for_trainer_precision(trainer_config, torch)
         bundle = _build_runtime_bundle(case, entry, cfg, device, dtype)
-        collector_config = build_rollout_config_from_cfg(cfg, family=entry.family)
+        collector_config = build_rollout_config_from_cfg(cfg)
         if case.synthetic_replay_rollout:
             collector = _SyntheticDiffusionReplayCollector(
                 model=bundle.model,
@@ -602,15 +589,18 @@ def test_real_checkpoint_online_rl_updates_trainable_weights(
         else:
             executor = _build_executor(entry, bundle.model, cfg)
             reward_fn = (
-                build_reward_from_cfg(cfg, built=built, device=str(device))
+                build_reward(
+                    built=built,
+                    resources=resolve_distributed_resources(cfg),
+                    device=str(device),
+                )
                 if case.use_config_reward
                 else _IndexReward()
             )
-            collector = build_collector_from_cfg(
-                cfg,
+            collector = build_rollout_collector(
+                entry,
                 reward_fn=reward_fn,
-                family_entry=entry,
-                collector_config=collector_config,
+                config=collector_config,
                 runtime=_DirectExecutorGenerationRuntime(executor),
             )
         pair = build_algorithm_and_evaluator_from_cfg(
@@ -727,21 +717,23 @@ async def _shutdown_if_present(value: Any) -> None:
 
 def _build_runtime_bundle(
     case: RealCheckpointCase,
-    entry: RolloutFamilyEntry,
+    entry: ModelFamilyEntry,
     cfg: Any,
     device: torch.device,
     dtype: torch.dtype,
 ) -> Any:
-    resolver_path = case.replay_model_build_resolver or entry.model_build_resolver
-    builder_path = case.replay_runtime_builder or entry.runtime_builder
-    resolver = import_from_path(resolver_path)
-    builder = import_from_path(builder_path)
-    build = resolver(cfg, device, parameter_dtype_override=dtype)
-    return builder(build)
+    for_rollout = not case.synthetic_replay_rollout
+    build = entry.resolve_model_build(
+        cfg,
+        device,
+        for_rollout=for_rollout,
+        parameter_dtype_override=dtype,
+    )
+    return entry.build_rollout(build) if for_rollout else entry.build_replay(build)
 
 
 def _build_executor(
-    entry: RolloutFamilyEntry,
+    entry: ModelFamilyEntry,
     model: Any,
     cfg: Any,
 ) -> Any:

@@ -7,7 +7,7 @@ defaults:
   - /recipe/online/diffusion_grpo
 
 trainer:
-  entrypoint: vrl.scripts.diffusion.wan_2_1.train:train_wan_2_1_i2v_grpo
+  entrypoint: vrl.scripts.diffusion.train:train_diffusion_online
 
 actor:
   optim:

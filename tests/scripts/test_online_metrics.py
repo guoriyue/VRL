@@ -84,14 +84,24 @@ def test_metrics_csv_preflight_preserves_single_process_error() -> None:
 def test_online_resume_rejects_changed_reward_component_schema(tmp_path) -> None:
     path = tmp_path / "metrics.csv"
     OnlineRecipeRun(
-        stack=SimpleNamespace(component_names=("aesthetic",)),
+        bundle=None,
+        trainer=None,
+        strategy=None,
+        family="unit",
+        component_names=("aesthetic",),
+        export_modules=None,
         csv_path=path,
         rng=None,
         resume=False,
     ).prepare_metrics_csv()
 
     resumed = OnlineRecipeRun(
-        stack=SimpleNamespace(component_names=("aesthetic", "pickscore")),
+        bundle=None,
+        trainer=None,
+        strategy=None,
+        family="unit",
+        component_names=("aesthetic", "pickscore"),
+        export_modules=None,
         csv_path=path,
         rng=None,
         resume=True,

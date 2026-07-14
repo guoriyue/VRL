@@ -313,7 +313,7 @@ def test_loader_allows_torch_compile_after_shape_gate(monkeypatch) -> None:
 def test_resolve_model_build_derives_nvfp4_from_nested_precision() -> None:
     from omegaconf import OmegaConf
 
-    from vrl.models.model_build import resolve_model_build
+    from vrl.families.registry import get_model_family_entry
 
     cfg = OmegaConf.create(
         {
@@ -327,7 +327,7 @@ def test_resolve_model_build_derives_nvfp4_from_nested_precision() -> None:
             },
         },
     )
-    build = resolve_model_build(cfg, "cuda")
+    build = get_model_family_entry("sd3_5").resolve_model_build(cfg, "cuda")
     assert build.rollout is not None
     assert build.rollout.quantization_format == "nvfp4"
     assert build.rollout.autocast_dtype is torch.bfloat16

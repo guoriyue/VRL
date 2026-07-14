@@ -10,14 +10,13 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any, get_args
+from typing import Any
 
 from omegaconf import DictConfig, ListConfig, OmegaConf
 from omegaconf.errors import MissingMandatoryValue
 from pydantic import ValidationError
 
 from vrl.config.schema import (
-    AlgorithmConfig,
     RewardConfig,
     _extract_error_message,
     parse_config,
@@ -74,19 +73,6 @@ def path_exists(cfg: DictConfig, path: str) -> bool:
             return False
         node = node[key]
     return True
-
-
-def resolve_algorithm_kind(algo: DictConfig) -> str:
-    """Resolve and validate the algorithm dispatch key."""
-    kind = algo.get("kind", None)
-    if kind is None:
-        raise ValueError("algorithm.kind required")
-    kind = str(kind)
-    valid = frozenset(get_args(AlgorithmConfig.model_fields["kind"].annotation))
-    if kind not in valid:
-        expected = " / ".join(sorted(valid))
-        raise ValueError(f"unknown algorithm.kind={kind!r}; expected {expected}")
-    return kind
 
 
 def validate_reward_config(cfg: DictConfig) -> None:
@@ -361,7 +347,6 @@ __all__ = [
     "optional_none",
     "path_exists",
     "require",
-    "resolve_algorithm_kind",
     "validate_production_kling_video_reward_config",
     "validate_production_reward_contract",
     "validate_reward_config",

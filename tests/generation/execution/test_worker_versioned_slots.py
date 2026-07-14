@@ -88,24 +88,11 @@ class _Executor:
         raise NotImplementedError
 
 
-def _unused_builder(spec: Any) -> Any:  # pragma: no cover - executor is injected
-    raise RuntimeError("builder must not run; the test injects core.executor directly")
-
-
-_MODULE = "tests.generation.execution.test_worker_versioned_slots"
-
-
 def _core(model: Any) -> GenerationWorkerCore:
-    # runtime_builder/executor_cls are validated as non-None import-path strings at
-    # construction but never imported here — _build_executor is skipped because we
-    # inject core.executor below (load_policy() then short-circuits).
     contract = GenerationRuntimeLaunchContract(
         family="sd3_5",
-        task="t2i",
-        generation_kind="diffusion",
+        model_build={},
         policy_version=1,
-        runtime_builder=f"{_MODULE}:_unused_builder",
-        executor_cls=f"{_MODULE}:_Executor",
     )
     core = GenerationWorkerCore("rollout-0", contract)
     core.executor = _Executor(model)  # bypass load_policy() build

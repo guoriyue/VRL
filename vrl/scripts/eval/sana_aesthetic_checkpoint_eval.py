@@ -51,7 +51,7 @@ SAMPLES_RELATIVE_PATH = Path("sana_aesthetic_eval/samples.jsonl")
 EVAL_BASE_SEED = 20260710
 EVAL_SAMPLES_PER_PROMPT = 2
 CANONICAL_CONFIG_NAME = "experiment/diffusion/sana/online_grpo_aesthetic"
-CANONICAL_PROTOCOL_SHA256 = "28732eded40cd7412db76f08eff085036215008467d538be98dfa98b6fca6dec"
+CANONICAL_PROTOCOL_SHA256 = "027151b2cfaa65bed559da76759799b3001c9c493eec1e725a0aa7dd20645485"
 # Frozen protocol-asset identities. These hashes name two concrete datasets;
 # they are not a duplicated prompt taxonomy or a user-facing config table.
 TRAIN_MANIFEST_SHA256 = "86580c8136a4b6d9fc6bbcc6d8e8e172b15fca6b5c6c956cc770255d8011de56"
@@ -846,14 +846,12 @@ def _generate_images(
     sampling: dict[str, Any],
     device: Any,
 ) -> list[GeneratedImage]:
-    from vrl.models.diffusion.build import (
-        build_family_runtime_bundle,
-        resolve_family_model_build,
-    )
+    from vrl.families.registry import get_model_family_entry
     from vrl.utils.media import write_png
 
-    build = resolve_family_model_build(cfg, device, for_rollout=True)
-    bundle = build_family_runtime_bundle(build)
+    entry = get_model_family_entry(str(cfg.model.family))
+    build = entry.resolve_model_build(cfg, device, for_rollout=True)
+    bundle = entry.build_rollout(build)
     model = bundle.model.eval()
     generated: list[GeneratedImage] = []
     loaded_checkpoint: Path | None = None

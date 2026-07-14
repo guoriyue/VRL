@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
 from typing import Any
 
 from vrl.generation.execution.types import (
@@ -21,7 +20,7 @@ class RayGenerationWorker:
     def __init__(
         self,
         worker_id: str,
-        launch_contract: GenerationRuntimeLaunchContract | Mapping[str, Any],
+        launch_contract: GenerationRuntimeLaunchContract,
     ) -> None:
         self.core = GenerationWorkerCore(
             worker_id,

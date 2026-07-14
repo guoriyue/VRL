@@ -9,9 +9,9 @@ import torch
 from omegaconf import OmegaConf
 
 from vrl.config.loading import load_config
+from vrl.families.registry import get_model_family_entry
 from vrl.generation import GenerationRequest
 from vrl.generation.execution.chunks import SampleChunk
-from vrl.models.ar.build import resolve_family_ar_model_build
 from vrl.models.ar.janus_pro.runtime import (
     JanusProChunkExecutor,
 )
@@ -20,7 +20,11 @@ from vrl.models.ar.janus_pro.runtime import (
 def test_janus_r1_replay_build_keeps_the_explicit_runtime_family() -> None:
     cfg = load_config("experiment/ar/janus_pro/online_r1_grpo_ocr")
 
-    build = resolve_family_ar_model_build(cfg, device="cpu", for_rollout=False)
+    build = get_model_family_entry("janus_pro_r1").resolve_model_build(
+        cfg,
+        device="cpu",
+        for_rollout=False,
+    )
 
     assert cfg.model.family == "janus_pro_r1"
     assert build.family == cfg.model.family
@@ -45,7 +49,7 @@ def test_janus_model_build_does_not_expose_decode_strategy() -> None:
         }
     )
 
-    build = resolve_family_ar_model_build(cfg, device="cpu")
+    build = get_model_family_entry("janus_pro").resolve_model_build(cfg, device="cpu")
 
     assert build.sampling_config is not None
     assert "ar_decode_strategy" not in build.sampling_config
@@ -66,7 +70,7 @@ def test_ar_runtime_rejects_duplicate_model_dtype() -> None:
     )
 
     with pytest.raises(ValueError, match=r"model\.dtype.*top-level precision"):
-        resolve_family_ar_model_build(cfg, device="cpu")
+        get_model_family_entry("janus_pro").resolve_model_build(cfg, device="cpu")
 
 
 def test_janus_executor_parse_sampling_params_reads_scheduler_batch_size() -> None:

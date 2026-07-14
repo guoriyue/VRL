@@ -101,7 +101,8 @@ class InProcessRewardRuntime:
             # CumemPool marks itself asleep only after allocator.sleep returns.
             # A failure therefore leaves this branch retryable on the next call.
             pool.sleep()
-        self._release_cuda_memory_for_parking()
+        device = str(self._worker_config.get("device", ""))
+        release_cuda_memory_for_parking(device)
         baseline_bytes = self._preload_gpu_used_bytes
         if baseline_bytes is None:
             raise RuntimeError("reward runtime has no pre-load GPU parking baseline")
@@ -109,7 +110,7 @@ class InProcessRewardRuntime:
             request_id=request_id,
             released=True,
             baseline_gpu_used_bytes=baseline_bytes,
-            residual_gpu_used_bytes=self._gpu_used_bytes(),
+            residual_gpu_used_bytes=gpu_used_bytes(device),
             residual_bytes_limit=self._parking_residual_bytes_limit,
         )
         proof.validate(request_id=request_id)
@@ -129,7 +130,9 @@ class InProcessRewardRuntime:
                 # Build inside the pool so every CUDA allocation the factory
                 # makes (from_pretrained, .to(device), buffers) is tagged and
                 # sleep/wake can release/restore it wholesale.
-                self._preload_gpu_used_bytes = self._gpu_used_bytes()
+                self._preload_gpu_used_bytes = gpu_used_bytes(
+                    str(self._worker_config.get("device", "")),
+                )
                 self._pool = CumemPool.require()
                 with self._pool.building():
                     self._model = factory(self._worker_config)
@@ -174,7 +177,8 @@ class InProcessRewardRuntime:
         # reserved in this long-lived driver process, so terminal cleanup must
         # release the configured device cache for every runtime. The shared
         # path additionally proves the release against its pre-load baseline.
-        self._release_cuda_memory_for_parking()
+        device = str(self._worker_config.get("device", ""))
+        release_cuda_memory_for_parking(device)
         if pool is not None:
             baseline_bytes = self._preload_gpu_used_bytes
             if baseline_bytes is None:
@@ -182,7 +186,7 @@ class InProcessRewardRuntime:
             # A failure retains the pool/baseline so terminal cleanup can retry
             # cache release; the trainer remains parked until this succeeds.
             validate_reward_parking_residual(
-                residual_bytes=self._gpu_used_bytes(),
+                residual_bytes=gpu_used_bytes(device),
                 baseline_bytes=baseline_bytes,
                 limit_bytes=self._parking_residual_bytes_limit,
                 context="reward memory release during shutdown",
@@ -190,14 +194,6 @@ class InProcessRewardRuntime:
         self._pool = None
         self._last_request_id = None
         self._preload_gpu_used_bytes = None
-
-    # Instance-assignable test seams over the shared parking bookkeeping in
-    # vrl.utils.cuda_memory; rewards measure their configured device only.
-    def _gpu_used_bytes(self) -> int:
-        return gpu_used_bytes(str(self._worker_config.get("device", "")))
-
-    def _release_cuda_memory_for_parking(self) -> None:
-        return release_cuda_memory_for_parking(str(self._worker_config.get("device", "")))
 
 
 def build_reward_runtime(

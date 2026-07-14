@@ -3,23 +3,22 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from types import SimpleNamespace
 from typing import Any
+from unittest.mock import patch
 
 import pytest
 import torch
 from omegaconf import OmegaConf
 
-from tests.generation.ray.test_rollout_launcher import _Gatherer
+from vrl.families.registry import ModelFamilyEntry, get_model_family_entry
 from vrl.generation.execution.types import DistributedWorkerHandle
 from vrl.generation.launch_contract import GenerationRuntimeLaunchContract
-from vrl.generation.ray.config import (
-    DRIVER_CUDA_OWNERSHIP_ERROR,
-    RayGenerationConfig,
-)
+from vrl.generation.ray.config import RayGenerationConfig
+from vrl.generation.ray.launch_inputs import RayGenerationLaunchInputs
 from vrl.generation.ray.launcher import RayGenerationLauncher
 from vrl.generation.ray.utils import all_workers_support_versioned_slots
-from vrl.models.interfaces import ModelBuild, RolloutBuildOptions
+from vrl.ray.placement import RolePlacement
+from vrl.ray.resources import resolve_distributed_resources
 
 
 class _CudaPolicy:
@@ -36,103 +35,52 @@ class _Bundle:
     trainable_modules: dict[str, Any]
 
 
-def resolve_fake_model_build(cfg: Any, device: str) -> ModelBuild:
-    model_node = OmegaConf.select(cfg, "model")
-    model_config = (
-        OmegaConf.to_container(model_node, resolve=True) if OmegaConf.is_config(model_node) else {}
-    )
-    return ModelBuild(
-        model_name_or_path="unit-test",
-        device=device,
-        parameter_dtype=torch.bfloat16,
-        family=str(model_config["family"]),
-        model_config=model_config,
-        sampling_config={
-            "num_steps": 1,
-        },
-        # The fake extractor deliberately uses a different autocast dtype from
-        # parameter storage so this fixture verifies both cross Ray intact.
-        rollout=RolloutBuildOptions(
-            autocast_dtype=torch.float32,
-            prompt_encoder_dtype=torch.float16,
-        ),
-    )
+def test_launch_contract_rejects_unknown_fields_at_typed_boundary() -> None:
+    payload = {
+        "family": "unit",
+        "model_build": {},
+        "executor": object(),
+    }
 
-
-def _launch_contract() -> GenerationRuntimeLaunchContract:
-    return GenerationRuntimeLaunchContract(
-        family="janus_pro",
-        task="ar_t2i",
-        generation_kind="ar",
-        runtime_builder=("tests.generation.ray.test_rollout_launcher:build_tiny_runtime_bundle"),
-        executor_cls="tests.generation.ray.test_rollout_launcher:_TinyChunkExecutor",
-    )
-
-
-def test_launch_contract_rejects_live_object_key_through_schema() -> None:
-    payload = _launch_contract().to_dict()
-    payload["executor"] = object()
-
-    with pytest.raises(ValueError, match=r"unsupported.*executor"):
-        GenerationRuntimeLaunchContract.from_dict(payload)
+    with pytest.raises(TypeError, match=r"unexpected keyword argument 'executor'"):
+        GenerationRuntimeLaunchContract(**payload)  # type: ignore[arg-type]
 
 
 def test_launch_contract_accepts_primitive_config_leaves() -> None:
     contract = GenerationRuntimeLaunchContract(
         family="unit",
-        task="test",
-        generation_kind="ar",
-        runtime_builder="tests.fake:build",
-        executor_cls="tests.fake:Executor",
-        model_config={
-            "text": "value",
-            "integer": 1,
-            "number": 1.5,
-            "enabled": True,
-            "optional": None,
+        model_build={
+            "model_name_or_path": "unit-test",
+            "model_config": {
+                "text": "value",
+                "integer": 1,
+                "number": 1.5,
+                "enabled": True,
+                "optional": None,
+            },
         },
     )
 
-    assert contract.model_config["enabled"] is True
-    assert contract.model_config["optional"] is None
+    model_config = contract.model_build["model_config"]
+    assert model_config["enabled"] is True
+    assert model_config["optional"] is None
 
 
 def test_launch_contract_rejects_callable_config_leaf() -> None:
     with pytest.raises(TypeError, match="callable"):
         GenerationRuntimeLaunchContract(
             family="unit",
-            task="test",
-            generation_kind="ar",
-            runtime_builder="tests.fake:build",
-            executor_cls="tests.fake:Executor",
+            model_build={},
             executor_kwargs={"factory": lambda: None},
         )
 
 
-def test_launch_contract_rejects_unknown_generation_kind() -> None:
-    with pytest.raises(ValueError, match="unsupported generation_kind"):
+def test_launch_contract_rejects_empty_registry_identity() -> None:
+    with pytest.raises(ValueError, match=r"family must be non-empty"):
         GenerationRuntimeLaunchContract(
-            family="unit",
-            task="test",
-            generation_kind="video",  # type: ignore[arg-type]
-            runtime_builder="tests.fake:build",
-            executor_cls="tests.fake:Executor",
+            family="",
+            model_build={},
         )
-
-
-def _build_inputs_entry(collector_kind: str = "diffusion") -> Any:
-    return SimpleNamespace(
-        family="sd3_5",
-        task="t2i",
-        runtime_builder=("tests.generation.ray.test_rollout_launcher:build_tiny_runtime_bundle"),
-        executor_cls="tests.generation.ray.test_rollout_launcher:_TinyChunkExecutor",
-        model_build_resolver=("tests.generation.ray.test_runtime_config:resolve_fake_model_build"),
-        gatherer=SimpleNamespace(
-            import_path="tests.generation.ray.test_rollout_launcher:_Gatherer",
-            kwargs={},
-        ),
-        collector=SimpleNamespace(kind=collector_kind),
-    )
 
 
 def _cfg(
@@ -190,13 +138,22 @@ def _resource_cfg(
     )
 
 
-def _build_inputs_cfg(
+def _ray_config(cfg: Any) -> RayGenerationConfig:
+    return RayGenerationConfig.from_cfg(
+        cfg,
+        resources=resolve_distributed_resources(cfg),
+    )
+
+
+def _launch_cfg(
     *,
     model_torch_compile: dict[str, Any] | None = None,
 ) -> Any:
     model_config = {
         "family": "sd3_5",
+        "path": "unit-test",
         "marker": "driver-config",
+        "use_lora": False,
         "torch_compile": model_torch_compile
         or {
             "enable": False,
@@ -221,9 +178,54 @@ def _build_inputs_cfg(
             },
         },
         "model": model_config,
+        "precision": {
+            "training": {"dtype": "bf16"},
+            # Deliberately differs from training and prompt encoding so this
+            # fixture proves role-specific values survive the Ray projection.
+            "rollout": {
+                "dtype": "fp32",
+                "prompt_encoders": {"dtype": "fp16"},
+            },
+        },
         "rollout": {},
     }
     return OmegaConf.create(cfg)
+
+
+def _capture_launch_inputs(
+    cfg: Any,
+    entry: ModelFamilyEntry,
+) -> RayGenerationLaunchInputs:
+    """Intercept the public launch boundary without starting Ray actors."""
+
+    captured: list[RayGenerationLaunchInputs] = []
+
+    def capture_launch(
+        _launcher: RayGenerationLauncher,
+        _config: RayGenerationConfig,
+        launch_inputs: RayGenerationLaunchInputs,
+        *,
+        placement: RolePlacement,
+    ) -> RayGenerationLaunchInputs:
+        assert isinstance(placement, RolePlacement)
+        captured.append(launch_inputs)
+        return launch_inputs
+
+    with patch.object(RayGenerationLauncher, "launch", new=capture_launch):
+        result = RayGenerationLauncher(init_ray=False).launch_from_cfg(
+            cfg,
+            resources=resolve_distributed_resources(cfg),
+            entry=entry,
+            driver_bundle=_Bundle(model=_CpuPolicy(), trainable_modules={}),
+            placement=RolePlacement(
+                placement_group=object(),
+                bundle_indices=(),
+                expected_gpu_ids=(),
+            ),
+        )
+
+    assert captured == [result]
+    return captured[0]
 
 
 class _SlotWorker:
@@ -300,11 +302,11 @@ def test_runtime_capability_false_when_a_worker_query_raises(local_ray) -> None:
 
 def test_chunk_placement_strategy_switches_from_cfg() -> None:
     """Checks distributed.rollout.chunk_placement_strategy flips the policy."""
-    assert RayGenerationConfig.from_cfg(_cfg()).chunk_placement_strategy == "round_robin"
+    assert _ray_config(_cfg()).chunk_placement_strategy == "round_robin"
 
     cfg = _cfg()
     cfg.distributed.rollout.chunk_placement_strategy = "dynamic"
-    dynamic = RayGenerationConfig.from_cfg(cfg)
+    dynamic = _ray_config(cfg)
     assert dynamic.chunk_placement_strategy == "dynamic"
     # Invalid values are now rejected at the typed schema boundary
     # (RolloutWorkerSection Literal) at parse time, not in RayGenerationConfig —
@@ -313,41 +315,42 @@ def test_chunk_placement_strategy_switches_from_cfg() -> None:
 
 def test_pipelined_switches_from_cfg() -> None:
     """Checks distributed.rollout.pipelined flips the per-request pipelined path."""
-    assert RayGenerationConfig.from_cfg(_cfg()).pipelined is False
+    assert _ray_config(_cfg()).pipelined is False
 
     cfg = _cfg()
     cfg.distributed.rollout.pipelined = True
 
-    assert RayGenerationConfig.from_cfg(cfg).pipelined is True
+    assert _ray_config(cfg).pipelined is True
 
 
 def test_sync_trainable_state_defaults_on_for_from_cfg() -> None:
     """Online runs train the policy the rollout workers must resync, so an omitted
     sync_trainable_state defaults ON (True), not silently False (which would train
     the rollout on stale policy weights). Explicit values are kept."""
-    assert RayGenerationConfig.from_cfg(_cfg()).sync_trainable_state is True
+    assert _ray_config(_cfg()).sync_trainable_state is True
 
     cfg = _cfg()
     cfg.distributed.rollout.sync_trainable_state = False
-    assert RayGenerationConfig.from_cfg(cfg).sync_trainable_state is False
+    assert _ray_config(cfg).sync_trainable_state is False
 
 
-def test_ray_build_inputs_uses_model_compile_config_as_single_source() -> None:
-    """Checks build inputs carry model.torch_compile without rollout overrides."""
-    launch_inputs = RayGenerationLauncher.build_inputs(
-        _build_inputs_cfg(
+def test_launch_from_cfg_projects_model_compile_and_precision() -> None:
+    """The public launch path projects model config and dtype wire values once."""
+    launch_inputs = _capture_launch_inputs(
+        _launch_cfg(
             model_torch_compile={
                 "enable": True,
                 "mode": "default",
             },
         ),
-        _build_inputs_entry(),
+        get_model_family_entry("sd3_5"),
     )
 
     model_build = launch_inputs.launch_contract.model_build
-    assert launch_inputs.launch_contract.generation_kind == "diffusion"
+    assert launch_inputs.launch_contract.family == "sd3_5"
+    assert "family" not in model_build
     assert model_build["device"] == "cpu"
-    assert model_build["parameter_dtype"] == "bfloat16"
+    assert model_build["parameter_dtype"] == "float32"
     assert model_build["rollout"]["autocast_dtype"] == "float32"
     assert model_build["rollout"]["prompt_encoder_dtype"] == "float16"
     assert model_build["model_config"]["marker"] == "driver-config"
@@ -357,11 +360,11 @@ def test_ray_build_inputs_uses_model_compile_config_as_single_source() -> None:
     }
 
 
-def test_ray_build_inputs_preserves_disabled_model_compile_config() -> None:
+def test_launch_from_cfg_preserves_disabled_model_compile_config() -> None:
     """Checks disabled model.torch_compile is preserved as ordinary model config."""
-    launch_inputs = RayGenerationLauncher.build_inputs(
-        _build_inputs_cfg(),
-        _build_inputs_entry(),
+    launch_inputs = _capture_launch_inputs(
+        _launch_cfg(),
+        get_model_family_entry("sd3_5"),
     )
 
     model_config = launch_inputs.launch_contract.model_build["model_config"]
@@ -372,84 +375,55 @@ def test_ray_build_inputs_preserves_disabled_model_compile_config() -> None:
     }
 
 
-def test_ray_build_inputs_rejects_config_and_registry_family_mismatch() -> None:
-    entry = _build_inputs_entry()
-    entry.family = "sana"
-
-    with pytest.raises(ValueError, match=r"model_build='sd3_5'.*entry='sana'"):
-        RayGenerationLauncher.build_inputs(_build_inputs_cfg(), entry)
-
-
-def test_ray_build_inputs_threads_resolved_base_weight_sync() -> None:
+def test_launch_from_cfg_threads_resolved_base_weight_sync() -> None:
     """The rollout lifecycle, not model YAML, owns master-weight retention."""
-    cfg = _build_inputs_cfg()
+    cfg = _launch_cfg()
     cfg.distributed.rollout = {"sync_trainable_state": False}
 
-    launch_inputs = RayGenerationLauncher.build_inputs(
+    launch_inputs = _capture_launch_inputs(
         cfg,
-        _build_inputs_entry(),
+        get_model_family_entry("sd3_5"),
     )
 
     rollout = launch_inputs.launch_contract.model_build["rollout"]
     assert rollout["base_weight_sync"] is False
 
 
-def test_ray_build_inputs_marks_lora_as_adapter_only_sync() -> None:
+def test_launch_from_cfg_marks_lora_as_adapter_only_sync() -> None:
     """LoRA sync never needs retained base-precision masters on the rollout."""
-    cfg = _build_inputs_cfg()
+    cfg = _launch_cfg()
     cfg.model.use_lora = True
 
-    launch_inputs = RayGenerationLauncher.build_inputs(
+    launch_inputs = _capture_launch_inputs(
         cfg,
-        _build_inputs_entry(),
+        get_model_family_entry("sd3_5"),
     )
 
     rollout = launch_inputs.launch_contract.model_build["rollout"]
     assert rollout["base_weight_sync"] is False
 
 
-def test_ray_build_inputs_rejects_model_compile_for_ar_family() -> None:
+def test_launch_from_cfg_rejects_model_compile_for_ar_family() -> None:
     """Checks model.torch_compile fails fast on rollout families that cannot compile."""
-    with pytest.raises(ValueError, match="does not support torch compile"):
-        RayGenerationLauncher.build_inputs(
-            _build_inputs_cfg(
-                model_torch_compile={
-                    "enable": True,
-                    "mode": "default",
-                },
-            ),
-            _build_inputs_entry("ar_discrete"),
-        )
-
-
-def test_ray_build_inputs_marks_ar_generation_kind() -> None:
-    launch_inputs = RayGenerationLauncher.build_inputs(
-        _build_inputs_cfg(),
-        _build_inputs_entry("ar_discrete"),
+    cfg = _launch_cfg(
+        model_torch_compile={
+            "enable": True,
+            "mode": "default",
+        },
     )
+    cfg.model.family = "janus_pro"
 
-    assert launch_inputs.launch_contract.generation_kind == "ar"
-
-
-@pytest.mark.parametrize(
-    ("launch_contract", "gatherer"),
-    [
-        pytest.param(None, _Gatherer(), id="missing-launch-contract"),
-        pytest.param(_launch_contract(), None, id="missing-gatherer"),
-        pytest.param(None, None, id="missing-both"),
-    ],
-)
-def test_ray_backend_requires_launch_contract_and_gatherer(
-    launch_contract: Any,
-    gatherer: Any,
-) -> None:
-    """Checks Ray backend requires launch contract and gatherer."""
-    with pytest.raises(ValueError, match="launch_contract plus gatherer"):
-        RayGenerationLauncher().launch_from_cfg(
-            _cfg(),
-            launch_contract=launch_contract,
-            gatherer=gatherer,
-            driver_policy=_CpuPolicy(),
+    with pytest.raises(ValueError, match="does not support torch compile"):
+        RayGenerationLauncher(init_ray=False).launch_from_cfg(
+            cfg,
+            resources=resolve_distributed_resources(cfg),
+            entry=get_model_family_entry("janus_pro"),
+            driver_bundle=_Bundle(model=_CpuPolicy(), trainable_modules={}),
+            placement=RolePlacement(
+                placement_group=object(),
+                bundle_indices=(),
+                expected_gpu_ids=(),
+            ),
         )
 
 
@@ -457,18 +431,29 @@ def test_launcher_default_ray_init_is_owned_local() -> None:
     assert RayGenerationLauncher().ray_init_kwargs == {"address": "local"}
 
 
-def test_ray_backend_rejects_driver_cuda_policy_without_overlap() -> None:
-    """Checks Ray backend rejects driver cuda policy without overlap."""
-    with pytest.raises(ValueError, match=r"resources\.allow_overlap=false"):
-        RayGenerationConfig.from_cfg(
-            _resource_cfg(
-                trainer_devices=[0],
-                rollout_devices=[0],
-                allow_overlap=False,
-            ),
-        ).validate_driver_state(driver_policy=_CudaPolicy())
+def test_ray_backend_rejects_unapproved_driver_cuda_overlap() -> None:
+    """The runtime backstop reports the concrete conflicting devices and policy."""
+    config = _ray_config(
+        _resource_cfg(
+            trainer_devices=[0],
+            rollout_devices=[0],
+            allow_overlap=True,
+        ),
+    )
+    # Resource resolution rejects this topology first in ordinary config flows.
+    # Flip only the approval bit to exercise the launch-boundary backstop.
+    config.allow_driver_gpu_overlap = False
 
-    assert "overlaps rollout devices" in DRIVER_CUDA_OWNERSHIP_ERROR
+    with pytest.raises(
+        ValueError,
+        match=(
+            r"Trainer device cuda:0 overlaps rollout devices \[0\], "
+            r"but resources\.allow_overlap=false"
+        ),
+    ):
+        config.validate_driver_state(
+            driver_bundle=_Bundle(model=_CudaPolicy(), trainable_modules={}),
+        )
 
 
 @pytest.mark.gpu
@@ -479,14 +464,20 @@ def test_ray_backend_detects_cuda_trainable_module_when_policy_has_no_device() -
         trainable_modules={"transformer": torch.nn.Linear(1, 1).to("cuda:0")},
     )
 
-    with pytest.raises(ValueError, match=r"resources\.allow_overlap=false"):
-        RayGenerationConfig.from_cfg(
-            _resource_cfg(
-                trainer_devices=[0],
-                rollout_devices=[0],
-                allow_overlap=False,
-            ),
-        ).validate_driver_state(driver_bundle=bundle)
+    config = _ray_config(
+        _resource_cfg(
+            trainer_devices=[0],
+            rollout_devices=[0],
+            allow_overlap=True,
+        ),
+    )
+    config.allow_driver_gpu_overlap = False
+
+    with pytest.raises(
+        ValueError,
+        match=r"Trainer device cuda:0 overlaps rollout devices \[0\]",
+    ):
+        config.validate_driver_state(driver_bundle=bundle)
 
 
 def test_ray_backend_allows_driver_cuda_policy_with_explicit_overlap() -> None:
@@ -495,23 +486,28 @@ def test_ray_backend_allows_driver_cuda_policy_with_explicit_overlap() -> None:
     A colocated single-GPU topology derives on-demand rollout activation, so the
     driver CUDA policy overlapping the rollout GPU is allowed.
     """
-    config = RayGenerationConfig.from_cfg(
+    config = _ray_config(
         _resource_cfg(
             trainer_devices=[0],
             rollout_devices=[0],
             allow_overlap=True,
         ),
-    ).validate_driver_state(driver_policy=_CudaPolicy())
+    ).validate_driver_state(
+        driver_bundle=_Bundle(model=_CudaPolicy(), trainable_modules={}),
+    )
 
     assert config.allow_driver_gpu_overlap is True
+    assert config.resources is not None
     assert config.resources.lifecycle.rollout.mode == "on_demand"
 
 
 def test_ray_backend_allows_split_driver_cuda_when_devices_do_not_overlap() -> None:
     """Checks Ray backend allows split driver cuda when devices do not overlap."""
-    config = RayGenerationConfig.from_cfg(
+    config = _ray_config(
         _resource_cfg(trainer_devices=[0], rollout_devices=[1]),
-    ).validate_driver_state(driver_policy=_CudaPolicy())
+    ).validate_driver_state(
+        driver_bundle=_Bundle(model=_CudaPolicy(), trainable_modules={}),
+    )
 
     assert config.resources is not None
     assert config.resources.trainer_devices == (0,)
