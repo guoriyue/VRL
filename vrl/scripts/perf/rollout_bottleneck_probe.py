@@ -1,10 +1,11 @@
-"""Where does diffusion rollout time go: compute, launch overhead, or VAE?
+"""Where does diffusion rollout time go: DiT forward, VAE, or host overhead?
 
-Decisive test for compute-bound vs launch-bound: time the DiT forward at growing
-batch sizes. If ms/sample drops as batch grows, the GPU was idle (launch/overhead
-bound) and you get extra samples nearly free -> bigger batch / compile fixes it.
-If ms/sample is flat, you are compute-bound and only fewer FLOPs (steps / fp8 /
-resolution / smaller model) helps.
+This is a batch-amortization screen, not a decisive saturation test. Falling
+ms/sample demonstrates a batching gain at the tested shapes; it does not prove
+recoverable device headroom. Flat ms/sample shows no batching gain in this sweep,
+but does not rule out compile, precision, or kernel-shape improvements. Use a
+real-workload co-run A/B for recoverable aggregate throughput and NCU against a
+same-machine GEMM baseline for kernel saturation.
 
 Also decomposes one rollout into DiT-forward vs VAE-decode vs scheduler/python.
 
@@ -33,18 +34,21 @@ def main() -> None:
     from diffusers import StableDiffusion3Pipeline
 
     print(f"loading {args.model} (bf16, cuda) ...")
-    pipe = StableDiffusion3Pipeline.from_pretrained(
-        args.model, torch_dtype=torch.bfloat16
-    ).to("cuda")
+    pipe = StableDiffusion3Pipeline.from_pretrained(args.model, torch_dtype=torch.bfloat16).to(
+        "cuda"
+    )
     pipe.set_progress_bar_config(disable=True)
     transformer = pipe.transformer
     device, dtype = transformer.device, transformer.dtype
 
     (embeds, neg, pooled, neg_pooled) = pipe.encode_prompt(
         prompt="a photorealistic astronaut riding a horse on mars",
-        prompt_2=None, prompt_3=None, do_classifier_free_guidance=True, device=device,
+        prompt_2=None,
+        prompt_3=None,
+        do_classifier_free_guidance=True,
+        device=device,
     )
-    full_embeds = torch.cat([neg, embeds])      # CFG -> 2 rows per sample
+    full_embeds = torch.cat([neg, embeds])  # CFG -> 2 rows per sample
     full_pooled = torch.cat([neg_pooled, pooled])
     num_ch = transformer.config.in_channels
     h, w = args.height // 8, args.width // 8
@@ -53,20 +57,22 @@ def main() -> None:
     t = pipe.scheduler.timesteps[len(pipe.scheduler.timesteps) // 2]
 
     print(f"\n=== DiT forward: batch-size scaling (steps={args.steps}, {args.height}^2) ===")
-    print(f"{'batch':>6} | {'ms/forward':>11} | {'ms/sample':>10} | {'tokens':>8} | verdict")
+    print(f"{'batch':>6} | {'ms/forward':>11} | {'ms/sample':>10} | {'tokens':>8} | read")
     base_per_sample = None
     for b in args.batches:
         latents = torch.randn(b, num_ch, h, w, device=device, dtype=dtype)
         emb = full_embeds.repeat_interleave(b, dim=0) if full_embeds.shape[0] == 2 else full_embeds
         pol = full_pooled.repeat_interleave(b, dim=0) if full_pooled.shape[0] == 2 else full_pooled
-        model_in = torch.cat([latents] * 2)      # CFG
+        model_in = torch.cat([latents] * 2)  # CFG
         ts = t.expand(model_in.shape[0])
 
         def _fwd(model_in=model_in, ts=ts, emb=emb, pol=pol):
             with torch.no_grad():
                 transformer(
-                    hidden_states=model_in, timestep=ts,
-                    encoder_hidden_states=emb, pooled_projections=pol,
+                    hidden_states=model_in,
+                    timestep=ts,
+                    encoder_hidden_states=emb,
+                    pooled_projections=pol,
                     return_dict=False,
                 )
 
@@ -80,9 +86,14 @@ def main() -> None:
         if base_per_sample is None:
             base_per_sample = per_sample
         ratio = per_sample / base_per_sample
-        verdict = "launch/overhead-bound (free headroom)" if ratio < 0.7 else (
-            "compute-bound (saturated)" if ratio > 0.9 else "transition")
-        print(f"{b:>6} | {ms:>11.2f} | {per_sample:>10.2f} | {h * w:>8} | {verdict}")
+        read = (
+            "strong amortization at this shape"
+            if ratio < 0.7
+            else "little amortization at this shape"
+            if ratio > 0.9
+            else "moderate amortization at this shape"
+        )
+        print(f"{b:>6} | {ms:>11.2f} | {per_sample:>10.2f} | {h * w:>8} | {read}")
 
     # Per-phase decomposition for one rollout at batch=group size.
     g = max(args.batches)
@@ -98,8 +109,11 @@ def main() -> None:
             mi = torch.cat([lat] * 2)
             with torch.no_grad():
                 out = transformer(
-                    hidden_states=mi, timestep=tt.expand(mi.shape[0]),
-                    encoder_hidden_states=emb, pooled_projections=pol, return_dict=False,
+                    hidden_states=mi,
+                    timestep=tt.expand(mi.shape[0]),
+                    encoder_hidden_states=emb,
+                    pooled_projections=pol,
+                    return_dict=False,
                 )[0]
             u, c = out.chunk(2)
             lat = pipe.scheduler.step(u + 4.5 * (c - u), tt, lat, return_dict=False)[0]
@@ -114,10 +128,12 @@ def main() -> None:
     final = _denoise()
     vae_ms = cuda_mean_ms(lambda: _vae(final), iters=3, warmup=1)
     total = denoise_ms + vae_ms
-    print(f"  denoise ({args.steps} DiT fwd): {denoise_ms:>9.1f} ms  ({denoise_ms/total*100:4.1f}%)")
-    print(f"  VAE decode               : {vae_ms:>9.1f} ms  ({vae_ms/total*100:4.1f}%)")
-    print(f"  per DiT forward (avg)    : {denoise_ms/args.steps:>9.2f} ms")
-    print(f"  total / sample           : {total/g:>9.1f} ms")
+    print(
+        f"  denoise ({args.steps} DiT fwd): {denoise_ms:>9.1f} ms  ({denoise_ms / total * 100:4.1f}%)"
+    )
+    print(f"  VAE decode               : {vae_ms:>9.1f} ms  ({vae_ms / total * 100:4.1f}%)")
+    print(f"  per DiT forward (avg)    : {denoise_ms / args.steps:>9.2f} ms")
+    print(f"  total / sample           : {total / g:>9.1f} ms")
     mem = torch.cuda.max_memory_allocated() / 1024**3
     print(f"  peak memory              : {mem:>9.2f} GB")
 

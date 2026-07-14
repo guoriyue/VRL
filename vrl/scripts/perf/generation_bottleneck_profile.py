@@ -3,12 +3,12 @@
 WHY: GPU util=100% does NOT prove peak FLOPS — a bandwidth-bound kernel (attention
 materializing an O(n^2) matrix, an oversized elementwise/copy) can pin util at 100%
 while wasting the SMs. ``gemm_projection_breakdown.py`` splits *GEMM* time only; this
-tool profiles the WHOLE denoise forward and answers two questions directly:
+tool profiles the WHOLE denoise forward and reports two useful observations:
 
   1. Which kernels own the device time? (full top-N by self CUDA time, GEMM + attention
      + norm + elementwise + copy — so a hidden bandwidth-bound kernel shows up.)
-  2. Is the forward compute- or memory-bound? (nvidia-smi dmon samples SM% vs MEM%
-     hardware counters during the profiled window; MEM% >> SM% == bandwidth-bound.)
+  2. What SM% and MEM% did nvidia-smi dmon report during the window? These are
+     supporting counters, not a compute-vs-memory roofline classification.
 
 HOW: reuses the repo torch.profiler pattern (ProfilerActivity.CUDA + key_averages,
 same as gemm_projection_breakdown / compile_benchmark). Kernels are bucketed by name
@@ -38,7 +38,8 @@ from vrl.scripts.perf.common.diffusion_runtime import build_model, make_step_fn,
 
 # Kernel-name -> bucket. First substring match wins; lowercased CUDA kernel name.
 # gemm/attention are compute-heavy; norm/elementwise/reduction/copy are typically
-# bandwidth-bound. A bandwidth bucket dominating == the "slow 访存 kernel" smell.
+# bandwidth-leaning. Bucket attribution identifies candidates; it does not prove
+# a kernel's roofline regime or predict a realized optimization gain.
 _BUCKETS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("gemm", ("gemm", "cutlass", "sgemm", "ampere", "wgrad", "implicit", "cublas", "matmul")),
     ("attention", ("flash", "fmha", "attention", "scaled_dot", "mha", "softmax")),
@@ -156,7 +157,8 @@ def main(argv=None):
     # steady-state forward, not the (larger) one-time load/warmup allocations.
     torch.cuda.reset_peak_memory_stats(device)
 
-    # Sample SM% vs MEM% hardware counters during the profiled window (compute vs bandwidth).
+    # Sample SM% vs MEM% during the same window so the trace has device context;
+    # the two percentages alone do not classify the forward's roofline regime.
     dmon = subprocess.Popen(
         ["nvidia-smi", "dmon", "-s", "u", "-d", "1", "-c", str(max(2, args.steps))],
         stdout=subprocess.PIPE,
@@ -193,7 +195,6 @@ def main(argv=None):
         return True
 
     bucket_us: dict[str, float] = defaultdict(float)
-    bucket_calls: dict[str, int] = defaultdict(int)
     top: list[tuple[float, str]] = []
     total_cuda_us = 0.0
     n_launches = 0
@@ -212,7 +213,6 @@ def main(argv=None):
         n_launches += calls
         b = _bucket(str(evt.key))
         bucket_us[b] += dev_us
-        bucket_calls[b] += calls
         top.append((dev_us, str(evt.key)))
 
     total = total_cuda_us or 1.0
@@ -228,9 +228,7 @@ def main(argv=None):
             f"  teacache: {c['teacache_skips']} skips / {c['teacache_runs']} runs "
             f"(skip ratio {c['teacache_skip_ratio']:.0%}, incl. warmup) ==="
         )
-    print(
-        "\n--- device time by bucket (compute = gemm+attention; bandwidth = norm/copy/reduction) ---"
-    )
+    print("\n--- device time by bucket (descriptive attribution, not a roofline verdict) ---")
     comp = bucket_us.get("gemm", 0) + bucket_us.get("attention", 0)
     band = (
         bucket_us.get("norm/elementwise", 0)
@@ -242,7 +240,8 @@ def main(argv=None):
         if v > 0:
             print(f"  {b:18s} {v / total * 100:5.1f}%  ({v / 1e6:.2f}s)")
     print(
-        f"  → compute(gemm+attn) {comp / total * 100:.1f}%  vs  bandwidth(norm/copy/reduce) {band / total * 100:.1f}%"
+        f"  → compute-heavy buckets {comp / total * 100:.1f}%  vs  "
+        f"bandwidth-leaning buckets {band / total * 100:.1f}%"
     )
 
     print("\n--- top 15 kernels by self device time ---")
@@ -251,8 +250,8 @@ def main(argv=None):
             f"  {dev_us / total * 100:5.1f}%  {dev_us / 1e3:8.1f}ms  [{_bucket(name):16s}] {name[:70]}"
         )
 
-    print("\n--- nvidia-smi dmon (sm% = compute util, mem% = memory-controller util) ---")
-    print("    bandwidth-bound smell: mem% sustained near or above sm%")
+    print("\n--- nvidia-smi dmon (supporting counters; not a saturation verdict) ---")
+    print("    use NCU roofline/SOL evidence to classify compute or memory limits")
     for line in dmon_out.strip().splitlines()[-(args.steps + 2) :]:
         print("   ", line)
 

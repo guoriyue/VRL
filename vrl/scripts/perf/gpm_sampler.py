@@ -6,6 +6,9 @@ interval. GPM gives *SM-level* counters (what fraction of SMs were busy and
 how occupied they were), unlike `nvidia-smi` utilization which only reports
 "any kernel resident" time.
 
+These counters explain execution; low occupancy alone does not prove unused or
+recoverable throughput. Use a real-workload throughput A/B for that decision.
+
 Usage:
     python -m vrl.scripts.perf.gpm_sampler OUT_CSV [INTERVAL_S=1.0]
 
@@ -79,7 +82,9 @@ def main() -> int:
                     values = []
                     for i in range(len(METRICS)):
                         m = query.metrics[i]
-                        values.append(f"{m.value:.3f}" if m.nvmlReturn == pynvml.NVML_SUCCESS else "nan")
+                        values.append(
+                            f"{m.value:.3f}" if m.nvmlReturn == pynvml.NVML_SUCCESS else "nan"
+                        )
                     fh.write(f"{time.time():.3f}," + ",".join(values) + "\n")
                     fh.flush()
                     # Swap buffers: current sample becomes baseline for the next delta.

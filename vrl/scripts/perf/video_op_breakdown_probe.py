@@ -16,9 +16,9 @@ kernel's self-time into:
                 the bandwidth-bound AdaLN-Zero + modulation work a fused kernel targets
   - OTHER     : copies / cat / reshape / misc
 
-If NORM_ELEM is a large slice of the COMPILED time, a hand-fused AdaLN-Zero kernel has
-real headroom (inductor did not fuse it away). Top-N kernels are printed raw so the
-bucketing is auditable, not a black box.
+If NORM_ELEM is a large slice of the COMPILED time, a hand-fused AdaLN-Zero kernel is
+a candidate for an implementation A/B. The bucket share does not predict recoverable
+speedup. Top-N kernels are printed raw so the bucketing is auditable, not a black box.
 
 Run: python -m vrl.scripts.perf.video_op_breakdown_probe --family cosmos-predict2.5 --frames 8
 """
@@ -36,10 +36,46 @@ from vrl.scripts.perf.common.synthetic_diffusion import build_synthetic_inputs
 # Substring buckets, checked in order; first match wins. Lowercased kernel name.
 _BUCKETS = (
     ("ATTENTION", ("flash", "fmha", "attention", "scaled_dot", "mem_eff", "_sdp", "sdpa")),
-    ("MATMUL", ("gemm", "cutlass", "cublas", "ampere", "sm80", "sm90", "sm120", "addmm",
-                "matmul", "wgrad", "dgrad", "s16816", "h16816", "_mm_", "gett", "implicit")),
-    ("NORM_ELEM", ("norm", "rope", "rotary", "elementwise", "triton_poi", "triton_red",
-                   "triton_per", "mul", "add", "layer_norm", "rms", "silu", "gelu", "vectorized")),
+    (
+        "MATMUL",
+        (
+            "gemm",
+            "cutlass",
+            "cublas",
+            "ampere",
+            "sm80",
+            "sm90",
+            "sm120",
+            "addmm",
+            "matmul",
+            "wgrad",
+            "dgrad",
+            "s16816",
+            "h16816",
+            "_mm_",
+            "gett",
+            "implicit",
+        ),
+    ),
+    (
+        "NORM_ELEM",
+        (
+            "norm",
+            "rope",
+            "rotary",
+            "elementwise",
+            "triton_poi",
+            "triton_red",
+            "triton_per",
+            "mul",
+            "add",
+            "layer_norm",
+            "rms",
+            "silu",
+            "gelu",
+            "vectorized",
+        ),
+    ),
 )
 
 
@@ -80,32 +116,41 @@ def _report(tag: str, totals: dict, rows: list, iters: int) -> None:
     print(f"\n=== {tag} — GPU self-time by bucket (per forward) ===")
     for label in ("MATMUL", "ATTENTION", "NORM_ELEM", "OTHER"):
         ms = totals.get(label, 0.0) / iters
-        print(f"  {label:<10} {ms:8.2f} ms  ({totals.get(label,0.0)/total*100:5.1f}%)")
+        print(f"  {label:<10} {ms:8.2f} ms  ({totals.get(label, 0.0) / total * 100:5.1f}%)")
     useful = (totals.get("MATMUL", 0) + totals.get("ATTENTION", 0)) / total * 100
-    print(f"  -- useful FLOP kernels (MATMUL+ATTN) = {useful:.1f}% of GPU time; "
-          f"the rest is fusion/overhead headroom --")
+    print(
+        f"  -- MATMUL+ATTN = {useful:.1f}% of GPU time; the remainder is "
+        "candidate non-matmul work, not automatically recoverable --"
+    )
     print("  top kernels:")
     for name, t in rows[:10]:
-        print(f"    {t/iters:7.2f} ms  [{_bucket(name):<9}] {name[:70]}")
+        print(f"    {t / iters:7.2f} ms  [{_bucket(name):<9}] {name[:70]}")
 
 
 def main() -> None:
     p = argparse.ArgumentParser(description=__doc__)
-    p.add_argument("--family", default="cosmos-predict2.5",
-                   choices=["cosmos-predict2", "cosmos-predict2.5", "wan_2_1"])
+    p.add_argument(
+        "--family",
+        default="cosmos-predict2.5",
+        choices=["cosmos-predict2", "cosmos-predict2.5", "wan_2_1"],
+    )
     p.add_argument("--frames", type=int, default=8)
     p.add_argument("--batch", type=int, default=1)
     p.add_argument("--iters", type=int, default=10)
     args = p.parse_args()
 
     device, dtype = torch.device("cuda"), torch.bfloat16
-    model, kwargs = build_synthetic_inputs(args.family, batch=args.batch, device=device, dtype=dtype)
+    model, kwargs = build_synthetic_inputs(
+        args.family, batch=args.batch, device=device, dtype=dtype
+    )
     B, C, _, h, w = kwargs["hidden_states"].shape
     kwargs["hidden_states"] = torch.randn(B, C, args.frames, h, w, device=device, dtype=dtype)
     cfg = model.config
     tok = args.frames * (h // cfg.patch_size[1]) * (w // cfg.patch_size[2])
-    print(f"{args.family}: {sum(q.numel() for q in model.parameters())/1e9:.2f}B, "
-          f"{cfg.num_layers} layers, frames={args.frames}, vid_tok={tok}")
+    print(
+        f"{args.family}: {sum(q.numel() for q in model.parameters()) / 1e9:.2f}B, "
+        f"{cfg.num_layers} layers, frames={args.frames}, vid_tok={tok}"
+    )
 
     def _fwd():
         with torch.no_grad():
@@ -125,9 +170,12 @@ def main() -> None:
     _report("COMPILED", comp_tot, comp_rows, args.iters)
 
     nm = comp_tot.get("NORM_ELEM", 0.0) / (sum(comp_tot.values()) or 1.0) * 100
-    print(f"\nverdict: after compile, NORM_ELEM (AdaLN/RoPE/modulation/pointwise) = {nm:.1f}% "
-          f"of GPU time.\n  >20% -> fused AdaLN-Zero kernel has real headroom (P1 priority); "
-          f"check ATTENTION% for FA-3 priority.")
+    print(
+        "\nscreen: after compile, "
+        f"NORM_ELEM (AdaLN/RoPE/modulation/pointwise) = {nm:.1f}% of GPU time.\n"
+        "  >20% -> benchmark a fused AdaLN-Zero candidate; bucket share alone "
+        "does not establish speedup. Check ATTENTION% before benchmarking FA-3."
+    )
 
 
 if __name__ == "__main__":
