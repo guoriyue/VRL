@@ -152,16 +152,6 @@ class MochiModel(LoraModelMixin, DiffusersPipelineModelBase, DiffusionBackboneRu
             device=build.device,
         )
 
-    def _encoder_device(self) -> Any:
-        """Device the frozen T5 encoder lives on (CPU when offloaded)."""
-        enc = getattr(self.pipeline, "text_encoder", None)
-        if enc is not None:
-            try:
-                return next(enc.parameters()).device
-            except StopIteration:
-                pass
-        return self.device
-
     # -- encode_prompt -------------------------------------------------
 
     def encode_prompt(

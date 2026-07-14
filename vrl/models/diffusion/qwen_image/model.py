@@ -187,11 +187,6 @@ class QwenImageModel(LoraModelMixin, DiffusersPipelineModelBase, DiffusionBackbo
             scheduler.set_timesteps(num_steps, device=device)
         return scheduler.timesteps
 
-    @property
-    def _guidance_embeds(self) -> bool:
-        """Whether the checkpoint embeds a distilled-guidance scalar (base: False)."""
-        return bool(getattr(self.transformer.config, "guidance_embeds", False))
-
     # -- encode_prompt -------------------------------------------------
 
     def encode_prompt(
@@ -243,16 +238,6 @@ class QwenImageModel(LoraModelMixin, DiffusersPipelineModelBase, DiffusionBackbo
                 else negative_prompt_embeds_mask.to(self.device)
             )
         return result
-
-    def _encoder_device(self) -> Any:
-        """Device the frozen Qwen2.5-VL encoder lives on (CPU when offloaded)."""
-        enc = getattr(self.pipeline, "text_encoder", None)
-        if enc is not None:
-            try:
-                return next(enc.parameters()).device
-            except StopIteration:
-                pass
-        return self.device
 
     # -- prepare_sampling ----------------------------------------------
 

@@ -16,6 +16,7 @@ from vrl.generation.diffusion.layout import VideoGenerationRequest
 from vrl.models.diffusion import DiffusionModelBase
 from vrl.models.diffusion.cosmos import CosmosReplayForward
 from vrl.models.diffusion.cosmos.predict2.model import CosmosPredict2Model
+from vrl.models.diffusion.flux.model import FluxModel
 from vrl.models.diffusion.sd3_5.model import SD3_5Model
 from vrl.models.diffusion.wan_2_1.model import WanT2VDiffusersModel
 from vrl.models.interfaces import ReplayResult
@@ -146,6 +147,45 @@ class _BackendPipelineStub(nn.Module):
         self.vae = nn.Linear(2, 2)
         self.text_encoder = nn.Linear(2, 2)
         self.device = torch.device("cpu")
+
+
+def test_pipeline_model_base_discovers_primary_encoder_device() -> None:
+    pipeline = _BackendPipelineStub()
+    runtime = SD3_5Model(pipeline=pipeline, device=torch.device("meta"))
+
+    assert runtime._encoder_device() == torch.device("cpu")
+
+
+def test_pipeline_model_base_falls_back_for_parameterless_encoder() -> None:
+    pipeline = _BackendPipelineStub()
+    pipeline.text_encoder = nn.Identity()
+    runtime = SD3_5Model(pipeline=pipeline, device=torch.device("meta"))
+
+    assert runtime._encoder_device() == torch.device("meta")
+
+
+@pytest.mark.parametrize(
+    ("config", "expected"),
+    [
+        (SimpleNamespace(guidance_embeds=True), True),
+        (SimpleNamespace(guidance_embeds=False), False),
+        (SimpleNamespace(), False),
+    ],
+)
+def test_pipeline_model_base_reads_guidance_embeds(config: Any, expected: bool) -> None:
+    pipeline = _BackendPipelineStub()
+    pipeline.transformer.config = config
+    runtime = SD3_5Model(pipeline=pipeline, device=torch.device("cpu"))
+
+    assert runtime._guidance_embeds is expected
+
+
+def test_flux_encoder_device_prefers_second_encoder() -> None:
+    pipeline = _BackendPipelineStub()
+    pipeline.text_encoder_2 = nn.Linear(2, 2, device="meta")
+    runtime = FluxModel(pipeline=pipeline, device=torch.device("cpu"))
+
+    assert runtime._encoder_device() == torch.device("meta")
 
 
 def _peft_disable_flags(module: nn.Module) -> list[bool]:
@@ -442,11 +482,15 @@ def test_install_retains_old_version_after_newer_install() -> None:
     assert runtime.has_trainable_state(2)
 
     runtime.activate_trainable_state(2)
-    assert torch.equal(runtime.transformer.weight, torch.full_like(runtime.transformer.weight, 2.0))
+    assert torch.equal(
+        runtime.transformer.weight, torch.full_like(runtime.transformer.weight, 2.0)
+    )
 
     # Old v1 still resolves to v1's weights even though v2 was installed after it.
     runtime.activate_trainable_state(1)
-    assert torch.equal(runtime.transformer.weight, torch.full_like(runtime.transformer.weight, 1.0))
+    assert torch.equal(
+        runtime.transformer.weight, torch.full_like(runtime.transformer.weight, 1.0)
+    )
     assert torch.equal(runtime.transformer.bias, torch.full_like(runtime.transformer.bias, 1.0))
 
 
@@ -471,4 +515,6 @@ def test_activate_is_idempotent_for_active_version() -> None:
     with torch.no_grad():
         runtime.transformer.weight.fill_(5.0)
     runtime.activate_trainable_state(1)
-    assert torch.equal(runtime.transformer.weight, torch.full_like(runtime.transformer.weight, 5.0))
+    assert torch.equal(
+        runtime.transformer.weight, torch.full_like(runtime.transformer.weight, 5.0)
+    )

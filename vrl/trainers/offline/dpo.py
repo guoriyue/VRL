@@ -124,13 +124,6 @@ def _build_optimizer(
 ForwardFn = Callable[..., torch.Tensor]
 
 
-def _trainable_forward_model(model: nn.Module) -> nn.Module:
-    """Return the trainable backbone when a policy wrapper owns replay semantics."""
-
-    transformer = getattr(model, "transformer", None)
-    return transformer if transformer is not None else model
-
-
 def wan_forward(
     model: nn.Module,
     noisy_latents: torch.Tensor,
@@ -140,7 +133,9 @@ def wan_forward(
 ) -> torch.Tensor:
     """Wan transformer forward; unwrap policy modules before raw backbone call."""
     del extra
-    forward_model = _trainable_forward_model(model)
+    forward_model = getattr(model, "transformer", None)
+    if forward_model is None:
+        forward_model = model
     out = forward_model(
         hidden_states=noisy_latents,
         timestep=timesteps,

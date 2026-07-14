@@ -113,19 +113,8 @@ def load_prompt_image_manifest(
     )
 
 
-def _load_prompt_examples_from_config(
-    data_cfg: Any,
-    *,
-    manifest_key: str,
-    missing_message: str,
-) -> list[PromptExample]:
-    """Resolve ``data.loader`` and load examples from ``data.<manifest_key>``.
-
-    The train (``data.manifest``) and eval (``data.eval_manifest``) entry points
-    differ only in which manifest key they read and the message they fail with,
-    so the loader resolution, presence check, and dispatch live here once and the
-    two paths cannot drift apart.
-    """
+def load_prompt_examples_from_config(data_cfg: Any) -> list[PromptExample]:
+    """Resolve ``data.loader`` and load examples from ``data.manifest``."""
 
     raw_loader = cfg_get(data_cfg, "loader", None)
     if raw_loader is None:
@@ -139,9 +128,9 @@ def _load_prompt_examples_from_config(
         loader = "prompt_image_manifest" if fmt == "image_caption_jsonl" else "prompt_manifest"
     else:
         loader = str(raw_loader)
-    manifest = cfg_get(data_cfg, manifest_key, None)
+    manifest = cfg_get(data_cfg, "manifest", None)
     if not manifest:
-        raise ValueError(missing_message)
+        raise ValueError("config missing required field: data.manifest")
 
     if loader == "prompt_manifest":
         return load_prompt_manifest(manifest)
@@ -159,17 +148,6 @@ def _load_prompt_examples_from_config(
         )
 
     raise ValueError(f"unknown data.loader={loader!r}")
-
-
-def load_prompt_examples_from_config(data_cfg: Any) -> list[PromptExample]:
-    """Dispatch prompt example loading from a resolved ``data`` config section."""
-
-    return _load_prompt_examples_from_config(
-        data_cfg,
-        manifest_key="manifest",
-        missing_message="config missing required field: data.manifest",
-    )
-
 
 
 class JsonlPromptDataset(Dataset):
@@ -194,9 +172,7 @@ class JsonlPromptDataset(Dataset):
                 extra_metadata = {
                     key: value for key, value in obj.items() if key not in known_fields
                 }
-                prompt_fields = {
-                    key: value for key, value in obj.items() if key in known_fields
-                }
+                prompt_fields = {key: value for key, value in obj.items() if key in known_fields}
                 metadata = dict(prompt_fields.get("metadata") or {})
                 metadata.update(extra_metadata)
                 prompt_fields["metadata"] = metadata

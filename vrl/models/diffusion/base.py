@@ -475,11 +475,13 @@ class DiffusersPipelineModelBase(DiffusionModelBase):
     trainable transformer (sd3_5, flux, qwen_image, cosmos, wan's primary).
 
     Factors the members that were byte-identical across those families:
-    pipeline/device/scheduler/raw_handle access, transformer swap, the
-    single-transformer trainable map, full-finetune, and scheduler timestep
-    init. A family overrides only where it genuinely differs (sd3's attention
-    processor reinstall on ``_set_transformer``, wan's multi-transformer
-    ``trainable_modules``/LoRA, Predict2.5's NFT full-finetune guard).
+    pipeline/device/scheduler/raw_handle access, frozen encoder device discovery,
+    distilled-guidance detection, transformer swap, the single-transformer
+    trainable map, full-finetune, and scheduler timestep init. A family
+    overrides only where it genuinely differs (FLUX's dual-encoder discovery,
+    sd3's attention processor reinstall on ``_set_transformer``, wan's
+    multi-transformer ``trainable_modules``/LoRA, Predict2.5's NFT
+    full-finetune guard).
     Families NOT backed by a diffusers pipeline (echo's LTX wrapper, anima's
     single-file checkpoint) stay on ``DiffusionModelBase`` directly.
     """
@@ -503,6 +505,23 @@ class DiffusersPipelineModelBase(DiffusionModelBase):
     @property
     def device(self) -> Any:
         return self._device if self._device is not None else self.pipeline.device
+
+    def _encoder_device(self) -> Any:
+        """Return the device that owns the pipeline's primary text encoder."""
+
+        encoder = getattr(self.pipeline, "text_encoder", None)
+        if encoder is not None:
+            try:
+                return next(encoder.parameters()).device
+            except StopIteration:
+                pass
+        return self.device
+
+    @property
+    def _guidance_embeds(self) -> bool:
+        """Whether the checkpoint embeds a distilled-guidance scalar."""
+
+        return bool(getattr(self.transformer.config, "guidance_embeds", False))
 
     @property
     def trainable_modules(self) -> dict[str, Any]:

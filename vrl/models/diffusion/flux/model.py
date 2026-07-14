@@ -237,11 +237,6 @@ class FluxModel(LoraModelMixin, DiffusersPipelineModelBase, DiffusionBackboneRun
             scheduler.set_timesteps(num_steps, device=device)
         return scheduler.timesteps
 
-    @property
-    def _guidance_embeds(self) -> bool:
-        """Whether the FLUX checkpoint embeds a guidance scalar (dev) or not (schnell)."""
-        return bool(getattr(self.transformer.config, "guidance_embeds", False))
-
     @staticmethod
     def _build_latent_image_ids(
         height: int,

@@ -34,9 +34,11 @@ class LinearTargetProfile(StrEnum):
     ATTENTION_MLP = "attention_mlp"
 
 
-def is_mlp_linear_path(path: str) -> bool:
-    """Whether a dotted module path belongs to a transformer feed-forward block."""
+def matches_linear_target(path: str, profile: LinearTargetProfile) -> bool:
+    """Whether ``path`` belongs to a validated quantization target profile."""
 
+    if profile is LinearTargetProfile.ATTENTION_MLP:
+        return True
     return any(
         segment in MLP_PATH_SEGMENTS
         or segment.startswith(("ff_", "mlp_"))
@@ -45,19 +47,10 @@ def is_mlp_linear_path(path: str) -> bool:
     )
 
 
-def matches_linear_target(path: str, profile: LinearTargetProfile) -> bool:
-    """Whether ``path`` belongs to a validated quantization target profile."""
-
-    if profile is LinearTargetProfile.ATTENTION_MLP:
-        return True
-    return is_mlp_linear_path(path)
-
-
 __all__ = [
     "DEFAULT_EXCLUDE",
     "LM_EXCLUDE",
     "MLP_PATH_SEGMENTS",
     "LinearTargetProfile",
-    "is_mlp_linear_path",
     "matches_linear_target",
 ]

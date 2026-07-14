@@ -13,7 +13,7 @@ from tests.models.diffusion.fixtures import (
     build_tiny_sd3_transformer,
     build_tiny_wan_transformer,
 )
-from vrl.nn.quantization.targeting import is_mlp_linear_path
+from vrl.nn.quantization.targeting import LinearTargetProfile, matches_linear_target
 
 
 @pytest.mark.parametrize(
@@ -32,7 +32,9 @@ def test_nvfp4_selects_real_mlp_paths_but_not_attention(builder) -> None:
         path for path, module in transformer.named_modules() if isinstance(module, nn.Linear)
     ]
 
-    selected = [path for path in linear_paths if is_mlp_linear_path(path)]
+    selected = [
+        path for path in linear_paths if matches_linear_target(path, LinearTargetProfile.MLP_ONLY)
+    ]
 
     assert selected
     assert not any("attn" in path for path in selected)
@@ -45,4 +47,6 @@ def test_nvfp4_does_not_misclassify_sana_attention_when_mlp_uses_convolutions() 
         path for path, module in transformer.named_modules() if isinstance(module, nn.Linear)
     ]
 
-    assert not any(is_mlp_linear_path(path) for path in linear_paths)
+    assert not any(
+        matches_linear_target(path, LinearTargetProfile.MLP_ONLY) for path in linear_paths
+    )

@@ -162,21 +162,6 @@ class HunyuanImageModel(LoraModelMixin, DiffusersPipelineModelBase, DiffusionBac
             device=build.device,
         )
 
-    def _encoder_device(self) -> Any:
-        """Device the frozen Qwen2.5-VL encoder lives on (CPU when offloaded)."""
-        enc = getattr(self.pipeline, "text_encoder", None)
-        if enc is not None:
-            try:
-                return next(enc.parameters()).device
-            except StopIteration:
-                pass
-        return self.device
-
-    @property
-    def _guidance_embeds(self) -> bool:
-        """Whether the checkpoint embeds a distilled-guidance scalar (2.1 base: False)."""
-        return bool(getattr(self.transformer.config, "guidance_embeds", False))
-
     # -- encode_prompt -------------------------------------------------
 
     def encode_prompt(
