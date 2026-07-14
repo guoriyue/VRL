@@ -10,12 +10,27 @@
 
 **为什么 GEMM 比 attention 大——这是 DiT 的结构，不是 bug。** DiT 的 FLOP 压在 Linear 上：FFN/MLP 两个大 matmul（中间维 ~4× hidden）+ QKV 投影 + out-proj + AdaLN/modulation 投影。attention 的 `softmax(QK^T)V` 是 O(seq²)，**只有序列很长才占优**；你的负载序列短（cosmos 240p "序列太短 attention~0"；SD3.5 512px bf16 后 attention 仅 9%），所以 FFN 这类 GEMM 自然占 ~48-51%。**GEMM 大 = 在这个分辨率下就是 GEMM-bound 模型。**
 
-**真正的问题不是"kernel 慢"，是"喂不饱"。** NCU 实测 GEMM `Compute(SM)` 只有 **42-58%**、SM occupancy **18-26%**，定性为"**小 shape / fragmented / launch-bound 指纹**"。cuBLAS/CUTLASS 的 GEMM kernel 本身已接近峰值——**所以"手写更快的 GEMM kernel"不在选项内**。能做的只有两类：
+**Corrected interpretation (2026-07-12): low occupancy is not proof that the
+GPU is under-fed.** Tensor-core GEMMs commonly have low occupancy because their
+register and shared-memory use limits resident warps. NCU tensor-pipe SOL must be
+compared with a same-machine square-GEMM baseline; that comparison, not the
+`18-26%` occupancy value, supports the conclusion that the main GEMMs are near
+the achievable kernel ceiling. See
+`docs/sprints/SPRINT_gpu_saturation_and_colocation_decision.md`.
+
+The measured optimization classes were:
 
 - **(A) 换更高的硬件 peak** → FP8/FP4。硬件实测是 **RTX 5090 / Blackwell `sm_120`（compute_cap 12.0）**，FP8/FP4 tensor core 在，但精度档还停在 bf16，**完全没用上**——这是唯一没开采的硬件 peak。**注：FP8 已按用户决定暂缓（2026-06-14）**；P0 显示它本可安全覆盖 ~95% 的 GEMM，分析保留在 §4 P3 供日后复活。代价是最大的 FFN（~50%）在不上 FP8 时没有杠杆。
-- **(B) 去碎片化 / 做大 M** → full-param 剔除 LoRA 瘦 GEMM、融合 QKV/gate_up 投影、做大 batch×tokens。这是大部分 headroom，且基本是配置/架构改动，不是写 kernel。
+- **(B) Reduce fragmentation or change shape** → full-param removes thin LoRA
+  GEMMs, compile fuses launch-heavy pointwise work, and batching changes M. Each
+  lever needs its own throughput and memory A/B; occupancy does not predict its
+  gain.
 
-**现实天花板**：在"单卡 32GB + bf16 + 小 batch + diffusers shape"约束下，GEMM `Compute(SM)` 上限约 42-58%、occupancy 18-26%。文档自己反复说"**不是 5090 不行，是 PyTorch/diffusers 的 shape 和执行路径**"。突破这条线只有三选一——**FP8（换精度）/ 做大 M（被显存卡死）/ 去碎片化（全参+融合）**——没有一条免费。
+**Evidence boundary:** the reported `42-58%` NCU `Compute(SM)` and `18-26%`
+occupancy values are descriptive measurements, not universal ceilings. The
+same-machine GEMM comparison and the actual compile/QKV/batch A/B results decide
+the conclusions for the tested shapes. FP8, larger M, and fragmentation reduction
+remain distinct levers with different correctness and memory costs.
 
 ---
 
@@ -23,7 +38,9 @@
 
 - **kernel 分布**：SD3.5 fp32 `GEMM 47.5% / Attention 34% / elementwise 12.8%`；bf16 后 attention path 几乎消失（fp32 attn 15.2% → 0.1% + flash 9.0%），GEMM 升到 nsys 42.8%，elementwise 42.3%。cosmos 训练 step `GEMM 250.4s/50.7% / elementwise 231.9s/46.9% / attention ~0%`。
 - **GEMM Compute(SM)**：fp32 duration-weighted 51.2%（representative large 58.3%）；bf16 top tensorop GEMM **仅 42.2%**；batch sweep b8/16/24/32 **死钉 42-44%**；compiled WMMA weighted 15-31%。
-- **占用**（GPM active 段）：SM occupancy 18-26%、tensor core 21-31%、DRAM 27-38%——"小 shape / fragmented kernel 指纹"。
+- **Active-window GPM counters**: SM occupancy 18-26%, tensor activity 21-31%,
+  and DRAM activity 27-38%. These values describe the run and do not establish
+  recoverable throughput.
 - **launch-bound**：fp32 228k `cudaLaunchKernel`/epoch；cosmos 一个 step 发 1.3M+ kernel，训练 span 只有 ~64% 在忙。
 - **elementwise 风暴 ~70% 来自 LoRA plumbing**：280 个 PEFT 层的双 mm（lora_A/lora_B 瘦 GEMM）+ fp32/bf16 cast + scaling mul，把 GEMM 之间塞满碎 kernel。
 - **Amdahl**：cosmos 训练占 epoch 63%，所有调度类优化合计端到端上限 ~15%。
@@ -130,7 +147,7 @@ cosmos 最大是因为 eager 碎得多（层更深 + AdaLN-LoRA modulation 每�
 | **融合 QKV 投影**【已实测 2026-06-14，低 ROI】 | 3 个瘦 GEMM 拼成 1 个大 GEMM，减 launch | 小（全参 SD3/Wan）；**Cosmos 无 fuse API** | **实测确认低 ROI**：SD3.5 −2% 总 GEMM、Wan ~0、Cosmos 不支持（无 `fuse_qkv_projections()`）。数值等价（rel<0.6%），但需 full-param（破 LoRA `target_modules=to_q/k/v`）、不碰 FFN。**不落地 runtime**；`--fuse-qkv` 留在 profiler 作度量 |
 | **rollout 侧 merge LoRA → dense** | 35 步×CFG 的推理前向变单个大 GEMM | 真要写（merge/unmerge 要跟 colocated 训练 + 权重同步配合） | 只接了 `disable_adapter`（给 KL ref 用），**没有 `merge_adapter`** |
 | **FP8/FP4 线性层**（torchao float8 / TransformerEngine）**【暂缓 2026-06-14】** | **唯一没碰的硬件 peak，~2× bf16 throughput**；P0 证实可安全覆盖 ~95% GEMM | 大 + 风险高 | **用户暂缓，未做**：`precision.py` 是封闭的 `(fp32,bf16,fp16)`；要新精度轴 + float8 替换 + dtype plumbing；**必须过 rollout-vs-train logprob parity 红线**（`trainer.py:603` 均差≤0.01）；DiT 的 modulation/最终投影**必须 FQN 过滤否则毁图**；调参尾巴是多天 |
-| 加大 batch/分辨率（做大 M） | 直接对症 occupancy | 配置 | **做透了**：b8→32 GEMM 死钉 42-44%；32GB 容量墙先到（predict2 512p93f sbs=8 OOM）——**单卡不是解** |
+| Larger batch/resolution (larger M) | Changes shape and amortization; requires throughput/memory A/B | Config | Tested through b8→32: GEMM `Compute(SM)` stayed 42-44% and the 32 GB capacity limit arrived first (predict2 512p93f sbs=8 OOM); occupancy is not the decision metric |
 
 ---
 

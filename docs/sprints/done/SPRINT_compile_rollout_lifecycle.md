@@ -10,6 +10,11 @@
 > model memory; references below to rebuilding workers, `with_release_after_collect`,
 > flat lifecycle mirrors, and `vrl/models/model_build.py` describe the superseded
 > implementation rather than the current code.
+>
+> The later resource-source cleanup also deleted the flat
+> `RayGenerationConfig.allow_driver_gpu_overlap` mirror. Current code reads
+> `RayGenerationConfig.resources.colocated` directly; older tables below are
+> historical descriptions, not current APIs.
 
 原 sprint 是**测量 +
 生命周期正确性**,不动调度架构。聚焦 **Cosmos Predict2.5 + Kling RL**(不是旧的 Predict2)。

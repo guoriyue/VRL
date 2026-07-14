@@ -1,5 +1,15 @@
 # SPRINT: 跨请求 step 调度器（统一推理引擎的终局形态）
 
+> **Current-state correction (2026-07-13).** The former
+> `vrl/generation/pipeline/` topology/payload/runner package and Ray stage
+> adapters were deleted after a zero-production-consumer audit. Current
+> diffusion generation uses the canonical
+> `DiffusionChunkExecutorBase.forward_chunk_plan`; optional single-worker request
+> pipelining overlaps D2H teardown without a stage graph. References below to the
+> old contract layer describe a rejected historical route, not dormant code that
+> can be switched on. A future cross-request scheduler must earn its own typed
+> state and cache-ownership contracts from a profiling gate.
+
 状态：**parked / direction-decided（2026-06-16）**。这是对"blocking stage + inference
 for all models from scratch"这个框架级问题的方向裁决。结论：**终局形态是一个 family-neutral
 的跨请求 `StepScheduler`（Angle C），但它现在不做**——它优化的不是当前瓶颈，且当前硬件
@@ -34,9 +44,11 @@ for all models from scratch"这个框架级问题的方向裁决。结论：**�
   （拥有 forward 之后还要再叠 kernel/block-causal 才兑现），且触发条件最不成立——"attention 占
   34%"是 **fp32 老数据**，bf16+`torch.compile`（31f6843，1.25–1.37x，inductor 自带 fusion）上线后
   从未重测。现在自研 forward 去打一个可能已被 compile fuse 掉的瓶颈 = 镀金。
-- **Angle B（接通休眠的 `vrl/generation/pipeline/*` stage 契约层）**：启动最便宜，但 Phase-1 是
-  **数值惰性搬运**（把同一个 fused 调用塞进 payload 契约，trajectory 逐位不变），真正的 win 需要
-  和 C 的 Phase-3 完全相同的"可恢复 denoise 循环"手术——绕远路到同一终点。
+- **Angle B (reuse the old stage-contract seam): rejected and deleted.** Its
+  first phase only wrapped the same fused chunk forward in payload routing, while
+  the real win still required Angle C's resumable denoise-loop work. Keeping that
+  test-only detour would constrain a future scheduler without providing runtime
+  behavior.
 - **Angle C** 打的就是 per-request 边界本身，且**已 90% 存在**：
 
   | 已有原语 | 路径 | 作用 |
@@ -54,10 +66,11 @@ for all models from scratch"这个框架级问题的方向裁决。结论：**�
 - 执行核 = **request-level chunking only**：planner 只产 `SampleChunk`；staging 严格
   **请求内、chunk 内**，唯一动态适配是 OOM 时 chunk 减半。跨请求 step、cache ownership
   和 position-ready queue 都尚不存在。
-- stage pipeline 契约层 = **contract-only，零生产消费者**：`PipelineTopology/SerialPipelineRunner/
-  RayPipelineStageWorker`（12 测试过）休眠;diffusion executor 已把工作拆成 typed stage
-  （`run_prompt_encode_stage/run_prepare_stage/run_denoise_stage/run_decode_stage`,
-  `diffusion/executor.py:437-454`),但被同一个 fused 串行协调器**内联消费**,没走 topology。
+- The old stage-pipeline contract had zero production consumers and is now
+  deleted. The useful typed model-stage methods remain
+  (`run_prompt_encode_stage`, `run_prepare_stage`, `run_denoise_stage`, and
+  `run_decode_stage`), and `forward_chunk_plan` calls them directly in canonical
+  order.
 - native transformer executor（Angle A）= **none**：所有 family 仍 `self.transformer = diffusers
   对象`，唯一接触点是 `DiffusionBackboneCaller._call_transformer`（`backbone.py:152`）。
 

@@ -72,7 +72,9 @@ controller + generator 多策略信用分配与交替训练
   尚未生产它。
 - 当前 `GenerationRequest` 只有单个 `policy_version`，没有 controller + 多工具的版本向量。
 - 当前 tree 没有通用 `vrl/rollouts/envs` agent 契约；`SPRINT_world_model_as_env.md` 引用的是另一分支。
-- 当前 `PipelineTopology` 是有意无环的 DAG；agent loop 是循环，不能硬塞成 cyclic pipeline。
+- The current tree has no `PipelineTopology` API. Even if a future physical
+  stage runtime introduces a per-call DAG, an agent episode is a cyclic
+  orchestration concern and must not be encoded as a generation-stage graph.
 - 当前没有可训练的通用 VLM/text controller family，也没有 controller 专用 reward-to-replay builder。
 
 ## 3. 四个 sprint 的边界
@@ -120,8 +122,11 @@ AgentEpisodeOrchestrator
   └─ stop/budget     -> final reward + per-policy trajectory refs
 ```
 
-`PipelineTopology` 继续表达**一次工具调用内部**的 DAG stage；episode orchestrator 表达多轮循环。两个层级
-不要合并。
+A tool call remains one `GenerationRuntime.generate` request. Its current
+implementation is the family executor's canonical chunk forward, not a retained
+topology object. If physical stages are rebuilt after profiling, their DAG would
+still stay inside one tool call; the episode orchestrator owns the multi-turn
+loop. Do not merge those layers.
 
 ### 4.2 Server-style execution 是实现手段，不是产品方向
 
@@ -180,7 +185,9 @@ always-refine、random-select 与 best-of-2 比。
 - `GenerationRuntime` 保持单次调用 transport boundary。
 - `RolloutCollector` 保持 one-shot visual bandit fast path；agentic collector/orchestrator 平行新增。
 - family executor、trajectory validator、reward model registry 和现有 diffusion/AR trainer 路径保持兼容。
-- `PipelineTopology` 保持 DAG；跨 family 的薄 tool adapter 保留，因为它是协议/框架适配边界。
+- Do not recreate a physical-stage topology for agent episodes. Cross-family
+  tool adapters remain thin because they are real protocol/framework adapters,
+  not because the deleted generation-pipeline seam must be preserved.
 
 ### 常量与薄文件规则
 

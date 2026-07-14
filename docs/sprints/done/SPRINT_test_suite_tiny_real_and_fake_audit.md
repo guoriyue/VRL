@@ -1,5 +1,10 @@
 # SPRINT: 测试套件 tiny-real 化、假替身审计与配置断言整改（planned）
 
+> **Historical correction (2026-07-13).** The physical-stage contract and its
+> `RayPipelineStageWorker` test discussed below were subsequently deleted because
+> the whole seam had zero production consumers. The timing investigation remains
+> a historical finding, not a reason to restore that test-only adapter.
+
 状态：已落地 / done。全套 T1–T6 已在 commit 84584d2（"test: tiny-real fixtures, dedup fakes, prune declaration-only config asserts"，main 祖先）一次性实现：AR fixtures.py（build_stub_janus_mmgpt/build_stub_janus_model）、anima test_backbone_parity.py + build_tiny_anima_transformer、_ONLINE_RECIPES/_RECIPES 从 _experiment_names() glob 派生、interfaces 契约参数化注册家族、replay-export 对齐 predict2+predict2.5+anima、cosmos/wan-i2v from_build loading test、conftest marker 注释、_wait_until 沉入 continuous/_helpers.py。190 测试全绿。仅 T3.4/T6.4（doc 明标可选、nightly-only 提速观察）未做，不计入 scope。
 保留、哪些测试什么都没证明该删、哪些配置断言违反 no-exact-config、哪些 parity/infra 缺口要补。
 findings + 路径 + 整改逻辑都在本文。按 T1→T6 分轨道做，轨道间基本无依赖（T1 的 AR fixtures 是 T5

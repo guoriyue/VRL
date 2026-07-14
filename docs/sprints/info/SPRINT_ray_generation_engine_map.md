@@ -18,6 +18,19 @@ GenerationRuntime (protocol)  ── collector-facing: generate / update_weights
 ```
 Different processes: Runtime/Executor live on the **driver**; Worker/Core/model-executor live in each **Ray actor**. That process split is why they can't be merged.
 
+**Physical-stage boundary (verified 2026-07-13):** "multi-worker" in this map
+means chunks dispatched to full-model rollout workers. The speculative
+`PipelineTopology` / payload / serial-runner contract and the
+`RayPipelineStageWorker` / `RayPipelineRunner` test adapters were deleted after
+the dead-code audit found no production constructor, config reader, resource
+planner, or dotted-string launch reference. The canonical diffusion path is now
+`DiffusionChunkExecutorBase.forward_chunk_plan`; optional single-worker overlap
+is request-level `forward_chunks_pipelined`, which calls that same canonical
+chunk forward while overlapping the previous result's D2H teardown. Physical
+stage actors, placement, queues, and tensor relay are proposals that must be
+rebuilt only after a multi-GPU profiling gate demonstrates an advantage over
+full-model data-parallel rollout workers.
+
 ## The two call chains (verified)
 
 **① Launch (build the engine) — `RayGenerationLauncher.launch` (launcher.py:51):**

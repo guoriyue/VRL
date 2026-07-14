@@ -59,7 +59,7 @@
 | 设置 | 现状 | 动作 | 为何不派生 |
 |---|---|---|---|
 | `rollout.sde.type` | flat ConfigBlock dict;手查 `{"sde","cps"}` **三处**(schema:457 / layout.py:262 / flow_matching.py:116) | 把 sde block 提成 typed 子模型 `SdeConfig(type: Literal["sde","cps"], ...)`(像 FSDPConfig);删 schema:457 重复校验;**保留** layout 请求边界 guard | sde vs cps 是 per-experiment 采样选择,同一 family 两边都出现,不可靠派生;默认 `sde` 已存在 |
-| `distributed.rollout.chunk_placement_strategy` | 默认 `round_robin`;手查 `{"round_robin","dynamic"}` **两处**(config.py:56 + chunk_placement.py:34) | `Literal["round_robin","dynamic"]`;去重 `RayGenerationConfig.__post_init__` 的重复检查(**保留** `ChunkPlacementPolicy` 运行时 guard + `_PLACEMENT_STRATEGIES`) | 是 perf/调度选择;翻默认会静默改调度行为 |
+| `distributed.rollout.chunk_placement_strategy` | Previously duplicated `{"round_robin","dynamic"}` in config and placement validation | Keep one `ChunkPlacementStrategy` Literal in `execution/types.py`; schema, Ray config, and `ChunkPlacementPolicy` import it, while the runtime guard derives values with `get_args()` | This remains a per-experiment scheduling choice; changing the default would silently alter dispatch behavior |
 
 ### 2.3 低优先 / 单家族
 
@@ -144,7 +144,7 @@
 - `vrl/config/schema.py` — RolloutConfig(`:207-225` sde/denoise/final_image_policy)、SamplingConfig(`:235-258`)、`_cross_field_validate`(`:455-485`)、Literal 先例(`:88,116`)、错误格式(`:497-500`)
 - `vrl/generation/diffusion/layout.py:122,261-274` — `_parse_sde_type`/`_parse_denoise_mode`(wire-boundary guard)
 - `vrl/generation/ray/config.py:33-59,105-109` — `chunk_placement_strategy`/`sync_trainable_state`/`placement_strategy` + `__post_init__` 手查
-- `vrl/generation/execution/chunk_placement.py:17,34,122` — `_PLACEMENT_STRATEGIES` + 运行时 policy guard
+- `vrl/generation/execution/types.py` / `chunk_placement.py` — the shared `ChunkPlacementStrategy` Literal and its derived runtime policy guard
 - `vrl/nn/modules/ar_attention_backends.py:25-68` — `_backend_builders` + `resolve_attention_backend`
 - `vrl/rewards/runtime.py:71-84`、`vrl/rewards/base.py:143,152,169-175,181-189`、`vrl/rewards/inference.py:14,39-98`、`vrl/rewards/artifacts.py:28-104` — reward execution/media_type/artifact_format/scheduling/score_key
 - `vrl/scripts/common/factory.py:136`、`vrl/ray/resources.py:1378` — pool-reward 计数(execution 派生 footgun 落点)

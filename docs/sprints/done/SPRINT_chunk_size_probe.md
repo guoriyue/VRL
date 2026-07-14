@@ -1,5 +1,10 @@
 # SPRINT: 启动时 chunk-size 探测（vLLM profile-run 形状）—— samples_per_chunk: auto
 
+> **Historical correction (2026-07-13).** The startup real-execution probe remains
+> current. Later cleanup removed the standalone `estimate_chunk_cost` helper and
+> the test-only `ChunkMemoryReading.to_metrics` bridge. Memory shadow rows remain
+> log-only provenance and are no longer attached to `GenerationOutput.extra`.
+
 状态：**DONE（2026-07-07）——真机 gate 已过**。代码全部落地（§7）；CPU 侧 13 个新单测 +
 全量 580 过、ruff 干净；真机探测在 RTX 5090 上通过（§8 实测记录）。
 

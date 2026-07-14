@@ -1,5 +1,13 @@
 # SPRINT: Grab-bag file audit — 低内聚文件结构整治
 
+> **Post-execution correction (2026-07-13).** This sprint preserved the
+> physical-stage adapters during its original execution. A later five-form
+> dead-code audit found that the topology/payload/serial-runner package and the
+> Ray stage adapters still had no production constructor, configuration,
+> resource planner, or dotted-path consumer, so that entire seam and its
+> contract-only tests were deleted. References below describe the earlier
+> audit boundary, not the current source tree or a reason to restore it.
+
 **日期**: 2026-07-10  **状态**: EXECUTED and archived（2026-07-10，全部 4 个 sprint 落地）
 **验证**: 全量 pytest 1630 passed / 0 failed（基线 1629：-1 删除的 prefix-cache 测试，+1 diffusion replay 回归测试，+1 artifact_data_root 断言）；ruff 与 config lint 全绿；flow_matching 重构做了 HEAD-vs-新版位精确 probe（CFG 开/关、sample+replay 全等）。
 
@@ -49,7 +57,7 @@
 
 ### 保持不变（及原因）
 - `_over_capacity`（命名两条件谓词，保留）；`ReplayRolloutStubs`（Sprint 4 才动其周边）；kling preflight 与 `_preflight_production_video_reward`（活跃、有测试）。
-- **非目标（来自 REJECTED 清单）**：`RolloutScheduler` 不改名（vLLM 先例命名，所有 *Policy 替代名与 `StalenessPolicy`/RL policy-version 词汇冲突）；`vrl/generation/ray/pipeline_runner.py` / `stage_worker.py` 及其导出、契约测试**全部保留**（parked sprint 的 foundation staging，framework adapter/protocol boundary，属 keep-list）。
+- **Original non-goal, now superseded:** `RolloutScheduler` keeps its name because it follows vLLM precedent and `*Policy` alternatives collide with `StalenessPolicy` and RL policy-version terminology. This sprint originally preserved `vrl/generation/ray/pipeline_runner.py`, `stage_worker.py`, and their contract tests. The 2026-07-13 production-consumer audit superseded that decision and deleted the test-only seam.
 
 ### 验证清单
 - `pytest tests/rollouts/orchestration/continuous/ tests/rollouts/collector/ tests/nn/ tests/ray/ tests/trajectory tests/models/interfaces/ tests/algorithms -k "not slow"`
@@ -166,6 +174,6 @@
 | 6 | #15/#38（Sprint 3）与 #16（Sprint 4）触同一批 family model.py | 区域不相交（from_build / _lora_dtype / Replay 类）；固定 Sprint 3→4 顺序 |
 | 7 | #5 与 #34 同触 resolver.py | 互补：#34 删 `_lookup_tensor`（Sprint 1），#5 让 `tensor()` delegate `named_tensor`（Sprint 3），无重叠符号 |
 | 8 | 并行 worktree 风险（记忆：另一进程 reconcile wm-infra 的 layout.py/sampling-state；用户并行改分支） | Sprint 3 第 9 项与 Sprint 4 全部条目落地前强制 `git fetch` + `git status` 复查；#14 的 registry/build.py 同样先复查 |
-| 9 | REJECTED 清单 | `RolloutScheduler` 命名与 `pipeline_runner.py`/`stage_worker.py` 全家在四个 sprint 中均列为非目标，防止后续误清 |
+| 9 | REJECTED list | `RolloutScheduler` naming remained a non-goal across all four sprints; the physical-stage adapters were also an original non-goal but were later deleted because they had no production consumer |
 
 **总账**：Sprint 1 ≈ 11 项纯删（S）；Sprint 2 ≈ 7 项搬移（S）；Sprint 3 ≈ 9 项合并（S 为主 + 1 个 M + 1 个活 bug 修复）；Sprint 4 = 3 个 M 级合并 + 1 个有意行为变化，全部带 parity 闸门。

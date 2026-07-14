@@ -1,5 +1,16 @@
 # SPRINT: Video rollout staged pipeline —— async reward + stream 重叠（填非-DiT 空转）
 
+> **Current-state correction (2026-07-12).** This parked document preserves
+> historical measurements and decisions; it is not the current reward deployment
+> contract. Reward now supports both in-process and optional HTTP runtimes. The
+> canonical overlap rules are in `docs/sprints/SPRINT_reward_service.md`: async
+> transport and physical accelerator isolation are separate facts, and overlap is
+> fail-closed until both are verified. `distributed.resources.reward.gpu_pool` is
+> role-level resource placement, not a physical `PipelineStage` placement API.
+> The diffusion topology contains generation stages only and exposes no stage GPU
+> or runtime-policy fields. Historical one-shot overlap probes were removed after
+> their conclusions were recorded here.
+
 > **2026-07-01 架构更正（reward 执行层收敛到 inline + sleep/wake）：** d90ce04 的
 > resident-reward Ray parking 被 revert 后，本轮把整个 **Ray reward actor pool 删掉了**
 > （`vrl/rewards/ray/`、`vrl/ray/runtime.py` 的 `RayActorMethodRuntime`+`release_after_call`、
@@ -21,7 +32,7 @@
 > 需要新的 remote 传输而不是复活 actor pool。
 
 状态：**parked：机制基本落地，等待多卡吞吐验证（2026-07-09 复核）**。
-触发条件：有可独占的 ≥2/3 GPU，按当前 inline reward 架构重新测量剩余收益。性质：EXACT(无损)吞吐杠杆。二次复核（对照通过的测试 + 既有配置）发现：async-reward + per-stage-placement 这条线**绝大部分已经建好且已测**——placement/release 契约、continuous producer 的 reward(N)∥generate(N+1) 重叠、late-group 版本丢弃**都已存在**。真正剩的是 ≥2/3-GPU 吞吐验证和单卡 staged I/O overlap。详见 §7。文中旧 `execution=pool` 分析是历史测量背景，不得作为当前实现说明。
+触发条件：有可独占的 ≥2/3 GPU，按当前 reward runtime 架构重新测量剩余收益。性质：EXACT(无损)吞吐杠杆。二次复核（对照通过的测试 + 既有配置）发现：async-reward + reward-role placement 这条线的 placement/release 契约、continuous producer 的 reward(N)∥generate(N+1) 调度能力、late-group 版本丢弃都已存在；实际 overlap 仍必须通过 reward runtime capability gate。真正剩的是 ≥2/3-GPU 吞吐验证和单卡 staged I/O overlap。详见 §7。文中旧 `execution=pool` 分析是历史测量背景，不得作为当前实现说明。
 
 > **2026-06-27 实测结论(kernel-union + NVTX,真 cosmos run,推翻本 sprint 原假设):**
 > - **生成侧不是大头**:denoise 循环 GPU-bound(96-98%);单卡 rollout 的 36% idle 几乎全在 **per-sample chunk 边界**(sbs=1=7 个边界),已用 **`sample_batch_size=4` 单卡回收(1.50x,64%→89% busy,已落配置)**。剩 ~9% 是非-tensor 边界,被 NCU 证明 tensor core 已到 5090 bf16 天花板(43%≈47%)→ 单卡 P2 重叠只能藏非-tensor 部分,ROI 低。
@@ -83,7 +94,7 @@ video rollout 的 GPU 在 denoise 时满载,但在 **reward 打分 / CPU 数学 
 
   **设 `rollout.sample_batch_size=4` → 1.50x rollout,89% GPU-busy,放得下**(online_grpo_fullparam_8bit_240p.yaml:52 当前是 1)。每翻倍 sbs 砍半边界 → 填 boundary idle。**精确无损**(sbs 只控制 n 样本里几个共享一次 forward batch 维,每样本 noise/denoise/log-prob 不变;planner 本就支持 fixed-size sample chunks)。**推翻旧假设"video can't batch (OOM)"——240p_33f 至少 batch 到 4。** sbs=8(1 chunk,0 边界)未测,OOM 风险 + 边际小(~89%→~94%)。
 - **P2/P3 — 单卡 staged pipeline(把边界的 copy+CPU 藏进下一个 denoise)。实测背书,2026-06-27:**
-  - **能藏什么 / 不能藏什么(micro-benchmark 实测,`vrl/scripts/perf/single_gpu_overlap_{compute,copy}_probe.py`):**
+  - **能藏什么 / 不能藏什么（历史 one-shot micro-benchmark 结果；验证脚本已按一次性产物生命周期删除）：**
     ```
     compute ∥ compute        → NEUTRAL（2×2B forward,双流 1.1% = 噪声;tensor core 串行)
     compute ∥ (copy+CPU)     → 藏得了（denoise 1680ms ∥ 400ms copy+CPU → 并发 1687ms ≈ compute 单独,快 20%)
@@ -121,7 +132,7 @@ video rollout 的 GPU 在 denoise 时满载,但在 **reward 打分 / CPU 数学 
 
 ## 7. 2026-06-27 二次复核 — 机制基本落地（对照通过的测试与既有配置）
 
-本节是对 §0-§6 计划的**实证复核**：本 sprint 提的 async-reward + per-stage-placement，
+本节是对 §0-§6 计划的**历史实证复核**：本 sprint 当时所谓的 async-reward + per-stage-placement，
 **大部分机制已经存在并已被测试覆盖**，不是待从零开工的 build。本轮又补上 recipe 与
 late-reward correctness tests。下面每条都给代码/测试证据。完整版见
 [[SPRINT_diffusion_rollout_stage_pipeline]] §4.4。
@@ -140,29 +151,31 @@ barrier 自动消失。证据 `tests/ray/test_resources.py`：
 本 session 跑：15 passed。
 ```
 
-**(b) per-stage placement 配置面（reward stage）：已建，已测。**
+**(b) reward role resource placement：已建，已测。**
 `distributed.resources.reward.gpu_pool: auto|rollout|dedicated` 已有完整语法 + 5 条测试
 （`test_resources.py:1019-1113`，含 auto 抢空闲卡、与 legacy 等价、互斥校验、未知值拒绝）。
+这是 reward role 的资源所有权配置，不是 `PipelineStage` 的物理 placement 表面。
 
-**(c) reward(N) ∥ generate(N+1) 重叠：已是 continuous 模式既有行为。**
+**(c) continuous 已有多 group inflight 调度；reward/generation overlap 另行 gated。**
 
 ```text
 vrl/rollouts/orchestration/continuous/producer.py
   bounded asyncio inflight 集合，每组一个 task（含 generation+reward），
-  max_inflight_groups>=2 时第 N 组与第 N+1 组同时在飞 -> §1 的「async 安全重叠」已就绪
-configs/.../sd3_5/online_grpo_ocr_single_gpu_async_debug.yaml
-  已有一份可跑的单卡 continuous async 配方（max_inflight_groups: 2）
+  max_inflight_groups>=2 时调度器可以保持多组 in flight
+  实际 generation/reward overlap 仍受 reward runtime capability gate 约束
+The former single-GPU continuous async debug recipe was removed. Current
+continuous mode requires disjoint trainer and rollout accelerator ownership.
 ```
 
 **(d) late group 正确性：version-stamp + max_stale + drop_stale 已兜住**
 （`staleness.py` 的 `StalenessPolicy.admit/too_stale`、`scheduler.py:8-10`）。reward 与 policy
 无关，迟到组按版本丢弃，不污染 on-policy 训练——这正是 §4「不引入 staleness」的硬保证。
 
-**本轮已补：**
+**Historical validation recorded by this sprint:**
 
 ```text
-(1) configs/experiment/diffusion/cosmos_predict2/online_grpo_async_reward.yaml
-    组合 cosmos continuous + rollout.gpu_pool=dedicated + reward.gpu_pool=dedicated。
+(1) A dedicated-rollout/dedicated-reward recipe exercised the disjoint layout;
+    that recipe is no longer a maintained repository asset.
 (2) tests/ray/test_resources.py::test_cosmos_async_reward_recipe_resolves_resident_reward_overlap
     锁住 recipe 解析出的 disjoint reward layout、resident reward、no rollout-before-reward release、
     continuous.max_inflight_groups>=2。
@@ -185,5 +198,4 @@ configs/.../sd3_5/online_grpo_ocr_single_gpu_async_debug.yaml
 
 **教训：先核对已有测试/配置，再 scope build。** 早先 do-next 把已存在的 placement/release
 契约、gpu_pool 语法、async 重叠当成「要新建」来立项——根因是其 reader 映射了**源码**却没映射
-**既有测试套件**（`tests/ray/test_resources.py` 的 placement/lifecycle 测试 + async debug
-配方本就证明这些机制是活的）。scope build 前必须 grep `tests/` 与 `configs/` 确认是否已被测被配。
+**既有测试套件**（`tests/ray/test_resources.py` 的 placement/lifecycle 测试）。scope build 前必须 grep `tests/` 与当前配置根目录，确认是否已被测、是否仍有消费者。

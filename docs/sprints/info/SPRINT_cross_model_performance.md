@@ -87,31 +87,34 @@ active 段（`sm_util > 50%`）统计：
 
 | family | profiled shape | sm_util | sm_occupancy | tensor core | DRAM bandwidth | read |
 | --- | --- | ---: | ---: | ---: | ---: | --- |
-| sd3_5 | n/sbs=8, rbs=8 | 83.7% | 19.9% | 27.8% | 30.9% | busy but under-filled |
-| wan 1.3B T2V | n/sbs=4, rbs=1 | 89.2% | 18.4% | 31.4% | 30.2% | sbs=4 仍不是上限 |
-| anima | n/sbs=4, rbs=4 | 72.2% | 20.4% | 21.9% | 27.5% | fixed-cycle amortization improved, chunk still small |
-| cosmos-predict2 | n=2, sbs=1, 512p93f preview | 97.0% | 26.4% | 30.5% | 30.3% | active compute not saturated |
+| sd3_5 | n/sbs=8, rbs=8 | 83.7% | 19.9% | 27.8% | 30.9% | descriptive counters; no saturation verdict |
+| wan 1.3B T2V | n/sbs=4, rbs=1 | 89.2% | 18.4% | 31.4% | 30.2% | descriptive counters; no batch-limit verdict |
+| anima | n/sbs=4, rbs=4 | 72.2% | 20.4% | 21.9% | 27.5% | fixed-cycle amortization improved; counters do not prove headroom |
+| cosmos-predict2 | n=2, sbs=1, 512p93f preview | 97.0% | 26.4% | 30.5% | 30.3% | descriptive counters; no saturation verdict |
 
-结论：`nvidia-smi` / `sm_util` 的 70-97% busy 不是 scale 上限；SM 内部 occupancy
-只有约 18-26%，tensor core 与 DRAM 都约 20-31%。这是小 shape / fragmented kernel
-的指纹。下一档先加 denoise chunk，再用 OOM retry / VAE tiling 兜住容量边界。
+These active-window counters describe the execution mix; they do not establish
+recoverable throughput or a safe next batch size. In particular, `18-26%` SM
+occupancy is not proof of an under-filled GPU. Batch changes require a direct
+throughput, latency, correctness, and memory A/B.
 
 > **⚠️ 2026-07-12 纠正：上面这段的最后一句读错了。** 18-26% 的 occupancy **不是**
 > "小 shape / 还有头空间"的指纹，而是 **tensor-core GEMM 的正常指纹**（每线程占大量
 > 寄存器/shared memory，按设计每 SM 只驻留很少 warp）。真机反证：同卡两副本 + MPS 时
 > occupancy 29.2%→33.1%、DRAM 32.7%→38.5%（第二个进程的 kernel 确实被塞进了 SM），
 > **吞吐只涨 3%** —— occupancy 上去了吞吐没上去，说明它根本不是限制量。
-> 判"填没填满"只能看**吞吐随 batch 的标度**（SD3.5 ms/fwd 69.1@b4 → 264.7@b16 ≈ 线性
-> = compute-bound）或共置 A/B，不能看 occupancy 读数。本表的数据本身有效，失效的是那句
-> 推论；也解释了当时"加 batch 但 occupancy 纹丝不动（18→19%、20→20%）"为什么不是异常。
-> 详见 `docs/sprints/info/SPRINT_gpu_saturation_and_mps_colocation.md` §0.2。
+> Batch scaling is weak screening evidence, not a decisive saturation test: it
+> changes kernel shapes, activation pressure, and amortization together. Use a
+> real-workload co-run A/B to test recoverable aggregate throughput, and compare
+> NCU tensor-pipe SOL with a same-machine square-GEMM baseline to test kernel
+> saturation. The table remains valid as counter data; its old headroom inference
+> does not. See `docs/sprints/SPRINT_gpu_saturation_and_colocation_decision.md`.
 
 | 改动 | 文件 | 依据 / 边界 |
 | --- | --- | --- |
 | sd3_5 `n/sample_batch_size` 8→16 | sd3_5 三个实验 yaml | 旧 b16 风险来自 VAE decode；`model.memory.vae_decode.tiling=true` 已接上，chunk OOM 仍会自动 split |
-| wan 1.3B T2V `n/sample_batch_size` 4→8 | `online_grpo_ocr`, `online_grpo_kling_video_reward`, `online_grpo_physics` | GPM sbs=4 occupancy 18%；保留 video-reward 实验 `rollout_batch_size=1`，不把 prompt batching 和 reward 请求混在一起 |
+| wan 1.3B T2V `n/sample_batch_size` 4→8 | `online_grpo_ocr`, `online_grpo_kling_video_reward`, `online_grpo_physics` | Treat as a direct throughput/memory experiment, not an occupancy inference; keep video-reward `rollout_batch_size=1` so prompt batching and reward requests remain separate |
 | anima `n/sample_batch_size` →8 | anima 两个实验 yaml | `rollout_batch_size=4` 已摊掉固定周期；下一瓶颈是每 prompt denoise chunk 小 |
-| predict2 `n` 4→8 / per-sample `sample_batch_size` 1→8 | predict2 两个实验 yaml | GPM preview sbs=1 occupancy 26%；同 prompt 内样本共用 reference，sample batching 不改变 V2W conditioning |
+| predict2 `n` 4→8 / per-sample `sample_batch_size` 1→8 | predict2 两个实验 yaml | Treat as a direct throughput/memory experiment; samples under one prompt share the reference and sample batching does not change V2W conditioning |
 
 明确未改：Wan 14B I2V 没套用这次 1.3B T2V 的 GPM 结论；它的 480p81f + 14B
 内存边界不同，仍需要单独 live gate。
@@ -121,9 +124,9 @@ active 段（`sm_util > 50%`）统计：
 | family | gate | occupancy（上一档→这一档） | 峰值显存 | 判定 |
 | --- | --- | --- | --- | --- |
 | wan sbs=8 | **pass** | 18% → 19%（持平） | 17.0 GB | 吞吐另算（occupancy 上限非 batch 决定，是 kernel 形状）；sbs=8 保留 |
-| anima sbs=8 | **pass** | 20% → **27%**，DRAM 27→38% | **6.3 GB** | 仍有大余量，下一档可试 16 |
+| anima sbs=8 | **pass** | 20% → **27%**, DRAM 27→38% | **6.3 GB** | Capacity gate passed; a larger batch still requires its own throughput/latency A/B |
 | sd3_5 b16 | **pass（加 slicing 后）** | 20% → 20%，tensor 28→32% | 17.6 GB | 根因：sd3_5 yaml 此前只有 tiling 没有 **slicing**（b16 batch decode 需逐图）；`memory.vae_decode.slicing=true` 后通过。occupancy 与 wan 同样被 kernel 形状钉住 |
-| predict2 sbs=8 | **fail，已回退 sbs=1** | — | OOM @ transformer RMSNorm | 512p93f 在 sbs=1 时峰值已 31.8GB，CFG 又把 batch ×2 —— **该分辨率在 32GB 上没有 sample-batch 余量**；26% occupancy 的余量只能靠 compile/融合吃 |
+| predict2 sbs=8 | **fail，已回退 sbs=1** | — | OOM @ transformer RMSNorm | At 512p93f, sbs=1 already peaks at 31.8 GB and CFG doubles the batch; this 32 GB device has no sample-batch capacity at that shape. Occupancy does not alter the capacity result |
 
 两次 OOM 共同证伪了表格里的安全网假设：**chunk OOM 自动 split 在 ray
 executor 路径上不存在**（`vrl/generation/ray/executor.py:93` 直接 raise）。

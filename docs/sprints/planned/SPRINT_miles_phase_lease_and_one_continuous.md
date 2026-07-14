@@ -554,11 +554,14 @@ resolved plan，不在 schedule/runtime 再用 raw device sets 重推导。`Cont
 它不选择 lifecycle，也不重算 device sets；runtime 只携带 resolver/launcher 交下来的 verdict。
 这组 thin methods 提供真实 protocol/adapter boundary，不是 dead wrapper。
 
-同样保留 `ResolvedDistributedResources.colocated`、
-`RayGenerationConfig.allow_driver_gpu_overlap` 与 runtime `requires_driver_model_offload`：它们仍分别驱动
-launch/config、lazy on-demand runtime 与 trainer parking。把 `requires_driver_model_offload` 明确放进
-`GenerationRuntime` protocol，coordinator 直接读该行为 capability，不用 `getattr` fallback，也不
-重新询问 raw topology。
+Keep `ResolvedDistributedResources.colocated` and runtime
+`requires_driver_model_offload`: they drive launcher/runtime placement and
+trainer parking. The former `RayGenerationConfig.allow_driver_gpu_overlap`
+mirror was deleted; `RayGenerationConfig.resources` is required and every
+consumer now reads the resolved plan directly. Keep
+`requires_driver_model_offload` on the `GenerationRuntime` protocol so the
+coordinator consumes the behavior capability without a `getattr` fallback or
+re-deriving raw topology.
 
 对旧配置给 hard error 和两条明确迁移：
 
@@ -573,10 +576,11 @@ real continuous:
 
 旧的 continuous shared 配置不是等价字段迁移：必须显式选择 strict shared phase lease 或增加
 disjoint rollout GPU。Legacy role `memory_fraction` 必须给 targeted hard error，不能静默忽略。
-Future engine-local KV/cache budget 与 role lifecycle selector 是不同概念；当前
-`PipelineStageRuntimePolicy.memory_fraction` 也只有测试 reader、没有 runtime consumer，按
-dead-field 规则在 P1 删除。未来有真实 engine consumer 时再从其 source of truth 引入，不能以
-占位字段形式“保持不变”。
+A future engine-local KV/cache budget is distinct from a role lifecycle
+selector. The former `PipelineStageRuntimePolicy.memory_fraction` had only a
+test reader and no runtime consumer, so it was deleted with the test-only
+physical-stage seam. Reintroduce such a budget only from a real engine
+consumer's source of truth, never as a placeholder field.
 
 ### P2 — 完整 trainer memory lease
 
@@ -903,11 +907,12 @@ launcher field 和 `_rollout_memory_fraction()` 一起删除。新增的 trainin
 保留 `_MB`、`_CPU`、`_MISSING`、观测时间阈值等：它们分别是单位、设备 singleton、sentinel、
 观测边界。本文范围没有大型 ALL_CAPS 业务词表或重复 typed structure 的手写集合。
 
-`PipelineStageRuntimePolicy.memory_fraction` 不能因为同名就列为“应保持”：当前生产代码只有
-字段定义/范围校验，唯一 reader 是测试，属于 test-only dead field。P1 应删除它和对应断言，
-除非另一个已批准 sprint 在同一变更中接入真实 stage/backend consumer；不要用“future
-engine budget”给 dormant field 续命。Future engine-local budget 应在有真实 runtime consumer
-时从其 source of truth 新增。
+The former `PipelineStageRuntimePolicy.memory_fraction` was not worth keeping
+merely because a future engine might use a similarly named budget. It had only
+a field definition, range validation, and a test reader, so the field, its
+assertions, and the physical-stage contract were deleted together. Do not
+recreate that dormant field. A future engine-local budget must originate from
+a real runtime consumer's source of truth.
 
 ### 非目标
 
@@ -938,7 +943,7 @@ engine budget”给 dormant field 续命。Future engine-local budget 应在有�
 - `vrl/rollouts/orchestration/schedule.py`
 - `vrl/rollouts/orchestration/continuous/schedule.py`
 - `vrl/generation/protocols.py`（保留 runtime topology backstop，并补齐 driver-offload capability）
-- `vrl/generation/pipeline/topology.py`（删除 test-only dead `memory_fraction`）
+- deleted physical-stage topology package（its test-only `memory_fraction` was removed; it is not an implementation target）
 - `vrl/generation/ray/config.py`
 - `vrl/generation/ray/launcher.py`
 - `vrl/generation/ray/runtime.py`
@@ -1058,7 +1063,7 @@ merge gate。整个 umbrella 只有两组 gate 都有对应硬件证据时才标
 - `vrl/generation/ray/runtime.py:98-137,238-306,317-379,381-457,633-690`
 - `vrl/generation/execution/worker.py:61-180,307-496`
 - `vrl/utils/cuda_memory.py:121-144`
-- `vrl/generation/pipeline/topology.py:19-40`
+- `docs/sprints/info/SPRINT_ray_generation_engine_map.md`（current canonical generation path and deleted-seam correction）
 - `vrl/trainers/online/trainer.py:500-588,663-696,1021,1438`
 - `vrl/trainers/core/types.py:157-207`
 - `vrl/trainers/strategy.py:25-87,89-150,189-337,351-487`

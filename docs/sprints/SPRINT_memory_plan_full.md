@@ -8,6 +8,17 @@
 > frozen offload 误列为现有 generation 机制——本篇按 Phase 0 的实际代码状态修正，
 > 不再把一个不存在的机制当系统前提。
 
+> **Current-state correction (2026-07-13).** The formula-estimator and
+> `estimate_chunk_cost` helper described by older sections are not current APIs.
+> Scheduling cost is calculated once, inline in
+> `DistributedExecutionPlanner.plan_with_engine`. Chunk-size admission uses the
+> startup real-execution probe (`AffinePeakFit` plus confirmation/bisection), not
+> the abandoned steady-state estimator. `build_chunk_memory_shadow` is retained
+> only to format log-only provenance rows; it no longer writes
+> `GenerationOutput.extra["chunk_memory_shadow"]`. `ChunkMemoryReading` has no
+> test-only `to_metrics` bridge: validation derives required names from the
+> dataclass, producers send the raw mapping, and tests use `dataclasses.asdict`.
+
 ## 0. 诊断：有机制，无系统；而且机制只统一了一半
 
 ### 现有机制清单（各自正确、互不知晓）
@@ -113,32 +124,22 @@ lifecycle 删除。要让告警有意义必须用 **soft 阈值**（如 `0.85 ×
 
 ## Phase 2（L2）：字节准入 + 执行器阶梯（核心增量）
 
-> ### L2 进度（2026-07-02）：第一步 profiling shadow 已落地
+> ### L2 current state (verified 2026-07-13)
 >
-> - **测量（worker 侧，`vrl/generation/diffusion/executor.py`）**：denoise 平台与 decode 尖峰
->   两相位分开测——每相位边界 `reset_peak_memory_stats` 后读 `max_memory_allocated`。顺带修掉
->   一个既有缺陷：原 `peak_memory_mb` 从不 reset，实为**进程终身高水位**（chunk 2 的"峰值"包含
->   chunk 1 的 decode 尖峰），标定数据本会被污染；现 `peak_memory_mb = max(两相位)`，真 per-chunk。
-> - **读数结构 `ChunkMemoryReading`**（`execution/chunk_placement.py`，与 `estimate_chunk_cost`
->   并列、不混用）：sample_count / latent_bytes / baseline_allocated / denoise_peak / decode_peak /
->   reserved_start / free_start / total；派生 `non_torch_bytes=(total-free)-reserved`、
->   `budget_bytes=reserved+free`。
-> - **v0 估算器**：`peak(n) = baseline + n·max(denoise_ps, decode_ps)`，系数取本请求最大 chunk 的
->   实测（同形状线性模型；OOM-split 子 chunk 免费提供 n/2 的线性验证点）。与本 doc 原签名
->   `estimate_chunk_bytes(request, chunk, capability, profile)` 的差异：v0 不做跨形状外推——
->   capability 不携带 latent 几何，坚持 profile 驱动、不建手维护的 per-family 常量表（上方
->   "标定债"纪律）；形状插值在标定阶段长出。
-> - **wire**：worker `_chunk_metrics` **无条件**携带 `chunk_memory`（十几个 int/chunk；重债 debug
->   payload 仍留 runtime_debug 门内）→ driver `RayGenerationExecutor` 组装
->   `output.extra["chunk_memory_shadow"]` + 每 chunk 一行 INFO（est / actual / err% / budget /
->   non_torch / admissible_n）。`admissible_n` 的上限用 `samples_per_prompt` 而非当前配置的
->   samples_per_chunk——shadow 要能报告"本可以塞更大"，不只"塞小点"。
-> - **测试**：`tests/generation/execution/test_chunk_memory_shadow.py`（估算线性、budget 准入边界、
->   partial 读数拒绝、worker 无门控过线、无读数→空集）。tests/generation + tests/ray +
->   tests/config + tests/architecture 全绿。
-> - **未做（下一步 = 标定）**：跨形状/跨 run 系数回填；观察真实 run 的 shadow err%；误差可控后才把
->   `admissible_n` 变准入闸（届时改 planner `_chunk_size`）。注意 pipelined 路径的相位归因有噪
->   （上一 chunk 的 teardown 释放与下一 chunk 的相位交错）——标定只采 per-chunk dispatch 路径的数据。
+> - The diffusion executor still records separate denoise and decode allocated
+>   peaks. `ChunkMemoryReading.from_metrics` rejects incomplete mappings using
+>   dataclass-derived field names.
+> - `samples_per_chunk: auto` runs truncated real chunks, fits two measured
+>   points, confirms the candidate, bisects an OOM boundary, and applies the
+>   throughput knee. Recursive per-chunk OOM splitting remains the final safety
+>   net.
+> - Worker chunk metrics carry a compact memory mapping. The driver converts
+>   valid readings into one `chunk memory:` INFO row per chunk. Those rows are
+>   explicitly log/provenance-only; no normal `GenerationOutput.extra` key
+>   carries them to the collector.
+> - The older v0 estimator, predicted/admissible fields, and standalone scheduler
+>   cost helper were deleted. Sections below that discuss cross-shape formula
+>   estimation are future design notes, not descriptions of current code.
 
 目标先写清楚：memory estimation 的最终目的不是"把 chunk 切得越多越碎"，也不是
 保守省显存；目标是在当前 topology/lifecycle 给出的可用显存内，**投放尽可能多的有效
@@ -174,9 +175,10 @@ with memory_profiling(...) as profile_result:
 实现：
 
 ```text
-地基   estimate_chunk_cost（为 LPT 建）已在 chunk_placement.py:66-77
-       —— standalone 纯函数，今天只当 LPT 调度优先级，从不当准入闸；不要把它改成
-       显存语义，新增并列 estimator
+foundation
+       LPT cost is computed inline as sample_count multiplied by num_steps or
+       max_new_tokens. It is a scheduling hint only, never a memory-admission
+       source. There is no public estimate_chunk_cost helper to extend.
 测量   worker/runtime 建好后跑代表性 profile chunk，记录：
        model_baseline_bytes、profile_activation_peak_bytes、non_torch_bytes、
        cuda_graph_or_compile_overhead_bytes、free/total/cap bytes

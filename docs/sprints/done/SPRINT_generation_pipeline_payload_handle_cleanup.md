@@ -1,5 +1,11 @@
 # SPRINT: generation pipeline payload/handle 死字段清理（done）
 
+> **Historical correction (2026-07-13).** This document records an incremental
+> cleanup of a seam that no longer exists. The remaining topology, payload,
+> serial runner, Ray stage adapters, and contract-only tests were later deleted
+> after a full audit found zero production consumers. Do not treat the retained
+> field list below as a current API.
+
 状态：done（落地 commit `91a086e`；2026-06-21 归档）。
 范围：删除 `RayPipelineStageHandle.worker_id` 和 `PipelineStagePayload.sample_identity`。
 来源：dead-dataclass-hunt + 手动验证，承接 [[SPRINT_segment_signal_dead_field_cleanup]]。

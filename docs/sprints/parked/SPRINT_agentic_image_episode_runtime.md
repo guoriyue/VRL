@@ -10,9 +10,10 @@
 增加一个视觉专用、有界、可回放的 agent episode 层：controller 可以观察 prompt 与已有 artifact，输出
 结构化 tool call，调用已有 image/video generator runtime，接收结果后继续或停止。
 
-核心裁决：**episode loop 位于 `GenerationRuntime` 之上；一次 tool call 仍是一个普通
-`GenerationRequest -> GenerationOutput`。** 不改 family executor，不把 loop 塞进 `PipelineTopology`，也不
-把现有 one-shot `RolloutCollector` 改成同时服务两种范式。
+Core decision: the episode loop sits above `GenerationRuntime`; one tool call is
+still an ordinary `GenerationRequest -> GenerationOutput`. Do not change family
+executors, recreate the deleted physical-stage topology to host an episode loop,
+or force the one-shot `RolloutCollector` to serve both paradigms.
 
 ## 1. 最小使用场景
 
@@ -198,7 +199,8 @@ episode。
 
 - one-shot `RolloutCollector` 与 `OnlineTrainer` fast path。
 - `GenerationRuntime` 的 `generate/release/is_colocated` transport contract。
-- `PipelineTopology` 的 DAG invariant。
+- The absence of a physical-stage contract. If profiling later justifies one,
+  its per-call DAG remains separate from the episode loop.
 - family-specific 薄 adapters：它们是统一 protocol 与不同 request schema 之间的必要 framework boundary。
 
 ### 非目标

@@ -1,5 +1,15 @@
 # SPRINT: Reward execution —— 成本分层放置 + 异步打分
 
+> **Superseded status (2026-07-12):** this document preserves an earlier,
+> withdrawn design discussion. Its claims that VRL has no standalone reward
+> service, that reward execution uses a local/Ray switch, and that strict
+> streaming adds no capability are no longer current. The implemented source of
+> truth is `docs/sprints/SPRINT_reward_service.md`: reward inference now supports
+> typed `in_process` and `http` runtimes, strict streaming is gated by both
+> non-blocking execution and verified accelerator isolation, and unverified HTTP
+> endpoints fail closed. The cost-aware auto-placement proposal below remains a
+> non-implemented historical proposal, not a config contract.
+
 状态：**design / not-started（P1 + P2 都已撤回，2026-06-29）；P3 仍未实现**。本轮 CPU 落地了 P1（流式打分）+ P2（reward_cost 成本感知放置），评审后**两个都撤回**，只保留分析结论（§13/§13.1）和一个顺带的 stale 测试修复（`VRL_PROFILE_COLLECT`→`VRL_PROFILE`）。
 - **P2 撤回**：现形态只做了"显式标注"那半，**和已有的显式 `gpu_pool: rollout` 重复**；真正价值在自动测量（需 GPU run，未做），且和 P1 互斥（单卡 share = 串行卸载，不是并发）。
 - **P1 撤回**：reward 的 async **早已存在于 `continuous` 模式**（reward ∥ 别的 group 生成 + ∥ 训练，见 §13.1）；P1 改的 `collect_prompt_batches` 在 continuous 下每次只收一个 group → no-op，只对 strict_on_policy 默认路径有那一条窄的 call 内重叠，niche 太小、未实测、和 continuous 高度重叠。**没有引入新能力。**

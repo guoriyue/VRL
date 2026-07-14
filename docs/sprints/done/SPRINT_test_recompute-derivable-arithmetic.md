@@ -1,5 +1,11 @@
 # SPRINT: 测试里冻结手算结果，应改为从输入重算（done）
 
+> **Historical correction (2026-07-13).** `estimate_chunk_cost` was later folded
+> into `DistributedExecutionPlanner.plan_with_engine` because it had one
+> production caller and no protocol boundary. The examples below describe the
+> source shape at the time of this completed test cleanup; they are not current
+> import guidance.
+
 状态：done（2026-06-21）。**三个**文件的手算冻结结果改为从 source 公式/模板重算:
 `test_chunk_dispatch.py` 两处 `20.0` → `estimate_chunk_cost(...)` / `row sample_count*num_steps`(并把
 request 提为局部变量);`test_oom_split.py` chunk_key 字面串 → `SampleChunk(...).chunk_key`(新增 `_key` helper);

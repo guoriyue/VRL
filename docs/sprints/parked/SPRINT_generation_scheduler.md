@@ -1,14 +1,26 @@
 # SPRINT: Generation scheduler upgrade
 
+> **Current-state correction (2026-07-13).** Track A is the live chunk-level
+> scheduler: `chunk_placement.py` provides the placement policy used when the
+> planner assigns whole-model chunks to rollout workers, and multi-worker
+> generation is data parallel. Track B remains a proposal. The former topology,
+> payload/result, serial-runner, and Ray stage-adapter seams were deleted because
+> they had no production constructor or behavioral consumer. A "multi-worker"
+> statement in Track A therefore means chunks dispatched to full-model workers,
+> not physical stages placed on different workers. If profiling opens Track B,
+> its contracts must be rebuilt together with the real scheduler and launcher;
+> this document does not describe retained implementation scaffolding.
+
 状态：**Track A implemented（2026-06-11，dormant until multi-GPU）**；
 Track B gated 不变。落地内容：
 
 ```text
 A1  execution/scheduler.py -> chunk_placement.py（原子改名，零残留，
     架构测试清单同步）
-T1  vrl/ray/actor_pool.py 派发循环打点（queue_wait_s / execution_s），
-    executor 汇总进 GenerationOutput.extra["ray_chunk_schedule"]
-    （chunk_key / assignment_strategy / estimated_cost / assigned_worker）
+T1  vrl/ray/actor_pool.py records queue_wait_s / execution_s. The executor
+    includes the schedule only in the propagated runtime_debug payload; the
+    former unconditional GenerationOutput.extra["ray_chunk_schedule"] key was
+    removed because no production consumer read it.
 T2  pull 式动态派发：RayActorJob.worker_id 可为 None，pool 把未绑定 job
     派给当前 inflight 最少的空闲 worker；LPT 经 RayActorJob.priority
     （= estimated_cost）在派发层排序，gather 顺序零接触。
@@ -48,26 +60,22 @@ Track B:
 
 ## 0. Core Conclusion
 
-当前 `vrl/generation/execution/scheduler.py` 本质上不是 scheduler runtime，而是静态 chunk placement planner。
+当前 `vrl/generation/execution/chunk_placement.py` 本质上不是 physical stage scheduler runtime，而是 chunk placement policy。
 
 它做三件事：
 
 ```text
-1. 从 request.sampling.sample_batch_size 决定每个 SampleChunk 的大小。
-2. 调 build_engine_plan(...) 生成 chunks 和 profiler labels。
+1. Read request.sampling.samples_per_chunk to size each SampleChunk.
+2. Call build_engine_plan(...) to generate chunks.
 3. 用 round-robin 把 chunks 分给 rollout workers。
 ```
 
 关键代码：
 
 ```python
-max_samples = int(
-    request.sampling.get("sample_batch_size", request.samples_per_prompt),
-)
+max_samples = int(request.sampling.get("samples_per_chunk", request.samples_per_prompt))
 engine_plan = build_engine_plan(
     request,
-    sample_rows,
-    capability=capability,
     max_samples_per_chunk=max(1, max_samples),
 )
 ```
@@ -248,7 +256,7 @@ Stage drains outbox -> route result downstream / terminal completion
 VRL 应该学这个边界：
 
 ```text
-RayPipelineStageWorker / future Stage shell:
+Future StageActor shell (not present today):
   owns actor lifecycle, routing, relay, metrics, abort/drain.
 
 StageScheduler:
@@ -280,7 +288,9 @@ class OutgoingMessage:
     metadata: dict[str, Any] | None = None
 ```
 
-VRL 已经有 `PipelineStagePayload` / `PipelineStageResult`，不需要复制这个 class，但应该保留同样的 shape：
+A future implementation must define a small message contract from measured
+requirements. The deleted payload/result classes are not a reusable current API;
+the following fields are design requirements, not retained types:
 
 ```text
 request_id
@@ -332,7 +342,7 @@ decode_latents:
   start with batch mode or serial micro-batch; do not assume concurrency is safe.
 ```
 
-`PipelineStageRuntimePolicy` 已经覆盖这些字段：
+Track B 将需要显式定义这些 proposed policy fields；当前代码里还没有对应的 policy type：
 
 ```text
 batch_size
@@ -342,7 +352,7 @@ max_batch_cost
 memory_fraction
 ```
 
-需要补的不是更多 YAML，而是 scheduler 对这些字段的真实执行语义。
+需要补的是 type、scheduler 与这些字段的真实执行语义；在那之前不应该提前暴露一个无消费者的 YAML 表面。
 
 ### 3.4 Abort and error are first-class scheduler behavior
 
@@ -495,12 +505,10 @@ AR cost ~= sample_count * max_new_tokens
 estimated_chunk_cost = sample_count * max(1, num_steps or max_new_tokens or 1)
 ```
 
-后续让 `FamilyCapability` 或 executor 提供 override：
-
-```text
-capability.chunk_cost_axes
-executor.estimate_chunk_cost(request, chunk)
-```
+The current family-neutral calculation is intentionally inline in
+`DistributedExecutionPlanner.plan_with_engine`; there is no standalone
+`estimate_chunk_cost` API or capability override. Add an override only when a
+measured family-specific scheduler actually consumes it.
 
 **pull 式派发下 cost model 的用途是"先后"不是"去哪"**：placement 由 pull
 决定，cost 只用来对 pending 队列做降序排序（经典 LPT——大活先派，避免
@@ -512,8 +520,9 @@ sample identity 或 gather order。OOM split 产生的子 chunk 在 worker 内�
 
 ### A4. Record scheduling telemetry
 
-现在 `ray_chunk_metrics` 主要来自 worker result（executor.py:119）。需要补
-driver-side scheduling metrics。**打点位置必须在 `vrl/ray/actor_pool.py`**：
+Worker results still carry internal chunk metrics, while the collector propagates
+only the explicitly requested `runtime_debug` payload. Driver-side scheduling
+metrics are recorded in `vrl/ray/actor_pool.py` because:
 `queue_wait_s`（进 pending 到实际 `remote_method` 调用）和提交时刻只有派发
 循环自己知道，executor 层补不出来：
 
@@ -563,17 +572,20 @@ metrics 能证明两种派发模式的差异（imbalance / tail）
 
 ## 5. Track B: Physical Stage Scheduler
 
-Track B 使用已经落地的 pipeline contract：
+Track B has no retained pipeline contract. If its profiling gate opens, the
+minimum proposed concepts are:
 
 ```text
 PipelineTopology
 PipelineStage
-PipelineStageRuntimePolicy
 PipelineStagePayload
 PipelineStageResult
 RayPipelineStageWorker
 RayPipelineRunner
 ```
+
+The names above are proposal vocabulary only. They must not be imported or
+configured until a launcher, placement plan, and scheduler consume them.
 
 它解决的是 chunk 内部的 physical stage scheduling：
 
@@ -617,16 +629,14 @@ when policy sync can drain safely
 
 ### B2. Per-stage policy
 
-使用现有 `PipelineStageRuntimePolicy`：
+未来 policy 需要的最小字段形状（proposal only）：
 
-```python
-@dataclass(frozen=True, slots=True)
-class PipelineStageRuntimePolicy:
-    batch_size: int | None = None
-    max_inflight: int = 1
-    max_batch_wait_ms: int = 0
-    max_batch_cost: int | None = None
-    memory_fraction: float | None = None
+```text
+batch_size: optional integer
+max_inflight: integer, default 1
+max_batch_wait_ms: integer, default 0
+max_batch_cost: optional integer
+memory_fraction: optional float
 ```
 
 不同 stage 的 policy 应该不同：
@@ -662,8 +672,8 @@ Ray actor 可以做这个，但第一版不要直接追求最终形态。
 ```text
 Level 1:
   driver-routed actors.
-  RayPipelineRunner sequentially routes payload.
-  Already in contract foundation.
+  A newly built driver route validates payload and actor boundaries.
+  No contract foundation is retained today.
 
 Level 2:
   per-stage actor queues.
@@ -737,13 +747,14 @@ queue_wait_s
 end_to_end_s
 ```
 
-输出到：
+Emitted only when runtime debug is requested:
 
 ```text
-GenerationOutput.extra["ray_chunk_schedule"]
+GenerationOutput.extra["runtime_debug"]["chunk_schedule"]
 ```
 
-这一步不改调度策略，只让当前 round-robin 的行为可观测。
+There is no unconditional top-level schedule key; the collector did not consume
+it. This instrumentation does not change placement behavior.
 
 ### T2. Pull-based dynamic dispatch + LPT ordering
 
@@ -858,7 +869,7 @@ OOM retry behavior is documented for stage failures
 - `docs/sprints/parked/SPRINT_physical_stage_runtime.md`
 - `docs/sprints/parked/SPRINT_diffusion_rollout_stage_pipeline.md`
 - `docs/sprints/parked/SPRINT_runtime_block_policies.md`
-- `vrl/generation/execution/scheduler.py`
+- `vrl/generation/execution/chunk_placement.py`
 - `vrl/generation/execution/planner.py`
 - `vrl/generation/execution/chunks.py`
 - `vrl/generation/ray/executor.py`

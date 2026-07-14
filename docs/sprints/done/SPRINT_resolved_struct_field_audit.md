@@ -4,6 +4,12 @@
 > that its remaining identity/classification fields duplicated the rollout
 > registry. The type has now been removed entirely. The historical per-field
 > verdicts below are retained as audit provenance, not current architecture.
+>
+> **Historical correction (2026-07-13).** A later cleanup made
+> `RayGenerationConfig.resources` mandatory and removed its flat
+> `allow_driver_gpu_overlap` mirror. Historical consumer chains below describe
+> the code at the time of this audit; current consumers read
+> `ResolvedDistributedResources.colocated` directly.
 
 状态：**done（核心审计全部落地，2026-06-18 归档至 done/）**。P0/P1/§9 + **P3（防腐约定）+ §5（`FamilyCapability` 死 flag 删除）+ §9.3 `log_freq`（决策：删旋钮）现已全部落地**；仅剩 `VideoGenerationRequest` DTO 死字段（明确的独立 MR）。这是一次"派生结构体里的字段是否真有人消费、如何防止它继续膨胀"的审计。
 

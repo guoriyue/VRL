@@ -1,18 +1,34 @@
 # SPRINT: Physical stage runtime（future）
 
-状态：foundation contract layer 已落地（b224383，PipelineTopology / PipelineStagePayload / SerialPipelineRunner / RayPipelineStageWorker / RayPipelineRunner + 12 passing contract tests），但仅是未接线的 Level-1 actor-safe seam（无任何 rollout/trainer/config 引用）；physical Ray stage runtime（StageScheduler、bounded queues、tensor relay，§6 P0-P4）尚未开工，仍 parked 等待 multi-GPU + cross-family profiling gate（§3）。
+> **Current-state correction (2026-07-13).** VRL has no physical-stage topology,
+> payload, runner, or Ray stage-worker contract in the current tree. The former
+> `vrl/generation/pipeline/` package and Ray stage adapters were test-only seams
+> with no production constructor, config reader, resource placement, or dotted
+> launch reference, so they were deleted. The canonical implementation is
+> `DiffusionChunkExecutorBase.forward_chunk_plan`. Optional single-worker request
+> pipelining calls that same chunk forward and overlaps only the previous result's
+> D2H teardown. Every topology, stage payload, actor, queue, relay, and per-stage
+> policy name below is a historical sketch or future proposal, not a current API.
+> Rebuild none of it until a multi-GPU, cross-family profile beats the simpler
+> full-model data-parallel worker baseline.
+
+Historical status at commit `b224383` (superseded): the repository temporarily
+contained a `PipelineTopology` / payload / serial runner and Ray adapter seam with
+contract tests. It was never wired to rollout launch, placement, or scheduling and
+was removed by the 2026-07-13 dead-code audit.
 
 ## 0. Core Decision
 
-不要把 SGLang-Omni 式 physical stage runtime 塞进当前的 planner label 或
-cross-model performance sprint。要做 staging，但分两层：
+Do not fold an SGLang-Omni-style physical-stage runtime into the current chunk
+planner or cross-model performance work. There is one gate and one future build:
 
 ```text
-foundation staging:
-  现在做。typed payloads、serial_staged、per-stage metrics、placement schema。
+current:
+  canonical forward_chunk_plan + full-model chunk workers
+  optional single-worker request pipelining for compute/D2H overlap
 
-physical staging:
-  多 GPU / cross-family profile gate 打开后做。Ray stage actors、queues、relay。
+future, only after the profiling gate:
+  rebuild typed stage payloads, actors, placement, bounded queues, and relay
 ```
 
 现有 `ExecutionStage` / chunk planner 仍然只是逻辑执行标签和 profiler label：
@@ -70,9 +86,11 @@ GenerationChunkExecutor:
   logical family executor boundary.
   Receives one SampleChunk and returns one ChunkResult.
 
-PipelineTopology / PipelineStage:
-  physical runtime topology.
-  Decides how that SampleChunk moves through actors/stages.
+Current diffusion execution:
+  forward_chunk_plan runs the typed model-stage methods in canonical order.
+
+Physical stage runtime (proposal only):
+  would define how a SampleChunk moves through stage actors and placements.
 ```
 
 没有 `SampleChunk`，rollout 会丢失 group/sample identity、batch split、seed、OOM retry
@@ -92,17 +110,10 @@ denoise/decode 切列，stage 方法的工作单位就是 chunk）。但 physica
    chunk 的所有 stage（含 denoise）重跑 —— 失败边界把两轴耦合，拆分前必须显式定义。
 ```
 
-当前已落地的 foundation contract：
-
-```text
-vrl/generation/pipeline/topology.py
-vrl/generation/pipeline/payload.py
-vrl/generation/pipeline/runner.py
-vrl/generation/ray/stage_worker.py
-vrl/generation/ray/pipeline_runner.py
-```
-
-这些文件只建立 actor-safe contract 和 serial/Ray routing seam；它们不是完整 scheduler。
+No foundation contract is retained in the import graph. Keeping an unwired
+actor-safe shape would make future code conform to an unmeasured design. A future
+implementation must start from the measured payload, placement, cancellation,
+and relay requirements rather than resurrecting the deleted test seam.
 
 ## 1. 为什么不属于当前 cross-model sprint
 
@@ -424,9 +435,11 @@ launch / sync bound; moving it to another GPU may not help. A stage with high
 CUDA total is a real GPU placement candidate, but wall time still decides whether
 relay and queues erase the gain.
 
-## 5. Foundation work to do now
+## 5. Foundation work after the profiling gate
 
-These changes prepare the future pipeline without committing to physical actors:
+Do not add standalone topology, payload, or placement schemas before the gate.
+If measurement opens the work, implement the smallest end-to-end slice with a
+real launcher and behavioral consumer:
 
 ```text
 typed payload schemas for denoise output, decode input/output, and reward input
@@ -434,12 +447,12 @@ serial_staged mode that runs the same payloads inside one process
 per-payload tensor byte accounting
 per-stage wall time and CUDA time in runtime_debug
 explicit policy_version / sample identity fields on stage payloads
-placement schema draft with validation but no default physical execution path
+placement consumed by actor launch and validated against actual GPU ownership
 ```
 
-This is the correct foundation because it preserves today’s fused chunk fallback
-while making future physical workers a transport/scheduler substitution, not a
-semantic rewrite of RL rollout payloads.
+The fused `forward_chunk_plan` remains the parity baseline. A future stage path
+must prove equivalence against it and must not leave a contract-only fallback in
+the tree.
 
 ### 5.1 Ray actor / scheduler feasibility
 
@@ -463,7 +476,8 @@ Level 3: real stage scheduler + relay
   Purpose: production physical pipeline.
 ```
 
-Level 1 is already represented by the current contract layer:
+Level 1 is not represented by current code. If the profiling gate opens, it must
+be implemented together with a real launcher and behavioral consumer:
 
 ```text
 PipelineTopology
@@ -496,7 +510,7 @@ First scheduler shape:
 StageScheduler
   inbox: bounded queue[PipelineStagePayload]
   outbox: bounded queue[PipelineStageResult]
-  batch policy: PipelineStageRuntimePolicy
+  batch policy: proposed per-stage scheduling policy
   admission: policy_version barrier + queue credits
   drain: explicit shutdown / weight-sync barrier
 ```

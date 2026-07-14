@@ -1,5 +1,17 @@
 # SPRINT: rollout colocation 输入面收口到 gpu_pool 单一源 (done)
 
+> **Historical correction (2026-07-12).** This done sprint records the source
+> and configuration tree that existed when the cleanup was performed. A
+> then-current pipeline policy also had a field named `memory_fraction`; that
+> policy type was subsequently deleted because it had no runtime consumer.
+> Current `PipelineStage` has no runtime-policy or memory-fraction field. The
+> single-GPU continuous debug recipe cited below was also a one-shot historical
+> asset and is no longer a maintained current config. These later deletions do
+> not change this sprint's original dead-field finding.
+> A subsequent source-of-truth cleanup also removed the flat
+> `RayGenerationConfig.allow_driver_gpu_overlap` mirror; current code reads the
+> required `ResolvedDistributedResources` plan directly.
+
 状态：done（2026-06-20）。P0–P3 全部落地：删 `RolloutResourceConfig.memory_fraction` 死镜像、
 `DistributedResourceConfig.rollout_persistent_colocated_workers` 改 `resolve_distributed_resources`
 顶部就地派生、删遗留 `colocate` 块语法（`_parse_colocate_block` + schema 字段 + 唯一在用 config 迁移到
@@ -87,7 +99,7 @@ base preset（`configs/base/distributed/ray_rollout_colocated_single_gpu.yaml:16
     gpu_memory_fraction = config.rollout_gpu_memory_fraction
 ```
 
-grep `rollout.memory_fraction` 在 vrl/ 与 tests/ 对这个 nested 字段**零读者**（唯一同名命中是另一个结构体 `PipelineStageRuntimePolicy.memory_fraction`，`vrl/generation/pipeline/topology.py:39`，与本字段无关）。同级 `gpu_pool` 字段则有真实读者（`:208/227`），所以只有 `memory_fraction` 可删。
+grep `rollout.memory_fraction` 在 vrl/ 与 tests/ 对这个 nested 字段**零读者**（当时唯一同名命中来自另一个、与本字段无关的 pipeline policy；该 policy 后续也因无 runtime consumer 被删除）。同级 `gpu_pool` 字段则有真实读者（`:208/227`），所以只有 `memory_fraction` 可删。
 
 ### 1.3 `rollout_persistent_colocated_workers` 是缓存派生布尔
 
@@ -183,7 +195,7 @@ persistent = config.rollout.gpu_pool == "trainer" and config.rollout_gpu_memory_
 
 - `vrl/ray/resources.py:27-40`（`RolloutResourceConfig` 字段，含死 `memory_fraction`）、`:68-77`（`DistributedResourceConfig` 含派生缓存 `rollout_persistent_colocated_workers`）、`:200-208/226-234`（resolver 读 `gpu_pool`）、`:283-321`（`persistent_colocated_workers` 四处读 + release 派生）、`:475-525`（`from_cfg` 双写 memory_fraction + 缓存 persistent）、`:1151-1204`（`_parse_rollout_pool` 双语法）、`:1207-1244`（`_parse_colocate_block`）、`:1278-1308`（removed-key 守卫指回 colocate）
 - `vrl/config/schema.py:421-440`（`RolloutWorkerSection`，`colocate` 仍注册为公有 key）
-- `vrl/generation/pipeline/topology.py:39`（同名但无关的 `PipelineStageRuntimePolicy.memory_fraction`，排除误判）
+- 当时 `vrl/generation/pipeline/topology.py` 中另一个同名但无关的 pipeline-policy 字段（后续已删；当时用于排除误判）
 - `configs/experiment/diffusion/sd3_5/online_grpo_ocr_single_gpu_async_debug.yaml:41-42`（全仓唯一在用遗留 colocate 块）
 - `configs/base/distributed/ray_rollout_colocated_single_gpu.yaml:16-26`、`configs/experiment/diffusion/cosmos_predict2_5/online_nft_kling_video_reward_ddp_2x1.yaml:51`（已用新 gpu_pool 语法）
 - `tests/config/test_load_all_experiments.py:312`、`tests/ray/test_resources.py:284-285/1261`（待迁移断言）

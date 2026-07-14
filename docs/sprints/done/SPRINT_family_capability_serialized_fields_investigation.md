@@ -5,6 +5,11 @@
 > launch contract now carries only canonical `family`; each worker performs one
 > registry lookup and derives task, collector kind, executor, and model recipe
 > from that entry.
+>
+> **Additional historical correction (2026-07-13).** The standalone
+> `estimate_chunk_cost` helper named below was later inlined into the only
+> production planner caller. That later cleanup does not change this document's
+> serialized-capability verdict.
 
 状态：done（2026-06-21）。调查结论：6 个「经 `to_dict()` 跨 Ray 边界但无 in-process 读者」的字段，逐一追踪序列化下游消费后**全部证实为真死**（序列化了但 worker / placement 侧从不按 key 读回）——遂全部删除。验证：`ruff` 全绿，`pytest tests/generation/test_capabilities.py tests/generation/execution/ tests/generation/ray/test_oom_split.py` **24 passed**，`to_dict`/`from_value` 往返 + `with_runtime_caps` 冒烟通过。
 范围：`vrl/generation/capabilities.py` 的 `FamilyCapability` 5 字段 + `ExecutionStageCapability.metadata`。

@@ -1,5 +1,10 @@
 # SPRINT: GPU 饱和度判读口径 + MPS 同卡共置
 
+> **Archive notice (2026-07-12):** this file preserves the original measurement
+> narrative. The canonical product policy and the corrected heterogeneous
+> arithmetic are in
+> `docs/sprints/SPRINT_gpu_saturation_and_colocation_decision.md`.
+
 > 归档类型：长期测量结果；实验已关闭，但判读口径继续作为性能分析依据。
 > 起因：外部文章《10 行代码把小模型吞吐提升 200%》（CUDA MPS + 多副本）。
 > 本 sprint 学它的**判据**（不是那 10 行脚本），并在我们自己的机器 + 真实模型上验证。
@@ -13,11 +18,14 @@
 
 - **同质**（两个真实 SD3.5 rollout DiT 前向，512²、CFG、真实 chunk=8 → DiT batch 16）：
   合计吞吐 **1.03x**（小 chunk=2 时 1.11x）。合成小 GEMM 的 1.45x **不迁移到真实模型**。
-- **异质**（DiT 前向 ⊕ VAE decode，即"用带宽负载填 tensor 负载的空隙"这个更强的假设）：
-  合计有效工作量 **1.14x** —— 余量真实存在但很小；**而且拿不到**：MPS 无优先级控制，
-  实测它把关键路径 DiT 打慢 **4.18x** 去喂 VAE。rollout 墙钟由 denoise 决定，这是净亏。
+- **Heterogeneous** (DiT forward plus VAE decode): corrected normalized
+  effective work is **1.03x**, not `1.14x`. MPS exposes a client-priority hint,
+  but not enforceable critical-path QoS; the measured DiT path slowed by
+  **4.18x** while VAE work progressed.
 
-**不做。** 这 ~14% 的重叠余量若要拿，也该用**进程内 CUDA streams**，不是跨进程 MPS。
+**Decision:** do not productize MPS colocation. The corrected heterogeneous
+aggregate gain is approximately `3%`, before accounting for the critical-path
+regression.
 
 ### 0.2 真正的收获：低 SM occupancy **不等于** GPU 没填满（纠正一条错误读数）
 
@@ -49,8 +57,11 @@ counters 只能解释，永远不能定案。
 ### 0.3 profiling 的口径问题（原始诉求）
 
 三个"利用率"可以在同一个 run 上同时读出 100% / 64% / 29%，而且都对（§2）。
-任何饱和度结论必须同时给出三列，并注明是**单 kernel 值**还是**时间平均值**——
-但**判死/判活只能靠 batch-标度或共置 A/B 这种吞吐实验**，counters 只能解释、不能定案。
+任何饱和度结论必须同时给出三列，并注明是**单 kernel 值**还是**时间平均值**。
+Counters explain execution. Batch scaling is only a screening signal. Use a
+real-workload co-run A/B to test recoverable aggregate throughput, or NCU against
+a same-machine GEMM baseline to test kernel saturation; those are different
+questions.
 
 ### 0.4 剩下真正的靶子
 
@@ -88,7 +99,7 @@ rollout 在 run 级别是 **64% busy / 36% idle**，其中 ~33% 是无归属的�
 
 ## 3. 实测
 
-### 3.1 合成基线：判据本身成立（`vrl/scripts/perf/mps_colocation_probe.py`）
+### 3.1 Archived synthetic baseline (one-shot harness removed)
 
 bf16 GEMM，合计 = 两个客户端之和：
 
@@ -134,27 +145,33 @@ sm_util ↑），**吞吐却只涨 3%**。机器早就没有可回收的吞吐�
 | --- | ---: | ---: | ---: |
 | DiT 前向 | 3.765 /s | 1.733（慢 2.17x） | 0.902（**慢 4.18x**） |
 | VAE decode | 5.289 /s | 2.549（慢 2.07x） | 4.199（只慢 1.26x） |
-| **合计有效工作量** | — | **1.04x**（≈ 无重叠） | **1.14x** |
+| **合计有效工作量** | — | **0.94x** | **1.03x** |
 
-（合计有效工作量 = 两边完成的工作按各自单独速率折算成串行耗时 ÷ 实际墙钟窗口。
-1.0 = 完全没重叠，2.0 = 完美重叠。）
+Normalized effective work is the sum of each colocated rate divided by its solo
+rate. The corrected calculations are:
 
-两条结论：
+```text
+no MPS = 1.733 / 3.765 + 2.549 / 5.289 = 0.942x
+MPS    = 0.902 / 3.765 + 4.199 / 5.289 = 1.034x
+```
 
-1. **确实存在重叠余量，但只有 ~14%**——远不是合成小 GEMM 那个 45%。机器在"做功"意义上
-   已经用掉了约 85-90%。
-2. **而且这 14% 拿不到**：MPS 没有优先级控制，实测它偏袒 VAE（多而小的 kernel 抢先），
-   把 **DiT 打慢了 4.18x**。而 rollout 的墙钟就是 denoise 决定的——用关键路径 4 倍的代价去
-   换 VAE 早点算完，是净亏。
-3. 顺带一提：**这 14% 就算要拿，也不该用 MPS 拿**——进程内 CUDA streams 就能重叠阶段，
-   不需要跨进程。我们今天不重叠 decode 与 denoise 是**程序结构**是顺序的，不是硬件不允许。
+Corrected conclusions:
+
+1. Aggregate effective work improved by only about **3%**, not `14%`.
+2. The client-priority API is a driver hint rather than hard QoS. In this run,
+   the denoise critical path slowed by **4.18x**, which dominates rollout wall
+   time and makes the trade unacceptable.
+3. Any future process-local stage-overlap proposal must beat the serial production
+   baseline directly. This measurement does not justify a cross-process MPS path.
 
 ### 3.4 踩到的坑（都是真的）
 
-- **静默退回时间片**：自定义 `CUDA_MPS_PIPE_DIRECTORY`（指到 `/tmp/claude-*/…`）会让
-  control daemon 启动后**立刻退出**，客户端**静默**用普通时间片跑——第一轮我因此拿到一张
-  自洽的"MPS 无效"假表。默认 pipe dir 正常。探针现在强制校验：窗口内必须在 `nvidia-smi`
-  里看到 `nvidia-cuda-mps-server`，否则不许标成 "MPS"。
+- **Silent fallback to time slicing:** a mismatched `CUDA_MPS_PIPE_DIRECTORY`
+  caused the control daemon to exit while clients continued without MPS. The
+  historical harness checked for an MPS server row, but that was insufficient:
+  an unrelated or lingering server did not prove that the benchmark client PIDs
+  were attached. The one-shot harness has been removed. Any future probe must
+  verify the exact clients through MPS control state before labeling a run MPS.
 - **daemon 是 per-user 全局的**：开着时该用户新起的任何 CUDA 进程都会挂上去（实测把用户
   当时在跑的 pytest 一并接管了）。**不能接进训练启动脚本**，必须显式手动开关。
 - **`gpm_sampler` 一直是跑不起来的**：它 import `pynvml`，而 `nvidia-ml-py` 从未在
@@ -167,7 +184,7 @@ sm_util ↑），**吞吐却只涨 3%**。机器早就没有可回收的吞吐�
 | --- | --- | --- |
 | sd3_5（image） | **共置无用**（1.03x @真实 chunk） | §3.2 真机 A/B |
 | cosmos / wan（video） | **共置无用**，双重死 | 显存无余量（512p93f sbs=1 已 31.8GB）+ 主 GEMM 已到 bf16 上限 |
-| anima 等小模型 | 不再单独试 | occupancy 低是 GEMM 指纹（§0.2），不是空闲证据；它的 kernel 形状与 sd3_5 同类 |
+| anima and other small models | Not separately benchmarked | Do not infer a result from occupancy or model class. The product path remains closed; any future workload-specific proposal must pass the canonical reopening gate |
 
 `vrl/ray/resources.py:190`（拒绝分数 GPU）与 `placement.py:180`（拒绝同卡双 worker）
 **保持不动**——实测证明放开它们没有收益，无 MPS 时反而是 0.92x。
@@ -179,20 +196,24 @@ sm_util ↑），**吞吐却只涨 3%**。机器早就没有可回收的吞吐�
    **进程内 pipelining / resident actor**（已有 sprint：
    `parked/SPRINT_diffusion_rollout_stage_pipeline.md`、
    `planned/SPRINT_miles_phase_lease_and_one_continuous.md`），不是同卡多副本。
-2. **阶段重叠（小头，已量化上界 ~14%）**：§3.3 测出 denoise ⊕ decode 的重叠余量约 14%。
-   若要拿，走**进程内 CUDA streams**（`parked/SPRINT_video_rollout_stage_overlap.md`），
-   MPS 路线因无优先级控制而净亏。注意这 14% 是**上界**，实际 decode 只占 rollout 一小段时间。
+2. **Stage overlap (small target):** §3.3 shows only about `3%` normalized
+   effective-work improvement after correcting the arithmetic, with a `4.18x`
+   DiT slowdown. A process-local CUDA-stream proposal may still be measured
+   independently, but this MPS result provides no positive product gate.
 
 ## 6. 非目标
 
 - 不再试 MPS/MIG/同卡多副本（本 sprint 已判死）。
 - 不把 MPS daemon 接进任何启动脚本。
-- 不再用 occupancy 读数论证"还有头空间"——只用吞吐-batch 标度或共置 A/B 定案。
+- Do not use occupancy as evidence of recoverable headroom. Treat batch scaling
+  as screening evidence; use a real-workload co-run A/B for recoverable
+  throughput and an NCU/same-machine-GEMM comparison for kernel saturation.
 
 ## 参考
 
 - 外部文章：<https://www.linkedin.com/pulse/10-行代码把小模型吞吐提升200-jiaxin-deng-jnowc/>
-- 合成判据探针：`vrl/scripts/perf/mps_colocation_probe.py`（+ `tests/scripts/perf/test_mps_colocation_probe.py`）
+- Synthetic positive/negative-control results: archived in §3.1; the one-shot
+  harness and its test were removed after the decision was recorded.
 - SM 级采样：`vrl/scripts/perf/gpm_sampler.py`（现由 `pyproject.toml` 的 `[perf]` extra 提供 `nvidia-ml-py`）
 - MFU 分母标定：`vrl/scripts/perf/gemm_peak_probe.py`、`vrl/scripts/perf/gpu_preflight.py`
 - 被本 sprint 纠正的读数：`docs/sprints/info/SPRINT_cross_model_performance.md` §3
