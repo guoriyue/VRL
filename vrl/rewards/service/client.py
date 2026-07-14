@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import asyncio
 import json
+import time
 from contextlib import suppress
+from dataclasses import replace
 from typing import TYPE_CHECKING, Any
 from urllib.parse import quote
 
@@ -16,6 +18,7 @@ from vrl.rewards.inference import (
     validate_reward_results,
 )
 from vrl.rewards.service.protocol import (
+    GENERATION_OVERLAP_SAFE_CAPABILITY,
     SHARED_FILESYSTEM_ARTIFACT_TRANSPORT,
     RemoteRewardServiceError,
     RewardServiceErrorCode,
@@ -36,6 +39,8 @@ if TYPE_CHECKING:
 
 class HttpRewardRuntime:
     """Score against an operator-owned reward service over async HTTP."""
+
+    scoring_is_nonblocking = True
 
     def __init__(
         self,
@@ -71,13 +76,14 @@ class HttpRewardRuntime:
         self._session_lock = asyncio.Lock()
         self._identity_lock = asyncio.Lock()
         self._identity_checked = False
+        self._external_accelerator_isolation_verified = False
         self._closed = False
 
     @property
-    def supports_generation_overlap(self) -> bool:
-        """Remote model work does not occupy the rollout process or its GPU."""
+    def external_accelerator_isolation_verified(self) -> bool:
+        """Whether preflight proved the service safe beside generation."""
 
-        return True
+        return self._external_accelerator_isolation_verified
 
     async def score_batch(
         self,
@@ -85,6 +91,7 @@ class HttpRewardRuntime:
     ) -> list[RewardInferenceResult]:
         await self._ensure_identity()
         payload = request_to_wire(request)
+        roundtrip_started = time.perf_counter()
         try:
             body, status = await self._request_json("POST", "/score", json_body=payload)
         except asyncio.CancelledError:
@@ -109,7 +116,18 @@ class HttpRewardRuntime:
                 body,
                 expected_request_id=request.request_id,
             )
-            return validate_reward_results(request, results)
+            validated = validate_reward_results(request, results)
+            roundtrip_ms = (time.perf_counter() - roundtrip_started) * 1000.0
+            return [
+                replace(
+                    result,
+                    metadata={
+                        **result.metadata,
+                        "http_roundtrip_ms": roundtrip_ms,
+                    },
+                )
+                for result in validated
+            ]
         except RewardServiceProtocolError as error:
             raise RemoteRewardServiceError(
                 RewardServiceErrorCode.TRANSPORT_ERROR.value,
@@ -211,6 +229,9 @@ class HttpRewardRuntime:
                         "actual_version": info.model_version,
                     },
                 )
+            self._external_accelerator_isolation_verified = (
+                GENERATION_OVERLAP_SAFE_CAPABILITY in info.capabilities
+            )
             self._identity_checked = True
 
     async def _get_session(self) -> aiohttp.ClientSession:

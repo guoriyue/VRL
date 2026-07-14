@@ -86,7 +86,6 @@ class RewardBatchReport:
     scores: list[float]
     components: dict[str, list[float]] = field(default_factory=dict)
     timing_ms: dict[str, float] = field(default_factory=dict)
-    results: list[RewardInferenceResult] = field(default_factory=list)
 
 
 class RewardCleanupError(RuntimeError):
@@ -192,12 +191,25 @@ class RewardFunction:
         self._last_reward_request_id: str | None = None
 
     @property
-    def supports_generation_overlap(self) -> bool:
-        """Whether this scorer can run without blocking generation progress."""
+    def scoring_is_nonblocking(self) -> bool:
+        """Whether this scorer yields while inference runs elsewhere."""
 
         return bool(
-            self.runtime is not None
-            and getattr(self.runtime, "supports_generation_overlap", False)
+            self.runtime is not None and getattr(self.runtime, "scoring_is_nonblocking", False)
+        )
+
+    @property
+    def external_accelerator_isolation_verified(self) -> bool:
+        """Whether out-of-plan reward accelerator work has been isolated."""
+
+        if self.runtime is None:
+            return True
+        return bool(
+            getattr(
+                self.runtime,
+                "external_accelerator_isolation_verified",
+                False,
+            ),
         )
 
     async def preflight(self) -> None:
@@ -484,12 +496,37 @@ class RewardFunction:
                 scores=[float(result.selected_score) for result in results],
                 timing_ms={
                     "latency_ms": total_latency_ms,
-                    "queue_wait_ms": _max_result_timing(results, "queue_wait_ms"),
-                    "inference_ms": _sum_result_timing(results, "inference_ms")
-                    if results
-                    else inference_total_ms,
+                    "queue_wait_ms": max(
+                        (
+                            float(result.queue_wait_ms)
+                            for result in results
+                            if result.queue_wait_ms is not None
+                        ),
+                        default=0.0,
+                    ),
+                    "inference_ms": (
+                        sum(
+                            float(result.inference_ms)
+                            for result in results
+                            if result.inference_ms is not None
+                        )
+                        if results
+                        else inference_total_ms
+                    ),
+                    "artifact_materialization_ms": materialization_ms,
+                    "artifact_validation_ms": _max_result_metadata_timing(
+                        results,
+                        "service_artifact_validation_ms",
+                    ),
+                    "service_inference_wall_ms": _max_result_metadata_timing(
+                        results,
+                        "service_inference_wall_ms",
+                    ),
+                    "transport_roundtrip_ms": _max_result_metadata_timing(
+                        results,
+                        "http_roundtrip_ms",
+                    ),
                 },
-                results=list(results),
             )
         except BaseException as error:
             operation_error = error
@@ -622,16 +659,13 @@ def decode_artifact_frames(artifact: Any, num_frames: int | None = None) -> Any:
     )
 
 
-def _max_result_timing(results: list[RewardInferenceResult], field: str) -> float:
-    values = [
-        float(value) for result in results if (value := getattr(result, field, None)) is not None
-    ]
-    return max(values, default=0.0)
-
-
-def _sum_result_timing(results: list[RewardInferenceResult], field: str) -> float:
-    return sum(
-        float(value) for result in results if (value := getattr(result, field, None)) is not None
+def _max_result_metadata_timing(
+    results: list[RewardInferenceResult],
+    key: str,
+) -> float:
+    return max(
+        (float(result.metadata[key]) for result in results if key in result.metadata),
+        default=0.0,
     )
 
 

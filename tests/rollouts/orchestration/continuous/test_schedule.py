@@ -13,6 +13,7 @@ import pytest
 import torch
 import torch.nn as nn
 
+from tests.rollouts.orchestration.continuous._helpers import owner_snapshot
 from vrl.generation.execution.types import StaleSlotDiscard
 from vrl.rollouts.batch import RolloutBatch
 from vrl.rollouts.orchestration import (
@@ -90,6 +91,7 @@ class _Collector:
         self.requires_runtime_offload_before_reward = False
         self.requires_driver_model_offload_for_reward = False
         self.supports_reward_generation_overlap = False
+        self.supports_continuous_reward_execution = True
         self.calls: list[dict[str, Any]] = []
         self.activation_calls = 0
         self.offload_calls = 0
@@ -176,7 +178,7 @@ async def _snapshot_when(
     loop = asyncio.get_running_loop()
     deadline = loop.time() + timeout_s
     while True:
-        snapshot = await schedule._debug_snapshot()
+        snapshot = await owner_snapshot(schedule._owner)
         if condition(snapshot):
             return snapshot
         if loop.time() >= deadline:
@@ -203,7 +205,7 @@ async def test_shutdown_joins_owner_and_is_idempotent() -> None:
     )
 
     await schedule.next_iteration(["p0"], group_size=1)
-    running = await schedule._debug_snapshot()
+    running = await owner_snapshot(schedule._owner)
     assert running.producer_state is not None
     assert running.producer_state.running is True
 
@@ -255,13 +257,13 @@ async def test_owner_production_advances_while_trainer_loop_is_blocked() -> None
 
     try:
         await schedule.next_iteration(["p0"], group_size=1)
-        before = await schedule._debug_snapshot()
+        before = await owner_snapshot(schedule._owner)
         assert before.producer_state is not None
 
         # This blocks the trainer asyncio loop exactly like synchronous backward.
         time.sleep(0.12)
 
-        after = await schedule._debug_snapshot()
+        after = await owner_snapshot(schedule._owner)
         assert after.producer_state is not None
         assert after.producer_state.tick_count > before.producer_state.tick_count
         assert after.producer_state.submitted_count > before.producer_state.submitted_count
@@ -392,7 +394,7 @@ async def test_weight_sync_barrier_advances_version_and_resumes() -> None:
         await schedule.after_train_step()
         # Barrier performed exactly one post-train sync and resumed admission.
         assert len(syncer.calls) == sync_calls_before + 1
-        snapshot = await schedule._debug_snapshot()
+        snapshot = await owner_snapshot(schedule._owner)
         assert snapshot.producer_state is not None
         assert snapshot.producer_state.paused_for_weight_sync is False
         assert runtime.current_policy_version == 2
@@ -420,7 +422,7 @@ async def test_partial_commit_failure_closes_admission_and_runtime() -> None:
             await schedule.after_train_step()
 
         calls_after_failure = len(collector.calls)
-        failed = await schedule._debug_snapshot()
+        failed = await owner_snapshot(schedule._owner)
         assert failed.producer_state is None
         assert failed.queue_stats == {}
         assert "worker install ACK mismatch" in str(failed.terminal_error)
@@ -465,7 +467,7 @@ async def test_after_train_step_purges_items_outside_production_window() -> None
         assert first_sync["continuous.post_sync_dropped_stale"] == 0.0
 
         second_sync = await schedule.after_train_step()
-        after = await schedule._debug_snapshot()
+        after = await owner_snapshot(schedule._owner)
         assert runtime.current_policy_version == 3
         assert (
             second_sync["continuous.post_sync_dropped_stale"] >= queued_before_sync["ready_items"]
@@ -516,6 +518,15 @@ def test_rejects_reward_scoring_on_trainer_gpu() -> None:
     collector.requires_driver_model_offload_for_reward = True
 
     with pytest.raises(RuntimeError, match="trainer GPU while backward overlaps"):
+        _build(_continuous_config(), collector, _Syncer(runtime))
+
+
+def test_rejects_unverified_external_reward_accelerator() -> None:
+    runtime = _Runtime()
+    collector = _Collector(runtime)
+    collector.supports_continuous_reward_execution = False
+
+    with pytest.raises(RuntimeError, match="verified reward accelerator isolation"):
         _build(_continuous_config(), collector, _Syncer(runtime))
 
 
@@ -574,7 +585,7 @@ async def test_reward_failure_fails_fast_and_never_reaches_queue() -> None:
     try:
         with pytest.raises(RuntimeError, match="reward model exploded"):
             await schedule.next_iteration(["p0", "p1"], group_size=2)
-        assert (await schedule._debug_snapshot()).queue_stats == {}
+        assert (await owner_snapshot(schedule._owner)).queue_stats == {}
     finally:
         await schedule.shutdown()
 
@@ -618,7 +629,7 @@ async def test_weight_sync_waits_for_inflight_reward() -> None:
         barrier = asyncio.create_task(schedule.after_train_step())
         await asyncio.sleep(0.05)
         # Reward still in flight: admission paused, sync not yet performed.
-        blocked = await schedule._debug_snapshot()
+        blocked = await owner_snapshot(schedule._owner)
         assert blocked.producer_state is not None
         assert blocked.producer_state.paused_for_weight_sync is True
         assert len(syncer.calls) == sync_calls_before
@@ -627,7 +638,7 @@ async def test_weight_sync_waits_for_inflight_reward() -> None:
         collector.allow_score.set()
         await asyncio.wait_for(barrier, 5.0)
         assert len(syncer.calls) == sync_calls_before + 1
-        resumed = await schedule._debug_snapshot()
+        resumed = await owner_snapshot(schedule._owner)
         assert resumed.producer_state is not None
         assert resumed.producer_state.paused_for_weight_sync is False
     finally:
@@ -677,7 +688,7 @@ async def test_non_draining_sync_skips_inflight_wait() -> None:
 
         assert phases["continuous.weight_sync_barrier_mode"] == 1.0
         assert len(syncer.calls) == sync_calls_before + 1
-        snapshot = await schedule._debug_snapshot()
+        snapshot = await owner_snapshot(schedule._owner)
         assert snapshot.producer_state is not None
         assert snapshot.producer_state.paused_for_weight_sync is False
     finally:
@@ -744,7 +755,7 @@ async def test_prompt_set_update_swaps_producer_source() -> None:
     try:
         await schedule.next_iteration(["p0", "p1"], group_size=2)
         await schedule.next_iteration(["p0", "p2"], group_size=2)
-        assert (await schedule._debug_snapshot()).prompts == ("p0", "p2")
+        assert (await owner_snapshot(schedule._owner)).prompts == ("p0", "p2")
     finally:
         await schedule.shutdown()
 
@@ -771,13 +782,13 @@ async def test_prompt_set_update_purges_old_ready_items_before_wait() -> None:
             lambda item: item.queue_stats.get("ready_items", 0) >= 4,
         )
         await schedule.after_train_step()
-        after_sync = await schedule._debug_snapshot()
+        after_sync = await owner_snapshot(schedule._owner)
         assert after_sync.queue_stats["ready_items"] >= 4
 
         second = await schedule.next_iteration(["p2", "p3"], group_size=1)
 
         assert sorted(batch.prompts[0] for batch in second.batches) == ["p2", "p3"]
         assert second.stats.as_phase_dict()["continuous.prompt_set_dropped"] >= 4.0
-        assert (await schedule._debug_snapshot()).queue_stats["dropped_prompt_set"] >= 4.0
+        assert (await owner_snapshot(schedule._owner)).queue_stats["dropped_prompt_set"] >= 4.0
     finally:
         await schedule.shutdown()

@@ -139,28 +139,6 @@ class RolloutCollector:
                 errors,
             )
 
-    async def collect(
-        self,
-        inputs: list[Any],
-        *,
-        group_size: int,
-        metadata: Mapping[str, Any] | None = None,
-        request_overrides: Mapping[str, Any] | None = None,
-        seed: int | None = None,
-        runtime_debug: bool = False,
-        policy_version: int | None = None,
-    ) -> RolloutBatch:
-        unscored = await self.collect_unscored(
-            inputs,
-            group_size=group_size,
-            metadata=metadata,
-            request_overrides=request_overrides,
-            seed=seed,
-            runtime_debug=runtime_debug,
-            policy_version=policy_version,
-        )
-        return (await self.score_rollouts([unscored]))[0]
-
     async def collect_unscored(
         self,
         inputs: list[Any],
@@ -174,7 +152,7 @@ class RolloutCollector:
     ) -> UnscoredRollout:
         """Generate one group of ``GenerationInput`` (or bare prompt) conditioning.
 
-        Deferred-scoring half of collect(): the generation runtime stays
+        Generation half of the collection flow: the runtime stays
         resident so several groups can be generated back to back; scoring (and
         the rollout offload shared-GPU reward runs need before it) happens in
         score_rollouts(). ``metadata`` is the group's opaque reward-scoring
@@ -326,12 +304,33 @@ class RolloutCollector:
 
     @property
     def supports_reward_generation_overlap(self) -> bool:
-        """Whether reward scoring can safely overlap the next generation."""
+        """Whether strict collection can stream score N beside generation N+1."""
+
+        reward_fn = self.reward_scorer.reward_fn
+        return bool(
+            reward_fn is not None
+            and self._reward_accelerator_isolation_verified(reward_fn)
+            and getattr(reward_fn, "scoring_is_nonblocking", False)
+        )
+
+    @property
+    def supports_continuous_reward_execution(self) -> bool:
+        """Whether reward placement is safe beside continuous trainer/rollout work."""
+
+        reward_fn = self.reward_scorer.reward_fn
+        return reward_fn is None or self._reward_accelerator_isolation_verified(reward_fn)
+
+    def _reward_accelerator_isolation_verified(self, reward_fn: Any) -> bool:
+        """Combine local topology with proof for out-of-plan accelerators."""
 
         return bool(
             not self.requires_runtime_offload_before_reward
             and not self.requires_driver_model_offload_for_reward
-            and getattr(self.reward_scorer, "supports_generation_overlap", False)
+            and getattr(
+                reward_fn,
+                "external_accelerator_isolation_verified",
+                False,
+            )
         )
 
 

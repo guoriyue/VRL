@@ -160,7 +160,8 @@ def test_all_registry_entries_build_collectors_from_the_same_entry() -> None:
             ),
         )
         assert collector.request_builder.entry is entry
-        assert callable(collector.collect)
+        assert callable(collector.collect_unscored)
+        assert callable(collector.score_rollouts)
 
 
 def test_unknown_family_raises_clear_error() -> None:

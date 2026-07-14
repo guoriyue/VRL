@@ -181,10 +181,12 @@ class RewardInferenceResult(_ScoreSelection):
     sample_id: str | None = None
     group_id: str | None = None
     trajectory_id: str | None = None
+    # display/provenance-only: which reward model scored this; wire + debug JSONL.
     reward_model_version: str | None = None
     latency_ms: float | None = None
     queue_wait_ms: float | None = None
     inference_ms: float | None = None
+    # display/provenance-only: which worker scored this; wire + debug JSONL.
     worker_id: str | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
     error: str | None = None
@@ -204,20 +206,28 @@ class RewardInferenceResult(_ScoreSelection):
                 f"reward result {self.artifact_id!r} selected_score mismatch: "
                 f"{self.selected_score} != {expected}",
             )
-        if self.latency_ms is not None and float(self.latency_ms) < 0:
-            raise ValueError("RewardInferenceResult.latency_ms must be non-negative")
-        if self.queue_wait_ms is not None and float(self.queue_wait_ms) < 0:
-            raise ValueError("RewardInferenceResult.queue_wait_ms must be non-negative")
-        if self.inference_ms is not None and float(self.inference_ms) < 0:
-            raise ValueError("RewardInferenceResult.inference_ms must be non-negative")
+        for field_name in ("latency_ms", "queue_wait_ms", "inference_ms"):
+            value = getattr(self, field_name)
+            if value is None:
+                continue
+            normalized = float(value)
+            if not math.isfinite(normalized) or normalized < 0:
+                raise ValueError(
+                    f"RewardInferenceResult.{field_name} must be finite and non-negative",
+                )
 
 
 class RewardInferenceRuntime(Protocol):
     """Runtime boundary for model-backed reward inference."""
 
     @property
-    def supports_generation_overlap(self) -> bool:
-        """Whether scoring yields while generation work runs elsewhere."""
+    def scoring_is_nonblocking(self) -> bool:
+        """Whether scoring yields the caller while model work runs elsewhere."""
+        ...
+
+    @property
+    def external_accelerator_isolation_verified(self) -> bool:
+        """Whether accelerator work outside the resource plan is isolated."""
         ...
 
     async def score_batch(
@@ -354,15 +364,12 @@ def score_artifacts_with_model(
     *,
     worker_id: str,
     reward_model_version: str = "",
-    queue_wait_ms: float = 0.0,
-    extra_metadata: Mapping[str, Any] | None = None,
 ) -> list[RewardInferenceResult]:
     """Run a ``RewardModel`` over a request's artifacts and build result rows.
 
-    Shared by the in-process (local) runtime and the Ray worker so both
-    transports score artifacts through identical logic. A model may expose a
-    ``score_request(request) -> list[Mapping]`` batch hook (aligned to
-    ``request.artifacts``); otherwise its per-artifact ``__call__`` is looped.
+    A model may expose a ``score_request(request) -> list[Mapping]`` batch hook
+    (aligned to ``request.artifacts``); otherwise its per-artifact ``__call__``
+    is looped.
     """
 
     def build_result(
@@ -374,9 +381,6 @@ def score_artifacts_with_model(
             raise TypeError("reward model must return a mapping of scores")
         scores = {str(key): float(value) for key, value in raw_scores.items()}
         selected = request.select_score(scores)
-        metadata: dict[str, Any] = {"artifact_path": artifact.path}
-        if extra_metadata:
-            metadata.update(dict(extra_metadata))
         return RewardInferenceResult(
             artifact_id=artifact.artifact_id,
             scores=scores,
@@ -392,11 +396,9 @@ def score_artifacts_with_model(
             group_id=artifact.group_id,
             trajectory_id=artifact.trajectory_id,
             reward_model_version=str(reward_model_version),
-            latency_ms=queue_wait_ms + inference_ms,
-            queue_wait_ms=queue_wait_ms,
+            latency_ms=inference_ms,
             inference_ms=inference_ms,
             worker_id=worker_id,
-            metadata=metadata,
         )
 
     batch_score = getattr(model, "score_request", None)

@@ -9,7 +9,7 @@ from typing import Any
 
 from vrl.config.reward_inference import parse_reward_inference_config
 from vrl.rewards.base import RewardBatchReport, RewardCleanupError, RewardFunction
-from vrl.rewards.inference import RewardInferenceResult, RewardMemoryReleaseProof
+from vrl.rewards.inference import RewardMemoryReleaseProof
 from vrl.rewards.runtime import build_reward_runtime
 from vrl.rewards.types import RewardRollout
 
@@ -89,12 +89,18 @@ class MultiReward(RewardFunction):
         self._shutdown_completed_children: set[int] = set()
 
     @property
-    def supports_generation_overlap(self) -> bool:
-        """Stream only when every component uses a non-blocking transport."""
+    def scoring_is_nonblocking(self) -> bool:
+        """Whether every component yields while its model work executes."""
 
         return bool(self.rewards) and all(
-            reward.supports_generation_overlap for _, _, reward in self.rewards
+            reward.scoring_is_nonblocking for _, _, reward in self.rewards
         )
+
+    @property
+    def external_accelerator_isolation_verified(self) -> bool:
+        """Whether every external component proved accelerator isolation."""
+
+        return all(reward.external_accelerator_isolation_verified for _, _, reward in self.rewards)
 
     async def preflight(self) -> None:
         """Check every component's remote dependency before training starts."""
@@ -227,13 +233,11 @@ class MultiReward(RewardFunction):
         totals = [0.0] * len(rollouts)
         components: dict[str, list[float]] = {}
         timing_ms: dict[str, float] = {}
-        results: list[RewardInferenceResult] = []
         operation_error: BaseException | None = None
         try:
             for name, weight, fn in self.rewards:
                 report = await fn.score_batch_report(rollouts)
                 components[name] = list(report.scores)
-                results.extend(report.results)
                 for key, value in report.timing_ms.items():
                     timing_ms[str(key)] = timing_ms.get(str(key), 0.0) + float(value)
                 for i, s in enumerate(report.scores):
@@ -241,12 +245,19 @@ class MultiReward(RewardFunction):
         except BaseException as error:
             operation_error = error
         _, cleanup_error = await self._park_all_memory()
-        _raise_operation_and_cleanup(operation_error, cleanup_error)
+        if operation_error is not None and cleanup_error is not None:
+            raise RewardCleanupError(
+                "reward operation and memory parking both failed",
+                [operation_error, cleanup_error],
+            )
+        if operation_error is not None:
+            raise operation_error
+        if cleanup_error is not None:
+            raise cleanup_error
         return RewardBatchReport(
             scores=totals,
             components=components,
             timing_ms=timing_ms,
-            results=results,
         )
 
     async def park_memory(self) -> tuple[RewardMemoryReleaseProof, ...]:
@@ -318,18 +329,3 @@ def validate_reward_memory_parking_components(
             f"but these reward components do not provide it: {unsupported}. "
             "Use a dedicated reward GPU or a reward with complete parking support.",
         )
-
-
-def _raise_operation_and_cleanup(
-    operation_error: BaseException | None,
-    cleanup_error: BaseException | None,
-) -> None:
-    if operation_error is not None and cleanup_error is not None:
-        raise RewardCleanupError(
-            "reward operation and memory parking both failed",
-            [operation_error, cleanup_error],
-        )
-    if operation_error is not None:
-        raise operation_error
-    if cleanup_error is not None:
-        raise cleanup_error

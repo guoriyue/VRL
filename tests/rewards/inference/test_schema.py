@@ -172,3 +172,23 @@ def test_result_rejects_selected_score_mismatch() -> None:
             reward_name="reward",
             score_key="overall_reward",
         )
+
+
+@pytest.mark.parametrize(
+    ("field_name", "value"),
+    [
+        ("latency_ms", float("nan")),
+        ("queue_wait_ms", float("inf")),
+        ("inference_ms", -1.0),
+    ],
+)
+def test_result_rejects_invalid_timing(field_name: str, value: float) -> None:
+    with pytest.raises(ValueError, match="must be finite and non-negative"):
+        RewardInferenceResult(
+            artifact_id="a",
+            scores={"overall_reward": 1.0},
+            selected_score=1.0,
+            reward_name="reward",
+            score_key="overall_reward",
+            **{field_name: value},
+        )

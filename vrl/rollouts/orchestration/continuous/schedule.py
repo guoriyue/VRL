@@ -11,7 +11,6 @@ from __future__ import annotations
 from typing import Any
 
 from vrl.rollouts.orchestration.continuous.owner import (
-    ContinuousOwnerSnapshot,
     ContinuousRolloutOwner,
 )
 from vrl.rollouts.orchestration.rollout_runtime import RolloutRuntimeCoordinator
@@ -85,11 +84,6 @@ class ContinuousRolloutSchedule:
 
         await self._owner.shutdown()
 
-    async def _debug_snapshot(self) -> ContinuousOwnerSnapshot:
-        """Test/diagnostic copy; never exposes owner-loop mutable objects."""
-
-        return await self._owner.snapshot()
-
     def _validate_allowed(self, max_stale_policy_versions: int) -> None:
         if int(max_stale_policy_versions) < 1:
             raise ValueError(
@@ -119,6 +113,19 @@ class ContinuousRolloutSchedule:
                 "continuous rollout requires reward scoring that does not offload "
                 "the rollout runtime mid-iteration; use a dedicated reward GPU "
                 "or strict_on_policy scheduling",
+            )
+        if not getattr(
+            self.lifecycle.collector,
+            "supports_continuous_reward_execution",
+            False,
+        ):
+            # A single collect task still overlaps the trainer in continuous mode.
+            # Limiting group concurrency therefore cannot make an external reward
+            # service safe when its accelerator placement is unknown.
+            raise RuntimeError(
+                "continuous rollout requires verified reward accelerator isolation "
+                "from both trainer and rollout GPUs; use a service that advertises "
+                "generation_overlap_safe, or use strict_on_policy scheduling",
             )
 
 

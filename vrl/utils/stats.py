@@ -26,6 +26,7 @@ mutates directly.
 from __future__ import annotations
 
 import logging
+import math
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Protocol
@@ -42,9 +43,14 @@ class RolloutStats:
     """
 
     phase_seconds: dict[str, float] = field(default_factory=dict)
-    reward_latency_ms: float | None = None
+    counters: dict[str, float] = field(default_factory=dict)
     reward_queue_wait_ms: float | None = None
     reward_inference_ms: float | None = None
+    reward_extra_ms: dict[str, float] = field(default_factory=dict)
+    _reward_latency_samples_ms: list[float] = field(
+        default_factory=list,
+        repr=False,
+    )
 
     def add_phase(self, name: str, seconds: float) -> None:
         """Accumulate ``seconds`` under phase ``name`` (sums on repeat)."""
@@ -59,22 +65,35 @@ class RolloutStats:
         for name, seconds in phases.items():
             self.add_phase(str(name), float(seconds))
 
-    def merge(self, other: RolloutStats) -> None:
-        """Fold another accumulator into this one (phase sums; reward last-wins).
+    def add_counter(self, name: str, value: float = 1.0) -> None:
+        """Accumulate a unitless count without treating it as phase time."""
 
-        Reward timings are call-level (one score_many per collect), so the
-        last non-None value wins rather than summing — matching how the
-        collector records reward_score on the first group only to avoid
-        double-counting one wall time across a group.
-        """
+        if not name:
+            raise ValueError("counter name must be non-empty")
+        normalized = float(value)
+        if not math.isfinite(normalized):
+            raise ValueError(f"counter {name!r} must be finite")
+        self.counters[name] = self.counters.get(name, 0.0) + normalized
+
+    def merge(self, other: RolloutStats) -> None:
+        """Fold another accumulator into this one without losing concurrent calls."""
 
         self.add_phases(other.phase_seconds)
-        if other.reward_latency_ms is not None:
-            self.reward_latency_ms = other.reward_latency_ms
-        if other.reward_queue_wait_ms is not None:
-            self.reward_queue_wait_ms = other.reward_queue_wait_ms
-        if other.reward_inference_ms is not None:
-            self.reward_inference_ms = other.reward_inference_ms
+        for name, value in other.counters.items():
+            self.add_counter(name, value)
+        self.reward_queue_wait_ms = _sum_optional(
+            self.reward_queue_wait_ms,
+            other.reward_queue_wait_ms,
+        )
+        self.reward_inference_ms = _sum_optional(
+            self.reward_inference_ms,
+            other.reward_inference_ms,
+        )
+        self._reward_latency_samples_ms.extend(other._reward_latency_samples_ms)
+        for name, milliseconds in other.reward_extra_ms.items():
+            self.reward_extra_ms[name] = self.reward_extra_ms.get(name, 0.0) + float(
+                milliseconds,
+            )
 
     def fold_reward_timing(
         self,
@@ -82,15 +101,39 @@ class RolloutStats:
         latency_ms: float | None = None,
         queue_wait_ms: float | None = None,
         inference_ms: float | None = None,
+        extra_ms: Mapping[str, float] | None = None,
     ) -> None:
-        """Record reward-inference timings (primitives, no reward-type import)."""
+        """Accumulate one reward call's timings (primitives, no reward import)."""
 
-        if latency_ms is not None:
-            self.reward_latency_ms = float(latency_ms)
-        if queue_wait_ms is not None:
-            self.reward_queue_wait_ms = float(queue_wait_ms)
-        if inference_ms is not None:
-            self.reward_inference_ms = float(inference_ms)
+        latency = _timing_value("latency_ms", latency_ms)
+        queue_wait = _timing_value("queue_wait_ms", queue_wait_ms)
+        inference = _timing_value("inference_ms", inference_ms)
+        normalized_extra: dict[str, float] = {}
+        for name, milliseconds in dict(extra_ms or {}).items():
+            if not name or not name.endswith("_ms"):
+                raise ValueError("extra reward timing names must end with '_ms'")
+            value = _timing_value(name, milliseconds)
+            assert value is not None
+            normalized_extra[name] = value
+
+        if any(value is not None for value in (latency, queue_wait, inference)) or (
+            normalized_extra
+        ):
+            self.add_counter("reward.call_count")
+        if latency is not None:
+            self._reward_latency_samples_ms.append(latency)
+        if queue_wait is not None:
+            self.reward_queue_wait_ms = _sum_optional(
+                self.reward_queue_wait_ms,
+                queue_wait,
+            )
+        if inference is not None:
+            self.reward_inference_ms = _sum_optional(
+                self.reward_inference_ms,
+                inference,
+            )
+        for name, value in normalized_extra.items():
+            self.reward_extra_ms[name] = self.reward_extra_ms.get(name, 0.0) + value
 
     def as_phase_dict(self) -> dict[str, float]:
         """Flat phase->seconds view, including reward timings as seconds.
@@ -101,23 +144,36 @@ class RolloutStats:
         """
 
         out = dict(self.phase_seconds)
+        out.update(self.counters)
         for key, ms in (
-            ("reward.latency_s", self.reward_latency_ms),
             ("reward.queue_wait_s", self.reward_queue_wait_ms),
             ("reward.inference_s", self.reward_inference_ms),
         ):
             if ms is not None:
                 out[key] = float(ms) / 1000.0
+        if self._reward_latency_samples_ms:
+            ordered = sorted(self._reward_latency_samples_ms)
+            out["reward.latency_s"] = sum(ordered) / 1000.0
+            out["reward.latency_p50_s"] = ordered[math.ceil(0.50 * len(ordered)) - 1] / 1000.0
+            out["reward.latency_p95_s"] = ordered[math.ceil(0.95 * len(ordered)) - 1] / 1000.0
+        for name, milliseconds in self.reward_extra_ms.items():
+            out[f"reward.{name[:-3]}_s"] = float(milliseconds) / 1000.0
         return out
 
-    @classmethod
-    def from_phase_dict(cls, phases: Mapping[str, float] | None) -> RolloutStats:
-        """Build a RolloutStats from a flat ``phase_times`` mapping."""
 
-        stats = cls()
-        if phases:
-            stats.add_phases(phases)
-        return stats
+def _sum_optional(left: float | None, right: float | None) -> float | None:
+    if right is None:
+        return left
+    return float(right) if left is None else float(left) + float(right)
+
+
+def _timing_value(name: str, value: float | None) -> float | None:
+    if value is None:
+        return None
+    normalized = float(value)
+    if not math.isfinite(normalized) or normalized < 0:
+        raise ValueError(f"reward timing {name!r} must be finite and non-negative")
+    return normalized
 
 
 class StatsSink(Protocol):
@@ -141,12 +197,22 @@ class LoggingStatsSink:
         phases = stats.as_phase_dict()
         if not phases:
             return
-        total = sum(v for k, v in phases.items() if not k.startswith("collect."))
+        percentage_phases = {
+            name: seconds
+            for name, seconds in stats.phase_seconds.items()
+            if not name.startswith("collect.")
+        }
+        total = sum(percentage_phases.values())
         if total <= 0:
             self._logger.info("phase_times[step=%d] total=0.000s", step)
             return
         parts = " | ".join(
-            f"{k}={v:.3f}s ({100 * v / total:.1f}%)" for k, v in phases.items()
+            (
+                f"{name}={value:.3f}s ({100 * value / total:.1f}%)"
+                if name in percentage_phases
+                else f"{name}={value:.3f}"
+            )
+            for name, value in phases.items()
         )
         self._logger.info("phase_times[step=%d] total=%.3fs | %s", step, total, parts)
 

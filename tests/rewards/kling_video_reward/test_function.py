@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import asdict
+import json
 from pathlib import Path
 
 import pytest
@@ -117,8 +117,13 @@ async def test_video_reward_materializes_artifacts_and_returns_runtime_scores(
     assert Path(request.artifacts[0].path).exists()
     assert (tmp_path / "artifacts" / "manifest.jsonl").exists()
     assert (tmp_path / "debug" / "kling_video_reward_requests.jsonl").exists()
-    assert (tmp_path / "debug" / "kling_video_reward_results.jsonl").exists()
-    assert asdict(report.results[0])["reward_model_version"] == "fake-test"
+    result_rows = [
+        json.loads(line)
+        for line in (tmp_path / "debug" / "kling_video_reward_results.jsonl")
+        .read_text()
+        .splitlines()
+    ]
+    assert result_rows[0]["reward_model_version"] == "fake-test"
 
 
 @pytest.mark.asyncio

@@ -15,6 +15,7 @@ from typing import Any
 WIRE_PROTOCOL = "vrl.reward"
 WIRE_VERSION = 1
 SHARED_FILESYSTEM_ARTIFACT_TRANSPORT = "shared_filesystem_paths"
+GENERATION_OVERLAP_SAFE_CAPABILITY = "generation_overlap_safe"
 
 
 class RewardServiceErrorCode(str, Enum):
@@ -117,6 +118,7 @@ class RemoteRewardServiceError(RuntimeError):
 
 
 __all__ = [
+    "GENERATION_OVERLAP_SAFE_CAPABILITY",
     "SHARED_FILESYSTEM_ARTIFACT_TRANSPORT",
     "WIRE_PROTOCOL",
     "WIRE_VERSION",

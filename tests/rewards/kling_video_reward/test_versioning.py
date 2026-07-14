@@ -68,8 +68,6 @@ async def test_video_reward_debug_records_versions_and_latency(tmp_path: Path) -
     report = await reward.score_batch_report([_rollout()])
 
     assert report.scores == pytest.approx([4.0])
-    assert report.results[0].policy_version == 23
-    assert report.results[0].reward_model_version == "reward-v2"
     request_rows = [
         json.loads(line)
         for line in (tmp_path / "reward_debug" / "kling_video_reward_requests.jsonl")

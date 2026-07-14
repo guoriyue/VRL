@@ -44,6 +44,9 @@ class InProcessRewardRuntime:
     observation-only scorers still execute and therefore count.
     """
 
+    scoring_is_nonblocking = False
+    external_accelerator_isolation_verified = True
+
     def __init__(
         self,
         worker_config: Mapping[str, Any] | None = None,
@@ -67,12 +70,6 @@ class InProcessRewardRuntime:
         )
         if self._parking_residual_bytes_limit < 0:
             raise ValueError("reward memory parking residual limit must be >= 0")
-
-    @property
-    def supports_generation_overlap(self) -> bool:
-        """In-process model calls are synchronous on the collector event loop."""
-
-        return False
 
     @property
     def requires_memory_parking(self) -> bool:

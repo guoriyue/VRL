@@ -154,10 +154,14 @@ async def test_phase_times_accumulate_per_call() -> None:
         stats=stats,
     )
 
-    assert stats.phase_seconds == {
-        "collect.engine_generate": 2.0,
-        "collect.reward_score": 0.5,
-        "collect.batch_build": 0.25,
+    assert stats.phase_seconds["collect.engine_generate"] == 2.0
+    assert stats.phase_seconds["collect.reward_score"] == 0.5
+    assert stats.phase_seconds["collect.batch_build"] == 0.25
+    assert stats.phase_seconds["collect.wall"] >= 0.0
+    assert stats.phase_seconds["collect.generation_reward_overlap"] == 0.0
+    assert stats.counters == {
+        "collect.group_count": 2.0,
+        "collect.sample_count": 2.0,
     }
 
 
@@ -222,6 +226,28 @@ class _StreamingCollector(_DeferredCollector):
             self.active_scores -= 1
 
 
+class _TimedCollector(_DeferredCollector):
+    """Delay-proportional fake for the batched-serial vs overlap wall A/B."""
+
+    def __init__(self, *, supports_overlap: bool, delay_s: float = 0.04) -> None:
+        super().__init__(
+            rollout_reward_handoff=False,
+            trainer_reward_handoff=False,
+            supports_overlap=supports_overlap,
+        )
+        self.delay_s = delay_s
+
+    async def collect_unscored(self, inputs: list[Any], **kwargs: Any) -> Any:
+        await asyncio.sleep(self.delay_s)
+        return await super().collect_unscored(inputs, **kwargs)
+
+    async def score_rollouts(self, pendings: list[Any]) -> list[RolloutBatch]:
+        # Batched scoring keeps the same per-group work as streamed scoring, so
+        # the only A/B difference is whether that work overlaps generation.
+        await asyncio.sleep(self.delay_s * len(pendings))
+        return await super().score_rollouts(pendings)
+
+
 @pytest.mark.asyncio
 async def test_capable_collector_overlaps_reward_with_next_generation() -> None:
     collector = _StreamingCollector()
@@ -244,6 +270,42 @@ async def test_capable_collector_overlaps_reward_with_next_generation() -> None:
     assert collector.active_scores == 0
     assert [batch.prompts for batch in batches] == [["p0"], ["p1"]]
     assert [batch.group_ids.item() for batch in batches] == [0, 1]
+
+
+@pytest.mark.asyncio
+async def test_overlap_stats_support_batched_serial_vs_streaming_wall_ab() -> None:
+    from vrl.utils.stats import RolloutStats
+
+    prompts = [PromptExample(prompt="p0"), PromptExample(prompt="p1")]
+    serial_stats = RolloutStats()
+    overlap_stats = RolloutStats()
+
+    await collect_prompt_batches(
+        collector=_TimedCollector(supports_overlap=False),
+        prompts=prompts,
+        group_size=1,
+        runtime_debug=False,
+        policy_version=3,
+        stats=serial_stats,
+    )
+    await collect_prompt_batches(
+        collector=_TimedCollector(supports_overlap=True),
+        prompts=prompts,
+        group_size=1,
+        runtime_debug=False,
+        policy_version=3,
+        stats=overlap_stats,
+    )
+
+    serial_wall = serial_stats.phase_seconds["collect.wall"]
+    overlap_wall = overlap_stats.phase_seconds["collect.wall"]
+    assert serial_stats.phase_seconds["collect.generation_reward_overlap"] == 0.0
+    assert overlap_stats.phase_seconds["collect.generation_reward_overlap"] >= 0.02
+    assert overlap_wall < serial_wall * 0.9
+    assert overlap_stats.counters == {
+        "collect.group_count": 2.0,
+        "collect.sample_count": 2.0,
+    }
 
 
 @pytest.mark.parametrize(

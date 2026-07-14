@@ -7,6 +7,7 @@ from typing import Any
 import pytest
 import torch
 
+from tests.rollouts.collector._helpers import collect_scored
 from vrl.generation import (
     GenerationInput,
     GenerationOutput,
@@ -127,12 +128,15 @@ class _RewardScorer:
         runtime: _Runtime | None = None,
         *,
         fail_park: bool = False,
-        supports_generation_overlap: bool = False,
+        scoring_is_nonblocking: bool = False,
+        external_accelerator_isolation_verified: bool = False,
     ) -> None:
         self.calls: list[dict[str, Any]] = []
         self.runtime = runtime
         self.fail_park = fail_park
-        self.supports_generation_overlap = supports_generation_overlap
+        self.reward_fn = self
+        self.scoring_is_nonblocking = scoring_is_nonblocking
+        self.external_accelerator_isolation_verified = external_accelerator_isolation_verified
         self.shutdown_failures = 0
         self.shutdown_calls = 0
         self.last_memory_release_proofs: tuple[RewardMemoryReleaseProof, ...] = ()
@@ -208,7 +212,7 @@ def test_collector_requires_runtime_before_collect() -> None:
     collector = _collector()
 
     with pytest.raises(RuntimeError, match="runtime is not initialized"):
-        asyncio.run(collector.collect(["p0"], group_size=1))
+        asyncio.run(collect_scored(collector, ["p0"], group_size=1))
 
 
 def test_collector_rejects_incomplete_runtime_control_protocol() -> None:
@@ -262,7 +266,7 @@ def test_collector_routes_request_through_runtime_reward_and_trajectory_batch() 
     )
 
     batch = asyncio.run(
-        collector.collect(["p0", "p1"], group_size=2, seed=5, policy_version=7),
+        collect_scored(collector, ["p0", "p1"], group_size=2, seed=5, policy_version=7),
     )
 
     assert len(runtime.requests) == 1
@@ -292,7 +296,7 @@ async def test_profiled_collector_builds_cpu_batch_without_trainer_cuda_sync(
     monkeypatch.setattr(torch.cuda, "synchronize", reject_trainer_sync)
     collector = _collector(runtime=_Runtime(), reward_scorer=_RewardScorer())
 
-    batch = await collector.collect(["p0"], group_size=1)
+    batch = await collect_scored(collector, ["p0"], group_size=1)
 
     assert batch.rewards.device.type == "cpu"
     assert batch.dones.device.type == "cpu"
@@ -323,7 +327,7 @@ def test_collector_offloads_runtime_memory_before_reward_scoring() -> None:
         lifecycle=lifecycle,
     )
 
-    asyncio.run(collector.collect(["p0"], group_size=1))
+    asyncio.run(collect_scored(collector, ["p0"], group_size=1))
     asyncio.run(collector.offload_runtime_memory())
 
     assert runtime.events == [
@@ -361,7 +365,7 @@ def test_collector_does_not_offload_runtime_before_independent_reward() -> None:
         lifecycle=lifecycle,
     )
 
-    asyncio.run(collector.collect(["p0"], group_size=1))
+    asyncio.run(collect_scored(collector, ["p0"], group_size=1))
 
     assert runtime.events == ["generate", "score"]
     assert collector.requires_driver_model_offload_for_reward is False
@@ -399,12 +403,44 @@ def test_collector_derives_reward_generation_overlap_from_topology_and_scorer(
     )
     collector = _collector(
         reward_scorer=_RewardScorer(
-            supports_generation_overlap=scorer_supports_overlap,
+            scoring_is_nonblocking=scorer_supports_overlap,
+            external_accelerator_isolation_verified=scorer_supports_overlap,
         ),
         lifecycle=lifecycle,
     )
 
     assert collector.supports_reward_generation_overlap is expected
+    assert collector.supports_continuous_reward_execution is expected
+
+
+def test_collector_keeps_continuous_admission_for_no_reward() -> None:
+    collector = _collector(reward_scorer=RewardScorer(None))
+
+    assert collector.supports_reward_generation_overlap is False
+    assert collector.supports_continuous_reward_execution is True
+
+
+def test_collector_separates_nonblocking_scoring_from_accelerator_isolation() -> None:
+    scorer = _RewardScorer()
+    scorer.scoring_is_nonblocking = True
+    scorer.external_accelerator_isolation_verified = False
+    collector = _collector(reward_scorer=scorer)
+
+    assert collector.supports_reward_generation_overlap is False
+    assert collector.supports_continuous_reward_execution is False
+
+    scorer.external_accelerator_isolation_verified = True
+
+    assert collector.supports_reward_generation_overlap is True
+    assert collector.supports_continuous_reward_execution is True
+
+
+def test_dedicated_local_reward_allows_concurrent_collects_without_streaming() -> None:
+    scorer = _RewardScorer(external_accelerator_isolation_verified=True)
+    collector = _collector(reward_scorer=scorer)
+
+    assert collector.supports_reward_generation_overlap is False
+    assert collector.supports_continuous_reward_execution is True
 
 
 def test_collector_blocks_trainer_handoff_when_reward_release_proof_fails() -> None:
@@ -443,7 +479,7 @@ def test_collector_blocks_trainer_handoff_when_reward_release_proof_fails() -> N
     )
 
     with pytest.raises(RuntimeError, match="reward park failed"):
-        asyncio.run(collector.collect(["p0"], group_size=1))
+        asyncio.run(collect_scored(collector, ["p0"], group_size=1))
     with pytest.raises(RuntimeError, match="reward park failed"):
         asyncio.run(collector.offload_runtime_memory())
 
@@ -492,7 +528,7 @@ def test_collector_phase_final_gate_retries_reward_parking() -> None:
     collector = _collector(runtime=runtime, reward_scorer=scorer, lifecycle=lifecycle)
 
     with pytest.raises(RuntimeError, match="transient reward park failure"):
-        asyncio.run(collector.collect(["p0"], group_size=1))
+        asyncio.run(collect_scored(collector, ["p0"], group_size=1))
 
     asyncio.run(collector.offload_runtime_memory())
 
@@ -709,6 +745,7 @@ def test_collect_prompt_batches_folds_reward_timing_into_stats() -> None:
                     "latency_ms": 12.0,
                     "queue_wait_ms": 3.0,
                     "inference_ms": 9.0,
+                    "artifact_validation_ms": 2.0,
                 },
             )
 
@@ -735,10 +772,12 @@ def test_collect_prompt_batches_folds_reward_timing_into_stats() -> None:
     assert reward_fn.batch_sizes == [2]
     assert len(batches) == 1
     assert batches[0].rewards.tolist() == [1.0, 2.0]
-    assert stats.reward_latency_ms == 12.0
+    assert stats.as_phase_dict()["reward.latency_s"] == 0.012
     assert stats.reward_queue_wait_ms == 3.0
     assert stats.reward_inference_ms == 9.0
+    assert stats.reward_extra_ms == {"artifact_validation_ms": 2.0}
     assert stats.as_phase_dict()["reward.queue_wait_s"] == 0.003
+    assert stats.as_phase_dict()["reward.artifact_validation_s"] == 0.002
 
 
 def test_reward_view_selection_fails_fast_when_ambiguous() -> None:

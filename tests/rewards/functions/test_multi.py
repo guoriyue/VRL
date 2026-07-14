@@ -37,18 +37,16 @@ class _QueuedBatchReward(RewardFunction):
 
 
 class _TimedBatchReward(RewardFunction):
-    def __init__(self, scores: list[float], timing_ms: dict[str, float], tag: str) -> None:
+    def __init__(self, scores: list[float], timing_ms: dict[str, float]) -> None:
         super().__init__()
         self.scores = list(scores)
         self.timing_ms = dict(timing_ms)
-        self.tag = tag
 
     async def score_batch_report(self, rollouts: list[RewardRollout]) -> RewardBatchReport:
         assert len(rollouts) == len(self.scores)
         return RewardBatchReport(
             scores=list(self.scores),
             timing_ms=dict(self.timing_ms),
-            results=[self.tag],
         )
 
 
@@ -155,7 +153,6 @@ async def test_multi_reward_aggregates_inference_observations() -> None:
                         "queue_wait_ms": 1.0,
                         "inference_ms": 4.0,
                     },
-                    "first-result",
                 ),
             ),
             (
@@ -168,7 +165,6 @@ async def test_multi_reward_aggregates_inference_observations() -> None:
                         "queue_wait_ms": 3.0,
                         "inference_ms": 6.0,
                     },
-                    "second-result",
                 ),
             ),
         ],
@@ -177,7 +173,6 @@ async def test_multi_reward_aggregates_inference_observations() -> None:
     report = await reward.score_batch_report([_make_rollout("a"), _make_rollout("b")])
 
     assert report.scores == pytest.approx([2.1, 4.2])
-    assert report.results == ["first-result", "second-result"]
     assert report.timing_ms == pytest.approx(
         {
             "latency_ms": 12.0,
@@ -427,8 +422,10 @@ def test_http_disk_reward_builds_transport_without_local_model_config(tmp_path) 
     component = reward.rewards[0][2]
     assert component.artifact_transport == "disk"
     assert isinstance(component.runtime, HttpRewardRuntime)
-    assert component.supports_generation_overlap is True
-    assert reward.supports_generation_overlap is True
+    assert component.scoring_is_nonblocking is True
+    assert component.external_accelerator_isolation_verified is False
+    assert reward.scoring_is_nonblocking is True
+    assert reward.external_accelerator_isolation_verified is False
 
 
 def test_http_reward_rejects_inmemory_artifact_component() -> None:
@@ -488,7 +485,8 @@ def test_mixed_runtime_components_fail_closed_for_generation_overlap(tmp_path) -
         },
     )
 
-    assert reward.supports_generation_overlap is False
+    assert reward.scoring_is_nonblocking is False
+    assert reward.external_accelerator_isolation_verified is False
 
 
 def test_http_reward_rejects_local_worker_config() -> None:

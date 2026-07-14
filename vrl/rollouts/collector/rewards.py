@@ -97,15 +97,6 @@ class RewardScorer:
         self._shutdown_complete = False
         self._score_lock = asyncio.Lock()
 
-    @property
-    def supports_generation_overlap(self) -> bool:
-        """Whether scoring can make progress without blocking generation."""
-
-        return bool(
-            self.reward_fn is not None
-            and getattr(self.reward_fn, "supports_generation_overlap", False)
-        )
-
     async def shutdown(self) -> None:
         """Release the owned reward function exactly once after success."""
 

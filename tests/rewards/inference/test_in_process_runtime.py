@@ -44,6 +44,8 @@ async def test_in_process_runtime_scores_without_disk_or_ray() -> None:
     runtime = InProcessRewardRuntime(model=_SumMediaModel())
     results = await runtime.score_batch(_make_request())
 
+    assert runtime.scoring_is_nonblocking is False
+    assert runtime.external_accelerator_isolation_verified is True
     assert [r.artifact_id for r in results] == ["a", "b"]  # original order preserved
     assert results[0].selected_score == pytest.approx(3.0)
     assert results[1].selected_score == pytest.approx(3.0)

@@ -11,7 +11,7 @@ class TestRewardUpdateFlow:
     """Groups tests for reward update flow."""
 
     def test_cea_step_forwards_prompt_example_kwargs(self) -> None:
-        """PromptExample fields should be forwarded as kwargs to collector.collect()."""
+        """PromptExample fields should be forwarded as kwargs to collector.collect_unscored()."""
         import asyncio
 
         import torch

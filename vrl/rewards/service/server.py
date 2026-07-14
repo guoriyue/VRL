@@ -7,6 +7,7 @@ import asyncio
 import json
 import signal
 import threading
+import time
 from collections import OrderedDict
 from collections.abc import Mapping, Sequence
 from contextlib import suppress
@@ -19,6 +20,7 @@ from aiohttp import web
 from vrl.rewards.inference import sha256_file, validate_reward_results
 from vrl.rewards.service.owner import RewardRuntimeOwner
 from vrl.rewards.service.protocol import (
+    GENERATION_OVERLAP_SAFE_CAPABILITY,
     RewardServiceErrorCode,
     RewardServiceInfo,
     RewardServiceProtocolError,
@@ -65,6 +67,9 @@ class RewardServiceConfig:
     max_pending_requests: int = 8
     max_cached_requests: int = 1024
     max_request_bytes: int = 16 * 1024 * 1024
+    # Operator attestation for GPU services. CPU services are inferred safe by
+    # _load_service because they execute no accelerator work beside generation.
+    generation_overlap_safe: bool = False
 
     @classmethod
     def from_mapping(cls, value: Mapping[str, Any]) -> RewardServiceConfig:
@@ -83,6 +88,9 @@ class RewardServiceConfig:
         worker_config = payload.get("worker_config") or {}
         if not isinstance(worker_config, Mapping):
             raise TypeError("reward service worker_config must be a mapping")
+        generation_overlap_safe = payload.get("generation_overlap_safe", False)
+        if not isinstance(generation_overlap_safe, bool):
+            raise TypeError("reward service generation_overlap_safe must be a boolean")
         payload["artifact_roots"] = roots
         payload["worker_config"] = dict(worker_config)
         return cls(**payload)
@@ -104,6 +112,7 @@ class RewardService:
         max_pending_requests: int = 8,
         max_cached_requests: int = 1024,
         max_request_bytes: int = 16 * 1024 * 1024,
+        generation_overlap_safe: bool = False,
     ) -> None:
         if not host:
             raise ValueError("reward service host is required")
@@ -113,6 +122,8 @@ class RewardService:
             raise ValueError("reward service max_cached_requests must be >= 0")
         if max_request_bytes < 1:
             raise ValueError("reward service max_request_bytes must be >= 1")
+        if not isinstance(generation_overlap_safe, bool):
+            raise TypeError("reward service generation_overlap_safe must be a boolean")
 
         roots: list[Path] = []
         for value in artifact_roots:
@@ -137,10 +148,13 @@ class RewardService:
         self._host = host
         self._port = int(port)
         self._artifact_roots = tuple(roots)
+        capabilities = ["cancel", "idempotency", "score_batch"]
+        if generation_overlap_safe:
+            capabilities.append(GENERATION_OVERLAP_SAFE_CAPABILITY)
         self._info = RewardServiceInfo(
             model_name=str(model_name).strip() or type(runtime).__name__,
             model_version=str(model_version).strip(),
-            capabilities=("cancel", "idempotency", "score_batch"),
+            capabilities=tuple(capabilities),
             max_concurrency=max_concurrency,
             max_pending_requests=max_pending_requests,
         )
@@ -377,10 +391,35 @@ class RewardService:
 
     async def _execute(self, request: RewardInferenceRequest) -> _Reply:
         try:
+            validation_started = time.perf_counter()
             request = await self._validate_artifact_paths(request)
+            artifact_validation_ms = (time.perf_counter() - validation_started) * 1000.0
+            queued_at = time.perf_counter()
             async with self._concurrency:
+                service_queue_wait_ms = (time.perf_counter() - queued_at) * 1000.0
+                inference_started = time.perf_counter()
                 results = list(await self._owner.score_batch(request))
+                service_inference_wall_ms = (time.perf_counter() - inference_started) * 1000.0
                 results = validate_reward_results(request, results)
+                results = [
+                    replace(
+                        result,
+                        queue_wait_ms=(float(result.queue_wait_ms or 0.0) + service_queue_wait_ms),
+                        latency_ms=(
+                            float(result.latency_ms)
+                            if result.latency_ms is not None
+                            else float(result.queue_wait_ms or 0.0)
+                            + float(result.inference_ms or 0.0)
+                        )
+                        + service_queue_wait_ms,
+                        metadata={
+                            **result.metadata,
+                            "service_artifact_validation_ms": artifact_validation_ms,
+                            "service_inference_wall_ms": service_inference_wall_ms,
+                        },
+                    )
+                    for result in results
+                ]
             return _Reply(
                 status=200,
                 body=score_response_to_wire(request.request_id, results),
@@ -633,6 +672,8 @@ def _load_service(config_path: Path) -> RewardService:
         path if Path(path).is_absolute() else config_path.parent / path
         for path in cfg.artifact_roots
     ]
+    configured_device = str(worker_config.get("device", "")).strip().lower()
+    runs_on_cpu = configured_device == "cpu" or configured_device.startswith("cpu:")
     return RewardService(
         InProcessRewardRuntime(worker_config),
         artifact_roots=roots,
@@ -649,6 +690,7 @@ def _load_service(config_path: Path) -> RewardService:
         max_pending_requests=int(cfg.max_pending_requests),
         max_cached_requests=int(cfg.max_cached_requests),
         max_request_bytes=int(cfg.max_request_bytes),
+        generation_overlap_safe=bool(cfg.generation_overlap_safe or runs_on_cpu),
     )
 
 

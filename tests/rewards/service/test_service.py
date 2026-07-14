@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import json
 import signal
 import socket
 import subprocess
@@ -27,6 +28,7 @@ from vrl.rewards.inference import (
 from vrl.rewards.runtime import build_reward_runtime
 from vrl.rewards.service.client import HttpRewardRuntime
 from vrl.rewards.service.protocol import (
+    GENERATION_OVERLAP_SAFE_CAPABILITY,
     SHARED_FILESYSTEM_ARTIFACT_TRANSPORT,
     WIRE_PROTOCOL,
     WIRE_VERSION,
@@ -193,6 +195,8 @@ async def test_client_scores_through_async_server_and_validates_identity(tmp_pat
     main_thread = threading.get_ident()
 
     async with _running_service(runtime, tmp_path) as (service, client):
+        assert client.scoring_is_nonblocking is True
+        assert client.external_accelerator_isolation_verified is False
         host, port = service.address
         # /live stays operator-facing (process supervisors probe it directly);
         # the trainer client only consumes readiness + identity via preflight.
@@ -204,6 +208,7 @@ async def test_client_scores_through_async_server_and_validates_identity(tmp_pat
             assert (await live_response.json())["status"] == "live"
         assert await client.ready()
         await client.ensure_ready()
+        assert client.external_accelerator_isolation_verified is False
         info = await client.info()
         results = await client.score_batch(_request(str(artifact_file)))
 
@@ -211,11 +216,33 @@ async def test_client_scores_through_async_server_and_validates_identity(tmp_pat
     assert info.model_version == "unit-v1"
     assert set(info.capabilities) == {"cancel", "idempotency", "score_batch"}
     assert [result.selected_score for result in results] == [0.75]
+    assert results[0].metadata["service_artifact_validation_ms"] >= 0.0
+    assert results[0].metadata["service_inference_wall_ms"] >= 0.0
+    assert results[0].metadata["http_roundtrip_ms"] >= 0.0
     assert runtime.requests[0].artifacts[0].path == str(artifact_file.resolve())
     assert runtime.requests[0].artifacts[0].metadata == {"target_text": "HELLO"}
     assert runtime.shutdown_calls == 1
     assert len(set(runtime.thread_ids)) == 1
     assert runtime.thread_ids[0] != main_thread
+
+
+@pytest.mark.asyncio
+async def test_client_verifies_isolation_only_after_safe_service_preflight(tmp_path) -> None:
+    runtime = _FakeRuntime()
+
+    async with _running_service(
+        runtime,
+        tmp_path,
+        generation_overlap_safe=True,
+    ) as (_service, client):
+        assert client.scoring_is_nonblocking is True
+        assert client.external_accelerator_isolation_verified is False
+
+        await client.ensure_ready()
+        info = await client.info()
+
+        assert GENERATION_OVERLAP_SAFE_CAPABILITY in info.capabilities
+        assert client.external_accelerator_isolation_verified is True
 
 
 @pytest.mark.asyncio
@@ -293,6 +320,7 @@ async def test_ensure_ready_fails_fast_on_identity_mismatch(tmp_path) -> None:
         await service.shutdown_async()
 
     assert runtime.requests == []
+    assert client.external_accelerator_isolation_verified is False
 
 
 @pytest.mark.asyncio
@@ -470,6 +498,64 @@ async def test_bounded_admission_returns_retryable_backpressure(tmp_path) -> Non
 
 
 @pytest.mark.asyncio
+async def test_service_reports_actual_semaphore_queue_wait(tmp_path) -> None:
+    class _BlockingRuntime(_FakeRuntime):
+        def __init__(self) -> None:
+            super().__init__()
+            self.started = threading.Event()
+            self.release = threading.Event()
+
+        async def score_batch(self, request):
+            self.requests.append(request)
+            self.started.set()
+            await asyncio.to_thread(self.release.wait)
+            return _results(request)
+
+    class _ObservedSemaphore(asyncio.Semaphore):
+        def __init__(self, value: int) -> None:
+            super().__init__(value)
+            self.waiting = asyncio.Event()
+
+        async def acquire(self) -> bool:
+            if self.locked():
+                self.waiting.set()
+            return await super().acquire()
+
+    first_file = tmp_path / "first.mp4"
+    second_file = tmp_path / "second.mp4"
+    first_file.write_bytes(b"x")
+    second_file.write_bytes(b"x")
+    runtime = _BlockingRuntime()
+    async with _running_service(
+        runtime,
+        tmp_path,
+        max_concurrency=1,
+        max_pending_requests=2,
+    ) as (service, client):
+        observed = _ObservedSemaphore(1)
+        service._concurrency = observed
+        first = asyncio.create_task(
+            client.score_batch(_request(str(first_file), request_id="req-first")),
+        )
+        assert await asyncio.to_thread(runtime.started.wait, 2)
+        second = asyncio.create_task(
+            client.score_batch(_request(str(second_file), request_id="req-second")),
+        )
+        await asyncio.wait_for(observed.waiting.wait(), 2)
+        runtime.release.set()
+        first_results, second_results = await asyncio.gather(first, second)
+
+    first_result = first_results[0]
+    second_result = second_results[0]
+    assert first_result.queue_wait_ms is not None
+    assert first_result.queue_wait_ms >= 0
+    assert second_result.queue_wait_ms is not None
+    assert second_result.queue_wait_ms > first_result.queue_wait_ms
+    assert second_result.latency_ms is not None
+    assert second_result.latency_ms >= second_result.queue_wait_ms
+
+
+@pytest.mark.asyncio
 async def test_idempotency_joins_inflight_replays_cache_and_rejects_conflict(tmp_path) -> None:
     class _BlockingRuntime(_FakeRuntime):
         def __init__(self) -> None:
@@ -504,7 +590,32 @@ async def test_idempotency_joins_inflight_replays_cache_and_rejects_conflict(tmp
             )
 
     assert len(runtime.requests) == 1
-    assert first_results == duplicate_results == replay_results
+
+    # The idempotent service result is stable; client-local roundtrip time is a
+    # per-attempt observation and is intentionally allowed to differ.
+    def semantic_results(results):
+        return [
+            replace(
+                result,
+                metadata={
+                    key: value
+                    for key, value in result.metadata.items()
+                    if key != "http_roundtrip_ms"
+                },
+            )
+            for result in results
+        ]
+
+    assert (
+        semantic_results(first_results)
+        == semantic_results(duplicate_results)
+        == semantic_results(replay_results)
+    )
+    assert all(
+        result.metadata["http_roundtrip_ms"] >= 0.0
+        for results in (first_results, duplicate_results, replay_results)
+        for result in results
+    )
     assert caught.value.code == RewardServiceErrorCode.IDEMPOTENCY_CONFLICT.value
     assert caught.value.status_code == 409
 
@@ -673,6 +784,30 @@ async def test_retryable_scoring_failure_can_retry_same_request_id(tmp_path) -> 
 
 
 @pytest.mark.asyncio
+async def test_invalid_timing_is_retryable_instead_of_cached_as_success(tmp_path) -> None:
+    class _InvalidTimingRuntime(_FakeRuntime):
+        async def score_batch(self, request):
+            self.requests.append(request)
+            if len(self.requests) == 1:
+                return [replace(_results(request)[0], queue_wait_ms=float("nan"))]
+            return _results(request)
+
+    artifact_file = tmp_path / "a0.mp4"
+    artifact_file.write_bytes(b"x")
+    runtime = _InvalidTimingRuntime()
+    request = _request(str(artifact_file), request_id="retry-invalid-timing")
+    async with _running_service(runtime, tmp_path) as (_service, client):
+        with pytest.raises(RemoteRewardServiceError) as first:
+            await client.score_batch(request)
+        results = await client.score_batch(request)
+
+    assert first.value.code == RewardServiceErrorCode.SCORING_FAILED.value
+    assert first.value.retryable
+    assert [result.selected_score for result in results] == [0.75]
+    assert len(runtime.requests) == 2
+
+
+@pytest.mark.asyncio
 async def test_service_shutdown_cancels_work_and_shuts_runtime_exactly_once(tmp_path) -> None:
     class _CancellableRuntime(_FakeRuntime):
         def __init__(self) -> None:
@@ -725,7 +860,8 @@ def test_build_reward_runtime_accepts_typed_http_config() -> None:
         ),
     )
     assert isinstance(runtime, HttpRewardRuntime)
-    assert runtime.supports_generation_overlap is True
+    assert runtime.scoring_is_nonblocking is True
+    assert runtime.external_accelerator_isolation_verified is False
 
 
 def test_service_requires_explicit_existing_absolute_artifact_roots(tmp_path) -> None:
@@ -747,6 +883,14 @@ def test_cli_config_rejects_unknown_top_level_keys_but_keeps_worker_config_open(
         },
     )
     assert parsed.worker_config == {"model_specific_knob": 7}
+    assert parsed.generation_overlap_safe is False
+    with pytest.raises(TypeError, match="must be a boolean"):
+        RewardServiceConfig.from_mapping(
+            {
+                "artifact_roots": ["/tmp"],
+                "generation_overlap_safe": "true",
+            },
+        )
 
 
 def test_module_cli_handles_sigterm_without_eager_import_warning(tmp_path) -> None:
@@ -798,6 +942,12 @@ def test_module_cli_handles_sigterm_without_eager_import_warning(tmp_path) -> No
                         f"reward service CLI failed to start: stdout={stdout!r} stderr={stderr!r}",
                     )
                 time.sleep(0.05)
+        with urllib.request.urlopen(
+            f"http://127.0.0.1:{port}/info",
+            timeout=1.0,
+        ) as response:
+            info = json.load(response)["info"]
+        assert GENERATION_OVERLAP_SAFE_CAPABILITY in info["capabilities"]
         process.send_signal(signal.SIGTERM)
         stdout, stderr = process.communicate(timeout=15)
     finally:

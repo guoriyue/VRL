@@ -17,6 +17,7 @@ class CollectorControlFake:
     runtime = _RuntimeControl()
     requires_runtime_offload_before_reward = False
     requires_driver_model_offload_for_reward = False
+    supports_continuous_reward_execution = True
 
     async def activate_runtime(self) -> None:
         return None

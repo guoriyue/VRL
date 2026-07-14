@@ -419,7 +419,7 @@ def _item(
         group_key=group_key,
         rollout_policy_version=version,
         batch=_batch(f"p{group_key}"),
-        stats=RolloutStats.from_phase_dict(phase_times),
+        stats=RolloutStats(phase_seconds=dict(phase_times or {})),
     )
 
 
@@ -499,10 +499,9 @@ async def test_late_reward_group_dropped_under_non_draining_max_stale_0() -> Non
     it. It can NEVER reach a trained iteration, because reward is
     policy-independent and cannot relabel the stamped version to the new one.
 
-    This drives the exact machinery the non-draining branch uses
-    (``schedule._drop_stale_ready_items_after_sync`` -> ``scheduler.drop_stale``
-    at schedule.py:252, then ``consumer.drain_for_iteration`` ->
-    ``scheduler.select_iteration``).
+    This drives the exact machinery the non-draining owner branch uses
+    (``scheduler.drop_stale`` after weight sync, then
+    ``consumer.drain_for_iteration`` -> ``scheduler.select_iteration``).
     """
     queue = ContinuousRolloutQueue(max_items=8)
     scheduler = RolloutScheduler(
@@ -521,7 +520,7 @@ async def test_late_reward_group_dropped_under_non_draining_max_stale_0() -> Non
     assert queue.size() == 1
 
     # Trainer is now at v2; the post-sync purge runs drop_stale at the new
-    # version (exactly schedule._drop_stale_ready_items_after_sync's call).
+    # version, matching the owner's commit path.
     dropped = scheduler.drop_stale(queue, current_version=2)
     assert dropped == 1
     assert queue.size() == 0

@@ -10,7 +10,7 @@ from typing import Any
 import pytest
 import torch
 
-from tests.rollouts.orchestration.continuous._helpers import _wait_until
+from tests.rollouts.orchestration.continuous._helpers import _wait_until, owner_snapshot
 from vrl.generation.ray.runtime import RayGenerationRuntime
 from vrl.rollouts.batch import RolloutBatch
 from vrl.rollouts.orchestration.continuous.owner import ContinuousRolloutOwner
@@ -148,10 +148,14 @@ class _OwnerLifecycle:
         await self.collector.shutdown()
 
 
-def _owner(lifecycle: _OwnerLifecycle) -> ContinuousRolloutOwner:
+def _owner(
+    lifecycle: _OwnerLifecycle,
+    *,
+    max_inflight_groups: int = 1,
+) -> ContinuousRolloutOwner:
     return ContinuousRolloutOwner(
         lifecycle=lifecycle,
-        max_inflight_groups=1,
+        max_inflight_groups=max_inflight_groups,
         max_ready_groups=4,
         max_ready_bytes_mb=8,
         max_stale_policy_versions=1,
@@ -175,11 +179,11 @@ async def test_owner_cadence_survives_blocked_trainer_event_loop() -> None:
             runtime_debug=False,
             initial_weights={"w": 0},
         )
-        before = await owner.snapshot()
+        before = await owner_snapshot(owner)
 
         # Simulate synchronous trainer forward/backward starving its asyncio loop.
         time.sleep(0.05)
-        after = await owner.snapshot()
+        after = await owner_snapshot(owner)
 
         assert iteration.policy_version == 1
         assert before.producer_state is not None
@@ -232,7 +236,7 @@ async def test_draining_commit_waits_for_reward_then_resumes() -> None:
         push_count = len(lifecycle.push_calls)
         commit = asyncio.create_task(owner.commit_weights({"w": 1}))
         await asyncio.sleep(0.05)
-        blocked = await owner.snapshot()
+        blocked = await owner_snapshot(owner)
 
         assert commit.done() is False
         assert len(lifecycle.push_calls) == push_count
@@ -241,7 +245,7 @@ async def test_draining_commit_waits_for_reward_then_resumes() -> None:
 
         collector.release_scores()
         phases = await asyncio.wait_for(commit, 5.0)
-        resumed = await owner.snapshot()
+        resumed = await owner_snapshot(owner)
 
         assert phases["continuous.weight_sync_barrier_mode"] == 0.0
         assert lifecycle.version == 2
@@ -269,7 +273,7 @@ async def test_version_slots_skip_drain_but_still_gate_new_admission() -> None:
         await _wait_until(lambda: collector.blocked_calls > 0)
 
         phases = await asyncio.wait_for(owner.commit_weights({"w": 1}), 5.0)
-        snapshot = await owner.snapshot()
+        snapshot = await owner_snapshot(owner)
 
         assert phases["continuous.weight_sync_barrier_mode"] == 1.0
         assert lifecycle.version == 2
@@ -297,7 +301,7 @@ async def test_failed_commit_closes_admission_and_preserves_root_cause() -> None
     with pytest.raises(RuntimeError, match="worker install ACK mismatch"):
         await owner.commit_weights({"w": 1})
 
-    failed = await owner.snapshot()
+    failed = await owner_snapshot(owner)
     assert failed.producer_state is None
     assert "worker install ACK mismatch" in str(failed.terminal_error)
     assert collector.shutdown_calls == 1
@@ -398,7 +402,7 @@ async def test_real_runtime_cleanup_failure_does_not_replace_ack_root() -> None:
     with pytest.raises(RuntimeError, match="worker install ACK mismatch"):
         await owner.commit_weights({"w": 1})
 
-    failed = await owner.snapshot()
+    failed = await owner_snapshot(owner)
     assert "worker install ACK mismatch" in str(failed.terminal_error)
     assert "runtime cleanup failed" not in str(failed.terminal_error)
     assert cleanup_calls == 2

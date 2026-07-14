@@ -14,7 +14,6 @@ import concurrent.futures
 import logging
 import threading
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass, replace
 from typing import Any, TypeVar
 
 from vrl.rollouts.orchestration.continuous.consumer import ContinuousRolloutConsumer
@@ -22,7 +21,6 @@ from vrl.rollouts.orchestration.continuous.producer import ContinuousRolloutProd
 from vrl.rollouts.orchestration.continuous.queue import ContinuousRolloutQueue
 from vrl.rollouts.orchestration.continuous.scheduler import RolloutScheduler
 from vrl.rollouts.orchestration.continuous.staleness import StalenessPolicy
-from vrl.rollouts.orchestration.continuous.types import ContinuousRolloutProducerState
 from vrl.rollouts.orchestration.rollout_runtime import (
     RolloutRuntimeCoordinator,
     record_phase,
@@ -40,20 +38,6 @@ _OWNER_START_TIMEOUT_S = 10.0
 _OWNER_STOP_TIMEOUT_S = 30.0
 
 _T = TypeVar("_T")
-
-
-@dataclass(frozen=True, slots=True)
-class ContinuousOwnerSnapshot:
-    """Immutable diagnostic view copied out of the owner loop."""
-
-    # display/provenance-only: diagnostic copy of owner-local producer state.
-    producer_state: ContinuousRolloutProducerState | None
-    # display/provenance-only: diagnostic queue counters copied for tests/logging.
-    queue_stats: dict[str, float]
-    # display/provenance-only: diagnostic prompt source copied out of the owner.
-    prompts: tuple[Any, ...]
-    # display/provenance-only: first terminal owner failure rendered for diagnosis.
-    terminal_error: str | None
 
 
 class _ContinuousOwnerRuntime:
@@ -106,7 +90,7 @@ class _ContinuousOwnerRuntime:
         initial_weights: Any,
     ) -> RolloutIteration:
         async def operation() -> RolloutIteration:
-            prompt_key = _prompt_key(prompts)
+            prompt_key = tuple(str(getattr(item, "prompt", item)) for item in prompts)
             phase_times: dict[str, float] = {}
 
             if self.producer is None:
@@ -124,8 +108,13 @@ class _ContinuousOwnerRuntime:
                     prompts,
                     prompt_set_id=self._prompt_set_id,
                 )
+                assert self.queue is not None
+                assert self.scheduler is not None
                 phase_times["continuous.prompt_set_dropped"] = float(
-                    self._drop_obsolete_prompt_set_items(),
+                    self.scheduler.drop_obsolete_prompt_sets(
+                        self.queue,
+                        prompt_set_id=self._prompt_set_id,
+                    ),
                 )
                 self._prompt_key = prompt_key
 
@@ -176,8 +165,13 @@ class _ContinuousOwnerRuntime:
                     prepared_weights,
                     phase_times,
                 )
+                assert self.queue is not None
+                assert self.scheduler is not None
                 phase_times["continuous.post_sync_dropped_stale"] = float(
-                    self._drop_stale_ready_items_after_sync(),
+                    self.scheduler.drop_stale(
+                        self.queue,
+                        current_version=self.lifecycle.current_policy_version(),
+                    ),
                 )
                 phase_times["continuous.weight_sync_barrier_mode"] = float(
                     non_draining,
@@ -195,22 +189,6 @@ class _ContinuousOwnerRuntime:
             self.state = RolloutScheduleState()
 
         await self._run_command(operation)
-
-    async def snapshot(self) -> ContinuousOwnerSnapshot:
-        """Return a copy without taking the command lock.
-
-        Diagnostics must remain available while a commit is blocked draining an
-        in-flight request; both this coroutine and the producer run on the same
-        loop, so copying the primitive fields is race-free.
-        """
-
-        producer = self.producer
-        return ContinuousOwnerSnapshot(
-            producer_state=(None if producer is None else replace(producer.state)),
-            queue_stats={} if self.queue is None else dict(self.queue.stats()),
-            prompts=() if producer is None else tuple(producer.prompts),
-            terminal_error=(None if self._terminal_error is None else repr(self._terminal_error)),
-        )
 
     async def shutdown(self) -> None:
         """Cancel owner commands, stop production, and close its runtime once."""
@@ -237,7 +215,12 @@ class _ContinuousOwnerRuntime:
         self._active_commands.add(task)
         try:
             async with self._command_lock:
-                self._require_running()
+                if self._shutting_down:
+                    raise RuntimeError("continuous rollout owner is shutting down")
+                if self._terminal_error is not None:
+                    raise RuntimeError("continuous rollout owner has failed") from (
+                        self._terminal_error
+                    )
                 return await operation()
         except asyncio.CancelledError as error:
             if not self._shutting_down:
@@ -248,12 +231,6 @@ class _ContinuousOwnerRuntime:
             raise
         finally:
             self._active_commands.discard(task)
-
-    def _require_running(self) -> None:
-        if self._shutting_down:
-            raise RuntimeError("continuous rollout owner is shutting down")
-        if self._terminal_error is not None:
-            raise RuntimeError("continuous rollout owner has failed") from self._terminal_error
 
     async def _fail(self, error: BaseException) -> None:
         if self._terminal_error is None:
@@ -302,7 +279,9 @@ class _ContinuousOwnerRuntime:
 
     async def _terminal_cleanup_once(self) -> None:
         await self._stop_pipeline()
-        await self._shutdown_collector_runtime()
+        if not self._runtime_closed:
+            await self.lifecycle.shutdown_collector_runtime()
+            self._runtime_closed = True
 
     async def _start_pipeline(
         self,
@@ -362,28 +341,6 @@ class _ContinuousOwnerRuntime:
             await producer.stop()
         if queue is not None:
             queue.close()
-
-    async def _shutdown_collector_runtime(self) -> None:
-        if self._runtime_closed:
-            return
-        await self.lifecycle.shutdown_collector_runtime()
-        self._runtime_closed = True
-
-    def _drop_stale_ready_items_after_sync(self) -> int:
-        if self.queue is None or self.scheduler is None:
-            return 0
-        return self.scheduler.drop_stale(
-            self.queue,
-            current_version=self.lifecycle.current_policy_version(),
-        )
-
-    def _drop_obsolete_prompt_set_items(self) -> int:
-        if self.queue is None or self.scheduler is None:
-            return 0
-        return self.scheduler.drop_obsolete_prompt_sets(
-            self.queue,
-            prompt_set_id=self._prompt_set_id,
-        )
 
     def _attach_producer_metrics(self, iteration: RolloutIteration) -> None:
         if self.producer is None or self.queue is None:
@@ -476,11 +433,6 @@ class ContinuousRolloutOwner:
             runtime.commit_weights(prepared_weights),
             loop,
         )
-        return await _await_owner_future(future)
-
-    async def snapshot(self) -> ContinuousOwnerSnapshot:
-        runtime, loop = self._ensure_thread()
-        future = asyncio.run_coroutine_threadsafe(runtime.snapshot(), loop)
         return await _await_owner_future(future)
 
     def reset(self) -> None:
@@ -601,8 +553,4 @@ async def _await_owner_future(future: concurrent.futures.Future[_T]) -> _T:
     return await asyncio.shield(asyncio.wrap_future(future))
 
 
-def _prompt_key(prompts: list[Any]) -> tuple[str, ...]:
-    return tuple(str(getattr(item, "prompt", item)) for item in prompts)
-
-
-__all__ = ["ContinuousOwnerSnapshot", "ContinuousRolloutOwner"]
+__all__ = ["ContinuousRolloutOwner"]

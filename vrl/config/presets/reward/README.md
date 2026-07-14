@@ -34,9 +34,17 @@ unknown, VRL retains that request's artifacts for operator cleanup rather than
 deleting files that the service may still be reading.
 
 Generation/reward streaming is capability-derived. It is enabled only when no
-GPU phase handoff is required and every reward component uses a non-blocking
-runtime. In-process rewards retain one batched scoring call even on a dedicated
-GPU; this avoids trading batch throughput for fake event-loop concurrency.
+GPU phase handoff is required and every reward component is both non-blocking
+and physically isolated from generation. HTTP is only a transport: an external
+service stays fail-closed unless its `/info` response advertises the
+`generation_overlap_safe` capability. The standalone service emits that
+capability for an explicit `generation_overlap_safe: true` operator attestation,
+or for an explicitly configured CPU device. Never attest a GPU service that can
+resolve to any trainer or generation GPU. Strict scheduling keeps an unverified
+service on the batched-serial path; continuous scheduling rejects it because even
+one reward call would overlap trainer backward. In-process rewards retain one
+batched scoring call even on a dedicated GPU; this avoids trading batch
+throughput for fake event-loop concurrency.
 
 ## Video Score Keys
 

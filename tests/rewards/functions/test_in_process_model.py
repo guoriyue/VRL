@@ -66,8 +66,6 @@ async def test_reward_function_in_process_scores_without_disk() -> None:
     )
 
     assert report.scores == pytest.approx([0.5, 1.0])
-    assert [r.worker_id for r in report.results] == ["local", "local"]
-    # in-memory artifacts carry no materialized path
     await reward.shutdown()
 
 
