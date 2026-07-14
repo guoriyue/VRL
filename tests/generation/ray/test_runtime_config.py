@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any
 from unittest.mock import patch
 
@@ -323,6 +323,55 @@ def test_pipelined_switches_from_cfg() -> None:
     assert _ray_config(cfg).pipelined is True
 
 
+def test_pipelined_rejects_multiple_resolved_workers() -> None:
+    cfg = _resource_cfg(trainer_devices=[0], rollout_devices=[1, 2])
+    cfg.distributed.rollout.pipelined = True
+
+    with pytest.raises(ValueError, match="requires exactly one rollout worker"):
+        RayGenerationConfig.from_cfg(
+            cfg,
+            resources=resolve_distributed_resources(cfg),
+        )
+
+
+def test_pipelined_rejects_multiple_placement_bundles_before_ray_start(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(
+        "vrl.generation.ray.launcher.require_ray",
+        lambda: pytest.fail("Ray must not start before pipeline placement validation"),
+    )
+    cfg = _launch_cfg()
+    cfg.distributed.rollout = {
+        "pipelined": True,
+        "sync_trainable_state": False,
+    }
+    config = RayGenerationConfig.from_cfg(
+        cfg,
+        resources=resolve_distributed_resources(cfg),
+    )
+    entry = get_model_family_entry("sd3_5")
+    launch_inputs = RayGenerationLaunchInputs(
+        launch_contract=GenerationRuntimeLaunchContract(
+            family=entry.family,
+            model_build={},
+        ),
+        gatherer=entry.new_gatherer(),
+    )
+    placement = RolePlacement(
+        placement_group=object(),
+        bundle_indices=(0, 1),
+        expected_gpu_ids=(),
+    )
+
+    with pytest.raises(ValueError, match="exactly one rollout placement bundle"):
+        RayGenerationLauncher(init_ray=False).launch(
+            config,
+            launch_inputs,
+            placement=placement,
+        )
+
+
 def test_sync_trainable_state_defaults_on_for_from_cfg() -> None:
     """Online runs train the policy the rollout workers must resync, so an omitted
     sync_trainable_state defaults ON (True), not silently False (which would train
@@ -441,8 +490,8 @@ def test_ray_backend_rejects_unapproved_driver_cuda_overlap() -> None:
         ),
     )
     # Resource resolution rejects this topology first in ordinary config flows.
-    # Flip only the approval bit to exercise the launch-boundary backstop.
-    config.allow_driver_gpu_overlap = False
+    # Replace only the derived approval bit to exercise the launch-boundary backstop.
+    config.resources = replace(config.resources, colocated=False)
 
     with pytest.raises(
         ValueError,
@@ -471,7 +520,7 @@ def test_ray_backend_detects_cuda_trainable_module_when_policy_has_no_device() -
             allow_overlap=True,
         ),
     )
-    config.allow_driver_gpu_overlap = False
+    config.resources = replace(config.resources, colocated=False)
 
     with pytest.raises(
         ValueError,
@@ -496,8 +545,7 @@ def test_ray_backend_allows_driver_cuda_policy_with_explicit_overlap() -> None:
         driver_bundle=_Bundle(model=_CudaPolicy(), trainable_modules={}),
     )
 
-    assert config.allow_driver_gpu_overlap is True
-    assert config.resources is not None
+    assert config.resources.colocated is True
     assert config.resources.lifecycle.rollout.mode == "on_demand"
 
 
@@ -509,7 +557,6 @@ def test_ray_backend_allows_split_driver_cuda_when_devices_do_not_overlap() -> N
         driver_bundle=_Bundle(model=_CudaPolicy(), trainable_modules={}),
     )
 
-    assert config.resources is not None
     assert config.resources.trainer_devices == (0,)
     assert config.resources.rollout_devices == (1,)
-    assert config.allow_driver_gpu_overlap is False
+    assert config.resources.colocated is False

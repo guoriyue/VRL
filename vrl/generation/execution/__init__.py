@@ -19,6 +19,7 @@ from vrl.generation.execution.planner import (
 from vrl.generation.execution.types import (
     ChunkExecutionEnvelope,
     ChunkExecutionResult,
+    ChunkPlacementStrategy,
     DistributedWorkerHandle,
     WorkerMemoryParkingSnapshot,
 )
@@ -28,6 +29,7 @@ __all__ = [
     "ChunkExecutionEnvelope",
     "ChunkExecutionResult",
     "ChunkPlacementPolicy",
+    "ChunkPlacementStrategy",
     "DeviceAssignment",
     "DistributedExecutionPlanner",
     "DistributedGenerationPlan",

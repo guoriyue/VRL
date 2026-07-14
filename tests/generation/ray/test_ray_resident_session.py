@@ -128,11 +128,11 @@ def test_ray_generation_worker_load_policy_is_idempotent(
     worker = RayGenerationWorker("rollout-0", _launch_contract())
 
     worker.load_policy()
-    first_executor = worker.executor
+    first_executor = worker.core.executor
     worker.load_policy()
 
     assert _TinyChunkExecutor.build_count == 1
-    assert worker.executor is first_executor
+    assert worker.core.executor is first_executor
 
 
 def test_ray_generation_worker_rebuilds_executor_after_release(
@@ -146,13 +146,13 @@ def test_ray_generation_worker_rebuilds_executor_after_release(
     worker = RayGenerationWorker("rollout-0", _launch_contract())
 
     worker.load_policy()
-    first_executor = worker.executor
+    first_executor = worker.core.executor
 
     worker.release_policy()
-    assert worker.executor is None
+    assert worker.core.executor is None
 
     worker.load_policy()
 
     assert _TinyChunkExecutor.build_count == 2
-    assert worker.executor is not None
-    assert worker.executor is not first_executor
+    assert worker.core.executor is not None
+    assert worker.core.executor is not first_executor

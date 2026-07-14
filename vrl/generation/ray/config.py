@@ -6,8 +6,9 @@ import logging
 import os
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
-from typing import Any, Literal
+from typing import Any
 
+from vrl.generation.execution.types import ChunkPlacementStrategy
 from vrl.models.interfaces.runtime import bundle_loads_full_generation_modules
 from vrl.ray.resources import (
     ResolvedDistributedResources,
@@ -22,39 +23,40 @@ logger = init_logger(__name__)
 class RayGenerationConfig:
     """Ray generation execution config plus resolved worker resources."""
 
-    num_workers: int = 1
-    gpus_per_worker: float = 1.0
+    resources: ResolvedDistributedResources
     cpus_per_worker: float = 1.0
-    allow_driver_gpu_overlap: bool = False
     max_inflight_chunks_per_worker: int = 1
-    # Opt-in single-worker pipelined rollout: one rollout worker runs a request's
-    # chunks via execute_request_pipelined / forward_plan_pipelined. Default False
-    # = unchanged per-chunk dispatch; only takes effect with exactly one worker.
+    # Opt-in single-worker pipelined rollout. Multi-worker execution is rejected
+    # because per-worker request partitioning is not implemented.
     pipelined: bool = False
     # Chunk->worker binding: "round_robin" binds at plan time (baseline);
     # "dynamic" binds at dispatch time (pull + LPT). Equivalent for 1 worker.
     # Allowed-set rejection is at the typed schema boundary (RolloutWorkerSection);
     # the runtime ChunkPlacementPolicy guard is the wire-boundary backstop.
-    chunk_placement_strategy: Literal["round_robin", "dynamic"] = "round_robin"
+    chunk_placement_strategy: ChunkPlacementStrategy = "round_robin"
     # Plain on/off. True keeps rollout workers resynced to the trained policy (the
     # syncer flattens whatever is trainable — lora or full-param); False disables it.
     # Defaults ON: online runs train the policy the rollout workers must resync, so
     # an omitted value previously meant silent stale-policy training. The syncer is
     # only built on the online launch path, so this never affects eval.
     sync_trainable_state: bool = True
-    # The full resolved lifecycle/placement plan; the resolver validates it once
-    # and this object carries that source of truth without flat mirrors.
-    resources: ResolvedDistributedResources | None = None
 
     def __post_init__(self) -> None:
-        if self.num_workers < 1:
-            raise ValueError("num_workers must be >= 1")
-        if self.gpus_per_worker < 0:
-            raise ValueError("gpus_per_worker must be >= 0")
+        if self.resources.rollout_num_workers < 1:
+            raise ValueError("distributed.resources.rollout.num_workers must be >= 1")
+        if self.resources.rollout_gpus_per_worker < 0:
+            raise ValueError("distributed.resources.rollout.gpus_per_worker must be >= 0")
         if self.cpus_per_worker <= 0:
             raise ValueError("cpus_per_worker must be > 0")
         if self.max_inflight_chunks_per_worker < 1:
             raise ValueError("max_inflight_chunks_per_worker must be >= 1")
+        if self.pipelined and self.resources.rollout_num_workers != 1:
+            raise ValueError(
+                "distributed.rollout.pipelined=true requires exactly one rollout "
+                f"worker; resolved {self.resources.rollout_num_workers}. "
+                "Per-worker request pipelining "
+                "is not implemented.",
+            )
 
     @classmethod
     def from_cfg(
@@ -68,12 +70,10 @@ class RayGenerationConfig:
         rollout = cfg_get(distributed, "rollout", {})
 
         return cls(
-            num_workers=resources.rollout_num_workers,
-            gpus_per_worker=resources.rollout_gpus_per_worker,
+            resources=resources,
             cpus_per_worker=float(
                 cfg_get(rollout, "cpus_per_worker", 1.0),
             ),
-            allow_driver_gpu_overlap=bool(resources.colocated),
             max_inflight_chunks_per_worker=int(
                 cfg_get(
                     rollout,
@@ -90,9 +90,6 @@ class RayGenerationConfig:
             chunk_placement_strategy=str(
                 cfg_get(rollout, "chunk_placement_strategy", "round_robin"),
             ),
-            # The resolved plan is the single source of truth for lifecycle/memory;
-            # carry it whole rather than mirroring its fields onto flat copies.
-            resources=resources,
         )
 
     def validate_driver_state(
@@ -126,9 +123,9 @@ def validate_colocated_replay_memory(
     """
 
     if not (
-        rollout_config.allow_driver_gpu_overlap
-        and rollout_config.num_workers >= 1
-        and rollout_config.gpus_per_worker > 0
+        rollout_config.resources.colocated
+        and rollout_config.resources.rollout_num_workers >= 1
+        and rollout_config.resources.rollout_gpus_per_worker > 0
     ):
         return
     if not bundle_loads_full_generation_modules(bundle):
@@ -160,28 +157,19 @@ def _validate_driver_cuda_ownership(
         return
 
     resources = config.resources
-    if resources is not None and resources.cross_node:
+    if resources.cross_node:
         # Cross-node: the driver's head-local cuda ordinal and a remote rollout
         # GPU live in different ordinal spaces, so a set-intersection overlap
         # check is meaningless. Node-level isolation is enforced by the launcher
         # preflight (head --num-gpus=0) and validate_actor_gpu_ids node check.
         return
-    if resources is None:
-        raise ValueError(
-            "Driver loaded rollout policy on CUDA, but no distributed.resources "
-            "plan is available to prove rollout devices do not overlap. "
-            "Provide distributed.resources for split runs, or set "
-            "distributed.resources.rollout.gpu_pool=trainer for time-shared "
-            "single-GPU colocation.",
-        )
-
     overlap = driver_cuda_devices & set(resources.rollout_devices)
     if not overlap:
         return
 
     overlap_list = sorted(overlap)
     rollout_devices = list(resources.rollout_devices)
-    if not config.allow_driver_gpu_overlap:
+    if not resources.colocated:
         raise ValueError(
             f"Trainer device cuda:{overlap_list[0]} overlaps rollout devices "
             f"{rollout_devices}, but resources.allow_overlap=false. "

@@ -5,13 +5,49 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 import pytest
+from omegaconf import OmegaConf
 
 from vrl.generation.ray.config import (
     RayGenerationConfig,
     validate_colocated_replay_memory,
 )
+from vrl.ray.resources import resolve_distributed_resources
 from vrl.utils.cuda_memory import is_cuda_out_of_memory
 from vrl.utils.memory import HostMemorySnapshot, format_host_memory
+
+
+def _ray_config(*, colocated: bool) -> RayGenerationConfig:
+    rollout = (
+        {
+            "gpu_pool": "trainer",
+            "num_gpus": 1,
+            "gpus_per_worker": 1,
+            "num_workers": 1,
+        }
+        if colocated
+        else {
+            "devices": [1],
+            "num_gpus": 1,
+            "gpus_per_worker": 1,
+            "num_workers": 1,
+        }
+    )
+    cfg = OmegaConf.create(
+        {
+            "distributed": {
+                "resources": {
+                    "visible_devices": [0] if colocated else [0, 1],
+                    "trainer": {"devices": [0]},
+                    "rollout": rollout,
+                },
+                "rollout": {},
+            },
+        },
+    )
+    return RayGenerationConfig.from_cfg(
+        cfg,
+        resources=resolve_distributed_resources(cfg),
+    )
 
 
 def test_format_host_memory_omits_unknown_fields() -> None:
@@ -35,12 +71,7 @@ def test_colocated_full_generation_bundle_can_fail_strict_guard() -> None:
             "loads_full_generation_modules": True,
         },
     )
-    config = RayGenerationConfig(
-        num_workers=1,
-        gpus_per_worker=1.0,
-        cpus_per_worker=1.0,
-        allow_driver_gpu_overlap=True,
-    )
+    config = _ray_config(colocated=True)
 
     with pytest.raises(ValueError, match="loads_full_generation_modules=true"):
         validate_colocated_replay_memory(
@@ -53,12 +84,7 @@ def test_colocated_full_generation_bundle_can_fail_strict_guard() -> None:
 def test_non_colocated_full_generation_bundle_passes_memory_guard() -> None:
     """Checks non colocated full generation bundle passes memory guard."""
     bundle = SimpleNamespace(metadata={"loads_full_generation_modules": True})
-    config = RayGenerationConfig(
-        num_workers=1,
-        gpus_per_worker=1.0,
-        cpus_per_worker=1.0,
-        allow_driver_gpu_overlap=False,
-    )
+    config = _ray_config(colocated=False)
 
     validate_colocated_replay_memory(
         bundle=bundle,

@@ -73,12 +73,18 @@ class RayGenerationLauncher:
         contract = launch_inputs.launch_contract
         chunk_gatherer = require_chunk_gatherer(launch_inputs.gatherer)
 
+        bundle_indices = list(placement.bundle_indices)
+        if rollout_config.pipelined and len(bundle_indices) != 1:
+            raise ValueError(
+                "pipelined Ray generation requires exactly one rollout placement "
+                f"bundle; received {len(bundle_indices)}. Per-worker request "
+                "pipelining is not implemented.",
+            )
         ray = require_ray()
         if self.init_ray and not ray.is_initialized():
             ray.init(**self.ray_init_kwargs)
 
         placement_group = placement.placement_group
-        bundle_indices = list(placement.bundle_indices)
         expected_gpu_ids = placement.expected_gpu_ids
 
         worker_ids = [f"rollout-{logical_idx}" for logical_idx in range(len(bundle_indices))]
@@ -90,7 +96,7 @@ class RayGenerationLauncher:
                 worker_configs=worker_configs,
                 worker_ids=worker_ids,
                 num_cpus=rollout_config.cpus_per_worker,
-                num_gpus=rollout_config.gpus_per_worker,
+                num_gpus=rollout_config.resources.rollout_gpus_per_worker,
                 placement_group=placement_group,
                 bundle_indices=bundle_indices,
                 startup_method="load_policy",
@@ -141,7 +147,7 @@ class RayGenerationLauncher:
             executor,
             weight_sync=weight_sync,
             owned_workers=workers,
-            colocated=rollout_config.allow_driver_gpu_overlap,
+            colocated=rollout_config.resources.colocated,
         )
         if contract.policy_version is not None:
             runtime.current_policy_version = contract.policy_version
@@ -198,7 +204,7 @@ class RayGenerationLauncher:
         ).validate_driver_state(
             driver_bundle=driver_bundle,
         )
-        runtime_device = "cuda" if config.gpus_per_worker > 0 else "cpu"
+        runtime_device = "cuda" if config.resources.rollout_gpus_per_worker > 0 else "cpu"
         build = entry.resolve_model_build(cfg, runtime_device)
         # The lifecycle resolver, not the model config, owns whether rollout
         # workers will receive trainable-state updates. Thread that resolved fact
@@ -232,9 +238,7 @@ class RayGenerationLauncher:
         # (resources.lifecycle), the single source of truth. Hand-built configs
         # without a resolved plan default to resident.
         resources = config.resources
-        rollout_on_demand = (
-            resources is not None and resources.lifecycle.rollout.mode == "on_demand"
-        )
+        rollout_on_demand = resources.lifecycle.rollout.mode == "on_demand"
         if rollout_on_demand:
             return RayGenerationRuntime.with_on_demand_activation(
                 config,

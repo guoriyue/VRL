@@ -14,6 +14,7 @@ from vrl.generation.execution.ids import build_sample_rows
 from vrl.generation.execution.types import (
     ChunkExecutionResult,
     DistributedWorkerHandle,
+    PipelinedRequestOutOfMemory,
     StaleSlotDiscard,
 )
 from vrl.generation.protocols import ChunkGatherer, ChunkResult
@@ -40,12 +41,18 @@ class RayGenerationExecutor:
             raise ValueError("RayGenerationExecutor requires at least one worker")
         if max_inflight_chunks_per_worker < 1:
             raise ValueError("max_inflight_chunks_per_worker must be >= 1")
+        if pipelined and len(workers) != 1:
+            raise ValueError(
+                "pipelined Ray generation requires exactly one rollout worker; "
+                f"received {len(workers)}. Per-worker request pipelining is not "
+                "implemented.",
+            )
         self.planner = planner
         self.workers = list(workers)
         self.gatherer = gatherer
         self.max_inflight_chunks_per_worker = int(max_inflight_chunks_per_worker)
-        # Opt-in single-worker pipelined rollout. Default False = unchanged per-chunk
-        # dispatch. Only valid with exactly one worker; ignored otherwise.
+        # Config validation rejects multi-worker use; this constructor repeats the
+        # guard for callers that construct executors directly.
         self.pipelined = bool(pipelined)
 
     async def execute(self, request: GenerationRequest) -> GenerationOutput:
@@ -62,16 +69,31 @@ class RayGenerationExecutor:
             )
         assignments = list(generation_plan.assignments)
         engine_plan = generation_plan.engine_plan
-        if self.pipelined and len(self.workers) == 1:
-            out = await self._execute_request_pipelined(request, engine_plan, sample_rows)
-            logger.info(
-                "generation wall: path=per_request_pipelined chunks=%d wall_s=%.3f",
-                len(engine_plan.chunks),
-                time.perf_counter() - _gen_start,
+        pipelined_oom: PipelinedRequestOutOfMemory | None = None
+        if self.pipelined and len(engine_plan.chunks) >= 2:
+            pipelined_result = await self._execute_request_pipelined(
+                request,
+                engine_plan,
+                sample_rows,
             )
-            return out
+            if isinstance(pipelined_result, GenerationOutput):
+                logger.info(
+                    "generation wall: path=per_request_pipelined chunks=%d wall_s=%.3f",
+                    len(engine_plan.chunks),
+                    time.perf_counter() - _gen_start,
+                )
+                return pipelined_result
+            pipelined_oom = pipelined_result
+            logger.warning(
+                "pipelined generation request %s OOMed on worker %s; retrying "
+                "through per-chunk split admission: %s",
+                request.request_id,
+                pipelined_oom.worker_id,
+                pipelined_oom.error,
+            )
         worker_by_id = {worker.worker_id: worker for worker in self.workers}
         strategy = self.planner.policy.strategy
+        runtime_debug_on = bool(request.metadata.get("_runtime_debug"))
         remote_jobs: list[RayActorJob] = []
         result_pairs: list[tuple[int, ChunkExecutionResult]] = []
         schedule_rows: list[dict[str, Any]] = []
@@ -119,7 +141,7 @@ class RayGenerationExecutor:
                     remote_jobs,
                     max_inflight_per_actor=self.max_inflight_chunks_per_worker,
                     worker_methods=worker_methods,
-                    schedule=schedule_rows,
+                    schedule=schedule_rows if runtime_debug_on else None,
                 ),
             )
 
@@ -182,14 +204,12 @@ class RayGenerationExecutor:
             chunk_outputs.append(result.output)
 
         output = self.gatherer.gather_chunks(request, sample_rows, chunk_outputs)
-        output.extra["ray_chunk_metrics"] = [dict(result.metrics) for result in results]
         # Raw per-chunk memory readings (drift monitor for the startup
-        # chunk-size probe). Telemetry only — nothing here changes chunk sizing.
+        # chunk-size probe). Log-only provenance; nothing here changes chunk sizing.
         memory_shadow = build_chunk_memory_shadow(
             [result.metrics for result in results],
         )
         if memory_shadow:
-            output.extra["chunk_memory_shadow"] = memory_shadow
             for row in memory_shadow:
                 logger.info(
                     "chunk memory: chunk=%s n=%d peak=%.0fMB "
@@ -204,7 +224,6 @@ class RayGenerationExecutor:
                     row["budget_bytes"] / 2**20,
                     row["non_torch_bytes"] / 2**20,
                 )
-        runtime_debug_on = bool(request.metadata.get("_runtime_debug"))
         schedule_summary: list[dict[str, Any]] = []
         if schedule_rows:
             by_index = {row["job_index"]: row for row in schedule_rows}
@@ -221,7 +240,6 @@ class RayGenerationExecutor:
                 for job_index, assignment in enumerate(assignments)
                 if job_index in by_index
             ]
-            output.extra["ray_chunk_schedule"] = schedule_summary
         if runtime_debug_on:
             for row in schedule_summary:
                 logger.info(
@@ -235,8 +253,6 @@ class RayGenerationExecutor:
                     row["queue_wait_s"],
                     row["execution_s"],
                 )
-        if oom_splits:
-            output.extra["ray_chunk_oom_splits"] = oom_splits
         worker_debug_rows = [
             result.metrics for result in results if result.metrics.get("runtime_debug")
         ]
@@ -250,7 +266,12 @@ class RayGenerationExecutor:
         if debug_payload:
             output.extra["runtime_debug"] = debug_payload
         logger.info(
-            "generation wall: path=per_chunk_dispatch chunks=%d wall_s=%.3f",
+            "generation wall: path=%s chunks=%d wall_s=%.3f",
+            (
+                "per_chunk_dispatch_after_pipelined_oom"
+                if pipelined_oom is not None
+                else "per_chunk_dispatch"
+            ),
             len(assignments),
             time.perf_counter() - _gen_start,
         )
@@ -261,13 +282,13 @@ class RayGenerationExecutor:
         request: GenerationRequest,
         engine_plan: Any,
         sample_rows: Any,
-    ) -> GenerationOutput:
+    ) -> GenerationOutput | PipelinedRequestOutOfMemory:
         """Single-worker stage-overlap path (opt-in, ``pipelined=True``):
         the whole request's chunks run software-pipelined on one worker
         (``forward_plan_pipelined``), returning the already-gathered
-        GenerationOutput. Skips the per-chunk dispatch + OOM-split (the pipeline
-        keeps depth 1 = ~2 chunks resident, raising peak vs single-chunk — only use
-        when 2 chunks fit). Version safety is enforced in the worker (slot
+        GenerationOutput. The pipeline keeps depth 1 (about two chunks resident),
+        so a typed OOM response falls back to the normal per-chunk dispatch and
+        split admission path. Version safety is enforced in the worker (slot
         activation / StaleSlotDiscard); a stale request raises and is counted as a
         graceful discard upstream, never trained off-policy."""
 
@@ -278,8 +299,27 @@ class RayGenerationExecutor:
         call = actor.execute_request_pipelined
         remote = getattr(call, "remote", None)
         if callable(remote):
-            return await remote(request, engine_plan, sample_rows)
-        return call(request, engine_plan, sample_rows)
+            result = await remote(request, engine_plan, sample_rows)
+        else:
+            result = call(request, engine_plan, sample_rows)
+        if not isinstance(result, (GenerationOutput, PipelinedRequestOutOfMemory)):
+            raise TypeError(
+                f"pipelined generation worker returned unsupported result {type(result).__name__}",
+            )
+        if result.request_id != request.request_id:
+            raise RuntimeError(
+                "pipelined generation request_id mismatch: "
+                f"{result.request_id!r} != {request.request_id!r}",
+            )
+        if (
+            isinstance(result, PipelinedRequestOutOfMemory)
+            and result.worker_id != worker.worker_id
+        ):
+            raise RuntimeError(
+                "pipelined generation worker_id mismatch: "
+                f"{result.worker_id!r} != {worker.worker_id!r}",
+            )
+        return result
 
     async def _degrade_oom_chunks(
         self,

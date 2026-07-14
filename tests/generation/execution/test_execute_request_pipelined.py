@@ -9,7 +9,10 @@ from types import SimpleNamespace
 
 import pytest
 
-from vrl.generation.execution.types import StaleSlotDiscard
+from vrl.generation.execution.types import (
+    PipelinedRequestOutOfMemory,
+    StaleSlotDiscard,
+)
 from vrl.generation.execution.worker import GenerationWorkerCore
 
 
@@ -26,18 +29,22 @@ class _Model:
 
 
 class _Executor:
-    def __init__(self, model: _Model) -> None:
+    def __init__(self, model: _Model, *, error: RuntimeError | None = None) -> None:
         self.model = model
+        self.error = error
         self.calls: list[tuple] = []
 
     def forward_plan_pipelined(self, request, sample_rows, plan):
         self.calls.append((request, sample_rows, plan))
+        if self.error is not None:
+            raise self.error
         return "GATHERED_OUTPUT"
 
 
 def _core(*, executor, uses_slots: bool, policy_version: int | None):
     core = GenerationWorkerCore.__new__(GenerationWorkerCore)
     core.executor = executor
+    core.worker_id = "w0"
     core._uses_versioned_slots = uses_slots
     core._policy_version = policy_version
     core.load_policy = lambda: None  # type: ignore[method-assign]
@@ -94,3 +101,50 @@ def test_no_expected_version_runs_unconditionally() -> None:
 
     out = GenerationWorkerCore.execute_request_pipelined(core, _request(None), "plan", "rows")
     assert out == "GATHERED_OUTPUT"
+
+
+def test_cuda_oom_clears_worker_state_and_returns_typed_retry(monkeypatch) -> None:
+    cleanup_calls: list[dict[str, bool]] = []
+    monkeypatch.setattr(
+        "vrl.generation.execution.worker.release_cuda_memory",
+        lambda **kwargs: cleanup_calls.append(kwargs),
+    )
+    ex = _Executor(
+        _Model(set()),
+        error=RuntimeError("CUDA out of memory while pipelining request"),
+    )
+    core = _core(executor=ex, uses_slots=False, policy_version=5)
+
+    result = GenerationWorkerCore.execute_request_pipelined(
+        core,
+        _request(5),
+        "plan",
+        "rows",
+    )
+
+    assert result == PipelinedRequestOutOfMemory(
+        request_id="r",
+        worker_id="w0",
+        error="CUDA out of memory while pipelining request",
+    )
+    assert cleanup_calls == [{"gc_collect": True}]
+
+
+def test_non_oom_pipeline_error_propagates_without_cleanup(monkeypatch) -> None:
+    cleanup_calls: list[dict[str, bool]] = []
+    monkeypatch.setattr(
+        "vrl.generation.execution.worker.release_cuda_memory",
+        lambda **kwargs: cleanup_calls.append(kwargs),
+    )
+    ex = _Executor(_Model(set()), error=RuntimeError("scheduler state is invalid"))
+    core = _core(executor=ex, uses_slots=False, policy_version=5)
+
+    with pytest.raises(RuntimeError, match="scheduler state is invalid"):
+        GenerationWorkerCore.execute_request_pipelined(
+            core,
+            _request(5),
+            "plan",
+            "rows",
+        )
+
+    assert cleanup_calls == []

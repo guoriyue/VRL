@@ -30,6 +30,7 @@ class DistributedWorkerHandle:
     actor: Any | None = None
 
 
+ChunkPlacementStrategy = Literal["round_robin", "dynamic"]
 ParkingBackend = Literal["cpu_only", "cpu_offload", "cumem"]
 
 
@@ -106,11 +107,28 @@ class ChunkExecutionResult:
     stale_slot: bool = False
 
 
+@dataclass(frozen=True, slots=True)
+class PipelinedRequestOutOfMemory:
+    """Typed worker response that asks the driver to retry through chunk admission.
+
+    A whole-request pipeline can retain two chunks while overlapping teardown and
+    compute. If that larger residency OOMs, the worker must first discard its
+    partial request state, then return this response so the driver can use the
+    normal per-chunk CPU handoff and split-on-OOM path.
+    """
+
+    request_id: str
+    worker_id: str
+    error: str
+
+
 __all__ = [
     "ChunkExecutionEnvelope",
     "ChunkExecutionResult",
+    "ChunkPlacementStrategy",
     "DistributedWorkerHandle",
     "ParkingBackend",
+    "PipelinedRequestOutOfMemory",
     "StaleSlotDiscard",
     "WorkerMemoryParkingSnapshot",
 ]

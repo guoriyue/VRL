@@ -102,13 +102,13 @@ class RayGenerationRuntime(GenerationRuntime):
     ) -> RayGenerationRuntime:
         """Build a runtime explicitly activated/offloaded by its schedule."""
         resources = config.resources
-        if resources is None or resources.lifecycle.rollout.mode != "on_demand":
+        if resources.lifecycle.rollout.mode != "on_demand":
             raise ValueError(
                 "with_on_demand_activation requires a resolved on-demand rollout lifecycle plan",
             )
         contract = launch_inputs.launch_contract
         sleep_contract = contract
-        if config.gpus_per_worker > 0:
+        if resources.rollout_gpus_per_worker > 0:
             sleep_contract = replace(
                 contract,
                 sleep_offload=True,
@@ -138,8 +138,8 @@ class RayGenerationRuntime(GenerationRuntime):
         state = self._on_demand
         return bool(
             state is not None
-            and state.config.allow_driver_gpu_overlap
-            and state.config.gpus_per_worker > 0
+            and state.config.resources.colocated
+            and state.config.resources.rollout_gpus_per_worker > 0
         )
 
     @property
@@ -268,10 +268,7 @@ class RayGenerationRuntime(GenerationRuntime):
     def is_colocated(self) -> bool:
         state = self._on_demand
         if state is not None:
-            if state.config.allow_driver_gpu_overlap:
-                return True
-            resources = state.config.resources
-            return bool(resources is not None and resources.colocated)
+            return bool(state.config.resources.colocated)
         return self._colocated
 
     async def update_weights(self, state_ref: Any, policy_version: int) -> None:

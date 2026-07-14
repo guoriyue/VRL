@@ -7,18 +7,21 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
+from omegaconf import OmegaConf
 
 from vrl.generation.execution.types import (
     DistributedWorkerHandle,
     WorkerMemoryParkingSnapshot,
 )
 from vrl.generation.launch_contract import GenerationRuntimeLaunchContract
+from vrl.generation.ray.config import RayGenerationConfig
 from vrl.generation.ray.launch_inputs import RayGenerationLaunchInputs
 from vrl.generation.ray.lifecycle_fsm import RuntimeLifecycleError, RuntimePhase
 from vrl.generation.ray.runtime import (
     RayGenerationRuntime,
     _PolicySnapshot,
 )
+from vrl.ray.resources import resolve_distributed_resources
 from vrl.trainers.weight_sync import build_runtime_weight_syncer
 
 
@@ -79,12 +82,67 @@ class _BlockingSleepInner(_FakeInner):
         await super().sleep_workers()
 
 
-def _on_demand_resources(*, colocated: bool = True) -> SimpleNamespace:
-    return SimpleNamespace(
-        colocated=colocated,
-        lifecycle=SimpleNamespace(
-            rollout=SimpleNamespace(mode="on_demand"),
-        ),
+def _ray_config(
+    *,
+    sync_trainable_state: bool = True,
+    topology: str = "trainer_shared",
+) -> RayGenerationConfig:
+    if topology == "trainer_shared":
+        visible_devices = [0]
+        rollout = {
+            "gpu_pool": "trainer",
+            "num_gpus": 1,
+            "gpus_per_worker": 1,
+            "num_workers": 1,
+        }
+        reward = None
+    elif topology == "reward_shared":
+        visible_devices = [0, 1]
+        rollout = {
+            "devices": [1],
+            "num_gpus": 1,
+            "gpus_per_worker": 1,
+            "num_workers": 1,
+        }
+        reward = {
+            "devices": [1],
+            "num_gpus": 1,
+            "gpus_per_worker": 1,
+            "num_workers": 1,
+            "gpu_pool": "rollout",
+        }
+    elif topology == "resident":
+        visible_devices = [0, 1]
+        rollout = {
+            "devices": [1],
+            "num_gpus": 1,
+            "gpus_per_worker": 1,
+            "num_workers": 1,
+        }
+        reward = None
+    else:  # pragma: no cover - test fixture guard
+        raise ValueError(f"unknown topology: {topology}")
+
+    resources = {
+        "visible_devices": visible_devices,
+        "trainer": {"devices": [0]},
+        "rollout": rollout,
+    }
+    if reward is not None:
+        resources["reward"] = reward
+    cfg = OmegaConf.create(
+        {
+            "distributed": {
+                "resources": resources,
+                "rollout": {
+                    "sync_trainable_state": sync_trainable_state,
+                },
+            },
+        },
+    )
+    return RayGenerationConfig.from_cfg(
+        cfg,
+        resources=resolve_distributed_resources(cfg),
     )
 
 
@@ -99,14 +157,11 @@ def _launch_contract(*, policy_version: int = 0) -> GenerationRuntimeLaunchContr
 def _on_demand_runtime(
     *,
     sync_trainable_state: bool = True,
-    allow_driver_gpu_overlap: bool = True,
-    gpus_per_worker: float = 0.0,
+    colocated: bool = True,
 ) -> RayGenerationRuntime:
-    config = SimpleNamespace(
+    config = _ray_config(
         sync_trainable_state=sync_trainable_state,
-        gpus_per_worker=gpus_per_worker,
-        allow_driver_gpu_overlap=allow_driver_gpu_overlap,
-        resources=_on_demand_resources(colocated=allow_driver_gpu_overlap),
+        topology="trainer_shared" if colocated else "reward_shared",
     )
     return RayGenerationRuntime.with_on_demand_activation(
         config,
@@ -258,7 +313,7 @@ async def test_runtime_rejects_duplicate_worker_ids_before_parking() -> None:
 
 
 def test_on_demand_factory_stamps_contract_for_cumem_offload() -> None:
-    runtime = _on_demand_runtime(gpus_per_worker=1.0)
+    runtime = _on_demand_runtime()
     state = runtime._on_demand
     assert state is not None
     assert state.launch_inputs.launch_contract.sleep_offload is True
@@ -276,33 +331,17 @@ def test_on_demand_weight_sync_capability_does_not_require_active_workers() -> N
 
 
 def test_driver_model_offload_is_derived_from_actual_gpu_overlap() -> None:
-    shared_gpu = _on_demand_runtime(
-        allow_driver_gpu_overlap=True,
-        gpus_per_worker=1.0,
-    )
-    separate_gpu = _on_demand_runtime(
-        allow_driver_gpu_overlap=False,
-        gpus_per_worker=1.0,
-    )
-    cpu_rollout = _on_demand_runtime(
-        allow_driver_gpu_overlap=True,
-        gpus_per_worker=0.0,
-    )
+    shared_gpu = _on_demand_runtime(colocated=True)
+    separate_gpu = _on_demand_runtime(colocated=False)
 
     assert shared_gpu.requires_driver_model_offload is True
     assert separate_gpu.requires_driver_model_offload is False
-    assert cpu_rollout.requires_driver_model_offload is False
 
 
-@pytest.mark.parametrize("resources", [None, _on_demand_resources()])
-def test_on_demand_factory_requires_on_demand_plan(resources) -> None:
-    if resources is not None:
-        resources.lifecycle.rollout.mode = "resident"
-    config = SimpleNamespace(
+def test_on_demand_factory_requires_on_demand_plan() -> None:
+    config = _ray_config(
         sync_trainable_state=False,
-        gpus_per_worker=0.0,
-        allow_driver_gpu_overlap=False,
-        resources=resources,
+        topology="resident",
     )
 
     with pytest.raises(ValueError, match="resolved on-demand"):

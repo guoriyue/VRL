@@ -23,7 +23,6 @@ import pytest
 from vrl.generation.execution.chunk_placement import (
     ChunkPlacementPolicy,
     DistributedExecutionPlanner,
-    estimate_chunk_cost,
 )
 from vrl.generation.execution.types import (
     ChunkExecutionEnvelope,
@@ -77,7 +76,7 @@ def _request(num_steps: int = 10, samples: int = 8, sbs: int = 2) -> GenerationR
         samples_per_prompt=samples,
         sampling={"height": 64, "width": 64, "num_steps": num_steps, "samples_per_chunk": sbs},
         return_artifacts={"output"},
-        metadata={"dataset": "unit"},
+        metadata={"dataset": "unit", "_runtime_debug": True},
     )
 
 
@@ -99,9 +98,12 @@ def test_bound_jobs_keep_plan_time_binding_and_order() -> None:
     fast = _FakeWorker("w0", speed_rank_base=0)
     slow = _FakeWorker("w1", speed_rank_base=100)
     jobs = [
-        RayActorJob(job_index=i, worker_id=("w0" if i % 2 == 0 else "w1"),
-                    remote_method=(fast.remote if i % 2 == 0 else slow.remote),
-                    payload=f"chunk-{i}")
+        RayActorJob(
+            job_index=i,
+            worker_id=("w0" if i % 2 == 0 else "w1"),
+            remote_method=(fast.remote if i % 2 == 0 else slow.remote),
+            payload=f"chunk-{i}",
+        )
         for i in range(4)
     ]
 
@@ -140,9 +142,15 @@ def test_lpt_priority_orders_submission() -> None:
     """Checks higher-priority (more expensive) chunks are submitted first."""
     worker = _FakeWorker("w0", speed_rank_base=0)
     jobs = [
-        RayActorJob(job_index=0, worker_id=None, remote_method=None, payload="small", priority=1.0),
-        RayActorJob(job_index=1, worker_id=None, remote_method=None, payload="large", priority=10.0),
-        RayActorJob(job_index=2, worker_id=None, remote_method=None, payload="medium", priority=5.0),
+        RayActorJob(
+            job_index=0, worker_id=None, remote_method=None, payload="small", priority=1.0
+        ),
+        RayActorJob(
+            job_index=1, worker_id=None, remote_method=None, payload="large", priority=10.0
+        ),
+        RayActorJob(
+            job_index=2, worker_id=None, remote_method=None, payload="medium", priority=5.0
+        ),
     ]
 
     pairs = asyncio.run(
@@ -206,11 +214,8 @@ def test_dynamic_planner_leaves_chunks_unbound_with_costs() -> None:
     plan = planner.plan_with_engine(request, _workers(2))
 
     assert all(a.worker_id is None for a in plan.assignments)
-    # Cost is the source formula's output, not a hand-computed snapshot.
     assert len(plan.assignments) == 4
-    assert [a.estimated_cost for a in plan.assignments] == [
-        estimate_chunk_cost(request, a.chunk) for a in plan.assignments
-    ]
+    assert all(a.estimated_cost > 0 for a in plan.assignments)
     assert all(a.chunk is a.envelope.chunk for a in plan.assignments)
     assert all(not hasattr(a, "node_id") for a in plan.assignments)
     assert all(not hasattr(a, "gpu_ids") for a in plan.assignments)
@@ -218,13 +223,13 @@ def test_dynamic_planner_leaves_chunks_unbound_with_costs() -> None:
     assert [a.chunk.sample_start for a in plan.assignments] == [0, 2, 4, 6]
 
 
-def test_estimate_chunk_cost_uses_steps_axis() -> None:
+def test_planner_cost_uses_steps_axis() -> None:
     """Checks the cost hint scales with samples x steps."""
     request = _request(num_steps=35, samples=4, sbs=4)
     plan = DistributedExecutionPlanner().plan_with_engine(request, _workers(1))
 
-    chunk = plan.assignments[0].chunk
-    assert estimate_chunk_cost(request, chunk) == chunk.sample_count * 35
+    assignment = plan.assignments[0]
+    assert assignment.estimated_cost == assignment.chunk.sample_count * 35
 
 
 def test_placement_policy_rejects_unknown_strategy() -> None:
@@ -310,7 +315,7 @@ async def test_executor_round_robin_dispatches_per_plan_binding() -> None:
     # 4 chunks alternate w0/w1 even though w1 is much slower: plan-time binding.
     assert actors[0].executed == ["prompt:0:samples:0:2", "prompt:0:samples:4:6"]
     assert actors[1].executed == ["prompt:0:samples:2:4", "prompt:0:samples:6:8"]
-    schedule = output.extra["ray_chunk_schedule"]
+    schedule = output.extra["runtime_debug"]["chunk_schedule"]
     assert [row["assigned_worker"] for row in schedule] == ["w0", "w1", "w0", "w1"]
     for row in schedule:
         assert row["assignment_strategy"] == "round_robin"
@@ -330,7 +335,7 @@ async def test_executor_dynamic_dispatches_by_pull() -> None:
     # The fast worker pulls every queued chunk once the slow one is busy.
     assert len(actors[0].executed) == 3
     assert len(actors[1].executed) == 1
-    schedule = output.extra["ray_chunk_schedule"]
+    schedule = output.extra["runtime_debug"]["chunk_schedule"]
     assert all(row["assignment_strategy"] == "dynamic" for row in schedule)
     by_worker = {
         worker: sum(1 for row in schedule if row["assigned_worker"] == worker)

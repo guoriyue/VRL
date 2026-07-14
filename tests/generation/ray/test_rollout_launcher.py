@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Sequence
+from dataclasses import replace
 from pathlib import Path
-from types import SimpleNamespace
 from typing import Any
 
 try:
@@ -151,8 +151,7 @@ def test_ray_generation_launcher_builds_worker_runtime_with_embedded_ray() -> No
     try:
         runtime = launcher_mod.RayGenerationLauncher(init_ray=False).launch(
             RayGenerationConfig(
-                num_workers=1,
-                gpus_per_worker=0.0,
+                resources=owner.resources,
                 cpus_per_worker=0.5,
                 sync_trainable_state=False,
                 chunk_placement_strategy="dynamic",
@@ -221,8 +220,7 @@ def test_owner_placement_runtime_does_not_own_placement_group() -> None:
     try:
         runtime = launcher_mod.RayGenerationLauncher(init_ray=False).launch(
             RayGenerationConfig(
-                num_workers=1,
-                gpus_per_worker=0.0,
+                resources=owner.resources,
                 cpus_per_worker=0.5,
                 sync_trainable_state=False,
             ),
@@ -246,8 +244,8 @@ def test_owner_placement_runtime_does_not_own_placement_group() -> None:
         ray.shutdown()
 
 
-def test_launcher_preserves_explicit_colocation_protocol_signal() -> None:
-    """Direct runtime construction preserves the is_colocated safety signal."""
+def test_launcher_uses_resolved_colocation_protocol_signal() -> None:
+    """Launcher derives the runtime colocation signal from resolved topology."""
     ray = pytest.importorskip("ray")
     import vrl.generation.ray.launcher as launcher_mod
 
@@ -257,17 +255,15 @@ def test_launcher_preserves_explicit_colocation_protocol_signal() -> None:
     try:
         runtime = launcher_mod.RayGenerationLauncher(init_ray=False).launch(
             RayGenerationConfig(
-                num_workers=1,
-                gpus_per_worker=0.0,
+                resources=owner.resources,
                 cpus_per_worker=0.5,
-                allow_driver_gpu_overlap=True,
                 sync_trainable_state=False,
             ),
             _launch_inputs(),
             placement=owner.rollout_placement,
         )
 
-        assert runtime.is_colocated() is True
+        assert runtime.is_colocated() is False
     finally:
         if runtime is not None:
             asyncio.run(runtime.shutdown())
@@ -281,18 +277,21 @@ def test_phase_handoff_keeps_actor_and_owner_placement() -> None:
 
     _init_ray(ray)
     owner = _cpu_rollout_owner(ray)
+    on_demand_resources = replace(
+        owner.resources,
+        lifecycle=replace(
+            owner.resources.lifecycle,
+            rollout=replace(
+                owner.resources.lifecycle.rollout,
+                mode="on_demand",
+            ),
+        ),
+    )
     runtime = RayGenerationRuntime.with_on_demand_activation(
         RayGenerationConfig(
-            num_workers=1,
-            gpus_per_worker=0.0,
+            resources=on_demand_resources,
             cpus_per_worker=0.5,
             sync_trainable_state=False,
-            resources=SimpleNamespace(
-                rollout_gpus_per_worker=0.0,
-                lifecycle=SimpleNamespace(
-                    rollout=SimpleNamespace(mode="on_demand"),
-                ),
-            ),
         ),
         _launch_inputs(),
         placement=owner.rollout_placement,

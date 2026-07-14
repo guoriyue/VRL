@@ -25,6 +25,7 @@ from vrl.config.precision import PrecisionConfig
 from vrl.config.reward_inference import parse_reward_inference_config
 from vrl.config.unknown_keys import OPEN, ConfigBlock
 from vrl.families.names import normalize_model_family
+from vrl.generation.execution.types import ChunkPlacementStrategy
 from vrl.models.interfaces.runtime import MODEL_MEMORY_SECTIONS
 from vrl.ray.resources import (
     RewardResourceConfig,
@@ -697,12 +698,11 @@ class RolloutWorkerSection(ConfigBase):
 
     cpus_per_worker: float = 1.0
     max_inflight_chunks_per_worker: int = 1
-    chunk_placement_strategy: Literal["round_robin", "dynamic"] = "round_robin"
+    chunk_placement_strategy: ChunkPlacementStrategy = "round_robin"
     sync_trainable_state: bool = True
-    # Opt-in single-worker pipelined rollout. Read by RayGenerationConfig.from_cfg;
-    # only takes effect with exactly one rollout worker and more than one planned
-    # chunk. Best paired with the largest samples_per_chunk that keeps 2 chunks
-    # resident.
+    # Opt-in single-worker pipelined rollout. Config resolution rejects multiple
+    # workers; requests with fewer than two chunks use the standard per-chunk path,
+    # and a pipeline OOM falls back to that path's split-and-retry behavior.
     pipelined: bool = False
 
 

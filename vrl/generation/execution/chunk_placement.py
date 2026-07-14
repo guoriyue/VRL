@@ -4,17 +4,16 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, fields
-from typing import Any
+from typing import Any, get_args
 
 from vrl.generation.execution.chunks import SampleChunk
 from vrl.generation.execution.planner import EnginePlan, build_engine_plan
 from vrl.generation.execution.types import (
     ChunkExecutionEnvelope,
+    ChunkPlacementStrategy,
     DistributedWorkerHandle,
 )
 from vrl.generation.types import GenerationRequest
-
-_PLACEMENT_STRATEGIES = ("round_robin", "dynamic")
 
 
 @dataclass(frozen=True, slots=True)
@@ -28,13 +27,14 @@ class ChunkPlacementPolicy:
     tail. With one worker the two strategies are equivalent.
     """
 
-    strategy: str = "round_robin"
+    strategy: ChunkPlacementStrategy = "round_robin"
 
     def __post_init__(self) -> None:
-        if self.strategy not in _PLACEMENT_STRATEGIES:
+        allowed = get_args(ChunkPlacementStrategy)
+        if self.strategy not in allowed:
             raise ValueError(
                 "chunk placement strategy must be one of "
-                f"{', '.join(_PLACEMENT_STRATEGIES)}; got {self.strategy!r}",
+                f"{', '.join(allowed)}; got {self.strategy!r}",
             )
 
 
@@ -64,20 +64,6 @@ class DistributedGenerationPlan:
 
     engine_plan: EnginePlan
     assignments: tuple[DeviceAssignment, ...]
-
-
-def estimate_chunk_cost(request: GenerationRequest, chunk: SampleChunk) -> float:
-    """Family-neutral relative cost of one chunk (scheduler hint only).
-
-    Diffusion work scales with samples x denoise steps; AR with samples x
-    new tokens. This must never influence sample identity or gather order —
-    it only orders dispatch under dynamic placement and labels telemetry.
-    """
-
-    steps = request.sampling.get("num_steps") or request.sampling.get(
-        "max_new_tokens",
-    )
-    return float(chunk.sample_count * max(1, int(steps or 1)))
 
 
 @dataclass(frozen=True, slots=True)
@@ -125,9 +111,6 @@ class ChunkMemoryReading:
 
         return self.reserved_start_bytes + self.free_start_bytes
 
-    def to_metrics(self) -> dict[str, int]:
-        return {f.name: int(getattr(self, f.name)) for f in fields(self)}
-
     @classmethod
     def from_metrics(cls, raw: Mapping[str, Any]) -> ChunkMemoryReading | None:
         names = [f.name for f in fields(cls)]
@@ -166,9 +149,6 @@ class AffinePeakFit:
             slope_bytes_per_sample=slope,
             intercept_bytes=peak_low - slope * n_low,
         )
-
-    def predict_bytes(self, sample_count: int) -> int:
-        return int(self.intercept_bytes + sample_count * self.slope_bytes_per_sample)
 
     def max_samples_within(self, budget_bytes: int) -> int:
         """Largest n with predicted peak <= budget (0 = not even the intercept fits)."""
@@ -257,6 +237,10 @@ class DistributedExecutionPlanner:
             max_samples_per_chunk=max(1, max_samples),
         )
         bind_at_plan_time = self.policy.strategy == "round_robin"
+        steps = request.sampling.get("num_steps") or request.sampling.get(
+            "max_new_tokens",
+        )
+        cost_per_sample = max(1, int(steps or 1))
         assignments: list[DeviceAssignment] = []
         for idx, chunk in enumerate(engine_plan.chunks):
             worker = workers[idx % len(workers)] if bind_at_plan_time else None
@@ -268,13 +252,14 @@ class DistributedExecutionPlanner:
                 DeviceAssignment(
                     worker_id=worker.worker_id if worker else None,
                     envelope=envelope,
-                    estimated_cost=estimate_chunk_cost(request, chunk),
+                    estimated_cost=float(chunk.sample_count * cost_per_sample),
                 ),
             )
         return DistributedGenerationPlan(
             engine_plan=engine_plan,
             assignments=tuple(assignments),
         )
+
 
 __all__ = [
     "AffinePeakFit",
@@ -284,5 +269,4 @@ __all__ = [
     "DistributedExecutionPlanner",
     "DistributedGenerationPlan",
     "build_chunk_memory_shadow",
-    "estimate_chunk_cost",
 ]

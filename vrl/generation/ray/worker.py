@@ -7,10 +7,12 @@ from typing import Any
 from vrl.generation.execution.types import (
     ChunkExecutionEnvelope,
     ChunkExecutionResult,
+    PipelinedRequestOutOfMemory,
     WorkerMemoryParkingSnapshot,
 )
 from vrl.generation.execution.worker import GenerationWorkerCore
 from vrl.generation.launch_contract import GenerationRuntimeLaunchContract
+from vrl.generation.types import GenerationOutput
 from vrl.ray.dependencies import current_gpu_ids, current_node_ip
 
 
@@ -27,14 +29,6 @@ class RayGenerationWorker:
             launch_contract,
             metadata_provider=self._ray_metadata,
         )
-
-    @property
-    def worker_id(self) -> str:
-        return self.core.worker_id
-
-    @property
-    def executor(self) -> Any:
-        return self.core.executor
 
     def load_policy(self) -> None:
         self.core.load_policy()
@@ -80,9 +74,9 @@ class RayGenerationWorker:
         request: Any,
         engine_plan: Any,
         sample_rows: Any,
-    ) -> Any:
+    ) -> GenerationOutput | PipelinedRequestOutOfMemory:
         """Per-request software-pipelined execution (single-worker stage-overlap
-        path); returns the gathered GenerationOutput. See
+        path); returns a gathered output or typed OOM retry. See
         GenerationWorkerCore.execute_request_pipelined."""
         return self.core.execute_request_pipelined(request, engine_plan, sample_rows)
 
@@ -93,7 +87,7 @@ class RayGenerationWorker:
         except Exception:
             node_ip = "unknown"
             gpu_ids = []
-        return {"worker_id": self.worker_id, "node_ip": node_ip, "gpu_ids": gpu_ids}
+        return {"worker_id": self.core.worker_id, "node_ip": node_ip, "gpu_ids": gpu_ids}
 
 
 __all__ = ["RayGenerationWorker"]

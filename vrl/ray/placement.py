@@ -298,24 +298,15 @@ class GlobalRayPlacementOwner:
 
     @property
     def rollout_placement(self) -> RolePlacement | None:
-        return self._role_placement("rollout", self.resources.rollout_devices)
-
-    @property
-    def reward_placement(self) -> RolePlacement | None:
-        return self._role_placement("reward", self.resources.reward_devices)
-
-    def _role_placement(
-        self,
-        role: str,
-        expected_gpu_ids: tuple[int, ...],
-    ) -> RolePlacement | None:
-        bundles = self._role_bundles.get(role, ())
+        bundles = self._role_bundles.get("rollout", ())
         if not bundles or self._placement_group is None:
             return None
         return RolePlacement(
             placement_group=self._placement_group,
             bundle_indices=bundles,
-            expected_gpu_ids=() if self.resources.cross_node else tuple(expected_gpu_ids),
+            expected_gpu_ids=(
+                () if self.resources.cross_node else tuple(self.resources.rollout_devices)
+            ),
         )
 
     # -- role assignment (pure; unit-tested with an injected probe) ----------

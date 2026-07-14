@@ -547,6 +547,11 @@ def test_release_policy_wakes_and_closes_cumem_pool(monkeypatch) -> None:
 def test_real_cumem_one_shot_scope_sleep_wake_in_subprocess() -> None:
     """One real scope round-trips; a second scope is blocked before C++ abort."""
 
+    from vrl.utils.cuda_memory import CumemPool
+
+    if CumemPool.try_create("vrl-one-shot-preflight") is None:
+        pytest.skip("vLLM CuMemAllocator is unavailable")
+
     script = textwrap.dedent(
         """
         import gc

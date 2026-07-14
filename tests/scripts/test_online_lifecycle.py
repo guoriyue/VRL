@@ -137,7 +137,6 @@ class _FakePlacementOwner:
         del args, kwargs
         self._state = state
         self.rollout_placement = object()
-        self.reward_placement = object()
 
     def create(self) -> None:
         self._state["owner_creates"] += 1

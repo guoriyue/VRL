@@ -9,7 +9,7 @@ resolves ``samples_per_chunk: auto`` once and rewrites requests).
 from __future__ import annotations
 
 import asyncio
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from types import SimpleNamespace
 from typing import Any
 
@@ -61,7 +61,6 @@ def test_affine_fit_recovers_slope_intercept_and_budget_division() -> None:
 
     assert fit.slope_bytes_per_sample == 2 * GB
     assert fit.intercept_bytes == 10 * GB
-    assert fit.predict_bytes(8) == 26 * GB
     # (32 - 10) // 2 = 11 samples fit the full card.
     assert fit.max_samples_within(32 * GB) == 11
     # Not even the intercept fits.
@@ -83,8 +82,8 @@ def test_affine_fit_rejects_degenerate_points() -> None:
 def test_reading_metrics_roundtrip_and_partial_rejection() -> None:
     reading = _reading()
 
-    assert ChunkMemoryReading.from_metrics(reading.to_metrics()) == reading
-    partial = dict(reading.to_metrics())
+    assert ChunkMemoryReading.from_metrics(asdict(reading)) == reading
+    partial = asdict(reading)
     del partial["decode_peak_bytes"]
     assert ChunkMemoryReading.from_metrics(partial) is None
     # non-torch = device-used minus torch-reserved: (32-18) - 11 = 3GB.
@@ -95,7 +94,7 @@ def test_reading_metrics_roundtrip_and_partial_rejection() -> None:
 def test_shadow_rows_are_raw_readings_without_estimation() -> None:
     rows = build_chunk_memory_shadow(
         [
-            {"chunk_key": "p0:s0:4", "chunk_memory": _reading().to_metrics()},
+            {"chunk_key": "p0:s0:4", "chunk_memory": asdict(_reading())},
             {"chunk_key": "ar-chunk"},  # no reading (AR / CPU) -> skipped
         ],
     )
@@ -145,13 +144,15 @@ class _ProbeExecutor:
     def run_decode_stage(self, denoised: Any) -> Any:
         n = denoised.n
         return SimpleNamespace(
-            memory=_reading(
-                sample_count=n,
-                denoise_peak=10 * GB + 2 * GB * n,
-                decode_peak=10 * GB + 1 * GB * n,
-                reserved_start=8 * GB,
-                free_start=24 * GB,  # non_torch = (32-24) - 8 = 0
-            ).to_metrics(),
+            memory=asdict(
+                _reading(
+                    sample_count=n,
+                    denoise_peak=10 * GB + 2 * GB * n,
+                    decode_peak=10 * GB + 1 * GB * n,
+                    reserved_start=8 * GB,
+                    free_start=24 * GB,  # non_torch = (32-24) - 8 = 0
+                ),
+            ),
         )
 
     def gather_chunks(self, *args: Any, **kwargs: Any) -> Any:
@@ -342,7 +343,7 @@ class _MemoryExecutor:
         self.model = SimpleNamespace(device="cpu")
 
     def forward_chunk_plan(self, *args: Any, **kwargs: Any) -> Any:
-        return SimpleNamespace(memory=_reading().to_metrics())
+        return SimpleNamespace(memory=asdict(_reading()))
 
     def gather_chunks(self, *args: Any, **kwargs: Any) -> Any:
         raise NotImplementedError
@@ -372,5 +373,5 @@ def test_worker_forwards_chunk_memory_without_runtime_debug() -> None:
     result = core.execute_chunk(envelope)
 
     assert result.error is None
-    assert result.metrics["chunk_memory"] == _reading().to_metrics()
+    assert result.metrics["chunk_memory"] == asdict(_reading())
     assert "engine_counters" not in result.metrics

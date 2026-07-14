@@ -8,15 +8,18 @@ from typing import Any
 from vrl.generation.execution.types import (
     ChunkExecutionEnvelope,
     ChunkExecutionResult,
+    PipelinedRequestOutOfMemory,
     WorkerMemoryParkingSnapshot,
 )
 from vrl.generation.launch_contract import GenerationRuntimeLaunchContract
 from vrl.generation.protocols import GenerationChunkExecutor
+from vrl.generation.types import GenerationOutput
 from vrl.models.interfaces import require_runtime_model
 from vrl.utils.config import import_from_path
 from vrl.utils.cuda_memory import (
     CumemPool,
     gpu_used_bytes,
+    is_cuda_out_of_memory,
     release_cuda_memory,
     release_cuda_memory_for_parking,
 )
@@ -660,12 +663,14 @@ class GenerationWorkerCore:
         request: Any,
         engine_plan: Any,
         sample_rows: Any,
-    ) -> Any:
+    ) -> GenerationOutput | PipelinedRequestOutOfMemory:
         """Run ALL of a request's chunks through the executor's software pipeline
         (``forward_plan_pipelined``) on THIS worker, so chunk N+1's denoise overlaps
         chunk N's GPU->CPU copy + host packing — hiding the per-chunk worker
         boundary that per-chunk dispatch leaves serial. Single-worker only (all the
-        request's chunks must be here). Returns the gathered ``GenerationOutput``.
+        request's chunks must be here). Returns the gathered ``GenerationOutput``;
+        after a CUDA OOM it first joins pending copy work, clears partial request
+        state, and returns ``PipelinedRequestOutOfMemory`` for driver-side retry.
 
         Version safety mirrors ``execute_chunk`` but at the REQUEST level (every
         chunk shares ``request.policy_version``): slot mode serves the request from
@@ -698,7 +703,28 @@ class GenerationWorkerCore:
                 f"{type(self.executor).__name__} must implement forward_plan_pipelined(...) "
                 "for per-request pipelined execution",
             )
-        return forward_plan_pipelined(request, sample_rows, engine_plan)
+        try:
+            return forward_plan_pipelined(request, sample_rows, engine_plan)
+        except RuntimeError as error:
+            if not is_cuda_out_of_memory(error):
+                raise
+            error_text = str(error)
+            # The exception traceback retains every partially produced chunk and
+            # copy-stream object. Clear those frames before emptying the allocator
+            # cache; otherwise the driver's safe per-chunk retry can immediately
+            # OOM on tensors held by the failed whole-request pipeline.
+            traceback = error.__traceback__
+            if traceback is not None:
+                import traceback as traceback_module
+
+                traceback_module.clear_frames(traceback)
+                error.__traceback__ = None
+            release_cuda_memory(gc_collect=True)
+            return PipelinedRequestOutOfMemory(
+                request_id=request.request_id,
+                worker_id=self.worker_id,
+                error=error_text,
+            )
 
     def _profile_forward_chunk(
         self,
@@ -841,16 +867,16 @@ class GenerationWorkerCore:
                 return host
             return tensor.cpu()
 
-        copied = map_tensor_tree(value, _pinned_copy, is_leaf=cls._is_tensor)
+        copied = map_tensor_tree(
+            value,
+            _pinned_copy,
+            is_leaf=lambda candidate: hasattr(candidate, "detach") and hasattr(candidate, "cpu"),
+        )
         if pending["cuda_copies"]:
             import torch
 
             torch.cuda.synchronize()
         return copied
-
-    @staticmethod
-    def _is_tensor(value: Any) -> bool:
-        return hasattr(value, "detach") and hasattr(value, "cpu")
 
     def _fallback_metadata(self) -> dict[str, Any]:
         return {"worker_id": self.worker_id, "node_ip": "unknown", "gpu_ids": []}

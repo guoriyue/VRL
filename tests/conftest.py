@@ -34,9 +34,7 @@ except Exception:  # pragma: no cover - torch import/driver failure
 
 
 def pytest_addoption(parser):
-    parser.addoption(
-        "--optional", action="store_true", default=False, help="run optional test"
-    )
+    parser.addoption("--optional", action="store_true", default=False, help="run optional test")
     parser.addoption(
         "--distributed",
         action="store_true",
@@ -101,15 +99,29 @@ def local_ray():
     stops only the processes this driver spawned (never ``ray stop``).
     """
     ray = pytest.importorskip("ray")
+    from ray._private import ray_constants
+
     ray.shutdown()
-    ray.init(
-        address="local",
-        num_cpus=2,
-        include_dashboard=False,
-        log_to_driver=False,
-    )
-    yield ray
-    ray.shutdown()
+    # Ray's uv hook packages the entire current working directory and launches
+    # workers through a newly resolved project environment. That is useful for a
+    # remote cluster, but it breaks this local fixture's contract: test actors then
+    # lose the driver's dev dependencies (including pytest) and a small unit test
+    # uploads hundreds of MiB. A local cluster must inherit the already-active test
+    # interpreter instead.
+    previous_uv_hook = ray_constants.RAY_ENABLE_UV_RUN_RUNTIME_ENV
+    ray_constants.RAY_ENABLE_UV_RUN_RUNTIME_ENV = False
+    try:
+        ray.init(
+            address="local",
+            num_cpus=2,
+            include_dashboard=False,
+            log_to_driver=False,
+            _skip_env_hook=True,
+        )
+        yield ray
+    finally:
+        ray.shutdown()
+        ray_constants.RAY_ENABLE_UV_RUN_RUNTIME_ENV = previous_uv_hook
 
 
 @pytest.fixture(autouse=True)

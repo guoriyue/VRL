@@ -10,6 +10,7 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 import pytest
+from omegaconf import OmegaConf
 
 from vrl.generation.launch_contract import GenerationRuntimeLaunchContract
 from vrl.generation.protocols import PolicyVersionProvider
@@ -17,32 +18,58 @@ from vrl.generation.ray.config import RayGenerationConfig
 from vrl.generation.ray.launch_inputs import RayGenerationLaunchInputs
 from vrl.generation.ray.runtime import RayGenerationRuntime
 from vrl.ray.placement import RolePlacement
-from vrl.ray.resources import ActorLeasePolicy, PhaseHandoffPolicy, RayLifecyclePlan
+from vrl.ray.resources import resolve_distributed_resources
 from vrl.trainers.weight_sync import RayRuntimeWeightSyncer, WeightSyncer
 
 
 def _on_demand_runtime(
     *,
-    allow_driver_gpu_overlap: bool = False,
     colocated: bool = False,
 ) -> RayGenerationRuntime:
-    config = RayGenerationConfig(
-        allow_driver_gpu_overlap=allow_driver_gpu_overlap,
-        # Use the real lifecycle types so the fixture cannot omit the canonical
-        # on-demand selection that production resolves from shared-GPU topology.
-        resources=SimpleNamespace(
-            colocated=colocated,
-            lifecycle=RayLifecyclePlan(
-                rollout=ActorLeasePolicy(mode="on_demand"),
-                reward=ActorLeasePolicy(mode="resident"),
-                handoff=PhaseHandoffPolicy(
-                    release_rollout_before_train=True,
-                    release_rollout_before_reward=True,
-                    release_trainer_before_reward=False,
-                    release_reward_after_score=False,
-                ),
-            ),
-        ),
+    rollout = (
+        {
+            "gpu_pool": "trainer",
+            "num_gpus": 1,
+            "gpus_per_worker": 1,
+            "num_workers": 1,
+        }
+        if colocated
+        else {
+            "devices": [1],
+            "num_gpus": 1,
+            "gpus_per_worker": 1,
+            "num_workers": 1,
+        }
+    )
+    reward = (
+        None
+        if colocated
+        else {
+            "devices": [1],
+            "num_gpus": 1,
+            "gpus_per_worker": 1,
+            "num_workers": 1,
+            "gpu_pool": "rollout",
+        }
+    )
+    resources = {
+        "visible_devices": [0] if colocated else [0, 1],
+        "trainer": {"devices": [0]},
+        "rollout": rollout,
+    }
+    if reward is not None:
+        resources["reward"] = reward
+    cfg = OmegaConf.create(
+        {
+            "distributed": {
+                "resources": resources,
+                "rollout": {},
+            },
+        },
+    )
+    config = RayGenerationConfig.from_cfg(
+        cfg,
+        resources=resolve_distributed_resources(cfg),
     )
     return RayGenerationRuntime.with_on_demand_activation(
         config,
@@ -76,18 +103,14 @@ def test_persistent_runtime_is_not_colocated() -> None:
 
 
 @pytest.mark.parametrize(
-    ("overlap", "colocated", "expected"),
+    ("colocated", "expected"),
     [
-        (True, False, True),
-        (False, True, True),
-        (False, False, False),
+        (True, True),
+        (False, False),
     ],
 )
-def test_on_demand_runtime_colocation(overlap, colocated, expected) -> None:
-    runtime = _on_demand_runtime(
-        allow_driver_gpu_overlap=overlap,
-        colocated=colocated,
-    )
+def test_on_demand_runtime_colocation(colocated, expected) -> None:
+    runtime = _on_demand_runtime(colocated=colocated)
     assert runtime.is_colocated() is expected
 
 

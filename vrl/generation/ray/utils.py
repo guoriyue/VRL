@@ -64,7 +64,7 @@ def validate_worker_gpu_ids(
     """Validate launched workers against the resolved rollout placement."""
 
     resources = config.resources
-    if resources is None or resources.rollout_gpus_per_worker <= 0:
+    if resources.rollout_gpus_per_worker <= 0:
         return
 
     driver_node_ip: str | None = None

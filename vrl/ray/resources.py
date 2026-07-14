@@ -178,7 +178,17 @@ def resolve_distributed_resources(cfg: Any) -> ResolvedDistributedResources:
     if config.cross_node:
         visible_devices = _resolve_cross_node_visible_devices(config)
     else:
-        visible_devices = _resolve_visible_devices(config.visible_devices)
+        parsed_visible_devices = _parse_devices(config.visible_devices)
+        visible_devices = (
+            _auto_visible_cuda_devices()
+            if parsed_visible_devices == "auto"
+            else tuple(
+                _dedupe_ints(
+                    parsed_visible_devices,
+                    field_name="distributed.resources.visible_devices",
+                ),
+            )
+        )
 
     # fsdp has two topologies. ASYMMETRIC: one resolver owns the whole training
     # world (trainer = num_nodes*gpus_per_node GPUs, rollout/reward on separate
@@ -313,8 +323,7 @@ def resolve_distributed_resources(cfg: Any) -> ResolvedDistributedResources:
 
     # Release scheduling is derived entirely from the resolved GPU topology:
     # roles that share a GPU hand it over between phases; roles with dedicated
-    # GPUs stay resident. The named per-boundary handoffs feed both the lifecycle
-    # plan and the flat compatibility fields on ResolvedDistributedResources.
+    # GPUs stay resident. The named handoff plan is the only behavior source.
     rollout_release_before_train = colocated
     rollout_release_before_reward_model = reward_shared_with_rollout
     trainer_release_before_reward_model = reward_shared_with_trainer
@@ -331,8 +340,7 @@ def resolve_distributed_resources(cfg: Any) -> ResolvedDistributedResources:
         and rollout_num_workers > 0
         and not config.cross_node
     )
-    # One derivation feeds both the named plan and the flat compatibility
-    # fields: a role is on_demand when any handoff makes it yield, while the plan
+    # A role is on_demand when any handoff makes it yield, while the handoff plan
     # keeps the specific phase boundary explicit.
     lifecycle = RayLifecyclePlan(
         rollout=ActorLeasePolicy(
@@ -571,13 +579,6 @@ def _distributed_resource_config_from_cfg(cfg: Any) -> DistributedResourceConfig
         ),
         cross_node=bool(cfg_get(resources, "cross_node", False)),
     )
-
-
-def _resolve_visible_devices(value: list[int] | str) -> tuple[int, ...]:
-    devices = _parse_devices(value)
-    if devices == "auto":
-        return _auto_visible_cuda_devices()
-    return tuple(_dedupe_ints(devices, field_name="distributed.resources.visible_devices"))
 
 
 def _resolve_cross_node_visible_devices(
@@ -1147,12 +1148,6 @@ def build_bundle_layout(resolved: ResolvedDistributedResources) -> BundleLayout:
     )
 
 
-def _parse_optional_bool(value: Any) -> bool | None:
-    if value is None:
-        return None
-    return bool(value)
-
-
 def _parse_rollout_gpu_pool(
     *,
     rollout_node: Any,
@@ -1208,10 +1203,10 @@ def _parse_reward_gpu_pool(reward_node: Any) -> str:
                 f"or 'dedicated', got {gpu_pool!r}",
             )
         return value
-    parsed = _parse_optional_bool(legacy if legacy is not _MISSING else None)
-    if parsed is None:
+    legacy_value = legacy if legacy is not _MISSING else None
+    if legacy_value is None:
         return "auto"
-    return "rollout" if parsed else "dedicated"
+    return "rollout" if bool(legacy_value) else "dedicated"
 
 
 def _reject_removed_distributed_keys(rollout_runtime: Any, reward_runtime: Any) -> None:
