@@ -68,8 +68,7 @@ def build_tiny_runtime_bundle(build: ModelBuild) -> RuntimeBundle:
     assert str(build.device) == "cpu"
     assert build.parameter_dtype is torch.float16
     assert isinstance(build.rollout, RolloutBuildOptions)
-    assert build.precision == RolePrecision("fp16", "tf32")
-    assert build.outer_autocast is False
+    assert build.precision == RolePrecision("fp16", "tf32", outer_autocast=False)
     assert build.rollout.prompt_encoder_dtype is torch.float32
     return RuntimeBundle(
         model=_TinyRuntimeModel(),
@@ -77,7 +76,6 @@ def build_tiny_runtime_bundle(build: ModelBuild) -> RuntimeBundle:
         scheduler=None,
         raw_handle=None,
         precision=build.precision,
-        outer_autocast=build.outer_autocast,
     )
 
 
@@ -115,8 +113,8 @@ def _launch_contract() -> GenerationRuntimeLaunchContract:
                 "dtype": "fp16",
                 "float32_precision": "tf32",
                 "quantization": None,
+                "outer_autocast": False,
             },
-            "outer_autocast": False,
             "rollout": {
                 "prompt_encoder_dtype": "float32",
                 "base_weight_sync": False,

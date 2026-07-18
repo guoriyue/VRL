@@ -275,10 +275,9 @@ class TrainerConfig:
     host_memory_budget_fraction: float = field(default=0.0, metadata={"yaml": "rollout"})
 
     # --- precision (bridged from the unified precision policy) ---
-    # Replay/training role label (canonical fp32/bf16/fp16). Diffusion normally
-    # uses it for outer autocast, while family capabilities such as SANA may
-    # disable that boundary. Empty -> fp32 ("no"). Production bridges this from
-    # precision.training.dtype; bare construction (tests) defaults to fp32.
+    # Replay/training execution signature (for example fp16+no-autocast).
+    # Empty -> fp32 ("no"). Production bridges the resolved public role; legacy
+    # consumers extract its base dtype instead of re-resolving execution policy.
     train_precision: str = field(default="", metadata={"yaml": "bridged"})
     # off | full | selective (or bool: true=full, false=off). Activation
     # checkpointing is a recompute tax that lowers MFU; it only pays for itself

@@ -9,6 +9,7 @@ from vrl.config.precision import RolePrecision
 DEFAULT_PRECISION = RolePrecision(
     dtype="fp32",
     float32_precision="ieee",
+    outer_autocast=False,
 )
 
 
@@ -16,12 +17,10 @@ def _stamp_model_precision(
     model: Any,
     *,
     precision: RolePrecision = DEFAULT_PRECISION,
-    outer_autocast_enabled: bool = False,
 ) -> None:
-    """Stamp the runtime precision fields required by trainer test doubles."""
+    """Stamp the role precision required by trainer test doubles."""
 
     model.precision = precision
-    model.outer_autocast_enabled = outer_autocast_enabled
 
 
 def _algorithm_inputs(inputs):

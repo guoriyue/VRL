@@ -14,7 +14,11 @@ from vrl.config.precision import RolePrecision
 from vrl.scripts.eval import sana_aesthetic_checkpoint_eval as checkpoint_eval
 from vrl.scripts.eval import sana_inference
 
-SANA_PRECISION = RolePrecision(dtype="fp16", float32_precision="ieee")
+SANA_PRECISION = RolePrecision(
+    dtype="fp16",
+    float32_precision="ieee",
+    outer_autocast=False,
+)
 
 
 def _write_run(tmp_path: Path, *, empty_manifest: bool = False) -> Path:
@@ -588,7 +592,6 @@ def test_official_generation_keeps_two_images_in_one_fixed_seed_stream() -> None
     model = SimpleNamespace(
         pipeline=FakePipeline(),
         precision=SANA_PRECISION,
-        outer_autocast_enabled=False,
     )
     decoded = sana_inference.generate_prompt_images(
         model,
@@ -621,7 +624,6 @@ def test_official_generation_rejects_sampling_drift() -> None:
             SimpleNamespace(
                 pipeline=SimpleNamespace(),
                 precision=SANA_PRECISION,
-                outer_autocast_enabled=False,
             ),
             scheduler=DPMSolverMultistepScheduler(),
             prompt="fox",
@@ -644,7 +646,6 @@ def test_generation_uses_fresh_base_before_reading_fullparam_checkpoints(
     class FakeModel:
         state = "base"
         precision = SANA_PRECISION
-        outer_autocast_enabled = False
 
         def eval(self):
             return self
@@ -653,7 +654,6 @@ def test_generation_uses_fresh_base_before_reading_fullparam_checkpoints(
     bundle = SimpleNamespace(
         model=model,
         precision=SANA_PRECISION,
-        outer_autocast=False,
     )
     entry = SimpleNamespace(
         resolve_model_build=lambda *args, **kwargs: object(),
@@ -698,11 +698,6 @@ def test_generation_uses_fresh_base_before_reading_fullparam_checkpoints(
     monkeypatch.setattr(checkpoint_eval, "load_trainable_state", fake_load)
     monkeypatch.setattr(checkpoint_eval, "generate_prompt_images", fake_generate)
     monkeypatch.setattr(checkpoint_eval, "load_official_scheduler", lambda build: object())
-    monkeypatch.setattr(
-        checkpoint_eval,
-        "validate_model_precision",
-        lambda value: {},
-    )
     monkeypatch.setattr(media, "write_png", fake_write_png)
     first_checkpoint = tmp_path / "checkpoint-25"
     targets = [

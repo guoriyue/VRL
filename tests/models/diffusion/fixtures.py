@@ -415,6 +415,6 @@ def stamp_test_contract(model: Any, *, autocast: str = "off") -> Any:
     model.precision = RolePrecision(
         dtype="fp32" if autocast == "off" else autocast,
         float32_precision="ieee",
+        outer_autocast=autocast != "off",
     )
-    model.outer_autocast_enabled = autocast != "off"
     return model

@@ -9,7 +9,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Literal, get_args
 
-from vrl.config.precision import Float32Precision
 from vrl.families.names import (
     normalize_model_family,
     validate_model_family_aliases,
@@ -41,17 +40,6 @@ class DiffusionFamilyBuild:
     # Only families whose replay construction cannot use the generic descriptor
     # path declare an override (echo/cosmos3/anima).
     replay_runtime_builder: str | None = None
-    # Optional family capability boundary for base transformer storage. Keep
-    # this only when some public role dtypes are known-invalid for the family;
-    # ordinary families inherit every plain dtype from the precision policy.
-    supported_parameter_dtypes: tuple[str, ...] | None = None
-    # Optional process-wide FP32 backend requirement. Ordinary families accept
-    # either public mode; SANA's FP32 linear-attention math requires IEEE.
-    required_float32_precision: Float32Precision | None = None
-    # Whether the shared diffusion forward boundary applies the role dtype via
-    # outer autocast. SANA disables it because its attention processor owns
-    # internal FP32 promotion.
-    outer_autocast: bool = True
     # LoRA-only family: the generic builders fail loud BEFORE paying the
     # transformer load. The per-family WHY belongs in a comment on the entry
     # (and in the model's own apply_full_finetune error), not in runtime data.
@@ -70,31 +58,6 @@ class DiffusionFamilyBuild:
             raise ValueError(
                 "scheduler_classname belongs to the generic replay builder and "
                 "cannot accompany replay_runtime_builder",
-            )
-        if self.required_float32_precision not in (None, *get_args(Float32Precision)):
-            raise ValueError(
-                "required_float32_precision must be ieee, tf32, or None; got "
-                f"{self.required_float32_precision!r}",
-            )
-        if not isinstance(self.outer_autocast, bool):
-            raise TypeError("outer_autocast must be a bool")
-
-    def validate_parameter_dtype(self, family: str, parameter_dtype: Any) -> None:
-        """Enforce a family checkpoint's supported parameter storage dtypes."""
-
-        if self.supported_parameter_dtypes is None:
-            return
-        from vrl.models.dtypes import dtype_to_wire_name
-
-        actual_dtype = dtype_to_wire_name(parameter_dtype)
-        supported_names = tuple(
-            dtype_to_wire_name(dtype) for dtype in self.supported_parameter_dtypes
-        )
-        if actual_dtype not in supported_names:
-            raise ValueError(
-                f"diffusion family {family!r} supports base parameter dtypes "
-                f"{self.supported_parameter_dtypes!r}; got {parameter_dtype!r}. "
-                "Set the selected precision role dtype to a supported value.",
             )
 
 
@@ -145,8 +108,8 @@ class ModelFamilyEntry:
 
         This is the only config-to-``ModelBuild`` boundary. Family identity was
         already selected by ``get_model_family_entry`` and is never read from
-        the config again; ordinary precision comes from the top-level precision
-        policy, while genuine family invariants stay on the build descriptor.
+        the config again; execution precision comes from the top-level precision
+        policy.
         """
 
         from vrl.config.precision import resolve_precision_policy
@@ -192,19 +155,6 @@ class ModelFamilyEntry:
             if parameter_dtype_override is not None
             else role_parameter_dtype
         )
-        if isinstance(self.family_build, DiffusionFamilyBuild):
-            self.family_build.validate_parameter_dtype(self.family, parameter_dtype)
-            required_float32 = self.family_build.required_float32_precision
-            if (
-                required_float32 is not None
-                and role_precision.float32_precision != required_float32
-            ):
-                raise ValueError(
-                    f"model family {self.family!r} requires "
-                    "precision.float32_precision="
-                    f"{required_float32!r}; got "
-                    f"{role_precision.float32_precision!r}",
-                )
         rollout = None
         if for_rollout:
             rollout = RolloutBuildOptions(
@@ -216,11 +166,6 @@ class ModelFamilyEntry:
             parameter_dtype=parameter_dtype,
             family=self.family,
             precision=role_precision,
-            outer_autocast=(
-                self.family_build.outer_autocast
-                if isinstance(self.family_build, DiffusionFamilyBuild)
-                else False
-            ),
             model_config=model_config,
             sampling_config=sampling_config,
             rollout=rollout,
@@ -404,18 +349,6 @@ _register_model_family(
             model_cls="vrl.models.diffusion.sana.model:SanaModel",
             replay_cls="vrl.models.diffusion.sana.model:SanaReplayModel",
             transformer_classname="SanaTransformer2DModel",
-            # This checkpoint's transformer must execute with native FP16
-            # parameters. BF16 autocast produced color blocks, while FP32
-            # parameters destabilized the final linear-attention block. Frozen
-            # Gemma and protected scheduler/log-probability math own separate
-            # BF16/FP32 boundaries.
-            supported_parameter_dtypes=("fp16",),
-            # SANA's native FP16 linear-attention path is corrupted by outer
-            # autocast. Its processor promotes Q/K/V to FP32, where TF32 also
-            # changes rollout/replay likelihoods, so both processes require
-            # full IEEE FP32 matmuls.
-            required_float32_precision="ieee",
-            outer_autocast=False,
         ),
     ),
 )

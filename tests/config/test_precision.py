@@ -151,6 +151,49 @@ def test_rollout_quantization_inherits_training_base_dtype():
     assert p.rollout.label == "bf16+fp8"
 
 
+def test_rollout_inherits_training_outer_autocast() -> None:
+    p = resolve_precision_policy(
+        _cfg(
+            precision={
+                "float32_precision": "ieee",
+                "training": {"dtype": "fp16", "outer_autocast": False},
+            },
+        ),
+    )
+
+    expected = RolePrecision(
+        dtype="fp16",
+        float32_precision="ieee",
+        outer_autocast=False,
+    )
+    assert p.training == expected
+    assert p.rollout == expected
+    assert p.training.label == "fp16+no-autocast"
+    assert p.stages_match is True
+
+
+def test_rollout_can_override_training_outer_autocast() -> None:
+    block = _plain_precision("fp16")
+    block["rollout"]["outer_autocast"] = False
+
+    p = resolve_precision_policy(_cfg(precision=block))
+
+    assert p.training.outer_autocast is True
+    assert p.rollout.outer_autocast is False
+    assert p.rollout.label == "fp16+no-autocast"
+    assert p.stages_match is False
+
+
+@pytest.mark.parametrize("role", ["training", "rollout"])
+@pytest.mark.parametrize("value", [0, 1, "false"])
+def test_outer_autocast_rejects_non_boolean_values(role, value) -> None:
+    block = _plain_precision()
+    block[role]["outer_autocast"] = value
+
+    with pytest.raises(TypeError, match=rf"precision\.{role}\.outer_autocast must be a bool"):
+        resolve_precision_policy(_cfg(precision=block))
+
+
 def test_prompt_encoders_default_to_rollout_dtype_even_for_fp32():
     p = resolve_precision_policy(_cfg(precision=_plain_precision("fp32")))
     assert p.prompt_encoder_dtype == "fp32"

@@ -147,10 +147,12 @@ def test_generate_all_releases_model_before_rebuilding(monkeypatch, tmp_path) ->
     class FakeBundle:
         def __init__(self) -> None:
             self.model = FakeModel()
-            self.precision = RolePrecision(dtype="fp32", float32_precision="ieee")
-            self.outer_autocast = False
+            self.precision = RolePrecision(
+                dtype="fp32",
+                float32_precision="ieee",
+                outer_autocast=False,
+            )
             self.model.precision = self.precision
-            self.model.outer_autocast_enabled = self.outer_autocast
 
     model_refs: list[weakref.ReferenceType[FakeModel]] = []
 

@@ -120,7 +120,7 @@ class TestAdvantageAndMetrics:
                 signal_request=None,
             ):
                 assert model.precision is DEFAULT_PRECISION
-                assert model.outer_autocast_enabled is False
+                assert model.precision.outer_autocast is False
                 batch_size = batch.rewards.shape[0]
                 self.calls += 1
                 old = torch.full(

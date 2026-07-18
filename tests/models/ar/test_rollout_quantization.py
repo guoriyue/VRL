@@ -137,8 +137,8 @@ def test_ar_worker_guard_requires_the_requested_format(
             "bf16",
             "tf32",
             QuantizationPolicy(format=format_name),
+            outer_autocast=False,
         ),
-        outer_autocast=False,
         rollout=RolloutBuildOptions(
             prompt_encoder_dtype="bf16",
         ),
@@ -164,8 +164,8 @@ def test_ar_worker_guard_rejects_a_different_quantization_format() -> None:
             "bf16",
             "tf32",
             QuantizationPolicy(format="nvfp4"),
+            outer_autocast=False,
         ),
-        outer_autocast=False,
         rollout=RolloutBuildOptions(
             prompt_encoder_dtype="bf16",
         ),
@@ -204,8 +204,8 @@ def test_ar_builder_rejects_unsupported_nvfp4_before_quantization_mutation(
             "bf16",
             "tf32",
             QuantizationPolicy(format="nvfp4"),
+            outer_autocast=False,
         ),
-        outer_autocast=False,
         rollout=RolloutBuildOptions(
             prompt_encoder_dtype="bf16",
         ),
@@ -248,8 +248,8 @@ def test_ar_builder_applies_rollout_quantization_and_replay_does_not(
                 None
                 if quantization_format is None
                 else QuantizationPolicy(format=quantization_format),
+                outer_autocast=False,
             ),
-            outer_autocast=False,
             model_config={"path": "fake/repo", "use_lora": False},
             rollout=(
                 RolloutBuildOptions(

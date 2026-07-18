@@ -30,7 +30,11 @@ from vrl.rollouts.evaluators.diffusion.sde_logprob import DiffusionSDELogProbEva
 from vrl.rollouts.evaluators.types import SignalRequest
 from vrl.trajectory import build_diffusion_trajectory
 
-_PRECISION = RolePrecision(dtype="fp32", float32_precision="ieee")
+_PRECISION = RolePrecision(
+    dtype="fp32",
+    float32_precision="ieee",
+    outer_autocast=False,
+)
 
 # -- generation-side buffer + config ----------------------------------------
 
@@ -221,7 +225,6 @@ class _Scheduler:
 class _CountingReplayModel(DiffusionModelBase):
     family = "test"
     precision = _PRECISION
-    outer_autocast_enabled = False
     device = torch.device("cpu")
 
     def __init__(self) -> None:

@@ -16,7 +16,6 @@ def test_full_pipeline_propagates_revision_like_component_loader() -> None:
         parameter_dtype=torch.float16,
         family="sd3_5",
         precision=RolePrecision("fp16", "tf32"),
-        outer_autocast=True,
         model_config={"revision": "immutable-revision"},
     )
 
@@ -32,7 +31,6 @@ def test_full_pipeline_omits_absent_revision() -> None:
         parameter_dtype=torch.float16,
         family="sd3_5",
         precision=RolePrecision("fp16", "tf32"),
-        outer_autocast=True,
         model_config={},
     )
 

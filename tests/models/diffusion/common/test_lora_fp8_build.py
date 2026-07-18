@@ -182,7 +182,6 @@ def test_shared_builder_drops_master_before_quantized_lora_gpu_move(monkeypatch)
         parameter_dtype=torch.float16,
         family="sd3_5",
         precision=RolePrecision("bf16", "tf32", QuantizationPolicy(format="fp8")),
-        outer_autocast=True,
         rollout=RolloutBuildOptions(
             prompt_encoder_dtype=torch.bfloat16,
             base_weight_sync=False,
@@ -228,8 +227,7 @@ def test_shared_builder_preserves_resolved_role_precision() -> None:
         device="cpu",
         parameter_dtype=torch.float16,
         family="sd3_5",
-        precision=RolePrecision("fp32", "ieee"),
-        outer_autocast=False,
+        precision=RolePrecision("fp32", "ieee", outer_autocast=False),
         rollout=RolloutBuildOptions(
             prompt_encoder_dtype=torch.bfloat16,
         ),
@@ -243,7 +241,7 @@ def test_shared_builder_preserves_resolved_role_precision() -> None:
     )
 
     assert bundle.precision is build.precision
-    assert bundle.outer_autocast is build.outer_autocast
+    assert bundle.precision.outer_autocast is False
 
 
 def test_nvfp4_hardware_guard_runs_before_quantization_mutation(
@@ -267,7 +265,6 @@ def test_nvfp4_hardware_guard_runs_before_quantization_mutation(
         parameter_dtype=torch.bfloat16,
         family="sd3_5",
         precision=RolePrecision("bf16", "tf32", QuantizationPolicy(format="nvfp4")),
-        outer_autocast=True,
         rollout=RolloutBuildOptions(
             prompt_encoder_dtype=torch.bfloat16,
         ),
@@ -332,7 +329,6 @@ def test_full_finetune_dtype_move_preserves_quantized_cache(
             "tf32",
             QuantizationPolicy(format=quantization_format),
         ),
-        outer_autocast=True,
         rollout=RolloutBuildOptions(
             prompt_encoder_dtype=torch.bfloat16,
         ),

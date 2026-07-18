@@ -183,8 +183,8 @@ def test_diffusion_launch_contract_uses_resolved_config_parameter_dtype() -> Non
         "dtype": "bf16",
         "float32_precision": "tf32",
         "quantization": None,
+        "outer_autocast": True,
     }
-    assert inputs.launch_contract.model_build["outer_autocast"] is True
 
 
 def test_sana_launch_contract_carries_parameter_and_rollout_precision() -> None:
@@ -213,8 +213,8 @@ def test_sana_launch_contract_carries_parameter_and_rollout_precision() -> None:
         "dtype": "fp16",
         "float32_precision": "ieee",
         "quantization": None,
+        "outer_autocast": False,
     }
-    assert model_build["outer_autocast"] is False
     assert model_build["rollout"] == {
         "prompt_encoder_dtype": "bfloat16",
         "base_weight_sync": False,
@@ -236,15 +236,7 @@ def test_sana_fp8_rollout_keeps_native_policy_and_bf16_prompt_encoder() -> None:
             "distributed.resources.reward.gpus_per_worker=0",
         ],
     )
-    cfg.precision = {
-        "float32_precision": "ieee",
-        "training": {"dtype": "fp16"},
-        "rollout": {
-            "dtype": "fp16",
-            "quantization": {"format": "fp8"},
-            "prompt_encoders": {"dtype": "bf16"},
-        },
-    }
+    cfg.precision.rollout.quantization = {"format": "fp8"}
 
     inputs = _capture_launch_inputs(
         cfg,
@@ -257,8 +249,8 @@ def test_sana_fp8_rollout_keeps_native_policy_and_bf16_prompt_encoder() -> None:
         "dtype": "fp16",
         "float32_precision": "ieee",
         "quantization": {"format": "fp8", "recipe": "rowwise"},
+        "outer_autocast": False,
     }
-    assert model_build["outer_autocast"] is False
     assert model_build["rollout"]["prompt_encoder_dtype"] == "bfloat16"
     assert "quantization" not in model_build["rollout"]
 

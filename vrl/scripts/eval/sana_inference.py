@@ -1,9 +1,9 @@
 """Shared native SANA inference protocol for evaluation entrypoints.
 
 Training uses a stochastic Flow-GRPO scheduler at 512px, but model quality is
-judged through SANA's public 1024px DPM-Solver++ pipeline.  Keeping scheduler,
-precision, and generation validation here prevents one evaluation CLI from
-silently drifting back to the training sampler.
+judged through SANA's public 1024px DPM-Solver++ pipeline. Keeping scheduler,
+sampling, and execution-context validation here prevents one evaluation CLI
+from silently drifting back to the training sampler.
 """
 
 from __future__ import annotations
@@ -13,7 +13,6 @@ from typing import Any
 
 import torch
 
-from vrl.models.precision import model_precision
 from vrl.utils.media import to_pil_image
 
 # These mappings are persisted protocol identities, not tunable defaults.
@@ -95,19 +94,6 @@ def generate_prompt_images(
 
     if num_images < 1:
         raise ValueError(f"num_images must be >= 1; got {num_images}")
-    precision = model_precision(model)
-    if (
-        precision.dtype != "fp16"
-        or precision.float32_precision != "ieee"
-        or bool(getattr(model, "outer_autocast_enabled", True))
-    ):
-        raise ValueError(
-            "SANA native inference requires fp16 role precision, no outer "
-            "autocast, and IEEE FP32 matmuls; "
-            f"got precision={precision!r}, "
-            "outer_autocast="
-            f"{getattr(model, 'outer_autocast_enabled', None)!r}",
-        )
     if _is_autocast_enabled(device):
         raise RuntimeError("SANA native inference must run without an outer autocast context")
     validate_scheduler(scheduler)

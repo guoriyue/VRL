@@ -115,18 +115,16 @@ class ModelBuild:
 
     model_name_or_path: str
     device: Any
-    # Resolved base transformer parameter dtype. Family capabilities may reject
-    # unsupported public role dtypes independently of forward autocast.
+    # Resolved base transformer parameter dtype selected by the public role.
     parameter_dtype: Any
     # Canonical registry identity. Both driver replay and Ray rollout builds
     # require it; the worker restores it from the launch contract.
     family: str
     # The selected training or rollout role is the single precision source for
-    # base compute, selective quantization, and process-local FP32 matmul mode.
+    # base compute, outer autocast, selective quantization, and process-local
+    # FP32 matmul mode.
     # A primitive mapping is accepted only at the Ray wire boundary.
     precision: RolePrecision | Mapping[str, Any]
-    # Family capability consumed by the shared diffusion forward boundary.
-    outer_autocast: bool
     model_config: dict[str, Any] | None = None
     sampling_config: dict[str, Any] | None = None
     # Full-generation build inputs. ``None`` is the replay contract: replay owns
@@ -156,8 +154,6 @@ class ModelBuild:
             raise TypeError(
                 "ModelBuild.precision must be RolePrecision or a mapping",
             )
-        if not isinstance(self.outer_autocast, bool):
-            raise TypeError("ModelBuild.outer_autocast must be a bool")
         self.parameter_dtype = resolve_torch_dtype(self.parameter_dtype)
         parameter_name = dtype_to_wire_name(self.parameter_dtype)
         try:
@@ -272,10 +268,10 @@ class RuntimeBundle:
     restores only these modules, so family builders must include every
     trainable adapter/backbone needed for exact resume.
 
-    ``precision`` is the selected training or rollout role. ``outer_autocast``
-    is the family capability that controls whether diffusion forwards apply its
-    dtype through AMP. Assembly stamps both on ``model`` for replay algorithms
-    that call the transformer outside the family ``forward_step`` wrapper.
+    ``precision`` is the selected training or rollout role, including whether
+    diffusion forwards apply its dtype through outer autocast. Assembly stamps
+    the complete role on ``model`` for replay algorithms that call the
+    transformer outside the family ``forward_step`` wrapper.
 
     ``metadata`` may include generic replay/runtime flags used by shared
     trainer infrastructure. Build these through this module's
@@ -293,7 +289,6 @@ class RuntimeBundle:
     scheduler: Any
     raw_handle: Any
     precision: RolePrecision
-    outer_autocast: bool
     metadata: dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
@@ -301,9 +296,6 @@ class RuntimeBundle:
             raise TypeError(
                 "RuntimeBundle.precision must be RolePrecision",
             )
-        if not isinstance(self.outer_autocast, bool):
-            raise TypeError("RuntimeBundle.outer_autocast must be a bool")
         # Replay consumers read the exact role policy from the model they
         # forward, so a caller cannot pair a model with a different policy.
         self.model.precision = self.precision
-        self.model.outer_autocast_enabled = self.outer_autocast

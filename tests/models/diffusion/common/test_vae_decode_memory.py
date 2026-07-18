@@ -137,7 +137,6 @@ def test_wan_runtime_bundle_applies_model_build_memory_policy(
             parameter_dtype="float32",
             family="wan_2_1",
             precision=RolePrecision("fp32", "tf32"),
-            outer_autocast=True,
             rollout=RolloutBuildOptions(
                 prompt_encoder_dtype="float16",
             ),
@@ -237,8 +236,8 @@ def test_full_generation_runtime_bundles_apply_model_build_memory_policy(
             precision=RolePrecision(
                 "fp16" if build_family == "sana" else "fp32",
                 "ieee" if build_family == "sana" else "tf32",
+                outer_autocast=build_family != "sana",
             ),
-            outer_autocast=build_family != "sana",
             rollout=RolloutBuildOptions(
                 prompt_encoder_dtype="float16",
             ),

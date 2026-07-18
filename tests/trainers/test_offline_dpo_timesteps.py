@@ -28,7 +28,11 @@ from vrl.trainers.offline import (
     wan_forward,
 )
 
-PRECISION = RolePrecision(dtype="fp32", float32_precision="ieee")
+PRECISION = RolePrecision(
+    dtype="fp32",
+    float32_precision="ieee",
+    outer_autocast=False,
+)
 
 
 def _noop_forward(model, noisy, ts, encoder, extra=None):  # pragma: no cover
@@ -61,8 +65,8 @@ def _make_trainer(
     model.precision = RolePrecision(
         dtype="fp32",
         float32_precision=float32_precision,
+        outer_autocast=False,
     )
-    model.outer_autocast_enabled = False
     return OfflineDPOTrainer(
         model=model,
         ref_model=None,
@@ -105,7 +109,6 @@ class TestSampleTimesteps:
         cfg = OfflineDPOTrainerConfig(prediction_type="epsilon")
         model = torch.nn.Linear(4, 4)
         model.precision = PRECISION
-        model.outer_autocast_enabled = False
         trainer = OfflineDPOTrainer(
             model=model,
             ref_model=None,
@@ -316,7 +319,6 @@ def test_step_metrics_report_the_optimized_loss(
     monkeypatch.setattr(dpo_module, "diffusion_dpo_loss", fake_dpo_loss)
     monkeypatch.setattr(dpo_module, "diffusion_sft_loss", fake_sft_loss)
     model.precision = PRECISION
-    model.outer_autocast_enabled = False
     trainer = OfflineDPOTrainer(
         model=model,
         ref_model=ref_model,

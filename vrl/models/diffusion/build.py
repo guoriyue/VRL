@@ -89,7 +89,6 @@ def build_diffusion_runtime_bundle(
         scheduler=model.scheduler,
         raw_handle=model.raw_handle,
         precision=build.precision,
-        outer_autocast=build.outer_autocast,
         metadata=full_generation_bundle_metadata(),
     )
 
@@ -117,7 +116,6 @@ def assemble_replay_bundle(
         scheduler=model.scheduler,
         raw_handle=None,
         precision=build.precision,
-        outer_autocast=build.outer_autocast,
         metadata=minimal_replay_bundle_metadata(),
     )
 
@@ -175,7 +173,6 @@ def build_family_runtime_bundle(
         raise ValueError(
             f"rollout build family {build.family!r} does not match entry {entry.family!r}",
         )
-    recipe.validate_parameter_dtype(entry.family, build.parameter_dtype)
     _check_requires_lora(entry, build)
     logger.info("Building %s runtime bundle (registry descriptor)", entry.family)
     return build_diffusion_runtime_bundle(
@@ -203,7 +200,6 @@ def build_family_replay_runtime_bundle(
         raise ValueError(
             f"replay build family {build.family!r} does not match entry {entry.family!r}",
         )
-    recipe.validate_parameter_dtype(entry.family, build.parameter_dtype)
     _check_requires_lora(entry, build)
     if recipe.replay_cls is None or recipe.transformer_classname is None:
         raise ValueError(

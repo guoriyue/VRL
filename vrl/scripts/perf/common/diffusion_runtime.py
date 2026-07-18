@@ -43,7 +43,7 @@ def build_model(cfg, device, dtype):
         raise ValueError(
             "TeaCache probe dtype does not match resolved rollout precision: "
             f"requested {token!r}, resolved dtype={runtime.precision.dtype!r}, "
-            f"outer_autocast={runtime.outer_autocast!r}",
+            f"outer_autocast={runtime.precision.outer_autocast!r}",
         )
     return runtime.model
 

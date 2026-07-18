@@ -55,17 +55,23 @@ def _state(*, do_cfg: bool) -> SanaSamplingState:
     )
 
 
-def test_sana_requires_validated_forward_without_outer_autocast() -> None:
-    """SANA's family descriptor owns one shared forward requirement."""
+def test_sana_yaml_resolves_native_forward_precision() -> None:
+    """SANA's YAML owns the shared rollout and replay precision policy."""
 
+    from vrl.config.loading import load_config
+    from vrl.config.precision import RolePrecision
     from vrl.families.registry import get_model_family_entry
 
-    family_build = get_model_family_entry("sana").family_build
-    assert family_build.required_float32_precision == "ieee"
-    assert family_build.outer_autocast is False
-    assert not hasattr(SanaModel, "disable_rollout_autocast")
-    assert not hasattr(SanaModel, "disable_train_autocast")
-    assert not hasattr(SanaModel, "allow_tf32")
+    cfg = load_config("experiment/diffusion/sana/online_grpo_aesthetic")
+    entry = get_model_family_entry("sana")
+    expected = RolePrecision(
+        dtype="fp16",
+        float32_precision="ieee",
+        outer_autocast=False,
+    )
+
+    assert entry.resolve_model_build(cfg, "cpu", for_rollout=True).precision == expected
+    assert entry.resolve_model_build(cfg, "cpu", for_rollout=False).precision == expected
 
 
 def test_sana_fp16_output_is_promoted_before_cfg() -> None:

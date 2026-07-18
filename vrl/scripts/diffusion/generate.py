@@ -14,7 +14,7 @@ trainer):
 
     python -m vrl.scripts.diffusion.generate --family sana \\
         --path Efficient-Large-Model/Sana_1600M_1024px_diffusers \\
-        --dtype fp16 \\
+        --dtype fp16 --float32-precision ieee --no-outer-autocast \\
         --prompt "a red fox in the snow" --steps 8 --height 512 --width 512 \\
         --check-replay --out /tmp/sana_probe.png
 """
@@ -39,14 +39,20 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument(
         "--dtype",
-        default=None,
-        help="rollout role dtype (default: the sole family-supported dtype, otherwise bf16)",
+        required=True,
+        help="rollout role dtype",
     )
     parser.add_argument(
         "--float32-precision",
         choices=["ieee", "tf32"],
-        default=None,
-        help="FP32 matmul mode (default: the family requirement, otherwise tf32)",
+        required=True,
+        help="FP32 matmul mode",
+    )
+    parser.add_argument(
+        "--outer-autocast",
+        action=argparse.BooleanOptionalAction,
+        required=True,
+        help="whether the shared diffusion boundary applies role-dtype autocast",
     )
     parser.add_argument(
         "--device",
@@ -85,10 +91,9 @@ def _build_arg_parser() -> argparse.ArgumentParser:
 def _resolve_probe_model_build(args: argparse.Namespace, entry: Any, device: Any) -> Any:
     """Project CLI inputs through the production model-build resolver.
 
-    The family descriptor owns parameter storage while the public precision
-    policy owns autocast, prompt-encoder precision, and quantized rollout behavior.
-    Reusing that boundary keeps this direct probe from growing a second dtype
-    policy that can drift from Ray workers.
+    The explicit public precision policy owns parameter storage, autocast,
+    prompt-encoder precision, and quantized rollout behavior. Reusing the
+    production resolver keeps the probe and Ray workers on the same contract.
     """
 
     from dataclasses import replace
@@ -97,17 +102,13 @@ def _resolve_probe_model_build(args: argparse.Namespace, entry: Any, device: Any
 
     from vrl.models.dtypes import dtype_to_precision_token, resolve_torch_dtype
 
-    supported_dtypes = entry.family_build.supported_parameter_dtypes
-    role_dtype = (
-        supported_dtypes[0]
-        if args.dtype is None and supported_dtypes is not None and len(supported_dtypes) == 1
-        else (args.dtype or "bfloat16")
-    )
-    role_precision = dtype_to_precision_token(resolve_torch_dtype(role_dtype))
-    family_float32_precision = entry.family_build.required_float32_precision
+    role_precision = dtype_to_precision_token(resolve_torch_dtype(args.dtype))
     precision: dict[str, Any] = {
-        "float32_precision": (args.float32_precision or family_float32_precision or "tf32"),
-        "training": {"dtype": role_precision},
+        "float32_precision": args.float32_precision,
+        "training": {
+            "dtype": role_precision,
+            "outer_autocast": args.outer_autocast,
+        },
     }
     if args.quantize is not None:
         precision["rollout"] = {"quantization": {"format": args.quantize}}

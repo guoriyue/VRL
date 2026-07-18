@@ -300,8 +300,11 @@ def _make_resume_trainer(
     role_dtype = train_precision if train_precision in {"fp16", "bf16"} else "fp32"
     _stamp_model_precision(
         model,
-        precision=RolePrecision(dtype=role_dtype, float32_precision="ieee"),
-        outer_autocast_enabled=train_precision in {"fp16", "bf16"},
+        precision=RolePrecision(
+            dtype=role_dtype,
+            float32_precision="ieee",
+            outer_autocast=train_precision in {"fp16", "bf16"},
+        ),
     )
     return OnlineTrainer(
         algorithm=_ResumeAlgorithm(),

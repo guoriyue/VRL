@@ -13,7 +13,8 @@ from vrl.algorithms.grpo.continuous import (
 )
 from vrl.config.builders import build_configs
 from vrl.config.loading import load_config
-from vrl.families.registry import DiffusionFamilyBuild, get_model_family_entry
+from vrl.config.precision import RolePrecision
+from vrl.families.registry import get_model_family_entry
 from vrl.ray.resources import resolve_distributed_resources
 from vrl.rollouts.collector.config import build_rollout_config_from_cfg
 from vrl.scripts.common.factory import (
@@ -149,37 +150,43 @@ def test_sana_family_defaults_to_native_fp16() -> None:
     entry = get_model_family_entry("sana")
     build = entry.resolve_model_build(cfg, torch.device("cpu"))
 
-    assert isinstance(entry.family_build, DiffusionFamilyBuild)
-    assert entry.family_build.supported_parameter_dtypes == ("fp16",)
-    assert entry.family_build.required_float32_precision == "ieee"
-    assert entry.family_build.outer_autocast is False
     assert cfg.model.get("dtype") is None
-    # Structural invariants, not preset literals: training and rollout both
-    # declare the checkpoint's native FP16 role, while Gemma stays independently
-    # BF16. SanaModel turns the FP16 role into a no-autocast runtime boundary.
+    expected = RolePrecision(
+        dtype="fp16",
+        float32_precision="ieee",
+        outer_autocast=False,
+    )
     assert built["trainer"].train_precision == built["trainer"].rollout_precision
     assert built["trainer"].replay_samples_per_chunk == built["trainer"].samples_per_chunk
     assert build.parameter_dtype is torch.float16
-    assert build.precision.dtype == "fp16"
-    assert build.precision.float32_precision == "ieee"
-    assert build.outer_autocast is False
+    assert build.precision == expected
+    assert (
+        entry.resolve_model_build(cfg, torch.device("cpu"), for_rollout=False).precision
+        == expected
+    )
     assert build.rollout is not None
     assert build.rollout.prompt_encoder_dtype is torch.bfloat16
 
 
 @pytest.mark.parametrize("role", ["training", "rollout"])
 @pytest.mark.parametrize("dtype", ["bf16", "fp32"])
-def test_sana_family_rejects_non_native_role_precision(role: str, dtype: str) -> None:
-    """Invalid transformer dtypes fail before checkpoint loading for either role."""
+def test_sana_role_precision_follows_yaml(role: str, dtype: str) -> None:
+    """The selected YAML role owns SANA's transformer execution policy."""
     cfg = load_config("experiment/diffusion/sana/online_grpo_aesthetic")
     cfg.precision[role].dtype = dtype
 
-    with pytest.raises(ValueError, match=r"sana.*supports base parameter dtypes.*fp16"):
-        get_model_family_entry("sana").resolve_model_build(
-            cfg,
-            torch.device("cpu"),
-            for_rollout=role == "rollout",
-        )
+    build = get_model_family_entry("sana").resolve_model_build(
+        cfg,
+        torch.device("cpu"),
+        for_rollout=role == "rollout",
+    )
+
+    assert build.precision == RolePrecision(
+        dtype=dtype,
+        float32_precision="ieee",
+        outer_autocast=False,
+    )
+    assert build.parameter_dtype is getattr(torch, {"bf16": "bfloat16", "fp32": "float32"}[dtype])
 
 
 def test_sana_fullparam_pilot_disables_tf32_and_gates_backend_drift() -> None:
@@ -286,23 +293,29 @@ def test_ordinary_diffusion_family_rejects_duplicate_model_dtype() -> None:
 
 
 @pytest.mark.parametrize("dtype", ["bf16", "fp32"])
-def test_sana_family_capability_rejects_non_native_direct_tool_override(dtype: str) -> None:
+def test_sana_direct_tool_override_changes_storage_only(dtype: str) -> None:
     cfg = load_config("experiment/diffusion/sana/online_grpo_aesthetic")
 
-    with pytest.raises(ValueError, match=r"sana.*supports base parameter dtypes.*fp16"):
-        get_model_family_entry("sana").resolve_model_build(
-            cfg,
-            torch.device("cpu"),
-            parameter_dtype_override=dtype,
-        )
+    build = get_model_family_entry("sana").resolve_model_build(
+        cfg,
+        torch.device("cpu"),
+        parameter_dtype_override=dtype,
+    )
+
+    assert build.parameter_dtype is getattr(torch, {"bf16": "bfloat16", "fp32": "float32"}[dtype])
+    assert build.precision == RolePrecision(
+        dtype="fp16",
+        float32_precision="ieee",
+        outer_autocast=False,
+    )
 
 
 def test_token_objective_rejects_unused_math_precision_override() -> None:
     cfg = load_config("experiment/ar/emu3/online_grpo_pickscore_validation")
     cfg.precision = {
         "float32_precision": "tf32",
-        "training": {"dtype": "bf16"},
-        "rollout": {"dtype": "bf16"},
+        "training": {"dtype": "bf16", "outer_autocast": False},
+        "rollout": {"dtype": "bf16", "outer_autocast": False},
         "diffusion_math": {"dtype": "bf16"},
     }
     built = build_configs(cfg)

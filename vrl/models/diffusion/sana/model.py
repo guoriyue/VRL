@@ -106,9 +106,8 @@ class SanaModel(LoraModelMixin, DiffusersPipelineModelBase, DiffusionBackboneRun
         """Load the diffusers SANA pipeline + freeze non-trainable modules."""
         from diffusers import SanaPipeline
 
-        # The family capability rejects non-native transformer dtypes before
-        # this loader runs. Rollout and replay both receive the validated FP16
-        # role dtype from the unified precision policy.
+        # Rollout and replay both receive the role dtype selected by the unified
+        # precision policy. The canonical SANA preset chooses native FP16.
         model_dtype = build.parameter_dtype
         prompt_encoder_dtype, load_kwargs = diffusers_pipeline_dtypes(build, model_dtype)
         pipeline = SanaPipeline.from_pretrained(
@@ -370,49 +369,4 @@ class SanaReplayModel(DiffusersReplayModelBase, SanaModel):
     """Replay-only SANA model that owns no prompt encoder, VAE, or pipeline."""
 
 
-def validate_model_precision(model: Any) -> dict[str, Any]:
-    """Require the materialized no-autocast SANA precision boundary.
-
-    The registry constrains the resolved contract; this gate verifies the
-    loaded reality — actual component dtypes and the effective process FP32
-    backend — because a checkpoint or a stray backend toggle can violate the
-    family invariant without touching the contract.
-    """
-
-    from vrl.models.dtypes import dtype_to_wire_name
-    from vrl.models.precision import float32_precision_state
-
-    pipeline = getattr(model, "pipeline", None)
-    if pipeline is None:
-        raise TypeError("SANA runtime model does not expose its native pipeline")
-    components = {
-        "transformer": model.transformer,
-        "prompt_encoder": getattr(pipeline, "text_encoder", None),
-        "vae": getattr(pipeline, "vae", None),
-    }
-    for name, component in components.items():
-        if component is None or not hasattr(component, "dtype"):
-            raise TypeError(f"SANA {name} does not expose a dtype")
-    actual = {
-        **{name: dtype_to_wire_name(component.dtype) for name, component in components.items()},
-        "outer_autocast": bool(getattr(model, "outer_autocast_enabled", True)),
-        "effective_float32_precision": float32_precision_state(),
-    }
-    expected = {
-        "transformer": "float16",
-        "prompt_encoder": "bfloat16",
-        "vae": "float32",
-        "outer_autocast": False,
-        "effective_float32_precision": {
-            "matmul": "ieee",
-            "cudnn": "ieee",
-        },
-    }
-    if actual != expected:
-        raise ValueError(
-            f"SANA precision boundary mismatch: expected={expected}, actual={actual}",
-        )
-    return actual
-
-
-__all__ = ["SanaModel", "SanaReplayModel", "SanaSamplingState", "validate_model_precision"]
+__all__ = ["SanaModel", "SanaReplayModel", "SanaSamplingState"]

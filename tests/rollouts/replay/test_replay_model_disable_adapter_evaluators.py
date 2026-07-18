@@ -22,7 +22,11 @@ from vrl.trajectory import (
     build_training_view,
 )
 
-_PRECISION = RolePrecision(dtype="fp32", float32_precision="ieee")
+_PRECISION = RolePrecision(
+    dtype="fp32",
+    float32_precision="ieee",
+    outer_autocast=False,
+)
 
 
 def _request() -> GenerationRequest:
@@ -106,7 +110,6 @@ def _continuous_batch() -> RolloutBatch:
 
 class _DiscreteReplayModel:
     precision = _PRECISION
-    outer_autocast_enabled = False
 
     def __init__(self) -> None:
         self.disable_calls = 0
@@ -141,7 +144,6 @@ class _DiscreteReplayModel:
 
 class _ContinuousReplayModel:
     precision = _PRECISION
-    outer_autocast_enabled = False
 
     def __init__(self) -> None:
         self.disable_calls = 0

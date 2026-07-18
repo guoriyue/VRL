@@ -1,16 +1,18 @@
 """Resolve public precision config into role-specific runtime policy.
 
-``dtype`` is the ordinary parameter/autocast precision for a role. Selective
-quantization is a separate kernel policy layered on that dtype: FP8 replaces
-eligible attention/MLP Linears, while experimental NVFP4 conservatively replaces
-eligible MLP Linears only. Unswapped operations keep the role dtype.
+``dtype`` is the ordinary parameter precision for a role; ``outer_autocast``
+selects whether the shared diffusion boundary also applies that dtype through
+AMP. Selective quantization is a separate kernel policy layered on the dtype:
+FP8 replaces eligible attention/MLP Linears, while experimental NVFP4
+conservatively replaces eligible MLP Linears only. Unswapped operations keep
+the role dtype.
 
-Rollout dtype defaults to training dtype. Prompt-encoder dtype defaults to the
-resolved rollout dtype; the canonical base preset explicitly selects fp16 to
-preserve its established memory policy. VAE precision is family-owned and is
-not represented by this prompt-encoder axis. Diffusion math defaults to fp32.
-FP32 matmul precision is an explicit run-wide policy because PyTorch process
-defaults are not a stable trainer/worker contract.
+Rollout dtype and outer-autocast behavior default to the training role.
+Prompt-encoder dtype defaults to the resolved rollout dtype; the canonical base
+preset explicitly selects fp16 to preserve its established memory policy. VAE
+precision is family-owned and is not represented by this prompt-encoder axis.
+Diffusion math defaults to fp32. FP32 matmul precision is an explicit run-wide
+policy because PyTorch process defaults are not a stable trainer/worker contract.
 
 Training quantization is part of the structural schema so the eventual training
 runtime will use the same role shape, but policy resolution fails until a real
@@ -68,6 +70,7 @@ class QuantizationConfig:
 @dataclass(frozen=True, slots=True)
 class TrainingPrecisionConfig:
     dtype: Any
+    outer_autocast: Any = True
     quantization: QuantizationConfig | None = None
 
 
@@ -79,6 +82,7 @@ class PromptEncodersPrecisionConfig:
 @dataclass(frozen=True, slots=True)
 class RolloutPrecisionConfig:
     dtype: Any = None
+    outer_autocast: Any = None
     quantization: QuantizationConfig | None = None
     prompt_encoders: PromptEncodersPrecisionConfig | None = None
 
@@ -172,6 +176,7 @@ class RolePrecision:
     dtype: str
     float32_precision: Float32Precision
     quantization: QuantizationPolicy | None = None
+    outer_autocast: bool = True
 
     def __post_init__(self) -> None:
         object.__setattr__(
@@ -184,6 +189,8 @@ class RolePrecision:
             "float32_precision",
             _normalize_float32_precision(self.float32_precision),
         )
+        if not isinstance(self.outer_autocast, bool):
+            raise TypeError("role outer_autocast must be a bool")
         if self.quantization is not None and not isinstance(
             self.quantization,
             QuantizationPolicy,
@@ -192,11 +199,14 @@ class RolePrecision:
 
     @property
     def label(self) -> str:
-        """Stable role label containing the base dtype and kernel policy."""
+        """Stable role label containing base dtype and execution policies."""
 
-        if self.quantization is None:
-            return self.dtype
-        return f"{self.dtype}+{self.quantization.format}"
+        parts = [self.dtype]
+        if self.quantization is not None:
+            parts.append(self.quantization.format)
+        if not self.outer_autocast:
+            parts.append("no-autocast")
+        return "+".join(parts)
 
 
 @dataclass(frozen=True, slots=True)
@@ -238,7 +248,7 @@ class PrecisionPolicy:
 
     @property
     def stages_match(self) -> bool:
-        """Whether rollout and replay use the same dtype and kernel policy."""
+        """Whether rollout and replay use the same complete execution policy."""
 
         return self.training == self.rollout
 
@@ -280,12 +290,14 @@ def resolve_precision_policy(cfg: Any) -> PrecisionPolicy:
         block,
         "training",
         float32_precision=float32_precision,
+        outer_autocast_default=True,
     )
     rollout = _parse_role(
         block,
         "rollout",
         dtype_default=training.dtype,
         float32_precision=float32_precision,
+        outer_autocast_default=training.outer_autocast,
     )
     math_raw = _select(block, "diffusion_math.dtype", "fp32")
     prompt_encoder_raw = _select(
@@ -312,6 +324,7 @@ def _parse_role(
     role: str,
     *,
     float32_precision: Float32Precision,
+    outer_autocast_default: bool,
     dtype_default: Any = _MISSING,
 ) -> RolePrecision:
     dtype_raw = _select(block, f"{role}.dtype", dtype_default)
@@ -328,9 +341,19 @@ def _parse_role(
             format=str(format_raw),
             recipe=str(recipe_raw) if recipe_raw is not None else None,
         )
+    outer_autocast = _select(
+        block,
+        f"{role}.outer_autocast",
+        outer_autocast_default,
+    )
+    if not isinstance(outer_autocast, bool):
+        raise TypeError(
+            f"precision.{role}.outer_autocast must be a bool; got {outer_autocast!r}",
+        )
     return RolePrecision(
         dtype=_normalize_plain_dtype(dtype_raw, path=f"precision.{role}.dtype"),
         float32_precision=float32_precision,
+        outer_autocast=outer_autocast,
         quantization=quantization,
     )
 
@@ -363,7 +386,8 @@ def _reject_legacy_keys(block: Any) -> None:
         names = ", ".join(present)
         raise ValueError(
             f"legacy precision key(s) are no longer supported: {names}. Use "
-            "precision.training.dtype, precision.rollout.dtype, "
+            "precision.training.dtype, precision.training.outer_autocast, "
+            "precision.rollout.dtype, precision.rollout.outer_autocast, "
             "precision.rollout.quantization, precision.diffusion_math.dtype, "
             "precision.rollout.prompt_encoders.dtype, and "
             "precision.float32_precision.",

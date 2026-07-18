@@ -14,8 +14,9 @@ defaults:
   - /reward/pickscore
 
 # This recipe keeps the model preset's official FP16 transformer path without
-# outer autocast. The family rejects BF16 and FP32 denoiser builds; Gemma remains
-# BF16 and stochastic scheduler/log-probability math remains protected FP32.
+# outer autocast. BF16 and FP32 denoiser paths failed the canonical quality
+# probes but remain explicit experiment overrides. Gemma stays BF16, while
+# stochastic scheduler/log-probability math remains protected FP32.
 
 sampling:
   max_sequence_length: 300

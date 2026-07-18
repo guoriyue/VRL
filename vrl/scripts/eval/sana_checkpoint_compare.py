@@ -27,8 +27,8 @@ from typing import Any
 import torch
 
 from vrl.config.loading import load_config
-from vrl.config.precision import resolve_precision_policy
-from vrl.models.diffusion.sana.model import validate_model_precision
+from vrl.models.dtypes import dtype_to_wire_name
+from vrl.models.precision import float32_precision_state, model_precision
 from vrl.scripts.eval.sana_inference import (
     SCHEDULER_PROTOCOL,
     generate_prompt_images,
@@ -46,7 +46,6 @@ logger = logging.getLogger(__name__)
 # Compatibility facade for the public comparison tool's focused protocol tests.
 _generate_prompt_group = generate_prompt_images
 _load_official_scheduler = load_official_scheduler
-_validate_model_precision = validate_model_precision
 _validate_scheduler = validate_scheduler
 
 # Persisted report identity is a protocol boundary.
@@ -141,7 +140,7 @@ def run_comparison(args: argparse.Namespace) -> dict[str, str]:
     build = resolve_family_model_build(cfg, device, for_rollout=True)
     bundle = build_family_runtime_bundle(build)
     model = bundle.model.eval()
-    dtype_record = _validate_model_precision(model)
+    dtype_record = _model_precision_snapshot(model)
 
     output_dir.mkdir(parents=True)
     base_path = output_dir / "base.png"
@@ -242,6 +241,28 @@ def run_comparison(args: argparse.Namespace) -> dict[str, str]:
     }
 
 
+def _model_precision_snapshot(model: Any) -> dict[str, Any]:
+    """Record the materialized SANA precision state for report provenance."""
+
+    pipeline = getattr(model, "pipeline", None)
+    if pipeline is None:
+        raise TypeError("SANA runtime model does not expose its native pipeline")
+    components = {
+        "transformer": getattr(model, "transformer", None),
+        "prompt_encoder": getattr(pipeline, "text_encoder", None),
+        "vae": getattr(pipeline, "vae", None),
+    }
+    for name, component in components.items():
+        if component is None or not hasattr(component, "dtype"):
+            raise TypeError(f"SANA {name} does not expose a dtype")
+    precision = model_precision(model)
+    return {
+        **{name: dtype_to_wire_name(component.dtype) for name, component in components.items()},
+        "outer_autocast": precision.outer_autocast,
+        "effective_float32_precision": float32_precision_state(),
+    }
+
+
 def _validate_resolved_config(cfg: Any) -> None:
     family = str(cfg.model.get("family", "")).strip().lower()
     if family != "sana":
@@ -252,25 +273,6 @@ def _validate_resolved_config(cfg: Any) -> None:
         raise ValueError(
             "SANA checkpoint comparison accepts full-parameter runs only: "
             "model.use_lora must be false and model.lora must be null",
-        )
-
-    policy = resolve_precision_policy(cfg)
-    if policy.training.dtype != policy.rollout.dtype:
-        raise ValueError(
-            "SANA comparison requires matching training and rollout precision; "
-            f"got training={policy.training.dtype!r}, rollout={policy.rollout.dtype!r}",
-        )
-    if policy.training.dtype != "fp16":
-        raise ValueError(
-            "SANA comparison requires aligned native-FP16 policy precision; "
-            f"got {policy.training.dtype!r}",
-        )
-    if policy.training.quantization is not None or policy.rollout.quantization is not None:
-        raise ValueError("SANA comparison does not accept quantized training or rollout")
-    if policy.prompt_encoder_dtype != "bf16":
-        raise ValueError(
-            "SANA comparison requires the BF16 prompt encoder; "
-            f"got {policy.prompt_encoder_dtype!r}",
         )
 
 

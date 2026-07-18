@@ -226,16 +226,18 @@ class _FakeFamilyEntry:
 
     def build_replay(self, build: Any) -> Any:
         del build
-        precision = RolePrecision(dtype="fp32", float32_precision="ieee")
+        precision = RolePrecision(
+            dtype="fp32",
+            float32_precision="ieee",
+            outer_autocast=False,
+        )
         model = _FakeModel()
         model.precision = precision
-        model.outer_autocast_enabled = False
         return SimpleNamespace(
             model=model,
             scheduler=object(),
             trainable_modules={},
             precision=precision,
-            outer_autocast=False,
         )
 
 

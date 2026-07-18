@@ -31,7 +31,7 @@ def test_bridge_uses_aligned_public_precision(experiment):
     cfg = load_config(f"experiment/{experiment}")
     trainer_config = build_configs(cfg)["trainer"]
     policy = resolve_precision_policy(cfg)
-    assert trainer_config.train_precision == policy.training.dtype
+    assert trainer_config.train_precision == policy.training.label
     assert trainer_config.rollout_precision == policy.rollout.label
     assert policy.training == policy.rollout
     assert torch_dtype_for_trainer_precision(trainer_config, torch) is resolve_torch_dtype(
@@ -111,6 +111,19 @@ def test_no_split_means_no_auto_correction_policy() -> None:
     # split-only policy (TIS truncate / drift_guard mode="fail") is NOT installed.
     assert trainer_config.precision_correction == PrecisionCorrectionConfig()
     assert trainer_config.precision_drift_guard == PrecisionDriftGuardConfig()
+
+
+def test_outer_autocast_split_is_preserved_in_trainer_role_labels() -> None:
+    block = _plain_policy("bf16")
+    block["rollout"]["outer_autocast"] = False
+    cfg = _with_precision("diffusion/sd3_5/online_grpo_ocr", block)
+
+    trainer_config = build_configs(cfg)["trainer"]
+
+    assert trainer_config.train_precision == "bf16"
+    assert trainer_config.rollout_precision == "bf16+no-autocast"
+    assert trainer_config.precision_correction.tis_mode == "truncate"
+    assert trainer_config.precision_drift_guard.mode == "fail"
 
 
 def test_explicit_precision_correction_is_respected_on_rollout_split():

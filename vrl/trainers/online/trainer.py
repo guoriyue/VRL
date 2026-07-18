@@ -43,7 +43,6 @@ from vrl.trainers.online.precision_guard import (
     measure_precision_drift,
 )
 from vrl.trainers.optimizer import FP32MasterWeightOptimizer, build_optimizer
-from vrl.trainers.precision import normalize_mixed_precision
 from vrl.trainers.strategy import SingleProcessStrategy, Strategy, TrainingMemoryState
 from vrl.trainers.weight_sync import TrainableStateGetter, WeightSyncer
 from vrl.utils.model_diagnostics import (
@@ -171,10 +170,6 @@ class PhaseTimer:
 # ---------------------------------------------------------------------------
 
 
-def _resolve_mixed_precision(config: TrainerConfig) -> str:
-    return normalize_mixed_precision(getattr(config, "train_precision", ""))
-
-
 def _create_grad_scaler(
     device: torch.device,
     model: Any,
@@ -183,10 +178,8 @@ def _create_grad_scaler(
 
     if device.type != "cuda":
         return None
-    uses_fp16_autocast = (
-        bool(getattr(model, "outer_autocast_enabled", True))
-        and model_precision(model).dtype == "fp16"
-    )
+    precision = model_precision(model)
+    uses_fp16_autocast = precision.outer_autocast and precision.dtype == "fp16"
     has_native_fp16_gradients = bool(
         model is not None
         and any(
@@ -250,7 +243,7 @@ def _trainer_precision_metadata(
     model: Any,
     evaluator: Any | None,
 ) -> dict[str, Any]:
-    training_precision = _precision_label(_resolve_mixed_precision(config))
+    training_precision = _precision_label(config.train_precision)
     rollout_precision = _precision_label(config.rollout_precision or training_precision)
     return {
         "training_precision": training_precision,

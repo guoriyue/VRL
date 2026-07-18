@@ -16,7 +16,11 @@ from vrl.rollouts.batch.ops import move_training_batch_to_device
 from vrl.rollouts.evaluators.diffusion.sde_logprob import DiffusionSDELogProbEvaluator
 from vrl.trajectory import build_diffusion_trajectory
 
-_PRECISION = RolePrecision(dtype="fp32", float32_precision="ieee")
+_PRECISION = RolePrecision(
+    dtype="fp32",
+    float32_precision="ieee",
+    outer_autocast=False,
+)
 
 
 def test_diffusion_replay_slices_timestep_before_device_move(monkeypatch) -> None:
@@ -152,7 +156,6 @@ class _Scheduler:
 
 class _ReplayModel(DiffusionModelBase):
     precision = _PRECISION
-    outer_autocast_enabled = False
     family = "test"
     device = torch.device("cpu")
 

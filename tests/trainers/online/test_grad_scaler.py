@@ -32,10 +32,10 @@ from vrl.trainers.strategy import SingleProcessStrategy
 
 
 # --------------------------------------------------------------------------
-# G1 — scaler follows effective FP16 backward risk, not outer-autocast alone
+# G1 — scaler follows effective FP16 backward risk, not outer autocast alone
 # --------------------------------------------------------------------------
 @pytest.mark.parametrize(
-    ("dtype", "outer_autocast_enabled", "device", "parameter_dtype", "expected"),
+    ("dtype", "outer_autocast", "device", "parameter_dtype", "expected"),
     [
         ("fp16", True, "cuda", torch.float32, True),  # ordinary AMP
         ("fp16", True, "cpu", torch.float32, False),
@@ -50,7 +50,7 @@ from vrl.trainers.strategy import SingleProcessStrategy
 def test_create_grad_scaler_matrix(
     monkeypatch: pytest.MonkeyPatch,
     dtype,
-    outer_autocast_enabled,
+    outer_autocast,
     device,
     parameter_dtype,
     expected,
@@ -58,8 +58,11 @@ def test_create_grad_scaler_matrix(
     model = nn.Linear(1, 1, bias=False).to(dtype=parameter_dtype)
     _stamp_model_precision(
         model,
-        precision=RolePrecision(dtype=dtype, float32_precision="ieee"),
-        outer_autocast_enabled=outer_autocast_enabled,
+        precision=RolePrecision(
+            dtype=dtype,
+            float32_precision="ieee",
+            outer_autocast=outer_autocast,
+        ),
     )
     sentinel = object()
     monkeypatch.setattr(torch.amp, "GradScaler", lambda _device: sentinel)

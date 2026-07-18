@@ -165,15 +165,12 @@ def test_runtime_bundle_exposes_model_contract() -> None:
         trainable_modules={},
         scheduler=None,
         raw_handle=None,
-        precision=RolePrecision("fp32", "ieee"),
-        outer_autocast=False,
+        precision=RolePrecision("fp32", "ieee", outer_autocast=False),
     )
 
     assert bundle.model is model
-    assert bundle.precision == RolePrecision("fp32", "ieee")
-    assert bundle.outer_autocast is False
+    assert bundle.precision == RolePrecision("fp32", "ieee", outer_autocast=False)
     assert model.precision is bundle.precision
-    assert model.outer_autocast_enabled is False
 
 
 def test_runtime_bundle_rejects_unresolved_role_precision_mapping() -> None:
@@ -187,7 +184,6 @@ def test_runtime_bundle_rejects_unresolved_role_precision_mapping() -> None:
                 "dtype": "fp32",
                 "float32_precision": "ieee",
             },
-            outer_autocast=False,
         )
 
 

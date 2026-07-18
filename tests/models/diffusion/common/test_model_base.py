@@ -73,8 +73,11 @@ class _CompiledWrapper(nn.Module):
 
 
 class _ModelBaseStub(DiffusionModelBase):
-    precision = RolePrecision(dtype="fp32", float32_precision="ieee")
-    outer_autocast_enabled = False
+    precision = RolePrecision(
+        dtype="fp32",
+        float32_precision="ieee",
+        outer_autocast=False,
+    )
     device = torch.device("cpu")
     family = "stub"
 
@@ -543,10 +546,17 @@ def test_forward_step_runs_under_the_stamped_contract() -> None:
             return {"noise_pred": torch.zeros(1)}
 
     stub = _ContractStub()
-    stub.precision = RolePrecision(dtype="bf16", float32_precision="ieee")
-    stub.outer_autocast_enabled = True
+    stub.precision = RolePrecision(
+        dtype="bf16",
+        float32_precision="ieee",
+        outer_autocast=True,
+    )
     stub.forward_step(object(), 0)
-    stub.outer_autocast_enabled = False
+    stub.precision = RolePrecision(
+        dtype="bf16",
+        float32_precision="ieee",
+        outer_autocast=False,
+    )
     stub.forward_step(object(), 0)
 
     assert states == [True, False]

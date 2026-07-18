@@ -331,7 +331,7 @@ def test_resolve_model_build_derives_nvfp4_from_nested_precision() -> None:
     assert build.precision.quantization.format == "nvfp4"
     assert build.precision.dtype == "bf16"
     assert build.precision.float32_precision == "tf32"
-    assert build.outer_autocast is True
+    assert build.precision.outer_autocast is True
     assert build.parameter_dtype is torch.bfloat16
 
 

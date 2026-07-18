@@ -10,17 +10,20 @@ from omegaconf import OmegaConf
 from PIL import Image
 
 from vrl.config.precision import RolePrecision
-from vrl.models import precision as precision_module
 from vrl.models.diffusion import build as diffusion_build
 from vrl.scripts.eval import sana_checkpoint_compare as checkpoint_compare
 
-SANA_PRECISION = RolePrecision(dtype="fp16", float32_precision="ieee")
+SANA_PRECISION = RolePrecision(
+    dtype="fp16",
+    float32_precision="ieee",
+    outer_autocast=False,
+)
 
 
 @pytest.fixture(autouse=True)
 def _effective_ieee_backend(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
-        precision_module,
+        checkpoint_compare,
         "float32_precision_state",
         lambda: {"matmul": "ieee", "cudnn": "ieee"},
     )
@@ -67,12 +70,10 @@ class _FakeModel:
         *,
         transformer_dtype: torch.dtype = torch.float16,
         precision: RolePrecision = SANA_PRECISION,
-        outer_autocast_enabled: bool = False,
     ) -> None:
         self.transformer = SimpleNamespace(dtype=transformer_dtype)
         self.pipeline = _FakePipeline(events)
         self.precision = precision
-        self.outer_autocast_enabled = outer_autocast_enabled
 
     def eval(self):
         return self
@@ -90,9 +91,10 @@ def _config(*, policy_dtype: str = "fp16") -> object:
             },
             "precision": {
                 "float32_precision": "ieee",
-                "training": {"dtype": policy_dtype},
+                "training": {"dtype": policy_dtype, "outer_autocast": False},
                 "rollout": {
                     "dtype": policy_dtype,
+                    "outer_autocast": False,
                     "prompt_encoders": {"dtype": "bf16"},
                 },
             },
@@ -144,7 +146,6 @@ def test_run_generates_base_before_strict_restore_and_current(
         model=model,
         trainable_modules={"transformer": model.transformer},
         precision=SANA_PRECISION,
-        outer_autocast=False,
     )
     build = SimpleNamespace(
         model_name_or_path="test/sana",
@@ -262,23 +263,9 @@ def test_run_refuses_to_mix_artifacts_with_an_existing_comparison(
         pytest.param("model.family", "wan", "model.family", id="non-sana"),
         pytest.param("model.use_lora", True, "full-parameter", id="lora-enabled"),
         pytest.param("model.lora", {"rank": 16}, "full-parameter", id="lora-config"),
-        pytest.param("precision.training.dtype", "bf16", "matching", id="training-bf16"),
-        pytest.param("precision.rollout.dtype", "bf16", "matching", id="rollout-bf16"),
-        pytest.param(
-            "precision.rollout.prompt_encoders.dtype",
-            "fp16",
-            "BF16 prompt encoder",
-            id="prompt-fp16",
-        ),
-        pytest.param(
-            "precision.rollout.quantization",
-            {"format": "fp8", "recipe": "rowwise"},
-            "quantized",
-            id="rollout-quantized",
-        ),
     ],
 )
-def test_config_protocol_rejects_non_native_runs(path, value, message) -> None:
+def test_config_protocol_rejects_out_of_scope_runs(path, value, message) -> None:
     cfg = _config()
     OmegaConf.update(cfg, path, value, merge=False)
 
@@ -286,14 +273,13 @@ def test_config_protocol_rejects_non_native_runs(path, value, message) -> None:
         checkpoint_compare._validate_resolved_config(cfg)
 
 
-def test_config_protocol_accepts_aligned_native_fp16_full_parameter_run() -> None:
+def test_config_protocol_accepts_full_parameter_sana_run() -> None:
     checkpoint_compare._validate_resolved_config(_config())
 
 
 @pytest.mark.parametrize("policy_dtype", ["bf16", "fp32"])
-def test_config_protocol_rejects_aligned_non_native_run(policy_dtype: str) -> None:
-    with pytest.raises(ValueError, match="native-FP16"):
-        checkpoint_compare._validate_resolved_config(_config(policy_dtype=policy_dtype))
+def test_config_protocol_leaves_precision_to_resolved_yaml(policy_dtype: str) -> None:
+    checkpoint_compare._validate_resolved_config(_config(policy_dtype=policy_dtype))
 
 
 @pytest.mark.parametrize(
@@ -329,14 +315,37 @@ def test_checkpoint_protocol_accepts_full_parameter_sana(tmp_path) -> None:
 
 
 @pytest.mark.parametrize(
-    ("target", "value"),
+    ("target", "value", "record_key", "expected"),
     [
-        pytest.param("transformer.dtype", torch.bfloat16, id="transformer-bf16"),
-        pytest.param("pipeline.text_encoder.dtype", torch.float16, id="prompt-fp16"),
-        pytest.param("pipeline.vae.dtype", torch.float16, id="vae-fp16"),
+        pytest.param(
+            "transformer.dtype",
+            torch.bfloat16,
+            "transformer",
+            "bfloat16",
+            id="transformer-bf16",
+        ),
+        pytest.param(
+            "pipeline.text_encoder.dtype",
+            torch.float16,
+            "prompt_encoder",
+            "float16",
+            id="prompt-fp16",
+        ),
+        pytest.param(
+            "pipeline.vae.dtype",
+            torch.float16,
+            "vae",
+            "float16",
+            id="vae-fp16",
+        ),
     ],
 )
-def test_model_precision_rejects_non_native_boundary(target, value) -> None:
+def test_model_precision_snapshot_records_materialized_dtypes(
+    target,
+    value,
+    record_key,
+    expected,
+) -> None:
     model = _FakeModel([])
     owner = model
     parts = target.split(".")
@@ -344,12 +353,13 @@ def test_model_precision_rejects_non_native_boundary(target, value) -> None:
         owner = getattr(owner, part)
     setattr(owner, parts[-1], value)
 
-    with pytest.raises(ValueError, match="precision boundary mismatch"):
-        checkpoint_compare._validate_model_precision(model)
+    actual = checkpoint_compare._model_precision_snapshot(model)
+
+    assert actual[record_key] == expected
 
 
-def test_model_precision_accepts_native_fp16_no_autocast_boundary() -> None:
-    actual = checkpoint_compare._validate_model_precision(_FakeModel([]))
+def test_model_precision_snapshot_records_native_configured_boundary() -> None:
+    actual = checkpoint_compare._model_precision_snapshot(_FakeModel([]))
 
     assert actual["transformer"] == "float16"
     assert actual["prompt_encoder"] == "bfloat16"
@@ -361,55 +371,36 @@ def test_model_precision_accepts_native_fp16_no_autocast_boundary() -> None:
     }
 
 
-def test_model_precision_rejects_fp32_transformer() -> None:
-    with pytest.raises(ValueError, match="precision boundary mismatch"):
-        checkpoint_compare._validate_model_precision(
-            _FakeModel([], transformer_dtype=torch.float32),
-        )
+def test_model_precision_snapshot_records_configured_outer_autocast() -> None:
+    model = _FakeModel(
+        [],
+        precision=RolePrecision(
+            dtype="fp16",
+            float32_precision="ieee",
+            outer_autocast=True,
+        ),
+    )
+
+    actual = checkpoint_compare._model_precision_snapshot(model)
+
+    assert actual["outer_autocast"] is True
 
 
-def test_model_precision_rejects_active_outer_autocast_capability() -> None:
-    with pytest.raises(ValueError, match="precision boundary mismatch"):
-        checkpoint_compare._validate_model_precision(
-            _FakeModel([], outer_autocast_enabled=True),
-        )
-
-
-@pytest.mark.parametrize(
-    "precision",
-    [
-        RolePrecision(dtype="bf16", float32_precision="ieee"),
-        RolePrecision(dtype="fp16", float32_precision="tf32"),
-    ],
-)
-def test_generation_rejects_wrong_role_precision(
-    precision: RolePrecision,
-) -> None:
-    with pytest.raises(ValueError, match="native inference requires"):
-        checkpoint_compare._generate_one(
-            _FakeModel([], precision=precision),
-            scheduler=DPMSolverMultistepScheduler(),
-            prompt="test",
-            seed=1,
-            height=8,
-            width=8,
-            steps=1,
-            guidance_scale=4.5,
-            device=torch.device("cpu"),
-        )
-
-
-def test_model_precision_rejects_effective_backend_drift(
+def test_model_precision_snapshot_records_effective_backend(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(
-        precision_module,
+        checkpoint_compare,
         "float32_precision_state",
         lambda: {"matmul": "tf32", "cudnn": "ieee"},
     )
 
-    with pytest.raises(ValueError, match="precision boundary mismatch"):
-        checkpoint_compare._validate_model_precision(_FakeModel([]))
+    actual = checkpoint_compare._model_precision_snapshot(_FakeModel([]))
+
+    assert actual["effective_float32_precision"] == {
+        "matmul": "tf32",
+        "cudnn": "ieee",
+    }
 
 
 def test_generation_rejects_an_active_outer_autocast() -> None:

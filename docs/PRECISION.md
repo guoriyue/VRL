@@ -9,9 +9,11 @@ precision:
 
   training:
     dtype: bf16
+    outer_autocast: true
 
   rollout:
     dtype: bf16
+    outer_autocast: true
     quantization:
       format: fp8
       recipe: rowwise
@@ -24,7 +26,8 @@ precision:
 
 `precision.float32_precision` and `precision.training.dtype` are required.
 `float32_precision` accepts `ieee` or `tf32`. `rollout.dtype` inherits the
-training dtype,
+training dtype, `training.outer_autocast` defaults to true, and
+`rollout.outer_autocast` inherits the training value.
 `rollout.prompt_encoders.dtype` inherits the resolved rollout dtype, and
 `diffusion_math.dtype` defaults to FP32. Set prompt encoders to FP16 explicitly
 when that memory/accuracy trade-off is desired; quantization never changes their
@@ -36,23 +39,22 @@ dtype implicitly.
 `rollout.dtype` is the base dtype for the generation policy. A base dtype governs
 parameter loading and the dtype used by the model's shared execution boundary.
 After config resolution, each process receives one `RolePrecision` containing
-that role's `dtype`, `float32_precision`, and optional `quantization`. This is the
-single precision object used by model loading, backend setup, quantization, and
+that role's `dtype`, `float32_precision`, `outer_autocast`, and optional
+`quantization`. This is the single precision object used by model loading,
+backend setup, the shared diffusion forward boundary, quantization, and
 diagnostics; rollout build options carry only generation-specific inputs such as
 the prompt-encoder dtype and weight-sync lifecycle.
 
-Whether a diffusion family supports an outer transformer autocast scope is a
-family capability, not another user precision setting. Ordinary diffusion
-families enable that boundary, while AR families and SANA disable it. The shared
-boundary is still a no-op for an FP32 role. `ModelBuild` and `RuntimeBundle`
-therefore carry the resolved role precision together with this family-owned
-capability, and stamp both on the model that actually executes the forward.
-Executors and trajectory contexts do not copy either value.
+`outer_autocast` controls the shared transformer AMP scope for a role. It is a
+public execution choice rather than a hidden family capability. Selecting false
+keeps the model's native parameter execution while still allowing protected
+operations inside the model to own their local precision. FP32 roles make the
+shared autocast scope a no-op regardless of this setting.
 
-A model-family requirement may further constrain the resolved model contract.
-SANA, for example, requires native FP16 transformer parameters with outer
-autocast off. This requirement lives in the family registry and is not a public
-knob: a user cannot select an unsupported SANA forward mode through YAML.
+SANA's canonical preset explicitly selects FP16 parameters, IEEE FP32 matmuls,
+and `outer_autocast: false` for both roles. These are checkpoint-validated preset
+values, not permanent restrictions attached to every model registered as SANA;
+an explicit config override is accepted as an experiment choice.
 
 An aligned BF16 run only needs:
 
@@ -78,14 +80,12 @@ precision:
 `float32_precision` controls FP32 matrix multiplication kernels in every trainer
 and rollout process. `tf32` permits TensorFloat-32 acceleration; `ieee` requires
 strict IEEE FP32 behavior. This axis is independent of parameter storage and the
-family-owned outer autocast capability: FP16/BF16 models may still contain FP32
+role's outer autocast setting: FP16/BF16 models may still contain FP32
 attention or protected sub-operations whose matmuls consume this policy.
 
-The setting is explicit because process defaults can differ. A family requirement
-may constrain it: SANA's canonical preset selects `ieee`, and the registry rejects
-a conflicting public value because its linear-attention processor promotes Q/K/V
-to FP32 and is numerically sensitive to TF32. That family requirement is not
-another user-facing precision setting.
+The setting is explicit because process defaults can differ. SANA's canonical
+preset selects `ieee` because its linear-attention processor promotes Q/K/V to
+FP32 and is numerically sensitive to TF32.
 
 ## Selective rollout quantization
 
@@ -174,8 +174,8 @@ This controls generation-only text/prompt encoders for model families whose
 rollout builder exposes them. It defaults to `rollout.dtype` and is independent
 of policy quantization.
 
-It does not control the VAE. VAE precision is a model-family fidelity invariant;
-current diffusion families keep VAE decode in FP32. The previous
+It does not control the VAE. Current diffusion loaders actively materialize VAE
+decode modules in FP32 for output fidelity. The previous
 `frozen_components` name incorrectly implied that one public dtype controlled
 every frozen pipeline module and has been removed.
 

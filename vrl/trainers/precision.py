@@ -4,9 +4,11 @@ from __future__ import annotations
 
 from typing import Any
 
+from vrl.config.precision import QuantizationPolicy
+
 
 def normalize_mixed_precision(mixed_precision: Any) -> str:
-    """Normalize a value to the AMP ``no``/``fp16``/``bf16`` protocol."""
+    """Extract the base dtype from a trainer role label for legacy consumers."""
 
     if isinstance(mixed_precision, bool):
         if mixed_precision:
@@ -18,6 +20,22 @@ def normalize_mixed_precision(mixed_precision: Any) -> str:
     token = str(mixed_precision or "").lower().strip()
     if not token:
         return "no"
+
+    parts = token.split("+")
+    token = parts[0]
+    suffixes = parts[1:]
+    quantization_suffixes = [suffix for suffix in suffixes if suffix != "no-autocast"]
+    valid_suffixes = len(suffixes) == len(set(suffixes)) and len(quantization_suffixes) <= 1
+    if valid_suffixes and quantization_suffixes:
+        try:
+            QuantizationPolicy(format=quantization_suffixes[0])
+        except ValueError:
+            valid_suffixes = False
+    if not valid_suffixes:
+        raise ValueError(
+            "trainer precision label has an unknown or duplicate execution policy; "
+            f"got {mixed_precision!r}",
+        )
 
     aliases = {
         "none": "no",
@@ -45,7 +63,7 @@ def torch_dtype_for_mixed_precision(
     *,
     torch: Any,
 ) -> Any:
-    """Return the model weight dtype implied by normalized precision config."""
+    """Return the model weight dtype encoded by a trainer role label."""
 
     precision = normalize_mixed_precision(mixed_precision)
     if precision == "no":

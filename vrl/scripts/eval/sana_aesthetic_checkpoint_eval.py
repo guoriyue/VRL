@@ -30,7 +30,6 @@ from typing import Any
 from omegaconf import DictConfig, OmegaConf
 
 from vrl.config.loading import load_config
-from vrl.models.diffusion.sana.model import validate_model_precision
 from vrl.scripts.eval.sana_inference import (
     OFFICIAL_SAMPLING_PROTOCOL,
     SCHEDULER_PROTOCOL,
@@ -59,7 +58,7 @@ EVAL_SAMPLES_PER_PROMPT = 2
 # This is the fixed scientific comparison interval, not a training IO knob.
 EVAL_CHECKPOINT_INTERVAL = 25
 CANONICAL_CONFIG_NAME = "experiment/diffusion/sana/online_grpo_aesthetic_fullparam_long"
-CANONICAL_PROTOCOL_SHA256 = "1a1babbb0fa6c44157d97f2a7e35fa46e77f1251d1a0ea0a3b70414bc643c89e"
+CANONICAL_PROTOCOL_SHA256 = "7f1d4175ffde29d598abf6330377709ed3b4462fccccefb42f8f70b6bd5b881a"
 # Frozen protocol-asset identities. These hashes name two concrete datasets;
 # they are not a duplicated prompt taxonomy or a user-facing config table.
 TRAIN_MANIFEST_SHA256 = "86580c8136a4b6d9fc6bbcc6d8e8e172b15fca6b5c6c956cc770255d8011de56"
@@ -772,7 +771,6 @@ def _generate_images(
     build = entry.resolve_model_build(cfg, device, for_rollout=True)
     bundle = entry.build_rollout(build)
     model = bundle.model.eval()
-    validate_model_precision(model)
     generated: list[GeneratedImage] = []
     checkpoint_read = False
     try:

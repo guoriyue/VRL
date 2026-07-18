@@ -19,7 +19,11 @@ from vrl.rollouts.evaluators.ar.multi_segment_token_logprob import (
 )
 from vrl.trajectory import build_ar_multisegment_trajectory, build_training_view
 
-_PRECISION = RolePrecision(dtype="fp32", float32_precision="ieee")
+_PRECISION = RolePrecision(
+    dtype="fp32",
+    float32_precision="ieee",
+    outer_autocast=False,
+)
 
 
 def _sample_rows() -> list[GenerationSampleRow]:
@@ -123,7 +127,6 @@ def _trajectory_batch(context: dict | None = None) -> RolloutBatch:
 
 class _SegmentReplayModel:
     precision = _PRECISION
-    outer_autocast_enabled = False
 
     def __init__(self) -> None:
         self.calls: list[tuple[str, str]] = []

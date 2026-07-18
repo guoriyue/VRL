@@ -49,12 +49,13 @@ def model_autocast(
     model: Any,
     device: torch.device | str,
 ) -> AbstractContextManager[Any]:
-    """Apply a model's role dtype and family-owned outer-autocast capability."""
+    """Apply a model's resolved role dtype and outer-autocast policy."""
 
+    precision = model_precision(model)
     return forward_autocast(
-        model_precision(model).dtype,
+        precision.dtype,
         device,
-        enabled=bool(getattr(model, "outer_autocast_enabled", True)),
+        enabled=precision.outer_autocast,
     )
 
 
@@ -82,7 +83,7 @@ def apply_float32_precision(mode: Float32Precision) -> None:
 
 
 def float32_precision_state() -> dict[str, str]:
-    """Return the effective PyTorch FP32 backend modes for diagnostics/gates."""
+    """Return the effective PyTorch FP32 backend modes for diagnostics."""
 
     import torch
 

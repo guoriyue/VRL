@@ -27,7 +27,6 @@ def test_resolve_model_build_defaults_to_gen_hf_checkpoint() -> None:
 
     assert build.model_name_or_path == "BAAI/Emu3-Gen-hf"
     assert build.precision == RolePrecision("fp32", "tf32")
-    assert build.outer_autocast is False
 
 
 def test_resolve_model_build_carries_sampling_and_lora_overrides() -> None:

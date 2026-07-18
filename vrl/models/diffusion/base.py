@@ -71,8 +71,8 @@ class DiffusionModelBase(nn.Module, ABC):
     def __init_subclass__(cls, **kwargs: Any) -> None:
         """Run every concrete ``forward_step`` under its role precision.
 
-        RuntimeBundle stamps the selected role precision and family autocast
-        capability on the model. Wrapping ``forward_step`` here means rollout,
+        RuntimeBundle stamps the selected role precision on the model. Wrapping
+        ``forward_step`` here means rollout,
         replay (``replay_forward`` and
         ``replay_forward_with_latents`` both funnel through ``self.forward``),
         and direct script calls all receive the same boundary without wrapping

@@ -6,15 +6,15 @@
 # live on the dataclasses in vrl/trainers/core/types.py — base YAML must not
 # restate them.
 precision:
-  # FP32 matmuls use TensorFloat-32 kernels unless a model family requires
-  # strict IEEE execution. This is independent of parameter/autocast dtype.
+  # FP32 matmuls use TensorFloat-32 kernels unless a model preset explicitly
+  # selects strict IEEE execution. This is independent of parameter/autocast dtype.
   float32_precision: tf32
   training:
     dtype: bf16
-  # Rollout compute and prompt encoders inherit training.dtype. SDE/scheduler/
-  # log-prob math defaults to fp32. Set rollout.dtype, rollout.quantization,
-  # rollout.prompt_encoders.dtype, or diffusion_math.dtype only for a measured
-  # override.
+    outer_autocast: true
+  # Rollout compute and outer autocast inherit the training role. Prompt encoders
+  # inherit rollout.dtype; SDE/scheduler/log-prob math defaults to fp32. Override
+  # only for a measured execution policy.
 
 actor:
   optim:

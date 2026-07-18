@@ -47,7 +47,7 @@ def test_sana_training_path_matches_native_flow_euler_at_every_step() -> None:
     assert model.pipeline.vae.dtype is torch.float32
     assert bundle.precision.dtype == "fp16"
     assert bundle.precision.float32_precision == "ieee"
-    assert bundle.outer_autocast is False
+    assert bundle.precision.outer_autocast is False
 
     prompt = "a red apple on a blue ceramic plate, studio photo"
     encoded = model.encode_prompt([prompt], [""], guidance_scale=4.5)
@@ -118,7 +118,7 @@ def test_sana_training_path_matches_native_flow_euler_at_every_step() -> None:
             with forward_autocast(
                 bundle.precision.dtype,
                 state.latents.device,
-                enabled=bundle.outer_autocast,
+                enabled=bundle.precision.outer_autocast,
             ):
                 production_noise = model.forward_step(state, step_index)["noise_pred"]
             torch.testing.assert_close(

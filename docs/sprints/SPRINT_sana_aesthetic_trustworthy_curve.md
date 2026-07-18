@@ -200,8 +200,8 @@ python -m vrl.scripts.eval.sana_aesthetic_curve_verdict \
 2026-07-13 native-FP16 因果复核取代了上述结论：rollout 与 replay 都关闭
 TF32 时，独立模型的 10/10 步 noise/log-prob 逐位一致；只给 replay 开 TF32
 即可重现 `1e-4` clip band 越界。首个 full-param one-step run 虽能 backward，
-但因 TF32 分叉与缺少 FP32 master 而无效。replacement 必须同时通过 TF32
-family capability、FP32 master/GradScaler、strict resume 与 `1e-6` parity gate。
+但因 TF32 分叉与缺少 FP32 master 而无效。replacement 必须同时通过显式 IEEE
+role policy、FP32 master/GradScaler、strict resume 与 `1e-6` parity gate。
 
 ### 3.4 2026-07-13 native-FP16 full-parameter pilot
 
@@ -308,12 +308,14 @@ The pre-launch probes isolated the failure:
   a valid compromise: the denoise path became non-finite and decoded to a black
   image.
 
-Therefore the family capability admits only FP16 transformer parameters. BF16
-and FP32 roles fail before checkpoint loading. Full-parameter optimization
-continues to use the already validated design: visible FP16 trainable parameters,
-checkpointed FP32 master parameters, GradScaler, and AdamW8bit moments. This is
-full-parameter training with full-precision update residuals, but it is not and
-must not be described as an FP32 transformer forward. No FP32 long run was
+Therefore the canonical replacement uses FP16 transformer parameters. BF16 and
+FP32 were rejected as trustworthy-curve candidates by the measured probe, while
+the public config remains explicitly overridable for new experiments.
+Full-parameter optimization continues to use the already validated design:
+visible FP16 trainable parameters, checkpointed FP32 master parameters,
+GradScaler, and AdamW8bit moments. This is full-parameter training with
+full-precision update residuals, but it is not and must not be described as an
+FP32 transformer forward. No FP32 long run was
 launched. The failed canary and inference outputs are one-shot evidence; this
 decision record and the regression tests are their retained result.
 
@@ -382,13 +384,13 @@ quantized-backward/FSDP 方案并跑过至少一个 backward 后才解锁。
 
 应改变且已改变：
 
-- SANA family build descriptor 固定 FP16 base transformer；denoiser 使用
-  native FP16/no-outer-autocast，Gemma 使用 BF16，VAE/CFG/timestep 与受保护
+- SANA preset 为 training/rollout 都显式选择 native FP16、IEEE FP32 backend
+  和 `outer_autocast: false`；Gemma 使用 BF16，VAE/CFG/timestep 与受保护的
   scheduler/log-prob math 使用 FP32。
-- SANA registry requirement 将每个 public role 解析为
-  `RolePrecision(dtype="fp16", float32_precision="ieee")`，并把 family-owned
-  `outer_autocast=False` 与它一起交给 trainer 和 rollout worker；两边显式写
-  FP32 backend policy，避免进程默认值分叉。该 family requirement 不是 public knob。
+- 每个进程只接收对应的 `RolePrecision(dtype="fp16",
+  float32_precision="ieee", outer_autocast=False)`。registry 不再复制 checkpoint
+  precision 限制；显式 YAML override 被视为实验选择，可信曲线仍由 canonical
+  config/protocol gate 保持严格。
 - Low-precision trainables 自动派生 checkpointed FP32 master；AdamW8bit 只
   压缩 optimizer moments，GradScaler 保护 FP16 backward，成功 step 后把
   visible policy 发布回 FP16。SANA full-param pilot 保持 EMA disabled，因为

@@ -44,8 +44,7 @@ def test_model_build_rejects_subbyte_parameter_storage(dtype: str) -> None:
             device="cpu",
             parameter_dtype=dtype,
             family="sd3_5",
-            precision=RolePrecision("fp32", "ieee"),
-            outer_autocast=False,
+            precision=RolePrecision("fp32", "ieee", outer_autocast=False),
         )
 
 
@@ -92,8 +91,8 @@ def test_model_build_reconstructs_nested_rollout_payload() -> None:
             "dtype": "bf16",
             "float32_precision": "tf32",
             "quantization": {"format": "fp8", "recipe": "rowwise"},
+            "outer_autocast": True,
         },
-        outer_autocast=True,
         rollout={
             "prompt_encoder_dtype": "fp32",
             "base_weight_sync": False,
@@ -106,7 +105,7 @@ def test_model_build_reconstructs_nested_rollout_payload() -> None:
         "tf32",
         QuantizationPolicy(format="fp8", recipe="rowwise"),
     )
-    assert build.outer_autocast is True
+    assert build.precision.outer_autocast is True
     assert isinstance(build.rollout, RolloutBuildOptions)
     assert build.rollout.prompt_encoder_dtype is torch.float32
     assert build.precision.quantization is not None
@@ -147,7 +146,7 @@ def test_model_build_resolver_projects_nvfp4_over_the_rollout_base_dtype() -> No
         "tf32",
         QuantizationPolicy(format="nvfp4"),
     )
-    assert build.outer_autocast is True
+    assert build.precision.outer_autocast is True
     assert rollout.prompt_encoder_dtype is torch.float16
     assert build.precision.quantization is not None
     assert build.precision.quantization.format == "nvfp4"
@@ -249,8 +248,7 @@ def _build(**overrides: Any) -> ModelBuild:
         "device": "cpu",
         "parameter_dtype": torch.float32,
         "family": "sd3_5",
-        "precision": RolePrecision("fp32", "tf32"),
-        "outer_autocast": False,
+        "precision": RolePrecision("fp32", "tf32", outer_autocast=False),
         "model_config": model_config,
         "sampling_config": dict(scheduler_config),
     }
@@ -332,24 +330,6 @@ def test_registry_descriptor_replay_builder_returns_minimal_bundle(
     # ModelBuild rejects a missing identity before any registry dispatch.
     with pytest.raises(ValueError, match=r"ModelBuild\.family"):
         _build(family="")
-
-
-@pytest.mark.parametrize(
-    "entry_method",
-    ["build_rollout", "build_replay"],
-)
-@pytest.mark.parametrize("parameter_dtype", [torch.bfloat16, torch.float32])
-def test_sana_builders_enforce_family_parameter_dtype(
-    entry_method: str,
-    parameter_dtype: torch.dtype,
-) -> None:
-    """Manual builds cannot bypass SANA's native-FP16 boundary."""
-    from vrl.families.registry import get_model_family_entry
-
-    with pytest.raises(ValueError, match=r"sana.*supports base parameter dtypes.*fp16"):
-        getattr(get_model_family_entry("sana"), entry_method)(
-            _build(family="sana", parameter_dtype=parameter_dtype),
-        )
 
 
 def test_wan_replay_builder_uses_wan_pipeline_scheduler_class(

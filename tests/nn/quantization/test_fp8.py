@@ -545,7 +545,7 @@ def test_resolve_model_build_derives_fp8_from_precision_rollout():
     assert build.precision.quantization.format == "fp8"
     assert build.precision.dtype == "bf16"
     assert build.precision.float32_precision == "tf32"
-    assert build.outer_autocast is True
+    assert build.precision.outer_autocast is True
     assert build.parameter_dtype is torch.bfloat16  # this family uses a bf16 source master
 
     bf16_cfg = OmegaConf.create(

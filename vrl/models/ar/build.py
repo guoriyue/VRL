@@ -93,7 +93,6 @@ def build_family_ar_bundle(
         scheduler=None,
         raw_handle=None if replay else model,
         precision=build.precision,
-        outer_autocast=build.outer_autocast,
         metadata=(
             minimal_replay_bundle_metadata() if replay else full_generation_bundle_metadata()
         ),

@@ -47,7 +47,11 @@ _BATCH = TINY_WAN_LATENT_SHAPE[0]
 _LATENT_SHAPE = TINY_WAN_LATENT_SHAPE
 _TEXT_LEN = TINY_WAN_TEXT_LEN
 _TEXT_DIM = TINY_WAN_TEXT_DIM
-_PRECISION = RolePrecision(dtype="fp32", float32_precision="ieee")
+_PRECISION = RolePrecision(
+    dtype="fp32",
+    float32_precision="ieee",
+    outer_autocast=False,
+)
 
 
 def test_diffusion_nft_does_not_tolerate_off_policy_staleness() -> None:
@@ -101,7 +105,6 @@ class _NFTModel(DiffusionModelBase):
     """
 
     precision = _PRECISION
-    outer_autocast_enabled = False
 
     def __init__(self, transformer: torch.nn.Module) -> None:
         super().__init__()

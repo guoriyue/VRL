@@ -98,7 +98,6 @@ def _worker_setup_hook(repo_root: str) -> Any:
                 scheduler=None,
                 raw_handle=None,
                 precision=build.precision,
-                outer_autocast=build.outer_autocast,
             )
 
         # The hook executes before worker imports the launch contract. Publishing
@@ -139,8 +138,8 @@ def _launch_inputs() -> RayGenerationLaunchInputs:
                     "dtype": "fp32",
                     "float32_precision": "tf32",
                     "quantization": None,
+                    "outer_autocast": False,
                 },
-                "outer_autocast": False,
             },
             policy_version=7,
         ),
