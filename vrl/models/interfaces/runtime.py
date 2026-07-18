@@ -213,7 +213,7 @@ class ModelBuild:
         ``dropout`` / ``init`` extras are carried from the raw ``model.lora``
         block only when present, preserving per-family presence semantics. AR
         families layer their own defaults via
-        ``vrl.models.ar.build.ar_model_config_base``.
+        ``vrl.models.steps.token.build.token_model_config_base``.
         """
         if not self.use_lora:
             return None

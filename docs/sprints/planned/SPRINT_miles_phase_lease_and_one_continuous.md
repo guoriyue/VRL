@@ -272,7 +272,7 @@ gpu_pool=trainer + memory_fraction    -> resident
 
 但“字段最终被 worker 读取”不能单独证明这是应保留的产品能力。Repo-owned producer 审计显示，
 唯一实际设置 role `memory_fraction` 的 active preset 是
-`vrl/config/presets/experiment/diffusion/sd3_5/online_grpo_ocr_single_gpu_async_debug.yaml`；它只为
+`vrl/config/presets/experiment/sd3_5/online_grpo_ocr_single_gpu_async_debug.yaml`；它只为
 same-GPU continuous probe 存在。本 sprint 禁止该 topology 后，仓库没有 bounded-resident recipe、
 script、E2E 或 CI consumer。把旧 preset 改名成 strict resident harness 会是在制造消费者来保留
 无人使用的能力。
@@ -972,11 +972,11 @@ a real runtime consumer's source of truth.
 ### Config/tests/docs migration
 
 - delete
-  `vrl/config/presets/experiment/diffusion/sd3_5/online_grpo_ocr_single_gpu_async_debug.yaml`；它是
+  `vrl/config/presets/experiment/sd3_5/online_grpo_ocr_single_gpu_async_debug.yaml`；它是
   same-GPU continuous 一次性 probe，不重命名成 resident harness；
 - update `vrl/config/presets/base/distributed/ray_rollout_colocated_single_gpu.yaml`;
 - update `vrl/config/presets/base/rollout/orchestration/{strict,continuous}.yaml`;
-- update `vrl/config/presets/experiment/diffusion/sd3_5/online_grpo_ocr_crossnode_debug.yaml`
+- update `vrl/config/presets/experiment/sd3_5/online_grpo_ocr_crossnode_debug.yaml`
   与 `ContinuousRolloutConfig.max_stale_policy_versions` 的 single source of truth；
 - update resource/config/runtime/orchestration/online lifecycle tests found by:
 
@@ -1051,10 +1051,10 @@ merge gate。整个 umbrella 只有两组 gate 都有对应硬件证据时才标
 ### VRL
 
 - `vrl/ray/resources.py:149-163,283-365,1158-1271`
-- `vrl/config/presets/experiment/diffusion/sd3_5/online_grpo_ocr_single_gpu_async_debug.yaml:27-43`
-- `vrl/config/presets/experiment/diffusion/cosmos_predict2_5/online_nft_kling_video_reward_ddp_2x1.yaml:48-54`
-- `vrl/config/presets/experiment/diffusion/sd3_5/online_grpo_ocr_fsdp_2x1_fullparam.yaml:53-57`
-- `vrl/config/presets/experiment/diffusion/cosmos_predict2_5/online_nft_kling_video_reward_fsdp_2x1.yaml:71-76`
+- `vrl/config/presets/experiment/sd3_5/online_grpo_ocr_single_gpu_async_debug.yaml:27-43`
+- `vrl/config/presets/experiment/cosmos_predict2_5/online_nft_kling_video_reward_ddp_2x1.yaml:48-54`
+- `vrl/config/presets/experiment/sd3_5/online_grpo_ocr_fsdp_2x1_fullparam.yaml:53-57`
+- `vrl/config/presets/experiment/cosmos_predict2_5/online_nft_kling_video_reward_fsdp_2x1.yaml:71-76`
 - `vrl/rollouts/orchestration/rollout_runtime.py:25-149`
 - `vrl/rollouts/orchestration/strict_on_policy.py:22-88`
 - `vrl/rollouts/orchestration/continuous/schedule.py:39-155,277-301`

@@ -6,28 +6,37 @@ single family table shared by model construction, generation, and collection.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Any, Literal, get_args
+from dataclasses import dataclass, field
+from typing import Any, Literal
 
 from vrl.families.names import (
     normalize_model_family,
     validate_model_family_aliases,
 )
-
-CollectorKind = Literal["diffusion", "ar_discrete", "ar_continuous", "ar_r1"]
+from vrl.families.semantics import PolicySemantics, TrajectoryLayout
 
 # Import-path protocol value shared by registry dispatch and generation workers.
 # Keeping it here avoids making the neutral family table import a runtime module.
-GENERIC_DIFFUSION_EXECUTOR = "vrl.generation.diffusion.executor:DiffusionChunkExecutor"
+GENERIC_DENOISE_EXECUTOR = "vrl.generation.bindings.joint_denoise.executor:DiffusionChunkExecutor"
 
 
 @dataclass(frozen=True, slots=True)
-class DiffusionFamilyBuild:
-    """Declarative build recipe for a descriptor-driven diffusion family.
+class GenerationRuntimeCapabilities:
+    """Concrete executor/runtime behaviors, separate from model semantics."""
+
+    supports_torch_compile: bool = False
+    accepts_samples_per_chunk: bool = False
+    supports_cumem_pool: bool = False
+    requires_frozen_component_parking: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class DenoiseFamilyBuild:
+    """Declarative build recipe for a descriptor-driven denoise policy.
 
     A family whose runtime construction is pure data records its build inputs
     here. ``ModelFamilyEntry`` derives the shared resolver and worker builder
-    from whether this descriptor or an ``ARFamilyBuild`` is present. Only real
+    from whether this descriptor or a ``TokenFamilyBuild`` is present. Only real
     family-specific replay assembly remains as an explicit override.
     """
 
@@ -51,7 +60,7 @@ class DiffusionFamilyBuild:
         custom_replay = self.replay_runtime_builder is not None
         if partial_generic_replay or generic_replay == custom_replay:
             raise ValueError(
-                "diffusion family build must declare either replay_cls plus "
+                "denoise family build must declare either replay_cls plus "
                 "transformer_classname, or one custom replay_runtime_builder",
             )
         if custom_replay and self.scheduler_classname is not None:
@@ -62,8 +71,8 @@ class DiffusionFamilyBuild:
 
 
 @dataclass(frozen=True, slots=True)
-class ARFamilyBuild:
-    """Declarative model construction for a descriptor-driven AR family."""
+class TokenFamilyBuild:
+    """Declarative model construction for a descriptor-driven token policy."""
 
     model_cls: str
     replay_cls: str
@@ -71,7 +80,7 @@ class ARFamilyBuild:
     config_builder: str
     default_model_path: str
     # NextStep's upstream loader accepts checkpointing only during construction;
-    # ordinary AR families do not project the trainer knob into ModelBuild.
+    # ordinary token families do not project the trainer knob into ModelBuild.
     gradient_checkpointing_at_load: bool = False
 
 
@@ -81,19 +90,26 @@ class ModelFamilyEntry:
 
     family: str
     task: str
-    collector_kind: CollectorKind
+    policy_semantics: PolicySemantics
     executor_cls: str
-    family_build: DiffusionFamilyBuild | ARFamilyBuild
+    gatherer_cls: str
+    family_build: DenoiseFamilyBuild | TokenFamilyBuild
+    runtime_capabilities: GenerationRuntimeCapabilities = field(
+        default_factory=GenerationRuntimeCapabilities,
+    )
+    request_metadata_namespace: str | None = None
 
     def __post_init__(self) -> None:
-        if self.collector_kind not in get_args(CollectorKind):
-            raise ValueError(f"unsupported collector kind: {self.collector_kind!r}")
-        diffusion_build = isinstance(self.family_build, DiffusionFamilyBuild)
-        if diffusion_build != (self.collector_kind == "diffusion"):
+        denoise_build = isinstance(self.family_build, DenoiseFamilyBuild)
+        if denoise_build != (self.policy_semantics.step_kind == "denoise"):
             raise ValueError(
-                f"model family {self.family!r} collector kind "
-                f"{self.collector_kind!r} does not match its family build",
+                f"model family {self.family!r} policy semantics "
+                f"{self.policy_semantics!r} does not match its family build",
             )
+        if not self.gatherer_cls:
+            raise ValueError(f"model family {self.family!r} requires a gatherer binding")
+        if self.request_metadata_namespace == "":
+            raise ValueError("request_metadata_namespace must be non-empty when set")
 
     def resolve_model_build(
         self,
@@ -120,17 +136,17 @@ class ModelFamilyEntry:
         configured_dtype = model_config.get("dtype")
         model_path = model_config.get("path")
 
-        if isinstance(self.family_build, DiffusionFamilyBuild):
+        if isinstance(self.family_build, DenoiseFamilyBuild):
             if configured_dtype is not None:
                 raise ValueError(
-                    f"model.dtype is not configurable for diffusion family "
+                    f"model.dtype is not configurable for denoise family "
                     f"{self.family!r}; parameter precision follows the top-level "
                     "precision block. Remove model.dtype.",
                 )
         else:
             if configured_dtype is not None:
                 raise ValueError(
-                    "model.dtype is not configurable for AR families; remove it and "
+                    "model.dtype is not configurable for token families; remove it and "
                     "use the top-level precision block so rollout and replay cannot "
                     "diverge",
                 )
@@ -172,7 +188,7 @@ class ModelFamilyEntry:
         )
 
         if (
-            isinstance(self.family_build, ARFamilyBuild)
+            isinstance(self.family_build, TokenFamilyBuild)
             and self.family_build.gradient_checkpointing_at_load
         ):
             # NextStep's upstream loader accepts this only during construction.
@@ -202,17 +218,17 @@ class ModelFamilyEntry:
                 f"replay build family {build.family!r} does not match entry {self.family!r}",
             )
 
-        if isinstance(self.family_build, DiffusionFamilyBuild):
+        if isinstance(self.family_build, DenoiseFamilyBuild):
             if self.family_build.replay_runtime_builder is not None:
                 from vrl.utils.config import import_from_path
 
                 return import_from_path(self.family_build.replay_runtime_builder)(build)
-            from vrl.models.diffusion.build import build_family_replay_runtime_bundle
+            from vrl.models.steps.denoise.build import build_family_replay_runtime_bundle
 
             return build_family_replay_runtime_bundle(build, entry=self)
-        from vrl.models.ar.build import build_family_ar_bundle
+        from vrl.models.steps.token.build import build_token_family_bundle
 
-        return build_family_ar_bundle(build, entry=self, replay=True)
+        return build_token_family_bundle(build, entry=self, replay=True)
 
     def build_rollout(self, build: Any) -> Any:
         """Construct a rollout bundle from this entry's resolved model build."""
@@ -221,32 +237,20 @@ class ModelFamilyEntry:
             raise ValueError(
                 f"rollout build family {build.family!r} does not match entry {self.family!r}",
             )
-        if isinstance(self.family_build, DiffusionFamilyBuild):
-            from vrl.models.diffusion.build import build_family_runtime_bundle
+        if isinstance(self.family_build, DenoiseFamilyBuild):
+            from vrl.models.steps.denoise.build import build_family_runtime_bundle
 
             return build_family_runtime_bundle(build, entry=self)
-        from vrl.models.ar.build import build_family_ar_bundle
+        from vrl.models.steps.token.build import build_token_family_bundle
 
-        return build_family_ar_bundle(build, entry=self, replay=False)
+        return build_token_family_bundle(build, entry=self, replay=False)
 
     def new_gatherer(self) -> Any:
-        """Construct the gatherer implied by the collector protocol."""
+        """Construct the explicitly bound driver-side gatherer lazily."""
 
-        if self.collector_kind == "diffusion":
-            from vrl.generation.diffusion.gather import DiffusionChunkGatherer
+        from vrl.utils.config import import_from_path
 
-            return DiffusionChunkGatherer()
-        if self.collector_kind == "ar_continuous":
-            from vrl.models.ar.nextstep_1.runtime import NextStep1ChunkGatherer
-
-            return NextStep1ChunkGatherer()
-        if self.collector_kind == "ar_r1":
-            from vrl.models.ar.janus_pro.runtime import JanusProR1ChunkGatherer
-
-            return JanusProR1ChunkGatherer()
-        from vrl.generation.ar.executor import ARDiscreteChunkGatherer
-
-        return ARDiscreteChunkGatherer()
+        return import_from_path(self.gatherer_cls)()
 
 
 FAMILY_REGISTRY: dict[str, ModelFamilyEntry] = {}
@@ -261,153 +265,178 @@ def _register_model_family(entry: ModelFamilyEntry) -> ModelFamilyEntry:
     return entry
 
 
-def _diffusion_entry(
+def _joint_denoise_entry(
     *,
     family: str,
     task: str,
     executor_cls: str | None = None,
-    build: DiffusionFamilyBuild,
+    build: DenoiseFamilyBuild,
+    runtime_capabilities: GenerationRuntimeCapabilities | None = None,
 ) -> ModelFamilyEntry:
     # Default dispatch: the shared generic executor. Families with real
     # per-chunk logic pass their own executor_cls. Per-family executor config
     # (num_frames / max_sequence_length / ...) lives in the model yaml's
     # ``executor`` block, read wholesale at launch — not here.
     if executor_cls is None:
-        executor_cls = GENERIC_DIFFUSION_EXECUTOR
+        executor_cls = GENERIC_DENOISE_EXECUTOR
+    if runtime_capabilities is None:
+        runtime_capabilities = GenerationRuntimeCapabilities(
+            supports_torch_compile=True,
+            accepts_samples_per_chunk=True,
+            supports_cumem_pool=True,
+            requires_frozen_component_parking=True,
+        )
     return ModelFamilyEntry(
         family=family,
         task=task,
-        collector_kind="diffusion",
+        policy_semantics=PolicySemantics(
+            temporal_organization="joint",
+            step_kind="denoise",
+            action_distribution="continuous",
+            trajectory_layout="denoise",
+        ),
         executor_cls=executor_cls,
+        gatherer_cls="vrl.generation.bindings.joint_denoise.gather:DiffusionChunkGatherer",
         family_build=build,
+        runtime_capabilities=runtime_capabilities,
     )
 
 
-def _ar_entry(
+def _causal_token_entry(
     *,
     family: str,
-    collector_kind: CollectorKind,
+    action_distribution: Literal["categorical", "continuous"],
     executor_cls: str,
-    ar_build: ARFamilyBuild,
+    build: TokenFamilyBuild,
     task: str = "ar_t2i",
+    trajectory_layout: TrajectoryLayout = "token",
+    gatherer_cls: str = "vrl.generation.bindings.causal_token.executor:ARDiscreteChunkGatherer",
+    request_metadata_namespace: str | None = None,
 ) -> ModelFamilyEntry:
-    """Construct the uniform registry wiring shared by AR families."""
+    """Construct common wiring for current causal token-policy variants."""
 
     return ModelFamilyEntry(
         family=family,
         task=task,
-        collector_kind=collector_kind,
+        policy_semantics=PolicySemantics(
+            temporal_organization="causal",
+            step_kind="token",
+            action_distribution=action_distribution,
+            trajectory_layout=trajectory_layout,
+        ),
         executor_cls=executor_cls,
-        family_build=ar_build,
+        gatherer_cls=gatherer_cls,
+        family_build=build,
+        request_metadata_namespace=request_metadata_namespace,
     )
 
 
 _register_model_family(
-    _diffusion_entry(
+    _joint_denoise_entry(
         family="sd3_5",
         task="t2i",
-        build=DiffusionFamilyBuild(
-            model_cls="vrl.models.diffusion.sd3_5.model:SD3_5Model",
-            replay_cls="vrl.models.diffusion.sd3_5.model:SD3_5ReplayModel",
+        build=DenoiseFamilyBuild(
+            model_cls="vrl.models.families.sd3_5.model:SD3_5Model",
+            replay_cls="vrl.models.families.sd3_5.model:SD3_5ReplayModel",
             transformer_classname="SD3Transformer2DModel",
         ),
     ),
 )
 
 _register_model_family(
-    _diffusion_entry(
+    _joint_denoise_entry(
         family="flux",
         task="t2i",
-        build=DiffusionFamilyBuild(
-            model_cls="vrl.models.diffusion.flux.model:FluxModel",
-            replay_cls="vrl.models.diffusion.flux.model:FluxReplayModel",
+        build=DenoiseFamilyBuild(
+            model_cls="vrl.models.families.flux.model:FluxModel",
+            replay_cls="vrl.models.families.flux.model:FluxReplayModel",
             transformer_classname="FluxTransformer2DModel",
         ),
     ),
 )
 
 _register_model_family(
-    _diffusion_entry(
+    _joint_denoise_entry(
         family="qwen_image",
         task="t2i",
         # Descriptor-driven family: the generic functions in
-        # vrl.models.diffusion.build read the recipe below, so qwen_image ships
+        # vrl.models.steps.denoise.build read the recipe below, so qwen_image ships
         # no per-family builder/resolver functions.
-        build=DiffusionFamilyBuild(
-            model_cls="vrl.models.diffusion.qwen_image.model:QwenImageModel",
-            replay_cls="vrl.models.diffusion.qwen_image.model:QwenImageReplayModel",
+        build=DenoiseFamilyBuild(
+            model_cls="vrl.models.families.qwen_image.model:QwenImageModel",
+            replay_cls="vrl.models.families.qwen_image.model:QwenImageReplayModel",
             transformer_classname="QwenImageTransformer2DModel",
         ),
     ),
 )
 
 _register_model_family(
-    _diffusion_entry(
+    _joint_denoise_entry(
         family="sana",
         task="t2i",
-        build=DiffusionFamilyBuild(
-            model_cls="vrl.models.diffusion.sana.model:SanaModel",
-            replay_cls="vrl.models.diffusion.sana.model:SanaReplayModel",
+        build=DenoiseFamilyBuild(
+            model_cls="vrl.models.families.sana.model:SanaModel",
+            replay_cls="vrl.models.families.sana.model:SanaReplayModel",
             transformer_classname="SanaTransformer2DModel",
         ),
     ),
 )
 
 _register_model_family(
-    _diffusion_entry(
+    _joint_denoise_entry(
         family="lumina2",
         task="t2i",
-        build=DiffusionFamilyBuild(
-            model_cls="vrl.models.diffusion.lumina2.model:Lumina2Model",
-            replay_cls="vrl.models.diffusion.lumina2.model:Lumina2ReplayModel",
+        build=DenoiseFamilyBuild(
+            model_cls="vrl.models.families.lumina2.model:Lumina2Model",
+            replay_cls="vrl.models.families.lumina2.model:Lumina2ReplayModel",
             transformer_classname="Lumina2Transformer2DModel",
         ),
     ),
 )
 
 _register_model_family(
-    _diffusion_entry(
+    _joint_denoise_entry(
         family="hunyuan_video",
         task="t2v",
-        build=DiffusionFamilyBuild(
-            model_cls="vrl.models.diffusion.hunyuan_video.model:HunyuanVideoModel",
-            replay_cls="vrl.models.diffusion.hunyuan_video.model:HunyuanVideoReplayModel",
+        build=DenoiseFamilyBuild(
+            model_cls="vrl.models.families.hunyuan_video.model:HunyuanVideoModel",
+            replay_cls="vrl.models.families.hunyuan_video.model:HunyuanVideoReplayModel",
             transformer_classname="HunyuanVideoTransformer3DModel",
         ),
     ),
 )
 
 _register_model_family(
-    _diffusion_entry(
+    _joint_denoise_entry(
         family="mochi",
         task="t2v",
-        build=DiffusionFamilyBuild(
-            model_cls="vrl.models.diffusion.mochi.model:MochiModel",
-            replay_cls="vrl.models.diffusion.mochi.model:MochiReplayModel",
+        build=DenoiseFamilyBuild(
+            model_cls="vrl.models.families.mochi.model:MochiModel",
+            replay_cls="vrl.models.families.mochi.model:MochiReplayModel",
             transformer_classname="MochiTransformer3DModel",
         ),
     ),
 )
 
 _register_model_family(
-    _diffusion_entry(
+    _joint_denoise_entry(
         family="hunyuan_image",
         task="t2i",
-        build=DiffusionFamilyBuild(
-            model_cls="vrl.models.diffusion.hunyuan_image.model:HunyuanImageModel",
-            replay_cls="vrl.models.diffusion.hunyuan_image.model:HunyuanImageReplayModel",
+        build=DenoiseFamilyBuild(
+            model_cls="vrl.models.families.hunyuan_image.model:HunyuanImageModel",
+            replay_cls="vrl.models.families.hunyuan_image.model:HunyuanImageReplayModel",
             transformer_classname="HunyuanImageTransformer2DModel",
         ),
     ),
 )
 
 _register_model_family(
-    _diffusion_entry(
+    _joint_denoise_entry(
         family="pixart_sigma",
         task="t2i",
-        build=DiffusionFamilyBuild(
-            model_cls="vrl.models.diffusion.pixart_sigma.model:PixArtSigmaModel",
-            replay_cls="vrl.models.diffusion.pixart_sigma.model:PixArtSigmaReplayModel",
+        build=DenoiseFamilyBuild(
+            model_cls="vrl.models.families.pixart_sigma.model:PixArtSigmaModel",
+            replay_cls="vrl.models.families.pixart_sigma.model:PixArtSigmaReplayModel",
             transformer_classname="PixArtTransformer2DModel",
             # Epsilon DDPM family (sde_type=ddim): load a DDIMScheduler so the
             # shipped beta config survives into prepare_replay, which rebuilds
@@ -418,12 +447,12 @@ _register_model_family(
 )
 
 _register_model_family(
-    _diffusion_entry(
+    _joint_denoise_entry(
         family="cogvideox",
         task="t2v",
-        build=DiffusionFamilyBuild(
-            model_cls="vrl.models.diffusion.cogvideox.model:CogVideoXModel",
-            replay_cls="vrl.models.diffusion.cogvideox.model:CogVideoXReplayModel",
+        build=DenoiseFamilyBuild(
+            model_cls="vrl.models.families.cogvideox.model:CogVideoXModel",
+            replay_cls="vrl.models.families.cogvideox.model:CogVideoXReplayModel",
             transformer_classname="CogVideoXTransformer3DModel",
             # v-prediction DDPM family: replay recomputes log-probs on the
             # same ladder the rollout sampled (sde_type=ddim).
@@ -433,16 +462,16 @@ _register_model_family(
 )
 
 _register_model_family(
-    _diffusion_entry(
+    _joint_denoise_entry(
         family="wan_2_1",
         task="t2v",
         # The two wan entries carry their own per-variant recipes, so the
         # t2v/i2v resolution is decided here, once, by family selection. The
         # dual-stage transformer_2 late-load lives in the replay model's
         # prepare_replay, so replay is generic too.
-        build=DiffusionFamilyBuild(
-            model_cls="vrl.models.diffusion.wan_2_1.model:WanT2VDiffusersModel",
-            replay_cls="vrl.models.diffusion.wan_2_1.model:WanT2VReplayModel",
+        build=DenoiseFamilyBuild(
+            model_cls="vrl.models.families.wan_2_1.model:WanT2VDiffusersModel",
+            replay_cls="vrl.models.families.wan_2_1.model:WanT2VReplayModel",
             transformer_classname="WanTransformer3DModel",
             # Replay recomputes log-probs on the schedule the rollout sampled.
             scheduler_classname="UniPCMultistepScheduler",
@@ -451,13 +480,13 @@ _register_model_family(
 )
 
 _register_model_family(
-    _diffusion_entry(
+    _joint_denoise_entry(
         family="wan_2_1_i2v",
         task="i2v",
-        executor_cls="vrl.models.diffusion.wan_2_1.runtime:Wan_2_1I2VChunkExecutor",
-        build=DiffusionFamilyBuild(
-            model_cls="vrl.models.diffusion.wan_2_1.model:WanI2VDiffusersModel",
-            replay_cls="vrl.models.diffusion.wan_2_1.model:WanI2VReplayModel",
+        executor_cls="vrl.models.families.wan_2_1.runtime:Wan_2_1I2VChunkExecutor",
+        build=DenoiseFamilyBuild(
+            model_cls="vrl.models.families.wan_2_1.model:WanI2VDiffusersModel",
+            replay_cls="vrl.models.families.wan_2_1.model:WanI2VReplayModel",
             transformer_classname="WanTransformer3DModel",
             scheduler_classname="UniPCMultistepScheduler",
         ),
@@ -465,28 +494,28 @@ _register_model_family(
 )
 
 _register_model_family(
-    _diffusion_entry(
+    _joint_denoise_entry(
         family="cosmos-predict2",
         task="v2w",
-        executor_cls="vrl.models.diffusion.cosmos.predict2.runtime:CosmosChunkExecutor",
-        build=DiffusionFamilyBuild(
-            model_cls="vrl.models.diffusion.cosmos.predict2.model:CosmosPredict2Model",
-            replay_cls="vrl.models.diffusion.cosmos.predict2.model:CosmosPredict2ReplayModel",
+        executor_cls="vrl.models.families.cosmos.predict2.runtime:CosmosChunkExecutor",
+        build=DenoiseFamilyBuild(
+            model_cls="vrl.models.families.cosmos.predict2.model:CosmosPredict2Model",
+            replay_cls="vrl.models.families.cosmos.predict2.model:CosmosPredict2ReplayModel",
             transformer_classname="CosmosTransformer3DModel",
         ),
     ),
 )
 
 _register_model_family(
-    _diffusion_entry(
+    _joint_denoise_entry(
         family="cosmos-predict2.5",
         task="t2w",
         executor_cls=(
-            "vrl.models.diffusion.cosmos.predict2_5.runtime:CosmosPredict25ChunkExecutor"
+            "vrl.models.families.cosmos.predict2_5.runtime:CosmosPredict25ChunkExecutor"
         ),
-        build=DiffusionFamilyBuild(
-            model_cls=("vrl.models.diffusion.cosmos.predict2_5.model:CosmosPredict25Model"),
-            replay_cls=("vrl.models.diffusion.cosmos.predict2_5.model:CosmosPredict25ReplayModel"),
+        build=DenoiseFamilyBuild(
+            model_cls=("vrl.models.families.cosmos.predict2_5.model:CosmosPredict25Model"),
+            replay_cls=("vrl.models.families.cosmos.predict2_5.model:CosmosPredict25ReplayModel"),
             transformer_classname="CosmosTransformer3DModel",
             # Upstream ships UniPC; replay must recompute log-probs under the
             # same schedule the rollout sampled with.
@@ -499,129 +528,133 @@ _register_model_family(
 )
 
 _register_model_family(
-    _diffusion_entry(
+    _joint_denoise_entry(
         family="cosmos3",
         task="t2v",
-        executor_cls="vrl.models.diffusion.cosmos.cosmos3.runtime:Cosmos3ChunkExecutor",
-        build=DiffusionFamilyBuild(
-            model_cls="vrl.models.diffusion.cosmos.cosmos3.model:Cosmos3Model",
+        executor_cls="vrl.models.families.cosmos.cosmos3.runtime:Cosmos3ChunkExecutor",
+        build=DenoiseFamilyBuild(
+            model_cls="vrl.models.families.cosmos.cosmos3.model:Cosmos3Model",
             replay_runtime_builder=(
-                "vrl.models.diffusion.cosmos.cosmos3.runtime:build_cosmos3_replay_runtime_bundle"
+                "vrl.models.families.cosmos.cosmos3.runtime:build_cosmos3_replay_runtime_bundle"
             ),
         ),
     ),
 )
 
 _register_model_family(
-    _diffusion_entry(
+    _joint_denoise_entry(
         family="cosmos-predict2-anima",
         task="t2i",
-        build=DiffusionFamilyBuild(
-            model_cls="vrl.models.diffusion.cosmos.anima.model:AnimaModel",
+        build=DenoiseFamilyBuild(
+            model_cls="vrl.models.families.cosmos.anima.model:AnimaModel",
             replay_runtime_builder=(
-                "vrl.models.diffusion.cosmos.anima.runtime:build_anima_replay_runtime_bundle"
+                "vrl.models.families.cosmos.anima.runtime:build_anima_replay_runtime_bundle"
             ),
         ),
     ),
 )
 
 _register_model_family(
-    _diffusion_entry(
+    _joint_denoise_entry(
         family="echo",
         task="t2v",
-        executor_cls="vrl.models.diffusion.echo.runtime:EchoChunkExecutor",
-        build=DiffusionFamilyBuild(
-            model_cls="vrl.models.diffusion.echo.model:EchoModel",
+        executor_cls="vrl.models.families.echo.runtime:EchoChunkExecutor",
+        build=DenoiseFamilyBuild(
+            model_cls="vrl.models.families.echo.model:EchoModel",
             replay_runtime_builder=(
-                "vrl.models.diffusion.echo.runtime:build_echo_replay_runtime_bundle"
+                "vrl.models.families.echo.runtime:build_echo_replay_runtime_bundle"
             ),
         ),
     ),
 )
 
-_JANUS_PRO_BUILD = ARFamilyBuild(
-    model_cls="vrl.models.ar.janus_pro.model:JanusProModel",
-    replay_cls="vrl.models.ar.janus_pro.model:JanusProReplayModel",
-    config_cls="vrl.models.ar.janus_pro.model:JanusProConfig",
-    config_builder="vrl.models.ar.janus_pro.runtime:janus_config_from_build",
+_JANUS_PRO_BUILD = TokenFamilyBuild(
+    model_cls="vrl.models.families.janus_pro.model:JanusProModel",
+    replay_cls="vrl.models.families.janus_pro.model:JanusProReplayModel",
+    config_cls="vrl.models.families.janus_pro.model:JanusProConfig",
+    config_builder="vrl.models.families.janus_pro.runtime:janus_config_from_build",
     default_model_path="deepseek-ai/Janus-Pro-1B",
 )
 
 _register_model_family(
-    _ar_entry(
+    _causal_token_entry(
         family="janus_pro",
-        collector_kind="ar_discrete",
-        executor_cls="vrl.models.ar.janus_pro.runtime:JanusProChunkExecutor",
-        ar_build=_JANUS_PRO_BUILD,
+        action_distribution="categorical",
+        executor_cls="vrl.models.families.janus_pro.runtime:JanusProChunkExecutor",
+        build=_JANUS_PRO_BUILD,
     ),
 )
 
 _register_model_family(
-    _ar_entry(
+    _causal_token_entry(
         family="janus_pro_r1",
-        collector_kind="ar_r1",
+        action_distribution="categorical",
         task="ar_t2i_r1",
-        executor_cls="vrl.models.ar.janus_pro.runtime:JanusProR1ChunkExecutor",
-        ar_build=_JANUS_PRO_BUILD,
+        executor_cls="vrl.models.families.janus_pro.runtime:JanusProR1ChunkExecutor",
+        gatherer_cls="vrl.models.families.janus_pro.runtime:JanusProR1ChunkGatherer",
+        build=_JANUS_PRO_BUILD,
+        trajectory_layout="multisegment_token",
     ),
 )
 
 _register_model_family(
-    _ar_entry(
+    _causal_token_entry(
         family="nextstep_1",
-        collector_kind="ar_continuous",
-        executor_cls="vrl.models.ar.nextstep_1.runtime:NextStep1ChunkExecutor",
-        ar_build=ARFamilyBuild(
-            model_cls="vrl.models.ar.nextstep_1.model:NextStep1Model",
-            replay_cls="vrl.models.ar.nextstep_1.model:NextStep1ReplayModel",
-            config_cls="vrl.models.ar.nextstep_1.model:NextStep1Config",
-            config_builder=("vrl.models.ar.nextstep_1.runtime:nextstep_config_from_build"),
+        action_distribution="continuous",
+        executor_cls="vrl.models.families.nextstep_1.runtime:NextStep1ChunkExecutor",
+        gatherer_cls="vrl.models.families.nextstep_1.runtime:NextStep1ChunkGatherer",
+        build=TokenFamilyBuild(
+            model_cls="vrl.models.families.nextstep_1.model:NextStep1Model",
+            replay_cls="vrl.models.families.nextstep_1.model:NextStep1ReplayModel",
+            config_cls="vrl.models.families.nextstep_1.model:NextStep1Config",
+            config_builder=("vrl.models.families.nextstep_1.runtime:nextstep_config_from_build"),
             default_model_path="stepfun-ai/NextStep-1.1",
             gradient_checkpointing_at_load=True,
         ),
+        request_metadata_namespace="rollout_metadata",
     ),
 )
 
 _register_model_family(
-    _ar_entry(
+    _causal_token_entry(
         family="emu3",
-        collector_kind="ar_discrete",
-        executor_cls="vrl.models.ar.emu3.runtime:Emu3ChunkExecutor",
-        ar_build=ARFamilyBuild(
-            model_cls="vrl.models.ar.emu3.model:Emu3Model",
-            replay_cls="vrl.models.ar.emu3.model:Emu3ReplayModel",
-            config_cls="vrl.models.ar.emu3.model:Emu3Config",
-            config_builder="vrl.models.ar.emu3.runtime:emu3_config_from_build",
+        action_distribution="categorical",
+        executor_cls="vrl.models.families.emu3.runtime:Emu3ChunkExecutor",
+        build=TokenFamilyBuild(
+            model_cls="vrl.models.families.emu3.model:Emu3Model",
+            replay_cls="vrl.models.families.emu3.model:Emu3ReplayModel",
+            config_cls="vrl.models.families.emu3.model:Emu3Config",
+            config_builder="vrl.models.families.emu3.runtime:emu3_config_from_build",
             default_model_path="BAAI/Emu3-Gen-hf",
         ),
     ),
 )
 
 _register_model_family(
-    _ar_entry(
+    _causal_token_entry(
         family="glm_image",
-        collector_kind="ar_discrete",
-        executor_cls="vrl.models.ar.glm_image.runtime:GlmImageChunkExecutor",
-        ar_build=ARFamilyBuild(
-            model_cls="vrl.models.ar.glm_image.model:GlmImageModel",
-            replay_cls="vrl.models.ar.glm_image.model:GlmImageReplayModel",
-            config_cls="vrl.models.ar.glm_image.model:GlmImageConfig",
-            config_builder="vrl.models.ar.glm_image.runtime:glm_image_config_from_build",
+        action_distribution="categorical",
+        executor_cls="vrl.models.families.glm_image.runtime:GlmImageChunkExecutor",
+        build=TokenFamilyBuild(
+            model_cls="vrl.models.families.glm_image.model:GlmImageModel",
+            replay_cls="vrl.models.families.glm_image.model:GlmImageReplayModel",
+            config_cls="vrl.models.families.glm_image.model:GlmImageConfig",
+            config_builder="vrl.models.families.glm_image.runtime:glm_image_config_from_build",
             default_model_path="zai-org/GLM-Image",
         ),
     ),
 )
 
 _register_model_family(
-    _ar_entry(
+    _causal_token_entry(
         family="llamagen",
-        collector_kind="ar_discrete",
-        executor_cls="vrl.models.ar.llamagen.runtime:LlamaGenChunkExecutor",
-        ar_build=ARFamilyBuild(
-            model_cls="vrl.models.ar.llamagen.model:LlamaGenModel",
-            replay_cls="vrl.models.ar.llamagen.model:LlamaGenReplayModel",
-            config_cls="vrl.models.ar.llamagen.model:LlamaGenConfig",
-            config_builder="vrl.models.ar.llamagen.runtime:llamagen_config_from_build",
+        action_distribution="categorical",
+        executor_cls="vrl.models.families.llamagen.runtime:LlamaGenChunkExecutor",
+        build=TokenFamilyBuild(
+            model_cls="vrl.models.families.llamagen.model:LlamaGenModel",
+            replay_cls="vrl.models.families.llamagen.model:LlamaGenReplayModel",
+            config_cls="vrl.models.families.llamagen.model:LlamaGenConfig",
+            config_builder="vrl.models.families.llamagen.runtime:llamagen_config_from_build",
             default_model_path="peizesun/llamagen_t2i",
         ),
     ),
@@ -645,8 +678,9 @@ def get_model_family_entry(family: str) -> ModelFamilyEntry:
 
 __all__ = [
     "FAMILY_REGISTRY",
-    "GENERIC_DIFFUSION_EXECUTOR",
-    "CollectorKind",
+    "GENERIC_DENOISE_EXECUTOR",
+    "GenerationRuntimeCapabilities",
     "ModelFamilyEntry",
+    "PolicySemantics",
     "get_model_family_entry",
 ]

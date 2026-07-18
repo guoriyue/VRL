@@ -2,15 +2,17 @@
 
 RL post-training for visual generative models.
 
-`visual-rl` trains diffusion and autoregressive image/video generators with one
-layered-config trainer and one Collector -> Evaluator -> Algorithm loop. Recipes are
-marked as validated only after real training runs show optimizer updates, non-flat
-rewards, generated artifacts, and changed weights.
+`visual-rl` trains visual generative policies with one layered-config trainer and
+one Collector -> Evaluator -> Algorithm loop. Policies are classified by temporal
+organization (`joint`, `causal`, or `causal_chunked`) and policy step (`denoise`
+or `token`), rather than forcing every model into an AR-or-diffusion bucket.
+Recipes are marked as validated only after real training runs show optimizer
+updates, non-flat rewards, generated artifacts, and changed weights.
 
 ## Why It Exists
 
-- **One training loop.** The same online RL loop drives diffusion and AR families
-  instead of keeping a separate training script per model.
+- **One training loop.** The same online RL loop drives joint-denoise and
+  causal-token policies instead of keeping a separate training script per model.
 - **Layered configs.** Model, sampling, reward, dataset, algorithm, rollout, and
   distributed choices are composed from bundled YAML layers under
   `vrl/config/presets/`.
@@ -21,22 +23,25 @@ rewards, generated artifacts, and changed weights.
 
 ## Why not an LLM-RL framework?
 
-RL frameworks built for text LLMs (slime, verl, OpenRLHF, TRL) assume a shape that
-visual generation does not have, so bending them to diffusion/video RL fights the
-core abstractions at every step:
+RL frameworks built for text LLMs (slime, verl, OpenRLHF, TRL) assume one causal
+categorical-token shape. Visual policies span several shapes, so forcing all of
+them through that abstraction fights the core contracts:
 
-- **Rollout is a multi-step denoising trajectory** — 20–50 full DiT forwards per
-  sample, not one token-by-token pass over a KV-cache.
-- **The log-prob is a continuous-latent Gaussian density** (flow-matching / SDE
-  transition), not a categorical token cross-entropy.
+- **Temporal organization varies** — today's policies update a whole latent field
+  jointly or advance ordered tokens causally; causal temporal chunks are a
+  separate future composition, not another name for either one.
+- **The policy step varies** — denoise policies record continuous flow/Gaussian
+  transitions, while token policies record categorical or continuous token
+  actions.
 - **The reward is on decoded pixels/video** (VAE decode → image/video reward
   model), not on text.
 - **Conditioning is world-model-shaped** (reference image/video, I2V, V2W), not a
   text prefix.
 
-`visual-rl` is built around exactly these — diffusion *and* autoregressive image
-*and* video — behind one rollout / replay / algorithm contract. See
-[`docs/NORTH_STAR.md`](docs/NORTH_STAR.md) for the full positioning and roadmap.
+`visual-rl` keeps these policy semantics explicit behind one rollout / replay /
+algorithm contract. See [`docs/MODEL_TAXONOMY.md`](docs/MODEL_TAXONOMY.md) for
+the axes and [`docs/NORTH_STAR.md`](docs/NORTH_STAR.md) for the full positioning
+and roadmap.
 
 ## Status Policy
 
@@ -49,30 +54,30 @@ core abstractions at every step:
 
 ## Supported Models
 
-| Family | Modality | Algorithms | Status |
-| --- | --- | --- | --- |
-| **SD3.5** | text -> image diffusion | GRPO | ✅ OCR GRPO |
-| **FLUX** | text -> image diffusion | GRPO-Guard, DanceGRPO, DiffusionNFT, Flow-DPPO | 🧪 Runnable |
-| **Qwen-Image** | text -> image diffusion | GRPO | 🧪 Runnable |
-| **SANA** | text -> image diffusion | GRPO | 🧪 Runnable |
-| **Lumina-Image-2** | text -> image diffusion | GRPO | 🧪 Runnable |
-| **HunyuanImage-2.1** | text -> image diffusion | GRPO | 🧪 Runnable |
-| **PixArt-Sigma** | text -> image diffusion | GRPO | 🧪 Runnable |
-| **CogVideoX** | text -> video diffusion | GRPO | 🧪 Runnable |
-| **HunyuanVideo** | text -> video diffusion | GRPO | 🧪 Runnable |
-| **Mochi-1** | text -> video diffusion | GRPO | 🧪 Runnable |
-| **Wan2.1** | text/image -> video diffusion | GRPO, DPO | 🧪 Runnable |
-| **Wan2.2** | image -> video diffusion | GRPO | 🧪 Runnable |
-| **Cosmos-Predict2** | video -> world diffusion | GRPO | 🧪 Runnable |
-| **Cosmos-Predict2.5** | text -> world diffusion | GRPO, DiffusionNFT | 🧪 Runnable |
-| **Cosmos-Anima** | text -> image diffusion | GRPO | 🧪 Runnable |
-| **Echo** | text -> video diffusion | GRPO | 🧪 Runnable |
-| **Janus-Pro** | autoregressive image | GRPO, R1-GRPO | 🧪 Runnable |
-| **NextStep-1** | autoregressive image | GRPO | 🧪 Runnable |
-| **Emu3** | autoregressive image | Token-GRPO | 🔌 Integrated |
-| **GLM-Image** | autoregressive image | Token-GRPO | 🔌 Integrated |
-| **LlamaGen** | autoregressive image | Token-GRPO | 🔌 Integrated |
-| **Cosmos3** | text -> video diffusion | — | 🔌 Integrated |
+| Family | Modality | Policy organization / step | Algorithms | Status |
+| --- | --- | --- | --- | --- |
+| **SD3.5** | text -> image | joint / denoise | GRPO | ✅ OCR GRPO |
+| **FLUX** | text -> image | joint / denoise | GRPO-Guard, DanceGRPO, DiffusionNFT, Flow-DPPO | 🧪 Runnable |
+| **Qwen-Image** | text -> image | joint / denoise | GRPO | 🧪 Runnable |
+| **SANA** | text -> image | joint / denoise | GRPO | 🧪 Runnable |
+| **Lumina-Image-2** | text -> image | joint / denoise | GRPO | 🧪 Runnable |
+| **HunyuanImage-2.1** | text -> image | joint / denoise | GRPO | 🧪 Runnable |
+| **PixArt-Sigma** | text -> image | joint / denoise | GRPO | 🧪 Runnable |
+| **CogVideoX** | text -> video | joint / denoise | GRPO | 🧪 Runnable |
+| **HunyuanVideo** | text -> video | joint / denoise | GRPO | 🧪 Runnable |
+| **Mochi-1** | text -> video | joint / denoise | GRPO | 🧪 Runnable |
+| **Wan2.1** | text/image -> video | joint / denoise | GRPO, DPO | 🧪 Runnable |
+| **Wan2.2** | image -> video | joint / denoise | GRPO | 🧪 Runnable |
+| **Cosmos-Predict2** | video -> world | joint / denoise | GRPO | 🧪 Runnable |
+| **Cosmos-Predict2.5** | text -> world | joint / denoise | GRPO, DiffusionNFT | 🧪 Runnable |
+| **Cosmos-Anima** | text -> image | joint / denoise | GRPO | 🧪 Runnable |
+| **Echo** | text -> video | joint / denoise | GRPO | 🧪 Runnable |
+| **Janus-Pro** | text -> image | causal / token (R1: multisegment) | GRPO, R1-GRPO | 🧪 Runnable |
+| **NextStep-1** | text -> image | causal / token (continuous action) | GRPO | 🧪 Runnable |
+| **Emu3** | text -> image | causal / token | Token-GRPO | 🔌 Integrated |
+| **GLM-Image** | text -> image | causal / token | Token-GRPO | 🔌 Integrated |
+| **LlamaGen** | text -> image | causal / token | Token-GRPO | 🔌 Integrated |
+| **Cosmos3** | text -> video | joint / denoise | — | 🔌 Integrated |
 
 `FAMILY_REGISTRY` is the canonical runtime roster. This table reports user-facing
 recipe readiness as well, so a registered family remains Integrated until a complete
@@ -100,7 +105,7 @@ collect -> evaluate -> advantage -> loss -> backward -> step
 
 Core contracts:
 
-- **Collector** produces images, video, or AR tokens and records the trajectory.
+- **Collector** produces decoded images/video and records the policy trajectory.
 - **Reward** scores the rollout through a common reward interface.
 - **Evaluator** replays the trajectory through the current model.
 - **Algorithm** consumes trajectory signals and computes the loss.
@@ -110,9 +115,16 @@ Core contracts:
 
 ```text
 vrl/
-  models/      diffusion and autoregressive model families
-  generation/  executors and generation runtimes
-  rollouts/    collector, orchestration, family registry
+  models/
+    families/  family-owned checkpoints, backbones, and replay projections
+    steps/     shared denoise/token model contracts and builders
+  generation/
+    steps/        denoise loop and token-step protocol
+    composition/  reusable temporal-organization state machines
+    bindings/     concrete joint-denoise and causal-token assemblies
+    execution/ ray/  step-neutral execution and distributed lifecycle
+  families/    policy semantics and canonical runtime registry
+  rollouts/    collector, orchestration, and replay evaluation
   rewards/     reward objectives, reward models, scoring transport
   algorithms/  GRPO, flow-matching, DPO, DiffusionNFT
   trainers/    online and offline trainers, weight sync, checkpointing
@@ -162,8 +174,8 @@ table and isolation notes below call out environments that must remain separate:
 
 | Use case | Install | Brings (why) |
 |---|---|---|
-| Diffusion families (SD3.5 / Flux / Cosmos / Wan / Qwen …) | `.[cosmos]` | diffusers + transformers + peft + torchvision |
-| AR-image families (Janus-Pro / NextStep) | `.[cosmos]` | transformers/peft model runtime (vLLM accel is separate — see note) |
+| Joint-denoise families (SD3.5 / Flux / Cosmos / Wan / Qwen …) | `.[cosmos]` | diffusers + transformers + peft + torchvision |
+| Causal-token families (Janus-Pro / NextStep) | `.[cosmos]` | transformers/peft model runtime (vLLM accel is separate — see note) |
 | OCR reward (the validated quickstart) | `.[ocr]` | paddleocr |
 | Video / VLM reward (Kling, VideoScore2, UnifiedReward) | `.[reward]` | transformers≥5.13, qwen-vl-utils, opencv |
 | Pose / motion / anatomy eval | `.[pose]` (CPU) · `.[pose-gpu]` (GPU) | onnxruntime + opencv |
@@ -174,9 +186,9 @@ table and isolation notes below call out environments that must remain separate:
 
 Example — the SD3.5-OCR quickstart below needs `pip install -e ".[cosmos,ocr]"`.
 (The `cosmos` group is the core model-runtime extra and is misnamed for history —
-it serves *all* diffusion and AR families, not just Cosmos.)
+it serves both joint-denoise and causal-token families, not just Cosmos.)
 
-> **`ar-vllm` is optional; a separate environment is recommended.** AR-image families
+> **`ar-vllm` is optional; a separate environment is recommended.** Causal-token families
 > run in the main env without it via `sampling.attention_backend=torch_native`;
 > `.[ar-vllm]` only adds vLLM's internal paged-attention / blockwise-fp8 kernels.
 > vLLM pins its Torch/TorchVision/TorchAudio ABI. The current lock resolves it with
@@ -211,7 +223,7 @@ it — SD3.5 text-to-image GRPO with an OCR reward:
 
 ```bash
 pip install -e ".[cosmos,ocr]"
-vrl-train --config experiment/diffusion/sd3_5/online_grpo_ocr
+vrl-train --config experiment/sd3_5/online_grpo_ocr
 ```
 
 `--config` accepts a bundled config name (no extension) or an absolute YAML path;
@@ -219,7 +231,7 @@ trailing args are OmegaConf dotlist overrides (`vrl-train --help`):
 
 ```bash
 # shorter smoke run
-vrl-train --config experiment/diffusion/sd3_5/online_grpo_ocr \
+vrl-train --config experiment/sd3_5/online_grpo_ocr \
     trainer.total_epochs=2 trainer.seed=0
 ```
 
@@ -237,5 +249,6 @@ recipe lives under `vrl/config/presets/experiment/` — browse it to see what ru
 ## Docs
 
 - [`docs/NORTH_STAR.md`](docs/NORTH_STAR.md) — positioning, moat, and roadmap (why visual-rl, not slime/verl).
+- [`docs/MODEL_TAXONOMY.md`](docs/MODEL_TAXONOMY.md) — policy axes, current family profiles, and physical layout.
 - [`docs/ADDING_A_MODEL_FAMILY.md`](docs/ADDING_A_MODEL_FAMILY.md) — add a model module, registry descriptor, presets, and contract tests without forking the trainer.
 - [`docs/PRECISION.md`](docs/PRECISION.md) — base dtypes, selective FP8 quantization, protected diffusion math, and frozen rollout components.

@@ -5,7 +5,7 @@
 > `python -m vrl.scripts.eval.cosmos_predict25_kling_eval`; this runbook covers
 > training placement only.
 
-Runbook for `experiment/diffusion/cosmos_predict2_5/online_nft_kling_video_reward_cross_node`.
+Runbook for `experiment/cosmos_predict2_5/online_nft_kling_video_reward_cross_node`.
 
 > Status as of 2026-07-11: reward placement follows the current in-process
 > runtime. Kling scores on the driver; because reward has no separate GPU
@@ -92,7 +92,7 @@ ray status --address=10.0.0.1:6379
 ```bash
 # on node A
 RAY_ADDRESS=10.0.0.1:6379 \
-  vrl-train --config experiment/diffusion/cosmos_predict2_5/online_nft_kling_video_reward_cross_node
+  vrl-train --config experiment/cosmos_predict2_5/online_nft_kling_video_reward_cross_node
 ```
 
 Always pass the intended cluster address explicitly. The recipe rejects a
@@ -106,7 +106,7 @@ address identifies the operator-owned cluster.
 
 ```bash
 RAY_ADDRESS=10.0.0.1:6379 \
-  vrl-train --config experiment/diffusion/cosmos_predict2_5/online_nft_kling_video_reward_cross_node \
+  vrl-train --config experiment/cosmos_predict2_5/online_nft_kling_video_reward_cross_node \
     trainer.total_epochs=4 trainer.save_freq=2 trainer.eval.freq=2
 ```
 

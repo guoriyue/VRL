@@ -64,14 +64,14 @@ ratio 极小、要乘穿 ~10 步，所以 clip 必须比 AR 的 0.2 紧 2000 倍
 
 ## 3. 落地
 
-新建 `configs/experiment/diffusion/flux/online_dance_grpo_aesthetic_validation.yaml`，从
+新建 `configs/experiment/flux/online_dance_grpo_aesthetic_validation.yaml`，从
 `flux/online_grpo_smoke_single_gpu.yaml` 派生，只换 recipe + 放大到能出 learning 信号：
 
 ```yaml
 # DanceGRPO correctness-validation run: FlowGRPO + random timestep selection.
 defaults:
   - /recipe/online/flow_matching_dance_grpo   # <- was flow_matching_grpo
-  - /model/diffusion/flux/dev
+  - /model/flux/dev
   - /sampling/image/512
   - /sampling/denoise/10_step_cfg_4_5
   - /reward/aesthetic            # <- HPS analog (paper optimizes HPS-v2.1); fallback /reward/ocr
@@ -98,7 +98,7 @@ rollout:
   sde: { window_range: [0, 10] }
 
 trainer:
-  entrypoint: vrl.scripts.diffusion.train:train_diffusion_online
+  entrypoint: vrl.scripts.train:train_online
   output_dir: outputs/flux_dance_grpo_aesthetic_validation
   total_epochs: 300
   save_freq: 50
@@ -140,7 +140,7 @@ model: { torch_compile: { enable: false } }
 - 实现：`vrl/algorithms/grpo/continuous.py:33,84,105-124`、
   `configs/base/algorithm/dance_grpo.yaml`、`configs/recipe/online/flow_matching_dance_grpo.yaml`
 - timestep 消费：`vrl/trainers/online/trainer.py:688,922`、`vrl/trainers/core/types.py:276,330`
-- 基线 config：`configs/experiment/diffusion/flux/online_grpo_smoke_single_gpu.yaml`、
-  `configs/experiment/diffusion/wan_2_1/online_grpo_ocr.yaml`（更省显存的 fallback）
+- 基线 config：`configs/experiment/flux/online_grpo_smoke_single_gpu.yaml`、
+  `configs/experiment/wan_2_1/online_grpo_ocr.yaml`（更省显存的 fallback）
 - 奖励/数据：`vrl/rewards/functions/aesthetic.py`、`configs/reward/aesthetic.yaml`、
   `configs/dataset/drawbench_train_192.yaml`（cheap fallback：`configs/reward/ocr.yaml` + `/dataset/ocr`）

@@ -61,8 +61,8 @@ AR 本轮没有 external provider。把 AR 放进 matrix 是为了证明 externa
 
 两个正交 source of truth 分别声明：
 
-- `ModelFamilyEntry`：family semantics、`collector_kind`、`family_build` 与默认 native
-  `executor_cls`；
+- `ModelFamilyEntry`：`policy_semantics`、`family_build`、显式 gatherer/runtime capability
+  与默认 native `executor_cls`；`collector_kind` 仅为兼容投影；
 - typed provider binding：只构造一次的 immutable source/schema provenance、provider
   process/build path、实际 capability、family-specific executor binding 与 representative
   conformance fixture。

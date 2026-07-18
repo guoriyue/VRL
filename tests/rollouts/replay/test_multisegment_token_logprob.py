@@ -14,7 +14,7 @@ from vrl.models.interfaces import (
     ReplaySegmentResult,
 )
 from vrl.rollouts.batch import RolloutBatch
-from vrl.rollouts.evaluators.ar.multi_segment_token_logprob import (
+from vrl.rollouts.evaluators.token.multi_segment_token_logprob import (
     MultiSegmentTokenLogProbEvaluator,
 )
 from vrl.trajectory import build_ar_multisegment_trajectory, build_training_view

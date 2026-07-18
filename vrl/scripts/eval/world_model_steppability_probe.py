@@ -42,8 +42,8 @@ def _new_report(args: argparse.Namespace) -> dict[str, Any]:
         # The three Phase-0 questions, answered as we learn them.
         "questions": {
             "interactive_generator_available": "unknown",  # A: yes | no_only_2x
-            "frame_prefix_conditioning_slot": "unknown",   # B: exists_unused | absent
-            "action_conditioning_seam": "unknown",         # C: extensible_extra_dict | absent
+            "frame_prefix_conditioning_slot": "unknown",  # B: exists_unused | absent
+            "action_conditioning_seam": "unknown",  # C: extensible_extra_dict | absent
         },
         "checks": {},
         "blockers": [],
@@ -92,8 +92,9 @@ def _check_a_interactive_generator(report: dict[str, Any]) -> None:
         )
 
 
-def _check_b_frame_prefix(report: dict[str, Any], *, load_weights: bool, model: str | None,
-                          prefix_frames: int) -> None:
+def _check_b_frame_prefix(
+    report: dict[str, Any], *, load_weights: bool, model: str | None, prefix_frames: int
+) -> None:
     """B: does a frame-prefix conditioning slot exist (and is it currently unused)?"""
     has_slot = False
     # B-static-1: the diffusers Cosmos 2.5 pipeline's prepare_latents accepts a
@@ -115,7 +116,7 @@ def _check_b_frame_prefix(report: dict[str, Any], *, load_weights: bool, model: 
     # B-static-2: confirm our wrapper currently leaves the slot UNUSED (num_frames_in=0),
     # so enabling a prefix is a wrapper change, not an upstream one.
     try:
-        from vrl.models.diffusion.cosmos.predict2_5.model import CosmosPredict25Model
+        from vrl.models.families.cosmos.predict2_5.model import CosmosPredict25Model
 
         src = inspect.getsource(CosmosPredict25Model.prepare_sampling).replace(" ", "")
         report["checks"]["B_wrapper_uses_slot"] = {
@@ -126,7 +127,9 @@ def _check_b_frame_prefix(report: dict[str, Any], *, load_weights: bool, model: 
     # B-live (gated): actually allocate a prefix-conditioned latent. Needs weights/GPU.
     if load_weights:
         _check_b_live(report, model=model, prefix_frames=prefix_frames)
-    report["questions"]["frame_prefix_conditioning_slot"] = "exists_unused" if has_slot else "absent"
+    report["questions"]["frame_prefix_conditioning_slot"] = (
+        "exists_unused" if has_slot else "absent"
+    )
 
 
 def _check_b_live(report: dict[str, Any], *, model: str | None, prefix_frames: int) -> None:
@@ -146,10 +149,18 @@ def _check_b_live(report: dict[str, Any], *, model: str | None, prefix_frames: i
         video = torch.zeros(1, 3, t_in, h, w, device=device, dtype=torch.bfloat16)
         num_channels = pipe.transformer.config.in_channels - 1
         out = pipe.prepare_latents(
-            video=video, batch_size=1, num_channels_latents=num_channels,
-            height=h, width=w, num_frames_in=t_in, num_frames_out=t_in + 4,
-            do_classifier_free_guidance=False, dtype=torch.float32, device=device,
-            generator=torch.Generator(device="cpu").manual_seed(0), latents=None,
+            video=video,
+            batch_size=1,
+            num_channels_latents=num_channels,
+            height=h,
+            width=w,
+            num_frames_in=t_in,
+            num_frames_out=t_in + 4,
+            do_classifier_free_guidance=False,
+            dtype=torch.float32,
+            device=device,
+            generator=torch.Generator(device="cpu").manual_seed(0),
+            latents=None,
         )
         latents, _cond_latent, cond_mask, _cond_indicator = out
         report["checks"]["B_live"] = {
@@ -159,8 +170,11 @@ def _check_b_live(report: dict[str, Any], *, model: str | None, prefix_frames: i
             "cond_mask_nonzero": bool(cond_mask.abs().sum().item() > 0),
         }
     except Exception as exc:
-        report["checks"]["B_live"] = {"status": "blocked", "error": repr(exc),
-                                      "trace": traceback.format_exc(limit=3)}
+        report["checks"]["B_live"] = {
+            "status": "blocked",
+            "error": repr(exc),
+            "trace": traceback.format_exc(limit=3),
+        }
         report["blockers"].append(f"live frame-prefix prepare_latents failed: {exc!r}")
 
 
@@ -170,7 +184,7 @@ def _check_c_action_seam(report: dict[str, Any]) -> None:
 
     has_extra = False
     try:
-        from vrl.models.diffusion.common.backbone import DiffusionBackboneInput
+        from vrl.models.steps.denoise.common.backbone import DiffusionBackboneInput
 
         fields = {f.name: str(f.type) for f in dataclasses.fields(DiffusionBackboneInput)}
         has_extra = "extra" in fields
@@ -184,13 +198,14 @@ def _check_c_action_seam(report: dict[str, Any]) -> None:
     # Wan-I2V already threads `condition`/`image_embeds` through extra=; an `action`
     # key would be additive. The runner still has to be taught to CONSUME it.
     try:
-        import vrl.models.diffusion.wan_2_1.model as _wan
+        import vrl.models.families.wan_2_1.model as _wan
 
         src = inspect.getsource(_wan).replace(" ", "")
         report["checks"]["C_wan_extra_usage"] = {
-            "wan_threads_condition_via_extra": 'extra={"condition"' in src or '"condition":' in src,
+            "wan_threads_condition_via_extra": 'extra={"condition"' in src
+            or '"condition":' in src,
             "note": "adding extra['action'] is non-breaking, but WanI2V*BackboneRunner must be "
-                    "extended to consume it before it conditions generation.",
+            "extended to consume it before it conditions generation.",
         }
     except Exception as exc:
         report["checks"]["C_wan_extra_usage"] = {"status": "blocked", "error": repr(exc)}
@@ -230,8 +245,11 @@ def _decide(report: dict[str, Any]) -> None:
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--out", default="outputs/wm_as_env_probe/steppability_decision.json")
-    parser.add_argument("--load-weights", action="store_true",
-                        help="run the live frame-prefix test (needs a checkpoint + GPU)")
+    parser.add_argument(
+        "--load-weights",
+        action="store_true",
+        help="run the live frame-prefix test (needs a checkpoint + GPU)",
+    )
     parser.add_argument("--model", default=None, help="checkpoint for the live B test")
     parser.add_argument("--prefix-frames", type=int, default=2)
     args = parser.parse_args(argv)
@@ -241,8 +259,12 @@ def main(argv: list[str] | None = None) -> None:
     # Each check is isolated so one blocker never hides the others.
     for check in (
         lambda: _check_a_interactive_generator(report),
-        lambda: _check_b_frame_prefix(report, load_weights=args.load_weights,
-                                      model=args.model, prefix_frames=args.prefix_frames),
+        lambda: _check_b_frame_prefix(
+            report,
+            load_weights=args.load_weights,
+            model=args.model,
+            prefix_frames=args.prefix_frames,
+        ),
         lambda: _check_c_action_seam(report),
     ):
         try:

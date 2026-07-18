@@ -207,14 +207,49 @@ jobs:
           from pathlib import Path
 
           import vrl
-          from vrl.config.loading import load_config
+          from vrl.config.loading import list_bundled_configs, load_config
+          from vrl.families.registry import FAMILY_REGISTRY
 
           install_root = Path("wheel-site").resolve()
           module_path = Path(vrl.__file__).resolve()
           assert module_path.is_relative_to(install_root), module_path
 
-          cfg = load_config("experiment/diffusion/sd3_5/online_grpo_ocr")
+          config_paths = list_bundled_configs()
+          stale_prefixes = (
+              "experiment/ar/",
+              "experiment/diffusion/",
+              "model/ar/",
+              "model/diffusion/",
+              "sampling/ar/",
+          )
+          assert not [path for path in config_paths if path.startswith(stale_prefixes)]
+
+          cfg = load_config("experiment/sd3_5/online_grpo_ocr")
           assert cfg.trainer.entrypoint
+
+          installed_files = {
+              str(path) for path in distribution("visual-rl").files or ()
+          }
+          registry_paths = []
+          for entry in FAMILY_REGISTRY.values():
+              registry_paths.extend((entry.executor_cls, entry.gatherer_cls))
+              for field_name in (
+                  "model_cls",
+                  "replay_cls",
+                  "config_cls",
+                  "config_builder",
+                  "replay_runtime_builder",
+              ):
+                  value = getattr(entry.family_build, field_name, None)
+                  if value:
+                      registry_paths.append(value)
+          for import_path in registry_paths:
+              module = import_path.partition(":")[0]
+              relative = module.replace(".", "/")
+              assert (
+                  f"{relative}.py" in installed_files
+                  or f"{relative}/__init__.py" in installed_files
+              ), import_path
 
           scripts = {
               entry.name: entry.value

@@ -7,7 +7,7 @@
 # cross-node (trainer GPU on the head node, rollout GPU on a remote Ray worker):
 #
 #   RAY_ADDRESS=<head-ip>:6379 CUDA_VISIBLE_DEVICES=0 python -m vrl.scripts.train \
-#     --config experiment/diffusion/sd3_5/online_grpo_ocr \
+#     --config experiment/sd3_5/online_grpo_ocr \
 #     /base/distributed=ray_rollout_cross_node \
 #     /base/rollout/orchestration=continuous \
 #     trainer.rollout_orchestration.continuous.max_inflight_groups=4 \

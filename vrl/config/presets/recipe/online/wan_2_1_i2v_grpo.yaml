@@ -4,10 +4,10 @@
 # identically zero, so it must stay a visible per-experiment choice, never a
 # recipe default.
 defaults:
-  - /recipe/online/diffusion_grpo
+  - /recipe/online/denoise_grpo
 
 trainer:
-  entrypoint: vrl.scripts.diffusion.train:train_diffusion_online
+  entrypoint: vrl.scripts.train:train_online
 
 actor:
   optim:

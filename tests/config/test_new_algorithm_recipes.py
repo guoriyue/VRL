@@ -20,7 +20,7 @@ from vrl.config.loading import load_config
 
 # A complete diffusion GRPO experiment; we swap only its /recipe/online group so
 # the new recipe inherits a full model/sampling/reward/dataset environment.
-_BASE = "experiment/diffusion/sd3_5/online_grpo_ocr"
+_BASE = "experiment/sd3_5/online_grpo_ocr"
 
 
 def _load(recipe: str):

@@ -22,4 +22,4 @@ rollout:
 trainer:
   # GRPO-Guard trains through the family-agnostic GRPO recipe; the algorithm
   # difference lives in /base/algorithm/grpo_guard, not in a custom entrypoint.
-  entrypoint: vrl.scripts.diffusion.train:train_diffusion_online
+  entrypoint: vrl.scripts.train:train_online

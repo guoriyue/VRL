@@ -153,7 +153,7 @@ def build_algorithm_and_evaluator_from_cfg(
             GRPOGuard,
             GRPOGuardConfig,
         )
-        from vrl.rollouts.evaluators.diffusion.sde_logprob import (
+        from vrl.rollouts.evaluators.denoise.sde_logprob import (
             DiffusionSDELogProbEvaluator,
         )
 
@@ -197,12 +197,12 @@ def build_algorithm_and_evaluator_from_cfg(
                 f"{family_entry.family} token GRPO expects TokenGRPOConfig, got "
                 f"{type(algorithm_config).__name__}",
             )
-        if family_entry.collector_kind == "ar_continuous":
-            from vrl.rollouts.evaluators.ar import ContinuousTokenLogProbEvaluator
+        if family_entry.policy_semantics.action_distribution == "continuous":
+            from vrl.rollouts.evaluators.token import ContinuousTokenLogProbEvaluator
 
             evaluator = ContinuousTokenLogProbEvaluator()
         else:
-            from vrl.rollouts.evaluators.ar import TokenLogProbEvaluator
+            from vrl.rollouts.evaluators.token import TokenLogProbEvaluator
 
             evaluator = TokenLogProbEvaluator()
         return AlgorithmEvaluatorPair(algorithm=TokenGRPO(algorithm_config), evaluator=evaluator)
@@ -212,7 +212,7 @@ def build_algorithm_and_evaluator_from_cfg(
             MultiSegmentTokenGRPO,
             MultiSegmentTokenGRPOConfig,
         )
-        from vrl.rollouts.evaluators.ar import MultiSegmentTokenLogProbEvaluator
+        from vrl.rollouts.evaluators.token import MultiSegmentTokenLogProbEvaluator
 
         if family_entry.family != "janus_pro_r1":
             raise ValueError(

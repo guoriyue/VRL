@@ -71,17 +71,17 @@ per_sample_loss = torch.where(keep, -advantages * ratio, 0)   # NO ratio clip
 
 > 2026-07-11 配置面纠偏：`reward/geneval` 仍保留为 scorer adapter，但默认
 > `import_path: ""` 没有可执行 evaluator。因此不再发布
-> `experiment/diffusion/sd3_5/online_grpo_geneval` 这类必然在运行时失败的 active
+> `experiment/sd3_5/online_grpo_geneval` 这类必然在运行时失败的 active
 > experiment。下面的 Flow-DPPO 配方在真实 GenEval scorer 接入并通过 reward memory
 > preflight 前只是一份设计草案；今天可运行的验证继续使用 PickScore/OCR fallback。
 
-新建 `configs/experiment/diffusion/flux/online_flow_dppo_geneval_validation.yaml`：
+新建 `configs/experiment/flux/online_flow_dppo_geneval_validation.yaml`：
 
 ```yaml
 # Flow-DPPO correctness-validation run: Gaussian-KL trust region (no ratio clip).
 defaults:
   - /recipe/online/flow_matching_dppo        # sets return_prev_sample_mean: true
-  - /model/diffusion/flux/dev
+  - /model/flux/dev
   - /sampling/image/512
   - /sampling/denoise/10_step_cfg_4_5
   - /reward/geneval            # <- Flow-GRPO headline task; set reward.kwargs.geneval.import_path!
@@ -114,7 +114,7 @@ rollout:
   sde: { window_range: [0, 10] }
 
 trainer:
-  entrypoint: vrl.scripts.diffusion.train:train_diffusion_online
+  entrypoint: vrl.scripts.train:train_online
   output_dir: outputs/flux_flow_dppo_geneval_validation
   total_epochs: 300
   save_freq: 50
@@ -158,6 +158,6 @@ model: { torch_compile: { enable: false } }
   fraction 视角）
 - KL 闭式：`vrl/math/diffusion/flow_matching.py: compute_kl_divergence`
 - proposal-mean 存储：`vrl/generation/diffusion/executor.py:203-209`、`layout.py:62-141`
-- 基线 config：`configs/experiment/diffusion/flux/online_grpo_smoke_single_gpu.yaml`
+- 基线 config：`configs/experiment/flux/online_grpo_smoke_single_gpu.yaml`
 - 奖励/数据：`vrl/rewards/functions/geneval.py`、`configs/reward/geneval.yaml`（`import_path` 需填）、
   `configs/dataset/geneval.yaml`（fallback：`configs/reward/{pickscore,ocr}.yaml`）

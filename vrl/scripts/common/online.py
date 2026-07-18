@@ -822,7 +822,7 @@ async def run_online_recipe(
     )
     bundle = family_entry.build_replay(replay_build)
     log_host_memory("after_trainer_bundle_build", log=logger)
-    if family_entry.collector_kind == "diffusion":
+    if family_entry.policy_semantics.step_kind == "denoise":
         enable_transformer_gradient_checkpointing(bundle, cfg)
     model = require_runtime_model(
         bundle.model,
@@ -891,7 +891,7 @@ async def run_online_recipe(
 
         ref_model = (
             _default_reference_model(bundle, cfg)
-            if family_entry.collector_kind == "diffusion"
+            if family_entry.policy_semantics.step_kind == "denoise"
             and str(cfg.algorithm.kind) != "diffusion_nft"
             else None
         )
@@ -962,7 +962,7 @@ async def run_online_recipe(
 
         export_modules = (
             _export_transformer_lora(bundle, cfg)
-            if family_entry.collector_kind == "diffusion"
+            if family_entry.policy_semantics.step_kind == "denoise"
             else _export_language_model_lora(bundle, cfg)
         )
         run = OnlineRecipeRun(

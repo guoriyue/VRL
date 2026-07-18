@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 import torch
 
-from vrl.scripts.diffusion.encode_targets import (
+from vrl.scripts.denoise.encode_targets import (
     _resolve_target_videos,
     _video_at_sampling_geometry,
 )

@@ -59,7 +59,7 @@ def _segment(batch: int, length: int, *, visual: bool) -> dict[str, torch.Tensor
 
 
 def test_r1_train_segments_derive_from_algorithm_config() -> None:
-    cfg = load_config("experiment/ar/janus_pro/online_r1_grpo_ocr")
+    cfg = load_config("experiment/janus_pro/online_r1_grpo_ocr")
     cfg.algorithm.train_segments.initial_image = False
     cfg.algorithm.train_segments.selfcheck_text = True
 

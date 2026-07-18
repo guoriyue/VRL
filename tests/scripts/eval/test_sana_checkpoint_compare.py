@@ -10,7 +10,7 @@ from omegaconf import OmegaConf
 from PIL import Image
 
 from vrl.config.precision import RolePrecision
-from vrl.models.diffusion import build as diffusion_build
+from vrl.models.steps.denoise import build as diffusion_build
 from vrl.scripts.eval import sana_checkpoint_compare as checkpoint_compare
 
 SANA_PRECISION = RolePrecision(

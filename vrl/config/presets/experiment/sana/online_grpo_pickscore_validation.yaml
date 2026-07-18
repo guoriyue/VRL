@@ -1,0 +1,38 @@
+# SANA 1.6B + PickScore GRPO — first-landing validation recipe.
+# GPU parity gates (run before trusting curves): (1) one generation vs
+# diffusers SanaPipeline at same prompt/seed/steps (pass the same
+# complex_human_instruction to both sides — VRL defaults it OFF, the pipeline
+# defaults it ON); (2) debug.first_step asserts rollout logprob == replay.
+defaults:
+  - /recipe/online/flow_matching_grpo
+  - /model/sana/1600m
+  - /sampling/image/512
+  - /sampling/denoise/10_step_cfg_4_5
+  - /dataset/pickapic_v2
+  - /reward/pickscore
+
+# This validation recipe keeps the model preset's native FP16 path without outer
+# autocast; Gemma remains a separate BF16 prompt-encoding boundary. The family
+# rejects non-native BF16 and FP32 transformer roles before model loading.
+
+sampling:
+  max_sequence_length: 300
+
+actor:
+  optim:
+    lr: 3.0e-4
+  gradient_accumulation_steps: 4
+  # Symmetric 8/8 chunk shape keeps rollout and replay on the same batched-CFG
+  # execution shape before the first optimizer step.
+  replay_samples_per_chunk: 8
+
+rollout:
+  n_samples_per_prompt: 16
+  prompts_per_batch: 8
+  samples_per_chunk: 8
+
+trainer:
+  output_dir: outputs/sana_pickscore_grpo
+  save_freq: 60
+  debug:
+    first_step: true

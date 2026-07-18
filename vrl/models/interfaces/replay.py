@@ -75,7 +75,7 @@ class ReplaySegmentResult:
         if token_ids is None:
             token_ids = self.require_value("token_ids")
 
-        from vrl.math.ar.logprob import gather_categorical_log_probs
+        from vrl.math.token.logprob import gather_categorical_log_probs
 
         return gather_categorical_log_probs(logits, token_ids, temperature=temperature)
 
@@ -105,8 +105,7 @@ class ReplayResult:
             return self.segments[segment_name]
         except KeyError as err:
             raise KeyError(
-                f"ReplayResult missing segment {segment_name!r}; "
-                f"got {sorted(self.segments)}",
+                f"ReplayResult missing segment {segment_name!r}; got {sorted(self.segments)}",
             ) from err
 
 

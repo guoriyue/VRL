@@ -16,7 +16,7 @@ resolved experiment config. Then run the opt-in artifact test:
 
 ```bash
 pytest tests/quality/test_real_inference_preflight.py -q \
-  --quality-config experiment/diffusion/sana/online_grpo_aesthetic \
+  --quality-config experiment/sana/online_grpo_aesthetic \
   --quality-evidence /absolute/path/to/evidence.json
 ```
 
@@ -24,7 +24,7 @@ For checkpoint evidence, also pass the exact `checkpoint.pt`:
 
 ```bash
 pytest tests/quality/test_real_inference_preflight.py -q \
-  --quality-config experiment/diffusion/sana/online_grpo_aesthetic \
+  --quality-config experiment/sana/online_grpo_aesthetic \
   --quality-evidence /absolute/path/to/evidence.json \
   --quality-checkpoint /absolute/path/to/checkpoint.pt
 ```

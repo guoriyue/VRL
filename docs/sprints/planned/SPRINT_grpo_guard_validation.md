@@ -61,13 +61,13 @@ policy_loss = per_sample_loss.mean() / sqrt_dt_mean.pow(2).clamp_min(1e-12)   # 
 
 ## 3. 落地
 
-新建 `configs/experiment/diffusion/flux/online_grpo_guard_pickscore_validation.yaml`：
+新建 `configs/experiment/flux/online_grpo_guard_pickscore_validation.yaml`：
 
 ```yaml
 # GRPO-Guard correctness-validation run: ratio-mean-bias + per-step scale norm.
 defaults:
   - /recipe/online/flow_matching_grpo_guard   # sets return_prev_sample_mean: true
-  - /model/diffusion/flux/dev
+  - /model/flux/dev
   - /sampling/image/512
   - /sampling/denoise/10_step_cfg_4_5
   - /reward/pickscore          # <- Flow-GRPO human-preference task (local CLIP-H + PickScore_v1)
@@ -97,7 +97,7 @@ rollout:
   sde: { window_range: [0, 10] }
 
 trainer:
-  entrypoint: vrl.scripts.diffusion.train:train_diffusion_online
+  entrypoint: vrl.scripts.train:train_online
   output_dir: outputs/flux_grpo_guard_pickscore_validation
   total_epochs: 300
   save_freq: 50
@@ -138,6 +138,6 @@ model: { torch_compile: { enable: false } }
 - 母体论文：`docs/papers/diffusion-flow-rl/flow-grpo-online-flow-matching-rl.pdf`
 - proposal-mean / dt 来源：`vrl/rollouts/evaluators/diffusion/sde_logprob.py`、
   `vrl/generation/diffusion/executor.py:203-209`
-- 基线 config：`configs/experiment/diffusion/flux/online_grpo_smoke_single_gpu.yaml`
+- 基线 config：`configs/experiment/flux/online_grpo_smoke_single_gpu.yaml`
 - 奖励/数据：`vrl/rewards/functions/pickscore.py`、`configs/reward/pickscore.yaml`、
   `configs/dataset/pickscore_sfw.yaml`

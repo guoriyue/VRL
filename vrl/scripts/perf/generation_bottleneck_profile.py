@@ -17,7 +17,7 @@ compute-vs-bandwidth split is legible without Nsight Compute (which isn't instal
 
 Usage:
     python -m vrl.scripts.perf.generation_bottleneck_profile \
-        --config experiment/diffusion/cosmos_predict2_5/online_nft_kling_video_reward \
+        --config experiment/cosmos_predict2_5/online_nft_kling_video_reward \
         --steps 6 --warmup 2 --trace outputs/perf/gen_trace.json
 """
 
@@ -33,7 +33,7 @@ from omegaconf import OmegaConf
 
 from vrl.config.loading import load_config
 from vrl.config.precision import normalize_precision
-from vrl.generation.diffusion.teacache import TeaCacheConfig
+from vrl.generation.steps.denoise.teacache import TeaCacheConfig
 from vrl.scripts.perf.common.diffusion_runtime import build_runtime, make_step_fn, run_e2e
 
 # Kernel-name -> bucket. First substring match wins; lowercased CUDA kernel name.

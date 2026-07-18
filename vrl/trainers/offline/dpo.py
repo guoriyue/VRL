@@ -9,7 +9,7 @@ The two batteries-included paths are:
 
 For Wan video models, image-only datasets (Pick-a-Pic) are handled by the
 caller's ``encode_pixels`` replicating each image along the temporal dim
-before VAE encoding (see ``vrl/scripts/diffusion/wan_2_1/train_dpo.py``).
+before VAE encoding (see ``vrl/scripts/families/wan_2_1/train_dpo.py``).
 """
 
 from __future__ import annotations

@@ -5,10 +5,10 @@
 # reference-image wiring, and the family is LoRA-only (apply_full_finetune
 # raises; the paper's full-param 3e-5 path needs multi-GPU + a separate sprint).
 defaults:
-  - /recipe/online/diffusion_grpo
+  - /recipe/online/denoise_grpo
 
 trainer:
-  entrypoint: vrl.scripts.diffusion.train:train_diffusion_online
+  entrypoint: vrl.scripts.train:train_online
 
 algorithm:
   # cosmos/wan video GRPO wants a tighter clip than the diffusion default (1e-4);

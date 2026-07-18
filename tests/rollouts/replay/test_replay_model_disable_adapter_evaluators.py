@@ -11,10 +11,10 @@ from vrl.config.precision import RolePrecision
 from vrl.generation import GenerationRequest, GenerationSampleRow
 from vrl.models.interfaces import ReplayResult, ReplaySegmentResult
 from vrl.rollouts.batch import RolloutBatch
-from vrl.rollouts.evaluators.ar.continuous_token_logprob import (
+from vrl.rollouts.evaluators.token.continuous_token_logprob import (
     ContinuousTokenLogProbEvaluator,
 )
-from vrl.rollouts.evaluators.ar.token_logprob import TokenLogProbEvaluator
+from vrl.rollouts.evaluators.token.token_logprob import TokenLogProbEvaluator
 from vrl.rollouts.evaluators.types import SignalRequest
 from vrl.trajectory import (
     build_ar_continuous_trajectory,

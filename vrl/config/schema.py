@@ -180,7 +180,7 @@ class DataConfig(ConfigBase):
     cache_dir: str | None = None
     # Precomputed clean-latents shard for the GRPO diffusion-loss regularizer
     # (algorithm.sft_weight > 0): {target_video -> VAE latents} written by
-    # vrl/scripts/diffusion/encode_targets.py. reader: run_online_recipe.
+    # vrl/scripts/denoise/encode_targets.py. reader: run_online_recipe.
     sft_latents: str | None = None
     max_train_samples: Any = None
     task_type: str | None = None
@@ -270,7 +270,7 @@ class SdeConfig(ConfigBase):
 
 
 class RolloutConfig(ConfigBase):
-    # readers: math/diffusion flow_matching window + RootConfig check
+    # readers: vrl/math/denoise/flow_matching.py window + RootConfig check
     sde: SdeConfig | None = None
     noise_level: float | None = None
     # janus_pro R1 only; the sole source for final_image_policy. Validated for
@@ -285,15 +285,16 @@ class RolloutConfig(ConfigBase):
     # Fail-fast host-RAM guard fraction for streaming accumulation (0.0 = off).
     # reader: vrl/scripts/common/online.py:_run_streaming_optimizer_update.
     host_memory_budget_fraction: float | None = None
-    # reader: vrl/generation/diffusion/layout.py _parse_denoise_mode (request boundary).
+    # reader: vrl/generation/bindings/joint_denoise/layout.py
+    # _parse_denoise_mode (request boundary).
     # Allowed set is the type; the layout guard stays for over-the-wire request dicts.
     denoise_mode: Literal["native", "sde"] | None = None
-    # reader: vrl/generation/diffusion/layout.py — opt-in to storing each denoise
-    # step's rollout proposal mean for trust-region replay (flow_dppo/grpo_guard).
+    # reader: vrl/generation/bindings/joint_denoise/layout.py — opt-in to storing
+    # each denoise step's rollout proposal mean for trust-region replay.
     return_prev_sample_mean: Any = None
-    # reader: vrl/generation/diffusion/layout.py — opt-in to caching the frozen
-    # reference (LoRA-disabled) noise_pred at collect, so KL replay never reruns
-    # the ref forward. Lossless: replay applies the same sde_step_with_logprob.
+    # reader: vrl/generation/bindings/joint_denoise/layout.py — opt-in to caching
+    # the frozen reference (LoRA-disabled) noise_pred at collect, so KL replay never
+    # reruns the ref forward. Lossless: replay applies the same sde_step_with_logprob.
     cache_ref_noise_pred: Any = None
     same_latent: Any = None
     # reader: generation planner (chunk_placement.py) + diffusion layout. int =
@@ -567,7 +568,7 @@ class TrainerSection(ConfigBase):
     # continuous sub-block nests automatically from the dataclass field type
     rollout_orchestration: Annotated[Any, ConfigBlock(RolloutOrchestrationConfig)] = None
     torch_profiler: Annotated[Any, ConfigBlock(TorchProfilerConfig)] = None
-    # offline DPO entrypoint (vrl/scripts/diffusion/wan_2_1/train_dpo.py)
+    # offline DPO entrypoint (vrl/scripts/families/wan_2_1/train_dpo.py)
     checkpointing_steps: Any = None
     log_interval: Any = None
     max_train_steps: Any = None
@@ -588,7 +589,7 @@ class ActorSection(ConfigBase):
     # Replay-side chunk capacity, independent from generation. Default 1 is the
     # safe training floor; recipes may explicitly raise it after measurement.
     replay_samples_per_chunk: Any = None
-    # offline DPO entrypoint (vrl/scripts/diffusion/wan_2_1/train_dpo.py)
+    # offline DPO entrypoint (vrl/scripts/families/wan_2_1/train_dpo.py)
     prediction_type: Any = None
     scale_lr: Any = None
     train_batch_size: Any = None
@@ -822,7 +823,7 @@ class RootConfig(ConfigBase):
                         raise ValueError(
                             "algorithm.sft_weight > 0 requires data.sft_latents "
                             "(the precomputed clean-latents shard; see "
-                            "vrl/scripts/diffusion/encode_targets.py)",
+                            "vrl/scripts/denoise/encode_targets.py)",
                         )
                 elif kind != "diffusion_dpo":
                     raise ValueError(

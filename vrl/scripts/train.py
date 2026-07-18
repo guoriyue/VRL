@@ -22,6 +22,14 @@ from typing import Any
 from omegaconf import DictConfig
 
 
+async def train_online(cfg: DictConfig) -> None:
+    """Run the registry-selected online recipe for any policy semantics."""
+
+    from vrl.scripts.common.online import run_online_recipe
+
+    await run_online_recipe(cfg)
+
+
 @dataclass(frozen=True, slots=True)
 class TrainTarget:
     """Resolved implementation for one merged training config."""
@@ -181,7 +189,9 @@ def write_run_verdict(
         (path / RUN_VERDICT_NAME).write_text(json.dumps(verdict, indent=2) + "\n")
     except OSError:
         logging.getLogger(__name__).warning(
-            "failed to write run verdict to %s", output_dir, exc_info=True,
+            "failed to write run verdict to %s",
+            output_dir,
+            exc_info=True,
         )
 
 

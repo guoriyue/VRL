@@ -10,8 +10,8 @@ wm-infra 已经不是“等待接入某个推理引擎”的 trainer 外壳。�
 
 - rollout collector 面向的 runtime 协议与显式 activate/offload/shutdown 生命周期；
 - serializable worker launch contract、Ray worker/resource ownership 与 chunk dispatch；
-- diffusion denoise loop、SDE action/log-prob trajectory、replay tensor export；
-- AR prefill/decode/cache scheduling、token log-prob trajectory；
+- joint-denoise loop、SDE action/log-prob trajectory、replay tensor export；
+- causal-token prefill/decode/cache scheduling、token log-prob trajectory；
 - policy version、versioned weight slots、continuous rollout 的 admission/drain 纪律。
 
 因此当前工作不是把 engine 从零换成 FlashDreams、SGLang 或 vLLM，而是把这套
@@ -21,9 +21,9 @@ native engine 继续做完整，并在它下面接可选执行 provider：
 wm-infra native generation engine
   ├─ request / plan / Ray lifecycle / policy version       owned here
   ├─ trajectory / log-prob / replay / reward / trainer     owned here
-  ├─ native diffusion execution                            default + oracle
-  ├─ native AR execution                                   default + only AR engine
-  └─ optional diffusion execution providers
+  ├─ native joint-denoise execution                        default + oracle
+  ├─ native causal-token execution                         default token path
+  └─ optional denoise execution providers
        ├─ FlashDreams controlled fork
        └─ SGLang-Diffusion upstream API
 ```
@@ -42,15 +42,16 @@ Diffusers-backed forward 误写成“没有自研 engine”。
 | Runtime | `GenerationRuntime` 定义 activate/generate/offload/shutdown 和 policy version | 保留为唯一 collector-facing runtime |
 | Distributed launch | `GenerationRuntimeLaunchContract` 只传 primitive config 与 import path，拒绝 live tensor/module/pipeline | 继续作为 worker 构造与进程隔离边界 |
 | Worker | `GenerationWorkerCore` 构造 family executor、安装版本化权重、执行 chunk、sleep/wake 与故障清理 | 外部 provider 必须进入此生命周期，不能另起旁路服务 |
-| Diffusion | `DiffusionChunkExecutorBase` 自己拥有 prepare/denoise/trajectory/decode/gather 流程 | native path 是语义 oracle；provider 只能从明确的 family-executor boundary 接入 |
-| AR | `ARChunkExecutorBase` 与 `ARDecodeLoop` 自己拥有 prefill/decode/cache/token trajectory | 保持 native；本轮不做第二个 AR full engine |
+| Joint × denoise | `bindings/joint_denoise.DiffusionChunkExecutorBase` 组合 prompt/prepare、共享 denoise loop、trajectory、decode 与 gather | native path 是语义 oracle；provider 只能从明确的 family-executor boundary 接入 |
+| Causal × token | `bindings/causal_token.ARChunkExecutorBase` 与 `composition.causal.CausalTokenLoop` 拥有 prefill/decode/cache/token trajectory | 保持 native；本轮不做第二个 causal-token full engine |
 | Replay | family model 导出 replay tensors/context，trainer 侧按 trajectory schema 重放 | provider 输出必须投影到同一 schema，不能让 trainer 认识 provider 私有对象 |
 | Native transformer forward | Wan/Cosmos 当前主要仍调用 Diffusers transformer | 保持事件门控的独立 Layer-B sprint，不在本 program 重复实现 |
 | Cross-request step batching | 已有 parked 的 family-neutral `StepScheduler` 方向 | 不建 provider 专用 scheduler；仍由真实 underfill + workload gate 解 park |
 
-当前 `ModelFamilyEntry.collector_kind` 表达 diffusion / discrete AR / continuous AR / R1
-的 collection 语义，不是外部 engine 菜单。不要把 FlashDreams/SGLang 名字塞进这个
-字段，也不要把一个 native runtime 拆成两个顶层 rollout backend。
+当前 `ModelFamilyEntry.policy_semantics` 正交表达 trainable policy 的时间组织、step、
+action distribution 与 trajectory layout；executor/gatherer/provider 由独立 binding 表达。
+旧 `collector_kind` 已删除。不要把 FlashDreams/SGLang 名字塞进 semantics，也不要把
+一个 native runtime 拆成两个顶层 rollout backend。
 
 native transformer executor 目前不解 park：计划中的 Wan native executor/attention/
 weight mapper 尚不存在；独立的 SD3.5 bf16/FA2、**compile-off** full-rollout profile 已把
@@ -82,10 +83,10 @@ transformer / kernel / provider scheduling   mostly upstream or parked
 
 | 能力 | 生产代码证据 | 判定 |
 |---|---|---|
-| RL trajectory | `diffusion/executor.py` 在 denoise loop 写 observations/actions/log-probs；`trajectory/builders.py` 构造 action/old_log_prob/mask；validator 检查 role 与 axis | 这是 trainer-facing source of truth，不是 inference-only artifact wrapper |
+| RL trajectory | `generation/steps/denoise/loop.py` 产出 observations/actions/log-probs；binding 与 `trajectory/builders.py` 构造 trainer-facing trajectory，validator 检查 role 与 axis | 这是 trainer-facing source of truth，不是 inference-only artifact wrapper |
 | Policy freshness | worker 按 request version 激活 slot；slot 被逐出时 `RayGenerationExecutor` 丢弃整条 request | mixed-policy partial result fail closed |
 | GPU/runtime lifecycle | `GenerationRuntime` 暴露 activate/generate/offload/shutdown；Ray runtime 对 activate/offload/shutdown 做 single-flight 与资源清理 | shared-GPU handoff 与 terminal ownership 是 engine 行为 |
-| Diffusion + AR | diffusion 自有 denoise/SDE loop；AR 自有 token scheduler/cache row routing；两者汇入同一 `GenerationOutput`/trajectory | 一个顶层 engine 可以保留两种不同数学执行形态 |
+| Joint-denoise + causal-token | denoise step 自有 SDE loop；causal composition 自有 token scheduler/cache row routing；两者汇入同一 `GenerationOutput`/trajectory | 一个顶层 engine 可以保留两种不同数学执行形态 |
 | RL group integrity | sample chunk OOM 时有序二分，gather 再检查完整覆盖 | OOM 不会静默少样本、重复样本或重排 GRPO group |
 
 #### 尚未成立的能力与代价
@@ -96,7 +97,7 @@ transformer / kernel / provider scheduling   mostly upstream or parked
 | Verifiable weight commit | worker ACK 当前只有整数 policy version；没有 schema/digest ACK 与 weight-sync deadline | [Ray rollout fault tolerance](SPRINT_ray_rollout_fault_tolerance.md) |
 | Provider selection | `ModelFamilyEntry` 当前只有一个 `executor_cls`，launch contract 没有 provider identity/schema/provenance | 本 program N2 + [multi-engine conformance](parked/SPRINT_multi_engine_rollout_conformance.md) |
 | Full model ownership | diffusion backbone 最终调用 Diffusers transformer；pipeline/scheduler/text encoder/VAE 仍大量来自 upstream | [native transformer executor](parked/SPRINT_diffusion_native_transformer_executor.md)，继续 profile-gated |
-| Cross-request batching | diffusion chunk 跑完整 denoise loop；AR `TokenScheduler` 每个 `ARDecodeLoop` 单独创建；不同 request 不共享 forward | [cross-request step scheduler](parked/SPRINT_cross_request_step_scheduler.md)，继续 workload-gated |
+| Cross-request batching | joint-denoise binding 跑完整 denoise loop；`TokenScheduler` 每个 `CausalTokenLoop` 单独创建；不同 request 不共享 forward | [cross-request step scheduler](parked/SPRINT_cross_request_step_scheduler.md)，继续 workload-gated |
 | Video trajectory capacity | denoise 前预分配完整 observations/actions，并可选再分配 previous means/reference predictions | [paged trajectory store](parked/SPRINT_paged_trajectory_store.md)，只在目标 video profile 证明容量/搬运瓶颈后解 park |
 
 因此本 program 的架构结论不是“native 一定比外部 engine 快”，而是替换成本不对称：
@@ -128,7 +129,7 @@ production profile 证明 native request scheduling 而非 model compute 是主�
 
 1. 把 request/output、policy version、weight install、failure cleanup、trajectory/replay
    这些 engine-owned 语义钉成 provider-independent contract tests。
-2. 以 native diffusion 与 native AR 路径作为唯一行为基线。
+2. 以 native joint-denoise 与 causal-token 路径作为唯一行为基线。
 3. 先覆盖 fake/model-free 与 CPU 数学路径；需要真实模型/GPU 的门在 GPU 可用后单独跑，
    不用 mock 结果冒充通过。
 4. 不预建一个只有 native 实现的抽象 provider 层，也不假设所有 provider 都能逐
@@ -217,7 +218,7 @@ whole-request replay、weight ACK digest/schema 等具体实现继续归
 
 ```text
 FlashDreams:
-  family executor owns temporal-AR state machine + native trajectory
+  family executor owns causal-chunked state machine + native trajectory
     -> reuses outer SampleChunk planning/OOM/gather
     -> private step-level FlashDreams adapter predicts flow
 
@@ -250,7 +251,7 @@ bindings 只声明实际实现的 executor/runtime builder/capability。launch �
 的每个字段必须被 import validation、launch、readiness/schema/digest mismatch 或 capability
 rejection 实际消费；否则删除或在定义处标注 display/provenance-only。
 
-config 不能把 provider 名塞进 `collector_kind`。选择必须在构造
+config 不能把 provider 名塞进 `policy_semantics`。选择必须在构造
 `GenerationRuntimeLaunchContract` 前完成；未注册 family/provider binding、pin 不匹配、
 capability 未实现时 fail closed。测试从这一个 typed source 发现 case，不维护平行
 `SUPPORTED_PROVIDERS` 常量。
@@ -268,7 +269,7 @@ upstream + 可重复应用变更”，但不复制长期膨胀的单文件 patch
 
 ### N3 — Native path 持续可用
 
-接入 provider 后，native diffusion 与 native AR 仍必须：
+接入 provider 后，native joint-denoise 与 causal-token 路径仍必须：
 
 - 无外部 engine dependency 即可 import、resolve config 与运行 CPU tests；
 - 保持默认选择，除非 recipe 显式选择一个已经通过 conformance 的 provider；
@@ -294,7 +295,8 @@ upstream + 可重复应用变更”，但不复制长期膨胀的单文件 patch
   live model 与 pipeline。
 - `build_family_runtime_bundle` 与注册的 replay runtime builder 即使很薄也保留：它们提供
   lazy import、worker-side construction 与跨 family 一致形状。
-- `CollectorKind` 保持 typed schema boundary；它表达 collection 语义，不表达 provider。
+- `PolicySemantics` 保持 typed schema boundary；它不表达 provider。旧
+  `CollectorKind` 已删除，不再维护第二套扁平 taxonomy。
 
 ### ALL_CAPS 与数据来源
 
@@ -310,7 +312,7 @@ upstream + 可重复应用变更”，但不复制长期膨胀的单文件 patch
 ### 非目标
 
 - 不重写 trainer、reward、trajectory 或 Ray runtime 来迎合外部 API。
-- 不做第二套 AR rollout engine；AR 继续走 native engine，vLLM 只可作为明确的 attention
+- 不做第二套 causal-token rollout engine；该 binding 继续走 native engine，vLLM 只可作为明确的 attention
   kernel/backend 边界。
 - 不提前解 park native transformer executor、cross-request `StepScheduler`、physical
   pipeline 或 NCCL weight transport；各自已有独立 gate 与 sprint。
@@ -320,11 +322,11 @@ upstream + 可重复应用变更”，但不复制长期膨胀的单文件 patch
 
 ## 5. Program Definition of Done
 
-- [ ] Native diffusion 与 native AR 均通过统一 runtime/lifecycle/version contract。
+- [ ] Native joint-denoise 与 causal-token 均通过统一 runtime/lifecycle/version contract。
 - [ ] Generation architecture boundary 全绿；`vrl/generation/` 不反向 import rollout/trainer。
 - [ ] `GenerationRequest` 每个公开字段都有非日志行为消费者；当前 dead `priority` 已删除。
 - [ ] OOM degradation 后 group coverage/order 与 request policy version 仍完整一致。
-- [ ] Native diffusion trajectory 是 provider conformance 的明确 oracle。
+- [ ] Native joint-denoise trajectory 是 provider conformance 的明确 oracle。
 - [ ] FlashDreams provider 通过 Self-Forcing collect → replay round-trip。
 - [ ] SGLang provider 通过一个官方支持 T2I family 的 collect → replay round-trip。
 - [ ] 两个 provider 的 config 不能声明未实现 capability；validation 来自同一 typed source。
@@ -349,9 +351,13 @@ upstream + 可重复应用变更”，但不复制长期膨胀的单文件 patch
 - `vrl/generation/launch_contract.py`
 - `vrl/generation/execution/worker.py`
 - `vrl/generation/ray/`
-- `vrl/generation/diffusion/executor.py`
-- `vrl/generation/ar/executor.py`
-- `vrl/models/diffusion/base.py`
+- `vrl/generation/bindings/joint_denoise/executor.py`
+- `vrl/generation/bindings/causal_token/executor.py`
+- `vrl/generation/steps/denoise/loop.py`
+- `vrl/generation/composition/causal/token_loop.py`
+- `vrl/models/steps/denoise/base.py`
+- `vrl/models/steps/token/base.py`
+- `docs/MODEL_TAXONOMY.md`
 - `docs/sprints/SPRINT_explicit_rollout_activation.md`
 - `docs/sprints/reading/SPRINT_diffusion_rollout_system.md`
 - `docs/sprints/info/SPRINT_ray_generation_engine_map.md`

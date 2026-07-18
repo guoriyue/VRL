@@ -5,7 +5,7 @@ RL 必须用 **paper-shaped 配置**（够显存才跑得起），**不要**沿�
 L40S 的缩水 override——那次只采了论文 **千分之二** 的 rollout 量，学不出东西。
 
 > 来源：本篇核对了论文 PDF（`docs/papers/world-models/cosmos-predict2-5-world-foundation-models.pdf` 第 13 页
-> §4.2.2 Reinforcement Learning）、仓库 config（`configs/experiment/diffusion/cosmos_predict2_5/`）、
+> §4.2.2 Reinforcement Learning）、仓库 config（`configs/experiment/cosmos_predict2_5/`）、
 > 以及 field-notes（`info/SPRINT_cosmos_training_field_notes.md`）。
 
 ## 0. 一句话
@@ -58,7 +58,7 @@ rbs=1、n=3 时组内只有 3 个样本、每步只有 1 个 prompt——advanta
 
 ```bash
 # paper-shaped 配置已存在,直接用(NFT 变体):
-#   configs/experiment/diffusion/cosmos_predict2_5/online_nft_kling_video_reward.yaml
+#   configs/experiment/cosmos_predict2_5/online_nft_kling_video_reward.yaml
 #   → n_samples_per_prompt=8, rollout_batch_size=32, 512p_93f, 20_step_no_cfg,
 #     total_epochs=256, timestep_fraction=0.5(→10 切片)
 # 关键:这套 n=8/rbs=32/512p/93f 在单 L40S(46GB)塞不下,需要多卡或更大卡。
@@ -80,10 +80,10 @@ rbs=1、n=3 时组内只有 3 个样本、每步只有 1 个 prompt——advanta
    家族**(不是 predict2.5),且 v2w 那个是 **Video2World + per-sample 参考图条件**(`/dataset/video_world_v2w`、
    `reference_mode: per_sample`),走另一个数据/入口。
    **→ Implemented (2026-07-08; entrypoint consolidated 2026-07-13):** the current
-   entrypoint is `vrl.scripts.diffusion.train:train_diffusion_online`; family/task
+   entrypoint is `vrl.scripts.train:train_online`; family/task
    behavior comes from the registry. The family recipe is
    `vrl/config/presets/recipe/online/cosmos_predict25_grpo.yaml`, with experiment
-   `vrl/config/presets/experiment/diffusion/cosmos_predict2_5/online_grpo_kling_video_reward.yaml` (paper-shaped:
+   `vrl/config/presets/experiment/cosmos_predict2_5/online_grpo_kling_video_reward.yaml` (paper-shaped:
    n=8×rbs=32、512p_93f、20步no-CFG、timestep_fraction 0.5→10 切片、256 updates;有意偏差已在配置头注明:
    LoRA 1e-4 替 full-param 3e-5、ppo_epochs=4 替单 pass、无 diffusion-loss 正则)。config 校验套件过
    (`tests/config/test_load_all_experiments.py` 31 passed)。**跑起来仍需多卡/大卡显存**(见 §4),
@@ -161,8 +161,8 @@ rbs=1、n=3 时组内只有 3 个样本、每步只有 1 个 prompt——advanta
 ## 6. 参考
 
 - 论文:`docs/papers/world-models/cosmos-predict2-5-world-foundation-models.pdf` §4.2.2(p13)
-- paper-shaped config:`configs/experiment/diffusion/cosmos_predict2_5/online_nft_kling_video_reward.yaml`
-- GRPO 变体:`configs/experiment/diffusion/cosmos_predict2/online_grpo_kling_video_reward.yaml`
+- paper-shaped config:`configs/experiment/cosmos_predict2_5/online_nft_kling_video_reward.yaml`
+- GRPO 变体:`configs/experiment/cosmos_predict2/online_grpo_kling_video_reward.yaml`
 - 单卡实跑记录:`docs/sprints/info/SPRINT_cosmos_training_field_notes.md`
 - 单卡 runbook:`docs/sprints/info/SPRINT_cosmos25_kling_paper_recipe_runbook.md`
 - 固定 eval 信号(判断有没有学到):`docs/sprints/done/SPRINT_cosmos_kling_fixed_eval_signal.md`

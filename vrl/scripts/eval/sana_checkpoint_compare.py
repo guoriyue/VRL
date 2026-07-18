@@ -132,7 +132,7 @@ def run_comparison(args: argparse.Namespace) -> dict[str, str]:
         )
 
     device = _resolve_device(args.device)
-    from vrl.models.diffusion.build import (
+    from vrl.models.steps.denoise.build import (
         build_family_runtime_bundle,
         resolve_family_model_build,
     )

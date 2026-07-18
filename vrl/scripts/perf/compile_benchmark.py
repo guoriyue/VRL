@@ -12,14 +12,15 @@ WHAT it measures, for compile OFF vs ON, on two paths that mirror the real code:
   - rollout: forward-only under ``no_grad`` (the 35-step x CFG denoise loop is
     just this forward repeated -- the dominant rollout cost).
   - train:   forward + backward with gradient checkpointing enabled, matching
-    ``vrl/scripts/diffusion/cosmos/train.py:131`` (default True).
+    recipes that set ``actor.gradient_checkpointing: true``.
 Per cell: median step latency, CUDA kernel launches issued per step (the
 launch-bound signal -- compile fuses elementwise epilogues into fewer kernels),
 and peak memory.
 
 FAITHFULNESS: this compiles the bare diffusers transformer exactly as the runtime
 does -- ``torch.compile(transformer, mode=mode, fullgraph=False)`` (see
-``vrl/models/diffusion/base.py:200``). Compile's fusion/guard decisions depend on
+``vrl/models/steps/denoise/base.py::DiffusionModelBase.torch_compile_transformer``).
+Compile's fusion/guard decisions depend on
 the op graph and tensor shapes, both reproduced exactly by the config-init
 synthetic model (``build_synthetic_inputs``); weight VALUES never affect compile
 behavior or launch structure, so no checkpoint download is needed. The synthetic
@@ -82,7 +83,7 @@ def _maybe_compile(model: torch.nn.Module, *, compiled: bool, mode: str) -> torc
 
     if not compiled:
         return model
-    # Mirrors vrl/models/diffusion/base.py:200 (the only place the runtime compiles).
+    # Mirrors DiffusionModelBase.torch_compile_transformer (the runtime boundary).
     return torch.compile(model, mode=mode, fullgraph=False)
 
 
@@ -128,8 +129,8 @@ def _run_cell(
                 runner(**kwargs)
 
     elif path == "train":
-        # Match the real train path: full-param grads + gradient checkpointing
-        # (vrl/scripts/diffusion/cosmos/train.py:131, default True). Configure the
+        # Match the real train path: full-param grads + gradient checkpointing,
+        # as selected by actor.gradient_checkpointing. Configure the
         # eager module fully, THEN compile, so the OptimizedModule wraps the final
         # state (grad-ckpt is a forward-time flag; pre- vs post-compile is equivalent).
         model.train()

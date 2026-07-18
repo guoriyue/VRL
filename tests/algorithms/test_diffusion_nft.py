@@ -26,7 +26,7 @@ from typing import Any
 import pytest
 import torch
 
-from tests.models.diffusion.fixtures import (
+from tests.models.steps.denoise.fixtures import (
     TINY_WAN_LATENT_SHAPE,
     TINY_WAN_TEXT_DIM,
     TINY_WAN_TEXT_LEN,
@@ -36,10 +36,9 @@ from tests.models.diffusion.fixtures import (
 from vrl.algorithms.diffusion_nft import DiffusionNFT, DiffusionNFTConfig
 from vrl.algorithms.grpo.continuous import GRPO, GRPOConfig
 from vrl.config.precision import RolePrecision
-from vrl.generation.diffusion.layout import VideoGenerationRequest
-from vrl.generation.types import GenerationRequest, GenerationSampleRow
-from vrl.models.diffusion import DiffusionModelBase
-from vrl.models.diffusion.cosmos.predict2_5.model import _copy_adapter_weights
+from vrl.generation.types import GenerationRequest, GenerationSampleRow, VideoGenerationRequest
+from vrl.models.families.cosmos.predict2_5.model import _copy_adapter_weights
+from vrl.models.steps.denoise import DiffusionModelBase
 from vrl.rollouts.batch import RolloutBatch
 from vrl.trajectory.builders import build_diffusion_trajectory
 

@@ -1,0 +1,1 @@
+"""Concrete generation binding tests."""

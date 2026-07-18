@@ -6,9 +6,9 @@ import time
 
 import torch
 
-from vrl.generation.diffusion.layout import VideoGenerationRequest
-from vrl.generation.diffusion.teacache import TeaCacheState, teacache_signal
-from vrl.math.diffusion.flow_matching import sde_step_with_logprob
+from vrl.generation.steps.denoise.teacache import TeaCacheState, teacache_signal
+from vrl.generation.types import VideoGenerationRequest
+from vrl.math.denoise.flow_matching import sde_step_with_logprob
 from vrl.models.interfaces import RuntimeBundle
 
 _PROMPT = "a physical scene, high quality"

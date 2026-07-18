@@ -5,6 +5,7 @@ from __future__ import annotations
 import subprocess
 import sys
 from dataclasses import replace
+from pathlib import Path
 
 import pytest
 from omegaconf import OmegaConf
@@ -15,10 +16,11 @@ from vrl.families.names import (
 )
 from vrl.families.registry import (
     FAMILY_REGISTRY,
-    ARFamilyBuild,
-    DiffusionFamilyBuild,
+    DenoiseFamilyBuild,
+    TokenFamilyBuild,
     get_model_family_entry,
 )
+from vrl.families.semantics import PolicySemantics
 from vrl.rollouts.collector import build_rollout_collector
 from vrl.rollouts.collector.config import (
     RolloutCollectorConfig,
@@ -27,11 +29,19 @@ from vrl.rollouts.collector.config import (
 from vrl.utils.config import import_from_path
 
 
-def test_family_entry_rejects_a_collector_kind_build_mismatch() -> None:
+def test_family_entry_rejects_a_policy_step_build_mismatch() -> None:
     entry = get_model_family_entry("sana")
 
     with pytest.raises(ValueError, match="does not match its family build"):
-        replace(entry, collector_kind="ar_discrete")
+        replace(
+            entry,
+            policy_semantics=PolicySemantics(
+                temporal_organization="causal",
+                step_kind="token",
+                action_distribution="categorical",
+                trajectory_layout="token",
+            ),
+        )
 
 
 def test_family_name_import_does_not_load_runtime_registry() -> None:
@@ -52,6 +62,40 @@ def test_family_name_import_does_not_load_runtime_registry() -> None:
     assert result.returncode == 0, result.stderr
 
 
+def test_production_code_does_not_reference_legacy_taxonomy_paths() -> None:
+    root = Path(__file__).resolve().parents[3] / "vrl"
+    legacy_directories = (
+        root / "models" / "ar",
+        root / "models" / "diffusion",
+        root / "generation" / "ar",
+        root / "generation" / "diffusion",
+        root / "math" / "ar",
+        root / "math" / "diffusion",
+        root / "rollouts" / "evaluators" / "ar",
+        root / "rollouts" / "evaluators" / "diffusion",
+        root / "scripts" / "ar",
+        root / "scripts" / "diffusion",
+    )
+    stale_directories = [path.relative_to(root) for path in legacy_directories if path.exists()]
+    assert not stale_directories, f"legacy taxonomy directories: {stale_directories}"
+
+    legacy_paths = (
+        "vrl.models." + "ar",
+        "vrl.models." + "diffusion",
+        "vrl.generation." + "ar",
+        "vrl.generation." + "diffusion",
+        "vrl.math." + "ar",
+        "vrl.math." + "diffusion",
+    )
+    violations = [
+        path.relative_to(root)
+        for path in root.rglob("*.py")
+        if any(legacy_path in path.read_text(encoding="utf-8") for legacy_path in legacy_paths)
+    ]
+
+    assert not violations, f"legacy taxonomy path references: {violations}"
+
+
 def test_family_registry_entries_have_complete_protocol_wiring() -> None:
     assert FAMILY_REGISTRY
     assert len(FAMILY_REGISTRY) == len(set(FAMILY_REGISTRY))
@@ -60,14 +104,20 @@ def test_family_registry_entries_have_complete_protocol_wiring() -> None:
         assert entry.family == family
         assert entry.task
         assert callable(entry.new_gatherer().gather_chunks)
-        if entry.collector_kind == "diffusion":
-            assert isinstance(entry.family_build, DiffusionFamilyBuild)
+        assert entry.policy_semantics.temporal_organization in {"joint", "causal"}
+        if entry.policy_semantics.step_kind == "denoise":
+            assert isinstance(entry.family_build, DenoiseFamilyBuild)
             assert entry.executor_cls.startswith(
-                ("vrl.models.diffusion.", "vrl.generation.diffusion."),
+                (
+                    "vrl.models.families.",
+                    "vrl.generation.bindings.joint_denoise.",
+                ),
             )
         else:
-            assert isinstance(entry.family_build, ARFamilyBuild)
-            assert entry.executor_cls.startswith("vrl.models.ar.")
+            assert isinstance(entry.family_build, TokenFamilyBuild)
+            assert entry.executor_cls.startswith(
+                ("vrl.models.families.", "vrl.generation.bindings.causal_token."),
+            )
 
 
 def test_family_aliases_resolve_to_canonical_entries() -> None:
@@ -169,14 +219,16 @@ def test_unknown_family_raises_clear_error() -> None:
         get_model_family_entry("not_a_family")
 
 
-def test_ar_family_build_descriptors_are_importable() -> None:
-    ar_entries = [
-        entry for entry in FAMILY_REGISTRY.values() if entry.collector_kind != "diffusion"
+def test_token_family_build_descriptors_are_importable() -> None:
+    token_entries = [
+        entry
+        for entry in FAMILY_REGISTRY.values()
+        if isinstance(entry.family_build, TokenFamilyBuild)
     ]
-    assert len(ar_entries) >= 6
-    for entry in ar_entries:
+    assert len(token_entries) >= 6
+    for entry in token_entries:
         build = entry.family_build
-        assert isinstance(build, ARFamilyBuild)
+        assert isinstance(build, TokenFamilyBuild)
         for path in (
             build.model_cls,
             build.replay_cls,
@@ -186,14 +238,16 @@ def test_ar_family_build_descriptors_are_importable() -> None:
             assert callable(import_from_path(path))
 
 
-def test_diffusion_family_build_descriptors_have_one_replay_path() -> None:
-    diffusion_entries = [
-        entry for entry in FAMILY_REGISTRY.values() if entry.collector_kind == "diffusion"
+def test_denoise_family_build_descriptors_have_one_replay_path() -> None:
+    denoise_entries = [
+        entry
+        for entry in FAMILY_REGISTRY.values()
+        if isinstance(entry.family_build, DenoiseFamilyBuild)
     ]
-    assert len(diffusion_entries) >= 10
-    for entry in diffusion_entries:
+    assert len(denoise_entries) >= 10
+    for entry in denoise_entries:
         build = entry.family_build
-        assert isinstance(build, DiffusionFamilyBuild)
+        assert isinstance(build, DenoiseFamilyBuild)
         if build.replay_cls is not None:
             assert callable(import_from_path(build.replay_cls))
             assert build.transformer_classname

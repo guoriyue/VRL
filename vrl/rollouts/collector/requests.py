@@ -113,10 +113,12 @@ class GenerationRequestBuilder:
         input_metadata = dict(item.metadata)
         if "video_fps" in group_metadata:
             input_metadata.setdefault("video_fps", group_metadata["video_fps"])
-        # Some engines expect their per-sample metadata under a family-specific
-        # key (e.g. nextstep_1's "rollout_metadata").
-        if self.entry.collector_kind == "ar_continuous":
-            input_metadata = {"rollout_metadata": input_metadata}
+        # Some engines bind per-sample metadata under a family-specific request
+        # namespace. This is an adapter contract, not a consequence of causal or
+        # continuous policy semantics.
+        namespace = self.entry.request_metadata_namespace
+        if namespace is not None:
+            input_metadata = {namespace: input_metadata}
         return GenerationInput(
             prompt=item.prompt,
             task_type=item.task_type or _DEFAULT_TASK_TYPE_BY_FAMILY_TASK.get(self.entry.task),

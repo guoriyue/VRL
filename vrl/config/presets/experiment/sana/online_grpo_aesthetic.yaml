@@ -1,0 +1,57 @@
+# SANA 1.6B + aesthetic GRPO — pre-registered trustworthy learning curve.
+# PASS/FAIL is owned by docs/sprints/SPRINT_sana_aesthetic_trustworthy_curve.md
+# and vrl.scripts.eval.sana_aesthetic_curve_verdict. Do not change the run depth,
+# eval grid, seed, or thresholds after the baseline row has been written.
+defaults:
+  - /recipe/online/flow_matching_grpo
+  - /model/sana/1600m
+  - /sampling/image/512
+  - /sampling/denoise/10_step_cfg_4_5
+  - /dataset/drawbench_train_192
+  - /reward/aesthetic
+  # Observational only: weight is forced to zero below, so this prompt-aware
+  # scorer detects aesthetic reward hacking without changing the objective.
+  - /reward/pickscore
+
+# This recipe keeps the model preset's official FP16 transformer path without
+# outer autocast. BF16 and FP32 denoiser paths failed the canonical quality
+# probes but remain explicit experiment overrides. Gemma stays BF16, while
+# stochastic scheduler/log-probability math remains protected FP32.
+
+sampling:
+  max_sequence_length: 300
+
+actor:
+  optim:
+    lr: 3.0e-4
+  # Match the rollout batch shape so batched CFG is identical on replay.
+  replay_samples_per_chunk: 8
+  gradient_checkpointing: true
+  # One inner step leaves ratio-based learning nearly inert; four is the
+  # repository's measured diffusion-GRPO setting for a real policy movement.
+  ppo_epochs: 4
+
+rollout:
+  n_samples_per_prompt: 16
+  prompts_per_batch: 8
+  # Both aesthetic and PickScore stay resident on the colocated card after
+  # scoring. Eight samples peaks below the remaining VAE decode budget; sixteen
+  # deterministically OOMs and only succeeds through the runtime split fallback.
+  samples_per_chunk: 8
+
+trainer:
+  output_dir: outputs/sana_aesthetic_trustworthy_curve
+  total_epochs: 300
+  save_freq: 25
+  debug:
+    first_step: true
+
+reward:
+  components:
+    aesthetic: 1.0
+    pickscore: 0.0
+  kwargs:
+    # Observation-only guard. Keep it on CPU so aesthetic remains the single
+    # shared-GPU CuMem owner; weight 0 excludes it from the optimization reward.
+    pickscore:
+      device: cpu

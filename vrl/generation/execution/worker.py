@@ -119,8 +119,9 @@ class GenerationWorkerCore:
         A sleep-offload diffusion worker (``launch_contract.sleep_offload``, set by the
         colocated-trainer lease) allocates the whole model inside vLLM's
         CuMemAllocator pool, so ``sleep``/``wake`` release and restore the GPU
-        *physical* pages via CUDA virtual memory. AR remains on the verified CPU
-        fallback because GLM-Image's temporary decode path calls ``empty_cache``;
+        *physical* pages via CUDA virtual memory. Executors without the published
+        pool capability remain on the verified CPU fallback because GLM-Image's
+        temporary decode path calls ``empty_cache``;
         doing that inside vLLM's pluggable allocator scope is unsupported. The
         worker rejects families or executor shapes that have not declared and
         implemented complete fallback parking instead of accepting a no-op.
@@ -128,7 +129,7 @@ class GenerationWorkerCore:
 
         if (
             not self.launch_contract.sleep_offload
-            or self.family_entry.collector_kind != "diffusion"
+            or not self.family_entry.runtime_capabilities.supports_cumem_pool
         ):
             return self._build_executor()
         pool = CumemPool.try_create(tag="weights")
@@ -323,12 +324,15 @@ class GenerationWorkerCore:
                 f"generation worker {self.worker_id!r} cannot completely park "
                 f"{type(executor).__name__}: CPU fallback requires executor.model.to(...)"
             )
-        if self.family_entry.collector_kind == "diffusion" and not callable(
-            getattr(model, "move_frozen_components", None),
+        if (
+            self.family_entry.runtime_capabilities.requires_frozen_component_parking
+            and not callable(
+                getattr(model, "move_frozen_components", None),
+            )
         ):
             raise RuntimeError(
                 f"generation worker {self.worker_id!r} cannot completely park "
-                f"{type(model).__name__}: diffusion CPU fallback requires "
+                f"{type(model).__name__}: this CPU fallback requires "
                 "move_frozen_components(...)"
             )
 
@@ -833,9 +837,9 @@ class GenerationWorkerCore:
 
         assert_rollout_quantization_applied(model, build)
         executor_kwargs = dict(launch_contract.executor_kwargs)
-        from vrl.families.registry import GENERIC_DIFFUSION_EXECUTOR
+        from vrl.families.registry import GENERIC_DENOISE_EXECUTOR
 
-        if self.family_entry.executor_cls == GENERIC_DIFFUSION_EXECUTOR:
+        if self.family_entry.executor_cls == GENERIC_DENOISE_EXECUTOR:
             executor_kwargs.update(
                 family=self.family_entry.family,
                 task=self.family_entry.task,

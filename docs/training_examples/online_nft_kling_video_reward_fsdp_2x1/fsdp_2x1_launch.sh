@@ -33,7 +33,7 @@ REPO="${REPO:-$HOME/VRL}"
 IFACE="${IFACE:-enp39s0}"                 # NCCL/GLOO socket interface (must match on both)
 PORT="${PORT:-29500}"
 OUT="${OUT:-outputs/fsdp_2x1_run}"
-CONFIG="${CONFIG:-experiment/diffusion/cosmos_predict2_5/online_nft_kling_video_reward_fsdp_2x1}"
+CONFIG="${CONFIG:-experiment/cosmos_predict2_5/online_nft_kling_video_reward_fsdp_2x1}"
 SAVE_FREQ="${SAVE_FREQ:-3}"
 # run-specific knobs (resolution / batch / memory) — NOT hardcoded:
 EXTRA_OVERRIDES="${EXTRA_OVERRIDES:-}"

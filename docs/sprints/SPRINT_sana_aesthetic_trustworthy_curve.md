@@ -63,7 +63,7 @@ substitute for the 300-update held-out learning claim in this document.
 
 ## 2. 固定资产与运行配置
 
-- 训练配置：`vrl/config/presets/experiment/diffusion/sana/online_grpo_aesthetic_fullparam_long.yaml`
+- 训练配置：`vrl/config/presets/experiment/sana/online_grpo_aesthetic_fullparam_long.yaml`
 - 训练 prompt：`datasets/drawbench/train_192.txt`
 - fixed eval：`datasets/drawbench/eval_64.txt`
   - 从 `datasets/drawbench/test.txt` 保序去重；
@@ -118,7 +118,7 @@ substitute for the 300-update held-out learning claim in this document.
 
 ```bash
 PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True \
-vrl-train --config experiment/diffusion/sana/online_grpo_aesthetic
+vrl-train --config experiment/sana/online_grpo_aesthetic
 ```
 
 该输出目录的 checkpoint 只保留为历史证据，不能作为 full-parameter v3 的 resume
@@ -131,7 +131,7 @@ v3 full-parameter 主跑只使用以下 canonical preset；supervisor 在输出�
 CUDA_VISIBLE_DEVICES=0 \
 PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True \
 python -u -m vrl.scripts.supervise \
-  --config experiment/diffusion/sana/online_grpo_aesthetic_fullparam_long
+  --config experiment/sana/online_grpo_aesthetic_fullparam_long
 ```
 
 ## 3. 主跑 PASS/FAIL（baseline 之前冻结）
@@ -340,7 +340,7 @@ prompt adherence。防线在运行前固定为：
 
 ```bash
 PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True \
-vrl-train --config experiment/diffusion/sana/online_grpo_aesthetic \
+vrl-train --config experiment/sana/online_grpo_aesthetic \
   precision.rollout.quantization.format=fp8 \
   precision.rollout.quantization.recipe=rowwise \
   precision.rollout.prompt_encoders.dtype=bf16 \

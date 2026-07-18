@@ -1,0 +1,81 @@
+# Cosmos Predict2 2B Video2World + GRPO on public DROID targets, at the COHERENT 480P shape.
+#
+# WHY 480P (not 240p): the cached default checkpoint is the 720P variant, which generates
+# GARBAGE below 704p (verified: 240p/480p with 720P weights collapse to rainbow noise — OOD
+# resolution). So a 240p full-param config optimizes on garbage rollouts and cannot
+# produce a trustworthy curve. The native 480P weights (NVIDIA .pt -> diffusers, model.path)
+# generate COHERENT video at their NATIVE 93-frame clip length (33f is OOD -> artifacts), and
+# 480p_93f is ~2.25x fewer tokens than 704p_93f -> it fits a single 32GB card with full-param
+# 8-bit Adam where 704p_93f full-param OOMs. This is the single-card shape that can actually
+# learn on the DROID target data + reward we built.
+#
+# Checkpoint (reproduce): download model-480p-16fps.pt from nvidia/Cosmos-Predict2-2B-Video2World
+# and run the diffusers cosmos converter (transformer_type=Cosmos-2.0-Diffusion-2B-Video2World),
+# reusing the 720P vae/text_encoder/tokenizer/scheduler. 567/567 transformer keys map exactly.
+# Dataset: python -m vrl.scripts.data.setup video-world-targets --repo-id lerobot/droid_1.0.1 \
+#   --name droid_full_targets --limit 1000 --eval-limit 64 --camera observation.images.exterior_1_left
+# Run (single 32GB): PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True (full-param video OOMs without it).
+defaults:
+- /recipe/online/cosmos_predict2_grpo
+- /model/cosmos/predict2_2b
+- /sampling/video/480p_33f            # 832x480 bucket; num_frames overridden to native 93 below
+- /sampling/denoise/35_step_cfg_7
+- /reward/target_dino_similarity
+- /reward/kling_video_reward
+- /dataset/droid_full_target_v2w
+
+model:
+  use_lora: false
+  # Converted native-480P transformer + shared 720P vae/text_encoder/tokenizer/scheduler (see header).
+  path: checkpoints/cosmos-predict2-2b-480p-16fps-diffusers
+  revision: null
+  # Compile OFF: it cannot combine with gradient_checkpointing (torch.compile traces
+  # torch.utils.checkpoint into an InternalTorchDynamoError — see activation_checkpointing.py),
+  # and at 480p_93f full-param we NEED grad-ckpt for memory, so we take the eager+checkpointing
+  # branch and forgo compile's ~1.25x. predict2_2b defaults torch_compile.enable=true.
+  torch_compile:
+    enable: false
+
+sampling:
+  num_frames: 93                      # native clip length for the 480P weights (33f is OOD -> artifacts)
+  fps: 16
+
+actor:
+  optim:
+    lr: 2.0e-5
+    optim_8bit: true                  # int8 Adam state -> full-param 2B fits 32GB (fp32 state OOMs)
+  gradient_checkpointing: true
+  ppo_epochs: 4                       # =1 makes clip_fraction identically 0 (dead trust-region)
+
+
+rollout:
+  samples_per_chunk: 1                # 480p_93f is token-heavy; keep 1 for memory (raise if smoke shows headroom)
+
+distributed:
+  rollout:
+    # Single-worker software pipeline: hide each chunk's GPU->CPU copy + host packing
+    # behind the next chunk's denoise (bit-exact -> old_log_prob unchanged, RL-safe;
+    # auto no-op on >1 worker). Needs >=2 chunks; sbs=1 gives 8 chunks for the
+    # 480p_93f memory-safe shape, and can be raised only after a memory smoke. NOTE: this is
+    # distributed.rollout.pipelined (the Ray worker config), NOT the top-level rollout.
+    pipelined: true
+
+trainer:
+  output_dir: outputs/cosmos_pred2_droid_full_target_480p
+  total_epochs: 300
+  save_freq: 50
+  debug: {first_step: true}
+
+reward:
+  components:
+    target_dino_similarity: 0.80
+    kling_video_reward: 0.20
+  kwargs:
+    # A shared GPU can have one verifiable CuMem reward owner. Keep the 7B
+    # Kling model on that lease and run the small DINO anchor on CPU.
+    target_dino_similarity:
+      worker_config:
+        device: cpu
+    kling_video_reward:
+      artifact_format: mp4
+      score_key: visual_quality+motion_quality

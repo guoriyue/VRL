@@ -280,11 +280,11 @@ def test_registry_descriptor_replay_builder_returns_minimal_bundle(
     """The descriptor-driven generic replay builder (descriptor families).
 
     These families ship no builder functions: the registry entry's
-    ``DiffusionFamilyBuild`` recipe drives the generic builder, keyed by
+    ``DenoiseFamilyBuild`` recipe drives the generic builder, keyed by
     ``build.family``. Behavioral contract matches the per-family builders above.
     """
     from vrl.families.registry import get_model_family_entry
-    from vrl.models.diffusion import build as _shared_build
+    from vrl.models.steps.denoise import build as _shared_build
 
     loaded_builds: list[ModelBuild] = []
 
@@ -337,7 +337,7 @@ def test_wan_replay_builder_uses_wan_pipeline_scheduler_class(
 ) -> None:
     """The wan descriptor's scheduler_classname drives the generic replay loader."""
     from vrl.families.registry import get_model_family_entry
-    from vrl.models.diffusion import build as _shared_build
+    from vrl.models.steps.denoise import build as _shared_build
 
     scheduler_classes: list[str] = []
 
@@ -365,8 +365,8 @@ def test_wan_i2v_replay_builder_uses_i2v_replay_model(
 ) -> None:
     """The i2v registry entry's replay_cls selects the I2V replay model."""
     from vrl.families.registry import get_model_family_entry
-    from vrl.models.diffusion import build as _shared_build
-    from vrl.models.diffusion.wan_2_1.model import WanI2VReplayModel
+    from vrl.models.families.wan_2_1.model import WanI2VReplayModel
+    from vrl.models.steps.denoise import build as _shared_build
 
     monkeypatch.setattr(
         _shared_build,
@@ -393,7 +393,7 @@ def test_wan_dual_stage_replay_builder_loads_low_noise_transformer(
     """Wan 2.2 dual-stage: prepare_replay late-loads transformer_2 and trains it."""
     import vrl.models.loader as _loader
     from vrl.families.registry import get_model_family_entry
-    from vrl.models.diffusion import build as _shared_build
+    from vrl.models.steps.denoise import build as _shared_build
 
     loaded_subfolders: list[str] = []
 
@@ -440,8 +440,8 @@ def test_cosmos_predict25_replay_builder_keeps_diffusion_nft_surface(
 ) -> None:
     """Checks Cosmos predict25 replay builder keeps diffusion NFT surface."""
     from vrl.families.registry import get_model_family_entry
-    from vrl.models.diffusion import build as _shared_build
-    from vrl.models.diffusion.cosmos import predict2_5
+    from vrl.models.families.cosmos import predict2_5
+    from vrl.models.steps.denoise import build as _shared_build
 
     # predict2_5 is a registry-descriptor family: the generic replay builder
     # constructs it, so the loaders are patched on the shared build module.
@@ -480,7 +480,7 @@ def test_anima_replay_builder_uses_only_transformer_checkpoint(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Checks Anima replay builder uses only transformer checkpoint."""
-    from vrl.models.diffusion.cosmos.anima import runtime
+    from vrl.models.families.cosmos.anima import runtime
 
     monkeypatch.setattr(
         runtime,
@@ -511,7 +511,7 @@ def test_anima_replay_builder_uses_only_transformer_checkpoint(
 
 def test_anima_empty_prompts_are_replaced_before_tokenization() -> None:
     """Checks Anima empty prompts are replaced before tokenization."""
-    from vrl.models.diffusion.cosmos.anima.model import _non_empty_prompts
+    from vrl.models.families.cosmos.anima.model import _non_empty_prompts
 
     assert _non_empty_prompts(["", "  ", "anime"]) == [".", ".", "anime"]
 
@@ -522,7 +522,7 @@ def test_anima_model_build_uses_explicit_local_paths() -> None:
     from vrl.families.registry import get_model_family_entry
 
     cfg = load_config(
-        "experiment/diffusion/anima_preview3/online_grpo_aesthetic",
+        "experiment/anima_preview3/online_grpo_aesthetic",
         overrides=[
             "model.path=/models/anima",
             "model.transformer_path=/models/anima/transformer.safetensors",
@@ -557,7 +557,7 @@ def test_anima_artifact_resolution_fails_loud_when_hub_fetch_fails(
     from vrl.families.registry import get_model_family_entry
 
     cfg = load_config(
-        "experiment/diffusion/anima_preview3/online_grpo_aesthetic",
+        "experiment/anima_preview3/online_grpo_aesthetic",
         overrides=[
             "sampling.num_steps=1",
             "model.use_lora=false",
@@ -581,7 +581,7 @@ def test_anima_artifact_resolution_fails_loud_when_hub_fetch_fails(
 
     with pytest.raises(ValueError, match=r"model\.path='circlestone-labs/Anima'"):
         build.model_config["transformer_path"] = ""
-        from vrl.models.diffusion.cosmos.anima.runtime import _resolve_artifact
+        from vrl.models.families.cosmos.anima.runtime import _resolve_artifact
 
         _resolve_artifact(
             build.model_name_or_path,
@@ -596,32 +596,32 @@ def test_anima_artifact_resolution_fails_loud_when_hub_fetch_fails(
     [
         (
             "janus_pro",
-            "vrl.models.ar.janus_pro.model",
+            "vrl.models.families.janus_pro.model",
             "JanusProReplayModel",
         ),
         (
             "janus_pro_r1",
-            "vrl.models.ar.janus_pro.model",
+            "vrl.models.families.janus_pro.model",
             "JanusProReplayModel",
         ),
         (
             "nextstep_1",
-            "vrl.models.ar.nextstep_1.model",
+            "vrl.models.families.nextstep_1.model",
             "NextStep1ReplayModel",
         ),
         (
             "emu3",
-            "vrl.models.ar.emu3.model",
+            "vrl.models.families.emu3.model",
             "Emu3ReplayModel",
         ),
         (
             "glm_image",
-            "vrl.models.ar.glm_image.model",
+            "vrl.models.families.glm_image.model",
             "GlmImageReplayModel",
         ),
         (
             "llamagen",
-            "vrl.models.ar.llamagen.model",
+            "vrl.models.families.llamagen.model",
             "LlamaGenReplayModel",
         ),
     ],
@@ -650,20 +650,20 @@ def test_ar_replay_builders_return_minimal_bundles(
 @pytest.mark.parametrize(
     ("family", "model_module_path", "model_attr"),
     [
-        ("janus_pro", "vrl.models.ar.janus_pro.model", "JanusProModel"),
+        ("janus_pro", "vrl.models.families.janus_pro.model", "JanusProModel"),
         (
             "janus_pro_r1",
-            "vrl.models.ar.janus_pro.model",
+            "vrl.models.families.janus_pro.model",
             "JanusProModel",
         ),
         (
             "nextstep_1",
-            "vrl.models.ar.nextstep_1.model",
+            "vrl.models.families.nextstep_1.model",
             "NextStep1Model",
         ),
-        ("emu3", "vrl.models.ar.emu3.model", "Emu3Model"),
-        ("glm_image", "vrl.models.ar.glm_image.model", "GlmImageModel"),
-        ("llamagen", "vrl.models.ar.llamagen.model", "LlamaGenModel"),
+        ("emu3", "vrl.models.families.emu3.model", "Emu3Model"),
+        ("glm_image", "vrl.models.families.glm_image.model", "GlmImageModel"),
+        ("llamagen", "vrl.models.families.llamagen.model", "LlamaGenModel"),
     ],
 )
 def test_ar_rollout_builders_follow_registry_descriptors(

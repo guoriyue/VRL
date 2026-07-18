@@ -16,7 +16,7 @@ A useful k needs BOTH high forward savings AND high diversity retention. The
 prefix_steps -> retention curve is exactly what signal_paged P0 asks for (minus the
 reward model; latent diversity is the variance proxy).
 
-Faithful: uses vrl.math.diffusion.flow_matching.sde_step_with_logprob (the same SDE
+Faithful: uses vrl.math.denoise.flow_matching.sde_step_with_logprob (the same SDE
 step the rollout/replay path uses), not a toy noise injection.
 
 Run: python -m vrl.scripts.eval.shared_prefix_divergence_probe --group 6 --steps 28 --side 768
@@ -28,7 +28,7 @@ import argparse
 
 import torch
 
-from vrl.math.diffusion.flow_matching import sde_step_with_logprob
+from vrl.math.denoise.flow_matching import sde_step_with_logprob
 
 
 def _pairwise_mean_l2(x: torch.Tensor) -> float:
@@ -53,7 +53,9 @@ def main() -> None:
 
     from diffusers import StableDiffusion3Pipeline
 
-    pipe = StableDiffusion3Pipeline.from_pretrained(args.model, torch_dtype=torch.bfloat16).to("cuda")
+    pipe = StableDiffusion3Pipeline.from_pretrained(args.model, torch_dtype=torch.bfloat16).to(
+        "cuda"
+    )
     pipe.set_progress_bar_config(disable=True)
     tf = pipe.transformer
     device, dtype = tf.device, tf.dtype
@@ -62,7 +64,10 @@ def main() -> None:
 
     embeds, neg, pooled, neg_pooled = pipe.encode_prompt(
         prompt="a photorealistic astronaut riding a horse on mars",
-        prompt_2=None, prompt_3=None, do_classifier_free_guidance=True, device=device,
+        prompt_2=None,
+        prompt_3=None,
+        do_classifier_free_guidance=True,
+        device=device,
     )
     h, w = args.side // 8, args.side // 8
     ch = tf.config.in_channels
@@ -76,8 +81,13 @@ def main() -> None:
         """CFG velocity (transformer output) for a [n, ...] latent batch."""
         n = lat.shape[0]
         model_in = torch.cat([lat] * 2)
-        out = tf(hidden_states=model_in, timestep=t.expand(2 * n),
-                 encoder_hidden_states=emb, pooled_projections=pl, return_dict=False)[0]
+        out = tf(
+            hidden_states=model_in,
+            timestep=t.expand(2 * n),
+            encoder_hidden_states=emb,
+            pooled_projections=pl,
+            return_dict=False,
+        )[0]
         uncond, cond = out.chunk(2)
         return uncond + args.guidance * (cond - uncond)
 
@@ -90,8 +100,13 @@ def main() -> None:
             t = sched.timesteps[i]
             vel = _vel(lat, t, emb, pl)
             res = sde_step_with_logprob(
-                sched, vel, t.expand(n), lat, generator=gen,
-                noise_level=args.noise_level, step_index=i,
+                sched,
+                vel,
+                t.expand(n),
+                lat,
+                generator=gen,
+                noise_level=args.noise_level,
+                step_index=i,
             )
             lat = res.prev_sample.to(dtype)
         return lat
@@ -100,8 +115,10 @@ def main() -> None:
         g = torch.Generator(device=device).manual_seed(seed)
         return torch.randn(n, ch, h, w, device=device, dtype=dtype, generator=g)
 
-    print(f"model SD3.5-medium  G={G}  T={T}  side={args.side}^2  guidance={args.guidance}  "
-          f"noise_level={args.noise_level}")
+    print(
+        f"model SD3.5-medium  G={G}  T={T}  side={args.side}^2  guidance={args.guidance}  "
+        f"noise_level={args.noise_level}"
+    )
 
     # Baseline: G fully-independent trajectories (own initial noise, own SDE noise).
     sched.set_timesteps(T, device=device)
@@ -117,12 +134,16 @@ def main() -> None:
         sched.set_timesteps(T, device=device)
         if k == 0:
             # No shared prefix == fully independent (retention sanity check ~1.0).
-            final = _denoise(_init_latents(G, args.seed + 1), 0,
-                             torch.Generator(device=device).manual_seed(args.seed + 101))
+            final = _denoise(
+                _init_latents(G, args.seed + 1),
+                0,
+                torch.Generator(device=device).manual_seed(args.seed + 101),
+            )
         else:
             # Shared prefix: ONE trajectory for steps 0..k-1, then broadcast and branch.
-            lat_k = _run_prefix(sched, tf, _init_latents(1, args.seed + 1), k,
-                                args, _embeds, _vel, dtype, device)
+            lat_k = _run_prefix(
+                sched, tf, _init_latents(1, args.seed + 1), k, args, _embeds, _vel, dtype, device
+            )
             branch = lat_k.repeat(G, *([1] * (lat_k.ndim - 1)))
             if k >= T:
                 final = branch  # fully shared -> all identical (retention ~0 sanity check)
@@ -132,13 +153,14 @@ def main() -> None:
         d = _pairwise_mean_l2(final)
         ret = d / d0 if d0 > 0 else 0.0
         saved = 1.0 - (k + G * (T - k)) / (G * T)
-        verdict = ("DEAD (diversity gone)" if ret < 0.3 else
-                   "viable" if ret >= 0.7 else "marginal")
-        print(f"{k:>3} | {saved*100:>8.1f}% | {d:>11.3f} | {ret*100:>8.0f}% | {verdict}")
+        verdict = "DEAD (diversity gone)" if ret < 0.3 else "viable" if ret >= 0.7 else "marginal"
+        print(f"{k:>3} | {saved * 100:>8.1f}% | {d:>11.3f} | {ret * 100:>8.0f}% | {verdict}")
 
     print("\nread: want a k with BOTH high fwd_saved AND retention>=70%. If retention drops")
     print("      below ~30% while fwd_saved is still small, the early steps lock global")
-    print("      structure -> shared-prefix collapses GRPO reward variance -> lossless lever is dead.")
+    print(
+        "      structure -> shared-prefix collapses GRPO reward variance -> lossless lever is dead."
+    )
 
 
 @torch.no_grad()
@@ -150,8 +172,13 @@ def _run_prefix(sched, tf, lat, k, args, _embeds, _vel, dtype, device):
         t = sched.timesteps[i]
         vel = _vel(lat, t, emb, pl)
         res = sde_step_with_logprob(
-            sched, vel, t.expand(1), lat, generator=gen,
-            noise_level=args.noise_level, step_index=i,
+            sched,
+            vel,
+            t.expand(1),
+            lat,
+            generator=gen,
+            noise_level=args.noise_level,
+            step_index=i,
         )
         lat = res.prev_sample.to(dtype)
     return lat

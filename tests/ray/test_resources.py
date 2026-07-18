@@ -614,7 +614,7 @@ def test_cross_node_kling_recipe_keeps_the_local_reward_on_the_driver() -> None:
     from vrl.config.loading import load_config
 
     cfg = load_config(
-        "experiment/diffusion/cosmos_predict2_5/online_nft_kling_video_reward_cross_node",
+        "experiment/cosmos_predict2_5/online_nft_kling_video_reward_cross_node",
     )
     resolved = resolve_distributed_resources(cfg)
 
@@ -1533,7 +1533,7 @@ def test_cosmos_async_reward_recipe_resolves_resident_reward_overlap() -> None:
     """
     from vrl.config.loading import load_config
 
-    cfg = load_config("experiment/diffusion/cosmos_predict2/online_grpo_async_reward")
+    cfg = load_config("experiment/cosmos_predict2/online_grpo_async_reward")
 
     # The recipe deliberately omits visible_devices (it is a site/run knob). Supply
     # the 3-GPU box the disjoint layout targets; the resolver derives the rest.

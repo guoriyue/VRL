@@ -6,7 +6,7 @@
 > EMA/scaler, and live-gradient parking is implemented. Current DDP runs need a
 > rollout GPU pool disjoint from the trainer.
 
-Runbook for `experiment/diffusion/cosmos_predict2_5/online_nft_kling_video_reward_ddp_2x1`,
+Runbook for `experiment/cosmos_predict2_5/online_nft_kling_video_reward_ddp_2x1`,
 run unattended across **two servers, 1 GPU each**, with the resume-capable launcher
 [`ddp_2x1_launch.sh`](./ddp_2x1_launch.sh).
 

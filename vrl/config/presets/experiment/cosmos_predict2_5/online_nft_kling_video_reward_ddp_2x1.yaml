@@ -1,0 +1,71 @@
+# Symmetric colocated DDP (2 servers x 1 GPU) variant of the Cosmos Predict2.5 +
+# Kling DiffusionNFT run (SPRINT_symmetric_colocated_ddp.md).
+#
+# STATUS: capability-gated, not currently runnable. Shared-GPU phase leasing now
+# requires complete collective parking of DDP reducer buckets, optimizer/EMA/scaler
+# state, and live gradients. DDPStrategy rejects this topology before model or Ray
+# launch until that collective parking implementation exists. This file remains the
+# canonical future acceptance shape; use disjoint rollout GPUs for a runnable DDP
+# job today.
+#
+# Every server runs ONE torchrun rank = 1 DDP train replica + the base recipe's
+# single-GPU colocated rollout (and Kling reward) time-sharing its local GPU, all
+# reading the SAME policy version. Only the gradient all-reduce crosses servers
+# (the torchrun process group); Ray rollout workers and the in-process reward
+# model are per-rank-LOCAL (each rank does its own local ray.init() on its card). There
+# is NO shared Ray cluster and NO cross-node Ray placement group.
+#
+# It inherits the base recipe's single-GPU colocated plan UNCHANGED (trainer +
+# on-demand rollout + Kling reward time-sharing one GPU, release between phases)
+# and only flips the trainer to DDP across the 2 ranks. The 2B transformer + LoRA
+# fits on one card, so DDP (replicate + all-reduce the small LoRA grads) is
+# simpler/cheaper than FSDP's shard/all-gather. Outputs (metrics / checkpoints /
+# eval) are written by rank0 only — i.e. server A's disk.
+#
+# Launch (run on BOTH servers; same --master_addr = server A's reachable IP):
+#   # server A (rank 0, the output node):
+#   HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 \
+#     torchrun --nnodes=2 --node_rank=0 --nproc_per_node=1 \
+#       --master_addr=<A_IP> --master_port=29500 -m vrl.scripts.train \
+#       --config experiment/cosmos_predict2_5/online_nft_kling_video_reward_ddp_2x1
+#   # server B (rank 1): same command with --node_rank=1
+#
+# Do NOT `ray start` a shared cluster — each rank's local ray.init() must own its
+# own GPU. NCCL needs the two servers to reach each other on --master_port and the
+# NCCL ports (set NCCL_SOCKET_IFNAME / GLOO_SOCKET_IFNAME if multi-homed).
+defaults:
+  - /experiment/cosmos_predict2_5/online_nft_kling_video_reward
+
+distributed:
+  # Flip ONLY the trainer to DDP; inherit the base single-GPU colocated resource
+  # plan unchanged. world_size = num_nodes * gpus_per_node = 2 drives only the
+  # gradient all-reduce (each rank still resolves its own local 1-GPU plan).
+  training:
+    strategy: ddp
+    num_nodes: 2
+    gpus_per_node: 1
+    ddp:
+      # Correct because both the frozen base AND NFT's forward-only "previous"
+      # adapter are requires_grad=False (the latter is frozen in Cosmos apply_lora
+      # via _freeze_adapter_params), so the only params the reducer tracks are the
+      # trainable "default" adapter — which always gets a grad. (Before that freeze
+      # this had to be true, or the first backward died on the "previous" params
+      # getting no gradient under their no_grad replay.)
+      find_unused_parameters: false
+  resources:
+    rollout:
+      # Each rank colocates its rollout worker on its own (trainer) GPU — state the
+      # intent explicitly via the gpu_pool grammar rather than relying on the base
+      # preset's allow_overlap fallback. Shared roles always use on-demand phase
+      # handoff; the actor processes stay alive while their GPU state parks.
+      gpu_pool: trainer
+    reward:
+      # 2 GPUs total (1 per rank), so there is no spare card to dedicate: the Kling
+      # reward time-shares the same card as rollout/trainer. State that intent
+      # explicitly (share the rollout pool) instead of leaning on the `auto`
+      # default — auto would also pick share here, but only because no spare
+      # happens to exist, which makes the placement unauditable from the config and
+      # silently topology-dependent. Explicit `rollout` is fail-loud: if the box
+      # ever gains a spare GPU, this stays shared by intent rather than auto
+      # quietly grabbing the spare and changing throughput characteristics.
+      gpu_pool: rollout

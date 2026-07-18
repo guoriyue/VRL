@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "visual-rl"
 version = "0.1.0"
-description = "Visual generation RL infrastructure stack across autoregressive image generation, diffusion, and world models"
+description = "Visual generation RL infrastructure across model families, policy steps, and temporal organizations"
 readme = "README.md"
 requires-python = ">=3.10"
 license = "Apache-2.0"
@@ -47,7 +47,7 @@ cosmos = [
     "transformers>=5.13.0,<6",
     "accelerate>=0.30.0",
     "sentencepiece>=0.2.0",
-    "peft>=0.11.0",          # LoRA adapters for diffusion/AR model families
+    "peft>=0.11.0",          # LoRA adapters for denoise- and token-step model families
     "torchvision>=0.17.0",   # diffusers cosmos transformer + preference data transforms
 ]
 # Video reward scoring. Covers Kling VideoReward / Qwen2-VL, VideoScore2 and
@@ -93,13 +93,13 @@ pose-gpu = [
     "nvidia-cudnn-cu12>=9.0.0",
     "opencv-python>=4.8.0",
 ]
-# OPTIONAL AR-image accelerator (Janus-Pro, NextStep). AR families run in the
+# OPTIONAL token-image accelerator (Janus-Pro, NextStep). Token families run in the
 # main env without this via sampling.attention_backend=torch_native; the extra
 # adds vLLM's internal KV/paged-attention kernels
 # (vrl/nn/kernels/attention/vllm_paged.py) and the blockwise-fp8 path
 # (vrl/nn/quantization/fp8.py). vLLM pins its own Torch ABI, so keep this
 # accelerator in a dedicated environment instead of co-installing it with the
-# diffusers model/reward stack.
+# diffusers model/reward stack. The public extra keeps its historical ar-vllm name.
 ar-vllm = [
     "vllm>=0.21.0,<0.22",
 ]
@@ -114,7 +114,7 @@ videoeval = [
 # via bitsandbytes lets a full-param 2B DiT fit a single 32GB card where fp32 Adam
 # state OOMs. Quantizes the optimizer state only (not the forward) → RL-safe:
 # old_log_prob / train-inference consistency are untouched. Opt-in heavy CUDA
-# wheel, kept out of [cosmos]/CI so plain diffusion installs stay lean.
+# wheel, kept out of [cosmos]/CI so plain denoise-model installs stay lean.
 optim8bit = [
     "bitsandbytes>=0.43.0",
 ]

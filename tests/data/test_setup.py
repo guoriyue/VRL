@@ -220,7 +220,7 @@ def test_for_experiment_resolves_real_wan_experiment(capsys) -> None:
     """Checks for experiment resolves real Wan experiment."""
     from vrl.config.loading import load_config
 
-    experiment = "diffusion/wan_2_1/online_grpo_kling_video_reward"
+    experiment = "wan_2_1/online_grpo_kling_video_reward"
     setup.main(["for-experiment", experiment])
     out = json.loads(capsys.readouterr().out)
 

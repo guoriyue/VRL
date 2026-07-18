@@ -31,8 +31,8 @@ direct FP16/BF16 parameter update 证据无效。
 
 ## 1. P1.5 — full-param 替换 LoRA（仍是 LoRA 的家族）
 
-- **surface**：`vrl/config/presets/model/diffusion/sd3_5/medium.yaml`、
-  `vrl/config/presets/model/diffusion/wan_2_1/` 与 `wan_2_2/` 的模型 preset
+- **surface**：`vrl/config/presets/model/sd3_5/medium.yaml`、
+  `vrl/config/presets/model/wan_2_1/` 与 `wan_2_2/` 的模型 preset
   仍以 LoRA 为主。
 - **why**：全参训练是 LoRA 之外**最大的非-FP8 吞吐/质量杠杆**（GEMM 不再被 adapter 旁路稀释）。cosmos predict2.5 已是全参基线。
 - **gate**：受显存/多卡门控——SANA 1.6B 已通过单 RTX 5090 的五步

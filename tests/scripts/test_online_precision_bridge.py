@@ -41,11 +41,11 @@ def test_bridge_uses_aligned_public_precision(experiment):
 
 def test_precision_block_drives_trainer():
     """Checks precision block drives trainer."""
-    cfg = load_config("experiment/diffusion/sd3_5/online_grpo_ocr")
-    cfg = _with_precision("diffusion/sd3_5/online_grpo_ocr", _plain_policy("fp32"))
+    cfg = load_config("experiment/sd3_5/online_grpo_ocr")
+    cfg = _with_precision("sd3_5/online_grpo_ocr", _plain_policy("fp32"))
     assert torch_dtype_for_trainer_precision(build_configs(cfg)["trainer"], torch) is torch.float32
 
-    cfg = _with_precision("diffusion/sd3_5/online_grpo_ocr", _plain_policy("bf16"))
+    cfg = _with_precision("sd3_5/online_grpo_ocr", _plain_policy("bf16"))
     trainer_config = build_configs(cfg)["trainer"]
     assert trainer_config.train_precision == "bf16"
     assert torch_dtype_for_trainer_precision(trainer_config, torch) is torch.bfloat16
@@ -53,7 +53,7 @@ def test_precision_block_drives_trainer():
 
 def test_fp16_precision_block_drives_trainer_and_rollout():
     """Checks scalar fp16 drives both replay compute and rollout precision."""
-    cfg = load_config("experiment/diffusion/sd3_5/online_grpo_ocr")
+    cfg = load_config("experiment/sd3_5/online_grpo_ocr")
     cfg = OmegaConf.merge(cfg, OmegaConf.create({"precision": _plain_policy("fp16")}))
 
     built = build_configs(cfg)
@@ -75,7 +75,7 @@ def test_rollout_precision_split_auto_derives_correction_policy(
 ):
     """A low-precision rollout split is a user intent; correction is derived."""
     cfg = _with_precision(
-        "diffusion/sd3_5/online_grpo_ocr",
+        "sd3_5/online_grpo_ocr",
         _rollout_quantization_policy(format_name),
     )
 
@@ -101,7 +101,7 @@ def test_rollout_precision_split_auto_derives_correction_policy(
 def test_no_split_means_no_auto_correction_policy() -> None:
     """rollout == train: the builder early-returns and installs no auto policy."""
     cfg = _with_precision(
-        "diffusion/sd3_5/online_grpo_ocr",
+        "sd3_5/online_grpo_ocr",
         _plain_policy("bf16"),
     )
 
@@ -116,7 +116,7 @@ def test_no_split_means_no_auto_correction_policy() -> None:
 def test_outer_autocast_split_is_preserved_in_trainer_role_labels() -> None:
     block = _plain_policy("bf16")
     block["rollout"]["outer_autocast"] = False
-    cfg = _with_precision("diffusion/sd3_5/online_grpo_ocr", block)
+    cfg = _with_precision("sd3_5/online_grpo_ocr", block)
 
     trainer_config = build_configs(cfg)["trainer"]
 
@@ -129,7 +129,7 @@ def test_outer_autocast_split_is_preserved_in_trainer_role_labels() -> None:
 def test_explicit_precision_correction_is_respected_on_rollout_split():
     """Expert correction blocks override the auto split-precision defaults."""
     cfg = _with_precision(
-        "diffusion/sd3_5/online_grpo_ocr",
+        "sd3_5/online_grpo_ocr",
         _rollout_fp8_policy(),
     )
     cfg = OmegaConf.merge(
@@ -184,14 +184,14 @@ def test_math_axis_resolves_to_dtype(math, expected):
 
     block = _plain_policy("fp32")
     block["diffusion_math"] = {"dtype": math}
-    cfg = _with_precision("diffusion/sd3_5/online_grpo_ocr", block)
+    cfg = _with_precision("sd3_5/online_grpo_ocr", block)
     assert resolve_torch_dtype(resolve_precision_policy(cfg).diffusion_math) is expected
     assert build_configs(cfg)["precision"].diffusion_math == math
 
 
 def test_precision_drift_guard_config_is_bridged_from_yaml():
     """Checks precision drift guard YAML config reaches TrainerConfig."""
-    cfg = load_config("experiment/diffusion/sd3_5/online_grpo_ocr")
+    cfg = load_config("experiment/sd3_5/online_grpo_ocr")
     cfg = OmegaConf.merge(
         cfg,
         OmegaConf.create(
@@ -313,7 +313,7 @@ def test_prompt_encoder_axis_in_model_build(prompt_encoder, expected):
 
     block = _plain_policy("fp32")
     block["rollout"]["prompt_encoders"] = {"dtype": prompt_encoder}
-    cfg = _with_precision("diffusion/sd3_5/online_grpo_ocr", block)
+    cfg = _with_precision("sd3_5/online_grpo_ocr", block)
     build = get_model_family_entry("sd3_5").resolve_model_build(
         cfg,
         torch.device("cpu"),
@@ -328,7 +328,7 @@ def test_family_parameter_dtype_is_derived_from_runtime_role() -> None:
     from vrl.families.registry import get_model_family_entry
 
     cfg = _with_precision(
-        "diffusion/sd3_5/online_grpo_ocr",
+        "sd3_5/online_grpo_ocr",
         {
             "training": {"dtype": "bf16"},
             "rollout": {"dtype": "fp16"},
@@ -351,7 +351,7 @@ def test_direct_tool_parameter_dtype_override_is_explicit() -> None:
     """Non-production tools may override storage dtype only through a named argument."""
     from vrl.families.registry import get_model_family_entry
 
-    cfg = _with_precision("diffusion/sd3_5/online_grpo_ocr", _plain_policy("bf16"))
+    cfg = _with_precision("sd3_5/online_grpo_ocr", _plain_policy("bf16"))
     build = get_model_family_entry("sd3_5").resolve_model_build(
         cfg,
         torch.device("cpu"),

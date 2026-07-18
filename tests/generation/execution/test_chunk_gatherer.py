@@ -7,7 +7,7 @@ from typing import Any
 
 import torch
 
-from vrl.generation.diffusion import DiffusionChunkGatherer, DiffusionChunkResult
+from vrl.generation.bindings.joint_denoise import DiffusionChunkGatherer, DiffusionChunkResult
 from vrl.generation.execution.ids import build_sample_rows
 from vrl.generation.protocols import ChunkGatherer
 from vrl.generation.types import GenerationOutput, GenerationRequest

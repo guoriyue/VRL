@@ -48,8 +48,10 @@ from vrl.trainers.data import load_prompt_manifest
 logger = logging.getLogger(__name__)
 
 # These are persisted protocol/file identities, not tunable experiment defaults.
-REPORT_SCHEMA = "vrl.sana_aesthetic_checkpoint_eval/v3"
-REPORT_SCHEMA_VERSION = 3
+# v4 records the family-neutral training entrypoint introduced by the physical
+# taxonomy migration; sampling, reward, and optimization protocol values are unchanged.
+REPORT_SCHEMA = "vrl.sana_aesthetic_checkpoint_eval/v4"
+REPORT_SCHEMA_VERSION = 4
 REPORT_RELATIVE_PATH = Path("sana_aesthetic_fullparam_native_fp16_eval/report.json")
 SAMPLES_RELATIVE_PATH = Path("sana_aesthetic_fullparam_native_fp16_eval/samples.jsonl")
 EVAL_BASE_SEED = 20260710
@@ -57,8 +59,8 @@ EVAL_SAMPLES_PER_PROMPT = 2
 # Recovery checkpoints may be denser than the preregistered held-out curve.
 # This is the fixed scientific comparison interval, not a training IO knob.
 EVAL_CHECKPOINT_INTERVAL = 25
-CANONICAL_CONFIG_NAME = "experiment/diffusion/sana/online_grpo_aesthetic_fullparam_long"
-CANONICAL_PROTOCOL_SHA256 = "7f1d4175ffde29d598abf6330377709ed3b4462fccccefb42f8f70b6bd5b881a"
+CANONICAL_CONFIG_NAME = "experiment/sana/online_grpo_aesthetic_fullparam_long"
+CANONICAL_PROTOCOL_SHA256 = "b898129d24642ceb97c2aea2608e81406e06d413cde69c73460e9917bce1dbdd"
 # Frozen protocol-asset identities. These hashes name two concrete datasets;
 # they are not a duplicated prompt taxonomy or a user-facing config table.
 TRAIN_MANIFEST_SHA256 = "86580c8136a4b6d9fc6bbcc6d8e8e172b15fca6b5c6c956cc770255d8011de56"

@@ -1,0 +1,431 @@
+"""SD 3.5 t2i diffusers-backed model.
+
+Diffusion implementation for Stable Diffusion 3.5-Medium image generation.
+The generation helper flow is:
+
+    encode_prompt -> prepare_sampling -> forward_step xN -> decode_latents
+
+The collector owns the scheduler step / SDE step. ``forward_step`` does only
+one transformer forward (with optional batched CFG concat) and returns noise
+predictions.
+
+Per-family ``SD3SamplingState`` is private to this file — engine /
+collector code MUST NOT introspect it beyond the documented attributes
+(``latents``, ``timesteps``, ``scheduler``, plus the embeds the eval path
+re-builds explicitly).
+
+Timestep shape convention used by ``forward_step``:
+- During rollouts ``timesteps`` is a 1-D tensor ``[T]`` of scheduler
+  timesteps; ``state.timesteps[step_idx]`` is a scalar that we expand to
+  ``[B]`` for the transformer call.
+- During eval/training the collector pre-builds a ``SD3SamplingState``
+  whose ``timesteps`` is a ``[1, B]`` tensor (per-sample timestep at the
+  selected denoise step) and calls ``forward_step(state, 0, ...)``;
+  ``state.timesteps[0]`` is then ``[B]`` and ``forward_step``'s
+  ``t.expand(bsz)`` is a no-op (because the source already has shape
+  ``[B]`` — ``Tensor.expand`` accepts equal sizes).
+"""
+
+from __future__ import annotations
+
+import random
+import sys
+from dataclasses import dataclass
+from typing import Any
+
+import torch
+
+from vrl.generation.types import VideoGenerationRequest
+from vrl.models.interfaces.runtime import ModelBuild
+from vrl.models.steps.denoise import (
+    DiffusersPipelineModelBase,
+    DiffusersReplayModelBase,
+    DiffusionSamplingStateBase,
+    diffusers_pipeline_dtypes,
+)
+from vrl.models.steps.denoise.common import (
+    ChunkedLatentDecoder,
+    DiffusionBackboneCaller,
+    DiffusionBackboneInput,
+    DiffusionBackboneRunnerBase,
+    DiffusionBranch,
+    LatentDecodePlan,
+    expand_batch_timestep,
+    pack_eval_timestep,
+)
+from vrl.models.steps.denoise.common.lora import LoraModelMixin
+from vrl.models.steps.denoise.common.tensors import require_tensor
+from vrl.nn.layers.attention.joint import SD3JointAttentionProcessor
+
+
+def install_sd3_joint_attention_processor(transformer: object) -> bool:
+    """Install VRL SD3 attention processor when the transformer supports it."""
+
+    for candidate in _candidate_transformers(transformer):
+        set_attn_processor = getattr(candidate, "set_attn_processor", None)
+        if callable(set_attn_processor):
+            set_attn_processor(SD3JointAttentionProcessor())
+            return True
+    return False
+
+
+def _candidate_transformers(transformer: object) -> tuple[object, ...]:
+    candidates: list[object] = []
+    stack = [transformer]
+    seen: set[int] = set()
+    while stack:
+        item = stack.pop(0)
+        marker = id(item)
+        if marker in seen:
+            continue
+        seen.add(marker)
+        candidates.append(item)
+        for attr in ("module", "base_model", "model"):
+            child = getattr(item, attr, None)
+            if child is not None:
+                stack.append(child)
+    return tuple(candidates)
+
+
+@dataclass
+class SD3SamplingState(DiffusionSamplingStateBase):
+    """Private SD3 sampling state. Engine MUST NOT introspect."""
+
+    prompt_embeds: torch.Tensor
+    pooled_prompt_embeds: torch.Tensor
+    negative_prompt_embeds: torch.Tensor | None
+    negative_pooled_prompt_embeds: torch.Tensor | None
+    do_cfg: bool
+
+
+class SD3_5Model(LoraModelMixin, DiffusersPipelineModelBase, DiffusionBackboneRunnerBase):
+    """Diffusers-backed SD 3.5 t2i model.
+
+    The model implements the backbone-runner protocol itself (``cfg_mode`` /
+    ``build_branch``): "how to call MY transformer" is model knowledge, so
+    ``forward_step`` passes ``self`` to the shared CFG caller.
+    """
+
+    cfg_mode = "batched_cfg"
+    cfg_base = "uncond"
+
+    def __init__(
+        self,
+        *,
+        pipeline: Any,
+        device: Any = None,
+    ) -> None:
+        super().__init__(pipeline=pipeline, device=device)
+        self.uses_vrl_attention_processor = install_sd3_joint_attention_processor(
+            self.transformer,
+        )
+
+    def _set_transformer(self, transformer: Any) -> None:
+        super()._set_transformer(transformer)
+        self.uses_vrl_attention_processor = install_sd3_joint_attention_processor(
+            transformer,
+        )
+
+    # -- backend ownership (called by runtime, not by collectors) -------
+
+    @classmethod
+    def from_build(cls, build: ModelBuild) -> SD3_5Model:
+        """Load the diffusers SD3.5 pipeline + freeze non-trainable modules."""
+        from diffusers import StableDiffusion3Pipeline
+
+        model_dtype = build.parameter_dtype
+        prompt_encoder_dtype, load_kwargs = diffusers_pipeline_dtypes(build, model_dtype)
+        pipeline = StableDiffusion3Pipeline.from_pretrained(
+            build.model_name_or_path,
+            **load_kwargs,
+        )
+        pipeline.vae.requires_grad_(False)
+        for enc in (
+            pipeline.text_encoder,
+            pipeline.text_encoder_2,
+            pipeline.text_encoder_3,
+        ):
+            if enc is not None:
+                enc.requires_grad_(False)
+                enc.to(build.device, dtype=prompt_encoder_dtype)
+        pipeline.vae.to(build.device, dtype=torch.float32)
+        # getattr: bare/test builds may omit ``memory`` (same fallback contract
+        # as ``prompt_encoder_dtype`` above).
+        return cls(
+            pipeline=pipeline,
+            device=build.device,
+        )
+
+    # -- encode_prompt -------------------------------------------------
+
+    def encode_prompt(
+        self,
+        prompt: str | list[str],
+        negative_prompt: str | list[str] | None = None,
+        **kwargs: Any,
+    ) -> dict[str, Any]:
+        """Encode prompt via SD3's three text encoders (T5 + 2x CLIP).
+
+        Returns prompt_embeds (joint T5+CLIP sequence), pooled_prompt_embeds
+        (CLIP pooled), and their negative counterparts when CFG is active.
+        """
+        max_seq = kwargs.get("max_sequence_length", 128)
+        guidance_scale = kwargs.get("guidance_scale", 4.5)
+        do_cfg = guidance_scale > 1.0
+        neg = negative_prompt if negative_prompt is not None else ""
+
+        (
+            prompt_embeds,
+            negative_prompt_embeds,
+            pooled_prompt_embeds,
+            negative_pooled_prompt_embeds,
+        ) = self.pipeline.encode_prompt(
+            prompt=prompt,
+            prompt_2=prompt,
+            prompt_3=prompt,
+            negative_prompt=neg,
+            negative_prompt_2=neg,
+            negative_prompt_3=neg,
+            do_classifier_free_guidance=do_cfg,
+            num_images_per_prompt=1,
+            max_sequence_length=max_seq,
+            device=self.device,
+        )
+
+        td = self.pipeline.transformer.dtype
+        prompt_embeds = prompt_embeds.to(td)
+        pooled_prompt_embeds = pooled_prompt_embeds.to(td)
+        if negative_prompt_embeds is not None:
+            negative_prompt_embeds = negative_prompt_embeds.to(td)
+        if negative_pooled_prompt_embeds is not None:
+            negative_pooled_prompt_embeds = negative_pooled_prompt_embeds.to(td)
+
+        return {
+            "prompt_embeds": prompt_embeds,
+            "pooled_prompt_embeds": pooled_prompt_embeds,
+            "negative_prompt_embeds": negative_prompt_embeds,
+            "negative_pooled_prompt_embeds": negative_pooled_prompt_embeds,
+        }
+
+    # -- prepare_sampling ----------------------------------------------
+
+    def prepare_sampling(
+        self,
+        request: VideoGenerationRequest,
+        encoded: dict[str, Any],
+        **kwargs: Any,
+    ) -> SD3SamplingState:
+        """Build the per-request SamplingState for a denoise loop."""
+        pipe = self.pipeline
+        device = self.device
+
+        prompt_embeds = encoded["prompt_embeds"]
+        pooled_prompt_embeds = encoded["pooled_prompt_embeds"]
+        negative_prompt_embeds = encoded.get("negative_prompt_embeds")
+        negative_pooled_prompt_embeds = encoded.get("negative_pooled_prompt_embeds")
+
+        pipe.scheduler.set_timesteps(request.num_steps, device=device)
+        timesteps = pipe.scheduler.timesteps
+
+        seed = request.seed if request.seed is not None else random.randint(0, sys.maxsize)
+        generator = torch.Generator(device=device)
+        generator.manual_seed(seed)
+
+        num_channels_latents = pipe.transformer.config.in_channels
+        batch_size = prompt_embeds.shape[0]
+        # SD3 prepare_latents: (batch, channels, height, width, dtype, device, generator, latents)
+        latents = pipe.prepare_latents(
+            batch_size,
+            num_channels_latents,
+            request.height,
+            request.width,
+            torch.float32,
+            device,
+            generator,
+            None,
+        )
+
+        do_cfg = request.guidance_scale > 1.0
+
+        return SD3SamplingState(
+            latents=latents,
+            timesteps=timesteps,
+            scheduler=pipe.scheduler,
+            prompt_embeds=prompt_embeds,
+            pooled_prompt_embeds=pooled_prompt_embeds,
+            negative_prompt_embeds=negative_prompt_embeds,
+            negative_pooled_prompt_embeds=negative_pooled_prompt_embeds,
+            guidance_scale=request.guidance_scale,
+            do_cfg=do_cfg,
+        )
+
+    # -- backbone runner protocol ---------------------------------------
+
+    def build_branch(
+        self,
+        request: DiffusionBackboneInput,
+        branch: str,
+    ) -> DiffusionBranch:
+        """Map SD3 transformer kwargs into the shared backbone contract."""
+        if branch == "cond":
+            embeds = request.prompt_embeds
+            pooled = request.extra["pooled_prompt_embeds"]
+        else:
+            embeds = require_tensor(request.negative_prompt_embeds, "negative_prompt_embeds")
+            pooled = require_tensor(
+                request.extra.get("negative_pooled_prompt_embeds"),
+                "negative_pooled_prompt_embeds",
+            )
+        return DiffusionBranch(
+            hidden_states=request.hidden_states,
+            timestep=request.timestep,
+            encoder_hidden_states=embeds,
+            extra_kwargs={"pooled_projections": pooled},
+        )
+
+    # -- forward_step --------------------------------------------------
+
+    def forward_step(
+        self,
+        state: SD3SamplingState,
+        step_idx: int,
+    ) -> dict[str, Any]:
+        """SD3 transformer forward + optional batched CFG.
+
+        Returns noise_pred plus the un/conditional branches; the caller owns
+        scheduler.step / SDE.
+        """
+        t = state.timesteps[step_idx]
+        bsz = state.latents.shape[0]
+        td = self._transformer_dtype()
+
+        latent_input = state.latents.to(td)
+        # SD3 timestep is broadcast across batch as the raw float (not /1000).
+        # If t is already shape [B] (eval path packs timesteps as [1, B]),
+        # Tensor.expand(bsz) is a no-op on the equal-sized dim.
+        timestep_batch = expand_batch_timestep(t, bsz).to(device=latent_input.device, dtype=td)
+        prompt_embeds = state.prompt_embeds.to(td)
+        pooled_prompt_embeds = state.pooled_prompt_embeds.to(td)
+        negative_prompt_embeds = (
+            None if state.negative_prompt_embeds is None else state.negative_prompt_embeds.to(td)
+        )
+        negative_pooled_prompt_embeds = (
+            None
+            if state.negative_pooled_prompt_embeds is None
+            else state.negative_pooled_prompt_embeds.to(td)
+        )
+        output = DiffusionBackboneCaller(
+            self.transformer,
+            self,
+        )(
+            DiffusionBackboneInput(
+                hidden_states=latent_input,
+                timestep=timestep_batch,
+                prompt_embeds=prompt_embeds,
+                negative_prompt_embeds=negative_prompt_embeds,
+                guidance_scale=state.guidance_scale,
+                do_cfg=state.do_cfg,
+                output_dtype=td,
+                extra={
+                    "pooled_prompt_embeds": pooled_prompt_embeds,
+                    "negative_pooled_prompt_embeds": negative_pooled_prompt_embeds,
+                },
+            ),
+        )
+        return output.as_dict()
+
+    # -- collector boundary --------------------------------------------
+
+    def export_batch_context(self, state: SD3SamplingState) -> dict[str, Any]:
+        """Project SD3 sampling state into trajectory context."""
+        return {
+            "guidance_scale": state.guidance_scale,
+            "cfg": state.do_cfg,
+        }
+
+    def export_replay_tensors(self, state: SD3SamplingState) -> dict[str, Any]:
+        """Project SD3 sampling state into trajectory replay tensors."""
+        return {
+            "prompt_embeds": state.prompt_embeds,
+            "pooled_prompt_embeds": state.pooled_prompt_embeds,
+            "negative_prompt_embeds": state.negative_prompt_embeds,
+            "negative_pooled_prompt_embeds": state.negative_pooled_prompt_embeds,
+        }
+
+    def restore_eval_state(
+        self,
+        replay_tensors: dict[str, Any],
+        batch_context: dict[str, Any],
+        latents: Any,
+        step_idx: int,
+    ) -> SD3SamplingState:
+        """Rebuild SD3SamplingState from a batch slice for the eval forward path.
+
+        Packs timesteps as ``[1, B]`` so ``state.timesteps[0]`` is ``[B]`` —
+        matches the eval-path convention documented in the class docstring.
+        """
+        ts = replay_tensors["timesteps"]
+        timesteps = pack_eval_timestep(ts, step_idx)
+        return SD3SamplingState(
+            latents=latents,
+            timesteps=timesteps,
+            scheduler=None,  # not needed for forward_step (no scheduler.step here)
+            prompt_embeds=replay_tensors["prompt_embeds"],
+            pooled_prompt_embeds=replay_tensors["pooled_prompt_embeds"],
+            negative_prompt_embeds=replay_tensors.get("negative_prompt_embeds"),
+            negative_pooled_prompt_embeds=replay_tensors.get(
+                "negative_pooled_prompt_embeds",
+            ),
+            guidance_scale=batch_context["guidance_scale"],
+            do_cfg=batch_context["cfg"] and batch_context["guidance_scale"] > 1.0,
+        )
+
+    # -- decode_latents ------------------------------------------------
+
+    def decode_latents(self, latents: torch.Tensor) -> torch.Tensor:
+        """Decode latents → image via SD3 VAE (4D, no T dim)."""
+        pipe = self.pipeline
+        scaling_factor = pipe.vae.config.scaling_factor
+        shift_factor = getattr(pipe.vae.config, "shift_factor", 0.0) or 0.0
+        decoder = ChunkedLatentDecoder(
+            LatentDecodePlan(
+                prepare_latents=lambda chunk: (
+                    chunk.to(pipe.vae.dtype) / scaling_factor + shift_factor
+                ),
+                vae_decode=lambda chunk: pipe.vae.decode(
+                    chunk,
+                    return_dict=False,
+                )[0],
+                postprocess=lambda image: pipe.image_processor.postprocess(
+                    image,
+                    output_type="pt",
+                ),
+                output_layout="image_bchw",
+                decode_batch_size=getattr(pipe, "decode_batch_size", None),
+            ),
+        )
+        return decoder(latents)
+
+
+class SD3_5ReplayModel(DiffusersReplayModelBase, SD3_5Model):
+    """Replay-only SD3.5 model that owns no prompt encoders, VAE, or pipeline."""
+
+    def __init__(self, *, transformer: Any, scheduler: Any, device: Any = None) -> None:
+        DiffusersReplayModelBase.__init__(
+            self,
+            transformer=transformer,
+            scheduler=scheduler,
+            device=device,
+        )
+        self.uses_vrl_attention_processor = install_sd3_joint_attention_processor(
+            transformer,
+        )
+
+    def _set_transformer(self, transformer: Any) -> None:
+        self.transformer = transformer
+        self.uses_vrl_attention_processor = install_sd3_joint_attention_processor(
+            transformer,
+        )
+
+
+__all__ = ["SD3SamplingState", "SD3_5Model", "SD3_5ReplayModel"]

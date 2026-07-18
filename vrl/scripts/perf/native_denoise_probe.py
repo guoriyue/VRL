@@ -16,7 +16,7 @@ encoders/VAE parked on CPU (denoise-only window), torch.compile on (omni auto-co
 Usage (main env):
     HF_HOME=/mnt/nvme/hf HF_HUB_OFFLINE=1 CUDA_VISIBLE_DEVICES=0 \\
       python -m vrl.scripts.perf.native_denoise_probe \\
-        --config experiment/diffusion/flux/online_grpo_smoke_single_gpu \\
+        --config experiment/flux/online_grpo_smoke_single_gpu \\
         --steps 20 --compile --out /mnt/nvme/perf/flux_native.json
 """
 

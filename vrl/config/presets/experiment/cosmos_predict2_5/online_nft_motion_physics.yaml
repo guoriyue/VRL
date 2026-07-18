@@ -1,0 +1,85 @@
+# Cosmos Predict2.5 2B + DiffusionNFT, DanceGRPO-style video reward + physics.
+# Aligned to the Cosmos-Predict2.5 RL paper: 20-step no-CFG denoising,
+# then ten evenly spaced training timestep slices.
+# DanceGRPO optimizes video generators against the Kling VideoReward axes
+# (Visual / Motion / Text), and Motion Quality is its closest thing to a
+# physical-plausibility signal. This recipe keeps that DanceGRPO motion-quality
+# core and adds an explicit physics term — VideoCon-Physics P("follows physical
+# commonsense"):
+#   reward = 0.7 · Kling Motion-Quality z-score + 0.3 · VideoCon-Physics P(Yes)
+# Same skeleton as online_nft_kling_video_reward.yaml; only the reward differs.
+# Experimental: keep out of README until a real run proves non-flat reward,
+# acceptable video quality, generated artifacts, and changed LoRA weights.
+defaults:
+  - /recipe/online/diffusion_nft
+  - /model/cosmos/predict2_5_2b
+  - /sampling/video/512p_93f
+  - /sampling/denoise/20_step_no_cfg
+  - /reward/kling_video_reward
+  - /reward/videocon_physics
+  - /dataset/videophy
+
+# Compile-both, same as online_nft_kling_video_reward.yaml (this recipe is its
+# skeleton with only the reward swapped): one switch compiles train replay AND
+# rollout denoise on the same kernels — the parity-safe choice (see the kling
+# config header for the full rationale + measured 1.31x/1.33x numbers).
+model:
+  torch_compile:
+    enable: true
+    mode: default
+
+actor:
+  optim:
+    lr: 3.0e-5
+  ppo_epochs: 1
+  timestep_fraction: 0.5
+  ema:
+    enable: true
+    decay: 0.9
+    update_interval: 1
+
+rollout:
+  n_samples_per_prompt: 2
+  prompts_per_batch: 1
+  # Stream one prompt group at a time (here prompts_per_batch=1, so this is a
+  # no-op today, but keeps the slice explicit and consistent with the sibling
+  # kling recipe; derives gradient_accumulation_steps=1).
+  microbatch_size: 1
+  # Fail fast if the streamed group already uses >90% of host RAM (0.0 disables).
+  host_memory_budget_fraction: 0.9
+  samples_per_chunk: 1
+  noise_level: 0.7
+  sde:
+    type: cps
+
+trainer:
+  entrypoint: vrl.scripts.train:train_online
+  output_dir: outputs/cosmos_predict2_5_2b_motion_physics
+  total_epochs: 1
+  save_freq: 20
+
+# Final weighted combination — overrides the per-reward defaults each
+# `/reward/...` import declared. Kling Motion Quality at 0.7, VideoCon-Physics
+# physical commonsense at 0.3. Both materialize mp4: VideoCon requires it, and
+# the production report needs Kling on mp4.
+reward:
+  components:
+    kling_video_reward: 0.7
+    videocon_physics: 0.3
+  kwargs:
+    kling_video_reward:
+      artifact_format: mp4
+      score_key: motion_quality
+    videocon_physics:
+      artifact_format: mp4
+      score_key: physical_commonsense
+      # CuMem sleep is process-wide, so only Kling owns the shared GPU lease.
+      # Keep the second 7B judge explicit and independent on CPU; this favors
+      # correctness over reward throughput until a remote process boundary exists.
+      worker_config:
+        device: cpu
+
+production:
+  kling_video_reward:
+    enabled: true
+    report_path: outputs/cosmos_predict2_5_2b_motion_physics/production_report.md

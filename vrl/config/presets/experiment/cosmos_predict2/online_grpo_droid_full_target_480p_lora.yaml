@@ -1,0 +1,65 @@
+# Cosmos Predict2 2B Video2World + GRPO on full DROID, 480P NATIVE, LoRA.
+#
+# WHY LoRA (not full-param): 480p_33f full-param OOMs a single 32GB card -- the
+# per-sample 480p attention (~51k tokens) + full grad + full optimizer state peaks
+# ~30.2GB (trainer alone), over the budget even with full checkpointing + 8-bit Adam.
+# LoRA drops the full grad + full optimizer state (only adapter params train), so the
+# same 480p forward fits with ~10GB headroom. The 480P weights still generate coherently
+# (baseline eval reward 0.4487 vs 240p garbage 0.2587). The real full-param 480p curve
+# needs multi-GPU FSDP; this is the single-card runnable path.
+#
+# Uses the converted 480P diffusers pipeline at model.path (see the full-param sibling
+# online_grpo_droid_full_target_480p.yaml header for the conversion recipe).
+defaults:
+- /recipe/online/cosmos_predict2_grpo
+- /model/cosmos/predict2_2b
+- /sampling/video/480p_33f
+- /sampling/denoise/35_step_cfg_7
+- /reward/target_dino_similarity
+- /reward/motion_dynamics
+- /dataset/droid_full_target_v2w
+
+model:
+  use_lora: true
+  path: checkpoints/cosmos-predict2-2b-480p-16fps-diffusers
+  revision: null
+  # Eager: robust for an unattended overnight run. compile needs gradient_checkpointing
+  # off (mutually exclusive), and compile-alone OOMs at 480p activations -- so eager.
+  torch_compile: {enable: false}
+  lora:
+    rank: 32
+    alpha: 32
+    target_modules: [to_q, to_k, to_v, to_out.0]
+
+actor:
+  optim:
+    lr: 1.0e-4          # LoRA lr (memory: LoRA wants 1e-4, not full-param's 2e-5)
+  gradient_checkpointing: true
+  ppo_epochs: 4         # >1 so clip_fraction>0 (trust-region engages); flow_grpo lesson
+
+rollout:
+  samples_per_chunk: 4
+
+distributed:
+  resources:
+    # DINOv2 and RAFT both support CPU execution but do not provide complete
+    # GPU parking. Keep this single-card recipe honest by reserving no reward GPU.
+    reward:
+      num_gpus: 0
+      devices: []
+      gpus_per_worker: 0.0
+      num_workers: 1
+  rollout:
+    pipelined: true
+
+
+trainer:
+  output_dir: outputs/cosmos_pred2_droid_full_target_480p_lora
+  total_epochs: 100     # long overnight run
+  save_freq: 10         # checkpoints at 10,20,... so a mid-run crash is resumable
+  debug: {first_step: true}
+
+reward:
+  components:
+    target_dino_similarity: 1.0
+    motion_dynamics: 0.2

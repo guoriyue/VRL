@@ -1,0 +1,34 @@
+# Emu3-Gen 9B + PickScore GRPO — first-landing training validation recipe.
+# The expansion campaign verified the ROLLOUT side (replay parity 0.0e+00,
+# real-weight probe); this is the first config that can actually TRAIN the
+# family, through the generic AR entrypoint (recipe carries it). GPU gates
+# before trusting curves: debug.first_step (rollout logprob == replay) and an
+# eyeball of the first saved samples.
+defaults:
+  - /recipe/online/categorical_token_grpo
+  - /model/emu3/gen_9b
+  - /sampling/token/emu3_image_512_1to1
+  - /reward/pickscore
+  - /dataset/drawbench_train_192
+
+
+algorithm:
+  # clip_ratio inherits the AR-safe 0.2 from /base/algorithm/grpo.
+  kl_coef: 0.01
+  kl_estimator: k2
+
+actor:
+  optim:
+    # LoRA lr scale (project lesson: 1e-4, not full-param scale).
+    lr: 1.0e-4
+
+rollout:
+  # Stream one prompt group at a time so host RAM holds ~1 group's AR replay
+  # tensors instead of all 8 before backward (janus validation precedent).
+  microbatch_size: 1
+  host_memory_budget_fraction: 0.9
+
+trainer:
+  output_dir: outputs/emu3_pickscore_grpo
+  debug:
+    first_step: true

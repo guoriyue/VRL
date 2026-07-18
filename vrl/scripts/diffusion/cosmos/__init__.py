@@ -1,2 +1,0 @@
-"""Cosmos-family diffusion scripts."""
-

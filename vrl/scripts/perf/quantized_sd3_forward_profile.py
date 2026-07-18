@@ -39,7 +39,7 @@ from typing import Any
 import torch
 import torch.nn.functional as F
 
-from vrl.models.diffusion.sd3_5.model import install_sd3_joint_attention_processor
+from vrl.models.families.sd3_5.model import install_sd3_joint_attention_processor
 from vrl.nn.quantization import (
     LinearTargetProfile,
     QuantizedLinear,

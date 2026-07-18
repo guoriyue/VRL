@@ -18,7 +18,7 @@ import torch
 from diffusers import WanPipeline
 from diffusers.utils import export_to_video
 
-from vrl.models.diffusion.common.vae_decode_memory import (
+from vrl.models.steps.denoise.common.vae_decode_memory import (
     VaeDecodeMemory,
     configure_memory_mechanisms,
 )
@@ -110,13 +110,15 @@ def main() -> None:
             f"{video_path.name} ({elapsed:.1f}s)",
             flush=True,
         )
-        manifest.append({
-            "index": i,
-            "prompt": prompt,
-            "seed": seed,
-            "video": str(video_path),
-            "elapsed_sec": elapsed,
-        })
+        manifest.append(
+            {
+                "index": i,
+                "prompt": prompt,
+                "seed": seed,
+                "video": str(video_path),
+                "elapsed_sec": elapsed,
+            }
+        )
 
     with open(out / "manifest.json", "w") as f:
         json.dump(

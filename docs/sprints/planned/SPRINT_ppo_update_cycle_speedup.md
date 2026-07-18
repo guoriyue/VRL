@@ -235,7 +235,7 @@ timestep,门是"曲线仍在动"（eval 网格趋势不塌）。若 P0 过门,�
    PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True \
    HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 \
      vrl-train \
-       --config experiment/diffusion/cosmos_predict2/online_grpo_droid_lora_480p_curve \
+       --config experiment/cosmos_predict2/online_grpo_droid_lora_480p_curve \
        trainer.total_epochs=3 trainer.save_freq=3 trainer.eval.enabled=false \
        trainer.output_dir=outputs/cosmos_pred2_replay1_480p93f_gate
    ```

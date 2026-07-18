@@ -113,9 +113,9 @@ fp8 让 transformer 权重减半 → **每张图 offload 换入带宽减半** + 
 ```bash
 # naive（主环境）—— 端到端 / 单步 kernel 画像：
 HF_HUB_OFFLINE=1 python vrl/scripts/perf/generation_bottleneck_profile.py \
-  --config experiment/diffusion/flux/online_grpo_smoke_single_gpu --precision bf16 --e2e
+  --config experiment/flux/online_grpo_smoke_single_gpu --precision bf16 --e2e
 HF_HUB_OFFLINE=1 python vrl/scripts/perf/generation_bottleneck_profile.py \
-  --config experiment/diffusion/flux/online_grpo_smoke_single_gpu --precision bf16 \
+  --config experiment/flux/online_grpo_smoke_single_gpu --precision bf16 \
   --trace outputs/perf/flux_bf16_naive_trace.json   # 单步 kernel 画像
 
 # vLLM-Omni（.venvs/vllm-omni）：
@@ -200,7 +200,7 @@ omni 的 `denoise_step_latency_ms = stage_gen_time_ms / num_steps`，**把 encod
 # native（主环境）—— 纯去噪 s/step，同口径：
 HF_HOME=/mnt/nvme/hf HF_HUB_OFFLINE=1 CUDA_VISIBLE_DEVICES=0 \
   python -m vrl.scripts.perf.native_denoise_probe \
-    --config experiment/diffusion/flux/online_grpo_smoke_single_gpu \
+    --config experiment/flux/online_grpo_smoke_single_gpu \
     --steps 20 --compile --out /mnt/nvme/perf/flux_native_l40s.json
 
 # vLLM-Omni（.venvs/vllm-omni）—— 关 offload，两边 full-loaded；跑两个步数点以剥出边际每步：
@@ -214,4 +214,3 @@ CUDA_VISIBLE_DEVICES=0 HF_HUB_OFFLINE=1 .venvs/vllm-omni/bin/python \
     --steps 10 --no-offload --out /mnt/nvme/perf/flux_omni_l40s.json
 # 验证编译确在起作用：上面再加 enforce_eager 跑一版 A/B（omni 侧通过 stage_kwargs 传 enforce_eager=True）
 ```
-

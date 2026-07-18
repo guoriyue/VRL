@@ -1894,7 +1894,7 @@ class OnlineTrainer(Trainer):
 
         import torch.nn.functional as F
 
-        from vrl.math.diffusion.flow_matching import diffusion_pretraining_pair
+        from vrl.math.denoise.flow_matching import diffusion_pretraining_pair
         from vrl.trajectory import TrajectoryResolver
 
         assert self._sft_latents is not None  # ctor validated

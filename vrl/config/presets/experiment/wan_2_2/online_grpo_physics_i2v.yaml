@@ -1,0 +1,74 @@
+# Wan 2.2 A14B I2V GRPO proof run targeting motion quality + physical commonsense.
+# Mirrors the wan_2_1 I2V physics recipe, but loads the Wan 2.2 dual-stage A14B
+# model (boundary-ratio routing over transformer / transformer_2). Per
+# SPRINT_wan_2_2_proof_run §1 this is a SMOKE/proof run (small total_epochs):
+# train only the low-noise expert (transformer_2) by default; set
+# trainable_transformers: both to train both experts. The dual-expert is
+# boundary-time-routed (t >= boundary_ratio * num_train_timesteps selects the
+# high-noise expert), so replay re-loads transformer_2 for the low-noise window.
+defaults:
+  - /recipe/online/denoise_grpo
+  - /model/wan_2_2/i2v_a14b
+  - /sampling/video/480x832_81f
+  - /sampling/denoise/20_step_cfg_5_0
+  - /reward/kling_video_reward
+  - /reward/videocon_physics
+  - /dataset/videophy_i2v
+
+model:
+  # Proof run trains only the low-noise expert (mirrors the i2v_a14b default,
+  # declared explicitly here so the recipe is self-documenting). The dual-stage
+  # routing still loads both experts; only transformer_2 receives gradients.
+  trainable_transformers:
+    - transformer_2
+  # Compile is a policy-transformer build choice. This proof run opts into
+  # compile-both locally while the shared Wan2.2 I2V model default remains
+  # conservative.
+  torch_compile:
+    enable: true
+    mode: default
+
+actor:
+  optim:
+    lr: 5.0e-5
+  ppo_epochs: 1
+
+algorithm:
+  kl_coef: 0.004
+
+rollout:
+  n_samples_per_prompt: 2
+  prompts_per_batch: 1
+  samples_per_chunk: 4   # batch the denoise forward; sbs=1 left the GPU at 25% (smoke 2026-06-09)
+  denoise_mode: native
+  noise_level: 0.7
+  sde:
+    type: cps
+
+trainer:
+  entrypoint: vrl.scripts.train:train_online
+  total_epochs: 2   # proof/smoke run only (validate replay contract + reward signal)
+  output_dir: outputs/wan_2_2_i2v_a14b_physics_smoke
+  save_freq: 2
+
+reward:
+  components:
+    kling_video_reward: 0.3
+    videocon_physics: 0.7
+  kwargs:
+    kling_video_reward:
+      artifact_format: mp4
+      score_key: motion_quality
+    videocon_physics:
+      artifact_format: mp4
+      score_key: physical_commonsense
+      # CuMem sleep is process-wide, so only Kling owns the shared GPU lease.
+      # VideoCon remains part of the objective but executes explicitly on CPU;
+      # this is a correctness-first throughput trade-off.
+      worker_config:
+        device: cpu
+
+production:
+  kling_video_reward:
+    enabled: false
+    report_path: outputs/wan_2_2_i2v_a14b_physics_smoke/production_report.md

@@ -30,8 +30,8 @@ def test_trajectory_layer_stays_family_neutral() -> None:
         VRL_ROOT / "trajectory",
         forbidden=(
             "vrl.algorithms",
-            "vrl.generation.ar",
-            "vrl.generation.diffusion",
+            "vrl.generation.bindings.causal_token",
+            "vrl.generation.bindings.joint_denoise",
             "vrl.generation.ray",
             "vrl.rewards",
             "vrl.rollouts",

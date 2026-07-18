@@ -33,8 +33,8 @@ from typing import Any
 
 import torch
 
-from vrl.models.diffusion.sd3_5.model import SD3_5Model
 from vrl.models.dtypes import resolve_torch_dtype
+from vrl.models.families.sd3_5.model import SD3_5Model
 
 _WEIGHTS_TAG = "weights"
 

@@ -217,22 +217,18 @@ class RayGenerationLauncher:
                 # quantizer does not have to reinterpret model configuration.
                 base_weight_sync=(config.sync_trainable_state and not build.use_lora),
             )
-        if bool(cfg_path(cfg, "model.torch_compile.enable", False)) and (
-            entry.collector_kind != "diffusion"
+        if bool(cfg_path(cfg, "model.torch_compile.enable", False)) and not (
+            entry.runtime_capabilities.supports_torch_compile
         ):
             raise ValueError(
                 f"{entry.family} does not support torch compile but "
                 "model.torch_compile.enable is set",
             )
-        from vrl.rollouts.orchestration.types import RolloutScheduleMode
-
-        schedule_mode = RolloutScheduleMode(
-            str(
-                cfg_path(
-                    cfg,
-                    "trainer.rollout_orchestration.schedule_mode",
-                    RolloutScheduleMode.STRICT_ON_POLICY.value,
-                ),
+        schedule_mode = str(
+            cfg_path(
+                cfg,
+                "trainer.rollout_orchestration.schedule_mode",
+                "strict_on_policy",
             ),
         )
         launch_inputs = RayGenerationLaunchInputs(
@@ -248,7 +244,7 @@ class RayGenerationLauncher:
                 # gate proves their retained slots fit in host RAM.
                 versioned_weight_sync=(
                     config.sync_trainable_state
-                    and schedule_mode is RolloutScheduleMode.CONTINUOUS
+                    and schedule_mode == "continuous"
                     and build.use_lora
                 ),
             ),
@@ -273,11 +269,12 @@ class RayGenerationLauncher:
 
 
 def _build_executor_kwargs(entry: Any, cfg: Any) -> dict[str, Any]:
-    from vrl.families.registry import GENERIC_DIFFUSION_EXECUTOR
+    from vrl.families.registry import GENERIC_DENOISE_EXECUTOR
 
     kwargs: dict[str, Any] = {}
-    # Diffusion executors take a chunk batch size; AR executors do not.
-    if entry.collector_kind == "diffusion":
+    # Only executors that publish this constructor capability receive the
+    # request-chunk size; temporal organization does not determine their API.
+    if entry.runtime_capabilities.accepts_samples_per_chunk:
         samples_per_chunk = cfg_path(cfg, "rollout.samples_per_chunk", None)
         # ``auto`` belongs to the request and is resolved by RayGenerationRuntime
         # before dispatch. Do not feed it to the executor constructor, whose
@@ -288,7 +285,7 @@ def _build_executor_kwargs(entry: Any, cfg: Any) -> dict[str, Any]:
     # from yaml in ONE pass (config is homogeneous — no per-field extraction);
     # family/task identity comes from the registry entry. Families with their
     # own executor hardcode these as class attrs and skip this.
-    if entry.executor_cls == GENERIC_DIFFUSION_EXECUTOR:
+    if entry.executor_cls == GENERIC_DENOISE_EXECUTOR:
         kwargs.update(dict(cfg_path(cfg, "model.executor", {}) or {}))
     return kwargs
 

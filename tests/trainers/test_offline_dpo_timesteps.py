@@ -13,7 +13,7 @@ from types import SimpleNamespace
 import pytest
 import torch
 
-from tests.models.diffusion.fixtures import (
+from tests.models.steps.denoise.fixtures import (
     TINY_WAN_LATENT_SHAPE,
     TINY_WAN_TEXT_DIM,
     TINY_WAN_TEXT_LEN,

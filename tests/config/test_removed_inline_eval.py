@@ -10,7 +10,7 @@ from vrl.config.loading import load_config
 
 def test_trainer_eval_points_to_standalone_checkpoint_evaluation() -> None:
     cfg = load_config(
-        "experiment/diffusion/sd3_5/online_grpo_ocr",
+        "experiment/sd3_5/online_grpo_ocr",
         overrides=["trainer.eval.enabled=true"],
     )
 
