@@ -9,6 +9,7 @@ from vrl.rewards.functions.registry import MultiReward
 from vrl.rewards.runtime import InProcessRewardRuntime
 from vrl.rewards.service.client import HttpRewardRuntime
 from vrl.rewards.types import RewardRollout
+from vrl.utils.cuda_memory import CUDA_RUNTIME_RESIDUAL_BYTES_LIMIT
 
 
 def _make_rollout(prompt: str) -> RewardRollout:
@@ -327,6 +328,7 @@ def test_shared_parking_allows_one_gpu_reward_with_cpu_sibling() -> None:
     runtimes = {name: fn.runtime for name, _, fn in reward.rewards}
     functions = {name: fn for name, _, fn in reward.rewards}
     assert runtimes["aesthetic"].requires_memory_parking is True
+    assert runtimes["aesthetic"]._parking_residual_bytes_limit == CUDA_RUNTIME_RESIDUAL_BYTES_LIMIT
     assert runtimes["ocr"].requires_memory_parking is False
     assert functions["ocr"]._model._device == "cpu"
 

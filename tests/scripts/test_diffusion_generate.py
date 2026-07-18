@@ -27,8 +27,6 @@ def test_probe_model_build_uses_family_parameter_and_public_precision_policy() -
             "sana",
             "--path",
             "unused",
-            "--dtype",
-            "float32",
         ],
     )
 
@@ -40,10 +38,34 @@ def test_probe_model_build_uses_family_parameter_and_public_precision_policy() -
 
     assert build.parameter_dtype is torch.float16
     rollout = build.require_rollout()
-    assert rollout.autocast_dtype is torch.float32
-    assert rollout.prompt_encoder_dtype is torch.float32
+    assert build.forward_precision.autocast == "off"
+    assert build.forward_precision.float32_precision == "ieee"
+    assert rollout.prompt_encoder_dtype is torch.float16
     assert rollout.quantization_format is None
     assert rollout.base_weight_sync is False
+
+
+def test_probe_model_build_rejects_family_incompatible_float32_precision() -> None:
+    args = generate._build_arg_parser().parse_args(
+        [
+            "--family",
+            "sana",
+            "--path",
+            "unused",
+            "--float32-precision",
+            "tf32",
+        ],
+    )
+
+    with pytest.raises(
+        ValueError,
+        match=r"requires precision\.float32_precision='ieee'",
+    ):
+        generate._resolve_probe_model_build(
+            args,
+            get_model_family_entry("sana"),
+            torch.device("cpu"),
+        )
 
 
 @pytest.mark.parametrize("quantization_format", ["fp8", "nvfp4"])
@@ -57,7 +79,7 @@ def test_probe_model_build_derives_quantization_from_autocast_precision(
             "--path",
             "unused",
             "--dtype",
-            "bfloat16",
+            "fp16",
             "--quantize",
             quantization_format,
         ],
@@ -71,7 +93,8 @@ def test_probe_model_build_derives_quantization_from_autocast_precision(
 
     assert build.parameter_dtype is torch.float16
     rollout = build.require_rollout()
-    assert rollout.autocast_dtype is torch.bfloat16
-    assert rollout.prompt_encoder_dtype is torch.bfloat16
+    assert build.forward_precision.autocast == "off"
+    assert build.forward_precision.float32_precision == "ieee"
+    assert rollout.prompt_encoder_dtype is torch.float16
     assert rollout.quantization_format == quantization_format
     assert rollout.base_weight_sync is False

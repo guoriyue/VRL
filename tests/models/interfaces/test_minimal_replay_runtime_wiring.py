@@ -10,6 +10,7 @@ import torch.nn as nn
 
 from vrl.models.interfaces.runtime import (
     ModelBuild,
+    ResolvedForwardPrecision,
     RolloutBuildOptions,
     bundle_loads_full_generation_modules,
     full_generation_bundle_metadata,
@@ -17,14 +18,21 @@ from vrl.models.interfaces.runtime import (
 )
 
 
-def test_rollout_build_options_rejects_quantized_outer_autocast() -> None:
+def test_forward_precision_rejects_quantized_outer_autocast() -> None:
     """Quantization formats are selective GEMM policies, not autocast dtypes."""
 
-    with pytest.raises(ValueError, match=r"FP8.*NVFP4.*outer torch\.autocast"):
-        RolloutBuildOptions(
-            autocast_dtype="fp8",
-            prompt_encoder_dtype="bf16",
-            quantization_format="fp8",
+    with pytest.raises(ValueError, match="forward autocast must be one of"):
+        ResolvedForwardPrecision(
+            autocast="fp8",  # type: ignore[arg-type]
+            float32_precision="tf32",
+        )
+
+
+def test_forward_precision_rejects_unknown_float32_backend() -> None:
+    with pytest.raises(ValueError, match="forward float32_precision must be one of"):
+        ResolvedForwardPrecision(
+            autocast="off",
+            float32_precision="fast",  # type: ignore[arg-type]
         )
 
 
@@ -36,6 +44,7 @@ def test_model_build_rejects_subbyte_parameter_storage(dtype: str) -> None:
             device="cpu",
             parameter_dtype=dtype,
             family="sd3_5",
+            forward_precision=ResolvedForwardPrecision("off", "ieee"),
         )
 
 
@@ -49,7 +58,6 @@ def test_rollout_build_options_rejects_unknown_or_ambiguous_quantization(
 ) -> None:
     with pytest.raises(ValueError, match=message):
         RolloutBuildOptions(
-            autocast_dtype="bf16",
             prompt_encoder_dtype="fp16",
             quantization_format=quantization_format,
         )
@@ -57,7 +65,6 @@ def test_rollout_build_options_rejects_unknown_or_ambiguous_quantization(
 
 def test_rollout_build_options_normalizes_fp8_default_recipe() -> None:
     options = RolloutBuildOptions(
-        autocast_dtype="bf16",
         prompt_encoder_dtype="bf16",
         quantization_format="FP8",
     )
@@ -68,7 +75,6 @@ def test_rollout_build_options_normalizes_fp8_default_recipe() -> None:
 
 def test_rollout_build_options_accepts_nvfp4_without_recipe() -> None:
     options = RolloutBuildOptions(
-        autocast_dtype="bf16",
         prompt_encoder_dtype="bf16",
         quantization_format="NVFP4",
     )
@@ -80,7 +86,6 @@ def test_rollout_build_options_accepts_nvfp4_without_recipe() -> None:
 def test_rollout_build_options_rejects_nvfp4_recipe() -> None:
     with pytest.raises(ValueError, match=r"nvfp4.*does not accept.*recipe"):
         RolloutBuildOptions(
-            autocast_dtype="bf16",
             prompt_encoder_dtype="bf16",
             quantization_format="nvfp4",
             quantization_recipe="rowwise",
@@ -95,8 +100,11 @@ def test_model_build_reconstructs_nested_rollout_payload() -> None:
         device="cpu",
         parameter_dtype="fp16",
         family="sd3_5",
+        forward_precision={
+            "autocast": "bf16",
+            "float32_precision": "tf32",
+        },
         rollout={
-            "autocast_dtype": "bf16",
             "prompt_encoder_dtype": "fp32",
             "quantization_format": "fp8",
             "quantization_recipe": "rowwise",
@@ -105,8 +113,8 @@ def test_model_build_reconstructs_nested_rollout_payload() -> None:
     )
 
     assert build.parameter_dtype is torch.float16
+    assert build.forward_precision == ResolvedForwardPrecision("bf16", "tf32")
     assert isinstance(build.rollout, RolloutBuildOptions)
-    assert build.rollout.autocast_dtype is torch.bfloat16
     assert build.rollout.prompt_encoder_dtype is torch.float32
     assert build.rollout.quantization_format == "fp8"
     assert build.rollout.base_weight_sync is False
@@ -121,6 +129,7 @@ def test_model_build_resolver_projects_nvfp4_over_the_rollout_base_dtype() -> No
         {
             "model": {"path": "fake/repo"},
             "precision": {
+                "float32_precision": "tf32",
                 "training": {"dtype": "bf16"},
                 "rollout": {
                     "dtype": "bf16",
@@ -139,7 +148,7 @@ def test_model_build_resolver_projects_nvfp4_over_the_rollout_base_dtype() -> No
     rollout = build.require_rollout()
 
     assert build.parameter_dtype is torch.bfloat16
-    assert rollout.autocast_dtype is torch.bfloat16
+    assert build.forward_precision == ResolvedForwardPrecision("bf16", "tf32")
     assert rollout.prompt_encoder_dtype is torch.float16
     assert rollout.quantization_format == "nvfp4"
     assert rollout.quantization_recipe is None
@@ -207,6 +216,7 @@ def _build(**overrides: Any) -> ModelBuild:
         "device": "cpu",
         "parameter_dtype": torch.float32,
         "family": "sd3_5",
+        "forward_precision": ResolvedForwardPrecision("off", "tf32"),
         "model_config": model_config,
         "sampling_config": dict(scheduler_config),
     }
@@ -294,13 +304,17 @@ def test_registry_descriptor_replay_builder_returns_minimal_bundle(
     "entry_method",
     ["build_rollout", "build_replay"],
 )
-def test_sana_builders_enforce_family_parameter_dtype(entry_method: str) -> None:
-    """Manual builds cannot bypass the SANA parameter invariant."""
+@pytest.mark.parametrize("parameter_dtype", [torch.bfloat16, torch.float32])
+def test_sana_builders_enforce_family_parameter_dtype(
+    entry_method: str,
+    parameter_dtype: torch.dtype,
+) -> None:
+    """Manual builds cannot bypass SANA's native-FP16 boundary."""
     from vrl.families.registry import get_model_family_entry
 
-    with pytest.raises(ValueError, match=r"sana.*requires base parameter dtype.*fp16"):
+    with pytest.raises(ValueError, match=r"sana.*supports base parameter dtypes.*fp16"):
         getattr(get_model_family_entry("sana"), entry_method)(
-            _build(family="sana", parameter_dtype=torch.bfloat16),
+            _build(family="sana", parameter_dtype=parameter_dtype),
         )
 
 
@@ -653,7 +667,6 @@ def test_ar_rollout_builders_follow_registry_descriptors(
         _build(
             family=family,
             rollout=RolloutBuildOptions(
-                autocast_dtype=torch.float32,
                 prompt_encoder_dtype=torch.float16,
             ),
         ),

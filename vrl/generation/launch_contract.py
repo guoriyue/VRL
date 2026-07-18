@@ -22,6 +22,11 @@ class GenerationRuntimeLaunchContract:
     policy_version: int | None = None
     torch_profiler: dict[str, Any] = field(default_factory=dict)
     sleep_offload: bool = False
+    # Continuous rollout may sync while older requests remain in flight, so its
+    # workers retain versioned CPU policy payloads. Strict on-policy drains every
+    # request before syncing and must overwrite in place; retaining full-parameter
+    # snapshots there wastes one model-sized host allocation per slot.
+    versioned_weight_sync: bool = False
 
     def __post_init__(self) -> None:
         if not self.family:
@@ -47,6 +52,8 @@ class GenerationRuntimeLaunchContract:
             )
         if self.policy_version is not None:
             object.__setattr__(self, "policy_version", int(self.policy_version))
+        if not isinstance(self.versioned_weight_sync, bool):
+            raise TypeError("versioned_weight_sync must be a bool")
 
         try:
             pickle.dumps(self)

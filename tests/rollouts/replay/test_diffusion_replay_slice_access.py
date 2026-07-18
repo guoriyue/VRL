@@ -2,24 +2,65 @@
 
 from __future__ import annotations
 
-from contextlib import nullcontext
+from contextlib import contextmanager, nullcontext
 from typing import Any
 
 import torch
 
 from vrl.generation import GenerationRequest, GenerationSampleRow
 from vrl.models.diffusion import DiffusionModelBase
-from vrl.models.interfaces import ReplayResult, ReplaySegmentResult
+from vrl.models.interfaces import ReplayResult, ReplaySegmentResult, ResolvedForwardPrecision
 from vrl.rollouts.batch import RolloutBatch
 from vrl.rollouts.batch.ops import move_training_batch_to_device
 from vrl.rollouts.evaluators.diffusion.sde_logprob import DiffusionSDELogProbEvaluator
 from vrl.trajectory import build_diffusion_trajectory
 
+_FORWARD_PRECISION = ResolvedForwardPrecision(autocast="off", float32_precision="ieee")
 
-def test_diffusion_replay_slices_timestep_before_device_move() -> None:
+
+def test_diffusion_replay_slices_timestep_before_device_move(monkeypatch) -> None:
     """Checks diffusion replay slices timestep before device move."""
+    import vrl.rollouts.evaluators.diffusion.sde_logprob as evaluator_module
+
     batch, sentinels = _batch_with_sentinel_timestep_tensors()
     evaluator = DiffusionSDELogProbEvaluator(_Scheduler())
+    model = _ReplayModel()
+    active_forward_scope = 0
+
+    @contextmanager
+    def track_forward_autocast(policy, device):
+        nonlocal active_forward_scope
+        assert policy is _FORWARD_PRECISION
+        assert torch.device(device).type == "cpu"
+        active_forward_scope += 1
+        try:
+            yield
+        finally:
+            active_forward_scope -= 1
+
+    original_replay_forward = model.replay_forward
+
+    def checked_replay_forward(replay_batch, timestep_idx, *, request=None):
+        assert active_forward_scope == 1
+        return original_replay_forward(
+            replay_batch,
+            timestep_idx,
+            request=request,
+        )
+
+    original_sde_step = evaluator_module.flow_matching_math.sde_step_with_logprob
+
+    def checked_sde_step(*args, **kwargs):
+        assert active_forward_scope == 0
+        return original_sde_step(*args, **kwargs)
+
+    monkeypatch.setattr(evaluator_module, "forward_autocast", track_forward_autocast)
+    monkeypatch.setattr(model, "replay_forward", checked_replay_forward)
+    monkeypatch.setattr(
+        evaluator_module.flow_matching_math,
+        "sde_step_with_logprob",
+        checked_sde_step,
+    )
 
     assert evaluator.supports_deferred_replay_tensor_move is True
     moved = move_training_batch_to_device(
@@ -28,14 +69,16 @@ def test_diffusion_replay_slices_timestep_before_device_move() -> None:
         defer_replay_tensors=True,
     )
     signals = evaluator.evaluate(
-        _ReplayModel(),
+        model,
         moved,
         timestep_idx=1,
+        forward_precision=_FORWARD_PRECISION,
     )
 
     assert signals.primary.log_prob.shape == (2,)
     assert all(sentinel.full_to_calls == 0 for sentinel in sentinels)
     assert all(sentinel.slice_count > 0 for sentinel in sentinels)
+    assert active_forward_scope == 0
 
 
 def _batch_with_sentinel_timestep_tensors() -> tuple[RolloutBatch, list[_NoFullMoveTensor]]:

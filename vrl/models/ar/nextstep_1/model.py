@@ -39,7 +39,6 @@ from vrl.math.ar.flow_matching import (
 from vrl.models.ar.base import ARModelBase, ARReplayRolloutStubs
 from vrl.models.dtypes import resolve_torch_dtype
 from vrl.models.interfaces import ReplayRequest, ReplayResult, ReplaySegmentResult
-from vrl.models.utils import count_trainable_params
 from vrl.utils.logging import init_logger
 
 logger = init_logger(__name__)
@@ -196,9 +195,6 @@ class NextStep1Model(ARModelBase):
     # ------------------------------------------------------------------
     # Public: trainable param count
     # ------------------------------------------------------------------
-
-    def trainable_param_count(self) -> int:
-        return count_trainable_params(self)
 
     @property
     def device(self) -> torch.device:

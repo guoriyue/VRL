@@ -146,6 +146,7 @@ def _with_precision(experiment, block):
 
 def _plain_policy(dtype: str) -> dict:
     return {
+        "float32_precision": "tf32",
         "training": {"dtype": dtype},
         "rollout": {"dtype": dtype},
     }

@@ -97,7 +97,11 @@ def test_wan_runtime_bundle_applies_model_build_memory_policy(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Checks the Wan runtime applies its model-build memory policy."""
-    from vrl.models.interfaces.runtime import ModelBuild, RolloutBuildOptions
+    from vrl.models.interfaces.runtime import (
+        ModelBuild,
+        ResolvedForwardPrecision,
+        RolloutBuildOptions,
+    )
 
     class _FakeModel:
         def __init__(self) -> None:
@@ -132,8 +136,8 @@ def test_wan_runtime_bundle_applies_model_build_memory_policy(
             device="cpu",
             parameter_dtype="float32",
             family="wan_2_1",
+            forward_precision=ResolvedForwardPrecision("off", "tf32"),
             rollout=RolloutBuildOptions(
-                autocast_dtype="float32",
                 prompt_encoder_dtype="float16",
             ),
             sampling_config={"num_steps": 2},
@@ -184,7 +188,11 @@ def test_full_generation_runtime_bundles_apply_model_build_memory_policy(
     build_family: str,
 ) -> None:
     """Checks full-generation runtime bundles apply VAE memory policy."""
-    from vrl.models.interfaces.runtime import ModelBuild, RolloutBuildOptions
+    from vrl.models.interfaces.runtime import (
+        ModelBuild,
+        ResolvedForwardPrecision,
+        RolloutBuildOptions,
+    )
 
     loaded_builds: list[ModelBuild] = []
 
@@ -226,8 +234,11 @@ def test_full_generation_runtime_bundles_apply_model_build_memory_policy(
             device="cpu",
             parameter_dtype="float16" if build_family == "sana" else "float32",
             family=build_family,
+            forward_precision=ResolvedForwardPrecision(
+                "off",
+                "ieee" if build_family == "sana" else "tf32",
+            ),
             rollout=RolloutBuildOptions(
-                autocast_dtype="float32",
                 prompt_encoder_dtype="float16",
             ),
             sampling_config={"num_steps": 2},

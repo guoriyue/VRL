@@ -50,14 +50,6 @@ class DiffusionSamplingStateBase:
 class DiffusionModelBase(nn.Module, ABC):
     """Shared model base for diffusion families on the RL path."""
 
-    # Rollout builders resolve this once from PrecisionPolicy; executors and
-    # direct probes consume it around the transformer forward. It is distinct
-    # from parameter storage (SANA keeps fp16 weights under bf16 autocast).
-    autocast_dtype: torch.dtype | None = None
-    # Some upstream diffusion-RL recipes intentionally keep LoRA replay outside
-    # autocast. The trainer reads this flag when choosing the replay context.
-    disable_train_autocast: bool = False
-
     async def load(self) -> None:
         """Load heavy modules. Default no-op for adapters constructed eagerly."""
         return None

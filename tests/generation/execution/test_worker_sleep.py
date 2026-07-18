@@ -24,6 +24,7 @@ import torch
 
 from vrl.generation.execution.worker import GenerationWorkerCore
 from vrl.generation.launch_contract import GenerationRuntimeLaunchContract
+from vrl.utils.cuda_memory import CUDA_RUNTIME_RESIDUAL_BYTES_LIMIT
 
 
 @pytest.fixture(autouse=True)
@@ -132,6 +133,7 @@ def test_sleep_parks_model_and_frozen_on_cpu_keeping_executor() -> None:
     assert core.executor is not None
     assert snapshot.worker_id == "rollout-0"
     assert snapshot.backend == "cpu_offload"
+    assert snapshot.residual_bytes_limit == CUDA_RUNTIME_RESIDUAL_BYTES_LIMIT
     assert snapshot.residual_gpu_used_bytes == snapshot.baseline_gpu_used_bytes
 
 
@@ -166,6 +168,7 @@ def test_sleep_without_loaded_model_is_a_safe_no_op() -> None:
     snapshot = core.sleep()  # must not raise (nothing loaded)
     assert core.executor is None
     assert snapshot.backend == "cpu_only"
+    assert snapshot.residual_bytes_limit == 0
 
 
 def test_wake_after_eviction_rebuilds_via_load_policy() -> None:
@@ -190,7 +193,7 @@ def test_cumem_sleep_wake_uses_allocator_not_module_moves() -> None:
     fake = _FakeCuMem()
     core._cumem = CumemPool(fake, "weights")  # as if load_policy pooled the model
 
-    core.sleep()
+    snapshot = core.sleep()
     core.wake()
 
     # The whole pooled model is released/restored through the allocator; the naive
@@ -199,6 +202,37 @@ def test_cumem_sleep_wake_uses_allocator_not_module_moves() -> None:
     assert fake.wake_calls == [["weights"]]
     assert model.to_calls == []
     assert model.frozen_calls == []
+    assert snapshot.residual_bytes_limit == CUDA_RUNTIME_RESIDUAL_BYTES_LIMIT
+
+
+@pytest.mark.parametrize(
+    ("extra_residual_bytes", "should_pass"),
+    ((0, True), (1, False)),
+)
+def test_cumem_sleep_bounds_lazy_cuda_runtime_residual(
+    monkeypatch: pytest.MonkeyPatch,
+    extra_residual_bytes: int,
+    should_pass: bool,
+) -> None:
+    """Runtime drift is bounded; one byte beyond the protocol limit still fails."""
+
+    import vrl.generation.execution.worker as worker_module
+    from vrl.utils.cuda_memory import CumemPool
+
+    core = _core(_SleepModel(device="cuda:0"))
+    core._cumem = CumemPool(_FakeCuMem(), "weights")
+    baseline = 1024
+    core._preload_gpu_used_bytes = baseline
+    residual = baseline + CUDA_RUNTIME_RESIDUAL_BYTES_LIMIT + extra_residual_bytes
+    readings = iter((10 * 1024**3, residual))
+    monkeypatch.setattr(worker_module, "gpu_used_bytes", lambda: next(readings))
+
+    if should_pass:
+        snapshot = core.sleep()
+        assert snapshot.residual_gpu_used_bytes == residual
+        return
+    with pytest.raises(RuntimeError, match="incomplete cumem memory parking"):
+        core.sleep()
 
 
 def test_cumem_sleep_and_wake_use_pool_state_for_idempotency() -> None:
@@ -457,18 +491,30 @@ def test_wake_failure_keeps_cpu_parked_state_for_retry() -> None:
     assert model.frozen_calls == ["cpu", "cuda:0", "cuda:0"]
 
 
-def test_sleep_rejects_residual_above_preload_baseline(monkeypatch) -> None:
+@pytest.mark.parametrize(
+    ("extra_residual_bytes", "should_pass"),
+    ((0, True), (1, False)),
+)
+def test_cpu_offload_bounds_lazy_cuda_runtime_residual(
+    monkeypatch: pytest.MonkeyPatch,
+    extra_residual_bytes: int,
+    should_pass: bool,
+) -> None:
     import vrl.generation.execution.worker as worker_module
 
     core = _core(_SleepModel())
-    core._preload_gpu_used_bytes = 0
-    readings = iter((1024, 1))
+    baseline = 1024
+    core._preload_gpu_used_bytes = baseline
+    residual = baseline + CUDA_RUNTIME_RESIDUAL_BYTES_LIMIT + extra_residual_bytes
+    readings = iter((10 * 1024**3, residual))
     monkeypatch.setattr(worker_module, "gpu_used_bytes", lambda: next(readings))
 
-    with pytest.raises(
-        RuntimeError,
-        match=r"incomplete cpu_offload memory parking: loaded=1024 residual=1",
-    ):
+    if should_pass:
+        snapshot = core.sleep()
+        assert snapshot.residual_bytes_limit == CUDA_RUNTIME_RESIDUAL_BYTES_LIMIT
+        assert snapshot.residual_gpu_used_bytes == residual
+        return
+    with pytest.raises(RuntimeError, match="incomplete cpu_offload memory parking"):
         core.sleep()
 
 

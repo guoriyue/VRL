@@ -8,6 +8,7 @@ import pytest
 from omegaconf import OmegaConf
 from PIL import Image
 
+from vrl.models.interfaces import ResolvedForwardPrecision
 from vrl.scripts.diffusion.cosmos.anima import generate
 
 
@@ -110,7 +111,13 @@ def test_generate_records_the_batch_seed_for_every_sample(monkeypatch, tmp_path)
     monkeypatch.setattr(generate, "load_config", lambda *_args, **_kwargs: cfg)
     entry = SimpleNamespace(
         resolve_model_build=lambda *_args, **_kwargs: object(),
-        build_rollout=lambda _build: SimpleNamespace(model=_Model()),
+        build_rollout=lambda _build: SimpleNamespace(
+            model=_Model(),
+            forward_precision=ResolvedForwardPrecision(
+                autocast="off",
+                float32_precision="ieee",
+            ),
+        ),
     )
     monkeypatch.setattr(generate, "get_model_family_entry", lambda _family: entry)
     monkeypatch.setattr(

@@ -24,18 +24,25 @@ from vrl.models.dtypes import (
 )
 
 
-def _cfg(precision=None, mixed_precision=None, bf16=None):
+def _cfg(precision=None, mixed_precision=None, bf16=None, allow_tf32=None):
     actor = {}
     if mixed_precision is not None:
         actor["mixed_precision"] = mixed_precision
     if bf16 is not None:
         actor["bf16"] = bf16
+    if allow_tf32 is not None:
+        actor["optim"] = {"allow_tf32": allow_tf32}
     top = {"actor": actor}
     if precision is not None:
         top["precision"] = precision
     return SimpleNamespace(
         precision=top.get("precision"),
-        actor=SimpleNamespace(**actor),
+        actor=SimpleNamespace(
+            **{
+                key: SimpleNamespace(**value) if isinstance(value, dict) else value
+                for key, value in actor.items()
+            },
+        ),
     )
 
 
@@ -105,6 +112,7 @@ def test_dtype_to_precision_token_rejects_rollout_quantization(value):
 
 def _plain_precision(dtype: str = "bf16") -> dict:
     return {
+        "float32_precision": "tf32",
         "training": {"dtype": dtype},
         "rollout": {"dtype": dtype},
     }
@@ -112,11 +120,17 @@ def _plain_precision(dtype: str = "bf16") -> dict:
 
 def test_nested_bf16_resolves_role_dtypes_and_protected_defaults():
     p = resolve_precision_policy(
-        _cfg(precision={"training": {"dtype": "bf16"}}),
+        _cfg(
+            precision={
+                "float32_precision": "tf32",
+                "training": {"dtype": "bf16"},
+            },
+        ),
     )
     assert p == PrecisionPolicy(
         training=RolePrecision(dtype="bf16"),
         rollout=RolePrecision(dtype="bf16"),
+        float32_precision="tf32",
         diffusion_math="fp32",
         prompt_encoder_dtype="bf16",
     )
@@ -127,6 +141,7 @@ def test_rollout_quantization_inherits_training_base_dtype():
     p = resolve_precision_policy(
         _cfg(
             precision={
+                "float32_precision": "tf32",
                 "training": {"dtype": "bf16"},
                 "rollout": {"quantization": {"format": "fp8"}},
             },
@@ -156,6 +171,43 @@ def test_base_preset_keeps_prompt_encoders_aligned_with_rollout():
     p = resolve_precision_policy(cfg)
     assert p.rollout.dtype == "bf16"
     assert p.prompt_encoder_dtype == "bf16"
+    assert p.float32_precision == "tf32"
+
+
+@pytest.mark.parametrize("mode", ["ieee", "tf32"])
+def test_float32_precision_is_explicit_and_resolved(mode):
+    block = _plain_precision()
+    block["float32_precision"] = mode
+
+    assert resolve_precision_policy(_cfg(precision=block)).float32_precision == mode
+
+
+def test_float32_precision_is_required():
+    block = _plain_precision()
+    del block["float32_precision"]
+
+    with pytest.raises(ValueError, match=r"precision\.float32_precision is required"):
+        resolve_precision_policy(_cfg(precision=block))
+
+
+@pytest.mark.parametrize("mode", ["", "fp32", "true"])
+def test_float32_precision_rejects_unknown_modes(mode):
+    block = _plain_precision()
+    block["float32_precision"] = mode
+
+    with pytest.raises(ValueError, match=r"precision\.float32_precision must be one of"):
+        resolve_precision_policy(_cfg(precision=block))
+
+
+@pytest.mark.parametrize("allow_tf32", [False, True])
+def test_legacy_optimizer_tf32_key_has_migration_error(allow_tf32):
+    with pytest.raises(
+        ValueError,
+        match=r"actor\.optim\.allow_tf32.*precision\.float32_precision",
+    ):
+        resolve_precision_policy(
+            _cfg(precision=_plain_precision(), allow_tf32=allow_tf32),
+        )
 
 
 @pytest.mark.parametrize("scalar", ["bf16", "fp32", "fp8", False])

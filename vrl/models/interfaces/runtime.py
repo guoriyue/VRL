@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Literal, get_args
 
 from vrl.models.interfaces.replay import RuntimeModel
 
@@ -33,6 +33,32 @@ TORCH_COMPILE_MODEL_KEY = "torch_compile"
 # consumed by the colocated-RAM guard (``validate_colocated_replay_memory``)
 # to size host memory.
 LOADS_FULL_GENERATION_MODULES_KEY = "loads_full_generation_modules"
+
+AutocastMode = Literal["off", "fp16", "bf16"]
+Float32Precision = Literal["ieee", "tf32"]
+
+
+@dataclass(frozen=True, slots=True)
+class ResolvedForwardPrecision:
+    """Fully resolved transformer-forward precision for one runtime process.
+
+    Strings keep this contract wire-safe. ``off`` is the only no-autocast
+    state; FP32 is never overloaded as a sentinel for disabling autocast.
+    """
+
+    autocast: AutocastMode
+    float32_precision: Float32Precision
+
+    def __post_init__(self) -> None:
+        if self.autocast not in get_args(AutocastMode):
+            raise ValueError(
+                f"forward autocast must be one of {get_args(AutocastMode)}; got {self.autocast!r}",
+            )
+        if self.float32_precision not in get_args(Float32Precision):
+            raise ValueError(
+                "forward float32_precision must be one of "
+                f"{get_args(Float32Precision)}; got {self.float32_precision!r}",
+            )
 
 
 def full_generation_bundle_metadata() -> dict[str, Any]:
@@ -60,11 +86,9 @@ def bundle_loads_full_generation_modules(bundle: Any) -> bool:
 class RolloutBuildOptions:
     """Generation-only precision and lifecycle inputs for a rollout model.
 
-    ``autocast_dtype`` is deliberately distinct from ``quantization_format``. A plain
-    fp32/bf16/fp16 rollout uses that dtype directly, while an FP8 rollout swaps
-    selected GEMMs and still needs a real autocast dtype for attention, norms,
-    residuals, and every linear that was not swapped. NVFP4 follows the same
-    layered contract but conservatively swaps MLP linears only.
+    Selective quantization stays distinct from the transformer's resolved
+    forward precision. FP8/NVFP4 replace eligible GEMMs while unswapped
+    operations follow ``ModelBuild.forward_precision``.
 
     ``prompt_encoder_dtype`` names the generation-only encoder precision policy
     the runtime actually consumes. VAEs remain family-owned fp32 fidelity boundaries;
@@ -74,7 +98,6 @@ class RolloutBuildOptions:
     a path that must never quantize or load generation-only prompt encoders.
     """
 
-    autocast_dtype: Any
     prompt_encoder_dtype: Any
     quantization_format: str | None = None
     quantization_recipe: str | None = None
@@ -87,17 +110,6 @@ class RolloutBuildOptions:
             resolve_torch_dtype,
         )
 
-        autocast_dtype = resolve_torch_dtype(self.autocast_dtype)
-        autocast_name = dtype_to_wire_name(autocast_dtype)
-        try:
-            dtype_to_precision_token(autocast_dtype)
-        except ValueError as error:
-            raise ValueError(
-                "rollout autocast dtype must be fp16, bf16, or fp32; "
-                f"got {autocast_name!r}. FP8 and NVFP4 are selective GEMM "
-                "formats; neither is an outer torch.autocast dtype.",
-            ) from error
-        object.__setattr__(self, "autocast_dtype", autocast_dtype)
         prompt_encoder_dtype = resolve_torch_dtype(self.prompt_encoder_dtype)
         prompt_encoder_name = dtype_to_wire_name(prompt_encoder_dtype)
         try:
@@ -155,12 +167,15 @@ class ModelBuild:
 
     model_name_or_path: str
     device: Any
-    # Resolved base transformer parameter dtype. A family build descriptor may pin
-    # this independently of rollout autocast (SANA: fp16 parameters, bf16 forward).
+    # Resolved base transformer parameter dtype. Family capabilities may reject
+    # unsupported public role dtypes independently of forward autocast.
     parameter_dtype: Any
     # Canonical registry identity. Both driver replay and Ray rollout builds
     # require it; the worker restores it from the launch contract.
     family: str
+    # Fully resolved, process-local transformer execution contract. A nested
+    # primitive mapping is accepted only at the Ray wire boundary.
+    forward_precision: ResolvedForwardPrecision | Mapping[str, Any]
     model_config: dict[str, Any] | None = None
     sampling_config: dict[str, Any] | None = None
     # Full-generation build inputs. ``None`` is the replay contract: replay owns
@@ -178,6 +193,14 @@ class ModelBuild:
 
         if not isinstance(self.family, str) or not self.family:
             raise ValueError("ModelBuild.family must be a non-empty string")
+        if isinstance(self.forward_precision, Mapping):
+            self.forward_precision = ResolvedForwardPrecision(
+                **dict(self.forward_precision),
+            )
+        elif not isinstance(self.forward_precision, ResolvedForwardPrecision):
+            raise TypeError(
+                "ModelBuild.forward_precision must be ResolvedForwardPrecision or a mapping",
+            )
         self.parameter_dtype = resolve_torch_dtype(self.parameter_dtype)
         parameter_name = dtype_to_wire_name(self.parameter_dtype)
         try:
@@ -307,4 +330,11 @@ class RuntimeBundle:
     trainable_modules: dict[str, Any]
     scheduler: Any
     raw_handle: Any
+    forward_precision: ResolvedForwardPrecision
     metadata: dict[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.forward_precision, ResolvedForwardPrecision):
+            raise TypeError(
+                "RuntimeBundle.forward_precision must be ResolvedForwardPrecision",
+            )

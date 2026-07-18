@@ -22,6 +22,15 @@ class LatentDecodePlan:
     decode_batch_size: int | None = None
     prepare_decoded: Callable[[torch.Tensor], torch.Tensor] | None = None
 
+    def __post_init__(self) -> None:
+        # Fail at plan construction, not mid-decode: a trailing comma turns a
+        # lambda field into a 1-tuple silently (bit sana/hunyuan 2026-07-12).
+        for name in ("prepare_latents", "vae_decode", "postprocess"):
+            if not callable(getattr(self, name)):
+                raise TypeError(f"LatentDecodePlan.{name} must be callable")
+        if self.prepare_decoded is not None and not callable(self.prepare_decoded):
+            raise TypeError("LatentDecodePlan.prepare_decoded must be callable or None")
+
 
 class ChunkedLatentDecoder:
     """Apply family normalization, VAE decode, postprocess, and layout policy."""

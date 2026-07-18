@@ -14,7 +14,6 @@ training run.
 from __future__ import annotations
 
 import argparse
-import copy
 import csv
 import gc
 import hashlib
@@ -24,7 +23,6 @@ import math
 import os
 import re
 import statistics
-from contextlib import nullcontext
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -32,6 +30,13 @@ from typing import Any
 from omegaconf import DictConfig, OmegaConf
 
 from vrl.config.loading import load_config
+from vrl.scripts.eval.sana_inference import (
+    OFFICIAL_SAMPLING_PROTOCOL,
+    SCHEDULER_PROTOCOL,
+    generate_prompt_images,
+    load_official_scheduler,
+    validate_model_precision,
+)
 from vrl.trainers.checkpointing import (
     TRAINING_CHECKPOINT_NAME,
     is_complete_checkpoint,
@@ -44,24 +49,23 @@ from vrl.trainers.data import load_prompt_manifest
 logger = logging.getLogger(__name__)
 
 # These are persisted protocol/file identities, not tunable experiment defaults.
-REPORT_SCHEMA = "vrl.sana_aesthetic_checkpoint_eval/v1"
-REPORT_SCHEMA_VERSION = 1
-REPORT_RELATIVE_PATH = Path("sana_aesthetic_eval/report.json")
-SAMPLES_RELATIVE_PATH = Path("sana_aesthetic_eval/samples.jsonl")
+REPORT_SCHEMA = "vrl.sana_aesthetic_checkpoint_eval/v3"
+REPORT_SCHEMA_VERSION = 3
+REPORT_RELATIVE_PATH = Path("sana_aesthetic_fullparam_native_fp16_eval/report.json")
+SAMPLES_RELATIVE_PATH = Path("sana_aesthetic_fullparam_native_fp16_eval/samples.jsonl")
 EVAL_BASE_SEED = 20260710
 EVAL_SAMPLES_PER_PROMPT = 2
-CANONICAL_CONFIG_NAME = "experiment/diffusion/sana/online_grpo_aesthetic"
-CANONICAL_PROTOCOL_SHA256 = "027151b2cfaa65bed559da76759799b3001c9c493eec1e725a0aa7dd20645485"
+# Recovery checkpoints may be denser than the preregistered held-out curve.
+# This is the fixed scientific comparison interval, not a training IO knob.
+EVAL_CHECKPOINT_INTERVAL = 25
+CANONICAL_CONFIG_NAME = "experiment/diffusion/sana/online_grpo_aesthetic_fullparam_long"
+CANONICAL_PROTOCOL_SHA256 = "1a1babbb0fa6c44157d97f2a7e35fa46e77f1251d1a0ea0a3b70414bc643c89e"
 # Frozen protocol-asset identities. These hashes name two concrete datasets;
 # they are not a duplicated prompt taxonomy or a user-facing config table.
 TRAIN_MANIFEST_SHA256 = "86580c8136a4b6d9fc6bbcc6d8e8e172b15fca6b5c6c956cc770255d8011de56"
 EVAL_MANIFEST_SHA256 = "10c70e8af2ae16b0d76eb9da0f53801485ab0a3bae83e605d310faa9b16bfcdd"
 TRAIN_PROMPT_COUNT = 192
 EVAL_PROMPT_COUNT = 64
-SANA_MODEL_REVISION = "d1b54936033cd7d45410ecadd692c5c502a19a38"
-AESTHETIC_MODEL_REVISION = "32bd64288804d66eefd0ccbe215aa642df71cc41"
-PICKSCORE_PROCESSOR_REVISION = "1c2b8495b28150b8a4922ee1c8edee224c284c0c"
-PICKSCORE_MODEL_REVISION = "a4e4367c6dfa7288a00c550414478f865b875800"
 AESTHETIC_ASSET_SHA256 = "21dd590f3ccdc646f0d53120778b296013b096a035a2718c9cb0d511bff0f1e0"
 AESTHETIC_ASSET_BYTES = 3_714_759
 
@@ -72,10 +76,10 @@ class CheckpointTarget:
 
     label: str
     epoch: int
-    path: Path
+    path: Path | None
     # Provenance-only: emitted into the report and revalidated by its reader.
-    checkpoint_sha256: str
-    checkpoint_bytes: int
+    checkpoint_sha256: str | None
+    checkpoint_bytes: int | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -141,7 +145,7 @@ def main(argv: list[str] | None = None) -> None:
 
     targets = _discover_checkpoint_targets(run_dir, cfg)
     device = _resolve_device(args.device)
-    sampling = _resolve_sampling(cfg)
+    sampling = _resolve_sampling()
     build_cfg = _materialize_model_snapshot(cfg)
     reward_models = _materialize_reward_model_snapshots(
         _build_reward_model_definitions(cfg, generation_device=str(device)),
@@ -186,7 +190,7 @@ def main(argv: list[str] | None = None) -> None:
             "model": {
                 "family": str(cfg.model.family),
                 "repo": str(cfg.model.path),
-                "revision": SANA_MODEL_REVISION,
+                "revision": str(cfg.model.revision),
             },
             "training_manifest": {
                 "path": str(training_manifest_path),
@@ -204,7 +208,11 @@ def main(argv: list[str] | None = None) -> None:
                 "formula": "base_seed + prompt_index * samples_per_prompt",
                 "sample_stream": "one batched torch.Generator stream per prompt group",
             },
+            "evaluation_curve": {
+                "checkpoint_interval": EVAL_CHECKPOINT_INTERVAL,
+            },
             "sampling": sampling,
+            "scheduler_protocol": dict(SCHEDULER_PROTOCOL),
             "execution": {"generation_device": str(device)},
             "rewards": [_reward_model_record(reward_model) for reward_model in reward_models],
             "checkpoints": [_checkpoint_record(target, run_dir) for target in targets],
@@ -326,97 +334,24 @@ def load_report_metrics(run_dir: str | Path) -> list[dict[str, float]]:
 
 
 def _normalize_run_config(cfg: DictConfig) -> DictConfig:
-    """Return a canonical build copy while preserving archived run provenance.
+    """Require the exact pre-registered full-parameter long-run config."""
 
-    The active run predates removal of ``model.dtype`` and inline ``trainer.eval``.
-    Those two legacy fields are accepted only at their exact SANA protocol values
-    and removed from this in-memory copy. PickScore's later CPU placement default
-    is execution topology rather than scientific protocol, so comparison ignores
-    that one key while the returned config preserves the run's effective choice.
-    Every other resolved field must equal the canonical bundled preset.
-    """
-
-    canonical = load_config(CANONICAL_CONFIG_NAME)
     actual = OmegaConf.to_container(cfg, resolve=True)
-    expected = OmegaConf.to_container(canonical, resolve=True)
+    expected = OmegaConf.to_container(load_config(CANONICAL_CONFIG_NAME), resolve=True)
     if not isinstance(actual, dict) or not isinstance(expected, dict):
         raise TypeError("SANA evaluation configs must resolve to mappings")
-    actual = copy.deepcopy(actual)
-    expected = copy.deepcopy(expected)
-
-    model = actual.get("model")
-    if not isinstance(model, dict):
-        raise ValueError("SANA evaluation config has no model mapping")
-    legacy_dtype = model.pop("dtype", None)
-    if legacy_dtype is not None:
-        from vrl.models.dtypes import dtype_to_precision_token
-
-        try:
-            legacy_token = dtype_to_precision_token(legacy_dtype)
-        except ValueError as error:
-            raise ValueError(
-                f"legacy SANA model.dtype must be fp16, got {legacy_dtype!r}",
-            ) from error
-        if legacy_token != "fp16":
-            raise ValueError(f"legacy SANA model.dtype must be fp16, got {legacy_dtype!r}")
-
-    legacy_precision = actual.get("precision")
-    if isinstance(legacy_precision, str):
-        from vrl.models.dtypes import dtype_to_precision_token
-
-        if dtype_to_precision_token(legacy_precision) != "bf16":
-            raise ValueError(
-                f"legacy SANA precision must be bf16, got {legacy_precision!r}",
-            )
-        # The precision cleanup replaced the legacy scalar with a typed training
-        # dtype whose aligned rollout value is inherited. This build copy adopts
-        # the equivalent canonical representation; the archived file/hash stays
-        # untouched.
-        actual["precision"] = copy.deepcopy(expected["precision"])
-
-    trainer = actual.get("trainer")
-    expected_trainer = expected.get("trainer")
-    if not isinstance(trainer, dict) or not isinstance(expected_trainer, dict):
-        raise ValueError("SANA evaluation config has no trainer mapping")
-    legacy_eval = trainer.pop("eval", None)
-    if legacy_eval is not None:
-        eval_manifest = Path(str(expected["data"]["eval_manifest"])).expanduser().resolve()
-        expected_legacy_eval = {
-            "enabled": True,
-            "freq": int(expected_trainer["save_freq"]),
-            "samples_per_prompt": EVAL_SAMPLES_PER_PROMPT,
-            "max_prompts": len(load_prompt_manifest(eval_manifest)),
-            "seed": EVAL_BASE_SEED,
-        }
-        if legacy_eval != expected_legacy_eval:
-            raise ValueError(
-                "legacy trainer.eval does not match the registered SANA protocol: "
-                f"{legacy_eval!r} != {expected_legacy_eval!r}",
-            )
-
-    # Device placement changed after the active run began (missing meant CUDA;
-    # the current preset pins PickScore to CPU). Both execute the same float32
-    # scorer and the effective device is persisted separately in report provenance.
-    actual_for_comparison = copy.deepcopy(actual)
-    expected_for_comparison = copy.deepcopy(expected)
-    for candidate in (actual_for_comparison, expected_for_comparison):
-        reward_kwargs = candidate.get("reward", {}).get("kwargs", {})
-        pickscore = reward_kwargs.get("pickscore", {})
-        if isinstance(pickscore, dict):
-            pickscore.pop("device", None)
-    canonical_digest = _semantic_digest(expected_for_comparison)
+    canonical_digest = _semantic_digest(expected)
     if canonical_digest != CANONICAL_PROTOCOL_SHA256:
         raise ValueError(
             "bundled SANA aesthetic preset changed without a protocol schema update: "
             f"{canonical_digest} != {CANONICAL_PROTOCOL_SHA256}",
         )
-    if actual_for_comparison != expected_for_comparison:
-        mismatch = _first_config_difference(actual_for_comparison, expected_for_comparison)
+    if actual != expected:
+        mismatch = _first_config_difference(actual, expected)
         raise ValueError(
-            "resolved config does not match the registered SANA aesthetic protocol"
+            "resolved config does not match the registered SANA full-parameter protocol"
             + (f": {mismatch}" if mismatch else ""),
         )
-
     normalized = OmegaConf.create(actual)
     OmegaConf.resolve(normalized)
     assert isinstance(normalized, DictConfig)
@@ -534,19 +469,31 @@ def _discover_checkpoint_targets(run_dir: Path, cfg: DictConfig) -> list[Checkpo
     if save_freq <= 0:
         raise ValueError("SANA aesthetic curve requires trainer.save_freq > 0")
     total_epochs = int(OmegaConf.select(cfg, "trainer.total_epochs", default=0))
-    if total_epochs <= 0 or total_epochs % save_freq != 0:
+    if (
+        total_epochs <= 0
+        or total_epochs % save_freq != 0
+        or total_epochs % EVAL_CHECKPOINT_INTERVAL != 0
+        or EVAL_CHECKPOINT_INTERVAL % save_freq != 0
+    ):
         raise ValueError(
-            "SANA aesthetic curve requires total_epochs > 0 and divisible by save_freq",
+            "SANA aesthetic curve requires total_epochs divisible by both the "
+            "checkpoint and evaluation intervals, with save_freq dividing the "
+            "evaluation interval",
         )
-    epochs = [epoch for epoch, _ in numbered]
-    expected = list(range(save_freq, total_epochs + 1, save_freq))
+    eval_numbered = [
+        (epoch, path) for epoch, path in numbered if epoch % EVAL_CHECKPOINT_INTERVAL == 0
+    ]
+    epochs = [epoch for epoch, _ in eval_numbered]
+    expected = list(
+        range(EVAL_CHECKPOINT_INTERVAL, total_epochs + 1, EVAL_CHECKPOINT_INTERVAL),
+    )
     if epochs != expected:
         raise ValueError(
             f"checkpoint curve is incomplete or has gaps: found={epochs}, expected={expected}",
         )
 
     checkpoint_targets: list[CheckpointTarget] = []
-    for epoch, path in numbered:
+    for epoch, path in eval_numbered:
         checkpoint_file = path / TRAINING_CHECKPOINT_NAME
         checkpoint_targets.append(
             CheckpointTarget(
@@ -557,13 +504,12 @@ def _discover_checkpoint_targets(run_dir: Path, cfg: DictConfig) -> list[Checkpo
                 checkpoint_bytes=checkpoint_file.stat().st_size,
             ),
         )
-    first = checkpoint_targets[0]
     baseline = CheckpointTarget(
         label="baseline",
         epoch=-1,
-        path=first.path,
-        checkpoint_sha256=first.checkpoint_sha256,
-        checkpoint_bytes=first.checkpoint_bytes,
+        path=None,
+        checkpoint_sha256=None,
+        checkpoint_bytes=None,
     )
     return [baseline, *checkpoint_targets]
 
@@ -588,13 +534,12 @@ def _validate_training_metrics(path: Path, cfg: DictConfig) -> None:
 
 
 def _validate_training_log_provenance(run_dir: Path, cfg: DictConfig) -> dict[str, Any]:
-    """Bind this legacy run to the HF revisions observed in its startup log."""
+    """Bind the supervisor log to revisions pinned in the resolved config."""
 
     path = run_dir / "supervisor.log"
     if not path.is_file():
         raise FileNotFoundError(
-            "SANA run has no supervisor.log revision evidence; legacy cache-hit runs "
-            "without machine-readable model revisions cannot be evaluated trustworthily",
+            "SANA run has no supervisor.log launch evidence",
         )
     reward_kwargs = OmegaConf.to_container(
         OmegaConf.select(cfg, "reward.kwargs", default={}),
@@ -603,31 +548,24 @@ def _validate_training_log_provenance(run_dir: Path, cfg: DictConfig) -> dict[st
     reward_kwargs = dict(reward_kwargs or {})
     aesthetic = dict(reward_kwargs.get("aesthetic") or {})
     pickscore = dict(reward_kwargs.get("pickscore") or {})
-    expected = {
-        str(cfg.model.path): SANA_MODEL_REVISION,
-        str(aesthetic.get("model_name") or ""): AESTHETIC_MODEL_REVISION,
-        str(pickscore.get("processor_name") or ""): PICKSCORE_PROCESSOR_REVISION,
-        str(pickscore.get("model_name") or ""): PICKSCORE_MODEL_REVISION,
+    configured = {
+        str(cfg.model.path): str(cfg.model.revision or ""),
+        str(aesthetic.get("model_name") or ""): str(
+            aesthetic.get("model_revision") or "",
+        ),
+        str(pickscore.get("processor_name") or ""): str(
+            pickscore.get("processor_revision") or "",
+        ),
+        str(pickscore.get("model_name") or ""): str(
+            pickscore.get("model_revision") or "",
+        ),
     }
-    if "" in expected:
-        raise ValueError("SANA training log provenance is missing a configured model identity")
-    text = path.read_text(encoding="utf-8", errors="replace")
-    resolved: dict[str, str] = {}
-    for repo, revision in expected.items():
-        pattern = re.compile(
-            rf"/api/resolve-cache/models/{re.escape(repo)}/([0-9a-f]{{40}})/",
-        )
-        observed = set(pattern.findall(text))
-        if observed != {revision}:
-            raise ValueError(
-                f"training log revisions for {repo!r} do not match the registered run: "
-                f"observed={sorted(observed)}, expected={[revision]}",
-            )
-        resolved[repo] = revision
+    if "" in configured or any(not revision for revision in configured.values()):
+        raise ValueError("SANA training provenance requires pinned model and reward revisions")
     return {
         "path": path.name,
         "sha256": _sha256(path),
-        "resolved_model_revisions": resolved,
+        "configured_model_revisions": configured,
     }
 
 
@@ -642,29 +580,10 @@ def _resolve_device(value: str) -> Any:
     return torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
 
-def _resolve_sampling(cfg: DictConfig) -> dict[str, Any]:
-    num_steps = int(OmegaConf.select(cfg, "sampling.num_steps", default=0))
-    window_size = int(OmegaConf.select(cfg, "rollout.sde.window_size", default=0))
-    if window_size != 0:
-        raise ValueError(
-            "SANA trustworthy-curve evaluation requires rollout.sde.window_size=0; "
-            "a random SDE window is not a fixed evaluation protocol",
-        )
-    return {
-        "width": int(OmegaConf.select(cfg, "sampling.width", default=0)),
-        "height": int(OmegaConf.select(cfg, "sampling.height", default=0)),
-        "num_steps": num_steps,
-        "guidance_scale": float(
-            OmegaConf.select(cfg, "sampling.guidance_scale", default=0.0),
-        ),
-        "max_sequence_length": int(
-            OmegaConf.select(cfg, "sampling.max_sequence_length", default=0),
-        ),
-        "denoise_mode": str(OmegaConf.select(cfg, "rollout.denoise_mode", default="sde")),
-        "noise_level": float(OmegaConf.select(cfg, "rollout.noise_level", default=1.0)),
-        "sde_type": str(OmegaConf.select(cfg, "rollout.sde.type", default="flow_grpo")),
-        "sde_window": [0, num_steps],
-    }
+def _resolve_sampling() -> dict[str, Any]:
+    """Return the quality protocol, intentionally independent of training SDE."""
+
+    return dict(OFFICIAL_SAMPLING_PROTOCOL)
 
 
 def _build_reward_model_definitions(
@@ -683,13 +602,13 @@ def _build_reward_model_definitions(
             "aesthetic",
             "aesthetic",
             "vrl.rewards.models.aesthetic:aesthetic_reward_model",
-            ("model_name",),
+            ("model_name", "model_revision"),
         ),
         (
             "pickscore",
             "pickscore",
             "vrl.rewards.models.pickscore:pickscore_reward_model",
-            ("processor_name", "model_name"),
+            ("processor_name", "processor_revision", "model_name", "model_revision"),
         ),
     ):
         model_config = dict(reward_kwargs.get(name) or {})
@@ -712,7 +631,7 @@ def _build_reward_model_definitions(
             provenance = {
                 "model": {
                     "repo": str(model_config["model_name"]),
-                    "revision": AESTHETIC_MODEL_REVISION,
+                    "revision": str(model_config["model_revision"]),
                 },
                 "mlp_asset": _aesthetic_asset_record(),
             }
@@ -720,11 +639,11 @@ def _build_reward_model_definitions(
             provenance = {
                 "processor": {
                     "repo": str(model_config["processor_name"]),
-                    "revision": PICKSCORE_PROCESSOR_REVISION,
+                    "revision": str(model_config["processor_revision"]),
                 },
                 "model": {
                     "repo": str(model_config["model_name"]),
-                    "revision": PICKSCORE_MODEL_REVISION,
+                    "revision": str(model_config["model_revision"]),
                 },
             }
         reward_models.append(
@@ -746,7 +665,7 @@ def _materialize_model_snapshot(cfg: DictConfig) -> DictConfig:
 
     local_path = snapshot_download(
         repo_id=str(cfg.model.path),
-        revision=SANA_MODEL_REVISION,
+        revision=str(cfg.model.revision),
     )
     plain = OmegaConf.to_container(cfg, resolve=True)
     assert isinstance(plain, dict)
@@ -853,14 +772,28 @@ def _generate_images(
     build = entry.resolve_model_build(cfg, device, for_rollout=True)
     bundle = entry.build_rollout(build)
     model = bundle.model.eval()
+    validate_model_precision(model, bundle.forward_precision)
     generated: list[GeneratedImage] = []
-    loaded_checkpoint: Path | None = None
+    checkpoint_read = False
     try:
         for target in targets:
-            if target.path != loaded_checkpoint:
+            if target.epoch == -1:
+                if target.path is not None:
+                    raise ValueError(
+                        "full-parameter baseline must come from the pinned base model"
+                    )
+                if checkpoint_read:
+                    raise RuntimeError("SANA baseline was scheduled after checkpoint loading")
+            else:
+                if target.path is None:
+                    raise ValueError(f"checkpoint target has no path: {target.label}")
                 checkpoint = load_training_checkpoint(target.path)
                 if str(checkpoint.payload.get("family", "")) != "sana":
                     raise ValueError(f"checkpoint family is not sana: {target.path}")
+                if checkpoint.meta.get("uses_lora") is not False:
+                    raise ValueError(
+                        f"full-parameter checkpoint must declare uses_lora=false: {target.path}",
+                    )
                 match = re.fullmatch(r"checkpoint-(\d+)", target.path.name)
                 if match is None:
                     raise ValueError(f"invalid numbered checkpoint path: {target.path}")
@@ -872,133 +805,54 @@ def _generate_images(
                     )
                 trainable_state = checkpoint.trainable_state
                 load_trainable_state(bundle, trainable_state, strict=True)
-                # The checkpoint payload also owns optimizer/RNG state that
-                # evaluation never reads. Drop it before generating 128 images.
                 del checkpoint, trainable_state
-                loaded_checkpoint = target.path
-            # The registered baseline is the adapter-off base policy, not an
-            # assumption about PEFT's current LoRA initializer. Checkpoints use
-            # their loaded adapters normally.
-            adapter_context = model.disable_adapter() if target.epoch == -1 else nullcontext()
-            with adapter_context:
-                for prompt_index, prompt in enumerate(prompts):
-                    group_seed = _group_seed(prompt_index)
-                    logger.info(
-                        "Generating checkpoint=%s prompt=%d samples=%d group_seed=%d",
-                        target.label,
-                        prompt_index,
-                        EVAL_SAMPLES_PER_PROMPT,
-                        group_seed,
+                checkpoint_read = True
+            for prompt_index, prompt in enumerate(prompts):
+                group_seed = _group_seed(prompt_index)
+                logger.info(
+                    "Generating checkpoint=%s prompt=%d samples=%d group_seed=%d",
+                    target.label,
+                    prompt_index,
+                    EVAL_SAMPLES_PER_PROMPT,
+                    group_seed,
+                )
+                # A fresh scheduler per prompt group makes each grid cell
+                # independent of mutable scheduler state from earlier prompts.
+                decoded = generate_prompt_images(
+                    model,
+                    forward_precision=bundle.forward_precision,
+                    scheduler=load_official_scheduler(build),
+                    prompt=prompt,
+                    seed=group_seed,
+                    num_images=EVAL_SAMPLES_PER_PROMPT,
+                    device=device,
+                    sampling=sampling,
+                )
+                for sample_index, image in enumerate(decoded):
+                    path = (
+                        output_dir
+                        / "images"
+                        / target.label
+                        / f"prompt{prompt_index:04d}_sample{sample_index:02d}.png"
                     )
-                    decoded = _generate_prompt_images(
-                        model,
-                        prompt=prompt,
-                        group_seed=group_seed,
-                        sampling=sampling,
-                        device=device,
+                    write_png(image, path)
+                    generated.append(
+                        GeneratedImage(
+                            checkpoint_label=target.label,
+                            epoch=target.epoch,
+                            prompt_index=prompt_index,
+                            sample_index=sample_index,
+                            group_seed=group_seed,
+                            prompt=prompt,
+                            path=path.resolve(),
+                            image_sha256=_sha256(path),
+                        ),
                     )
-                    if getattr(decoded, "shape", (0,))[0] != EVAL_SAMPLES_PER_PROMPT:
-                        raise ValueError(
-                            "SANA fixed eval generated the wrong prompt-group batch size: "
-                            f"{getattr(decoded, 'shape', None)}",
-                        )
-                    for sample_index in range(EVAL_SAMPLES_PER_PROMPT):
-                        path = (
-                            output_dir
-                            / "images"
-                            / target.label
-                            / f"prompt{prompt_index:04d}_sample{sample_index:02d}.png"
-                        )
-                        write_png(decoded[sample_index], path)
-                        generated.append(
-                            GeneratedImage(
-                                checkpoint_label=target.label,
-                                epoch=target.epoch,
-                                prompt_index=prompt_index,
-                                sample_index=sample_index,
-                                group_seed=group_seed,
-                                prompt=prompt,
-                                path=path.resolve(),
-                                image_sha256=_sha256(path),
-                            ),
-                        )
-                    del decoded
+                del decoded
     finally:
         del model, bundle
         _release_cuda()
     return generated
-
-
-def _generate_prompt_images(
-    model: Any,
-    *,
-    prompt: str,
-    group_seed: int,
-    sampling: dict[str, Any],
-    device: Any,
-) -> Any:
-    import torch
-
-    from vrl.generation.diffusion.layout import DiffusionRequestLayout, VideoGenerationRequest
-    from vrl.math.diffusion.flow_matching import sde_step_with_logprob
-
-    encoded = model.encode_prompt(
-        prompt,
-        None,
-        max_sequence_length=int(sampling["max_sequence_length"]),
-        guidance_scale=float(sampling["guidance_scale"]),
-    )
-    encoded = DiffusionRequestLayout().repeat_encoded_batch(
-        encoded,
-        EVAL_SAMPLES_PER_PROMPT,
-    )
-    request = VideoGenerationRequest(
-        prompt=prompt,
-        width=int(sampling["width"]),
-        height=int(sampling["height"]),
-        frame_count=1,
-        num_steps=int(sampling["num_steps"]),
-        guidance_scale=float(sampling["guidance_scale"]),
-        seed=group_seed,
-        extra={"max_sequence_length": int(sampling["max_sequence_length"])},
-    )
-    state = model.prepare_sampling(request, encoded)
-    generator = torch.Generator(device=state.latents.device)
-    generator.manual_seed(group_seed)
-    autocast_dtype = getattr(model, "autocast_dtype", torch.float32)
-    autocast = (
-        torch.amp.autocast("cuda", dtype=autocast_dtype)
-        if getattr(device, "type", None) == "cuda"
-        and autocast_dtype in (torch.float16, torch.bfloat16)
-        else nullcontext()
-    )
-    with torch.inference_mode():
-        with autocast:
-            for step_index, timestep in enumerate(state.timesteps):
-                noise_pred = model.forward_step(state, step_index)["noise_pred"]
-                if sampling["denoise_mode"] == "native":
-                    state.latents = state.scheduler.step(
-                        noise_pred.float(),
-                        timestep,
-                        state.latents.float(),
-                        return_dict=False,
-                    )[0]
-                else:
-                    state.latents = sde_step_with_logprob(
-                        state.scheduler,
-                        noise_pred.float(),
-                        timestep.unsqueeze(0),
-                        state.latents.float(),
-                        generator=generator,
-                        deterministic=False,
-                        return_dt=False,
-                        noise_level=float(sampling["noise_level"]),
-                        sde_type=str(sampling["sde_type"]),
-                        step_index=step_index,
-                    ).prev_sample
-        # SANA's DC-AE is an explicit fp32 fidelity boundary. The production
-        # executor decodes after leaving transformer autocast; keep eval equal.
-        return model.decode_latents(state.latents)
 
 
 def _score_images(
@@ -1096,11 +950,11 @@ def _checkpoint_record(target: CheckpointTarget, run_dir: Path) -> dict[str, Any
         return {
             "label": target.label,
             "epoch": target.epoch,
-            "source_checkpoint_path": str(target.path.relative_to(run_dir)),
-            "checkpoint_sha256": target.checkpoint_sha256,
-            "checkpoint_bytes": target.checkpoint_bytes,
-            "adapter": "disabled",
+            "source": "pinned_base_model_snapshot",
+            "checkpoint_loaded": False,
         }
+    if target.path is None or target.checkpoint_sha256 is None or target.checkpoint_bytes is None:
+        raise ValueError(f"checkpoint target provenance is incomplete: {target.label}")
     return {
         "label": target.label,
         "epoch": target.epoch,
@@ -1122,7 +976,9 @@ def _validate_report_provenance(
         "training_manifest",
         "eval_manifest",
         "seed_grid",
+        "evaluation_curve",
         "sampling",
+        "scheduler_protocol",
         "execution",
         "rewards",
         "checkpoints",
@@ -1138,7 +994,9 @@ def _validate_report_provenance(
         "training_manifest",
         "eval_manifest",
         "seed_grid",
+        "evaluation_curve",
         "sampling",
+        "scheduler_protocol",
         "execution",
         "samples",
     ):
@@ -1169,7 +1027,7 @@ def _validate_report_provenance(
     expected_model = {
         "family": str(cfg.model.family),
         "repo": str(cfg.model.path),
-        "revision": SANA_MODEL_REVISION,
+        "revision": str(cfg.model.revision),
     }
     if provenance["model"] != expected_model:
         raise ValueError("SANA evaluation model provenance disagrees with resolved_config.yaml")
@@ -1192,8 +1050,10 @@ def _validate_report_provenance(
         if int(record.get("prompt_count", -1)) != expected_count:
             raise ValueError(f"SANA {label} prompt count changed")
 
-    if provenance["sampling"] != _resolve_sampling(cfg):
-        raise ValueError("SANA evaluation sampling provenance disagrees with resolved_config.yaml")
+    if provenance["sampling"] != _resolve_sampling():
+        raise ValueError("SANA evaluation sampling provenance changed")
+    if provenance["scheduler_protocol"] != SCHEDULER_PROTOCOL:
+        raise ValueError("SANA evaluation scheduler protocol changed")
 
     seed_grid = provenance["seed_grid"]
     expected_seed = {
@@ -1206,6 +1066,11 @@ def _validate_report_provenance(
         raise ValueError(
             f"SANA evaluation report seed protocol changed: {seed_grid!r} != {expected_seed!r}",
         )
+
+    if provenance["evaluation_curve"] != {
+        "checkpoint_interval": EVAL_CHECKPOINT_INTERVAL,
+    }:
+        raise ValueError("SANA evaluation checkpoint interval changed")
 
     execution = provenance["execution"]
     if not isinstance(execution, dict) or not str(execution.get("generation_device", "")):

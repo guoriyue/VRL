@@ -21,11 +21,9 @@ from vrl.trainers.data.prompts import (
     load_prompt_image_manifest,
     load_prompt_manifest,
 )
-from vrl.trainers.data.samplers import DistributedKRepeatSampler
 
 __all__ = [
     "ArtifactManifestReport",
-    "DistributedKRepeatSampler",
     "ImageCaptionPromptDataset",
     "JsonlPromptDataset",
     "PickAPicPreferenceDataset",

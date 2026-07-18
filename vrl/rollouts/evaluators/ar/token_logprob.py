@@ -16,7 +16,8 @@ from __future__ import annotations
 import torch
 
 from vrl.math.ar.logprob import gather_categorical_log_probs
-from vrl.models.interfaces import ReplayModel, require_replay_model
+from vrl.models.forward_precision import forward_autocast
+from vrl.models.interfaces import ReplayModel, ResolvedForwardPrecision, require_replay_model
 from vrl.rollouts.batch import RolloutBatch
 from vrl.rollouts.evaluators.base import Evaluator
 from vrl.rollouts.evaluators.trajectory import TrajectorySignalBuilder
@@ -46,6 +47,8 @@ class TokenLogProbEvaluator(Evaluator):
         timestep_idx: int = 0,
         ref_model: ReplayModel | None = None,
         signal_request: SignalRequest | None = None,
+        *,
+        forward_precision: ResolvedForwardPrecision,
     ) -> TrajectorySignalBatch:
         model = require_replay_model(model, owner="TokenLogProbEvaluator.model")
         if ref_model is not None:
@@ -58,18 +61,32 @@ class TokenLogProbEvaluator(Evaluator):
         # must renormalize with the recorded temperature for old/new parity.
         temperature = float(builder.context.get("temperature", 1.0))
 
-        new_lp = self._compute_logprobs(model, batch, action_ids, temperature)
+        new_lp = self._compute_logprobs(
+            model,
+            batch,
+            action_ids,
+            temperature,
+            forward_precision,
+        )
 
         ref_lp = None
         if request.need_ref:
             if ref_model is not None:
                 ref_lp = self._compute_logprobs(
-                    ref_model, batch, action_ids, temperature,
+                    ref_model,
+                    batch,
+                    action_ids,
+                    temperature,
+                    forward_precision,
                 )
             else:
                 with torch.no_grad(), model.disable_adapter():
                     ref_lp = self._compute_logprobs(
-                        model, batch, action_ids, temperature,
+                        model,
+                        batch,
+                        action_ids,
+                        temperature,
+                        forward_precision,
                     )
 
         return builder.single_segment(
@@ -92,11 +109,15 @@ class TokenLogProbEvaluator(Evaluator):
         batch: RolloutBatch,
         action_ids: torch.Tensor,
         temperature: float,
+        forward_precision: ResolvedForwardPrecision,
     ) -> torch.Tensor:
         """Forward + gather. Always returns ``[B, L]`` float32 log-probs."""
-        out = model.replay_forward(batch, timestep_idx=0)
+        with forward_autocast(forward_precision, batch.observations.device):
+            out = model.replay_forward(batch, timestep_idx=0)
         result = out.require_segment("image_tokens")
-        logits: torch.Tensor = result.require_value("logits")   # [B, L, V_img]
+        logits: torch.Tensor = result.require_value("logits")  # [B, L, V_img]
         return gather_categorical_log_probs(
-            logits, action_ids, temperature=temperature,
+            logits,
+            action_ids,
+            temperature=temperature,
         )  # [B, L]

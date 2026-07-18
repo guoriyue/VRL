@@ -22,6 +22,7 @@ from vrl.rewards.inference import (
     RewardMemoryReleaseProof,
 )
 from vrl.rewards.types import RewardRollout
+from vrl.utils.cuda_memory import CUDA_RUNTIME_RESIDUAL_BYTES_LIMIT
 from vrl.utils.logging import init_logger
 
 logger = init_logger(__name__)
@@ -31,11 +32,6 @@ ArtifactBuilder = Callable[[list[RewardRollout]], list[RewardInferenceArtifact]]
 # materializations or transfers their ownership to the debug/output dir.
 ArtifactFinalizer = Callable[[list[RewardInferenceArtifact]], None]
 ArtifactTransport = Literal["in_memory", "disk"]
-
-# Protocol boundary measured on RTX 5090: the first CUDA scoring kernel leaves a
-# 2 MiB runtime allocation outside vLLM's one-shot model pool. Keep a bounded
-# 4 MiB allowance; model/cache pages beyond it still fail the physical proof.
-_REWARD_CUDA_RUNTIME_RESIDUAL_BYTES = 4 * 1024 * 1024
 
 
 def resolve_reward_component_device(
@@ -602,7 +598,7 @@ class CumemRewardFunction(RewardFunction):
     """Reward whose model allocations support verified tagged-pool parking."""
 
     memory_parking: ClassVar[RewardMemoryParkingCapability] = RewardMemoryParkingCapability(
-        residual_bytes_limit=_REWARD_CUDA_RUNTIME_RESIDUAL_BYTES,
+        residual_bytes_limit=CUDA_RUNTIME_RESIDUAL_BYTES_LIMIT,
     )
 
 

@@ -19,6 +19,7 @@ it away. That catches a sign flip independently of how the loss is written.
 
 from __future__ import annotations
 
+from contextlib import contextmanager
 from dataclasses import fields
 from typing import Any
 
@@ -38,6 +39,7 @@ from vrl.generation.diffusion.layout import VideoGenerationRequest
 from vrl.generation.types import GenerationRequest, GenerationSampleRow
 from vrl.models.diffusion import DiffusionModelBase
 from vrl.models.diffusion.cosmos.predict2_5.model import _copy_adapter_weights
+from vrl.models.interfaces import ResolvedForwardPrecision
 from vrl.rollouts.batch import RolloutBatch
 from vrl.trajectory.builders import build_diffusion_trajectory
 
@@ -45,6 +47,7 @@ _BATCH = TINY_WAN_LATENT_SHAPE[0]
 _LATENT_SHAPE = TINY_WAN_LATENT_SHAPE
 _TEXT_LEN = TINY_WAN_TEXT_LEN
 _TEXT_DIM = TINY_WAN_TEXT_DIM
+FORWARD_PRECISION = ResolvedForwardPrecision(autocast="off", float32_precision="ieee")
 
 
 def test_diffusion_nft_does_not_tolerate_off_policy_staleness() -> None:
@@ -257,6 +260,7 @@ def _step_distances(*, advantage: float) -> tuple[float, float, torch.Tensor]:
         batch,
         0,
         torch.tensor([advantage]),
+        FORWARD_PRECISION,
     )
     trainable = [p for p in model.transformer.parameters() if p.requires_grad]
     opt = torch.optim.SGD(trainable, lr=50.0)
@@ -286,6 +290,7 @@ def test_nft_returns_only_objective_owned_step_metrics() -> None:
         batch,
         0,
         torch.full((_BATCH,), 5.0),
+        FORWARD_PRECISION,
     )
 
     # approx_kl is the historical CSV view of this exact reference-prediction
@@ -296,6 +301,59 @@ def test_nft_returns_only_objective_owned_step_metrics() -> None:
     assert metrics.adv_zero_rate == 0.0
     assert metrics.adv_saturation == 0.0
     assert metrics.phase_times == {}
+
+
+def test_nft_autocast_only_wraps_transformer_forwards(monkeypatch) -> None:
+    import vrl.algorithms.diffusion_nft as nft_module
+
+    model = _build_model()
+    batch = _build_batch(
+        x0=torch.randn(_LATENT_SHAPE),
+        noise=torch.randn(_LATENT_SHAPE),
+        prompt_embeds=torch.randn(_BATCH, _TEXT_LEN, _TEXT_DIM),
+        timestep=500.0,
+    )
+    active_forward_scope = 0
+    scope_count = 0
+
+    @contextmanager
+    def track_forward_autocast(policy, device):
+        nonlocal active_forward_scope, scope_count
+        assert policy is FORWARD_PRECISION
+        assert torch.device(device).type == "cpu"
+        active_forward_scope += 1
+        scope_count += 1
+        try:
+            yield
+        finally:
+            active_forward_scope -= 1
+
+    def check_transformer_scope(_module, _args):
+        assert active_forward_scope == 1
+
+    original_normalized_mse = nft_module.normalized_mse
+
+    def checked_normalized_mse(prediction, target):
+        assert active_forward_scope == 0
+        return original_normalized_mse(prediction, target)
+
+    monkeypatch.setattr(nft_module, "forward_autocast", track_forward_autocast)
+    monkeypatch.setattr(nft_module, "normalized_mse", checked_normalized_mse)
+    hook = model.transformer.register_forward_pre_hook(check_transformer_scope)
+    try:
+        loss, _metrics = DiffusionNFT().compute_batch_timestep_loss(
+            model,
+            batch,
+            0,
+            torch.ones(_BATCH),
+            FORWARD_PRECISION,
+        )
+    finally:
+        hook.remove()
+
+    assert loss.requires_grad
+    assert scope_count == 3
+    assert active_forward_scope == 0
 
 
 def test_positive_advantage_trains_toward_reconstruction() -> None:
@@ -326,7 +384,13 @@ def test_nft_beta_must_be_positive() -> None:
         timestep=500.0,
     )
     with pytest.raises(RuntimeError, match="nft_beta must be > 0"):
-        DiffusionNFT(cfg).compute_batch_timestep_loss(model, batch, 0, torch.tensor([1.0]))
+        DiffusionNFT(cfg).compute_batch_timestep_loss(
+            model,
+            batch,
+            0,
+            torch.tensor([1.0]),
+            FORWARD_PRECISION,
+        )
 
 
 def test_advantage_scale_is_the_only_nft_advantage_scale() -> None:
@@ -348,7 +412,13 @@ def test_advantage_scale_must_be_positive() -> None:
         timestep=500.0,
     )
     with pytest.raises(RuntimeError, match="advantage_scale must be > 0"):
-        DiffusionNFT(cfg).compute_batch_timestep_loss(model, batch, 0, torch.tensor([1.0]))
+        DiffusionNFT(cfg).compute_batch_timestep_loss(
+            model,
+            batch,
+            0,
+            torch.tensor([1.0]),
+            FORWARD_PRECISION,
+        )
 
 
 def test_after_optimizer_step_syncs_previous_adapter() -> None:
@@ -387,6 +457,7 @@ def test_first_step_invariant_check_passes_when_previous_synced() -> None:
         model=model,
         batch=batch,
         advantages=torch.tensor([2.0]),
+        forward_precision=FORWARD_PRECISION,
         timestep_index=0,
     )
 
@@ -417,6 +488,7 @@ def test_edm_scale_timestep_grid_fails_loudly() -> None:
             batch,
             0,
             torch.tensor([1.0]),
+            FORWARD_PRECISION,
         )
 
 
@@ -443,12 +515,14 @@ def test_lr_zero_reward_channel_is_inert() -> None:
         batch,
         0,
         torch.tensor([5.0]),
+        FORWARD_PRECISION,
     )
     loss_neg, metrics_neg = nft.compute_batch_timestep_loss(
         model,
         batch,
         0,
         torch.tensor([-5.0]),
+        FORWARD_PRECISION,
     )
 
     assert metrics_pos.policy_loss == metrics_neg.policy_loss

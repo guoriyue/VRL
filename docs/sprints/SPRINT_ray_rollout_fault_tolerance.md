@@ -1,34 +1,47 @@
 # SPRINT: Ray rollout worker recovery and lifecycle truthfulness
 
-> Lifecycle note (2026-07-11): the ticket/`QUIESCING` design below is historical.
-> `SPRINT_explicit_rollout_activation.md` is the current ownership contract:
-> schedules drain work; runtimes own activation/offload and terminal cleanup.
+> Lifecycle correction (2026-07-13): `OperationTicket`、runtime-level `QUIESCING`
+> 与 public `RECOVERING` phase 都不是当前或目标 contract。当前 ownership 以
+> `SPRINT_explicit_rollout_activation.md` 为准：schedule owns admission/drain；runtime
+> owns activation/offload、transactional install 与 terminal cleanup；future recovery
+> 是 worker-fleet owner 内部的 concrete single-flight task。
 
 状态：**in-progress（2026-07-10）**。三个 run-level recovery gates 已清
 （signal ownership `3bb23f52`、atomic checkpoint `97ac2da7`、repo-owned
 supervisor `bb282f7a`），实施顺序 1（lifecycle derivation `b9d768af`）、
-2（早期状态机骨架 `e6b0dade`）已落地；状态机 truthfulness
-切片又补齐了 runtime-issued admission ticket、真实 drain barrier、temporary
-`QUIESCING` barrier、shutdown single-flight 和 failed-cleanup retry，并删除了尚无
-classifier消费者的 expected-kill registry。lease-level transactional weight
-commit也已落地：`state_ref + policy_version` 作为一个 committed snapshot，在远端
+2（早期状态机骨架 `e6b0dade`）已由 explicit activation 方案收敛：schedule-owned
+drain、runtime activation/offload/shutdown single-flight、terminal lifecycle 与
+failed-cleanup retry 已落地，并删除了无行为消费者的 generic ticket/active-operation
+状态和 expected-kill registry。on-demand transactional weight commit 也已落地：
+`state_ref + policy_version` 作为一个 desired snapshot，在远端
 update成功后才发布；失败关闭admission并清理未知worker。剩余 3–7
 （worker-fleet owner、typed failure/deadline、digest/version-slot commit、
 deterministic replay、observability + real-Ray twin）未开始。true-Ray/GPU
 验收按本文纪律等待 GPU 空闲。
 
-lazy cold-launch/wake 也已使用内部 acquire single-flight + 独立 ticket：并发 generate
+lazy cold-launch/wake 使用具体的 `activation_task` single-flight：并发 generate
 共享同一次 restore，candidate 在 restore 完成前不 publish；即使唯一 waiter 被 cancel，
-terminal drain仍会等待 acquire task完成并接管 cleanup。startup probe、release-policy、
+terminal shutdown仍会等待 activation task完成并接管 cleanup。startup probe、release-policy、
 sleep/wake 的同步 `ray.get` 已移出 event-loop thread；launcher 保留 main-thread Ray init，
 已连接后的 actor startup/policy load 通过 async adapter移出 event-loop thread。底层 thread
-不被 caller cancellation 强杀，而是由 acquire ticket保证晚归 candidate 仍被接管。
+不被 caller cancellation 强杀，而是由 runtime-owned activation task 保证晚归 candidate
+仍被接管。
 
 > 步骤 3–6 的 identity/ownership 细化见
 > [`SPRINT_runtime_time_machine_without_fleet_args.md`](./SPRINT_runtime_time_machine_without_fleet_args.md)：
 > 裸 `_fleet_generation`、`fleet_generation=` 参数和 write-only expected-kill registry
 > 已删除。真正实现 stale-event recovery 时，epoch只能作为 immutable `WorkerFleet`
-> 的行为字段，由 runtime-issued `OperationTicket` 自动携带。
+> 的行为字段，由 fleet owner 在 dispatch/result/recovery publish 时自动检查；不得重新
+> 暴露成每层手传参数，也不为它恢复 generic `OperationTicket`。
+
+2026-07-13 native-engine audit 再次确认“剩余 3–7 未完成”是代码事实，不只是计划标签：
+
+- `run_actor_jobs()` 在一个 ObjectRef 失败后取消 asyncio waiter，但明确不取消底层 Ray work；
+- worker update ACK 当前只返回整数 policy version，没有 key schema/state digest；
+- terminal `RuntimePhase` 只有 `RUNNING/SHUTTING_DOWN/TERMINATED`，当前没有 fleet rebuild
+  或 whole-request replay consumer。
+
+因此已完成的 lifecycle truthfulness 不能被描述成 automatic recovery 已存在。
 
 前置：
 
@@ -121,20 +134,19 @@ memory 波动和“正常 DEAD 被误判为事故”的观察噪声。因此原�
 generation actor sleep 后虽然仍持有 Ray logical bundle，但 inline reward 不通过 Ray
 申请该 token；因此 canonical `on_demand` rollout统一使用sleep/wake。重复派生的
 `sleep_eligible`和missing-topology teardown fallback已删除；没有resolved lifecycle plan
-时launcher保持resident，不再由private factory暗中制造另一种lease。
+时launcher保持resident，不再由private factory暗中制造另一种on-demand state。
 
-`release()` 读取 `state.workers_asleep` 做幂等保护。collector 的
-reward 前 release 与 schedule `finally` 可能在同一 phase 重复触达 release；第二次
-release 不得再次 sleep。相同地，只有 `workers_asleep=True` 才允许 wake，成功后再提交
-`workers_asleep=False`。
+`offload()` 读取 `state.workers_offloaded` 做幂等保护。schedule `finally` 与 terminal
+cleanup 即使相邻触达，已 offload 的 worker 也不得再次 sleep。相同地，只有
+`workers_offloaded=True` 才需要 wake；成功 restore 并确认 desired policy 后，再提交
+`workers_offloaded=False`。
 
 ### 当前行为状态机
 
-使用行为消费的状态，而不是 log-only 标签：
+terminal runtime 只保存被行为消费的状态：
 
 ```text
-RUNNING  -> QUIESCING -> RUNNING
-RUNNING / QUIESCING -> SHUTTING_DOWN -> TERMINATED
+RUNNING -> SHUTTING_DOWN -> TERMINATED
 ```
 
 `failure: BaseException | None` 与 phase 正交：运行或cleanup failure保存第一个
@@ -143,55 +155,55 @@ shutdown重试，成功后才进入 `TERMINATED`。不需要重复表达同一�
 
 状态消费者：
 
-- `RUNNING`：允许提交 request；worker-specific failure 可进入 recovery；
-- `QUIESCING`：临时关闭 admission，等待已接收操作后 sleep；正常完成才回到
-  `RUNNING`，若 terminal shutdown 到达则让位给 `SHUTTING_DOWN`；
+- `RUNNING`：runtime terminal admission 仍开放；strict/continuous schedule 在调用
+  weight sync、offload 或 shutdown 前负责停止 producer 并 drain；
 - `SHUTTING_DOWN`：拒绝新 request；actor death 作为 expected termination，不重拉；
 - `TERMINATED`：所有 public runtime operation fail-fast；
 
-这里采用服务/executor生命周期术语，而不是 Java thread或Ray actor状态。`QUIESCING` 只描述
-facade的临时admission barrier：停止接收新工作并等待in-flight完成；normal handoff随后
-park worker，teardown只属于terminal cleanup/failure。`SHUTTING_DOWN/TERMINATED`
-分别表示terminal cleanup进行中和cleanup已完成。
+`QUIESCING` 属于 schedule 的 pause/drain 行为，不是 runtime phase；`STARTING` 由具体
+`activation_task` readiness barrier 表达。future recovery 也不预留 public
+`RECOVERING` enum：只有 worker-fleet owner 与 shared recovery task 真正实现后，才增加其
+内部状态，而且必须被 stale-result rejection、candidate publish 或 shutdown cleanup 消费。
 
-`STARTING` 已删除：resident runtime只在actors READY后构造，on-demand facade构造后
-即可admission并由acquire ticket保护lazy launch。`RECOVERING`也不预留：automatic
-recovery尚未实现；等shared recovery task有真实消费者时再加入。
+### 当前 on-demand ownership record
 
-### 当前 lease ownership record
-
-`_RuntimeLease` 只保存跨 `await` 仍必须存在的启动输入、资源所有权和恢复提交点：
+`_OnDemandRuntimeState` 只保存跨 `await` 仍必须存在的启动输入、资源所有权和 policy
+提交点：
 
 ```python
 @dataclass(slots=True)
-class _RuntimeLease:
+class _OnDemandRuntimeState:
     config: RayGenerationConfig
     launch_inputs: RayGenerationLaunchInputs
     placement: RolePlacement
     inner_runtime: RayGenerationRuntime | None = None
-    acquire_task: asyncio.Task[RayGenerationRuntime] | None = None
-    committed_policy: _CommittedPolicyState | None = None
-    workers_asleep: bool = False
+    activation_task: asyncio.Task[RayGenerationRuntime] | None = None
+    desired_policy: _PolicySnapshot | None = None
+    active_policy_version: int | None = None
+    workers_offloaded: bool = False
 ```
 
 - `config`、`launch_inputs`、`placement` 是首次lazy launch失败后仍可重试的唯一启动输入；
 - `inner_runtime` 是当前actors的所有权，不是fleet generation；
-- `acquire_task` 同时提供single-flight和readiness barrier，不能由`workers_asleep`替代；
-- `committed_policy` 原子绑定state ref与version，避免两字段跨`await`分裂提交；
-- `workers_asleep` 只描述已有worker是否已经让出physical GPU。
+- `activation_task` 同时提供single-flight和readiness barrier，不能由
+  `workers_offloaded`替代；
+- `desired_policy` 原子绑定state ref与version；active fleet 完成 ACK 后才推进；
+- `active_policy_version` 记录当前 fleet 已确认安装的 version，不重复保存 state payload；
+- `workers_offloaded` 只描述已有worker是否已经让出physical GPU。
 
 已删除的`last_state`、`sleep_eligible`和`fleet_generation`都不是独立真相。同步能力也不存进
-lease：outer runtime的`supports_weight_sync`从`config.sync_trainable_state`派生，resident
+on-demand state：outer runtime的`supports_weight_sync`从`config.sync_trainable_state`派生，resident
 runtime则从真实`GenerationWeightSync`派生。这样lazy launch前训练器仍能创建weight syncer，
 又不需要`weight_sync=object()`哨兵或新的布尔状态字段。
 
-未来 recovery 必须是 single-flight：同一 fleet epoch 上的多个并发 request 同时观察
-actor death 时，共享一个 recovery task，不得各自创建 replacement fleet。shutdown
-在未来 `RECOVERING` 中到达时，先把目标状态推进到 `SHUTTING_DOWN`，使 recovery 在 publish 新
-fleet 前中止并清理 candidate，避免 teardown 后 actor “复活”。状态机和 transition
-由 runtime/fleet owner 持有，不放成模糊的 online recipe log field。
+未来 recovery 必须是 single-flight：同一 immutable fleet identity 上的多个并发 request
+同时观察 actor death 时，共享一个 runtime-owned recovery task，不得各自创建 replacement
+fleet。shutdown 先把 terminal lifecycle 推进到 `SHUTTING_DOWN`；recovery task 在 publish
+candidate 前重新检查 terminal phase 与 fleet identity，若已 shutdown/stale 就清理 candidate，
+避免 teardown 后 actor “复活”。这些字段由 fleet owner 持有，不放成 public lifecycle enum
+或模糊的 online recipe log field。
 
-这些 ALL_CAPS 值是进程生命周期协议，属于合理常量边界。每个状态必须至少有一个
+这些 ALL_CAPS terminal phase 是进程生命周期协议，属于合理常量边界。每个状态必须至少有一个
 非日志行为消费者。
 
 仅凭 `SHUTTING_DOWN` 不能证明具体是谁杀了 actor。它只能证明 driver 已经表达停止意图。
@@ -281,7 +293,7 @@ request replay 叠加。
 
 ## Transactional weight restore
 
-此前 lease 在远端 update 成功前写入：
+此前 on-demand facade 在远端 update 成功前写入：
 
 ```python
 state.last_state = state_ref
@@ -289,11 +301,11 @@ self.current_policy_version = policy_version
 await runtime.update_weights(...)
 ```
 
-这会让部分失败的版本成为下一次replay source，已经修复。当前lease使用不可变
-`_CommittedPolicyState(state_ref, policy_version)`：active worker全部update返回后才同时
-推进snapshot和`current_policy_version`；失败保留上一snapshot、关闭admission并terminal
-cleanup未知worker。worker parked或尚未lazy launch时可以直接接收snapshot，因为下一次
-activation必须restore成功后才对generate可见。`acquire_task`先于active-runtime fast path，
+这会让部分失败的版本成为下一次replay source，已经修复。当前 on-demand state 使用不可变
+`_PolicySnapshot(state_ref, policy_version)`：active worker全部update返回后才推进
+`desired_policy`、`active_policy_version`和`current_policy_version`；失败保留上一snapshot、
+关闭terminal admission并cleanup未知worker。worker parked或尚未lazy launch时可以直接接收
+snapshot，因为下一次activation必须restore成功后才对generate可见。`activation_task`先于active-runtime fast path，
 所以wake已完成但restore仍在进行时，第二个generate也不能穿透readiness barrier。
 
 recovery层仍需继续完成：
@@ -337,12 +349,14 @@ Ray actor name 可作为可读标签，但不是 recovery identity，也不能�
 
 1. **已完成：**inline reward/trainer handoff统一sleep，不再每轮teardown；删除无生产者的
    `sleep_eligible`和missing-topology fallback。
-2. 引入 truthful admission/drain状态机；expected-kill record随步骤4的真实death
-   classifier一起实现，不提前保留write-only registry。
-3. 把 resident 与 lease launch 统一到可重建的 worker-fleet owner，并把 immutable
-   fleet identity 附到现有内部 `OperationTicket`。
+2. **已完成：**explicit activation + schedule-owned admission/drain；runtime terminal
+   lifecycle 只保留 `RUNNING/SHUTTING_DOWN/TERMINATED`，具体 activation/offload/shutdown
+   task 各自 single-flight。expected-kill record随步骤4的真实death classifier一起实现，
+   不提前保留write-only registry。
+3. 把 resident 与 on-demand launch 统一到可重建的 worker-fleet owner；immutable fleet
+   identity 由 dispatch/result/recovery publish 自动检查，不恢复 generic ticket 参数链。
 4. 引入 typed Ray failure/deadline 和 ObjectRef cancellation/quarantine。
-5. **部分完成：**lease snapshot在worker ACK后提交，失败terminal cleanup；fleet recovery
+5. **部分完成：**on-demand snapshot在worker ACK后提交，失败terminal cleanup；fleet recovery
    的digest/version-slot transaction仍待实现。
 6. 实现 full-request deterministic replay 和 retry circuit breaker。
 7. 加 observability 和 isolated real-Ray twin。
@@ -352,11 +366,12 @@ Ray actor name 可作为可读标签，但不是 recovery identity，也不能�
 ### Fast CPU deterministic，当前即可运行
 
 - lifecycle matrix 证明 dedicated→resident、inline colocated→sleep、fatal→quarantine；
-- 同一 phase 连续两次 release 只 sleep 一次，wake 只在workers-asleep state执行；
+- 同一 phase 连续两次 offload 只 sleep 一次，wake 只在workers-offloaded state执行；
 - 正常 `SHUTTING_DOWN` kill 不触发 recovery，且有 matching operation id；
-- `RUNNING` actor death 进入 `RECOVERING`，重建后恢复最后 committed version；
+- `RUNNING` actor death 触发一个 internal shared recovery task，重建后恢复最后 committed
+  version；不要求新增 public `RECOVERING` phase；
 - 两个并发 request 同时发现同一 actor death 只创建一个 replacement fleet；
-- recovery 中 shutdown 最终进入 `TERMINATED`，没有 candidate actor 残留；
+- recovery task 运行中 shutdown 最终进入 `TERMINATED`，没有 candidate actor 残留；
 - `TERMINATED` 后 generate/update_weights fail-fast，重复 shutdown 幂等；
 - partial weight update 不推进 committed version；
 - request replay 保持相同 request id、sample seeds、policy version和完整 group；
@@ -371,9 +386,10 @@ Ray actor name 可作为可读标签，但不是 recovery identity，也不能�
 - 允许 controlled clock、awaitable refs、fake inner runtime 等 deterministic protocol
   doubles 验证 admission、调用顺序和错误注入；不得用 fake 证明 Ray kill/cancel/
   exception semantics，这些必须有 isolated real-Ray twin；
-- resident与on-demand sleep lease；round-robin、dynamic、single-worker
+- resident与on-demand sleep state；round-robin、dynamic、single-worker
   pipelined path 都覆盖；OOM split 行为保持不变；
-- executor、weight sync、runtime ownership 和 shutdown 观察到同一个 fleet generation。
+- executor、weight sync、runtime ownership 和 shutdown 观察到同一个 immutable fleet
+  identity；该 identity 不是每层手传的裸整数参数。
 
 ### Isolated real Ray，GPU 空闲后运行
 
@@ -411,7 +427,7 @@ Ray actor name 可作为可读标签，但不是 recovery identity，也不能�
 - `_RAY_ADDRESS_ENV`、checkpoint filenames、lifecycle enum values 等真实协议常量。
 
 薄函数/文件不因本 sprint 追求 LOC 而压平。worker-fleet owner 只有在统一 resident 与
-lease recovery、移除真实重复复杂度时才成立，不能新增装饰性的 manager/handler。
+on-demand recovery、移除真实重复复杂度时才成立，不能新增装饰性的 manager/handler。
 
 ## 非目标
 
@@ -425,7 +441,7 @@ lease recovery、移除真实重复复杂度时才成立，不能新增装饰性
 
 ## 参考
 
-- Ray runtime/lease：`vrl/generation/ray/runtime.py`
+- Ray runtime/on-demand state：`vrl/generation/ray/runtime.py`
 - actor dispatch：`vrl/ray/actor_pool.py`
 - actor construction：`vrl/ray/actor_group.py`
 - worker adapter：`vrl/generation/ray/worker.py`

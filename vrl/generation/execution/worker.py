@@ -17,6 +17,7 @@ from vrl.generation.types import GenerationOutput
 from vrl.models.interfaces import require_runtime_model
 from vrl.utils.config import import_from_path
 from vrl.utils.cuda_memory import (
+    CUDA_RUNTIME_RESIDUAL_BYTES_LIMIT,
     CumemPool,
     gpu_used_bytes,
     is_cuda_out_of_memory,
@@ -211,6 +212,7 @@ class GenerationWorkerCore:
                 pool.sleep()
             release_cuda_memory_for_parking()
             backend = "cumem"
+            residual_bytes_limit = CUDA_RUNTIME_RESIDUAL_BYTES_LIMIT
         else:
             model = self.executor.model
             restore_device = self._cpu_parked_device
@@ -246,6 +248,9 @@ class GenerationWorkerCore:
                 self._cpu_parked_device = restore_device
             release_cuda_memory_for_parking()
             backend = "cpu_offload" if str(restore_device).startswith("cuda") else "cpu_only"
+            residual_bytes_limit = (
+                CUDA_RUNTIME_RESIDUAL_BYTES_LIMIT if backend == "cpu_offload" else 0
+            )
 
         residual_bytes = gpu_used_bytes()
         baseline_bytes = self._preload_gpu_used_bytes
@@ -262,6 +267,17 @@ class GenerationWorkerCore:
             baseline_gpu_used_bytes=baseline_bytes,
             loaded_gpu_used_bytes=loaded_bytes,
             residual_gpu_used_bytes=residual_bytes,
+            residual_bytes_limit=residual_bytes_limit,
+        )
+        logger.info(
+            "worker memory parking: worker=%s backend=%s loaded=%d "
+            "residual=%d baseline=%d limit=%d",
+            snapshot.worker_id,
+            snapshot.backend,
+            snapshot.loaded_gpu_used_bytes,
+            snapshot.residual_gpu_used_bytes,
+            snapshot.baseline_gpu_used_bytes,
+            snapshot.residual_bytes_limit,
         )
         snapshot.validate()
         return snapshot
@@ -328,7 +344,9 @@ class GenerationWorkerCore:
 
         self.load_policy()
         policy_obj = getattr(self.executor, "model", None)
-        if bool(getattr(policy_obj, "supports_versioned_trainable_state", False)):
+        if self.launch_contract.versioned_weight_sync and bool(
+            getattr(policy_obj, "supports_versioned_trainable_state", False),
+        ):
             model = require_runtime_model(
                 policy_obj,
                 owner=f"{type(self.executor).__name__}.model",
@@ -360,7 +378,10 @@ class GenerationWorkerCore:
 
         self.load_policy()
         model = getattr(self.executor, "model", None)
-        return bool(getattr(model, "supports_versioned_trainable_state", False))
+        return bool(
+            self.launch_contract.versioned_weight_sync
+            and getattr(model, "supports_versioned_trainable_state", False)
+        )
 
     def worker_metadata(self, *, runtime_debug: bool = False) -> dict[str, Any]:
         try:
@@ -804,6 +825,9 @@ class GenerationWorkerCore:
         # dtypes while reconstructing the primitive Ray payload.
         build = ModelBuild(**build_payload)
         bundle = self.family_entry.build_rollout(build)
+        from vrl.models.forward_precision import apply_float32_precision
+
+        apply_float32_precision(bundle.forward_precision.float32_precision)
         model = require_runtime_model(bundle.model, owner="RuntimeBundle.model")
         # Family- and scheme-agnostic backstop: if rollout quantization asks for a
         # quantized rollout (FP8/NVFP4/...) but this family's builder forgot to swap,
@@ -820,6 +844,8 @@ class GenerationWorkerCore:
                 task=self.family_entry.task,
             )
         built = executor_cls(model, **executor_kwargs)
+        if self.family_entry.collector_kind == "diffusion":
+            built.forward_precision = bundle.forward_precision
         return _require_chunked_executor(built)
 
     @staticmethod

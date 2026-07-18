@@ -17,6 +17,9 @@ class AestheticRewardModel(TorchRewardModel):
         self.model_name = str(
             self.worker_config.get("model_name", "openai/clip-vit-large-patch14"),
         )
+        self.model_revision = (
+            str(self.worker_config.get("model_revision", "") or "").strip() or None
+        )
         self._scorer: Any = None
 
     def _load(self) -> None:
@@ -25,6 +28,7 @@ class AestheticRewardModel(TorchRewardModel):
         from transformers import CLIPModel, CLIPProcessor
 
         model_name = self.model_name
+        load_kwargs = {"revision": self.model_revision} if self.model_revision else {}
 
         class _MLP(nn.Module):
             def __init__(self) -> None:
@@ -47,8 +51,8 @@ class AestheticRewardModel(TorchRewardModel):
         class _AestheticScorer(nn.Module):
             def __init__(self, dtype: Any) -> None:
                 super().__init__()
-                self.clip = CLIPModel.from_pretrained(model_name)
-                self.processor = CLIPProcessor.from_pretrained(model_name)
+                self.clip = CLIPModel.from_pretrained(model_name, **load_kwargs)
+                self.processor = CLIPProcessor.from_pretrained(model_name, **load_kwargs)
                 self.mlp = _MLP()
                 from importlib import resources
 

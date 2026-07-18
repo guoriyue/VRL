@@ -915,6 +915,7 @@ async def run_online_recipe(
             # bind the strategy export lazily instead of snapshotting once.
             sync_state_getter=lambda: strategy.export_rollout_state(bundle),
             config=trainer_config,
+            forward_precision=bundle.forward_precision,
             device=device,
             strategy=strategy,
             sft_latents=_load_sft_latents_from_config(

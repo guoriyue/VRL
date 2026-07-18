@@ -106,9 +106,9 @@ class SanaModel(LoraModelMixin, DiffusersPipelineModelBase, DiffusionBackboneRun
         """Load the diffusers SANA pipeline + freeze non-trainable modules."""
         from diffusers import SanaPipeline
 
-        # The SANA family build pins base transformer parameters to fp16. Forward
-        # autocast is a separate precision-policy axis, so rollout and replay
-        # receive one consistent parameter dtype without a user-facing model knob.
+        # The family capability rejects non-native transformer dtypes before
+        # this loader runs. Rollout and replay both receive the validated FP16
+        # role dtype from the unified precision policy.
         model_dtype = build.parameter_dtype
         prompt_encoder_dtype, load_kwargs = diffusers_pipeline_dtypes(build, model_dtype)
         pipeline = SanaPipeline.from_pretrained(
@@ -265,9 +265,10 @@ class SanaModel(LoraModelMixin, DiffusersPipelineModelBase, DiffusionBackboneRun
         timestep_scale = float(
             getattr(self.transformer.config, "timestep_scale", 1.0),
         )
-        timestep_batch = (
-            expand_batch_timestep(t, bsz).to(device=latent_input.device, dtype=td) * timestep_scale
-        )
+        # Keep the scheduler timestep in fp32, exactly as SanaPipeline does.
+        # Transformer inputs/weights remain at the native FP16 role dtype;
+        # the time embedding owns its internal conversion.
+        timestep_batch = expand_batch_timestep(t, bsz).to(latent_input.device) * timestep_scale
         negative_embeds = (
             None if state.negative_prompt_embeds is None else state.negative_prompt_embeds.to(td)
         )
@@ -282,7 +283,10 @@ class SanaModel(LoraModelMixin, DiffusersPipelineModelBase, DiffusionBackboneRun
                 negative_prompt_embeds=negative_embeds,
                 guidance_scale=state.guidance_scale,
                 do_cfg=state.do_cfg,
-                output_dtype=td,
+                # SanaPipeline promotes each transformer branch before CFG.
+                # Keeping this fp32 also feeds the protected scheduler/log-prob
+                # path without a lossy fp16 round trip.
+                output_dtype=torch.float32,
                 extra={
                     "encoder_attention_mask": state.prompt_attention_mask,
                     "negative_encoder_attention_mask": state.negative_prompt_attention_mask,
@@ -349,7 +353,7 @@ class SanaModel(LoraModelMixin, DiffusersPipelineModelBase, DiffusionBackboneRun
         scaling_factor = vae.config.scaling_factor
         decoder = ChunkedLatentDecoder(
             LatentDecodePlan(
-                prepare_latents=(lambda chunk: chunk.to(vae.dtype) / scaling_factor,),
+                prepare_latents=lambda chunk: chunk.to(vae.dtype) / scaling_factor,
                 vae_decode=lambda chunk: vae.decode(chunk, return_dict=False)[0],
                 postprocess=lambda image: pipe.image_processor.postprocess(
                     image,

@@ -136,10 +136,6 @@ class NSFWSafetyRewardModel:
         return -float(penalty)
 
 
-def nsfw_safety_reward_model(worker_config: Mapping[str, Any]) -> NSFWSafetyRewardModel:
-    return NSFWSafetyRewardModel(worker_config)
-
-
 def _extract_images(output: Any, max_images: int) -> list[Any]:
     images: list[Any] = []
     _append_images(output, images)
@@ -306,4 +302,4 @@ def _validate_lower_bounded(name: str, value: float, *, inclusive: bool) -> floa
     return out
 
 
-__all__ = ["NSFWSafetyRewardModel", "nsfw_safety_reward_model"]
+__all__ = ["NSFWSafetyRewardModel"]

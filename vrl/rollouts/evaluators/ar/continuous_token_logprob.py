@@ -14,7 +14,8 @@ from __future__ import annotations
 
 import torch
 
-from vrl.models.interfaces import ReplayModel, require_replay_model
+from vrl.models.forward_precision import forward_autocast
+from vrl.models.interfaces import ReplayModel, ResolvedForwardPrecision, require_replay_model
 from vrl.rollouts.batch import RolloutBatch
 from vrl.rollouts.evaluators.base import Evaluator
 from vrl.rollouts.evaluators.trajectory import TrajectorySignalBuilder
@@ -38,6 +39,8 @@ class ContinuousTokenLogProbEvaluator(Evaluator):
         timestep_idx: int = 0,
         ref_model: ReplayModel | None = None,
         signal_request: SignalRequest | None = None,
+        *,
+        forward_precision: ResolvedForwardPrecision,
     ) -> TrajectorySignalBatch:
         model = require_replay_model(model, owner="ContinuousTokenLogProbEvaluator.model")
         if ref_model is not None:
@@ -47,15 +50,15 @@ class ContinuousTokenLogProbEvaluator(Evaluator):
             )
         request = signal_request or SignalRequest()
 
-        new_lp = self._compute_logprobs(model, batch)
+        new_lp = self._compute_logprobs(model, batch, forward_precision)
 
         ref_lp: torch.Tensor | None = None
         if request.need_ref:
             if ref_model is not None:
-                ref_lp = self._compute_logprobs(ref_model, batch)
+                ref_lp = self._compute_logprobs(ref_model, batch, forward_precision)
             else:
                 with torch.no_grad(), model.disable_adapter():
-                    ref_lp = self._compute_logprobs(model, batch)
+                    ref_lp = self._compute_logprobs(model, batch, forward_precision)
 
         return TrajectorySignalBuilder(batch).single_segment(
             segment_name="image_tokens",
@@ -70,6 +73,7 @@ class ContinuousTokenLogProbEvaluator(Evaluator):
     def _compute_logprobs(
         model: ReplayModel,
         batch: RolloutBatch,
+        forward_precision: ResolvedForwardPrecision,
     ) -> torch.Tensor:
         """Forward through ``model.replay_forward`` — return ``[B, L]`` float32 log-probs.
 
@@ -78,7 +82,8 @@ class ContinuousTokenLogProbEvaluator(Evaluator):
         Gaussian density at the sampled tokens. This evaluator just unwraps
         the returned ``log_probs`` and casts to float32.
         """
-        out = model.replay_forward(batch, timestep_idx=0)
+        with forward_autocast(forward_precision, batch.observations.device):
+            out = model.replay_forward(batch, timestep_idx=0)
         result = out.require_segment("image_tokens")
-        log_probs: torch.Tensor = result.require_value("log_probs")   # [B, L]
+        log_probs: torch.Tensor = result.require_value("log_probs")  # [B, L]
         return log_probs.float()

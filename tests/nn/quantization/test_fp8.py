@@ -513,6 +513,7 @@ def test_resolve_model_build_derives_fp8_from_precision_rollout():
         {
             "model": {"path": "x"},
             "precision": {
+                "float32_precision": "tf32",
                 "training": {"dtype": "bf16"},
                 "rollout": {
                     "dtype": "bf16",
@@ -525,13 +526,15 @@ def test_resolve_model_build_derives_fp8_from_precision_rollout():
     build = entry.resolve_model_build(fp8_cfg, "cuda")
     assert build.rollout is not None
     assert build.rollout.quantization_format == "fp8"
-    assert build.rollout.autocast_dtype is torch.bfloat16
+    assert build.forward_precision.autocast == "bf16"
+    assert build.forward_precision.float32_precision == "tf32"
     assert build.parameter_dtype is torch.bfloat16  # this family uses a bf16 source master
 
     bf16_cfg = OmegaConf.create(
         {
             "model": {"path": "x"},
             "precision": {
+                "float32_precision": "tf32",
                 "training": {"dtype": "bf16"},
                 "rollout": {"dtype": "bf16"},
             },
@@ -540,7 +543,7 @@ def test_resolve_model_build_derives_fp8_from_precision_rollout():
     plain_build = entry.resolve_model_build(bf16_cfg, "cuda")
     assert plain_build.rollout is not None
     assert plain_build.rollout.quantization_format is None
-    assert plain_build.rollout.autocast_dtype is torch.bfloat16
+    assert plain_build.forward_precision.autocast == "bf16"
 
 
 @requires_fp8

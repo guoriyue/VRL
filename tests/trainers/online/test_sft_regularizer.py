@@ -10,6 +10,7 @@ import torch.nn as nn
 from diffusers import FlowMatchEulerDiscreteScheduler
 
 from tests.trainers.online._collector_control import CollectorControlFake
+from tests.trainers.online._helpers import DEFAULT_FORWARD_PRECISION, _rollout_context
 from vrl.algorithms.grpo.continuous import GRPO, GRPOConfig
 from vrl.generation.types import GenerationRequest, GenerationSampleRow
 from vrl.rollouts.batch import RolloutBatch
@@ -98,7 +99,10 @@ def _batch(scheduler) -> RolloutBatch:
         dones=torch.ones(_B, dtype=torch.bool),
         group_ids=torch.arange(_B),
         prompts=list(_PROMPTS),
-        context={"reward_metadata": {"target_video": _TARGET_VIDEO}},
+        context={
+            **_rollout_context(),
+            "reward_metadata": {"target_video": _TARGET_VIDEO},
+        },
         trajectory=trajectory,
     )
 
@@ -120,6 +124,7 @@ def _trainer(tmp_path, *, sft_weight: float, sft_latents) -> OnlineTrainer:
             train_precision="no",
             output_dir=str(tmp_path),
         ),
+        forward_precision=DEFAULT_FORWARD_PRECISION,
         device="cpu",
         sft_latents=sft_latents,
     )
@@ -170,6 +175,49 @@ def test_sft_term_rejects_geometry_mismatch(tmp_path) -> None:
         trainer._sft_regularizer_loss(_batch(trainer.evaluator.scheduler))
 
 
+def test_sft_autocast_only_wraps_policy_forward(tmp_path, monkeypatch) -> None:
+    import vrl.trainers.online.trainer as trainer_module
+
+    trainer = _trainer(
+        tmp_path,
+        sft_weight=0.5,
+        sft_latents=_latents_for_targets(),
+    )
+    active_forward_scope = 0
+
+    @contextlib.contextmanager
+    def track_forward_autocast(policy, device):
+        nonlocal active_forward_scope
+        assert policy is DEFAULT_FORWARD_PRECISION
+        assert torch.device(device).type == "cpu"
+        active_forward_scope += 1
+        try:
+            yield
+        finally:
+            active_forward_scope -= 1
+
+    original_forward = trainer.model.replay_forward_with_latents
+
+    def checked_forward(batch, timestep_idx, latents):
+        assert active_forward_scope == 1
+        return original_forward(batch, timestep_idx, latents)
+
+    original_mse_loss = torch.nn.functional.mse_loss
+
+    def checked_mse_loss(prediction, target):
+        assert active_forward_scope == 0
+        return original_mse_loss(prediction, target)
+
+    monkeypatch.setattr(trainer_module, "forward_autocast", track_forward_autocast)
+    monkeypatch.setattr(trainer.model, "replay_forward_with_latents", checked_forward)
+    monkeypatch.setattr(torch.nn.functional, "mse_loss", checked_mse_loss)
+
+    loss = trainer._sft_regularizer_loss(_batch(trainer.evaluator.scheduler))
+
+    assert loss.requires_grad
+    assert active_forward_scope == 0
+
+
 def test_ctor_rejects_weight_without_latents(tmp_path) -> None:
     with pytest.raises(ValueError, match="sft_weight > 0 but no sft_latents"):
         _trainer(tmp_path, sft_weight=0.5, sft_latents=None)
@@ -196,7 +244,6 @@ def test_sft_backward_uses_group_scale_not_timestep_scale(tmp_path) -> None:
         loss_weight=0.25,
         total_groups=2,
         is_dummy=False,
-        autocast_ctx=contextlib.nullcontext(),
         agg=agg,
     )
 
@@ -223,7 +270,6 @@ def test_sft_dummy_slot_runs_zero_weight_backward_without_metric(tmp_path) -> No
         loss_weight=0.0,
         total_groups=2,
         is_dummy=True,
-        autocast_ctx=contextlib.nullcontext(),
         agg=agg,
     )
 

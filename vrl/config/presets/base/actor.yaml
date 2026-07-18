@@ -6,6 +6,9 @@
 # live on the dataclasses in vrl/trainers/core/types.py — base YAML must not
 # restate them.
 precision:
+  # FP32 matmuls use TensorFloat-32 kernels unless a model family requires
+  # strict IEEE execution. This is independent of parameter/autocast dtype.
+  float32_precision: tf32
   training:
     dtype: bf16
   # Rollout compute and prompt encoders inherit training.dtype. SDE/scheduler/

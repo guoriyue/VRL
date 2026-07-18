@@ -7,12 +7,19 @@ import contextlib
 import torch
 
 from vrl.generation import GenerationRequest, GenerationSampleRow
-from vrl.models.interfaces import ReplayRequest, ReplayResult, ReplaySegmentResult
+from vrl.models.interfaces import (
+    ReplayRequest,
+    ReplayResult,
+    ReplaySegmentResult,
+    ResolvedForwardPrecision,
+)
 from vrl.rollouts.batch import RolloutBatch
 from vrl.rollouts.evaluators.ar.multi_segment_token_logprob import (
     MultiSegmentTokenLogProbEvaluator,
 )
 from vrl.trajectory import build_ar_multisegment_trajectory, build_training_view
+
+_FORWARD_PRECISION = ResolvedForwardPrecision(autocast="off", float32_precision="ieee")
 
 
 def _sample_rows() -> list[GenerationSampleRow]:
@@ -169,7 +176,7 @@ def test_evaluator_can_replay_text_segment_without_using_image_path() -> None:
         enabled_segments=("selfcheck_text",),
     )
 
-    signals = evaluator.evaluate(model, batch)
+    signals = evaluator.evaluate(model, batch, forward_precision=_FORWARD_PRECISION)
 
     assert model.calls == [("selfcheck_text", "text")]
     assert signals.segments["selfcheck_text"].log_prob.shape == (2, 2)
@@ -183,15 +190,19 @@ def test_evaluator_applies_rollout_temperature_to_all_segments() -> None:
         enabled_segments=("selfcheck_text", "final_image"),
     )
 
-    signals = evaluator.evaluate(model, batch)
+    signals = evaluator.evaluate(model, batch, forward_precision=_FORWARD_PRECISION)
 
     token_ids = torch.tensor([[7, 8], [8, 9]])
     logits = torch.zeros(2, 2, 20)
     logits.scatter_(-1, token_ids.unsqueeze(-1), 3.0)
-    expected = torch.nn.functional.log_softmax(logits / 0.5, dim=-1).gather(
-        -1,
-        token_ids.unsqueeze(-1),
-    ).squeeze(-1)
+    expected = (
+        torch.nn.functional.log_softmax(logits / 0.5, dim=-1)
+        .gather(
+            -1,
+            token_ids.unsqueeze(-1),
+        )
+        .squeeze(-1)
+    )
     assert torch.allclose(signals.segments["selfcheck_text"].log_prob, expected, atol=1e-6)
 
 
@@ -203,10 +214,61 @@ def test_evaluator_reads_r1_segments_from_canonical_trajectory_fields() -> None:
         enabled_segments=("selfcheck_text", "final_image"),
     )
 
-    signals = evaluator.evaluate(model, batch)
+    signals = evaluator.evaluate(model, batch, forward_precision=_FORWARD_PRECISION)
 
     assert model.calls == [("selfcheck_text", "text"), ("final_image", "image")]
     assert signals.primary_segment == "final_image"
     assert signals.primary.log_prob.shape == (2, 3)
     assert signals.segments["selfcheck_text"].log_prob.shape == (2, 2)
     assert signals.segments["final_image"].old_log_prob.shape == (2, 3)
+
+
+def test_multisegment_autocast_excludes_logprob_extraction(monkeypatch) -> None:
+    import vrl.rollouts.evaluators.ar.multi_segment_token_logprob as evaluator_module
+
+    batch = _trajectory_batch()
+    model = _SegmentReplayModel()
+    evaluator = MultiSegmentTokenLogProbEvaluator(
+        enabled_segments=("selfcheck_text", "final_image"),
+    )
+    active_forward_scope = 0
+
+    @contextlib.contextmanager
+    def track_forward_autocast(policy, device):
+        nonlocal active_forward_scope
+        assert policy is _FORWARD_PRECISION
+        assert torch.device(device).type == "cpu"
+        active_forward_scope += 1
+        try:
+            yield
+        finally:
+            active_forward_scope -= 1
+
+    original_replay_forward = model.replay_forward
+
+    def checked_replay_forward(replay_batch, timestep_idx=0, *, request=None):
+        assert active_forward_scope == 1
+        return original_replay_forward(
+            replay_batch,
+            timestep_idx,
+            request=request,
+        )
+
+    original_extract = evaluator._compute_segment_logprobs
+
+    def checked_extract(output, name, segment, temperature):
+        assert active_forward_scope == 0
+        return original_extract(output, name, segment, temperature)
+
+    monkeypatch.setattr(evaluator_module, "forward_autocast", track_forward_autocast)
+    monkeypatch.setattr(model, "replay_forward", checked_replay_forward)
+    monkeypatch.setattr(evaluator, "_compute_segment_logprobs", checked_extract)
+
+    signals = evaluator.evaluate(
+        model,
+        batch,
+        forward_precision=_FORWARD_PRECISION,
+    )
+
+    assert signals.primary_segment == "final_image"
+    assert active_forward_scope == 0

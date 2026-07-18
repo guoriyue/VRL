@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import pytest
 import torch
 
@@ -77,6 +79,34 @@ def test_precision_guard_failure_exits_nonzero(monkeypatch, capsys) -> None:
 
     assert exc_info.value.code == 1
     assert "FAILED: ratio exceeded limit" in capsys.readouterr().out
+
+
+def test_precision_guard_preserves_quantization_as_role_execution_label(
+    monkeypatch,
+    capsys,
+) -> None:
+    captured = {}
+
+    def pass_guard(*_args, **kwargs):
+        captured.update(kwargs)
+        return {
+            "violated": False,
+            "worst_stats": {"ratio_abs_dev_max": 0.0},
+        }
+
+    monkeypatch.setattr(drift_probe, "run_precision_drift_guard", pass_guard)
+
+    _require_precision_guard(
+        SimpleNamespace(max_ratio_abs_dev=1.0),
+        scheme="nvfp4",
+        replay_logprob=torch.zeros(2),
+        rollout_logprob=torch.zeros(2),
+    )
+
+    assert captured["training_precision"] == "bf16"
+    assert captured["rollout_precision"] == "bf16+nvfp4"
+    assert captured["training_forward_precision"] == captured["rollout_forward_precision"]
+    assert "PASSED" in capsys.readouterr().out
 
 
 def test_drift_probe_rejects_legacy_fp4_scheme() -> None:

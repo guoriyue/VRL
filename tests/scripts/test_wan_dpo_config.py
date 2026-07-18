@@ -20,7 +20,6 @@ def _resolved_trainer_config(overrides: list[str] | None = None):
     return _build_offline_dpo_trainer_config(
         cfg,
         DiffusionDPOConfig(beta=123.0, sft_weight=0.25),
-        mixed_precision="bf16",
         train_batch_size=int(cfg.actor.train_batch_size),
         gradient_accumulation_steps=int(cfg.actor.gradient_accumulation_steps),
     )
@@ -34,7 +33,6 @@ def test_offline_dpo_bridges_every_supported_adam_knob() -> None:
             "actor.optim.adam_beta2=0.8",
             "actor.optim.weight_decay=0.03",
             "actor.optim.eps=1e-6",
-            "actor.optim.allow_tf32=false",
             "actor.scale_lr=true",
             "actor.train_batch_size=2",
             "actor.gradient_accumulation_steps=3",
@@ -48,7 +46,6 @@ def test_offline_dpo_bridges_every_supported_adam_knob() -> None:
     assert resolved.adam_beta2 == pytest.approx(0.8)
     assert resolved.adam_weight_decay == pytest.approx(0.03)
     assert resolved.adam_epsilon == pytest.approx(1e-6)
-    assert resolved.allow_tf32 is False
 
 
 def test_offline_dpo_uses_typed_optimizer_defaults_when_keys_are_absent() -> None:
@@ -58,7 +55,6 @@ def test_offline_dpo_uses_typed_optimizer_defaults_when_keys_are_absent() -> Non
     assert resolved.adam_beta2 == pytest.approx(0.999)
     assert resolved.adam_weight_decay == pytest.approx(1e-4)
     assert resolved.adam_epsilon == pytest.approx(1e-8)
-    assert resolved.allow_tf32 is True
 
 
 def test_offline_dpo_rejects_unsupported_8bit_optimizer() -> None:
@@ -90,14 +86,12 @@ def test_offline_dpo_adafactor_keeps_shared_optimizer_knobs() -> None:
             "actor.scale_lr=false",
             "actor.optim.lr=2e-7",
             "actor.optim.weight_decay=0.03",
-            "actor.optim.allow_tf32=false",
         ],
     )
 
     assert resolved.use_adafactor is True
     assert resolved.lr == pytest.approx(2e-7)
     assert resolved.adam_weight_decay == pytest.approx(0.03)
-    assert resolved.allow_tf32 is False
 
 
 def test_offline_dpo_recipe_does_not_inherit_online_only_state() -> None:
@@ -126,11 +120,15 @@ def test_offline_dpo_builds_its_full_model_through_the_family_registry(
             received_cfg: object,
             device: object,
             *,
+            for_rollout: bool,
+            precision_role: str,
             parameter_dtype_override: object,
         ) -> object:
             captured.update(
                 cfg=received_cfg,
                 device=device,
+                for_rollout=for_rollout,
+                precision_role=precision_role,
                 parameter_dtype_override=parameter_dtype_override,
             )
             raise _ReachedRegistryBoundary
@@ -156,3 +154,5 @@ def test_offline_dpo_builds_its_full_model_through_the_family_registry(
 
     assert captured["family"] == "wan"
     assert captured["cfg"] is cfg
+    assert captured["for_rollout"] is True
+    assert captured["precision_role"] == "training"

@@ -55,7 +55,6 @@ def test_sd3_fp32_runtime_loads_frozen_components_without_fp32_peak(monkeypatch)
         model_name_or_path="stabilityai/stable-diffusion-3.5-medium",
         parameter_dtype=torch.float32,
         rollout=RolloutBuildOptions(
-            autocast_dtype=torch.float32,
             prompt_encoder_dtype=torch.float16,
         ),
         device="cuda:0",

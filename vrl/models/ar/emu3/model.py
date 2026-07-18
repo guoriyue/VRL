@@ -42,7 +42,6 @@ import torch.nn as nn
 from vrl.models.ar.base import ARModelBase, ARReplayRolloutStubs
 from vrl.models.dtypes import resolve_torch_dtype
 from vrl.models.interfaces import ReplayRequest, ReplayResult, ReplaySegmentResult
-from vrl.models.utils import count_trainable_params
 from vrl.utils.logging import init_logger
 
 logger = init_logger(__name__)
@@ -271,9 +270,6 @@ class Emu3Model(ARModelBase):
     def dtype(self) -> torch.dtype:
         return next(self.emu3.parameters()).dtype
 
-    def trainable_param_count(self) -> int:
-        return count_trainable_params(self.emu3)
-
     def _lm_trunk(self) -> nn.Module:
         """Return the Emu3TextModel trunk that emits ``last_hidden_state``.
 
@@ -323,12 +319,6 @@ class Emu3Model(ARModelBase):
             "Applied LoRA (rank=%d, alpha=%d) to the Emu3 text model.",
             self.config.lora_rank, self.config.lora_alpha,
         )
-
-    @property
-    def has_lora_adapter(self) -> bool:
-        """True iff this wrapper carries a real PEFT adapter we can disable."""
-        lm = self.language_model
-        return hasattr(lm, "disable_adapter") and callable(lm.disable_adapter)
 
     # ------------------------------------------------------------------
     # Generation vocab — image tokens + EOL/EOF/EOI/EOS structural columns

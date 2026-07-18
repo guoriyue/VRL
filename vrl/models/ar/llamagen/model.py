@@ -36,7 +36,6 @@ import torch.nn as nn
 from vrl.models.ar.base import ARModelBase, ARReplayRolloutStubs
 from vrl.models.dtypes import resolve_torch_dtype
 from vrl.models.interfaces import ReplayRequest, ReplayResult, ReplaySegmentResult
-from vrl.models.utils import count_trainable_params
 from vrl.utils.logging import init_logger
 
 logger = init_logger(__name__)
@@ -215,14 +214,6 @@ class LlamaGenModel(ARModelBase):
     @property
     def dtype(self) -> torch.dtype:
         return next(self._gpt_trunk().parameters()).dtype
-
-    def trainable_param_count(self) -> int:
-        return count_trainable_params(self)
-
-    @property
-    def has_lora_adapter(self) -> bool:
-        lm = self.gpt
-        return hasattr(lm, "disable_adapter") and callable(lm.disable_adapter)
 
     def _apply_lora(self, gpt: Any) -> Any:
         try:

@@ -49,7 +49,6 @@ from vrl.models.ar.base import ARModelBase, ARReplayRolloutStubs
 from vrl.models.ar.janus_pro import JANUS_R1_SEGMENTS
 from vrl.models.dtypes import resolve_torch_dtype
 from vrl.models.interfaces import ReplayRequest, ReplayResult, ReplaySegmentResult
-from vrl.models.utils import count_trainable_params
 from vrl.trajectory import role_tensor
 from vrl.utils.logging import init_logger
 
@@ -261,9 +260,6 @@ class JanusProModel(ARModelBase):
     def dtype(self) -> torch.dtype:
         return next(self.mmgpt.parameters()).dtype
 
-    def trainable_param_count(self) -> int:
-        return count_trainable_params(self.mmgpt)
-
     # ------------------------------------------------------------------
     # LoRA / reference-policy helpers
     # ------------------------------------------------------------------
@@ -287,18 +283,11 @@ class JanusProModel(ARModelBase):
         # Wrap ONLY the language model — vq / vision / aligner stay frozen.
         mmgpt.language_model = get_peft_model(mmgpt.language_model, lora_cfg)
         logger.info(
-            "Applied LoRA (rank=%d, alpha=%d) to Janus language model. "
-            "Trainable params will be reported by trainable_param_count().",
+            "Applied LoRA (rank=%d, alpha=%d) to Janus language model.",
             self.config.lora_rank,
             self.config.lora_alpha,
         )
         return mmgpt
-
-    @property
-    def has_lora_adapter(self) -> bool:
-        """True iff this wrapper carries a real PEFT adapter we can disable."""
-        lm = self.language_model
-        return hasattr(lm, "disable_adapter") and callable(lm.disable_adapter)
 
     # ------------------------------------------------------------------
     # Train-time forward — image-token logits

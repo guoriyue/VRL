@@ -1,17 +1,23 @@
 from __future__ import annotations
 
 import json
-from contextlib import contextmanager
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 import torch
 from omegaconf import OmegaConf
+from PIL import Image
 
 from vrl.config.loading import load_config
-from vrl.config.precision import resolve_precision_policy
+from vrl.models.interfaces.runtime import ResolvedForwardPrecision
 from vrl.scripts.eval import sana_aesthetic_checkpoint_eval as checkpoint_eval
+from vrl.scripts.eval import sana_inference
+
+SANA_FORWARD_PRECISION = ResolvedForwardPrecision(
+    autocast="off",
+    float32_precision="ieee",
+)
 
 
 def _write_run(tmp_path: Path, *, empty_manifest: bool = False) -> Path:
@@ -24,7 +30,9 @@ def _write_run(tmp_path: Path, *, empty_manifest: bool = False) -> Path:
             "model": {
                 "family": "sana",
                 "path": "test/sana",
-                "use_lora": True,
+                "revision": "model-revision",
+                "use_lora": False,
+                "lora": None,
             },
             "data": {"eval_manifest": str(manifest)},
             "precision": "bf16",
@@ -43,11 +51,16 @@ def _write_run(tmp_path: Path, *, empty_manifest: bool = False) -> Path:
             "reward": {
                 "components": {"aesthetic": 1.0, "pickscore": 0.0},
                 "kwargs": {
-                    "aesthetic": {"model_name": "test/aesthetic"},
+                    "aesthetic": {
+                        "model_name": "test/aesthetic",
+                        "model_revision": "aesthetic-revision",
+                    },
                     "pickscore": {
                         "device": "cpu",
                         "model_name": "test/pickscore",
+                        "model_revision": "pickscore-revision",
                         "processor_name": "test/processor",
+                        "processor_revision": "processor-revision",
                     },
                 },
             },
@@ -69,6 +82,7 @@ def _write_run(tmp_path: Path, *, empty_manifest: bool = False) -> Path:
                 "family": "sana",
                 "completed_epoch": 25,
                 "checkpoint_file_bytes": len(payload),
+                "uses_lora": False,
             },
         ),
         encoding="utf-8",
@@ -157,16 +171,23 @@ def test_main_writes_provenance_bound_report(monkeypatch, tmp_path, capsys) -> N
     assert all(row["sample_count"] == 2.0 for row in rows)
     payload = json.loads((run_dir / checkpoint_eval.REPORT_RELATIVE_PATH).read_text())
     assert payload["schema"] == checkpoint_eval.REPORT_SCHEMA
-    assert payload["schema_version"] == 1
+    assert payload["schema_version"] == checkpoint_eval.REPORT_SCHEMA_VERSION
     assert payload["provenance"]["seed_grid"]["base_seed"] == 20260710
+    assert payload["provenance"]["evaluation_curve"] == {
+        "checkpoint_interval": 25,
+    }
     rewards = payload["provenance"]["rewards"]
     assert rewards[0]["identity"]["model"]["repo"] == "test/aesthetic"
     assert rewards[1]["identity"]["processor"]["repo"] == "test/processor"
     assert rewards[1]["identity"]["model"]["repo"] == "test/pickscore"
     checkpoints = payload["provenance"]["checkpoints"]
-    assert checkpoints[0]["source_checkpoint_path"] == "checkpoint-25"
-    assert checkpoints[0]["checkpoint_sha256"] == checkpoints[1]["checkpoint_sha256"]
-    assert checkpoints[0]["adapter"] == "disabled"
+    assert checkpoints[0] == {
+        "label": "baseline",
+        "epoch": -1,
+        "source": "pinned_base_model_snapshot",
+        "checkpoint_loaded": False,
+    }
+    assert checkpoints[1]["path"] == "checkpoint-25"
     assert "curve_points" in capsys.readouterr().out
 
     checkpoint_path = run_dir / "checkpoint-25/checkpoint.pt"
@@ -286,6 +307,33 @@ def test_checkpoint_discovery_rejects_incomplete_curve_before_model_load(tmp_pat
         checkpoint_eval._discover_checkpoint_targets(run_dir, cfg)
 
 
+def test_checkpoint_discovery_keeps_recovery_saves_out_of_eval_curve(tmp_path) -> None:
+    run_dir = _write_run(tmp_path)
+    cfg = OmegaConf.load(run_dir / "resolved_config.yaml")
+    cfg.trainer.save_freq = 5
+
+    for epoch in (5, 10, 15, 20):
+        checkpoint = run_dir / f"checkpoint-{epoch}"
+        checkpoint.mkdir()
+        payload = f"checkpoint-{epoch}".encode()
+        (checkpoint / "checkpoint.pt").write_bytes(payload)
+        (checkpoint / "checkpoint_meta.json").write_text(
+            json.dumps(
+                {
+                    "family": "sana",
+                    "completed_epoch": epoch,
+                    "checkpoint_file_bytes": len(payload),
+                    "uses_lora": False,
+                },
+            ),
+            encoding="utf-8",
+        )
+
+    targets = checkpoint_eval._discover_checkpoint_targets(run_dir, cfg)
+
+    assert [target.epoch for target in targets] == [-1, 25]
+
+
 def test_training_metrics_preflight_requires_every_registered_update(tmp_path) -> None:
     run_dir = _write_run(tmp_path)
     cfg = OmegaConf.load(run_dir / "resolved_config.yaml")
@@ -297,43 +345,48 @@ def test_training_metrics_preflight_requires_every_registered_update(tmp_path) -
         checkpoint_eval._validate_training_metrics(metrics, cfg)
 
 
-def test_legacy_active_config_normalizes_only_registered_compatibility_fields() -> None:
+def test_fullparam_long_config_is_the_exact_registered_protocol() -> None:
     canonical = load_config(checkpoint_eval.CANONICAL_CONFIG_NAME)
-    legacy = OmegaConf.create(OmegaConf.to_container(canonical, resolve=True))
-    legacy.model.dtype = "fp16"
-    legacy.precision = "bf16"
-    legacy.trainer.eval = {
-        "enabled": True,
-        "freq": 25,
-        "samples_per_prompt": 2,
-        "max_prompts": 64,
-        "seed": 20260710,
+    normalized = checkpoint_eval._normalize_run_config(canonical)
+
+    assert normalized.model.use_lora is False
+    assert normalized.actor.ppo_epochs == 1
+    assert normalized.trainer.total_epochs == 300
+    assert normalized.trainer.save_freq == 5
+
+
+@pytest.mark.parametrize(
+    ("path", "value"),
+    [
+        ("model.use_lora", True),
+        ("actor.optim.lr", 1.0e-5),
+        ("actor.ppo_epochs", 4),
+        ("trainer.total_epochs", 301),
+        ("sampling.num_steps", 11),
+    ],
+)
+def test_fullparam_protocol_rejects_scientific_drift(path: str, value: object) -> None:
+    changed = load_config(checkpoint_eval.CANONICAL_CONFIG_NAME)
+    OmegaConf.update(changed, path, value, merge=False)
+
+    with pytest.raises(ValueError, match=path.replace(".", r"\.")):
+        checkpoint_eval._normalize_run_config(changed)
+
+
+def test_quality_sampling_is_official_and_not_derived_from_training_sde() -> None:
+    cfg = load_config(checkpoint_eval.CANONICAL_CONFIG_NAME)
+
+    assert (cfg.sampling.width, cfg.sampling.height, cfg.sampling.num_steps) == (512, 512, 10)
+    assert checkpoint_eval._resolve_sampling() == {
+        "negative_prompt": "",
+        "height": 1024,
+        "width": 1024,
+        "num_inference_steps": 20,
+        "guidance_scale": 4.5,
+        "max_sequence_length": 300,
+        "use_resolution_binning": True,
+        "complex_human_instruction": "official_pipeline_default",
     }
-    del legacy.reward.kwargs.pickscore["device"]
-
-    normalized = checkpoint_eval._normalize_run_config(legacy)
-
-    assert legacy.model.dtype == "fp16"
-    assert legacy.trainer.eval.enabled is True
-    assert normalized.model.get("dtype") is None
-    normalized_policy = resolve_precision_policy(normalized)
-    assert normalized_policy.training.dtype == "bf16"
-    assert normalized_policy.rollout.dtype == "bf16"
-    assert normalized.trainer.get("eval") is None
-    assert normalized.reward.kwargs.pickscore.get("device") is None
-
-
-def test_legacy_config_rejects_wrong_dtype_and_scientific_protocol_drift() -> None:
-    canonical = load_config(checkpoint_eval.CANONICAL_CONFIG_NAME)
-    wrong_dtype = OmegaConf.create(OmegaConf.to_container(canonical, resolve=True))
-    wrong_dtype.model.dtype = "bf16"
-    with pytest.raises(ValueError, match=r"model\.dtype must be fp16"):
-        checkpoint_eval._normalize_run_config(wrong_dtype)
-
-    changed_sampling = OmegaConf.create(OmegaConf.to_container(canonical, resolve=True))
-    changed_sampling.sampling.num_steps = 11
-    with pytest.raises(ValueError, match=r"sampling\.num_steps"):
-        checkpoint_eval._normalize_run_config(changed_sampling)
 
 
 def test_canonical_preset_change_requires_protocol_digest_update(monkeypatch) -> None:
@@ -419,7 +472,9 @@ def test_reward_provenance_includes_pinned_revisions_and_asset_hash() -> None:
     )
     records = [checkpoint_eval._reward_model_record(model) for model in reward_models]
 
-    assert records[0]["identity"]["model"]["revision"] == checkpoint_eval.AESTHETIC_MODEL_REVISION
+    assert (
+        records[0]["identity"]["model"]["revision"] == cfg.reward.kwargs.aesthetic.model_revision
+    )
     assert records[0]["identity"]["mlp_asset"] == {
         "package": "vrl.rewards.assets",
         "name": "sac+logos+ava1-l14-linearMSE.pth",
@@ -428,9 +483,11 @@ def test_reward_provenance_includes_pinned_revisions_and_asset_hash() -> None:
     }
     assert (
         records[1]["identity"]["processor"]["revision"]
-        == checkpoint_eval.PICKSCORE_PROCESSOR_REVISION
+        == cfg.reward.kwargs.pickscore.processor_revision
     )
-    assert records[1]["identity"]["model"]["revision"] == checkpoint_eval.PICKSCORE_MODEL_REVISION
+    assert (
+        records[1]["identity"]["model"]["revision"] == cfg.reward.kwargs.pickscore.model_revision
+    )
 
 
 def test_snapshot_materialization_uses_all_four_pinned_revisions(monkeypatch) -> None:
@@ -455,15 +512,18 @@ def test_snapshot_materialization_uses_all_four_pinned_revisions(monkeypatch) ->
     )
 
     assert str(cfg.model.path) == "Efficient-Large-Model/Sana_1600M_1024px_diffusers"
-    assert str(build_cfg.model.path) == f"/immutable/{checkpoint_eval.SANA_MODEL_REVISION}"
+    assert str(build_cfg.model.path) == f"/immutable/{cfg.model.revision}"
     assert set(calls) == {
-        (str(cfg.model.path), checkpoint_eval.SANA_MODEL_REVISION),
-        ("openai/clip-vit-large-patch14", checkpoint_eval.AESTHETIC_MODEL_REVISION),
+        (str(cfg.model.path), str(cfg.model.revision)),
+        (
+            "openai/clip-vit-large-patch14",
+            str(cfg.reward.kwargs.aesthetic.model_revision),
+        ),
         (
             "laion/CLIP-ViT-H-14-laion2B-s32B-b79K",
-            checkpoint_eval.PICKSCORE_PROCESSOR_REVISION,
+            str(cfg.reward.kwargs.pickscore.processor_revision),
         ),
-        ("yuvalkirstain/PickScore_v1", checkpoint_eval.PICKSCORE_MODEL_REVISION),
+        ("yuvalkirstain/PickScore_v1", str(cfg.reward.kwargs.pickscore.model_revision)),
     }
     assert materialized_reward_models[0].model_config["model_name"].startswith("/immutable/")
     assert (
@@ -479,115 +539,97 @@ def test_snapshot_materialization_uses_all_four_pinned_revisions(monkeypatch) ->
     )
 
 
-def test_training_log_requires_exact_observed_revision_singletons(tmp_path) -> None:
+def test_training_log_binds_configured_revisions_without_network_log_scraping(tmp_path) -> None:
     cfg = load_config(checkpoint_eval.CANONICAL_CONFIG_NAME)
-    with pytest.raises(FileNotFoundError, match=r"no supervisor\.log revision evidence"):
+    with pytest.raises(FileNotFoundError, match=r"no supervisor\.log launch evidence"):
         checkpoint_eval._validate_training_log_provenance(tmp_path, cfg)
 
     reward_kwargs = OmegaConf.to_container(cfg.reward.kwargs, resolve=True)
     expected = {
-        str(cfg.model.path): checkpoint_eval.SANA_MODEL_REVISION,
-        reward_kwargs["aesthetic"]["model_name"]: checkpoint_eval.AESTHETIC_MODEL_REVISION,
-        reward_kwargs["pickscore"]["processor_name"]: checkpoint_eval.PICKSCORE_PROCESSOR_REVISION,
-        reward_kwargs["pickscore"]["model_name"]: checkpoint_eval.PICKSCORE_MODEL_REVISION,
+        str(cfg.model.path): str(cfg.model.revision),
+        reward_kwargs["aesthetic"]["model_name"]: reward_kwargs["aesthetic"]["model_revision"],
+        reward_kwargs["pickscore"]["processor_name"]: reward_kwargs["pickscore"][
+            "processor_revision"
+        ],
+        reward_kwargs["pickscore"]["model_name"]: reward_kwargs["pickscore"]["model_revision"],
     }
     log = tmp_path / "supervisor.log"
-    log.write_text(
-        "\n".join(
-            f"HEAD https://huggingface.co/api/resolve-cache/models/{repo}/{revision}/config.json"
-            for repo, revision in expected.items()
-        ),
-        encoding="utf-8",
-    )
+    log.write_text("all artifacts were cache hits\n", encoding="utf-8")
 
     record = checkpoint_eval._validate_training_log_provenance(tmp_path, cfg)
 
-    assert record["resolved_model_revisions"] == expected
+    assert record["configured_model_revisions"] == expected
     assert record["sha256"] == checkpoint_eval._sha256(log)
 
-    with log.open("a", encoding="utf-8") as handle:
-        handle.write(
-            "\nHEAD https://huggingface.co/api/resolve-cache/models/"
-            f"{cfg.model.path}/{'0' * 40}/config.json\n",
-        )
-    with pytest.raises(ValueError, match="do not match the registered run"):
+    cfg.reward.kwargs.pickscore.model_revision = None
+    with pytest.raises(ValueError, match="requires pinned"):
         checkpoint_eval._validate_training_log_provenance(tmp_path, cfg)
 
 
-def test_generation_keeps_two_samples_in_one_fixed_seed_stream(monkeypatch) -> None:
-    import vrl.math.diffusion.flow_matching as flow_matching
+def test_official_generation_keeps_two_images_in_one_fixed_seed_stream() -> None:
+    class DPMSolverMultistepScheduler:
+        def __init__(self) -> None:
+            self.config = {
+                key: value
+                for key, value in sana_inference.SCHEDULER_PROTOCOL.items()
+                if key != "class_name"
+            }
 
-    autocast_active = False
+    class FakePipeline:
+        scheduler = None
 
-    @contextmanager
-    def fake_autocast(device_type, *, dtype):
-        nonlocal autocast_active
-        assert device_type == "cuda"
-        assert dtype == torch.bfloat16
-        autocast_active = True
-        try:
-            yield
-        finally:
-            autocast_active = False
-
-    class FakeModel:
-        autocast_dtype = torch.bfloat16
-
-        def encode_prompt(self, prompt, negative_prompt, **kwargs):
-            del prompt, negative_prompt, kwargs
-            return {"prompt_embeds": torch.ones(1, 2)}
-
-        def prepare_sampling(self, request, encoded):
-            assert request.seed == checkpoint_eval.EVAL_BASE_SEED
-            assert encoded["prompt_embeds"].shape[0] == 2
+        def __call__(self, **kwargs):
+            assert torch.is_inference_mode_enabled()
+            assert kwargs["generator"].initial_seed() == checkpoint_eval.EVAL_BASE_SEED
+            assert kwargs["num_images_per_prompt"] == checkpoint_eval.EVAL_SAMPLES_PER_PROMPT
+            assert kwargs["height"] == kwargs["width"] == 1024
+            assert kwargs["num_inference_steps"] == 20
             return SimpleNamespace(
-                latents=torch.zeros(2, 1, 1, 1),
-                timesteps=torch.tensor([1.0]),
-                scheduler=object(),
+                images=[Image.new("RGB", (8, 8), color=index) for index in range(2)],
             )
 
-        def forward_step(self, state, step_index):
-            del step_index
-            assert autocast_active is True
-            return {"noise_pred": torch.ones_like(state.latents)}
-
-        def decode_latents(self, latents):
-            assert autocast_active is False
-            return latents
-
-    def fake_sde_step(scheduler, noise_pred, timestep, latents, **kwargs):
-        del scheduler, timestep
-        assert latents.shape[0] == checkpoint_eval.EVAL_SAMPLES_PER_PROMPT
-        assert kwargs["generator"].initial_seed() == checkpoint_eval.EVAL_BASE_SEED
-        assert kwargs["deterministic"] is False
-        return SimpleNamespace(prev_sample=latents + noise_pred)
-
-    monkeypatch.setattr(flow_matching, "sde_step_with_logprob", fake_sde_step)
-    monkeypatch.setattr(torch.amp, "autocast", fake_autocast)
-    sampling = {
-        "width": 8,
-        "height": 8,
-        "num_steps": 1,
-        "guidance_scale": 4.5,
-        "max_sequence_length": 8,
-        "denoise_mode": "sde",
-        "noise_level": 0.7,
-        "sde_type": "flow_grpo",
-    }
-
-    decoded = checkpoint_eval._generate_prompt_images(
-        FakeModel(),
+    model = SimpleNamespace(pipeline=FakePipeline())
+    decoded = sana_inference.generate_prompt_images(
+        model,
+        forward_precision=SANA_FORWARD_PRECISION,
+        scheduler=DPMSolverMultistepScheduler(),
         prompt="fox",
-        group_seed=checkpoint_eval._group_seed(0),
-        sampling=sampling,
-        device=SimpleNamespace(type="cuda"),
+        seed=checkpoint_eval._group_seed(0),
+        num_images=checkpoint_eval.EVAL_SAMPLES_PER_PROMPT,
+        device=torch.device("cpu"),
+        sampling=checkpoint_eval._resolve_sampling(),
     )
 
-    assert decoded.shape[0] == checkpoint_eval.EVAL_SAMPLES_PER_PROMPT
+    assert len(decoded) == checkpoint_eval.EVAL_SAMPLES_PER_PROMPT
     assert checkpoint_eval._group_seed(1) - checkpoint_eval._group_seed(0) == 2
 
 
-def test_generation_uses_adapter_off_baseline_then_loads_checkpoints_in_order(
+def test_official_generation_rejects_sampling_drift() -> None:
+    class DPMSolverMultistepScheduler:
+        def __init__(self) -> None:
+            self.config = {
+                key: value
+                for key, value in sana_inference.SCHEDULER_PROTOCOL.items()
+                if key != "class_name"
+            }
+
+    changed = checkpoint_eval._resolve_sampling()
+    changed["height"] = 512
+
+    with pytest.raises(ValueError, match="changed from the official protocol"):
+        sana_inference.generate_prompt_images(
+            SimpleNamespace(pipeline=SimpleNamespace()),
+            forward_precision=SANA_FORWARD_PRECISION,
+            scheduler=DPMSolverMultistepScheduler(),
+            prompt="fox",
+            seed=0,
+            num_images=2,
+            device=torch.device("cpu"),
+            sampling=changed,
+        )
+
+
+def test_generation_uses_fresh_base_before_reading_fullparam_checkpoints(
     monkeypatch,
     tmp_path,
 ) -> None:
@@ -597,24 +639,13 @@ def test_generation_uses_adapter_off_baseline_then_loads_checkpoints_in_order(
     events: list[str] = []
 
     class FakeModel:
-        state = "initial-lora"
+        state = "base"
 
         def eval(self):
             return self
 
-        @contextmanager
-        def disable_adapter(self):
-            previous = self.state
-            self.state = "base"
-            events.append("baseline:enter")
-            try:
-                yield
-            finally:
-                events.append("baseline:exit")
-                self.state = previous
-
     model = FakeModel()
-    bundle = SimpleNamespace(model=model)
+    bundle = SimpleNamespace(model=model, forward_precision=SANA_FORWARD_PRECISION)
     entry = SimpleNamespace(
         resolve_model_build=lambda *args, **kwargs: object(),
         build_rollout=lambda build: bundle,
@@ -627,10 +658,14 @@ def test_generation_uses_adapter_off_baseline_then_loads_checkpoints_in_order(
     monkeypatch.setattr(
         checkpoint_eval,
         "load_training_checkpoint",
-        lambda path: SimpleNamespace(
-            payload={"family": "sana"},
-            next_epoch=int(Path(path).name.split("-")[-1]),
-            trainable_state={"epoch": int(Path(path).name.split("-")[-1])},
+        lambda path: (
+            events.append(f"read:{Path(path).name.split('-')[-1]}")
+            or SimpleNamespace(
+                payload={"family": "sana"},
+                meta={"uses_lora": False},
+                next_epoch=int(Path(path).name.split("-")[-1]),
+                trainable_state={"epoch": int(Path(path).name.split("-")[-1])},
+            )
         ),
     )
 
@@ -644,7 +679,7 @@ def test_generation_uses_adapter_off_baseline_then_loads_checkpoints_in_order(
         del kwargs
         assert model_arg is model
         events.append(f"generate:{model.state}")
-        return torch.zeros(2, 3, 1, 1)
+        return [object(), object()]
 
     def fake_write_png(image, path):
         del image
@@ -652,11 +687,17 @@ def test_generation_uses_adapter_off_baseline_then_loads_checkpoints_in_order(
         path.write_bytes(b"png")
 
     monkeypatch.setattr(checkpoint_eval, "load_trainable_state", fake_load)
-    monkeypatch.setattr(checkpoint_eval, "_generate_prompt_images", fake_generate)
+    monkeypatch.setattr(checkpoint_eval, "generate_prompt_images", fake_generate)
+    monkeypatch.setattr(checkpoint_eval, "load_official_scheduler", lambda build: object())
+    monkeypatch.setattr(
+        checkpoint_eval,
+        "validate_model_precision",
+        lambda value, forward_precision: {},
+    )
     monkeypatch.setattr(media, "write_png", fake_write_png)
     first_checkpoint = tmp_path / "checkpoint-25"
     targets = [
-        checkpoint_eval.CheckpointTarget("baseline", -1, first_checkpoint, "hash-25", 1),
+        checkpoint_eval.CheckpointTarget("baseline", -1, None, None, None),
         checkpoint_eval.CheckpointTarget(
             "checkpoint-25",
             25,
@@ -684,11 +725,11 @@ def test_generation_uses_adapter_off_baseline_then_loads_checkpoints_in_order(
 
     assert len(generated) == 6
     assert events == [
-        "load:25",
-        "baseline:enter",
         "generate:base",
-        "baseline:exit",
+        "read:25",
+        "load:25",
         "generate:checkpoint-25",
+        "read:50",
         "load:50",
         "generate:checkpoint-50",
     ]

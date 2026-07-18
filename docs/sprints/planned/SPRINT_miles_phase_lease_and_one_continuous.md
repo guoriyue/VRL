@@ -51,8 +51,9 @@ acceptance 仍是完成门槛。
 - CuMem one-shot sleep/wake/terminal-close subprocess 通过；256 MiB pooled model 从
   `13,404,209,152` bytes 回到 `13,135,773,696` baseline，allocator registry 的 tag 被删除；
 - dedicated 256 MiB reward shutdown 同样从 `13,404,209,152` 回到 `13,135,773,696`，
-  `torch.cuda.memory_reserved()==0`；tiny shared reward 的首次 CUDA runtime drift 为 2 MiB，低于
-  topology-injected 4 MiB residual allowance；
+  `torch.cuda.memory_reserved()==0`；tiny shared reward 的首次 CUDA runtime drift 为 2 MiB；真实
+  CLIP-L score 在模型池完整卸载 1.64 GiB 后留下 42 MiB（fresh process 为 126 MiB），与 generation
+  共用实测上界 256 MiB 的 CUDA runtime residual allowance；
 - tiny generation worker CPU fallback sleep 返回到 pre-load physical baseline；真实 Ray actor 的
   ObjectRef 直接 await/ACK 通过，不再创建不可 join 的 `to_thread(ray.get)` waiter。
 

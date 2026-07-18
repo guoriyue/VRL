@@ -224,6 +224,17 @@ class RayGenerationLauncher:
                 f"{entry.family} does not support torch compile but "
                 "model.torch_compile.enable is set",
             )
+        from vrl.rollouts.orchestration.types import RolloutScheduleMode
+
+        schedule_mode = RolloutScheduleMode(
+            str(
+                cfg_path(
+                    cfg,
+                    "trainer.rollout_orchestration.schedule_mode",
+                    RolloutScheduleMode.STRICT_ON_POLICY.value,
+                ),
+            ),
+        )
         launch_inputs = RayGenerationLaunchInputs(
             launch_contract=GenerationRuntimeLaunchContract(
                 family=entry.family,
@@ -231,6 +242,15 @@ class RayGenerationLauncher:
                 executor_kwargs=_build_executor_kwargs(entry, cfg),
                 policy_version=0,
                 torch_profiler=_runtime_profiler(cfg),
+                # The schedule is the source of truth for whether a worker may
+                # serve an older request after a weight sync. Full-parameter
+                # payloads fail closed to the draining path until a byte-budget
+                # gate proves their retained slots fit in host RAM.
+                versioned_weight_sync=(
+                    config.sync_trainable_state
+                    and schedule_mode is RolloutScheduleMode.CONTINUOUS
+                    and build.use_lora
+                ),
             ),
             gatherer=entry.new_gatherer(),
         )
@@ -282,7 +302,6 @@ def _model_build_payload(build: Any) -> dict[str, Any]:
     payload["parameter_dtype"] = dtype_to_wire_name(payload["parameter_dtype"])
     rollout = payload.get("rollout")
     if rollout is not None:
-        rollout["autocast_dtype"] = dtype_to_wire_name(rollout["autocast_dtype"])
         rollout["prompt_encoder_dtype"] = dtype_to_wire_name(
             rollout["prompt_encoder_dtype"],
         )

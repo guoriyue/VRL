@@ -179,6 +179,7 @@ def _launch_cfg(
         },
         "model": model_config,
         "precision": {
+            "float32_precision": "tf32",
             "training": {"dtype": "bf16"},
             # Deliberately differs from training and prompt encoding so this
             # fixture proves role-specific values survive the Ray projection.
@@ -400,7 +401,10 @@ def test_launch_from_cfg_projects_model_compile_and_precision() -> None:
     assert "family" not in model_build
     assert model_build["device"] == "cpu"
     assert model_build["parameter_dtype"] == "float32"
-    assert model_build["rollout"]["autocast_dtype"] == "float32"
+    assert model_build["forward_precision"] == {
+        "autocast": "off",
+        "float32_precision": "tf32",
+    }
     assert model_build["rollout"]["prompt_encoder_dtype"] == "float16"
     assert model_build["model_config"]["marker"] == "driver-config"
     assert model_build["model_config"]["torch_compile"] == {
@@ -422,6 +426,35 @@ def test_launch_from_cfg_preserves_disabled_model_compile_config() -> None:
         "enable": False,
         "mode": "default",
     }
+
+
+def test_launch_from_cfg_derives_versioned_sync_from_schedule() -> None:
+    strict = _capture_launch_inputs(
+        _launch_cfg(),
+        get_model_family_entry("sd3_5"),
+    )
+    assert strict.launch_contract.versioned_weight_sync is False
+
+    continuous_fullparam_cfg = _launch_cfg()
+    continuous_fullparam_cfg.trainer = {
+        "rollout_orchestration": {"schedule_mode": "continuous"},
+    }
+    continuous_fullparam = _capture_launch_inputs(
+        continuous_fullparam_cfg,
+        get_model_family_entry("sd3_5"),
+    )
+    assert continuous_fullparam.launch_contract.versioned_weight_sync is False
+
+    continuous_lora_cfg = _launch_cfg()
+    continuous_lora_cfg.model.use_lora = True
+    continuous_lora_cfg.trainer = {
+        "rollout_orchestration": {"schedule_mode": "continuous"},
+    }
+    continuous_lora = _capture_launch_inputs(
+        continuous_lora_cfg,
+        get_model_family_entry("sd3_5"),
+    )
+    assert continuous_lora.launch_contract.versioned_weight_sync is True
 
 
 def test_launch_from_cfg_threads_resolved_base_weight_sync() -> None:

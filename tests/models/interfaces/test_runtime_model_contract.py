@@ -16,6 +16,7 @@ from vrl.models.interfaces import (
     ReplayRequest,
     ReplayResult,
     ReplaySegmentResult,
+    ResolvedForwardPrecision,
     RuntimeBundle,
     RuntimeModel,
     require_runtime_model,
@@ -164,9 +165,25 @@ def test_runtime_bundle_exposes_model_contract() -> None:
         trainable_modules={},
         scheduler=None,
         raw_handle=None,
+        forward_precision=ResolvedForwardPrecision("off", "ieee"),
     )
 
     assert bundle.model is model
+    assert bundle.forward_precision == ResolvedForwardPrecision("off", "ieee")
+
+
+def test_runtime_bundle_rejects_unresolved_forward_precision_mapping() -> None:
+    with pytest.raises(TypeError, match=r"RuntimeBundle\.forward_precision"):
+        RuntimeBundle(
+            model=_MinimalRuntimeModel(),
+            trainable_modules={},
+            scheduler=None,
+            raw_handle=None,
+            forward_precision={  # type: ignore[arg-type]
+                "autocast": "off",
+                "float32_precision": "ieee",
+            },
+        )
 
 
 def test_diffusion_load_trainable_state_accepts_trainable_only_payload() -> None:

@@ -6,7 +6,6 @@ from vrl.trainers.core.types import (
     TrainerConfig,
     TrainState,
 )
-from vrl.trainers.data import DistributedKRepeatSampler
 from vrl.trainers.online import OnlineTrainer
 from vrl.trainers.online.ema import EMAModuleWrapper
 from vrl.trainers.weight_sync import (
@@ -18,7 +17,6 @@ from vrl.trainers.weight_sync import (
 )
 
 __all__ = [
-    "DistributedKRepeatSampler",
     "EMAModuleWrapper",
     "OnlineTrainer",
     "RayRuntimeWeightSyncer",

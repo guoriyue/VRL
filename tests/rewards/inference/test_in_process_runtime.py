@@ -2,10 +2,17 @@
 
 from __future__ import annotations
 
+import math
+import os
+import weakref
+
 import pytest
+import torch
 
 from vrl.rewards.inference import RewardInferenceArtifact, RewardInferenceRequest
+from vrl.rewards.models.base import TorchRewardModel
 from vrl.rewards.runtime import InProcessRewardRuntime
+from vrl.utils.cuda_memory import CUDA_RUNTIME_RESIDUAL_BYTES_LIMIT
 
 
 class _SumMediaModel:
@@ -84,13 +91,23 @@ class _FakeCumemAllocator:
         self.sleeps: list[tuple[str, ...]] = []
         self.wakes: list[list[str]] = []
         self.allocator_and_pools: dict[str, object] = {}
+        self.building = False
 
     def use_memory_pool(self, *, tag: str):
         import contextlib
 
         self.pool_tags.append(tag)
         self.allocator_and_pools[tag] = object()
-        return contextlib.nullcontext()
+
+        @contextlib.contextmanager
+        def scope():
+            self.building = True
+            try:
+                yield
+            finally:
+                self.building = False
+
+        return scope()
 
     def sleep(self, *, offload_tags) -> None:
         self.sleeps.append(tuple(offload_tags))
@@ -107,6 +124,50 @@ def _immovable_factory(worker_config):
             return {"overall": 2.0}
 
     return _Immovable()
+
+
+class _LazyTorchModel(TorchRewardModel):
+    """Records whether its deferred state materialized inside a CuMem scope."""
+
+    def __init__(self, worker_config):
+        super().__init__(worker_config)
+        self.load_scopes: list[bool] = []
+
+    def _load(self) -> None:
+        import vrl.utils.cuda_memory as cuda_memory_mod
+
+        allocator = cuda_memory_mod._cumem_allocator()
+        self.load_scopes.append(bool(allocator and getattr(allocator, "building", False)))
+
+    def score_media(self, *, media, prompt, request):
+        del prompt, request
+        return {"overall": float(sum(media))}
+
+
+def _lazy_torch_factory(worker_config):
+    return _LazyTorchModel(worker_config)
+
+
+class _PartialPrepareState:
+    pass
+
+
+_PARTIAL_PREPARE_REF: weakref.ReferenceType[_PartialPrepareState] | None = None
+
+
+class _FailingPrepareModel(TorchRewardModel):
+    def _load(self) -> None:
+        global _PARTIAL_PREPARE_REF
+        self.partial_state = _PartialPrepareState()
+        _PARTIAL_PREPARE_REF = weakref.ref(self.partial_state)
+        raise RuntimeError("prepare failed")
+
+    def score_media(self, *, media, prompt, request):  # pragma: no cover
+        raise AssertionError("a failed preparation must never reach scoring")
+
+
+def _failing_prepare_factory(worker_config):
+    return _FailingPrepareModel(worker_config)
 
 
 def _parking_request() -> RewardInferenceRequest:
@@ -157,8 +218,84 @@ async def test_sleep_offload_uses_cumem_pool(monkeypatch) -> None:
 
 
 @pytest.mark.asyncio
-async def test_reward_parking_rejects_default_allocator_residual(monkeypatch) -> None:
-    import vrl.rewards.runtime as reward_runtime_module
+async def test_sleep_offload_materializes_lazy_model_inside_cumem_pool(monkeypatch) -> None:
+    """A lazy wrapper cannot defer its real CUDA allocations until scoring."""
+    import vrl.utils.cuda_memory as cuda_memory_mod
+
+    allocator = _FakeCumemAllocator()
+    monkeypatch.setattr(cuda_memory_mod, "_cumem_allocator", lambda: allocator)
+    runtime = InProcessRewardRuntime(
+        {
+            "sleep_offload": True,
+            "model_factory": f"{__name__}:_lazy_torch_factory",
+        },
+    )
+
+    results = await runtime.score_batch(_make_request())
+
+    assert [result.selected_score for result in results] == [3.0, 3.0]
+    assert runtime._model.load_scopes == [True]
+    await runtime.park_memory()
+    await runtime.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_dedicated_runtime_keeps_lazy_model_outside_cumem_pool(monkeypatch) -> None:
+    """Without a shared-GPU lease, model loading remains first-score lazy."""
+    import vrl.utils.cuda_memory as cuda_memory_mod
+
+    allocator = _FakeCumemAllocator()
+    monkeypatch.setattr(cuda_memory_mod, "_cumem_allocator", lambda: allocator)
+    runtime = InProcessRewardRuntime(
+        {"model_factory": f"{__name__}:_lazy_torch_factory"},
+    )
+
+    await runtime.score_batch(_make_request())
+
+    assert runtime._model.load_scopes == [False]
+    assert allocator.pool_tags == []
+    await runtime.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_failed_pooled_preparation_rolls_back_before_retry(monkeypatch) -> None:
+    """A partial lazy load cannot become the runtime's committed model."""
+    import vrl.utils.cuda_memory as cuda_memory_mod
+
+    allocator = _FakeCumemAllocator()
+    monkeypatch.setattr(cuda_memory_mod, "_cumem_allocator", lambda: allocator)
+    runtime = InProcessRewardRuntime(
+        {
+            "sleep_offload": True,
+            "model_factory": f"{__name__}:_failing_prepare_factory",
+        },
+    )
+    runtime._release_cuda_memory_for_parking = lambda: None  # type: ignore[method-assign]
+
+    with pytest.raises(RuntimeError, match="prepare failed"):
+        await runtime.score_batch(_make_request())
+
+    assert _PARTIAL_PREPARE_REF is not None
+    assert _PARTIAL_PREPARE_REF() is None
+    assert runtime._model is None
+    assert runtime._pool is None
+    assert runtime._preload_gpu_used_bytes is None
+    assert allocator.allocator_and_pools == {}
+
+    runtime._worker_config["model_factory"] = f"{__name__}:_lazy_torch_factory"
+    results = await runtime.score_batch(_make_request())
+    assert [result.selected_score for result in results] == [3.0, 3.0]
+    await runtime.park_memory()
+    await runtime.shutdown()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("extra_residual_bytes", "should_pass"), ((0, True), (1, False)))
+async def test_reward_parking_bounds_cuda_runtime_residual(
+    monkeypatch,
+    extra_residual_bytes: int,
+    should_pass: bool,
+) -> None:
     import vrl.utils.cuda_memory as cuda_memory_mod
 
     allocator = _FakeCumemAllocator()
@@ -168,24 +305,25 @@ async def test_reward_parking_rejects_default_allocator_residual(monkeypatch) ->
             "device": "cuda:0",
             "sleep_offload": True,
             "model_factory": f"{__name__}:_immovable_factory",
+            "memory_parking_residual_bytes_limit": CUDA_RUNTIME_RESIDUAL_BYTES_LIMIT,
         },
     )
-    readings = iter((100, 101))
-    monkeypatch.setattr(
-        reward_runtime_module,
-        "gpu_used_bytes",
-        lambda _device: next(readings),
-    )
-    monkeypatch.setattr(
-        reward_runtime_module,
-        "release_cuda_memory_for_parking",
-        lambda _device: None,
-    )
+    baseline = 1024
+    residual = baseline + CUDA_RUNTIME_RESIDUAL_BYTES_LIMIT + extra_residual_bytes
+    # load baseline, park proof, terminal shutdown proof
+    readings = iter((baseline, residual, baseline))
+    runtime._gpu_used_bytes = lambda: next(readings)  # type: ignore[method-assign]
+    runtime._release_cuda_memory_for_parking = lambda: None  # type: ignore[method-assign]
 
     await runtime.score_batch(_parking_request())
 
-    with pytest.raises(RuntimeError, match="incomplete reward memory parking"):
-        await runtime.park_memory()
+    if should_pass:
+        proof = await runtime.park_memory()
+        assert proof.residual_gpu_used_bytes == residual
+    else:
+        with pytest.raises(RuntimeError, match="incomplete reward memory parking"):
+            await runtime.park_memory()
+    await runtime.shutdown()
 
 
 @pytest.mark.asyncio
@@ -283,3 +421,55 @@ def test_sleep_offload_rejects_injected_model() -> None:
     """An already-built model cannot be retroactively placed in the CuMem pool."""
     with pytest.raises(ValueError, match="model_factory"):
         InProcessRewardRuntime({"sleep_offload": True}, model=object())
+
+
+@pytest.mark.gpu
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is unavailable")
+@pytest.mark.skipif(
+    os.environ.get("WM_RUN_REAL_MODEL_TESTS") != "1",
+    reason="set WM_RUN_REAL_MODEL_TESTS=1 for cached real-model gates",
+)
+@pytest.mark.asyncio
+async def test_real_aesthetic_score_parks_stably_across_two_cycles() -> None:
+    """A real CLIP forward may retain runtime code, never its 1.64 GiB model pool."""
+    runtime = InProcessRewardRuntime(
+        {
+            "device": "cuda:0",
+            "dtype": "float32",
+            "model_name": "openai/clip-vit-large-patch14",
+            "model_factory": "vrl.rewards.models.aesthetic:aesthetic_reward_model",
+            "sleep_offload": True,
+            "memory_parking_residual_bytes_limit": CUDA_RUNTIME_RESIDUAL_BYTES_LIMIT,
+        },
+    )
+    request = RewardInferenceRequest(
+        request_id="real-aesthetic-parking",
+        artifacts=(
+            RewardInferenceArtifact(
+                artifact_id="image-0",
+                path="",
+                media_type="image",
+                media=torch.zeros(3, 512, 512),
+            ),
+        ),
+        reward_name="aesthetic",
+        score_key="aesthetic",
+    )
+    try:
+        first_result = await runtime.score_batch(request)
+        first_proof = await runtime.park_memory()
+        second_result = await runtime.score_batch(request)
+        second_proof = await runtime.park_memory()
+
+        assert math.isfinite(first_result[0].selected_score)
+        assert second_result[0].selected_score == pytest.approx(
+            first_result[0].selected_score,
+        )
+        first_delta = first_proof.residual_gpu_used_bytes - first_proof.baseline_gpu_used_bytes
+        second_delta = second_proof.residual_gpu_used_bytes - second_proof.baseline_gpu_used_bytes
+        assert 0 <= first_delta <= CUDA_RUNTIME_RESIDUAL_BYTES_LIMIT
+        # A second score may reuse the same process-lifetime CUDA code; it must
+        # not accumulate another model-sized or steadily growing residual.
+        assert second_delta <= first_delta + 4 * 1024 * 1024
+    finally:
+        await runtime.shutdown()

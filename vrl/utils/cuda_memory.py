@@ -6,6 +6,15 @@ import gc
 import itertools
 from typing import Any
 
+# CUDA loads device code and library state on first real kernel execution. Those
+# process-lifetime pages are not user tensors, the caching allocator, or a tagged
+# CuMem model pool, so neither CPU offload nor pool.sleep() can release them. RTX
+# 5090 probes measured 120--210 MiB after deleting all user tensors; production
+# SANA generation retained 154 MiB and a correctly pooled CLIP-L score retained
+# 42 MiB (126 MiB in a fresh process). Keep one bounded backend protocol limit;
+# callers still reject a single byte beyond it and CPU-only paths use zero.
+CUDA_RUNTIME_RESIDUAL_BYTES_LIMIT = 256 * 1024 * 1024
+
 
 def _cumem_allocator() -> Any | None:
     """Return the process-wide vLLM CuMemAllocator, or None when unavailable.
@@ -255,6 +264,7 @@ def release_cuda_memory_for_parking(device: str | None = None) -> None:
 
 
 __all__ = [
+    "CUDA_RUNTIME_RESIDUAL_BYTES_LIMIT",
     "CumemPool",
     "empty_cuda_cache",
     "gpu_used_bytes",

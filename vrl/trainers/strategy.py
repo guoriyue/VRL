@@ -247,6 +247,24 @@ class SingleProcessStrategy(Strategy):
                 _move_module(module, torch.device("cpu"))
 
             if state.optimizer is not None:
+                # Optimizers normally point at model parameters already moved
+                # above. A low-precision policy instead exposes independent FP32
+                # master parameters through param_groups; move those (and any
+                # live master grads) explicitly before walking moment state.
+                for group in state.optimizer.param_groups:
+                    for parameter in group.get("params", ()):
+                        _move_tensor_tree_in_place(
+                            parameter,
+                            torch.device("cpu"),
+                            seen=seen_tensors,
+                            restores=parked.tensors,
+                        )
+                        _move_tensor_tree_in_place(
+                            getattr(parameter, "grad", None),
+                            torch.device("cpu"),
+                            seen=seen_tensors,
+                            restores=parked.tensors,
+                        )
                 _move_tensor_tree_in_place(
                     state.optimizer.state,
                     torch.device("cpu"),

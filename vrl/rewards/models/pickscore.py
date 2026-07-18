@@ -21,11 +21,18 @@ class PickScoreRewardModel(TorchRewardModel):
         super().__init__(worker_config)
         self.processor_name = str(
             self.worker_config.get(
-                "processor_name", "laion/CLIP-ViT-H-14-laion2B-s32B-b79K",
+                "processor_name",
+                "laion/CLIP-ViT-H-14-laion2B-s32B-b79K",
             ),
         )
         self.model_name = str(
             self.worker_config.get("model_name", "yuvalkirstain/PickScore_v1"),
+        )
+        self.processor_revision = (
+            str(self.worker_config.get("processor_revision", "") or "").strip() or None
+        )
+        self.model_revision = (
+            str(self.worker_config.get("model_revision", "") or "").strip() or None
         )
         self._processor: Any = None
         self._model: Any = None
@@ -33,9 +40,16 @@ class PickScoreRewardModel(TorchRewardModel):
     def _load(self) -> None:
         from transformers import CLIPModel, CLIPProcessor
 
-        self._processor = CLIPProcessor.from_pretrained(self.processor_name)
+        processor_kwargs = {"revision": self.processor_revision} if self.processor_revision else {}
+        model_kwargs = {"revision": self.model_revision} if self.model_revision else {}
+        self._processor = CLIPProcessor.from_pretrained(
+            self.processor_name,
+            **processor_kwargs,
+        )
         self._model = (
-            CLIPModel.from_pretrained(self.model_name).eval().to(self.device, dtype=self.dtype)
+            CLIPModel.from_pretrained(self.model_name, **model_kwargs)
+            .eval()
+            .to(self.device, dtype=self.dtype)
         )
 
     def score_media(self, *, media: Any, prompt: str, request: Any) -> Mapping[str, float]:
@@ -54,7 +68,11 @@ class PickScoreRewardModel(TorchRewardModel):
                 arr = arr[:, mid].transpose(0, 2, 3, 1)
             images = [Image.fromarray(a) for a in arr]
         elif isinstance(media, np.ndarray):
-            images = [Image.fromarray(media)] if media.ndim == 3 else [Image.fromarray(a) for a in media]
+            images = (
+                [Image.fromarray(media)]
+                if media.ndim == 3
+                else [Image.fromarray(a) for a in media]
+            )
         elif isinstance(media, Image.Image):
             images = [media]
         else:
@@ -68,12 +86,19 @@ class PickScoreRewardModel(TorchRewardModel):
 
         with torch.no_grad():
             image_inputs = self._processor(
-                images=images, padding=True, truncation=True, max_length=77, return_tensors="pt",
+                images=images,
+                padding=True,
+                truncation=True,
+                max_length=77,
+                return_tensors="pt",
             )
             image_inputs = {k: v.to(self.device) for k, v in image_inputs.items()}
             text_inputs = self._processor(
                 text=[prompt] * len(images),
-                padding=True, truncation=True, max_length=77, return_tensors="pt",
+                padding=True,
+                truncation=True,
+                max_length=77,
+                return_tensors="pt",
             )
             text_inputs = {k: v.to(self.device) for k, v in text_inputs.items()}
             image_embs = self._model.get_image_features(**image_inputs).pooler_output

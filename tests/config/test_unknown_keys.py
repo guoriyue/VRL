@@ -30,12 +30,16 @@ def test_unknown_keys_are_found_at_every_depth() -> None:
             "distributed": {
                 "resources": {"reward": {"num_gpus": 1, "share_with_rolout": True}},
             },
-            "actor": {"mixed_precision": "bf16", "optim": {"lr": 1e-4, "lrr": 2}},
+            "actor": {
+                "mixed_precision": "bf16",
+                "optim": {"lr": 1e-4, "lrr": 2, "allow_tf32": True},
+            },
         },
     )
     unknown = find_unknown_keys(cfg)
     assert unknown == [
         "actor.mixed_precision",
+        "actor.optim.allow_tf32",
         "actor.optim.lrr",
         "distributed.resources.reward.share_with_rolout",
         "rollout.sde.window_sze",

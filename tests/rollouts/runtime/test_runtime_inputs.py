@@ -179,11 +179,14 @@ def test_diffusion_launch_contract_uses_resolved_config_parameter_dtype() -> Non
     assert isinstance(inputs, RayGenerationLaunchInputs)
     assert inputs.launch_contract.model_build["device"] == "cuda"
     assert inputs.launch_contract.model_build["parameter_dtype"] == "bfloat16"
-    assert inputs.launch_contract.model_build["rollout"]["autocast_dtype"] == "bfloat16"
+    assert inputs.launch_contract.model_build["forward_precision"] == {
+        "autocast": "bf16",
+        "float32_precision": "tf32",
+    }
 
 
 def test_sana_launch_contract_carries_parameter_and_rollout_precision() -> None:
-    """SANA's fp16 parameters and bf16 autocast survive the Ray boundary."""
+    """SANA's native FP16 policy and separate BF16 Gemma survive the Ray boundary."""
     cfg = load_config(
         "experiment/diffusion/sana/online_grpo_aesthetic",
         overrides=[
@@ -204,8 +207,11 @@ def test_sana_launch_contract_carries_parameter_and_rollout_precision() -> None:
 
     model_build = inputs.launch_contract.model_build
     assert model_build["parameter_dtype"] == "float16"
+    assert model_build["forward_precision"] == {
+        "autocast": "off",
+        "float32_precision": "ieee",
+    }
     assert model_build["rollout"] == {
-        "autocast_dtype": "bfloat16",
         "prompt_encoder_dtype": "bfloat16",
         "quantization_format": None,
         "quantization_recipe": None,
@@ -214,8 +220,8 @@ def test_sana_launch_contract_carries_parameter_and_rollout_precision() -> None:
     assert pickle.loads(pickle.dumps(model_build)) == model_build
 
 
-def test_sana_fp8_rollout_keeps_bf16_outer_autocast() -> None:
-    """FP8 swaps GEMMs; unswapped rollout ops remain under bf16 autocast."""
+def test_sana_fp8_rollout_keeps_native_policy_and_bf16_prompt_encoder() -> None:
+    """FP8 swaps GEMMs without changing SANA or Gemma's base dtype policies."""
     cfg = load_config(
         "experiment/diffusion/sana/online_grpo_aesthetic",
         overrides=[
@@ -229,9 +235,10 @@ def test_sana_fp8_rollout_keeps_bf16_outer_autocast() -> None:
         ],
     )
     cfg.precision = {
-        "training": {"dtype": "bf16"},
+        "float32_precision": "ieee",
+        "training": {"dtype": "fp16"},
         "rollout": {
-            "dtype": "bf16",
+            "dtype": "fp16",
             "quantization": {"format": "fp8"},
             "prompt_encoders": {"dtype": "bf16"},
         },
@@ -244,7 +251,10 @@ def test_sana_fp8_rollout_keeps_bf16_outer_autocast() -> None:
 
     model_build = inputs.launch_contract.model_build
     assert model_build["parameter_dtype"] == "float16"
-    assert model_build["rollout"]["autocast_dtype"] == "bfloat16"
+    assert model_build["forward_precision"] == {
+        "autocast": "off",
+        "float32_precision": "ieee",
+    }
     assert model_build["rollout"]["prompt_encoder_dtype"] == "bfloat16"
     assert model_build["rollout"]["quantization_format"] == "fp8"
 

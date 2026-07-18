@@ -11,7 +11,7 @@ import logging
 import time
 from collections import defaultdict
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from typing import Any
 
 import torch
@@ -23,6 +23,12 @@ from vrl.algorithms.logprob_mismatch import (
     compute_logprob_mismatch_stats,
 )
 from vrl.algorithms.types import InitialReplayStats, PolicyUpdateStats, TrainStepMetrics
+from vrl.models.forward_precision import (
+    apply_float32_precision,
+    float32_precision_state,
+    forward_autocast,
+)
+from vrl.models.interfaces import ResolvedForwardPrecision
 from vrl.rollouts.batch import RolloutBatch
 from vrl.rollouts.batch.ops import (
     move_training_batch_to_device,
@@ -37,6 +43,7 @@ from vrl.trainers.online.precision_guard import (
     enforce_precision_drift,
     measure_precision_drift,
 )
+from vrl.trainers.optimizer import FP32MasterWeightOptimizer, build_optimizer
 from vrl.trainers.precision import normalize_mixed_precision
 from vrl.trainers.strategy import SingleProcessStrategy, Strategy, TrainingMemoryState
 from vrl.trainers.weight_sync import TrainableStateGetter, WeightSyncer
@@ -122,47 +129,6 @@ def _all_ranks_have_work(has_work: bool, device: torch.device) -> bool:
 
 
 # ---------------------------------------------------------------------------
-# Optimizer factory
-# ---------------------------------------------------------------------------
-
-
-def _create_optimizer(
-    parameters: Any,
-    config: TrainerConfig,
-) -> torch.optim.Optimizer:
-    """Create an AdamW optimizer."""
-    optim = config.optim
-    parameters = list(parameters)
-    # fused=True collapses the per-parameter optimizer step into a handful of
-    # kernels (the loop variant launched ~1.7k/step on LoRA models). It is
-    # only valid for CUDA float params; anything else falls back to default.
-    use_fused = bool(parameters) and all(
-        isinstance(p, torch.Tensor) and p.is_cuda and p.is_floating_point() for p in parameters
-    )
-    if getattr(optim, "optim_8bit", False):
-        # int8 Adam state -> full-parameter 2B+ DiT fits on one 32GB card. Quantizes the
-        # optimizer state only (not the forward), so rollout/replay logprobs are unchanged
-        # — safe on the RL policy path. Requires bitsandbytes (CUDA, incl. Blackwell sm_120).
-        import bitsandbytes as bnb
-
-        return bnb.optim.AdamW8bit(
-            parameters,
-            lr=optim.lr,
-            betas=(optim.adam_beta1, optim.adam_beta2),
-            weight_decay=optim.weight_decay,
-            eps=optim.eps,
-        )
-    return torch.optim.AdamW(
-        parameters,
-        lr=optim.lr,
-        betas=(optim.adam_beta1, optim.adam_beta2),
-        weight_decay=optim.weight_decay,
-        eps=optim.eps,
-        fused=use_fused or None,
-    )
-
-
-# ---------------------------------------------------------------------------
 # Phase profiler
 # ---------------------------------------------------------------------------
 
@@ -202,7 +168,7 @@ class PhaseTimer:
 
 
 # ---------------------------------------------------------------------------
-# Autocast helper
+# Forward precision
 # ---------------------------------------------------------------------------
 
 
@@ -210,44 +176,35 @@ def _resolve_mixed_precision(config: TrainerConfig) -> str:
     return normalize_mixed_precision(getattr(config, "train_precision", ""))
 
 
-def _get_autocast(
-    config: TrainerConfig,
-    device: torch.device,
-    model: Any | None = None,
-) -> Any:
-    """Return the configured autocast context manager."""
-    autocast_dtype = _trainer_autocast_dtype(config, device, model=model)
-    if autocast_dtype is None:
-        return contextlib.nullcontext()
-    return torch.amp.autocast(str(device), dtype=autocast_dtype)
-
-
-def _trainer_autocast_dtype(
-    config: TrainerConfig,
-    device: torch.device,
-    model: Any | None = None,
-) -> torch.dtype | None:
-    if bool(getattr(model, "disable_train_autocast", False)):
-        return None
-    precision = _resolve_mixed_precision(config)
-    if precision == "bf16":
-        return torch.bfloat16
-    if precision == "fp16" and device.type == "cuda":
-        return torch.float16
-    return None
-
-
-def _needs_grad_scaler(
-    config: TrainerConfig,
+def _create_grad_scaler(
+    forward_precision: ResolvedForwardPrecision,
     device: torch.device,
     model: Any,
-    accelerator: Any | None,
-) -> bool:
-    """Use dynamic loss scaling for native CUDA fp16 training."""
+) -> torch.amp.GradScaler | None:
+    """Build the CUDA scaler for either FP16 compute or native FP16 grads."""
 
-    if accelerator is not None:
-        return False
-    return _trainer_autocast_dtype(config, device, model=model) == torch.float16
+    if device.type != "cuda":
+        return None
+    uses_fp16_autocast = forward_precision.autocast == "fp16"
+    has_native_fp16_gradients = bool(
+        model is not None
+        and any(
+            parameter.requires_grad and parameter.dtype == torch.float16
+            for parameter in model.parameters()
+        )
+    )
+    if not (uses_fp16_autocast or has_native_fp16_gradients):
+        return None
+    return torch.amp.GradScaler("cuda")
+
+
+def _requires_fp32_master_weights(model: Any) -> bool:
+    """Return whether the optimizer must preserve sub-ULP update residuals."""
+
+    return any(
+        parameter.requires_grad and parameter.dtype in {torch.float16, torch.bfloat16}
+        for parameter in model.parameters()
+    )
 
 
 def _precision_label(value: Any) -> str:
@@ -289,28 +246,23 @@ def _model_transformer_dtype(model: Any) -> str | None:
 
 def _trainer_precision_metadata(
     config: TrainerConfig,
-    device: torch.device,
     model: Any,
     evaluator: Any | None,
+    forward_precision: ResolvedForwardPrecision,
 ) -> dict[str, Any]:
-    train_precision = _precision_label(_resolve_mixed_precision(config))
-    rollout_precision = _precision_label(config.rollout_precision or train_precision)
-    autocast_dtype = _trainer_autocast_dtype(config, device, model=model)
+    training_precision = _precision_label(_resolve_mixed_precision(config))
+    rollout_precision = _precision_label(config.rollout_precision or training_precision)
     return {
-        "train_precision": train_precision,
+        "training_precision": training_precision,
         "rollout_precision": rollout_precision,
         # Report the dtype the evaluator actually consumes instead of carrying a
         # duplicate TrainerConfig projection of the public precision policy.
         "math_precision": _precision_label(
             getattr(evaluator, "math_dtype", None) or torch.float32,
         ),
-        "mixed_precision": _resolve_mixed_precision(config),
-        "trainer_autocast_enabled": autocast_dtype is not None,
-        "trainer_autocast_dtype": _dtype_label(autocast_dtype),
+        "training_forward_precision": asdict(forward_precision),
+        "effective_float32_precision": float32_precision_state(),
         "trainer_transformer_dtype": _model_transformer_dtype(model),
-        "allow_tf32_config": bool(config.optim.allow_tf32),
-        "allow_tf32_matmul": bool(torch.backends.cuda.matmul.allow_tf32),
-        "allow_tf32_cudnn": bool(torch.backends.cudnn.allow_tf32),
     }
 
 
@@ -319,9 +271,17 @@ def _merge_rollout_precision_context(
     batch_context: dict[str, Any],
 ) -> dict[str, Any]:
     merged = dict(metadata)
-    for key in ("rollout_autocast_dtype", "rollout_autocast_enabled"):
-        if key in batch_context:
-            merged[key] = batch_context[key]
+    raw = batch_context.get("rollout_forward_precision")
+    if isinstance(raw, ResolvedForwardPrecision):
+        rollout = raw
+    elif isinstance(raw, Mapping):
+        rollout = ResolvedForwardPrecision(**dict(raw))
+    else:
+        raise ValueError(
+            "rollout batch context is missing rollout_forward_precision; "
+            "generation must record the resolved forward contract",
+        )
+    merged["rollout_forward_precision"] = asdict(rollout)
     return merged
 
 
@@ -742,12 +702,12 @@ class OnlineTrainer(Trainer):
         evaluator: Any,
         model: nn.Module,
         config: TrainerConfig,
+        forward_precision: ResolvedForwardPrecision,
         ref_model: nn.Module | None = None,
         weight_syncer: WeightSyncer | None = None,
         sync_state_getter: TrainableStateGetter | None = None,
         prompts: list[str] | None = None,
         device: torch.device | str = "cuda",
-        accelerator: Any | None = None,
         strategy: Strategy | None = None,
         sft_latents: Mapping[str, Any] | None = None,
     ) -> None:
@@ -764,6 +724,9 @@ class OnlineTrainer(Trainer):
             )
         self.sync_state_getter = sync_state_getter
         self.config = config
+        if not isinstance(forward_precision, ResolvedForwardPrecision):
+            raise TypeError("OnlineTrainer requires ResolvedForwardPrecision")
+        self.forward_precision = forward_precision
         # Precision correction (TIS) is a trainer-level precision-drift concern, not
         # an algorithm hyperparameter; inject it into algorithms that apply it
         # (importance-ratio algorithms hold a `precision_correction` slot).
@@ -781,11 +744,21 @@ class OnlineTrainer(Trainer):
             )
         self.device = torch.device(device) if isinstance(device, str) else device
         self.state = TrainState()
-        self.accelerator = accelerator
         # How a step runs on the hardware (backward / clip / state export). The
         # default keeps current single-GPU behavior; FSDP2 swaps this in later
         # without the trainer loop changing. See vrl/trainers/strategy.py.
         self._strategy: Strategy = strategy or SingleProcessStrategy()
+        if (
+            _requires_fp32_master_weights(self.model)
+            and self._strategy.context.strategy != "single_process"
+        ):
+            # Reject before prepare_model can initialize a process group or wrap
+            # modules. Independent masters need explicit distributed sharding,
+            # found-inf agreement, and checkpoint mapping that are not built yet.
+            raise NotImplementedError(
+                "low-precision trainable parameters require FP32 master weights, "
+                "which are currently supported only by the single_process strategy",
+            )
         # Route the model through the strategy once: identity for single process,
         # fully_shard wrapping for FSDP2. Done before optimizer / grad-scaler / EMA
         # so they bind to the (possibly sharded) parameters the strategy returns.
@@ -793,10 +766,10 @@ class OnlineTrainer(Trainer):
         # Sink for the per-step phase-timing line (recording decoupled from
         # emitting); swap for a jsonl/Prometheus sink later.
         self._stats_sink: StatsSink = LoggingStatsSink(logger)
-        self._grad_scaler: torch.amp.GradScaler | None = (
-            torch.amp.GradScaler("cuda")
-            if _needs_grad_scaler(self.config, self.device, self.model, self.accelerator)
-            else None
+        self._grad_scaler = _create_grad_scaler(
+            self.forward_precision,
+            self.device,
+            self.model,
         )
 
         self._optimizer: torch.optim.Optimizer | None = None
@@ -819,9 +792,9 @@ class OnlineTrainer(Trainer):
         )
         self._validate_trust_region_engages()
 
-        if self.config.optim.allow_tf32:
-            torch.backends.cuda.matmul.allow_tf32 = True
-            torch.backends.cudnn.allow_tf32 = True
+        # The backend setting is process-global, so every trainer construction
+        # projects both the IEEE and TF32 paths instead of inheriting stale state.
+        apply_float32_precision(self.forward_precision.float32_precision)
 
     def _validate_trust_region_engages(self) -> None:
         """Refuse configs where a trust-region algorithm's ratio term is inert.
@@ -867,7 +840,13 @@ class OnlineTrainer(Trainer):
     def _ensure_optimizer(self) -> torch.optim.Optimizer:
         if self._optimizer is None:
             trainable = [p for p in self.model.parameters() if p.requires_grad]
-            self._optimizer = _create_optimizer(trainable, self.config)
+            if _requires_fp32_master_weights(self.model):
+                self._optimizer = FP32MasterWeightOptimizer(
+                    trainable,
+                    lambda masters: build_optimizer(masters, self.config),
+                )
+            else:
+                self._optimizer = build_optimizer(trainable, self.config)
         return self._optimizer
 
     def _ensure_ema(self) -> EMAModuleWrapper | None:
@@ -920,6 +899,8 @@ class OnlineTrainer(Trainer):
         from vrl.utils.profiling import record_function
 
         if not bool(getattr(self.algorithm, "uses_evaluator", True)):
+            # DiffusionNFT owns its raw transformer boundaries and applies the
+            # resolved contract there; its objective reductions remain outside.
             with record_function("trainer.loss"):
                 return algorithm_adapter.compute_loss(
                     self.algorithm,
@@ -931,6 +912,7 @@ class OnlineTrainer(Trainer):
                             "model": self.model,
                             "rollout_batch": chunk_batch,
                             "timestep_index": timestep_index,
+                            "forward_precision": self.forward_precision,
                         },
                     ),
                 )
@@ -941,6 +923,8 @@ class OnlineTrainer(Trainer):
         need_kl_intermediates = kl_coef > 0 or bool(
             getattr(self.algorithm, "needs_kl_intermediates", False),
         )
+        # The evaluator scopes only replay_forward; SDE/log-prob/gather math
+        # and the algorithm loss remain outside autocast.
         with record_function("trainer.replay"):
             signals = self.evaluator.evaluate(
                 self.model,
@@ -951,6 +935,7 @@ class OnlineTrainer(Trainer):
                     need_ref=kl_coef > 0,
                     need_kl_intermediates=need_kl_intermediates,
                 ),
+                forward_precision=self.forward_precision,
             )
         with record_function("trainer.loss"):
             if not isinstance(signals, TrajectorySignalBatch):
@@ -1011,14 +996,19 @@ class OnlineTrainer(Trainer):
         """
         cfg = self.config
         grad_norm: Any = 0.0
+        if isinstance(optimizer, FP32MasterWeightOptimizer):
+            optimizer.prepare_gradients()
+            parameters_for_clip = list(optimizer.parameters())
+        else:
+            parameters_for_clip = list(self.model.parameters())
         if self._grad_scaler is not None:
             self._grad_scaler.unscale_(optimizer)
         if cfg.max_norm > 0:
-            grad_norm = self._strategy.clip_grad_norm(self.model.parameters(), cfg.max_norm)
+            grad_norm = self._strategy.clip_grad_norm(parameters_for_clip, cfg.max_norm)
         else:
             # no clip — compute norm manually for diagnostic
             sq_sum = 0.0
-            for p in self.model.parameters():
+            for p in parameters_for_clip:
                 if p.grad is not None:
                     sq_sum += float(p.grad.detach().pow(2).sum().item())
             grad_norm = sq_sum**0.5
@@ -1230,7 +1220,6 @@ class OnlineTrainer(Trainer):
         # is balanced.
         if not _all_ranks_have_work(bool(batch.batches), self.device):
             return
-        autocast_ctx = _get_autocast(cfg, self.device, model=self.model)
         uses_evaluator = bool(getattr(self.algorithm, "uses_evaluator", True))
         algorithm_adapter = AlgorithmAdapter()
         defer = uses_evaluator and bool(
@@ -1262,18 +1251,16 @@ class OnlineTrainer(Trainer):
                 loss_weight=sample_chunk.loss_weight,
                 total_groups=total_groups,
                 is_dummy=sample_chunk.is_dummy,
-                autocast_ctx=autocast_ctx,
                 agg=agg,
             )
             for j in train_indices:
-                with autocast_ctx:
-                    loss, metrics = self._compute_replay_loss(
-                        chunk_batch,
-                        chunk_adv,
-                        j,
-                        algorithm_adapter=algorithm_adapter,
-                    )
-                    loss = loss * sample_chunk.loss_weight / loss_scale
+                loss, metrics = self._compute_replay_loss(
+                    chunk_batch,
+                    chunk_adv,
+                    j,
+                    algorithm_adapter=algorithm_adapter,
+                )
+                loss = loss * sample_chunk.loss_weight / loss_scale
                 self._backward(loss)
                 if not sample_chunk.is_dummy:
                     agg.add(
@@ -1372,7 +1359,6 @@ class OnlineTrainer(Trainer):
 
         # 3. Train loop — gradient accumulation across per-prompt batches.
         self.model.train()
-        autocast_ctx = _get_autocast(cfg, self.device, model=self.model)
         agg_metrics = _ReplayMetrics()
         uses_evaluator = bool(getattr(self.algorithm, "uses_evaluator", True))
         algorithm_adapter = AlgorithmAdapter()
@@ -1437,7 +1423,12 @@ class OnlineTrainer(Trainer):
         # (using first filtered batch so memory footprint is bounded).
         first_step_debug_record: dict[str, Any] | None = None
         precision_metadata = _merge_rollout_precision_context(
-            _trainer_precision_metadata(cfg, self.device, self.model, self.evaluator),
+            _trainer_precision_metadata(
+                cfg,
+                self.model,
+                self.evaluator,
+                self.forward_precision,
+            ),
             filtered_batches[0].context,
         )
         first_debug_chunk = _training_sample_chunks(
@@ -1451,13 +1442,17 @@ class OnlineTrainer(Trainer):
                 self.device,
                 defer_replay_tensors=defer_replay_tensor_move,
             )
-            with torch.no_grad(), autocast_ctx, record_function("trainer.replay"):
+            with (
+                torch.no_grad(),
+                record_function("trainer.replay"),
+            ):
                 _dbg_signals = self.evaluator.evaluate(
                     self.model,
                     _dbg_batch,
                     0,
                     ref_model=self.ref_model,
                     signal_request=SignalRequest(need_ref=False, need_kl_intermediates=False),
+                    forward_precision=self.forward_precision,
                 )
             if not isinstance(_dbg_signals, TrajectorySignalBatch):
                 raise TypeError(
@@ -1504,8 +1499,6 @@ class OnlineTrainer(Trainer):
                 "trainer_step": int(self.state.step),
                 "global_step": int(self.state.global_step),
                 "device": str(self.device),
-                "mixed_precision": _resolve_mixed_precision(cfg),
-                "autocast_enabled": precision_metadata["trainer_autocast_enabled"],
                 "precision_policy": precision_metadata,
                 "old_log_prob": tensor_stats(_old_lp_0),
                 "fresh_log_prob": tensor_stats(_dbg_log_prob),
@@ -1550,12 +1543,16 @@ class OnlineTrainer(Trainer):
                     defer_replay_tensors=defer_replay_tensor_move,
                 )
                 _dbg_adv = first_debug_chunk.advantages.to(self.device)
-                with torch.no_grad(), autocast_ctx, record_function("trainer.replay"):
+                with (
+                    torch.no_grad(),
+                    record_function("trainer.replay"),
+                ):
                     _invariant = _invariant_check(
                         model=self.model,
                         batch=_dbg_batch,
                         advantages=_dbg_adv,
                         timestep_index=0,
+                        forward_precision=self.forward_precision,
                     )
                 logger.info(
                     "DEBUG first-step %s: abs_diff=%.3e (threshold %.1e)",
@@ -1577,7 +1574,6 @@ class OnlineTrainer(Trainer):
                     "trainer_step": int(self.state.step),
                     "global_step": int(self.state.global_step),
                     "device": str(self.device),
-                    "mixed_precision": _resolve_mixed_precision(cfg),
                     "precision_policy": precision_metadata,
                     "rollout_context": {
                         key: value
@@ -1597,7 +1593,10 @@ class OnlineTrainer(Trainer):
             )
 
             def _guard_evaluate(timestep_idx: int) -> TrajectorySignalBatch:
-                with torch.no_grad(), autocast_ctx, record_function("trainer.replay"):
+                with (
+                    torch.no_grad(),
+                    record_function("trainer.replay"),
+                ):
                     _sig = self.evaluator.evaluate(
                         self.model,
                         _guard_batch,
@@ -1607,6 +1606,7 @@ class OnlineTrainer(Trainer):
                             need_ref=False,
                             need_kl_intermediates=False,
                         ),
+                        forward_precision=self.forward_precision,
                     )
                 if not isinstance(_sig, TrajectorySignalBatch):
                     raise TypeError(
@@ -1617,8 +1617,12 @@ class OnlineTrainer(Trainer):
 
             _guard_record = measure_precision_drift(
                 cfg.precision_drift_guard,
-                train_precision=_resolve_mixed_precision(cfg),
-                rollout_precision=cfg.rollout_precision or _resolve_mixed_precision(cfg),
+                training_precision=precision_metadata["training_precision"],
+                rollout_precision=precision_metadata["rollout_precision"],
+                training_forward_precision=self.forward_precision,
+                rollout_forward_precision=ResolvedForwardPrecision(
+                    **precision_metadata["rollout_forward_precision"],
+                ),
                 math_precision=_precision_label(
                     getattr(self.evaluator, "math_dtype", None) or torch.float32,
                 ),
@@ -1684,11 +1688,10 @@ class OnlineTrainer(Trainer):
                         loss_weight=sample_chunk.loss_weight,
                         total_groups=len(chunk_batches),
                         is_dummy=sample_chunk.is_dummy,
-                        autocast_ctx=autocast_ctx,
                         agg=agg_metrics,
                     )
                     for j in train_indices:
-                        with timer.time("evaluate"), autocast_ctx:
+                        with timer.time("evaluate"):
                             loss, metrics = self._compute_replay_loss(
                                 chunk_batch,
                                 chunk_adv,
@@ -1833,7 +1836,6 @@ class OnlineTrainer(Trainer):
         loss_weight: float,
         total_groups: int,
         is_dummy: bool,
-        autocast_ctx: Any,
         agg: _ReplayMetrics,
     ) -> None:
         """Backpropagate one correctly normalized, rank-balanced SFT term.
@@ -1852,7 +1854,7 @@ class OnlineTrainer(Trainer):
 
         from vrl.utils.profiling import record_function
 
-        with autocast_ctx, record_function("trainer.sft_regularizer"):
+        with record_function("trainer.sft_regularizer"):
             sft_term = self._sft_regularizer_loss(chunk_batch)
             scaled_term = sft_term * float(loss_weight) / int(total_groups)
         self._backward(scaled_term)
@@ -1993,7 +1995,8 @@ class OnlineTrainer(Trainer):
 
         noise = torch.randn_like(x0)
         noisy, target = diffusion_pretraining_pair(scheduler, x0, noise, t)
-        values = self.model.replay_forward_with_latents(chunk_batch, step_idx, noisy)
+        with forward_autocast(self.forward_precision, self.device):
+            values = self.model.replay_forward_with_latents(chunk_batch, step_idx, noisy)
         model_pred = values["noise_pred"]
         return self._sft_weight * F.mse_loss(model_pred.float(), target.float())
 
@@ -2032,13 +2035,44 @@ class OnlineTrainer(Trainer):
         self.state.total_reward = float(state.get("total_reward", 0.0))
         self.state.total_loss = float(state.get("total_loss", 0.0))
 
+        nonzero_checkpoint = max(self.state.step, self.state.global_step) > 0
+        if (
+            nonzero_checkpoint
+            and _requires_fp32_master_weights(self.model)
+            and "optimizer" not in state
+        ):
+            message = (
+                "nonzero low-precision checkpoint is missing optimizer state; "
+                "FP32 master residuals cannot be reconstructed from rounded model weights"
+            )
+            if strict:
+                raise ValueError(message)
+            logger.warning("%s; initializing fresh masters from model weights", message)
+
         if "optimizer" in state:
             optimizer = self._ensure_optimizer()
+            optimizer_state = state["optimizer"]
+            checkpoint_uses_fp32_master = isinstance(optimizer_state, Mapping) and (
+                "fp32_master_weights" in optimizer_state
+            )
+            trainer_uses_fp32_master = isinstance(
+                optimizer,
+                FP32MasterWeightOptimizer,
+            )
+            if checkpoint_uses_fp32_master != trainer_uses_fp32_master:
+                message = (
+                    "checkpoint FP32 master-weight state does not match the current "
+                    f"optimizer policy (checkpoint={checkpoint_uses_fp32_master}, "
+                    f"current={trainer_uses_fp32_master})"
+                )
+                if strict:
+                    raise ValueError(message)
+                logger.warning("%s; loading only compatible optimizer state", message)
             try:
                 self._strategy.load_optimizer_state(
                     self.model,
                     optimizer,
-                    state["optimizer"],
+                    optimizer_state,
                 )
             except Exception:
                 if strict:
@@ -2059,6 +2093,16 @@ class OnlineTrainer(Trainer):
                     if strict:
                         raise
                     logger.warning("Skipping incompatible GradScaler state during non-strict load")
+        elif self._grad_scaler is not None and nonzero_checkpoint:
+            if strict:
+                raise ValueError(
+                    "nonzero fp16 checkpoint is missing GradScaler state; strict resume "
+                    "cannot reconstruct its loss-scale history",
+                )
+            logger.warning(
+                "Resuming a nonzero fp16 checkpoint without GradScaler state; "
+                "using a fresh dynamic loss scale",
+            )
 
         if "ema" in state:
             if not self.config.ema.enable:

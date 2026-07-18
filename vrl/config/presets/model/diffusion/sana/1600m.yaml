@@ -24,3 +24,17 @@ model:
     # numerics; flip after the first trustworthy curve.
     enable: false
     mode: default
+
+# The published transformer checkpoint requires native FP16 parameters without
+# outer autocast. The family capability rejects BF16 and FP32 denoiser roles;
+# Gemma remains a separate frozen BF16 protocol boundary.
+precision:
+  # SanaLinearAttnProcessor2_0 promotes Q/K/V to FP32 before matmul. Its
+  # checkpoint-validated path requires IEEE FP32 kernels in every process.
+  float32_precision: ieee
+  training:
+    dtype: fp16
+  rollout:
+    dtype: fp16
+    prompt_encoders:
+      dtype: bf16

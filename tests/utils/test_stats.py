@@ -81,6 +81,13 @@ def test_as_phase_dict_surfaces_reward_as_seconds() -> None:
     assert d["reward.inference_s"] == 2.0
 
 
+def test_add_phases_accumulates_mapping() -> None:
+    s = RolloutStats()
+    s.add_phases({"a": 1.0, "b": 2.0})
+    assert s.phase_seconds == {"a": 1.0, "b": 2.0}
+    assert RolloutStats().phase_seconds == {}
+
+
 def test_logging_sink_excludes_collect_from_percent_base(caplog) -> None:
     s = RolloutStats()
     s.add_phase("denoise", 3.0)

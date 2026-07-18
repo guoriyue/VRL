@@ -11,6 +11,7 @@ from vrl.generation.diffusion.executor import (
     DiffusionDenoiseConfig,
 )
 from vrl.generation.diffusion.layout import DiffusionSDEParams
+from vrl.models.interfaces.runtime import ResolvedForwardPrecision
 
 
 def test_native_denoise_mode_uses_scheduler_step() -> None:
@@ -53,6 +54,10 @@ def test_native_denoise_mode_uses_scheduler_step() -> None:
 class _Executor(DiffusionChunkExecutorBase):
     family = "fake"
     task = "t2i"
+    forward_precision = ResolvedForwardPrecision(
+        autocast="off",
+        float32_precision="ieee",
+    )
 
     def __init__(self, model: object) -> None:
         self.model = model

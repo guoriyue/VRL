@@ -142,33 +142,109 @@ def test_sana_aesthetic_keeps_cpu_observation_only_pickscore() -> None:
     assert pickscore.runtime._worker_config["device"] == "cpu"
 
 
-def test_sana_family_pins_fp16_parameters_under_bf16_forward() -> None:
-    """SANA owns its parameter invariant without exposing a model dtype knob."""
+def test_sana_family_defaults_to_native_fp16() -> None:
+    """The public role precision matches the checkpoint's runtime invariant."""
     cfg = load_config("experiment/diffusion/sana/online_grpo_aesthetic")
     built = build_configs(cfg)
     entry = get_model_family_entry("sana")
     build = entry.resolve_model_build(cfg, torch.device("cpu"))
 
     assert isinstance(entry.family_build, DiffusionFamilyBuild)
-    assert entry.family_build.base_parameter_dtype == "fp16"
+    assert entry.family_build.supported_parameter_dtypes == ("fp16",)
+    assert entry.family_build.forward_precision.autocast == "off"
+    assert entry.family_build.forward_precision.float32_precision == "ieee"
     assert cfg.model.get("dtype") is None
-    # Structural invariants, not preset literals: rollout must follow the
-    # train forward precision (no split), and the replay chunk must mirror the
-    # rollout chunk (SANA's batch-shape-sensitive kernels need symmetric
-    # shapes for log-prob parity). The pinned-parameter-vs-forward split
-    # itself is asserted on parameter_dtype / autocast_dtype below.
+    # Structural invariants, not preset literals: training and rollout both
+    # declare the checkpoint's native FP16 role, while Gemma stays independently
+    # BF16. SanaModel turns the FP16 role into a no-autocast runtime boundary.
     assert built["trainer"].train_precision == built["trainer"].rollout_precision
     assert built["trainer"].replay_samples_per_chunk == built["trainer"].samples_per_chunk
     assert build.parameter_dtype is torch.float16
+    assert build.forward_precision.autocast == "off"
+    assert build.forward_precision.float32_precision == "ieee"
     assert build.rollout is not None
-    assert build.rollout.autocast_dtype is torch.bfloat16
+    assert build.rollout.prompt_encoder_dtype is torch.bfloat16
+
+
+@pytest.mark.parametrize("role", ["training", "rollout"])
+@pytest.mark.parametrize("dtype", ["bf16", "fp32"])
+def test_sana_family_rejects_non_native_role_precision(role: str, dtype: str) -> None:
+    """Invalid transformer dtypes fail before checkpoint loading for either role."""
+    cfg = load_config("experiment/diffusion/sana/online_grpo_aesthetic")
+    cfg.precision[role].dtype = dtype
+
+    with pytest.raises(ValueError, match=r"sana.*supports base parameter dtypes.*fp16"):
+        get_model_family_entry("sana").resolve_model_build(
+            cfg,
+            torch.device("cpu"),
+            for_rollout=role == "rollout",
+        )
+
+
+def test_sana_fullparam_pilot_disables_tf32_and_gates_backend_drift() -> None:
+    """The strict first update must not consume clipping on backend mismatch."""
+    cfg = load_config("experiment/diffusion/sana/online_grpo_aesthetic_fullparam")
+    trainer = build_configs(cfg)["trainer"]
+
+    assert cfg.model.use_lora is False
+    assert cfg.precision.float32_precision == "ieee"
+    assert cfg.model.lora is None
+    assert cfg.algorithm.kl_coef == 0.0
+    assert trainer.optim.optim_8bit is True
+    assert trainer.ema.enable is False
+    assert trainer.ppo_epochs == 1
+    assert trainer.gradient_accumulation_steps == 1
+    assert trainer.prompts_per_batch == 1
+    assert trainer.n_samples_per_prompt == 8
+    assert trainer.samples_per_chunk == 1
+    assert trainer.replay_samples_per_chunk == 1
+    assert trainer.total_epochs == 5
+    assert trainer.save_freq == 1
+    assert trainer.debug.first_step is True
+    assert trainer.debug.max_abs_logprob_diff == pytest.approx(1.0e-6)
+    assert trainer.precision_drift_guard.mode == "fail"
+    assert trainer.precision_drift_guard.max_abs_log_ratio == pytest.approx(1.0e-6)
+    assert trainer.precision_drift_guard.max_ratio_abs_dev == pytest.approx(1.0e-6)
+
+
+def test_sana_fullparam_long_is_fresh_and_pins_reward_revisions() -> None:
+    """The canonical curve starts from base with immutable scorer identities."""
+    cfg = load_config("experiment/diffusion/sana/online_grpo_aesthetic_fullparam_long")
+    cfg.distributed.resources.visible_devices = [0]
+    built = build_configs(cfg)
+    trainer = built["trainer"]
+
+    assert trainer.resume_from == ""
+    assert trainer.total_epochs == 300
+    assert trainer.save_freq == 5
+    assert trainer.output_dir == "outputs/sana_aesthetic_fullparam_long"
+    assert cfg.model.use_lora is False
+    assert cfg.reward.kwargs.aesthetic.model_revision == (
+        "32bd64288804d66eefd0ccbe215aa642df71cc41"
+    )
+    assert cfg.reward.kwargs.pickscore.processor_revision == (
+        "1c2b8495b28150b8a4922ee1c8edee224c284c0c"
+    )
+    assert cfg.reward.kwargs.pickscore.model_revision == (
+        "a4e4367c6dfa7288a00c550414478f865b875800"
+    )
+    reward = build_reward(
+        built=built,
+        resources=resolve_distributed_resources(cfg),
+        device="cuda:0",
+    )
+    aesthetic_config = reward.rewards[0][2].runtime._worker_config
+    pickscore_config = reward.rewards[1][2].runtime._worker_config
+    assert aesthetic_config["model_revision"] == ("32bd64288804d66eefd0ccbe215aa642df71cc41")
+    assert pickscore_config["device"] == "cpu"
+    assert pickscore_config["processor_revision"] == ("1c2b8495b28150b8a4922ee1c8edee224c284c0c")
+    assert pickscore_config["model_revision"] == ("a4e4367c6dfa7288a00c550414478f865b875800")
 
 
 @pytest.mark.parametrize(
     "experiment",
     [
         "experiment/diffusion/sana/online_grpo_aesthetic",
-        "experiment/diffusion/sana/online_grpo_aesthetic_long",
         "experiment/diffusion/sana/online_grpo_pickscore_validation",
     ],
 )
@@ -208,20 +284,22 @@ def test_ordinary_diffusion_family_rejects_duplicate_model_dtype() -> None:
         )
 
 
-def test_sana_family_invariant_rejects_direct_tool_parameter_override() -> None:
+@pytest.mark.parametrize("dtype", ["bf16", "fp32"])
+def test_sana_family_capability_rejects_non_native_direct_tool_override(dtype: str) -> None:
     cfg = load_config("experiment/diffusion/sana/online_grpo_aesthetic")
 
-    with pytest.raises(ValueError, match=r"parameter_dtype_override.*conflicts"):
+    with pytest.raises(ValueError, match=r"sana.*supports base parameter dtypes.*fp16"):
         get_model_family_entry("sana").resolve_model_build(
             cfg,
             torch.device("cpu"),
-            parameter_dtype_override="bf16",
+            parameter_dtype_override=dtype,
         )
 
 
 def test_token_objective_rejects_unused_math_precision_override() -> None:
     cfg = load_config("experiment/ar/emu3/online_grpo_pickscore_validation")
     cfg.precision = {
+        "float32_precision": "tf32",
         "training": {"dtype": "bf16"},
         "rollout": {"dtype": "bf16"},
         "diffusion_math": {"dtype": "bf16"},

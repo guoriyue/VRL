@@ -86,8 +86,20 @@ class TorchRewardModel:
             self._load()
             self._loaded = True
 
-    def __call__(self, *, artifact: Any, request: Any) -> Mapping[str, float]:
+    def prepare_for_inference(self) -> None:
+        """Materialize lazy model state before the first score.
+
+        The in-process runtime calls this public lifecycle hook while building a
+        shared-GPU CuMem pool. Without it, a lightweight reward wrapper can be
+        constructed in the pool while its real CUDA weights are first allocated
+        later by ``__call__`` on the default allocator, making parking incomplete.
+        Dedicated-device runtimes keep their normal lazy first-score behavior.
+        """
+
         self._ensure_loaded()
+
+    def __call__(self, *, artifact: Any, request: Any) -> Mapping[str, float]:
+        self.prepare_for_inference()
         return self.score_media(
             media=artifact.as_media(),
             prompt=artifact.prompt,

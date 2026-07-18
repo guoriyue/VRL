@@ -5,7 +5,12 @@ from __future__ import annotations
 import pytest
 
 from tests.trainers.online._collector_control import CollectorControlFake
-from tests.trainers.online._helpers import _algorithm_inputs, _trajectory_signals
+from tests.trainers.online._helpers import (
+    DEFAULT_FORWARD_PRECISION,
+    _algorithm_inputs,
+    _rollout_context,
+    _trajectory_signals,
+)
 from vrl.rollouts.evaluators.base import Evaluator
 
 
@@ -99,6 +104,7 @@ class TestAdvantageAndMetrics:
                         },
                     },
                     prompts=list(prompts) * group_size,
+                    context=_rollout_context(),
                 )
 
         class _Evaluator(Evaluator):
@@ -112,7 +118,10 @@ class TestAdvantageAndMetrics:
                 timestep_idx,
                 ref_model=None,
                 signal_request=None,
+                *,
+                forward_precision,
             ):
+                assert forward_precision is DEFAULT_FORWARD_PRECISION
                 batch_size = batch.rewards.shape[0]
                 self.calls += 1
                 old = torch.full(
@@ -146,6 +155,7 @@ class TestAdvantageAndMetrics:
                 n_samples_per_prompt=2,
             ),
             device="cpu",
+            forward_precision=DEFAULT_FORWARD_PRECISION,
         )
         return trainer
 
@@ -352,6 +362,7 @@ class TestAdvantageAndMetrics:
                     dones=torch.ones(batch_size, dtype=torch.bool),
                     group_ids=torch.zeros(batch_size, dtype=torch.long),
                     prompts=prompts * group_size,
+                    context=_rollout_context(),
                     trajectory=trajectory,
                     training_view=build_training_view(trajectory),
                 )
@@ -380,6 +391,7 @@ class TestAdvantageAndMetrics:
                 drop_zero_advantage=True,
             ),
             device="cpu",
+            forward_precision=DEFAULT_FORWARD_PRECISION,
         )
 
         metrics = asyncio.run(trainer.step(["prompt-a"]))

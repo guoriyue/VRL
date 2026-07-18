@@ -16,7 +16,6 @@ from vrl.nn.quantization.fp4 import Fp4Linear, nvfp4_available, swap_linears_to_
 from vrl.nn.quantization.fp8 import (
     Fp8Linear,
     swap_linears_to_fp8,
-    vllm_block_fp8_available,
 )
 from vrl.nn.quantization.targeting import DEFAULT_EXCLUDE, LM_EXCLUDE, LinearTargetProfile
 
@@ -31,5 +30,4 @@ __all__ = [
     "nvfp4_available",
     "swap_linears_to_fp8",
     "swap_linears_to_nvfp4",
-    "vllm_block_fp8_available",
 ]

@@ -95,7 +95,7 @@ def evaluate(
     min_aesthetic_gain: float = 0.10,
     min_gain_z: float = 2.0,
     max_pickscore_relative_drop: float = 0.02,
-    max_pre_update_logprob_abs_diff: float = 0.01,
+    max_pre_update_logprob_abs_diff: float = 1.0e-6,
     qualitative_audit: str = "pending",
 ) -> dict[str, Any]:
     failures: list[str] = []
@@ -125,6 +125,8 @@ def evaluate(
         "trained_prompt_num",
         "active_clip_fraction",
         "pre_update_logprob_abs_diff_max",
+        "pre_update_clip_fraction",
+        "pre_update_active_clip_fraction",
     }
     for label, rows, keys in (
         ("eval", eval_rows, required_eval),
@@ -194,17 +196,19 @@ def evaluate(
         early_std = statistics.median(row["reward_std"] for row in train_rows[:window])
         late_std = statistics.median(row["reward_std"] for row in train_rows[-window:])
         max_parity_error = max(row["pre_update_logprob_abs_diff_max"] for row in train_rows)
-        active_clip_updates = (
-            statistics.fmean(float(row["active_clip_fraction"] > 0) for row in train_rows[5:])
-            if len(train_rows) > 5
-            else 0.0
+        max_pre_update_clip = max(row["pre_update_clip_fraction"] for row in train_rows)
+        max_pre_update_active_clip = max(
+            row["pre_update_active_clip_fraction"] for row in train_rows
         )
+        max_policy_active_clip = max(row["active_clip_fraction"] for row in train_rows)
         diagnostics.update(
             {
                 "early_reward_std_median": early_std,
                 "late_reward_std_median": late_std,
                 "max_pre_update_logprob_abs_diff": max_parity_error,
-                "updates_with_active_policy_clip": active_clip_updates,
+                "max_pre_update_clip_fraction": max_pre_update_clip,
+                "max_pre_update_active_clip_fraction": max_pre_update_active_clip,
+                "max_active_policy_clip_fraction": max_policy_active_clip,
             }
         )
         if late_std <= 1e-4 or late_std < 0.25 * early_std:
@@ -214,13 +218,18 @@ def evaluate(
                 "pre-update logprob parity error "
                 f"{max_parity_error:.6f} > {max_pre_update_logprob_abs_diff:.6f}",
             )
+        if max_pre_update_clip != 0 or max_pre_update_active_clip != 0:
+            failures.append("pre-update policy ratio or active clip is non-zero")
         if not any(row["grad_norm"] > 0 for row in train_rows):
             failures.append("all gradient norms are zero")
         if any(row["trained_prompt_num"] <= 0 for row in train_rows):
             failures.append("an update trained zero prompts")
-        if active_clip_updates < 0.25:
+        # This full-parameter protocol has one PPO pass. It replays the rollout
+        # policy before the sole optimizer update, so surrogate clipping would
+        # indicate backend drift rather than healthy later-pass policy movement.
+        if max_policy_active_clip != 0:
             failures.append(
-                "policy surrogate clip engaged in fewer than 25% of post-warmup updates",
+                "single-pass full-parameter policy unexpectedly engaged surrogate clipping",
             )
 
     if qualitative_audit not in {"pass", "fail"}:
@@ -240,6 +249,7 @@ def evaluate(
             "min_gain_z": min_gain_z,
             "max_pickscore_relative_drop": max_pickscore_relative_drop,
             "max_pre_update_logprob_abs_diff": max_pre_update_logprob_abs_diff,
+            "expected_active_clip_fraction": 0.0,
         },
     }
 

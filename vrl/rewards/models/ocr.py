@@ -161,12 +161,6 @@ class OCRRewardModel:
             pass
 
 
-def ocr_reward_model(worker_config: Mapping[str, Any]) -> OCRRewardModel:
-    """RewardModel factory for the reward registry / InProcessRewardRuntime."""
-
-    return OCRRewardModel(worker_config)
-
-
 def _build_paddle_ocr() -> Any:
     """Build PaddleOCR across both legacy 2.x and current 3.x constructor APIs."""
 
@@ -241,4 +235,4 @@ def _join_ocr_texts(texts: Any, scores: Any) -> str:
     )
 
 
-__all__ = ["OCRRewardModel", "ocr_reward_model"]
+__all__ = ["OCRRewardModel"]

@@ -13,8 +13,9 @@ defaults:
   # scorer detects aesthetic reward hacking without changing the objective.
   - /reward/pickscore
 
-# The SANA family build pins base transformer parameters to fp16. Use bf16 forward
-# autocast so stochastic SDE activations keep enough exponent range to avoid fp16 NaNs.
+# This recipe keeps the model preset's official FP16 transformer path without
+# outer autocast. The family rejects BF16 and FP32 denoiser builds; Gemma remains
+# BF16 and stochastic scheduler/log-probability math remains protected FP32.
 
 sampling:
   max_sequence_length: 300
@@ -22,9 +23,7 @@ sampling:
 actor:
   optim:
     lr: 3.0e-4
-  # Match the measured rollout chunk. SANA's bf16 kernels are batch-shape
-  # sensitive: rollout=8/replay=1 produced 0.014 pre-update log-prob drift,
-  # while 8/8 was bit-exact and fit the 32GB card with backward enabled.
+  # Match the rollout batch shape so batched CFG is identical on replay.
   replay_samples_per_chunk: 8
   gradient_checkpointing: true
   # One inner step leaves ratio-based learning nearly inert; four is the

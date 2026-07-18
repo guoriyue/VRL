@@ -23,8 +23,9 @@ import torch
 import torch.nn as nn
 
 from vrl.algorithms.dpo import diffusion_dpo_loss, diffusion_sft_loss
+from vrl.models.forward_precision import apply_float32_precision, forward_autocast
+from vrl.models.interfaces import ResolvedForwardPrecision
 from vrl.trainers.data.preferences import PreferenceBatch
-from vrl.trainers.precision import normalize_mixed_precision
 
 logger = logging.getLogger(__name__)
 
@@ -45,7 +46,6 @@ class OfflineDPOTrainerConfig:
     adam_beta2: float = field(default=0.999)
     adam_weight_decay: float = field(default=1e-2)
     adam_epsilon: float = field(default=1e-8)
-    allow_tf32: bool = field(default=True)
     use_adafactor: bool = field(default=False)
     max_grad_norm: float = field(default=1.0)
     gradient_accumulation_steps: int = field(default=1)
@@ -57,9 +57,6 @@ class OfflineDPOTrainerConfig:
     timestep_subset: tuple[int, int] | None = field(
         default=None
     )  # restrict sampling, e.g. (0, 200)
-
-    # --- mixed precision ---
-    mixed_precision: str = field(default="bf16")  # "fp16" | "bf16" | "no"
 
 
 @dataclass(slots=True)
@@ -74,17 +71,6 @@ class DPOStepMetrics:
     implicit_acc: float = 0.0
     sft_loss: float = 0.0
     grad_norm: float = 0.0
-
-
-def _autocast(precision: str, device: torch.device) -> Any:
-    import contextlib
-
-    precision = normalize_mixed_precision(precision)
-    if precision == "fp16":
-        return torch.amp.autocast(str(device), dtype=torch.float16)
-    if precision == "bf16":
-        return torch.amp.autocast(str(device), dtype=torch.bfloat16)
-    return contextlib.nullcontext()
 
 
 def _build_optimizer(
@@ -145,23 +131,6 @@ def wan_forward(
     return out
 
 
-def sd_unet_forward(
-    model: nn.Module,
-    noisy_latents: torch.Tensor,
-    timesteps: torch.Tensor,
-    encoder_hidden_states: torch.Tensor,
-    extra: dict[str, Any] | None = None,
-) -> torch.Tensor:
-    """SD 1.5 UNet forward."""
-    return model(
-        sample=noisy_latents,
-        timestep=timesteps,
-        encoder_hidden_states=encoder_hidden_states,
-        added_cond_kwargs=(extra or {}).get("added_cond_kwargs"),
-        return_dict=False,
-    )[0]
-
-
 # ---------------------------------------------------------------------------
 # OfflineDPOTrainer
 # ---------------------------------------------------------------------------
@@ -184,7 +153,7 @@ class OfflineDPOTrainer:
         ``encoder_hidden_states`` tensor shaped ``[2B, ..., D]``
         (winner-then-loser convention).
       * Provide ``forward_fn`` — model-family-specific forward
-        (``wan_forward`` / ``sd_unet_forward`` provided here).
+        (``wan_forward`` provided here).
       * Provide ``noise_scheduler`` for sampling timesteps + injecting
         noise. Flow-matching schedulers use ``scale_noise``; epsilon
         schedulers use ``add_noise``.
@@ -198,6 +167,7 @@ class OfflineDPOTrainer:
         noise_scheduler: Any,
         encode_pixels: Callable[[torch.Tensor], torch.Tensor],
         encode_text: Callable[[list[str]], torch.Tensor],
+        forward_precision: ResolvedForwardPrecision,
         config: OfflineDPOTrainerConfig | None = None,
         device: torch.device | str = "cuda",
     ) -> None:
@@ -207,10 +177,12 @@ class OfflineDPOTrainer:
         self.noise_scheduler = noise_scheduler
         self.encode_pixels = encode_pixels
         self.encode_text = encode_text
+        if not isinstance(forward_precision, ResolvedForwardPrecision):
+            raise TypeError("OfflineDPOTrainer requires ResolvedForwardPrecision")
+        self.forward_precision = forward_precision
         self.config = config or OfflineDPOTrainerConfig()
         self.device = torch.device(device) if isinstance(device, str) else device
-        torch.backends.cuda.matmul.allow_tf32 = bool(self.config.allow_tf32)
-        torch.backends.cudnn.allow_tf32 = bool(self.config.allow_tf32)
+        apply_float32_precision(self.forward_precision.float32_precision)
         self.global_step = 0
         self._gradient_accumulation_micro_step = 0
 
@@ -325,37 +297,38 @@ class OfflineDPOTrainer:
         noisy_latents, target = self._inject_noise(latents, noise, timesteps)
 
         # 5. Forward — policy + frozen reference
-        with _autocast(cfg.mixed_precision, self.device):
+        with forward_autocast(self.forward_precision, self.device):
             model_pred = self.forward_fn(
                 self.model,
                 noisy_latents,
                 timesteps,
                 encoder_hidden_states,
             )
-            with torch.no_grad():
-                ref_pred = self._reference_forward(
-                    noisy_latents,
-                    timesteps,
-                    encoder_hidden_states,
-                ).detach()
+        with torch.no_grad(), forward_autocast(self.forward_precision, self.device):
+            ref_pred = self._reference_forward(
+                noisy_latents,
+                timesteps,
+                encoder_hidden_states,
+            ).detach()
 
-            stats = diffusion_dpo_loss(
-                model_pred=model_pred.float(),
-                ref_pred=ref_pred.float(),
-                target=target.float(),
-                beta=cfg.beta,
+        # DPO/SFT reductions are protected FP32 math, not transformer forward.
+        stats = diffusion_dpo_loss(
+            model_pred=model_pred.float(),
+            ref_pred=ref_pred.float(),
+            target=target.float(),
+            beta=cfg.beta,
+        )
+        loss = stats["loss"]
+
+        sft_loss_val = torch.tensor(0.0, device=self.device)
+        if cfg.sft_weight > 0:
+            # Compute MSE on winner only
+            bsz = model_pred.shape[0] // 2
+            sft_loss_val = diffusion_sft_loss(
+                model_pred[:bsz].float(),
+                target[:bsz].float(),
             )
-            loss = stats["loss"]
-
-            sft_loss_val = torch.tensor(0.0, device=self.device)
-            if cfg.sft_weight > 0:
-                # Compute MSE on winner only
-                bsz = model_pred.shape[0] // 2
-                sft_loss_val = diffusion_sft_loss(
-                    model_pred[:bsz].float(),
-                    target[:bsz].float(),
-                )
-                loss = loss + cfg.sft_weight * sft_loss_val
+            loss = loss + cfg.sft_weight * sft_loss_val
 
         # 6. Backward + step (with optional accumulation)
         loss_scaled = loss / max(1, cfg.gradient_accumulation_steps)

@@ -925,8 +925,12 @@ def test_diffusion_dpo_accepts_its_resume_and_optimizer_surface() -> None:
     cfg = OmegaConf.create(
         {
             "algorithm": {"kind": "diffusion_dpo"},
+            "precision": {
+                "float32_precision": "ieee",
+                "training": {"dtype": "bf16"},
+            },
             "actor": {
-                "optim": {"lr": 1e-8, "allow_tf32": False},
+                "optim": {"lr": 1e-8},
                 "gradient_accumulation_steps": 1,
                 "gradient_checkpointing": False,
                 "max_norm": 1.0,

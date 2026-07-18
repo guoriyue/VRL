@@ -6,32 +6,28 @@ from types import SimpleNamespace
 
 import torch
 
-from vrl.scripts.perf.common.diffusion_runtime import build_model
+from vrl.scripts.perf.common.diffusion_runtime import build_runtime
 
 
-def test_build_model_passes_dtype_as_named_parameter_override(monkeypatch) -> None:
-    """The probe override must not depend on the resolver's argument order."""
+def test_build_runtime_uses_the_resolved_rollout_contract(monkeypatch) -> None:
     import vrl.families.registry as families
 
     cfg = SimpleNamespace(model=SimpleNamespace(family="sd3_5", use_lora=False))
     device = torch.device("cpu")
-    dtype = torch.bfloat16
     resolved_build = SimpleNamespace(family="sd3_5")
-    model = object()
+    runtime = object()
     calls: dict[str, object] = {}
 
     def resolve_build(
         actual_cfg,
         actual_device,
-        *,
-        parameter_dtype_override,
     ):
-        calls["resolver"] = (actual_cfg, actual_device, parameter_dtype_override)
+        calls["resolver"] = (actual_cfg, actual_device)
         return resolved_build
 
     def build_bundle(actual_build):
         calls["builder"] = actual_build
-        return SimpleNamespace(model=model)
+        return runtime
 
     entry = SimpleNamespace(
         family="sd3_5",
@@ -40,9 +36,9 @@ def test_build_model_passes_dtype_as_named_parameter_override(monkeypatch) -> No
     )
     monkeypatch.setattr(families, "get_model_family_entry", lambda _family: entry)
 
-    assert build_model(cfg, device, dtype) is model
+    assert build_runtime(cfg, device) is runtime
     assert calls == {
-        "resolver": (cfg, device, dtype),
+        "resolver": (cfg, device),
         "builder": resolved_build,
     }
     assert cfg.model.use_lora is True

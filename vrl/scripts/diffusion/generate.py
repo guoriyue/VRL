@@ -14,6 +14,7 @@ trainer):
 
     python -m vrl.scripts.diffusion.generate --family sana \\
         --path Efficient-Large-Model/Sana_1600M_1024px_diffusers \\
+        --dtype fp16 \\
         --prompt "a red fox in the snow" --steps 8 --height 512 --width 512 \\
         --check-replay --out /tmp/sana_probe.png
 """
@@ -38,8 +39,14 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument(
         "--dtype",
-        default="bfloat16",
-        help="outer rollout autocast dtype; family-owned parameter storage still wins",
+        default=None,
+        help="rollout role dtype (default: the sole family-supported dtype, otherwise bf16)",
+    )
+    parser.add_argument(
+        "--float32-precision",
+        choices=["ieee", "tf32"],
+        default=None,
+        help="FP32 matmul mode (default: the family requirement, otherwise tf32)",
     )
     parser.add_argument(
         "--device",
@@ -90,8 +97,18 @@ def _resolve_probe_model_build(args: argparse.Namespace, entry: Any, device: Any
 
     from vrl.models.dtypes import dtype_to_precision_token, resolve_torch_dtype
 
-    autocast_precision = dtype_to_precision_token(resolve_torch_dtype(args.dtype))
-    precision: dict[str, Any] = {"training": {"dtype": autocast_precision}}
+    supported_dtypes = entry.family_build.supported_parameter_dtypes
+    role_dtype = (
+        supported_dtypes[0]
+        if args.dtype is None and supported_dtypes is not None and len(supported_dtypes) == 1
+        else (args.dtype or "bfloat16")
+    )
+    role_precision = dtype_to_precision_token(resolve_torch_dtype(role_dtype))
+    family_float32_precision = entry.family_build.forward_precision.float32_precision
+    precision: dict[str, Any] = {
+        "float32_precision": (args.float32_precision or family_float32_precision or "tf32"),
+        "training": {"dtype": role_precision},
+    }
     if args.quantize is not None:
         precision["rollout"] = {"quantization": {"format": args.quantize}}
     cfg = OmegaConf.create(
@@ -121,6 +138,7 @@ def main() -> None:
     from vrl.families.registry import get_model_family_entry
     from vrl.generation.diffusion.layout import VideoGenerationRequest
     from vrl.math.diffusion.flow_matching import sde_step_with_logprob
+    from vrl.models.forward_precision import apply_float32_precision, forward_autocast
 
     entry = get_model_family_entry(args.family)
     family = entry.family
@@ -138,6 +156,7 @@ def main() -> None:
     print(f"[probe] building {family} bundle from {args.path} ...")
     bundle = entry.build_rollout(build)
     model = bundle.model
+    apply_float32_precision(bundle.forward_precision.float32_precision)
 
     encode_kwargs: dict[str, Any] = {"guidance_scale": args.guidance_scale}
     if args.max_sequence_length is not None:
@@ -175,11 +194,7 @@ def main() -> None:
     first_step: dict[str, Any] = {}
     logprobs = []
     for step_idx in range(args.steps):
-        with torch.amp.autocast(
-            device.type,
-            dtype=model.autocast_dtype,
-            enabled=(device.type == "cuda" and model.autocast_dtype != torch.float32),
-        ):
+        with forward_autocast(bundle.forward_precision, state.latents.device):
             out = model.forward_step(state, step_idx)
         timestep = state.timesteps[step_idx]
         sde = sde_step_with_logprob(
@@ -240,11 +255,7 @@ def main() -> None:
             first_step["latents"],
             0,
         )
-        with torch.amp.autocast(
-            device.type,
-            dtype=model.autocast_dtype,
-            enabled=(device.type == "cuda" and model.autocast_dtype != torch.float32),
-        ):
+        with forward_autocast(bundle.forward_precision, restored.latents.device):
             out = model.forward_step(restored, 0)
         pred_err = (out["noise_pred"].float() - first_step["noise_pred"].float()).abs().max()
         sde = sde_step_with_logprob(

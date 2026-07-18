@@ -15,6 +15,7 @@ from __future__ import annotations
 from vrl.models.diffusion.common.vae_decode_memory import (
     apply_generation_memory_policy,
 )
+from vrl.models.forward_precision import apply_float32_precision
 from vrl.models.interfaces.runtime import (
     ModelBuild,
     RuntimeBundle,
@@ -33,95 +34,19 @@ from vrl.utils.logging import init_logger
 logger = init_logger(__name__)
 
 
-def assemble_replay_bundle(
-    model: object,
-    build: ModelBuild,
-) -> RuntimeBundle:
-    """Shared replay-bundle assembly: training knobs + behavior metadata.
-
-    One construction site for the lora/full-finetune + compile tail — the
-    generic replay builder AND the hand-written-construction families (anima,
-    cosmos3, echo) all finish here, so a knob fix (e.g. the dual-stage
-    apply_full_finetune contract) lands once. Model METHODS, not loader
-    helpers: the family decides which transformer trains/compiles.
-    """
-    build.require_replay()
-    if build.use_lora:
-        model.apply_lora(build)
-    else:
-        model.apply_full_finetune()
-
-    compile_cfg = build.torch_compile or {}
-    if compile_cfg.get("enable"):
-        model.torch_compile_transformer(compile_cfg["mode"])
-
-    return RuntimeBundle(
-        model=model,
-        trainable_modules=model.trainable_modules,
-        scheduler=model.scheduler,
-        raw_handle=None,
-        metadata=minimal_replay_bundle_metadata(),
-    )
-
-
-# -- registry-descriptor path (families with NO builder functions) -----------
-# A family whose build is pure data records a ``DiffusionFamilyBuild`` on its
-# registry entry. The Ray worker receives only the serialized build and looks
-# the descriptor up again by its canonical family. Registry imports stay local
-# to avoid an import cycle.
-
-
-def _check_requires_lora(entry, build: ModelBuild) -> None:
-    """Fail a LoRA-only family loud before paying the transformer load."""
-
-    if entry.family_build.requires_lora and not build.use_lora:
-        raise RuntimeError(
-            f"model family {entry.family!r} is LoRA-only; set model.use_lora=true.",
-        )
-
-
-def _check_base_parameter_dtype(entry, build: ModelBuild) -> None:
-    """Enforce a family-owned parameter dtype on every construction path."""
-
-    expected = entry.family_build.base_parameter_dtype
-    if expected is None:
-        return
-    from vrl.models.dtypes import dtype_to_wire_name
-
-    if dtype_to_wire_name(build.parameter_dtype) != dtype_to_wire_name(expected):
-        raise ValueError(
-            f"diffusion family {entry.family!r} requires base parameter dtype "
-            f"{expected!r}; got {build.parameter_dtype!r}. Resolve ModelBuild through "
-            "the registered family resolver instead of overriding model dtype.",
-        )
-
-
-def build_family_runtime_bundle(
+def build_diffusion_runtime_bundle(
     build: ModelBuild,
     *,
-    entry,
+    model_cls: type,
+    memory_owner: str,
 ) -> RuntimeBundle:
-    """Generic rollout builder driven by the family's registry descriptor."""
+    """Load one diffusion rollout model and apply the shared runtime policy."""
 
-    from vrl.families.registry import DiffusionFamilyBuild
-    from vrl.utils.config import import_from_path
-
-    recipe = entry.family_build
-    if not isinstance(recipe, DiffusionFamilyBuild):
-        raise ValueError(f"model family {entry.family!r} has no diffusion build descriptor")
-    _check_base_parameter_dtype(entry, build)
-    _check_requires_lora(entry, build)
     rollout = build.require_rollout()
     # Reject unsupported NVFP4 hardware before checkpoint loading, LoRA wrapping,
     # or any other model mutation.
     validate_rollout_quantization_support(build)
-    model_cls = import_from_path(recipe.model_cls)
     model = model_cls.from_build(build)
-    # The executor reads the resolved autocast behavior from the model so prompt
-    # embedding storage cannot silently choose the transformer's compute dtype.
-    # This remains fp32/bf16/fp16 when selected GEMMs are quantized to FP8 or
-    # NVFP4.
-    model.autocast_dtype = rollout.autocast_dtype
 
     # PEFT can wrap only plain nn.Linear, while full-finetune owns the model's
     # device move. Both paths therefore quantize before the compact policy moves
@@ -155,14 +80,106 @@ def build_family_runtime_bundle(
     apply_generation_memory_policy(
         model,
         memory_config=build.memory,
-        owner=f"{entry.family} model",
+        owner=memory_owner,
     )
+    apply_float32_precision(build.forward_precision.float32_precision)
     return RuntimeBundle(
         model=model,
         trainable_modules=model.trainable_modules,
         scheduler=model.scheduler,
         raw_handle=model.raw_handle,
+        forward_precision=build.forward_precision,
         metadata=full_generation_bundle_metadata(),
+    )
+
+
+def assemble_replay_bundle(
+    model: object,
+    build: ModelBuild,
+) -> RuntimeBundle:
+    """Apply shared training knobs and assemble minimal replay metadata."""
+
+    build.require_replay()
+    if build.use_lora:
+        model.apply_lora(build)
+    else:
+        model.apply_full_finetune()
+
+    compile_cfg = build.torch_compile or {}
+    if compile_cfg.get("enable"):
+        model.torch_compile_transformer(compile_cfg["mode"])
+
+    apply_float32_precision(build.forward_precision.float32_precision)
+    return RuntimeBundle(
+        model=model,
+        trainable_modules=model.trainable_modules,
+        scheduler=model.scheduler,
+        raw_handle=None,
+        forward_precision=build.forward_precision,
+        metadata=minimal_replay_bundle_metadata(),
+    )
+
+
+def _check_requires_lora(entry, build: ModelBuild) -> None:
+    """Fail a LoRA-only family before paying the transformer load."""
+
+    if entry.family_build.requires_lora and not build.use_lora:
+        raise RuntimeError(
+            f"model family {entry.family!r} is LoRA-only; set model.use_lora=true.",
+        )
+
+
+def resolve_family_model_build(
+    cfg,
+    device,
+    *,
+    for_rollout: bool = True,
+    parameter_dtype_override=None,
+) -> ModelBuild:
+    """Resolve a diffusion build through the canonical family registry."""
+
+    from vrl.families.registry import get_model_family_entry
+
+    entry = get_model_family_entry(str(cfg.model.family))
+    return entry.resolve_model_build(
+        cfg,
+        device,
+        for_rollout=for_rollout,
+        parameter_dtype_override=parameter_dtype_override,
+    )
+
+
+def build_family_runtime_bundle(
+    build: ModelBuild,
+    *,
+    entry=None,
+) -> RuntimeBundle:
+    """Build rollout through a family's declarative diffusion recipe.
+
+    ``entry`` is supplied by the canonical registry in production. Direct
+    evaluation tools may omit it; their serialized ``ModelBuild.family`` then
+    selects the same canonical entry rather than recreating registry data.
+    """
+
+    from vrl.families.registry import DiffusionFamilyBuild, get_model_family_entry
+    from vrl.utils.config import import_from_path
+
+    if entry is None:
+        entry = get_model_family_entry(build.family)
+    recipe = entry.family_build
+    if not isinstance(recipe, DiffusionFamilyBuild):
+        raise ValueError(f"model family {entry.family!r} has no diffusion build descriptor")
+    if build.family != entry.family:
+        raise ValueError(
+            f"rollout build family {build.family!r} does not match entry {entry.family!r}",
+        )
+    recipe.validate_parameter_dtype(entry.family, build.parameter_dtype)
+    _check_requires_lora(entry, build)
+    logger.info("Building %s runtime bundle (registry descriptor)", entry.family)
+    return build_diffusion_runtime_bundle(
+        build,
+        model_cls=import_from_path(recipe.model_cls),
+        memory_owner=f"{entry.family} model",
     )
 
 
@@ -171,13 +188,12 @@ def build_family_replay_runtime_bundle(
     *,
     entry,
 ) -> RuntimeBundle:
-    """Generic replay builder driven by the family's registry descriptor."""
+    """Build replay through a family's declarative diffusion recipe."""
 
+    from vrl.families.registry import DiffusionFamilyBuild
     from vrl.utils.config import import_from_path
 
     build.require_replay()
-    from vrl.families.registry import DiffusionFamilyBuild
-
     recipe = entry.family_build
     if not isinstance(recipe, DiffusionFamilyBuild):
         raise ValueError(f"model family {entry.family!r} has no diffusion build descriptor")
@@ -185,7 +201,7 @@ def build_family_replay_runtime_bundle(
         raise ValueError(
             f"replay build family {build.family!r} does not match entry {entry.family!r}",
         )
-    _check_base_parameter_dtype(entry, build)
+    recipe.validate_parameter_dtype(entry.family, build.parameter_dtype)
     _check_requires_lora(entry, build)
     if recipe.replay_cls is None or recipe.transformer_classname is None:
         raise ValueError(
@@ -214,6 +230,8 @@ def build_family_replay_runtime_bundle(
 
 __all__ = [
     "assemble_replay_bundle",
+    "build_diffusion_runtime_bundle",
     "build_family_replay_runtime_bundle",
     "build_family_runtime_bundle",
+    "resolve_family_model_build",
 ]

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import time
 from collections.abc import Sequence
-from contextlib import nullcontext, suppress
+from contextlib import suppress
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -36,6 +36,8 @@ from vrl.generation.types import (
     GenerationSampleRow,
 )
 from vrl.math.diffusion.flow_matching import sde_step_with_logprob
+from vrl.models.forward_precision import forward_autocast
+from vrl.models.interfaces.runtime import ResolvedForwardPrecision
 from vrl.trajectory.storage import (
     TrajectoryStoragePolicy,
     apply_value_storage_policy,
@@ -95,8 +97,7 @@ class DiffusionDenoiseResult:
     # Partial ChunkMemoryReading fields (denoise phase); decode_denoise_result
     # completes it with the decode-phase peak. None off-CUDA.
     memory: dict[str, int] | None = None
-    # Mixed boundary: autocast keys feed replay context; remaining entries are
-    # display/provenance-only counters emitted through runtime debug metrics.
+    # Display/provenance-only runtime debug counters.
     engine_counters: dict[str, Any] = field(default_factory=dict)
 
 
@@ -294,12 +295,6 @@ def _timestep_dtype(timesteps: Any) -> torch.dtype:
     return torch.float32
 
 
-def _dtype_label(dtype: Any) -> str | None:
-    if dtype is None:
-        return None
-    return str(dtype).removeprefix("torch.")
-
-
 def _expand_timestep_for_buffer(
     timestep: Any,
     *,
@@ -396,6 +391,7 @@ class DiffusionChunkExecutorBase(
     family: str
     task: str
     model: Any
+    forward_precision: ResolvedForwardPrecision
     default_samples_per_chunk: int = 1
     default_num_frames: int = 1
     default_fps: int | None = None
@@ -759,27 +755,10 @@ class DiffusionChunkExecutorBase(
             else None
         )
 
-        prompt_embeds = encoded.get("prompt_embeds")
-        autocast_dtype = getattr(model, "autocast_dtype", None)
-        if autocast_dtype is None:
-            autocast_dtype = (
-                prompt_embeds.dtype
-                if isinstance(prompt_embeds, torch.Tensor)
-                else state.latents.dtype
-            )
-        if getattr(state.latents.device, "type", None) == "cuda" and autocast_dtype in (
-            torch.float16,
-            torch.bfloat16,
-        ):
-            autocast_ctx = torch.amp.autocast("cuda", dtype=autocast_dtype)
-            rollout_autocast_enabled = True
-        else:
-            autocast_ctx = nullcontext()
-            rollout_autocast_enabled = False
         num_steps_to_run = len(state.timesteps)
         if config.execute_steps is not None:
             num_steps_to_run = max(1, min(num_steps_to_run, int(config.execute_steps)))
-        with autocast_ctx, torch.no_grad():
+        with torch.no_grad():
             for step_idx in range(num_steps_to_run):
                 with record_function("generation.denoise_step"):
                     with record_function("generation.latent_snapshot"):
@@ -792,7 +771,10 @@ class DiffusionChunkExecutorBase(
                     ):
                         noise_pred = teacache.cached_noise_pred
                     else:
-                        with record_function("generation.denoise_forward"):
+                        with (
+                            record_function("generation.denoise_forward"),
+                            forward_autocast(self.forward_precision, state.latents.device),
+                        ):
                             step_output = model.forward_step(state, step_idx)
                         noise_pred = step_output["noise_pred"]
                         if teacache is not None:
@@ -812,6 +794,7 @@ class DiffusionChunkExecutorBase(
                                 "generation.ref_denoise_forward",
                             ),
                             model.disable_adapter(),
+                            forward_autocast(self.forward_precision, state.latents.device),
                         ):
                             ref_step_output = model.forward_step(state, step_idx)
                         ref_noise_pred = ref_step_output["noise_pred"]
@@ -930,8 +913,6 @@ class DiffusionChunkExecutorBase(
                     else 0
                 ),
                 "diffusion_denoise_mode": config.denoise_mode,
-                "diffusion_rollout_autocast_dtype": _dtype_label(autocast_dtype),
-                "diffusion_rollout_autocast_enabled": rollout_autocast_enabled,
                 **(teacache.counters() if teacache is not None else {}),
             },
         )
@@ -981,14 +962,10 @@ class DiffusionChunkExecutorBase(
                 "ref_noise_pred": denoise_result.ref_noise_preds,
             }
         context = dict(model.export_batch_context(state))
-        context.setdefault(
-            "rollout_autocast_dtype",
-            denoise_result.engine_counters.get("diffusion_rollout_autocast_dtype"),
-        )
-        context.setdefault(
-            "rollout_autocast_enabled",
-            denoise_result.engine_counters.get("diffusion_rollout_autocast_enabled"),
-        )
+        context["rollout_forward_precision"] = {
+            "autocast": self.forward_precision.autocast,
+            "float32_precision": self.forward_precision.float32_precision,
+        }
 
         decode_peak_bytes = _cuda_phase_peak_bytes()
         memory = None

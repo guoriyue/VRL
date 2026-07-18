@@ -92,12 +92,6 @@ class GenEvalRewardModel:
         return scorer
 
 
-def geneval_reward_model(worker_config: Mapping[str, Any]) -> GenEvalRewardModel:
-    """RewardModel factory for the reward registry / InProcessRewardRuntime."""
-
-    return GenEvalRewardModel(worker_config)
-
-
 def _run_awaitable(awaitable: Any) -> Any:
     """Run an awaitable scorer result to completion from a sync context.
 
@@ -119,4 +113,4 @@ def _normalize_result(result: Any) -> float:
     return float(result)
 
 
-__all__ = ["GenEvalRewardModel", "geneval_reward_model"]
+__all__ = ["GenEvalRewardModel"]

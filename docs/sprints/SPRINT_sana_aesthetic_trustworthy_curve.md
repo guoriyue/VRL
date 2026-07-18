@@ -1,16 +1,25 @@
 # SPRINT: SANA 美学 GRPO 可信曲线
 
-> 2026-07-12 evaluation contract: online fixed eval remains removed. After the
-> registered checkpoint curve is complete, run
+> 2026-07-13 full-parameter native-FP16 evaluation contract (v3): online fixed
+> eval remains removed. After the registered full-parameter curve is complete, run
 > `vrl.scripts.eval.sana_aesthetic_checkpoint_eval` over the training run. It
 > reads that run's resolved config, held-out manifest, and complete numbered
 > checkpoints without CLI overrides, then writes the provenance-bound canonical
-> report at `sana_aesthetic_eval/report.json`. Historical `eval_metrics.csv`
-> files remain readable but are not produced for new runs.
+> report at `sana_aesthetic_fullparam_native_fp16_eval/report.json`. Legacy BF16
+> and LoRA evaluator protocols cannot be normalized into this protocol.
 
-Status: **STOPPED AND INVALIDATED (2026-07-12 13:34 PDT)**. The operator
-stopped the run after metric row 231; `checkpoint-225` is the latest complete
-checkpoint. Do not resume this curve. The training-time 512px Flow-Euler eval
+Status: **TRAINING COMPLETE; HELD-OUT QUALITY PENDING**. The replacement run in
+`outputs/sana_aesthetic_fullparam_long/` completed all 300 updates and published
+`checkpoint-final` with `global_step=300`, `uses_lora=false`, and
+`run_verdict=success`. Its 300 metric rows cover epochs `0..299`, are finite,
+and have no zero-gradient update. No training process or tmux session remains.
+This completion proves the registered training job finished; it does not replace
+the standalone held-out report required for the quality verdict. The invalid
+first attempt is recorded in §3.5 and is not spliced into this run.
+
+The previous BF16 v1 run was stopped and invalidated on 2026-07-12 after metric
+row 231; `checkpoint-225` is its latest complete checkpoint. Do not resume that
+curve. Its training-time 512px Flow-Euler eval
 rose from `4.2352` to `5.7513`, but the corrected paired evaluation using the
 official SANA 1024px DPM path measured aesthetic `5.7520 -> 5.4308` and
 PickScore `0.8669 -> 0.7039`. The run therefore optimized a sampler/shape-bound
@@ -19,12 +28,19 @@ under the preregistered 300-update contract. A replacement experiment must
 start from a fresh baseline after its training/evaluation sampling contract is
 made equivalent; metrics from this run must not be spliced into it.
 
+The bounded five-update full-parameter pilot in
+`online_grpo_aesthetic_fullparam.yaml` completed successfully on 2026-07-13.
+It passed the capacity, native-precision, optimizer-state, strict-resume, and
+rollout/replay parity gates recorded in §3.4. It remains a systems gate, not a
+substitute for the 300-update held-out learning claim in this document.
+
 ## 0. 结论先行
 
-这不是“跑到看起来上升为止”的探索，而是一次固定预算实验：SANA 1.6B、DrawBench 192 条训练 prompt、
-与训练集精确去重后的 64 条 fixed-eval prompt、300 次 rollout update（每次 4 个 PPO optimizer step）、
-每 25 次 rollout update 保存 checkpoint、每 prompt 固定 2 个 standalone eval 样本。主结论只读
-`sana_aesthetic_eval/report.json` 中由逐样本 score 重算并校验的 summary；训练批次的 `reward_mean`
+这不是“跑到看起来上升为止”的探索，而是一次固定预算实验：SANA 1.6B 全参数、DrawBench 192 条训练 prompt、
+与训练集精确去重后的 64 条 fixed-eval prompt、300 次 rollout update（每次 1 个 optimizer step）、
+每 5 次 rollout update 保存 recovery checkpoint、每 25 次选择一个 checkpoint 做 held-out eval、
+每 prompt 固定 2 个 standalone eval 样本。主结论只读
+`sana_aesthetic_fullparam_native_fp16_eval/report.json` 中由逐样本 score 重算并校验的 summary；训练批次的 `reward_mean`
 不参与 PASS/FAIL。
 
 主跑 PASS 后才启动 50-update LoRA+fp8 rollout smoke。它验证 master-free fp8 adapter 同步进入真实训练循环；
@@ -37,18 +53,17 @@ made equivalent; metrics from this run must not be spliced into it.
 - SANA rollout 已完成真权重生成与 replay parity 验证，但没有跑过短 GRPO 曲线；旧 landing sprint 明确保留
   了这个空白。
 - aesthetic reward 是 CLIP ViT-L/14 image embedding 加本地 MLP 头，没有外部 judge 服务，适合复现。
-- SANA base transformer 参数必须保持 fp16；bf16 参数会让 linear attention 产生 confetti artifact。
-  前向计算则固定使用 bf16 autocast：真实 fp16 SDE 尝试已产生非有限 log-prob，而 bf16 的指数范围可避免
-  activation overflow. The family build descriptor fixes the former; public
-  `precision.training.dtype` and `precision.rollout.dtype` express the latter.
-  The evaluator normalizes this active run's archived scalar `bf16` only in its
-  in-memory build copy, leaving the archived config and hash unchanged.
+- SANA base transformer 与 denoiser forward 都必须走 pinned checkpoint 的
+  native FP16/no-outer-autocast 路径；Gemma prompt encoder 独立使用 BF16，VAE、
+  timestep、CFG combine、scheduler/log-prob math 使用 FP32。旧 run 的 BF16
+  outer autocast 会改变 linear attention 并产生 color-block artifact，不能
+  作为兼容表示被 evaluator 改写成 FP16。
 - 仓库既有算法测量显示，8–12 次 rollout update 只能证明管线工作，不能证明 learning；可信 learning 需要约
   200–300 次 rollout update。这里预注册 300，不在中途因曲线形状延长或缩短。
 
 ## 2. 固定资产与运行配置
 
-- 训练配置：`vrl/config/presets/experiment/diffusion/sana/online_grpo_aesthetic.yaml`
+- 训练配置：`vrl/config/presets/experiment/diffusion/sana/online_grpo_aesthetic_fullparam_long.yaml`
 - 训练 prompt：`datasets/drawbench/train_192.txt`
 - fixed eval：`datasets/drawbench/eval_64.txt`
   - 从 `datasets/drawbench/test.txt` 保序去重；
@@ -61,26 +76,30 @@ made equivalent; metrics from this run must not be spliced into it.
   machine, while any explicit execution-device choice is recorded in the report.
   PickScore never enters the advantage. The current preset's CPU placement is
   execution topology for future runs, not a retroactive rewrite of this run.
-- rollout update：300；每次 `ppo_epochs: 4`，因此完整运行是 1200 次 optimizer step；LoRA r16/alpha32；
-  10-step denoise；CFG 4.5。
-- rollout 与 replay 的 sample chunk 都固定为 8。它不是吞吐偏好：SANA bf16 kernel 对 batch shape 敏感，
-  两侧不一致会在 optimizer 前制造虚假的 PPO ratio 漂移。
-- standalone fixed eval：先 strict-load `checkpoint-25` 的完整 transformer state，再用同一 state 的
-  adapter-off base 作为 `epoch=-1`；随后启用该 adapter 得到 checkpoint-25 点，再按顺序加载后续 checkpoint。
-  Baseline 因而由本 run 的首 checkpoint hash 绑定，不依赖浮动 Hub base。
+- rollout update：300；`ppo_epochs: 1`，因此完整运行是 300 次 optimizer step；全部 396 个
+  transformer 参数通过 checkpointed FP32 master 更新；训练 rollout 是 512px、10-step Flow-SDE、CFG 4.5。
+- 旧 BF16 run 的 rollout/replay sample chunk 固定为 8/8；这是历史测量，不是
+  native FP16 full-parameter 路径的要求。修正 TF32 backend 后，native 路径的
+  1/1 replay shape 已实测 bit-exact；full-parameter pilot 使用 1 prompt × 8
+  samples、rollout/replay chunk 都为 1 以控制显存。
+- standalone fixed eval：在读取任何训练 checkpoint 之前，用 pinned SANA base snapshot 生成
+  `epoch=-1`；随后按顺序 strict-load `checkpoint-25` 到 `checkpoint-300`。每个 prompt group 使用新建的
+  official DPM-Solver++ scheduler、1024px、20 steps、CFG 4.5。训练 SDE 只负责探索，不能成为质量代理。
   64 prompts × 2 samples。每个 prompt 的两个样本保持在同一个 batched generator stream，group seed 为
   `20260710 + prompt_index * 2`, implementing the registered batched seed
   protocol. The evaluator rejects checkpoint gaps and records hashes for the
   config, manifests, checkpoints, and scored artifacts, plus explicit seed and
   reward identities.
-- 输出：`outputs/sana_aesthetic_trustworthy_curve/`；checkpoint 每 25 update。
+- 输出：`outputs/sana_aesthetic_fullparam_long/`；recovery checkpoint 每 5 update，
+  held-out curve 仍固定读取 `checkpoint-25,50,...,300`。
 
 ### Standalone report contract
 
-- Schema version is `1`; the canonical path is
-  `sana_aesthetic_eval/report.json`.
+- Full-parameter protocol schema version is `3`; the canonical path is
+  `sana_aesthetic_fullparam_native_fp16_eval/report.json`. Older reports retain
+  their raw provenance but are not accepted by the v3 reader.
 - Provenance binds the training metrics, resolved config and canonical protocol
-  digest, train/eval manifests, supervisor log and four observed Hub revisions,
+  digest, train/eval manifests, supervisor log, the four revisions pinned in config,
   packaged aesthetic MLP hash, sampling, batched seed grid, effective reward
   identities, checkpoint SHA-256 values, and per-sample JSONL/image SHA-256
   values.
@@ -90,22 +109,30 @@ made equivalent; metrics from this run must not be spliced into it.
 - New runs do not accept an external report or CSV path. The verdict reads a
   historical `eval_metrics.csv` only when the archived `resolved_config.yaml`
   explicitly contains `trainer.eval.enabled: true`.
-- Legacy evidence has a hard limit: the evaluator can prove that today's
-  manifests match their preregistered hashes and that `supervisor.log` observed
-  the four registered Hub revisions at startup. It cannot prove that a manifest
-  was never temporarily replaced and restored during training. A future run
-  without machine-readable revision evidence is rejected; the evaluator does
-  not infer revisions by walking the HF cache layout.
+- Model, aesthetic CLIP, PickScore processor, and PickScore model revisions are
+  explicit config fields consumed by their respective `from_pretrained` calls.
+  Cache-hit logs are therefore not parsed to infer dependency state; the resolved
+  config is the source of truth and its semantic digest is frozen before launch.
 
-启动命令：
+以下是已失效 BF16 v1 run 的历史启动命令，**不得执行或恢复**：
 
 ```bash
 PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True \
 vrl-train --config experiment/diffusion/sana/online_grpo_aesthetic
 ```
 
-中断后只能从该输出目录最新的完整 `checkpoint-*` 恢复。恢复不得修改数据、seed、精度、LR、
-update 总数、eval 频率或下面阈值。
+该输出目录的 checkpoint 只保留为历史证据，不能作为 full-parameter v3 的 resume
+source。v3 必须从 fresh base 和 fresh baseline 开始。
+
+v3 full-parameter 主跑只使用以下 canonical preset；supervisor 在输出目录为空时
+从 pinned base 启动，后续中断只恢复该目录最新的完整 checkpoint：
+
+```bash
+CUDA_VISIBLE_DEVICES=0 \
+PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True \
+python -u -m vrl.scripts.supervise \
+  --config experiment/diffusion/sana/online_grpo_aesthetic_fullparam_long
+```
 
 ## 3. 主跑 PASS/FAIL（baseline 之前冻结）
 
@@ -134,11 +161,15 @@ python -m vrl.scripts.eval.sana_aesthetic_curve_verdict \
    不在看到结果后改成 paired test 或更换显著性标准。
 3. **方向**：所有 post-training fixed-eval 点对 epoch 的 OLS slope `> 0`。
 4. **prompt-aware 防线**：终点 3 点平均 PickScore 不低于 baseline 的 98%。
-5. **梯度/策略活性**：所有 update 都实际训练 prompt；至少一个 `grad_norm > 0`；warm-up 后至少 25% update
-   的 `active_clip_fraction > 0`。`clip_fraction` 只表示 ratio 越界，不等于 surrogate 真被截断。
+5. **梯度/策略活性**：所有 update 都实际训练 prompt；至少一个 `grad_norm > 0`。本协议只有一次 PPO pass，
+   optimizer 前 ratio 应为 1，因此所有 `active_clip_fraction`、`pre_update_clip_fraction` 和
+   `pre_update_active_clip_fraction` 必须为 0；非零表示 backend drift，不是健康的策略移动。
 6. **多样性**：末 32 update 的 `reward_std` 中位数 `> 1e-4`，且不低于最初 32 update 中位数的 25%。
-7. **训推一致**：只看 optimizer step 之前的 `pre_update_logprob_abs_diff_max <= 0.01`；聚合的
-   `logprob_abs_diff_max` 含后续 PPO pass 的正常策略漂移，不能拿来判 backend parity。first-step 守卫必须无报错。
+7. **训推一致**：旧 v1 冻结门限 `0.01` 比 Flow-GRPO 的 `clip_ratio=1e-4`
+   宽两个数量级，因此只保留为“旧 run 为什么曾被错误放行”的历史判据。
+   Full-parameter v3 在首次 optimizer step 前要求
+   `pre_update_logprob_abs_diff_max <= 1e-6`，并且
+   `pre_update_clip_fraction == 0`、`pre_update_active_clip_fraction == 0`。
 8. **定性审计**：§4 PASS。
 
 ### 3.2 任一项触发即 FAIL
@@ -149,7 +180,7 @@ python -m vrl.scripts.eval.sana_aesthetic_curve_verdict \
 - 运行中改变判据、seed、eval prompt、LR、精度或预算。若因实现 bug 修代码，旧 run 作废；从新 baseline
   全量重跑并在本文件记录原因，不能拼接修复前后的曲线。
 
-### 3.3 2026-07-11 启动前真机门槛
+### 3.3 2026-07-11 旧 BF16 run 的真机记录（非 native 启动证据）
 
 同一 RTX 5090、同一 fresh base、同一 prompt/seed 上完成三次因果 smoke：
 
@@ -162,11 +193,85 @@ python -m vrl.scripts.eval.sana_aesthetic_curve_verdict \
   `grad_norm=0.423678`，LoRA SHA 改变，单 prompt fixed eval `4.2066 → 4.2536`。短 eval 只证明管线，
   不计入 §3.1 的 learning 结论。
 
-因此启动门槛固定为对称 8/8（三个 SANA preset 一并对齐，`_long`/`pickscore_validation` 原 16/1 形状
-按本节实测会触发 0.014 漂移直接撞 hard-fail），并在 optimizer 前对首 pass 的所有 sample/timestep 做
-hard-fail；单点 t0 probe 只保留为便于定位的详细诊断，不能再替代全量门槛。
+当时据此把旧 BF16 run 门槛固定为对称 8/8，并在 optimizer 前对首 pass
+全量 hard-fail；该 batch-shape 结论随 BF16 protocol 一并失效。全量 parity
+而非单点 t0 probe 的原则仍然保留。
 
-### 3.4 Repository-wide effect of the hardened gate (2026-07-11)
+2026-07-13 native-FP16 因果复核取代了上述结论：rollout 与 replay 都关闭
+TF32 时，独立模型的 10/10 步 noise/log-prob 逐位一致；只给 replay 开 TF32
+即可重现 `1e-4` clip band 越界。首个 full-param one-step run 虽能 backward，
+但因 TF32 分叉与缺少 FP32 master 而无效。replacement 必须同时通过 TF32
+family capability、FP32 master/GradScaler、strict resume 与 `1e-6` parity gate。
+
+### 3.4 2026-07-13 native-FP16 full-parameter pilot
+
+The canonical five-update run is `outputs/sana_aesthetic_fullparam/`. It uses
+the checkpoint-native FP16 transformer without outer autocast, BF16 Gemma,
+FP32 VAE/CFG/timestep/scheduler/log-probability math, and
+`precision.float32_precision=ieee` on
+both rollout and replay. `model.use_lora=false` makes all 396 transformer
+parameters trainable. AdamW8bit compresses optimizer moments only; the trainer
+owns checkpointed FP32 master parameters and a GradScaler.
+
+The capacity/numerics gate passed on one RTX 5090:
+
+- all five updates completed and published `checkpoint-1` through
+  `checkpoint-5` plus `checkpoint-final`; the final checkpoint is 12,887,934,871
+  bytes and records `global_step=5`, `uses_lora=false`;
+- every metric was finite, all five gradients were non-zero
+  (`0.124712 <= grad_norm <= 0.265342`), and the mean sampled training reward was
+  `4.86664` across different prompts;
+- every update reported exact-zero pre-update log-probability, ratio, clip, and
+  active-clip mismatch; the first-step full check observed
+  `max_abs_diff=0.0` against the `1e-6` hard limit;
+- generation peaked at 9,907 MiB per one-sample chunk and no OOM occurred;
+- a separate real checkpoint continuation restored model weights, AdamW8bit
+  moments, FP32 residuals, GradScaler, RNG, and progress from step 1, then
+  completed step 2 with exact-zero pre-update mismatch;
+- after five updates, all 396 FP32 master tensors changed and 96.63490% of their
+  elements differed from the FP16 initialization. Only 13.53824% had crossed an
+  FP16 representable boundary, which is why the master copy is required.
+  Rounding every master back to FP16 matched the published model state exactly.
+- `vrl.scripts.eval.sana_checkpoint_compare` then generated the base before
+  reading the training checkpoint and the current image after strict restore,
+  using fresh official DPM-Solver++ schedulers and reset seed `20260712`. Both
+  1024px images are coherent studio photographs rather than color blocks. On
+  this single inference-integrity probe, aesthetic moved `5.90665 -> 5.82033`
+  and PickScore moved `0.90663 -> 0.89834`; this is not a quality PASS and must
+  not be generalized from one prompt.
+
+These facts prove that full-parameter native-precision optimization is real and
+resumable. They do not prove aesthetic improvement: training rewards came from
+different sampled prompts, and five updates are not a held-out comparison. The
+official DPM++ 1024 base/current image check is a separate inference-integrity
+gate, and a longer curve still requires the preregistered held-out evaluation.
+
+### 3.5 2026-07-13 first long-run launch invalidation
+
+The first 300-update launch completed 11 finite updates but failed before its
+first checkpoint. Ray killed `RayGenerationWorker` when node memory reached
+88.39/91.88 GB; the worker alone held 43.23 GB. This was not a trajectory,
+reward, model-reload, object-store, or GPU leak. Strict on-policy weight sync
+incorrectly selected `TrainableStateSlots` solely because the diffusion model
+advertised the capability. Eight retained full-parameter FP16 snapshots cost
+23.91 GiB, and the colocated rollout's CuMem parking backup added 9.29 GiB.
+
+The generic runtime now separates capability from selected mode:
+
+- strict on-policy always direct-loads the latest state after its draining
+  barrier and retains no historical payload;
+- continuous LoRA keeps versioned slots for real in-flight ownership;
+- continuous full-parameter sync fails closed to the draining path until a
+  byte-budget gate proves retained snapshots fit host RAM.
+
+The invalid run had no complete checkpoint and its supervisor retry correctly
+started fresh, but that retry overwrote the partial metrics CSV. Its answer is
+recorded here; the incomplete output is deleted as a one-shot failure artifact.
+The replacement run starts from the pinned base. Recovery checkpoints now
+publish every five updates, while the scientific evaluator remains fixed to
+`checkpoint-25,50,...,300`; recovery IO cadence is not evaluation cadence.
+
+### 3.6 Repository-wide effect of the hardened gate (2026-07-11)
 
 - `debug.first_step` changed from warning when the first chunk's mean exceeded
   `0.01` to failing before the optimizer when the first pass's full maximum
@@ -179,6 +284,38 @@ hard-fail；单点 t0 probe 只保留为便于定位的详细诊断，不能再�
   Current `precision.training.dtype=fp32` disables autocast and runs a real FP32
   forward. Parity improves, but old and new FP32 curves are not directly
   comparable.
+
+### 3.7 Native FP32 rejection gate (2026-07-13)
+
+The pinned `Efficient-Large-Model/Sana_1600M_1024px_diffusers` transformer does
+not have a valid FP32 execution path. Its two default shards genuinely store
+F32 tensors, and Diffusers selects their index before either monolithic FP16
+file; the failure is therefore not an FP16-file-widening loader bug. The
+published F32 tensors are distribution weights that must be downcast for this
+checkpoint's recommended FP16 transformer execution.
+
+The pre-launch probes isolated the failure:
+
+- strict F32 loading used all 396 F32 tensors with zero missing, unexpected, or
+  mismatched keys;
+- on the same prompt, seed, embeddings, initial latent, and official DPM++
+  schedule, block statistics stayed close through block 18, then the final F32
+  block's hidden-state standard deviation jumped from `75.58` to `685.61`;
+- the F32 noise prediction had standard deviation `0.2451` versus `1.1216` for
+  native FP16, and the official 1024px decode produced psychedelic color-block
+  artifacts;
+- retaining F32 parameters while wrapping the pipeline in FP16 autocast was not
+  a valid compromise: the denoise path became non-finite and decoded to a black
+  image.
+
+Therefore the family capability admits only FP16 transformer parameters. BF16
+and FP32 roles fail before checkpoint loading. Full-parameter optimization
+continues to use the already validated design: visible FP16 trainable parameters,
+checkpointed FP32 master parameters, GradScaler, and AdamW8bit moments. This is
+full-parameter training with full-precision update residuals, but it is not and
+must not be described as an FP32 transformer forward. No FP32 long run was
+launched. The failed canary and inference outputs are one-shot evidence; this
+decision record and the regression tests are their retained result.
 
 ## 4. Reward-hacking 预案
 
@@ -202,7 +339,6 @@ prompt adherence。防线在运行前固定为：
 ```bash
 PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True \
 vrl-train --config experiment/diffusion/sana/online_grpo_aesthetic \
-  precision.training.dtype=bf16 \
   precision.rollout.quantization.format=fp8 \
   precision.rollout.quantization.recipe=rowwise \
   precision.rollout.prompt_encoders.dtype=bf16 \
@@ -246,10 +382,17 @@ quantized-backward/FSDP 方案并跑过至少一个 backward 后才解锁。
 
 应改变且已改变：
 
-- SANA family build descriptor 固定 fp16 base transformer 参数；在线配置使用 bf16 forward autocast，避免
-  fp16 SDE overflow。
-- SANA rollout/replay chunk 固定为实测 bit-exact 且能 backward 的 8/8；首 PPO pass 全量 parity 在
-  optimizer 前 hard-fail。
+- SANA family build descriptor 固定 FP16 base transformer；denoiser 使用
+  native FP16/no-outer-autocast，Gemma 使用 BF16，VAE/CFG/timestep 与受保护
+  scheduler/log-prob math 使用 FP32。
+- SANA registry requirement 将 public precision 解析为
+  `ResolvedForwardPrecision(autocast="off", float32_precision="ieee")`；trainer
+  与 rollout worker 消费同一 contract，显式写 FP32 backend policy，避免进程
+  默认值分叉。该 family requirement 不是 public knob。
+- Low-precision trainables 自动派生 checkpointed FP32 master；AdamW8bit 只
+  压缩 optimizer moments，GradScaler 保护 FP16 backward，成功 step 后把
+  visible policy 发布回 FP16。SANA full-param pilot 保持 EMA disabled，因为
+  low-precision EMA shadow 尚不提供 master 精度。
 - `clip_fraction` 与真正选中 clipped surrogate 的 `active_clip_fraction` 分开；raw KL 与
   `weighted_kl_loss` 分开，避免再次误读。
 - policy update 与 rollout/replay mismatch 在内部按职责分组；pass-zero snapshot 由 trainer 在 evaluator
@@ -313,3 +456,5 @@ Remaining convergence items (non-blocking):
 - `vrl/nn/quantization/fp8.py`
 - `vrl/scripts/eval/sana_aesthetic_curve_verdict.py`
 - `vrl/scripts/eval/sana_aesthetic_checkpoint_eval.py`
+- https://huggingface.co/docs/diffusers/v0.32.2/en/api/pipelines/sana
+- https://github.com/huggingface/diffusers/issues/10241

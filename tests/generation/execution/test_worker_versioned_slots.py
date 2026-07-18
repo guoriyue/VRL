@@ -88,11 +88,16 @@ class _Executor:
         raise NotImplementedError
 
 
-def _core(model: Any) -> GenerationWorkerCore:
+def _core(
+    model: Any,
+    *,
+    versioned_weight_sync: bool = True,
+) -> GenerationWorkerCore:
     contract = GenerationRuntimeLaunchContract(
         family="sd3_5",
         model_build={},
         policy_version=1,
+        versioned_weight_sync=versioned_weight_sync,
     )
     core = GenerationWorkerCore("rollout-0", contract)
     core.executor = _Executor(model)  # bypass load_policy() build
@@ -142,6 +147,23 @@ def test_update_weights_plain_model_loads_in_place() -> None:
     assert core._uses_versioned_slots is False
     assert model.load_calls == [{"transformer.w": "v1"}]
     assert core.current_policy_version() == 1
+
+
+def test_strict_sync_overwrites_slot_capable_model_without_retaining_payloads() -> None:
+    """Strict on-policy has no older in-flight request after its sync barrier."""
+
+    model = _SlotModel()
+    core = _core(model, versioned_weight_sync=False)
+
+    first = {"transformer.w": "v1"}
+    second = {"transformer.w": "v2"}
+    assert core.update_weights(first, 1) == 1
+    assert core.update_weights(second, 2) == 2
+
+    assert core._uses_versioned_slots is False
+    assert model.slots == {}
+    assert model.load_calls == [first, second]
+    assert core.supports_versioned_trainable_state() is False
 
 
 # -- execute_chunk ------------------------------------------------------------

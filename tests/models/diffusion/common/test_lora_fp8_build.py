@@ -15,8 +15,13 @@ import pytest
 import torch
 from torch import nn
 
+from vrl.models.diffusion.build import build_diffusion_runtime_bundle
 from vrl.models.diffusion.common.lora import LoraModelMixin
-from vrl.models.interfaces.runtime import ModelBuild, RolloutBuildOptions
+from vrl.models.interfaces.runtime import (
+    ModelBuild,
+    ResolvedForwardPrecision,
+    RolloutBuildOptions,
+)
 
 
 class _TrackingTransformer(nn.Module):
@@ -116,6 +121,7 @@ def test_fp8_config_replay_build_does_not_defer_device_move(monkeypatch) -> None
                 "lora": {"rank": 2, "alpha": 2, "target_modules": ["proj"]},
             },
             "precision": {
+                "float32_precision": "tf32",
                 "training": {"dtype": "bf16"},
                 "rollout": {
                     "dtype": "bf16",
@@ -176,8 +182,8 @@ def test_shared_builder_drops_master_before_quantized_lora_gpu_move(monkeypatch)
         device="cpu",
         parameter_dtype=torch.float16,
         family="sd3_5",
+        forward_precision=ResolvedForwardPrecision("bf16", "tf32"),
         rollout=RolloutBuildOptions(
-            autocast_dtype=torch.bfloat16,
             prompt_encoder_dtype=torch.bfloat16,
             quantization_format="fp8",
             base_weight_sync=False,
@@ -192,6 +198,51 @@ def test_shared_builder_drops_master_before_quantized_lora_gpu_move(monkeypatch)
     _build_sd35_rollout(monkeypatch, build, _Policy)
 
     assert events == ["attach", "quantize", "drop", "move"]
+
+
+def test_shared_builder_preserves_resolved_forward_precision() -> None:
+    """The builder carries the resolved contract without model introspection."""
+
+    class _Policy:
+        def __init__(self) -> None:
+            self.transformer = nn.Linear(2, 2)
+            self.device = "cpu"
+            self.scheduler = object()
+            self.raw_handle = object()
+
+        @classmethod
+        def from_build(cls, _build: Any) -> _Policy:
+            return cls()
+
+        @property
+        def trainable_modules(self) -> dict[str, Any]:
+            return {"transformer": self.transformer}
+
+        def apply_full_finetune(self) -> None:
+            self.transformer.requires_grad_(True)
+
+        def generation_memory_targets(self) -> dict[str, Any]:
+            return {}
+
+    build = ModelBuild(
+        model_name_or_path="fake",
+        device="cpu",
+        parameter_dtype=torch.float16,
+        family="sd3_5",
+        forward_precision=ResolvedForwardPrecision("off", "ieee"),
+        rollout=RolloutBuildOptions(
+            prompt_encoder_dtype=torch.bfloat16,
+        ),
+        model_config={"use_lora": False},
+    )
+
+    bundle = build_diffusion_runtime_bundle(
+        build,
+        model_cls=_Policy,
+        memory_owner="fake VAE",
+    )
+
+    assert bundle.forward_precision is build.forward_precision
 
 
 def test_nvfp4_hardware_guard_runs_before_quantization_mutation(
@@ -214,8 +265,8 @@ def test_nvfp4_hardware_guard_runs_before_quantization_mutation(
         device="cpu",
         parameter_dtype=torch.bfloat16,
         family="sd3_5",
+        forward_precision=ResolvedForwardPrecision("bf16", "tf32"),
         rollout=RolloutBuildOptions(
-            autocast_dtype=torch.bfloat16,
             prompt_encoder_dtype=torch.bfloat16,
             quantization_format="nvfp4",
         ),
@@ -275,8 +326,8 @@ def test_full_finetune_dtype_move_preserves_quantized_cache(
         device="cpu",
         parameter_dtype=torch.bfloat16,
         family="sd3_5",
+        forward_precision=ResolvedForwardPrecision("bf16", "tf32"),
         rollout=RolloutBuildOptions(
-            autocast_dtype=torch.bfloat16,
             prompt_encoder_dtype=torch.bfloat16,
             quantization_format=quantization_format,
         ),

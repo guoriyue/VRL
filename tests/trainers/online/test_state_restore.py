@@ -5,7 +5,12 @@ from __future__ import annotations
 import pytest
 
 from tests.trainers.online._collector_control import CollectorControlFake
-from tests.trainers.online._helpers import _algorithm_inputs, _trajectory_signals
+from tests.trainers.online._helpers import (
+    _algorithm_inputs,
+    _rollout_context,
+    _trajectory_signals,
+)
+from vrl.models.interfaces import ResolvedForwardPrecision
 
 
 class TestOnlineTrainerResumeState:
@@ -34,6 +39,18 @@ class TestOnlineTrainerResumeState:
         assert _adam_exp_avg_values(restored._optimizer) == pytest.approx(
             _adam_exp_avg_values(optimizer),
         )
+
+    def test_strict_resume_rejects_master_state_for_plain_optimizer(self) -> None:
+        source = _make_resume_trainer()
+        source._ensure_optimizer()
+        state = source.state_dict()
+        state["optimizer"]["fp32_master_weights"] = {
+            "version": 1,
+            "parameters": [],
+        }
+
+        with pytest.raises(ValueError, match="master-weight state does not match"):
+            _make_resume_trainer().load_state_dict(state, strict=True)
 
     def test_load_state_dict_initializes_and_restores_ema_state(self) -> None:
         """Checks load state dict initializes and restores EMA state."""
@@ -85,6 +102,49 @@ class TestOnlineTrainerResumeState:
 
         assert trainer._rollout_weights_initialized is False
 
+    def test_strict_resume_requires_master_optimizer_state_after_first_step(self) -> None:
+        trainer = _make_resume_trainer()
+        trainer.model.half()
+
+        with pytest.raises(ValueError, match=r"missing optimizer state.*master residuals"):
+            trainer.load_state_dict({"step": 1, "global_step": 1}, strict=True)
+
+        trainer.load_state_dict({"step": 1, "global_step": 1}, strict=False)
+
+        zero_step = _make_resume_trainer()
+        zero_step.model.half()
+        zero_step.load_state_dict({"step": 0, "global_step": 0}, strict=True)
+
+    def test_low_precision_master_gate_runs_before_distributed_prepare(self) -> None:
+        from types import SimpleNamespace
+
+        import torch
+
+        from vrl.trainers.strategy import SingleProcessStrategy
+
+        class _SpyStrategy:
+            def __init__(self, name: str) -> None:
+                self.context = SimpleNamespace(strategy=name)
+                self.prepared = False
+                self._delegate = SingleProcessStrategy()
+
+            def prepare_model(self, model):
+                self.prepared = True
+                return model
+
+            def __getattr__(self, name):
+                return getattr(self._delegate, name)
+
+        distributed = _SpyStrategy("ddp")
+        with pytest.raises(NotImplementedError, match="only by the single_process"):
+            _make_resume_trainer(model_dtype="float16", strategy=distributed)
+        assert distributed.prepared is False
+
+        compatible = _SpyStrategy("single_process")
+        trainer = _make_resume_trainer(model_dtype="float16", strategy=compatible)
+        assert compatible.prepared is True
+        assert trainer.model.weight.dtype is torch.float16
+
     def test_fp16_cuda_state_dict_round_trips_grad_scaler(self) -> None:
         """CUDA fp16 training must save and restore GradScaler state."""
         import torch
@@ -109,6 +169,18 @@ class TestOnlineTrainerResumeState:
 
         assert restored._grad_scaler is not None
         assert restored._grad_scaler.state_dict()["scale"] == state["grad_scaler"]["scale"]
+
+    def test_strict_resume_rejects_nonzero_fp16_checkpoint_without_scaler(self) -> None:
+        import torch
+
+        if not torch.cuda.is_available():
+            pytest.skip("CUDA is required for fp16 GradScaler")
+        trainer = _make_resume_trainer(device="cuda", train_precision="fp16")
+
+        with pytest.raises(ValueError, match="missing GradScaler state"):
+            trainer.load_state_dict({"step": 1, "global_step": 1}, strict=True)
+
+        trainer.load_state_dict({"step": 1, "global_step": 1}, strict=False)
 
     def test_resume_pushes_restored_driver_weights_before_next_collect(self) -> None:
         """Checks resume pushes restored driver weights before next collect."""
@@ -168,6 +240,7 @@ class _ResumeCollector(CollectorControlFake):
             rewards=torch.arange(group_size, dtype=torch.float32),
             dones=torch.ones(group_size, dtype=torch.bool),
             group_ids=torch.zeros(group_size, dtype=torch.long),
+            context=_rollout_context(),
             prompts=list(prompts) * group_size,
         )
 
@@ -211,6 +284,8 @@ def _make_resume_trainer(
     collector=None,
     device: str = "cpu",
     train_precision: str = "",
+    model_dtype: str = "float32",
+    strategy=None,
 ):
     import torch
     import torch.nn as nn
@@ -221,7 +296,8 @@ def _make_resume_trainer(
     model = nn.Linear(1, 1, bias=False)
     with torch.no_grad():
         model.weight.fill_(1.0)
-    model.to(device)
+    model.to(device=device, dtype=getattr(torch, model_dtype))
+    autocast = train_precision if train_precision in {"fp16", "bf16"} else "off"
     return OnlineTrainer(
         algorithm=_ResumeAlgorithm(),
         collector=collector or _ResumeCollector(),
@@ -235,6 +311,7 @@ def _make_resume_trainer(
                 else None
             )
         ),
+        strategy=strategy,
         config=TrainerConfig(
             prompts_per_batch=1,
             timestep_fraction=1.0,
@@ -246,6 +323,10 @@ def _make_resume_trainer(
             debug=DebugConfig(),
             n_samples_per_prompt=2,
             train_precision=train_precision,
+        ),
+        forward_precision=ResolvedForwardPrecision(
+            autocast=autocast,
+            float32_precision="ieee",
         ),
         device=device,
     )

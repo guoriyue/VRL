@@ -21,7 +21,11 @@ def _cfg():
                 "path": "peizesun/llamagen_t2i",
                 "use_lora": True,
             },
-            "precision": {"training": {"dtype": "fp32"}, "rollout": {"dtype": "fp32"}},
+            "precision": {
+                "float32_precision": "tf32",
+                "training": {"dtype": "fp32"},
+                "rollout": {"dtype": "fp32"},
+            },
             "sampling": {
                 "guidance_scale": 7.5,
                 "temperature": 1.0,
@@ -37,7 +41,11 @@ def test_resolve_model_build_defaults() -> None:
     cfg = OmegaConf.create(
         {
             "model": {"family": "llamagen", "use_lora": False},
-            "precision": {"training": {"dtype": "fp32"}, "rollout": {"dtype": "fp32"}},
+            "precision": {
+                "float32_precision": "tf32",
+                "training": {"dtype": "fp32"},
+                "rollout": {"dtype": "fp32"},
+            },
         },
     )
     build = get_model_family_entry("llamagen").resolve_model_build(cfg, device="cpu")

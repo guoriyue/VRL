@@ -367,9 +367,10 @@ def score_artifacts_with_model(
 ) -> list[RewardInferenceResult]:
     """Run a ``RewardModel`` over a request's artifacts and build result rows.
 
-    A model may expose a ``score_request(request) -> list[Mapping]`` batch hook
-    (aligned to ``request.artifacts``); otherwise its per-artifact ``__call__``
-    is looped.
+    The in-process runtime's scoring core (the former Ray reward worker shared
+    it; that transport is gone). A model may expose a
+    ``score_request(request) -> list[Mapping]`` batch hook (aligned to
+    ``request.artifacts``); otherwise its per-artifact ``__call__`` is looped.
     """
 
     def build_result(

@@ -13,7 +13,11 @@ def test_resolve_model_build_defaults_to_gen_hf_checkpoint() -> None:
     cfg = OmegaConf.create(
         {
             "model": {"family": "emu3"},
-            "precision": {"training": {"dtype": "fp32"}, "rollout": {"dtype": "fp32"}},
+            "precision": {
+                "float32_precision": "tf32",
+                "training": {"dtype": "fp32"},
+                "rollout": {"dtype": "fp32"},
+            },
             "sampling": {},
         },
     )
@@ -21,6 +25,8 @@ def test_resolve_model_build_defaults_to_gen_hf_checkpoint() -> None:
     build = get_model_family_entry("emu3").resolve_model_build(cfg, device="cpu")
 
     assert build.model_name_or_path == "BAAI/Emu3-Gen-hf"
+    assert build.forward_precision.autocast == "off"
+    assert build.forward_precision.float32_precision == "tf32"
 
 
 def test_resolve_model_build_carries_sampling_and_lora_overrides() -> None:
@@ -32,7 +38,11 @@ def test_resolve_model_build_carries_sampling_and_lora_overrides() -> None:
                 "use_lora": True,
                 "lora": {"rank": 8},
             },
-            "precision": {"training": {"dtype": "fp32"}, "rollout": {"dtype": "fp32"}},
+            "precision": {
+                "float32_precision": "tf32",
+                "training": {"dtype": "fp32"},
+                "rollout": {"dtype": "fp32"},
+            },
             "sampling": {
                 "guidance_scale": 4.0,
                 "temperature": 0.9,

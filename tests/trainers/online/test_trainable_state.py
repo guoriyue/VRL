@@ -3,7 +3,12 @@
 from __future__ import annotations
 
 from tests.trainers.online._collector_control import CollectorControlFake
-from tests.trainers.online._helpers import _algorithm_inputs, _trajectory_signals
+from tests.trainers.online._helpers import (
+    DEFAULT_FORWARD_PRECISION,
+    _algorithm_inputs,
+    _rollout_context,
+    _trajectory_signals,
+)
 from vrl.rollouts.evaluators.base import Evaluator
 
 
@@ -72,6 +77,7 @@ class TestTrainableState:
                     rewards=torch.arange(group_size, dtype=torch.float32),
                     dones=torch.ones(group_size, dtype=torch.bool),
                     group_ids=torch.zeros(group_size, dtype=torch.long),
+                    context=_rollout_context(),
                     prompts=list(prompts) * group_size,
                 )
 
@@ -104,6 +110,7 @@ class TestTrainableState:
                 debug=DebugConfig(),
                 n_samples_per_prompt=2,
             ),
+            forward_precision=DEFAULT_FORWARD_PRECISION,
             device="cpu",
         )
 
@@ -165,5 +172,6 @@ class TestTrainableState:
                     debug=DebugConfig(),
                     n_samples_per_prompt=2,
                 ),
+                forward_precision=DEFAULT_FORWARD_PRECISION,
                 device="cpu",
             )

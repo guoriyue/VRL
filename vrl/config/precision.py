@@ -9,6 +9,8 @@ Rollout dtype defaults to training dtype. Prompt-encoder dtype defaults to the
 resolved rollout dtype; the canonical base preset explicitly selects fp16 to
 preserve its established memory policy. VAE precision is family-owned and is
 not represented by this prompt-encoder axis. Diffusion math defaults to fp32.
+FP32 matmul precision is an explicit run-wide policy because PyTorch process
+defaults are not a stable trainer/worker contract.
 
 Training quantization is part of the structural schema so the eventual training
 runtime will use the same role shape, but policy resolution fails until a real
@@ -28,6 +30,7 @@ _MISSING = object()
 # one deliberately isolated table so config resolution, defaults, and error text
 # cannot drift when a new format lands.
 _PLAIN_DTYPES = ("fp32", "bf16", "fp16")
+_FLOAT32_PRECISION_MODES = ("ieee", "tf32")
 
 
 @dataclass(frozen=True, slots=True)
@@ -82,6 +85,7 @@ class RolloutPrecisionConfig:
 @dataclass(frozen=True, slots=True)
 class PrecisionConfig:
     training: TrainingPrecisionConfig
+    float32_precision: Any
     rollout: RolloutPrecisionConfig | None = None
     diffusion_math: DTypePrecisionConfig | None = None
 
@@ -111,6 +115,16 @@ def _normalize_plain_dtype(value: Any, *, path: str) -> str:
             "belongs under a `quantization.format` key, not a `dtype` key.",
         )
     return token
+
+
+def _normalize_float32_precision(value: Any) -> str:
+    mode = str(value).lower().strip()
+    if mode not in _FLOAT32_PRECISION_MODES:
+        raise ValueError(
+            "precision.float32_precision must be one of "
+            f"{_FLOAT32_PRECISION_MODES}; got {value!r}",
+        )
+    return mode
 
 
 @dataclass(frozen=True, slots=True)
@@ -184,6 +198,7 @@ class PrecisionPolicy:
 
     training: RolePrecision
     rollout: RolePrecision
+    float32_precision: str
     diffusion_math: str
     prompt_encoder_dtype: str
 
@@ -192,6 +207,11 @@ class PrecisionPolicy:
             raise TypeError("precision.training must resolve to RolePrecision")
         if not isinstance(self.rollout, RolePrecision):
             raise TypeError("precision.rollout must resolve to RolePrecision")
+        object.__setattr__(
+            self,
+            "float32_precision",
+            _normalize_float32_precision(self.float32_precision),
+        )
         object.__setattr__(
             self,
             "diffusion_math",
@@ -225,6 +245,14 @@ class PrecisionPolicy:
 def resolve_precision_policy(cfg: Any) -> PrecisionPolicy:
     """Resolve the required nested top-level ``precision`` block."""
 
+    legacy_allow_tf32 = _select(cfg, "actor.optim.allow_tf32", _MISSING)
+    if legacy_allow_tf32 is not _MISSING:
+        raise ValueError(
+            "actor.optim.allow_tf32 is no longer supported because FP32 matmul "
+            "precision is a forward policy, not an optimizer setting. Replace it "
+            "with top-level precision.float32_precision: tf32 (or ieee).",
+        )
+
     block = _select(cfg, "precision", _MISSING)
     if block is _MISSING:
         raise ValueError(
@@ -242,6 +270,12 @@ def resolve_precision_policy(cfg: Any) -> PrecisionPolicy:
 
     training = _parse_role(block, "training")
     rollout = _parse_role(block, "rollout", dtype_default=training.dtype)
+    float32_precision_raw = _select(block, "float32_precision", _MISSING)
+    if float32_precision_raw is _MISSING:
+        raise ValueError(
+            "precision.float32_precision is required; set it to 'tf32' for "
+            "TensorFloat-32 FP32 matmuls or 'ieee' for full IEEE FP32 matmuls.",
+        )
     math_raw = _select(block, "diffusion_math.dtype", "fp32")
     prompt_encoder_raw = _select(
         block,
@@ -251,6 +285,7 @@ def resolve_precision_policy(cfg: Any) -> PrecisionPolicy:
     return PrecisionPolicy(
         training=training,
         rollout=rollout,
+        float32_precision=_normalize_float32_precision(float32_precision_raw),
         diffusion_math=_normalize_plain_dtype(
             math_raw,
             path="precision.diffusion_math.dtype",
@@ -318,7 +353,8 @@ def _reject_legacy_keys(block: Any) -> None:
             f"legacy precision key(s) are no longer supported: {names}. Use "
             "precision.training.dtype, precision.rollout.dtype, "
             "precision.rollout.quantization, precision.diffusion_math.dtype, "
-            "and precision.rollout.prompt_encoders.dtype.",
+            "precision.rollout.prompt_encoders.dtype, and "
+            "precision.float32_precision.",
         )
 
 

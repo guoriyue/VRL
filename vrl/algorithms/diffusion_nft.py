@@ -9,6 +9,8 @@ from vrl.algorithms.advantages import group_relative_advantages
 from vrl.algorithms.base import Algorithm
 from vrl.algorithms.trajectory import AlgorithmInput
 from vrl.algorithms.types import PolicyUpdateStats, TrainStepMetrics
+from vrl.models.forward_precision import forward_autocast
+from vrl.models.interfaces import ResolvedForwardPrecision
 
 
 def normalized_mse(prediction: Any, target: Any) -> Any:
@@ -90,6 +92,7 @@ class DiffusionNFT(Algorithm):
         model: Any,
         batch: Any,
         advantages: Any,
+        forward_precision: ResolvedForwardPrecision,
         timestep_index: int = 0,
         threshold: float = 1.0e-6,
     ) -> dict[str, Any]:
@@ -115,6 +118,7 @@ class DiffusionNFT(Algorithm):
                     batch,
                     timestep_index,
                     adv,
+                    forward_precision,
                 )
             return float(loss.detach().float().item())
 
@@ -138,17 +142,24 @@ class DiffusionNFT(Algorithm):
         model = inputs.metadata.get("model")
         batch = inputs.metadata.get("rollout_batch")
         timestep_index = int(inputs.metadata.get("timestep_index", 0))
+        forward_precision = inputs.metadata.get("forward_precision")
         if model is None:
             raise RuntimeError("DiffusionNFT AlgorithmInput.metadata['model'] is required")
         if batch is None:
             raise RuntimeError("DiffusionNFT AlgorithmInput.metadata['rollout_batch'] is required")
         if inputs.advantages is None:
             raise RuntimeError("AlgorithmInput.advantages is required for DiffusionNFT")
+        if not isinstance(forward_precision, ResolvedForwardPrecision):
+            raise RuntimeError(
+                "DiffusionNFT AlgorithmInput.metadata['forward_precision'] must be "
+                "ResolvedForwardPrecision",
+            )
         return self.compute_batch_timestep_loss(
             model,
             batch,
             timestep_index,
             inputs.advantages,
+            forward_precision,
         )
 
     def compute_batch_timestep_loss(
@@ -157,6 +168,7 @@ class DiffusionNFT(Algorithm):
         batch: Any,
         timestep_index: int,
         advantages: Any,
+        forward_precision: ResolvedForwardPrecision,
     ) -> tuple[Any, TrainStepMetrics]:
         """Compute one DiffusionNFT loss slice for a rollout batch/timestep."""
 
@@ -165,6 +177,10 @@ class DiffusionNFT(Algorithm):
         from vrl.trajectory import TrajectoryResolver
 
         cfg = self.config
+        if not isinstance(forward_precision, ResolvedForwardPrecision):
+            raise TypeError(
+                "DiffusionNFT.compute_batch_timestep_loss requires ResolvedForwardPrecision",
+            )
         advantage_scale = float(cfg.advantage_scale)
         if advantage_scale <= 0:
             raise RuntimeError("DiffusionNFTConfig.advantage_scale must be > 0")
@@ -252,10 +268,19 @@ class DiffusionNFT(Algorithm):
             guidance_scale=batch.context.get("guidance_scale"),
         )
 
-        with model.activate_adapter("previous"), torch.no_grad():
+        with (
+            model.activate_adapter("previous"),
+            torch.no_grad(),
+            forward_autocast(forward_precision, x0.device),
+        ):
             previous_prediction = transformer(**transformer_inputs)[0].detach()
-        forward_prediction = transformer(**transformer_inputs)[0]
-        with model.disable_adapter(), torch.no_grad():
+        with forward_autocast(forward_precision, x0.device):
+            forward_prediction = transformer(**transformer_inputs)[0]
+        with (
+            model.disable_adapter(),
+            torch.no_grad(),
+            forward_autocast(forward_precision, x0.device),
+        ):
             ref_prediction = transformer(**transformer_inputs)[0].detach()
 
         # Advantages are already clamped to ±adv_clip_max upstream in

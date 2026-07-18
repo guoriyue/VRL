@@ -1,6 +1,28 @@
 # SPRINT：Diffusion native transformer executor
 
-状态：未开始 / parked。Phase 0-11 全部未落地（grep WanNativeTransformerExecutor / WanSelfAttention / load_wan_diffusers_transformer_weights / CosmosAttention2_0 在 vrl/ + tests/ 零命中；vrl/nn/layers/{dense,wan,mlp,norm,modulation}.py、vrl/nn/modules/diffusion/、vrl/models/diffusion/*/executor.py+weights.py 均不存在；backbone.py:88,153 仍 self.transformer = diffusers object）。唯一相关提交 0abb5fd 只是把本 doc 砍成 forward-looking plan，未写任何实现。触发事件：bf16 rollout dtype + torch.compile（31f6843）启用后，需重新 profiling 确认 attention 仍是瓶颈（见 SPRINT_rollout_performance：attention 34% 但全 fp32）才启动。
+状态：未开始 / parked。Phase 0-11 全部未落地（grep
+WanNativeTransformerExecutor / WanSelfAttention /
+load_wan_diffusers_transformer_weights / CosmosAttention2_0 在 vrl/ + tests/
+零命中；计划中的 native layer/module/executor/weights 文件仍不存在，Wan/Cosmos
+仍把 Diffusers transformer 交给 shared backbone caller）。
+
+**2026-07-13 gate refresh：当前触发条件未通过。** SD3.5 的 bf16/FA2、
+**compile-off** full-rollout profile 把 attention 从旧 fp32 profile 的 34% 降到约 9%；
+独立的 compile A/B 通过削 launch/elementwise 获益，Cosmos 的 NCU/GEMM/SDPA 复核也
+没有找到稳定的单卡无损 kernel 杠杆。这些是三组不同证据，9% 不能归因于 compile。
+当前自研主线是
+[Native generation engine program](../SPRINT_native_generation_engine_program.md)
+的 rollout/control plane、容错与 provider conformance，不是为了“从 scratch”而重写
+model forward。
+
+证据分别见
+[rollout performance archive](../info/SPRINT_rollout_performance.md) 与
+[GEMM/compile results](../done/SPRINT_gemm_utilization.md)。
+
+新的解 park 条件：production shape 的新 profile 证明 transformer 内部存在显著、
+Diffusers/compile/standard kernel 无法解决且可兑现的瓶颈，**或**新算法明确需要
+repo-owned block/layer semantics。单纯接入 FlashDreams/SGLang provider、或强调
+“我们自研 engine”，都不构成解 park 事件。
 
 ## 核心结论
 

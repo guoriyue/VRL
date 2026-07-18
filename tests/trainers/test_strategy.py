@@ -14,6 +14,7 @@ import torch
 from torch import nn
 
 from vrl.trainers.online.ema import EMAModuleWrapper
+from vrl.trainers.optimizer import FP32MasterWeightOptimizer
 from vrl.trainers.strategy import SingleProcessStrategy, TrainingMemoryState
 from vrl.trainers.weight_sync import build_trainable_state_sync_getter
 
@@ -328,6 +329,76 @@ def test_bitsandbytes_adamw8bit_state_survives_cuda_parking_round_trip() -> None
     optimizer.zero_grad(set_to_none=True)
     model(torch.full((2, 128), 0.5, device=device)).square().mean().backward()
     optimizer.step()
+    optimizer.zero_grad(set_to_none=True)
+
+
+@pytest.mark.gpu
+def test_fp32_master_parameters_and_live_grads_survive_cuda_parking() -> None:
+    if not torch.cuda.is_available():
+        pytest.skip("CUDA is required for FP32 master parking")
+    bitsandbytes = pytest.importorskip("bitsandbytes")
+    device = torch.device("cuda:0")
+    model = nn.Linear(128, 128, bias=False).to(device=device, dtype=torch.float16)
+    optimizer = FP32MasterWeightOptimizer(
+        model.parameters(),
+        lambda parameters: bitsandbytes.optim.AdamW8bit(parameters, lr=0.01),
+    )
+    scaler = torch.amp.GradScaler("cuda")
+
+    first_loss = (
+        model(
+            torch.ones(2, 128, device=device, dtype=torch.float16),
+        )
+        .square()
+        .mean()
+    )
+    scaler.scale(first_loss).backward()
+    optimizer.prepare_gradients()
+    scaler.unscale_(optimizer)
+    scaler.step(optimizer)
+    scaler.update()
+    optimizer.zero_grad(set_to_none=True)
+
+    # Keep a live prepared master gradient across the phase handoff. This is an
+    # exceptional but supported state (for example cancellation between
+    # backward and step) and must not pin the rollout GPU.
+    live_loss = model(
+        torch.full((2, 128), 0.5, device=device, dtype=torch.float16),
+    ).sum()
+    scaler.scale(live_loss).backward()
+    optimizer.prepare_gradients()
+    scaler.unscale_(optimizer)
+    masters = list(optimizer.parameters())
+    assert all(parameter.device.type == "cuda" for parameter in masters)
+    assert all(parameter.grad is not None for parameter in masters)
+
+    state = TrainingMemoryState(
+        model=model,
+        ref_model=None,
+        optimizer=optimizer,
+        ema=None,
+        grad_scaler=scaler,
+        device=device,
+    )
+    strategy = SingleProcessStrategy()
+    strategy.park_training_state(state)
+
+    assert all(parameter.device.type == "cpu" for parameter in masters)
+    assert all(
+        parameter.grad is not None and parameter.grad.device.type == "cpu" for parameter in masters
+    )
+    assert all(tensor.device.type == "cpu" for tensor in _tree_tensors(optimizer.state))
+
+    strategy.restore_training_state(state)
+
+    assert all(parameter.device.type == "cuda" for parameter in masters)
+    assert all(
+        parameter.grad is not None and parameter.grad.device.type == "cuda"
+        for parameter in masters
+    )
+    assert all(tensor.device.type == "cuda" for tensor in _tree_tensors(optimizer.state))
+    scaler.step(optimizer)
+    scaler.update()
     optimizer.zero_grad(set_to_none=True)
 
 

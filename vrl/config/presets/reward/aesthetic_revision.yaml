@@ -1,0 +1,15 @@
+# Aesthetic scorer with an explicit optional Hub revision boundary.
+#
+# Keep the unpinned aesthetic preset unchanged for archived protocol hashes;
+# experiments that require immutable scorer provenance compose this variant and
+# set the revision in their own protocol config.
+defaults:
+  - /reward/aesthetic
+  - _self_
+
+reward:
+  components:
+    aesthetic: 1.0
+  kwargs:
+    aesthetic:
+      model_revision: null

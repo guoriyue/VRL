@@ -15,9 +15,8 @@ or manages the ``nsys`` CLI. The manifest is the trust anchor — any later clai
 about a profile must cite ``requested``/``effective``/``missing`` activities
 there, not just a summary table that may be silently incomplete.
 
-``record_function`` / ``torch_profiler_step`` remain as compatibility aliases for
-existing call sites; new code should import ``profile_range`` /
-``capture_torch_trace``.
+``record_function`` remains as a compatibility alias for existing call sites;
+new code should import ``profile_range``.
 """
 
 from __future__ import annotations
@@ -407,11 +406,9 @@ def _write_manifest(
         )
 
 
-# Compatibility aliases for existing call sites. profile_range / capture_torch_trace
-# are the names new code should use; these stay one migration cycle.
+# Compatibility alias for existing call sites. profile_range is the name new
+# code should use; this stays one migration cycle.
 record_function = profile_range
-torch_profiler_step = capture_torch_trace
-
 
 __all__ = [
     "ResolvedActivities",
@@ -420,5 +417,4 @@ __all__ = [
     "nvtx_enabled",
     "profile_range",
     "record_function",
-    "torch_profiler_step",
 ]

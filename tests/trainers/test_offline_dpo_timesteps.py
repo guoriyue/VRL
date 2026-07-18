@@ -7,6 +7,7 @@ distribution without the trainer noticing.
 
 from __future__ import annotations
 
+from contextlib import contextmanager
 from types import SimpleNamespace
 
 import pytest
@@ -19,12 +20,15 @@ from tests.models.diffusion.fixtures import (
     build_tiny_wan_transformer,
     record_forward_calls,
 )
+from vrl.models.interfaces import ResolvedForwardPrecision
 from vrl.trainers.data.preferences import PreferenceBatch
 from vrl.trainers.offline import (
     OfflineDPOTrainer,
     OfflineDPOTrainerConfig,
     wan_forward,
 )
+
+FORWARD_PRECISION = ResolvedForwardPrecision(autocast="off", float32_precision="ieee")
 
 
 def _noop_forward(model, noisy, ts, encoder, extra=None):  # pragma: no cover
@@ -43,14 +47,13 @@ def _make_trainer(
     scheduler_timesteps,
     *,
     timestep_subset=None,
-    allow_tf32: bool = True,
+    float32_precision: str = "ieee",
 ) -> OfflineDPOTrainer:
     scheduler = SimpleNamespace(
         timesteps=scheduler_timesteps,
         config=SimpleNamespace(num_train_timesteps=1000),
     )
     cfg = OfflineDPOTrainerConfig(
-        allow_tf32=allow_tf32,
         prediction_type="epsilon",
         timestep_subset=timestep_subset,
     )
@@ -61,6 +64,10 @@ def _make_trainer(
         noise_scheduler=scheduler,
         encode_pixels=_noop_encode_pix,
         encode_text=_noop_encode_text,
+        forward_precision=ResolvedForwardPrecision(
+            autocast="off",
+            float32_precision=float32_precision,
+        ),
         config=cfg,
         device="cpu",
     )
@@ -101,6 +108,7 @@ class TestSampleTimesteps:
             noise_scheduler=scheduler,
             encode_pixels=_noop_encode_pix,
             encode_text=_noop_encode_text,
+            forward_precision=FORWARD_PRECISION,
             config=cfg,
             device="cpu",
         )
@@ -230,15 +238,16 @@ def test_offline_dpo_adamw_consumes_every_resolved_optimizer_value() -> None:
     assert optimizer.defaults["eps"] == pytest.approx(1e-5)
 
 
-@pytest.mark.parametrize("allow_tf32", [False, True])
-def test_offline_dpo_applies_tf32_policy(monkeypatch, allow_tf32: bool) -> None:
-    monkeypatch.setattr(torch.backends.cuda.matmul, "allow_tf32", not allow_tf32)
-    monkeypatch.setattr(torch.backends.cudnn, "allow_tf32", not allow_tf32)
+@pytest.mark.parametrize("float32_precision", ["ieee", "tf32"])
+def test_offline_dpo_applies_float32_policy(monkeypatch, float32_precision: str) -> None:
+    import vrl.trainers.offline.dpo as dpo_module
 
-    _make_trainer(torch.arange(20), allow_tf32=allow_tf32)
+    applied: list[str] = []
+    monkeypatch.setattr(dpo_module, "apply_float32_precision", applied.append)
 
-    assert torch.backends.cuda.matmul.allow_tf32 is allow_tf32
-    assert torch.backends.cudnn.allow_tf32 is allow_tf32
+    _make_trainer(torch.arange(20), float32_precision=float32_precision)
+
+    assert applied == [float32_precision]
 
 
 @pytest.mark.parametrize(
@@ -259,13 +268,27 @@ def test_step_metrics_report_the_optimized_loss(
         timesteps=torch.arange(1),
         add_noise=lambda latents, noise, timesteps: latents,
     )
+    active_forward_scope = 0
+
+    @contextmanager
+    def track_forward_autocast(policy, device):
+        nonlocal active_forward_scope
+        assert policy is FORWARD_PRECISION
+        assert torch.device(device).type == "cpu"
+        active_forward_scope += 1
+        try:
+            yield
+        finally:
+            active_forward_scope -= 1
 
     def forward_fn(model, noisy, timesteps, encoder):
         del timesteps, encoder
+        assert active_forward_scope == 1
         return model(noisy.flatten(1)[:, :1]).reshape(-1, 1, 1, 1)
 
     def fake_dpo_loss(*, model_pred, **kwargs):
         del kwargs
+        assert active_forward_scope == 0
         base = model_pred.sum() * 0.0 + 2.0
         return {
             "loss": base,
@@ -281,9 +304,11 @@ def test_step_metrics_report_the_optimized_loss(
     def fake_sft_loss(model_pred, target):
         nonlocal sft_calls
         del target
+        assert active_forward_scope == 0
         sft_calls += 1
         return model_pred.sum() * 0.0 + 3.0
 
+    monkeypatch.setattr(dpo_module, "forward_autocast", track_forward_autocast)
     monkeypatch.setattr(dpo_module, "diffusion_dpo_loss", fake_dpo_loss)
     monkeypatch.setattr(dpo_module, "diffusion_sft_loss", fake_sft_loss)
     trainer = OfflineDPOTrainer(
@@ -293,9 +318,9 @@ def test_step_metrics_report_the_optimized_loss(
         noise_scheduler=scheduler,
         encode_pixels=lambda pixels: pixels[:, :1],
         encode_text=lambda captions: torch.zeros(len(captions), 1),
+        forward_precision=FORWARD_PRECISION,
         config=OfflineDPOTrainerConfig(
             prediction_type="epsilon",
-            mixed_precision="no",
             sft_weight=sft_weight,
             lr=0.0,
         ),

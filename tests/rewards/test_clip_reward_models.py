@@ -68,6 +68,52 @@ def test_aesthetic_model_reads_transformers_5_projected_image_features(
     assert torch.isfinite(scores).all()
 
 
+@pytest.mark.parametrize("revision", [None, "aesthetic-immutable-revision"])
+def test_aesthetic_model_passes_optional_revision_to_clip_loaders(
+    monkeypatch: pytest.MonkeyPatch,
+    revision: str | None,
+) -> None:
+    """The model and processor resolve the same optional CLIP revision."""
+    transformers = pytest.importorskip("transformers")
+
+    from vrl.rewards.models.aesthetic import AestheticRewardModel
+
+    calls: list[tuple[str, str, dict[str, str]]] = []
+
+    class _FakeClip(torch.nn.Module):
+        pass
+
+    class _FakeProcessor:
+        pass
+
+    def load_clip(name: str, **kwargs: str) -> _FakeClip:
+        calls.append(("model", name, kwargs))
+        return _FakeClip()
+
+    def load_processor(name: str, **kwargs: str) -> _FakeProcessor:
+        calls.append(("processor", name, kwargs))
+        return _FakeProcessor()
+
+    monkeypatch.setattr(transformers.CLIPModel, "from_pretrained", staticmethod(load_clip))
+    monkeypatch.setattr(
+        transformers.CLIPProcessor,
+        "from_pretrained",
+        staticmethod(load_processor),
+    )
+    monkeypatch.setattr(torch, "load", lambda *args, **kwargs: _aesthetic_head_state_dict())
+    config = {"device": "cpu", "dtype": "float32"}
+    if revision is not None:
+        config["model_revision"] = revision
+
+    AestheticRewardModel(config)._load()
+
+    expected_kwargs = {"revision": revision} if revision is not None else {}
+    assert calls == [
+        ("model", "openai/clip-vit-large-patch14", expected_kwargs),
+        ("processor", "openai/clip-vit-large-patch14", expected_kwargs),
+    ]
+
+
 def test_pickscore_reads_transformers_5_projected_image_and_text_features() -> None:
     """Checks PickScore unwraps both projected Transformers 5 feature outputs."""
     pytest.importorskip("transformers")
@@ -106,3 +152,64 @@ def test_pickscore_reads_transformers_5_projected_image_and_text_features() -> N
     score = model._score("prompt", [object(), object()])
 
     assert score == pytest.approx(1.0 / 26.0)
+
+
+@pytest.mark.parametrize(
+    ("processor_revision", "model_revision"),
+    [
+        (None, None),
+        ("processor-immutable-revision", None),
+        (None, "model-immutable-revision"),
+        ("processor-immutable-revision", "model-immutable-revision"),
+    ],
+)
+def test_pickscore_passes_optional_revisions_to_matching_loaders(
+    monkeypatch: pytest.MonkeyPatch,
+    processor_revision: str | None,
+    model_revision: str | None,
+) -> None:
+    """Processor and model revisions remain independent optional boundaries."""
+    transformers = pytest.importorskip("transformers")
+
+    from vrl.rewards.models.pickscore import PickScoreRewardModel
+
+    calls: list[tuple[str, str, dict[str, str]]] = []
+
+    class _FakeProcessor:
+        pass
+
+    class _FakeClip:
+        def eval(self) -> _FakeClip:
+            return self
+
+        def to(self, *args, **kwargs) -> _FakeClip:
+            return self
+
+    def load_processor(name: str, **kwargs: str) -> _FakeProcessor:
+        calls.append(("processor", name, kwargs))
+        return _FakeProcessor()
+
+    def load_clip(name: str, **kwargs: str) -> _FakeClip:
+        calls.append(("model", name, kwargs))
+        return _FakeClip()
+
+    monkeypatch.setattr(
+        transformers.CLIPProcessor,
+        "from_pretrained",
+        staticmethod(load_processor),
+    )
+    monkeypatch.setattr(transformers.CLIPModel, "from_pretrained", staticmethod(load_clip))
+    config = {"device": "cpu"}
+    if processor_revision is not None:
+        config["processor_revision"] = processor_revision
+    if model_revision is not None:
+        config["model_revision"] = model_revision
+
+    PickScoreRewardModel(config)._load()
+
+    processor_kwargs = {"revision": processor_revision} if processor_revision is not None else {}
+    model_kwargs = {"revision": model_revision} if model_revision is not None else {}
+    assert calls == [
+        ("processor", "laion/CLIP-ViT-H-14-laion2B-s32B-b79K", processor_kwargs),
+        ("model", "yuvalkirstain/PickScore_v1", model_kwargs),
+    ]

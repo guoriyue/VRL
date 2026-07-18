@@ -2,6 +2,13 @@
 
 状态：discussion（不是 proposed/approved；这份文档的目的是把方向讨论清楚，再决定要不要拆 phase 落地）。
 
+> **2026-07-13 decision update：** 两层框架已被
+> [Native generation engine program](../SPRINT_native_generation_engine_program.md)
+> 采纳：wm-infra 的 rollout/control plane 继续自研并作为 source of truth；
+> FlashDreams/SGLang 只作为可选 diffusion execution provider。本文继续保留为
+> reading 证据；native transformer ownership 与跨请求 step scheduling 仍按各自
+> profiling/event gate parked。
+
 关联：[[SPRINT_diffusion_native_transformer_executor]]（模型执行层，正交关系，见下文「两层框架」）。
 
 ## 核心结论（先看这一段）

@@ -11,8 +11,9 @@ defaults:
   - /dataset/pickapic_v2
   - /reward/pickscore
 
-# The SANA family build pins base transformer parameters to fp16; bf16 autocast
-# avoids SDE activation overflow without changing that model invariant.
+# This validation recipe keeps the model preset's native FP16 path without outer
+# autocast; Gemma remains a separate BF16 prompt-encoding boundary. The family
+# rejects non-native BF16 and FP32 transformer roles before model loading.
 
 sampling:
   max_sequence_length: 300
@@ -21,10 +22,8 @@ actor:
   optim:
     lr: 3.0e-4
   gradient_accumulation_steps: 4
-  # Symmetric 8/8 chunk shape, same as online_grpo_aesthetic.yaml: SANA's bf16
-  # kernels are batch-shape sensitive (16/1 measured 0.014 pre-update log-prob
-  # drift > the 0.01 debug.first_step limit; 8/8 was bit-exact), so with the
-  # hard parity gate below the 16/1 shape aborts at the first optimizer step.
+  # Symmetric 8/8 chunk shape keeps rollout and replay on the same batched-CFG
+  # execution shape before the first optimizer step.
   replay_samples_per_chunk: 8
 
 rollout:

@@ -9,7 +9,12 @@ from vrl.models.interfaces.replay import (
     require_replay_model,
     require_runtime_model,
 )
-from vrl.models.interfaces.runtime import ModelBuild, RolloutBuildOptions, RuntimeBundle
+from vrl.models.interfaces.runtime import (
+    ModelBuild,
+    ResolvedForwardPrecision,
+    RolloutBuildOptions,
+    RuntimeBundle,
+)
 
 __all__ = [
     "ModelBuild",
@@ -17,6 +22,7 @@ __all__ = [
     "ReplayRequest",
     "ReplayResult",
     "ReplaySegmentResult",
+    "ResolvedForwardPrecision",
     "RolloutBuildOptions",
     "RuntimeBundle",
     "RuntimeModel",

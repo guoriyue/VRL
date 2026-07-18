@@ -36,7 +36,6 @@ from vrl.trainers.checkpointing import (
     save_training_checkpoint,
 )
 from vrl.trainers.core.types import OptimConfig, TrainerConfig
-from vrl.trainers.precision import normalize_mixed_precision
 
 if TYPE_CHECKING:
     from vrl.algorithms.dpo import DiffusionDPOConfig
@@ -49,7 +48,6 @@ def _build_offline_dpo_trainer_config(
     cfg: DictConfig,
     dpo_config: DiffusionDPOConfig,
     *,
-    mixed_precision: str,
     train_batch_size: int,
     gradient_accumulation_steps: int,
 ) -> OfflineDPOTrainerConfig:
@@ -92,7 +90,6 @@ def _build_offline_dpo_trainer_config(
         adam_beta2=float(optim.adam_beta2),
         adam_weight_decay=float(optim.weight_decay),
         adam_epsilon=float(optim.eps),
-        allow_tf32=bool(optim.allow_tf32),
         max_grad_norm=float(
             OmegaConf.select(
                 cfg,
@@ -102,7 +99,6 @@ def _build_offline_dpo_trainer_config(
         ),
         gradient_accumulation_steps=gradient_accumulation_steps,
         prediction_type=str(require(cfg, "actor.prediction_type")),
-        mixed_precision=mixed_precision,
         use_adafactor=use_adafactor,
     )
 
@@ -186,13 +182,11 @@ def train_wan_2_1_dpo(cfg: DictConfig) -> None:
         )
 
     precision = resolve_precision_policy(cfg)
-    mixed_precision = normalize_mixed_precision(precision.training.dtype)
     train_batch_size = int(require(cfg, "actor.train_batch_size"))
     grad_accum = int(require(cfg, "actor.gradient_accumulation_steps"))
     trainer_cfg = _build_offline_dpo_trainer_config(
         cfg,
         dpo_config,
-        mixed_precision=mixed_precision,
         train_batch_size=train_batch_size,
         gradient_accumulation_steps=grad_accum,
     )
@@ -222,6 +216,8 @@ def train_wan_2_1_dpo(cfg: DictConfig) -> None:
     build = family_entry.resolve_model_build(
         cfg,
         device,
+        for_rollout=True,
+        precision_role="training",
         parameter_dtype_override=weight_dtype,
     )
     bundle = family_entry.build_rollout(build)
@@ -285,6 +281,7 @@ def train_wan_2_1_dpo(cfg: DictConfig) -> None:
         noise_scheduler=pipeline.scheduler,
         encode_pixels=encode_pixels,
         encode_text=encode_text,
+        forward_precision=bundle.forward_precision,
         config=trainer_cfg,
         device=device,
     )

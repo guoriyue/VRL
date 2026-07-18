@@ -53,6 +53,44 @@ def _state(*, do_cfg: bool) -> SanaSamplingState:
     )
 
 
+def test_sana_requires_validated_forward_without_outer_autocast() -> None:
+    """SANA's family descriptor owns one shared forward requirement."""
+
+    from vrl.families.registry import get_model_family_entry
+
+    requirement = get_model_family_entry("sana").family_build.forward_precision
+    assert requirement.autocast == "off"
+    assert requirement.float32_precision == "ieee"
+    assert not hasattr(SanaModel, "disable_rollout_autocast")
+    assert not hasattr(SanaModel, "disable_train_autocast")
+    assert not hasattr(SanaModel, "allow_tf32")
+
+
+def test_sana_fp16_output_is_promoted_before_cfg() -> None:
+    """SANA matches native FP32 CFG instead of combining rounded FP16 branches."""
+
+    transformer = build_tiny_sana_transformer().half()
+    calls = record_forward_calls(transformer)
+    raw_outputs: list[torch.Tensor] = []
+    transformer.register_forward_hook(
+        lambda _module, _args, _kwargs, output: raw_outputs.append(output[0].detach()),
+        with_kwargs=True,
+    )
+    state = _state(do_cfg=True)
+
+    out = _model(transformer).forward_step(state, 0)
+
+    raw_uncond, raw_cond = raw_outputs[0].float().chunk(2)
+    native_cfg = raw_uncond + state.guidance_scale * (raw_cond - raw_uncond)
+    fp16_cfg = (
+        raw_outputs[0].chunk(2)[0]
+        + state.guidance_scale * (raw_outputs[0].chunk(2)[1] - raw_outputs[0].chunk(2)[0])
+    ).float()
+    torch.testing.assert_close(out["noise_pred"], native_cfg, rtol=0.0, atol=0.0)
+    assert not torch.equal(out["noise_pred"], fp16_cfg)
+    assert calls[0]["timestep"].dtype is torch.float32
+
+
 def test_sana_forward_step_runs_real_batched_cfg() -> None:
     """One doubled-batch transformer call; combine matches uncond+s*(cond-uncond)."""
     transformer = build_tiny_sana_transformer()
@@ -69,6 +107,7 @@ def test_sana_forward_step_runs_real_batched_cfg() -> None:
     assert calls[0]["encoder_attention_mask"].shape == (doubled, _TEXT_LEN)
     uncond, cond = out["noise_pred_uncond"], out["noise_pred_cond"]
     torch.testing.assert_close(out["noise_pred"], uncond + 4.5 * (cond - uncond))
+    assert out["noise_pred"].dtype is torch.float32
     assert out["noise_pred"].shape == TINY_SANA_LATENT_SHAPE
     assert not torch.allclose(cond, uncond)
 
@@ -102,6 +141,7 @@ def test_sana_forward_step_applies_timestep_scale() -> None:
         calls[0]["timestep"],
         torch.full((TINY_SANA_LATENT_SHAPE[0],), 5.0 * 0.5),
     )
+    assert calls[0]["timestep"].dtype is state.timesteps.dtype
 
 
 def test_sana_replay_roundtrip_restores_equivalent_state() -> None:

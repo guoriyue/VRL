@@ -97,6 +97,7 @@ def _worker_setup_hook(repo_root: str) -> Any:
                 trainable_modules={},
                 scheduler=None,
                 raw_handle=None,
+                forward_precision=build.forward_precision,
             )
 
         # The hook executes before worker imports the launch contract. Publishing
@@ -133,6 +134,10 @@ def _launch_inputs() -> RayGenerationLaunchInputs:
                 "model_name_or_path": "unit-test",
                 "device": "cpu",
                 "parameter_dtype": "float32",
+                "forward_precision": {
+                    "autocast": "off",
+                    "float32_precision": "tf32",
+                },
             },
             policy_version=7,
         ),

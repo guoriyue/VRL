@@ -15,35 +15,56 @@ import torch
 import torch.nn as nn
 
 from tests.trainers.online._collector_control import CollectorControlFake
-from tests.trainers.online._helpers import _algorithm_inputs, _trajectory_signals
+from tests.trainers.online._helpers import (
+    DEFAULT_FORWARD_PRECISION,
+    _algorithm_inputs,
+    _rollout_context,
+    _trajectory_signals,
+)
 from vrl.algorithms.types import TrainStepMetrics
 from vrl.rollouts.batch import RolloutBatch
 from vrl.rollouts.evaluators.base import Evaluator
 from vrl.trainers.core.types import EMAConfig, OptimConfig, TrainerConfig
 from vrl.trainers.online import OnlineTrainer
-from vrl.trainers.online.trainer import _needs_grad_scaler
+from vrl.trainers.online.trainer import _create_grad_scaler
+from vrl.trainers.optimizer import FP32MasterWeightOptimizer
 from vrl.trainers.strategy import SingleProcessStrategy
 
 
 # --------------------------------------------------------------------------
-# G1 — scaler is enabled only for native (no-accelerator) cuda fp16 training
+# G1 — scaler follows effective FP16 backward risk, not outer-autocast alone
 # --------------------------------------------------------------------------
 @pytest.mark.parametrize(
-    ("mixed_precision", "device", "accelerator", "expected"),
+    ("autocast", "device", "parameter_dtype", "expected"),
     [
-        ("fp16", "cuda", None, True),  # the one path that needs scaling
-        ("fp16", "cpu", None, False),  # fp16 autocast only resolves on cuda
-        ("bf16", "cuda", None, False),  # bf16 has fp32 range — no underflow
-        ("no", "cuda", None, False),  # fp32 — nothing to scale
-        ("fp16", "cuda", object(), False),  # accelerator self-manages a scaler
+        ("fp16", "cuda", torch.float32, True),  # ordinary AMP
+        ("fp16", "cpu", torch.float32, False),
+        ("bf16", "cuda", torch.float32, False),
+        ("off", "cuda", torch.float32, False),
+        # SANA: no outer autocast, but its native FP16 gradient buffers still
+        # need scaling before they are copied to FP32 master parameters.
+        ("off", "cuda", torch.float16, True),
+        ("off", "cuda", torch.bfloat16, False),
     ],
 )
-def test_needs_grad_scaler_matrix(mixed_precision, device, accelerator, expected) -> None:
-    config = SimpleNamespace(train_precision=mixed_precision)
-    assert (
-        _needs_grad_scaler(config, torch.device(device), model=None, accelerator=accelerator)
-        is expected
-    )
+def test_create_grad_scaler_matrix(
+    monkeypatch: pytest.MonkeyPatch,
+    autocast,
+    device,
+    parameter_dtype,
+    expected,
+) -> None:
+    from vrl.models.interfaces import ResolvedForwardPrecision
+
+    precision = ResolvedForwardPrecision(autocast=autocast, float32_precision="ieee")
+    model = nn.Linear(1, 1, bias=False).to(dtype=parameter_dtype)
+    sentinel = object()
+    monkeypatch.setattr(torch.amp, "GradScaler", lambda _device: sentinel)
+
+    scaler = _create_grad_scaler(precision, torch.device(device), model=model)
+
+    assert (scaler is sentinel) is expected
+    assert (scaler is None) is (not expected)
 
 
 # --------------------------------------------------------------------------
@@ -62,7 +83,6 @@ def _scaler_trainer(*, growth_interval: int = 2000, max_norm: float = 1.0):
     scaler.scale(model.weight.sum()).backward()  # grad now carries the 1024 scale
     trainer = SimpleNamespace(
         config=SimpleNamespace(max_norm=max_norm),
-        accelerator=None,
         model=model,
         _grad_scaler=scaler,
         _strategy=SingleProcessStrategy(),
@@ -89,6 +109,56 @@ def test_unscale_runs_before_clip(monkeypatch) -> None:
     OnlineTrainer._clip_and_step(trainer, optimizer)
 
     assert seen == [1.0], seen
+
+
+def test_clip_and_step_prepares_fp32_master_before_standard_unscale() -> None:
+    model = nn.Linear(1, 1, bias=False).half()
+    with torch.no_grad():
+        model.weight.fill_(1.0)
+    optimizer = FP32MasterWeightOptimizer(
+        model.parameters(),
+        lambda parameters: torch.optim.SGD(parameters, lr=0.1),
+    )
+    scaler = torch.amp.GradScaler("cpu", init_scale=128.0)
+    scaler.scale(model.weight.float().sum()).backward()
+    trainer = SimpleNamespace(
+        config=SimpleNamespace(max_norm=1.0),
+        model=model,
+        _grad_scaler=scaler,
+        _strategy=SingleProcessStrategy(),
+    )
+
+    grad_norm, stepped = OnlineTrainer._clip_and_step(trainer, optimizer)
+
+    assert grad_norm == pytest.approx(1.0)
+    assert stepped is True
+    assert model.weight.item() == pytest.approx(0.89990234375)
+
+
+def test_low_precision_trainables_derive_master_optimizer_without_config_knob() -> None:
+    trainer = object.__new__(OnlineTrainer)
+    trainer.model = nn.Linear(1, 1, bias=False).half()
+    trainer.config = SimpleNamespace(optim=OptimConfig(lr=1.0e-5))
+    trainer._optimizer = None
+
+    optimizer = trainer._ensure_optimizer()
+
+    assert isinstance(optimizer, FP32MasterWeightOptimizer)
+    assert next(optimizer.parameters()).dtype is torch.float32
+    assert trainer.model.weight.dtype is torch.float16
+
+
+def test_fp32_trainables_use_direct_optimizer_without_duplicate_master() -> None:
+    trainer = object.__new__(OnlineTrainer)
+    trainer.model = nn.Linear(1, 1, bias=False).float()
+    trainer.config = SimpleNamespace(optim=OptimConfig(lr=1.0e-5))
+    trainer._optimizer = None
+
+    optimizer = trainer._ensure_optimizer()
+
+    assert not isinstance(optimizer, FP32MasterWeightOptimizer)
+    assert optimizer.param_groups[0]["params"][0] is trainer.model.weight
+    assert trainer.model.weight.dtype is torch.float32
 
 
 # --------------------------------------------------------------------------
@@ -158,7 +228,7 @@ class _Collector(CollectorControlFake):
             rewards=torch.arange(group_size, dtype=torch.float32),
             dones=torch.ones(group_size, dtype=torch.bool),
             group_ids=torch.zeros(group_size, dtype=torch.long),
-            context={},
+            context=_rollout_context(),
             prompts=list(prompts) * group_size,
         )
 
@@ -203,6 +273,7 @@ def _build_trainer(tmp_path):
             train_precision="no",
             output_dir=str(tmp_path),
         ),
+        forward_precision=DEFAULT_FORWARD_PRECISION,
         device="cpu",
     )
     spy_ema = _SpyEMA()

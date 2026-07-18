@@ -26,8 +26,9 @@ offload()        park already-idle workers; never drain generation itself
 shutdown()       join activation/offload tasks and tear down owned resources
 ```
 
-`release()` and `with_release_after_collect()` remain compatibility facades. New
-code uses `offload()` and `with_on_demand_activation()`.
+`release()` and `with_release_after_collect()` compatibility facades have been
+removed. The canonical contract uses `offload()` and
+`with_on_demand_activation()` only.
 
 ## Ownership
 

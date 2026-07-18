@@ -15,11 +15,11 @@ def _train_rows(count: int = 300) -> list[dict[str, float]]:
             "reward_std": 0.5,
             "grad_norm": 0.1,
             "trained_prompt_num": 8.0,
-            "active_clip_fraction": 0.05,
-            # Later PPO passes intentionally drift from the rollout policy;
-            # only the pre-update field is backend parity.
-            "logprob_abs_diff_max": 0.5,
+            "active_clip_fraction": 0.0,
+            "logprob_abs_diff_max": 0.0,
             "pre_update_logprob_abs_diff_max": 0.0,
+            "pre_update_clip_fraction": 0.0,
+            "pre_update_active_clip_fraction": 0.0,
         }
         for index in range(count)
     ]
@@ -85,6 +85,24 @@ def test_fails_pre_update_logprob_parity_error() -> None:
 
     assert result["verdict"] == "FAIL"
     assert any("pre-update logprob parity" in failure for failure in result["failures"])
+
+
+@pytest.mark.parametrize(
+    "field",
+    [
+        "pre_update_clip_fraction",
+        "pre_update_active_clip_fraction",
+        "active_clip_fraction",
+    ],
+)
+def test_single_pass_fullparam_rejects_any_policy_clip(field: str) -> None:
+    train_rows = _train_rows()
+    train_rows[10][field] = 0.01
+
+    result = evaluate(_eval_rows(), train_rows, qualitative_audit="pass")
+
+    assert result["verdict"] == "FAIL"
+    assert any("clip" in failure for failure in result["failures"])
 
 
 def test_eval_reader_keeps_historical_inline_csv_compatibility(tmp_path) -> None:

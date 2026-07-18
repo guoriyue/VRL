@@ -281,7 +281,6 @@ def test_nvfp4_runtime_options_reject_fp8_recipes() -> None:
 
     with pytest.raises(ValueError, match="does not accept a recipe"):
         RolloutBuildOptions(
-            autocast_dtype="bf16",
             prompt_encoder_dtype="fp16",
             quantization_format="nvfp4",
             quantization_recipe="rowwise",
@@ -319,6 +318,7 @@ def test_resolve_model_build_derives_nvfp4_from_nested_precision() -> None:
         {
             "model": {"path": "x"},
             "precision": {
+                "float32_precision": "tf32",
                 "training": {"dtype": "bf16"},
                 "rollout": {
                     "dtype": "bf16",
@@ -330,7 +330,8 @@ def test_resolve_model_build_derives_nvfp4_from_nested_precision() -> None:
     build = get_model_family_entry("sd3_5").resolve_model_build(cfg, "cuda")
     assert build.rollout is not None
     assert build.rollout.quantization_format == "nvfp4"
-    assert build.rollout.autocast_dtype is torch.bfloat16
+    assert build.forward_precision.autocast == "bf16"
+    assert build.forward_precision.float32_precision == "tf32"
     assert build.parameter_dtype is torch.bfloat16
 
 

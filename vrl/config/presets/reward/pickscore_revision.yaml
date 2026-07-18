@@ -1,0 +1,16 @@
+# PickScore scorer with independent optional processor/model Hub revisions.
+#
+# Processor and model live in different repositories, so each identity remains
+# an explicit boundary. The base preset stays unchanged for archived protocols.
+defaults:
+  - /reward/pickscore
+  - _self_
+
+reward:
+  components:
+    pickscore: 1.0
+  kwargs:
+    pickscore:
+      device: null
+      processor_revision: null
+      model_revision: null

@@ -1,8 +1,12 @@
 # SPRINT: 接入 SANA T2I 家族（Phase-0 薄 seam 首个样例）
 
 状态：**DONE（2026-07-08）——随 [[SPRINT_thin_model_seam_and_ten_model_expansion]] Phase 1 落地并
-真权重 rollout 验证（replay parity 0.0e+00）**。家族要点：bf16 权重尾数会破坏线性注意力——二分定位后
-registry family descriptor（`base_parameter_dtype="fp16"`）固定 fp16 storage，model preset 无 dtype 键；前向精度仍由独立 precision policy 决定。修复后 SDE 直出杂志级画质。短 GRPO 曲线未单独跑
+真权重 rollout 验证（replay parity 0.0e+00）**。家族要点：非原生精度会破坏线性注意力——二分定位后，
+model preset 明确声明 FP16 role，registry family descriptor 用
+`supported_parameter_dtypes=("fp16",)` 在加载前拒绝 BF16/FP32；Gemma 与受保护数值分别保留 BF16/FP32
+边界；同一 descriptor 还要求 outer autocast off 与 IEEE FP32 backend，canonical
+preset 通过 `precision.float32_precision=ieee` 显式满足该要求。family requirement
+不是额外 public knob。修复后 SDE 直出杂志级画质。短 GRPO 曲线未单独跑
 （战役按 rollout 验证关账，详见 index sprint 文件头验证记录）。
 性质：新增 T2I DiT 家族，套 Phase 0 薄化后的 diffusion seam。
 

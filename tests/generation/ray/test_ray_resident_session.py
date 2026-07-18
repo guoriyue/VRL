@@ -17,6 +17,7 @@ from vrl.generation.types import GenerationOutput, GenerationRequest, Generation
 from vrl.models.interfaces import (
     ModelBuild,
     ReplayResult,
+    ResolvedForwardPrecision,
     RolloutBuildOptions,
     RuntimeBundle,
 )
@@ -67,13 +68,14 @@ def build_tiny_runtime_bundle(build: ModelBuild) -> RuntimeBundle:
     assert str(build.device) == "cpu"
     assert build.parameter_dtype is torch.float16
     assert isinstance(build.rollout, RolloutBuildOptions)
-    assert build.rollout.autocast_dtype is torch.bfloat16
+    assert build.forward_precision == ResolvedForwardPrecision("off", "tf32")
     assert build.rollout.prompt_encoder_dtype is torch.float32
     return RuntimeBundle(
         model=_TinyRuntimeModel(),
         trainable_modules={},
         scheduler=None,
         raw_handle=None,
+        forward_precision=build.forward_precision,
     )
 
 
@@ -107,8 +109,11 @@ def _launch_contract() -> GenerationRuntimeLaunchContract:
             "model_name_or_path": "unit-test",
             "device": "cpu",
             "parameter_dtype": "float16",
+            "forward_precision": {
+                "autocast": "off",
+                "float32_precision": "tf32",
+            },
             "rollout": {
-                "autocast_dtype": "bfloat16",
                 "prompt_encoder_dtype": "float32",
                 "quantization_format": None,
                 "quantization_recipe": None,

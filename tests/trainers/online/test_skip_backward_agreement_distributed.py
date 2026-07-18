@@ -22,7 +22,11 @@ import torch.multiprocessing as mp
 from torch import nn
 
 from tests.trainers.online._collector_control import CollectorControlFake
-from tests.trainers.online._helpers import _trajectory_signals
+from tests.trainers.online._helpers import (
+    DEFAULT_FORWARD_PRECISION,
+    _rollout_context,
+    _trajectory_signals,
+)
 from vrl.algorithms.logprob_mismatch import LogprobMismatchStats
 from vrl.algorithms.types import InitialReplayStats, PolicyUpdateStats, TrainStepMetrics
 from vrl.rollouts.batch import RolloutBatch
@@ -62,6 +66,7 @@ def _rollout_batch(sample_count: int) -> RolloutBatch:
         rewards=torch.arange(sample_count, dtype=torch.float32),
         dones=torch.ones(sample_count, dtype=torch.bool),
         group_ids=torch.zeros(sample_count, dtype=torch.long),
+        context=_rollout_context(),
     )
 
 
@@ -376,6 +381,7 @@ def _run_replay_loop_rank(
                 samples_per_chunk=1,
             ),
             device="cpu",
+            forward_precision=DEFAULT_FORWARD_PRECISION,
         )
 
         def _record_backward(loss: torch.Tensor) -> None:

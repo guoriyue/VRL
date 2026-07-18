@@ -6,6 +6,7 @@ defaults:
 # trainer presets: EMA, PPO epochs, rollout orchestration, and total_epochs have
 # no DPO consumers.
 precision:
+  float32_precision: tf32
   training:
     dtype: ???
 

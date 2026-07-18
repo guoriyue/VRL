@@ -66,7 +66,11 @@ def test_build_trainer_config_reports_all_missing_required_keys() -> None:
             "actor": {},
             "trainer": {},
             "rollout": {},
-            "precision": {"training": {"dtype": "bf16"}, "rollout": {"dtype": "bf16"}},
+            "precision": {
+                "float32_precision": "tf32",
+                "training": {"dtype": "bf16"},
+                "rollout": {"dtype": "bf16"},
+            },
         },
     )
 
@@ -371,7 +375,13 @@ def test_experiments_do_not_use_legacy_precision_fields() -> None:
     for name in _experiment_names():
         cfg = load_config(f"experiment/{name}")
         actor = cfg.get("actor", {})
-        if "mixed_precision" in actor or "bf16" in actor:
+        optim = actor.get("optim", {}) or {}
+        if (
+            "mixed_precision" in actor
+            or "bf16" in actor
+            or "allow_tf32" in optim
+            or cfg.precision.get("float32_precision") not in {"ieee", "tf32"}
+        ):
             offenders.append(name)
     assert offenders == []
 

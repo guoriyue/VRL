@@ -30,7 +30,7 @@ from pathlib import Path
 import torch
 
 from vrl.config.loading import load_config
-from vrl.scripts.perf.common.diffusion_runtime import build_model, make_step_fn
+from vrl.scripts.perf.common.diffusion_runtime import build_runtime, make_step_fn
 
 
 def main(argv=None) -> None:
@@ -47,16 +47,15 @@ def main(argv=None) -> None:
     # Match the omni side: base weights, no LoRA adapter.
     cfg.model.use_lora = False
     device = torch.device(args.device)
-    dtype = torch.bfloat16
-
-    model = build_model(cfg, device, dtype)
+    runtime = build_runtime(cfg, device)
+    model = runtime.model
     if args.compile:
         print("torch.compile(default) the transformer ...", flush=True)
         model.torch_compile_transformer("default")
 
     # make_step_fn parks frozen encoders/VAE on CPU and returns a closure that runs
     # one denoise forward + SDE step (the exact rollout inner loop).
-    step_fn, _ = make_step_fn(model, cfg, device, dtype)
+    step_fn, _ = make_step_fn(runtime, cfg)
 
     # Extra warmup when compiling so the (slow) first compiled call is excluded.
     for i in range(args.warmup + (4 if args.compile else 0)):
@@ -85,9 +84,12 @@ def main(argv=None) -> None:
     }
     Path(args.out).parent.mkdir(parents=True, exist_ok=True)
     Path(args.out).write_text(json.dumps(result, indent=2))
-    print(f"native denoise [{args.config}] compiled={args.compile}: "
-          f"{args.steps} steps, {wall:.2f}s ({wall/args.steps*1000:.1f} ms/step), "
-          f"denoise peak {peak_mib:.0f} MiB -> {args.out}", flush=True)
+    print(
+        f"native denoise [{args.config}] compiled={args.compile}: "
+        f"{args.steps} steps, {wall:.2f}s ({wall / args.steps * 1000:.1f} ms/step), "
+        f"denoise peak {peak_mib:.0f} MiB -> {args.out}",
+        flush=True,
+    )
 
 
 if __name__ == "__main__":

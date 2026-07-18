@@ -29,12 +29,12 @@ import time
 from collections import defaultdict
 
 import torch
+from omegaconf import OmegaConf
 
 from vrl.config.loading import load_config
 from vrl.config.precision import normalize_precision
 from vrl.generation.diffusion.teacache import TeaCacheConfig
-from vrl.models.dtypes import resolve_torch_dtype
-from vrl.scripts.perf.common.diffusion_runtime import build_model, make_step_fn, run_e2e
+from vrl.scripts.perf.common.diffusion_runtime import build_runtime, make_step_fn, run_e2e
 
 # Kernel-name -> bucket. First substring match wins; lowercased CUDA kernel name.
 # gemm/attention are compute-heavy; norm/elementwise/reduction/copy are typically
@@ -108,7 +108,12 @@ def main(argv=None):
     precision = normalize_precision(args.precision)
     fp8 = precision == "fp8"
     nvfp4 = precision == "nvfp4"
-    dtype = torch.bfloat16 if fp8 or nvfp4 else resolve_torch_dtype(precision)
+    OmegaConf.update(
+        cfg,
+        "precision.rollout.dtype",
+        "bf16" if fp8 or nvfp4 else precision,
+        force_add=True,
+    )
     label = f"bf16+fp8/{args.fp8_recipe}" if fp8 else "bf16+nvfp4" if nvfp4 else precision
     teacache_cfg = (
         TeaCacheConfig.from_sampling({"threshold": args.teacache})
@@ -124,7 +129,8 @@ def main(argv=None):
         flush=True,
     )
 
-    model = build_model(cfg, device, dtype)
+    runtime = build_runtime(cfg, device)
+    model = runtime.model
     if fp8:
         swapped = model.quantize_rollout_fp8(recipe=args.fp8_recipe)
         if not swapped:
@@ -145,9 +151,9 @@ def main(argv=None):
         print("torch.compile(default) the transformer ...", flush=True)
         model.torch_compile_transformer("default")
     if args.e2e:
-        run_e2e(model, cfg, device, dtype)
+        run_e2e(runtime, cfg, device)
         return
-    step_fn, teacache_state = make_step_fn(model, cfg, device, dtype, teacache=teacache_cfg)
+    step_fn, teacache_state = make_step_fn(runtime, cfg, teacache=teacache_cfg)
 
     # extra warmup when compiling so the (slow) first compiled call is excluded
     for i in range(args.warmup + (3 if args.compile else 0)):

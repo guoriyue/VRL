@@ -6,7 +6,7 @@ single family table shared by model construction, generation, and collection.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Literal, get_args
 
 from vrl.families.names import (
@@ -19,6 +19,26 @@ CollectorKind = Literal["diffusion", "ar_discrete", "ar_continuous", "ar_r1"]
 # Import-path protocol value shared by registry dispatch and generation workers.
 # Keeping it here avoids making the neutral family table import a runtime module.
 GENERIC_DIFFUSION_EXECUTOR = "vrl.generation.diffusion.executor:DiffusionChunkExecutor"
+
+
+@dataclass(frozen=True, slots=True)
+class ForwardPrecisionRequirement:
+    """Family-owned restrictions applied while resolving public precision."""
+
+    autocast: Literal["role", "off"] = "role"
+    float32_precision: Literal["ieee", "tf32"] | None = None
+
+    def __post_init__(self) -> None:
+        if self.autocast not in ("role", "off"):
+            raise ValueError(
+                "family forward autocast requirement must be 'role' or 'off'; "
+                f"got {self.autocast!r}",
+            )
+        if self.float32_precision not in (None, "ieee", "tf32"):
+            raise ValueError(
+                "family float32 precision requirement must be ieee, tf32, or "
+                f"None; got {self.float32_precision!r}",
+            )
 
 
 @dataclass(frozen=True, slots=True)
@@ -40,10 +60,13 @@ class DiffusionFamilyBuild:
     # Only families whose replay construction cannot use the generic descriptor
     # path declare an override (echo/cosmos3/anima).
     replay_runtime_builder: str | None = None
-    # Base transformer parameter dtype required by the model family, independent
-    # of rollout/replay autocast. Keep this on the build descriptor only for a
-    # genuine model invariant; ordinary families inherit the training dtype.
-    base_parameter_dtype: str | None = None
+    # Optional family capability boundary for base transformer storage. Keep
+    # this only when some public role dtypes are known-invalid for the family;
+    # ordinary families inherit every plain dtype from the precision policy.
+    supported_parameter_dtypes: tuple[str, ...] | None = None
+    forward_precision: ForwardPrecisionRequirement = field(
+        default_factory=ForwardPrecisionRequirement,
+    )
     # LoRA-only family: the generic builders fail loud BEFORE paying the
     # transformer load. The per-family WHY belongs in a comment on the entry
     # (and in the model's own apply_full_finetune error), not in runtime data.
@@ -62,6 +85,24 @@ class DiffusionFamilyBuild:
             raise ValueError(
                 "scheduler_classname belongs to the generic replay builder and "
                 "cannot accompany replay_runtime_builder",
+            )
+
+    def validate_parameter_dtype(self, family: str, parameter_dtype: Any) -> None:
+        """Enforce a family checkpoint's supported parameter storage dtypes."""
+
+        if self.supported_parameter_dtypes is None:
+            return
+        from vrl.models.dtypes import dtype_to_wire_name
+
+        actual_dtype = dtype_to_wire_name(parameter_dtype)
+        supported_names = tuple(
+            dtype_to_wire_name(dtype) for dtype in self.supported_parameter_dtypes
+        )
+        if actual_dtype not in supported_names:
+            raise ValueError(
+                f"diffusion family {family!r} supports base parameter dtypes "
+                f"{self.supported_parameter_dtypes!r}; got {parameter_dtype!r}. "
+                "Set the selected precision role dtype to a supported value.",
             )
 
 
@@ -105,6 +146,7 @@ class ModelFamilyEntry:
         device: Any,
         *,
         for_rollout: bool = True,
+        precision_role: Literal["training", "rollout"] | None = None,
         parameter_dtype_override: Any | None = None,
     ) -> Any:
         """Project user config into the model inputs owned by this family.
@@ -116,7 +158,11 @@ class ModelFamilyEntry:
         """
 
         from vrl.config.precision import resolve_precision_policy
-        from vrl.models.interfaces.runtime import ModelBuild, RolloutBuildOptions
+        from vrl.models.interfaces.runtime import (
+            ModelBuild,
+            ResolvedForwardPrecision,
+            RolloutBuildOptions,
+        )
         from vrl.utils.config import plain_mapping
 
         model_config = plain_mapping(cfg.model, field_name="model")
@@ -124,30 +170,12 @@ class ModelFamilyEntry:
         model_path = model_config.get("path")
 
         if isinstance(self.family_build, DiffusionFamilyBuild):
-            family_dtype = self.family_build.base_parameter_dtype
             if configured_dtype is not None:
-                reason = (
-                    f"its base parameter dtype is fixed to {family_dtype!r} by the "
-                    "family build descriptor"
-                    if family_dtype is not None
-                    else "parameter precision follows the top-level precision block"
-                )
                 raise ValueError(
                     f"model.dtype is not configurable for diffusion family "
-                    f"{self.family!r}; {reason}. Remove model.dtype.",
+                    f"{self.family!r}; parameter precision follows the top-level "
+                    "precision block. Remove model.dtype.",
                 )
-            if family_dtype is not None and parameter_dtype_override is not None:
-                from vrl.models.dtypes import dtype_to_wire_name
-
-                if dtype_to_wire_name(parameter_dtype_override) != dtype_to_wire_name(
-                    family_dtype,
-                ):
-                    raise ValueError(
-                        f"diffusion family {self.family!r} requires base parameter "
-                        f"dtype {family_dtype!r}; explicit parameter_dtype_override="
-                        f"{parameter_dtype_override!r} conflicts with that invariant.",
-                    )
-            parameter_dtype_override = family_dtype or parameter_dtype_override
         else:
             if configured_dtype is not None:
                 raise ValueError(
@@ -164,17 +192,51 @@ class ModelFamilyEntry:
             None if sampling is None else plain_mapping(sampling, field_name="sampling")
         )
         precision = resolve_precision_policy(cfg)
-        role_parameter_dtype = precision.rollout.dtype if for_rollout else precision.training.dtype
+        resolved_precision_role = precision_role or ("rollout" if for_rollout else "training")
+        if resolved_precision_role not in ("training", "rollout"):
+            raise ValueError(
+                f"precision_role must be 'training' or 'rollout'; got {resolved_precision_role!r}",
+            )
+        role_precision = getattr(precision, resolved_precision_role)
+        role_parameter_dtype = role_precision.dtype
         parameter_dtype = (
             parameter_dtype_override
             if parameter_dtype_override is not None
             else role_parameter_dtype
         )
+        forward_requirement = ForwardPrecisionRequirement()
+        if isinstance(self.family_build, DiffusionFamilyBuild):
+            self.family_build.validate_parameter_dtype(self.family, parameter_dtype)
+            forward_requirement = self.family_build.forward_precision
+        if (
+            forward_requirement.float32_precision is not None
+            and precision.float32_precision != forward_requirement.float32_precision
+        ):
+            raise ValueError(
+                f"model family {self.family!r} requires "
+                "precision.float32_precision="
+                f"{forward_requirement.float32_precision!r}; got "
+                f"{precision.float32_precision!r}",
+            )
+        # Diffusion owns an explicit outer-transformer autocast boundary. AR
+        # families already execute natively in their loaded parameter dtype;
+        # advertising an unused BF16/FP16 autocast policy would be a no-op field.
+        if isinstance(self.family_build, DiffusionFamilyBuild):
+            autocast = (
+                "off"
+                if forward_requirement.autocast == "off" or role_precision.dtype == "fp32"
+                else role_precision.dtype
+            )
+        else:
+            autocast = "off"
+        forward_precision = ResolvedForwardPrecision(
+            autocast=autocast,
+            float32_precision=precision.float32_precision,
+        )
         rollout = None
         if for_rollout:
             quantization = precision.rollout.quantization
             rollout = RolloutBuildOptions(
-                autocast_dtype=precision.rollout.dtype,
                 prompt_encoder_dtype=precision.prompt_encoder_dtype,
                 quantization_format=(quantization.format if quantization is not None else None),
                 quantization_recipe=(quantization.recipe if quantization is not None else None),
@@ -184,6 +246,7 @@ class ModelFamilyEntry:
             device=device,
             parameter_dtype=parameter_dtype,
             family=self.family,
+            forward_precision=forward_precision,
             model_config=model_config,
             sampling_config=sampling_config,
             rollout=rollout,
@@ -367,9 +430,20 @@ _register_model_family(
             model_cls="vrl.models.diffusion.sana.model:SanaModel",
             replay_cls="vrl.models.diffusion.sana.model:SanaReplayModel",
             transformer_classname="SanaTransformer2DModel",
-            # SANA linear attention is mantissa-sensitive: fp16 parameters are
-            # required even when bf16 autocast supplies forward activation range.
-            base_parameter_dtype="fp16",
+            # This checkpoint's transformer must execute with native FP16
+            # parameters. BF16 autocast produced color blocks, while FP32
+            # parameters destabilized the final linear-attention block. Frozen
+            # Gemma and protected scheduler/log-probability math own separate
+            # BF16/FP32 boundaries.
+            supported_parameter_dtypes=("fp16",),
+            # SANA's native FP16 linear-attention path is corrupted by outer
+            # autocast. Its processor promotes Q/K/V to FP32, where TF32 also
+            # changes rollout/replay likelihoods, so both processes require
+            # full IEEE FP32 matmuls.
+            forward_precision=ForwardPrecisionRequirement(
+                autocast="off",
+                float32_precision="ieee",
+            ),
         ),
     ),
 )

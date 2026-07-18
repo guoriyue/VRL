@@ -7,11 +7,13 @@ from typing import Any
 
 import torch
 
+from vrl.models.forward_precision import forward_autocast
 from vrl.models.interfaces import (
     ReplayModel,
     ReplayRequest,
     ReplayResult,
     ReplaySegmentResult,
+    ResolvedForwardPrecision,
     require_replay_model,
 )
 from vrl.rollouts.batch import RolloutBatch
@@ -40,6 +42,8 @@ class MultiSegmentTokenLogProbEvaluator(Evaluator):
         timestep_idx: int = 0,
         ref_model: ReplayModel | None = None,
         signal_request: SignalRequest | None = None,
+        *,
+        forward_precision: ResolvedForwardPrecision,
     ) -> TrajectorySignalBatch:
         del timestep_idx
         model = require_replay_model(model, owner="MultiSegmentTokenLogProbEvaluator.model")
@@ -60,13 +64,19 @@ class MultiSegmentTokenLogProbEvaluator(Evaluator):
             raise RuntimeError("no enabled R1 segments to evaluate")
 
         replay_request = ReplayRequest(segment_names=tuple(enabled_names))
-        current_output = model.replay_forward(batch, request=replay_request)
+        with forward_autocast(forward_precision, batch.observations.device):
+            current_output = model.replay_forward(batch, request=replay_request)
         ref_output = None
         if request.need_ref:
             if ref_model is not None:
-                ref_output = ref_model.replay_forward(batch, request=replay_request)
+                with forward_autocast(forward_precision, batch.observations.device):
+                    ref_output = ref_model.replay_forward(batch, request=replay_request)
             else:
-                with torch.no_grad(), model.disable_adapter():
+                with (
+                    torch.no_grad(),
+                    model.disable_adapter(),
+                    forward_autocast(forward_precision, batch.observations.device),
+                ):
                     ref_output = model.replay_forward(batch, request=replay_request)
 
         signal_builder = TrajectorySignalBuilder(batch)
@@ -79,12 +89,18 @@ class MultiSegmentTokenLogProbEvaluator(Evaluator):
         for name in enabled_names:
             segment = segments[name]
             new_lp = self._compute_segment_logprobs(
-                current_output, name, segment, temperature,
+                current_output,
+                name,
+                segment,
+                temperature,
             )
             ref_lp = None
             if ref_output is not None:
                 ref_lp = self._compute_segment_logprobs(
-                    ref_output, name, segment, temperature,
+                    ref_output,
+                    name,
+                    segment,
+                    temperature,
                 )
 
             segment_signals[name] = signal_builder.segment_signal(
@@ -125,11 +141,7 @@ class MultiSegmentTokenLogProbEvaluator(Evaluator):
                 for name, enabled in self.enabled_segments.items()
                 if enabled and name in segments
             ]
-        return [
-            name
-            for name in self.enabled_segments
-            if name in segments
-        ]
+        return [name for name in self.enabled_segments if name in segments]
 
     def _compute_segment_logprobs(
         self,
@@ -168,7 +180,12 @@ class MultiSegmentTokenLogProbEvaluator(Evaluator):
             "train": bool(segment.metadata.get("train", segment.trainable)),
             "modality": segment.modality,
         }
-        for key in ("prompt_embeds", "attention_mask", "prompt_attention_mask", "prompt_input_ids"):
+        for key in (
+            "prompt_embeds",
+            "attention_mask",
+            "prompt_attention_mask",
+            "prompt_input_ids",
+        ):
             tensor = segment.tensors.get(key)
             if tensor is not None:
                 payload[key] = tensor.value

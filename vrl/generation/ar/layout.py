@@ -69,12 +69,6 @@ class ARRequestLayout:
             ar_scheduler_batch_size=None if sampling.get("ar_scheduler_batch_size") is None else int(sampling.get("ar_scheduler_batch_size")),
         )
 
-    def expand_prompts(self, request: GenerationRequest) -> list[str]:
-        """Repeat prompts in the same prompt-major order as sample rows."""
-
-        samples_per_prompt = int(request.samples_per_prompt)
-        return [prompt for prompt in request.prompts for _ in range(samples_per_prompt)]
-
     def validate_chunk(self, request: GenerationRequest, chunk: SampleChunk) -> None:
         """Validate one prompt/sample AR chunk against its request."""
 
@@ -126,7 +120,7 @@ class ARRequestLayout:
                 sample_count=sample_count,
             )
             for field_name in row_fields:
-                self.require_rows(field_name, getattr(chunk, field_name), sample_count)
+                self._require_rows(field_name, getattr(chunk, field_name), sample_count)
             actual.extend(
                 (prompt_index, sample_index)
                 for sample_index in range(sample_start, sample_start + sample_count)
@@ -137,7 +131,7 @@ class ARRequestLayout:
             )
         return ordered
 
-    def require_rows(self, name: str, value: Any, count: int) -> None:
+    def _require_rows(self, name: str, value: Any, count: int) -> None:
         """Require a chunk tensor-like payload to have ``count`` batch rows."""
 
         shape = getattr(value, "shape", None)

@@ -8,7 +8,7 @@ import inspect
 import math
 import os
 import re
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
 
@@ -492,11 +492,13 @@ class _SyntheticDiffusionReplayCollector:
         case: RealCheckpointCase,
         cfg: Any,
         device: torch.device,
+        forward_precision: Any,
     ) -> None:
         self.model = model
         self.case = case
         self.cfg = cfg
         self.device = device
+        self.forward_precision = forward_precision
         self.runtime = _StaticPolicyRuntime()
 
     async def collect_unscored(self, prompts: list[str], **kwargs: Any) -> Any:
@@ -508,6 +510,7 @@ class _SyntheticDiffusionReplayCollector:
             group_size=int(kwargs["group_size"]),
             policy_version=kwargs.get("policy_version"),
             device=self.device,
+            forward_precision=self.forward_precision,
         )
 
     async def score_rollouts(self, pendings: Any) -> Any:
@@ -584,6 +587,7 @@ def test_real_checkpoint_online_rl_updates_trainable_weights(
                 case=case,
                 cfg=cfg,
                 device=device,
+                forward_precision=bundle.forward_precision,
             )
             reward_fn = None
         else:
@@ -620,6 +624,7 @@ def test_real_checkpoint_online_rl_updates_trainable_weights(
             sync_state_getter=None,
             config=trainer_config,
             device=device,
+            forward_precision=bundle.forward_precision,
         )
 
         before = trainable_state_digest(bundle.model)
@@ -758,6 +763,7 @@ def _synthetic_diffusion_replay_batch(
     group_size: int,
     policy_version: int | None,
     device: torch.device,
+    forward_precision: Any,
 ) -> Any:
     from vrl.math.diffusion.flow_matching import sde_step_with_logprob
     from vrl.rollouts.batch import RolloutBatch
@@ -832,6 +838,7 @@ def _synthetic_diffusion_replay_batch(
         # Same derivation the families use at rollout (do_cfg = guidance > 1).
         "cfg": float(cfg.sampling.guidance_scale) > 1.0,
         "model_family": case.family,
+        "rollout_forward_precision": asdict(forward_precision),
     }
     timesteps = model.scheduler.timesteps[:num_steps].to(device)
     timesteps = timesteps.unsqueeze(0).expand(batch_size, -1).clone()

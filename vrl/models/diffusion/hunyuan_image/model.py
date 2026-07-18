@@ -417,7 +417,7 @@ class HunyuanImageModel(LoraModelMixin, DiffusersPipelineModelBase, DiffusionBac
         scaling_factor = vae.config.scaling_factor
         decoder = ChunkedLatentDecoder(
             LatentDecodePlan(
-                prepare_latents=(lambda chunk: chunk.to(vae.dtype) / scaling_factor,),
+                prepare_latents=lambda chunk: chunk.to(vae.dtype) / scaling_factor,
                 vae_decode=lambda chunk: vae.decode(chunk, return_dict=False)[0],
                 postprocess=lambda image: pipe.image_processor.postprocess(
                     image,

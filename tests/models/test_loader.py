@@ -5,7 +5,7 @@ from types import SimpleNamespace
 import torch
 
 from vrl.models.diffusion.base import diffusers_pipeline_dtypes
-from vrl.models.interfaces.runtime import ModelBuild
+from vrl.models.interfaces.runtime import ModelBuild, ResolvedForwardPrecision
 
 
 def test_full_pipeline_propagates_revision_like_component_loader() -> None:
@@ -14,6 +14,7 @@ def test_full_pipeline_propagates_revision_like_component_loader() -> None:
         device="cpu",
         parameter_dtype=torch.float16,
         family="sd3_5",
+        forward_precision=ResolvedForwardPrecision("fp16", "tf32"),
         model_config={"revision": "immutable-revision"},
     )
 
@@ -28,6 +29,7 @@ def test_full_pipeline_omits_absent_revision() -> None:
         device="cpu",
         parameter_dtype=torch.float16,
         family="sd3_5",
+        forward_precision=ResolvedForwardPrecision("fp16", "tf32"),
         model_config={},
     )
 

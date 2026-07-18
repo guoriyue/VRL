@@ -82,7 +82,11 @@ def test_replay_build_resolves_gradient_checkpointing_mode(
     cfg = OmegaConf.create(
         {
             "model": {"family": "nextstep_1", "use_lora": False},
-            "precision": {"training": {"dtype": "fp32"}, "rollout": {"dtype": "fp32"}},
+            "precision": {
+                "float32_precision": "tf32",
+                "training": {"dtype": "fp32"},
+                "rollout": {"dtype": "fp32"},
+            },
             "actor": {"gradient_checkpointing": mode},
         },
     )
@@ -101,7 +105,11 @@ def test_replay_build_rejects_selective_gradient_checkpointing() -> None:
     cfg = OmegaConf.create(
         {
             "model": {"family": "nextstep_1", "use_lora": False},
-            "precision": {"training": {"dtype": "fp32"}, "rollout": {"dtype": "fp32"}},
+            "precision": {
+                "float32_precision": "tf32",
+                "training": {"dtype": "fp32"},
+                "rollout": {"dtype": "fp32"},
+            },
             "actor": {"gradient_checkpointing": "selective"},
         },
     )
@@ -118,7 +126,11 @@ def test_rollout_build_disables_gradient_checkpointing() -> None:
     cfg = OmegaConf.create(
         {
             "model": {"family": "nextstep_1", "use_lora": False},
-            "precision": {"training": {"dtype": "fp32"}, "rollout": {"dtype": "fp32"}},
+            "precision": {
+                "float32_precision": "tf32",
+                "training": {"dtype": "fp32"},
+                "rollout": {"dtype": "fp32"},
+            },
             "actor": {"gradient_checkpointing": "full"},
         },
     )

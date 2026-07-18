@@ -153,7 +153,6 @@ def test_model_exposes_trainer_replay_methods() -> None:
     assert callable(model.replay_forward)
     assert callable(model.disable_adapter)
     assert callable(model.load_trainable_state)
-    assert model.has_lora_adapter is False
     with model.disable_adapter():
         pass
 

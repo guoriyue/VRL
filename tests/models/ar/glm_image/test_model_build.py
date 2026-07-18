@@ -15,7 +15,11 @@ def test_resolve_model_build_defaults_to_glm_image_checkpoint() -> None:
     cfg = OmegaConf.create(
         {
             "model": {"family": "glm_image"},
-            "precision": {"training": {"dtype": "fp32"}, "rollout": {"dtype": "fp32"}},
+            "precision": {
+                "float32_precision": "tf32",
+                "training": {"dtype": "fp32"},
+                "rollout": {"dtype": "fp32"},
+            },
             "sampling": {},
         },
     )
@@ -34,7 +38,11 @@ def test_resolve_model_build_carries_sampling_and_lora_overrides() -> None:
                 "use_lora": True,
                 "lora": {"rank": 8},
             },
-            "precision": {"training": {"dtype": "fp32"}, "rollout": {"dtype": "fp32"}},
+            "precision": {
+                "float32_precision": "tf32",
+                "training": {"dtype": "fp32"},
+                "rollout": {"dtype": "fp32"},
+            },
             "sampling": {
                 "temperature": 0.8,
                 "top_p": 0.9,

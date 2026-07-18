@@ -1106,57 +1106,6 @@ def hand_crop_rows(
     return rows
 
 
-def hard_negative_rows(
-    candidates_path: str | Path,
-    *,
-    min_severity: int = 1,
-    labels: set[str] | None = None,
-) -> list[dict[str, Any]]:
-    selected: list[dict[str, Any]] = []
-    requested = labels or FAILURE_LABELS
-    for row in iter_metadata(candidates_path):
-        row_labels = {str(label) for label in row.get("labels", [])}
-        if not row_labels & requested:
-            continue
-        raw_severity = row.get("severity")
-        severity = 1 if raw_severity is None else int(raw_severity)
-        if severity < min_severity:
-            continue
-        out = dict(row)
-        out.setdefault("source", "anima_base")
-        out.setdefault("domain", DOMAIN)
-        out["labels"] = sorted(row_labels)
-        out["severity"] = severity
-        selected.append(out)
-    return selected
-
-
-def label_queue_rows(hard_negative_path: str | Path) -> list[dict[str, Any]]:
-    questions = (
-        "Are both arms anatomically connected?",
-        "Are the legs plausible for the requested action?",
-        "Are hands visible when requested?",
-        "Are fingers plausible enough for the image scale?",
-        "Which failure labels apply?",
-    )
-    rows: list[dict[str, Any]] = []
-    for row in iter_metadata(hard_negative_path):
-        rows.append(
-            {
-                "image_path": row.get("image_path", ""),
-                "prompt": row.get("prompt", ""),
-                "candidate_labels": row.get("labels", []),
-                "severity": row.get("severity", None),
-                "questions": list(questions),
-                "metadata": {
-                    "source": row.get("source", "anima_base"),
-                    "domain": row.get("domain", DOMAIN),
-                },
-            },
-        )
-    return rows
-
-
 def _image_path(row: Mapping[str, Any], *, image_root: str | Path | None) -> str | None:
     for key in ("image_path", "file_path", "path"):
         value = row.get(key)
@@ -1489,11 +1438,9 @@ __all__ = [
     "download_danbooru_images",
     "download_metadata_file",
     "hand_crop_rows",
-    "hard_negative_rows",
     "http_download",
     "is_anatomy_positive",
     "iter_metadata",
-    "label_queue_rows",
     "main",
     "manifest_setup_hints",
     "normalize_tags",

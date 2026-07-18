@@ -23,6 +23,7 @@ from vrl.algorithms.logprob_mismatch import (
     LogprobMismatchStats,
     compute_logprob_mismatch_stats,
 )
+from vrl.models.interfaces import ResolvedForwardPrecision
 from vrl.trainers.core.types import PrecisionDriftGuardConfig
 
 _logger = logging.getLogger(__name__)
@@ -35,25 +36,33 @@ class PrecisionDriftError(RuntimeError):
 def resolve_guard_mode(
     mode: str,
     *,
-    train_precision: str,
+    training_precision: str,
     rollout_precision: str,
+    training_forward_precision: ResolvedForwardPrecision,
+    rollout_forward_precision: ResolvedForwardPrecision,
 ) -> str:
     """Resolve ``auto`` into an effective ``off``/``warn``/``fail`` mode.
 
-    ``auto`` enables the guard only when rollout/train precision differ — same-dtype
-    first-step parity is already the debug probe's job, so ``auto`` stays off there to
-    avoid a redundant replay forward. On a mismatch it resolves to ``fail``: explicit
-    ``warn`` is the measurement escape hatch for calibration runs, not the default.
-    Explicit ``off``/``warn``/``fail`` always apply regardless of precision.
+    ``auto`` enables the guard when either the role execution label (including
+    rollout-only quantization) or the resolved forward contract differs.
     """
 
+    for name, precision in (
+        ("training_forward_precision", training_forward_precision),
+        ("rollout_forward_precision", rollout_forward_precision),
+    ):
+        if not isinstance(precision, ResolvedForwardPrecision):
+            raise TypeError(f"{name} must be ResolvedForwardPrecision")
     if mode in ("off", "warn", "fail"):
         return mode
     if mode != "auto":
         raise ValueError(
             f"precision drift guard mode must be auto/off/warn/fail; got {mode!r}",
         )
-    if _normalize(rollout_precision) != _normalize(train_precision):
+    role_match = _normalize_precision_label(rollout_precision) == _normalize_precision_label(
+        training_precision,
+    )
+    if not role_match or rollout_forward_precision != training_forward_precision:
         return "fail"
     return "off"
 
@@ -134,8 +143,10 @@ def _select_distributed_worst_record(record: dict[str, Any]) -> dict[str, Any]:
 def measure_precision_drift(
     config: PrecisionDriftGuardConfig,
     *,
-    train_precision: str,
+    training_precision: str,
     rollout_precision: str,
+    training_forward_precision: ResolvedForwardPrecision,
+    rollout_forward_precision: ResolvedForwardPrecision,
     math_precision: str,
     timestep_indices: Sequence[int],
     evaluate_fn: Callable[[int], Any],
@@ -152,15 +163,17 @@ def measure_precision_drift(
 
     mode = resolve_guard_mode(
         config.mode,
-        train_precision=train_precision,
+        training_precision=training_precision,
         rollout_precision=rollout_precision,
+        training_forward_precision=training_forward_precision,
+        rollout_forward_precision=rollout_forward_precision,
     )
     if mode == "off":
         return None
 
-    train_label = _normalize(train_precision)
-    rollout_label = _normalize(rollout_precision)
-    math_label = _normalize(math_precision)
+    training_label = _normalize_precision_label(training_precision)
+    rollout_label = _normalize_precision_label(rollout_precision)
+    math_label = _normalize_precision_label(math_precision)
     worst: LogprobMismatchStats | None = None
     worst_timestep = -1
     worst_key: tuple[bool, bool, float, float, float] | None = None
@@ -190,10 +203,13 @@ def measure_precision_drift(
         "event": "precision_drift_guard",
         "mode": mode,
         "violated": violated,
-        "train_precision": train_label,
+        "training_precision": training_label,
         "rollout_precision": rollout_label,
+        "training_forward_precision": dataclasses.asdict(training_forward_precision),
+        "rollout_forward_precision": dataclasses.asdict(rollout_forward_precision),
         "math_precision": math_label,
-        "train_rollout_precision_match": rollout_label == train_label,
+        "role_precision_match": rollout_label == training_label,
+        "forward_precision_match": rollout_forward_precision == training_forward_precision,
         "worst_timestep": worst_timestep,
         "max_abs_log_ratio": config.max_abs_log_ratio,
         "max_ratio_abs_dev": config.max_ratio_abs_dev,
@@ -225,8 +241,10 @@ def enforce_precision_drift(
     worst = record.get("worst_stats") or {}
     message = (
         "precision drift guard: rollout-vs-replay logprob parity exceeded "
-        f"threshold (train={record.get('train_precision')}, "
-        f"rollout={record.get('rollout_precision')}, "
+        f"threshold (training_role={record.get('training_precision')}, "
+        f"rollout_role={record.get('rollout_precision')}, "
+        f"training_forward={record.get('training_forward_precision')}, "
+        f"rollout_forward={record.get('rollout_forward_precision')}, "
         f"math={record.get('math_precision')}); "
         f"worst rank={record.get('worst_rank', 0)} "
         f"worst timestep={record.get('worst_timestep')} "
@@ -244,8 +262,10 @@ def enforce_precision_drift(
 def run_precision_drift_guard(
     config: PrecisionDriftGuardConfig,
     *,
-    train_precision: str,
+    training_precision: str,
     rollout_precision: str,
+    training_forward_precision: ResolvedForwardPrecision,
+    rollout_forward_precision: ResolvedForwardPrecision,
     math_precision: str,
     timestep_indices: Sequence[int],
     evaluate_fn: Callable[[int], Any],
@@ -256,8 +276,10 @@ def run_precision_drift_guard(
 
     record = measure_precision_drift(
         config,
-        train_precision=train_precision,
+        training_precision=training_precision,
         rollout_precision=rollout_precision,
+        training_forward_precision=training_forward_precision,
+        rollout_forward_precision=rollout_forward_precision,
         math_precision=math_precision,
         timestep_indices=timestep_indices,
         evaluate_fn=evaluate_fn,
@@ -267,7 +289,7 @@ def run_precision_drift_guard(
     return record
 
 
-def _normalize(precision: str) -> str:
+def _normalize_precision_label(precision: str) -> str:
     token = str(precision or "").strip().lower()
     return "fp32" if token in ("", "no") else token
 

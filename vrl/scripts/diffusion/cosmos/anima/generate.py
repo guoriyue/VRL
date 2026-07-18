@@ -6,7 +6,6 @@ import argparse
 import csv
 import json
 import logging
-from contextlib import nullcontext
 from pathlib import Path
 from typing import Any
 
@@ -18,6 +17,8 @@ from vrl.config.loading import load_config
 from vrl.families.registry import get_model_family_entry
 from vrl.generation.diffusion.layout import VideoGenerationRequest
 from vrl.models.dtypes import resolve_torch_dtype
+from vrl.models.forward_precision import forward_autocast
+from vrl.models.interfaces import ResolvedForwardPrecision
 from vrl.trainers.data import load_prompt_manifest
 from vrl.trainers.precision import torch_dtype_for_trainer_precision
 from vrl.utils.media import to_pil_image
@@ -194,8 +195,7 @@ def main(argv: list[str] | None = None) -> None:
                 seed=prompt_seed,
                 samples_per_prompt=args.samples_per_prompt,
                 sampling=sampling,
-                device=device,
-                dtype=dtype,
+                forward_precision=bundle.forward_precision,
                 torch=torch,
             )
             for sample_index, image in enumerate(images):
@@ -305,8 +305,7 @@ def _generate_images(
     seed: int,
     samples_per_prompt: int,
     sampling: dict[str, Any],
-    device: Any,
-    dtype: Any,
+    forward_precision: ResolvedForwardPrecision,
     torch: Any,
 ) -> list[Image.Image]:
     prompts = [prompt] * samples_per_prompt
@@ -329,14 +328,10 @@ def _generate_images(
         extra={"max_sequence_length": int(sampling["max_sequence_length"])},
     )
     state = model.prepare_sampling(request, encoded)
-    if getattr(device, "type", None) == "cuda" and dtype in (torch.float16, torch.bfloat16):
-        autocast_ctx = torch.amp.autocast("cuda", dtype=dtype)
-    else:
-        autocast_ctx = nullcontext()
-
-    with autocast_ctx:
+    with torch.no_grad():
         for step_idx, timestep in enumerate(state.timesteps):
-            step_output = model.forward_step(state, step_idx)
+            with forward_autocast(forward_precision, state.latents.device):
+                step_output = model.forward_step(state, step_idx)
             state.latents = state.scheduler.step(
                 step_output["noise_pred"].float(),
                 timestep,

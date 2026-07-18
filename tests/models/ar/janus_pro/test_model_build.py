@@ -39,7 +39,11 @@ def test_janus_model_build_does_not_expose_decode_strategy() -> None:
                 "path": "deepseek-ai/Janus-Pro-1B",
                 "use_lora": False,
             },
-            "precision": {"training": {"dtype": "fp32"}, "rollout": {"dtype": "fp32"}},
+            "precision": {
+                "float32_precision": "tf32",
+                "training": {"dtype": "fp32"},
+                "rollout": {"dtype": "fp32"},
+            },
             "sampling": {
                 "guidance_scale": 5.0,
                 "temperature": 1.0,
@@ -64,7 +68,11 @@ def test_ar_runtime_rejects_duplicate_model_dtype() -> None:
                 "path": "deepseek-ai/Janus-Pro-1B",
                 "dtype": "bfloat16",
             },
-            "precision": {"training": {"dtype": "fp16"}, "rollout": {"dtype": "fp16"}},
+            "precision": {
+                "float32_precision": "tf32",
+                "training": {"dtype": "fp16"},
+                "rollout": {"dtype": "fp16"},
+            },
             "sampling": {},
         },
     )

@@ -54,13 +54,6 @@ def _amax_scale(t: torch.Tensor, dim: int | None) -> torch.Tensor:
     return (amax / FP8_E4M3_MAX).clamp_min(1e-12).to(torch.float32)
 
 
-def vllm_block_fp8_available() -> bool:
-    """Whether the opt-in ``blockwise`` recipe (vLLM triton kernel) can be used."""
-    import importlib.util
-
-    return importlib.util.find_spec("vllm") is not None
-
-
 class Fp8Linear(QuantizedLinear):
     """Drop-in ``nn.Linear`` replacement running the matmul in fp8-e4m3.
 
@@ -254,5 +247,4 @@ __all__ = [
     "DEFAULT_EXCLUDE",
     "Fp8Linear",
     "swap_linears_to_fp8",
-    "vllm_block_fp8_available",
 ]
