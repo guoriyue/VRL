@@ -48,7 +48,7 @@ from vrl.algorithms.logprob_mismatch import (
 )
 from vrl.algorithms.trajectory import AlgorithmInput
 from vrl.config.builders import build_precision_split_safety_configs
-from vrl.models.interfaces import ResolvedForwardPrecision
+from vrl.models.interfaces import ForwardPrecision
 from vrl.nn.quantization import Fp4Linear, Fp8Linear, nvfp4_available
 from vrl.rollouts.evaluators.types import SegmentSignal, TrajectorySignalBatch
 from vrl.trainers.online.precision_guard import (
@@ -150,7 +150,7 @@ def _require_precision_guard(
         return _signals(replay_logprob, rollout_logprob)
 
     print("-- production precision drift guard --")
-    forward_precision = ResolvedForwardPrecision(
+    forward_precision = ForwardPrecision(
         autocast="off",
         float32_precision="ieee",
     )

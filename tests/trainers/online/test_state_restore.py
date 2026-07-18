@@ -10,7 +10,7 @@ from tests.trainers.online._helpers import (
     _rollout_context,
     _trajectory_signals,
 )
-from vrl.models.interfaces import ResolvedForwardPrecision
+from vrl.models.interfaces import ForwardPrecision
 
 
 class TestOnlineTrainerResumeState:
@@ -324,7 +324,7 @@ def _make_resume_trainer(
             n_samples_per_prompt=2,
             train_precision=train_precision,
         ),
-        forward_precision=ResolvedForwardPrecision(
+        forward_precision=ForwardPrecision(
             autocast=autocast,
             float32_precision="ieee",
         ),

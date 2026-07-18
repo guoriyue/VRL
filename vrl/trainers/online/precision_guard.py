@@ -23,7 +23,7 @@ from vrl.algorithms.logprob_mismatch import (
     LogprobMismatchStats,
     compute_logprob_mismatch_stats,
 )
-from vrl.models.interfaces import ResolvedForwardPrecision
+from vrl.models.interfaces import ForwardPrecision
 from vrl.trainers.core.types import PrecisionDriftGuardConfig
 
 _logger = logging.getLogger(__name__)
@@ -38,8 +38,8 @@ def resolve_guard_mode(
     *,
     training_precision: str,
     rollout_precision: str,
-    training_forward_precision: ResolvedForwardPrecision,
-    rollout_forward_precision: ResolvedForwardPrecision,
+    training_forward_precision: ForwardPrecision,
+    rollout_forward_precision: ForwardPrecision,
 ) -> str:
     """Resolve ``auto`` into an effective ``off``/``warn``/``fail`` mode.
 
@@ -51,8 +51,8 @@ def resolve_guard_mode(
         ("training_forward_precision", training_forward_precision),
         ("rollout_forward_precision", rollout_forward_precision),
     ):
-        if not isinstance(precision, ResolvedForwardPrecision):
-            raise TypeError(f"{name} must be ResolvedForwardPrecision")
+        if not isinstance(precision, ForwardPrecision):
+            raise TypeError(f"{name} must be ForwardPrecision")
     if mode in ("off", "warn", "fail"):
         return mode
     if mode != "auto":
@@ -145,8 +145,8 @@ def measure_precision_drift(
     *,
     training_precision: str,
     rollout_precision: str,
-    training_forward_precision: ResolvedForwardPrecision,
-    rollout_forward_precision: ResolvedForwardPrecision,
+    training_forward_precision: ForwardPrecision,
+    rollout_forward_precision: ForwardPrecision,
     math_precision: str,
     timestep_indices: Sequence[int],
     evaluate_fn: Callable[[int], Any],
@@ -264,8 +264,8 @@ def run_precision_drift_guard(
     *,
     training_precision: str,
     rollout_precision: str,
-    training_forward_precision: ResolvedForwardPrecision,
-    rollout_forward_precision: ResolvedForwardPrecision,
+    training_forward_precision: ForwardPrecision,
+    rollout_forward_precision: ForwardPrecision,
     math_precision: str,
     timestep_indices: Sequence[int],
     evaluate_fn: Callable[[int], Any],

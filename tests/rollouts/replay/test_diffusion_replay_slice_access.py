@@ -9,13 +9,13 @@ import torch
 
 from vrl.generation import GenerationRequest, GenerationSampleRow
 from vrl.models.diffusion import DiffusionModelBase
-from vrl.models.interfaces import ReplayResult, ReplaySegmentResult, ResolvedForwardPrecision
+from vrl.models.interfaces import ForwardPrecision, ReplayResult, ReplaySegmentResult
 from vrl.rollouts.batch import RolloutBatch
 from vrl.rollouts.batch.ops import move_training_batch_to_device
 from vrl.rollouts.evaluators.diffusion.sde_logprob import DiffusionSDELogProbEvaluator
 from vrl.trajectory import build_diffusion_trajectory
 
-_FORWARD_PRECISION = ResolvedForwardPrecision(autocast="off", float32_precision="ieee")
+_FORWARD_PRECISION = ForwardPrecision(autocast="off", float32_precision="ieee")
 
 
 def test_diffusion_replay_slices_timestep_before_device_move(monkeypatch) -> None:

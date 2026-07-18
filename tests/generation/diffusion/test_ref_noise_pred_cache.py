@@ -23,13 +23,13 @@ from vrl.generation.diffusion.executor import (
 )
 from vrl.generation.diffusion.layout import DiffusionRequestLayout, DiffusionSDEParams
 from vrl.models.diffusion import DiffusionModelBase
-from vrl.models.interfaces import ReplayResult, ReplaySegmentResult, ResolvedForwardPrecision
+from vrl.models.interfaces import ForwardPrecision, ReplayResult, ReplaySegmentResult
 from vrl.rollouts.batch import RolloutBatch
 from vrl.rollouts.evaluators.diffusion.sde_logprob import DiffusionSDELogProbEvaluator
 from vrl.rollouts.evaluators.types import SignalRequest
 from vrl.trajectory import build_diffusion_trajectory
 
-_FORWARD_PRECISION = ResolvedForwardPrecision(autocast="off", float32_precision="ieee")
+_FORWARD_PRECISION = ForwardPrecision(autocast="off", float32_precision="ieee")
 
 # -- generation-side buffer + config ----------------------------------------
 

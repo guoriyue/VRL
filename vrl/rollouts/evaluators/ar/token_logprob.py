@@ -17,7 +17,7 @@ import torch
 
 from vrl.math.ar.logprob import gather_categorical_log_probs
 from vrl.models.forward_precision import forward_autocast
-from vrl.models.interfaces import ReplayModel, ResolvedForwardPrecision, require_replay_model
+from vrl.models.interfaces import ForwardPrecision, ReplayModel, require_replay_model
 from vrl.rollouts.batch import RolloutBatch
 from vrl.rollouts.evaluators.base import Evaluator
 from vrl.rollouts.evaluators.trajectory import TrajectorySignalBuilder
@@ -48,7 +48,7 @@ class TokenLogProbEvaluator(Evaluator):
         ref_model: ReplayModel | None = None,
         signal_request: SignalRequest | None = None,
         *,
-        forward_precision: ResolvedForwardPrecision,
+        forward_precision: ForwardPrecision,
     ) -> TrajectorySignalBatch:
         model = require_replay_model(model, owner="TokenLogProbEvaluator.model")
         if ref_model is not None:
@@ -109,7 +109,7 @@ class TokenLogProbEvaluator(Evaluator):
         batch: RolloutBatch,
         action_ids: torch.Tensor,
         temperature: float,
-        forward_precision: ResolvedForwardPrecision,
+        forward_precision: ForwardPrecision,
     ) -> torch.Tensor:
         """Forward + gather. Always returns ``[B, L]`` float32 log-probs."""
         with forward_autocast(forward_precision, batch.observations.device):

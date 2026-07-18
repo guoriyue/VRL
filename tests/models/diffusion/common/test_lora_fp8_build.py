@@ -18,8 +18,8 @@ from torch import nn
 from vrl.models.diffusion.build import build_diffusion_runtime_bundle
 from vrl.models.diffusion.common.lora import LoraModelMixin
 from vrl.models.interfaces.runtime import (
+    ForwardPrecision,
     ModelBuild,
-    ResolvedForwardPrecision,
     RolloutBuildOptions,
 )
 
@@ -182,7 +182,7 @@ def test_shared_builder_drops_master_before_quantized_lora_gpu_move(monkeypatch)
         device="cpu",
         parameter_dtype=torch.float16,
         family="sd3_5",
-        forward_precision=ResolvedForwardPrecision("bf16", "tf32"),
+        forward_precision=ForwardPrecision("bf16", "tf32"),
         rollout=RolloutBuildOptions(
             prompt_encoder_dtype=torch.bfloat16,
             quantization_format="fp8",
@@ -229,7 +229,7 @@ def test_shared_builder_preserves_resolved_forward_precision() -> None:
         device="cpu",
         parameter_dtype=torch.float16,
         family="sd3_5",
-        forward_precision=ResolvedForwardPrecision("off", "ieee"),
+        forward_precision=ForwardPrecision("off", "ieee"),
         rollout=RolloutBuildOptions(
             prompt_encoder_dtype=torch.bfloat16,
         ),
@@ -265,7 +265,7 @@ def test_nvfp4_hardware_guard_runs_before_quantization_mutation(
         device="cpu",
         parameter_dtype=torch.bfloat16,
         family="sd3_5",
-        forward_precision=ResolvedForwardPrecision("bf16", "tf32"),
+        forward_precision=ForwardPrecision("bf16", "tf32"),
         rollout=RolloutBuildOptions(
             prompt_encoder_dtype=torch.bfloat16,
             quantization_format="nvfp4",
@@ -326,7 +326,7 @@ def test_full_finetune_dtype_move_preserves_quantized_cache(
         device="cpu",
         parameter_dtype=torch.bfloat16,
         family="sd3_5",
-        forward_precision=ResolvedForwardPrecision("bf16", "tf32"),
+        forward_precision=ForwardPrecision("bf16", "tf32"),
         rollout=RolloutBuildOptions(
             prompt_encoder_dtype=torch.bfloat16,
             quantization_format=quantization_format,

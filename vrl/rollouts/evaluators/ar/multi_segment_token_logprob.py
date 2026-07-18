@@ -9,11 +9,11 @@ import torch
 
 from vrl.models.forward_precision import forward_autocast
 from vrl.models.interfaces import (
+    ForwardPrecision,
     ReplayModel,
     ReplayRequest,
     ReplayResult,
     ReplaySegmentResult,
-    ResolvedForwardPrecision,
     require_replay_model,
 )
 from vrl.rollouts.batch import RolloutBatch
@@ -43,7 +43,7 @@ class MultiSegmentTokenLogProbEvaluator(Evaluator):
         ref_model: ReplayModel | None = None,
         signal_request: SignalRequest | None = None,
         *,
-        forward_precision: ResolvedForwardPrecision,
+        forward_precision: ForwardPrecision,
     ) -> TrajectorySignalBatch:
         del timestep_idx
         model = require_replay_model(model, owner="MultiSegmentTokenLogProbEvaluator.model")

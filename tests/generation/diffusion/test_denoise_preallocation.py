@@ -16,7 +16,7 @@ from vrl.generation.diffusion import (
 from vrl.generation.diffusion.layout import DiffusionSDEParams
 from vrl.generation.execution.chunks import SampleChunk
 from vrl.generation.types import GenerationRequest
-from vrl.models.interfaces.runtime import ResolvedForwardPrecision
+from vrl.models.interfaces.runtime import ForwardPrecision
 
 
 def test_preallocate_denoise_buffers_matches_latent_shape_dtype_and_device() -> None:
@@ -79,7 +79,7 @@ def test_run_denoise_steps_writes_preallocated_buffers(return_kl: bool) -> None:
 def test_resolved_forward_precision_is_independent_of_prompt_storage_dtype() -> None:
     """The resolved contract does not guess policy from prompt tensor storage."""
     executor = _Executor()
-    executor.forward_precision = ResolvedForwardPrecision(
+    executor.forward_precision = ForwardPrecision(
         autocast="bf16",
         float32_precision="tf32",
     )
@@ -125,7 +125,7 @@ def test_autocast_wraps_only_transformer_forward(monkeypatch: pytest.MonkeyPatch
     monkeypatch.setattr(executor_module, "sde_step_with_logprob", tracked_sde_step)
     executor = _Executor()
     executor.model = _AutocastModel()
-    executor.forward_precision = ResolvedForwardPrecision(
+    executor.forward_precision = ForwardPrecision(
         autocast="bf16",
         float32_precision="ieee",
     )
@@ -256,7 +256,7 @@ class _Executor(DiffusionChunkExecutorBase):
     family = "test"
     task = "t2i"
     model = _Model()
-    forward_precision = ResolvedForwardPrecision(
+    forward_precision = ForwardPrecision(
         autocast="off",
         float32_precision="ieee",
     )
@@ -336,7 +336,7 @@ def test_decode_denoise_result_packs_video_as_uint8() -> None:
         family = "test"
         task = "t2i"
         model = _UnitVideoModel()
-        forward_precision = ResolvedForwardPrecision(
+        forward_precision = ForwardPrecision(
             autocast="off",
             float32_precision="ieee",
         )

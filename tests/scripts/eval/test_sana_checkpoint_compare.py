@@ -10,11 +10,11 @@ from omegaconf import OmegaConf
 from PIL import Image
 
 from vrl.models.diffusion import build as diffusion_build
-from vrl.models.interfaces.runtime import ResolvedForwardPrecision
+from vrl.models.interfaces.runtime import ForwardPrecision
 from vrl.scripts.eval import sana_checkpoint_compare as checkpoint_compare
 from vrl.scripts.eval import sana_inference
 
-SANA_FORWARD_PRECISION = ResolvedForwardPrecision(
+SANA_FORWARD_PRECISION = ForwardPrecision(
     autocast="off",
     float32_precision="ieee",
 )
@@ -376,12 +376,12 @@ def test_model_precision_rejects_fp32_transformer() -> None:
 @pytest.mark.parametrize(
     "forward_precision",
     [
-        ResolvedForwardPrecision(autocast="bf16", float32_precision="ieee"),
-        ResolvedForwardPrecision(autocast="off", float32_precision="tf32"),
+        ForwardPrecision(autocast="bf16", float32_precision="ieee"),
+        ForwardPrecision(autocast="off", float32_precision="tf32"),
     ],
 )
 def test_model_precision_rejects_wrong_resolved_contract(
-    forward_precision: ResolvedForwardPrecision,
+    forward_precision: ForwardPrecision,
 ) -> None:
     with pytest.raises(ValueError, match="precision boundary mismatch"):
         checkpoint_compare._validate_model_precision(_FakeModel([]), forward_precision)

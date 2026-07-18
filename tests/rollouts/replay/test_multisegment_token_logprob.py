@@ -8,10 +8,10 @@ import torch
 
 from vrl.generation import GenerationRequest, GenerationSampleRow
 from vrl.models.interfaces import (
+    ForwardPrecision,
     ReplayRequest,
     ReplayResult,
     ReplaySegmentResult,
-    ResolvedForwardPrecision,
 )
 from vrl.rollouts.batch import RolloutBatch
 from vrl.rollouts.evaluators.ar.multi_segment_token_logprob import (
@@ -19,7 +19,7 @@ from vrl.rollouts.evaluators.ar.multi_segment_token_logprob import (
 )
 from vrl.trajectory import build_ar_multisegment_trajectory, build_training_view
 
-_FORWARD_PRECISION = ResolvedForwardPrecision(autocast="off", float32_precision="ieee")
+_FORWARD_PRECISION = ForwardPrecision(autocast="off", float32_precision="ieee")
 
 
 def _sample_rows() -> list[GenerationSampleRow]:

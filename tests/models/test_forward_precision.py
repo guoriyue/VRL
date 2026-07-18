@@ -6,7 +6,7 @@ import pytest
 import torch
 
 from vrl.models import forward_precision
-from vrl.models.interfaces.runtime import AutocastMode, ResolvedForwardPrecision
+from vrl.models.interfaces.runtime import AutocastMode, ForwardPrecision
 
 
 @pytest.mark.parametrize("mode", ["ieee", "tf32"])
@@ -76,7 +76,7 @@ def test_forward_autocast_applies_only_supported_cpu_modes(
     autocast: AutocastMode,
     expected_enabled: bool,
 ) -> None:
-    precision = ResolvedForwardPrecision(
+    precision = ForwardPrecision(
         autocast=autocast,
         float32_precision="ieee",
     )

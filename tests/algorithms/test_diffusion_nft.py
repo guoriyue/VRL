@@ -39,7 +39,7 @@ from vrl.generation.diffusion.layout import VideoGenerationRequest
 from vrl.generation.types import GenerationRequest, GenerationSampleRow
 from vrl.models.diffusion import DiffusionModelBase
 from vrl.models.diffusion.cosmos.predict2_5.model import _copy_adapter_weights
-from vrl.models.interfaces import ResolvedForwardPrecision
+from vrl.models.interfaces import ForwardPrecision
 from vrl.rollouts.batch import RolloutBatch
 from vrl.trajectory.builders import build_diffusion_trajectory
 
@@ -47,7 +47,7 @@ _BATCH = TINY_WAN_LATENT_SHAPE[0]
 _LATENT_SHAPE = TINY_WAN_LATENT_SHAPE
 _TEXT_LEN = TINY_WAN_TEXT_LEN
 _TEXT_DIM = TINY_WAN_TEXT_DIM
-FORWARD_PRECISION = ResolvedForwardPrecision(autocast="off", float32_precision="ieee")
+FORWARD_PRECISION = ForwardPrecision(autocast="off", float32_precision="ieee")
 
 
 def test_diffusion_nft_does_not_tolerate_off_policy_staleness() -> None:

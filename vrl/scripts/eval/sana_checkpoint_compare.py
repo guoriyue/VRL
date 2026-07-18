@@ -28,7 +28,7 @@ import torch
 
 from vrl.config.loading import load_config
 from vrl.config.precision import resolve_precision_policy
-from vrl.models.interfaces.runtime import ResolvedForwardPrecision
+from vrl.models.interfaces.runtime import ForwardPrecision
 from vrl.scripts.eval.sana_inference import (
     SCHEDULER_PROTOCOL,
     generate_prompt_images,
@@ -313,7 +313,7 @@ def _validate_checkpoint(checkpoint: Any) -> None:
 def _generate_one(
     model: Any,
     *,
-    forward_precision: ResolvedForwardPrecision,
+    forward_precision: ForwardPrecision,
     scheduler: Any,
     prompt: str,
     seed: int,

@@ -4,16 +4,16 @@ from __future__ import annotations
 
 from dataclasses import asdict
 
-from vrl.models.interfaces import ResolvedForwardPrecision
+from vrl.models.interfaces import ForwardPrecision
 
-DEFAULT_FORWARD_PRECISION = ResolvedForwardPrecision(
+DEFAULT_FORWARD_PRECISION = ForwardPrecision(
     autocast="off",
     float32_precision="ieee",
 )
 
 
 def _rollout_context(
-    precision: ResolvedForwardPrecision = DEFAULT_FORWARD_PRECISION,
+    precision: ForwardPrecision = DEFAULT_FORWARD_PRECISION,
 ) -> dict[str, object]:
     return {"rollout_forward_precision": asdict(precision)}
 

@@ -8,7 +8,7 @@ from collections.abc import Iterator
 import torch
 
 from vrl.generation import GenerationRequest, GenerationSampleRow
-from vrl.models.interfaces import ReplayResult, ReplaySegmentResult, ResolvedForwardPrecision
+from vrl.models.interfaces import ForwardPrecision, ReplayResult, ReplaySegmentResult
 from vrl.rollouts.batch import RolloutBatch
 from vrl.rollouts.evaluators.ar.continuous_token_logprob import (
     ContinuousTokenLogProbEvaluator,
@@ -21,7 +21,7 @@ from vrl.trajectory import (
     build_training_view,
 )
 
-_FORWARD_PRECISION = ResolvedForwardPrecision(autocast="off", float32_precision="ieee")
+_FORWARD_PRECISION = ForwardPrecision(autocast="off", float32_precision="ieee")
 
 
 def _request() -> GenerationRequest:

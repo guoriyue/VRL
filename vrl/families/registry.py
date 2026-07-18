@@ -159,8 +159,8 @@ class ModelFamilyEntry:
 
         from vrl.config.precision import resolve_precision_policy
         from vrl.models.interfaces.runtime import (
+            ForwardPrecision,
             ModelBuild,
-            ResolvedForwardPrecision,
             RolloutBuildOptions,
         )
         from vrl.utils.config import plain_mapping
@@ -229,7 +229,7 @@ class ModelFamilyEntry:
             )
         else:
             autocast = "off"
-        forward_precision = ResolvedForwardPrecision(
+        forward_precision = ForwardPrecision(
             autocast=autocast,
             float32_precision=precision.float32_precision,
         )

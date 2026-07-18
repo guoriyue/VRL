@@ -8,11 +8,11 @@ from typing import Any
 
 import torch
 
-from vrl.models.interfaces.runtime import Float32Precision, ResolvedForwardPrecision
+from vrl.models.interfaces.runtime import Float32Precision, ForwardPrecision
 
 
 def forward_autocast(
-    precision: ResolvedForwardPrecision,
+    precision: ForwardPrecision,
     device: torch.device | str,
 ) -> AbstractContextManager[Any]:
     """Return the transformer's resolved outer-autocast context."""

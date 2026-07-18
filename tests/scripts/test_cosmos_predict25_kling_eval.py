@@ -9,7 +9,7 @@ import pytest
 import torch
 from omegaconf import OmegaConf
 
-from vrl.models.interfaces import ResolvedForwardPrecision
+from vrl.models.interfaces import ForwardPrecision
 from vrl.scripts.eval import cosmos_predict25_kling_eval as eval_script
 
 
@@ -147,7 +147,7 @@ def test_generate_all_releases_model_before_rebuilding(monkeypatch, tmp_path) ->
     class FakeBundle:
         def __init__(self) -> None:
             self.model = FakeModel()
-            self.forward_precision = ResolvedForwardPrecision(
+            self.forward_precision = ForwardPrecision(
                 autocast="off",
                 float32_precision="ieee",
             )

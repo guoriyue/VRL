@@ -14,7 +14,7 @@ from typing import Any
 import torch
 
 from vrl.models.forward_precision import float32_precision_state
-from vrl.models.interfaces.runtime import ResolvedForwardPrecision
+from vrl.models.interfaces.runtime import ForwardPrecision
 from vrl.utils.media import to_pil_image
 
 # These mappings are persisted protocol identities, not tunable defaults.
@@ -41,7 +41,7 @@ SCHEDULER_PROTOCOL = {
 
 def validate_model_precision(
     model: Any,
-    forward_precision: ResolvedForwardPrecision,
+    forward_precision: ForwardPrecision,
 ) -> dict[str, Any]:
     """Require a validated no-autocast SANA precision boundary."""
 
@@ -125,7 +125,7 @@ def validate_scheduler(scheduler: Any) -> dict[str, Any]:
 def generate_prompt_images(
     model: Any,
     *,
-    forward_precision: ResolvedForwardPrecision,
+    forward_precision: ForwardPrecision,
     scheduler: Any,
     prompt: str,
     seed: int,
@@ -138,7 +138,7 @@ def generate_prompt_images(
 
     if num_images < 1:
         raise ValueError(f"num_images must be >= 1; got {num_images}")
-    if forward_precision != ResolvedForwardPrecision(
+    if forward_precision != ForwardPrecision(
         autocast="off",
         float32_precision="ieee",
     ):

@@ -386,7 +386,7 @@ quantized-backward/FSDP 方案并跑过至少一个 backward 后才解锁。
   native FP16/no-outer-autocast，Gemma 使用 BF16，VAE/CFG/timestep 与受保护
   scheduler/log-prob math 使用 FP32。
 - SANA registry requirement 将 public precision 解析为
-  `ResolvedForwardPrecision(autocast="off", float32_precision="ieee")`；trainer
+  `ForwardPrecision(autocast="off", float32_precision="ieee")`；trainer
   与 rollout worker 消费同一 contract，显式写 FP32 backend policy，避免进程
   默认值分叉。该 family requirement 不是 public knob。
 - Low-precision trainables 自动派生 checkpointed FP32 master；AdamW8bit 只

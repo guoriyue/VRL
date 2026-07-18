@@ -54,9 +54,9 @@ def test_create_grad_scaler_matrix(
     parameter_dtype,
     expected,
 ) -> None:
-    from vrl.models.interfaces import ResolvedForwardPrecision
+    from vrl.models.interfaces import ForwardPrecision
 
-    precision = ResolvedForwardPrecision(autocast=autocast, float32_precision="ieee")
+    precision = ForwardPrecision(autocast=autocast, float32_precision="ieee")
     model = nn.Linear(1, 1, bias=False).to(dtype=parameter_dtype)
     sentinel = object()
     monkeypatch.setattr(torch.amp, "GradScaler", lambda _device: sentinel)

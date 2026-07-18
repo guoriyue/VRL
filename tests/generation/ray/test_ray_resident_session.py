@@ -15,9 +15,9 @@ from vrl.generation.protocols import ChunkResult
 from vrl.generation.ray.worker import RayGenerationWorker
 from vrl.generation.types import GenerationOutput, GenerationRequest, GenerationSampleRow
 from vrl.models.interfaces import (
+    ForwardPrecision,
     ModelBuild,
     ReplayResult,
-    ResolvedForwardPrecision,
     RolloutBuildOptions,
     RuntimeBundle,
 )
@@ -68,7 +68,7 @@ def build_tiny_runtime_bundle(build: ModelBuild) -> RuntimeBundle:
     assert str(build.device) == "cpu"
     assert build.parameter_dtype is torch.float16
     assert isinstance(build.rollout, RolloutBuildOptions)
-    assert build.forward_precision == ResolvedForwardPrecision("off", "tf32")
+    assert build.forward_precision == ForwardPrecision("off", "tf32")
     assert build.rollout.prompt_encoder_dtype is torch.float32
     return RuntimeBundle(
         model=_TinyRuntimeModel(),

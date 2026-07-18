@@ -39,7 +39,7 @@ Float32Precision = Literal["ieee", "tf32"]
 
 
 @dataclass(frozen=True, slots=True)
-class ResolvedForwardPrecision:
+class ForwardPrecision:
     """Fully resolved transformer-forward precision for one runtime process.
 
     Strings keep this contract wire-safe. ``off`` is the only no-autocast
@@ -175,7 +175,7 @@ class ModelBuild:
     family: str
     # Fully resolved, process-local transformer execution contract. A nested
     # primitive mapping is accepted only at the Ray wire boundary.
-    forward_precision: ResolvedForwardPrecision | Mapping[str, Any]
+    forward_precision: ForwardPrecision | Mapping[str, Any]
     model_config: dict[str, Any] | None = None
     sampling_config: dict[str, Any] | None = None
     # Full-generation build inputs. ``None`` is the replay contract: replay owns
@@ -194,12 +194,12 @@ class ModelBuild:
         if not isinstance(self.family, str) or not self.family:
             raise ValueError("ModelBuild.family must be a non-empty string")
         if isinstance(self.forward_precision, Mapping):
-            self.forward_precision = ResolvedForwardPrecision(
+            self.forward_precision = ForwardPrecision(
                 **dict(self.forward_precision),
             )
-        elif not isinstance(self.forward_precision, ResolvedForwardPrecision):
+        elif not isinstance(self.forward_precision, ForwardPrecision):
             raise TypeError(
-                "ModelBuild.forward_precision must be ResolvedForwardPrecision or a mapping",
+                "ModelBuild.forward_precision must be ForwardPrecision or a mapping",
             )
         self.parameter_dtype = resolve_torch_dtype(self.parameter_dtype)
         parameter_name = dtype_to_wire_name(self.parameter_dtype)
@@ -330,11 +330,11 @@ class RuntimeBundle:
     trainable_modules: dict[str, Any]
     scheduler: Any
     raw_handle: Any
-    forward_precision: ResolvedForwardPrecision
+    forward_precision: ForwardPrecision
     metadata: dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
-        if not isinstance(self.forward_precision, ResolvedForwardPrecision):
+        if not isinstance(self.forward_precision, ForwardPrecision):
             raise TypeError(
-                "RuntimeBundle.forward_precision must be ResolvedForwardPrecision",
+                "RuntimeBundle.forward_precision must be ForwardPrecision",
             )

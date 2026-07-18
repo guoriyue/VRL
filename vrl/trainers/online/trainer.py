@@ -28,7 +28,7 @@ from vrl.models.forward_precision import (
     float32_precision_state,
     forward_autocast,
 )
-from vrl.models.interfaces import ResolvedForwardPrecision
+from vrl.models.interfaces import ForwardPrecision
 from vrl.rollouts.batch import RolloutBatch
 from vrl.rollouts.batch.ops import (
     move_training_batch_to_device,
@@ -177,7 +177,7 @@ def _resolve_mixed_precision(config: TrainerConfig) -> str:
 
 
 def _create_grad_scaler(
-    forward_precision: ResolvedForwardPrecision,
+    forward_precision: ForwardPrecision,
     device: torch.device,
     model: Any,
 ) -> torch.amp.GradScaler | None:
@@ -248,7 +248,7 @@ def _trainer_precision_metadata(
     config: TrainerConfig,
     model: Any,
     evaluator: Any | None,
-    forward_precision: ResolvedForwardPrecision,
+    forward_precision: ForwardPrecision,
 ) -> dict[str, Any]:
     training_precision = _precision_label(_resolve_mixed_precision(config))
     rollout_precision = _precision_label(config.rollout_precision or training_precision)
@@ -272,10 +272,10 @@ def _merge_rollout_precision_context(
 ) -> dict[str, Any]:
     merged = dict(metadata)
     raw = batch_context.get("rollout_forward_precision")
-    if isinstance(raw, ResolvedForwardPrecision):
+    if isinstance(raw, ForwardPrecision):
         rollout = raw
     elif isinstance(raw, Mapping):
-        rollout = ResolvedForwardPrecision(**dict(raw))
+        rollout = ForwardPrecision(**dict(raw))
     else:
         raise ValueError(
             "rollout batch context is missing rollout_forward_precision; "
@@ -702,7 +702,7 @@ class OnlineTrainer(Trainer):
         evaluator: Any,
         model: nn.Module,
         config: TrainerConfig,
-        forward_precision: ResolvedForwardPrecision,
+        forward_precision: ForwardPrecision,
         ref_model: nn.Module | None = None,
         weight_syncer: WeightSyncer | None = None,
         sync_state_getter: TrainableStateGetter | None = None,
@@ -724,8 +724,8 @@ class OnlineTrainer(Trainer):
             )
         self.sync_state_getter = sync_state_getter
         self.config = config
-        if not isinstance(forward_precision, ResolvedForwardPrecision):
-            raise TypeError("OnlineTrainer requires ResolvedForwardPrecision")
+        if not isinstance(forward_precision, ForwardPrecision):
+            raise TypeError("OnlineTrainer requires ForwardPrecision")
         self.forward_precision = forward_precision
         # Precision correction (TIS) is a trainer-level precision-drift concern, not
         # an algorithm hyperparameter; inject it into algorithms that apply it
@@ -1620,7 +1620,7 @@ class OnlineTrainer(Trainer):
                 training_precision=precision_metadata["training_precision"],
                 rollout_precision=precision_metadata["rollout_precision"],
                 training_forward_precision=self.forward_precision,
-                rollout_forward_precision=ResolvedForwardPrecision(
+                rollout_forward_precision=ForwardPrecision(
                     **precision_metadata["rollout_forward_precision"],
                 ),
                 math_precision=_precision_label(

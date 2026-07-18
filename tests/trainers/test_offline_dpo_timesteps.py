@@ -20,7 +20,7 @@ from tests.models.diffusion.fixtures import (
     build_tiny_wan_transformer,
     record_forward_calls,
 )
-from vrl.models.interfaces import ResolvedForwardPrecision
+from vrl.models.interfaces import ForwardPrecision
 from vrl.trainers.data.preferences import PreferenceBatch
 from vrl.trainers.offline import (
     OfflineDPOTrainer,
@@ -28,7 +28,7 @@ from vrl.trainers.offline import (
     wan_forward,
 )
 
-FORWARD_PRECISION = ResolvedForwardPrecision(autocast="off", float32_precision="ieee")
+FORWARD_PRECISION = ForwardPrecision(autocast="off", float32_precision="ieee")
 
 
 def _noop_forward(model, noisy, ts, encoder, extra=None):  # pragma: no cover
@@ -64,7 +64,7 @@ def _make_trainer(
         noise_scheduler=scheduler,
         encode_pixels=_noop_encode_pix,
         encode_text=_noop_encode_text,
-        forward_precision=ResolvedForwardPrecision(
+        forward_precision=ForwardPrecision(
             autocast="off",
             float32_precision=float32_precision,
         ),

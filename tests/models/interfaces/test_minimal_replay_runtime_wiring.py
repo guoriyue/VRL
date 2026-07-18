@@ -9,8 +9,8 @@ import torch
 import torch.nn as nn
 
 from vrl.models.interfaces.runtime import (
+    ForwardPrecision,
     ModelBuild,
-    ResolvedForwardPrecision,
     RolloutBuildOptions,
     bundle_loads_full_generation_modules,
     full_generation_bundle_metadata,
@@ -22,7 +22,7 @@ def test_forward_precision_rejects_quantized_outer_autocast() -> None:
     """Quantization formats are selective GEMM policies, not autocast dtypes."""
 
     with pytest.raises(ValueError, match="forward autocast must be one of"):
-        ResolvedForwardPrecision(
+        ForwardPrecision(
             autocast="fp8",  # type: ignore[arg-type]
             float32_precision="tf32",
         )
@@ -30,7 +30,7 @@ def test_forward_precision_rejects_quantized_outer_autocast() -> None:
 
 def test_forward_precision_rejects_unknown_float32_backend() -> None:
     with pytest.raises(ValueError, match="forward float32_precision must be one of"):
-        ResolvedForwardPrecision(
+        ForwardPrecision(
             autocast="off",
             float32_precision="fast",  # type: ignore[arg-type]
         )
@@ -44,7 +44,7 @@ def test_model_build_rejects_subbyte_parameter_storage(dtype: str) -> None:
             device="cpu",
             parameter_dtype=dtype,
             family="sd3_5",
-            forward_precision=ResolvedForwardPrecision("off", "ieee"),
+            forward_precision=ForwardPrecision("off", "ieee"),
         )
 
 
@@ -113,7 +113,7 @@ def test_model_build_reconstructs_nested_rollout_payload() -> None:
     )
 
     assert build.parameter_dtype is torch.float16
-    assert build.forward_precision == ResolvedForwardPrecision("bf16", "tf32")
+    assert build.forward_precision == ForwardPrecision("bf16", "tf32")
     assert isinstance(build.rollout, RolloutBuildOptions)
     assert build.rollout.prompt_encoder_dtype is torch.float32
     assert build.rollout.quantization_format == "fp8"
@@ -148,7 +148,7 @@ def test_model_build_resolver_projects_nvfp4_over_the_rollout_base_dtype() -> No
     rollout = build.require_rollout()
 
     assert build.parameter_dtype is torch.bfloat16
-    assert build.forward_precision == ResolvedForwardPrecision("bf16", "tf32")
+    assert build.forward_precision == ForwardPrecision("bf16", "tf32")
     assert rollout.prompt_encoder_dtype is torch.float16
     assert rollout.quantization_format == "nvfp4"
     assert rollout.quantization_recipe is None
@@ -216,7 +216,7 @@ def _build(**overrides: Any) -> ModelBuild:
         "device": "cpu",
         "parameter_dtype": torch.float32,
         "family": "sd3_5",
-        "forward_precision": ResolvedForwardPrecision("off", "tf32"),
+        "forward_precision": ForwardPrecision("off", "tf32"),
         "model_config": model_config,
         "sampling_config": dict(scheduler_config),
     }

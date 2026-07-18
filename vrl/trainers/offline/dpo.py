@@ -24,7 +24,7 @@ import torch.nn as nn
 
 from vrl.algorithms.dpo import diffusion_dpo_loss, diffusion_sft_loss
 from vrl.models.forward_precision import apply_float32_precision, forward_autocast
-from vrl.models.interfaces import ResolvedForwardPrecision
+from vrl.models.interfaces import ForwardPrecision
 from vrl.trainers.data.preferences import PreferenceBatch
 
 logger = logging.getLogger(__name__)
@@ -167,7 +167,7 @@ class OfflineDPOTrainer:
         noise_scheduler: Any,
         encode_pixels: Callable[[torch.Tensor], torch.Tensor],
         encode_text: Callable[[list[str]], torch.Tensor],
-        forward_precision: ResolvedForwardPrecision,
+        forward_precision: ForwardPrecision,
         config: OfflineDPOTrainerConfig | None = None,
         device: torch.device | str = "cuda",
     ) -> None:
@@ -177,8 +177,8 @@ class OfflineDPOTrainer:
         self.noise_scheduler = noise_scheduler
         self.encode_pixels = encode_pixels
         self.encode_text = encode_text
-        if not isinstance(forward_precision, ResolvedForwardPrecision):
-            raise TypeError("OfflineDPOTrainer requires ResolvedForwardPrecision")
+        if not isinstance(forward_precision, ForwardPrecision):
+            raise TypeError("OfflineDPOTrainer requires ForwardPrecision")
         self.forward_precision = forward_precision
         self.config = config or OfflineDPOTrainerConfig()
         self.device = torch.device(device) if isinstance(device, str) else device

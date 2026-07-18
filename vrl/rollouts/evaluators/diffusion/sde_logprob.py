@@ -7,8 +7,8 @@ import contextlib
 import vrl.math.diffusion.flow_matching as flow_matching_math
 from vrl.models.forward_precision import forward_autocast
 from vrl.models.interfaces import (
+    ForwardPrecision,
     ReplayModel,
-    ResolvedForwardPrecision,
     require_replay_model,
 )
 from vrl.rollouts.batch import RolloutBatch
@@ -49,7 +49,7 @@ class DiffusionSDELogProbEvaluator(Evaluator):
         ref_model: ReplayModel | None = None,
         signal_request: SignalRequest | None = None,
         *,
-        forward_precision: ResolvedForwardPrecision,
+        forward_precision: ForwardPrecision,
     ) -> TrajectorySignalBatch:
         """Replay one diffusion step into trajectory-native signals.
 

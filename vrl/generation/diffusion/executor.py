@@ -37,7 +37,7 @@ from vrl.generation.types import (
 )
 from vrl.math.diffusion.flow_matching import sde_step_with_logprob
 from vrl.models.forward_precision import forward_autocast
-from vrl.models.interfaces.runtime import ResolvedForwardPrecision
+from vrl.models.interfaces.runtime import ForwardPrecision
 from vrl.trajectory.storage import (
     TrajectoryStoragePolicy,
     apply_value_storage_policy,
@@ -391,7 +391,7 @@ class DiffusionChunkExecutorBase(
     family: str
     task: str
     model: Any
-    forward_precision: ResolvedForwardPrecision
+    forward_precision: ForwardPrecision
     default_samples_per_chunk: int = 1
     default_num_frames: int = 1
     default_fps: int | None = None

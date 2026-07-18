@@ -22,7 +22,7 @@ from vrl.generation.diffusion.layout import VideoGenerationRequest
 from vrl.math.diffusion.flow_matching import sde_step_with_logprob
 from vrl.models.dtypes import resolve_torch_dtype
 from vrl.models.forward_precision import forward_autocast
-from vrl.models.interfaces import ResolvedForwardPrecision
+from vrl.models.interfaces import ForwardPrecision
 from vrl.rewards.inference import RewardInferenceArtifact, RewardInferenceRequest
 from vrl.rewards.models.kling_video_reward import KlingVideoRewardModel
 from vrl.trainers.checkpointing import load_trainable_state, load_training_checkpoint
@@ -360,7 +360,7 @@ def _generate_checkpoint_videos(
     base_seed: int,
     output_dir: Path,
     sampling: dict[str, Any],
-    forward_precision: ResolvedForwardPrecision,
+    forward_precision: ForwardPrecision,
 ) -> list[GeneratedVideo]:
     videos: list[GeneratedVideo] = []
     video_dir = output_dir / "videos" / target.label
@@ -420,7 +420,7 @@ def _generate_one_video(
     prompt: str,
     seed: int,
     sampling: dict[str, Any],
-    forward_precision: ResolvedForwardPrecision,
+    forward_precision: ForwardPrecision,
 ) -> torch.Tensor:
     encoded = model.encode_prompt(
         prompt,

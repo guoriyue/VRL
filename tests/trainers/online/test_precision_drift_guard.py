@@ -11,7 +11,7 @@ import torch
 
 from tests.trainers.online._collector_control import CollectorControlFake
 from vrl.algorithms.logprob_mismatch import compute_logprob_mismatch_stats
-from vrl.models.interfaces import ResolvedForwardPrecision
+from vrl.models.interfaces import ForwardPrecision
 from vrl.trainers.core.types import PrecisionDriftGuardConfig
 from vrl.trainers.online.precision_guard import (
     PrecisionDriftError,
@@ -37,9 +37,9 @@ def _eval_with_drift(delta: float):
     return lambda _timestep: _signals(delta)
 
 
-def _forward(autocast: str) -> ResolvedForwardPrecision:
+def _forward(autocast: str) -> ForwardPrecision:
     mode = "off" if autocast in {"fp32", "no"} else autocast
-    return ResolvedForwardPrecision(autocast=mode, float32_precision="ieee")
+    return ForwardPrecision(autocast=mode, float32_precision="ieee")
 
 
 def _run(config, *, train, rollout, evaluate_fn, **kw):
@@ -97,8 +97,8 @@ def test_auto_is_off_for_same_dtype() -> None:
 
 
 def test_auto_detects_float32_backend_mismatch() -> None:
-    training = ResolvedForwardPrecision(autocast="off", float32_precision="ieee")
-    rollout = ResolvedForwardPrecision(autocast="off", float32_precision="tf32")
+    training = ForwardPrecision(autocast="off", float32_precision="ieee")
+    rollout = ForwardPrecision(autocast="off", float32_precision="tf32")
 
     assert (
         resolve_guard_mode(

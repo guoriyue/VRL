@@ -115,8 +115,8 @@ def test_ar_worker_guard_requires_the_requested_format(
 ) -> None:
     """AR models expose language_model, not diffusion's transformer attribute."""
     from vrl.models.interfaces.runtime import (
+        ForwardPrecision,
         ModelBuild,
-        ResolvedForwardPrecision,
         RolloutBuildOptions,
     )
     from vrl.models.loader import assert_rollout_quantization_applied
@@ -133,7 +133,7 @@ def test_ar_worker_guard_requires_the_requested_format(
         device="cpu",
         parameter_dtype="bf16",
         family="emu3",
-        forward_precision=ResolvedForwardPrecision("off", "tf32"),
+        forward_precision=ForwardPrecision("off", "tf32"),
         rollout=RolloutBuildOptions(
             prompt_encoder_dtype="bf16",
             quantization_format=format_name,
@@ -144,8 +144,8 @@ def test_ar_worker_guard_requires_the_requested_format(
 
 def test_ar_worker_guard_rejects_a_different_quantization_format() -> None:
     from vrl.models.interfaces.runtime import (
+        ForwardPrecision,
         ModelBuild,
-        ResolvedForwardPrecision,
         RolloutBuildOptions,
     )
     from vrl.models.loader import assert_rollout_quantization_applied
@@ -157,7 +157,7 @@ def test_ar_worker_guard_rejects_a_different_quantization_format() -> None:
         device="cpu",
         parameter_dtype="bf16",
         family="emu3",
-        forward_precision=ResolvedForwardPrecision("off", "tf32"),
+        forward_precision=ForwardPrecision("off", "tf32"),
         rollout=RolloutBuildOptions(
             prompt_encoder_dtype="bf16",
             quantization_format="nvfp4",
@@ -172,8 +172,8 @@ def test_ar_builder_rejects_unsupported_nvfp4_before_quantization_mutation(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from vrl.models.interfaces.runtime import (
+        ForwardPrecision,
         ModelBuild,
-        ResolvedForwardPrecision,
         RolloutBuildOptions,
     )
 
@@ -194,7 +194,7 @@ def test_ar_builder_rejects_unsupported_nvfp4_before_quantization_mutation(
         device="cpu",
         parameter_dtype="bf16",
         family="emu3",
-        forward_precision=ResolvedForwardPrecision("off", "tf32"),
+        forward_precision=ForwardPrecision("off", "tf32"),
         rollout=RolloutBuildOptions(
             prompt_encoder_dtype="bf16",
             quantization_format="nvfp4",
@@ -214,8 +214,8 @@ def test_ar_builder_applies_rollout_quantization_and_replay_does_not(
 ) -> None:
     """The shared AR builder quantizes rollout bundles only."""
     from vrl.models.interfaces.runtime import (
+        ForwardPrecision,
         ModelBuild,
-        ResolvedForwardPrecision,
         RolloutBuildOptions,
     )
     from vrl.models.loader import assert_rollout_quantization_applied
@@ -233,7 +233,7 @@ def test_ar_builder_applies_rollout_quantization_and_replay_does_not(
             device="cpu",
             parameter_dtype="float32",
             family="emu3",
-            forward_precision=ResolvedForwardPrecision("off", "tf32"),
+            forward_precision=ForwardPrecision("off", "tf32"),
             model_config={"path": "fake/repo", "use_lora": False},
             rollout=(
                 RolloutBuildOptions(

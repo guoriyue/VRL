@@ -15,7 +15,7 @@ from __future__ import annotations
 import torch
 
 from vrl.models.forward_precision import forward_autocast
-from vrl.models.interfaces import ReplayModel, ResolvedForwardPrecision, require_replay_model
+from vrl.models.interfaces import ForwardPrecision, ReplayModel, require_replay_model
 from vrl.rollouts.batch import RolloutBatch
 from vrl.rollouts.evaluators.base import Evaluator
 from vrl.rollouts.evaluators.trajectory import TrajectorySignalBuilder
@@ -40,7 +40,7 @@ class ContinuousTokenLogProbEvaluator(Evaluator):
         ref_model: ReplayModel | None = None,
         signal_request: SignalRequest | None = None,
         *,
-        forward_precision: ResolvedForwardPrecision,
+        forward_precision: ForwardPrecision,
     ) -> TrajectorySignalBatch:
         model = require_replay_model(model, owner="ContinuousTokenLogProbEvaluator.model")
         if ref_model is not None:
@@ -73,7 +73,7 @@ class ContinuousTokenLogProbEvaluator(Evaluator):
     def _compute_logprobs(
         model: ReplayModel,
         batch: RolloutBatch,
-        forward_precision: ResolvedForwardPrecision,
+        forward_precision: ForwardPrecision,
     ) -> torch.Tensor:
         """Forward through ``model.replay_forward`` — return ``[B, L]`` float32 log-probs.
 

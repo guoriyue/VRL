@@ -18,7 +18,7 @@ from vrl.families.registry import get_model_family_entry
 from vrl.generation.diffusion.layout import VideoGenerationRequest
 from vrl.models.dtypes import resolve_torch_dtype
 from vrl.models.forward_precision import forward_autocast
-from vrl.models.interfaces import ResolvedForwardPrecision
+from vrl.models.interfaces import ForwardPrecision
 from vrl.trainers.data import load_prompt_manifest
 from vrl.trainers.precision import torch_dtype_for_trainer_precision
 from vrl.utils.media import to_pil_image
@@ -305,7 +305,7 @@ def _generate_images(
     seed: int,
     samples_per_prompt: int,
     sampling: dict[str, Any],
-    forward_precision: ResolvedForwardPrecision,
+    forward_precision: ForwardPrecision,
     torch: Any,
 ) -> list[Image.Image]:
     prompts = [prompt] * samples_per_prompt

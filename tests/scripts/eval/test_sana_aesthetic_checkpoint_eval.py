@@ -10,11 +10,11 @@ from omegaconf import OmegaConf
 from PIL import Image
 
 from vrl.config.loading import load_config
-from vrl.models.interfaces.runtime import ResolvedForwardPrecision
+from vrl.models.interfaces.runtime import ForwardPrecision
 from vrl.scripts.eval import sana_aesthetic_checkpoint_eval as checkpoint_eval
 from vrl.scripts.eval import sana_inference
 
-SANA_FORWARD_PRECISION = ResolvedForwardPrecision(
+SANA_FORWARD_PRECISION = ForwardPrecision(
     autocast="off",
     float32_precision="ieee",
 )
