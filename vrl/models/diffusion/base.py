@@ -9,6 +9,7 @@ loading for diffusion families.
 from __future__ import annotations
 
 import contextlib
+import functools
 from abc import ABC, abstractmethod
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -20,6 +21,7 @@ import torch.nn as nn
 from vrl.generation.diffusion.layout import VideoGenerationRequest
 from vrl.models.interfaces import ReplayRequest, ReplayResult, ReplaySegmentResult
 from vrl.models.interfaces.runtime import ModelBuild
+from vrl.models.precision import model_autocast
 from vrl.models.utils import (
     TrainableStateSlots,
     activate_adapter_on,
@@ -47,12 +49,40 @@ class DiffusionSamplingStateBase:
     guidance_scale: float
 
 
+def _forward_step_with_autocast(fn: Any) -> Any:
+    """Apply the selected role dtype at every diffusion forward boundary."""
+
+    @functools.wraps(fn)
+    def wrapped(self: Any, *args: Any, **kwargs: Any) -> Any:
+        with model_autocast(self, self.device):
+            return fn(self, *args, **kwargs)
+
+    wrapped.__vrl_outer_autocast__ = True
+    return wrapped
+
+
 class DiffusionModelBase(nn.Module, ABC):
     """Shared model base for diffusion families on the RL path."""
 
     async def load(self) -> None:
         """Load heavy modules. Default no-op for adapters constructed eagerly."""
         return None
+
+    def __init_subclass__(cls, **kwargs: Any) -> None:
+        """Run every concrete ``forward_step`` under its role precision.
+
+        RuntimeBundle stamps the selected role precision and family autocast
+        capability on the model. Wrapping ``forward_step`` here means rollout,
+        replay (``replay_forward`` and
+        ``replay_forward_with_latents`` both funnel through ``self.forward``),
+        and direct script calls all receive the same boundary without wrapping
+        each call site in ``forward_autocast`` by hand.
+        """
+
+        super().__init_subclass__(**kwargs)
+        fn = cls.__dict__.get("forward_step")
+        if fn is not None and not getattr(fn, "__vrl_outer_autocast__", False):
+            cls.forward_step = _forward_step_with_autocast(fn)
 
     @abstractmethod
     def encode_prompt(

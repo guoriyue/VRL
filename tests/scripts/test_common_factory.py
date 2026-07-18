@@ -151,8 +151,8 @@ def test_sana_family_defaults_to_native_fp16() -> None:
 
     assert isinstance(entry.family_build, DiffusionFamilyBuild)
     assert entry.family_build.supported_parameter_dtypes == ("fp16",)
-    assert entry.family_build.forward_precision.autocast == "off"
-    assert entry.family_build.forward_precision.float32_precision == "ieee"
+    assert entry.family_build.required_float32_precision == "ieee"
+    assert entry.family_build.outer_autocast is False
     assert cfg.model.get("dtype") is None
     # Structural invariants, not preset literals: training and rollout both
     # declare the checkpoint's native FP16 role, while Gemma stays independently
@@ -160,8 +160,9 @@ def test_sana_family_defaults_to_native_fp16() -> None:
     assert built["trainer"].train_precision == built["trainer"].rollout_precision
     assert built["trainer"].replay_samples_per_chunk == built["trainer"].samples_per_chunk
     assert build.parameter_dtype is torch.float16
-    assert build.forward_precision.autocast == "off"
-    assert build.forward_precision.float32_precision == "ieee"
+    assert build.precision.dtype == "fp16"
+    assert build.precision.float32_precision == "ieee"
+    assert build.outer_autocast is False
     assert build.rollout is not None
     assert build.rollout.prompt_encoder_dtype is torch.bfloat16
 

@@ -4,8 +4,9 @@ from types import SimpleNamespace
 
 import torch
 
+from vrl.config.precision import RolePrecision
 from vrl.models.diffusion.base import diffusers_pipeline_dtypes
-from vrl.models.interfaces.runtime import ForwardPrecision, ModelBuild
+from vrl.models.interfaces.runtime import ModelBuild
 
 
 def test_full_pipeline_propagates_revision_like_component_loader() -> None:
@@ -14,7 +15,8 @@ def test_full_pipeline_propagates_revision_like_component_loader() -> None:
         device="cpu",
         parameter_dtype=torch.float16,
         family="sd3_5",
-        forward_precision=ForwardPrecision("fp16", "tf32"),
+        precision=RolePrecision("fp16", "tf32"),
+        outer_autocast=True,
         model_config={"revision": "immutable-revision"},
     )
 
@@ -29,7 +31,8 @@ def test_full_pipeline_omits_absent_revision() -> None:
         device="cpu",
         parameter_dtype=torch.float16,
         family="sd3_5",
-        forward_precision=ForwardPrecision("fp16", "tf32"),
+        precision=RolePrecision("fp16", "tf32"),
+        outer_autocast=True,
         model_config={},
     )
 

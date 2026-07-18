@@ -18,6 +18,7 @@ from tests.models.diffusion.fixtures import (
     TINY_COGVIDEOX_TEXT_LEN,
     build_tiny_cogvideox_transformer,
     record_forward_calls,
+    stamp_test_contract,
 )
 from vrl.models.diffusion.cogvideox.model import (
     CogVideoXModel,
@@ -28,10 +29,11 @@ from vrl.models.diffusion.cogvideox.model import (
 
 
 def _model(transformer: torch.nn.Module) -> CogVideoXModel:
-    return CogVideoXModel(
+    model = CogVideoXModel(
         pipeline=SimpleNamespace(transformer=transformer, device=torch.device("cpu")),
         device=torch.device("cpu"),
     )
+    return stamp_test_contract(model)
 
 
 def _state(*, do_cfg: bool) -> CogVideoXSamplingState:
@@ -42,9 +44,7 @@ def _state(*, do_cfg: bool) -> CogVideoXSamplingState:
         scheduler=None,
         prompt_embeds=torch.randn(bsz, TINY_COGVIDEOX_TEXT_LEN, TINY_COGVIDEOX_TEXT_DIM),
         negative_prompt_embeds=(
-            torch.randn(bsz, TINY_COGVIDEOX_TEXT_LEN, TINY_COGVIDEOX_TEXT_DIM)
-            if do_cfg
-            else None
+            torch.randn(bsz, TINY_COGVIDEOX_TEXT_LEN, TINY_COGVIDEOX_TEXT_DIM) if do_cfg else None
         ),
         guidance_scale=6.0 if do_cfg else 1.0,
         do_cfg=do_cfg,

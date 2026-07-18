@@ -11,7 +11,7 @@ import logging
 import time
 from collections import defaultdict
 from collections.abc import Mapping, Sequence
-from dataclasses import asdict, dataclass, field
+from dataclasses import dataclass, field
 from typing import Any
 
 import torch
@@ -23,12 +23,11 @@ from vrl.algorithms.logprob_mismatch import (
     compute_logprob_mismatch_stats,
 )
 from vrl.algorithms.types import InitialReplayStats, PolicyUpdateStats, TrainStepMetrics
-from vrl.models.forward_precision import (
+from vrl.models.precision import (
     apply_float32_precision,
     float32_precision_state,
-    forward_autocast,
+    model_precision,
 )
-from vrl.models.interfaces import ForwardPrecision
 from vrl.rollouts.batch import RolloutBatch
 from vrl.rollouts.batch.ops import (
     move_training_batch_to_device,
@@ -168,7 +167,7 @@ class PhaseTimer:
 
 
 # ---------------------------------------------------------------------------
-# Forward precision
+# Precision execution
 # ---------------------------------------------------------------------------
 
 
@@ -177,7 +176,6 @@ def _resolve_mixed_precision(config: TrainerConfig) -> str:
 
 
 def _create_grad_scaler(
-    forward_precision: ForwardPrecision,
     device: torch.device,
     model: Any,
 ) -> torch.amp.GradScaler | None:
@@ -185,7 +183,10 @@ def _create_grad_scaler(
 
     if device.type != "cuda":
         return None
-    uses_fp16_autocast = forward_precision.autocast == "fp16"
+    uses_fp16_autocast = (
+        bool(getattr(model, "outer_autocast_enabled", True))
+        and model_precision(model).dtype == "fp16"
+    )
     has_native_fp16_gradients = bool(
         model is not None
         and any(
@@ -248,7 +249,6 @@ def _trainer_precision_metadata(
     config: TrainerConfig,
     model: Any,
     evaluator: Any | None,
-    forward_precision: ForwardPrecision,
 ) -> dict[str, Any]:
     training_precision = _precision_label(_resolve_mixed_precision(config))
     rollout_precision = _precision_label(config.rollout_precision or training_precision)
@@ -260,29 +260,9 @@ def _trainer_precision_metadata(
         "math_precision": _precision_label(
             getattr(evaluator, "math_dtype", None) or torch.float32,
         ),
-        "training_forward_precision": asdict(forward_precision),
         "effective_float32_precision": float32_precision_state(),
         "trainer_transformer_dtype": _model_transformer_dtype(model),
     }
-
-
-def _merge_rollout_precision_context(
-    metadata: dict[str, Any],
-    batch_context: dict[str, Any],
-) -> dict[str, Any]:
-    merged = dict(metadata)
-    raw = batch_context.get("rollout_forward_precision")
-    if isinstance(raw, ForwardPrecision):
-        rollout = raw
-    elif isinstance(raw, Mapping):
-        rollout = ForwardPrecision(**dict(raw))
-    else:
-        raise ValueError(
-            "rollout batch context is missing rollout_forward_precision; "
-            "generation must record the resolved forward contract",
-        )
-    merged["rollout_forward_precision"] = asdict(rollout)
-    return merged
 
 
 # ---------------------------------------------------------------------------
@@ -702,7 +682,6 @@ class OnlineTrainer(Trainer):
         evaluator: Any,
         model: nn.Module,
         config: TrainerConfig,
-        forward_precision: ForwardPrecision,
         ref_model: nn.Module | None = None,
         weight_syncer: WeightSyncer | None = None,
         sync_state_getter: TrainableStateGetter | None = None,
@@ -724,9 +703,9 @@ class OnlineTrainer(Trainer):
             )
         self.sync_state_getter = sync_state_getter
         self.config = config
-        if not isinstance(forward_precision, ForwardPrecision):
-            raise TypeError("OnlineTrainer requires ForwardPrecision")
-        self.forward_precision = forward_precision
+        # RuntimeBundle stamps the selected role policy on the model so trainer
+        # process settings cannot be paired with a different build.
+        self.precision = model_precision(model)
         # Precision correction (TIS) is a trainer-level precision-drift concern, not
         # an algorithm hyperparameter; inject it into algorithms that apply it
         # (importance-ratio algorithms hold a `precision_correction` slot).
@@ -767,7 +746,6 @@ class OnlineTrainer(Trainer):
         # emitting); swap for a jsonl/Prometheus sink later.
         self._stats_sink: StatsSink = LoggingStatsSink(logger)
         self._grad_scaler = _create_grad_scaler(
-            self.forward_precision,
             self.device,
             self.model,
         )
@@ -794,7 +772,7 @@ class OnlineTrainer(Trainer):
 
         # The backend setting is process-global, so every trainer construction
         # projects both the IEEE and TF32 paths instead of inheriting stale state.
-        apply_float32_precision(self.forward_precision.float32_precision)
+        apply_float32_precision(self.precision.float32_precision)
 
     def _validate_trust_region_engages(self) -> None:
         """Refuse configs where a trust-region algorithm's ratio term is inert.
@@ -912,7 +890,6 @@ class OnlineTrainer(Trainer):
                             "model": self.model,
                             "rollout_batch": chunk_batch,
                             "timestep_index": timestep_index,
-                            "forward_precision": self.forward_precision,
                         },
                     ),
                 )
@@ -935,7 +912,6 @@ class OnlineTrainer(Trainer):
                     need_ref=kl_coef > 0,
                     need_kl_intermediates=need_kl_intermediates,
                 ),
-                forward_precision=self.forward_precision,
             )
         with record_function("trainer.loss"):
             if not isinstance(signals, TrajectorySignalBatch):
@@ -1422,14 +1398,10 @@ class OnlineTrainer(Trainer):
         # Debug first step: compare old vs fresh log-probs on first timestep
         # (using first filtered batch so memory footprint is bounded).
         first_step_debug_record: dict[str, Any] | None = None
-        precision_metadata = _merge_rollout_precision_context(
-            _trainer_precision_metadata(
-                cfg,
-                self.model,
-                self.evaluator,
-                self.forward_precision,
-            ),
-            filtered_batches[0].context,
+        precision_metadata = _trainer_precision_metadata(
+            cfg,
+            self.model,
+            self.evaluator,
         )
         first_debug_chunk = _training_sample_chunks(
             filtered_batches[0],
@@ -1452,7 +1424,6 @@ class OnlineTrainer(Trainer):
                     0,
                     ref_model=self.ref_model,
                     signal_request=SignalRequest(need_ref=False, need_kl_intermediates=False),
-                    forward_precision=self.forward_precision,
                 )
             if not isinstance(_dbg_signals, TrajectorySignalBatch):
                 raise TypeError(
@@ -1527,7 +1498,7 @@ class OnlineTrainer(Trainer):
                     "first-step log-prob parity failed before optimizer step: "
                     f"finite={_parity_finite}, max_abs_diff={_parity_max:.6g}, "
                     f"limit={_parity_limit:.6g}. Replay does not reproduce rollout "
-                    "log-probs; check forward precision, conditioning, and the "
+                    "log-probs; check role precision, conditioning, and the "
                     "scheduler domain.",
                 )
         elif cfg.debug.first_step and self.state.step == 0:
@@ -1552,7 +1523,6 @@ class OnlineTrainer(Trainer):
                         batch=_dbg_batch,
                         advantages=_dbg_adv,
                         timestep_index=0,
-                        forward_precision=self.forward_precision,
                     )
                 logger.info(
                     "DEBUG first-step %s: abs_diff=%.3e (threshold %.1e)",
@@ -1606,7 +1576,6 @@ class OnlineTrainer(Trainer):
                             need_ref=False,
                             need_kl_intermediates=False,
                         ),
-                        forward_precision=self.forward_precision,
                     )
                 if not isinstance(_sig, TrajectorySignalBatch):
                     raise TypeError(
@@ -1619,10 +1588,6 @@ class OnlineTrainer(Trainer):
                 cfg.precision_drift_guard,
                 training_precision=precision_metadata["training_precision"],
                 rollout_precision=precision_metadata["rollout_precision"],
-                training_forward_precision=self.forward_precision,
-                rollout_forward_precision=ForwardPrecision(
-                    **precision_metadata["rollout_forward_precision"],
-                ),
                 math_precision=_precision_label(
                     getattr(self.evaluator, "math_dtype", None) or torch.float32,
                 ),
@@ -1995,8 +1960,7 @@ class OnlineTrainer(Trainer):
 
         noise = torch.randn_like(x0)
         noisy, target = diffusion_pretraining_pair(scheduler, x0, noise, t)
-        with forward_autocast(self.forward_precision, self.device):
-            values = self.model.replay_forward_with_latents(chunk_batch, step_idx, noisy)
+        values = self.model.replay_forward_with_latents(chunk_batch, step_idx, noisy)
         model_pred = values["noise_pred"]
         return self._sft_weight * F.mse_loss(model_pred.float(), target.float())
 

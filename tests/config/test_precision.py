@@ -128,9 +128,8 @@ def test_nested_bf16_resolves_role_dtypes_and_protected_defaults():
         ),
     )
     assert p == PrecisionPolicy(
-        training=RolePrecision(dtype="bf16"),
-        rollout=RolePrecision(dtype="bf16"),
-        float32_precision="tf32",
+        training=RolePrecision(dtype="bf16", float32_precision="tf32"),
+        rollout=RolePrecision(dtype="bf16", float32_precision="tf32"),
         diffusion_math="fp32",
         prompt_encoder_dtype="bf16",
     )
@@ -171,7 +170,8 @@ def test_base_preset_keeps_prompt_encoders_aligned_with_rollout():
     p = resolve_precision_policy(cfg)
     assert p.rollout.dtype == "bf16"
     assert p.prompt_encoder_dtype == "bf16"
-    assert p.float32_precision == "tf32"
+    assert p.training.float32_precision == "tf32"
+    assert p.rollout.float32_precision == "tf32"
 
 
 @pytest.mark.parametrize("mode", ["ieee", "tf32"])
@@ -179,7 +179,9 @@ def test_float32_precision_is_explicit_and_resolved(mode):
     block = _plain_precision()
     block["float32_precision"] = mode
 
-    assert resolve_precision_policy(_cfg(precision=block)).float32_precision == mode
+    policy = resolve_precision_policy(_cfg(precision=block))
+    assert policy.training.float32_precision == mode
+    assert policy.rollout.float32_precision == mode
 
 
 def test_float32_precision_is_required():
@@ -280,9 +282,10 @@ def test_fp8_rollout_split_keeps_bf16_base_and_prompt_default():
     block = _plain_precision()
     block["rollout"]["quantization"] = {"format": "fp8", "recipe": "rowwise"}
     p = resolve_precision_policy(_cfg(precision=block))
-    assert p.training == RolePrecision(dtype="bf16")
+    assert p.training == RolePrecision(dtype="bf16", float32_precision="tf32")
     assert p.rollout == RolePrecision(
         dtype="bf16",
+        float32_precision="tf32",
         quantization=QuantizationPolicy(format="fp8", recipe="rowwise"),
     )
     assert p.prompt_encoder_dtype == "bf16"
@@ -417,7 +420,7 @@ def test_legacy_actor_precision_keys_warn_via_schema(caplog):
     assert "mixed_precision" in joined
 
 
-# Every online GRPO recipe must keep rollout/replay forward precision aligned.
+# Every online GRPO recipe must keep rollout/replay role precision aligned.
 # Derive the list from the experiment glob (the single source of truth in
 # test_load_all_experiments) instead of hand-maintaining it — a hand list
 # silently drops new recipes (it had already drifted, missing

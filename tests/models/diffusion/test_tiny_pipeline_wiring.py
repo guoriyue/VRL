@@ -19,6 +19,7 @@ from types import SimpleNamespace
 import pytest
 import torch
 
+from tests.models.diffusion.fixtures import stamp_test_contract
 from tests.models.diffusion.registry import (
     TinyPipelineUnavailable,
     architectures_with_tiny_pipeline,
@@ -55,6 +56,7 @@ def test_wan_wrapper_runs_on_real_loaded_pipeline() -> None:
         pipeline=SimpleNamespace(transformer=tf, device=torch.device("cpu")),
         device=torch.device("cpu"),
     )
+    stamp_test_contract(model)
     c, dim = tf.config.in_channels, tf.config.text_dim
     state = WanT2VSamplingState(
         latents=torch.randn(2, c, 1, 4, 4),
@@ -85,6 +87,7 @@ def test_sd3_wrapper_runs_on_real_loaded_pipeline() -> None:
         pipeline=SimpleNamespace(transformer=tf, device=torch.device("cpu")),
         device=torch.device("cpu"),
     )
+    stamp_test_contract(model)
     size = tf.config.sample_size
     joint, pooled = tf.config.joint_attention_dim, tf.config.pooled_projection_dim
     state = SD3SamplingState(

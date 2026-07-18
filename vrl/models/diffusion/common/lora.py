@@ -66,7 +66,8 @@ class LoraModelMixin:
         # quantization.
         rollout = getattr(build, "rollout", None)
         defer_device_move = bool(
-            rollout is not None and getattr(rollout, "quantization_format", None),
+            rollout is not None
+            and getattr(getattr(build, "precision", None), "quantization", None),
         )
         if not defer_device_move:
             if dtype is None:

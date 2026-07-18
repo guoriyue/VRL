@@ -16,6 +16,7 @@ from typing import Any
 
 import torch
 
+from vrl.config.precision import RolePrecision
 from vrl.generation import GenerationRequest, GenerationSampleRow
 from vrl.generation.diffusion.executor import (
     DiffusionDenoiseConfig,
@@ -23,13 +24,13 @@ from vrl.generation.diffusion.executor import (
 )
 from vrl.generation.diffusion.layout import DiffusionRequestLayout, DiffusionSDEParams
 from vrl.models.diffusion import DiffusionModelBase
-from vrl.models.interfaces import ForwardPrecision, ReplayResult, ReplaySegmentResult
+from vrl.models.interfaces import ReplayResult, ReplaySegmentResult
 from vrl.rollouts.batch import RolloutBatch
 from vrl.rollouts.evaluators.diffusion.sde_logprob import DiffusionSDELogProbEvaluator
 from vrl.rollouts.evaluators.types import SignalRequest
 from vrl.trajectory import build_diffusion_trajectory
 
-_FORWARD_PRECISION = ForwardPrecision(autocast="off", float32_precision="ieee")
+_PRECISION = RolePrecision(dtype="fp32", float32_precision="ieee")
 
 # -- generation-side buffer + config ----------------------------------------
 
@@ -172,7 +173,6 @@ def test_cached_ref_skips_the_ref_forward() -> None:
         timestep_idx=1,
         ref_model=model,
         signal_request=SignalRequest(need_ref=True),
-        forward_precision=_FORWARD_PRECISION,
     )
 
     assert signals.primary.ref_log_prob is not None
@@ -194,7 +194,6 @@ def test_cached_ref_matches_fresh_ref_forward() -> None:
         timestep_idx=1,
         ref_model=cached,
         signal_request=SignalRequest(need_ref=True),
-        forward_precision=_FORWARD_PRECISION,
     )
     fresh_signals = evaluator.evaluate(
         fresh,
@@ -202,7 +201,6 @@ def test_cached_ref_matches_fresh_ref_forward() -> None:
         timestep_idx=1,
         ref_model=fresh,
         signal_request=SignalRequest(need_ref=True),
-        forward_precision=_FORWARD_PRECISION,
     )
 
     assert cached.replay_forward_calls == 1  # policy only
@@ -222,6 +220,8 @@ class _Scheduler:
 
 class _CountingReplayModel(DiffusionModelBase):
     family = "test"
+    precision = _PRECISION
+    outer_autocast_enabled = False
     device = torch.device("cpu")
 
     def __init__(self) -> None:

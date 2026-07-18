@@ -4,9 +4,9 @@
 真权重 rollout 验证（replay parity 0.0e+00）**。家族要点：非原生精度会破坏线性注意力——二分定位后，
 model preset 明确声明 FP16 role，registry family descriptor 用
 `supported_parameter_dtypes=("fp16",)` 在加载前拒绝 BF16/FP32；Gemma 与受保护数值分别保留 BF16/FP32
-边界；同一 descriptor 还要求 outer autocast off 与 IEEE FP32 backend，canonical
-preset 通过 `precision.float32_precision=ieee` 显式满足该要求。family requirement
-不是额外 public knob。修复后 SDE 直出杂志级画质。短 GRPO 曲线未单独跑
+边界；同一 descriptor 将每个 role 解析为含 IEEE backend 的完整 `RolePrecision`，并把
+family-owned outer autocast 关闭，canonical preset 通过 `precision.float32_precision=ieee`
+显式满足该要求。family requirement 不是额外 public knob。修复后 SDE 直出杂志级画质。短 GRPO 曲线未单独跑
 （战役按 rollout 验证关账，详见 index sprint 文件头验证记录）。
 性质：新增 T2I DiT 家族，套 Phase 0 薄化后的 diffusion seam。
 

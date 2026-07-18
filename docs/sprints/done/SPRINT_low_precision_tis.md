@@ -24,7 +24,7 @@ rollout/replay 前向差异时才打开。
 fp32 math` 通过精度检查、零漂移（2026-06-07 run），并由 guard 强制
 （`vrl/trainers/online/precision_guard.py` +
 `tests/trainers/online/test_precision_drift_guard.py:90`
-`test_precision_drift_guard_checks_fp16_same_forward_precision`）。项目又默认 bf16
+`test_precision_drift_guard_checks_fp16_same_role_precision`）。项目又默认 bf16
 （rollout == replay），所以当前**根本没有 behavior/proximal mismatch 需要 TIS 去修**——现在建它
 等于为一个已被工程消除的 mismatch 写修正。
 

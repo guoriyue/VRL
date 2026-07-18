@@ -8,6 +8,7 @@ import pytest
 import torch
 from omegaconf import OmegaConf
 
+from vrl.config.precision import RolePrecision
 from vrl.models.interfaces import ReplayResult
 from vrl.scripts.common import online
 
@@ -225,10 +226,16 @@ class _FakeFamilyEntry:
 
     def build_replay(self, build: Any) -> Any:
         del build
+        precision = RolePrecision(dtype="fp32", float32_precision="ieee")
+        model = _FakeModel()
+        model.precision = precision
+        model.outer_autocast_enabled = False
         return SimpleNamespace(
-            model=_FakeModel(),
+            model=model,
             scheduler=object(),
             trainable_modules={},
+            precision=precision,
+            outer_autocast=False,
         )
 
 

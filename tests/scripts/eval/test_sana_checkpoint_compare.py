@@ -9,21 +9,18 @@ import torch
 from omegaconf import OmegaConf
 from PIL import Image
 
+from vrl.config.precision import RolePrecision
+from vrl.models import precision as precision_module
 from vrl.models.diffusion import build as diffusion_build
-from vrl.models.interfaces.runtime import ForwardPrecision
 from vrl.scripts.eval import sana_checkpoint_compare as checkpoint_compare
-from vrl.scripts.eval import sana_inference
 
-SANA_FORWARD_PRECISION = ForwardPrecision(
-    autocast="off",
-    float32_precision="ieee",
-)
+SANA_PRECISION = RolePrecision(dtype="fp16", float32_precision="ieee")
 
 
 @pytest.fixture(autouse=True)
 def _effective_ieee_backend(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
-        sana_inference,
+        precision_module,
         "float32_precision_state",
         lambda: {"matmul": "ieee", "cudnn": "ieee"},
     )
@@ -69,9 +66,13 @@ class _FakeModel:
         events: list[str],
         *,
         transformer_dtype: torch.dtype = torch.float16,
+        precision: RolePrecision = SANA_PRECISION,
+        outer_autocast_enabled: bool = False,
     ) -> None:
         self.transformer = SimpleNamespace(dtype=transformer_dtype)
         self.pipeline = _FakePipeline(events)
+        self.precision = precision
+        self.outer_autocast_enabled = outer_autocast_enabled
 
     def eval(self):
         return self
@@ -142,7 +143,8 @@ def test_run_generates_base_before_strict_restore_and_current(
     bundle = SimpleNamespace(
         model=model,
         trainable_modules={"transformer": model.transformer},
-        forward_precision=SANA_FORWARD_PRECISION,
+        precision=SANA_PRECISION,
+        outer_autocast=False,
     )
     build = SimpleNamespace(
         model_name_or_path="test/sana",
@@ -343,22 +345,16 @@ def test_model_precision_rejects_non_native_boundary(target, value) -> None:
     setattr(owner, parts[-1], value)
 
     with pytest.raises(ValueError, match="precision boundary mismatch"):
-        checkpoint_compare._validate_model_precision(model, SANA_FORWARD_PRECISION)
+        checkpoint_compare._validate_model_precision(model)
 
 
 def test_model_precision_accepts_native_fp16_no_autocast_boundary() -> None:
-    actual = checkpoint_compare._validate_model_precision(
-        _FakeModel([]),
-        SANA_FORWARD_PRECISION,
-    )
+    actual = checkpoint_compare._validate_model_precision(_FakeModel([]))
 
     assert actual["transformer"] == "float16"
     assert actual["prompt_encoder"] == "bfloat16"
     assert actual["vae"] == "float32"
-    assert actual["forward_precision"] == {
-        "autocast": "off",
-        "float32_precision": "ieee",
-    }
+    assert actual["outer_autocast"] is False
     assert actual["effective_float32_precision"] == {
         "matmul": "ieee",
         "cudnn": "ieee",
@@ -369,38 +365,51 @@ def test_model_precision_rejects_fp32_transformer() -> None:
     with pytest.raises(ValueError, match="precision boundary mismatch"):
         checkpoint_compare._validate_model_precision(
             _FakeModel([], transformer_dtype=torch.float32),
-            SANA_FORWARD_PRECISION,
+        )
+
+
+def test_model_precision_rejects_active_outer_autocast_capability() -> None:
+    with pytest.raises(ValueError, match="precision boundary mismatch"):
+        checkpoint_compare._validate_model_precision(
+            _FakeModel([], outer_autocast_enabled=True),
         )
 
 
 @pytest.mark.parametrize(
-    "forward_precision",
+    "precision",
     [
-        ForwardPrecision(autocast="bf16", float32_precision="ieee"),
-        ForwardPrecision(autocast="off", float32_precision="tf32"),
+        RolePrecision(dtype="bf16", float32_precision="ieee"),
+        RolePrecision(dtype="fp16", float32_precision="tf32"),
     ],
 )
-def test_model_precision_rejects_wrong_resolved_contract(
-    forward_precision: ForwardPrecision,
+def test_generation_rejects_wrong_role_precision(
+    precision: RolePrecision,
 ) -> None:
-    with pytest.raises(ValueError, match="precision boundary mismatch"):
-        checkpoint_compare._validate_model_precision(_FakeModel([]), forward_precision)
+    with pytest.raises(ValueError, match="native inference requires"):
+        checkpoint_compare._generate_one(
+            _FakeModel([], precision=precision),
+            scheduler=DPMSolverMultistepScheduler(),
+            prompt="test",
+            seed=1,
+            height=8,
+            width=8,
+            steps=1,
+            guidance_scale=4.5,
+            device=torch.device("cpu"),
+        )
 
 
 def test_model_precision_rejects_effective_backend_drift(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(
-        sana_inference,
+        precision_module,
         "float32_precision_state",
         lambda: {"matmul": "tf32", "cudnn": "ieee"},
     )
 
     with pytest.raises(ValueError, match="precision boundary mismatch"):
-        checkpoint_compare._validate_model_precision(
-            _FakeModel([]),
-            SANA_FORWARD_PRECISION,
-        )
+        checkpoint_compare._validate_model_precision(_FakeModel([]))
 
 
 def test_generation_rejects_an_active_outer_autocast() -> None:
@@ -412,7 +421,6 @@ def test_generation_rejects_an_active_outer_autocast() -> None:
     ):
         checkpoint_compare._generate_one(
             model,
-            forward_precision=SANA_FORWARD_PRECISION,
             scheduler=DPMSolverMultistepScheduler(),
             prompt="test",
             seed=1,

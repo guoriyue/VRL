@@ -30,12 +30,12 @@ from typing import Any
 from omegaconf import DictConfig, OmegaConf
 
 from vrl.config.loading import load_config
+from vrl.models.diffusion.sana.model import validate_model_precision
 from vrl.scripts.eval.sana_inference import (
     OFFICIAL_SAMPLING_PROTOCOL,
     SCHEDULER_PROTOCOL,
     generate_prompt_images,
     load_official_scheduler,
-    validate_model_precision,
 )
 from vrl.trainers.checkpointing import (
     TRAINING_CHECKPOINT_NAME,
@@ -772,7 +772,7 @@ def _generate_images(
     build = entry.resolve_model_build(cfg, device, for_rollout=True)
     bundle = entry.build_rollout(build)
     model = bundle.model.eval()
-    validate_model_precision(model, bundle.forward_precision)
+    validate_model_precision(model)
     generated: list[GeneratedImage] = []
     checkpoint_read = False
     try:
@@ -820,7 +820,6 @@ def _generate_images(
                 # independent of mutable scheduler state from earlier prompts.
                 decoded = generate_prompt_images(
                     model,
-                    forward_precision=bundle.forward_precision,
                     scheduler=load_official_scheduler(build),
                     prompt=prompt,
                     seed=group_seed,

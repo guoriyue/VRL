@@ -13,7 +13,7 @@ from typing import Any
 
 import torch
 
-from tests.models.diffusion.fixtures import record_forward_calls
+from tests.models.diffusion.fixtures import record_forward_calls, stamp_test_contract
 from vrl.models.diffusion.pixart_sigma.model import (
     PixArtSigmaModel,
     PixArtSigmaReplayModel,
@@ -52,10 +52,11 @@ def build_tiny_pixart_transformer(*, seed: int = 0) -> Any:
 
 
 def _model(transformer: torch.nn.Module) -> PixArtSigmaModel:
-    return PixArtSigmaModel(
+    model = PixArtSigmaModel(
         pipeline=SimpleNamespace(transformer=transformer, device=torch.device("cpu")),
         device=torch.device("cpu"),
     )
+    return stamp_test_contract(model)
 
 
 def _state(*, do_cfg: bool) -> PixArtSigmaSamplingState:
@@ -162,7 +163,9 @@ def test_pixart_replay_roundtrip_restores_equivalent_state() -> None:
     replay = model.export_replay_tensors(state)
     context = model.export_batch_context(state)
     replay["timesteps"] = torch.full(
-        (TINY_PIXART_LATENT_SHAPE[0],), 499, dtype=torch.int64,
+        (TINY_PIXART_LATENT_SHAPE[0],),
+        499,
+        dtype=torch.int64,
     )
 
     restored = PixArtSigmaReplayModel(

@@ -825,9 +825,6 @@ class GenerationWorkerCore:
         # dtypes while reconstructing the primitive Ray payload.
         build = ModelBuild(**build_payload)
         bundle = self.family_entry.build_rollout(build)
-        from vrl.models.forward_precision import apply_float32_precision
-
-        apply_float32_precision(bundle.forward_precision.float32_precision)
         model = require_runtime_model(bundle.model, owner="RuntimeBundle.model")
         # Family- and scheme-agnostic backstop: if rollout quantization asks for a
         # quantized rollout (FP8/NVFP4/...) but this family's builder forgot to swap,
@@ -844,8 +841,6 @@ class GenerationWorkerCore:
                 task=self.family_entry.task,
             )
         built = executor_cls(model, **executor_kwargs)
-        if self.family_entry.collector_kind == "diffusion":
-            built.forward_precision = bundle.forward_precision
         return _require_chunked_executor(built)
 
     @staticmethod

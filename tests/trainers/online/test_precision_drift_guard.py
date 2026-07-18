@@ -10,8 +10,8 @@ import pytest
 import torch
 
 from tests.trainers.online._collector_control import CollectorControlFake
+from tests.trainers.online._helpers import _stamp_model_precision
 from vrl.algorithms.logprob_mismatch import compute_logprob_mismatch_stats
-from vrl.models.interfaces import ForwardPrecision
 from vrl.trainers.core.types import PrecisionDriftGuardConfig
 from vrl.trainers.online.precision_guard import (
     PrecisionDriftError,
@@ -37,18 +37,11 @@ def _eval_with_drift(delta: float):
     return lambda _timestep: _signals(delta)
 
 
-def _forward(autocast: str) -> ForwardPrecision:
-    mode = "off" if autocast in {"fp32", "no"} else autocast
-    return ForwardPrecision(autocast=mode, float32_precision="ieee")
-
-
 def _run(config, *, train, rollout, evaluate_fn, **kw):
     return run_precision_drift_guard(
         config,
         training_precision=train,
         rollout_precision=rollout,
-        training_forward_precision=_forward(train),
-        rollout_forward_precision=_forward(rollout),
         math_precision="fp32",
         timestep_indices=[0, 1, 2],
         evaluate_fn=evaluate_fn,
@@ -65,8 +58,6 @@ def test_auto_enables_fail_for_rollout_compute_mismatch() -> None:
             "auto",
             training_precision="fp32",
             rollout_precision="bf16",
-            training_forward_precision=_forward("fp32"),
-            rollout_forward_precision=_forward("bf16"),
         )
         == "fail"
     )
@@ -75,53 +66,28 @@ def test_auto_enables_fail_for_rollout_compute_mismatch() -> None:
             "auto",
             training_precision="fp32",
             rollout_precision="fp16",
-            training_forward_precision=_forward("fp32"),
-            rollout_forward_precision=_forward("fp16"),
         )
         == "fail"
     )
 
 
 def test_auto_is_off_for_same_dtype() -> None:
-    policy = _forward("fp32")
     assert (
         resolve_guard_mode(
             "auto",
             training_precision="fp32",
             rollout_precision="fp32",
-            training_forward_precision=policy,
-            rollout_forward_precision=policy,
         )
         == "off"
     )
 
 
-def test_auto_detects_float32_backend_mismatch() -> None:
-    training = ForwardPrecision(autocast="off", float32_precision="ieee")
-    rollout = ForwardPrecision(autocast="off", float32_precision="tf32")
-
-    assert (
-        resolve_guard_mode(
-            "auto",
-            training_precision="fp32",
-            rollout_precision="fp32",
-            training_forward_precision=training,
-            rollout_forward_precision=rollout,
-        )
-        == "fail"
-    )
-
-
-def test_auto_detects_rollout_quantization_with_same_forward_contract() -> None:
-    policy = _forward("bf16")
-
+def test_auto_detects_rollout_quantization() -> None:
     assert (
         resolve_guard_mode(
             "auto",
             training_precision="bf16",
             rollout_precision="bf16+fp8",
-            training_forward_precision=policy,
-            rollout_forward_precision=policy,
         )
         == "fail"
     )
@@ -134,23 +100,18 @@ def test_auto_normalizes_legacy_no_to_fp32() -> None:
             "auto",
             training_precision="no",
             rollout_precision="fp32",
-            training_forward_precision=_forward("no"),
-            rollout_forward_precision=_forward("fp32"),
         )
         == "off"
     )
 
 
 def test_explicit_modes_pass_through_regardless_of_precision() -> None:
-    policy = _forward("fp32")
     for mode in ("off", "warn", "fail"):
         assert (
             resolve_guard_mode(
                 mode,
                 training_precision="fp32",
                 rollout_precision="fp32",
-                training_forward_precision=policy,
-                rollout_forward_precision=policy,
             )
             == mode
         )
@@ -162,8 +123,6 @@ def test_unknown_mode_rejected() -> None:
             "loud",
             training_precision="fp32",
             rollout_precision="bf16",
-            training_forward_precision=_forward("fp32"),
-            rollout_forward_precision=_forward("bf16"),
         )
 
 
@@ -177,26 +136,19 @@ def test_precision_drift_guard_passes_when_within_threshold() -> None:
     assert record["violated"] is False
 
 
-def test_precision_drift_guard_checks_fp16_same_forward_precision() -> None:
+def test_precision_drift_guard_checks_fp16_same_role_precision() -> None:
     cfg = PrecisionDriftGuardConfig(mode="fail")
     record = _run(
         cfg,
         train="fp16",
         rollout="fp16",
         evaluate_fn=_eval_with_drift(0.0),
-        metadata={
-            "training_forward_precision": asdict(_forward("fp16")),
-            "trainer_transformer_dtype": "float16",
-            "rollout_forward_precision": asdict(_forward("fp16")),
-        },
+        metadata={"trainer_transformer_dtype": "float16"},
     )
     assert record is not None
     assert record["mode"] == "fail"
     assert record["role_precision_match"] is True
-    assert record["forward_precision_match"] is True
     assert record["violated"] is False
-    assert record["training_forward_precision"] == asdict(_forward("fp16"))
-    assert record["rollout_forward_precision"] == asdict(_forward("fp16"))
     assert record["metadata"]["trainer_transformer_dtype"] == "float16"
 
 
@@ -299,8 +251,6 @@ def test_measure_precision_drift_selects_one_whole_worst_rank_record(monkeypatch
         cfg,
         training_precision="fp32",
         rollout_precision="bf16",
-        training_forward_precision=_forward("fp32"),
-        rollout_forward_precision=_forward("bf16"),
         math_precision="fp32",
         timestep_indices=[3],
         evaluate_fn=_eval_with_drift(1.0),
@@ -387,7 +337,7 @@ def test_online_trainer_precision_guard_fails_before_optimizer_when_ratio_drifts
                 dones=torch.ones(group_size, dtype=torch.bool),
                 group_ids=torch.zeros(group_size, dtype=torch.long),
                 prompts=list(prompts) * group_size,
-                context={"rollout_forward_precision": asdict(_forward("bf16"))},
+                context={},
             )
 
     class _Evaluator(Evaluator):
@@ -398,6 +348,7 @@ def test_online_trainer_precision_guard_fails_before_optimizer_when_ratio_drifts
 
     algorithm = _Algorithm()
     model = torch.nn.Linear(1, 1, bias=False)
+    _stamp_model_precision(model)
     with torch.no_grad():
         model.weight.fill_(0.05)
     before = model.weight.detach().clone()
@@ -418,7 +369,6 @@ def test_online_trainer_precision_guard_fails_before_optimizer_when_ratio_drifts
             train_precision="no",
             rollout_precision="bf16",
         ),
-        forward_precision=_forward("fp32"),
         device="cpu",
     )
 

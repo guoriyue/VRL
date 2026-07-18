@@ -22,15 +22,16 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Literal, cast, get_args
 
 _MISSING = object()
+
+Float32Precision = Literal["ieee", "tf32"]
 
 # Protocol vocabularies are a real config boundary. Keep recipe compatibility in
 # one deliberately isolated table so config resolution, defaults, and error text
 # cannot drift when a new format lands.
 _PLAIN_DTYPES = ("fp32", "bf16", "fp16")
-_FLOAT32_PRECISION_MODES = ("ieee", "tf32")
 
 
 @dataclass(frozen=True, slots=True)
@@ -117,14 +118,14 @@ def _normalize_plain_dtype(value: Any, *, path: str) -> str:
     return token
 
 
-def _normalize_float32_precision(value: Any) -> str:
+def _normalize_float32_precision(value: Any) -> Float32Precision:
     mode = str(value).lower().strip()
-    if mode not in _FLOAT32_PRECISION_MODES:
+    allowed = get_args(Float32Precision)
+    if mode not in allowed:
         raise ValueError(
-            "precision.float32_precision must be one of "
-            f"{_FLOAT32_PRECISION_MODES}; got {value!r}",
+            f"precision.float32_precision must be one of {allowed}; got {value!r}",
         )
-    return mode
+    return cast("Float32Precision", mode)
 
 
 @dataclass(frozen=True, slots=True)
@@ -166,9 +167,10 @@ class QuantizationPolicy:
 
 @dataclass(frozen=True, slots=True)
 class RolePrecision:
-    """Base dtype plus optional selective quantization for one runtime role."""
+    """Transformer precision selected for one trainer or rollout process."""
 
     dtype: str
+    float32_precision: Float32Precision
     quantization: QuantizationPolicy | None = None
 
     def __post_init__(self) -> None:
@@ -176,6 +178,11 @@ class RolePrecision:
             self,
             "dtype",
             _normalize_plain_dtype(self.dtype, path="precision role dtype"),
+        )
+        object.__setattr__(
+            self,
+            "float32_precision",
+            _normalize_float32_precision(self.float32_precision),
         )
         if self.quantization is not None and not isinstance(
             self.quantization,
@@ -185,7 +192,7 @@ class RolePrecision:
 
     @property
     def label(self) -> str:
-        """Stable execution label containing both base dtype and kernel policy."""
+        """Stable role label containing the base dtype and kernel policy."""
 
         if self.quantization is None:
             return self.dtype
@@ -198,7 +205,6 @@ class PrecisionPolicy:
 
     training: RolePrecision
     rollout: RolePrecision
-    float32_precision: str
     diffusion_math: str
     prompt_encoder_dtype: str
 
@@ -207,11 +213,6 @@ class PrecisionPolicy:
             raise TypeError("precision.training must resolve to RolePrecision")
         if not isinstance(self.rollout, RolePrecision):
             raise TypeError("precision.rollout must resolve to RolePrecision")
-        object.__setattr__(
-            self,
-            "float32_precision",
-            _normalize_float32_precision(self.float32_precision),
-        )
         object.__setattr__(
             self,
             "diffusion_math",
@@ -268,14 +269,24 @@ def resolve_precision_policy(cfg: Any) -> PrecisionPolicy:
         )
     _reject_legacy_keys(block)
 
-    training = _parse_role(block, "training")
-    rollout = _parse_role(block, "rollout", dtype_default=training.dtype)
     float32_precision_raw = _select(block, "float32_precision", _MISSING)
     if float32_precision_raw is _MISSING:
         raise ValueError(
             "precision.float32_precision is required; set it to 'tf32' for "
             "TensorFloat-32 FP32 matmuls or 'ieee' for full IEEE FP32 matmuls.",
         )
+    float32_precision = _normalize_float32_precision(float32_precision_raw)
+    training = _parse_role(
+        block,
+        "training",
+        float32_precision=float32_precision,
+    )
+    rollout = _parse_role(
+        block,
+        "rollout",
+        dtype_default=training.dtype,
+        float32_precision=float32_precision,
+    )
     math_raw = _select(block, "diffusion_math.dtype", "fp32")
     prompt_encoder_raw = _select(
         block,
@@ -285,7 +296,6 @@ def resolve_precision_policy(cfg: Any) -> PrecisionPolicy:
     return PrecisionPolicy(
         training=training,
         rollout=rollout,
-        float32_precision=_normalize_float32_precision(float32_precision_raw),
         diffusion_math=_normalize_plain_dtype(
             math_raw,
             path="precision.diffusion_math.dtype",
@@ -301,6 +311,7 @@ def _parse_role(
     block: Any,
     role: str,
     *,
+    float32_precision: Float32Precision,
     dtype_default: Any = _MISSING,
 ) -> RolePrecision:
     dtype_raw = _select(block, f"{role}.dtype", dtype_default)
@@ -319,6 +330,7 @@ def _parse_role(
         )
     return RolePrecision(
         dtype=_normalize_plain_dtype(dtype_raw, path=f"precision.{role}.dtype"),
+        float32_precision=float32_precision,
         quantization=quantization,
     )
 
@@ -378,6 +390,7 @@ def _select(obj: Any, path: str, default: Any = None) -> Any:
 
 
 __all__ = [
+    "Float32Precision",
     "PrecisionConfig",
     "PrecisionPolicy",
     "QuantizationPolicy",

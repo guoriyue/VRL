@@ -15,13 +15,10 @@ import pytest
 import torch
 from torch import nn
 
+from vrl.config.precision import QuantizationPolicy, RolePrecision
 from vrl.models.diffusion.build import build_diffusion_runtime_bundle
 from vrl.models.diffusion.common.lora import LoraModelMixin
-from vrl.models.interfaces.runtime import (
-    ForwardPrecision,
-    ModelBuild,
-    RolloutBuildOptions,
-)
+from vrl.models.interfaces.runtime import ModelBuild, RolloutBuildOptions
 
 
 class _TrackingTransformer(nn.Module):
@@ -45,10 +42,12 @@ class _LoraPolicy(LoraModelMixin):
 
 
 def _build(*, quantization_format: str | None) -> SimpleNamespace:
+    quantization = (
+        None if quantization_format is None else QuantizationPolicy(format=quantization_format)
+    )
     return SimpleNamespace(
-        rollout=SimpleNamespace(
-            quantization_format=quantization_format,
-        ),
+        precision=RolePrecision("fp16", "tf32", quantization),
+        rollout=SimpleNamespace(),
         parameter_dtype=torch.float16,
         lora_path=None,
         lora={"rank": 2, "alpha": 2, "target_modules": ["proj"]},
@@ -182,10 +181,10 @@ def test_shared_builder_drops_master_before_quantized_lora_gpu_move(monkeypatch)
         device="cpu",
         parameter_dtype=torch.float16,
         family="sd3_5",
-        forward_precision=ForwardPrecision("bf16", "tf32"),
+        precision=RolePrecision("bf16", "tf32", QuantizationPolicy(format="fp8")),
+        outer_autocast=True,
         rollout=RolloutBuildOptions(
             prompt_encoder_dtype=torch.bfloat16,
-            quantization_format="fp8",
             base_weight_sync=False,
         ),
         model_config={
@@ -200,7 +199,7 @@ def test_shared_builder_drops_master_before_quantized_lora_gpu_move(monkeypatch)
     assert events == ["attach", "quantize", "drop", "move"]
 
 
-def test_shared_builder_preserves_resolved_forward_precision() -> None:
+def test_shared_builder_preserves_resolved_role_precision() -> None:
     """The builder carries the resolved contract without model introspection."""
 
     class _Policy:
@@ -229,7 +228,8 @@ def test_shared_builder_preserves_resolved_forward_precision() -> None:
         device="cpu",
         parameter_dtype=torch.float16,
         family="sd3_5",
-        forward_precision=ForwardPrecision("off", "ieee"),
+        precision=RolePrecision("fp32", "ieee"),
+        outer_autocast=False,
         rollout=RolloutBuildOptions(
             prompt_encoder_dtype=torch.bfloat16,
         ),
@@ -242,7 +242,8 @@ def test_shared_builder_preserves_resolved_forward_precision() -> None:
         memory_owner="fake VAE",
     )
 
-    assert bundle.forward_precision is build.forward_precision
+    assert bundle.precision is build.precision
+    assert bundle.outer_autocast is build.outer_autocast
 
 
 def test_nvfp4_hardware_guard_runs_before_quantization_mutation(
@@ -265,10 +266,10 @@ def test_nvfp4_hardware_guard_runs_before_quantization_mutation(
         device="cpu",
         parameter_dtype=torch.bfloat16,
         family="sd3_5",
-        forward_precision=ForwardPrecision("bf16", "tf32"),
+        precision=RolePrecision("bf16", "tf32", QuantizationPolicy(format="nvfp4")),
+        outer_autocast=True,
         rollout=RolloutBuildOptions(
             prompt_encoder_dtype=torch.bfloat16,
-            quantization_format="nvfp4",
         ),
     )
 
@@ -326,10 +327,14 @@ def test_full_finetune_dtype_move_preserves_quantized_cache(
         device="cpu",
         parameter_dtype=torch.bfloat16,
         family="sd3_5",
-        forward_precision=ForwardPrecision("bf16", "tf32"),
+        precision=RolePrecision(
+            "bf16",
+            "tf32",
+            QuantizationPolicy(format=quantization_format),
+        ),
+        outer_autocast=True,
         rollout=RolloutBuildOptions(
             prompt_encoder_dtype=torch.bfloat16,
-            quantization_format=quantization_format,
         ),
         model_config={"use_lora": False},
     )

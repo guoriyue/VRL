@@ -1,6 +1,6 @@
 """Precision drift guard: enforce/observe rollout-vs-replay logprob parity.
 
-When rollout and replay use different forward precision policies, the collection
+When rollout and replay use different role precision policies, the collection
 time logprob no longer equals the freshly recomputed replay logprob, so the GRPO
 importance ratio is != 1 at the very first step. This guard recomputes parity on
 the first training step (before any optimizer update) and either warns or fails,
@@ -23,7 +23,6 @@ from vrl.algorithms.logprob_mismatch import (
     LogprobMismatchStats,
     compute_logprob_mismatch_stats,
 )
-from vrl.models.interfaces import ForwardPrecision
 from vrl.trainers.core.types import PrecisionDriftGuardConfig
 
 _logger = logging.getLogger(__name__)
@@ -38,21 +37,13 @@ def resolve_guard_mode(
     *,
     training_precision: str,
     rollout_precision: str,
-    training_forward_precision: ForwardPrecision,
-    rollout_forward_precision: ForwardPrecision,
 ) -> str:
     """Resolve ``auto`` into an effective ``off``/``warn``/``fail`` mode.
 
-    ``auto`` enables the guard when either the role execution label (including
-    rollout-only quantization) or the resolved forward contract differs.
+    ``auto`` enables the guard when the role execution label differs, including
+    rollout-only quantization.
     """
 
-    for name, precision in (
-        ("training_forward_precision", training_forward_precision),
-        ("rollout_forward_precision", rollout_forward_precision),
-    ):
-        if not isinstance(precision, ForwardPrecision):
-            raise TypeError(f"{name} must be ForwardPrecision")
     if mode in ("off", "warn", "fail"):
         return mode
     if mode != "auto":
@@ -62,9 +53,7 @@ def resolve_guard_mode(
     role_match = _normalize_precision_label(rollout_precision) == _normalize_precision_label(
         training_precision,
     )
-    if not role_match or rollout_forward_precision != training_forward_precision:
-        return "fail"
-    return "off"
+    return "off" if role_match else "fail"
 
 
 def select_guard_timesteps(timestep_indices: Sequence[int], max_checks: int) -> list[int]:
@@ -145,8 +134,6 @@ def measure_precision_drift(
     *,
     training_precision: str,
     rollout_precision: str,
-    training_forward_precision: ForwardPrecision,
-    rollout_forward_precision: ForwardPrecision,
     math_precision: str,
     timestep_indices: Sequence[int],
     evaluate_fn: Callable[[int], Any],
@@ -165,8 +152,6 @@ def measure_precision_drift(
         config.mode,
         training_precision=training_precision,
         rollout_precision=rollout_precision,
-        training_forward_precision=training_forward_precision,
-        rollout_forward_precision=rollout_forward_precision,
     )
     if mode == "off":
         return None
@@ -205,11 +190,8 @@ def measure_precision_drift(
         "violated": violated,
         "training_precision": training_label,
         "rollout_precision": rollout_label,
-        "training_forward_precision": dataclasses.asdict(training_forward_precision),
-        "rollout_forward_precision": dataclasses.asdict(rollout_forward_precision),
         "math_precision": math_label,
         "role_precision_match": rollout_label == training_label,
-        "forward_precision_match": rollout_forward_precision == training_forward_precision,
         "worst_timestep": worst_timestep,
         "max_abs_log_ratio": config.max_abs_log_ratio,
         "max_ratio_abs_dev": config.max_ratio_abs_dev,
@@ -243,8 +225,6 @@ def enforce_precision_drift(
         "precision drift guard: rollout-vs-replay logprob parity exceeded "
         f"threshold (training_role={record.get('training_precision')}, "
         f"rollout_role={record.get('rollout_precision')}, "
-        f"training_forward={record.get('training_forward_precision')}, "
-        f"rollout_forward={record.get('rollout_forward_precision')}, "
         f"math={record.get('math_precision')}); "
         f"worst rank={record.get('worst_rank', 0)} "
         f"worst timestep={record.get('worst_timestep')} "
@@ -264,8 +244,6 @@ def run_precision_drift_guard(
     *,
     training_precision: str,
     rollout_precision: str,
-    training_forward_precision: ForwardPrecision,
-    rollout_forward_precision: ForwardPrecision,
     math_precision: str,
     timestep_indices: Sequence[int],
     evaluate_fn: Callable[[int], Any],
@@ -278,8 +256,6 @@ def run_precision_drift_guard(
         config,
         training_precision=training_precision,
         rollout_precision=rollout_precision,
-        training_forward_precision=training_forward_precision,
-        rollout_forward_precision=rollout_forward_precision,
         math_precision=math_precision,
         timestep_indices=timestep_indices,
         evaluate_fn=evaluate_fn,

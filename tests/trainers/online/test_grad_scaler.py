@@ -16,12 +16,12 @@ import torch.nn as nn
 
 from tests.trainers.online._collector_control import CollectorControlFake
 from tests.trainers.online._helpers import (
-    DEFAULT_FORWARD_PRECISION,
     _algorithm_inputs,
-    _rollout_context,
+    _stamp_model_precision,
     _trajectory_signals,
 )
 from vrl.algorithms.types import TrainStepMetrics
+from vrl.config.precision import RolePrecision
 from vrl.rollouts.batch import RolloutBatch
 from vrl.rollouts.evaluators.base import Evaluator
 from vrl.trainers.core.types import EMAConfig, OptimConfig, TrainerConfig
@@ -35,33 +35,36 @@ from vrl.trainers.strategy import SingleProcessStrategy
 # G1 — scaler follows effective FP16 backward risk, not outer-autocast alone
 # --------------------------------------------------------------------------
 @pytest.mark.parametrize(
-    ("autocast", "device", "parameter_dtype", "expected"),
+    ("dtype", "outer_autocast_enabled", "device", "parameter_dtype", "expected"),
     [
-        ("fp16", "cuda", torch.float32, True),  # ordinary AMP
-        ("fp16", "cpu", torch.float32, False),
-        ("bf16", "cuda", torch.float32, False),
-        ("off", "cuda", torch.float32, False),
+        ("fp16", True, "cuda", torch.float32, True),  # ordinary AMP
+        ("fp16", True, "cpu", torch.float32, False),
+        ("bf16", True, "cuda", torch.float32, False),
+        ("fp32", False, "cuda", torch.float32, False),
         # SANA: no outer autocast, but its native FP16 gradient buffers still
         # need scaling before they are copied to FP32 master parameters.
-        ("off", "cuda", torch.float16, True),
-        ("off", "cuda", torch.bfloat16, False),
+        ("fp16", False, "cuda", torch.float16, True),
+        ("bf16", False, "cuda", torch.bfloat16, False),
     ],
 )
 def test_create_grad_scaler_matrix(
     monkeypatch: pytest.MonkeyPatch,
-    autocast,
+    dtype,
+    outer_autocast_enabled,
     device,
     parameter_dtype,
     expected,
 ) -> None:
-    from vrl.models.interfaces import ForwardPrecision
-
-    precision = ForwardPrecision(autocast=autocast, float32_precision="ieee")
     model = nn.Linear(1, 1, bias=False).to(dtype=parameter_dtype)
+    _stamp_model_precision(
+        model,
+        precision=RolePrecision(dtype=dtype, float32_precision="ieee"),
+        outer_autocast_enabled=outer_autocast_enabled,
+    )
     sentinel = object()
     monkeypatch.setattr(torch.amp, "GradScaler", lambda _device: sentinel)
 
-    scaler = _create_grad_scaler(precision, torch.device(device), model=model)
+    scaler = _create_grad_scaler(torch.device(device), model=model)
 
     assert (scaler is sentinel) is expected
     assert (scaler is None) is (not expected)
@@ -228,7 +231,7 @@ class _Collector(CollectorControlFake):
             rewards=torch.arange(group_size, dtype=torch.float32),
             dones=torch.ones(group_size, dtype=torch.bool),
             group_ids=torch.zeros(group_size, dtype=torch.long),
-            context=_rollout_context(),
+            context={},
             prompts=list(prompts) * group_size,
         )
 
@@ -255,6 +258,7 @@ class _SpyEMA:
 def _build_trainer(tmp_path):
     algorithm = _Algorithm()
     model = nn.Linear(1, 1, bias=False)
+    _stamp_model_precision(model)
     with torch.no_grad():
         model.weight.fill_(1.0)
     trainer = OnlineTrainer(
@@ -273,7 +277,6 @@ def _build_trainer(tmp_path):
             train_precision="no",
             output_dir=str(tmp_path),
         ),
-        forward_precision=DEFAULT_FORWARD_PRECISION,
         device="cpu",
     )
     spy_ema = _SpyEMA()

@@ -17,6 +17,7 @@ from tests.models.diffusion.fixtures import (
     TINY_SANA_LATENT_SHAPE,
     build_tiny_sana_transformer,
     record_forward_calls,
+    stamp_test_contract,
 )
 from vrl.models.diffusion.sana.model import (
     SanaModel,
@@ -28,10 +29,11 @@ _TEXT_LEN = 5
 
 
 def _model(transformer: torch.nn.Module) -> SanaModel:
-    return SanaModel(
+    model = SanaModel(
         pipeline=SimpleNamespace(transformer=transformer, device=torch.device("cpu")),
         device=torch.device("cpu"),
     )
+    return stamp_test_contract(model)
 
 
 def _state(*, do_cfg: bool) -> SanaSamplingState:
@@ -58,9 +60,9 @@ def test_sana_requires_validated_forward_without_outer_autocast() -> None:
 
     from vrl.families.registry import get_model_family_entry
 
-    requirement = get_model_family_entry("sana").family_build.forward_precision
-    assert requirement.autocast == "off"
-    assert requirement.float32_precision == "ieee"
+    family_build = get_model_family_entry("sana").family_build
+    assert family_build.required_float32_precision == "ieee"
+    assert family_build.outer_autocast is False
     assert not hasattr(SanaModel, "disable_rollout_autocast")
     assert not hasattr(SanaModel, "disable_train_autocast")
     assert not hasattr(SanaModel, "allow_tf32")

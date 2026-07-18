@@ -10,7 +10,12 @@ import pytest
 import torch
 import torch.nn as nn
 
-from tests.models.diffusion.fixtures import add_lora_adapters, build_tiny_wan_transformer
+from tests.models.diffusion.fixtures import (
+    add_lora_adapters,
+    build_tiny_wan_transformer,
+    stamp_test_contract,
+)
+from vrl.config.precision import RolePrecision
 from vrl.generation import GenerationRequest, GenerationSampleRow
 from vrl.generation.diffusion.layout import VideoGenerationRequest
 from vrl.models.diffusion import DiffusionModelBase
@@ -68,6 +73,9 @@ class _CompiledWrapper(nn.Module):
 
 
 class _ModelBaseStub(DiffusionModelBase):
+    precision = RolePrecision(dtype="fp32", float32_precision="ieee")
+    outer_autocast_enabled = False
+    device = torch.device("cpu")
     family = "stub"
 
     def __init__(self) -> None:
@@ -152,6 +160,7 @@ class _BackendPipelineStub(nn.Module):
 def test_pipeline_model_base_discovers_primary_encoder_device() -> None:
     pipeline = _BackendPipelineStub()
     runtime = SD3_5Model(pipeline=pipeline, device=torch.device("meta"))
+    stamp_test_contract(runtime)
 
     assert runtime._encoder_device() == torch.device("cpu")
 
@@ -160,6 +169,7 @@ def test_pipeline_model_base_falls_back_for_parameterless_encoder() -> None:
     pipeline = _BackendPipelineStub()
     pipeline.text_encoder = nn.Identity()
     runtime = SD3_5Model(pipeline=pipeline, device=torch.device("meta"))
+    stamp_test_contract(runtime)
 
     assert runtime._encoder_device() == torch.device("meta")
 
@@ -176,6 +186,7 @@ def test_pipeline_model_base_reads_guidance_embeds(config: Any, expected: bool) 
     pipeline = _BackendPipelineStub()
     pipeline.transformer.config = config
     runtime = SD3_5Model(pipeline=pipeline, device=torch.device("cpu"))
+    stamp_test_contract(runtime)
 
     assert runtime._guidance_embeds is expected
 
@@ -184,6 +195,7 @@ def test_flux_encoder_device_prefers_second_encoder() -> None:
     pipeline = _BackendPipelineStub()
     pipeline.text_encoder_2 = nn.Linear(2, 2, device="meta")
     runtime = FluxModel(pipeline=pipeline, device=torch.device("cpu"))
+    stamp_test_contract(runtime)
 
     assert runtime._encoder_device() == torch.device("meta")
 
@@ -518,3 +530,24 @@ def test_activate_is_idempotent_for_active_version() -> None:
     assert torch.equal(
         runtime.transformer.weight, torch.full_like(runtime.transformer.weight, 5.0)
     )
+
+
+def test_forward_step_runs_under_the_stamped_contract() -> None:
+    """The base hook applies the model's own contract around forward_step only."""
+
+    states: list[bool] = []
+
+    class _ContractStub(_ModelBaseStub):
+        def forward_step(self, state, step_idx):
+            states.append(torch.is_autocast_enabled("cpu"))
+            return {"noise_pred": torch.zeros(1)}
+
+    stub = _ContractStub()
+    stub.precision = RolePrecision(dtype="bf16", float32_precision="ieee")
+    stub.outer_autocast_enabled = True
+    stub.forward_step(object(), 0)
+    stub.outer_autocast_enabled = False
+    stub.forward_step(object(), 0)
+
+    assert states == [True, False]
+    assert torch.is_autocast_enabled("cpu") is False

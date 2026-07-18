@@ -30,17 +30,26 @@ training dtype,
 when that memory/accuracy trade-off is desired; quantization never changes their
 dtype implicitly.
 
-## Parameter storage and outer forward
+## Role precision and the model forward boundary
 
 `training.dtype` is the base dtype for the trainer/replay model.
 `rollout.dtype` is the base dtype for the generation policy. A base dtype governs
-parameter loading. The runtime separately resolves whether the transformer
-forward enters outer autocast: diffusion FP16/BF16 roles normally use matching
-autocast, while diffusion FP32 roles run without it. AR families execute
-natively at their loaded parameter dtype and therefore resolve outer autocast
-to `off`.
+parameter loading and the dtype used by the model's shared execution boundary.
+After config resolution, each process receives one `RolePrecision` containing
+that role's `dtype`, `float32_precision`, and optional `quantization`. This is the
+single precision object used by model loading, backend setup, quantization, and
+diagnostics; rollout build options carry only generation-specific inputs such as
+the prompt-encoder dtype and weight-sync lifecycle.
 
-A model-family requirement may further constrain the resolved runtime contract.
+Whether a diffusion family supports an outer transformer autocast scope is a
+family capability, not another user precision setting. Ordinary diffusion
+families enable that boundary, while AR families and SANA disable it. The shared
+boundary is still a no-op for an FP32 role. `ModelBuild` and `RuntimeBundle`
+therefore carry the resolved role precision together with this family-owned
+capability, and stamp both on the model that actually executes the forward.
+Executors and trajectory contexts do not copy either value.
+
+A model-family requirement may further constrain the resolved model contract.
 SANA, for example, requires native FP16 transformer parameters with outer
 autocast off. This requirement lives in the family registry and is not a public
 knob: a user cannot select an unsupported SANA forward mode through YAML.
@@ -68,9 +77,9 @@ precision:
 
 `float32_precision` controls FP32 matrix multiplication kernels in every trainer
 and rollout process. `tf32` permits TensorFloat-32 acceleration; `ieee` requires
-strict IEEE FP32 behavior. This axis is independent of parameter storage and
-outer autocast: FP16/BF16 models may still contain FP32 attention or protected
-sub-operations whose matmuls consume this policy.
+strict IEEE FP32 behavior. This axis is independent of parameter storage and the
+family-owned outer autocast capability: FP16/BF16 models may still contain FP32
+attention or protected sub-operations whose matmuls consume this policy.
 
 The setting is explicit because process defaults can differ. A family requirement
 may constrain it: SANA's canonical preset selects `ieee`, and the registry rejects

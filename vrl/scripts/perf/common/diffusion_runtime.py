@@ -9,7 +9,6 @@ import torch
 from vrl.generation.diffusion.layout import VideoGenerationRequest
 from vrl.generation.diffusion.teacache import TeaCacheState, teacache_signal
 from vrl.math.diffusion.flow_matching import sde_step_with_logprob
-from vrl.models.forward_precision import forward_autocast
 from vrl.models.interfaces import RuntimeBundle
 
 _PROMPT = "a physical scene, high quality"
@@ -31,21 +30,20 @@ def build_runtime(cfg, device) -> RuntimeBundle:
 def build_model(cfg, device, dtype):
     """Compatibility facade for the recorded TeaCache drift probe.
 
-    That one-shot probe predates ``RuntimeBundle.forward_precision`` and owns
-    its historical BF16 context locally. Refuse a config/CLI mismatch instead
-    of silently letting its explicit context diverge from the resolved runtime.
+    That one-shot probe owns its historical BF16 context locally. Refuse a
+    config/CLI mismatch instead of silently letting it diverge from the
+    resolved rollout role.
     """
 
     from vrl.models.dtypes import dtype_to_precision_token
 
     runtime = build_runtime(cfg, device)
     token = dtype_to_precision_token(dtype)
-    expected_autocast = "off" if token == "fp32" else token
-    if runtime.forward_precision.autocast != expected_autocast:
+    if runtime.precision.dtype != token:
         raise ValueError(
-            "TeaCache probe dtype does not match resolved rollout forward "
-            f"precision: requested {expected_autocast!r}, resolved "
-            f"{runtime.forward_precision.autocast!r}",
+            "TeaCache probe dtype does not match resolved rollout precision: "
+            f"requested {token!r}, resolved dtype={runtime.precision.dtype!r}, "
+            f"outer_autocast={runtime.outer_autocast!r}",
         )
     return runtime.model
 
@@ -97,8 +95,7 @@ def make_step_fn(runtime: RuntimeBundle, cfg, teacache=None):
             ):
                 noise_pred = cache_state.cached_noise_pred
             else:
-                with forward_autocast(runtime.forward_precision, state.latents.device):
-                    noise_pred = model.forward_step(state, step_idx)["noise_pred"]
+                noise_pred = model.forward_step(state, step_idx)["noise_pred"]
                 if cache_state is not None:
                     cache_state.cache_noise_pred(noise_pred)
             result = sde_step_with_logprob(
@@ -123,8 +120,7 @@ def _e2e_once(runtime: RuntimeBundle, cfg):
     state = prepare_sampling_state(model, cfg)
     with torch.no_grad():
         for step_idx in range(int(sampling.num_steps)):
-            with forward_autocast(runtime.forward_precision, state.latents.device):
-                noise_pred = model.forward_step(state, step_idx)["noise_pred"]
+            noise_pred = model.forward_step(state, step_idx)["noise_pred"]
             result = sde_step_with_logprob(
                 state.scheduler,
                 noise_pred.float(),

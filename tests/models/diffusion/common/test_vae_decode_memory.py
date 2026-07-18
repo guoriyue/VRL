@@ -6,6 +6,7 @@ from typing import Any
 import pytest
 import torch
 
+from vrl.config.precision import RolePrecision
 from vrl.models.diffusion.common.vae_decode_memory import (
     VaeDecodeMemory,
     apply_generation_memory_policy,
@@ -98,7 +99,6 @@ def test_wan_runtime_bundle_applies_model_build_memory_policy(
 ) -> None:
     """Checks the Wan runtime applies its model-build memory policy."""
     from vrl.models.interfaces.runtime import (
-        ForwardPrecision,
         ModelBuild,
         RolloutBuildOptions,
     )
@@ -136,7 +136,8 @@ def test_wan_runtime_bundle_applies_model_build_memory_policy(
             device="cpu",
             parameter_dtype="float32",
             family="wan_2_1",
-            forward_precision=ForwardPrecision("off", "tf32"),
+            precision=RolePrecision("fp32", "tf32"),
+            outer_autocast=True,
             rollout=RolloutBuildOptions(
                 prompt_encoder_dtype="float16",
             ),
@@ -189,7 +190,6 @@ def test_full_generation_runtime_bundles_apply_model_build_memory_policy(
 ) -> None:
     """Checks full-generation runtime bundles apply VAE memory policy."""
     from vrl.models.interfaces.runtime import (
-        ForwardPrecision,
         ModelBuild,
         RolloutBuildOptions,
     )
@@ -234,10 +234,11 @@ def test_full_generation_runtime_bundles_apply_model_build_memory_policy(
             device="cpu",
             parameter_dtype="float16" if build_family == "sana" else "float32",
             family=build_family,
-            forward_precision=ForwardPrecision(
-                "off",
+            precision=RolePrecision(
+                "fp16" if build_family == "sana" else "fp32",
                 "ieee" if build_family == "sana" else "tf32",
             ),
+            outer_autocast=build_family != "sana",
             rollout=RolloutBuildOptions(
                 prompt_encoder_dtype="float16",
             ),

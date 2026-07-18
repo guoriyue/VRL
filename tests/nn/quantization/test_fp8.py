@@ -354,10 +354,14 @@ def _rollout_spec(
     recipe: str | None = None,
     **values,
 ) -> SimpleNamespace:
+    from vrl.config.precision import QuantizationPolicy, RolePrecision
+
+    policy = (
+        None if quantization is None else QuantizationPolicy(format=quantization, recipe=recipe)
+    )
     return SimpleNamespace(
+        precision=RolePrecision("bf16", "tf32", policy),
         rollout=SimpleNamespace(
-            quantization_format=quantization,
-            quantization_recipe=recipe,
             base_weight_sync=True,
         ),
         **values,
@@ -495,9 +499,21 @@ def test_apply_rollout_quantization_dispatches_by_scheme():
     # bf16/fp16/fp32 rollout: a load-time dtype, nothing to swap
     apply_rollout_quantization(model, _rollout_spec(None))
     assert model.recipes == []
-    # an unimplemented scheme must NOT silently no-op (that was the old footgun) — raise
+    # An unimplemented scheme must NOT silently no-op (that was the old footgun).
+    # QuantizationPolicy rejects unknown formats at construction, so reaching the
+    # loader with one requires a raw fake — the loader still fails loud.
+    unknown_scheme = SimpleNamespace(
+        device=None,
+        torch_compile=None,
+        precision=SimpleNamespace(
+            quantization=SimpleNamespace(format="int8", recipe=None),
+        ),
+        rollout=SimpleNamespace(
+            base_weight_sync=True,
+        ),
+    )
     with pytest.raises(NotImplementedError, match="no rollout swap"):
-        apply_rollout_quantization(model, _rollout_spec("int8"))
+        apply_rollout_quantization(model, unknown_scheme)
     assert model.recipes == []
     # fp8: the swap fires
     apply_rollout_quantization(model, _rollout_spec("fp8"))
@@ -525,9 +541,11 @@ def test_resolve_model_build_derives_fp8_from_precision_rollout():
     entry = get_model_family_entry("sd3_5")
     build = entry.resolve_model_build(fp8_cfg, "cuda")
     assert build.rollout is not None
-    assert build.rollout.quantization_format == "fp8"
-    assert build.forward_precision.autocast == "bf16"
-    assert build.forward_precision.float32_precision == "tf32"
+    assert build.precision.quantization is not None
+    assert build.precision.quantization.format == "fp8"
+    assert build.precision.dtype == "bf16"
+    assert build.precision.float32_precision == "tf32"
+    assert build.outer_autocast is True
     assert build.parameter_dtype is torch.bfloat16  # this family uses a bf16 source master
 
     bf16_cfg = OmegaConf.create(
@@ -542,8 +560,8 @@ def test_resolve_model_build_derives_fp8_from_precision_rollout():
     )
     plain_build = entry.resolve_model_build(bf16_cfg, "cuda")
     assert plain_build.rollout is not None
-    assert plain_build.rollout.quantization_format is None
-    assert plain_build.forward_precision.autocast == "bf16"
+    assert plain_build.precision.quantization is None
+    assert plain_build.precision.dtype == "bf16"
 
 
 @requires_fp8

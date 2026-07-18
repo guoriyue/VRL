@@ -16,8 +16,7 @@ from __future__ import annotations
 import torch
 
 from vrl.math.ar.logprob import gather_categorical_log_probs
-from vrl.models.forward_precision import forward_autocast
-from vrl.models.interfaces import ForwardPrecision, ReplayModel, require_replay_model
+from vrl.models.interfaces import ReplayModel, require_replay_model
 from vrl.rollouts.batch import RolloutBatch
 from vrl.rollouts.evaluators.base import Evaluator
 from vrl.rollouts.evaluators.trajectory import TrajectorySignalBuilder
@@ -47,8 +46,6 @@ class TokenLogProbEvaluator(Evaluator):
         timestep_idx: int = 0,
         ref_model: ReplayModel | None = None,
         signal_request: SignalRequest | None = None,
-        *,
-        forward_precision: ForwardPrecision,
     ) -> TrajectorySignalBatch:
         model = require_replay_model(model, owner="TokenLogProbEvaluator.model")
         if ref_model is not None:
@@ -66,7 +63,6 @@ class TokenLogProbEvaluator(Evaluator):
             batch,
             action_ids,
             temperature,
-            forward_precision,
         )
 
         ref_lp = None
@@ -77,7 +73,6 @@ class TokenLogProbEvaluator(Evaluator):
                     batch,
                     action_ids,
                     temperature,
-                    forward_precision,
                 )
             else:
                 with torch.no_grad(), model.disable_adapter():
@@ -86,7 +81,6 @@ class TokenLogProbEvaluator(Evaluator):
                         batch,
                         action_ids,
                         temperature,
-                        forward_precision,
                     )
 
         return builder.single_segment(
@@ -109,11 +103,9 @@ class TokenLogProbEvaluator(Evaluator):
         batch: RolloutBatch,
         action_ids: torch.Tensor,
         temperature: float,
-        forward_precision: ForwardPrecision,
     ) -> torch.Tensor:
         """Forward + gather. Always returns ``[B, L]`` float32 log-probs."""
-        with forward_autocast(forward_precision, batch.observations.device):
-            out = model.replay_forward(batch, timestep_idx=0)
+        out = model.replay_forward(batch, timestep_idx=0)
         result = out.require_segment("image_tokens")
         logits: torch.Tensor = result.require_value("logits")  # [B, L, V_img]
         return gather_categorical_log_probs(

@@ -97,9 +97,8 @@ def load_flow_match_scheduler(
 def validate_rollout_quantization_support(build: Any) -> None:
     """Fail before model mutation when the requested rollout format cannot run."""
 
-    rollout = getattr(build, "rollout", None)
-    format_name = getattr(rollout, "quantization_format", None)
-    if format_name != "nvfp4":
+    quantization = getattr(getattr(build, "precision", None), "quantization", None)
+    if quantization is None or quantization.format != "nvfp4":
         return
     from vrl.nn.quantization import nvfp4_available
 
@@ -114,7 +113,7 @@ def validate_rollout_quantization_support(build: Any) -> None:
 def apply_rollout_quantization(model: Any, build: Any) -> int:
     """Swap the rollout transformer's big GEMMs to the configured low-precision scheme.
 
-    Reads ``build.rollout.quantization_format`` and dispatches to its module
+    Reads ``build.precision.quantization`` and dispatches to its module
     swap. FP8 targets eligible attention projections and MLPs; NVFP4 keeps the
     validated MLP-only target profile. Quantization is rollout-only and layered
     on the ordinary rollout dtype, which remains responsible for unswapped
@@ -129,11 +128,12 @@ def apply_rollout_quantization(model: Any, build: Any) -> int:
     import logging
 
     rollout = getattr(build, "rollout", None)
-    format_name = getattr(rollout, "quantization_format", None)
-    if not format_name:  # bf16/fp16/fp32 rollout — no selective GEMM swap
+    quantization = getattr(getattr(build, "precision", None), "quantization", None)
+    if quantization is None:  # bf16/fp16/fp32 rollout — no selective GEMM swap
         return 0
+    format_name = quantization.format
     validate_rollout_quantization_support(build)
-    recipe = getattr(rollout, "quantization_recipe", None)
+    recipe = quantization.recipe
     # blockwise delegates to vLLM's triton kernel, whose wrapper dynamo cannot
     # trace (lru_cache'd deep_gemm check + ctypes pynvml call): measured 45 graph
     # breaks on SD3.5 and a compiled forward ~10x SLOWER than eager
@@ -208,10 +208,10 @@ def assert_rollout_quantization_applied(model: Any, build: Any) -> None:
     NVFP4 request merely because both share the same base class.
     """
 
-    rollout = getattr(build, "rollout", None)
-    format_name = getattr(rollout, "quantization_format", None)
-    if not format_name:  # None / bf16 / fp16 / fp32 rollout — nothing to verify
+    quantization = getattr(getattr(build, "precision", None), "quantization", None)
+    if quantization is None:  # bf16 / fp16 / fp32 rollout — nothing to verify
         return
+    format_name = quantization.format
     from vrl.nn.quantization import QuantizedLinear
 
     # Diffusion wrappers expose ``transformer``; AR wrappers expose

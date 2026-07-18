@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from omegaconf import OmegaConf
 
+from vrl.config.precision import RolePrecision
 from vrl.families.registry import get_model_family_entry
 from vrl.models.ar.emu3.runner import Emu3TokenRunner
 from vrl.models.ar.emu3.runtime import Emu3ChunkExecutor, emu3_config_from_build
@@ -25,8 +26,8 @@ def test_resolve_model_build_defaults_to_gen_hf_checkpoint() -> None:
     build = get_model_family_entry("emu3").resolve_model_build(cfg, device="cpu")
 
     assert build.model_name_or_path == "BAAI/Emu3-Gen-hf"
-    assert build.forward_precision.autocast == "off"
-    assert build.forward_precision.float32_precision == "tf32"
+    assert build.precision == RolePrecision("fp32", "tf32")
+    assert build.outer_autocast is False
 
 
 def test_resolve_model_build_carries_sampling_and_lora_overrides() -> None:

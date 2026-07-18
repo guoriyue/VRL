@@ -23,8 +23,7 @@ from torch import nn
 
 from tests.trainers.online._collector_control import CollectorControlFake
 from tests.trainers.online._helpers import (
-    DEFAULT_FORWARD_PRECISION,
-    _rollout_context,
+    _stamp_model_precision,
     _trajectory_signals,
 )
 from vrl.algorithms.logprob_mismatch import LogprobMismatchStats
@@ -66,7 +65,7 @@ def _rollout_batch(sample_count: int) -> RolloutBatch:
         rewards=torch.arange(sample_count, dtype=torch.float32),
         dones=torch.ones(sample_count, dtype=torch.bool),
         group_ids=torch.zeros(sample_count, dtype=torch.long),
-        context=_rollout_context(),
+        context={},
     )
 
 
@@ -361,6 +360,7 @@ def _run_replay_loop_rank(
                 return _trajectory_signals(batch, log_prob, timestep_idx)
 
         model = nn.Linear(1, 1, bias=False)
+        _stamp_model_precision(model)
         with torch.no_grad():
             model.weight.fill_(1.0)
         trainer = OnlineTrainer(
@@ -381,7 +381,6 @@ def _run_replay_loop_rank(
                 samples_per_chunk=1,
             ),
             device="cpu",
-            forward_precision=DEFAULT_FORWARD_PRECISION,
         )
 
         def _record_backward(loss: torch.Tensor) -> None:

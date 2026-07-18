@@ -25,6 +25,7 @@ from tests.models.diffusion.fixtures import (
     build_tiny_wan_i2v_transformer,
     build_tiny_wan_transformer,
     record_forward_calls,
+    stamp_test_contract,
 )
 from vrl.models.diffusion.wan_2_1.model import (
     WanI2VDiffusersModel,
@@ -45,14 +46,16 @@ def _model(
     transformer_2: torch.nn.Module | None = None,
     boundary_ratio: float | None = None,
 ) -> Any:
-    return cls(
-        pipeline=SimpleNamespace(
-            transformer=transformer,
-            transformer_2=transformer_2,
-            config=SimpleNamespace(boundary_ratio=boundary_ratio),
+    return stamp_test_contract(
+        cls(
+            pipeline=SimpleNamespace(
+                transformer=transformer,
+                transformer_2=transformer_2,
+                config=SimpleNamespace(boundary_ratio=boundary_ratio),
+                device=torch.device("cpu"),
+            ),
             device=torch.device("cpu"),
         ),
-        device=torch.device("cpu"),
     )
 
 

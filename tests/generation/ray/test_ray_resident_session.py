@@ -10,12 +10,12 @@ from typing import Any
 import pytest
 import torch
 
+from vrl.config.precision import RolePrecision
 from vrl.generation.launch_contract import GenerationRuntimeLaunchContract
 from vrl.generation.protocols import ChunkResult
 from vrl.generation.ray.worker import RayGenerationWorker
 from vrl.generation.types import GenerationOutput, GenerationRequest, GenerationSampleRow
 from vrl.models.interfaces import (
-    ForwardPrecision,
     ModelBuild,
     ReplayResult,
     RolloutBuildOptions,
@@ -68,14 +68,16 @@ def build_tiny_runtime_bundle(build: ModelBuild) -> RuntimeBundle:
     assert str(build.device) == "cpu"
     assert build.parameter_dtype is torch.float16
     assert isinstance(build.rollout, RolloutBuildOptions)
-    assert build.forward_precision == ForwardPrecision("off", "tf32")
+    assert build.precision == RolePrecision("fp16", "tf32")
+    assert build.outer_autocast is False
     assert build.rollout.prompt_encoder_dtype is torch.float32
     return RuntimeBundle(
         model=_TinyRuntimeModel(),
         trainable_modules={},
         scheduler=None,
         raw_handle=None,
-        forward_precision=build.forward_precision,
+        precision=build.precision,
+        outer_autocast=build.outer_autocast,
     )
 
 
@@ -109,14 +111,14 @@ def _launch_contract() -> GenerationRuntimeLaunchContract:
             "model_name_or_path": "unit-test",
             "device": "cpu",
             "parameter_dtype": "float16",
-            "forward_precision": {
-                "autocast": "off",
+            "precision": {
+                "dtype": "fp16",
                 "float32_precision": "tf32",
+                "quantization": None,
             },
+            "outer_autocast": False,
             "rollout": {
                 "prompt_encoder_dtype": "float32",
-                "quantization_format": None,
-                "quantization_recipe": None,
                 "base_weight_sync": False,
             },
         },

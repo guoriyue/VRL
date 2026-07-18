@@ -7,9 +7,7 @@ from typing import Any
 
 import torch
 
-from vrl.models.forward_precision import forward_autocast
 from vrl.models.interfaces import (
-    ForwardPrecision,
     ReplayModel,
     ReplayRequest,
     ReplayResult,
@@ -42,8 +40,6 @@ class MultiSegmentTokenLogProbEvaluator(Evaluator):
         timestep_idx: int = 0,
         ref_model: ReplayModel | None = None,
         signal_request: SignalRequest | None = None,
-        *,
-        forward_precision: ForwardPrecision,
     ) -> TrajectorySignalBatch:
         del timestep_idx
         model = require_replay_model(model, owner="MultiSegmentTokenLogProbEvaluator.model")
@@ -64,19 +60,13 @@ class MultiSegmentTokenLogProbEvaluator(Evaluator):
             raise RuntimeError("no enabled R1 segments to evaluate")
 
         replay_request = ReplayRequest(segment_names=tuple(enabled_names))
-        with forward_autocast(forward_precision, batch.observations.device):
-            current_output = model.replay_forward(batch, request=replay_request)
+        current_output = model.replay_forward(batch, request=replay_request)
         ref_output = None
         if request.need_ref:
             if ref_model is not None:
-                with forward_autocast(forward_precision, batch.observations.device):
-                    ref_output = ref_model.replay_forward(batch, request=replay_request)
+                ref_output = ref_model.replay_forward(batch, request=replay_request)
             else:
-                with (
-                    torch.no_grad(),
-                    model.disable_adapter(),
-                    forward_autocast(forward_precision, batch.observations.device),
-                ):
+                with torch.no_grad(), model.disable_adapter():
                     ref_output = model.replay_forward(batch, request=replay_request)
 
         signal_builder = TrajectorySignalBuilder(batch)

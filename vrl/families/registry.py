@@ -6,9 +6,10 @@ single family table shared by model construction, generation, and collection.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any, Literal, get_args
 
+from vrl.config.precision import Float32Precision
 from vrl.families.names import (
     normalize_model_family,
     validate_model_family_aliases,
@@ -19,26 +20,6 @@ CollectorKind = Literal["diffusion", "ar_discrete", "ar_continuous", "ar_r1"]
 # Import-path protocol value shared by registry dispatch and generation workers.
 # Keeping it here avoids making the neutral family table import a runtime module.
 GENERIC_DIFFUSION_EXECUTOR = "vrl.generation.diffusion.executor:DiffusionChunkExecutor"
-
-
-@dataclass(frozen=True, slots=True)
-class ForwardPrecisionRequirement:
-    """Family-owned restrictions applied while resolving public precision."""
-
-    autocast: Literal["role", "off"] = "role"
-    float32_precision: Literal["ieee", "tf32"] | None = None
-
-    def __post_init__(self) -> None:
-        if self.autocast not in ("role", "off"):
-            raise ValueError(
-                "family forward autocast requirement must be 'role' or 'off'; "
-                f"got {self.autocast!r}",
-            )
-        if self.float32_precision not in (None, "ieee", "tf32"):
-            raise ValueError(
-                "family float32 precision requirement must be ieee, tf32, or "
-                f"None; got {self.float32_precision!r}",
-            )
 
 
 @dataclass(frozen=True, slots=True)
@@ -64,9 +45,13 @@ class DiffusionFamilyBuild:
     # this only when some public role dtypes are known-invalid for the family;
     # ordinary families inherit every plain dtype from the precision policy.
     supported_parameter_dtypes: tuple[str, ...] | None = None
-    forward_precision: ForwardPrecisionRequirement = field(
-        default_factory=ForwardPrecisionRequirement,
-    )
+    # Optional process-wide FP32 backend requirement. Ordinary families accept
+    # either public mode; SANA's FP32 linear-attention math requires IEEE.
+    required_float32_precision: Float32Precision | None = None
+    # Whether the shared diffusion forward boundary applies the role dtype via
+    # outer autocast. SANA disables it because its attention processor owns
+    # internal FP32 promotion.
+    outer_autocast: bool = True
     # LoRA-only family: the generic builders fail loud BEFORE paying the
     # transformer load. The per-family WHY belongs in a comment on the entry
     # (and in the model's own apply_full_finetune error), not in runtime data.
@@ -86,6 +71,13 @@ class DiffusionFamilyBuild:
                 "scheduler_classname belongs to the generic replay builder and "
                 "cannot accompany replay_runtime_builder",
             )
+        if self.required_float32_precision not in (None, *get_args(Float32Precision)):
+            raise ValueError(
+                "required_float32_precision must be ieee, tf32, or None; got "
+                f"{self.required_float32_precision!r}",
+            )
+        if not isinstance(self.outer_autocast, bool):
+            raise TypeError("outer_autocast must be a bool")
 
     def validate_parameter_dtype(self, family: str, parameter_dtype: Any) -> None:
         """Enforce a family checkpoint's supported parameter storage dtypes."""
@@ -158,11 +150,7 @@ class ModelFamilyEntry:
         """
 
         from vrl.config.precision import resolve_precision_policy
-        from vrl.models.interfaces.runtime import (
-            ForwardPrecision,
-            ModelBuild,
-            RolloutBuildOptions,
-        )
+        from vrl.models.interfaces.runtime import ModelBuild, RolloutBuildOptions
         from vrl.utils.config import plain_mapping
 
         model_config = plain_mapping(cfg.model, field_name="model")
@@ -204,49 +192,35 @@ class ModelFamilyEntry:
             if parameter_dtype_override is not None
             else role_parameter_dtype
         )
-        forward_requirement = ForwardPrecisionRequirement()
         if isinstance(self.family_build, DiffusionFamilyBuild):
             self.family_build.validate_parameter_dtype(self.family, parameter_dtype)
-            forward_requirement = self.family_build.forward_precision
-        if (
-            forward_requirement.float32_precision is not None
-            and precision.float32_precision != forward_requirement.float32_precision
-        ):
-            raise ValueError(
-                f"model family {self.family!r} requires "
-                "precision.float32_precision="
-                f"{forward_requirement.float32_precision!r}; got "
-                f"{precision.float32_precision!r}",
-            )
-        # Diffusion owns an explicit outer-transformer autocast boundary. AR
-        # families already execute natively in their loaded parameter dtype;
-        # advertising an unused BF16/FP16 autocast policy would be a no-op field.
-        if isinstance(self.family_build, DiffusionFamilyBuild):
-            autocast = (
-                "off"
-                if forward_requirement.autocast == "off" or role_precision.dtype == "fp32"
-                else role_precision.dtype
-            )
-        else:
-            autocast = "off"
-        forward_precision = ForwardPrecision(
-            autocast=autocast,
-            float32_precision=precision.float32_precision,
-        )
+            required_float32 = self.family_build.required_float32_precision
+            if (
+                required_float32 is not None
+                and role_precision.float32_precision != required_float32
+            ):
+                raise ValueError(
+                    f"model family {self.family!r} requires "
+                    "precision.float32_precision="
+                    f"{required_float32!r}; got "
+                    f"{role_precision.float32_precision!r}",
+                )
         rollout = None
         if for_rollout:
-            quantization = precision.rollout.quantization
             rollout = RolloutBuildOptions(
                 prompt_encoder_dtype=precision.prompt_encoder_dtype,
-                quantization_format=(quantization.format if quantization is not None else None),
-                quantization_recipe=(quantization.recipe if quantization is not None else None),
             )
         build = ModelBuild(
             model_name_or_path=str(model_path),
             device=device,
             parameter_dtype=parameter_dtype,
             family=self.family,
-            forward_precision=forward_precision,
+            precision=role_precision,
+            outer_autocast=(
+                self.family_build.outer_autocast
+                if isinstance(self.family_build, DiffusionFamilyBuild)
+                else False
+            ),
             model_config=model_config,
             sampling_config=sampling_config,
             rollout=rollout,
@@ -440,10 +414,8 @@ _register_model_family(
             # autocast. Its processor promotes Q/K/V to FP32, where TF32 also
             # changes rollout/replay likelihoods, so both processes require
             # full IEEE FP32 matmuls.
-            forward_precision=ForwardPrecisionRequirement(
-                autocast="off",
-                float32_precision="ieee",
-            ),
+            required_float32_precision="ieee",
+            outer_autocast=False,
         ),
     ),
 )

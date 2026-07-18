@@ -7,10 +7,10 @@ import pytest
 from tests.trainers.online._collector_control import CollectorControlFake
 from tests.trainers.online._helpers import (
     _algorithm_inputs,
-    _rollout_context,
+    _stamp_model_precision,
     _trajectory_signals,
 )
-from vrl.models.interfaces import ForwardPrecision
+from vrl.config.precision import RolePrecision
 
 
 class TestOnlineTrainerResumeState:
@@ -240,7 +240,7 @@ class _ResumeCollector(CollectorControlFake):
             rewards=torch.arange(group_size, dtype=torch.float32),
             dones=torch.ones(group_size, dtype=torch.bool),
             group_ids=torch.zeros(group_size, dtype=torch.long),
-            context=_rollout_context(),
+            context={},
             prompts=list(prompts) * group_size,
         )
 
@@ -297,7 +297,12 @@ def _make_resume_trainer(
     with torch.no_grad():
         model.weight.fill_(1.0)
     model.to(device=device, dtype=getattr(torch, model_dtype))
-    autocast = train_precision if train_precision in {"fp16", "bf16"} else "off"
+    role_dtype = train_precision if train_precision in {"fp16", "bf16"} else "fp32"
+    _stamp_model_precision(
+        model,
+        precision=RolePrecision(dtype=role_dtype, float32_precision="ieee"),
+        outer_autocast_enabled=train_precision in {"fp16", "bf16"},
+    )
     return OnlineTrainer(
         algorithm=_ResumeAlgorithm(),
         collector=collector or _ResumeCollector(),
@@ -323,10 +328,6 @@ def _make_resume_trainer(
             debug=DebugConfig(),
             n_samples_per_prompt=2,
             train_precision=train_precision,
-        ),
-        forward_precision=ForwardPrecision(
-            autocast=autocast,
-            float32_precision="ieee",
         ),
         device=device,
     )

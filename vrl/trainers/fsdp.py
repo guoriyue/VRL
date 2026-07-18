@@ -100,8 +100,8 @@ def mixed_precision_policy(
     ``actor`` keeps the model builder's resolved parameter dtype and performs
     gradient reduction in fp32. FSDP must not introduce a second parameter-dtype
     owner: most families follow top-level precision, while SANA deliberately
-    stores fp16 parameters under bf16 forward autocast. ``none`` leaves both
-    parameters and reduction in their native dtype.
+    stores native fp16 parameters with outer autocast disabled. ``none`` leaves
+    both parameters and reduction in their native dtype.
     """
 
     from torch.distributed.fsdp import MixedPrecisionPolicy

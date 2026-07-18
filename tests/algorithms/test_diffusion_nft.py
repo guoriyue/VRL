@@ -35,11 +35,11 @@ from tests.models.diffusion.fixtures import (
 )
 from vrl.algorithms.diffusion_nft import DiffusionNFT, DiffusionNFTConfig
 from vrl.algorithms.grpo.continuous import GRPO, GRPOConfig
+from vrl.config.precision import RolePrecision
 from vrl.generation.diffusion.layout import VideoGenerationRequest
 from vrl.generation.types import GenerationRequest, GenerationSampleRow
 from vrl.models.diffusion import DiffusionModelBase
 from vrl.models.diffusion.cosmos.predict2_5.model import _copy_adapter_weights
-from vrl.models.interfaces import ForwardPrecision
 from vrl.rollouts.batch import RolloutBatch
 from vrl.trajectory.builders import build_diffusion_trajectory
 
@@ -47,7 +47,7 @@ _BATCH = TINY_WAN_LATENT_SHAPE[0]
 _LATENT_SHAPE = TINY_WAN_LATENT_SHAPE
 _TEXT_LEN = TINY_WAN_TEXT_LEN
 _TEXT_DIM = TINY_WAN_TEXT_DIM
-FORWARD_PRECISION = ForwardPrecision(autocast="off", float32_precision="ieee")
+_PRECISION = RolePrecision(dtype="fp32", float32_precision="ieee")
 
 
 def test_diffusion_nft_does_not_tolerate_off_policy_staleness() -> None:
@@ -99,6 +99,9 @@ class _NFTModel(DiffusionModelBase):
     ``disable_adapters`` route to actually-different weights. ``sync_previous_policy_adapter``
     delegates to the same ``_copy_adapter_weights`` the production model uses.
     """
+
+    precision = _PRECISION
+    outer_autocast_enabled = False
 
     def __init__(self, transformer: torch.nn.Module) -> None:
         super().__init__()
@@ -260,7 +263,6 @@ def _step_distances(*, advantage: float) -> tuple[float, float, torch.Tensor]:
         batch,
         0,
         torch.tensor([advantage]),
-        FORWARD_PRECISION,
     )
     trainable = [p for p in model.transformer.parameters() if p.requires_grad]
     opt = torch.optim.SGD(trainable, lr=50.0)
@@ -290,7 +292,6 @@ def test_nft_returns_only_objective_owned_step_metrics() -> None:
         batch,
         0,
         torch.full((_BATCH,), 5.0),
-        FORWARD_PRECISION,
     )
 
     # approx_kl is the historical CSV view of this exact reference-prediction
@@ -317,9 +318,9 @@ def test_nft_autocast_only_wraps_transformer_forwards(monkeypatch) -> None:
     scope_count = 0
 
     @contextmanager
-    def track_forward_autocast(policy, device):
+    def track_model_autocast(forward_model, device):
         nonlocal active_forward_scope, scope_count
-        assert policy is FORWARD_PRECISION
+        assert forward_model is model
         assert torch.device(device).type == "cpu"
         active_forward_scope += 1
         scope_count += 1
@@ -337,7 +338,7 @@ def test_nft_autocast_only_wraps_transformer_forwards(monkeypatch) -> None:
         assert active_forward_scope == 0
         return original_normalized_mse(prediction, target)
 
-    monkeypatch.setattr(nft_module, "forward_autocast", track_forward_autocast)
+    monkeypatch.setattr(nft_module, "model_autocast", track_model_autocast)
     monkeypatch.setattr(nft_module, "normalized_mse", checked_normalized_mse)
     hook = model.transformer.register_forward_pre_hook(check_transformer_scope)
     try:
@@ -346,7 +347,6 @@ def test_nft_autocast_only_wraps_transformer_forwards(monkeypatch) -> None:
             batch,
             0,
             torch.ones(_BATCH),
-            FORWARD_PRECISION,
         )
     finally:
         hook.remove()
@@ -389,7 +389,6 @@ def test_nft_beta_must_be_positive() -> None:
             batch,
             0,
             torch.tensor([1.0]),
-            FORWARD_PRECISION,
         )
 
 
@@ -417,7 +416,6 @@ def test_advantage_scale_must_be_positive() -> None:
             batch,
             0,
             torch.tensor([1.0]),
-            FORWARD_PRECISION,
         )
 
 
@@ -457,7 +455,6 @@ def test_first_step_invariant_check_passes_when_previous_synced() -> None:
         model=model,
         batch=batch,
         advantages=torch.tensor([2.0]),
-        forward_precision=FORWARD_PRECISION,
         timestep_index=0,
     )
 
@@ -488,7 +485,6 @@ def test_edm_scale_timestep_grid_fails_loudly() -> None:
             batch,
             0,
             torch.tensor([1.0]),
-            FORWARD_PRECISION,
         )
 
 
@@ -515,14 +511,12 @@ def test_lr_zero_reward_channel_is_inert() -> None:
         batch,
         0,
         torch.tensor([5.0]),
-        FORWARD_PRECISION,
     )
     loss_neg, metrics_neg = nft.compute_batch_timestep_loss(
         model,
         batch,
         0,
         torch.tensor([-5.0]),
-        FORWARD_PRECISION,
     )
 
     assert metrics_pos.policy_loss == metrics_neg.policy_loss

@@ -13,8 +13,7 @@ from typing import Any
 
 import torch
 
-from vrl.models.forward_precision import float32_precision_state
-from vrl.models.interfaces.runtime import ForwardPrecision
+from vrl.models.precision import model_precision
 from vrl.utils.media import to_pil_image
 
 # These mappings are persisted protocol identities, not tunable defaults.
@@ -37,47 +36,6 @@ SCHEDULER_PROTOCOL = {
     "flow_shift": 3.0,
     "prediction_type": "flow_prediction",
 }
-
-
-def validate_model_precision(
-    model: Any,
-    forward_precision: ForwardPrecision,
-) -> dict[str, Any]:
-    """Require a validated no-autocast SANA precision boundary."""
-
-    pipeline = getattr(model, "pipeline", None)
-    if pipeline is None:
-        raise TypeError("SANA runtime model does not expose its native pipeline")
-    actual = {
-        "transformer": _dtype_name(_component_dtype(model.transformer, "transformer")),
-        "prompt_encoder": _dtype_name(
-            _component_dtype(getattr(pipeline, "text_encoder", None), "text_encoder"),
-        ),
-        "vae": _dtype_name(_component_dtype(getattr(pipeline, "vae", None), "vae")),
-        "forward_precision": {
-            "autocast": forward_precision.autocast,
-            "float32_precision": forward_precision.float32_precision,
-        },
-        "effective_float32_precision": float32_precision_state(),
-    }
-    expected = {
-        "transformer": "float16",
-        "prompt_encoder": "bfloat16",
-        "vae": "float32",
-        "forward_precision": {
-            "autocast": "off",
-            "float32_precision": "ieee",
-        },
-        "effective_float32_precision": {
-            "matmul": "ieee",
-            "cudnn": "ieee",
-        },
-    }
-    if actual != expected:
-        raise ValueError(
-            f"SANA precision boundary mismatch: expected={expected}, actual={actual}",
-        )
-    return actual
 
 
 def load_official_scheduler(build: Any) -> Any:
@@ -125,7 +83,6 @@ def validate_scheduler(scheduler: Any) -> dict[str, Any]:
 def generate_prompt_images(
     model: Any,
     *,
-    forward_precision: ForwardPrecision,
     scheduler: Any,
     prompt: str,
     seed: int,
@@ -138,14 +95,18 @@ def generate_prompt_images(
 
     if num_images < 1:
         raise ValueError(f"num_images must be >= 1; got {num_images}")
-    if forward_precision != ForwardPrecision(
-        autocast="off",
-        float32_precision="ieee",
+    precision = model_precision(model)
+    if (
+        precision.dtype != "fp16"
+        or precision.float32_precision != "ieee"
+        or bool(getattr(model, "outer_autocast_enabled", True))
     ):
         raise ValueError(
-            "SANA native inference requires resolved forward precision "
-            "autocast='off', float32_precision='ieee'; "
-            f"got {forward_precision!r}",
+            "SANA native inference requires fp16 role precision, no outer "
+            "autocast, and IEEE FP32 matmuls; "
+            f"got precision={precision!r}, "
+            "outer_autocast="
+            f"{getattr(model, 'outer_autocast_enabled', None)!r}",
         )
     if _is_autocast_enabled(device):
         raise RuntimeError("SANA native inference must run without an outer autocast context")
@@ -182,16 +143,6 @@ def generate_prompt_images(
     return [to_pil_image(image) for image in images]
 
 
-def _component_dtype(component: Any, name: str) -> Any:
-    if component is None or not hasattr(component, "dtype"):
-        raise TypeError(f"SANA {name} does not expose a dtype")
-    return component.dtype
-
-
-def _dtype_name(dtype: Any) -> str:
-    return str(dtype).removeprefix("torch.")
-
-
 def _model_revision(build: Any) -> str | None:
     model_config = build.model_config or {}
     revision = model_config.get("revision")
@@ -219,6 +170,5 @@ __all__ = [
     "SCHEDULER_PROTOCOL",
     "generate_prompt_images",
     "load_official_scheduler",
-    "validate_model_precision",
     "validate_scheduler",
 ]

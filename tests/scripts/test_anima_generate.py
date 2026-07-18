@@ -8,7 +8,7 @@ import pytest
 from omegaconf import OmegaConf
 from PIL import Image
 
-from vrl.models.interfaces import ForwardPrecision
+from vrl.config.precision import RolePrecision
 from vrl.scripts.diffusion.cosmos.anima import generate
 
 
@@ -113,10 +113,8 @@ def test_generate_records_the_batch_seed_for_every_sample(monkeypatch, tmp_path)
         resolve_model_build=lambda *_args, **_kwargs: object(),
         build_rollout=lambda _build: SimpleNamespace(
             model=_Model(),
-            forward_precision=ForwardPrecision(
-                autocast="off",
-                float32_precision="ieee",
-            ),
+            precision=RolePrecision(dtype="fp32", float32_precision="ieee"),
+            outer_autocast=False,
         ),
     )
     monkeypatch.setattr(generate, "get_model_family_entry", lambda _family: entry)

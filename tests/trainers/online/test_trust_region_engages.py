@@ -17,8 +17,7 @@ import torch.nn as nn
 
 from tests.trainers.online._collector_control import CollectorControlFake
 from tests.trainers.online._helpers import (
-    DEFAULT_FORWARD_PRECISION,
-    _rollout_context,
+    _stamp_model_precision,
     _trajectory_signals,
 )
 from vrl.algorithms.grpo.continuous import GRPO, FlowDPPO, GRPOGuard
@@ -46,7 +45,7 @@ class _Collector(CollectorControlFake):
             rewards=torch.arange(group_size, dtype=torch.float32),
             dones=torch.ones(group_size, dtype=torch.bool),
             group_ids=torch.zeros(group_size, dtype=torch.long),
-            context=_rollout_context(),
+            context={},
             prompts=list(prompts) * group_size,
         )
 
@@ -70,6 +69,7 @@ def _build_trainer(
     max_stale_policy_versions: int = 1,
 ) -> OnlineTrainer:
     model = nn.Linear(1, 1, bias=False)
+    _stamp_model_precision(model)
     with torch.no_grad():
         model.weight.fill_(1.0)
     return OnlineTrainer(
@@ -95,7 +95,6 @@ def _build_trainer(
             train_precision="no",
             output_dir=str(tmp_path),
         ),
-        forward_precision=DEFAULT_FORWARD_PRECISION,
         device="cpu",
     )
 

@@ -20,7 +20,7 @@ from tests.models.diffusion.fixtures import (
     build_tiny_wan_transformer,
     record_forward_calls,
 )
-from vrl.models.interfaces import ForwardPrecision
+from vrl.config.precision import RolePrecision
 from vrl.trainers.data.preferences import PreferenceBatch
 from vrl.trainers.offline import (
     OfflineDPOTrainer,
@@ -28,7 +28,7 @@ from vrl.trainers.offline import (
     wan_forward,
 )
 
-FORWARD_PRECISION = ForwardPrecision(autocast="off", float32_precision="ieee")
+PRECISION = RolePrecision(dtype="fp32", float32_precision="ieee")
 
 
 def _noop_forward(model, noisy, ts, encoder, extra=None):  # pragma: no cover
@@ -57,17 +57,19 @@ def _make_trainer(
         prediction_type="epsilon",
         timestep_subset=timestep_subset,
     )
+    model = torch.nn.Linear(4, 4)
+    model.precision = RolePrecision(
+        dtype="fp32",
+        float32_precision=float32_precision,
+    )
+    model.outer_autocast_enabled = False
     return OfflineDPOTrainer(
-        model=torch.nn.Linear(4, 4),
+        model=model,
         ref_model=None,
         forward_fn=_noop_forward,
         noise_scheduler=scheduler,
         encode_pixels=_noop_encode_pix,
         encode_text=_noop_encode_text,
-        forward_precision=ForwardPrecision(
-            autocast="off",
-            float32_precision=float32_precision,
-        ),
         config=cfg,
         device="cpu",
     )
@@ -101,14 +103,16 @@ class TestSampleTimesteps:
         scheduler = SimpleNamespace(config=SimpleNamespace(num_train_timesteps=1000))
         # Avoid setting ``timesteps`` - getattr should return None.
         cfg = OfflineDPOTrainerConfig(prediction_type="epsilon")
+        model = torch.nn.Linear(4, 4)
+        model.precision = PRECISION
+        model.outer_autocast_enabled = False
         trainer = OfflineDPOTrainer(
-            model=torch.nn.Linear(4, 4),
+            model=model,
             ref_model=None,
             forward_fn=_noop_forward,
             noise_scheduler=scheduler,
             encode_pixels=_noop_encode_pix,
             encode_text=_noop_encode_text,
-            forward_precision=FORWARD_PRECISION,
             config=cfg,
             device="cpu",
         )
@@ -271,9 +275,9 @@ def test_step_metrics_report_the_optimized_loss(
     active_forward_scope = 0
 
     @contextmanager
-    def track_forward_autocast(policy, device):
+    def track_model_autocast(forward_model, device):
         nonlocal active_forward_scope
-        assert policy is FORWARD_PRECISION
+        assert forward_model is model
         assert torch.device(device).type == "cpu"
         active_forward_scope += 1
         try:
@@ -308,9 +312,11 @@ def test_step_metrics_report_the_optimized_loss(
         sft_calls += 1
         return model_pred.sum() * 0.0 + 3.0
 
-    monkeypatch.setattr(dpo_module, "forward_autocast", track_forward_autocast)
+    monkeypatch.setattr(dpo_module, "model_autocast", track_model_autocast)
     monkeypatch.setattr(dpo_module, "diffusion_dpo_loss", fake_dpo_loss)
     monkeypatch.setattr(dpo_module, "diffusion_sft_loss", fake_sft_loss)
+    model.precision = PRECISION
+    model.outer_autocast_enabled = False
     trainer = OfflineDPOTrainer(
         model=model,
         ref_model=ref_model,
@@ -318,7 +324,6 @@ def test_step_metrics_report_the_optimized_loss(
         noise_scheduler=scheduler,
         encode_pixels=lambda pixels: pixels[:, :1],
         encode_text=lambda captions: torch.zeros(len(captions), 1),
-        forward_precision=FORWARD_PRECISION,
         config=OfflineDPOTrainerConfig(
             prediction_type="epsilon",
             sft_weight=sft_weight,

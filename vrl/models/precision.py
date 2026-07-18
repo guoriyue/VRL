@@ -1,29 +1,61 @@
-"""Project resolved forward precision onto PyTorch execution boundaries."""
+"""Project resolved role precision onto PyTorch execution boundaries."""
 
 from __future__ import annotations
 
 import contextlib
 from contextlib import AbstractContextManager
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-import torch
+from vrl.config.precision import Float32Precision, RolePrecision
 
-from vrl.models.interfaces.runtime import Float32Precision, ForwardPrecision
+if TYPE_CHECKING:
+    import torch
+
+
+def model_precision(model: Any) -> RolePrecision:
+    """Return the role precision stamped on a runtime or replay model."""
+
+    precision = getattr(model, "precision", None)
+    if not isinstance(precision, RolePrecision):
+        raise TypeError(
+            f"{type(model).__name__}.precision is missing or not a RolePrecision; "
+            "models receive it from RuntimeBundle assembly",
+        )
+    return precision
 
 
 def forward_autocast(
-    precision: ForwardPrecision,
+    dtype: str,
+    device: torch.device | str,
+    *,
+    enabled: bool = True,
+) -> AbstractContextManager[Any]:
+    """Return the outer transformer-autocast context for one role dtype."""
+
+    import torch
+
+    if not enabled or dtype == "fp32":
+        return contextlib.nullcontext()
+    if dtype not in ("fp16", "bf16"):
+        raise ValueError(f"unsupported autocast dtype: {dtype!r}")
+    device_type = torch.device(device).type
+    if device_type == "cpu" and dtype == "fp16":
+        return contextlib.nullcontext()
+    torch_dtype = torch.float16 if dtype == "fp16" else torch.bfloat16
+    return torch.amp.autocast(device_type=device_type, dtype=torch_dtype)
+
+
+def model_autocast(
+    model: Any,
     device: torch.device | str,
 ) -> AbstractContextManager[Any]:
-    """Return the transformer's resolved outer-autocast context."""
+    """Apply a model's role dtype and family-owned outer-autocast capability."""
 
-    if precision.autocast == "off":
-        return contextlib.nullcontext()
-    device_type = torch.device(device).type
-    if device_type == "cpu" and precision.autocast == "fp16":
-        return contextlib.nullcontext()
-    dtype = torch.float16 if precision.autocast == "fp16" else torch.bfloat16
-    return torch.amp.autocast(device_type=device_type, dtype=dtype)
+    return forward_autocast(
+        model_precision(model).dtype,
+        device,
+        enabled=bool(getattr(model, "outer_autocast_enabled", True)),
+    )
 
 
 def apply_float32_precision(mode: Float32Precision) -> None:
@@ -33,6 +65,8 @@ def apply_float32_precision(mode: Float32Precision) -> None:
     fallback keeps supported older releases on the legacy bool API without
     mixing both mechanisms in one process.
     """
+
+    import torch
 
     if mode not in ("ieee", "tf32"):
         raise ValueError(f"unsupported float32 precision mode: {mode!r}")
@@ -49,6 +83,8 @@ def apply_float32_precision(mode: Float32Precision) -> None:
 
 def float32_precision_state() -> dict[str, str]:
     """Return the effective PyTorch FP32 backend modes for diagnostics/gates."""
+
+    import torch
 
     matmul = torch.backends.cuda.matmul
     cudnn = torch.backends.cudnn
@@ -67,4 +103,6 @@ __all__ = [
     "apply_float32_precision",
     "float32_precision_state",
     "forward_autocast",
+    "model_autocast",
+    "model_precision",
 ]

@@ -6,9 +6,9 @@ import contextlib
 
 import torch
 
+from vrl.config.precision import RolePrecision
 from vrl.generation import GenerationRequest, GenerationSampleRow
 from vrl.models.interfaces import (
-    ForwardPrecision,
     ReplayRequest,
     ReplayResult,
     ReplaySegmentResult,
@@ -19,7 +19,7 @@ from vrl.rollouts.evaluators.ar.multi_segment_token_logprob import (
 )
 from vrl.trajectory import build_ar_multisegment_trajectory, build_training_view
 
-_FORWARD_PRECISION = ForwardPrecision(autocast="off", float32_precision="ieee")
+_PRECISION = RolePrecision(dtype="fp32", float32_precision="ieee")
 
 
 def _sample_rows() -> list[GenerationSampleRow]:
@@ -122,6 +122,9 @@ def _trajectory_batch(context: dict | None = None) -> RolloutBatch:
 
 
 class _SegmentReplayModel:
+    precision = _PRECISION
+    outer_autocast_enabled = False
+
     def __init__(self) -> None:
         self.calls: list[tuple[str, str]] = []
 
@@ -176,7 +179,7 @@ def test_evaluator_can_replay_text_segment_without_using_image_path() -> None:
         enabled_segments=("selfcheck_text",),
     )
 
-    signals = evaluator.evaluate(model, batch, forward_precision=_FORWARD_PRECISION)
+    signals = evaluator.evaluate(model, batch)
 
     assert model.calls == [("selfcheck_text", "text")]
     assert signals.segments["selfcheck_text"].log_prob.shape == (2, 2)
@@ -190,7 +193,7 @@ def test_evaluator_applies_rollout_temperature_to_all_segments() -> None:
         enabled_segments=("selfcheck_text", "final_image"),
     )
 
-    signals = evaluator.evaluate(model, batch, forward_precision=_FORWARD_PRECISION)
+    signals = evaluator.evaluate(model, batch)
 
     token_ids = torch.tensor([[7, 8], [8, 9]])
     logits = torch.zeros(2, 2, 20)
@@ -214,61 +217,10 @@ def test_evaluator_reads_r1_segments_from_canonical_trajectory_fields() -> None:
         enabled_segments=("selfcheck_text", "final_image"),
     )
 
-    signals = evaluator.evaluate(model, batch, forward_precision=_FORWARD_PRECISION)
+    signals = evaluator.evaluate(model, batch)
 
     assert model.calls == [("selfcheck_text", "text"), ("final_image", "image")]
     assert signals.primary_segment == "final_image"
     assert signals.primary.log_prob.shape == (2, 3)
     assert signals.segments["selfcheck_text"].log_prob.shape == (2, 2)
     assert signals.segments["final_image"].old_log_prob.shape == (2, 3)
-
-
-def test_multisegment_autocast_excludes_logprob_extraction(monkeypatch) -> None:
-    import vrl.rollouts.evaluators.ar.multi_segment_token_logprob as evaluator_module
-
-    batch = _trajectory_batch()
-    model = _SegmentReplayModel()
-    evaluator = MultiSegmentTokenLogProbEvaluator(
-        enabled_segments=("selfcheck_text", "final_image"),
-    )
-    active_forward_scope = 0
-
-    @contextlib.contextmanager
-    def track_forward_autocast(policy, device):
-        nonlocal active_forward_scope
-        assert policy is _FORWARD_PRECISION
-        assert torch.device(device).type == "cpu"
-        active_forward_scope += 1
-        try:
-            yield
-        finally:
-            active_forward_scope -= 1
-
-    original_replay_forward = model.replay_forward
-
-    def checked_replay_forward(replay_batch, timestep_idx=0, *, request=None):
-        assert active_forward_scope == 1
-        return original_replay_forward(
-            replay_batch,
-            timestep_idx,
-            request=request,
-        )
-
-    original_extract = evaluator._compute_segment_logprobs
-
-    def checked_extract(output, name, segment, temperature):
-        assert active_forward_scope == 0
-        return original_extract(output, name, segment, temperature)
-
-    monkeypatch.setattr(evaluator_module, "forward_autocast", track_forward_autocast)
-    monkeypatch.setattr(model, "replay_forward", checked_replay_forward)
-    monkeypatch.setattr(evaluator, "_compute_segment_logprobs", checked_extract)
-
-    signals = evaluator.evaluate(
-        model,
-        batch,
-        forward_precision=_FORWARD_PRECISION,
-    )
-
-    assert signals.primary_segment == "final_image"
-    assert active_forward_scope == 0

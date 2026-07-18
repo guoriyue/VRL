@@ -179,10 +179,12 @@ def test_diffusion_launch_contract_uses_resolved_config_parameter_dtype() -> Non
     assert isinstance(inputs, RayGenerationLaunchInputs)
     assert inputs.launch_contract.model_build["device"] == "cuda"
     assert inputs.launch_contract.model_build["parameter_dtype"] == "bfloat16"
-    assert inputs.launch_contract.model_build["forward_precision"] == {
-        "autocast": "bf16",
+    assert inputs.launch_contract.model_build["precision"] == {
+        "dtype": "bf16",
         "float32_precision": "tf32",
+        "quantization": None,
     }
+    assert inputs.launch_contract.model_build["outer_autocast"] is True
 
 
 def test_sana_launch_contract_carries_parameter_and_rollout_precision() -> None:
@@ -207,14 +209,14 @@ def test_sana_launch_contract_carries_parameter_and_rollout_precision() -> None:
 
     model_build = inputs.launch_contract.model_build
     assert model_build["parameter_dtype"] == "float16"
-    assert model_build["forward_precision"] == {
-        "autocast": "off",
+    assert model_build["precision"] == {
+        "dtype": "fp16",
         "float32_precision": "ieee",
+        "quantization": None,
     }
+    assert model_build["outer_autocast"] is False
     assert model_build["rollout"] == {
         "prompt_encoder_dtype": "bfloat16",
-        "quantization_format": None,
-        "quantization_recipe": None,
         "base_weight_sync": False,
     }
     assert pickle.loads(pickle.dumps(model_build)) == model_build
@@ -251,12 +253,14 @@ def test_sana_fp8_rollout_keeps_native_policy_and_bf16_prompt_encoder() -> None:
 
     model_build = inputs.launch_contract.model_build
     assert model_build["parameter_dtype"] == "float16"
-    assert model_build["forward_precision"] == {
-        "autocast": "off",
+    assert model_build["precision"] == {
+        "dtype": "fp16",
         "float32_precision": "ieee",
+        "quantization": {"format": "fp8", "recipe": "rowwise"},
     }
+    assert model_build["outer_autocast"] is False
     assert model_build["rollout"]["prompt_encoder_dtype"] == "bfloat16"
-    assert model_build["rollout"]["quantization_format"] == "fp8"
+    assert "quantization" not in model_build["rollout"]
 
 
 def test_generation_chunk_auto_reaches_ray_runtime_without_executor_coercion() -> None:

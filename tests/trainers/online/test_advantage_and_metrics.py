@@ -6,9 +6,9 @@ import pytest
 
 from tests.trainers.online._collector_control import CollectorControlFake
 from tests.trainers.online._helpers import (
-    DEFAULT_FORWARD_PRECISION,
+    DEFAULT_PRECISION,
     _algorithm_inputs,
-    _rollout_context,
+    _stamp_model_precision,
     _trajectory_signals,
 )
 from vrl.rollouts.evaluators.base import Evaluator
@@ -104,7 +104,7 @@ class TestAdvantageAndMetrics:
                         },
                     },
                     prompts=list(prompts) * group_size,
-                    context=_rollout_context(),
+                    context={},
                 )
 
         class _Evaluator(Evaluator):
@@ -118,10 +118,9 @@ class TestAdvantageAndMetrics:
                 timestep_idx,
                 ref_model=None,
                 signal_request=None,
-                *,
-                forward_precision,
             ):
-                assert forward_precision is DEFAULT_FORWARD_PRECISION
+                assert model.precision is DEFAULT_PRECISION
+                assert model.outer_autocast_enabled is False
                 batch_size = batch.rewards.shape[0]
                 self.calls += 1
                 old = torch.full(
@@ -133,6 +132,7 @@ class TestAdvantageAndMetrics:
                 return _trajectory_signals(batch, log_prob, timestep_idx)
 
         model = nn.Linear(1, 1, bias=False)
+        _stamp_model_precision(model)
         with torch.no_grad():
             model.weight.fill_(1.0)
 
@@ -155,7 +155,6 @@ class TestAdvantageAndMetrics:
                 n_samples_per_prompt=2,
             ),
             device="cpu",
-            forward_precision=DEFAULT_FORWARD_PRECISION,
         )
         return trainer
 
@@ -362,7 +361,7 @@ class TestAdvantageAndMetrics:
                     dones=torch.ones(batch_size, dtype=torch.bool),
                     group_ids=torch.zeros(batch_size, dtype=torch.long),
                     prompts=prompts * group_size,
-                    context=_rollout_context(),
+                    context={},
                     trajectory=trajectory,
                     training_view=build_training_view(trajectory),
                 )
@@ -374,6 +373,7 @@ class TestAdvantageAndMetrics:
 
         algorithm = _Algorithm()
         model = nn.Linear(1, 1, bias=False)
+        _stamp_model_precision(model)
         trainer = OnlineTrainer(
             algorithm=algorithm,
             collector=_Collector(),
@@ -391,7 +391,6 @@ class TestAdvantageAndMetrics:
                 drop_zero_advantage=True,
             ),
             device="cpu",
-            forward_precision=DEFAULT_FORWARD_PRECISION,
         )
 
         metrics = asyncio.run(trainer.step(["prompt-a"]))

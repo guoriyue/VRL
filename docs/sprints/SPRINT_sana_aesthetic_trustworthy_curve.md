@@ -385,10 +385,10 @@ quantized-backward/FSDP 方案并跑过至少一个 backward 后才解锁。
 - SANA family build descriptor 固定 FP16 base transformer；denoiser 使用
   native FP16/no-outer-autocast，Gemma 使用 BF16，VAE/CFG/timestep 与受保护
   scheduler/log-prob math 使用 FP32。
-- SANA registry requirement 将 public precision 解析为
-  `ForwardPrecision(autocast="off", float32_precision="ieee")`；trainer
-  与 rollout worker 消费同一 contract，显式写 FP32 backend policy，避免进程
-  默认值分叉。该 family requirement 不是 public knob。
+- SANA registry requirement 将每个 public role 解析为
+  `RolePrecision(dtype="fp16", float32_precision="ieee")`，并把 family-owned
+  `outer_autocast=False` 与它一起交给 trainer 和 rollout worker；两边显式写
+  FP32 backend policy，避免进程默认值分叉。该 family requirement 不是 public knob。
 - Low-precision trainables 自动派生 checkpointed FP32 master；AdamW8bit 只
   压缩 optimizer moments，GradScaler 保护 FP16 backward，成功 step 后把
   visible policy 发布回 FP16。SANA full-param pilot 保持 EMA disabled，因为

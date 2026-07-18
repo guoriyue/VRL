@@ -4,9 +4,8 @@ from __future__ import annotations
 
 from tests.trainers.online._collector_control import CollectorControlFake
 from tests.trainers.online._helpers import (
-    DEFAULT_FORWARD_PRECISION,
     _algorithm_inputs,
-    _rollout_context,
+    _stamp_model_precision,
     _trajectory_signals,
 )
 from vrl.rollouts.evaluators.base import Evaluator
@@ -75,7 +74,7 @@ class TestRewardUpdateFlow:
                     dones=torch.ones(group_size, dtype=torch.bool),
                     group_ids=torch.zeros(group_size, dtype=torch.long),
                     prompts=prompts * group_size,
-                    context=_rollout_context(),
+                    context={},
                 )
 
         class _Evaluator(Evaluator):
@@ -88,6 +87,7 @@ class TestRewardUpdateFlow:
         import torch.nn as nn
 
         model = nn.Linear(1, 1, bias=False)
+        _stamp_model_precision(model)
         with torch.no_grad():
             model.weight.fill_(1.0)
 
@@ -108,7 +108,6 @@ class TestRewardUpdateFlow:
                 n_samples_per_prompt=2,
             ),
             device="cpu",
-            forward_precision=DEFAULT_FORWARD_PRECISION,
         )
 
         example = PromptExample(
@@ -195,7 +194,7 @@ class TestRewardUpdateFlow:
                     dones=torch.ones(batch_size, dtype=torch.bool),
                     group_ids=group_ids,
                     prompts=[p for p in prompts for _ in range(group_size)],
-                    context=_rollout_context(),
+                    context={},
                 )
 
         class _Evaluator(Evaluator):
@@ -210,6 +209,7 @@ class TestRewardUpdateFlow:
                 )
 
         model = nn.Linear(1, 1, bias=False)
+        _stamp_model_precision(model)
         with torch.no_grad():
             model.weight.fill_(1.0)
 
@@ -231,7 +231,6 @@ class TestRewardUpdateFlow:
                 replay_samples_per_chunk=0,
             ),
             device="cpu",
-            forward_precision=DEFAULT_FORWARD_PRECISION,
         )
 
         asyncio.run(trainer.step(["prompt-a", "prompt-b"]))
@@ -302,7 +301,7 @@ class TestRewardUpdateFlow:
                     dones=torch.ones(batch_size, dtype=torch.bool),
                     group_ids=group_ids,
                     prompts=[p for p in prompts for _ in range(group_size)],
-                    context=_rollout_context(),
+                    context={},
                 )
 
         class _Evaluator(Evaluator):
@@ -313,6 +312,7 @@ class TestRewardUpdateFlow:
                 )
 
         model = nn.Linear(1, 1, bias=False)
+        _stamp_model_precision(model)
         with torch.no_grad():
             model.weight.fill_(1.0)
 
@@ -334,7 +334,6 @@ class TestRewardUpdateFlow:
                 gradient_accumulation_steps=4,
             ),
             device="cpu",
-            forward_precision=DEFAULT_FORWARD_PRECISION,
         )
 
         asyncio.run(
@@ -487,7 +486,7 @@ class TestRewardUpdateFlow:
                     dones=torch.ones(batch_size, dtype=torch.bool),
                     group_ids=group_ids,
                     prompts=[p for p in prompts for _ in range(group_size)],
-                    context=_rollout_context(),
+                    context={},
                 )
 
         class _Evaluator(Evaluator):
@@ -498,6 +497,7 @@ class TestRewardUpdateFlow:
                 )
 
         model = nn.Linear(1, 1, bias=False)
+        _stamp_model_precision(model)
         with torch.no_grad():
             model.weight.fill_(1.0)
 
@@ -519,7 +519,6 @@ class TestRewardUpdateFlow:
                 gradient_accumulation_steps=4,
             ),
             device="cpu",
-            forward_precision=DEFAULT_FORWARD_PRECISION,
         )
 
         original_step = trainer._clip_and_step
@@ -598,7 +597,7 @@ class TestRewardUpdateFlow:
                     dones=torch.ones(batch_size, dtype=torch.bool),
                     group_ids=group_ids,
                     prompts=[p for p in prompts for _ in range(group_size)],
-                    context=_rollout_context(),
+                    context={},
                 )
 
         class _Evaluator(Evaluator):
@@ -610,6 +609,7 @@ class TestRewardUpdateFlow:
 
         def _make_trainer(gas: int) -> OnlineTrainer:
             model = nn.Linear(1, 1, bias=False)
+            _stamp_model_precision(model)
             with torch.no_grad():
                 model.weight.fill_(1.0)
             return OnlineTrainer(
@@ -630,7 +630,6 @@ class TestRewardUpdateFlow:
                     gradient_accumulation_steps=gas,
                 ),
                 device="cpu",
-                forward_precision=DEFAULT_FORWARD_PRECISION,
             )
 
         prompts = ["p0", "p1", "p2", "p3"]
@@ -719,7 +718,7 @@ def test_replay_samples_per_chunk_splits_backward_and_preserves_gradient(monkeyp
                 dones=torch.ones(batch_size, dtype=torch.bool),
                 group_ids=torch.zeros(batch_size, dtype=torch.long),
                 prompts=[p for p in prompts for _ in range(group_size)],
-                context=_rollout_context(),
+                context={},
             )
 
     class _Evaluator(Evaluator):
@@ -739,6 +738,7 @@ def test_replay_samples_per_chunk_splits_backward_and_preserves_gradient(monkeyp
     ) -> tuple[OnlineTrainer, list[int]]:
         replay_calls: list[int] = []
         model = nn.Linear(1, 1, bias=False)
+        _stamp_model_precision(model)
         with torch.no_grad():
             model.weight.fill_(1.0)
         trainer = OnlineTrainer(
@@ -760,7 +760,6 @@ def test_replay_samples_per_chunk_splits_backward_and_preserves_gradient(monkeyp
                 replay_samples_per_chunk=replay_samples_per_chunk,
             ),
             device="cpu",
-            forward_precision=DEFAULT_FORWARD_PRECISION,
         )
         return trainer, replay_calls
 
@@ -959,11 +958,13 @@ def test_fixed_replay_chunk_remains_available_to_distributed_strategies() -> Non
             context=SimpleNamespace(strategy=strategy_name),
             prepare_model=lambda model: model,
         )
+        model = nn.Linear(1, 1)
+        _stamp_model_precision(model)
         trainer = OnlineTrainer(
             algorithm=_Algorithm(),
             collector=CollectorControlFake(),
             evaluator=None,
-            model=nn.Linear(1, 1),
+            model=model,
             config=TrainerConfig(
                 optim=OptimConfig(lr=1e-4),
                 n_samples_per_prompt=2,
@@ -976,7 +977,6 @@ def test_fixed_replay_chunk_remains_available_to_distributed_strategies() -> Non
             ),
             strategy=strategy,  # type: ignore[arg-type]
             device="cpu",
-            forward_precision=DEFAULT_FORWARD_PRECISION,
         )
         assert trainer.config.replay_samples_per_chunk == 1
 

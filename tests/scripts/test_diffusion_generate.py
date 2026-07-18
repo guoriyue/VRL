@@ -38,10 +38,12 @@ def test_probe_model_build_uses_family_parameter_and_public_precision_policy() -
 
     assert build.parameter_dtype is torch.float16
     rollout = build.require_rollout()
-    assert build.forward_precision.autocast == "off"
-    assert build.forward_precision.float32_precision == "ieee"
+    assert build.precision.dtype == "fp16"
+    assert build.precision.float32_precision == "ieee"
+    assert build.precision.quantization is None
+    assert build.outer_autocast is False
     assert rollout.prompt_encoder_dtype is torch.float16
-    assert rollout.quantization_format is None
+    assert not hasattr(rollout, "quantization")
     assert rollout.base_weight_sync is False
 
 
@@ -69,7 +71,7 @@ def test_probe_model_build_rejects_family_incompatible_float32_precision() -> No
 
 
 @pytest.mark.parametrize("quantization_format", ["fp8", "nvfp4"])
-def test_probe_model_build_derives_quantization_from_autocast_precision(
+def test_probe_model_build_derives_quantization_from_role_precision(
     quantization_format: str,
 ) -> None:
     args = generate._build_arg_parser().parse_args(
@@ -93,8 +95,11 @@ def test_probe_model_build_derives_quantization_from_autocast_precision(
 
     assert build.parameter_dtype is torch.float16
     rollout = build.require_rollout()
-    assert build.forward_precision.autocast == "off"
-    assert build.forward_precision.float32_precision == "ieee"
+    assert build.precision.dtype == "fp16"
+    assert build.precision.float32_precision == "ieee"
+    assert build.precision.quantization is not None
+    assert build.precision.quantization.format == quantization_format
+    assert build.outer_autocast is False
     assert rollout.prompt_encoder_dtype is torch.float16
-    assert rollout.quantization_format == quantization_format
+    assert not hasattr(rollout, "quantization")
     assert rollout.base_weight_sync is False

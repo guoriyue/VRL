@@ -15,13 +15,13 @@ from __future__ import annotations
 from typing import Any
 
 from vrl.models.dtypes import dtype_to_wire_name
-from vrl.models.forward_precision import apply_float32_precision
 from vrl.models.interfaces.runtime import (
     ModelBuild,
     RuntimeBundle,
     full_generation_bundle_metadata,
     minimal_replay_bundle_metadata,
 )
+from vrl.models.precision import apply_float32_precision
 
 
 def ar_model_config_base(
@@ -82,21 +82,18 @@ def build_family_ar_bundle(
         build.require_replay()
     else:
         build.require_rollout()
-        from vrl.models.loader import (
-            apply_rollout_quantization,
-            validate_rollout_quantization_support,
-        )
+        from vrl.models.loader import apply_rollout_quantization
 
-        validate_rollout_quantization_support(build)
         apply_rollout_quantization(model, build)
 
-    apply_float32_precision(build.forward_precision.float32_precision)
+    apply_float32_precision(build.precision.float32_precision)
     return RuntimeBundle(
         model=model,
         trainable_modules={"model": model},
         scheduler=None,
         raw_handle=None if replay else model,
-        forward_precision=build.forward_precision,
+        precision=build.precision,
+        outer_autocast=build.outer_autocast,
         metadata=(
             minimal_replay_bundle_metadata() if replay else full_generation_bundle_metadata()
         ),

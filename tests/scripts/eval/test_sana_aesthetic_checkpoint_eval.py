@@ -10,14 +10,11 @@ from omegaconf import OmegaConf
 from PIL import Image
 
 from vrl.config.loading import load_config
-from vrl.models.interfaces.runtime import ForwardPrecision
+from vrl.config.precision import RolePrecision
 from vrl.scripts.eval import sana_aesthetic_checkpoint_eval as checkpoint_eval
 from vrl.scripts.eval import sana_inference
 
-SANA_FORWARD_PRECISION = ForwardPrecision(
-    autocast="off",
-    float32_precision="ieee",
-)
+SANA_PRECISION = RolePrecision(dtype="fp16", float32_precision="ieee")
 
 
 def _write_run(tmp_path: Path, *, empty_manifest: bool = False) -> Path:
@@ -588,10 +585,13 @@ def test_official_generation_keeps_two_images_in_one_fixed_seed_stream() -> None
                 images=[Image.new("RGB", (8, 8), color=index) for index in range(2)],
             )
 
-    model = SimpleNamespace(pipeline=FakePipeline())
+    model = SimpleNamespace(
+        pipeline=FakePipeline(),
+        precision=SANA_PRECISION,
+        outer_autocast_enabled=False,
+    )
     decoded = sana_inference.generate_prompt_images(
         model,
-        forward_precision=SANA_FORWARD_PRECISION,
         scheduler=DPMSolverMultistepScheduler(),
         prompt="fox",
         seed=checkpoint_eval._group_seed(0),
@@ -618,8 +618,11 @@ def test_official_generation_rejects_sampling_drift() -> None:
 
     with pytest.raises(ValueError, match="changed from the official protocol"):
         sana_inference.generate_prompt_images(
-            SimpleNamespace(pipeline=SimpleNamespace()),
-            forward_precision=SANA_FORWARD_PRECISION,
+            SimpleNamespace(
+                pipeline=SimpleNamespace(),
+                precision=SANA_PRECISION,
+                outer_autocast_enabled=False,
+            ),
             scheduler=DPMSolverMultistepScheduler(),
             prompt="fox",
             seed=0,
@@ -640,12 +643,18 @@ def test_generation_uses_fresh_base_before_reading_fullparam_checkpoints(
 
     class FakeModel:
         state = "base"
+        precision = SANA_PRECISION
+        outer_autocast_enabled = False
 
         def eval(self):
             return self
 
     model = FakeModel()
-    bundle = SimpleNamespace(model=model, forward_precision=SANA_FORWARD_PRECISION)
+    bundle = SimpleNamespace(
+        model=model,
+        precision=SANA_PRECISION,
+        outer_autocast=False,
+    )
     entry = SimpleNamespace(
         resolve_model_build=lambda *args, **kwargs: object(),
         build_rollout=lambda build: bundle,
@@ -692,7 +701,7 @@ def test_generation_uses_fresh_base_before_reading_fullparam_checkpoints(
     monkeypatch.setattr(
         checkpoint_eval,
         "validate_model_precision",
-        lambda value, forward_precision: {},
+        lambda value: {},
     )
     monkeypatch.setattr(media, "write_png", fake_write_png)
     first_checkpoint = tmp_path / "checkpoint-25"

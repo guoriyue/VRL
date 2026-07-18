@@ -28,12 +28,11 @@ import torch
 
 from vrl.config.loading import load_config
 from vrl.config.precision import resolve_precision_policy
-from vrl.models.interfaces.runtime import ForwardPrecision
+from vrl.models.diffusion.sana.model import validate_model_precision
 from vrl.scripts.eval.sana_inference import (
     SCHEDULER_PROTOCOL,
     generate_prompt_images,
     load_official_scheduler,
-    validate_model_precision,
     validate_scheduler,
 )
 from vrl.trainers.checkpointing import (
@@ -142,7 +141,7 @@ def run_comparison(args: argparse.Namespace) -> dict[str, str]:
     build = resolve_family_model_build(cfg, device, for_rollout=True)
     bundle = build_family_runtime_bundle(build)
     model = bundle.model.eval()
-    dtype_record = _validate_model_precision(model, bundle.forward_precision)
+    dtype_record = _validate_model_precision(model)
 
     output_dir.mkdir(parents=True)
     base_path = output_dir / "base.png"
@@ -153,7 +152,6 @@ def run_comparison(args: argparse.Namespace) -> dict[str, str]:
     base_scheduler = _load_official_scheduler(build)
     base_image = _generate_one(
         model,
-        forward_precision=bundle.forward_precision,
         scheduler=base_scheduler,
         prompt=args.prompt,
         seed=args.seed,
@@ -181,7 +179,6 @@ def run_comparison(args: argparse.Namespace) -> dict[str, str]:
         raise RuntimeError("official scheduler loader reused an instance across comparison images")
     current_image = _generate_one(
         model,
-        forward_precision=bundle.forward_precision,
         scheduler=current_scheduler,
         prompt=args.prompt,
         seed=args.seed,
@@ -313,7 +310,6 @@ def _validate_checkpoint(checkpoint: Any) -> None:
 def _generate_one(
     model: Any,
     *,
-    forward_precision: ForwardPrecision,
     scheduler: Any,
     prompt: str,
     seed: int,
@@ -325,7 +321,6 @@ def _generate_one(
 ) -> Any:
     images = _generate_prompt_group(
         model,
-        forward_precision=forward_precision,
         scheduler=scheduler,
         prompt=prompt,
         seed=seed,

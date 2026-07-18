@@ -16,9 +16,8 @@ import torch.nn as nn
 
 from tests.trainers.online._collector_control import CollectorControlFake
 from tests.trainers.online._helpers import (
-    DEFAULT_FORWARD_PRECISION,
     _algorithm_inputs,
-    _rollout_context,
+    _stamp_model_precision,
     _trajectory_signals,
 )
 from vrl.algorithms.types import TrainStepMetrics
@@ -60,7 +59,7 @@ class _Collector(CollectorControlFake):
             rewards=torch.arange(group_size, dtype=torch.float32),
             dones=torch.ones(group_size, dtype=torch.bool),
             group_ids=torch.zeros(group_size, dtype=torch.long),
-            context=_rollout_context(),
+            context={},
             prompts=list(prompts) * group_size,
         )
 
@@ -77,6 +76,7 @@ class _Evaluator(Evaluator):
 
 def _build_trainer(tmp_path) -> OnlineTrainer:
     model = nn.Linear(1, 1, bias=False)
+    _stamp_model_precision(model)
     with torch.no_grad():
         model.weight.fill_(1.0)
     return OnlineTrainer(
@@ -95,7 +95,6 @@ def _build_trainer(tmp_path) -> OnlineTrainer:
             train_precision="no",
             output_dir=str(tmp_path),
         ),
-        forward_precision=DEFAULT_FORWARD_PRECISION,
         device="cpu",
     )
 

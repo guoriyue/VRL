@@ -401,3 +401,20 @@ def record_forward_calls(module: torch.nn.Module) -> list[dict[str, Any]]:
         with_kwargs=True,
     )
     return calls
+
+
+def stamp_test_contract(model: Any, *, autocast: str = "off") -> Any:
+    """Stamp the role precision a RuntimeBundle would have stamped.
+
+    Tests constructing family models directly (no bundle) mirror production
+    reality with an explicit stamp; ``off`` keeps pre-hook test numerics.
+    """
+
+    from vrl.config.precision import RolePrecision
+
+    model.precision = RolePrecision(
+        dtype="fp32" if autocast == "off" else autocast,
+        float32_precision="ieee",
+    )
+    model.outer_autocast_enabled = autocast != "off"
+    return model

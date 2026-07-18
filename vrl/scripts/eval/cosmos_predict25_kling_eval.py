@@ -21,8 +21,6 @@ from vrl.families.registry import get_model_family_entry
 from vrl.generation.diffusion.layout import VideoGenerationRequest
 from vrl.math.diffusion.flow_matching import sde_step_with_logprob
 from vrl.models.dtypes import resolve_torch_dtype
-from vrl.models.forward_precision import forward_autocast
-from vrl.models.interfaces import ForwardPrecision
 from vrl.rewards.inference import RewardInferenceArtifact, RewardInferenceRequest
 from vrl.rewards.models.kling_video_reward import KlingVideoRewardModel
 from vrl.trainers.checkpointing import load_trainable_state, load_training_checkpoint
@@ -330,7 +328,6 @@ def _generate_all(
                         base_seed=base_seed,
                         output_dir=output_dir,
                         sampling=sampling,
-                        forward_precision=bundle.forward_precision,
                     ),
                 )
             finally:
@@ -360,7 +357,6 @@ def _generate_checkpoint_videos(
     base_seed: int,
     output_dir: Path,
     sampling: dict[str, Any],
-    forward_precision: ForwardPrecision,
 ) -> list[GeneratedVideo]:
     videos: list[GeneratedVideo] = []
     video_dir = output_dir / "videos" / target.label
@@ -385,7 +381,6 @@ def _generate_checkpoint_videos(
                 prompt=prompt,
                 seed=seed,
                 sampling=sampling,
-                forward_precision=forward_precision,
             )
             path = video_dir / f"prompt{prompt_index:04d}_sample{sample_index:02d}.mp4"
             write_mp4(tensor, path, fps=float(sampling["fps"]))
@@ -420,7 +415,6 @@ def _generate_one_video(
     prompt: str,
     seed: int,
     sampling: dict[str, Any],
-    forward_precision: ForwardPrecision,
 ) -> torch.Tensor:
     encoded = model.encode_prompt(
         prompt,
@@ -444,8 +438,7 @@ def _generate_one_video(
     generator.manual_seed(int(seed))
     with torch.no_grad():
         for step_idx, timestep in enumerate(state.timesteps):
-            with forward_autocast(forward_precision, state.latents.device):
-                step_output = model.forward_step(state, step_idx)
+            step_output = model.forward_step(state, step_idx)
             if str(sampling["denoise_mode"]) == "native":
                 state.latents = state.scheduler.step(
                     step_output["noise_pred"].float(),

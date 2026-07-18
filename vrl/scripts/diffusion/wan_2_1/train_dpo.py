@@ -281,7 +281,6 @@ def train_wan_2_1_dpo(cfg: DictConfig) -> None:
         noise_scheduler=pipeline.scheduler,
         encode_pixels=encode_pixels,
         encode_text=encode_text,
-        forward_precision=bundle.forward_precision,
         config=trainer_cfg,
         device=device,
     )

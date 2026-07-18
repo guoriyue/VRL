@@ -105,7 +105,13 @@ def test_precision_guard_preserves_quantization_as_role_execution_label(
 
     assert captured["training_precision"] == "bf16"
     assert captured["rollout_precision"] == "bf16+nvfp4"
-    assert captured["training_forward_precision"] == captured["rollout_forward_precision"]
+    assert set(captured) == {
+        "training_precision",
+        "rollout_precision",
+        "math_precision",
+        "timestep_indices",
+        "evaluate_fn",
+    }
     assert "PASSED" in capsys.readouterr().out
 
 

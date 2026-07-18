@@ -7,8 +7,9 @@ from collections.abc import Iterator
 
 import torch
 
+from vrl.config.precision import RolePrecision
 from vrl.generation import GenerationRequest, GenerationSampleRow
-from vrl.models.interfaces import ForwardPrecision, ReplayResult, ReplaySegmentResult
+from vrl.models.interfaces import ReplayResult, ReplaySegmentResult
 from vrl.rollouts.batch import RolloutBatch
 from vrl.rollouts.evaluators.ar.continuous_token_logprob import (
     ContinuousTokenLogProbEvaluator,
@@ -21,7 +22,7 @@ from vrl.trajectory import (
     build_training_view,
 )
 
-_FORWARD_PRECISION = ForwardPrecision(autocast="off", float32_precision="ieee")
+_PRECISION = RolePrecision(dtype="fp32", float32_precision="ieee")
 
 
 def _request() -> GenerationRequest:
@@ -104,6 +105,9 @@ def _continuous_batch() -> RolloutBatch:
 
 
 class _DiscreteReplayModel:
+    precision = _PRECISION
+    outer_autocast_enabled = False
+
     def __init__(self) -> None:
         self.disable_calls = 0
         self._disabled = False
@@ -136,6 +140,9 @@ class _DiscreteReplayModel:
 
 
 class _ContinuousReplayModel:
+    precision = _PRECISION
+    outer_autocast_enabled = False
+
     def __init__(self) -> None:
         self.disable_calls = 0
         self._disabled = False
@@ -173,7 +180,6 @@ def test_token_logprob_evaluator_applies_rollout_temperature() -> None:
     signals = TokenLogProbEvaluator().evaluate(
         model,
         batch,
-        forward_precision=_FORWARD_PRECISION,
     )
 
     logits = torch.zeros(2, 2, 8)
@@ -189,50 +195,6 @@ def test_token_logprob_evaluator_applies_rollout_temperature() -> None:
     assert torch.allclose(signals.primary.log_prob, expected, atol=1e-6)
 
 
-def test_token_autocast_excludes_logprob_gather(monkeypatch) -> None:
-    import vrl.rollouts.evaluators.ar.token_logprob as evaluator_module
-
-    batch = _discrete_batch()
-    model = _DiscreteReplayModel()
-    active_forward_scope = 0
-
-    @contextlib.contextmanager
-    def track_forward_autocast(policy, device):
-        nonlocal active_forward_scope
-        assert policy is _FORWARD_PRECISION
-        assert torch.device(device).type == "cpu"
-        active_forward_scope += 1
-        try:
-            yield
-        finally:
-            active_forward_scope -= 1
-
-    original_replay_forward = model.replay_forward
-
-    def checked_replay_forward(replay_batch, timestep_idx=0, **kwargs):
-        assert active_forward_scope == 1
-        return original_replay_forward(replay_batch, timestep_idx, **kwargs)
-
-    original_gather = evaluator_module.gather_categorical_log_probs
-
-    def checked_gather(logits, action_ids, *, temperature):
-        assert active_forward_scope == 0
-        return original_gather(logits, action_ids, temperature=temperature)
-
-    monkeypatch.setattr(evaluator_module, "forward_autocast", track_forward_autocast)
-    monkeypatch.setattr(model, "replay_forward", checked_replay_forward)
-    monkeypatch.setattr(evaluator_module, "gather_categorical_log_probs", checked_gather)
-
-    signals = TokenLogProbEvaluator().evaluate(
-        model,
-        batch,
-        forward_precision=_FORWARD_PRECISION,
-    )
-
-    assert signals.primary.log_prob.shape == batch.actions.shape
-    assert active_forward_scope == 0
-
-
 def test_token_logprob_evaluator_uses_replay_model_disable_adapter() -> None:
     """Checks token logprob evaluator uses replay model disable adapter."""
     batch = _discrete_batch()
@@ -242,7 +204,6 @@ def test_token_logprob_evaluator_uses_replay_model_disable_adapter() -> None:
         model,
         batch,
         signal_request=SignalRequest(need_ref=True),
-        forward_precision=_FORWARD_PRECISION,
     )
 
     assert model.disable_calls == 1
@@ -259,7 +220,6 @@ def test_continuous_logprob_evaluator_uses_replay_model_disable_adapter() -> Non
         model,
         batch,
         signal_request=SignalRequest(need_ref=True),
-        forward_precision=_FORWARD_PRECISION,
     )
 
     assert model.disable_calls == 1

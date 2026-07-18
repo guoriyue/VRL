@@ -21,10 +21,14 @@ def test_gather_categorical_log_probs_matches_full_log_softmax() -> None:
     )
 
     actual = gather_categorical_log_probs(logits, token_ids, chunk_size=3)
-    expected = F.log_softmax(logits.float(), dim=-1).gather(
-        -1,
-        token_ids.unsqueeze(-1),
-    ).squeeze(-1)
+    expected = (
+        F.log_softmax(logits.float(), dim=-1)
+        .gather(
+            -1,
+            token_ids.unsqueeze(-1),
+        )
+        .squeeze(-1)
+    )
 
     assert torch.allclose(actual, expected)
 
@@ -35,10 +39,14 @@ def test_gather_categorical_log_probs_applies_temperature() -> None:
     token_ids = torch.randint(0, 11, (2, 5))
 
     actual = gather_categorical_log_probs(logits, token_ids, temperature=0.7)
-    expected = F.log_softmax(logits.float() / 0.7, dim=-1).gather(
-        -1,
-        token_ids.unsqueeze(-1),
-    ).squeeze(-1)
+    expected = (
+        F.log_softmax(logits.float() / 0.7, dim=-1)
+        .gather(
+            -1,
+            token_ids.unsqueeze(-1),
+        )
+        .squeeze(-1)
+    )
 
     assert torch.allclose(actual, expected, atol=1e-5)
 

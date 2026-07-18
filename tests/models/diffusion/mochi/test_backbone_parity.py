@@ -18,6 +18,7 @@ from tests.models.diffusion.fixtures import (
     TINY_MOCHI_TEXT_DIM,
     build_tiny_mochi_transformer,
     record_forward_calls,
+    stamp_test_contract,
 )
 from vrl.models.diffusion.mochi.model import (
     MochiModel,
@@ -31,10 +32,11 @@ _NUM_TRAIN_TIMESTEPS = 1000
 
 
 def _model(transformer: torch.nn.Module) -> MochiModel:
-    return MochiModel(
+    model = MochiModel(
         pipeline=SimpleNamespace(transformer=transformer, device=torch.device("cpu")),
         device=torch.device("cpu"),
     )
+    return stamp_test_contract(model)
 
 
 def _state(*, do_cfg: bool) -> MochiSamplingState:

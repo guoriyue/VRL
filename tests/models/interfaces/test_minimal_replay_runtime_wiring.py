@@ -8,8 +8,8 @@ import pytest
 import torch
 import torch.nn as nn
 
+from vrl.config.precision import QuantizationPolicy, RolePrecision
 from vrl.models.interfaces.runtime import (
-    ForwardPrecision,
     ModelBuild,
     RolloutBuildOptions,
     bundle_loads_full_generation_modules,
@@ -18,20 +18,20 @@ from vrl.models.interfaces.runtime import (
 )
 
 
-def test_forward_precision_rejects_quantized_outer_autocast() -> None:
+def test_role_precision_rejects_quantized_base_dtype() -> None:
     """Quantization formats are selective GEMM policies, not autocast dtypes."""
 
-    with pytest.raises(ValueError, match="forward autocast must be one of"):
-        ForwardPrecision(
-            autocast="fp8",  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="precision role dtype must be one of"):
+        RolePrecision(
+            dtype="fp8",
             float32_precision="tf32",
         )
 
 
-def test_forward_precision_rejects_unknown_float32_backend() -> None:
-    with pytest.raises(ValueError, match="forward float32_precision must be one of"):
-        ForwardPrecision(
-            autocast="off",
+def test_role_precision_rejects_unknown_float32_backend() -> None:
+    with pytest.raises(ValueError, match=r"precision\.float32_precision must be one of"):
+        RolePrecision(
+            dtype="fp32",
             float32_precision="fast",  # type: ignore[arg-type]
         )
 
@@ -44,7 +44,8 @@ def test_model_build_rejects_subbyte_parameter_storage(dtype: str) -> None:
             device="cpu",
             parameter_dtype=dtype,
             family="sd3_5",
-            forward_precision=ForwardPrecision("off", "ieee"),
+            precision=RolePrecision("fp32", "ieee"),
+            outer_autocast=False,
         )
 
 
@@ -52,44 +53,31 @@ def test_model_build_rejects_subbyte_parameter_storage(dtype: str) -> None:
     ("quantization_format", "message"),
     [("fp4", "replaced.*nvfp4"), ("int8", "quantization.format")],
 )
-def test_rollout_build_options_rejects_unknown_or_ambiguous_quantization(
+def test_quantization_policy_rejects_unknown_or_ambiguous_format(
     quantization_format: str,
     message: str,
 ) -> None:
     with pytest.raises(ValueError, match=message):
-        RolloutBuildOptions(
-            prompt_encoder_dtype="fp16",
-            quantization_format=quantization_format,
-        )
+        QuantizationPolicy(format=quantization_format)
 
 
-def test_rollout_build_options_normalizes_fp8_default_recipe() -> None:
-    options = RolloutBuildOptions(
-        prompt_encoder_dtype="bf16",
-        quantization_format="FP8",
-    )
+def test_quantization_policy_normalizes_fp8_default_recipe() -> None:
+    quantization = QuantizationPolicy(format="FP8")
 
-    assert options.quantization_format == "fp8"
-    assert options.quantization_recipe == "rowwise"
+    assert quantization.format == "fp8"
+    assert quantization.recipe == "rowwise"
 
 
-def test_rollout_build_options_accepts_nvfp4_without_recipe() -> None:
-    options = RolloutBuildOptions(
-        prompt_encoder_dtype="bf16",
-        quantization_format="NVFP4",
-    )
+def test_quantization_policy_accepts_nvfp4_without_recipe() -> None:
+    quantization = QuantizationPolicy(format="NVFP4")
 
-    assert options.quantization_format == "nvfp4"
-    assert options.quantization_recipe is None
+    assert quantization.format == "nvfp4"
+    assert quantization.recipe is None
 
 
-def test_rollout_build_options_rejects_nvfp4_recipe() -> None:
+def test_quantization_policy_rejects_nvfp4_recipe() -> None:
     with pytest.raises(ValueError, match=r"nvfp4.*does not accept.*recipe"):
-        RolloutBuildOptions(
-            prompt_encoder_dtype="bf16",
-            quantization_format="nvfp4",
-            quantization_recipe="rowwise",
-        )
+        QuantizationPolicy(format="nvfp4", recipe="rowwise")
 
 
 def test_model_build_reconstructs_nested_rollout_payload() -> None:
@@ -100,23 +88,29 @@ def test_model_build_reconstructs_nested_rollout_payload() -> None:
         device="cpu",
         parameter_dtype="fp16",
         family="sd3_5",
-        forward_precision={
-            "autocast": "bf16",
+        precision={
+            "dtype": "bf16",
             "float32_precision": "tf32",
+            "quantization": {"format": "fp8", "recipe": "rowwise"},
         },
+        outer_autocast=True,
         rollout={
             "prompt_encoder_dtype": "fp32",
-            "quantization_format": "fp8",
-            "quantization_recipe": "rowwise",
             "base_weight_sync": False,
         },
     )
 
     assert build.parameter_dtype is torch.float16
-    assert build.forward_precision == ForwardPrecision("bf16", "tf32")
+    assert build.precision == RolePrecision(
+        "bf16",
+        "tf32",
+        QuantizationPolicy(format="fp8", recipe="rowwise"),
+    )
+    assert build.outer_autocast is True
     assert isinstance(build.rollout, RolloutBuildOptions)
     assert build.rollout.prompt_encoder_dtype is torch.float32
-    assert build.rollout.quantization_format == "fp8"
+    assert build.precision.quantization is not None
+    assert build.precision.quantization.format == "fp8"
     assert build.rollout.base_weight_sync is False
 
 
@@ -148,10 +142,49 @@ def test_model_build_resolver_projects_nvfp4_over_the_rollout_base_dtype() -> No
     rollout = build.require_rollout()
 
     assert build.parameter_dtype is torch.bfloat16
-    assert build.forward_precision == ForwardPrecision("bf16", "tf32")
+    assert build.precision == RolePrecision(
+        "bf16",
+        "tf32",
+        QuantizationPolicy(format="nvfp4"),
+    )
+    assert build.outer_autocast is True
     assert rollout.prompt_encoder_dtype is torch.float16
-    assert rollout.quantization_format == "nvfp4"
-    assert rollout.quantization_recipe is None
+    assert build.precision.quantization is not None
+    assert build.precision.quantization.format == "nvfp4"
+    assert build.precision.quantization.recipe is None
+
+
+def test_full_generation_build_with_training_role_excludes_rollout_quantization() -> None:
+    """Offline DPO may load generation modules without adopting rollout kernels."""
+
+    from omegaconf import OmegaConf
+
+    from vrl.families.registry import get_model_family_entry
+
+    cfg = OmegaConf.create(
+        {
+            "model": {"path": "fake/repo"},
+            "precision": {
+                "float32_precision": "tf32",
+                "training": {"dtype": "bf16"},
+                "rollout": {
+                    "dtype": "bf16",
+                    "quantization": {"format": "fp8"},
+                },
+            },
+        },
+    )
+
+    build = get_model_family_entry("wan_2_1").resolve_model_build(
+        cfg,
+        "cpu",
+        for_rollout=True,
+        precision_role="training",
+    )
+
+    assert isinstance(build.require_rollout(), RolloutBuildOptions)
+    assert build.precision == RolePrecision("bf16", "tf32")
+    assert build.precision.quantization is None
 
 
 class _TinyTransformer(nn.Module):
@@ -216,7 +249,8 @@ def _build(**overrides: Any) -> ModelBuild:
         "device": "cpu",
         "parameter_dtype": torch.float32,
         "family": "sd3_5",
-        "forward_precision": ForwardPrecision("off", "tf32"),
+        "precision": RolePrecision("fp32", "tf32"),
+        "outer_autocast": False,
         "model_config": model_config,
         "sampling_config": dict(scheduler_config),
     }

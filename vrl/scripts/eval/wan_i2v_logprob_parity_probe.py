@@ -38,7 +38,6 @@ from pathlib import Path
 import torch
 
 from vrl.math.diffusion.flow_matching import sde_step_with_logprob
-from vrl.models.forward_precision import forward_autocast
 
 
 def main() -> None:
@@ -131,8 +130,7 @@ def main() -> None:
         for step_idx in range(len(state.timesteps)):
             latents_ori = state.latents.clone()
             timestep = state.timesteps[step_idx]
-            with forward_autocast(bundle.forward_precision, state.latents.device):
-                noise_pred = model.forward_step(state, step_idx)["noise_pred"]
+            noise_pred = model.forward_step(state, step_idx)["noise_pred"]
             prev_latents = state.scheduler.step(
                 noise_pred,
                 timestep,
@@ -188,8 +186,7 @@ def main() -> None:
                 obs[step_idx].to(device),
                 step_idx,
             )
-            with forward_autocast(bundle.forward_precision, eval_state.latents.device):
-                fresh_noise_pred = model.forward(eval_state, 0)["noise_pred"]
+            fresh_noise_pred = model.forward(eval_state, 0)["noise_pred"]
             fresh = sde_step_with_logprob(
                 state.scheduler,
                 fresh_noise_pred.float(),

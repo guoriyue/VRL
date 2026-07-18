@@ -2,20 +2,26 @@
 
 from __future__ import annotations
 
-from dataclasses import asdict
+from typing import Any
 
-from vrl.models.interfaces import ForwardPrecision
+from vrl.config.precision import RolePrecision
 
-DEFAULT_FORWARD_PRECISION = ForwardPrecision(
-    autocast="off",
+DEFAULT_PRECISION = RolePrecision(
+    dtype="fp32",
     float32_precision="ieee",
 )
 
 
-def _rollout_context(
-    precision: ForwardPrecision = DEFAULT_FORWARD_PRECISION,
-) -> dict[str, object]:
-    return {"rollout_forward_precision": asdict(precision)}
+def _stamp_model_precision(
+    model: Any,
+    *,
+    precision: RolePrecision = DEFAULT_PRECISION,
+    outer_autocast_enabled: bool = False,
+) -> None:
+    """Stamp the runtime precision fields required by trainer test doubles."""
+
+    model.precision = precision
+    model.outer_autocast_enabled = outer_autocast_enabled
 
 
 def _algorithm_inputs(inputs):

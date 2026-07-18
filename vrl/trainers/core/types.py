@@ -92,14 +92,14 @@ class DebugConfig:
 class PrecisionDriftGuardConfig:
     """Rollout-vs-replay logprob parity guard (precision/backend drift).
 
-    A correctness guard, not a debug probe: when rollout/replay forward precision
-    or backend policy differs, the collection-time logprob may no longer equal the
+    A correctness guard, not a debug probe: when rollout/replay role precision
+    differs, the collection-time logprob may no longer equal the
     recomputed replay logprob, so the GRPO importance ratio drifts from 1 at the
     first step.
 
     ``mode``: ``"off"``/``"warn"``/``"fail"`` are explicit; ``"auto"`` enables the guard
     only when rollout!=train precision and resolves to ``"fail"``. Use explicit
-    ``"warn"``/``"fail"`` for same-forward-precision acceptance runs, such as
+    ``"warn"``/``"fail"`` for same-role acceptance runs, such as
     SD3.5 FP16 rollout/replay parity checks.
     """
 
@@ -275,10 +275,10 @@ class TrainerConfig:
     host_memory_budget_fraction: float = field(default=0.0, metadata={"yaml": "rollout"})
 
     # --- precision (bridged from the unified precision policy) ---
-    # The replay/training forward dtype (canonical fp32/bf16/fp16); the trainer
-    # autocasts to it (AMP), so the forward is mixed, not uniformly this dtype.
-    # Empty -> fp32 ("no"). Production bridges this from precision.training.dtype;
-    # bare construction (tests) defaults to fp32.
+    # Replay/training role label (canonical fp32/bf16/fp16). Diffusion normally
+    # uses it for outer autocast, while family capabilities such as SANA may
+    # disable that boundary. Empty -> fp32 ("no"). Production bridges this from
+    # precision.training.dtype; bare construction (tests) defaults to fp32.
     train_precision: str = field(default="", metadata={"yaml": "bridged"})
     # off | full | selective (or bool: true=full, false=off). Activation
     # checkpointing is a recompute tax that lowers MFU; it only pays for itself

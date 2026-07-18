@@ -36,8 +36,6 @@ from vrl.generation.types import (
     GenerationSampleRow,
 )
 from vrl.math.diffusion.flow_matching import sde_step_with_logprob
-from vrl.models.forward_precision import forward_autocast
-from vrl.models.interfaces.runtime import ForwardPrecision
 from vrl.trajectory.storage import (
     TrajectoryStoragePolicy,
     apply_value_storage_policy,
@@ -391,7 +389,6 @@ class DiffusionChunkExecutorBase(
     family: str
     task: str
     model: Any
-    forward_precision: ForwardPrecision
     default_samples_per_chunk: int = 1
     default_num_frames: int = 1
     default_fps: int | None = None
@@ -771,10 +768,7 @@ class DiffusionChunkExecutorBase(
                     ):
                         noise_pred = teacache.cached_noise_pred
                     else:
-                        with (
-                            record_function("generation.denoise_forward"),
-                            forward_autocast(self.forward_precision, state.latents.device),
-                        ):
+                        with record_function("generation.denoise_forward"):
                             step_output = model.forward_step(state, step_idx)
                         noise_pred = step_output["noise_pred"]
                         if teacache is not None:
@@ -794,7 +788,6 @@ class DiffusionChunkExecutorBase(
                                 "generation.ref_denoise_forward",
                             ),
                             model.disable_adapter(),
-                            forward_autocast(self.forward_precision, state.latents.device),
                         ):
                             ref_step_output = model.forward_step(state, step_idx)
                         ref_noise_pred = ref_step_output["noise_pred"]
@@ -962,10 +955,6 @@ class DiffusionChunkExecutorBase(
                 "ref_noise_pred": denoise_result.ref_noise_preds,
             }
         context = dict(model.export_batch_context(state))
-        context["rollout_forward_precision"] = {
-            "autocast": self.forward_precision.autocast,
-            "float32_precision": self.forward_precision.float32_precision,
-        }
 
         decode_peak_bytes = _cuda_phase_peak_bytes()
         memory = None

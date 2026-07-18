@@ -23,8 +23,11 @@ import torch
 import torch.nn as nn
 
 from vrl.algorithms.dpo import diffusion_dpo_loss, diffusion_sft_loss
-from vrl.models.forward_precision import apply_float32_precision, forward_autocast
-from vrl.models.interfaces import ForwardPrecision
+from vrl.models.precision import (
+    apply_float32_precision,
+    model_autocast,
+    model_precision,
+)
 from vrl.trainers.data.preferences import PreferenceBatch
 
 logger = logging.getLogger(__name__)
@@ -167,7 +170,6 @@ class OfflineDPOTrainer:
         noise_scheduler: Any,
         encode_pixels: Callable[[torch.Tensor], torch.Tensor],
         encode_text: Callable[[list[str]], torch.Tensor],
-        forward_precision: ForwardPrecision,
         config: OfflineDPOTrainerConfig | None = None,
         device: torch.device | str = "cuda",
     ) -> None:
@@ -177,12 +179,10 @@ class OfflineDPOTrainer:
         self.noise_scheduler = noise_scheduler
         self.encode_pixels = encode_pixels
         self.encode_text = encode_text
-        if not isinstance(forward_precision, ForwardPrecision):
-            raise TypeError("OfflineDPOTrainer requires ForwardPrecision")
-        self.forward_precision = forward_precision
+        self.precision = model_precision(model)
         self.config = config or OfflineDPOTrainerConfig()
         self.device = torch.device(device) if isinstance(device, str) else device
-        apply_float32_precision(self.forward_precision.float32_precision)
+        apply_float32_precision(self.precision.float32_precision)
         self.global_step = 0
         self._gradient_accumulation_micro_step = 0
 
@@ -297,14 +297,14 @@ class OfflineDPOTrainer:
         noisy_latents, target = self._inject_noise(latents, noise, timesteps)
 
         # 5. Forward — policy + frozen reference
-        with forward_autocast(self.forward_precision, self.device):
+        with model_autocast(self.model, self.device):
             model_pred = self.forward_fn(
                 self.model,
                 noisy_latents,
                 timesteps,
                 encoder_hidden_states,
             )
-        with torch.no_grad(), forward_autocast(self.forward_precision, self.device):
+        with torch.no_grad(), model_autocast(self.model, self.device):
             ref_pred = self._reference_forward(
                 noisy_latents,
                 timesteps,

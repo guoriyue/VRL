@@ -104,7 +104,7 @@ def _resolve_probe_model_build(args: argparse.Namespace, entry: Any, device: Any
         else (args.dtype or "bfloat16")
     )
     role_precision = dtype_to_precision_token(resolve_torch_dtype(role_dtype))
-    family_float32_precision = entry.family_build.forward_precision.float32_precision
+    family_float32_precision = entry.family_build.required_float32_precision
     precision: dict[str, Any] = {
         "float32_precision": (args.float32_precision or family_float32_precision or "tf32"),
         "training": {"dtype": role_precision},
@@ -138,7 +138,6 @@ def main() -> None:
     from vrl.families.registry import get_model_family_entry
     from vrl.generation.diffusion.layout import VideoGenerationRequest
     from vrl.math.diffusion.flow_matching import sde_step_with_logprob
-    from vrl.models.forward_precision import apply_float32_precision, forward_autocast
 
     entry = get_model_family_entry(args.family)
     family = entry.family
@@ -156,7 +155,6 @@ def main() -> None:
     print(f"[probe] building {family} bundle from {args.path} ...")
     bundle = entry.build_rollout(build)
     model = bundle.model
-    apply_float32_precision(bundle.forward_precision.float32_precision)
 
     encode_kwargs: dict[str, Any] = {"guidance_scale": args.guidance_scale}
     if args.max_sequence_length is not None:
@@ -194,8 +192,7 @@ def main() -> None:
     first_step: dict[str, Any] = {}
     logprobs = []
     for step_idx in range(args.steps):
-        with forward_autocast(bundle.forward_precision, state.latents.device):
-            out = model.forward_step(state, step_idx)
+        out = model.forward_step(state, step_idx)
         timestep = state.timesteps[step_idx]
         sde = sde_step_with_logprob(
             state.scheduler,
@@ -255,8 +252,7 @@ def main() -> None:
             first_step["latents"],
             0,
         )
-        with forward_autocast(bundle.forward_precision, restored.latents.device):
-            out = model.forward_step(restored, 0)
+        out = model.forward_step(restored, 0)
         pred_err = (out["noise_pred"].float() - first_step["noise_pred"].float()).abs().max()
         sde = sde_step_with_logprob(
             state.scheduler,

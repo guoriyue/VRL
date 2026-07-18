@@ -8,6 +8,7 @@ import pytest
 import torch
 from torch import nn
 
+from vrl.config.precision import QuantizationPolicy, RolePrecision
 from vrl.nn.quantization import (
     Fp4Linear,
     drop_quantized_masters,
@@ -257,9 +258,12 @@ def _rollout_spec(
     return SimpleNamespace(
         device=device,
         torch_compile=torch_compile,
+        precision=RolePrecision(
+            "bf16",
+            "tf32",
+            QuantizationPolicy(format="nvfp4", recipe=recipe),
+        ),
         rollout=SimpleNamespace(
-            quantization_format="nvfp4",
-            quantization_recipe=recipe,
             base_weight_sync=True,
         ),
     )
@@ -276,15 +280,9 @@ def test_apply_rollout_quantization_dispatches_nvfp4(caplog, monkeypatch) -> Non
     assert "nvfp4" in caplog.text
 
 
-def test_nvfp4_runtime_options_reject_fp8_recipes() -> None:
-    from vrl.models.interfaces.runtime import RolloutBuildOptions
-
+def test_nvfp4_policy_rejects_fp8_recipes() -> None:
     with pytest.raises(ValueError, match="does not accept a recipe"):
-        RolloutBuildOptions(
-            prompt_encoder_dtype="fp16",
-            quantization_format="nvfp4",
-            quantization_recipe="rowwise",
-        )
+        QuantizationPolicy(format="nvfp4", recipe="rowwise")
 
 
 def test_loader_rejects_unsupported_target_before_mutation(monkeypatch) -> None:
@@ -329,9 +327,11 @@ def test_resolve_model_build_derives_nvfp4_from_nested_precision() -> None:
     )
     build = get_model_family_entry("sd3_5").resolve_model_build(cfg, "cuda")
     assert build.rollout is not None
-    assert build.rollout.quantization_format == "nvfp4"
-    assert build.forward_precision.autocast == "bf16"
-    assert build.forward_precision.float32_precision == "tf32"
+    assert build.precision.quantization is not None
+    assert build.precision.quantization.format == "nvfp4"
+    assert build.precision.dtype == "bf16"
+    assert build.precision.float32_precision == "tf32"
+    assert build.outer_autocast is True
     assert build.parameter_dtype is torch.bfloat16
 
 

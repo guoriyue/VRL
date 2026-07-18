@@ -9,8 +9,9 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass, field
-from typing import Any, Literal, get_args
+from typing import Any
 
+from vrl.config.precision import QuantizationPolicy, RolePrecision
 from vrl.models.interfaces.replay import RuntimeModel
 
 # Single source of truth for valid ``model.memory`` subsection names, shared by
@@ -33,32 +34,6 @@ TORCH_COMPILE_MODEL_KEY = "torch_compile"
 # consumed by the colocated-RAM guard (``validate_colocated_replay_memory``)
 # to size host memory.
 LOADS_FULL_GENERATION_MODULES_KEY = "loads_full_generation_modules"
-
-AutocastMode = Literal["off", "fp16", "bf16"]
-Float32Precision = Literal["ieee", "tf32"]
-
-
-@dataclass(frozen=True, slots=True)
-class ForwardPrecision:
-    """Fully resolved transformer-forward precision for one runtime process.
-
-    Strings keep this contract wire-safe. ``off`` is the only no-autocast
-    state; FP32 is never overloaded as a sentinel for disabling autocast.
-    """
-
-    autocast: AutocastMode
-    float32_precision: Float32Precision
-
-    def __post_init__(self) -> None:
-        if self.autocast not in get_args(AutocastMode):
-            raise ValueError(
-                f"forward autocast must be one of {get_args(AutocastMode)}; got {self.autocast!r}",
-            )
-        if self.float32_precision not in get_args(Float32Precision):
-            raise ValueError(
-                "forward float32_precision must be one of "
-                f"{get_args(Float32Precision)}; got {self.float32_precision!r}",
-            )
 
 
 def full_generation_bundle_metadata() -> dict[str, Any]:
@@ -86,10 +61,6 @@ def bundle_loads_full_generation_modules(bundle: Any) -> bool:
 class RolloutBuildOptions:
     """Generation-only precision and lifecycle inputs for a rollout model.
 
-    Selective quantization stays distinct from the transformer's resolved
-    forward precision. FP8/NVFP4 replace eligible GEMMs while unswapped
-    operations follow ``ModelBuild.forward_precision``.
-
     ``prompt_encoder_dtype`` names the generation-only encoder precision policy
     the runtime actually consumes. VAEs remain family-owned fp32 fidelity boundaries;
     putting their dtype under this option would advertise a knob they ignore.
@@ -99,8 +70,6 @@ class RolloutBuildOptions:
     """
 
     prompt_encoder_dtype: Any
-    quantization_format: str | None = None
-    quantization_recipe: str | None = None
     base_weight_sync: bool = True
 
     def __post_init__(self) -> None:
@@ -121,29 +90,8 @@ class RolloutBuildOptions:
             ) from error
         object.__setattr__(self, "prompt_encoder_dtype", prompt_encoder_dtype)
 
-        recipe = (
-            str(self.quantization_recipe).lower().strip()
-            if self.quantization_recipe is not None
-            else None
-        )
-        if recipe is not None and self.quantization_format is None:
-            raise ValueError(
-                "rollout quantization_recipe requires quantization_format",
-            )
-        quantization_format = None
-        if self.quantization_format is not None:
-            from vrl.config.precision import QuantizationPolicy
-
-            quantization = QuantizationPolicy(
-                format=str(self.quantization_format),
-                recipe=recipe,
-            )
-            quantization_format = quantization.format
-            recipe = quantization.recipe
         if not isinstance(self.base_weight_sync, bool):
             raise TypeError("rollout base_weight_sync must be a bool")
-        object.__setattr__(self, "quantization_format", quantization_format)
-        object.__setattr__(self, "quantization_recipe", recipe)
 
 
 @dataclass
@@ -173,9 +121,12 @@ class ModelBuild:
     # Canonical registry identity. Both driver replay and Ray rollout builds
     # require it; the worker restores it from the launch contract.
     family: str
-    # Fully resolved, process-local transformer execution contract. A nested
-    # primitive mapping is accepted only at the Ray wire boundary.
-    forward_precision: ForwardPrecision | Mapping[str, Any]
+    # The selected training or rollout role is the single precision source for
+    # base compute, selective quantization, and process-local FP32 matmul mode.
+    # A primitive mapping is accepted only at the Ray wire boundary.
+    precision: RolePrecision | Mapping[str, Any]
+    # Family capability consumed by the shared diffusion forward boundary.
+    outer_autocast: bool
     model_config: dict[str, Any] | None = None
     sampling_config: dict[str, Any] | None = None
     # Full-generation build inputs. ``None`` is the replay contract: replay owns
@@ -193,14 +144,20 @@ class ModelBuild:
 
         if not isinstance(self.family, str) or not self.family:
             raise ValueError("ModelBuild.family must be a non-empty string")
-        if isinstance(self.forward_precision, Mapping):
-            self.forward_precision = ForwardPrecision(
-                **dict(self.forward_precision),
-            )
-        elif not isinstance(self.forward_precision, ForwardPrecision):
+        if isinstance(self.precision, Mapping):
+            precision_payload = dict(self.precision)
+            quantization = precision_payload.get("quantization")
+            if isinstance(quantization, Mapping):
+                precision_payload["quantization"] = QuantizationPolicy(
+                    **dict(quantization),
+                )
+            self.precision = RolePrecision(**precision_payload)
+        elif not isinstance(self.precision, RolePrecision):
             raise TypeError(
-                "ModelBuild.forward_precision must be ForwardPrecision or a mapping",
+                "ModelBuild.precision must be RolePrecision or a mapping",
             )
+        if not isinstance(self.outer_autocast, bool):
+            raise TypeError("ModelBuild.outer_autocast must be a bool")
         self.parameter_dtype = resolve_torch_dtype(self.parameter_dtype)
         parameter_name = dtype_to_wire_name(self.parameter_dtype)
         try:
@@ -315,6 +272,11 @@ class RuntimeBundle:
     restores only these modules, so family builders must include every
     trainable adapter/backbone needed for exact resume.
 
+    ``precision`` is the selected training or rollout role. ``outer_autocast``
+    is the family capability that controls whether diffusion forwards apply its
+    dtype through AMP. Assembly stamps both on ``model`` for replay algorithms
+    that call the transformer outside the family ``forward_step`` wrapper.
+
     ``metadata`` may include generic replay/runtime flags used by shared
     trainer infrastructure. Build these through this module's
     ``full_generation_bundle_metadata`` / ``minimal_replay_bundle_metadata``
@@ -330,11 +292,18 @@ class RuntimeBundle:
     trainable_modules: dict[str, Any]
     scheduler: Any
     raw_handle: Any
-    forward_precision: ForwardPrecision
+    precision: RolePrecision
+    outer_autocast: bool
     metadata: dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
-        if not isinstance(self.forward_precision, ForwardPrecision):
+        if not isinstance(self.precision, RolePrecision):
             raise TypeError(
-                "RuntimeBundle.forward_precision must be ForwardPrecision",
+                "RuntimeBundle.precision must be RolePrecision",
             )
+        if not isinstance(self.outer_autocast, bool):
+            raise TypeError("RuntimeBundle.outer_autocast must be a bool")
+        # Replay consumers read the exact role policy from the model they
+        # forward, so a caller cannot pair a model with a different policy.
+        self.model.precision = self.precision
+        self.model.outer_autocast_enabled = self.outer_autocast

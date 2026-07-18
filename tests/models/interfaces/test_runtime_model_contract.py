@@ -11,9 +11,9 @@ import torch
 import torch.nn as nn
 
 from tests.models.interfaces import registered_family_model_classes
+from vrl.config.precision import RolePrecision
 from vrl.models.diffusion import DiffusionModelBase
 from vrl.models.interfaces import (
-    ForwardPrecision,
     ReplayRequest,
     ReplayResult,
     ReplaySegmentResult,
@@ -165,24 +165,29 @@ def test_runtime_bundle_exposes_model_contract() -> None:
         trainable_modules={},
         scheduler=None,
         raw_handle=None,
-        forward_precision=ForwardPrecision("off", "ieee"),
+        precision=RolePrecision("fp32", "ieee"),
+        outer_autocast=False,
     )
 
     assert bundle.model is model
-    assert bundle.forward_precision == ForwardPrecision("off", "ieee")
+    assert bundle.precision == RolePrecision("fp32", "ieee")
+    assert bundle.outer_autocast is False
+    assert model.precision is bundle.precision
+    assert model.outer_autocast_enabled is False
 
 
-def test_runtime_bundle_rejects_unresolved_forward_precision_mapping() -> None:
-    with pytest.raises(TypeError, match=r"RuntimeBundle\.forward_precision"):
+def test_runtime_bundle_rejects_unresolved_role_precision_mapping() -> None:
+    with pytest.raises(TypeError, match=r"RuntimeBundle\.precision"):
         RuntimeBundle(
             model=_MinimalRuntimeModel(),
             trainable_modules={},
             scheduler=None,
             raw_handle=None,
-            forward_precision={  # type: ignore[arg-type]
-                "autocast": "off",
+            precision={  # type: ignore[arg-type]
+                "dtype": "fp32",
                 "float32_precision": "ieee",
             },
+            outer_autocast=False,
         )
 
 

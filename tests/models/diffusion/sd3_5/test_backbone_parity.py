@@ -17,6 +17,7 @@ from tests.models.diffusion.fixtures import (
     TINY_SD3_POOLED_DIM,
     build_tiny_sd3_transformer,
     record_forward_calls,
+    stamp_test_contract,
 )
 from vrl.models.diffusion.sd3_5.model import SD3_5Model, SD3SamplingState
 
@@ -24,10 +25,11 @@ _TEXT_LEN = 3
 
 
 def _model(transformer: torch.nn.Module) -> SD3_5Model:
-    return SD3_5Model(
+    model = SD3_5Model(
         pipeline=SimpleNamespace(transformer=transformer, device=torch.device("cpu")),
         device=torch.device("cpu"),
     )
+    return stamp_test_contract(model)
 
 
 def test_sd3_forward_step_runs_real_batched_cfg() -> None:

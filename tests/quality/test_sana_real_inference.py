@@ -28,7 +28,7 @@ def test_sana_training_path_matches_native_flow_euler_at_every_step() -> None:
         build_family_runtime_bundle,
         resolve_family_model_build,
     )
-    from vrl.models.forward_precision import forward_autocast
+    from vrl.models.precision import forward_autocast
 
     cfg = load_config("experiment/diffusion/sana/online_grpo_aesthetic")
     repo_id = str(cfg.model.path)
@@ -45,8 +45,9 @@ def test_sana_training_path_matches_native_flow_euler_at_every_step() -> None:
     assert model.transformer.dtype is torch.float16
     assert model.pipeline.text_encoder.dtype is torch.bfloat16
     assert model.pipeline.vae.dtype is torch.float32
-    assert bundle.forward_precision.autocast == "off"
-    assert bundle.forward_precision.float32_precision == "ieee"
+    assert bundle.precision.dtype == "fp16"
+    assert bundle.precision.float32_precision == "ieee"
+    assert bundle.outer_autocast is False
 
     prompt = "a red apple on a blue ceramic plate, studio photo"
     encoded = model.encode_prompt([prompt], [""], guidance_scale=4.5)
@@ -114,7 +115,11 @@ def test_sana_training_path_matches_native_flow_euler_at_every_step() -> None:
                 ).float().square().mean().sqrt() / reference_noise.std()
                 assert float(relative_rmse) > 0.25
 
-            with forward_autocast(bundle.forward_precision, state.latents.device):
+            with forward_autocast(
+                bundle.precision.dtype,
+                state.latents.device,
+                enabled=bundle.outer_autocast,
+            ):
                 production_noise = model.forward_step(state, step_index)["noise_pred"]
             torch.testing.assert_close(
                 production_noise.float(),

@@ -5,6 +5,7 @@ from typing import Any
 
 import torch
 
+from tests.models.diffusion.fixtures import stamp_test_contract
 from vrl.models.diffusion.cosmos.anima.model import AnimaModel, AnimaSamplingState
 
 
@@ -50,6 +51,7 @@ def test_anima_forward_step_uses_const_flow_derivative_contract() -> None:
         device=torch.device("cpu"),
         dtype=torch.float32,
     )
+    stamp_test_contract(model)
     latents = torch.full((1, 1, 1, 1, 1), 5.0)
     state = AnimaSamplingState(
         latents=latents,

@@ -5,9 +5,7 @@ from __future__ import annotations
 import contextlib
 
 import vrl.math.diffusion.flow_matching as flow_matching_math
-from vrl.models.forward_precision import forward_autocast
 from vrl.models.interfaces import (
-    ForwardPrecision,
     ReplayModel,
     require_replay_model,
 )
@@ -48,8 +46,6 @@ class DiffusionSDELogProbEvaluator(Evaluator):
         timestep_idx: int,
         ref_model: ReplayModel | None = None,
         signal_request: SignalRequest | None = None,
-        *,
-        forward_precision: ForwardPrecision,
     ) -> TrajectorySignalBatch:
         """Replay one diffusion step into trajectory-native signals.
 
@@ -82,8 +78,7 @@ class DiffusionSDELogProbEvaluator(Evaluator):
         observations = batch.observations[:, timestep_idx]  # x_t
         actions = batch.actions[:, timestep_idx]  # x_{t-1}
 
-        with forward_autocast(forward_precision, batch.observations.device):
-            fwd = model.replay_forward(batch, timestep_idx).require_segment("denoise")
+        fwd = model.replay_forward(batch, timestep_idx).require_segment("denoise")
         noise_pred = fwd.require_value("noise_pred")
         device = getattr(noise_pred, "device", None)
         t = move_value_to_device(t, device)
@@ -145,13 +140,7 @@ class DiffusionSDELogProbEvaluator(Evaluator):
                         else contextlib.nullcontext()
                     )
 
-                    with (
-                        ctx,
-                        forward_autocast(
-                            forward_precision,
-                            batch.observations.device,
-                        ),
-                    ):
+                    with ctx:
                         ref_fwd = ref_model.replay_forward(
                             batch,
                             timestep_idx,

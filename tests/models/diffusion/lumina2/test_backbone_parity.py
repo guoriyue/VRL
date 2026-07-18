@@ -18,6 +18,7 @@ from tests.models.diffusion.fixtures import (
     TINY_LUMINA2_LATENT_SHAPE,
     build_tiny_lumina2_transformer,
     record_forward_calls,
+    stamp_test_contract,
 )
 from vrl.models.diffusion.lumina2.model import (
     Lumina2Model,
@@ -30,10 +31,11 @@ _NUM_TRAIN_TIMESTEPS = 1000
 
 
 def _model(transformer: torch.nn.Module) -> Lumina2Model:
-    return Lumina2Model(
+    model = Lumina2Model(
         pipeline=SimpleNamespace(transformer=transformer, device=torch.device("cpu")),
         device=torch.device("cpu"),
     )
+    return stamp_test_contract(model)
 
 
 def _state(*, do_cfg: bool) -> Lumina2SamplingState:

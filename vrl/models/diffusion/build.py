@@ -15,7 +15,6 @@ from __future__ import annotations
 from vrl.models.diffusion.common.vae_decode_memory import (
     apply_generation_memory_policy,
 )
-from vrl.models.forward_precision import apply_float32_precision
 from vrl.models.interfaces.runtime import (
     ModelBuild,
     RuntimeBundle,
@@ -29,6 +28,7 @@ from vrl.models.loader import (
     load_flow_match_scheduler,
     validate_rollout_quantization_support,
 )
+from vrl.models.precision import apply_float32_precision
 from vrl.utils.logging import init_logger
 
 logger = init_logger(__name__)
@@ -42,7 +42,7 @@ def build_diffusion_runtime_bundle(
 ) -> RuntimeBundle:
     """Load one diffusion rollout model and apply the shared runtime policy."""
 
-    rollout = build.require_rollout()
+    build.require_rollout()
     # Reject unsupported NVFP4 hardware before checkpoint loading, LoRA wrapping,
     # or any other model mutation.
     validate_rollout_quantization_support(build)
@@ -61,7 +61,7 @@ def build_diffusion_runtime_bundle(
                 lora_config["alpha"],
             )
         apply_rollout_quantization(model, build)
-        if rollout.quantization_format:
+        if build.precision.quantization:
             model.transformer.to(model.device)
     else:
         apply_rollout_quantization(model, build)
@@ -82,13 +82,14 @@ def build_diffusion_runtime_bundle(
         memory_config=build.memory,
         owner=memory_owner,
     )
-    apply_float32_precision(build.forward_precision.float32_precision)
+    apply_float32_precision(build.precision.float32_precision)
     return RuntimeBundle(
         model=model,
         trainable_modules=model.trainable_modules,
         scheduler=model.scheduler,
         raw_handle=model.raw_handle,
-        forward_precision=build.forward_precision,
+        precision=build.precision,
+        outer_autocast=build.outer_autocast,
         metadata=full_generation_bundle_metadata(),
     )
 
@@ -109,13 +110,14 @@ def assemble_replay_bundle(
     if compile_cfg.get("enable"):
         model.torch_compile_transformer(compile_cfg["mode"])
 
-    apply_float32_precision(build.forward_precision.float32_precision)
+    apply_float32_precision(build.precision.float32_precision)
     return RuntimeBundle(
         model=model,
         trainable_modules=model.trainable_modules,
         scheduler=model.scheduler,
         raw_handle=None,
-        forward_precision=build.forward_precision,
+        precision=build.precision,
+        outer_autocast=build.outer_autocast,
         metadata=minimal_replay_bundle_metadata(),
     )
 

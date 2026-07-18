@@ -13,6 +13,7 @@ import torch
 import torch.nn as nn
 from diffusers import FlowMatchEulerDiscreteScheduler
 
+from tests.models.diffusion.fixtures import stamp_test_contract
 from vrl.generation.diffusion.layout import VideoGenerationRequest
 from vrl.models.diffusion.echo.model import (
     EchoModel,
@@ -63,6 +64,7 @@ def _build_model() -> tuple[EchoModel, _FakeEcho]:
         dtype=torch.float32,
         device=torch.device("cpu"),
     )
+    stamp_test_contract(model)
     return model, echo
 
 
@@ -201,6 +203,7 @@ def test_move_frozen_components_offloads_wrappers_device_driven() -> None:
         dtype=torch.float32,
         device=torch.device("cpu"),
     )
+    stamp_test_contract(model)
     model.move_frozen_components("cpu_sentinel")
 
     assert te.encoder.moved_to == "cpu_sentinel"
@@ -213,8 +216,12 @@ def test_move_frozen_components_offloads_wrappers_device_driven() -> None:
 def test_replay_model_offload_is_noop_without_wrappers() -> None:
     echo = _FakeEcho()
     replay = EchoReplayModel(
-        echo=echo, scheduler=FlowMatchEulerDiscreteScheduler(num_train_timesteps=1000), dtype=torch.float32, device=torch.device("cpu"),
+        echo=echo,
+        scheduler=FlowMatchEulerDiscreteScheduler(num_train_timesteps=1000),
+        dtype=torch.float32,
+        device=torch.device("cpu"),
     )
+    stamp_test_contract(replay)
     replay.move_frozen_components("cpu")  # no text encoder / VAE -> must not raise
 
 
@@ -230,6 +237,7 @@ def test_replay_model_is_transformer_only_and_runs_velocity_forward() -> None:
         dtype=torch.float32,
         device=torch.device("cpu"),
     )
+    stamp_test_contract(replay)
     assert replay.raw_handle is None
     assert replay.trainable_modules == {"transformer": echo.model}
     # Rollout-only surface raises (ReplayRolloutStubs) — replay never encodes/decodes.

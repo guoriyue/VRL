@@ -16,7 +16,6 @@ from vrl.generation.diffusion import (
 from vrl.generation.diffusion.layout import DiffusionSDEParams
 from vrl.generation.execution.chunks import SampleChunk
 from vrl.generation.types import GenerationRequest
-from vrl.models.interfaces.runtime import ForwardPrecision
 
 
 def test_preallocate_denoise_buffers_matches_latent_shape_dtype_and_device() -> None:
@@ -76,13 +75,9 @@ def test_run_denoise_steps_writes_preallocated_buffers(return_kl: bool) -> None:
     )
 
 
-def test_resolved_forward_precision_is_independent_of_prompt_storage_dtype() -> None:
-    """The resolved contract does not guess policy from prompt tensor storage."""
+def test_decode_denoise_result_does_not_serialize_model_precision() -> None:
+    """Execution policy stays on the model instead of entering trajectories."""
     executor = _Executor()
-    executor.forward_precision = ForwardPrecision(
-        autocast="bf16",
-        float32_precision="tf32",
-    )
 
     result = executor.run_denoise_steps(
         state=_state(batch=2, steps=1),
@@ -95,14 +90,16 @@ def test_resolved_forward_precision_is_independent_of_prompt_storage_dtype() -> 
         denoise_result=result,
     )
 
-    assert chunk.context["rollout_forward_precision"] == {
-        "autocast": "bf16",
-        "float32_precision": "tf32",
-    }
+    assert chunk.context == {"model_family": "test"}
 
 
-def test_autocast_wraps_only_transformer_forward(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Scheduler/SDE math must remain outside the transformer autocast scope."""
+def test_executor_adds_no_autocast_scope(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The model owns its forward contract; the executor must not add autocast.
+
+    ``DiffusionModelBase`` wraps ``forward_step`` with the stamped contract
+    (covered in tests/models/diffusion/common/test_model_base.py); scheduler
+    and SDE math always run outside any autocast scope.
+    """
     from vrl.generation.diffusion import executor as executor_module
 
     forward_states: list[bool] = []
@@ -125,10 +122,6 @@ def test_autocast_wraps_only_transformer_forward(monkeypatch: pytest.MonkeyPatch
     monkeypatch.setattr(executor_module, "sde_step_with_logprob", tracked_sde_step)
     executor = _Executor()
     executor.model = _AutocastModel()
-    executor.forward_precision = ForwardPrecision(
-        autocast="bf16",
-        float32_precision="ieee",
-    )
 
     executor.run_denoise_steps(
         state=_state(batch=2, steps=1),
@@ -136,12 +129,12 @@ def test_autocast_wraps_only_transformer_forward(monkeypatch: pytest.MonkeyPatch
         config=_config(sample_count=2),
     )
 
-    assert forward_states == [True]
+    assert forward_states == [False]
     assert sde_states == [False]
 
 
-def test_decode_denoise_result_threads_rollout_dtype_into_context() -> None:
-    """Checks rollout dtype is visible in trajectory context."""
+def test_decode_denoise_result_uses_only_model_exported_context() -> None:
+    """The executor does not append process-local execution policy."""
     executor = _Executor()
     state = _state(batch=2, steps=1)
     denoise = executor.run_denoise_steps(
@@ -155,10 +148,7 @@ def test_decode_denoise_result_threads_rollout_dtype_into_context() -> None:
         denoise_result=denoise,
     )
 
-    assert chunk.context["rollout_forward_precision"] == {
-        "autocast": "off",
-        "float32_precision": "ieee",
-    }
+    assert chunk.context == {"model_family": "test"}
 
 
 def test_forward_chunk_plan_routes_through_stage_boundary_methods() -> None:
@@ -256,10 +246,6 @@ class _Executor(DiffusionChunkExecutorBase):
     family = "test"
     task = "t2i"
     model = _Model()
-    forward_precision = ForwardPrecision(
-        autocast="off",
-        float32_precision="ieee",
-    )
 
 
 class _StageTrackingExecutor(DiffusionChunkExecutorBase):
@@ -336,10 +322,6 @@ def test_decode_denoise_result_packs_video_as_uint8() -> None:
         family = "test"
         task = "t2i"
         model = _UnitVideoModel()
-        forward_precision = ForwardPrecision(
-            autocast="off",
-            float32_precision="ieee",
-        )
 
     executor = _UnitVideoExecutor()
     denoise = executor.run_denoise_steps(

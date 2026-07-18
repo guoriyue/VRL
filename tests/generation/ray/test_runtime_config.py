@@ -401,10 +401,12 @@ def test_launch_from_cfg_projects_model_compile_and_precision() -> None:
     assert "family" not in model_build
     assert model_build["device"] == "cpu"
     assert model_build["parameter_dtype"] == "float32"
-    assert model_build["forward_precision"] == {
-        "autocast": "off",
+    assert model_build["precision"] == {
+        "dtype": "fp32",
         "float32_precision": "tf32",
+        "quantization": None,
     }
+    assert model_build["outer_autocast"] is True
     assert model_build["rollout"]["prompt_encoder_dtype"] == "float16"
     assert model_build["model_config"]["marker"] == "driver-config"
     assert model_build["model_config"]["torch_compile"] == {

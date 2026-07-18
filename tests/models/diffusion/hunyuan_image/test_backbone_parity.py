@@ -16,7 +16,7 @@ from typing import Any
 
 import torch
 
-from tests.models.diffusion.fixtures import record_forward_calls
+from tests.models.diffusion.fixtures import record_forward_calls, stamp_test_contract
 from vrl.models.diffusion.hunyuan_image.model import (
     HunyuanImageModel,
     HunyuanImageReplayModel,
@@ -62,10 +62,11 @@ def build_tiny_hunyuan_image_transformer(*, seed: int = 0) -> Any:
 
 
 def _model(transformer: torch.nn.Module) -> HunyuanImageModel:
-    return HunyuanImageModel(
+    model = HunyuanImageModel(
         pipeline=SimpleNamespace(transformer=transformer, device=torch.device("cpu")),
         device=torch.device("cpu"),
     )
+    return stamp_test_contract(model)
 
 
 def _glyph_pair(bsz: int, *, zeros: bool) -> tuple[torch.Tensor, torch.Tensor]:
@@ -130,7 +131,9 @@ def test_hunyuan_image_forward_step_single_branch_when_no_cfg() -> None:
     assert calls[0]["encoder_hidden_states"].shape[1] == 5
     assert calls[0]["encoder_attention_mask"].shape == (2, 5)
     assert calls[0]["encoder_hidden_states_2"].shape == (
-        2, _GLYPH_LEN, TINY_HUNYUAN_IMAGE_TEXT_2_DIM,
+        2,
+        _GLYPH_LEN,
+        TINY_HUNYUAN_IMAGE_TEXT_2_DIM,
     )
     assert calls[0]["encoder_attention_mask_2"].shape == (2, _GLYPH_LEN)
     # Base (non-distilled) checkpoint: no guidance embedding.

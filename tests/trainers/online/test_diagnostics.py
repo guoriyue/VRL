@@ -6,9 +6,8 @@ import pytest
 
 from tests.trainers.online._collector_control import CollectorControlFake
 from tests.trainers.online._helpers import (
-    DEFAULT_FORWARD_PRECISION,
     _algorithm_inputs,
-    _rollout_context,
+    _stamp_model_precision,
     _trajectory_signals,
 )
 from vrl.rollouts.evaluators.base import Evaluator
@@ -82,7 +81,6 @@ class TestDiagnostics:
                     dones=torch.ones(group_size, dtype=torch.bool),
                     group_ids=torch.zeros(group_size, dtype=torch.long),
                     context={
-                        **_rollout_context(),
                         "runtime_debug": {
                             "ray_chunks": [
                                 {
@@ -113,6 +111,7 @@ class TestDiagnostics:
                 )
 
         model = nn.Linear(1, 1, bias=False)
+        _stamp_model_precision(model)
         with torch.no_grad():
             model.weight.fill_(model_value)
 
@@ -133,7 +132,6 @@ class TestDiagnostics:
                 train_precision="no",
                 output_dir=str(tmp_path),
             ),
-            forward_precision=DEFAULT_FORWARD_PRECISION,
             device="cpu",
         )
 
@@ -176,27 +174,15 @@ class TestDiagnostics:
         assert record["precision_policy"]["training_precision"] == "fp32"
         assert record["precision_policy"]["rollout_precision"] == "fp32"
         assert record["precision_policy"]["math_precision"] == "fp32"
-        assert record["precision_policy"]["training_forward_precision"] == {
-            "autocast": "off",
-            "float32_precision": "ieee",
-        }
         assert record["precision_policy"]["effective_float32_precision"] == {
             "matmul": "ieee",
             "cudnn": "ieee",
         }
         assert record["precision_policy"]["trainer_transformer_dtype"] == "float32"
-        assert record["precision_policy"]["rollout_forward_precision"] == {
-            "autocast": "off",
-            "float32_precision": "ieee",
-        }
         assert record["abs_diff"]["mean"] == pytest.approx(0.0)
         assert record["ratio"]["mean"] == pytest.approx(1.0)
         assert record["driver_trainable_before_step"]["tensor_count"] == 1
         assert record["driver_trainable_after_step"]["tensor_count"] == 1
-        assert record["rollout_context"]["rollout_forward_precision"] == {
-            "autocast": "off",
-            "float32_precision": "ieee",
-        }
         assert record["runtime_debug"]["ray_chunks"][0]["worker_id"] == "rollout-0"
         assert grad_enabled[0] is False
         assert any(grad_enabled[1:])
@@ -234,11 +220,13 @@ class TestDiagnostics:
             def evaluate(self, model, batch, timestep_idx, **kw):
                 raise AssertionError("the gate must not evaluate anything")
 
+        model = nn.Linear(1, 1, bias=False)
+        _stamp_model_precision(model)
         trainer = OnlineTrainer(
             algorithm=_Algorithm(),
             collector=CollectorControlFake(),
             evaluator=_Evaluator(),
-            model=nn.Linear(1, 1, bias=False),
+            model=model,
             config=TrainerConfig(
                 prompts_per_batch=1,
                 timestep_fraction=1.0,
@@ -250,7 +238,6 @@ class TestDiagnostics:
                 debug=DebugConfig(first_step=True),
                 n_samples_per_prompt=2,
             ),
-            forward_precision=DEFAULT_FORWARD_PRECISION,
             device="cpu",
         )
 
