@@ -21,7 +21,8 @@ AR 传统里的**因果性**，而不是把它与**离散性**绑定；离散化
 
 ## 2. 仓位决定（决策记录，即刻生效）
 
-- **主仓位 ~80%**：causal_chunked × denoise（self_forcing 家族 + provider 路线），
+- **主仓位 ~80%**：causal_chunked × denoise（CausVid 首接、MAGI-1 contract reference、
+  exact chunk-wise Self-Forcing variants + provider 路线），
   兼顾 joint-denoise 试验台（sd3_5/flux/sana 是 RL 正确性的 CI，39/12/5 个
   真实 run）。
 - **对冲 ~20%**：causal categorical-token 策略保温不冷冻——token-GRPO 五家族保留；nextstep_1
@@ -51,7 +52,7 @@ KV cache、trajectory 轴、reward 栈、weight sync 全可迁移，且离散似
                        denoise step          token step
 joint             │ current policies      │ （当前无）
 causal            │ （当前无）             │ current policies
-causal_chunked    │ self_forcing 目标格     │ （未来可存在）
+causal_chunked    │ CausVid/MAGI-1 等目标格 │ （未来可存在）
 ```
 
 时间组织、policy step、action distribution 与 trajectory layout 分开记录。
@@ -104,9 +105,10 @@ L3  vrl/families/registry + rollouts/trainers
 ```
 
 backbone（DiT/UNet/Transformer）仍是 family 内部实现细节，不增加一根 taxonomy 轴。
-新 self_forcing family 应放 `vrl/models/families/<family>/`，并注册为
+新 causal-chunked family 应放 `vrl/models/families/<family>/`，并注册为
 `(causal_chunked, denoise, continuous, denoise)`；不要新建
-`models/diffusion/self_forcing/`。
+`models/diffusion/<family>/`。候选的证据、顺序与 release gates 见
+[`MODEL_TAXONOMY.md`](../../MODEL_TAXONOMY.md#future-causal-chunked-support)。
 
 ## 5. 已完成与剩余项
 
@@ -117,9 +119,13 @@ backbone（DiT/UNet/Transformer）仍是 family 内部实现细节，不增加�
 3. **已完成：现有 composition 抽取。** causal-token state machine 已进入
    `generation/composition/causal/token_loop.py`；denoise hot loop 已进入
    `generation/steps/denoise/loop.py`。
-4. **待真实实现：causal-chunked denoise。** Self-Forcing 首版可以在自己的 binding
-   内拥有专用 chunk lifecycle；只有实现 diff 证明了共性，才继续上提共享
-   composition，不从四格表猜接口。
+4. **待真实实现：causal-chunked denoise。** 首个技术候选是 Wan2.1-1.3B-based
+   CausVid，因为它最贴近现有 Wan seam；但 upstream WIP 状态和 non-commercial
+   checkpoint license 是 promotion gate。MAGI-1 先作为 24-frame causal-chunk contract
+   reference，再评估其 custom/larger runtime。exact chunk-wise Self-Forcing variant 仍是
+   候选，但不能用 family 总称替代 variant 分类。首个 family 在自己的 binding 内拥有
+   专用 chunk lifecycle；只有第二个实现的 diff 证明了共性，才上提共享 composition，
+   不从四格表猜接口。
 5. **决策记录维护。** §1–§3 的 tripwire 只在季度 review 或触发事件时重开。
 
 ## 6. 架构卫生与非目标

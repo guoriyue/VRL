@@ -29,7 +29,26 @@ implementation rather than generation organization.
 | `causal + token + categorical + token` | Janus-Pro, Emu3, GLM-Image, LlamaGen |
 | `causal + token + continuous + token` | NextStep-1 |
 | `causal + token + categorical + multisegment_token` | Janus-Pro R1 |
-| `causal_chunked + denoise + continuous + denoise` | Reserved for Self-Forcing once its executable family lands |
+| `causal_chunked + denoise + continuous + denoise` | No executable families yet |
+
+## Future causal-chunked support
+
+The first support targets for the empty causal-chunked denoise profile are:
+
+| Candidate | Planned profile | Integration position |
+|---|---|---|
+| [CausVid](https://github.com/tianweiy/CausVid) ([paper](https://arxiv.org/abs/2412.07772), [weights](https://huggingface.co/tianweiy/CausVid/tree/main/autoregressive_checkpoint)) | `causal_chunked + denoise + continuous + denoise` | First technical integration candidate. It is built on Wan2.1-T2V-1.3B and advances multi-frame chunks causally while denoising within each chunk, so it is closest to VRL's existing Wan seam. Promotion is gated on upstream maturity and checkpoint licensing: the repository is WIP and the released weights are non-commercial. |
+| [MAGI-1](https://github.com/SandAI-org/MAGI-1) ([paper](https://arxiv.org/abs/2505.13211), [weights](https://huggingface.co/sand-ai/MAGI-1)) | `causal_chunked + denoise + continuous + denoise` | Contract and second integration candidate. It advances fixed 24-frame causal chunks and denoises every chunk jointly. Its custom, larger runtime makes it a useful semantic reference but a later implementation target than the Wan-based path. |
+
+These are roadmap candidates, not `FAMILY_REGISTRY` entries or runnable recipes.
+The first implementation should own its chunk/cache lifecycle in a family-specific
+binding. Extract `composition/causal_chunked` only after another implementation
+proves a shared boundary; do not add placeholder packages for the roadmap.
+
+Self-Forcing remains a related candidate only when named by exact executable
+variant. Its released chunk-wise DMD policy fits this profile, while the
+Self-Forcing family name alone does not: the method also includes a frame-wise
+variant with different temporal organization.
 
 Two hybrid cases show why this scope matters:
 
