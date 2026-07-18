@@ -12,6 +12,8 @@ from typing import Any
 
 import torch
 
+from vrl.config.precision import RolePrecision
+
 # Tiny real Wan DiT geometry (CPU, ~6.7K params): latent video [B, C, T, H, W]
 # with patch size (1, 2, 2); text embeds are [B, TEXT_LEN, TEXT_DIM].
 TINY_WAN_LATENT_SHAPE = (1, 4, 1, 4, 4)
@@ -403,18 +405,11 @@ def record_forward_calls(module: torch.nn.Module) -> list[dict[str, Any]]:
     return calls
 
 
-def stamp_test_contract(model: Any, *, autocast: str = "off") -> Any:
-    """Stamp the role precision a RuntimeBundle would have stamped.
-
-    Tests constructing family models directly (no bundle) mirror production
-    reality with an explicit stamp; ``off`` keeps pre-hook test numerics.
-    """
-
-    from vrl.config.precision import RolePrecision
+def stamp_model_precision(model: Any) -> None:
+    """Mirror RuntimeBundle precision assembly for direct-model forward tests."""
 
     model.precision = RolePrecision(
-        dtype="fp32" if autocast == "off" else autocast,
+        dtype="fp32",
         float32_precision="ieee",
-        outer_autocast=autocast != "off",
+        outer_autocast=False,
     )
-    return model

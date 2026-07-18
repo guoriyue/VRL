@@ -17,7 +17,7 @@ from tests.models.diffusion.fixtures import (
     TINY_QWEN_JOINT_DIM,
     build_tiny_qwen_image_transformer,
     record_forward_calls,
-    stamp_test_contract,
+    stamp_model_precision,
 )
 from vrl.models.diffusion.qwen_image.model import (
     QwenImageModel,
@@ -33,8 +33,8 @@ def _model(transformer: torch.nn.Module) -> QwenImageModel:
         pipeline=SimpleNamespace(transformer=transformer, device=torch.device("cpu")),
         device=torch.device("cpu"),
     )
-    stamp_test_contract(model)
-    return stamp_test_contract(model)
+    stamp_model_precision(model)
+    return model
 
 
 def test_qwen_forward_step_single_branch_when_no_cfg() -> None:
@@ -117,7 +117,7 @@ def test_qwen_replay_model_restores_state_without_a_pipeline() -> None:
         scheduler=None,
         device=torch.device("cpu"),
     )
-    stamp_test_contract(model)
+    stamp_model_precision(model)
     replay_tensors = {
         "prompt_embeds": torch.randn(2, 3, TINY_QWEN_JOINT_DIM),
         "prompt_embeds_mask": torch.ones(2, 3, dtype=torch.int64),

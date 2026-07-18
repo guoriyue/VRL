@@ -16,7 +16,7 @@ from typing import Any
 
 import torch
 
-from tests.models.diffusion.fixtures import record_forward_calls, stamp_test_contract
+from tests.models.diffusion.fixtures import record_forward_calls, stamp_model_precision
 from vrl.models.diffusion.hunyuan_image.model import (
     HunyuanImageModel,
     HunyuanImageReplayModel,
@@ -66,7 +66,8 @@ def _model(transformer: torch.nn.Module) -> HunyuanImageModel:
         pipeline=SimpleNamespace(transformer=transformer, device=torch.device("cpu")),
         device=torch.device("cpu"),
     )
-    return stamp_test_contract(model)
+    stamp_model_precision(model)
+    return model
 
 
 def _glyph_pair(bsz: int, *, zeros: bool) -> tuple[torch.Tensor, torch.Tensor]:

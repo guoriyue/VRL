@@ -18,7 +18,7 @@ from tests.models.diffusion.fixtures import (
     TINY_MOCHI_TEXT_DIM,
     build_tiny_mochi_transformer,
     record_forward_calls,
-    stamp_test_contract,
+    stamp_model_precision,
 )
 from vrl.models.diffusion.mochi.model import (
     MochiModel,
@@ -36,7 +36,8 @@ def _model(transformer: torch.nn.Module) -> MochiModel:
         pipeline=SimpleNamespace(transformer=transformer, device=torch.device("cpu")),
         device=torch.device("cpu"),
     )
-    return stamp_test_contract(model)
+    stamp_model_precision(model)
+    return model
 
 
 def _state(*, do_cfg: bool) -> MochiSamplingState:

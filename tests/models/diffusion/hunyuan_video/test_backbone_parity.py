@@ -18,7 +18,7 @@ from tests.models.diffusion.fixtures import (
     TINY_HUNYUAN_VIDEO_TEXT_DIM,
     build_tiny_hunyuan_video_transformer,
     record_forward_calls,
-    stamp_test_contract,
+    stamp_model_precision,
 )
 from vrl.models.diffusion.hunyuan_video.model import (
     HunyuanVideoModel,
@@ -34,7 +34,8 @@ def _model(transformer: torch.nn.Module) -> HunyuanVideoModel:
         pipeline=SimpleNamespace(transformer=transformer, device=torch.device("cpu")),
         device=torch.device("cpu"),
     )
-    return stamp_test_contract(model)
+    stamp_model_precision(model)
+    return model
 
 
 def _state() -> HunyuanVideoSamplingState:

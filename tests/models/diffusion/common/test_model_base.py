@@ -13,7 +13,6 @@ import torch.nn as nn
 from tests.models.diffusion.fixtures import (
     add_lora_adapters,
     build_tiny_wan_transformer,
-    stamp_test_contract,
 )
 from vrl.config.precision import RolePrecision
 from vrl.generation import GenerationRequest, GenerationSampleRow
@@ -163,7 +162,6 @@ class _BackendPipelineStub(nn.Module):
 def test_pipeline_model_base_discovers_primary_encoder_device() -> None:
     pipeline = _BackendPipelineStub()
     runtime = SD3_5Model(pipeline=pipeline, device=torch.device("meta"))
-    stamp_test_contract(runtime)
 
     assert runtime._encoder_device() == torch.device("cpu")
 
@@ -172,7 +170,6 @@ def test_pipeline_model_base_falls_back_for_parameterless_encoder() -> None:
     pipeline = _BackendPipelineStub()
     pipeline.text_encoder = nn.Identity()
     runtime = SD3_5Model(pipeline=pipeline, device=torch.device("meta"))
-    stamp_test_contract(runtime)
 
     assert runtime._encoder_device() == torch.device("meta")
 
@@ -189,7 +186,6 @@ def test_pipeline_model_base_reads_guidance_embeds(config: Any, expected: bool) 
     pipeline = _BackendPipelineStub()
     pipeline.transformer.config = config
     runtime = SD3_5Model(pipeline=pipeline, device=torch.device("cpu"))
-    stamp_test_contract(runtime)
 
     assert runtime._guidance_embeds is expected
 
@@ -198,7 +194,6 @@ def test_flux_encoder_device_prefers_second_encoder() -> None:
     pipeline = _BackendPipelineStub()
     pipeline.text_encoder_2 = nn.Linear(2, 2, device="meta")
     runtime = FluxModel(pipeline=pipeline, device=torch.device("cpu"))
-    stamp_test_contract(runtime)
 
     assert runtime._encoder_device() == torch.device("meta")
 

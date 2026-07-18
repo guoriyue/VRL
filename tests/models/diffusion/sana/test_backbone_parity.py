@@ -17,7 +17,7 @@ from tests.models.diffusion.fixtures import (
     TINY_SANA_LATENT_SHAPE,
     build_tiny_sana_transformer,
     record_forward_calls,
-    stamp_test_contract,
+    stamp_model_precision,
 )
 from vrl.models.diffusion.sana.model import (
     SanaModel,
@@ -33,7 +33,8 @@ def _model(transformer: torch.nn.Module) -> SanaModel:
         pipeline=SimpleNamespace(transformer=transformer, device=torch.device("cpu")),
         device=torch.device("cpu"),
     )
-    return stamp_test_contract(model)
+    stamp_model_precision(model)
+    return model
 
 
 def _state(*, do_cfg: bool) -> SanaSamplingState:

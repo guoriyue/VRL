@@ -13,7 +13,7 @@ from typing import Any
 
 import torch
 
-from tests.models.diffusion.fixtures import record_forward_calls, stamp_test_contract
+from tests.models.diffusion.fixtures import record_forward_calls, stamp_model_precision
 from vrl.models.diffusion.pixart_sigma.model import (
     PixArtSigmaModel,
     PixArtSigmaReplayModel,
@@ -56,7 +56,8 @@ def _model(transformer: torch.nn.Module) -> PixArtSigmaModel:
         pipeline=SimpleNamespace(transformer=transformer, device=torch.device("cpu")),
         device=torch.device("cpu"),
     )
-    return stamp_test_contract(model)
+    stamp_model_precision(model)
+    return model
 
 
 def _state(*, do_cfg: bool) -> PixArtSigmaSamplingState:

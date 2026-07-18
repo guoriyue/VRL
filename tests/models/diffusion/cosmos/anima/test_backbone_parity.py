@@ -26,7 +26,7 @@ from tests.models.diffusion.fixtures import (
     TINY_COSMOS_TEXT_DIM,
     build_tiny_anima_transformer,
     record_forward_calls,
-    stamp_test_contract,
+    stamp_model_precision,
 )
 from vrl.models.diffusion.cosmos.anima.model import (
     AnimaModel,
@@ -70,7 +70,7 @@ def test_anima_forward_step_runs_real_unbatched_cfg() -> None:
         device=torch.device("cpu"),
         dtype=torch.float32,
     )
-    stamp_test_contract(model)
+    stamp_model_precision(model)
     state = _state()
 
     out = model.forward_step(state, 0)

@@ -17,7 +17,7 @@ from tests.models.diffusion.fixtures import (
     TINY_COSMOS_TEXT_DIM,
     build_tiny_cosmos_transformer,
     record_forward_calls,
-    stamp_test_contract,
+    stamp_model_precision,
 )
 from vrl.models.diffusion.cosmos.predict2.model import (
     CosmosPredict2Model,
@@ -59,7 +59,7 @@ def test_cosmos_predict2_forward_step_runs_real_unbatched_cfg() -> None:
         pipeline=SimpleNamespace(transformer=transformer, device=torch.device("cpu")),
         device=torch.device("cpu"),
     )
-    stamp_test_contract(model)
+    stamp_model_precision(model)
     state = _state()
 
     out = model.forward_step(state, 0)

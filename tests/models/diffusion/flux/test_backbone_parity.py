@@ -17,7 +17,7 @@ from tests.models.diffusion.fixtures import (
     TINY_FLUX_POOLED_DIM,
     build_tiny_flux_transformer,
     record_forward_calls,
-    stamp_test_contract,
+    stamp_model_precision,
 )
 from vrl.models.diffusion.flux.model import FluxModel, FluxReplayModel, FluxSamplingState
 
@@ -30,8 +30,8 @@ def _model(transformer: torch.nn.Module) -> FluxModel:
         pipeline=SimpleNamespace(transformer=transformer, device=torch.device("cpu")),
         device=torch.device("cpu"),
     )
-    stamp_test_contract(model)
-    return stamp_test_contract(model)
+    stamp_model_precision(model)
+    return model
 
 
 def _state(model: FluxModel, *, guidance_embeds: bool) -> FluxSamplingState:
@@ -119,7 +119,7 @@ def test_flux_replay_model_restores_state_without_a_pipeline() -> None:
     """The pipeline-less replay model rebuilds position grids and runs forward_step."""
     transformer = build_tiny_flux_transformer(guidance_embeds=True)
     model = FluxReplayModel(transformer=transformer, scheduler=None, device=torch.device("cpu"))
-    stamp_test_contract(model)
+    stamp_model_precision(model)
 
     replay_tensors = {
         "prompt_embeds": torch.randn(2, _TEXT_LEN, TINY_FLUX_JOINT_DIM),
