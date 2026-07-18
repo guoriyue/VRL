@@ -22,15 +22,15 @@ def test_sana_training_path_matches_native_flow_euler_at_every_step() -> None:
     from huggingface_hub import snapshot_download
 
     from vrl.config.loading import load_config
-    from vrl.generation.diffusion.layout import VideoGenerationRequest
-    from vrl.math.diffusion.flow_matching import sde_step_with_logprob
-    from vrl.models.diffusion.build import (
+    from vrl.generation.types import VideoGenerationRequest
+    from vrl.math.denoise.flow_matching import sde_step_with_logprob
+    from vrl.models.precision import forward_autocast
+    from vrl.models.steps.denoise.build import (
         build_family_runtime_bundle,
         resolve_family_model_build,
     )
-    from vrl.models.precision import forward_autocast
 
-    cfg = load_config("experiment/diffusion/sana/online_grpo_aesthetic")
+    cfg = load_config("experiment/sana/online_grpo_aesthetic")
     repo_id = str(cfg.model.path)
     revision = str(cfg.model.revision)
     snapshot = snapshot_download(repo_id, revision=revision, local_files_only=True)

@@ -1,0 +1,68 @@
+# SANA 1.6B full-parameter aesthetic GRPO in the checkpoint's native FP16 path.
+#
+# This is intentionally a separate recipe from the LoRA curve. Full-parameter
+# updates need a lower learning rate, FP32 master weights, no adapter-disabled
+# KL reference, and no second EMA copy. The trainer derives its master-weight
+# adapter and FP16 GradScaler from the actual trainable parameter dtype; the
+# 8-bit optimizer changes moment storage only. Rollout/replay forward remains
+# the unquantized official FP16 transformer path.
+defaults:
+  - /experiment/sana/online_grpo_aesthetic
+  - _self_
+
+algorithm:
+  # The shared KL reference is implemented by disabling a LoRA adapter. A full
+  # policy has no adapter to disable and would require a second frozen 1.6B
+  # transformer, so this recipe uses pure GRPO instead of advertising fake KL.
+  kl_coef: 0.0
+
+model:
+  use_lora: false
+  lora: null
+
+actor:
+  optim:
+    # Full-parameter updates are much larger than rank-16 adapter updates; the
+    # LoRA recipe's 3e-4 is not a safe full-model learning rate.
+    lr: 5.0e-6
+    # AdamW8bit keeps quantized moments with FP32 scale metadata and is the
+    # memory enabler on a 32 GB card. It updates trainer-owned FP32 masters;
+    # successful steps publish rounded FP16 weights for native replay/rollout,
+    # while sub-ULP residuals remain in the checkpointed masters.
+    optim_8bit: true
+  ema:
+    # A full-model EMA is another complete parameter copy and is not needed for
+    # the first trustworthy curve.
+    enable: false
+  # Keep the first formal phase on the exact memory/numerical shape accepted by
+  # the real full-state canary. The inherited LoRA recipe is 8 prompts x 16
+  # samples x 4 PPO epochs and is not evidence for a 1.6B full-model update.
+  ppo_epochs: 1
+  gradient_accumulation_steps: 1
+  replay_samples_per_chunk: 1
+
+rollout:
+  prompts_per_batch: 1
+  n_samples_per_prompt: 8
+  samples_per_chunk: 1
+
+trainer:
+  # Start with a bounded, checkpoint-every-update master-weight pilot; promote
+  # the run depth only after parity, finite-state, resume, weight-delta, and
+  # held-out image/reward gates pass across all five updates.
+  total_epochs: 5
+  save_freq: 1
+  output_dir: outputs/sana_aesthetic_fullparam
+  debug:
+    first_step: true
+    # The corrected rollout/replay path is bit-exact. Keep a tiny diagnostic
+    # allowance for future kernel revisions, still two orders tighter than the
+    # algorithm's 1e-4 importance-ratio clip boundary.
+    max_abs_logprob_diff: 1.0e-6
+  precision_drift_guard:
+    # Same dtype labels do not reveal backend drift (for example TF32 vs IEEE),
+    # so this launch gate must be explicit rather than the cross-dtype-only auto.
+    mode: fail
+    max_timestep_checks: 3
+    max_abs_log_ratio: 1.0e-6
+    max_ratio_abs_dev: 1.0e-6

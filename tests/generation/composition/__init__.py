@@ -1,0 +1,1 @@
+"""Temporal-composition generation tests."""

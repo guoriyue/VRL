@@ -6,10 +6,10 @@
 # lr/ppo_epochs/samples_per_chunk when they deviate). Override any of these in an
 # experiment when it genuinely differs.
 defaults:
-  - /recipe/online/diffusion_grpo
+  - /recipe/online/denoise_grpo
 
 trainer:
-  entrypoint: vrl.scripts.diffusion.train:train_diffusion_online
+  entrypoint: vrl.scripts.train:train_online
 
 algorithm:
   # cosmos/wan video GRPO wants a tighter clip than the diffusion default (1e-4);

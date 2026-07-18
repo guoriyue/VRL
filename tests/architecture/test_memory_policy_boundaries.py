@@ -8,16 +8,16 @@ ROOT = Path(__file__).resolve().parents[2]
 VRL_ROOT = ROOT / "vrl"
 
 
-def test_diffusion_model_loaders_use_vae_decode_memory_boundary() -> None:
-    """VAE tiling/slicing must go through vrl.models.diffusion.common.vae_decode_memory."""
+def test_family_model_loaders_use_vae_decode_memory_boundary() -> None:
+    """VAE tiling/slicing must go through vrl.models.steps.denoise.common.vae_decode_memory."""
 
     # Only VAE tiling/slicing has a policy boundary (vae_decode_memory). Diffusers
     # pipeline-level offload through model.offload_mode is a legitimate single-GPU
     # inference strategy — e.g. Wan I2V 14B on a 32 GB card — so the underlying
     # accelerate calls are intentionally not forbidden here.
     violations = _forbidden_text(
-        VRL_ROOT / "models" / "diffusion",
-        filename="model.py",
+        VRL_ROOT / "models" / "families",
+        pattern="model.py",
         forbidden=(
             "enable_tiling(",
             "enable_slicing(",
@@ -26,7 +26,7 @@ def test_diffusion_model_loaders_use_vae_decode_memory_boundary() -> None:
     assert not violations, _format_violations(violations)
 
 
-def test_diffusion_train_scripts_do_not_inline_cpu_offload_policy() -> None:
+def test_train_scripts_do_not_inline_cpu_offload_policy() -> None:
     """Train scripts must not inline driver CPU offload.
 
     The trainer never loads the generation-only modules (text encoders, VAE):
@@ -37,8 +37,8 @@ def test_diffusion_train_scripts_do_not_inline_cpu_offload_policy() -> None:
     """
 
     violations = _forbidden_text(
-        VRL_ROOT / "scripts" / "diffusion",
-        filename="train.py",
+        VRL_ROOT / "scripts",
+        pattern="train*.py",
         forbidden=(
             "enable_model_cpu_offload(",
             "enable_sequential_cpu_offload(",
@@ -63,11 +63,11 @@ def test_runtime_interface_does_not_parse_model_memory_sections() -> None:
 def _forbidden_text(
     root: Path,
     *,
-    filename: str,
+    pattern: str,
     forbidden: tuple[str, ...],
 ) -> list[tuple[Path, int, str]]:
     violations: list[tuple[Path, int, str]] = []
-    for path in sorted(root.rglob(filename)):
+    for path in sorted(root.rglob(pattern)):
         text = path.read_text(encoding="utf-8")
         for lineno, line in enumerate(text.splitlines(), start=1):
             for snippet in forbidden:

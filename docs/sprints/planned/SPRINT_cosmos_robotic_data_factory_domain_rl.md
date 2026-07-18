@@ -197,7 +197,7 @@ Home chores / household manipulation 目标域下一步应该接：
 
 在动 audit/reward 之前，先确认**引擎层**：Cosmos Predict2 2B 能在机器人参考数据上端到端跑 RL 管线，且 GPU 跑在健康 compute-bound 区间。**结论分两半：引擎/性能/利用率真实有效；但具体的 240p_33f 配置生成是垃圾、不能用于真训练（见 point 6）——别把“引擎能跑”读成“模型能学”。**
 
-**新增配置**：`configs/experiment/diffusion/cosmos_predict2/online_grpo_v2w_reference_fullparam_240p.yaml`
+**新增配置**：`configs/experiment/cosmos_predict2/online_grpo_v2w_reference_fullparam_240p.yaml`
 = `video_world_v2w`（per_sample 机器人首帧）+ 240p_33f + full-param + 8bit Adam + ppo4。补上了 trustworthy_curve sprint §3.5 标记缺失的“真 reference + full-param”配置。
 
 **工具**（`vrl/scripts/perf/`）：`gpu_preflight`（定标 MFU 分母）+ `video_dit_mfu_probe`（隔离 DiT MFU）+ `gpm_sampler`（NVML GPM SM 级计数器，非 `nvidia-smi` 的“有 kernel 驻留”伪占用）。
@@ -230,7 +230,7 @@ Home chores / household manipulation 目标域下一步应该接：
 
    ```bash
    CUDA_VISIBLE_DEVICES=0 PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True vrl-train \
-     --config experiment/diffusion/cosmos_predict2/online_grpo_v2w_reference_fullparam_240p
+     --config experiment/cosmos_predict2/online_grpo_v2w_reference_fullparam_240p
    ```
 
 6. **生成质量在 240p_33f 崩掉（2026-06-27 复核）**：肉眼检查生成的 `reward_artifacts/sample-*.mp4`——**只有 frame 0（被 reference 的 init_latents/cond_indicator 钳住）是连贯的真实机器人场景，frame 4 起全部退化成彩虹噪声**。逐帧 neighbor-diff 统计骗人（彩虹是大色块、空间平滑），必须肉眼看。reward=-4.58 / visual_quality≈-1.5 正是在反映这个垃圾输出。

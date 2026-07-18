@@ -18,8 +18,8 @@ from omegaconf import DictConfig, OmegaConf
 from vrl.config.builders import build_configs
 from vrl.config.loading import load_config
 from vrl.families.registry import get_model_family_entry
-from vrl.generation.diffusion.layout import VideoGenerationRequest
-from vrl.math.diffusion.flow_matching import sde_step_with_logprob
+from vrl.generation.types import VideoGenerationRequest
+from vrl.math.denoise.flow_matching import sde_step_with_logprob
 from vrl.models.dtypes import resolve_torch_dtype
 from vrl.rewards.inference import RewardInferenceArtifact, RewardInferenceRequest
 from vrl.rewards.models.kling_video_reward import KlingVideoRewardModel
@@ -60,7 +60,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--config",
-        default="experiment/diffusion/cosmos_predict2_5/online_nft_kling_video_reward",
+        default="experiment/cosmos_predict2_5/online_nft_kling_video_reward",
         help="Bundled config name or absolute YAML path.",
     )
     parser.add_argument(

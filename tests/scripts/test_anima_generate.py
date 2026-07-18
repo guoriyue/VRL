@@ -9,7 +9,7 @@ from omegaconf import OmegaConf
 from PIL import Image
 
 from vrl.config.precision import RolePrecision
-from vrl.scripts.diffusion.cosmos.anima import generate
+from vrl.scripts.families.cosmos.anima import generate
 
 
 def test_generate_disables_empty_training_lora_for_inference() -> None:

@@ -139,17 +139,15 @@ def test_raw_yaml_has_no_user_specific_absolute_paths() -> None:
 
 
 def test_experiments_are_grouped_by_model_family() -> None:
-    """Every experiment lives at <modality>/<model>/<recipe> under a known modality.
+    """Every experiment lives at ``<family>/<recipe>``.
 
-    The structural convention — not any specific roster of names — is what the
-    layout guards: a two-level family grouping (modality, then model family)
-    with the recipe as the leaf. Pinning the literal set of names just churns
-    the test on every add/remove/rename; "all load+validate" is already owned by
-    test_all_experiments_load_and_validate.
+    Temporal organization and policy-step math live in registry semantics, so
+    the config path must not reintroduce the retired AR/diffusion taxonomy.
     """
     names = _experiment_names()
-    assert {Path(name).parts[0] for name in names} == {"ar", "diffusion"}
-    assert all(len(Path(name).parts) == 3 for name in names)
+    groups = {Path(name).parts[0] for name in names}
+    assert {"ar", "diffusion"}.isdisjoint(groups)
+    assert all(len(Path(name).parts) == 2 for name in names)
 
 
 def _reward_group_kwargs_keys(group_name: str) -> dict[str, set[str]]:
@@ -308,7 +306,7 @@ def test_validate_rejects_compile_with_gradient_checkpointing() -> None:
     experiment that sets checkpointing (that exact collision shipped in four
     cosmos_predict2 240p recipes before this load-time check existed).
     """
-    base = "experiment/diffusion/sd3_5/online_grpo_ocr"  # resolves compile=true
+    base = "experiment/sd3_5/online_grpo_ocr"  # resolves compile=true
 
     for ckpt in ("true", "full", "selective"):
         cfg = load_config(base, overrides=[f"actor.gradient_checkpointing={ckpt}"])
@@ -323,8 +321,8 @@ def test_validate_rejects_compile_with_gradient_checkpointing() -> None:
 @pytest.mark.parametrize(
     "name",
     [
-        "diffusion/cosmos_predict2_5/online_nft_kling_video_reward",
-        "diffusion/cosmos_predict2_5/online_nft_motion_physics",
+        "cosmos_predict2_5/online_nft_kling_video_reward",
+        "cosmos_predict2_5/online_nft_motion_physics",
     ],
 )
 def test_cosmos_predict25_nft_uses_paper_timestep_budget(name: str) -> None:
@@ -343,7 +341,7 @@ def test_cosmos_predict25_nft_uses_paper_timestep_budget(name: str) -> None:
 
 def test_cosmos_predict25_kling_reward_uses_paper_rl_batch() -> None:
     """Checks the Kling reward recipe matches the paper RL batch geometry."""
-    cfg = load_config("experiment/diffusion/cosmos_predict2_5/online_nft_kling_video_reward")
+    cfg = load_config("experiment/cosmos_predict2_5/online_nft_kling_video_reward")
 
     # Batch geometry (n_samples_per_prompt / prompts_per_batch / samples_per_chunk /
     # microbatch_size) is declarative YAML a tuner is free to change. Assert the real
@@ -389,7 +387,7 @@ def test_experiments_do_not_use_legacy_precision_fields() -> None:
 def test_rollout_orchestration_group_override_uses_rollout_namespace() -> None:
     """Checks rollout orchestration group override uses rollout namespace."""
     cfg = load_config(
-        "experiment/diffusion/sd3_5/online_grpo_ocr",
+        "experiment/sd3_5/online_grpo_ocr",
         overrides=["/base/rollout/orchestration=continuous"],
     )
 
@@ -407,11 +405,11 @@ def test_rollout_orchestration_group_override_uses_rollout_namespace() -> None:
 def test_algorithm_config_dispatches_representative_kinds() -> None:
     """Checks algorithm config dispatches representative kinds."""
     examples = {
-        "diffusion/sd3_5/online_grpo_ocr": GRPOConfig,
-        "ar/janus_pro/online_grpo_ocr": TokenGRPOConfig,
-        "ar/janus_pro/online_r1_grpo_ocr": MultiSegmentTokenGRPOConfig,
-        "diffusion/wan_2_1/offline_dpo_pickapic": DiffusionDPOConfig,
-        "diffusion/cosmos_predict2_5/online_nft_kling_video_reward": DiffusionNFTConfig,
+        "sd3_5/online_grpo_ocr": GRPOConfig,
+        "janus_pro/online_grpo_ocr": TokenGRPOConfig,
+        "janus_pro/online_r1_grpo_ocr": MultiSegmentTokenGRPOConfig,
+        "wan_2_1/offline_dpo_pickapic": DiffusionDPOConfig,
+        "cosmos_predict2_5/online_nft_kling_video_reward": DiffusionNFTConfig,
     }
     for name, expected_type in examples.items():
         cfg = load_config(f"experiment/{name}")
@@ -421,10 +419,10 @@ def test_algorithm_config_dispatches_representative_kinds() -> None:
 
 def test_janus_experiments_declare_the_exact_runtime_family() -> None:
     expected = {
-        "ar/janus_pro/online_grpo_ocr": "janus_pro",
-        "ar/janus_pro/online_grpo_aesthetic": "janus_pro",
-        "ar/janus_pro/online_r1_grpo_ocr": "janus_pro_r1",
-        "ar/janus_pro/online_r1_grpo_aesthetic": "janus_pro_r1",
+        "janus_pro/online_grpo_ocr": "janus_pro",
+        "janus_pro/online_grpo_aesthetic": "janus_pro",
+        "janus_pro/online_r1_grpo_ocr": "janus_pro_r1",
+        "janus_pro/online_r1_grpo_aesthetic": "janus_pro_r1",
     }
 
     for name, family in expected.items():
@@ -441,9 +439,9 @@ def test_algorithm_dispatch_is_stable_per_kind() -> None:
     test_algorithm_config_dispatches_representative_kinds.
     """
     for name in (
-        "diffusion/sd3_5/online_grpo_ocr",
-        "ar/janus_pro/online_grpo_ocr",
-        "diffusion/wan_2_1/offline_dpo_pickapic",
+        "sd3_5/online_grpo_ocr",
+        "janus_pro/online_grpo_ocr",
+        "wan_2_1/offline_dpo_pickapic",
     ):
         cfg = load_config(f"experiment/{name}")
         first = build_algorithm_config(cfg)
@@ -514,7 +512,7 @@ def test_cosmos_v2w_production_validation_accepts_source_backed_data(
         encoding="utf-8",
     )
     cfg = load_config(
-        "experiment/diffusion/cosmos_predict2/online_grpo_v2w_reference",
+        "experiment/cosmos_predict2/online_grpo_v2w_reference",
         overrides=[
             "production.kling_video_reward.enabled=true",
             f"data.manifest={train.as_posix()}",
@@ -600,7 +598,7 @@ def test_cosmos_target_v2w_production_validation_requires_target_clip(
     # test_cosmos_v2w_production_validation_accepts_source_backed_data. Here we validate
     # that target-clip-backed data resolves and validates for this recipe.
     cfg = load_config(
-        "experiment/diffusion/cosmos_predict2/online_grpo_droid_target_480p",
+        "experiment/cosmos_predict2/online_grpo_droid_target_480p",
         overrides=[
             f"data.manifest={train.as_posix()}",
             f"data.eval_manifest={eval_manifest.as_posix()}",
@@ -679,7 +677,7 @@ def test_wan_i2v_production_validation_accepts_source_backed_data(tmp_path: Path
     )
 
     cfg = load_config(
-        "experiment/diffusion/wan_2_1/online_grpo_physics_i2v",
+        "experiment/wan_2_1/online_grpo_physics_i2v",
         overrides=[
             "production.kling_video_reward.enabled=true",
             f"data.manifest={train_manifest.as_posix()}",
@@ -694,7 +692,7 @@ def test_wan_i2v_production_validation_accepts_source_backed_data(tmp_path: Path
 
 def test_wan_video_reward_production_config_requires_reward_name() -> None:
     """Checks Wan video reward production config requires reward name."""
-    cfg = load_config("experiment/diffusion/wan_2_1/online_grpo_kling_video_reward")
+    cfg = load_config("experiment/wan_2_1/online_grpo_kling_video_reward")
     cfg.reward.kwargs.kling_video_reward.reward_name = ""
 
     with pytest.raises(ValueError, match="reward_name"):
@@ -703,13 +701,13 @@ def test_wan_video_reward_production_config_requires_reward_name() -> None:
 
 def test_wan_video_reward_production_rejects_extra_loader_fields() -> None:
     """Checks Wan video reward production rejects extra loader fields."""
-    cfg = load_config("experiment/diffusion/wan_2_1/online_grpo_kling_video_reward")
+    cfg = load_config("experiment/wan_2_1/online_grpo_kling_video_reward")
     cfg.reward.kwargs.kling_video_reward.worker_config.import_path = "fake:thing"
 
     with pytest.raises(ValueError, match="remove extra loader fields"):
         validate_training_config(cfg)
 
-    cfg = load_config("experiment/diffusion/wan_2_1/online_grpo_kling_video_reward")
+    cfg = load_config("experiment/wan_2_1/online_grpo_kling_video_reward")
     cfg.reward.kwargs.kling_video_reward.worker_config.model_factory = "fake:factory"
 
     with pytest.raises(ValueError, match="remove extra loader fields"):
@@ -720,7 +718,7 @@ def test_unified_train_entrypoint_reads_yaml_entrypoint() -> None:
     """Checks unified train entrypoint reads YAML entrypoint."""
     from vrl.scripts.train import _import_callable, resolve_train_target
 
-    cfg = load_config("experiment/diffusion/sd3_5/online_grpo_ocr")
+    cfg = load_config("experiment/sd3_5/online_grpo_ocr")
     target = resolve_train_target(cfg)
 
     assert target.import_path == cfg.trainer.entrypoint
@@ -730,7 +728,7 @@ def test_unified_train_entrypoint_reads_yaml_entrypoint() -> None:
 def test_cli_overrides_reach_typed_trainer_config() -> None:
     """Checks CLI overrides reach typed trainer config."""
     cfg = load_config(
-        "experiment/diffusion/sd3_5/online_grpo_ocr",
+        "experiment/sd3_5/online_grpo_ocr",
         overrides=[
             "trainer.resume_from=/tmp/checkpoint-10",
             "trainer.torch_profiler.enabled=true",
@@ -751,7 +749,7 @@ def test_cli_overrides_reach_typed_trainer_config() -> None:
 def test_generation_chunk_auto_does_not_change_fixed_replay_default() -> None:
     """Generation auto remains generation-owned; replay defaults safely to one."""
     cfg = load_config(
-        "experiment/diffusion/sd3_5/online_grpo_ocr",
+        "experiment/sd3_5/online_grpo_ocr",
         overrides=["rollout.samples_per_chunk=auto"],
     )
     trainer = build_configs(cfg)["trainer"]
@@ -798,7 +796,7 @@ def test_diffusion_nft_rejects_removed_advantage_low() -> None:
 
 def test_missing_drop_zero_advantage_fails_fast() -> None:
     """actor.drop_zero_advantage is required; removing it fails loudly."""
-    cfg = load_config("experiment/diffusion/sd3_5/online_grpo_ocr")
+    cfg = load_config("experiment/sd3_5/online_grpo_ocr")
     del cfg.actor["drop_zero_advantage"]
     with pytest.raises(ValueError, match=r"actor\.drop_zero_advantage"):
         build_configs(cfg)
@@ -806,7 +804,7 @@ def test_missing_drop_zero_advantage_fails_fast() -> None:
 
 def test_negative_reward_component_weights_are_rejected() -> None:
     """Checks negative reward component weights are rejected."""
-    cfg = load_config("experiment/diffusion/anima_preview3/online_grpo_aesthetic_nsfw_safety")
+    cfg = load_config("experiment/anima_preview3/online_grpo_aesthetic_nsfw_safety")
     cfg.reward.components.nsfw_safety = -0.5
 
     with pytest.raises(ValueError, match=r"reward\.components\.nsfw_safety must be >= 0"):
@@ -824,7 +822,7 @@ def test_public_reward_builder_validates_its_input() -> None:
 
 def test_required_training_fields_fail_fast() -> None:
     """Checks required training fields fail fast."""
-    cfg = load_config("experiment/diffusion/wan_2_1/online_grpo_ocr")
+    cfg = load_config("experiment/wan_2_1/online_grpo_ocr")
     cfg.trainer.output_dir = "???"
     with pytest.raises(ValueError, match=r"trainer\.output_dir"):
         validate_training_config(cfg)
@@ -832,7 +830,7 @@ def test_required_training_fields_fail_fast() -> None:
 
 def test_dpo_allows_explicit_null_max_train_samples() -> None:
     """Checks DPO allows explicit null max train samples."""
-    cfg = load_config("experiment/diffusion/wan_2_1/offline_dpo_pickapic")
+    cfg = load_config("experiment/wan_2_1/offline_dpo_pickapic")
     cfg.data.max_train_samples = None
 
     assert optional_none(cfg, "data.max_train_samples") is None

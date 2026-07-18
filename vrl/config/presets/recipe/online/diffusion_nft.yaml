@@ -2,7 +2,7 @@
 defaults:
   - /base/algorithm/diffusion_nft
   - /base/actor
-  - /base/rollout/diffusion
+  - /base/rollout/denoise
   - /base/distributed/ray_rollout_colocated_single_gpu
   - /base/rollout/orchestration/strict
   - /base/trainer

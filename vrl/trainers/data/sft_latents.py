@@ -2,7 +2,7 @@
 
 One on-disk contract: ``{target_video -> [C, T, H, W] VAE latents}`` plus the
 family/model provenance needed to reject a shard encoded with a different model.
-The producer is ``vrl/scripts/diffusion/encode_targets.py``; the consumer is
+The producer is ``vrl/scripts/denoise/encode_targets.py``; the consumer is
 ``run_online_recipe`` (via ``data.sft_latents``) when ``algorithm.sft_weight > 0``.
 
 Split out of ``vrl/trainers/data/artifacts.py`` (which owns prompt-manifest path
@@ -31,7 +31,7 @@ def save_sft_latents(
     One file, one contract: ``{target_video -> [C, T, H, W] VAE latents}``
     plus the provenance needed to reject a shard encoded with a different
     family or model. The producer is
-    ``vrl/scripts/diffusion/encode_targets.py``.
+    ``vrl/scripts/denoise/encode_targets.py``.
     """
 
     import torch
@@ -69,7 +69,7 @@ def load_sft_latents(
     if not shard_path.exists():
         raise FileNotFoundError(
             f"data.sft_latents shard not found: {shard_path} "
-            "(produce it with vrl/scripts/diffusion/encode_targets.py)",
+            "(produce it with vrl/scripts/denoise/encode_targets.py)",
         )
     payload = torch.load(shard_path, map_location="cpu", weights_only=True)
     if not isinstance(payload, dict) or "latents" not in payload:

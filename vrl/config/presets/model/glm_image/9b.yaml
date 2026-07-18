@@ -1,0 +1,24 @@
+# GLM-Image (zai-org, hybrid checkpoint) — 9B autoregressive prior-token
+# generator + frozen 7B diffusion DiT decoder. RL trains ONLY the AR section;
+# the DiT decode is rollout postprocess. Sampling defaults (temperature /
+# top_p / image_height / image_width / max_text_length / decode_* knobs) live
+# in sampling/token/*.yaml. The image token count is derived from the
+# pixel target (prev_h*prev_w + token_h*token_w), so there is no
+# image_token_num knob for this family.
+model:
+  family: glm_image
+  path: zai-org/GLM-Image
+  revision: 2c433cc0cbc293bde2ac8ca9624f279b5d23fcf4
+
+  use_lora: true
+  lora:
+    rank: 32
+    alpha: 64
+    dropout: 0.0
+    init: gaussian
+    # GLM-Image's text trunk uses LLaMA-style attention projection names.
+    target_modules:
+      - q_proj
+      - k_proj
+      - v_proj
+      - o_proj

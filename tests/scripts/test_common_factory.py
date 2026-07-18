@@ -27,7 +27,7 @@ from vrl.scripts.common.factory import (
 def test_diffusion_grpo_evaluator_uses_resolved_rollout_sde_config() -> None:
     """Checks diffusion GRPO evaluator uses resolved rollout SDE config."""
     cfg = load_config(
-        "experiment/diffusion/wan_2_1/online_grpo_ocr",
+        "experiment/wan_2_1/online_grpo_ocr",
         overrides=[
             "rollout.noise_level=0.37",
             "rollout.sde.type=cps",
@@ -61,7 +61,7 @@ def test_diffusion_factory_accepts_each_kind_exact_config_type(
     expected_algorithm: type,
 ) -> None:
     cfg = load_config(
-        "experiment/diffusion/sd3_5/online_grpo_ocr",
+        "experiment/sd3_5/online_grpo_ocr",
         overrides=[f"/recipe/online={recipe}"],
     )
 
@@ -90,7 +90,7 @@ def test_diffusion_factory_rejects_a_sibling_config_type(
     expected_name: str,
 ) -> None:
     cfg = load_config(
-        "experiment/diffusion/sd3_5/online_grpo_ocr",
+        "experiment/sd3_5/online_grpo_ocr",
         overrides=[f"/recipe/online={recipe}"],
     )
     built = build_configs(cfg)
@@ -108,7 +108,7 @@ def test_diffusion_factory_rejects_a_sibling_config_type(
 
 def test_wan_empty_lora_preserves_base_policy_initially() -> None:
     """Checks Wan empty LoRA preserves base policy initially."""
-    cfg = load_config("experiment/diffusion/wan_2_1/online_grpo_physics")
+    cfg = load_config("experiment/wan_2_1/online_grpo_physics")
 
     build = get_model_family_entry("wan_2_1").resolve_model_build(
         cfg,
@@ -125,7 +125,7 @@ def test_wan_empty_lora_preserves_base_policy_initially() -> None:
 
 def test_sana_aesthetic_keeps_cpu_observation_only_pickscore() -> None:
     """PickScore is logged on CPU but contributes zero optimization weight."""
-    cfg = load_config("experiment/diffusion/sana/online_grpo_aesthetic")
+    cfg = load_config("experiment/sana/online_grpo_aesthetic")
     cfg.distributed.resources.visible_devices = [0]
     built = build_configs(cfg)
 
@@ -145,7 +145,7 @@ def test_sana_aesthetic_keeps_cpu_observation_only_pickscore() -> None:
 
 def test_sana_family_defaults_to_native_fp16() -> None:
     """The public role precision matches the checkpoint's runtime invariant."""
-    cfg = load_config("experiment/diffusion/sana/online_grpo_aesthetic")
+    cfg = load_config("experiment/sana/online_grpo_aesthetic")
     built = build_configs(cfg)
     entry = get_model_family_entry("sana")
     build = entry.resolve_model_build(cfg, torch.device("cpu"))
@@ -172,7 +172,7 @@ def test_sana_family_defaults_to_native_fp16() -> None:
 @pytest.mark.parametrize("dtype", ["bf16", "fp32"])
 def test_sana_role_precision_follows_yaml(role: str, dtype: str) -> None:
     """The selected YAML role owns SANA's transformer execution policy."""
-    cfg = load_config("experiment/diffusion/sana/online_grpo_aesthetic")
+    cfg = load_config("experiment/sana/online_grpo_aesthetic")
     cfg.precision[role].dtype = dtype
 
     build = get_model_family_entry("sana").resolve_model_build(
@@ -191,7 +191,7 @@ def test_sana_role_precision_follows_yaml(role: str, dtype: str) -> None:
 
 def test_sana_fullparam_pilot_disables_tf32_and_gates_backend_drift() -> None:
     """The strict first update must not consume clipping on backend mismatch."""
-    cfg = load_config("experiment/diffusion/sana/online_grpo_aesthetic_fullparam")
+    cfg = load_config("experiment/sana/online_grpo_aesthetic_fullparam")
     trainer = build_configs(cfg)["trainer"]
 
     assert cfg.model.use_lora is False
@@ -217,7 +217,7 @@ def test_sana_fullparam_pilot_disables_tf32_and_gates_backend_drift() -> None:
 
 def test_sana_fullparam_long_is_fresh_and_pins_reward_revisions() -> None:
     """The canonical curve starts from base with immutable scorer identities."""
-    cfg = load_config("experiment/diffusion/sana/online_grpo_aesthetic_fullparam_long")
+    cfg = load_config("experiment/sana/online_grpo_aesthetic_fullparam_long")
     cfg.distributed.resources.visible_devices = [0]
     built = build_configs(cfg)
     trainer = built["trainer"]
@@ -252,8 +252,8 @@ def test_sana_fullparam_long_is_fresh_and_pins_reward_revisions() -> None:
 @pytest.mark.parametrize(
     "experiment",
     [
-        "experiment/diffusion/sana/online_grpo_aesthetic",
-        "experiment/diffusion/sana/online_grpo_pickscore_validation",
+        "experiment/sana/online_grpo_aesthetic",
+        "experiment/sana/online_grpo_pickscore_validation",
     ],
 )
 def test_sana_experiments_pin_the_validated_symmetric_chunk_shape(
@@ -271,7 +271,7 @@ def test_sana_rejects_redundant_or_conflicting_model_dtype(
     configured_dtype: str,
 ) -> None:
     """A family invariant must not also survive as a user-controlled knob."""
-    cfg = load_config("experiment/diffusion/sana/online_grpo_aesthetic")
+    cfg = load_config("experiment/sana/online_grpo_aesthetic")
     cfg.model.dtype = configured_dtype
 
     with pytest.raises(ValueError, match=r"model\.dtype is not configurable.*sana"):
@@ -282,7 +282,7 @@ def test_sana_rejects_redundant_or_conflicting_model_dtype(
 
 
 def test_ordinary_diffusion_family_rejects_duplicate_model_dtype() -> None:
-    cfg = load_config("experiment/diffusion/sd3_5/online_grpo_ocr")
+    cfg = load_config("experiment/sd3_5/online_grpo_ocr")
     cfg.model.dtype = "fp16"
 
     with pytest.raises(ValueError, match=r"model\.dtype.*top-level precision"):
@@ -294,7 +294,7 @@ def test_ordinary_diffusion_family_rejects_duplicate_model_dtype() -> None:
 
 @pytest.mark.parametrize("dtype", ["bf16", "fp32"])
 def test_sana_direct_tool_override_changes_storage_only(dtype: str) -> None:
-    cfg = load_config("experiment/diffusion/sana/online_grpo_aesthetic")
+    cfg = load_config("experiment/sana/online_grpo_aesthetic")
 
     build = get_model_family_entry("sana").resolve_model_build(
         cfg,
@@ -311,7 +311,7 @@ def test_sana_direct_tool_override_changes_storage_only(dtype: str) -> None:
 
 
 def test_token_objective_rejects_unused_math_precision_override() -> None:
-    cfg = load_config("experiment/ar/emu3/online_grpo_pickscore_validation")
+    cfg = load_config("experiment/emu3/online_grpo_pickscore_validation")
     cfg.precision = {
         "float32_precision": "tf32",
         "training": {"dtype": "bf16", "outer_autocast": False},

@@ -12,7 +12,6 @@ import torch.nn as nn
 
 from tests.models.interfaces import registered_family_model_classes
 from vrl.config.precision import RolePrecision
-from vrl.models.diffusion import DiffusionModelBase
 from vrl.models.interfaces import (
     ReplayRequest,
     ReplayResult,
@@ -21,6 +20,7 @@ from vrl.models.interfaces import (
     RuntimeModel,
     require_runtime_model,
 )
+from vrl.models.steps.denoise import DiffusionModelBase
 
 # RuntimeModel's required surface. Derived from the protocol's
 # ``__protocol_attrs__``, so a method add/rename auto-widens the contract check.

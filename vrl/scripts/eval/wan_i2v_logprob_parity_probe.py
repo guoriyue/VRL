@@ -37,7 +37,7 @@ from pathlib import Path
 
 import torch
 
-from vrl.math.diffusion.flow_matching import sde_step_with_logprob
+from vrl.math.denoise.flow_matching import sde_step_with_logprob
 
 
 def main() -> None:
@@ -73,7 +73,7 @@ def main() -> None:
     from PIL import Image
 
     from vrl.families.registry import get_model_family_entry
-    from vrl.generation.diffusion.layout import VideoGenerationRequest
+    from vrl.generation.types import VideoGenerationRequest
 
     out_dir = Path(args.out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)

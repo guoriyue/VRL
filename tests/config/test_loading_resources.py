@@ -35,7 +35,7 @@ def test_config_package_defers_typed_builder_import() -> None:
 def test_bundled_config_inventory_contains_canonical_recipe() -> None:
     names = list_bundled_configs("experiment")
 
-    assert "experiment/diffusion/sd3_5/online_grpo_ocr.yaml" in names
+    assert "experiment/sd3_5/online_grpo_ocr.yaml" in names
     assert all(name.startswith("experiment/") for name in names)
 
 
@@ -43,12 +43,12 @@ def test_logical_name_cannot_be_shadowed_by_current_directory(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    shadow = tmp_path / "experiment" / "diffusion" / "sd3_5"
+    shadow = tmp_path / "experiment" / "sd3_5"
     shadow.mkdir(parents=True)
     (shadow / "online_grpo_ocr.yaml").write_text("model:\n  family: shadowed\n")
     monkeypatch.chdir(tmp_path)
 
-    cfg = load_config("experiment/diffusion/sd3_5/online_grpo_ocr")
+    cfg = load_config("experiment/sd3_5/online_grpo_ocr")
 
     assert cfg.model.family == "sd3_5"
 

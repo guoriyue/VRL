@@ -1,0 +1,35 @@
+# SD 3.5 Medium + PickScore SFW GRPO.
+defaults:
+  - /recipe/online/flow_matching_grpo
+  - /model/sd3_5/medium
+  - /sampling/image/512
+  - /sampling/denoise/10_step_cfg_4_5
+  - /dataset/pickscore_sfw
+  - /reward/pickscore
+
+
+sampling:
+  max_sequence_length: 128
+
+actor:
+  optim:
+    lr: 3.0e-4
+  gradient_accumulation_steps: 4
+
+algorithm:
+  kl_coef: 0.01
+
+rollout:
+  n_samples_per_prompt: 16
+  prompts_per_batch: 8
+  samples_per_chunk: 16
+
+trainer:
+  output_dir: outputs/sd3_5_pickscore_grpo
+  save_freq: 60
+  debug:
+    first_step: true
+
+model:
+  torch_compile:
+    enable: true   # launch-bound profile (P0 trace): elementwise 47%, 1M kernels/step

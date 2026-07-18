@@ -70,7 +70,7 @@ class RealCheckpointCase:
 CASES: tuple[RealCheckpointCase, ...] = (
     RealCheckpointCase(
         case_id="wan_2_1",
-        config="experiment/diffusion/wan_2_1/online_grpo_ocr",
+        config="experiment/wan_2_1/online_grpo_ocr",
         family="wan_2_1",
         prompt="A clear white sign that says RL",
         checkpoints=(
@@ -106,7 +106,7 @@ CASES: tuple[RealCheckpointCase, ...] = (
     ),
     RealCheckpointCase(
         case_id="sd3_5",
-        config="experiment/diffusion/sd3_5/online_grpo_ocr",
+        config="experiment/sd3_5/online_grpo_ocr",
         family="sd3_5",
         prompt="A square poster that says RL",
         checkpoints=(
@@ -147,7 +147,7 @@ CASES: tuple[RealCheckpointCase, ...] = (
     *(
         RealCheckpointCase(
             case_id=f"sd3_5_{_algo}",
-            config="experiment/diffusion/sd3_5/online_grpo_ocr",
+            config="experiment/sd3_5/online_grpo_ocr",
             family="sd3_5",
             prompt="A square poster that says RL",
             checkpoints=(
@@ -191,7 +191,7 @@ CASES: tuple[RealCheckpointCase, ...] = (
     ),
     RealCheckpointCase(
         case_id="janus_pro",
-        config="experiment/ar/janus_pro/online_grpo_ocr",
+        config="experiment/janus_pro/online_grpo_ocr",
         family="janus_pro",
         prompt="Text RL on a small label",
         checkpoints=(
@@ -225,7 +225,7 @@ CASES: tuple[RealCheckpointCase, ...] = (
     ),
     RealCheckpointCase(
         case_id="cosmos_predict2",
-        config="experiment/diffusion/cosmos_predict2/online_grpo_kling_video_reward",
+        config="experiment/cosmos_predict2/online_grpo_kling_video_reward",
         family="cosmos-predict2",
         prompt="A quiet street with a clear RL sign",
         checkpoints=(
@@ -271,7 +271,7 @@ CASES: tuple[RealCheckpointCase, ...] = (
     ),
     RealCheckpointCase(
         case_id="cosmos_predict2_5",
-        config="experiment/diffusion/cosmos_predict2_5/online_nft_kling_video_reward",
+        config="experiment/cosmos_predict2_5/online_nft_kling_video_reward",
         family="cosmos-predict2.5",
         prompt="A clear white sign that says RL",
         checkpoints=(
@@ -313,7 +313,7 @@ CASES: tuple[RealCheckpointCase, ...] = (
     ),
     RealCheckpointCase(
         case_id="cosmos_anima",
-        config="experiment/diffusion/anima_preview3/online_grpo_aesthetic",
+        config="experiment/anima_preview3/online_grpo_aesthetic",
         family="cosmos-predict2-anima",
         prompt="anime portrait of a small white sign that says RL",
         checkpoints=(
@@ -347,7 +347,7 @@ CASES: tuple[RealCheckpointCase, ...] = (
     ),
     RealCheckpointCase(
         case_id="cosmos_anima_safe",
-        config="experiment/diffusion/anima_preview3/online_grpo_aesthetic_nsfw_safety",
+        config="experiment/anima_preview3/online_grpo_aesthetic_nsfw_safety",
         family="cosmos-predict2-anima",
         prompt="anime portrait of a small white sign that says RL",
         checkpoints=(
@@ -381,7 +381,7 @@ CASES: tuple[RealCheckpointCase, ...] = (
     ),
     RealCheckpointCase(
         case_id="nextstep_1",
-        config="experiment/ar/nextstep_1/online_grpo_ocr",
+        config="experiment/nextstep_1/online_grpo_ocr",
         family="nextstep_1",
         prompt="Text RL on a small label",
         checkpoints=(
@@ -759,7 +759,7 @@ def _synthetic_diffusion_replay_batch(
     policy_version: int | None,
     device: torch.device,
 ) -> Any:
-    from vrl.math.diffusion.flow_matching import sde_step_with_logprob
+    from vrl.math.denoise.flow_matching import sde_step_with_logprob
     from vrl.rollouts.batch import RolloutBatch
     from vrl.trajectory import build_diffusion_trajectory, build_training_view
 

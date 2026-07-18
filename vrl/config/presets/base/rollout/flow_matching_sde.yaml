@@ -1,7 +1,7 @@
 # Flow-matching SDE rollout — extends diffusion base with stochastic-sampling knobs.
 # Used by SD 3.5 (flow_grpo paper Eq.9).
 defaults:
-  - /base/rollout/diffusion
+  - /base/rollout/denoise
 
 rollout:
   noise_level: 0.7              # flow-grpo Eq.9 SDE noise level

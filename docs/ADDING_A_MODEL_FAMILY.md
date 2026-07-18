@@ -1,22 +1,35 @@
 # Adding a Model Family
 
 This guide describes the current model-family seam in `visual-rl`. A standard
-diffusion family is a model module, one declarative registry entry, bundled YAML
-presets, and contract tests. It does not need a family-specific runner, executor,
-runtime builder, or config extractor.
+joint-denoise family is a family-owned model module, one declarative registry
+entry, bundled YAML presets, and contract tests. It does not need a
+family-specific runner, executor, runtime builder, or config extractor.
+
+The physical layout is family-first: family code lives under
+`vrl/models/families/`, while reusable model machinery lives under
+`vrl/models/steps/{denoise,token}/`. Generation code is separated into policy
+steps, temporal composition, and concrete bindings under
+`vrl/generation/{steps,composition,bindings}/`. Do not add new `models/ar`,
+`models/diffusion`, `generation/ar`, or `generation/diffusion` paths.
+
+Every registry entry classifies the trainable policy with `PolicySemantics`:
+temporal organization (`joint`, `causal`, or `causal_chunked`), policy step
+(`denoise` or `token`), action distribution, and trajectory layout. See
+[`MODEL_TAXONOMY.md`](MODEL_TAXONOMY.md).
 
 The existing `sd3_5` family is the smallest complete example.
 
 ## 1. Choose the correct family shape
 
-Use the descriptor-driven diffusion path when one trainable transformer and one
+Use the descriptor-driven denoise path when one trainable transformer and one
 scheduler are enough to build rollout and replay runtimes. The shared
-`DiffusionChunkExecutor` owns prompt, prepare, denoise, and decode orchestration;
-`DiffusionFamilyBuild` tells the shared builders which model classes and upstream
-transformer to load.
+`DiffusionChunkExecutor` in the `joint_denoise` binding owns prompt, prepare,
+denoise, and decode orchestration; `DenoiseFamilyBuild` tells the shared builders
+which model classes and upstream transformer to load. The retained `Diffusion*`
+class names are implementation APIs, not model taxonomy.
 
 ```text
-vrl/models/diffusion/<family>/
+vrl/models/families/<family>/
   __init__.py
   model.py
 ```
@@ -24,15 +37,16 @@ vrl/models/diffusion/<family>/
 Keep a family-specific `runtime.py` only when it provides a real execution
 boundary, such as reference-conditioning payload preparation or a custom staged
 executor. Wan I2V and the Cosmos families are examples. Do not add thin wrapper
-builders that only forward constants to `vrl.models.diffusion.build`.
+builders that only forward constants to `vrl.models.steps.denoise.build`.
 
-AR families have a different execution shape. They keep `model.py`, `runner.py`,
-and `runtime.py` because their token-loop state, executor, and model-config
-projection are family-specific. Bundle assembly and model-build resolution are
-shared through `ARFamilyBuild`; mirror the nearest AR descriptor instead of
-adding forwarding builders.
+Causal-token families have a different execution shape. They keep `model.py`,
+`runner.py`, and `runtime.py` when token-loop state, executor behavior, and
+model-config projection are family-specific. Bundle assembly and model-build
+resolution are shared through `TokenFamilyBuild` and
+`vrl.models.steps.token.build`; mirror the nearest causal-token descriptor
+instead of adding forwarding builders.
 
-## 2. Implement the diffusion model contract
+## 2. Implement the denoise model contract
 
 The rollout model normally subclasses `DiffusionModelBase` or
 `DiffusersPipelineModelBase` and implements these generation methods:
@@ -58,18 +72,18 @@ the current transformer. This replay path is the RL correctness boundary: its
 distribution must match rollout-time sampling so `old_log_prob` remains valid.
 Do not add algorithm code for a model family.
 
-## 3. Register a descriptor-driven diffusion family
+## 3. Register a descriptor-driven joint-denoise family
 
-Add one `_diffusion_entry` in `vrl/families/registry.py`:
+Add one `_joint_denoise_entry` in `vrl/families/registry.py`:
 
 ```python
 _register_model_family(
-    _diffusion_entry(
+    _joint_denoise_entry(
         family="my_model",
         task="t2i",
-        build=DiffusionFamilyBuild(
-            model_cls="vrl.models.diffusion.my_model.model:MyModel",
-            replay_cls="vrl.models.diffusion.my_model.model:MyReplayModel",
+        build=DenoiseFamilyBuild(
+            model_cls="vrl.models.families.my_model.model:MyModel",
+            replay_cls="vrl.models.families.my_model.model:MyReplayModel",
             transformer_classname="MyTransformer2DModel",
         ),
     ),
@@ -92,29 +106,35 @@ still name the exact registry entry (for example, `janus_pro_r1`, not
 `janus_pro` plus an algorithm-based inference rule). The algorithm validates
 compatibility; it never rewrites the configured family.
 
-`executor_cls` is intentionally absent above, so `_diffusion_entry` selects the
-shared `DiffusionChunkExecutor`. Add a family executor only when its body performs
-family-specific work; a renamed pass-through executor is not an extension point.
+`executor_cls` is intentionally absent above, so `_joint_denoise_entry` selects
+`vrl.generation.bindings.joint_denoise.executor:DiffusionChunkExecutor`. Add a
+family executor only when its body performs family-specific work; a renamed
+pass-through executor is not an extension point.
+
+For a causal-token policy, use `_causal_token_entry` with `TokenFamilyBuild`, an
+explicit family executor under `vrl.models.families.<family>.runtime`, and the
+correct categorical or continuous action distribution. Do not infer temporal
+organization from the checkpoint or selected algorithm.
 
 ## 4. Add bundled config layers
 
 Add model defaults and at least one experiment under the packaged preset tree:
 
 ```text
-vrl/config/presets/model/diffusion/my_model.yaml
-vrl/config/presets/experiment/diffusion/my_model/online_grpo_<reward>.yaml
+vrl/config/presets/model/my_model/default.yaml
+vrl/config/presets/experiment/my_model/online_grpo_<reward>.yaml
 tests/quality/protocols/families/my_model.yaml
 ```
 
 Mirror
-`vrl/config/presets/experiment/diffusion/sd3_5/online_grpo_ocr.yaml` and replace
+`vrl/config/presets/experiment/sd3_5/online_grpo_ocr.yaml` and replace
 only the model and sampling layers. Algorithm, rollout, reward, and distributed
 layers remain shared. Keep checkpoint paths portable: use a Hub ID, a repository-
 relative canonical path, or an explicit runtime override, never a contributor's
 home directory. The CLI uses the logical name without the package prefix or extension:
 
 ```bash
-vrl-train --config experiment/diffusion/my_model/online_grpo_<reward>
+vrl-train --config experiment/my_model/online_grpo_<reward>
 ```
 
 ## 5. Extend the contract matrix and tests
@@ -132,6 +152,10 @@ Add family tests that cover:
 - any custom executor branch, if the generic executor is insufficient.
 - a test-owned inference profile for every supported checkpoint identity,
   native vs production comparison mode, and true/false corruption cases.
+
+Keep family tests under `tests/models/families/<family>/`. Put reusable step
+contract tests under `tests/models/steps/{denoise,token}/`, and generation tests
+under the matching `tests/generation/{steps,composition,bindings}/` boundary.
 
 Run the CPU-safe structural gates before any real-model experiment:
 
@@ -155,14 +179,18 @@ status.
 
 - [ ] `model.py` implements generation and replay state projection.
 - [ ] the replay class owns no generation-only modules.
-- [ ] one registry entry uses `DiffusionFamilyBuild` and the shared builders.
+- [ ] one registry entry uses `DenoiseFamilyBuild` or `TokenFamilyBuild` and the
+      matching shared builders.
+- [ ] registry `PolicySemantics` describes the trainable policy rather than the
+      whole checkpoint (especially for hybrid or staged models).
 - [ ] the test-owned quality profile names every supported immutable checkpoint
       identity without adding quality state to the production registry.
 - [ ] every independent model dependency (text encoder, tokenizer, VAE) has
       its own revision field; never reuse the primary repository's commit.
 - [ ] no family `runtime.py` or executor exists without real custom semantics.
 - [ ] model and experiment presets live under `vrl/config/presets/`.
-- [ ] `FAMILY_MODEL_CLASSES` and family-specific tests cover both model classes.
+- [ ] the registry-derived interface matrix and family-specific tests cover both
+      rollout and replay model classes.
 - [ ] config, registry, interface, and parity tests pass.
 - [ ] a real run clears the promotion bar before the README says **Validated**.
 

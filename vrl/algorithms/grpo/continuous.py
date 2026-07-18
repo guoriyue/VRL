@@ -42,7 +42,7 @@ class GRPOConfig(ClippedPolicyConfig):
     # Diffusion-loss regularizer weight (Cosmos-Predict2.5 paper 4.2.2's
     # anti-reward-hacking term): adds sft_weight * MSE(model_pred,
     # pretraining_target) on CLEAN fine-tuning latents (data.sft_latents,
-    # produced by vrl/scripts/diffusion/encode_targets.py). The term is
+    # produced by vrl/scripts/denoise/encode_targets.py). The term is
     # computed by the trainer (it needs a model forward, which algorithm
     # losses never do); this knob rides the algorithm config so recipes tune
     # it next to kl_coef.
@@ -116,7 +116,7 @@ class GRPO(Algorithm):
         """
         import torch
 
-        from vrl.math.diffusion.flow_matching import compute_kl_divergence
+        from vrl.math.denoise.flow_matching import compute_kl_divergence
 
         cfg = self.config
         # Presence of signals + required_signal_keys is enforced upstream by
@@ -272,7 +272,7 @@ class FlowDPPO(GRPO):
     def compute_loss(self, inputs: AlgorithmInput) -> tuple[Any, TrainStepMetrics]:
         import torch
 
-        from vrl.math.diffusion.flow_matching import compute_kl_divergence
+        from vrl.math.denoise.flow_matching import compute_kl_divergence
 
         cfg = self.config
         if inputs.advantages is None:

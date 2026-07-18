@@ -209,7 +209,7 @@ def test_diffusion_math_and_prompt_encoders_can_be_explicit():
 
 
 def test_base_preset_keeps_prompt_encoders_aligned_with_rollout():
-    cfg = load_config("experiment/diffusion/sd3_5/online_grpo_ocr")
+    cfg = load_config("experiment/sd3_5/online_grpo_ocr")
     p = resolve_precision_policy(cfg)
     assert p.rollout.dtype == "bf16"
     assert p.prompt_encoder_dtype == "bf16"
@@ -454,7 +454,7 @@ def test_legacy_actor_precision_keys_warn_via_schema(caplog):
     from vrl.config.validation import validate_training_config
 
     cfg = load_config(
-        "experiment/diffusion/sd3_5/online_grpo_ocr",
+        "experiment/sd3_5/online_grpo_ocr",
         overrides=["actor.mixed_precision=bf16"],
     )
     with caplog.at_level(logging.WARNING):

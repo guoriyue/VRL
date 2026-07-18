@@ -1,7 +1,7 @@
 """Wan DPO pixel encoder must normalize latents exactly inverse to decode.
 
 The canonical Wan decode (``decode_latents`` in
-``vrl/models/diffusion/wan_2_1/model.py``) denormalizes ``raw = z * std + mean``
+``vrl/models/wan_2_1/model.py``) denormalizes ``raw = z * std + mean``
 with the VAE config's per-channel ``latents_mean`` / ``latents_std``. The DPO
 ``encode_pixels`` closure therefore has to produce ``z = (raw - mean) / std`` —
 a dropped reciprocal (``* std``) feeds the transformer latents scaled by
@@ -14,7 +14,7 @@ from types import SimpleNamespace
 
 import torch
 
-from vrl.scripts.diffusion.wan_2_1.train_dpo import _build_encoders
+from vrl.scripts.families.wan_2_1.train_dpo import _build_encoders
 
 
 class _FakeVAE:
@@ -34,13 +34,15 @@ class _FakeVAE:
 
 def test_encode_pixels_normalizes_inverse_of_decode() -> None:
     raw = torch.tensor(
-        [[[[[3.0]]], [[[7.0]]]],
-         [[[[-1.0]]], [[[0.5]]]]],
+        [[[[[3.0]]], [[[7.0]]]], [[[[-1.0]]], [[[0.5]]]]],
     )  # [B=2, z_dim=2, T=1, H=1, W=1]
     vae = _FakeVAE(raw)
     pipeline = SimpleNamespace(vae=vae)
     encode_pixels, _ = _build_encoders(
-        pipeline, num_frames=1, device=torch.device("cpu"), dtype=torch.float32,
+        pipeline,
+        num_frames=1,
+        device=torch.device("cpu"),
+        dtype=torch.float32,
     )
 
     z = encode_pixels(torch.zeros(2, 3, 4, 4))

@@ -1,0 +1,259 @@
+"""Request layout helpers shared by joint-denoise executors and gatherers."""
+
+from __future__ import annotations
+
+import random
+from collections.abc import Sequence
+from dataclasses import dataclass
+from typing import Any, TypeVar
+
+import torch
+
+from vrl.generation.execution.chunks import validate_chunk_range
+from vrl.generation.steps.denoise.config import DenoiseSDEParams
+from vrl.generation.steps.denoise.teacache import TeaCacheConfig
+from vrl.generation.types import GenerationRequest, GenerationSampleRow
+
+TChunk = TypeVar("TChunk")
+
+
+@dataclass(frozen=True, slots=True)
+class DiffusionBaseParams:
+    """Common parsed sampling fields every diffusion executor needs."""
+
+    num_steps: int
+    guidance_scale: float
+    height: int
+    width: int
+    num_frames: int
+    fps: int | None
+    samples_per_chunk: int
+    max_sequence_length: int
+    seed: int | None
+    negative_prompt: str | None
+
+
+@dataclass(frozen=True, slots=True)
+class DiffusionSamplingParams:
+    """Parsed diffusion sampling fields for one generation request."""
+
+    base: DiffusionBaseParams
+    sde: DenoiseSDEParams | None
+    denoise_mode: str
+    teacache: TeaCacheConfig | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class DiffusionRequestLayout:
+    """Prompt-major request layout shared by diffusion executors and gatherers."""
+
+    default_samples_per_chunk: int = 1
+    default_num_frames: int = 1
+    default_fps: int | None = None
+    default_max_sequence_length: int = 512
+    sde_type: str = "flow_grpo"
+
+    def parse_sampling_params(self, request: GenerationRequest) -> DiffusionSamplingParams:
+        """Parse shared diffusion sampling fields from GenerationRequest."""
+
+        sampling = request.sampling
+        num_steps = int(sampling["num_steps"])
+        fps_value = sampling.get("fps", self.default_fps)
+        seed = sampling.get("seed")
+        base = DiffusionBaseParams(
+            num_steps=num_steps,
+            guidance_scale=float(sampling["guidance_scale"]),
+            height=int(sampling["height"]),
+            width=int(sampling["width"]),
+            num_frames=int(
+                sampling.get(
+                    "num_frames",
+                    sampling.get("frame_count", self.default_num_frames),
+                )
+            ),
+            fps=None if fps_value is None else int(fps_value),
+            samples_per_chunk=max(
+                1,
+                int(
+                    sampling.get(
+                        "samples_per_chunk",
+                        self.default_samples_per_chunk,
+                    )
+                ),
+            ),
+            max_sequence_length=int(
+                sampling.get(
+                    "max_sequence_length",
+                    self.default_max_sequence_length,
+                )
+            ),
+            seed=None if seed is None else int(seed),
+            negative_prompt=sampling.get("negative_prompt"),
+        )
+        denoise_mode = self._parse_denoise_mode(sampling.get("denoise_mode", "sde"))
+        sde_window_range = self._parse_sde_window_range(
+            sampling.get("sde_window_range", (0, num_steps)),
+            num_steps=num_steps,
+        )
+        sde_window_size = int(sampling.get("sde_window_size", 0))
+        self._validate_sde_window_size(sde_window_size, sde_window_range)
+        sde = DenoiseSDEParams(
+            noise_level=float(sampling.get("noise_level", 1.0)),
+            sde_type=self._parse_sde_type(sampling.get("sde_type", self.sde_type)),
+            sde_window_size=sde_window_size,
+            sde_window_range=sde_window_range,
+            same_latent=bool(sampling.get("same_latent", False)),
+            return_kl=bool(sampling.get("return_kl", False)),
+            return_prev_sample_mean=bool(
+                sampling.get("return_prev_sample_mean", False),
+            ),
+            cache_ref_noise_pred=bool(
+                sampling.get("cache_ref_noise_pred", False),
+            ),
+        )
+        return DiffusionSamplingParams(
+            base=base,
+            sde=sde,
+            denoise_mode=denoise_mode,
+            teacache=TeaCacheConfig.from_sampling(sampling.get("teacache")),
+        )
+
+    def repeat_encoded_batch(self, encoded: dict[str, Any], count: int) -> dict[str, Any]:
+        """Repeat singleton-batch encoded tensors for a chunk sample count."""
+
+        return {key: self.repeat_batch(value, count) for key, value in encoded.items()}
+
+    def repeat_batch(self, value: Any, count: int) -> Any:
+        """Repeat a singleton tensor batch or accept an already-sized batch."""
+
+        if count < 1:
+            raise ValueError("count must be >= 1")
+        if not isinstance(value, torch.Tensor):
+            return value
+        if value.ndim == 0:
+            return value
+        batch = int(value.shape[0])
+        if batch == count:
+            return value
+        if batch != 1:
+            raise ValueError(
+                f"cannot repeat tensor batch={batch} to chunk sample count {count}",
+            )
+        repeat_shape = (count,) + (1,) * (value.ndim - 1)
+        return value.repeat(*repeat_shape)
+
+    def ordered_chunks(
+        self,
+        request: GenerationRequest,
+        sample_rows: Sequence[GenerationSampleRow],
+        chunks: Sequence[TChunk],
+    ) -> list[TChunk]:
+        """Sort diffusion chunks and ensure they exactly cover sample rows."""
+
+        if not chunks:
+            raise ValueError("chunks must be non-empty")
+        ordered = sorted(
+            chunks,
+            key=lambda chunk: (int(chunk.prompt_index), int(chunk.sample_start)),
+        )
+        expected = [(row.prompt_index, row.sample_index) for row in sample_rows]
+        actual: list[tuple[int, int]] = []
+        for chunk in ordered:
+            prompt_index = int(chunk.prompt_index)
+            sample_start = int(chunk.sample_start)
+            sample_count = int(chunk.sample_count)
+            validate_chunk_range(
+                request,
+                prompt_index=prompt_index,
+                sample_start=sample_start,
+                sample_count=sample_count,
+            )
+            self._require_rows("observations", chunk.observations, sample_count)
+            self._require_rows("actions", chunk.actions, sample_count)
+            self._require_rows("log_probs", chunk.log_probs, sample_count)
+            self._require_rows("timesteps", chunk.timesteps, sample_count)
+            self._require_rows("kl", chunk.kl, sample_count)
+            self._require_rows("video", chunk.video, sample_count)
+            actual.extend(
+                (prompt_index, sample_index)
+                for sample_index in range(sample_start, sample_start + sample_count)
+            )
+        if actual != expected:
+            raise ValueError(
+                "Diffusion chunks do not cover sample_rows in prompt-major order",
+            )
+        return ordered
+
+    def select_sde_window(
+        self,
+        sde_window_size: int,
+        sde_window_range: tuple[int, int],
+    ) -> tuple[int, int] | None:
+        """Pick the stochastic denoise-step window for a request."""
+
+        if sde_window_size <= 0:
+            return None
+        lo, hi = sde_window_range
+        start = random.randint(lo, hi - sde_window_size)
+        return (start, start + sde_window_size)
+
+    @staticmethod
+    def _require_rows(name: str, value: Any, count: int) -> None:
+        shape = getattr(value, "shape", None)
+        if shape is None or len(shape) < 1:
+            raise ValueError(f"chunk {name} must have a leading batch dimension")
+        if int(shape[0]) != count:
+            raise ValueError(f"chunk {name} has {shape[0]} rows, expected {count}")
+
+    @staticmethod
+    def _parse_sde_window_range(value: Any, *, num_steps: int) -> tuple[int, int]:
+        try:
+            lo = int(value[0])
+            hi = int(value[1])
+        except (TypeError, IndexError, ValueError) as exc:
+            raise ValueError(
+                "sampling.sde_window_range must contain two integer values",
+            ) from exc
+        if lo < 0 or hi <= lo or hi > num_steps:
+            raise ValueError(
+                "sampling.sde_window_range must satisfy 0 <= lo < hi <= num_steps",
+            )
+        return lo, hi
+
+    @staticmethod
+    def _validate_sde_window_size(
+        sde_window_size: int,
+        sde_window_range: tuple[int, int],
+    ) -> None:
+        if sde_window_size < 0:
+            raise ValueError("sampling.sde_window_size must be >= 0")
+        lo, hi = sde_window_range
+        if sde_window_size > hi - lo:
+            raise ValueError(
+                "sampling.sde_window_size cannot exceed sampling.sde_window_range",
+            )
+
+    @staticmethod
+    def _parse_sde_type(value: Any) -> str:
+        sde_type = str(value)
+        if sde_type not in {"flow_grpo", "cps", "ddim"}:
+            raise ValueError(
+                "sampling.sde_type must be 'flow_grpo', 'cps', or 'ddim'",
+            )
+        return sde_type
+
+    @staticmethod
+    def _parse_denoise_mode(value: Any) -> str:
+        denoise_mode = str(value).strip().lower()
+        if denoise_mode not in {"native", "sde"}:
+            raise ValueError(
+                "sampling.denoise_mode must be 'native' or 'sde'",
+            )
+        return denoise_mode
+
+
+__all__ = [
+    "DiffusionBaseParams",
+    "DiffusionRequestLayout",
+    "DiffusionSamplingParams",
+]

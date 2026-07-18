@@ -6,7 +6,7 @@ import pytest
 
 from vrl.algorithms.dpo import DiffusionDPOConfig
 from vrl.config.loading import load_config
-from vrl.scripts.diffusion.wan_2_1.train_dpo import (
+from vrl.scripts.families.wan_2_1.train_dpo import (
     _build_offline_dpo_trainer_config,
     train_wan_2_1_dpo,
 )
@@ -14,7 +14,7 @@ from vrl.scripts.diffusion.wan_2_1.train_dpo import (
 
 def _resolved_trainer_config(overrides: list[str] | None = None):
     cfg = load_config(
-        "experiment/diffusion/wan_2_1/offline_dpo_pickapic",
+        "experiment/wan_2_1/offline_dpo_pickapic",
         overrides=overrides,
     )
     return _build_offline_dpo_trainer_config(
@@ -95,7 +95,7 @@ def test_offline_dpo_adafactor_keeps_shared_optimizer_knobs() -> None:
 
 
 def test_offline_dpo_recipe_does_not_inherit_online_only_state() -> None:
-    cfg = load_config("experiment/diffusion/wan_2_1/offline_dpo_pickapic")
+    cfg = load_config("experiment/wan_2_1/offline_dpo_pickapic")
 
     assert "ema" not in cfg.actor
     assert "drop_zero_advantage" not in cfg.actor
@@ -108,7 +108,7 @@ def test_offline_dpo_recipe_does_not_inherit_online_only_state() -> None:
 def test_offline_dpo_builds_its_full_model_through_the_family_registry(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    cfg = load_config("experiment/diffusion/wan_2_1/offline_dpo_pickapic")
+    cfg = load_config("experiment/wan_2_1/offline_dpo_pickapic")
     captured: dict[str, object] = {}
 
     class _ReachedRegistryBoundary(RuntimeError):
@@ -134,7 +134,7 @@ def test_offline_dpo_builds_its_full_model_through_the_family_registry(
             raise _ReachedRegistryBoundary
 
     import vrl.families.registry as registry
-    from vrl.scripts.diffusion.wan_2_1 import train_dpo
+    from vrl.scripts.families.wan_2_1 import train_dpo
 
     def _entry_for(family: str) -> _Entry:
         captured["family"] = family

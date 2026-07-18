@@ -25,4 +25,4 @@ trainer:
   # Every composer dispatches to the family-agnostic GRPO recipe (the per-model
   # train.py forwarders were folded in the thin-seam sprint); families with a
   # custom recipe (wan, cosmos) compose a different recipe that overrides this.
-  entrypoint: vrl.scripts.diffusion.train:train_diffusion_online
+  entrypoint: vrl.scripts.train:train_online

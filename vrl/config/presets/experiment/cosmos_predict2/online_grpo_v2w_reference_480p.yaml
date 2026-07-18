@@ -1,0 +1,16 @@
+# Cosmos Predict2 2B Video2World + GRPO at 480p. Thin variant of
+# online_grpo_v2w_reference — differs only in resolution (480p_33f bucket → native
+# 93 frames), the 480P checkpoint, output dir, and an eval-enabled long schedule.
+defaults:
+  - /experiment/cosmos_predict2/online_grpo_v2w_reference
+  - /sampling/video/480p_33f            # 832x480; num_frames overridden to native 93
+
+model:
+  path: checkpoints/cosmos-predict2-2b-480p-16fps-diffusers
+  revision: null
+sampling:
+  num_frames: 93                        # 33f is OOD for the 480P weights (artifacts)
+trainer:
+  output_dir: outputs/cosmos_pred2_2b_v2w_480p
+  save_freq: 50
+  total_epochs: 300

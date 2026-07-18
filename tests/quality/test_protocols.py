@@ -56,11 +56,11 @@ def test_every_experiment_model_matches_an_approved_identity() -> None:
 @pytest.mark.parametrize(
     ("config_name", "revision"),
     (
-        ("model/ar/emu3/gen_9b", "062069a3301d7c62c6c93a55c9722efb9321f5f3"),
-        ("model/ar/glm_image/9b", "2c433cc0cbc293bde2ac8ca9624f279b5d23fcf4"),
-        ("model/ar/janus_pro/1b", "960ab33191f61342a4c60ae74d8dc356a39fafcb"),
-        ("model/ar/llamagen/xl_256", "276f5c5a3d915b922899a03f1912605531574747"),
-        ("model/ar/nextstep_1/1_1", "05486ff90769ad32109d219fd4659d41671a770a"),
+        ("model/emu3/gen_9b", "062069a3301d7c62c6c93a55c9722efb9321f5f3"),
+        ("model/glm_image/9b", "2c433cc0cbc293bde2ac8ca9624f279b5d23fcf4"),
+        ("model/janus_pro/1b", "960ab33191f61342a4c60ae74d8dc356a39fafcb"),
+        ("model/llamagen/xl_256", "276f5c5a3d915b922899a03f1912605531574747"),
+        ("model/nextstep_1/1_1", "05486ff90769ad32109d219fd4659d41671a770a"),
     ),
 )
 def test_ar_model_presets_and_profiles_pin_the_same_revision(
@@ -80,27 +80,27 @@ def test_ar_model_presets_and_profiles_pin_the_same_revision(
     ("config_name", "field", "revision"),
     (
         (
-            "model/ar/llamagen/xl_256",
+            "model/llamagen/xl_256",
             "t5_revision",
             "7d6315df2c2fb742f0f5b556879d730926ca9001",
         ),
         (
-            "model/ar/nextstep_1/1_1",
+            "model/nextstep_1/1_1",
             "vae_revision",
             "31c24c8c751e87b02d56ae6a5fe658e7da0b8388",
         ),
         (
-            "model/diffusion/echo/release",
+            "model/echo/release",
             "gemma_revision",
             "96b6f1eccf38110c56df3a15bffe176da04bfd80",
         ),
         (
-            "model/diffusion/cosmos/anima_preview3",
+            "model/cosmos/anima_preview3",
             "qwen_tokenizer_revision",
             "060db6499f32faf8b98477b0a26969ef7d8b9987",
         ),
         (
-            "model/diffusion/cosmos/anima_preview3",
+            "model/cosmos/anima_preview3",
             "t5_tokenizer_revision",
             "a9723ea7f1b39c1eae772870f3b547bf6ef7e6c1",
         ),
@@ -129,7 +129,7 @@ def test_explicit_janus_r1_family_uses_its_multisegment_profile() -> None:
     profile, protocol = load_quality_profile(cfg)
 
     assert cfg.model.family == "janus_pro_r1"
-    assert profile.extends == "ar_multisegment_image.yaml"
+    assert profile.extends == "multisegment_token_image.yaml"
     assert profile.model_identities[0].revision == cfg.model.revision
     assert protocol.required_segments == ("initial_image", "selfcheck", "final_image")
 

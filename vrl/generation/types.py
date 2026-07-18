@@ -27,6 +27,23 @@ class GenerationInput:
                 raise ValueError(f"GenerationInput.{name} must be None or non-empty")
 
 
+@dataclass(slots=True)
+class VideoGenerationRequest:
+    """Backend-neutral parameters for one image or video generation call."""
+
+    prompt: str = ""
+    negative_prompt: str = ""
+    task_type: str = "text_to_video"
+    width: int = 1024
+    height: int = 640
+    frame_count: int = 16
+    num_steps: int = 35
+    guidance_scale: float = 5.0
+    seed: int | None = None
+    fps: int = 16
+    extra: dict[str, Any] = field(default_factory=dict)
+
+
 @dataclass(slots=True, init=False)
 class GenerationRequest:
     """One generation request submitted to the engine."""
@@ -137,4 +154,5 @@ __all__ = [
     "GenerationOutput",
     "GenerationRequest",
     "GenerationSampleRow",
+    "VideoGenerationRequest",
 ]

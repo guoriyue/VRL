@@ -74,7 +74,7 @@ Use these conventions for compound video recipes:
 
 Keep `reward/kling_video_reward` on `overall_reward` for single-reward
 baselines. Compound experiments should override the score key explicitly, e.g.
-`experiment/diffusion/wan_2_1/online_grpo_physics` uses
+`experiment/wan_2_1/online_grpo_physics` uses
 `kling_video_reward.score_key=motion_quality` and
 `videocon_physics.score_key=physical_commonsense`.
 

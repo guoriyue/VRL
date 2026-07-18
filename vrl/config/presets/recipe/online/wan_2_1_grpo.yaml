@@ -4,7 +4,7 @@
 # kling/physics are video-reward shaped). Family dispatch comes from
 # diffusion_grpo's generic entrypoint via model.family.
 defaults:
-  - /recipe/online/diffusion_grpo
+  - /recipe/online/denoise_grpo
 
 rollout:
   n_samples_per_prompt: 8

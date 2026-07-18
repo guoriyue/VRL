@@ -9,6 +9,7 @@ import torch
 from omegaconf import OmegaConf
 
 from vrl.config.precision import RolePrecision
+from vrl.families.semantics import PolicySemantics
 from vrl.models.interfaces import ReplayResult
 from vrl.scripts.common import online
 
@@ -213,7 +214,12 @@ def _cfg() -> Any:
 class _FakeFamilyEntry:
     family = "sd3_5"
     task = "t2i"
-    collector_kind = "diffusion"
+    policy_semantics = PolicySemantics(
+        temporal_organization="joint",
+        step_kind="denoise",
+        action_distribution="continuous",
+        trajectory_layout="denoise",
+    )
 
     def __init__(self, state: dict[str, Any]) -> None:
         self._state = state

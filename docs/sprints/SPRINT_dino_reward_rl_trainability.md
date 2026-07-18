@@ -121,7 +121,7 @@ reward 数学正确性正交，归属独立 Ray sprint。
   `vrl/models/diffusion/base.py:146`（`forward(state, 0)`）、
   `vrl/math/diffusion/flow_matching.py:74`（`sigma = scheduler.sigmas[step_index]`）
 - 守卫：`vrl/trainers/online/trainer.py:1127`（first_step parity warn→建议 hard-fail）
-- 配方：`vrl/config/presets/experiment/diffusion/cosmos_predict2/online_grpo_droid_overfit_validation.yaml`
+- 配方：`vrl/config/presets/experiment/cosmos_predict2/online_grpo_droid_overfit_validation.yaml`
 - Ray 稳定性独立范围：`docs/sprints/done/SPRINT_ray_cluster_ownership_and_shared_host_isolation.md`
 - 现场外部终止证据：`outputs/janus_smoke/aesthetic.log`、`outputs/janus_smoke/aesthetic_rbs24.log`、
   `outputs/janus_smoke/baseline.log`（只证明 `SIGTERM`，不证明发送命令）
