@@ -2,7 +2,8 @@
 
 > Lifecycle correction (2026-07-13): `OperationTicket`、runtime-level `QUIESCING`
 > 与 public `RECOVERING` phase 都不是当前或目标 contract。当前 ownership 以
-> `SPRINT_explicit_rollout_activation.md` 为准：schedule owns admission/drain；runtime
+> [`SPRINT_explicit_rollout_activation.md`](done/SPRINT_explicit_rollout_activation.md)
+> 为准：schedule owns admission/drain；runtime
 > owns activation/offload、transactional install 与 terminal cleanup；future recovery
 > 是 worker-fleet owner 内部的 concrete single-flight task。
 
@@ -27,12 +28,13 @@ sleep/wake 的同步 `ray.get` 已移出 event-loop thread；launcher 保留 mai
 不被 caller cancellation 强杀，而是由 runtime-owned activation task 保证晚归 candidate
 仍被接管。
 
-> 步骤 3–6 的 identity/ownership 细化见
-> [`SPRINT_runtime_time_machine_without_fleet_args.md`](./SPRINT_runtime_time_machine_without_fleet_args.md)：
-> 裸 `_fleet_generation`、`fleet_generation=` 参数和 write-only expected-kill registry
-> 已删除。真正实现 stale-event recovery 时，epoch只能作为 immutable `WorkerFleet`
-> 的行为字段，由 fleet owner 在 dispatch/result/recovery publish 时自动检查；不得重新
-> 暴露成每层手传参数，也不为它恢复 generic `OperationTicket`。
+> Historical alternatives are preserved in
+> [`SPRINT_runtime_time_machine_without_fleet_args.md`](reading/SPRINT_runtime_time_machine_without_fleet_args.md),
+> but its ticket/`QUIESCING` design is not authoritative. 裸 `_fleet_generation`、
+> `fleet_generation=` 参数和 write-only expected-kill registry 已删除。真正实现
+> stale-event recovery 时，epoch只能作为 immutable `WorkerFleet` 的行为字段，
+> 由 fleet owner 在 dispatch/result/recovery publish 时自动检查；不得重新暴露成
+> 每层手传参数，也不为它恢复 generic `OperationTicket`。
 
 2026-07-13 native-engine audit 再次确认“剩余 3–7 未完成”是代码事实，不只是计划标签：
 
@@ -421,7 +423,7 @@ Ray actor name 可作为可读标签，但不是 recovery identity，也不能�
 
 - `Runtime -> Executor -> Ray actor adapter -> WorkerCore`：真实协议/进程边界；
 - `RayGenerationLauncher`：standalone public launch boundary；
-- `vrl/ray/lifecycle.py`：统一 owned-handle cleanup adapter；
+- concrete placement/runtime cleanup ownership and retryable terminal cleanup；
 - run-level placement owner 和 actor GPU validation；
 - generation/reward/build 的阶段边界；
 - `_RAY_ADDRESS_ENV`、checkpoint filenames、lifecycle enum values 等真实协议常量。
@@ -449,7 +451,6 @@ on-demand recovery、移除真实重复复杂度时才成立，不能新增装�
 - continuous producer：`vrl/rollouts/orchestration/continuous/producer.py`
 - teardown：`vrl/scripts/common/online.py:_shutdown_online_recipe_runtime`
 - sleep/wake GPU evidence：`docs/sprints/done/SPRINT_frozen_component_preservation.md`
-- repeated cold-load evidence：`outputs/janus_smoke/{run,baseline,aesthetic,aesthetic_rbs24,aesthetic_kllow}.log`
 - cosmos-rl explicit StopCommand/JobPhase：
   https://github.com/nvidia-cosmos/cosmos-rl/pull/696
 - Ray actor fault tolerance：

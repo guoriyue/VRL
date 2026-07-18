@@ -1,7 +1,7 @@
 # SPRINT: torch.compile × rollout worker 生命周期（Cosmos Predict2.5 RL）（planned）
 
 状态：superseded and archived（2026-07-11，由
-`docs/sprints/planned/SPRINT_miles_phase_lease_and_one_continuous.md` 取代）。
+`docs/sprints/SPRINT_miles_phase_lease_and_one_continuous.md` 取代）。
 
 > 本文保留 2026-06-17 的 compile 测量结果作为历史证据，但其 colocated-persistent 产品前提已
 > 删除。当前 shared trainer/rollout GPU 只允许 on-demand phase lease；role
@@ -281,4 +281,4 @@ resident 拿全额稳态加速;release-after-collect 的每周期重编译也因
 **收益基线**
 - §4.3 实测（Predict2.5 RTX 5090）：rollout **1.37×** / train **1.26×**，launch 2763→947 / 10098→3838
 - `docs/sprints/planned/SPRINT_gemm_utilization.md` P2（Predict2 1.37×/1.25×，与 Predict2.5 一致）
-- `docs/sprints/planned/SPRINT_cosmos_predict25_rl_paper_parity.md`（paper-faithful = resident 多卡）
+- `docs/sprints/parked/SPRINT_cosmos_predict25_rl_paper_parity.md`（paper-faithful = resident 多卡）

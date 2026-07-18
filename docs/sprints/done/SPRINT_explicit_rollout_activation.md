@@ -1,5 +1,9 @@
 # SPRINT: Explicit rollout activation and schedule-owned draining
 
+Status: **DONE (2026-07-18)**. The contract and its regression coverage are
+implemented; later worker-fleet recovery work remains in the Ray fault-tolerance
+sprint.
+
 ## Decision
 
 The rollout schedule is the single owner of admission and drain barriers. The

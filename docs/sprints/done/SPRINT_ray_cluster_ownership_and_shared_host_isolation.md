@@ -2,7 +2,7 @@
 
 Status: **done (2026-07-10)**. Implemented and verified with fake-Ray and CPU-only
 tests; no live Ray cluster or GPU experiment was used. It was split from
-[`SPRINT_dino_reward_rl_trainability.md`](../SPRINT_dino_reward_rl_trainability.md)
+[`SPRINT_dino_reward_rl_trainability.md`](../info/SPRINT_dino_reward_rl_trainability.md)
 because cluster ownership is independent of reward trainability.
 
 ## Outcome

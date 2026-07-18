@@ -1,7 +1,11 @@
 # SPRINT (info / measurement archive): flux 四算法正确性验证 reward 曲线（DanceGRPO / GRPO-Guard / Flow-DPPO / DiffusionNFT）
 
 状态：measurement archive（`info/`）。这是单卡上四个 diffusion-RL 算法的正确性验证观测记录，
-**不是 action item**；保留供复查。配套计划文档在 `planned/SPRINT_{dance_grpo,grpo_guard,flow_dppo,diffusion_nft}_validation.md`。
+**不是 action item**；保留供复查。Mechanism-only closure records are
+`done/SPRINT_dance_grpo_validation.md`,
+`done/SPRINT_grpo_guard_validation.md`, and
+`done/SPRINT_flow_dppo_validation.md`; DiffusionNFT follow-up remains in
+`parked/SPRINT_diffusion_nft_validation.md`.
 日期：2026-06-21 ~ 2026-06-22，单张 RTX 5090（32GB），VRL @ `main`（含未提交的 NFT→flux 移植）。
 模型 flux/dev（LoRA r32/α64, bf16, 256²），num_steps=10，single-GPU colocated strict-on-policy。
 

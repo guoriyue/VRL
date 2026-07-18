@@ -140,12 +140,12 @@ python -u -m vrl.scripts.supervise \
 
 ```bash
 python -m vrl.scripts.eval.sana_aesthetic_checkpoint_eval \
-  --run-dir outputs/sana_aesthetic_trustworthy_curve
+  --run-dir outputs/sana_aesthetic_fullparam_long
 
 python -m vrl.scripts.eval.sana_aesthetic_curve_verdict \
-  --run-dir outputs/sana_aesthetic_trustworthy_curve \
+  --run-dir outputs/sana_aesthetic_fullparam_long \
   --qualitative-audit pass \
-  --out outputs/sana_aesthetic_trustworthy_curve/verdict.json
+  --out outputs/sana_aesthetic_fullparam_long/verdict.json
 ```
 
 `--qualitative-audit pass` 只能在 §4 的盲审完成并通过后填写；默认 `pending` 必须返回 FAIL。
@@ -440,7 +440,8 @@ conclusion with a short smoke run.
 Remaining convergence items (non-blocking):
 
 - `precision.rollout.prompt_encoders.dtype` is still a silent no-op for
-  non-diffusers families. Wan, Cosmos Predict2.5, and AR loaders keep family-local
+  families outside the shared denoise builder. Wan, Cosmos Predict2.5, and
+  token-family loaders keep family-local
   FP32 VAE/T5 choices. Genuine family invariants should move into registry
   descriptors; other families should consume `build.rollout.prompt_encoder_dtype`.
 
@@ -452,8 +453,8 @@ Remaining convergence items (non-blocking):
 - `docs/sprints/done/SPRINT_fp8_rollout_gemm_kernel.md`
 - `vrl/rewards/models/aesthetic.py`
 - `vrl/rewards/functions/registry.py`
-- `vrl/models/diffusion/build.py`
-- `vrl/models/diffusion/common/lora.py`
+- `vrl/models/steps/denoise/build.py`
+- `vrl/models/steps/denoise/common/lora.py`
 - `vrl/models/loader.py`
 - `vrl/nn/quantization/fp8.py`
 - `vrl/scripts/eval/sana_aesthetic_curve_verdict.py`

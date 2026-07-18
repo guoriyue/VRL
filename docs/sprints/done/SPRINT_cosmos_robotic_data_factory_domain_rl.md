@@ -1,6 +1,9 @@
 # SPRINT: Cosmos Robotic Data Factory — 只接真实公开数据源
 
-状态：**planned / public-source substrate landed（2026-06-27）**。
+Status: **DONE — public-source substrate only (2026-07-18)**. The DROID/Bridge/
+JRDB provenance and configuration substrate landed. This does not prove that a
+Cosmos policy learned; learning evidence is owned by the separate trustworthy-
+curve sprint.
 
 > ⚠️ **更新（2026-06-28，SPRINT_future_reward）**：本文下面引用的 `target_video_similarity`
 > reward 及其 `target_video_similarity_probe` 脚本**已删除** —— 实测证伪(pixel-L1,最优解=糊均值,

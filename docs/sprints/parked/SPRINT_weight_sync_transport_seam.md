@@ -1,7 +1,8 @@
 # SPRINT: 权重同步传输 seam —— object-store 之外加 NCCL 直传
 
-状态:**planned(parked 性质的触发条件:第一个全参微调大模型的多卡训练需求
-出现时启动;LoRA-only 阶段不做)**。
+Status: **PARKED**. Trigger: the first full-parameter large-model multi-GPU
+training workload whose weight transport is material; do not start for LoRA-only
+workloads.
 
 ## 背景
 

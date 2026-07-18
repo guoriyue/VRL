@@ -3,7 +3,7 @@
 > **Archive notice (2026-07-12):** this file preserves the original measurement
 > narrative. The canonical product policy and the corrected heterogeneous
 > arithmetic are in
-> `docs/sprints/SPRINT_gpu_saturation_and_colocation_decision.md`.
+> `docs/sprints/done/SPRINT_gpu_saturation_and_colocation_decision.md`.
 
 > 归档类型：长期测量结果；实验已关闭，但判读口径继续作为性能分析依据。
 > 起因：外部文章《10 行代码把小模型吞吐提升 200%》（CUDA MPS + 多副本）。
@@ -195,7 +195,7 @@ Corrected conclusions:
    编排间隙（Ray/Python/传输）。这是**时间上的洞，不是 SM 里的洞**——解法是
    **进程内 pipelining / resident actor**（已有 sprint：
    `parked/SPRINT_diffusion_rollout_stage_pipeline.md`、
-   `planned/SPRINT_miles_phase_lease_and_one_continuous.md`），不是同卡多副本。
+   `docs/sprints/SPRINT_miles_phase_lease_and_one_continuous.md`），不是同卡多副本。
 2. **Stage overlap (small target):** §3.3 shows only about `3%` normalized
    effective-work improvement after correcting the arithmetic, with a `4.18x`
    DiT slowdown. A process-local CUDA-stream proposal may still be measured

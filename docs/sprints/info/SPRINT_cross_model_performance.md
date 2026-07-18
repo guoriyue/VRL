@@ -107,7 +107,7 @@ throughput, latency, correctness, and memory A/B.
 > real-workload co-run A/B to test recoverable aggregate throughput, and compare
 > NCU tensor-pipe SOL with a same-machine square-GEMM baseline to test kernel
 > saturation. The table remains valid as counter data; its old headroom inference
-> does not. See `docs/sprints/SPRINT_gpu_saturation_and_colocation_decision.md`.
+> does not. See `docs/sprints/done/SPRINT_gpu_saturation_and_colocation_decision.md`.
 
 | 改动 | 文件 | 依据 / 边界 |
 | --- | --- | --- |

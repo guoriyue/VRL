@@ -1,6 +1,8 @@
 # SPRINT: 单卡近似加速杠杆 —— bf16 饱和之后还能做什么（已验证研究 + 本机实测）
 
-状态：**planned / 研究已验证（2026-06-27）**。性质：deep-research（23 源 → 21 确认 / 4 证伪）+ 本机 profiling，回答"bf16 单卡饱和后真的没杠杆了吗"。**结论修正:不是没杠杆,是单卡剩下的杠杆全是 APPROXIMATE——但其中有 RL-safe 的用法。** exact 杠杆仍只有多卡。
+Status: **INFO ARCHIVE (2026-07-18)**. This is validated research and local
+profiling, not an executable sprint. Follow-up implementations live in their
+own proof-gated sprint documents.
 
 > 来由:[[SPRINT_lossless_diffusion_rl_research]] 判"单卡 bf16 饱和 → 无无损杠杆"后,追问"Triton kernel / staged pipeline 是不是漏了"。研究纠正两处:① 单卡有真(近似)杠杆;② 我把"47% 空转"证据用错了(那是多卡训练阶段闲置,非单卡 stream 重叠)。
 

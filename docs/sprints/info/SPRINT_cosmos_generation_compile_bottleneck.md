@@ -87,4 +87,4 @@ elementwise 时间、dmon MEM%、稳态 s/video** 为准，别看 compiled 的�
 - forward 路径：`forward_step`（用 `self.transformer`）→ `vrl/generation/diffusion/executor.py:680` `run_denoise_steps`
 - trace：`outputs/perf/gen_eager.json`、`outputs/perf/gen_compiled.json`（perfetto.dev 打开）
 - 相关：`docs/sprints/info/SPRINT_cosmos_performance.md`、`SPRINT_rollout_performance.md`、
-  `docs/sprints/planned/SPRINT_cosmos_predict25_rl_paper_parity.md`
+  `docs/sprints/parked/SPRINT_cosmos_predict25_rl_paper_parity.md`

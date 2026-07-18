@@ -4,7 +4,7 @@
 > withdrawn design discussion. Its claims that VRL has no standalone reward
 > service, that reward execution uses a local/Ray switch, and that strict
 > streaming adds no capability are no longer current. The implemented source of
-> truth is `docs/sprints/SPRINT_reward_service.md`: reward inference now supports
+> truth is `docs/sprints/done/SPRINT_reward_service.md`: reward inference now supports
 > typed `in_process` and `http` runtimes, strict streaming is gated by both
 > non-blocking execution and verified accelerator isolation, and unverified HTTP
 > endpoints fail closed. The cost-aware auto-placement proposal below remains a

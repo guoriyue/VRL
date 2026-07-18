@@ -515,7 +515,7 @@ RayGenerationRuntime._ReleaseAfterCollectState
 仓库 reading / design：
 
 - `docs/sprints/planned/SPRINT_slime_overlap_strategy.md`
-- `docs/sprints/planned/SPRINT_reward_execution.md`
+- `docs/sprints/done/SPRINT_reward_execution.md`
 - `docs/sprints/planned/SPRINT_memory_plan_full.md`
 - `docs/sprints/reading/slime.md`
 - `docs/sprints/reading/cosmos-rl.md`

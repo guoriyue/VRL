@@ -1,6 +1,6 @@
 # DECISION: GPU saturation evidence and colocation policy
 
-Status: **accepted, 2026-07-12**. This is the canonical product decision. The
+Status: **DONE / accepted, 2026-07-12**. This is the canonical product decision. The
 measurement archive remains in
 `docs/sprints/info/SPRINT_gpu_saturation_and_mps_colocation.md`.
 
@@ -186,8 +186,8 @@ rewrite or cleanup of unrelated historical sprint artifacts.
 
 - Measurement archive: `docs/sprints/info/SPRINT_gpu_saturation_and_mps_colocation.md`
 - Superseded reading note: `docs/sprints/reading/SPRINT_mps_same_gpu_dp.md`
-- Phase-lease and continuous design: `docs/sprints/planned/SPRINT_miles_phase_lease_and_one_continuous.md`
+- Phase-lease and continuous design: `docs/sprints/SPRINT_miles_phase_lease_and_one_continuous.md`
 - Resource guard: `vrl/ray/resources.py`
 - Schedule topology validation: `vrl/rollouts/orchestration/schedule.py`
-- External reward isolation contract: `docs/sprints/SPRINT_reward_service.md`
+- External reward isolation contract: `docs/sprints/done/SPRINT_reward_service.md`
 - NVIDIA MPS documentation: <https://docs.nvidia.com/deploy/mps/>

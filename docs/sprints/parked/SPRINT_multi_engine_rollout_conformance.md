@@ -285,7 +285,7 @@ docs/sprints/info/
 
 - `docs/sprints/SPRINT_native_generation_engine_program.md`
 - `docs/sprints/SPRINT_ray_rollout_fault_tolerance.md`
-- `docs/sprints/SPRINT_explicit_rollout_activation.md`
+- `docs/sprints/done/SPRINT_explicit_rollout_activation.md`
 - `docs/sprints/planned/SPRINT_flashdreams_execution_provider.md`
 - `docs/sprints/parked/SPRINT_self_forcing_causal_family.md`
 - `docs/sprints/parked/SPRINT_sglang_diffusion_execution_provider.md`

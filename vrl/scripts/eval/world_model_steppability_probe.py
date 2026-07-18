@@ -2,7 +2,7 @@
 action-conditioned environment? (world-model-as-env, Phase 0 KILL-RISK gate)
 
 One-shot *contract* probe, NOT a training entrypoint. It answers the Phase-0
-question from ``docs/sprints/planned/SPRINT_world_model_as_env.md``: before
+question from ``docs/sprints/parked/SPRINT_world_model_as_env.md``: before
 building a ``WorldModelEnv`` whose ``step()`` runs Cosmos/Wan, confirm the models
 even admit the two ingredients a steppable env needs:
 

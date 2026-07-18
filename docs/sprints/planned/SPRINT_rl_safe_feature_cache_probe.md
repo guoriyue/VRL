@@ -43,7 +43,7 @@ cached step 不能参与 policy-gradient log_prob
 仓库已有 rollout-only TeaCache 入口：
 
 ```text
-vrl/generation/diffusion/executor.py
+vrl/generation/bindings/joint_denoise/executor.py
   TeaCacheState
   teacache.should_run(...)
   teacache.cached_noise_pred
@@ -52,7 +52,7 @@ vrl/generation/diffusion/executor.py
 并且注释已经承认 TeaCache drift 和 fp8 drift 一样，需要 drift guard/TIS/RS 兜住：
 
 ```text
-vrl/generation/diffusion/teacache.py
+vrl/generation/steps/denoise/teacache.py
 vrl/algorithms/logprob_mismatch.py
 vrl/algorithms/grpo/continuous.py
 ```
@@ -111,8 +111,8 @@ SDE training window      -> trainable_sde
 
 ## 8. 关键文件
 
-- `vrl/generation/diffusion/executor.py`
-- `vrl/generation/diffusion/teacache.py`
+- `vrl/generation/bindings/joint_denoise/executor.py`
+- `vrl/generation/steps/denoise/{loop,teacache}.py`
 - `vrl/algorithms/logprob_mismatch.py`
 - `vrl/algorithms/grpo/continuous.py`
 - `vrl/trainers/online/trainer.py`

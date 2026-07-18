@@ -1,6 +1,8 @@
 # SPRINT: AR vs Diffusion 决策记录 + 分层整理 — 方向裁决与层图固化
 
-**日期**: 2026-07-13  **状态**: LAYOUT LANDED（2026-07-18）；causal-chunked policy 仍待真实实现
+**Date**: 2026-07-13  **Status**: **DONE — taxonomy and layout landed (2026-07-18)**.
+Causal-chunked policy implementation is separately tracked and is not remaining
+work in this decision sprint.
 **触发**: "AR 是未来、diffusion 画质不行，是否砍掉 diffusion 支持 / 是否把 ar 放到
 diffusion 之上重新分层"。本文把方向裁决和层图一起钉死，防止反复重开。
 

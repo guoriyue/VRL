@@ -1,9 +1,10 @@
 # SPRINT: full-param 替换 LoRA + FP8/FP4 精度轴（吞吐杠杆）(planned)
 
-状态：**部分落地**。P3 precision/drift correction 与 rollout FP8 kernel/
+Status: **PARKED / partially landed (2026-07-18)**. P3 precision/drift correction and rollout FP8 kernel/
 zero-swap guard 已落地。P1.5 的 native-FP16 FP32-master capacity/numerics gate
 已于 2026-07-13 通过；长期 held-out learning 仍未由五步 pilot 证明。旧的
-direct FP16/BF16 parameter update 证据无效。
+direct FP16/BF16 parameter update 证据无效。Resume for a family only when its
+held-out curve or multi-GPU capacity requirement supplies a concrete trigger.
 
 > **2026-07-13 correctness correction:** AdamW8bit 只压缩 optimizer moments，
 > 不提供 FP32 master parameter。SANA 原生 FP16 的 1.604B 参数在 `lr=5e-6`

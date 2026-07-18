@@ -1,9 +1,9 @@
-# SPRINT: GRPO-Guard 正确性验证实验（flux + PickScore，planned）
+# SPRINT: GRPO-Guard 正确性验证实验（flux + PickScore）
 
-状态：planned（2026-06-21）。性质：**算法正确性验证跑**——为新加的 `grpo_guard`
-（FlowGRPO + ratio-mean-bias 修正 + 跨步幅度归一）设计一次可判读的 learning 验证。
-模型 flux、数据/奖励对齐母体 Flow-GRPO 的人类偏好任务：**`pickscore` reward + PickScore prompts**
-（learned preference reward model，Flow-GRPO 三大 task 之一）。排除 sd3.5 / cosmos。
+Status: **DONE — mechanism validation only (2026-07-18)**. Ratio-mean-bias and
+clipping engaged under the multi-epoch probe. The short run did not establish a
+>2σ held-out learning curve; that longer claim is consolidated into the
+trustworthy reference-curve program.
 
 > 来源：实现 `vrl/algorithms/grpo/continuous.py:321`（`GRPOGuard`）+ recipe
 > `configs/recipe/online/flow_matching_grpo_guard.yaml` + 母体论文

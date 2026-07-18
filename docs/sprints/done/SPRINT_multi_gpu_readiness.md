@@ -8,7 +8,7 @@ rollout weight sync 的契约先准备好。完成后，拿到多 GPU 时应该�
 关联：
 - `docs/sprints/parked/SPRINT_multi_gpu_training.md`
 - `docs/sprints/done/SPRINT_global_ray_placement_owner.md`
-- `docs/sprints/planned/SPRINT_reward_execution.md`
+- `docs/sprints/done/SPRINT_reward_execution.md`
 
 ## 0. Core Decision
 
@@ -606,6 +606,6 @@ Non-goals：
 
 - `/home/mingfeiguo/Desktop/wm-infra/docs/sprints/parked/SPRINT_multi_gpu_training.md`
 - `/home/mingfeiguo/Desktop/wm-infra/docs/sprints/done/SPRINT_global_ray_placement_owner.md`
-- `/home/mingfeiguo/Desktop/wm-infra/docs/sprints/planned/SPRINT_reward_execution.md`
+- `/home/mingfeiguo/Desktop/wm-infra/docs/sprints/done/SPRINT_reward_execution.md`
 - `/home/mingfeiguo/Desktop/wm-infra/docs/sprints/reading/cosmos-rl.md`
 - `/home/mingfeiguo/Desktop/wm-infra/docs/sprints/reading/SPRINT_cosmos_rl_scaling_learnings.md`

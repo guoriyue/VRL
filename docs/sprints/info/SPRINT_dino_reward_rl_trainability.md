@@ -1,10 +1,12 @@
 # SPRINT: dino reward RL-trainability —— 用因果探针证明 reward 能被正确方向推动
 
-状态：**in-progress（2026-07-09）**。核心因果问题已用 gradient-honest 探针答出（POSITIVE，near-significant）；
-剩余项 = 正式管线 `vrl-train` 端到端复验 + 提高统计功效。Ray 集群归属与共享主机隔离已拆到
-[`SPRINT_ray_cluster_ownership_and_shared_host_isolation.md`](./done/SPRINT_ray_cluster_ownership_and_shared_host_isolation.md)，
-不再作为本 sprint 的 reward 因果验收项。性质：**correctness/causal
-validation**（不是新功能），沿 [[project_first_trustworthy_curve]] 的"能不能学"这条主线。
+Status: **INFO ARCHIVE (2026-07-18)**. The gradient-honest probe answered the
+bounded causal question with a positive but not >2σ result. Its one-shot
+continuation scripts and scratch outputs were removed after the answer was
+recorded, so this document no longer owns executable follow-up work. Formal
+video learning evidence belongs to the Cosmos trustworthy-curve sprint. Ray
+cluster ownership remains recorded in
+[`SPRINT_ray_cluster_ownership_and_shared_host_isolation.md`](../done/SPRINT_ray_cluster_ownership_and_shared_host_isolation.md).
 
 > 来由：`online_grpo_droid_full_target_480p` 的 24h 长跑判"reward 往下掉 -4.5σ"（[[project_droid_overfit_validation]]），
 > 追问"这是 reward 坏，还是操作点/梯度坏"。逐层拆解后发现前两次下跌各有 confound（采样脆 + 梯度 bug），
@@ -37,8 +39,9 @@ t=1.96 当"crossed"——R10 回撤就掉回 1.62,单端点会两边跳。
 
 - 每轮验证 `parity |Δlogp|_mean = 0.0000`、`clip_hits` 从 0 随策略移动上升（0→6→12→8→9→15）=
   梯度诚实 + 策略确实在动,不是随机。
-- 产物：`outputs/_level0_curve/`（`state.json`、`scores_round*.json`、`lora_round_*.pt`、`verdict.json`）。
-  探针脚本 `scratchpad/level0_curve.py`（Ray-free、断点续、抗杀）。
+- Historical one-shot artifacts were produced under `outputs/_level0_curve/`
+  by `scratchpad/level0_curve.py`. They were removed after this record captured
+  the result and are not maintained repository assets.
 
 ## 2. 关键 debug：为什么"往下掉"是假的
 
@@ -55,15 +58,15 @@ step   forward(es,0) BUG   forward_step(es,k) FIX
  0        0.00000              0.00000
  2/4/6/8  0.6–1.5        →     0.00000
 ```
-证明脚本 `scratchpad/parity_test.py`。
+The one-shot proof script was removed with the scratch artifacts.
 
 ## 3. 你的代码库没有这个 bug（16 家族全审）
 
 见 [[project_replay_parity_audit]]。两个正确 pattern,全家族一致：
 - **sigma-indexer**（cosmos predict2/2.5/anima/cosmos3,forward_step 读 `sigmas[step_idx]`）→ 都用
-  `CosmosReplayForward` mixin 的 `forward_step(state, timestep_idx)`（真索引）。`vrl/models/diffusion/cosmos/__init__.py:38`。
+  `CosmosReplayForward` mixin 的 `forward_step(state, timestep_idx)`（真索引）。`vrl/models/families/cosmos/__init__.py`。
 - **timestep-only**（sd3/flux/qwen/wan/sana/cogvideox/hunyuan×2/pixart/mochi/lumina2）→ 都用
-  `pack_eval_timestep` 把第 k 步 timestep 打包到位置 0,base `forward(state,0)`。`vrl/models/diffusion/base.py:146`。
+  `pack_eval_timestep` 把第 k 步 timestep 打包到位置 0,base `forward(state,0)`。`vrl/models/steps/denoise/base.py`。
 - 非标准 sigma 域都**显式处理**：cosmos EDM（`sde_step_with_logprob` 自动检测 `sigmas.max()>1` 转域）、
   mochi/lumina2 反转域（重建 descending scheduler）、pixart epsilon-DDPM（走独立 `sde_type=ddim` log-prob 路径）、
   echo 从 timestep 值直接推 sigma（免疫）。
@@ -86,44 +89,35 @@ parity=0.0）。我用探针还因为它是 Ray-free：现场旧日志证明 Ray
 这类 Ray 进程暴露面。**现有证据不能识别发送方或命令，也不能确认是 `ray stop`。** 这项环境稳定性问题与
 reward 数学正确性正交，归属独立 Ray sprint。
 
-## 6. 剩余项（按优先级）
+## 6. Closure and handoff
 
-1. **正式管线 continuation（IN PROGRESS 2026-07-09）** ⭐：探针停在 R10（dino ~0.486, +4.6%）后,
-   **warm-start 从探针策略接着用 `vrl-train` 训**(不是从零)。落地细节:
-   - 探针 `lora_round_10.pt`(PEFT 格式,448 keys)→ `scratchpad/convert_probe_lora.py` 经 model.apply_lora
-     路径转成 PEFT adapter 目录 `outputs/_level0_curve/probe_lora_r10_adapter`(load 时 unexpected=0,接干净)。
-   - 配方 `online_grpo_droid_overfit_validation` + 显存修复(spc=1 / traj cpu / reward gpu_pool)+ `run-until-success`。
-   - **断点续正确性坑**:`model.lora.path`(warm-start)与 `trainer.resume_from`(续 ckpt)**互斥**。条件启动器
-     `scratchpad/cosmos_continue.sh`:首跑 warm-start 探针 adapter;之后每次被杀改从 vrl-train 最新 checkpoint 续
-     (`save_freq=2`),不退回探针、不丢生产进度。
-   - **⚠️ 外部终止风险回归**:换回整框架会重新创建 Ray worker。历史现场存在来源未知的外部 `SIGTERM`；
-     `run-until-success`+`save_freq=2` 只能缩小进度损失，不能证明或消除发送方。集群归属与共享主机隔离由独立
-     Ray sprint 处理。
-   - **warm-start confound(诚实)**:从探针 +4.6% 接着训 = 不浪费,但这条生产曲线**不能再独立宣称"生产也把
-     dino 推上去了"**(大头探针推完了)。要独立复验须从零跑。且探针只 overfit 1 个 prompt,本配方 4 个 prompt →
-     其余 3 个冷启动,是"热启动的真训练"非纯单-prompt 续。
-   - **判读**:先看 `first-step log-prob` parity ≈0(证明 warm-start 权重接干净)→ 再看 eval dino 从 ~0.486 往哪走。
-2. **提高统计功效**：把每点样本 16 → 32/64,压掉点间抖动,让 t 稳定越过 2(比多跑更新更干净)。
-3. **first_step 守卫改硬失败**：`vrl/trainers/online/trainer.py:1127` 现在 parity>0.01 只 **warn**;改成
-   **hard-fail**（或首跑默认开）,这样未来新家族若写错 sigma 模式,不会默默用坏梯度训几小时(正是探针的教训)。
+- The proposed warm-start continuation was not retained as a reproducible
+  repository workflow. Its scratch scripts, adapter conversion, launcher, and
+  output directory were deleted together as one-shot artifacts.
+- First-step replay parity now hard-fails in the production trainer, preserving
+  the durable correctness lesson from the probe.
+- The bounded result remains positive but below the registered >2σ bar. This
+  archive does not reopen sampling until significance appears.
+- A formal multi-prompt video learning verdict belongs to the Cosmos
+  trustworthy-curve sprint rather than a continuation of this scratch probe.
 
 ## 7. 非目标
 
 - 不证明 dino 是"好"reward(能训 ≠ 训出好模型;泛化是多-prompt 长跑的事)。
 - 不改 §3 已审过的家族 replay(它们都对)。
-- 不在探针上追求生产级(它是替身;正式落地走 §6.1)。
+- 不在探针上追求生产级；正式学习证据由独立 reference curve 提供。
 
 ## 8. 引用
 
-- 探针/证据：`scratchpad/level0_curve.py`、`scratchpad/parity_test.py`、`outputs/_level0_curve/`
-- 正确 pattern：`vrl/models/diffusion/cosmos/__init__.py:38`（`forward_step(state, timestep_idx)`）、
-  `vrl/models/diffusion/cosmos/predict2/model.py:378`（`sigmas[step_idx]`）、
-  `vrl/models/diffusion/base.py:146`（`forward(state, 0)`）、
-  `vrl/math/diffusion/flow_matching.py:74`（`sigma = scheduler.sigmas[step_index]`）
-- 守卫：`vrl/trainers/online/trainer.py:1127`（first_step parity warn→建议 hard-fail）
+- Historical one-shot evidence (removed after recording):
+  `scratchpad/level0_curve.py`, `scratchpad/parity_test.py`, and
+  `outputs/_level0_curve/`.
+- Correct pattern: `vrl/models/families/cosmos/__init__.py`,
+  `vrl/models/families/cosmos/predict2/model.py`,
+  `vrl/models/steps/denoise/base.py`, and
+  `vrl/math/denoise/flow_matching.py`.
+- Guard: `vrl/trainers/online/trainer.py` (first-step parity hard failure).
 - 配方：`vrl/config/presets/experiment/cosmos_predict2/online_grpo_droid_overfit_validation.yaml`
 - Ray 稳定性独立范围：`docs/sprints/done/SPRINT_ray_cluster_ownership_and_shared_host_isolation.md`
-- 现场外部终止证据：`outputs/janus_smoke/aesthetic.log`、`outputs/janus_smoke/aesthetic_rbs24.log`、
-  `outputs/janus_smoke/baseline.log`（只证明 `SIGTERM`，不证明发送命令）
 - 记忆：[[project_droid_overfit_validation]]、[[project_replay_parity_audit]]、
   [[project_single_gpu_93f_probe_oom]]、[[feedback_unattended_run_survival]]、[[project_first_trustworthy_curve]]

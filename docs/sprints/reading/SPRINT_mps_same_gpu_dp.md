@@ -21,7 +21,7 @@ contract. A synthetic small-GEMM gain therefore does not justify an MPS product
 path or a fractional Ray GPU escape hatch.
 
 The accepted policy is documented in
-`docs/sprints/SPRINT_gpu_saturation_and_colocation_decision.md`:
+`docs/sprints/done/SPRINT_gpu_saturation_and_colocation_decision.md`:
 
 - shared trainer and rollout GPU: `strict_on_policy` with a full phase lease;
 - disjoint trainer and rollout GPUs: `continuous` may provide real overlap;

@@ -44,8 +44,8 @@ PPO 相位的乘法：
 
 关键代码锚点（本仓）：
 - timestep 子集与逐 timestep 反向循环：`vrl/trainers/online/trainer.py:759-934`
-- CFG 双前向（cond+uncond 都在梯度内）：`vrl/models/diffusion/common/backbone.py:127-145`
-- `do_cfg = guidance_scale > 1.0` 的现成开关：`vrl/models/diffusion/cosmos/predict2/model.py:241-242,284-285`
+- CFG 双前向（cond+uncond 都在梯度内）：`vrl/models/steps/denoise/common/backbone.py`
+- `do_cfg = guidance_scale > 1.0` 的现成开关：`vrl/models/families/cosmos/predict2/model.py`
 - 重算三档 off|full|selective：`vrl/config/schema.py:549`，applier
   `vrl/trainers/activation_checkpointing.py:128-169`（selective 不被模块支持时显式告警回退 full）
 - 改造前生成/训练共用一个 chunk 旋钮：`vrl/trainers/core/types.py` 的
@@ -247,7 +247,7 @@ timestep,门是"曲线仍在动"（eval 网格趋势不塌）。若 P0 过门,�
 
 - 本仓账本:`outputs/cosmos_pred2_droid_lora_480p_curve/{resolved_config.yaml,metrics.csv}`(wm-infra 侧)、
   run 日志 `/tmp/run-until-success.cosmos_fullcurve.1000.log`
-- 本仓代码:`vrl/trainers/online/trainer.py`、`vrl/models/diffusion/common/backbone.py`、
+- 本仓代码:`vrl/trainers/online/trainer.py`、`vrl/models/steps/denoise/common/backbone.py`、
   `vrl/trainers/activation_checkpointing.py`、`vrl/trainers/core/types.py`、`vrl/config/validation.py`
 - cosmos-rl @5b9fdba:`cosmos_rl/policy/config/wfm/__init__.py`、
   `cosmos_rl/policy/trainer/wfm_trainer.py`、`cosmos_rl/policy/model/wfm/models/t2v_model.py`、

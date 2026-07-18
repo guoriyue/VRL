@@ -1,6 +1,9 @@
 # SPRINT: Resource/config resolution audit — resolve_distributed_resources 与 config 校验层裁决记录
 
-**日期**: 2026-07-12  **状态**: PLANNED（主体是裁决记录；动作项只有 §3 的两小条）
+**Date**: 2026-07-12  **Status**: **DONE (2026-07-18)**. The audit found no dead
+resolved fields or duplicate validation layer. The two former comment-only
+actions were closed rather than adding decorative separators or coupling a
+production docstring to this sprint record.
 **触发**: "resolve_distributed_resources 为什么在那里 / config 加载校验函数一大堆"。
 本文回答 why、给出逐字段消费者核查结论，防止下轮审计重翻。
 
@@ -52,13 +55,13 @@ fsdp 对称/非对称双拓扑、`gpu_pool=trainer` 即 overlap 许可等规则�
 公共 builder/gate 边界，在薄函数保留清单内。**无合并/删除项。**
 （上一轮已删的 `sampling.cfg`、`task_variant` 死键不再赘述。）
 
-## 3. 仅有的两条动作项
+## 3. Closed comment-only proposals
 
-1. `resolve_distributed_resources` 体内五段决策补齐段落注释锚
-   （`# -- visible devices / role devices / worker sizing / overlap checks /
-   lifecycle derivation --`），成本 5 行，让"为什么在那里"从函数体自答。
-2. 本文归档后，在 `vrl/ray/resources.py` 模块 docstring 加一行指向本 sprint
-   （裁决记录防重翻，与 grab-bag audit 对 fsdp.py "一袋函数合法"的处理同款）。
+The audit does not add decorative section separators inside
+`resolve_distributed_resources`, and production module documentation does not
+link back to a sprint record. Existing names, types, validation, and focused
+WHY comments already carry the durable explanation. The audit record preserves
+the deeper evidence without coupling production code to planning history.
 
 ## 非目标
 

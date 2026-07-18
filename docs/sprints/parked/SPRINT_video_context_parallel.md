@@ -1,6 +1,6 @@
 # SPRINT: Video context parallel — 训练侧 CP 解锁 predict2_5 双卡 replay
 
-**日期**: 2026-07-13  **状态**: PLANNED（硬件 gate：需 2×GPU 在位）
+**Date**: 2026-07-13  **Status**: **PARKED — requires a real 2-GPU host or CI runner**.
 **来源**: FlashDreams 引擎评审教训 ②——它的多卡故事只有上下文并行且总共
 157 行（`core/distributed/context_parallel.py:32-157`：token 维
 `split_inputs_cp`/`cat_outputs_cp` + ring attention 组），证明视频 DiT 的

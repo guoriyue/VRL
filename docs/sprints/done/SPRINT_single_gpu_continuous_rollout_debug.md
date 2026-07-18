@@ -4,7 +4,7 @@
 
 > **Superseded（2026-07-11）**：本文件保留当时的 debug 结果作为历史记录，但它定义的
 > same-GPU resident continuous 产品路径已经由
-> `docs/sprints/planned/SPRINT_miles_phase_lease_and_one_continuous.md` 删除。当前 shared
+> `docs/sprints/SPRINT_miles_phase_lease_and_one_continuous.md` 删除。当前 shared
 > trainer/rollout GPU 只允许 `strict_on_policy` phase lease；production `continuous` 必须使用
 > disjoint GPUs。本文中的 preset、`persistent_colocated_workers`、role `memory_fraction` 和
 > `require_separate_gpus` 均已删除，下面的命令与配置不再是可运行接口。

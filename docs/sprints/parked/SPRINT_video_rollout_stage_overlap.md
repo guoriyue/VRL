@@ -3,7 +3,7 @@
 > **Current-state correction (2026-07-12).** This parked document preserves
 > historical measurements and decisions; it is not the current reward deployment
 > contract. Reward now supports both in-process and optional HTTP runtimes. The
-> canonical overlap rules are in `docs/sprints/SPRINT_reward_service.md`: async
+> canonical overlap rules are in `docs/sprints/done/SPRINT_reward_service.md`: async
 > transport and physical accelerator isolation are separate facts, and overlap is
 > fail-closed until both are verified. `distributed.resources.reward.gpu_pool` is
 > role-level resource placement, not a physical `PipelineStage` placement API.

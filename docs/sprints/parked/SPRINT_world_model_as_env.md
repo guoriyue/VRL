@@ -1,6 +1,8 @@
 # SPRINT: 世界模型即环境（world-model-as-env）—— 用自己的 Cosmos/Wan 背后驱动 env.step()
 
-状态：**planned（2026-06-27）**。目标：让本仓支持"环境 = 世界模型"——实现一个 `WorldModelEnv`,满足已有的 `Env` 协议(`vrl/rollouts/envs/contract.py`,在 `feat/physical-ai-vla-contract` 分支),其 `step(ActionChunk) → (EnvObservation, EnvRewardSignal)` 跑一次**本仓自己的** Cosmos/Wan 前向去预测下一帧观测,而不是调 MuJoCo。先用 Phase-0 probe 把"模型能不能被 step"这关跑掉,过门才往下。
+Status: **PARKED (2026-07-18)**. Resume when the typed environment contract lands
+on main and a real action-conditioned checkpoint is available for the live
+action-fidelity gate. The static probe alone is not executable support.
 
 ## 0. 结论先行（Phase-0 静态已跑出 = `go_prototype`）
 
@@ -91,8 +93,8 @@
 **参考**
 - 接缝/类型:`vrl/rollouts/envs/contract.py`、`vrl/models/vla/policy.py`、`vrl/rollouts/envs/libero.py`(分支 `feat/physical-ai-vla-contract`)
 - probe:`vrl/scripts/eval/world_model_steppability_probe.py`(本 sprint 新增)
-- frame-prefix 槽:`Cosmos2_5_PredictBasePipeline.prepare_latents`(`video`/`num_frames_in`);wrapper `vrl/models/diffusion/cosmos/predict2_5/model.py:338-351`(现传 `num_frames_in=0`)
-- action seam:`vrl/models/diffusion/common/backbone.py:23`(`DiffusionBackboneInput.extra`)、`vrl/models/diffusion/wan_2_1/model.py:740-745`(`extra={condition,image_embeds}`)
+- frame-prefix 槽:`Cosmos2_5_PredictBasePipeline.prepare_latents`(`video`/`num_frames_in`);wrapper `vrl/models/families/cosmos/predict2_5/model.py`(现传 `num_frames_in=0`)
+- action seam:`vrl/models/steps/denoise/common/backbone.py`(`DiffusionBackboneInput.extra`)、`vrl/models/families/wan_2_1/model.py`(`extra={condition,image_embeds}`)
 - omni 封锁:`vrl/scripts/eval/cosmos3_nano_generator_probe.py`(分支)
 - bandit trainer / 无 critic 协议:`vrl/trainers/online/trainer.py`、`vrl/algorithms/base.py`、`vrl/algorithms/grpo/multisegment.py`
 - canonical:DIAMOND(2405.12399)、DreamerV3(2301.04104)、Genie 3+SIMA 2、Vid2World(2505.14357)

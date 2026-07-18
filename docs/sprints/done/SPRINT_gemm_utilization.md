@@ -16,7 +16,7 @@ register and shared-memory use limits resident warps. NCU tensor-pipe SOL must b
 compared with a same-machine square-GEMM baseline; that comparison, not the
 `18-26%` occupancy value, supports the conclusion that the main GEMMs are near
 the achievable kernel ceiling. See
-`docs/sprints/SPRINT_gpu_saturation_and_colocation_decision.md`.
+`docs/sprints/done/SPRINT_gpu_saturation_and_colocation_decision.md`.
 
 The measured optimization classes were:
 

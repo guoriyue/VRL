@@ -1,12 +1,15 @@
 # SPRINT: AR 同-prompt 共享前缀 prefill（GRPO group 的前缀复用）
 
-状态：**planned / profiling-gated（2026-06-19）**。这是一个**条件性**优化：只有当 prefill
+Status: **PARKED / profiling-triggered (2026-07-18)**. Start only when a real
+causal-token workload shows prefill at 15–20% or more of rollout wall time. This
+is a conditional optimization: only when prefill
 （prompt 段）在 AR rollout 里占到有意义的 wall-clock 比例时才做。对当前的**图像生成 AR**
 （janus_pro / nextstep_1，短 prompt → 长 image-token decode）ROI 低；对**长-prompt AR**
 （文本推理 / 长 system prompt / janus_pro_r1 多段）ROI 才显著。先量再做。
 
-> 方法：逐跳核实了 `vrl/models/ar/{janus_pro,nextstep_1}/{runtime,runner}.py`、
-> `vrl/models/ar/paged_attention_helpers.py`、`vrl/families/registry.py`，以及 rollout 侧的
+> The current paths are `vrl/models/families/{janus_pro,nextstep_1}/{runtime,runner}.py`,
+> `vrl/models/steps/token/paged_attention_helpers.py`, and `vrl/families/registry.py`.
+> The audit also followed the rollout-side
 > 同-prompt 分组（`SampleChunk` + `n_samples_per_prompt`）。
 
 ---
@@ -25,7 +28,7 @@ profiling-gated。
 
 ### 1.1 同-prompt K 个 variant 被复制成 K 行
 
-`vrl/models/ar/janus_pro/runtime.py:453-456`（chunk 路径，nextstep_1 同形 `:816-819`）：
+`vrl/models/families/janus_pro/runtime.py`（chunk 路径，nextstep_1 同形）：
 
 ```python
 repeated_prompts = [chunk.prompt] * chunk.sample_count   # 同一个 prompt 复制 K 份
@@ -40,7 +43,7 @@ prompt**。当前 prefill 仍执行 cond+uncond 两次 branch forward，**每次
 
 ### 1.2 paged backend 没有前缀去重
 
-`vrl/models/ar/paged_attention_helpers.py` 只是「shared paged-attention helpers reused by runners」
+`vrl/models/steps/token/paged_attention_helpers.py` 只是「shared paged-attention helpers reused by runners」
 ——共享的是**代码**，不是**KV**。没有 radix/prefix-hash/cache-hit 逻辑，所以相同 prompt 前缀不会被
 自动复用。实际 paged KV cache 由每个 decode lane 独立持有；代码中没有 cache-kind registry 或
 跨样本前缀共享机制。
@@ -122,12 +125,12 @@ prompt**。当前 prefill 仍执行 cond+uncond 两次 branch forward，**每次
 
 ## 6. 代码引用（已核实）
 
-- 同-prompt 复制成 K 行：`vrl/models/ar/janus_pro/runtime.py:453-456`（chunk）/`:311-320`（whole-request）；
-  nextstep_1 同形 `vrl/models/ar/nextstep_1/runtime.py:816-819`。
+- 同-prompt 复制成 K 行：`vrl/models/families/janus_pro/runtime.py`；
+  nextstep_1 同形 `vrl/models/families/nextstep_1/runtime.py`。
 - prefill 单点：`janus_pro/runner.py:74-93,158-`（`_prefill_ar_prompt_paged`）；
   `nextstep_1/runner.py:93-134,239-247`（`_prefill_paged`）。
-- 无前缀去重：`vrl/models/ar/paged_attention_helpers.py`。
+- 无前缀去重：`vrl/models/steps/token/paged_attention_helpers.py`。
 - AR family/task 分类：`vrl/families/registry.py`；KV-cache 状态与推进：
-  `vrl/models/ar/paged_attention_helpers.py` 及各 family runner。
+  `vrl/models/steps/token/paged_attention_helpers.py` 及各 family runner。
 - rollout 同-prompt 分组（算法无关，K=group size）：`SampleChunk`（`generation/execution/chunks.py`）
-  + `n_samples_per_prompt`（`configs/base/rollout/ar_*.yaml`、`config/schema.py:234`）。
+  + `n_samples_per_prompt`（`vrl/config/presets/base/rollout/*.yaml`、`vrl/config/schema.py`）。

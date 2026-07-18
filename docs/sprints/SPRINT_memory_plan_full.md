@@ -1,7 +1,8 @@
 # SPRINT: Whole memory plan (current repo)
 
-状态：plan。本篇是面向当前仓库实际状态的**完整内存计划**——从已落地的机制
-统一，到尚未实现的内存系统。每个 Phase 独立成 sprint、单卡可验。
+Status: **LIVING ARCHITECTURE LOGBOOK; not an execution sprint**. This document
+tracks the current memory system and its still-open design boundaries. Concrete
+implementation phases are filed as separate sprints.
 
 > 本篇取代并吸收旧蓝图 `SPRINT_generation_memory_system.md`（已删除，2026-06-17）。
 > 旧蓝图的框架证据已并入下方"框架借鉴"表；其"现状"清单曾把**已撤销**的 trainer 侧
@@ -126,7 +127,7 @@ lifecycle 删除。要让告警有意义必须用 **soft 阈值**（如 `0.85 ×
 
 > ### L2 current state (verified 2026-07-13)
 >
-> - The diffusion executor still records separate denoise and decode allocated
+> - The joint-denoise executor still records separate denoise and decode allocated
 >   peaks. `ChunkMemoryReading.from_metrics` rejects incomplete mappings using
 >   dataclass-derived field names.
 > - `samples_per_chunk: auto` runs truncated real chunks, fits two measured

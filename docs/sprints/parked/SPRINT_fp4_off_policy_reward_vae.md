@@ -1,6 +1,8 @@
 # SPRINT: MXFP4 离-policy-path —— reward model + VAE 上 Blackwell FP4（越 bf16 上限）
 
-状态：**planned / high-risk proof-gated（2026-06-27）**。性质：**唯一能越过 bf16 硬件上限的单卡 compute 杠杆,但有损**——只能用在 **policy/log-prob path 之外**的组件(reward model、VAE),那里有损不污染 old_log_prob。Blackwell 第 5 代 tensor core 的 MXFP4/NVFP4 经 `tcgen05.mma` 硬件块缩放,custom Triton/CUTLASS 可调,~4x bf16。
+Status: **PARKED / profiling-triggered (2026-07-18)**. Resume only when a real
+profile shows reward or VAE compute is an exposed wall-clock bottleneck rather
+than hidden by overlap.
 
 > 来由([[SPRINT_lossless_diffusion_rl_research]] §验证 7-9 + 研究):bf16 GEMM 实测已到消费卡硬件上限(NCU tensor SOL 45% ≈ 最优方阵 47%)。唯一越界的是 sub-bf16(MXFP4 ~2x FP8 ~4x bf16,sm_120 确认有真 FP4 加速)。但 FP4 改输出 → **上 policy denoise 会改 Gaussian transition mean → 污染 old_log_prob**(禁止);只能离 policy path。
 > **2026-06-27 外部佐证(deep-research):** 这条"FP4 离 policy / bf16 上 policy"路线已是发表 SOTA——`FP4 Explore, BF16 Train`(arXiv:2604.06916, 2026-04)用近乎相同的契约(FP4 只跑 rollout、训练 bf16、log-prob 用 bf16 重算)报 ~2.5-3x rollout / 1.5-2x 端到端。配方可信,但其数在 H100;5090(sm_120,无 TMEM)的 FP4 tensor 路径不同 → **幅度必须本机重测,不能直接引用**。SVDQuant/Nunchaku NVFP4 在 5090 上对 FLUX 报 3x over bf16(仅 image,video 未实现);SageAttention3 FP4 attention 确认能在 sm_120 跑(5x over FA-2,有损)。
@@ -47,7 +49,7 @@ GRPO 梯度 = `Σ A_i ∇log π`,`A_i` = 组内 reward 中心化。old_log_prob 
 ## 6. 关键文件
 
 - reward:`vrl/rewards/runtime.py:InProcessRewardRuntime`、`vrl/rewards/functions/kling_video_reward.py`、`vrl/rewards/models/kling_video_reward.py`
-- VAE:各家 `vrl/models/diffusion/<family>/` 的 decode 路径
+- VAE:各家 `vrl/models/families/<family>/` 的 decode 路径
 - FP4 kernel 先例:`vrl/nn/quantization/fp8.py`（fp8 swap 机制,FP4 同构扩展)
 - 排序 parity:`vrl/algorithms/advantages.py:group_relative_advantages`
 - 证据:[[SPRINT_lossless_diffusion_rl_research.md]] §验证 7-9、记忆 `project_lossless_diffusion_rl_research`

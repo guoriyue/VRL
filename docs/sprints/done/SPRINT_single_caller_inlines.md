@@ -2,8 +2,9 @@
 
 **日期**: 2026-07-13  **状态**: EXECUTED and archived
 
-**来源**: `wm-infra/docs/sprints/planned/SPRINT_single_caller_inlines.md`。该计划文件不在
-VRL 当前树或 `origin/main`；本文记录对其 VRL 变更项的实际落地与执行时修正。
+**Source:** the superseded planned copy was removed after execution. This file
+is the canonical record of the landed changes and the corrections made while
+implementing them.
 
 ## 结论
 

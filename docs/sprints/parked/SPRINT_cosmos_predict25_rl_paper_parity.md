@@ -1,11 +1,13 @@
 # SPRINT: Cosmos Predict2.5 RL — paper-faithful run（rollout 预算对齐论文）
 
-状态：proposed / planned（2026-06-17）。**给另一台机器的要求**：复现 Cosmos-Predict2.5
+Status: **PARKED / hardware-triggered (2026-07-18)**. Resume when a machine can
+run the paper-shaped multi-GPU or large-memory workload and its GPU numerics
+gate. **给另一台机器的要求**：复现 Cosmos-Predict2.5
 RL 必须用 **paper-shaped 配置**（够显存才跑得起），**不要**沿用 field-notes 那次单卡
 L40S 的缩水 override——那次只采了论文 **千分之二** 的 rollout 量，学不出东西。
 
 > 来源：本篇核对了论文 PDF（`docs/papers/world-models/cosmos-predict2-5-world-foundation-models.pdf` 第 13 页
-> §4.2.2 Reinforcement Learning）、仓库 config（`configs/experiment/cosmos_predict2_5/`）、
+> §4.2.2 Reinforcement Learning）、仓库 config（`vrl/config/presets/experiment/cosmos_predict2_5/`）、
 > 以及 field-notes（`info/SPRINT_cosmos_training_field_notes.md`）。
 
 ## 0. 一句话
@@ -58,7 +60,7 @@ rbs=1、n=3 时组内只有 3 个样本、每步只有 1 个 prompt——advanta
 
 ```bash
 # paper-shaped 配置已存在,直接用(NFT 变体):
-#   configs/experiment/cosmos_predict2_5/online_nft_kling_video_reward.yaml
+#   vrl/config/presets/experiment/cosmos_predict2_5/online_nft_kling_video_reward.yaml
 #   → n_samples_per_prompt=8, rollout_batch_size=32, 512p_93f, 20_step_no_cfg,
 #     total_epochs=256, timestep_fraction=0.5(→10 切片)
 # 关键:这套 n=8/rbs=32/512p/93f 在单 L40S(46GB)塞不下,需要多卡或更大卡。
@@ -105,7 +107,7 @@ rbs=1、n=3 时组内只有 3 个样本、每步只有 1 个 prompt——advanta
    - **架构裁决:预编码 latents(Option A),不走 rollout-worker 现场编码(Option B)**。
      B 让生成 worker 替训练侧编码并每个 batch 重复运送同样的 target latents——把训练关切
      耦合进 rollout wire,且同一 prompt 的 latents 每 epoch 重复付费。A = 一次性离线
-     encode(全 bundle,可借 `vrl/scripts/diffusion/generate.py` 的家族无关加载),产出
+     encode(全 bundle,可借 `vrl/scripts/generation/joint_denoise.py` 的家族无关加载),产出
      (latents, embeds) shard;trainer 按 `algorithm.sft_weight>0` + `data.sft_latents`
      加载,MSE 项复用离线 DPO 已验证的构造(`_inject_noise`:flow_matching 走
      `scheduler.scale_noise`、target=noise-latents;epsilon/v-pred 走 add_noise/get_velocity
@@ -118,13 +120,13 @@ rbs=1、n=3 时组内只有 3 个样本、每步只有 1 个 prompt——advanta
    收紧:不预存 embeds——SFT 项复用**当前训练 batch 的 prompt 条件**(新模型方法
    `replay_forward_with_latents`,与 log-prob replay 走同一 state 重建/同一 timestep,
    sigma 域零第二换算路径),shard 只存 {target_video → 干净视频 latents}。五件套:
-   ① 加噪构造 `diffusion_pretraining_pair`(vrl/math/diffusion/flow_matching.py,
+   ① 加噪构造 `diffusion_pretraining_pair`(vrl/math/denoise/flow_matching.py,
    scheduler 拥有 forward process:flow=scale_noise+velocity 目标、ddim 系=add_noise+
    epsilon/v 目标);② `GRPOConfig.sft_weight` + schema 交叉校验(weight>0 无
    data.sft_latents 在 config load 即拒);③ shard 契约 save/load_sft_latents
    (trainers/data/artifacts.py,family 不匹配拒载);④ trainer 项
    `OnlineTrainer._sft_regularizer_loss`(每 chunk 一次额外 forward,严格/streaming
-   两路都接,metrics 列 sft_loss);⑤ 编码脚本 vrl/scripts/diffusion/encode_targets.py
+   两路都接,metrics 列 sft_loss);⑤ 编码脚本 vrl/scripts/denoise/encode_targets.py
    (吃实验 config 保证同模型同几何,`CosmosPredict2Model.encode_video_to_latents` =
    decode 的精确逆 + diffusers pipeline conditioning 同款构造;其他 family 用前先补该方法)。
    **GPU 门(未跑)**:① encode 一个 droid manifest 并 eyeball decode 回放;② 真权重
@@ -161,8 +163,8 @@ rbs=1、n=3 时组内只有 3 个样本、每步只有 1 个 prompt——advanta
 ## 6. 参考
 
 - 论文:`docs/papers/world-models/cosmos-predict2-5-world-foundation-models.pdf` §4.2.2(p13)
-- paper-shaped config:`configs/experiment/cosmos_predict2_5/online_nft_kling_video_reward.yaml`
-- GRPO 变体:`configs/experiment/cosmos_predict2/online_grpo_kling_video_reward.yaml`
+- paper-shaped config:`vrl/config/presets/experiment/cosmos_predict2_5/online_nft_kling_video_reward.yaml`
+- GRPO 变体:`vrl/config/presets/experiment/cosmos_predict2/online_grpo_kling_video_reward.yaml`
 - 单卡实跑记录:`docs/sprints/info/SPRINT_cosmos_training_field_notes.md`
 - 单卡 runbook:`docs/sprints/info/SPRINT_cosmos25_kling_paper_recipe_runbook.md`
 - 固定 eval 信号(判断有没有学到):`docs/sprints/done/SPRINT_cosmos_kling_fixed_eval_signal.md`

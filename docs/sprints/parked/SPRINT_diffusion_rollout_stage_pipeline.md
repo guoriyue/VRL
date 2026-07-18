@@ -105,7 +105,7 @@
 >      The resulting request pipeline is a single-worker, memory-constrained
 >      optimization. It is not a foundation or placement contract for physical
 >      multi-GPU stages.
-> 2. **[Current correction] async reward / correctness**: role-level disjoint reward placement and late-group correctness tests exist. Actual generation/reward streaming additionally requires the fail-closed reward capability described in `docs/sprints/SPRINT_reward_service.md`. The historical recipes named by older revisions are no longer maintained repository assets. The dedicated-GPU throughput claim still requires a ≥2/3 GPU A/B run.
+> 2. **[Current correction] async reward / correctness**: role-level disjoint reward placement and late-group correctness tests exist. Actual generation/reward streaming additionally requires the fail-closed reward capability described in `docs/sprints/done/SPRINT_reward_service.md`. The historical recipes named by older revisions are no longer maintained repository assets. The dedicated-GPU throughput claim still requires a ≥2/3 GPU A/B run.
 > 3. **[≥2卡] data-parallel denoise 吞吐**:摸 VRL 的 continuous + rollout num_workers 现状（已支持到哪、差什么),给 ≥2 卡近线性 rollout 的落地路径。← denoise 吞吐的真杠杆。
 > 4. **[gating probe]** 任何把 denoise 自己切 stage 跨卡之前,先证它打得过 N 个 data-parallel monolithic actor(denoise 94-98% bound 下大概率打不过)——别把 denoise 拆 stage。
 >
@@ -115,7 +115,7 @@
 > runner, or placement API. Async reward additionally requires an explicit
 > nonblocking and accelerator-isolated runtime capability.
 
-历史状态（2026-06-27 实测复核 → 重定向）：当时确认了 reward role placement/release 契约、`distributed.resources.reward.gpu_pool: auto|rollout|dedicated` 语法、continuous producer 的多 group inflight 能力，以及 late-group version/staleness 契约。这些不等于 physical stage placement，也不自动证明 reward overlap 安全。当前状态以顶部 correction 和 `docs/sprints/SPRINT_reward_service.md` 为准。
+历史状态（2026-06-27 实测复核 → 重定向）：当时确认了 reward role placement/release 契约、`distributed.resources.reward.gpu_pool: auto|rollout|dedicated` 语法、continuous producer 的多 group inflight 能力，以及 late-group version/staleness 契约。这些不等于 physical stage placement，也不自动证明 reward overlap 安全。当前状态以顶部 correction 和 `docs/sprints/done/SPRINT_reward_service.md` 为准。
 
 > **Historical 2026-06-27 implementation record:**
 > - That revision added `build_diffusion_pipeline_topology` and

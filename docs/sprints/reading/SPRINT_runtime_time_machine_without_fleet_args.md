@@ -1,17 +1,16 @@
 # SPRINT: Runtime time machine —— 用内部因果票据解决迟到事件，不把 fleet generation 变成公共参数
 
 > Historical design, superseded on 2026-07-11 by
-> `SPRINT_explicit_rollout_activation.md`. Runtime-issued operation tickets and
+> [`SPRINT_explicit_rollout_activation.md`](../done/SPRINT_explicit_rollout_activation.md).
+> Runtime-issued operation tickets and
 > `QUIESCING` were removed; rollout schedules now own admission/draining, while
 > the runtime keeps concrete activation/offload/shutdown single-flight tasks.
 
-状态：**in-progress（2026-07-10）**。这是
-[`SPRINT_ray_rollout_fault_tolerance.md`](./SPRINT_ray_rollout_fault_tolerance.md)
-步骤 3–6 的架构澄清，不是第二套 recovery 实现。P0 的 admission/cleanup truthfulness
-和 P1 的 runtime-issued ticket/drain barrier 已落地。outer/inner `_fleet_generation`、
-`fleet_generation=` 参数和 write-only expected-kill registry 已删除：在 stale-event
-control flow尚未实现时，它们只是会漂移的提前设计。ticket尚未绑定 immutable fleet
-identity，single fleet owner仍属于 P2。
+Status: **HISTORICAL / SUPERSEDED**. Do not implement the ticket or `QUIESCING`
+design below. Current recovery work is owned by
+[`SPRINT_ray_rollout_fault_tolerance.md`](../SPRINT_ray_rollout_fault_tolerance.md),
+which keeps concrete runtime tasks and moves future fleet identity into the
+worker-fleet owner.
 
 ## 0. 一句话
 

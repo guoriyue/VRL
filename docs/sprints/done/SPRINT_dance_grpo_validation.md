@@ -1,9 +1,9 @@
-# SPRINT: DanceGRPO 正确性验证实验（flux + aesthetic/DrawBench，planned）
+# SPRINT: DanceGRPO 正确性验证实验（flux + aesthetic/DrawBench）
 
-状态：planned（2026-06-21）。性质：**算法正确性验证跑**——为新加的 `dance_grpo`
-设计一次可判读的 learning 验证，而非功能移植。模型选 flux（论文原文即在 FLUX.1-dev 上
-验过 DanceGRPO），数据/奖励对齐论文的偏好/质量轴：**`aesthetic` reward + DrawBench prompts**
-（DanceGRPO 主轴是 HPS-v2.1，repo 里最接近的纯质量/偏好 reward 是 aesthetic）。排除 sd3.5 / cosmos。
+Status: **DONE — mechanism validation only (2026-07-18)**. Random timestep
+selection matched the strided control and clipping engaged. The short run did
+not establish a >2σ held-out learning curve; that longer claim is consolidated
+into the trustworthy reference-curve program.
 
 > 来源：论文 `docs/papers/diffusion-flow-rl/dancegrpo-visual-generation.pdf`
 > (arXiv 2505.07818) + 实现 `vrl/algorithms/grpo/continuous.py:33`（`GRPO`）+

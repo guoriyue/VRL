@@ -34,8 +34,8 @@ prompt
 
 关键代码：
 
-- `vrl/models/ar/janus_pro/model.py::generate_with_refine`
-- `vrl/models/ar/janus_pro/runtime.py::JanusProR1ChunkGatherer`
+- `vrl/models/families/janus_pro/model.py::generate_with_refine`
+- `vrl/models/families/janus_pro/runtime.py::JanusProR1ChunkGatherer`
 - `vrl/trajectory/builders.py::build_ar_multisegment_trajectory`
 - `vrl/rollouts/collector/batch_builder.py::TrajectoryRolloutBatchBuilder`
 - `vrl/algorithms/grpo/multisegment.py::MultiSegmentTokenGRPO`

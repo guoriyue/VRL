@@ -136,9 +136,10 @@ production profile 证明 native request scheduling 而非 model compute 是主�
    denoise step 调用。共同边界先保持现有 `GenerationChunkExecutor` + native trajectory。
 5. 当前 contract hygiene 必须在 provider integration 前清零：
    - `tests/architecture/test_generation_rollout_boundaries.py` 全绿；generation 不得反向
-     import rollout/trainer 类型。当前 `ray/launcher.py -> rollouts.orchestration.types`
-     是现存回归，应由中立 composition boundary 解析 schedule-derived fact，再把 primitive
-     `versioned_weight_sync` 传入 generation；不能用另一个手写 schedule literal table 代替；
+     import rollout/trainer 类型。该反向 import 已修复；当前剩余问题是
+     `ray/launcher.py` 再次读取 schedule 字符串并比较 `"continuous"`。应由中立
+     composition boundary 解析 schedule-derived fact，再把 primitive
+     `versioned_weight_sync` 传入 generation；不能保留第二处 schedule 解释；
    - 删除 `GenerationRequest.priority`。全仓生产审计显示它只有赋值，没有 scheduling
      consumer；活的 `RayActorJob.priority` 来自 `assignment.estimated_cost`，是不同概念。
      未来 cross-request scheduler 若真正消费 request admission priority，再以 typed、可测试
@@ -324,7 +325,8 @@ upstream + 可重复应用变更”，但不复制长期膨胀的单文件 patch
 
 - [ ] Native joint-denoise 与 causal-token 均通过统一 runtime/lifecycle/version contract。
 - [ ] Generation architecture boundary 全绿；`vrl/generation/` 不反向 import rollout/trainer。
-- [ ] `GenerationRequest` 每个公开字段都有非日志行为消费者；当前 dead `priority` 已删除。
+- [ ] `GenerationRequest` 每个公开字段都有非日志行为消费者；删除当前没有生产
+      consumer 的 `priority`。
 - [ ] OOM degradation 后 group coverage/order 与 request policy version 仍完整一致。
 - [ ] Native joint-denoise trajectory 是 provider conformance 的明确 oracle。
 - [ ] FlashDreams provider 通过 Self-Forcing collect → replay round-trip。
@@ -358,7 +360,7 @@ upstream + 可重复应用变更”，但不复制长期膨胀的单文件 patch
 - `vrl/models/steps/denoise/base.py`
 - `vrl/models/steps/token/base.py`
 - `docs/MODEL_TAXONOMY.md`
-- `docs/sprints/SPRINT_explicit_rollout_activation.md`
+- `docs/sprints/done/SPRINT_explicit_rollout_activation.md`
 - `docs/sprints/reading/SPRINT_diffusion_rollout_system.md`
 - `docs/sprints/info/SPRINT_ray_generation_engine_map.md`
 - `docs/sprints/info/SPRINT_rollout_performance.md`
@@ -366,5 +368,5 @@ upstream + 可重复应用变更”，但不复制长期膨胀的单文件 patch
 - `docs/sprints/parked/SPRINT_diffusion_native_transformer_executor.md`
 - `docs/sprints/parked/SPRINT_cross_request_step_scheduler.md`
 - `docs/sprints/parked/SPRINT_paged_trajectory_store.md`
-- `docs/sprints/planned/SPRINT_weight_sync_transport_seam.md`
+- `docs/sprints/parked/SPRINT_weight_sync_transport_seam.md`
 - `docs/sprints/done/SPRINT_slime_overlap_strategy.md`

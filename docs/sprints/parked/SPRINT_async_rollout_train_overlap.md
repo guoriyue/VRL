@@ -5,7 +5,7 @@
 DiffusionNFT 没有"理论安全"版本,只有"实测不伤就用"的经验路;且任何真 overlap 都需要 ≥2 卡。**
 
 > **边界更新（2026-07-11）**：
-> `docs/sprints/planned/SPRINT_miles_phase_lease_and_one_continuous.md` 已把这里提到的单卡
+> `docs/sprints/SPRINT_miles_phase_lease_and_one_continuous.md` 已把这里提到的单卡
 > resident continuous harness 连同 `require_separate_gpus`、`persistent_colocated_workers` 和
 > role `memory_fraction` 一起删除。当前单卡 shared topology 只能走 strict phase lease；唯一
 > production continuous 是 disjoint-GPU owner loop，且 typed staleness window 必须 `>=1`。

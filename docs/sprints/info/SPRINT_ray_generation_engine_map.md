@@ -260,5 +260,5 @@ serving engine，也不支持为了“全栈自研”立即重写 transformer/ke
 - `vrl/families/registry.py`
 - `vrl/ray/actor_pool.py`
 - `docs/sprints/SPRINT_native_generation_engine_program.md`
-- `docs/sprints/SPRINT_explicit_rollout_activation.md`
+- `docs/sprints/done/SPRINT_explicit_rollout_activation.md`
 - `docs/sprints/SPRINT_ray_rollout_fault_tolerance.md`

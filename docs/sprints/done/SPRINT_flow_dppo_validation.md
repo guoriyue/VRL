@@ -1,9 +1,9 @@
-# SPRINT: Flow-DPPO 正确性验证实验（flux + GenEval，planned）
+# SPRINT: Flow-DPPO 正确性验证实验（flux + GenEval）
 
-状态：planned（2026-06-21）。性质：**算法正确性验证跑**——为新加的 `flow_dppo`
-（信赖域 GRPO：丢弃高 KL、扩大差距的样本，无 PPO ratio clip）设计一次可判读的 learning 验证。
-模型 flux、数据/奖励对齐母体 Flow-GRPO 的头条任务：**`geneval` reward + GenEval prompts**
-（组合性 compositional benchmark，Flow-GRPO 的核心 task）。排除 sd3.5 / cosmos。
+Status: **DONE — mechanism validation only (2026-07-18)**. The mask was
+non-zero, threshold-monotonic, asymmetric, and controlled drift. The short run
+did not establish a >2σ held-out learning curve; that longer claim is
+consolidated into the trustworthy reference-curve program.
 
 > 来源：实现 `vrl/algorithms/grpo/continuous.py:239`（`FlowDPPO`）+ recipe
 > `configs/recipe/online/flow_matching_dppo.yaml` + 母体论文
