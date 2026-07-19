@@ -431,7 +431,7 @@ def _consumer(queue: ContinuousRolloutQueue, max_stale: int) -> ContinuousRollou
         max_bytes=0,
         groups_per_iteration=1,
     )
-    return ContinuousRolloutConsumer(queue=queue, scheduler=scheduler)
+    return ContinuousRolloutConsumer(queue=queue, scheduler=scheduler, fail_fast_errors=3)
 
 
 async def _drain(
@@ -511,7 +511,7 @@ async def test_late_reward_group_dropped_under_non_draining_max_stale_0() -> Non
         groups_per_iteration=1,
         max_bytes=0,
     )
-    consumer = ContinuousRolloutConsumer(queue=queue, scheduler=scheduler)
+    consumer = ContinuousRolloutConsumer(queue=queue, scheduler=scheduler, fail_fast_errors=3)
 
     # The late-reward group: produced (and stamped) under v1, but its reward
     # only lands AFTER the trainer has bumped to v2 (the non-draining barrier

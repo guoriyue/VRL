@@ -13,6 +13,7 @@ from vrl.rollouts.orchestration.continuous.staleness import StalenessPolicy
 from vrl.rollouts.orchestration.continuous.types import (
     ContinuousRolloutItem,
     ContinuousRolloutProducerState,
+    ContinuousRolloutSettings,
 )
 
 __all__ = [
@@ -24,6 +25,7 @@ __all__ = [
     "ContinuousRolloutProducerState",
     "ContinuousRolloutQueue",
     "ContinuousRolloutSchedule",
+    "ContinuousRolloutSettings",
     "RolloutScheduler",
     "StalenessPolicy",
 ]

@@ -37,7 +37,9 @@ class ContinuousRolloutConsumer:
         *,
         queue: ContinuousRolloutQueue,
         scheduler: RolloutScheduler,
-        fail_fast_errors: int = 3,
+        # No default: ContinuousRolloutConfig (vrl.trainers.core.types) is the
+        # single source of this default; the owner passes settings.fail_fast_errors.
+        fail_fast_errors: int,
     ) -> None:
         self.queue = queue
         # The scheduler owns the version/staleness decisions; the consumer drives

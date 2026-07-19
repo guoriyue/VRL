@@ -13,6 +13,7 @@ from typing import Any
 from vrl.rollouts.orchestration.continuous.owner import (
     ContinuousRolloutOwner,
 )
+from vrl.rollouts.orchestration.continuous.types import ContinuousRolloutSettings
 from vrl.rollouts.orchestration.rollout_runtime import RolloutRuntimeCoordinator
 from vrl.rollouts.orchestration.types import RolloutIteration, RolloutScheduleMode
 
@@ -27,26 +28,13 @@ class ContinuousRolloutSchedule:
         *,
         lifecycle: RolloutRuntimeCoordinator,
         # No defaults: the typed config remains the single source of defaults.
-        max_inflight_groups: int,
-        max_ready_groups: int,
-        max_ready_bytes_mb: int,
-        max_stale_policy_versions: int,
-        wait_timeout_s: float,
-        queue_poll_interval_s: float,
-        fail_fast_errors: int,
+        # ``settings`` already validated ``max_stale_policy_versions >= 1`` at
+        # construction, so this facade only checks the runtime-topology guards.
+        settings: ContinuousRolloutSettings,
     ) -> None:
         self.lifecycle = lifecycle
-        self._validate_allowed(max_stale_policy_versions)
-        self._owner = ContinuousRolloutOwner(
-            lifecycle=lifecycle,
-            max_inflight_groups=max_inflight_groups,
-            max_ready_groups=max_ready_groups,
-            max_ready_bytes_mb=max_ready_bytes_mb,
-            max_stale_policy_versions=max_stale_policy_versions,
-            wait_timeout_s=wait_timeout_s,
-            queue_poll_interval_s=queue_poll_interval_s,
-            fail_fast_errors=fail_fast_errors,
-        )
+        self._validate_runtime_isolation()
+        self._owner = ContinuousRolloutOwner(lifecycle=lifecycle, settings=settings)
         self._needs_initial_weights = True
 
     async def next_iteration(
@@ -84,12 +72,7 @@ class ContinuousRolloutSchedule:
 
         await self._owner.shutdown()
 
-    def _validate_allowed(self, max_stale_policy_versions: int) -> None:
-        if int(max_stale_policy_versions) < 1:
-            raise ValueError(
-                "continuous rollout requires max_stale_policy_versions >= 1; "
-                "use strict_on_policy for a zero-staleness serial run",
-            )
+    def _validate_runtime_isolation(self) -> None:
         # No config escape hatch exists: shared physical capacity cannot support
         # rollout kernels and trainer backward concurrently.  Check both the
         # runtime topology and the on-demand/offload capability so an incomplete

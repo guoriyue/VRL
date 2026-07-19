@@ -21,6 +21,7 @@ from vrl.rollouts.orchestration.continuous.producer import ContinuousRolloutProd
 from vrl.rollouts.orchestration.continuous.queue import ContinuousRolloutQueue
 from vrl.rollouts.orchestration.continuous.scheduler import RolloutScheduler
 from vrl.rollouts.orchestration.continuous.staleness import StalenessPolicy
+from vrl.rollouts.orchestration.continuous.types import ContinuousRolloutSettings
 from vrl.rollouts.orchestration.rollout_runtime import (
     RolloutRuntimeCoordinator,
     record_phase,
@@ -47,23 +48,17 @@ class _ContinuousOwnerRuntime:
         self,
         *,
         lifecycle: RolloutRuntimeCoordinator,
-        max_inflight_groups: int,
-        max_ready_groups: int,
-        max_ready_bytes_mb: int,
-        max_stale_policy_versions: int,
-        wait_timeout_s: float,
-        queue_poll_interval_s: float,
-        fail_fast_errors: int,
+        settings: ContinuousRolloutSettings,
     ) -> None:
         self.lifecycle = lifecycle
-        self.max_inflight_groups = int(max_inflight_groups)
-        self.max_ready_groups = int(max_ready_groups)
-        self.max_ready_bytes = int(max_ready_bytes_mb) * _MB
-        self.wait_timeout_s = float(wait_timeout_s)
-        self.queue_poll_interval_s = float(queue_poll_interval_s)
-        self.fail_fast_errors = int(fail_fast_errors)
+        self.max_inflight_groups = int(settings.max_inflight_groups)
+        self.max_ready_groups = int(settings.max_ready_groups)
+        self.max_ready_bytes = int(settings.max_ready_bytes_mb) * _MB
+        self.wait_timeout_s = float(settings.wait_timeout_s)
+        self.queue_poll_interval_s = float(settings.queue_poll_interval_s)
+        self.fail_fast_errors = int(settings.fail_fast_errors)
         self.staleness = StalenessPolicy(
-            max_stale_policy_versions=int(max_stale_policy_versions),
+            max_stale_policy_versions=int(settings.max_stale_policy_versions),
         )
 
         self.state = RolloutScheduleState()
@@ -395,8 +390,14 @@ class _ContinuousOwnerRuntime:
 class ContinuousRolloutOwner:
     """Thread/event-loop facade used by ``ContinuousRolloutSchedule``."""
 
-    def __init__(self, **runtime_kwargs: Any) -> None:
-        self._runtime_kwargs = dict(runtime_kwargs)
+    def __init__(
+        self,
+        *,
+        lifecycle: RolloutRuntimeCoordinator,
+        settings: ContinuousRolloutSettings,
+    ) -> None:
+        self._lifecycle = lifecycle
+        self._settings = settings
         self._state_lock = threading.Lock()
         self._ready = threading.Event()
         self._stopped = threading.Event()
@@ -524,7 +525,10 @@ class ContinuousRolloutOwner:
         try:
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
-            runtime = _ContinuousOwnerRuntime(**self._runtime_kwargs)
+            runtime = _ContinuousOwnerRuntime(
+                lifecycle=self._lifecycle,
+                settings=self._settings,
+            )
             with self._state_lock:
                 self._loop = loop
                 self._runtime = runtime

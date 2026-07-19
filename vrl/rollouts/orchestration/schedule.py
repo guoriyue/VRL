@@ -6,7 +6,10 @@ import logging
 from collections.abc import Callable
 from typing import Any, Protocol
 
-from vrl.rollouts.orchestration.continuous import ContinuousRolloutSchedule
+from vrl.rollouts.orchestration.continuous import (
+    ContinuousRolloutSchedule,
+    ContinuousRolloutSettings,
+)
 from vrl.rollouts.orchestration.rollout_runtime import RolloutRuntimeCoordinator
 from vrl.rollouts.orchestration.strict_on_policy import StrictOnPolicyRolloutSchedule
 from vrl.rollouts.orchestration.types import RolloutIteration, RolloutScheduleMode
@@ -134,15 +137,18 @@ def _build_continuous_schedule(
             "block (ContinuousRolloutConfig); none was provided",
         )
 
-    max_inflight_groups = int(cont.max_inflight_groups)
-    max_ready_groups = int(cont.max_ready_groups)
-    max_stale_policy_versions = int(cont.max_stale_policy_versions)
-
-    if max_stale_policy_versions < 1:
-        raise ValueError(
-            "continuous rollout requires max_stale_policy_versions >= 1; "
-            "use strict_on_policy for a zero-staleness serial run",
-        )
+    # Constructing the settings enforces max_stale_policy_versions >= 1 (its
+    # __post_init__), so the fail-fast on an unsound zero-window config happens
+    # here without a second copy of the check.
+    settings = ContinuousRolloutSettings(
+        max_inflight_groups=int(cont.max_inflight_groups),
+        max_ready_groups=int(cont.max_ready_groups),
+        max_ready_bytes_mb=int(cont.max_ready_bytes_mb),
+        max_stale_policy_versions=int(cont.max_stale_policy_versions),
+        wait_timeout_s=float(cont.wait_timeout_s),
+        queue_poll_interval_s=float(cont.queue_poll_interval_s),
+        fail_fast_errors=int(cont.fail_fast_errors),
+    )
 
     # A likelihood-free algorithm has no way to reweight off-policy samples, so
     # production continuous execution is unsound for it. Zero staleness is not a
@@ -150,7 +156,7 @@ def _build_continuous_schedule(
     if not algorithm_tolerates_off_policy_staleness:
         raise ValueError(
             "rollout_orchestration.continuous.max_stale_policy_versions="
-            f"{max_stale_policy_versions} is unsound for this algorithm: it is "
+            f"{settings.max_stale_policy_versions} is unsound for this algorithm: it is "
             "likelihood-free (no importance-sampling correction), so it can only "
             "train on strictly on-policy rollouts. Use schedule_mode='strict_on_policy', "
             "or use a GRPO-family algorithm for continuous off-policy prefetch.",
@@ -159,21 +165,12 @@ def _build_continuous_schedule(
     logger.info(
         "continuous async prefetch ENABLED: max_stale_policy_versions=%d, "
         "max_ready_groups=%d, max_inflight_groups=%d",
-        max_stale_policy_versions,
-        max_ready_groups,
-        max_inflight_groups,
+        settings.max_stale_policy_versions,
+        settings.max_ready_groups,
+        settings.max_inflight_groups,
     )
 
-    return ContinuousRolloutSchedule(
-        lifecycle=lifecycle,
-        max_inflight_groups=max_inflight_groups,
-        max_ready_groups=max_ready_groups,
-        max_ready_bytes_mb=int(cont.max_ready_bytes_mb),
-        max_stale_policy_versions=max_stale_policy_versions,
-        wait_timeout_s=float(cont.wait_timeout_s),
-        queue_poll_interval_s=float(cont.queue_poll_interval_s),
-        fail_fast_errors=int(cont.fail_fast_errors),
-    )
+    return ContinuousRolloutSchedule(lifecycle=lifecycle, settings=settings)
 
 
 __all__ = [

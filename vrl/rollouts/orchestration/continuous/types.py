@@ -12,6 +12,38 @@ from vrl.rollouts.batch import RolloutBatch
 from vrl.utils.stats import RolloutStats
 
 
+@dataclass(frozen=True, slots=True)
+class ContinuousRolloutSettings:
+    """The continuous rollout tuning that threads from config down to the runtime.
+
+    One object carries the seven settings through ``build_rollout_schedule`` ->
+    ``ContinuousRolloutSchedule`` -> ``ContinuousRolloutOwner`` ->
+    ``_ContinuousOwnerRuntime`` so adding a knob touches one field here, not four
+    repeated signatures. Deliberately has NO defaults: ``ContinuousRolloutConfig``
+    (``vrl.trainers.core.types``) remains the single source of default values, and
+    the rollout layer must not keep a second copy of them.
+
+    ``max_stale_policy_versions >= 1`` is validated here so both the build factory
+    and the schedule inherit one check instead of repeating it. A zero-version
+    window is serial strict-on-policy execution, which is a different schedule.
+    """
+
+    max_inflight_groups: int
+    max_ready_groups: int
+    max_ready_bytes_mb: int
+    max_stale_policy_versions: int
+    wait_timeout_s: float
+    queue_poll_interval_s: float
+    fail_fast_errors: int
+
+    def __post_init__(self) -> None:
+        if int(self.max_stale_policy_versions) < 1:
+            raise ValueError(
+                "continuous rollout requires max_stale_policy_versions >= 1; "
+                "use strict_on_policy for a zero-staleness serial run",
+            )
+
+
 def estimate_batch_bytes(batch: RolloutBatch) -> int:
     """Rough host-memory footprint of a queued ``RolloutBatch``.
 
@@ -109,5 +141,6 @@ class ContinuousRolloutProducerState:
 __all__ = [
     "ContinuousRolloutItem",
     "ContinuousRolloutProducerState",
+    "ContinuousRolloutSettings",
     "estimate_batch_bytes",
 ]

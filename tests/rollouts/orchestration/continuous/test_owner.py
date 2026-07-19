@@ -14,6 +14,7 @@ from tests.rollouts.orchestration.continuous._helpers import _wait_until, owner_
 from vrl.generation.ray.runtime import RayGenerationRuntime
 from vrl.rollouts.batch import RolloutBatch
 from vrl.rollouts.orchestration.continuous.owner import ContinuousRolloutOwner
+from vrl.rollouts.orchestration.continuous.types import ContinuousRolloutSettings
 
 
 def _batch(prompts: list[str], group_size: int) -> RolloutBatch:
@@ -155,13 +156,15 @@ def _owner(
 ) -> ContinuousRolloutOwner:
     return ContinuousRolloutOwner(
         lifecycle=lifecycle,
-        max_inflight_groups=max_inflight_groups,
-        max_ready_groups=4,
-        max_ready_bytes_mb=8,
-        max_stale_policy_versions=1,
-        wait_timeout_s=5.0,
-        queue_poll_interval_s=0.001,
-        fail_fast_errors=2,
+        settings=ContinuousRolloutSettings(
+            max_inflight_groups=max_inflight_groups,
+            max_ready_groups=4,
+            max_ready_bytes_mb=8,
+            max_stale_policy_versions=1,
+            wait_timeout_s=5.0,
+            queue_poll_interval_s=0.001,
+            fail_fast_errors=2,
+        ),
     )
 
 
