@@ -1,0 +1,67 @@
+# SANA 1.6B + aesthetic GRPO on production-scale Pick-a-Pic prompts.
+#
+# This preserves the measured experiment controls of the historical Pick-a-Pic
+# run: FlowMatchEuler rollout, symmetric 8/8 chunks, ppo_epochs 2,
+# timestep_fraction 0.5, EMA off, and the first-step parity check. It is not a
+# dataset-only variant of online_grpo_aesthetic, whose current PPO/EMA/timestep
+# policy differs.
+#
+# The historical outputs/sana_aesthetic_pickapic_sfw run resolved SANA as BF16.
+# This recipe now follows the current model preset's native FP16/no-autocast
+# policy; the historical curve motivates these experiment controls but does not
+# validate the current precision path. Run rollout preview and first-step parity
+# before starting a new curve.
+#
+# Prompt distribution and run depth:
+# - /dataset/pickscore_sfw swaps the 192 DrawBench prompts for 15,486 real
+#   Pick-a-Pic user prompts (SFW-filtered, imported from Flow-GRPO — see
+#   datasets/pickscore_sfw/report.json for provenance; zero train/test overlap).
+#   The aesthetic reward is prompt-agnostic, so the prompt set's job is to widen
+#   the explored image distribution beyond DrawBench's 11 benchmark categories.
+# - 300 rollout updates: repository measurements show 8-12 updates only prove
+#   the pipeline works; a trustworthy learning curve needs ~200-300.
+# - save_freq 10 keeps the run judgeable and resumable on the shared GPU with
+#   30 periodic recovery points plus checkpoint-final.
+# Standalone held-out evaluation can use datasets/pickscore_sfw/test.txt (1,024
+# prompts) through the dataset preset's eval_manifest; online training does not
+# execute that evaluation automatically.
+#
+# Run (single GPU): CUDA_VISIBLE_DEVICES=0 PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True \
+#   vrl-train --config experiment/sana/online_grpo_aesthetic_pickapic_sfw
+# Resume: trainer.resume_from=<outputs/sana_aesthetic_pickapic_sfw/ckpt dir>
+defaults:
+  - /recipe/online/flow_matching_grpo
+  - /model/sana/1600m
+  - /sampling/image/512
+  - /sampling/denoise/10_step_cfg_4_5
+  - /dataset/pickscore_sfw
+  - /reward/aesthetic
+  - _self_
+
+
+sampling:
+  max_sequence_length: 300
+
+actor:
+  optim:
+    lr: 3.0e-4
+  # Match rollout chunking so the first-step check compares the same batch
+  # shape on rollout and replay.
+  replay_samples_per_chunk: 8
+  gradient_checkpointing: true
+  ppo_epochs: 2
+  timestep_fraction: 0.5
+  ema:
+    enable: false
+
+rollout:
+  n_samples_per_prompt: 16
+  prompts_per_batch: 8
+  samples_per_chunk: 8
+
+trainer:
+  output_dir: outputs/sana_aesthetic_pickapic_sfw
+  total_epochs: 300           # 300 rollout updates, 600 optimizer steps (ppo_epochs=2)
+  save_freq: 10               # 30 periodic checkpoints plus checkpoint-final
+  debug:
+    first_step: true          # fail before the first optimizer step on bad parity

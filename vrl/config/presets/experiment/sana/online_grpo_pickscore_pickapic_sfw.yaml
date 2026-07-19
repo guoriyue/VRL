@@ -1,0 +1,78 @@
+# SANA 1.6B + PickScore GRPO on production-scale Pick-a-Pic prompts.
+#
+# Successor to online_grpo_aesthetic_pickapic_sfw after its post-mortem: that
+# historical BF16 aesthetic-only run produced no held-out gain and drifted into
+# texture hacking (structure collapse by update 300; see
+# outputs/sana_aesthetic_pickapic_sfw/compare_* sweeps). This recipe adapts the
+# high-level choices from upstream Flow-GRPO's pickscore_sd3 recipe: PickScore —
+# a prompt-aware human-preference model — as the sole optimized reward and EMA
+# smoothing (decay=0.9/interval=8). It is not paper parity: this single-GPU SANA
+# adaptation retains KL 0.04, timestep_fraction 0.5, CFG 4.5, and an 8x16
+# rollout batch instead of upstream SD3's KL 0.01, 0.99, and 48x24 exposure.
+#
+# The historical outputs/sana_pickscore_pickapic_sfw run resolved BF16. The
+# current model preset resolves native FP16 without outer autocast, so that run
+# is post-mortem evidence for the objective and batch decisions, not validation
+# of the current precision path. Run rollout preview and first-step parity
+# before starting a new curve.
+# Aesthetic rides along at zero weight on CPU as a hack-detection observer
+# (CPU keeps PickScore the single shared-GPU CuMem owner).
+#
+# Run (single GPU): CUDA_VISIBLE_DEVICES=0 PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True \
+#   vrl-train --config experiment/sana/online_grpo_pickscore_pickapic_sfw
+# Resume: trainer.resume_from=<outputs/sana_pickscore_pickapic_sfw/ckpt dir>
+defaults:
+  - /recipe/online/flow_matching_grpo
+  - /model/sana/1600m
+  - /sampling/image/512
+  - /sampling/denoise/10_step_cfg_4_5
+  - /dataset/pickscore_sfw
+  - /reward/pickscore
+  - /reward/aesthetic
+  - _self_
+
+
+sampling:
+  max_sequence_length: 300
+
+actor:
+  optim:
+    lr: 3.0e-4
+  # Match rollout chunking so the first-step check compares the same batch
+  # shape on rollout and replay.
+  replay_samples_per_chunk: 8
+  gradient_checkpointing: true
+  ppo_epochs: 2
+  timestep_fraction: 0.5
+  # Upstream Flow-GRPO's measured EMA (train_sd3.py: decay=0.9, interval=8).
+  # The aesthetic run trained with EMA off and hit reward hacking; the smoothed
+  # policy is part of the upstream quality recipe, not an optional extra.
+  ema:
+    enable: true
+    decay: 0.9
+    update_interval: 8
+
+rollout:
+  n_samples_per_prompt: 16
+  prompts_per_batch: 8
+  samples_per_chunk: 8
+
+trainer:
+  output_dir: outputs/sana_pickscore_pickapic_sfw
+  total_epochs: 200           # 200 rollout updates, 400 optimizer steps (ppo_epochs=2)
+  save_freq: 10               # 20 periodic checkpoints plus checkpoint-final
+  debug:
+    first_step: true          # fail before the first optimizer step on bad parity
+
+reward:
+  components:
+    pickscore: 1.0
+    # Observation-only hack detector: logged per epoch, excluded from the
+    # objective. Watches whether PickScore optimization drags the aesthetic
+    # statistic into the texture-collapse regime the previous run exposed.
+    aesthetic: 0.0
+  kwargs:
+    aesthetic:
+      # CPU placement keeps PickScore the single shared-GPU CuMem owner
+      # (zero-weight scorers still execute and count against the preflight).
+      device: cpu

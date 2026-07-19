@@ -1,0 +1,42 @@
+# SANA 1.6B + PickScore GRPO — full-dose recipe (24 prompts x 24 samples).
+#
+# Post-mortem of the historical BF16 online_grpo_pickscore_pickapic_sfw run
+# (200 rollout updates at 8x16=128 samples/update): flat through ep~140 — its
+# per-update sample budget was 9x below upstream Flow-GRPO's pickscore rollout
+# epoch (48 prompt groups x 24 samples = 1152 images across 32 GPUs), so the
+# advantage SNR never cleared PickScore's noise floor. A pre-clip grad spike of
+# 1.45 versus ~0.05 normal was clipped by the default 1.0 threshold, but that
+# still allowed roughly a 20x-normal update and kicked the LoRA into a texture
+# basin that group-relative advantages cannot recover from (all samples equally
+# degraded -> zero restoring signal). This recipe fixes the dosage within one
+# 32GB card:
+# - 24 prompts x 24 samples = 576 images/update (4.5x samples, ~2.1x SNR)
+# - actor.max_norm 0.2: 4x a normal LoRA step (~0.05) still passes, while the
+#   measured spike is bounded much earlier than the old 1.0 threshold
+# - 100 updates (~13h wall on the 5090), save every 5 for early-stop authority
+# Everything else inherits the predecessor recipe. The historical run does not
+# validate today's native FP16/no-autocast path; run rollout preview and
+# first-step parity before starting a new curve.
+#
+# Run (single GPU): CUDA_VISIBLE_DEVICES=0 PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True \
+#   vrl-train --config experiment/sana/online_grpo_pickscore_pickapic_sfw_24x24
+# Resume: trainer.resume_from=<outputs/sana_pickscore_pickapic_sfw_24x24/ckpt dir>
+defaults:
+  - /experiment/sana/online_grpo_pickscore_pickapic_sfw
+  - _self_
+
+actor:
+  # Measured on the 8x16 run: normal pre-clip grad_norm ~0.05, spike 1.45 at
+  # ep156. The default 1.0 clipped that spike but still permitted a roughly
+  # 20x-normal update. 0.2 leaves 4x headroom over a normal step.
+  max_norm: 0.2
+
+rollout:
+  n_samples_per_prompt: 24
+  prompts_per_batch: 24
+  samples_per_chunk: 8
+
+trainer:
+  output_dir: outputs/sana_pickscore_pickapic_sfw_24x24
+  total_epochs: 100           # 100 rollout updates, 200 optimizer steps (ppo_epochs=2)
+  save_freq: 5                # 20 periodic checkpoints plus checkpoint-final

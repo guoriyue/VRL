@@ -4,4 +4,6 @@ reward:
     aesthetic: 1.0
   kwargs:
     aesthetic:
+      # Optional CPU downgrade under the resource-resolved device ceiling.
+      device: null
       model_name: openai/clip-vit-large-patch14
