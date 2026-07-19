@@ -8,7 +8,7 @@ defaults:
   - /model/sana/1600m
   - /sampling/image/512
   - /sampling/denoise/10_step_cfg_4_5
-  - /dataset/pickapic_v2
+  - /dataset/pickscore_sfw
   - /reward/pickscore
 
 # This validation recipe keeps the model preset's native FP16 path without outer
