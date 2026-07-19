@@ -43,7 +43,7 @@ cached step 不能参与 policy-gradient log_prob
 仓库已有 rollout-only TeaCache 入口：
 
 ```text
-vrl/generation/bindings/joint_denoise/executor.py
+vrl/generation/bindings/full_sequence_denoise/executor.py
   TeaCacheState
   teacache.should_run(...)
   teacache.cached_noise_pred
@@ -111,7 +111,7 @@ SDE training window      -> trainable_sde
 
 ## 8. 关键文件
 
-- `vrl/generation/bindings/joint_denoise/executor.py`
+- `vrl/generation/bindings/full_sequence_denoise/executor.py`
 - `vrl/generation/steps/denoise/{loop,teacache}.py`
 - `vrl/algorithms/logprob_mismatch.py`
 - `vrl/algorithms/grpo/continuous.py`

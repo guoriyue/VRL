@@ -117,7 +117,7 @@ reference-curve 计划所有，而不属于已经关闭的机制 sprint。
   `vrl/config/presets/recipe/online/flow_matching_grpo_guard.yaml`
 - 母体论文：`docs/papers/diffusion-flow-rl/flow-grpo-online-flow-matching-rl.pdf`
 - proposal-mean / dt 来源：`vrl/rollouts/evaluators/denoise/sde_logprob.py`、
-  `vrl/generation/bindings/joint_denoise/executor.py`
+  `vrl/generation/bindings/full_sequence_denoise/executor.py`
 - 当前维护的实验：
   `vrl/config/presets/experiment/flux/online_grpo_guard_pickscore_validation.yaml`
 - 奖励/数据：`vrl/rewards/functions/pickscore.py`、

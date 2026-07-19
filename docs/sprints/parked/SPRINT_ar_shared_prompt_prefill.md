@@ -1,7 +1,7 @@
 # SPRINT: AR 同-prompt 共享前缀 prefill（GRPO group 的前缀复用）
 
 Status: **PARKED / profiling-triggered (2026-07-18)**. Start only when a real
-causal-token workload shows prefill at 15–20% or more of rollout wall time. This
+token-autoregressive workload shows prefill at 15–20% or more of rollout wall time. This
 is a conditional optimization: only when prefill
 （prompt 段）在 AR rollout 里占到有意义的 wall-clock 比例时才做。对当前的**图像生成 AR**
 （janus_pro / nextstep_1，短 prompt → 长 image-token decode）ROI 低；对**长-prompt AR**

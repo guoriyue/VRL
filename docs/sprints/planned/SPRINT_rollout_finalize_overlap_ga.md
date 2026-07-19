@@ -7,7 +7,7 @@
 已走的方向；本 sprint 不是新建，是把现有实现**补覆盖、量化残差、转默认**。
 
 **vrl 现状（2026-07-13 核实）**：`forward_plan_pipelined`
-（`vrl/generation/bindings/joint_denoise/executor.py::forward_plan_pipelined`）已实现同一模式——chunk N 的
+（`vrl/generation/bindings/full_sequence_denoise/executor.py::forward_plan_pipelined`）已实现同一模式——chunk N 的
 teardown（GPU→CPU 结果拷贝 + host 打包，copy stream）与 N+1 的
 produce（encode→prepare→denoise→decode，默认流）重叠，BIT-EXACT，经
 `run_chunk_through_pipeline` 复用同一批 stage 方法。但它：

@@ -126,7 +126,7 @@ lifecycle 删除。要让告警有意义必须用 **soft 阈值**（如 `0.85 ×
 
 > ### L2 current state (verified 2026-07-13)
 >
-> - The joint-denoise executor still records separate denoise and decode allocated
+> - The full-sequence denoise executor still records separate denoise and decode allocated
 >   peaks. `ChunkMemoryReading.from_metrics` rejects incomplete mappings using
 >   dataclass-derived field names.
 > - `samples_per_chunk: auto` runs truncated real chunks, fits two measured

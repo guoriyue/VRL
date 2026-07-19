@@ -1,20 +1,21 @@
 # Adding a Model Family
 
 This guide describes the current model-family seam in `visual-rl`. A standard
-joint-denoise family is a family-owned model module, one declarative registry
+full-sequence denoise family is a family-owned model module, one declarative registry
 entry, bundled YAML presets, and contract tests. It does not need a
 family-specific runner, executor, runtime builder, or config extractor.
 
 The physical layout is family-first: family code lives under
 `vrl/models/families/`, while reusable model machinery lives under
 `vrl/models/steps/{denoise,token}/`. Generation code is separated into policy
-steps, temporal composition, and concrete bindings under
+steps, generation composition, and concrete bindings under
 `vrl/generation/{steps,composition,bindings}/`. Do not add new `models/ar`,
 `models/diffusion`, `generation/ar`, or `generation/diffusion` paths.
 
 Every registry entry classifies the trainable policy with `PolicySemantics`:
-temporal organization (`joint`, `causal`, or `causal_chunked`), policy step
-(`denoise` or `token`), action distribution, and trajectory layout. See
+generation regime (`full_sequence`, `token_autoregressive`, or
+`chunk_autoregressive`), policy step (`denoise` or `token`), action distribution,
+and trajectory layout. See
 [`MODEL_TAXONOMY.md`](MODEL_TAXONOMY.md).
 
 The existing `sd3_5` family is the smallest complete example.
@@ -23,7 +24,7 @@ The existing `sd3_5` family is the smallest complete example.
 
 Use the descriptor-driven denoise path when one trainable transformer and one
 scheduler are enough to build rollout and replay runtimes. The shared
-`DiffusionChunkExecutor` in the `joint_denoise` binding owns prompt, prepare,
+`DiffusionChunkExecutor` in the `full_sequence_denoise` binding owns prompt, prepare,
 denoise, and decode orchestration; `DenoiseFamilyBuild` tells the shared builders
 which model classes and upstream transformer to load. The retained `Diffusion*`
 class names are implementation APIs, not model taxonomy.
@@ -39,11 +40,11 @@ boundary, such as reference-conditioning payload preparation or a custom staged
 executor. Wan I2V and the Cosmos families are examples. Do not add thin wrapper
 builders that only forward constants to `vrl.models.steps.denoise.build`.
 
-Causal-token families have a different execution shape. They keep `model.py`,
+Token-autoregressive families have a different execution shape. They keep `model.py`,
 `runner.py`, and `runtime.py` when token-loop state, executor behavior, and
 model-config projection are family-specific. Bundle assembly and model-build
 resolution are shared through `TokenFamilyBuild` and
-`vrl.models.steps.token.build`; mirror the nearest causal-token descriptor
+`vrl.models.steps.token.build`; mirror the nearest token-autoregressive descriptor
 instead of adding forwarding builders.
 
 ## 2. Implement the denoise model contract
@@ -72,13 +73,13 @@ the current transformer. This replay path is the RL correctness boundary: its
 distribution must match rollout-time sampling so `old_log_prob` remains valid.
 Do not add algorithm code for a model family.
 
-## 3. Register a descriptor-driven joint-denoise family
+## 3. Register a descriptor-driven full-sequence denoise family
 
-Add one `_joint_denoise_entry` in `vrl/families/registry.py`:
+Add one `_full_sequence_denoise_entry` in `vrl/families/registry.py`:
 
 ```python
 _register_model_family(
-    _joint_denoise_entry(
+    _full_sequence_denoise_entry(
         family="my_model",
         task="t2i",
         build=DenoiseFamilyBuild(
@@ -106,15 +107,16 @@ still name the exact registry entry (for example, `janus_pro_r1`, not
 `janus_pro` plus an algorithm-based inference rule). The algorithm validates
 compatibility; it never rewrites the configured family.
 
-`executor_cls` is intentionally absent above, so `_joint_denoise_entry` selects
-`vrl.generation.bindings.joint_denoise.executor:DiffusionChunkExecutor`. Add a
+`executor_cls` is intentionally absent above, so `_full_sequence_denoise_entry` selects
+`vrl.generation.bindings.full_sequence_denoise.executor:DiffusionChunkExecutor`. Add a
 family executor only when its body performs family-specific work; a renamed
 pass-through executor is not an extension point.
 
-For a causal-token policy, use `_causal_token_entry` with `TokenFamilyBuild`, an
-explicit family executor under `vrl.models.families.<family>.runtime`, and the
-correct categorical or continuous action distribution. Do not infer temporal
-organization from the checkpoint or selected algorithm.
+For a token-autoregressive policy, use `_token_autoregressive_entry` with
+`TokenFamilyBuild`, an explicit family executor under
+`vrl.models.families.<family>.runtime`, and the correct categorical or continuous
+action distribution. Do not infer the generation regime from the checkpoint or
+selected algorithm.
 
 ## 4. Add bundled config layers
 

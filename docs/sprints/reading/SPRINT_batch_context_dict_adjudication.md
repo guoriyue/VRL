@@ -38,7 +38,7 @@ family sampling state
 ## Separate live extension seam
 
 `chunk_passthrough_keys` is not a dormant knob. The FLUX model preset declares
-`[text_ids]`, and the joint-denoise executor consumes the list when projecting
+`[text_ids]`, and the full-sequence denoise executor consumes the list when projecting
 chunk inputs. Unknown passthrough keys fail loudly. This is independent of the
 batch-context wire-shape decision and must remain supported.
 

@@ -1,4 +1,4 @@
-# SPRINT: Remove fallback defaults from the joint-denoise layout value object
+# SPRINT: Remove fallback defaults from the full-sequence denoise layout value object
 
 **Date:** 2026-07-18  **Status:** PLANNED
 
@@ -44,7 +44,7 @@ configuration.
    continue to construct the layout explicitly from their resolved fallback
    values.
 2. Extract chunk ordering and leading-row validation into a clearly named
-   module-level function in `joint_denoise/layout.py`. The executor and gatherer
+   module-level function in `full_sequence_denoise/layout.py`. The executor and gatherer
    share it directly. This thin function is justified as the common
    executor/gatherer validation boundary; it is not a LOC-only extraction.
 3. Update parsing tests to construct layouts with explicit fallback values and
@@ -71,7 +71,7 @@ configuration.
 
 ## Verification
 
-- Run `tests/generation/bindings/joint_denoise` and the denoise-step suites.
+- Run `tests/generation/bindings/full_sequence_denoise` and the denoise-step suites.
 - Run Ruff only on touched Python files using the repository's required
   fix/format/check sequence.
 - Search for zero-argument `DiffusionRequestLayout()` calls and confirm none

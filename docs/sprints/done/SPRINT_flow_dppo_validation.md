@@ -120,7 +120,7 @@ GenEval `0.63 -> 0.95` 作为论文锚点。本 sprint 实际运行 PickScore �
   （高斯 KL 闭式）、`docs/papers/diffusion-flow-rl/op-grpo-off-policy-flow.pdf`（信赖域/clip
   fraction 视角）
 - KL 闭式：`vrl/math/denoise/flow_matching.py`
-- proposal-mean 存储：`vrl/generation/bindings/joint_denoise/executor.py`
+- proposal-mean 存储：`vrl/generation/bindings/full_sequence_denoise/executor.py`
 - 当前维护的实验：
   `vrl/config/presets/experiment/flux/online_flow_dppo_pickscore_validation.yaml`
 - 奖励/数据：`vrl/rewards/functions/pickscore.py`、

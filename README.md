@@ -3,16 +3,17 @@
 RL post-training for visual generative models.
 
 `visual-rl` trains visual generative policies with one layered-config trainer and
-one Collector -> Evaluator -> Algorithm loop. Policies are classified by temporal
-organization (`joint`, `causal`, or `causal_chunked`) and policy step (`denoise`
-or `token`), rather than forcing every model into an AR-or-diffusion bucket.
+one Collector -> Evaluator -> Algorithm loop. Policies are classified by generation
+regime (`full_sequence`, `token_autoregressive`, or `chunk_autoregressive`) and
+policy step (`denoise` or `token`), rather than forcing every model into an
+AR-or-diffusion bucket.
 Recipes are marked as validated only after real training runs show optimizer
 updates, non-flat rewards, generated artifacts, and changed weights.
 
 ## Why It Exists
 
-- **One training loop.** The same online RL loop drives joint-denoise and
-  causal-token policies instead of keeping a separate training script per model.
+- **One training loop.** The same online RL loop drives full-sequence denoise and
+  token-autoregressive policies instead of keeping a separate training script per model.
 - **Layered configs.** Model, sampling, reward, dataset, algorithm, rollout, and
   distributed choices are composed from bundled YAML layers under
   `vrl/config/presets/`.
@@ -27,9 +28,9 @@ RL frameworks built for text LLMs (slime, verl, OpenRLHF, TRL) assume one causal
 categorical-token shape. Visual policies span several shapes, so forcing all of
 them through that abstraction fights the core contracts:
 
-- **Temporal organization varies** — today's policies update a whole latent field
-  jointly or advance ordered tokens causally; causal temporal chunks are a
-  separate future composition, not another name for either one.
+- **Generation regime varies** — today's policies either update a full latent
+  sequence or generate one token at a time; autoregressive temporal chunks are
+  a separate future composition, not another name for either one.
 - **The policy step varies** — denoise policies record continuous flow/Gaussian
   transitions, while token policies record categorical or continuous token
   actions.
@@ -40,8 +41,8 @@ them through that abstraction fights the core contracts:
 
 `visual-rl` keeps these policy semantics explicit behind one rollout / replay /
 algorithm contract. See [`docs/MODEL_TAXONOMY.md`](docs/MODEL_TAXONOMY.md) for
-the axes and [`docs/NORTH_STAR.md`](docs/NORTH_STAR.md) for the full positioning
-and roadmap.
+the typed semantics and [`docs/NORTH_STAR.md`](docs/NORTH_STAR.md) for the full
+positioning and roadmap.
 
 ## Status Policy
 
@@ -54,30 +55,30 @@ and roadmap.
 
 ## Supported Models
 
-| Family | Modality | Policy organization / step | Algorithms | Status |
+| Family | Modality | Generation regime / step | Algorithms | Status |
 | --- | --- | --- | --- | --- |
-| **SD3.5** | text -> image | joint / denoise | GRPO | ✅ OCR GRPO |
-| **FLUX** | text -> image | joint / denoise | GRPO-Guard, DanceGRPO, DiffusionNFT, Flow-DPPO | 🧪 Runnable |
-| **Qwen-Image** | text -> image | joint / denoise | GRPO | 🧪 Runnable |
-| **SANA** | text -> image | joint / denoise | GRPO | 🧪 Runnable |
-| **Lumina-Image-2** | text -> image | joint / denoise | GRPO | 🧪 Runnable |
-| **HunyuanImage-2.1** | text -> image | joint / denoise | GRPO | 🧪 Runnable |
-| **PixArt-Sigma** | text -> image | joint / denoise | GRPO | 🧪 Runnable |
-| **CogVideoX** | text -> video | joint / denoise | GRPO | 🧪 Runnable |
-| **HunyuanVideo** | text -> video | joint / denoise | GRPO | 🧪 Runnable |
-| **Mochi-1** | text -> video | joint / denoise | GRPO | 🧪 Runnable |
-| **Wan2.1** | text/image -> video | joint / denoise | GRPO, DPO | 🧪 Runnable |
-| **Wan2.2** | image -> video | joint / denoise | GRPO | 🧪 Runnable |
-| **Cosmos-Predict2** | video -> world | joint / denoise | GRPO | 🧪 Runnable |
-| **Cosmos-Predict2.5** | text -> world | joint / denoise | GRPO, DiffusionNFT | 🧪 Runnable |
-| **Cosmos-Anima** | text -> image | joint / denoise | GRPO | 🧪 Runnable |
-| **Echo** | text -> video | joint / denoise | GRPO | 🧪 Runnable |
-| **Janus-Pro** | text -> image | causal / token (R1: multisegment) | GRPO, R1-GRPO | 🧪 Runnable |
-| **NextStep-1** | text -> image | causal / token (continuous action) | GRPO | 🧪 Runnable |
-| **Emu3** | text -> image | causal / token | Token-GRPO | 🔌 Integrated |
-| **GLM-Image** | text -> image | causal / token | Token-GRPO | 🔌 Integrated |
-| **LlamaGen** | text -> image | causal / token | Token-GRPO | 🔌 Integrated |
-| **Cosmos3** | text -> video | joint / denoise | — | 🔌 Integrated |
+| **SD3.5** | text -> image | full_sequence / denoise | GRPO | ✅ OCR GRPO |
+| **FLUX** | text -> image | full_sequence / denoise | GRPO-Guard, DanceGRPO, DiffusionNFT, Flow-DPPO | 🧪 Runnable |
+| **Qwen-Image** | text -> image | full_sequence / denoise | GRPO | 🧪 Runnable |
+| **SANA** | text -> image | full_sequence / denoise | GRPO | 🧪 Runnable |
+| **Lumina-Image-2** | text -> image | full_sequence / denoise | GRPO | 🧪 Runnable |
+| **HunyuanImage-2.1** | text -> image | full_sequence / denoise | GRPO | 🧪 Runnable |
+| **PixArt-Sigma** | text -> image | full_sequence / denoise | GRPO | 🧪 Runnable |
+| **CogVideoX** | text -> video | full_sequence / denoise | GRPO | 🧪 Runnable |
+| **HunyuanVideo** | text -> video | full_sequence / denoise | GRPO | 🧪 Runnable |
+| **Mochi-1** | text -> video | full_sequence / denoise | GRPO | 🧪 Runnable |
+| **Wan2.1** | text/image -> video | full_sequence / denoise | GRPO, DPO | 🧪 Runnable |
+| **Wan2.2** | image -> video | full_sequence / denoise | GRPO | 🧪 Runnable |
+| **Cosmos-Predict2** | video -> world | full_sequence / denoise | GRPO | 🧪 Runnable |
+| **Cosmos-Predict2.5** | text -> world | full_sequence / denoise | GRPO, DiffusionNFT | 🧪 Runnable |
+| **Cosmos-Anima** | text -> image | full_sequence / denoise | GRPO | 🧪 Runnable |
+| **Echo** | text -> video | full_sequence / denoise | GRPO | 🧪 Runnable |
+| **Janus-Pro** | text -> image | token_autoregressive / token (R1: multisegment) | GRPO, R1-GRPO | 🧪 Runnable |
+| **NextStep-1** | text -> image | token_autoregressive / token (continuous action) | GRPO | 🧪 Runnable |
+| **Emu3** | text -> image | token_autoregressive / token | Token-GRPO | 🔌 Integrated |
+| **GLM-Image** | text -> image | token_autoregressive / token | Token-GRPO | 🔌 Integrated |
+| **LlamaGen** | text -> image | token_autoregressive / token | Token-GRPO | 🔌 Integrated |
+| **Cosmos3** | text -> video | full_sequence / denoise | — | 🔌 Integrated |
 
 `FAMILY_REGISTRY` is the canonical runtime roster. This table reports user-facing
 recipe readiness as well, so a registered family remains Integrated until a complete
@@ -120,8 +121,8 @@ vrl/
     steps/     shared denoise/token model contracts and builders
   generation/
     steps/        denoise loop and token-step protocol
-    composition/  reusable temporal-organization state machines
-    bindings/     concrete joint-denoise and causal-token assemblies
+    composition/  reusable generation-regime state machines
+    bindings/     concrete full-sequence denoise and token-autoregressive assemblies
     execution/ ray/  step-neutral execution and distributed lifecycle
   families/    policy semantics and canonical runtime registry
   rollouts/    collector, orchestration, and replay evaluation
@@ -174,8 +175,8 @@ table and isolation notes below call out environments that must remain separate:
 
 | Use case | Install | Brings (why) |
 |---|---|---|
-| Joint-denoise families (SD3.5 / Flux / Cosmos / Wan / Qwen …) | `.[cosmos]` | diffusers + transformers + peft + torchvision |
-| Causal-token families (Janus-Pro / NextStep) | `.[cosmos]` | transformers/peft model runtime (vLLM accel is separate — see note) |
+| Full-sequence denoise families (SD3.5 / Flux / Cosmos / Wan / Qwen …) | `.[cosmos]` | diffusers + transformers + peft + torchvision |
+| Token-autoregressive families (Janus-Pro / NextStep) | `.[cosmos]` | transformers/peft model runtime (vLLM accel is separate — see note) |
 | OCR reward (the validated quickstart) | `.[ocr]` | paddleocr |
 | Video / VLM reward (Kling, VideoScore2, UnifiedReward) | `.[reward]` | transformers≥5.13, qwen-vl-utils, opencv |
 | Pose / motion / anatomy eval | `.[pose]` (CPU) · `.[pose-gpu]` (GPU) | onnxruntime + opencv |
@@ -186,9 +187,9 @@ table and isolation notes below call out environments that must remain separate:
 
 Example — the SD3.5-OCR quickstart below needs `pip install -e ".[cosmos,ocr]"`.
 (The `cosmos` group is the core model-runtime extra and is misnamed for history —
-it serves both joint-denoise and causal-token families, not just Cosmos.)
+it serves both full-sequence denoise and token-autoregressive families, not just Cosmos.)
 
-> **`ar-vllm` is optional; a separate environment is recommended.** Causal-token families
+> **`ar-vllm` is optional; a separate environment is recommended.** Token-autoregressive families
 > run in the main env without it via `sampling.attention_backend=torch_native`;
 > `.[ar-vllm]` only adds vLLM's internal paged-attention / blockwise-fp8 kernels.
 > vLLM pins its Torch/TorchVision/TorchAudio ABI. The current lock resolves it with

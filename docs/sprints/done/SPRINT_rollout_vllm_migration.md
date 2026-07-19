@@ -47,7 +47,7 @@ Skip the transformer forward on low-change denoise steps, reuse cached
 - `vrl/generation/steps/denoise/teacache.py` — `TeaCacheConfig` + `TeaCacheState`
   (rel-L1 accumulator, warmup/last-step force-run, skip-ratio counters) +
   `teacache_signal`. v1 signal = rel-L1 of input latents.
-- 当前接线：`vrl/generation/bindings/joint_denoise/layout.py` 解析
+- 当前接线：`vrl/generation/bindings/full_sequence_denoise/layout.py` 解析
   `sampling.teacache`，`vrl/generation/steps/denoise/loop.py` 在 denoise loop 中 gate
   `model.forward_step` 并发出 `teacache_*` counters。
 - 测试：`tests/generation/steps/denoise/test_teacache.py`。
@@ -139,7 +139,7 @@ TeaCache 在仓库 10–35 step schedule 上已经判定为结构性边际收益
 
 ### P3 — AR continuous-batching evaluation  ✅ DONE (architectural) — NOT worth replacing
 - **Reversed the earlier "AR is the biggest win" assumption.** Read the AR rollout
-  (当前实现位于 `vrl/generation/composition/causal/token_loop.py`): it is NOT naive per-request decode — it is
+  (当前实现位于 `vrl/generation/composition/token_autoregressive/token_loop.py`): it is NOT naive per-request decode — it is
   already a **token-batched lockstep decode with paged KV**:
   - `TokenScheduler` + `ARDecodeLoop`: `_max_batch_size` defaults to ALL samples
     (`scheduler_batch_size or len(sequences)`) → a chunk's whole sample set decodes
@@ -160,8 +160,8 @@ TeaCache 在仓库 10–35 step schedule 上已经判定为结构性边际收益
   continuous scheduling). KEEP the AR rollout.
 - ❌ **RETIRED / NON-GOAL**：可选 AR GPU throughput confirmation 不影响架构裁决，也没有
   独立行为风险要关闭；不以“再测一个数字”重新打开本 sprint。当前 CPU contract 由
-  `tests/generation/composition/causal/test_token_loop.py` 与
-  `tests/generation/composition/causal/test_token_scheduler.py` 固定。
+  `tests/generation/composition/token_autoregressive/test_token_loop.py` 与
+  `tests/generation/composition/token_autoregressive/test_token_scheduler.py` 固定。
 
 ---
 
@@ -190,7 +190,7 @@ honest answer is the rollout was already near-optimal:**
     denoise doesn't use paged KV / continuous batching). NOT replaced — correct.
 - **AR (nextstep/janus)** — *already correctly built, no replace needed.*
   - ✅ Already a lockstep token-batched paged-KV decode
-    (`vrl/generation/composition/causal/token_loop.py`); vLLM
+    (`vrl/generation/composition/token_autoregressive/token_loop.py`); vLLM
     paged kernel already imported. Continuous batching's value (ragged variable-
     length + streaming arrivals) does NOT apply to fixed-length image-token rollout.
   - ❌ vLLM-omni AR engine replace: adds ~nothing for this fixed-length workload.
@@ -215,7 +215,7 @@ assumed. No large untapped rollout headroom remains on this box.
   table above is the source for the morning report. Stopping autonomous changes.
 - **2026-06-20 h5** — P3 RESOLVED (architectural, reverses the "AR = biggest win"
   assumption). AR rollout is already a lockstep token-batched paged-KV decode
-  (`vrl/generation/composition/causal/token_loop.py`: full-width batch,
+  (`vrl/generation/composition/token_autoregressive/token_loop.py`: full-width batch,
   position-locked, no-EOS fixed-length). vLLM
   continuous batching's value (ragged/streaming) doesn't apply to fixed-length image
   AR → replacing adds ~nothing. Wrote the FINAL VERDICT section. Core sprint
