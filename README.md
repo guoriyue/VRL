@@ -28,9 +28,10 @@ RL frameworks built for text LLMs (slime, verl, OpenRLHF, TRL) assume one causal
 categorical-token shape. Visual policies span several shapes, so forcing all of
 them through that abstraction fights the core contracts:
 
-- **Generation regime varies** — today's policies either update a full latent
-  sequence or generate one token at a time; autoregressive temporal chunks are
-  a separate future composition, not another name for either one.
+- **Generation regime varies** — policies update a full latent sequence, emit
+  one token from a prefix, or advance one causal temporal chunk while denoising
+  inside that chunk. These are distinct time organizations, not AR/diffusion
+  synonyms.
 - **The policy step varies** — denoise policies record continuous flow/Gaussian
   transitions, while token policies record categorical or continuous token
   actions.
@@ -79,6 +80,8 @@ positioning and roadmap.
 | **GLM-Image** | text -> image | token_autoregressive / token | Token-GRPO | 🔌 Integrated |
 | **LlamaGen** | text -> image | token_autoregressive / token | Token-GRPO | 🔌 Integrated |
 | **Cosmos3** | text -> video | full_sequence / denoise | — | 🔌 Integrated |
+| **CausVid** | text -> video | chunk_autoregressive / denoise | GRPO | 🔌 Integrated (real-weight proof pending; non-commercial weights) |
+| **MAGI-1 4.5B** | text/image/video -> video | chunk_autoregressive / denoise | generation only | 🔌 Integrated (isolated upstream runtime; no replay API) |
 
 `FAMILY_REGISTRY` is the canonical runtime roster. This table reports user-facing
 recipe readiness as well, so a registered family remains Integrated until a complete
@@ -122,7 +125,7 @@ vrl/
   generation/
     steps/        denoise loop and token-step protocol
     composition/  reusable generation-regime state machines
-    bindings/     concrete full-sequence denoise and token-autoregressive assemblies
+    bindings/     full-sequence, token-AR, and temporal-chunk denoise assemblies
     execution/ ray/  step-neutral execution and distributed lifecycle
   families/    policy semantics and canonical runtime registry
   rollouts/    collector, orchestration, and replay evaluation
@@ -176,6 +179,7 @@ table and isolation notes below call out environments that must remain separate:
 | Use case | Install | Brings (why) |
 |---|---|---|
 | Full-sequence denoise families (SD3.5 / Flux / Cosmos / Wan / Qwen …) | `.[cosmos]` | diffusers + transformers + peft + torchvision |
+| CausVid causal-chunk rollout/replay | `.[cosmos]` + CUDA `flash-attn` | pinned upstream CausVid/Wan runtime; cross-attention requires FlashAttention |
 | Token-autoregressive families (Janus-Pro / NextStep) | `.[cosmos]` | transformers/peft model runtime (vLLM accel is separate — see note) |
 | OCR reward (the validated quickstart) | `.[ocr]` | paddleocr |
 | Video / VLM reward (Kling, VideoScore2, UnifiedReward) | `.[reward]` | transformers≥5.13, qwen-vl-utils, opencv |
@@ -184,6 +188,30 @@ table and isolation notes below call out environments that must remain separate:
 | Fixed video-eval suite (VBench) | dedicated `.[videoeval]` environment | vbench 0.1.5 |
 | Full-param 8-bit Adam (Cosmos trustworthy-curve recipe) | `.[optim8bit]` | bitsandbytes (int8 Adam state, RL-safe) |
 | Tests / lint | `uv sync --group test --group lint` | pytest, ruff |
+
+MAGI-1 is intentionally not a project extra: its official code pins an
+incompatible Torch/diffusers/transformers/FlashAttention stack. Create
+`third_party/MAGI-1/.venv` from that submodule's requirements and point
+`model.python_executable` at it. VRL invokes the audited official CLI in that
+environment and records a generation-only trajectory; trainer/replay startup
+fails before loading weights. Ray never uploads virtual environments: the
+driver resolves a path-like executable to an absolute path before launch, and
+every rollout node must provide that path through a shared mount or container
+image (or override the preset with its node-local absolute executable). The
+official 4.5B process also fixes the DiT to BF16 and T5 to FP32, so its launch
+config must use rollout `dtype: bf16`, `outer_autocast: false`, prompt-encoder
+`dtype: fp32`, and `float32_precision: ieee`; unsupported precision knobs fail
+before source probing or weight download.
+
+CausVid stays in the main model environment, but its pinned Wan cross-attention
+calls FlashAttention directly. After installing `.[cosmos]`, install a CUDA-
+compatible `flash-attn` build (typically
+`uv pip install --no-build-isolation flash-attn`) before resolving the
+multi-gigabyte weights. Run `make setup` after
+fetching the new submodule so the editable `causvid` package is refreshed. Ray
+archives omit nested Git databases; both adapters retain strict
+commit/clean-tree checks in a developer checkout and verify an audited SHA256
+of their executable source subset in the packaged worker tree.
 
 Example — the SD3.5-OCR quickstart below needs `pip install -e ".[cosmos,ocr]"`.
 (The `cosmos` group is the core model-runtime extra and is misnamed for history —

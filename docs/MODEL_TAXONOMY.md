@@ -34,22 +34,22 @@ solver steps, with each step updating the full output field.
 | `token_autoregressive + token + categorical + token` | Janus-Pro, Emu3, GLM-Image, LlamaGen |
 | `token_autoregressive + token + continuous + token` | NextStep-1 |
 | `token_autoregressive + token + categorical + multisegment_token` | Janus-Pro R1 |
-| `chunk_autoregressive + denoise + continuous + denoise` | No executable families yet |
+| `chunk_autoregressive + denoise + continuous + denoise` | CausVid (trainable Gaussian re-noise); MAGI-1 (generation-only trajectory) |
 
-## Future chunk-autoregressive support
+## Chunk-autoregressive support
 
-The first support targets for the empty chunk-autoregressive denoise profile are:
+The first two integrations deliberately share the typed trajectory/executor
+boundary while retaining family-owned temporal schedules:
 
-| Candidate | Planned profile | Integration position |
+| Family | Profile | Integration status |
 |---|---|---|
-| [CausVid](https://github.com/tianweiy/CausVid) ([paper](https://arxiv.org/abs/2412.07772), [weights](https://huggingface.co/tianweiy/CausVid/tree/main/autoregressive_checkpoint)) | `chunk_autoregressive + denoise + continuous + denoise` | First technical integration candidate. It is built on Wan2.1-T2V-1.3B and advances multi-frame chunks causally while denoising within each chunk, so it is closest to VRL's existing Wan seam. Promotion is gated on upstream maturity and checkpoint licensing: the repository is WIP and the released weights are non-commercial. |
-| [MAGI-1](https://github.com/SandAI-org/MAGI-1) ([paper](https://arxiv.org/abs/2505.13211), [weights](https://huggingface.co/sand-ai/MAGI-1)) | `chunk_autoregressive + denoise + continuous + denoise` | Contract and second integration candidate. It advances fixed 24-frame causal chunks and denoises every chunk jointly. Its custom, larger runtime makes it a useful semantic reference but a later implementation target than the Wan-based path. |
+| [CausVid](https://github.com/tianweiy/CausVid) ([paper](https://arxiv.org/abs/2412.07772), [weights](https://huggingface.co/tianweiy/CausVid/tree/main/autoregressive_checkpoint)) | `chunk_autoregressive + denoise + continuous + denoise` | Executable rollout and differentiable full-prefix GRPO replay. The released schedule performs three x0 predictions per latent chunk and records its two stochastic Gaussian re-noise transitions. Source and weight revisions are immutable; runtime requires an explicit acknowledgement of their CC BY-NC-SA 4.0 / non-commercial terms. DanceGRPO/Flow-DPPO/GRPO-Guard are rejected until their timestep/trust-region semantics are defined for the two policy axes. Real-weight RL promotion is still pending. |
+| [MAGI-1](https://github.com/SandAI-org/MAGI-1) ([paper](https://arxiv.org/abs/2505.13211), [weights](https://huggingface.co/sand-ai/MAGI-1)) | `chunk_autoregressive + denoise + continuous + denoise` | Executable generation through the pinned official 4.5B CLI in an isolated dependency environment. Its 24-video-frame chunks and diagonal multi-chunk denoise schedule are preserved upstream. The release exposes final-video inference under no-grad/inference mode, but no transition likelihood or autograd replay surface, so VRL records no fake actions/log-probs and rejects collector-to-trainer batch construction and replay. |
 
-These are roadmap candidates, not `FAMILY_REGISTRY` entries or runnable recipes.
-The first implementation should own its chunk/cache lifecycle in a family-specific
-binding. Extract `composition/chunk_autoregressive` only after another
-implementation proves a shared boundary; do not add placeholder packages for
-the roadmap.
+Both are `FAMILY_REGISTRY` entries. `CausVid` is the RL-capable implementation;
+`MAGI-1` is generation-only until upstream exposes an autograd model
+and replayable transition distribution. Registration therefore does not imply
+identical trainability.
 
 Self-Forcing remains a related candidate only when named by exact executable
 variant. Its released chunk-wise DMD policy fits this profile, while the
@@ -98,6 +98,7 @@ vrl/generation/
   composition/token_autoregressive/   reusable ordered-prefix state machine
   bindings/full_sequence_denoise/     full-sequence × denoise binding
   bindings/token_autoregressive/      token-autoregressive binding
+  bindings/chunk_autoregressive_denoise/ temporal-chunk × denoise contract
   execution/                  step-neutral chunk planning, pipelining, and workers
   ray/                        distributed lifecycle and transport
 ```
@@ -108,12 +109,12 @@ Model and experiment presets are family-first too:
 as routing directories. A family path is stable even if a later executable
 variant uses different policy semantics.
 
-There is intentionally no empty `composition/full_sequence` or
-`composition/chunk_autoregressive` package. Full-sequence orchestration currently
-has one concrete binding shape and remains in `full_sequence_denoise`.
-Chunk-autoregressive composition should land with its first executable policy,
-then share machinery only when a second implementation proves the common
-boundary. `SampleChunk` is execution batching over requests/samples, not an
+There is intentionally no empty `composition/full_sequence` or generalized
+`composition/chunk_autoregressive` state machine. The two causal-chunk families
+now prove a shared typed result/gather/replay-axis boundary, which lives in
+`bindings/chunk_autoregressive_denoise`; their cache lifecycles and denoise
+schedules remain family-owned because those algorithms differ materially.
+`SampleChunk` is execution batching over requests/samples, not an
 autoregressive temporal chunk.
 
 The older `Diffusion*` and `AR*` class names remain where renaming them would add
