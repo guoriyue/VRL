@@ -4,6 +4,8 @@ from vrl.trajectory.builders import (
     build_ar_continuous_trajectory,
     build_ar_discrete_trajectory,
     build_ar_multisegment_trajectory,
+    build_chunk_autoregressive_denoise_trajectory,
+    build_chunk_autoregressive_generation_trajectory,
     build_diffusion_trajectory,
 )
 from vrl.trajectory.resolver import (
@@ -68,6 +70,8 @@ __all__ = [
     "build_ar_continuous_trajectory",
     "build_ar_discrete_trajectory",
     "build_ar_multisegment_trajectory",
+    "build_chunk_autoregressive_denoise_trajectory",
+    "build_chunk_autoregressive_generation_trajectory",
     "build_diffusion_trajectory",
     "build_training_view",
     "named_tensor",

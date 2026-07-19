@@ -1150,6 +1150,35 @@ class OnlineTrainer(Trainer):
         step_size = num_timesteps / train_timestep_count
         return [int(i * step_size) for i in range(train_timestep_count)]
 
+    def _train_replay_indices(
+        self,
+        num_timesteps: int,
+        timestep_fraction: float,
+        selection: str = "strided",
+    ) -> list[int]:
+        """Return evaluator invocations for one replay batch.
+
+        Existing evaluators replay one denoise step per invocation and retain
+        the configured timestep subset.  Causal policies may instead require
+        one ordered pass over the complete trajectory; index ``0`` is then an
+        API-compatible sentinel and must not be interpreted as a selected
+        temporal chunk or denoise transition.
+        """
+
+        granularity = getattr(self.evaluator, "replay_granularity", "step")
+        if granularity == "trajectory":
+            return [0]
+        if granularity != "step":
+            raise ValueError(
+                "evaluator.replay_granularity must be 'step' or 'trajectory', "
+                f"got {granularity!r}",
+            )
+        return self._train_timestep_indices(
+            num_timesteps,
+            timestep_fraction,
+            selection,
+        )
+
     # ------------------------------------------------------------------
     # Streaming accumulation boundary (gradient_accumulation_steps>0):
     # begin -> backward(microbatch)* -> finish. One optimizer update spans
@@ -1176,7 +1205,7 @@ class OnlineTrainer(Trainer):
 
         ``total_groups`` is the global prompt-group count across the whole
         optimizer update (= prompts_per_batch); loss divides by
-        ``total_groups * num_train_timesteps`` so the accumulated gradient over
+        ``total_groups * num_replay_units`` so the accumulated gradient over
         all microbatches equals the legacy full-batch path.
         """
         from vrl.algorithms.trajectory import AlgorithmAdapter
@@ -1195,7 +1224,7 @@ class OnlineTrainer(Trainer):
             getattr(self.evaluator, "supports_deferred_replay_tensor_move", False),
         )
         num_timesteps = batch.batches[0].observations.shape[1]
-        train_indices = self._train_timestep_indices(
+        train_indices = self._train_replay_indices(
             num_timesteps,
             cfg.timestep_fraction,
             cfg.timestep_selection,
@@ -1300,7 +1329,7 @@ class OnlineTrainer(Trainer):
     async def train_on_rollout_batch(self, batch: TrainingBatch) -> TrainStepMetrics:
         """Train on a collected batch — the compute half of one step.
 
-        Stays async on purpose: the per-timestep ``await asyncio.sleep(0)`` in the
+        Stays async on purpose: the per-replay ``await asyncio.sleep(0)`` in the
         inner loop lets the continuous-rollout producer advance on the shared
         asyncio loop between CUDA-heavy iterations. Making this synchronous would
         change rollout interleaving, so the split keeps it awaitable. Behavior is
@@ -1371,11 +1400,11 @@ class OnlineTrainer(Trainer):
             getattr(self.evaluator, "supports_deferred_replay_tensor_move", False),
         )
 
-        # Timestep schedule — same num_timesteps across all batches (collector
-        # uses the same scheduler), so pick from first filtered batch. Shares the
-        # single-source selection helper with the streaming path.
+        # Replay schedule — step evaluators use the configured denoise subset;
+        # trajectory evaluators perform one causal pass over all policy axes.
+        # Shapes are consistent across batches, so inspect the first batch.
         num_timesteps = filtered_batches[0].observations.shape[1]
-        train_indices = self._train_timestep_indices(
+        train_indices = self._train_replay_indices(
             num_timesteps,
             cfg.timestep_fraction,
             cfg.timestep_selection,
@@ -1623,10 +1652,9 @@ class OnlineTrainer(Trainer):
                 capture_initial_replay = _ppo_epoch == 0 and batch_start == 0
                 chunk_batches = filtered_batches[batch_start : batch_start + grad_accum_batches]
                 chunk_advs = filtered_advs[batch_start : batch_start + grad_accum_batches]
-                # Flow-GRPO uses Accelerate accumulation over both rollout
-                # microbatches and denoising timesteps:
-                # gradient_accumulation_steps = microbatches * timesteps.
-                # Mirror that normalization explicitly in the native trainer.
+                # Normalize across rollout microbatches and evaluator replay
+                # units. Step evaluators contribute selected denoise timesteps;
+                # trajectory evaluators contribute one ordered causal pass.
                 loss_scale = len(chunk_batches) * len(train_indices)
 
                 for sample_chunk in _balanced_training_sample_chunks(
@@ -1657,8 +1685,8 @@ class OnlineTrainer(Trainer):
                                 algorithm_adapter=algorithm_adapter,
                             )
                             # Average across rollout micro-batches inside this
-                            # optimizer update; timestep accumulation follows
-                            # Flow-GRPO's per-denoise-step surrogate structure.
+                            # optimizer update; step evaluators retain Flow-GRPO's
+                            # per-denoise-step surrogate structure.
                             loss = loss * sample_chunk.loss_weight / loss_scale
 
                         with timer.time("backward"):

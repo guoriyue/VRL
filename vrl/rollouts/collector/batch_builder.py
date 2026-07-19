@@ -85,10 +85,17 @@ class TrajectoryRolloutBatchBuilder:
         """Convert the engine output and reward tensor into a trainer batch."""
 
         trainable = self._trainable_segments()
+        if not trainable:
+            raise RuntimeError(
+                "generation-only trajectory cannot build a trainer RolloutBatch: "
+                "no trainable policy segment or replay facts were recorded",
+            )
         if self._is_multisegment_categorical(trainable):
             return self._pack_ar_multisegment(trainable, rewards_raw)
         segment = self._primary_trainable_segment(preferred=self._primary_segment_name())
-        if segment.distribution == "flow_matching":
+        if segment.distribution == "flow_matching" or (
+            segment.distribution == "gaussian" and segment.modality == "latent"
+        ):
             return self._pack_diffusion(segment, rewards_raw)
         if segment.distribution in ("categorical", "gaussian"):
             return self._pack_ar_tokens(segment, rewards_raw)
@@ -108,9 +115,8 @@ class TrajectoryRolloutBatchBuilder:
         device = observations.device
 
         if self.context.kl_reward_coef > 0:
-            rewards_adjusted = rewards_raw.to(
-                device
-            ) - self.context.kl_reward_coef * kl_tensor.sum(dim=1)
+            kl_per_sample = kl_tensor.reshape(kl_tensor.shape[0], -1).sum(dim=1)
+            rewards_adjusted = rewards_raw.to(device) - self.context.kl_reward_coef * kl_per_sample
         else:
             rewards_adjusted = rewards_raw.to(device)
 

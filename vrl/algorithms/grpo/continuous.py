@@ -124,7 +124,7 @@ class GRPO(Algorithm):
         if inputs.advantages is None:
             raise RuntimeError("AlgorithmInput.advantages is required for GRPO")
         signals = inputs.signals.primary
-        advantages = inputs.advantages
+        advantages = self._broadcast_sample_values(inputs.advantages, signals.log_prob)
         old_log_probs = signals.old_log_prob
 
         raw_ratio = torch.exp(signals.log_prob - old_log_probs)
@@ -137,12 +137,21 @@ class GRPO(Algorithm):
         # band — orthogonal to TIS (which clamps the per-element weight). Both feed
         # the masked-mean denominator below (true off-policy rejection, not a
         # gradient-magnitude dilution).
-        rs_keep = apply_rejection_sample_mask(signals.log_prob - old_log_probs, pc)
+        rs_keep = apply_rejection_sample_mask(
+            signals.log_prob - old_log_probs,
+            pc,
+            mask=signals.mask,
+        )
         clipped_ratio = torch.clamp(ratio, 1.0 - cfg.clip_ratio, 1.0 + cfg.clip_ratio)
         unclipped_loss = -advantages * ratio
         clipped_loss = -advantages * clipped_ratio
         per_sample_loss = torch.maximum(unclipped_loss, clipped_loss)
-        keep = combine_keep_masks(tis_keep, rs_keep)
+        # Unlike the historical scalar-per-denoise-step path, grouped causal
+        # replay has a real transition mask. Fold it into the same denominator
+        # as TIS/RS so deterministic cache-finalization passes never become
+        # policy actions. Existing diffusion masks are all ones, preserving
+        # their numerical behavior.
+        keep = combine_keep_masks(signals.mask.to(ratio.dtype), tis_keep, rs_keep)
         if keep is not None:
             policy_loss = (per_sample_loss * keep).sum() / keep.sum().clamp_min(1.0)
             active_clip_fraction = (
@@ -207,6 +216,23 @@ class GRPO(Algorithm):
         )
 
         return loss, metrics
+
+    @staticmethod
+    def _broadcast_sample_values(values: Any, target: Any) -> Any:
+        """Expand one value per sample across grouped policy-action axes."""
+
+        value_shape = getattr(values, "shape", None)
+        target_shape = getattr(target, "shape", None)
+        if value_shape is None or target_shape is None:
+            return values
+        if not value_shape or not target_shape or int(value_shape[0]) != int(target_shape[0]):
+            raise ValueError(
+                "sample values and policy signals must share their leading batch axis: "
+                f"{tuple(value_shape)} vs {tuple(target_shape)}",
+            )
+        while values.ndim < target.ndim:
+            values = values.unsqueeze(-1)
+        return values
 
 
 def _require_trust_region_signals(signals: Any, algorithm: str) -> Any:
@@ -279,7 +305,7 @@ class FlowDPPO(GRPO):
             raise RuntimeError("AlgorithmInput.advantages is required for FlowDPPO")
         signals = inputs.signals.primary
         old_prev_sample_mean = _require_trust_region_signals(signals, "FlowDPPO")
-        advantages = inputs.advantages
+        advantages = self._broadcast_sample_values(inputs.advantages, signals.log_prob)
 
         raw_ratio = torch.exp(signals.log_prob - signals.old_log_prob)
         # Bound rollout->replay precision drift (FP8/NVFP4 rollout) before it
@@ -293,6 +319,7 @@ class FlowDPPO(GRPO):
         rs_keep = apply_rejection_sample_mask(
             signals.log_prob - signals.old_log_prob,
             pc,
+            mask=signals.mask,
         )
         # Gaussian KL between the current and rollout proposal means (the
         # current-vs-rollout drift). With add_kl_coefficient the sigma folds in the
@@ -312,14 +339,22 @@ class FlowDPPO(GRPO):
             kl_per_sample = (signals.prev_sample_mean - old_prev_sample_mean).pow(2).mean(
                 dim=non_batch
             ) / 2.0
-        high_kl = kl_per_sample >= cfg.kl_mask_threshold
+        high_kl = self._broadcast_sample_values(
+            kl_per_sample >= cfg.kl_mask_threshold,
+            ratio,
+        )
         pos_rm = high_kl & (ratio > 1.0) & (advantages > 0)
         neg_rm = high_kl & (ratio < 1.0) & (advantages < 0)
         trust_keep = (~(pos_rm | neg_rm)).detach()
         # Intersect the trust-region keep with the TIS/RS precision keeps; when
         # precision is not split both are None and ``keep`` collapses to
         # ``trust_keep`` (exact legacy behavior).
-        keep = combine_keep_masks(trust_keep.to(ratio.dtype), tis_keep, rs_keep)
+        keep = combine_keep_masks(
+            signals.mask.to(ratio.dtype),
+            trust_keep.to(ratio.dtype),
+            tis_keep,
+            rs_keep,
+        )
         unclipped_loss = -advantages * ratio
         per_sample_loss = torch.where(
             keep.bool(),
@@ -389,7 +424,7 @@ class GRPOGuard(GRPO):
             raise RuntimeError("AlgorithmInput.advantages is required for GRPOGuard")
         signals = inputs.signals.primary
         old_prev_sample_mean = _require_trust_region_signals(signals, "GRPOGuard")
-        advantages = inputs.advantages
+        advantages = self._broadcast_sample_values(inputs.advantages, signals.log_prob)
 
         log_ratio = signals.log_prob - signals.old_log_prob
         # Bound rollout->replay precision drift (FP8/NVFP4 rollout). GRPO-Guard keeps
@@ -399,7 +434,7 @@ class GRPOGuard(GRPO):
         # TIS-*mask* when configured. No-op when precision is not split.
         pc = self.precision_correction
         _, tis_keep = apply_truncated_importance_weight(torch.exp(log_ratio), pc)
-        rs_keep = apply_rejection_sample_mask(log_ratio, pc)
+        rs_keep = apply_rejection_sample_mask(log_ratio, pc, mask=signals.mask)
         # dt is guaranteed present by _require_trust_region_signals (no silent
         # fallback-to-1, which would erase the per-step scale normalization).
         sqrt_dt_mean = signals.dt.mean()
@@ -415,7 +450,7 @@ class GRPOGuard(GRPO):
         per_sample_loss = torch.maximum(unclipped_loss, clipped_loss)
         # Reject out-of-band precision-drift samples; collapses to the plain mean
         # when no precision keep is active.
-        keep = combine_keep_masks(tis_keep, rs_keep)
+        keep = combine_keep_masks(signals.mask.to(ratio.dtype), tis_keep, rs_keep)
         if keep is not None:
             reduced = (per_sample_loss * keep).sum() / keep.sum().clamp_min(1.0)
             active_clip_fraction = (

@@ -21,6 +21,8 @@ AxisKind = Literal[
     "discrete_token",
     "continuous_token",
     "denoise_step",
+    "temporal_chunk",
+    "denoise_transition",
     "text_token",
     "segment",
     "frame",

@@ -29,7 +29,11 @@ from vrl.rollouts.collector.rewards import (
     RewardScoringInput,
 )
 from vrl.rollouts.orchestration.prompt_collection import collect_prompt_batches
-from vrl.trajectory import RewardView, build_ar_discrete_trajectory
+from vrl.trajectory import (
+    RewardView,
+    build_ar_discrete_trajectory,
+    build_chunk_autoregressive_denoise_trajectory,
+)
 from vrl.utils.stats import RolloutStats
 
 
@@ -803,6 +807,86 @@ def test_reward_view_selection_fails_fast_when_ambiguous() -> None:
             output,
             RolloutBatchBuildContext(metadata={}),
         ).reward_outputs()
+
+
+def test_chunk_denoise_kl_reward_sums_chunk_and_transition_axes() -> None:
+    """Latent Gaussian trajectories use denoise packing and per-sample KL."""
+
+    request = GenerationRequest(
+        request_id="chunk-request",
+        family="causvid",
+        task="text_to_video",
+        inputs=["p0"],
+        samples_per_prompt=2,
+    )
+    sample_rows = _sample_rows(request)
+    batch_size, chunk_count, transition_count = 2, 2, 3
+    policy_shape = (batch_size, chunk_count, transition_count)
+    trajectory = build_chunk_autoregressive_denoise_trajectory(
+        request=request,
+        sample_rows=sample_rows,
+        observations=torch.zeros(*policy_shape, 1),
+        actions=torch.ones(*policy_shape, 1),
+        old_log_prob=torch.zeros(policy_shape),
+        mask=torch.ones(policy_shape),
+        timesteps=torch.zeros(policy_shape),
+        finalized_chunk_latents=torch.zeros(batch_size, chunk_count, 1),
+        replay_tensors={},
+        context={},
+        kl=torch.stack(
+            (
+                torch.ones(chunk_count, transition_count),
+                torch.full((chunk_count, transition_count), 2.0),
+            )
+        ),
+    )
+    output = GenerationOutput(
+        request_id=request.request_id,
+        family=request.family,
+        task=request.task,
+        prompts=list(request.prompts),
+        sample_rows=sample_rows,
+        output=torch.zeros(batch_size, 3, 2, 2),
+        trajectory=trajectory,
+    )
+
+    packed = TrajectoryRolloutBatchBuilder(
+        output,
+        RolloutBatchBuildContext(metadata={}, kl_reward_coef=0.25),
+    ).build(torch.tensor([10.0, 20.0]))
+
+    assert packed.observations.shape[:3] == policy_shape
+    assert packed.actions.shape[:3] == policy_shape
+    assert packed.rewards.tolist() == pytest.approx([8.5, 17.0])
+    assert packed.training_view is not None
+    assert packed.training_view.primary_segment == "denoise"
+
+
+def test_nonlatent_gaussian_keeps_autoregressive_packing() -> None:
+    """Gaussian token policies do not get mistaken for latent denoise policies."""
+
+    import asyncio
+
+    request = GenerationRequest(
+        request_id="token-gaussian-request",
+        family="unit",
+        task="text_to_image",
+        inputs=["p0"],
+        samples_per_prompt=1,
+    )
+    output = asyncio.run(_Runtime().generate(request))
+    assert output.trajectory is not None
+    output.trajectory.segments["image_tokens"].distribution = "gaussian"
+
+    packed = TrajectoryRolloutBatchBuilder(
+        output,
+        RolloutBatchBuildContext(metadata={}),
+    ).build(torch.tensor([1.0]))
+
+    assert packed.observations.shape == (1, 1, 3)
+    assert packed.actions.shape == (1, 2)
+    assert packed.training_view is not None
+    assert packed.training_view.primary_segment == "image_tokens"
 
 
 def test_collector_forwards_reference_metadata_to_request() -> None:
