@@ -1,4 +1,4 @@
-"""Continuous denoise loop independent of output temporal organization."""
+"""Continuous denoise loop independent of output generation regime."""
 
 from __future__ import annotations
 

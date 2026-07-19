@@ -1,1 +1,1 @@
-"""Temporal-organization engines shared across policy implementations."""
+"""Generation-regime composition shared across policy implementations."""

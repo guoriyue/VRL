@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
-from vrl.generation.composition.causal.token_loop import ActiveSequence, TokenScheduler
+from vrl.generation.composition.token_autoregressive.token_loop import (
+    ActiveSequence,
+    TokenScheduler,
+)
 
 
 def _seq(

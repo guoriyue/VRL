@@ -1,4 +1,4 @@
-"""Request layout helpers shared by causal-token executors and gatherers."""
+"""Request layout helpers shared by token-autoregressive executors and gatherers."""
 
 from __future__ import annotations
 

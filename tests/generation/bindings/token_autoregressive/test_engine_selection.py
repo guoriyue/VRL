@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from vrl.generation.bindings.causal_token.executor import ARChunkExecutorBase
+from vrl.generation.bindings.token_autoregressive.executor import ARChunkExecutorBase
 from vrl.generation.types import GenerationRequest
 
 

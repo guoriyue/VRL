@@ -11,8 +11,8 @@ import pytest
 
 from vrl.config.loading import load_config
 from vrl.families.registry import ModelFamilyEntry, get_model_family_entry
-from vrl.generation.bindings.causal_token.executor import ARDiscreteChunkGatherer
-from vrl.generation.bindings.joint_denoise import DiffusionChunkGatherer
+from vrl.generation.bindings.full_sequence_denoise import DiffusionChunkGatherer
+from vrl.generation.bindings.token_autoregressive.executor import ARDiscreteChunkGatherer
 from vrl.generation.protocols import GenerationChunkExecutor
 from vrl.generation.ray import RayGenerationLauncher, RayGenerationLaunchInputs
 from vrl.generation.ray.config import RayGenerationConfig
@@ -324,7 +324,7 @@ def test_model_torch_compile_applies_to_all_diffusion_rollout_families(
     )
 
     assert entry.policy_semantics.step_kind == "denoise"
-    assert entry.policy_semantics.temporal_organization == "joint"
+    assert entry.policy_semantics.generation_regime == "full_sequence"
     model_config = inputs.launch_contract.model_build["model_config"]
     assert model_config["torch_compile"] == {
         "enable": True,

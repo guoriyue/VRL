@@ -1,13 +1,13 @@
-"""Concrete causal-token generation binding."""
+"""Concrete token-autoregressive generation binding."""
 
-from vrl.generation.bindings.causal_token.executor import (
+from vrl.generation.bindings.token_autoregressive.executor import (
     ARChunkExecutorBase,
     ARChunkInputs,
     ARDiscreteChunkExecutorBase,
     ARDiscreteChunkGatherer,
     ARDiscreteChunkResult,
 )
-from vrl.generation.bindings.causal_token.layout import (
+from vrl.generation.bindings.token_autoregressive.layout import (
     ARChunkResult,
     ARRequestLayout,
     ARSamplingParams,

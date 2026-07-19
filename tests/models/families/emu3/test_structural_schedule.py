@@ -20,7 +20,7 @@ from tests.models.families.emu3.fixtures import (
     TINY_IMAGE_VOCAB,
     build_tiny_emu3_model,
 )
-from vrl.generation.composition.causal.token_loop import CausalTokenLoop
+from vrl.generation.composition.token_autoregressive.token_loop import TokenAutoregressiveLoop
 from vrl.generation.types import GenerationRequest, GenerationSampleRow
 from vrl.models.families.emu3.model import (
     emu3_allowed_token_mask,
@@ -95,7 +95,7 @@ def _run_tiny_decode_loop(model, batch_size: int = 2):
     embed = model.language_model.get_input_embeddings()
     cond_ids = torch.tensor([[1, 5, 6, 51]] * batch_size)
     uncond_ids = torch.tensor([[1, 0, 0, 51]] * batch_size)
-    return CausalTokenLoop(
+    return TokenAutoregressiveLoop(
         request=request,
         sample_rows=rows,
         runner=Emu3TokenRunner(

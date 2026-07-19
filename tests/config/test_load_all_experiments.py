@@ -141,7 +141,7 @@ def test_raw_yaml_has_no_user_specific_absolute_paths() -> None:
 def test_experiments_are_grouped_by_model_family() -> None:
     """Every experiment lives at ``<family>/<recipe>``.
 
-    Temporal organization and policy-step math live in registry semantics, so
+    Generation regime and policy-step math live in registry semantics, so
     the config path must not reintroduce the retired AR/diffusion taxonomy.
     """
     names = _experiment_names()

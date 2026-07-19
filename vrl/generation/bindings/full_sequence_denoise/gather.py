@@ -1,4 +1,4 @@
-"""Pure gatherer for joint-denoise chunk payloads."""
+"""Pure gatherer for full-sequence denoise chunk payloads."""
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, Any, cast
 
 import torch
 
-from vrl.generation.bindings.joint_denoise.layout import DiffusionRequestLayout
+from vrl.generation.bindings.full_sequence_denoise.layout import DiffusionRequestLayout
 from vrl.generation.protocols import ChunkResult
 from vrl.generation.types import (
     GenerationOutput,
@@ -18,7 +18,7 @@ from vrl.generation.types import (
 from vrl.trajectory import build_diffusion_trajectory
 
 if TYPE_CHECKING:
-    from vrl.generation.bindings.joint_denoise.executor import DiffusionChunkResult
+    from vrl.generation.bindings.full_sequence_denoise.executor import DiffusionChunkResult
 
 
 @dataclass(frozen=True, slots=True)

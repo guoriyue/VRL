@@ -1,4 +1,4 @@
-"""Shared executor scaffolding for joint-denoise generation families."""
+"""Shared executor scaffolding for full-sequence denoise generation families."""
 
 from __future__ import annotations
 
@@ -9,8 +9,8 @@ from typing import Any
 
 import torch
 
-from vrl.generation.bindings.joint_denoise.gather import DiffusionChunkGatherer
-from vrl.generation.bindings.joint_denoise.layout import (
+from vrl.generation.bindings.full_sequence_denoise.gather import DiffusionChunkGatherer
+from vrl.generation.bindings.full_sequence_denoise.layout import (
     DiffusionRequestLayout,
     DiffusionSamplingParams,
 )
@@ -510,7 +510,7 @@ class DiffusionChunkExecutorBase(
         encoded: dict[str, Any],
         config: DenoiseLoopConfig,
     ) -> DenoiseLoopResult:
-        """Adapt the joint-denoise binding to the step-owned loop."""
+        """Adapt the full-sequence denoise binding to the step-owned loop."""
 
         del encoded
         return run_denoise_loop(

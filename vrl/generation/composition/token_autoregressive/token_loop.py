@@ -1,4 +1,4 @@
-"""Scheduled causal-token loop used by token-family runtimes.
+"""Scheduled token-autoregressive loop used by token-family runtimes.
 
 The loop owns token-level scheduling and row-wise state routing for the current
 family runners. It has no public rollout API surface; generation callers only
@@ -18,8 +18,8 @@ from vrl.nn.layers.attention.cache_rows import ARCacheRows, ar_concat_rows, ar_s
 
 
 @dataclass(frozen=True, slots=True)
-class CausalSequenceKey:
-    """Grouping key for causal token batching."""
+class TokenAutoregressiveSequenceKey:
+    """Grouping key for token-autoregressive batching."""
 
     family: str
     task: str
@@ -30,7 +30,7 @@ class CausalSequenceKey:
 
 @dataclass(slots=True)
 class ActiveSequence:
-    """One in-flight causal image-token sequence."""
+    """One in-flight token-autoregressive image sequence."""
 
     request_id: str
     sample_id: str
@@ -56,8 +56,8 @@ class ActiveSequence:
             self.finished = True
 
     @property
-    def key(self) -> CausalSequenceKey:
-        return CausalSequenceKey(
+    def key(self) -> TokenAutoregressiveSequenceKey:
+        return TokenAutoregressiveSequenceKey(
             family=self.family,
             task=self.task,
             tokenizer_key=self.tokenizer_key,
@@ -84,7 +84,7 @@ class ActiveSequence:
 class TokenBatch:
     """One token-forward batch inside the scheduled decode loop."""
 
-    key: CausalSequenceKey
+    key: TokenAutoregressiveSequenceKey
     sequences: list[ActiveSequence]
 
     def __post_init__(self) -> None:
@@ -104,7 +104,7 @@ class TokenBatch:
 
 
 class TokenScheduler:
-    """Group active causal sequences into same-shape token batches."""
+    """Group active token-autoregressive sequences into same-shape batches."""
 
     def __init__(self, max_batch_size: int) -> None:
         if max_batch_size < 1:
@@ -124,8 +124,8 @@ class TokenScheduler:
             self.add(sequence)
 
     def pop_batch(self) -> TokenBatch | None:
-        groups: dict[tuple[CausalSequenceKey, int], list[ActiveSequence]] = {}
-        ordered_keys: list[tuple[CausalSequenceKey, int]] = []
+        groups: dict[tuple[TokenAutoregressiveSequenceKey, int], list[ActiveSequence]] = {}
+        ordered_keys: list[tuple[TokenAutoregressiveSequenceKey, int]] = []
         retained: list[ActiveSequence] = []
 
         for sequence in self._pending:
@@ -158,7 +158,7 @@ class TokenScheduler:
 
 
 @dataclass(slots=True)
-class CausalTokenEnvelope:
+class TokenAutoregressiveEnvelope:
     """Generation-owned KV/row-state envelope scheduled by the decode loop."""
 
     state: Any
@@ -171,7 +171,7 @@ class CausalTokenEnvelope:
         init: TokenLoopInit,
         *,
         batch_size: int,
-    ) -> CausalTokenEnvelope:
+    ) -> TokenAutoregressiveEnvelope:
         if batch_size < 1:
             raise ValueError("batch_size must be >= 1")
         return cls(
@@ -198,7 +198,9 @@ class CausalTokenEnvelope:
         row_indices = _row_indices(sequences, size=self.row_count)
         positions = [int(sequence.position) for sequence in sequences]
         if len(set(positions)) != 1:
-            raise ValueError("scheduled causal sequences must share one token position")
+            raise ValueError(
+                "scheduled token-autoregressive sequences must share one token position",
+            )
         return TokenStepBatch(
             row_indices=row_indices,
             positions=positions,
@@ -220,7 +222,7 @@ class CausalTokenEnvelope:
         for lanes in (self.cache_lanes, self.row_lanes):
             for lane in lanes.values():
                 return len(lane)
-        raise ValueError("CausalTokenEnvelope requires at least one row/cache lane")
+        raise ValueError("TokenAutoregressiveEnvelope requires at least one row/cache lane")
 
     def _require_cache_lane(self, name: str) -> ARCacheRows:
         try:
@@ -236,15 +238,15 @@ class CausalTokenEnvelope:
 
 
 @dataclass(slots=True)
-class CausalTokenResult:
-    """Result of one scheduled causal-token loop."""
+class TokenAutoregressiveResult:
+    """Result of one scheduled token-autoregressive loop."""
 
     finalized: Any
 
 
 @dataclass(slots=True)
-class CausalTokenLoop:
-    """Family-neutral causal composition over token policy steps."""
+class TokenAutoregressiveLoop:
+    """Family-neutral token-autoregressive composition over token policy steps."""
 
     request: GenerationRequest
     sample_rows: Sequence[GenerationSampleRow]
@@ -257,7 +259,7 @@ class CausalTokenLoop:
     init_kwargs: Mapping[str, Any] | None = None
     step_kwargs: Mapping[str, Any] | None = None
 
-    def run(self) -> CausalTokenResult:
+    def run(self) -> TokenAutoregressiveResult:
         rows = list(self.sample_rows)
         if not rows:
             raise ValueError("sample_rows must be non-empty")
@@ -276,7 +278,7 @@ class CausalTokenLoop:
                 "token model runner init_token must return TokenLoopInit; "
                 f"got {type(init_state).__name__}",
             )
-        envelope = CausalTokenEnvelope.from_init(init_state, batch_size=len(rows))
+        envelope = TokenAutoregressiveEnvelope.from_init(init_state, batch_size=len(rows))
         state = envelope.state
         sequences = self._build_sequences(rows)
         scheduler = TokenScheduler(max_batch_size=self._max_batch_size(sequences))
@@ -305,7 +307,7 @@ class CausalTokenLoop:
                 sequence.advance()
             scheduler.push_back_unfinished(batch)
 
-        return CausalTokenResult(finalized=self.runner.finalize_token(state))
+        return TokenAutoregressiveResult(finalized=self.runner.finalize_token(state))
 
     def _max_batch_size(self, sequences: Sequence[ActiveSequence]) -> int:
         max_batch_size = int(self.scheduler_batch_size or len(sequences))
@@ -315,7 +317,7 @@ class CausalTokenLoop:
         missing = [name for name in names if not hasattr(self.runner, name)]
         if missing:
             raise TypeError(
-                "causal token loop requires model runner hooks: " + ", ".join(missing),
+                "token-autoregressive loop requires model runner hooks: " + ", ".join(missing),
             )
 
     def _build_sequences(
@@ -371,10 +373,10 @@ def _row_indices(sequences: Sequence[ActiveSequence], *, size: int) -> list[int]
 __all__ = [
     "ARCacheRows",
     "ActiveSequence",
-    "CausalSequenceKey",
-    "CausalTokenEnvelope",
-    "CausalTokenLoop",
-    "CausalTokenResult",
+    "TokenAutoregressiveEnvelope",
+    "TokenAutoregressiveLoop",
+    "TokenAutoregressiveResult",
+    "TokenAutoregressiveSequenceKey",
     "TokenBatch",
     "TokenScheduler",
     "ar_concat_rows",

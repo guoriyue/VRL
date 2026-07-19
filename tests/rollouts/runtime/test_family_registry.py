@@ -6,6 +6,7 @@ import subprocess
 import sys
 from dataclasses import replace
 from pathlib import Path
+from typing import get_args
 
 import pytest
 from omegaconf import OmegaConf
@@ -20,7 +21,7 @@ from vrl.families.registry import (
     TokenFamilyBuild,
     get_model_family_entry,
 )
-from vrl.families.semantics import PolicySemantics
+from vrl.families.semantics import GenerationRegime, PolicySemantics
 from vrl.rollouts.collector import build_rollout_collector
 from vrl.rollouts.collector.config import (
     RolloutCollectorConfig,
@@ -36,12 +37,20 @@ def test_family_entry_rejects_a_policy_step_build_mismatch() -> None:
         replace(
             entry,
             policy_semantics=PolicySemantics(
-                temporal_organization="causal",
+                generation_regime="token_autoregressive",
                 step_kind="token",
                 action_distribution="categorical",
                 trajectory_layout="token",
             ),
         )
+
+
+def test_generation_regime_vocabulary_uses_paper_familiar_names() -> None:
+    assert set(get_args(GenerationRegime)) == {
+        "full_sequence",
+        "token_autoregressive",
+        "chunk_autoregressive",
+    }
 
 
 def test_family_name_import_does_not_load_runtime_registry() -> None:
@@ -104,19 +113,22 @@ def test_family_registry_entries_have_complete_protocol_wiring() -> None:
         assert entry.family == family
         assert entry.task
         assert callable(entry.new_gatherer().gather_chunks)
-        assert entry.policy_semantics.temporal_organization in {"joint", "causal"}
+        assert entry.policy_semantics.generation_regime in {
+            "full_sequence",
+            "token_autoregressive",
+        }
         if entry.policy_semantics.step_kind == "denoise":
             assert isinstance(entry.family_build, DenoiseFamilyBuild)
             assert entry.executor_cls.startswith(
                 (
                     "vrl.models.families.",
-                    "vrl.generation.bindings.joint_denoise.",
+                    "vrl.generation.bindings.full_sequence_denoise.",
                 ),
             )
         else:
             assert isinstance(entry.family_build, TokenFamilyBuild)
             assert entry.executor_cls.startswith(
-                ("vrl.models.families.", "vrl.generation.bindings.causal_token."),
+                ("vrl.models.families.", "vrl.generation.bindings.token_autoregressive."),
             )
 
 

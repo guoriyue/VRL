@@ -285,14 +285,14 @@ class RolloutConfig(ConfigBase):
     # Fail-fast host-RAM guard fraction for streaming accumulation (0.0 = off).
     # reader: vrl/scripts/common/online.py:_run_streaming_optimizer_update.
     host_memory_budget_fraction: float | None = None
-    # reader: vrl/generation/bindings/joint_denoise/layout.py
+    # reader: vrl/generation/bindings/full_sequence_denoise/layout.py
     # _parse_denoise_mode (request boundary).
     # Allowed set is the type; the layout guard stays for over-the-wire request dicts.
     denoise_mode: Literal["native", "sde"] | None = None
-    # reader: vrl/generation/bindings/joint_denoise/layout.py — opt-in to storing
+    # reader: vrl/generation/bindings/full_sequence_denoise/layout.py — opt-in to storing
     # each denoise step's rollout proposal mean for trust-region replay.
     return_prev_sample_mean: Any = None
-    # reader: vrl/generation/bindings/joint_denoise/layout.py — opt-in to caching
+    # reader: vrl/generation/bindings/full_sequence_denoise/layout.py — opt-in to caching
     # the frozen reference (LoRA-disabled) noise_pred at collect, so KL replay never
     # reruns the ref forward. Lossless: replay applies the same sde_step_with_logprob.
     cache_ref_noise_pred: Any = None

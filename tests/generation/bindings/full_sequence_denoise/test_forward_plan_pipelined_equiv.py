@@ -9,7 +9,9 @@ import pytest
 
 torch = pytest.importorskip("torch")
 
-from vrl.generation.bindings.joint_denoise.executor import DiffusionChunkExecutorBase  # noqa: E402
+from vrl.generation.bindings.full_sequence_denoise.executor import (  # noqa: E402
+    DiffusionChunkExecutorBase,
+)
 from vrl.generation.execution.ids import build_sample_rows  # noqa: E402
 from vrl.generation.execution.planner import build_engine_plan  # noqa: E402
 from vrl.generation.types import GenerationOutput, GenerationRequest  # noqa: E402

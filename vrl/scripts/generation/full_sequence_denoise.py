@@ -12,7 +12,7 @@ rollout's.
 This is the per-family GPU verification tool for model landings (no Ray, no
 trainer):
 
-    python -m vrl.scripts.generation.joint_denoise --family sana \\
+    python -m vrl.scripts.generation.full_sequence_denoise --family sana \\
         --path Efficient-Large-Model/Sana_1600M_1024px_diffusers \\
         --dtype fp16 --float32-precision ieee --no-outer-autocast \\
         --prompt "a red fox in the snow" --steps 8 --height 512 --width 512 \\
@@ -143,9 +143,9 @@ def main() -> None:
     entry = get_model_family_entry(args.family)
     family = entry.family
     semantics = entry.policy_semantics
-    if semantics.step_kind != "denoise" or semantics.temporal_organization != "joint":
+    if semantics.step_kind != "denoise" or semantics.generation_regime != "full_sequence":
         raise SystemExit(
-            f"--family {family} does not expose a joint denoise policy; this probe "
+            f"--family {family} does not expose a full-sequence denoise policy; this probe "
             "drives that execution shape only",
         )
     device = torch.device(

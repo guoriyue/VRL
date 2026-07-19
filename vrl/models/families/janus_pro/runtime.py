@@ -8,14 +8,14 @@ from typing import Any
 
 import torch
 
-from vrl.generation.bindings.causal_token import (
+from vrl.generation.bindings.token_autoregressive import (
     ARChunkInputs,
     ARDiscreteChunkExecutorBase,
     ARRequestLayout,
     ARSamplingParams,
 )
-from vrl.generation.composition.causal.token_loop import (
-    CausalTokenLoop,
+from vrl.generation.composition.token_autoregressive.token_loop import (
+    TokenAutoregressiveLoop,
     call_with_supported_kwargs,
 )
 from vrl.generation.execution.chunks import SampleChunk
@@ -334,7 +334,7 @@ class JanusProR1ChunkExecutor(JanusProChunkExecutor):
             **kwargs: Any,
         ) -> tuple[torch.Tensor, torch.Tensor]:
             image_token_num = int(kwargs.get("image_token_num", params.image_token_num))
-            decode_result = CausalTokenLoop(
+            decode_result = TokenAutoregressiveLoop(
                 request=request,
                 sample_rows=rows,
                 runner=self._ar_runner(request),

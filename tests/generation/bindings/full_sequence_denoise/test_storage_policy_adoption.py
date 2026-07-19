@@ -4,7 +4,10 @@ from __future__ import annotations
 
 import torch
 
-from vrl.generation.bindings.joint_denoise import DiffusionChunkGatherer, DiffusionChunkResult
+from vrl.generation.bindings.full_sequence_denoise import (
+    DiffusionChunkGatherer,
+    DiffusionChunkResult,
+)
 from vrl.generation.execution.ids import build_sample_rows
 from vrl.generation.types import GenerationRequest
 from vrl.rollouts.collector.batch_builder import (

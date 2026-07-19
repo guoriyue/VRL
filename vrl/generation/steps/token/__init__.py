@@ -1,4 +1,4 @@
-"""Token-step protocol shared by causal and future joint compositions."""
+"""Token-step protocol for token-autoregressive and future compositions."""
 
 from vrl.generation.steps.token.protocol import (
     TokenLoopInit,

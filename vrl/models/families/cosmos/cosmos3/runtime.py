@@ -18,7 +18,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from vrl.generation.bindings.joint_denoise import (
+from vrl.generation.bindings.full_sequence_denoise import (
     DiffusionChunkExecutorBase,
     DiffusionSamplingParams,
 )

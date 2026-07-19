@@ -12,8 +12,8 @@ from __future__ import annotations
 
 from typing import Any
 
-from vrl.generation.bindings.joint_denoise import DiffusionChunkExecutorBase
-from vrl.generation.bindings.joint_denoise.executor import ReferenceConditionedChunks
+from vrl.generation.bindings.full_sequence_denoise import DiffusionChunkExecutorBase
+from vrl.generation.bindings.full_sequence_denoise.executor import ReferenceConditionedChunks
 
 
 class Wan_2_1I2VChunkExecutor(ReferenceConditionedChunks, DiffusionChunkExecutorBase):

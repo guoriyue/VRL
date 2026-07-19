@@ -8,7 +8,7 @@ from typing import Any
 import pytest
 import torch
 
-from vrl.generation.bindings.joint_denoise import DiffusionChunkExecutorBase
+from vrl.generation.bindings.full_sequence_denoise import DiffusionChunkExecutorBase
 from vrl.generation.execution.chunks import SampleChunk
 from vrl.generation.steps.denoise import (
     DenoiseLoopConfig,

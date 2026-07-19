@@ -18,7 +18,7 @@ import torch
 
 from vrl.config.precision import RolePrecision
 from vrl.generation import GenerationRequest, GenerationSampleRow
-from vrl.generation.bindings.joint_denoise.layout import DiffusionRequestLayout
+from vrl.generation.bindings.full_sequence_denoise.layout import DiffusionRequestLayout
 from vrl.generation.steps.denoise import (
     DenoiseLoopConfig,
     DenoiseSDEParams,

@@ -215,7 +215,7 @@ class _FakeFamilyEntry:
     family = "sd3_5"
     task = "t2i"
     policy_semantics = PolicySemantics(
-        temporal_organization="joint",
+        generation_regime="full_sequence",
         step_kind="denoise",
         action_distribution="continuous",
         trajectory_layout="denoise",

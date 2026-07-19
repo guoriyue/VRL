@@ -6,7 +6,7 @@ from typing import Any
 
 import torch
 
-from vrl.generation.bindings.causal_token import ARChunkInputs, ARDiscreteChunkExecutorBase
+from vrl.generation.bindings.token_autoregressive import ARChunkInputs, ARDiscreteChunkExecutorBase
 from vrl.generation.execution.chunks import SampleChunk
 from vrl.generation.types import GenerationRequest
 from vrl.models.families.emu3.model import (

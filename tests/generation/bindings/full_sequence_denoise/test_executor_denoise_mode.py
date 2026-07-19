@@ -6,7 +6,7 @@ from dataclasses import dataclass
 
 import torch
 
-from vrl.generation.bindings.joint_denoise.executor import DiffusionChunkExecutorBase
+from vrl.generation.bindings.full_sequence_denoise.executor import DiffusionChunkExecutorBase
 from vrl.generation.steps.denoise import DenoiseLoopConfig, DenoiseSDEParams
 
 

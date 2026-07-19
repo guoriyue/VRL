@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "visual-rl"
 version = "0.1.0"
-description = "Visual generation RL infrastructure across model families, policy steps, and temporal organizations"
+description = "Visual generation RL infrastructure across model families, policy steps, and generation regimes"
 readme = "README.md"
 requires-python = ">=3.10"
 license = "Apache-2.0"

@@ -837,9 +837,9 @@ class GenerationWorkerCore:
 
         assert_rollout_quantization_applied(model, build)
         executor_kwargs = dict(launch_contract.executor_kwargs)
-        from vrl.families.registry import GENERIC_DENOISE_EXECUTOR
+        from vrl.families.registry import GENERIC_FULL_SEQUENCE_DENOISE_EXECUTOR
 
-        if self.family_entry.executor_cls == GENERIC_DENOISE_EXECUTOR:
+        if self.family_entry.executor_cls == GENERIC_FULL_SEQUENCE_DENOISE_EXECUTOR:
             executor_kwargs.update(
                 family=self.family_entry.family,
                 task=self.family_entry.task,

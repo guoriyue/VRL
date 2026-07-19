@@ -8,8 +8,8 @@ from omegaconf import OmegaConf
 
 from vrl.families.registry import get_model_family_entry
 from vrl.generation import GenerationRequest
-from vrl.generation.bindings.causal_token import ARRequestLayout
-from vrl.generation.composition.causal.token_loop import ActiveSequence
+from vrl.generation.bindings.token_autoregressive import ARRequestLayout
+from vrl.generation.composition.token_autoregressive.token_loop import ActiveSequence
 from vrl.generation.execution.ids import build_sample_rows
 from vrl.models.families.nextstep_1.runtime import (
     NextStep1ARChunkResult,

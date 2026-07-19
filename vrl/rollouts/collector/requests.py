@@ -114,8 +114,8 @@ class GenerationRequestBuilder:
         if "video_fps" in group_metadata:
             input_metadata.setdefault("video_fps", group_metadata["video_fps"])
         # Some engines bind per-sample metadata under a family-specific request
-        # namespace. This is an adapter contract, not a consequence of causal or
-        # continuous policy semantics.
+        # namespace. This is an adapter contract, not a consequence of the
+        # generation regime or action distribution.
         namespace = self.entry.request_metadata_namespace
         if namespace is not None:
             input_metadata = {namespace: input_metadata}

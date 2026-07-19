@@ -13,7 +13,7 @@ from tests.models.families.llamagen.fixtures import (
     build_tiny_llamagen_model,
 )
 from vrl.generation import GenerationRequest, GenerationSampleRow
-from vrl.generation.composition.causal.token_loop import CausalTokenLoop
+from vrl.generation.composition.token_autoregressive.token_loop import TokenAutoregressiveLoop
 from vrl.generation.steps.token import TokenStepBatch
 from vrl.models.families.llamagen.runner import LlamaGenARModelRunner
 
@@ -60,7 +60,7 @@ def _conditioning(model) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
 
 def _run_loop(model, *, top_k: int = 0, guidance_scale: float = 3.0):
     cond, uncond, mask = _conditioning(model)
-    return CausalTokenLoop(
+    return TokenAutoregressiveLoop(
         request=_request(),
         sample_rows=_sample_rows(),
         runner=LlamaGenARModelRunner(model),

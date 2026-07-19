@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 import torch
 
-from vrl.generation.bindings.joint_denoise import DiffusionRequestLayout
+from vrl.generation.bindings.full_sequence_denoise import DiffusionRequestLayout
 from vrl.generation.types import GenerationRequest
 
 

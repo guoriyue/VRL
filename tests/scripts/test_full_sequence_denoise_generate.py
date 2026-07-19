@@ -6,10 +6,10 @@ import pytest
 import torch
 
 from vrl.families.registry import get_model_family_entry
-from vrl.scripts.generation import joint_denoise as generate
+from vrl.scripts.generation import full_sequence_denoise as generate
 
 
-def test_generate_rejects_non_joint_denoise_family_before_build(
+def test_generate_rejects_non_full_sequence_denoise_family_before_build(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(
@@ -29,7 +29,7 @@ def test_generate_rejects_non_joint_denoise_family_before_build(
         ],
     )
 
-    with pytest.raises(SystemExit, match="does not expose a joint denoise policy"):
+    with pytest.raises(SystemExit, match="does not expose a full-sequence denoise policy"):
         generate.main()
 
 

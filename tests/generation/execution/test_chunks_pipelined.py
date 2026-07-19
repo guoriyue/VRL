@@ -11,7 +11,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from vrl.generation.bindings.joint_denoise.executor import DiffusionChunkResult
+from vrl.generation.bindings.full_sequence_denoise.executor import DiffusionChunkResult
 from vrl.generation.execution.pipeline import (
     _move_tree_to_cpu_async,
     forward_chunks_pipelined,

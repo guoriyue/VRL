@@ -6,7 +6,7 @@ from typing import Any
 
 import torch
 
-from vrl.generation.bindings.causal_token import (
+from vrl.generation.bindings.token_autoregressive import (
     ARChunkInputs,
     ARDiscreteChunkExecutorBase,
     ARSamplingParams,

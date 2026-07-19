@@ -1,4 +1,4 @@
-"""Request layout helpers shared by joint-denoise executors and gatherers."""
+"""Request layout helpers shared by full-sequence denoise executors and gatherers."""
 
 from __future__ import annotations
 

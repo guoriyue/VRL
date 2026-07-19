@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 
 from vrl.generation import GenerationInput, GenerationRequest
-from vrl.generation.bindings.joint_denoise.executor import ReferenceConditionedChunks
+from vrl.generation.bindings.full_sequence_denoise.executor import ReferenceConditionedChunks
 from vrl.generation.execution.chunks import SampleChunk
 
 
@@ -20,7 +20,7 @@ def _chunk(prompt_index: int, prompt: str) -> SampleChunk:
 
 def test_reference_conditioning_selects_the_chunk_prompt_input(monkeypatch) -> None:
     monkeypatch.setattr(
-        "vrl.generation.bindings.joint_denoise.executor.load_reference_image",
+        "vrl.generation.bindings.full_sequence_denoise.executor.load_reference_image",
         lambda value: value,
     )
     request = GenerationRequest(

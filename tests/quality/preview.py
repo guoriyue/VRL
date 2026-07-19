@@ -78,7 +78,10 @@ def generate_rollout_preview(
         raise RuntimeError("rollout preview requires a CUDA GPU")
 
     from vrl.config.validation import require, validate_training_config
-    from vrl.families.registry import GENERIC_DENOISE_EXECUTOR, get_model_family_entry
+    from vrl.families.registry import (
+        GENERIC_FULL_SEQUENCE_DENOISE_EXECUTOR,
+        get_model_family_entry,
+    )
     from vrl.generation.execution.ids import build_sample_rows
     from vrl.generation.ray.launcher import build_executor_kwargs
     from vrl.models.dtypes import dtype_to_wire_name
@@ -123,7 +126,7 @@ def generate_rollout_preview(
     assert_rollout_quantization_applied(model, build)
 
     executor_kwargs = build_executor_kwargs(entry, cfg)
-    if entry.executor_cls == GENERIC_DENOISE_EXECUTOR:
+    if entry.executor_cls == GENERIC_FULL_SEQUENCE_DENOISE_EXECUTOR:
         executor_kwargs.update(family=entry.family, task=entry.task)
     executor_cls = import_from_path(entry.executor_cls)
     executor = executor_cls(model, **executor_kwargs)

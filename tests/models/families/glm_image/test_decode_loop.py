@@ -16,7 +16,7 @@ from tests.models.families.glm_image.fixtures import (
     TINY_IMAGE_START_ID,
     build_tiny_glm_image_model,
 )
-from vrl.generation.composition.causal.token_loop import CausalTokenLoop
+from vrl.generation.composition.token_autoregressive.token_loop import TokenAutoregressiveLoop
 from vrl.generation.types import GenerationRequest, GenerationSampleRow
 from vrl.models.families.glm_image.runner import GlmImageTokenRunner
 
@@ -53,7 +53,7 @@ def _run_tiny_decode_loop(model, batch_size: int = 2, *, top_p: float = 1.0):
     # padding is on the left like the checkpoint tokenizer produces.
     cond_ids = torch.tensor([[30, 31, 32, TINY_IMAGE_START_ID]] * batch_size)
     cond_mask = torch.ones(batch_size, 4, dtype=torch.long)
-    result = CausalTokenLoop(
+    result = TokenAutoregressiveLoop(
         request=request,
         sample_rows=rows,
         runner=GlmImageTokenRunner(model),

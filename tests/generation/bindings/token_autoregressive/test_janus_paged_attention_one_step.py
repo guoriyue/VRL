@@ -11,7 +11,7 @@ import torch
 import torch.nn as nn
 
 from tests.models.steps.token.fixtures import RecordingHead, build_stub_janus_model
-from vrl.generation.composition.causal.token_loop import CausalTokenLoop
+from vrl.generation.composition.token_autoregressive.token_loop import TokenAutoregressiveLoop
 from vrl.generation.types import GenerationRequest, GenerationSampleRow
 from vrl.models.families.janus_pro.model import (
     JANUS_IMAGE_VOCAB_SIZE,
@@ -119,7 +119,7 @@ def test_janus_runner_can_drive_one_paged_attention_image_step() -> None:
     model = _model()
     backend = _RecordingPagedBackend()
 
-    CausalTokenLoop(
+    TokenAutoregressiveLoop(
         request=_request(),
         sample_rows=_rows(batch_size=2),
         runner=JanusProARModelRunner(model, attention_backend=backend),

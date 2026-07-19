@@ -1,4 +1,4 @@
-"""Orthogonal semantics for the trainable policy exposed by a family entry.
+"""Typed semantics for the trainable policy exposed by a family entry.
 
 These fields classify the executable policy variant selected by the registry,
 not every component stored in a checkpoint.  A hybrid checkpoint may contain a
@@ -11,7 +11,11 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Literal, get_args
 
-TemporalOrganization = Literal["joint", "causal", "causal_chunked"]
+GenerationRegime = Literal[
+    "full_sequence",
+    "token_autoregressive",
+    "chunk_autoregressive",
+]
 PolicyStepKind = Literal["denoise", "token"]
 ActionDistribution = Literal["categorical", "continuous"]
 TrajectoryLayout = Literal["denoise", "token", "multisegment_token"]
@@ -21,12 +25,12 @@ TrajectoryLayout = Literal["denoise", "token", "multisegment_token"]
 class PolicySemantics:
     """Generation semantics of the trainable, action-producing policy stage.
 
-    ``joint`` means one model step updates the whole output field without an
-    output-prefix cache. ``causal`` advances ordered positions from a prefix;
-    ``causal_chunked`` does the same at temporal-chunk granularity.
+    ``full_sequence`` updates all output positions together in each policy
+    step. ``token_autoregressive`` advances one ordered token from a prefix;
+    ``chunk_autoregressive`` advances one temporal chunk from earlier chunks.
     """
 
-    temporal_organization: TemporalOrganization
+    generation_regime: GenerationRegime
     step_kind: PolicyStepKind
     action_distribution: ActionDistribution
     trajectory_layout: TrajectoryLayout
@@ -34,9 +38,9 @@ class PolicySemantics:
     def __post_init__(self) -> None:
         for name, value, literal_type in (
             (
-                "temporal_organization",
-                self.temporal_organization,
-                TemporalOrganization,
+                "generation_regime",
+                self.generation_regime,
+                GenerationRegime,
             ),
             ("step_kind", self.step_kind, PolicyStepKind),
             ("action_distribution", self.action_distribution, ActionDistribution),
@@ -59,8 +63,8 @@ class PolicySemantics:
 
 __all__ = [
     "ActionDistribution",
+    "GenerationRegime",
     "PolicySemantics",
     "PolicyStepKind",
-    "TemporalOrganization",
     "TrajectoryLayout",
 ]

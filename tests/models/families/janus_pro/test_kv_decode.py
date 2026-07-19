@@ -9,7 +9,7 @@ import torch
 import torch.nn as nn
 
 from tests.models.steps.token.fixtures import RecordingHead, build_stub_janus_model
-from vrl.generation.composition.causal.token_loop import CausalTokenLoop
+from vrl.generation.composition.token_autoregressive.token_loop import TokenAutoregressiveLoop
 from vrl.generation.types import GenerationRequest, GenerationSampleRow
 from vrl.models.families.janus_pro.model import (
     JANUS_IMAGE_VOCAB_SIZE,
@@ -108,7 +108,7 @@ def _run_ar_decode(model: JanusProModel) -> None:
         )
         for index in range(batch_size)
     ]
-    CausalTokenLoop(
+    TokenAutoregressiveLoop(
         request=request,
         sample_rows=rows,
         runner=JanusProARModelRunner(

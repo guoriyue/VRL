@@ -30,8 +30,8 @@ def test_trajectory_layer_stays_family_neutral() -> None:
         VRL_ROOT / "trajectory",
         forbidden=(
             "vrl.algorithms",
-            "vrl.generation.bindings.causal_token",
-            "vrl.generation.bindings.joint_denoise",
+            "vrl.generation.bindings.token_autoregressive",
+            "vrl.generation.bindings.full_sequence_denoise",
             "vrl.generation.ray",
             "vrl.rewards",
             "vrl.rollouts",
@@ -48,6 +48,14 @@ def test_removed_boundary_packages_stay_removed() -> None:
     assert not (VRL_ROOT / "generation" / "runtime").exists()
     assert not (VRL_ROOT / "rollouts" / "families").exists()
     assert not (VRL_ROOT / "rollouts" / "family_names.py").exists()
+
+    retired_regime_paths = (
+        VRL_ROOT / "generation" / "bindings" / ("joint" + "_denoise"),
+        VRL_ROOT / "generation" / "bindings" / ("causal" + "_token"),
+        VRL_ROOT / "generation" / "composition" / ("caus" + "al"),
+        VRL_ROOT / "scripts" / "generation" / ("joint" + "_denoise.py"),
+    )
+    assert not [path for path in retired_regime_paths if path.exists()]
 
 
 def test_shared_ray_substrate_stays_domain_neutral() -> None:

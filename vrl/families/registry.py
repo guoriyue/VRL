@@ -17,7 +17,9 @@ from vrl.families.semantics import PolicySemantics, TrajectoryLayout
 
 # Import-path protocol value shared by registry dispatch and generation workers.
 # Keeping it here avoids making the neutral family table import a runtime module.
-GENERIC_DENOISE_EXECUTOR = "vrl.generation.bindings.joint_denoise.executor:DiffusionChunkExecutor"
+GENERIC_FULL_SEQUENCE_DENOISE_EXECUTOR = (
+    "vrl.generation.bindings.full_sequence_denoise.executor:DiffusionChunkExecutor"
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -265,7 +267,7 @@ def _register_model_family(entry: ModelFamilyEntry) -> ModelFamilyEntry:
     return entry
 
 
-def _joint_denoise_entry(
+def _full_sequence_denoise_entry(
     *,
     family: str,
     task: str,
@@ -278,7 +280,7 @@ def _joint_denoise_entry(
     # (num_frames / max_sequence_length / ...) lives in the model yaml's
     # ``executor`` block, read wholesale at launch — not here.
     if executor_cls is None:
-        executor_cls = GENERIC_DENOISE_EXECUTOR
+        executor_cls = GENERIC_FULL_SEQUENCE_DENOISE_EXECUTOR
     if runtime_capabilities is None:
         runtime_capabilities = GenerationRuntimeCapabilities(
             supports_torch_compile=True,
@@ -290,19 +292,19 @@ def _joint_denoise_entry(
         family=family,
         task=task,
         policy_semantics=PolicySemantics(
-            temporal_organization="joint",
+            generation_regime="full_sequence",
             step_kind="denoise",
             action_distribution="continuous",
             trajectory_layout="denoise",
         ),
         executor_cls=executor_cls,
-        gatherer_cls="vrl.generation.bindings.joint_denoise.gather:DiffusionChunkGatherer",
+        gatherer_cls="vrl.generation.bindings.full_sequence_denoise.gather:DiffusionChunkGatherer",
         family_build=build,
         runtime_capabilities=runtime_capabilities,
     )
 
 
-def _causal_token_entry(
+def _token_autoregressive_entry(
     *,
     family: str,
     action_distribution: Literal["categorical", "continuous"],
@@ -310,16 +312,16 @@ def _causal_token_entry(
     build: TokenFamilyBuild,
     task: str = "ar_t2i",
     trajectory_layout: TrajectoryLayout = "token",
-    gatherer_cls: str = "vrl.generation.bindings.causal_token.executor:ARDiscreteChunkGatherer",
+    gatherer_cls: str = "vrl.generation.bindings.token_autoregressive.executor:ARDiscreteChunkGatherer",
     request_metadata_namespace: str | None = None,
 ) -> ModelFamilyEntry:
-    """Construct common wiring for current causal token-policy variants."""
+    """Construct common wiring for current token-autoregressive policy variants."""
 
     return ModelFamilyEntry(
         family=family,
         task=task,
         policy_semantics=PolicySemantics(
-            temporal_organization="causal",
+            generation_regime="token_autoregressive",
             step_kind="token",
             action_distribution=action_distribution,
             trajectory_layout=trajectory_layout,
@@ -332,7 +334,7 @@ def _causal_token_entry(
 
 
 _register_model_family(
-    _joint_denoise_entry(
+    _full_sequence_denoise_entry(
         family="sd3_5",
         task="t2i",
         build=DenoiseFamilyBuild(
@@ -344,7 +346,7 @@ _register_model_family(
 )
 
 _register_model_family(
-    _joint_denoise_entry(
+    _full_sequence_denoise_entry(
         family="flux",
         task="t2i",
         build=DenoiseFamilyBuild(
@@ -356,7 +358,7 @@ _register_model_family(
 )
 
 _register_model_family(
-    _joint_denoise_entry(
+    _full_sequence_denoise_entry(
         family="qwen_image",
         task="t2i",
         # Descriptor-driven family: the generic functions in
@@ -371,7 +373,7 @@ _register_model_family(
 )
 
 _register_model_family(
-    _joint_denoise_entry(
+    _full_sequence_denoise_entry(
         family="sana",
         task="t2i",
         build=DenoiseFamilyBuild(
@@ -383,7 +385,7 @@ _register_model_family(
 )
 
 _register_model_family(
-    _joint_denoise_entry(
+    _full_sequence_denoise_entry(
         family="lumina2",
         task="t2i",
         build=DenoiseFamilyBuild(
@@ -395,7 +397,7 @@ _register_model_family(
 )
 
 _register_model_family(
-    _joint_denoise_entry(
+    _full_sequence_denoise_entry(
         family="hunyuan_video",
         task="t2v",
         build=DenoiseFamilyBuild(
@@ -407,7 +409,7 @@ _register_model_family(
 )
 
 _register_model_family(
-    _joint_denoise_entry(
+    _full_sequence_denoise_entry(
         family="mochi",
         task="t2v",
         build=DenoiseFamilyBuild(
@@ -419,7 +421,7 @@ _register_model_family(
 )
 
 _register_model_family(
-    _joint_denoise_entry(
+    _full_sequence_denoise_entry(
         family="hunyuan_image",
         task="t2i",
         build=DenoiseFamilyBuild(
@@ -431,7 +433,7 @@ _register_model_family(
 )
 
 _register_model_family(
-    _joint_denoise_entry(
+    _full_sequence_denoise_entry(
         family="pixart_sigma",
         task="t2i",
         build=DenoiseFamilyBuild(
@@ -447,7 +449,7 @@ _register_model_family(
 )
 
 _register_model_family(
-    _joint_denoise_entry(
+    _full_sequence_denoise_entry(
         family="cogvideox",
         task="t2v",
         build=DenoiseFamilyBuild(
@@ -462,7 +464,7 @@ _register_model_family(
 )
 
 _register_model_family(
-    _joint_denoise_entry(
+    _full_sequence_denoise_entry(
         family="wan_2_1",
         task="t2v",
         # The two wan entries carry their own per-variant recipes, so the
@@ -480,7 +482,7 @@ _register_model_family(
 )
 
 _register_model_family(
-    _joint_denoise_entry(
+    _full_sequence_denoise_entry(
         family="wan_2_1_i2v",
         task="i2v",
         executor_cls="vrl.models.families.wan_2_1.runtime:Wan_2_1I2VChunkExecutor",
@@ -494,7 +496,7 @@ _register_model_family(
 )
 
 _register_model_family(
-    _joint_denoise_entry(
+    _full_sequence_denoise_entry(
         family="cosmos-predict2",
         task="v2w",
         executor_cls="vrl.models.families.cosmos.predict2.runtime:CosmosChunkExecutor",
@@ -507,7 +509,7 @@ _register_model_family(
 )
 
 _register_model_family(
-    _joint_denoise_entry(
+    _full_sequence_denoise_entry(
         family="cosmos-predict2.5",
         task="t2w",
         executor_cls=(
@@ -528,7 +530,7 @@ _register_model_family(
 )
 
 _register_model_family(
-    _joint_denoise_entry(
+    _full_sequence_denoise_entry(
         family="cosmos3",
         task="t2v",
         executor_cls="vrl.models.families.cosmos.cosmos3.runtime:Cosmos3ChunkExecutor",
@@ -542,7 +544,7 @@ _register_model_family(
 )
 
 _register_model_family(
-    _joint_denoise_entry(
+    _full_sequence_denoise_entry(
         family="cosmos-predict2-anima",
         task="t2i",
         build=DenoiseFamilyBuild(
@@ -555,7 +557,7 @@ _register_model_family(
 )
 
 _register_model_family(
-    _joint_denoise_entry(
+    _full_sequence_denoise_entry(
         family="echo",
         task="t2v",
         executor_cls="vrl.models.families.echo.runtime:EchoChunkExecutor",
@@ -577,7 +579,7 @@ _JANUS_PRO_BUILD = TokenFamilyBuild(
 )
 
 _register_model_family(
-    _causal_token_entry(
+    _token_autoregressive_entry(
         family="janus_pro",
         action_distribution="categorical",
         executor_cls="vrl.models.families.janus_pro.runtime:JanusProChunkExecutor",
@@ -586,7 +588,7 @@ _register_model_family(
 )
 
 _register_model_family(
-    _causal_token_entry(
+    _token_autoregressive_entry(
         family="janus_pro_r1",
         action_distribution="categorical",
         task="ar_t2i_r1",
@@ -598,7 +600,7 @@ _register_model_family(
 )
 
 _register_model_family(
-    _causal_token_entry(
+    _token_autoregressive_entry(
         family="nextstep_1",
         action_distribution="continuous",
         executor_cls="vrl.models.families.nextstep_1.runtime:NextStep1ChunkExecutor",
@@ -616,7 +618,7 @@ _register_model_family(
 )
 
 _register_model_family(
-    _causal_token_entry(
+    _token_autoregressive_entry(
         family="emu3",
         action_distribution="categorical",
         executor_cls="vrl.models.families.emu3.runtime:Emu3ChunkExecutor",
@@ -631,7 +633,7 @@ _register_model_family(
 )
 
 _register_model_family(
-    _causal_token_entry(
+    _token_autoregressive_entry(
         family="glm_image",
         action_distribution="categorical",
         executor_cls="vrl.models.families.glm_image.runtime:GlmImageChunkExecutor",
@@ -646,7 +648,7 @@ _register_model_family(
 )
 
 _register_model_family(
-    _causal_token_entry(
+    _token_autoregressive_entry(
         family="llamagen",
         action_distribution="categorical",
         executor_cls="vrl.models.families.llamagen.runtime:LlamaGenChunkExecutor",
@@ -678,7 +680,7 @@ def get_model_family_entry(family: str) -> ModelFamilyEntry:
 
 __all__ = [
     "FAMILY_REGISTRY",
-    "GENERIC_DENOISE_EXECUTOR",
+    "GENERIC_FULL_SEQUENCE_DENOISE_EXECUTOR",
     "GenerationRuntimeCapabilities",
     "ModelFamilyEntry",
     "PolicySemantics",

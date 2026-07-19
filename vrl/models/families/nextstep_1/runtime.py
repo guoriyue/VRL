@@ -8,12 +8,12 @@ from typing import Any
 
 import torch
 
-from vrl.generation.bindings.causal_token import (
+from vrl.generation.bindings.token_autoregressive import (
     ARChunkExecutorBase,
     ARRequestLayout,
     ARSamplingParams,
 )
-from vrl.generation.composition.causal.token_loop import CausalTokenLoop
+from vrl.generation.composition.token_autoregressive.token_loop import TokenAutoregressiveLoop
 from vrl.generation.execution.chunks import SampleChunk
 from vrl.generation.types import (
     GenerationOutput,
@@ -167,7 +167,7 @@ class NextStep1ChunkExecutor(ARChunkExecutorBase):
         if generator is not None:
             sample_kwargs["generator"] = generator
 
-        decode_result = CausalTokenLoop(
+        decode_result = TokenAutoregressiveLoop(
             request=request,
             sample_rows=self.layout.chunk_sample_rows(request, chunk),
             runner=self._ar_runner(request),

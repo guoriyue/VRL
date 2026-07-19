@@ -6,7 +6,7 @@ from typing import Any
 
 import torch
 
-from vrl.generation.composition.causal.token_loop import CausalTokenLoop
+from vrl.generation.composition.token_autoregressive.token_loop import TokenAutoregressiveLoop
 from vrl.generation.steps.token import TokenLoopInit, TokenStepBatch, TokenStepOutput
 from vrl.generation.types import GenerationRequest, GenerationSampleRow
 
@@ -75,7 +75,7 @@ def test_ar_decode_loop_schedules_contract_cache_lanes() -> None:
     """Checks AR decode loop schedules contract cache lanes."""
     runner = _DeterministicARContractRunner()
 
-    result = CausalTokenLoop(
+    result = TokenAutoregressiveLoop(
         request=_request(),
         sample_rows=[_sample_row(index) for index in range(3)],
         runner=runner,
@@ -97,7 +97,7 @@ def test_ar_decode_loop_schedules_contract_cache_lanes() -> None:
 def test_ar_decode_loop_requires_family_hooks() -> None:
     """Checks AR decode loop requires family hooks."""
     try:
-        CausalTokenLoop(
+        TokenAutoregressiveLoop(
             request=_request(),
             sample_rows=[_sample_row(0)],
             runner=object(),
@@ -111,4 +111,4 @@ def test_ar_decode_loop_requires_family_hooks() -> None:
         assert "step_token" in str(exc)
         assert "finalize_token" in str(exc)
     else:
-        raise AssertionError("CausalTokenLoop should reject models without AR hooks")
+        raise AssertionError("TokenAutoregressiveLoop should reject models without AR hooks")

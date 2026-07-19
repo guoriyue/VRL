@@ -1,6 +1,6 @@
-"""Concrete joint-denoise generation binding."""
+"""Concrete full-sequence denoise generation binding."""
 
-from vrl.generation.bindings.joint_denoise.executor import (
+from vrl.generation.bindings.full_sequence_denoise.executor import (
     DiffusionChunkExecutor,
     DiffusionChunkExecutorBase,
     DiffusionChunkResult,
@@ -9,8 +9,8 @@ from vrl.generation.bindings.joint_denoise.executor import (
     DiffusionPromptStageInput,
     DiffusionPromptStageOutput,
 )
-from vrl.generation.bindings.joint_denoise.gather import DiffusionChunkGatherer
-from vrl.generation.bindings.joint_denoise.layout import (
+from vrl.generation.bindings.full_sequence_denoise.gather import DiffusionChunkGatherer
+from vrl.generation.bindings.full_sequence_denoise.layout import (
     DiffusionBaseParams,
     DiffusionRequestLayout,
     DiffusionSamplingParams,
