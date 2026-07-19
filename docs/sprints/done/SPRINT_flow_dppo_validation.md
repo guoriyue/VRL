@@ -1,12 +1,11 @@
-# SPRINT: Flow-DPPO 正确性验证实验（flux + GenEval）
+# SPRINT: Flow-DPPO 正确性验证实验（flux + PickScore）
 
-Status: **DONE — mechanism validation only (2026-07-18)**. The mask was
-non-zero, threshold-monotonic, asymmetric, and controlled drift. The short run
-did not establish a >2σ held-out learning curve; that longer claim is
-consolidated into the trustworthy reference-curve program.
+状态：**已完成——仅机制验证（2026-07-18）**。mask 非零、随 threshold 单调变化、具有
+不对称性，并能控制 drift。短跑没有建立 held-out reward 上升 >2σ 的曲线；该长期结论已移交
+可信 reference-curve 计划。
 
-> 来源：实现 `vrl/algorithms/grpo/continuous.py:239`（`FlowDPPO`）+ recipe
-> `configs/recipe/online/flow_matching_dppo.yaml` + 母体论文
+> 来源：实现 `vrl/algorithms/grpo/continuous.py`（`FlowDPPO`）+ recipe
+> `vrl/config/presets/recipe/online/flow_matching_dppo.yaml` + 母体论文
 > `docs/papers/diffusion-flow-rl/flow-grpo-online-flow-matching-rl.pdf`（FlowGRPO 的
 > 高斯 KL 闭式）+ 信赖域参照 `op-grpo-off-policy-flow.pdf`。
 > **注**：Flow-DPPO 无独立 PDF；它是 FlowGRPO 配方 + DPPO 信赖域（verl-omni
@@ -14,25 +13,25 @@ consolidated into the trustworthy reference-curve program.
 > 相关：[[SPRINT_grpo_guard_validation]]（同读 rollout proposal mean 的另一信赖域变体）、
 > [[SPRINT_segment_signal_dead_field_cleanup]]（`old_prev_sample_mean` 即为此算法保留）。
 
-## 0. Core Decision（先看这一段）
+## 0. 核心结论（先看这一段）
 
 **Flow-DPPO 用"精确高斯 KL 的不对称信赖域"替换 PPO 的对称 ratio clip。** 它**不 clip
 ratio**，而是计算当前 vs rollout proposal mean 的高斯 KL，把**高 KL 且在扩大差距**的样本
 整条丢掉（正 advantage 把 ratio 往上推、或负 advantage 把 ratio 往下推），保留所有"拉回旧策略"
-的更新。所以正确性有三个判据：
+的更新。正确性分成机制闭环与长期学习两个层次；本 sprint 只关闭机制层：
 
-1. **能把 reward 学起来**（信赖域没把信号全 mask 掉）。
-2. **`masked_fraction` 落在合理带内**（不为 0、不接近 1）——`kl_mask_threshold` 是唯一旋钮，
-   sweep 它应能单调改变 mask 比例与 drift。
-3. **不对称性成立**：只有"扩大差距"的更新被丢，"拉回"的永远保留（`continuous.py:288-290`）。
+1. **机制正确性（本 sprint 已关闭）：**mask 具有不对称性，依赖 rollout proposal mean 与
+   `dt`，在 policy drift 下变为非零，随 `kl_mask_threshold` 单调变化，并能控制 drift。
+2. **学习有效性（本 sprint 未关闭）：**固定 held-out reward 必须在长跑中上升 >2σ；
+   PickScore 短探针没有建立该结论。
 
 硬前置：Flow-DPPO 读 `signals.old_prev_sample_mean`（rollout 时的 reverse-SDE proposal
-mean），所以 recipe **必须** `rollout.return_prev_sample_mean: true`（`flow_matching_dppo.yaml:10`），
-否则 `_require_trust_region_signals` 立即 fail（`continuous.py:205-212`）。
+mean），所以 recipe **必须** `rollout.return_prev_sample_mean: true`，否则
+`_require_trust_region_signals` 立即 fail。
 
 ## 1. 算法实锤
 
-### 1.1 信赖域 mask（核心，`continuous.py:267-293`）
+### 1.1 信赖域 mask（核心，`FlowDPPO.compute_loss`）
 
 ```python
 ratio = torch.exp(signals.log_prob - signals.old_log_prob)
@@ -46,7 +45,7 @@ per_sample_loss = torch.where(keep, -advantages * ratio, 0)   # NO ratio clip
 ```
 
 - **无 ratio clip**：与 GRPO/DanceGRPO 的关键差别。信赖域完全靠 KL mask。
-- `add_kl_coefficient=True`（`FlowDPPOConfig:236`）→ KL 的 sigma 折进每步扩散系数
+- `add_kl_coefficient=True`（见 `FlowDPPOConfig`）→ KL 的 sigma 折进每步扩散系数
   `sigma_t = std_dev_t * sqrt_dt`（闭式 `compute_kl_divergence`）；False 则退化为单位方差
   `mean_diff²/2`（对齐 verl-omni 的 `add_kl_coefficient=False` 分支）。
 - `kl_mask_threshold=1.0`（默认）= 信赖域边界。
@@ -57,88 +56,53 @@ per_sample_loss = torch.where(keep, -advantages * ratio, 0)   # NO ratio clip
 **rollout 策略**（不是 frozen ref），度量 current-vs-rollout drift——这正是
 `old_prev_sample_mean` 这个第三个均值存在的理由。
 
-## 2. 实验设计（data / reward / model）
+## 2. 实际运行的实验
 
-| 维度 | 选择 | 理由 |
-|---|---|---|
-| 模型 | **flux/dev** LoRA bf16 256² | 与 [[SPRINT_dance_grpo_validation]] 同一 t2i 母体，便于横比；SDE-logprob 路径 family-agnostic（`factory.py` 按 `kind` 选 evaluator，不挑 family）。显存吃紧退 `wan_2_1/1_3b`。 |
-| 数据 | **`/dataset/geneval`** | Flow-GRPO 的组合性头条任务，prompt 带 object/count/color/position 结构；有 `eval_manifest`（test.jsonl）可做固定 eval（`configs/dataset/geneval.yaml`）。 |
-| 奖励 | **`/reward/geneval`** | 规则化组合性打分（counting/position/color），论文里**奖励即 metric**。⚠️ **需接线**：`configs/reward/geneval.yaml` 的 `import_path: ""` 留空——必须填入对象检测打分器（Mask2Former 类）的 import 路径才能跑（`vrl/rewards/functions/geneval.py`）。**runnable-today fallback：`/reward/pickscore`（CLIP-H，全本地）或 `/reward/ocr`**。 |
-| 超参 | `kl_mask_threshold=1.0`（默认，主 sweep 对象）、`add_kl_coefficient=true`、`kl_coef=0`（无显式 KL 罚项，信赖域靠 mask）、`global_std=true`、`G=16`（Flow-GRPO GenEval 用 24；G<12 在 Flow-GRPO 会塌，单卡折中 16，不稳就靠 grad-accum 升到 24）、`num_steps=10`、`noise_level=0.7`、`lr=1e-4`、`return_prev_sample_mean=true`（recipe 已设） |
-| 对照 | (a) plain `flow_matching_grpo`（有 ratio clip，Flow-GRPO GenEval 配方 `kl_coef=0.04`）；(b) Flow-DPPO 自身 sweep `kl_mask_threshold ∈ {0.3, 1.0, 3.0}` | 证明信赖域可控、且能替代 clip 学起来 |
+当前维护的入口是
+`vrl/config/presets/experiment/flux/online_flow_dppo_pickscore_validation.yaml`。
+它使用 flux/dev、PickScore + `pickscore_sfw`、`ppo_epochs=4`、group size 16 和
+`return_prev_sample_mean=true`。仓库没有维护中的
+`online_flow_dppo_geneval_validation` 配置。GenEval 只是原始论文锚点；其 scorer 在该环境中
+不可运行，也不是本关闭记录实际使用的 reward。
 
-## 3. 落地
+threshold sweep 使用
+`algorithm.kl_mask_threshold={0.0003,0.002,0.005,0.015}`。在该短探针中，配置默认值
+`1.0` 是没有触发 mask 的 baseline，不是有效工作的 trust-region 设置。
 
-> 2026-07-11 配置面纠偏：`reward/geneval` 仍保留为 scorer adapter，但默认
-> `import_path: ""` 没有可执行 evaluator。因此不再发布
-> `experiment/sd3_5/online_grpo_geneval` 这类必然在运行时失败的 active
-> experiment。下面的 Flow-DPPO 配方在真实 GenEval scorer 接入并通过 reward memory
-> preflight 前只是一份设计草案；今天可运行的验证继续使用 PickScore/OCR fallback。
+## 3. 机制观测证据
 
-新建 `configs/experiment/flux/online_flow_dppo_geneval_validation.yaml`：
+- `ppo_epochs=1` 时，mask 与 drift 都为零。
+- `ppo_epochs=4` 且 threshold=`1.0` 时，mask 仍为零，drift KL 升至 `0.0147`，reward
+  从 `0.784` 降至 `0.681`。
+- threshold 为 `0.0003`、`0.002`、`0.005`、`0.015` 时，mask fraction 均值分别是
+  `8.8%`、`1.8%`、`0.8%`、`0.03%`；drift KL 均值保持约 `0.0002-0.0004`，最终
+  reward 分别是 `0.783`、`0.782`、`0.776`、`0.780`。
 
-```yaml
-# Flow-DPPO correctness-validation run: Gaussian-KL trust region (no ratio clip).
-defaults:
-  - /recipe/online/flow_matching_dppo        # sets return_prev_sample_mean: true
-  - /model/flux/dev
-  - /sampling/image/512
-  - /sampling/denoise/10_step_cfg_4_5
-  - /reward/geneval            # <- Flow-GRPO headline task; set reward.kwargs.geneval.import_path!
-  - /dataset/geneval
-  - _self_
+因此，mask 变为非零并随 threshold 增大而单调下降，也阻止了未 mask baseline 的
+drift/reward 退化。原始静态 `5%-40%` 目标不是可靠的通用 finishing band：mask 生效后，
+负反馈会减少继续超过 threshold 的样本比例。
 
-precision:
-  training:
-    dtype: bf16
-sampling: { height: 256, width: 256, num_steps: 10, max_sequence_length: 64 }
+## 4. 关闭判据与结论
 
-# REQUIRED: wire the GenEval object-detector scorer (geneval.yaml ships import_path: "").
-# reward: { kwargs: { geneval: { import_path: "<your.module:Scorer>" } } }
+### 4.1 机制闭环——已完成
 
-actor:
-  optim: { lr: 1.0e-4 }
-  gradient_checkpointing: true
+- 单元测试证明不对称四象限 mask：只移除扩大 policy gap 的 high-KL update，保留拉回旧策略的
+  update。
+- zero drift 保留所有样本；两条 KL variance 分支都有覆盖。
+- 缺少 `old_prev_sample_mean` 或 `dt` 会 fail fast，typed algorithm dispatch 选择
+  `FlowDPPO`。
+- trust-region 算法拒绝 strict on-policy `ppo_epochs=1`，但允许 multi-epoch reuse。
+- 短 threshold sweep 证明 mask 非零、随 threshold 单调变化，并能控制 policy drift。
 
-algorithm:
-  kl_mask_threshold: 1.0       # trust-region boundary (the one knob to sweep)
-  add_kl_coefficient: true     # fold sqrt(-dt) diffusion coeff into KL sigma
-  global_std: true
+这些 true/false 路径由
+`tests/algorithms/test_flow_dppo_grpo_guard.py` 和
+`tests/trainers/online/test_trust_region_engages.py` 固定。
 
-rollout:
-  n_samples_per_prompt: 16     # Flow-GRPO GenEval uses 24; <12 collapses. 16 = single-GPU floor
-  rollout_batch_size: 8
-  sample_batch_size: 1
-  noise_level: 0.7
-  return_prev_sample_mean: true        # REQUIRED (recipe default; explicit here)
-  sde: { window_range: [0, 10] }
+### 4.2 原始完整曲线判据——未完成；已移交
 
-trainer:
-  entrypoint: vrl.scripts.train:train_online
-  output_dir: outputs/flux_flow_dppo_geneval_validation
-  total_epochs: 300
-  save_freq: 50
-  debug: { first_step: true }
-  eval: { enabled: true, freq: 25, samples_per_prompt: 2, max_prompts: 32, seed: 20260621 }
-
-model: { torch_compile: { enable: false } }
-```
-
-## 4. 判据（finishing criteria）
-
-- **学习信号**：固定 GenEval test 集 `eval_reward_mean` 单调上升 >2σ，over ~200-300 更新——证明
-  **无 ratio clip 也能靠信赖域学起来**。锚点：Flow-GRPO GenEval **0.63→0.95**（baseline GRPO
-  应往 ~0.9+ 爬，Flow-DPPO 与之相当）。
-- **mask 比例在带内**：`clip_fraction`（此处复用为 `masked_fraction`，`continuous.py:306`）
-  应 ∈ ~5%–40%。**≈0** → 信赖域从未触发（`kl_mask_threshold` 太松，等于裸 unclipped policy
-  gradient，会不稳）；**≈1** → 几乎全丢（太紧，学不动）。
-- **threshold 可控性**：sweep `kl_mask_threshold ∈ {0.3,1.0,3.0}`，mask 比例应**单调下降**、
-  `approx_kl`（drift）随阈值放松而**单调上升**——证明旋钮真的在控制信赖域。
-- **不对称性自检**（一次性 unit-level）：构造正/负 advantage × 高/低 ratio 的 4 象限输入，
-  确认只有 `(high_kl, ratio>1, adv>0)` 和 `(high_kl, ratio<1, adv<0)` 被 mask，另两象限保留
-  （直接断言 `continuous.py:288-290` 的 keep 掩码）。
-- **前置 fail-fast**：故意不设 `return_prev_sample_mean` 应在第 0 步抛
-  `"FlowDPPO needs signals.old_prev_sample_mean"`（`continuous.py:207`）——证明硬契约生效。
+原计划要求固定 held-out reward 在约 200-300 次 update 后上升 >2σ，并以 Flow-GRPO 的
+GenEval `0.63 -> 0.95` 作为论文锚点。本 sprint 实际运行 PickScore 而非 GenEval；短探针
+不能建立该学习结论。长曲线证据归可信 reference-curve 计划所有。
 
 ## 5. 非目标 / Non-Goals
 
@@ -146,18 +110,21 @@ model: { torch_compile: { enable: false } }
   本仓库未实现，超出范围（仅作信赖域参照）。
 - **不调 `compute_kl_divergence` 数学**——闭式已与 FlowGRPO 母体一致。
 - **不复现论文绝对数值**——验证信赖域**形状/可控性**，非数字。
-- **不实现 GenEval 检测器**——本 sprint 假设 `import_path` 已接好（或用 pickscore/ocr fallback）；
-  接线打分器本身归 reward 基建，不在本 sprint。
+- **不实现或运行 GenEval 检测器**——该 scorer 不属于本 sprint；机制探针使用的是 PickScore。
 
 ## References
-- 实现：`vrl/algorithms/grpo/continuous.py:195-309`（`_require_trust_region_signals` +
-  `FlowDPPO`）、`configs/base/algorithm/flow_dppo.yaml`、
-  `configs/recipe/online/flow_matching_dppo.yaml`
+- 实现：`vrl/algorithms/grpo/continuous.py`（`_require_trust_region_signals` +
+  `FlowDPPO`）、`vrl/config/presets/base/algorithm/flow_dppo.yaml`、
+  `vrl/config/presets/recipe/online/flow_matching_dppo.yaml`
 - 母体/参照论文：`docs/papers/diffusion-flow-rl/flow-grpo-online-flow-matching-rl.pdf`
   （高斯 KL 闭式）、`docs/papers/diffusion-flow-rl/op-grpo-off-policy-flow.pdf`（信赖域/clip
   fraction 视角）
-- KL 闭式：`vrl/math/diffusion/flow_matching.py: compute_kl_divergence`
-- proposal-mean 存储：`vrl/generation/diffusion/executor.py:203-209`、`layout.py:62-141`
-- 基线 config：`configs/experiment/flux/online_grpo_smoke_single_gpu.yaml`
-- 奖励/数据：`vrl/rewards/functions/geneval.py`、`configs/reward/geneval.yaml`（`import_path` 需填）、
-  `configs/dataset/geneval.yaml`（fallback：`configs/reward/{pickscore,ocr}.yaml`）
+- KL 闭式：`vrl/math/denoise/flow_matching.py`
+- proposal-mean 存储：`vrl/generation/bindings/joint_denoise/executor.py`
+- 当前维护的实验：
+  `vrl/config/presets/experiment/flux/online_flow_dppo_pickscore_validation.yaml`
+- 奖励/数据：`vrl/rewards/functions/pickscore.py`、
+  `vrl/config/presets/reward/pickscore.yaml`、
+  `vrl/config/presets/dataset/pickscore_sfw.yaml`
+- 回归测试：`tests/algorithms/test_flow_dppo_grpo_guard.py`、
+  `tests/trainers/online/test_trust_region_engages.py`

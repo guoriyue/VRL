@@ -1,35 +1,43 @@
 # SPRINT: GRPO-Guard 正确性验证实验（flux + PickScore）
 
-Status: **DONE — mechanism validation only (2026-07-18)**. Ratio-mean-bias and
-clipping engaged under the multi-epoch probe. The short run did not establish a
->2σ held-out learning curve; that longer claim is consolidated into the
-trustworthy reference-curve program.
+状态：**已完成——仅机制验证（2026-07-18）**。multi-epoch 探针触发了
+ratio-mean-bias 与 clipping。短跑没有建立 held-out reward 上升 >2σ 的曲线；该长期结论已
+移交可信 reference-curve 计划。
 
-> 来源：实现 `vrl/algorithms/grpo/continuous.py:321`（`GRPOGuard`）+ recipe
-> `configs/recipe/online/flow_matching_grpo_guard.yaml` + 母体论文
+> 来源：实现 `vrl/algorithms/grpo/continuous.py`（`GRPOGuard`）+ recipe
+> `vrl/config/presets/recipe/online/flow_matching_grpo_guard.yaml` + 母体论文
 > `docs/papers/diffusion-flow-rl/flow-grpo-online-flow-matching-rl.pdf`。
 > **注**：GRPO-Guard 无独立 PDF（verl-omni 合成）；判据从算法契约 + FlowGRPO 母体推导。
 > 相关：[[SPRINT_flow_dppo_validation]]（同读 proposal mean，但走"丢样本"而非"软修正"）。
 
-## 0. Core Decision（先看这一段）
+## 0. 核心结论（先看这一段）
 
 **GRPO-Guard 与 Flow-DPPO 处理同一个问题（current-vs-rollout 均值漂移），但走相反的设计：
-保留每个样本，把漂移软性折进 ratio 指数 + 跨去噪步归一 loss 幅度。** 所以正确性判据：
+信赖域本身不按 KL 丢样本，而是把漂移软性折进 ratio 指数 + 跨去噪步归一 loss 幅度。**
+正确性分成机制闭环与
+长期学习两个层次；本 sprint 只关闭机制层：
 
-1. **能把 reward 学起来**（修正项没把梯度弄坏）。
-2. **保留全部样本**——不像 Flow-DPPO 会 mask；GRPO-Guard 的 `clip_fraction` 来自标准 ratio
-   clip（`clip_ratio=1e-4`），`kl_penalty` 指标在这里记的是 `ratio_mean_bias.mean()`
-   （`continuous.py:372`），应**有限且小**。
-3. **跨步幅度归一生效**：loss 除以 `sqrt_dt_mean²`（`continuous.py:360`），让早/晚 timestep
-   的梯度量级可比——这是 "Guard" 的稳定性来源。判别性实验：在**会放大漂移的设置**下
-   （更高 lr / 跨全 timestep 训练），GRPO-Guard 应比 plain GRPO 更稳。
+1. **机制正确性（本 sprint 已关闭）：**在默认 precision-correction 设置下保留所有样本，
+   要求 rollout proposal mean 与 `dt`，在 drift 下触发 ratio-mean-bias，并在
+   multi-epoch reuse 中触发 clipped surrogate。
+2. **学习有效性（本 sprint 未关闭）：**固定 held-out PickScore 必须在长跑中上升 >2σ；短探针
+   没有建立该结论。
+
+默认 precision correction 关闭时，GRPO-Guard 的信赖域本身不像 Flow-DPPO 那样 mask。
+`clip_fraction` 来自标准 ratio clip（`clip_ratio=1e-4`）；`kl_penalty` 在这里记录
+`ratio_mean_bias.mean()`，应**有限且小**。可选的共享 TIS/RS precision correction 仍可拒绝
+精度漂移样本；这不是 GRPO-Guard 信赖域的样本丢弃语义。
+
+**跨步幅度归一**：loss 除以 `sqrt_dt_mean²`，让早/晚 timestep 的梯度量级可比——这是
+"Guard" 的稳定性来源。判别性实验应在会放大漂移的设置下比较 plain GRPO，但该长期对照没有
+在本 sprint 完成。
 
 硬前置：同 Flow-DPPO，读 `old_prev_sample_mean`，recipe 必须 `return_prev_sample_mean: true`
 （`flow_matching_grpo_guard.yaml`），否则 `_require_trust_region_signals` fail-fast。
 
 ## 1. 算法实锤
 
-### 1.1 ratio-mean-bias + step-scale norm（核心，`continuous.py:347-360`）
+### 1.1 ratio-mean-bias + step-scale norm（核心，`GRPOGuard.compute_loss`）
 
 ```python
 log_ratio = signals.log_prob - signals.old_log_prob
@@ -45,99 +53,75 @@ policy_loss = per_sample_loss.mean() / sqrt_dt_mean.pow(2).clamp_min(1e-12)   # 
 
 - **保留 clipped surrogate**（与 GRPO 同），但 ratio 先被 `ratio_mean_bias` 软修正再 clip。
 - `dt` 由 `_require_trust_region_signals` 保证存在（**无静默 fallback-to-1**，否则 step-scale
-  归一会被悄悄抹掉，`continuous.py:348-349`）。
+  归一会被悄悄抹掉）。
 - guard 项**不引入新超参**：全部由每步扩散 scale（`std_dev_t`、`sqrt_dt`）派生
-  （`GRPOGuardConfig` 注释，`continuous.py:313-318`）。
+  （见 `GRPOGuardConfig`）。
 
 ## 2. 实验设计（data / reward / model）
 
 | 维度 | 选择 | 理由 |
 |---|---|---|
 | 模型 | **flux/dev** LoRA bf16 256² | 与另两个 GRPO 变体同母体，可三方横比。显存吃紧退 `wan_2_1/1_3b`。 |
-| 数据 | **`/dataset/pickscore_sfw`** | Flow-GRPO 的人类偏好 prompt 集（SFW），有 `eval_manifest`（test.txt）可做固定 eval（`configs/dataset/pickscore_sfw.yaml`）。 |
+| 数据 | **`/dataset/pickscore_sfw`** | Flow-GRPO 的人类偏好 prompt 集（SFW），有 `eval_manifest`（test.txt）可做固定 eval（`vrl/config/presets/dataset/pickscore_sfw.yaml`）。 |
 | 奖励 | **`/reward/pickscore`**（CLIP-ViT-H-14 + `PickScore_v1`，fp32，全本地） | Flow-GRPO 的偏好 reward model，**直接对应论文 PickScore task**。比 OCR 重（要下 CLIP-H + PickScore 权重）但全本地、无需接线（`vrl/rewards/functions/pickscore.py`）。 |
 | 超参 | `clip_ratio=1e-4`（recipe）、`kl_coef=0`、`global_std=true`、`G=16`（Flow-GRPO 用 24；单卡折中）、`num_steps=10`、`noise_level=0.7`、`lr=1e-4`、`return_prev_sample_mean=true`（recipe 已设） |
 | 对照 | plain `flow_matching_grpo`，**同 lr 与 timestep_fraction=1.0**（跨全步训练、放大漂移；Flow-GRPO PickScore 配方 `kl_coef=0.01`） | GRPO-Guard 的卖点是在漂移大时更稳；对照需制造漂移才能体现差别 |
 
-## 3. 落地
+## 3. 可复现入口与观测结果
 
-新建 `configs/experiment/flux/online_grpo_guard_pickscore_validation.yaml`：
+当前维护的实验配置是
+`vrl/config/presets/experiment/flux/online_grpo_guard_pickscore_validation.yaml`。
+它选择 GRPO-Guard recipe、PickScore + `pickscore_sfw`、全 timestep 训练、
+`ppo_epochs=4`、group size 16 和 `return_prev_sample_mean=true`。
 
-```yaml
-# GRPO-Guard correctness-validation run: ratio-mean-bias + per-step scale norm.
-defaults:
-  - /recipe/online/flow_matching_grpo_guard   # sets return_prev_sample_mean: true
-  - /model/flux/dev
-  - /sampling/image/512
-  - /sampling/denoise/10_step_cfg_4_5
-  - /reward/pickscore          # <- Flow-GRPO human-preference task (local CLIP-H + PickScore_v1)
-  - /dataset/pickscore_sfw
-  - _self_
+短探针显示了预期的前后差异：
 
-precision:
-  training:
-    dtype: bf16
-sampling: { height: 256, width: 256, num_steps: 10, max_sequence_length: 64 }
+- `ppo_epochs=1`：ratio-mean-bias 与 clip fraction 都为零；
+- `ppo_epochs=4`：ratio-mean-bias 为 `0.00028-0.00047`，clip fraction 为
+  `0.025-0.095`。
 
-actor:
-  optim: { lr: 1.0e-4 }
-  gradient_checkpointing: true
-  timestep_fraction: 1.0       # train across all denoise steps -> exercises the per-step norm
+reward 曲线仍在短跑噪声内，且没有完成成对的 plain-GRPO 长期稳定性曲线。这些测量只证明机制
+触发，不证明收敛或比较质量。
 
-algorithm:
-  clip_ratio: 1.0e-4
-  global_std: true
+## 4. 关闭判据与结论
 
-rollout:
-  n_samples_per_prompt: 16     # Flow-GRPO uses 24; 16 = single-GPU floor (watch zero_std_ratio)
-  rollout_batch_size: 8
-  sample_batch_size: 1
-  noise_level: 0.7
-  return_prev_sample_mean: true        # REQUIRED (recipe default; explicit here)
-  sde: { window_range: [0, 10] }
+### 4.1 机制闭环——已完成
 
-trainer:
-  entrypoint: vrl.scripts.train:train_online
-  output_dir: outputs/flux_grpo_guard_pickscore_validation
-  total_epochs: 300
-  save_freq: 50
-  debug: { first_step: true }
-  eval: { enabled: true, freq: 25, samples_per_prompt: 2, max_prompts: 32, seed: 20260621 }
+- 没有 proposal-mean drift 且 scale=1 时，GRPO-Guard 近似共享 Flow-GRPO objective；
+  drift 增大时 ratio-mean-bias 随之增大。
+- 缺少 `old_prev_sample_mean` 或 `dt` 会 fail fast，typed dispatch 选择 `GRPOGuard`。
+- trust-region 算法拒绝 strict on-policy `ppo_epochs=1`，但允许 multi-epoch reuse。
+- 短探针使 ratio-mean-bias 与 clipping 都变为非零，同时 bias 保持有限且小。
 
-model: { torch_compile: { enable: false } }
-```
+这些 true/false 路径由 `tests/algorithms/test_flow_dppo_grpo_guard.py` 和
+`tests/trainers/online/test_trust_region_engages.py` 固定。
 
-## 4. 判据（finishing criteria）
+### 4.2 原始完整曲线判据——未完成；已移交
 
-- **学习信号**：固定 PickScore test 集 `eval_reward_mean` 单调上升 >2σ，over ~200-400 更新。
-  锚点：Flow-GRPO PickScore **21.72→~23.3**（~1400 steps）——本验证只验上升方向/相对稳定性。
-- **保留全样本**：与 Flow-DPPO 不同，GRPO-Guard 不丢样本——确认 loss 用 `.mean()` 全样本
-  （`continuous.py:360`），无 mask 分支。
-- **guard 项有界**：`kl_penalty`（= `ratio_mean_bias.mean()`）**有限且小**（不随训练发散）。
-  若它爆炸 → `scale`/`dt` 取值或 `old_prev_sample_mean` 链路有问题。
-- **step-scale 归一生效**：与对照 plain GRPO（`timestep_fraction=1.0`、同 lr）相比，GRPO-Guard
-  的 `approx_kl` / grad_norm 跨训练应**更平稳**（早/晚步幅度被归一）；plain GRPO 在跨全步 +
-  漂移下应更抖或更易塌。这是 "Guard" 的判别性证据。
-- **dt 硬契约**：删 `return_prev_sample_mean` 或制造缺 `dt` 的输入，应 fail-fast
-  （`continuous.py:217`）——证明无静默 fallback-to-1（否则 step-scale 归一被悄悄关掉）。
-- **first-step**：step 0 `ratio_mean_bias≈0`（rollout==replay，漂移为 0）、`ratio≈1`。
+原计划要求固定 held-out PickScore 在约 200-400 次 update 后上升 >2σ，并用成对
+plain-GRPO 对照证明 KL/gradient 更平稳。短探针没有建立任一长曲线结论；这些证据归可信
+reference-curve 计划所有，而不属于已经关闭的机制 sprint。
 
 ## 5. 非目标 / Non-Goals
 
 - **不与 Flow-DPPO 比谁更好**——两者是不同设计取舍（软修正 vs 丢样本），本 sprint 只验
-  GRPO-Guard 自身正确 + 稳定性卖点成立。
+  GRPO-Guard 自身机制；长期稳定性对比未在这里完成。
 - **不引入新超参**——guard 项由扩散 scale 派生，保持这一性质。
-- **不复现论文绝对数值**——验证机制与稳定性**方向**。
-- **不做 PickScore reward-hacking 审计**——Flow-GRPO 警告 PickScore 去 KL 会塌成单一风格；本
-  sprint 只验 GRPO-Guard 学起来 + 稳定，多样性塌缩另议。
+- **不复现论文绝对数值**——只验证机制，不把短探针解释为长期稳定性证据。
+- **不做 PickScore reward-hacking 审计**——Flow-GRPO 警告 PickScore 去 KL 会塌成单一风格；
+  本 sprint 不对长期学习、稳定性或多样性作结论。
 
 ## References
-- 实现：`vrl/algorithms/grpo/continuous.py:195-224,312-376`（`_require_trust_region_signals`
-  + `GRPOGuard`）、`configs/base/algorithm/grpo_guard.yaml`、
-  `configs/recipe/online/flow_matching_grpo_guard.yaml`
+- 实现：`vrl/algorithms/grpo/continuous.py`（`_require_trust_region_signals`
+  + `GRPOGuard`）、`vrl/config/presets/base/algorithm/grpo_guard.yaml`、
+  `vrl/config/presets/recipe/online/flow_matching_grpo_guard.yaml`
 - 母体论文：`docs/papers/diffusion-flow-rl/flow-grpo-online-flow-matching-rl.pdf`
-- proposal-mean / dt 来源：`vrl/rollouts/evaluators/diffusion/sde_logprob.py`、
-  `vrl/generation/diffusion/executor.py:203-209`
-- 基线 config：`configs/experiment/flux/online_grpo_smoke_single_gpu.yaml`
-- 奖励/数据：`vrl/rewards/functions/pickscore.py`、`configs/reward/pickscore.yaml`、
-  `configs/dataset/pickscore_sfw.yaml`
+- proposal-mean / dt 来源：`vrl/rollouts/evaluators/denoise/sde_logprob.py`、
+  `vrl/generation/bindings/joint_denoise/executor.py`
+- 当前维护的实验：
+  `vrl/config/presets/experiment/flux/online_grpo_guard_pickscore_validation.yaml`
+- 奖励/数据：`vrl/rewards/functions/pickscore.py`、
+  `vrl/config/presets/reward/pickscore.yaml`、
+  `vrl/config/presets/dataset/pickscore_sfw.yaml`
+- 回归测试：`tests/algorithms/test_flow_dppo_grpo_guard.py`、
+  `tests/trainers/online/test_trust_region_engages.py`

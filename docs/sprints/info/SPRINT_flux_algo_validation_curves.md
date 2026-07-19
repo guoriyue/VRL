@@ -1,41 +1,43 @@
 # SPRINT (info / measurement archive): flux 四算法正确性验证 reward 曲线（DanceGRPO / GRPO-Guard / Flow-DPPO / DiffusionNFT）
 
-状态：measurement archive（`info/`）。这是单卡上四个 diffusion-RL 算法的正确性验证观测记录，
-**不是 action item**；保留供复查。Mechanism-only closure records are
-`done/SPRINT_dance_grpo_validation.md`,
-`done/SPRINT_grpo_guard_validation.md`, and
-`done/SPRINT_flow_dppo_validation.md`; DiffusionNFT follow-up remains in
-`parked/SPRINT_diffusion_nft_validation.md`.
+状态：测量归档（`info/`）。这是单卡上四个 diffusion-RL 算法的正确性验证观测记录，
+**不是 action item**；保留供复查。仅机制关闭记录位于
+`done/SPRINT_dance_grpo_validation.md`、
+`done/SPRINT_grpo_guard_validation.md` 和
+`done/SPRINT_flow_dppo_validation.md`；DiffusionNFT follow-up 仍由
+`parked/SPRINT_diffusion_nft_validation.md` 持有。
 日期：2026-06-21 ~ 2026-06-22，单张 RTX 5090（32GB），VRL @ `main`（含未提交的 NFT→flux 移植）。
 模型 flux/dev（LoRA r32/α64, bf16, 256²），num_steps=10，single-GPU colocated strict-on-policy。
 
 ## TL;DR
 
-- **四个算法管线全部正确**：end-to-end 跑通（rc=0），first-step 不变量精确成立
+- **四个算法的短探针管线与机制路径全部跑通**：end-to-end rc=0，first-step 不变量精确成立
   （NFT `first_step_nft_invariant abs_diff=0.000e+00`；dance/dppo first-step log-prob diff `mean=0 max=0`），reward 不发散。
 - **第一轮（`ppo_epochs=1`，默认）四条 reward 全平**，都在 ±0.2σ 噪声内，看不到学习。这是**结构性**的，不是参数没调。
-- **根因（GRPO 三件套同一个）**：recipe 每 epoch 是 collect rollout → **恰好一次 optimizer update**
-  （`online.py:964-998`）。单次更新步上 `old_log_prob == 当前策略` → ratio 恒等于 1 →
+- **根因（GRPO 三件套同一个）**：`ppo_epochs=1` 时每个 rollout batch 只有一次 optimizer update。
+  单次更新步上 `old_log_prob == 当前策略` → ratio 恒等于 1 →
   **所有漂移类机制（ratio_mean_bias / mask / clip）数学上必为 0**，Guard / DPPO 的卖点完全空转。
-- **修复 = 开 `actor.ppo_epochs=4`**（内层 PPO 复用循环本就在 `trainer.py:1201`，只是没人开）。
+- **机制激活条件 = 开 `actor.ppo_epochs=4`**（内层 PPO 复用循环位于
+  `vrl/trainers/online/trainer.py`）。
   inner step≥2 用更新后的策略对同一 rollout batch 重算 log_prob → 产生漂移 → 机制被激活（epoch 0 即可见）。
 - **实测有效**：GRPO-Guard 的 `ratio_mean_bias` 从恒 0 → ~5e-4，`clip_fraction` 从 0 → ~3-10%。
-- **唯一未完全达标的是 Flow-DPPO 的 mask**：ppo_epochs=4 让漂移出现（`kl_penalty` 0.0004→0.0027 上升），
-  但 `kl_mask_threshold=1.0` ≫ 实际漂移（~0.003）→ `masked_fraction` 仍为 0。要落进 5-40% 带，
-  阈值得降到漂移量级（~0.002-0.005）。这是 follow-up（见末尾）。
+- **Flow-DPPO threshold sweep 已完成**：把阈值降到实际漂移量级后，mask 非零且随阈值
+  单调下降；有效信赖域把 drift KL 从 `0.015` 压到约 `0.0003`，并避免 reward 从约
+  `0.78` 退化到 `0.681`。原先静态的 5%-40% mask 带不再作为硬判据。
 - **NFT 一开始就健康**（无需 ppo_epochs 修），是四个里唯一有真实梯度信号的：grad_norm ~0.1-0.4，
   approx_kl 0→0.004（previous/default 真分离）。
 
 ## 运行配置
 
-入口：dance/guard/dppo/NFT 均走
-`vrl.scripts.diffusion.train:train_diffusion_online`；algorithm 由 `algorithm.kind`
-唯一分派（NFT 的模型接口仍由 `FluxModel` 组合
-`PreviousPolicyAdapterMixin` + `diffusion_nft_prepare_transformer_input`）。
-config：`experiment/diffusion/flux/online_{dance_grpo_aesthetic,grpo_guard_pickscore,flow_dppo_pickscore,diffusion_nft_pickscore}_validation`。
+入口：四条实验均走统一的 `vrl-train` CLI；algorithm 由 `algorithm.kind` 唯一分派。
+维护中的 config slug 为
+`experiment/flux/online_{dance_grpo_aesthetic,grpo_guard_pickscore,flow_dppo_pickscore,diffusion_nft_pickscore}_validation`，
+对应文件位于 `vrl/config/presets/experiment/flux/`。
 
-共同 override：`trainer.total_epochs={12 第一轮 / 8 第二轮} trainer.save_freq=9999 trainer.eval.enabled=false`。
-公共超参：lr=1e-4(LoRA)、num_steps=10、noise_level=0.7、rollout_batch_size=8、
+历史探针深度为第一轮 12 epoch、第二轮 8 epoch；当前三个 GRPO-family 维护配置
+设置 `trainer.total_epochs=300` / `trainer.save_freq=50`，DiffusionNFT 设置 `256` / `32`。
+旧 CLI override 不作为当前接口契约。
+公共超参：lr=1e-4(LoRA)、num_steps=10、noise_level=0.7、`prompts_per_batch=8`、
 n_samples_per_prompt={16 guard/dppo/nft, 12 dance}、clip_ratio=1e-4(guard/dance)。
 reward：guard/dppo/nft=pickscore（本地 CLIP-H+PickScore_v1），dance=aesthetic（HPS 类比）。
 > dppo 用 pickscore 而非 sprint 首选的 geneval——geneval 打分器在本环境无实现（detector 栈缺失），
@@ -58,16 +60,16 @@ flow_dppo       0.7863 -> 0.7804    -0.10σ   ~0.002     mask(clip) 恒 0
 
 ## Part B — 诊断：为什么 GRPO 三件套机制恒 0
 
-- recipe 每 epoch 单次 optimizer update（`online.py:964-998`，无内层复用）。
+- `ppo_epochs=1` 时每个 rollout batch 只有一次 optimizer update（无内层复用）。
 - 单步上 `signals.old_log_prob`(rollout) 与 `signals.log_prob`(当前) 来自同一策略 → ratio≡1。
-- GRPOGuard 的 `ratio_mean_bias = mean_diff_sq/(2·scale²)`（`continuous.py:354`）依赖
+- GRPOGuard 的 `ratio_mean_bias = mean_diff_sq/(2·scale²)` 依赖
   `prev_sample_mean − old_prev_sample_mean`，无漂移则为 0。
-- FlowDPPO 的 mask 依赖 `kl_per_sample ≥ threshold`（`continuous.py:287`），无漂移则 KL≈0，永不触发。
+- FlowDPPO 的 mask 依赖 `kl_per_sample ≥ threshold`，无漂移则 KL≈0，永不触发。
 - NFT 不同：loss 是 reward-weighted flow-matching MSE 对 previous 的 ratio=1 不敏感，天然大梯度，所以一开始就健康。
 
 指标列映射（判读必读，`TrainStepMetrics` 跨算法复用，机制指标借用通用列名）：
-- **GRPOGuard**：`kl_penalty` 列 = `ratio_mean_bias.mean()`（`continuous.py:372`）；`clip_fraction` = ratio-clip 比例。
-- **FlowDPPO**：`clip_fraction` 列 = `masked_fraction`（`continuous.py:306`）；`kl_penalty` = 高斯 KL 漂移均值。
+- **GRPOGuard**：`kl_penalty` 列 = `ratio_mean_bias.mean()`；`clip_fraction` = ratio-clip 比例。
+- **FlowDPPO**：`clip_fraction` 列 = `masked_fraction`；`kl_penalty` = 高斯 KL 漂移均值。
 
 ## Part C — 修复 `ppo_epochs=4`（机制激活，写 `*_pe4` 目录，8 epoch）
 
@@ -102,8 +104,9 @@ random   4.560                  0.27-0.38        ~0.003
 strided  4.547                  0.27-0.35        ~0.003
 ```
 
-两条统计上无差别（Δ=0.013），**random timestep 子集没破坏学习**（论文 §3.6 的核心声明）。
-clip(1e-4 极紧) 咬合 ~30%。caveat：两条都偏平（4.4-4.8 噪声内），所以是「同等平」而非「同等学习」。
+两条统计上无差别（Δ=0.013），**random timestep 子集没有破坏短探针机制行为**。
+clip(1e-4 极紧) 咬合 ~30%。两条都偏平（4.4-4.8 噪声内），所以这是「同等平」而非
+「同等学习」，不能外推为长期 reward 改善。
 
 ## Part D — Flow-DPPO 的 mask 阈值（sweep 完成）
 
@@ -128,32 +131,42 @@ threshold   mask(均值)   driftKL(均值)   reward 末
 真实动态下不成立。机制工作的最强证据不是命中 5-40%，而是 **mask 把 driftKL(0.015→0.0003) 和
 reward 退化(0.681→0.78) 都挡住了**。补跑 thr=0.0003 确认单调曲线继续向下延伸，并能把 mask
 拉进 5-40% 区间，但 reward/driftKL 没比 0.002 更好；因此不把“命中 5-40%”当机制 PASS 的硬判据。
-产物 `outputs/flux_flow_dppo_thr{0p0003,0p002,0p005,0p015}/`、`outputs/_dppo_threshold_sweep.{sh,log}`。
+这些是 one-shot probe 输出与 sweep launcher；测量写入本文后已删除，不是维护中的仓库资产。
 
 ## 判据判定（按各 sprint）
 
 - **DiffusionNFT** ✅ 管线 + 机制 PASS：反对称不变量精确成立、grad/approx_kl 健康。learning 待长跑（256 更新，非本次目标）。
-- **GRPO-Guard** ✅ 机制 PASS（ppo=4 后）：ratio_mean_bias 有限小(3-5e-4)、clip 咬合(2.5-9.5%)、保留全样本。
-- **DanceGRPO** ✅ PASS：random≈strided（4.560 vs 4.547），timestep 子集不破坏学习；clip 咬合。
+- **GRPO-Guard** ✅ 机制 PASS（ppo=4 后）：ratio_mean_bias 有限小(3-5e-4)、clip 咬合(2.5-9.5%)；
+  默认 precision correction 关闭时，信赖域本身不丢样本。
+- **DanceGRPO** ✅ 机制 PASS：random≈strided（4.560 vs 4.547），timestep 子集不破坏短探针行为；clip 咬合。
 - **Flow-DPPO** ✅ 机制 PASS（修正判读）：ppo=4 漂移激活、阈值 sweep 后 mask 非 0 且单调、trust region
   实测压住漂移并保住 reward（vs 未 mask 的 pe4 退化）。原 sprint「mask∈5-40%」判据因自调节不适用，
   改判据为「mask 非 0 + 单调 + 漂移/reward 受控」。
 
-> 共同限制：所有「learning（reward 上升 >2σ）」判据都需要 ~200-300 更新，本次 8-12 epoch 只验
-> 「管线对、first-step 自洽、机制被触发」，不下「学得起来」的结论。
+> 共同限制与交接：三份原始算法 sprint 都把「固定 held-out reward 上升 >2σ」列为长期
+> finishing criterion。本次 8-12 epoch 只关闭「管线、first-step、机制触发」；长期学习判据
+> 未完成，并已统一交给可信 reference-curve 计划。
 
 ## 关联
 
 - 复现并定位了 `project_first_trustworthy_curve`（2026-06-13 cosmos GRPO 持平）的根因：
   不是 epoch 数，是 `ppo_epochs=1` 的零漂移 + per-step 小梯度。
 - `info/SPRINT_cosmos25_kling_reward_curve.md`（同结论：轮换 prompt 让训练 reward 不可读为学习；杠杆是 per-step 梯度）。
-- NFT→flux 移植代码：`vrl/models/diffusion/flux/model.py`、`vrl/models/diffusion/common/lora.py:PreviousPolicyAdapterMixin`。
+- NFT→flux 移植代码：`vrl/models/families/flux/model.py`、
+  `vrl/models/steps/denoise/common/lora.py`（`PreviousPolicyAdapterMixin`）。
 
 ## 关键文件 / 产物
 
-- 配置：`configs/experiment/diffusion/flux/online_*_validation.yaml`（三个已加 `actor.ppo_epochs: 4`）。
-- 内层 PPO 复用循环：`vrl/trainers/online/trainer.py:1201`（`for _inner_epoch in range(cfg.ppo_epochs)`）。
-- 机制指标来源：`vrl/algorithms/grpo/continuous.py`（FlowDPPO:255-309, GRPOGuard:337-373）。
-- 第一轮产物：`outputs/flux_{grpo_guard,diffusion_nft,dance_grpo_aesthetic,flow_dppo}_*validation/metrics.csv`。
-- 第二轮（ppo=4）产物：`outputs/flux_*_pe4/metrics.csv`、`outputs/_validation_queue_pe4.{sh,log}`。
-- 汇总脚本：`outputs/_validation_summary.py`。
+- 配置：
+  `vrl/config/presets/experiment/flux/online_dance_grpo_aesthetic_validation.yaml`、
+  `vrl/config/presets/experiment/flux/online_grpo_guard_pickscore_validation.yaml`、
+  `vrl/config/presets/experiment/flux/online_flow_dppo_pickscore_validation.yaml`、
+  `vrl/config/presets/experiment/flux/online_diffusion_nft_pickscore_validation.yaml`。
+- 内层 PPO 复用循环：`vrl/trainers/online/trainer.py`。
+- 机制指标来源：`vrl/algorithms/grpo/continuous.py`。
+- 回归测试：`tests/algorithms/test_dance_grpo.py`、
+  `tests/algorithms/test_flow_dppo_grpo_guard.py`、
+  `tests/trainers/online/test_trust_region_engages.py`。
+- 历史 `outputs/flux_*`、`outputs/_validation_queue_pe4.*` 和
+  `outputs/_validation_summary.py` 都是 one-shot validation artifacts；本归档保留其测量结果，
+  不保留文件本身。
