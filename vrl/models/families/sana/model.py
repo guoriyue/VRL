@@ -101,6 +101,39 @@ class SanaModel(LoraModelMixin, DiffusersPipelineModelBase, DiffusionBackboneRun
 
     # -- backend ownership (called by runtime, not by collectors) -------
 
+    @staticmethod
+    def _apply_fp16_saturation_clamp(transformer: Any) -> None:
+        """Reapply SANA's fp16 attention saturation on a non-fp16 transformer.
+
+        The published fp16 checkpoint was calibrated WITH diffusers'
+        ``SanaLinearAttnProcessor2_0`` output clip to the fp16 range, but that
+        clip is dtype-conditional (``if original_dtype == torch.float16``).
+        Running the same weights in fp32/bf16 skips it, and the un-saturated
+        linear-attention outputs corrupt every image. It must be reapplied at
+        each linear-attention layer (not the transformer's final output), so it
+        rides ``set_attn_processor`` rather than ``forward_step``. Verified
+        2026-07-18: the official pipeline in fp32 reproduces the corruption, and
+        fp32 plus this clamp matches fp16 quality
+        (outputs/quality_preflight/sana_fp32_probe).
+        """
+
+        from diffusers.models.attention_processor import SanaLinearAttnProcessor2_0
+
+        class _SaturatedLinearAttnProcessor(SanaLinearAttnProcessor2_0):
+            def __call__(self, *args: Any, **kwargs: Any) -> torch.Tensor:
+                return super().__call__(*args, **kwargs).clip(-65504, 65504)
+
+        transformer.set_attn_processor(
+            {
+                name: (
+                    _SaturatedLinearAttnProcessor()
+                    if type(processor) is SanaLinearAttnProcessor2_0
+                    else processor
+                )
+                for name, processor in transformer.attn_processors.items()
+            },
+        )
+
     @classmethod
     def from_build(cls, build: ModelBuild) -> SanaModel:
         """Load the diffusers SANA pipeline + freeze non-trainable modules."""
@@ -140,10 +173,17 @@ class SanaModel(LoraModelMixin, DiffusersPipelineModelBase, DiffusionBackboneRun
             scheduler_config,
             shift=float(scheduler_config.get("flow_shift", 1.0)),
         )
+        if model_dtype != torch.float16:
+            cls._apply_fp16_saturation_clamp(pipeline.transformer)
         return cls(
             pipeline=pipeline,
             device=build.device,
         )
+
+    def prepare_replay(self, build: ModelBuild) -> None:
+        """Replay forwards need the same non-fp16 saturation clamp as rollout."""
+        if build.parameter_dtype != torch.float16:
+            self._apply_fp16_saturation_clamp(self.transformer)
 
     # -- encode_prompt -------------------------------------------------
 

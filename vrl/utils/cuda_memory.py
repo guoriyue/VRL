@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import gc
 import itertools
+import os
 from typing import Any
 
 # CUDA loads device code and library state on first real kernel execution. Those
@@ -13,7 +14,17 @@ from typing import Any
 # SANA generation retained 154 MiB and a correctly pooled CLIP-L score retained
 # 42 MiB (126 MiB in a fresh process). Keep one bounded backend protocol limit;
 # callers still reject a single byte beyond it and CPU-only paths use zero.
-CUDA_RUNTIME_RESIDUAL_BYTES_LIMIT = 256 * 1024 * 1024
+#
+# The default is calibrated for fp16 rollout. fp32 (or any doubled-precision)
+# generation leaves a larger, fragmentation-dependent residual after cumem
+# sleep — measured 0.2--0.9 GiB above baseline on single-card colocated SANA.
+# On a high-headroom card that residual is harmless (rollout parks while the
+# trainer's few-GiB step runs, far under the 32 GiB ceiling), so the tolerance
+# is overridable via VRL_CUDA_RESIDUAL_BYTES_LIMIT_MIB for such runs. The
+# default stays strict so a real leak in the tight fp16 case still fails loud.
+CUDA_RUNTIME_RESIDUAL_BYTES_LIMIT = (
+    int(os.environ.get("VRL_CUDA_RESIDUAL_BYTES_LIMIT_MIB", "256")) * 1024 * 1024
+)
 
 
 def _cumem_allocator() -> Any | None:
