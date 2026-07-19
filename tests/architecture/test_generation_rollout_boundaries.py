@@ -58,6 +58,30 @@ def test_removed_boundary_packages_stay_removed() -> None:
     assert not [path for path in retired_regime_paths if path.exists()]
 
 
+def test_retired_routing_paths_have_no_python_source() -> None:
+    """The family-first layout forbids restoring routing packages under the four
+    retired paths. Assert no ``*.py``/``*.pyi`` source lives there — NOT
+    ``.exists()``, which would false-fail on a correct checkout that merely
+    retains stale ``__pycache__`` bytecode from an older commit.
+    """
+    retired = (
+        VRL_ROOT / "models" / "ar",
+        VRL_ROOT / "models" / "diffusion",
+        VRL_ROOT / "generation" / "ar",
+        VRL_ROOT / "generation" / "diffusion",
+    )
+    offenders = [
+        source
+        for path in retired
+        for pattern in ("*.py", "*.pyi")
+        for source in path.rglob(pattern)
+        if "__pycache__" not in source.parts
+    ]
+    assert not offenders, "retired routing paths must contain no Python source:\n" + "\n".join(
+        str(source.relative_to(ROOT)) for source in offenders
+    )
+
+
 def test_shared_ray_substrate_stays_domain_neutral() -> None:
     """Checks shared Ray substrate stays domain neutral."""
     assert (VRL_ROOT / "ray" / "resources.py").exists()
