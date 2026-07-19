@@ -95,6 +95,9 @@ actor:
   # at epoch 0) and fractional timestep training is the flow_grpo/DanceGRPO norm.
   ppo_epochs: 2
   timestep_fraction: 0.5
+  # Replay capacity is independent from rollout generation chunking. Full-param
+  # 480p_93f backward reached 29.9 GiB at 2, so keep the safe floor explicit.
+  replay_samples_per_chunk: 1
   ema:
     enable: false                     # validation: no averaging lag on top of the raw policy
 
@@ -104,11 +107,9 @@ rollout:
   prompts_per_batch: 1                # per_sample reference mode hard-requires 1 (cosmos/train.py);
                                       # 16 rollouts/update via the bigger group instead — same budget,
                                       # lower advantage noise, prompts rotate across epochs
-  samples_per_chunk: 1                # this knob chunks BOTH generation and training replay; at
-                                      # full-param 480p_93f the run OOMs at 4 (gen, 25.3GiB + 4.2GiB
-                                      # driver-resident) AND at 2 (train backward, 29.9GiB) — the
-                                      # base recipe's "keep 1 for memory" holds for the full loop
-                                      # (P1's 1.4x sbs evidence measured the gen phase only)
+  samples_per_chunk: 1                # generation only: full-param 480p_93f OOMs at 4
+                                      # (25.3GiB worker + 4.2GiB driver-resident); P1's 1.4x
+                                      # larger-chunk evidence measured this phase only
   # false + NO per-row manifest seeds (2026-07-07): a fixed seed makes every
   # chunk share the initial latent (the seed IS the same-latent mechanism; the
   # flag only guards the seedless case), so the group's only diversity was SDE

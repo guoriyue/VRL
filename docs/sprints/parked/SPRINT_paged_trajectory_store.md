@@ -107,7 +107,8 @@ page = one tensor_kind for one denoise step over N samples
 ## 7. 非目标
 
 - 不做 diffusion attention KV cache。
-- 不做 shared-prefix/tree rollout；那是 `SPRINT_signal_paged_rollout.md` 的范围。
+- 不做 shared-prefix/tree rollout；其负结果归档在
+  `docs/sprints/info/SPRINT_signal_paged_rollout.md`。
 - 不改变 `sde_step_with_logprob` 或 GRPO loss。
 - 不把 page store 暴露成用户-facing config，先作为 executor/trainer 内部能力。
 

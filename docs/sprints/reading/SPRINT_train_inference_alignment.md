@@ -8,7 +8,8 @@
 > `vrl/rollouts/evaluators/diffusion/sde_logprob.py`、`vrl/scripts/common/factory.py`。
 > 相关：[[SPRINT_fullparam_and_fp8_precision]]（精度轴 + TIS/RS 地基，已落地）、
 > [[SPRINT_moe_support_decision]]、[[SPRINT_physical_ai_model_support]]、
-> [[SPRINT_speculative_diffusion_rollout]]、[[SPRINT_framework_lessons_vrl]]、
+> [[SPRINT_speculative_diffusion_rollout]]（whole-latent exact-coupling 已测得负结果）、
+> [[SPRINT_framework_lessons_vrl]]、
 > 记忆 `project_first_trustworthy_curve`（Cosmos+Kling GRPO 实跑 NO learning）。
 
 ## 0. 一句话
@@ -90,10 +91,16 @@ CFG 也同源：两边都 `batched_cfg`，都 `torch.cat([uncond, cond])` 拼 2x
 - 后果：一旦 rollout 走 vLLM/SGLang 式 KV-cache decode、训练走 FSDP/Megatron prefill，文章的**全部**根因回归——算子集分歧、prefill↔decode 差异、MoE router 不稳定排序、长序列累积。我们现在"scheduler 同对象 → 离散化一致"的保证**消失**。
 - 备料（前置工作，不是现在做）：把 `precision_guard` 从"只比 logprob 标量"扩成**逐模块激活值对账**的 parity harness，按文章三阶段（prefill↔prefill → prefill↔decode → 不同并行下）跑。MoE 要额外做：router 高精度 + 稳定排序（替换 `torch.topk`）+ 固定 token permutation 加和顺序。
 
-### 门 2：独立的投机扩散 / paged 扩散引擎
-- 触发：[[SPRINT_speculative_diffusion_rollout]]、`docs/sprints/reading/speculative_diffusion_sampling.md`。
-- 后果：投机扩散用 draft 模型 + 验证步，rollout 轨迹的 logprob 不再等于训练 replay 的 logprob——引入了 prefill/decode 式分歧。当前"采样和 replay 都用同一个 scheduler 严格重算"的前提被打破。
-- 备料：投机引擎产出的 logprob 必须能被训练 replay **精确重放**，或显式纳入 TIS 分母；落地前先跑 `fp8_rollout_drift_probe` 同款 parity 测试。
+### 门 2：未来新的独立投机扩散 / paged 扩散引擎
+
+- 当前状态：[[SPRINT_speculative_diffusion_rollout]] 的 whole-latent exact-coupling 已在真实
+  SD3.5 上测得 acceptance≈0、省算 0%，原型已删除；它是关闭的历史案例，不是 live trigger。
+- 重新触发：未来出现采用不同算法、拥有独立 execution path 的 speculative/paged diffusion
+  engine 时，才重新打开此门。
+- 后果：若新引擎使用 draft 模型 + 验证步，rollout 轨迹的 logprob 可能不再等于训练 replay
+  的 logprob——引入 prefill/decode 式分歧，打破“采样和 replay 用同一个 scheduler 严格重算”的前提。
+- 备料：新引擎产出的 logprob 必须能被训练 replay **精确重放**，或显式纳入 TIS 分母；
+  integration 前先跑 `fp8_rollout_drift_probe` 同款 parity 测试。
 
 ### 门 3：批不变性（batch-invariance）—— 已 live 的隐性漂移
 - 来源：Thinking Machines Lab《Defeating Nondeterminism in LLM Inference》（文章评论引用）—— 归约顺序 / batch size 不同会引入非确定性，即使同一套 forward。
@@ -137,6 +144,6 @@ CFG 也同源：两边都 `batched_cfg`，都 `torch.cat([uncond, cond])` 拼 2x
 ## 相关
 - [[SPRINT_fullparam_and_fp8_precision]] —— 精度轴 + TIS/RS + drift guard + fp8 rollout kernel（本 sprint 引用的对齐机器都在那落地）
 - [[SPRINT_moe_support_decision]]、[[SPRINT_physical_ai_model_support]] —— 门 1 触发源
-- [[SPRINT_speculative_diffusion_rollout]] —— 门 2 触发源
+- [[SPRINT_speculative_diffusion_rollout]] —— 门 2 的历史关闭案例；未来新独立 engine 才触发
 - [[SPRINT_framework_lessons_vrl]] —— 同类外部框架研读
 - 代码：`vrl/algorithms/logprob_mismatch.py`、`vrl/trainers/online/precision_guard.py`、`vrl/math/diffusion/flow_matching.py`、`vrl/generation/diffusion/executor.py`、`vrl/rollouts/evaluators/diffusion/sde_logprob.py`、`vrl/scripts/perf/fp8_rollout_drift_probe.py`

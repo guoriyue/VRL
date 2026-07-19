@@ -1,6 +1,6 @@
 # SPRINT: 死符号清除 + 单调用者合并（纯机械）
 
-状态：done（2026-07-10）。父：`../planned/SPRINT_fbag_00_overview.md`。
+状态：done（2026-07-10）。父记录：`SPRINT_fbag_00_overview.md`（同在 `done/`）。
 
 > 4 个零散小问题,分布在 4 个否则内聚的文件里。每条都经对抗性 verify 保留 + 本人独立 grep 复核。
 > 全是低风险机械改动,可以一个 commit 收掉。

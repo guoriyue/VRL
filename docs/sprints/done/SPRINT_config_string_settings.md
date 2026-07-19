@@ -152,4 +152,4 @@
 
 **相邻 sprint**
 - `done/SPRINT_config_unknown_key_warning.md` — unknown-key 单遍走查(Literal 化要不破它)
-- `planned/SPRINT_design_smell_audit.md` — `placement_strategy` dead-knob 归此类 backlog;`kind`/`loader` Literal 化先例
+- `done/SPRINT_design_smell_audit.md` — `placement_strategy` dead-knob 归此类 backlog;`kind`/`loader` Literal 化先例

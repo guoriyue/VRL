@@ -1,7 +1,14 @@
 # SPRINT: Signal-Paged Rollout / diffusion shared-prefix tree rollout
 
-状态：**PARKED — P0 实测负结果（2026-06-26，见 §0.6）**：只共享前 4 步，latent 多样性就塌到 44% retention，过不了 ≥70% 的 reward-variance 门；扩散早期步锁全局结构，加 SDE 噪声也救不回。下为原提案，留作记录。
-> （原状态：planned / proof-gated，2026-06-23）这不是把 vLLM/SGLang 的 AR paged KV 机制搬到 diffusion；这是一个 RL rollout 专用的 **trajectory block / shared-prefix** 实验：同一个 prompt 的 group 先共享一段 denoise 前缀，只在后缀分叉，从而少算 transformer forward。是否推进取决于实测的 reward variance 和 learning curve，不能只看吞吐。
+状态：**negative measurement archive（2026-06-26）**。KIND：**info**；P0 只共享前 4 步时，
+latent 多样性已降到 44% retention，在约 1.5× forward 减少点仅剩 31%–36%，明确低于
+≥70% 的验收门。本文自己的关闭条件已经触发，P1–P3 全部取消；这里保存测量、推导和历史
+提案，不是等待事件后重启的 parked 工作。
+
+> 原状态为 planned / proof-gated（2026-06-23）。实验不是把 vLLM/SGLang 的 AR paged KV
+> 搬进 diffusion，而是让同 prompt group 共享 denoise 前缀。实测已经回答“是否值得推进”：
+> 扩散早期步锁住全局结构，增加 SDE 噪声仍无法保住足够多样性，因此不进入 executor 或
+> block-native 实现。
 
 ## 0. 一句话
 
@@ -44,7 +51,7 @@ k + G * (T - k)
 
 > 这把本 sprint 从"throughput 实验"升级成"报告点名的无损候选"：proof gate 不变（reward variance 不塌），但它现在是三份性能 sprint 里**唯一同时满足 compute-bound 后仍可能省计算 + 无损**的那个。其余（paged store / stepwise batching）本轮已被实测证伪，feature cache 是近似（拿正确性换）。
 
-## 0.6 P0 实测：latent 多样性悬崖 —— 负结果，建议 park（2026-06-26）
+## 0.6 P0 实测：latent 多样性悬崖 —— 负结果，关闭（2026-06-26）
 
 跑了 P0 的 latent-diversity 版(`vrl/scripts/eval/shared_prefix_divergence_probe.py`，G=6 T=28 768²，repo 真实 `sde_step_with_logprob`）：
 
@@ -59,9 +66,14 @@ k    fwd_saved  retention         retention
 
 **P0 验收门是"≥1.5x forward 减少(≈k14)同时 reward variance retention ≥70%"。实测该点只有 31%(高噪声 36%),门没过;只共享前 4 步(省 12%)多样性就塌到 44%。** 扩散早期步锁全局结构,提高 SDE 噪声有缓解但救不回来。这正是 §7 R1 的风险,实测坐实。
 
-**按本 sprint §9 自己写的关闭条件("如果 P0/P2 显示 reward variance 被压平...应该关闭"),建议 park。** 唯一可能翻盘的是 reward-model 版 P0(对某些对全局结构不敏感的 reward),但 k=4 就塌到 44% 的悬崖太陡,概率低。完整数据 + 对标见 [[SPRINT_lossless_diffusion_rl_research]] §0.6 验证 2。
+**按本 sprint §9 自己写的关闭条件（“如果 P0/P2 显示 reward variance 被压平就关闭”），
+本方向已经关闭。** reward-model 专用版本若将来出现新的正面证据，应另立假设与 proof gate，
+不能把本负结果重新解释成未完成事项。完整数据与对标见
+[[SPRINT_lossless_diffusion_rl_research]] §0.6 验证 2。
 
-> caveat:latent 多样性是 reward variance 的代理非本体;单 prompt / SD3.5 / 768²。要彻底定论需接 reward model 重跑 P0;但在那之前,本 sprint 不应进 P1。
+> caveat：latent 多样性是 reward variance 的代理而非本体，且只测了单 prompt / SD3.5 /
+> 768²。这个限制保留在测量档案里，但不把已经失败的验收门改写成“待完成”；若新的 reward-model
+> 假设值得验证，应另立 Sprint。
 
 ## 1. 先修正旧类比
 
@@ -307,7 +319,9 @@ step_kind: stochastic_branch
 
 后续 block-native 才把 prefix 物理只存一份，训练时按 resolver lazy materialize。
 
-## 6. Phase plan
+## 6. 历史 phase plan（P0 关闭后 P1–P3 已取消）
+
+以下阶段保留用于解释当时的决策门。P0 已经失败，因此这些内容不再拥有执行状态。
 
 ### P0 — one-shot proof：数学和分布诊断
 
@@ -440,7 +454,7 @@ TeaCache 是 within-sample approximate forward skip，会引入 rollout-vs-repla
 
 ## 9. 成功标准
 
-这个 sprint 成功不等于“代码跑起来”。成功标准是证明一个新的资源抽象值得继续：
+这个 sprint 原本的成功标准不是“代码跑起来”，而是证明新的资源抽象值得继续：
 
 ```text
 同 prompt group 的 denoise 前缀可以作为 block 共享，
@@ -448,7 +462,8 @@ TeaCache 是 within-sample approximate forward skip，会引入 rollout-vs-repla
 并且能通过 trainable mask 保持 RL loss contract 清晰。
 ```
 
-如果 P0/P2 显示 reward variance 被压平，那结论也有价值：说明 shared-prefix 不是本 repo workload 的 killer capability，应该关闭，不继续投入 P3。
+P0 已经显示 reward variance 被压平，因此结论是 shared-prefix 不是本 repo workload 的
+killer capability；该方向已关闭，不继续投入 P1–P3。
 
 ## 10. 参考代码
 

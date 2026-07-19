@@ -1,6 +1,6 @@
 # SPRINT: 拆分 trainers/data/artifacts.py（唯一的真 grab-bag）
 
-状态：done（2026-07-10）。父：`../planned/SPRINT_fbag_00_overview.md`。
+状态：done（2026-07-10）。父记录：`SPRINT_fbag_00_overview.md`（同在 `done/`）。
 
 > 这是全仓 22 个审计文件里**唯一**被定为 `grab-bag-split-by-concern` 的文件（其余 15 内聚、
 > 6 只有零散小问题）。判决经对抗性 verify 保留（refuted=0）。

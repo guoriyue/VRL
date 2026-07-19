@@ -1,8 +1,7 @@
 # SPRINT: Whole memory plan (current repo)
 
-Status: **LIVING ARCHITECTURE LOGBOOK; not an execution sprint**. This document
-tracks the current memory system and its still-open design boundaries. Concrete
-implementation phases are filed as separate sprints.
+状态：**持续维护的架构日志，不是执行 Sprint**。本文跟踪当前 memory system 与仍开放的
+设计边界；具体实施阶段各自拥有独立 Sprint。
 
 > 本篇取代并吸收旧蓝图 `SPRINT_generation_memory_system.md`（已删除，2026-06-17）。
 > 旧蓝图的框架证据已并入下方"框架借鉴"表；其"现状"清单曾把**已撤销**的 trainer 侧

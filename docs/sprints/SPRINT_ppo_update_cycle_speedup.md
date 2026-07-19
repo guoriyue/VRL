@@ -1,6 +1,8 @@
 # SPRINT: PPO 训练相位提速（GRPO update cycle speedup, cosmos V2W 93f 单卡）
 
-状态：proposed / planned（2026-07-10）。
+状态：**in progress（2026-07-18）**。P2 的 generation/replay chunk 解耦、运行时消费者与
+CPU 合约已经落地；P1 的 selective-checkpoint 分支已由 93f 单卡 OOM 探针关闭。P0 的真实输出质量门和 P2 的三次真实
+optimizer update GPU 门仍未完成，因此本文是 active Sprint，不能归档为 done。
 
 > 来源：本篇的每个论断都核对了三处——①本仓实测（2026-07-10 EMA-off 480p_93f LoRA 曲线 run
 > 的日志与 resolved config）；②NVIDIA cosmos-rl（`~/Desktop/cosmos-rl` @ 5b9fdba,

@@ -280,5 +280,5 @@ resident 拿全额稳态加速;release-after-collect 的每周期重编译也因
 
 **收益基线**
 - §4.3 实测（Predict2.5 RTX 5090）：rollout **1.37×** / train **1.26×**，launch 2763→947 / 10098→3838
-- `docs/sprints/planned/SPRINT_gemm_utilization.md` P2（Predict2 1.37×/1.25×，与 Predict2.5 一致）
+- `docs/sprints/done/SPRINT_gemm_utilization.md` P2（Predict2 1.37×/1.25×，与 Predict2.5 一致）
 - `docs/sprints/parked/SPRINT_cosmos_predict25_rl_paper_parity.md`（paper-faithful = resident 多卡）

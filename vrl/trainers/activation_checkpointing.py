@@ -10,7 +10,7 @@ expensive ops whose recompute is pure waste (GEMM + attention) and recompute onl
 the cheap norm/pointwise/dropout -- the native-PyTorch equivalent of Megatron's
 selective recompute. Measured win on SD3.5-medium 1024² / 5090: selective recovers
 ~2/3 of full's recompute tax and reaches batches that no-checkpointing OOMs on. See
-docs/sprints/planned/SPRINT_training_mfu_selective_checkpointing.md (P0 results).
+docs/sprints/parked/SPRINT_training_mfu_selective_checkpointing.md (P0 results).
 """
 
 from __future__ import annotations

@@ -1,6 +1,12 @@
 # SPRINT: Multi-GPU Training
 
-状态：parked / blocked-on-event（等待真实 multi-GPU 硬件 → Phase 6 的 torchrun 2-GPU FSDP2 SD3 OCR 真实运行）。前置 readiness sprint 已落地（schema TrainingSection.strategy Literal["single_process","fsdp"]、DistributedTrainingContext/resolve_training_context、Strategy/SingleProcessStrategy 接缝、collect/train step split，commits d19faa2/b0d7b57/0d1b046/f979cce/fea4ba9/e6facbd/001ab41/1e6dc24）。FSDP2 **strategy 层**（FSDPStrategy / fully_shard / DTensor export）也已落地（见下方 Implementation status），但多卡编排（Phase 4 rank-split collect/train、§6.5 torchrun↔Ray、Phase 6 真实 2-GPU 运行）尚未实现，strategy=fsdp 当前由 run_online_recipe 的 _require_supported_online_strategy 主动 fail-fast。
+状态：**done（2026-06-22）**。原先等待真实 multi-GPU 硬件的 trigger 已满足：FSDP2 strategy、
+对称 colocated 编排、真实 cross-node 2×1 LoRA run 和真实 full-parameter FSDP run 均已落地并验证。
+下方 “Done” 记录是当前完成证据；更早的 parked 状态与 Phase 计划只保留为历史实施轨迹。
+
+> **阅读边界（2026-07-18）**：顶部完成记录覆盖旧的“尚未实现”段落。未做的 offline DPO、
+> optimizer/EMA resume、HF-format LoRA export 与 FSDP+compile 都是明确 non-goal 或独立未来工作，
+> 不重新打开本 sprint，也不把 `done/` 当作这些事项的 active owner。
 
 > **复核更新（2026-06-20）**：本 doc「无真实 2-GPU run」一句**已 stale**——一条 **DDP** 多卡路径其后独立落地并归档
 > `done/`（`vrl/trainers/strategy.py:464 DDPStrategy`、`SPRINT_symmetric_colocated_ddp` + `SPRINT_ddp_2x1_first_run_findings`,
@@ -101,7 +107,7 @@ adapter ⇒ would need a separate frozen copy) and `gradient_accumulation_steps=
    non-primary rank could otherwise return, hit shutdown, and let torchrun tear down
    rank0 mid-write. Defensive against that race (independent of the disk issue).
 
-**Still NOT done (deferred, not blocking):** Phase 7 (offline DPO distributed);
+**收口后的非目标（已推迟且不阻塞完成）：** Phase 7（offline DPO distributed）；
 DTensor-aware optimizer/EMA state and `resume_from` (still §10 fail-fast for fsdp);
 keeping bf16 FSDP params *with* GC (would need the MP cast re-applied during
 recompute — see bug 4); HF-format LoRA `save_pretrained` artifact under fsdp (the

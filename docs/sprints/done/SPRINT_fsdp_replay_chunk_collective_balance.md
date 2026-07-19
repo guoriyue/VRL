@@ -262,7 +262,7 @@ algorithm loss 使用 per-sample weights 做 weighted reduction
   - `TrainerConfig.microbatch_size`
 - `vrl/generation/ray/executor.py`
   - generation-side OOM split only; trainer replay has no equivalent fallback.
-- `docs/sprints/parked/SPRINT_multi_gpu_training.md`
+- `docs/sprints/done/SPRINT_multi_gpu_training.md`
   - FSDP2 orchestration context and existing `_all_ranks_have_work` lesson.
-- `docs/sprints/planned/SPRINT_memory_plan_full.md`
+- `docs/sprints/SPRINT_memory_plan_full.md`
   - future byte-admission work; related but separate from collective balance.

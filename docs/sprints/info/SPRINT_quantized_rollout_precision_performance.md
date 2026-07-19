@@ -3,7 +3,8 @@
 状态：**info measurement archive（2026-07-11）**。本页归档 RTX 5090、当时代码快照与
 SD3.5 Medium checkpoint 的可复现实测；这些数字不是随后 rebase 后 HEAD 的重新测量，也
 不是待办清单。实现状态与后续 gate 仍分别由
-`planned/SPRINT_nvfp4_rollout.md` 和 `done/SPRINT_fp8_rollout_gemm_kernel.md` 维护。
+`docs/sprints/SPRINT_nvfp4_rollout.md` 和
+`docs/sprints/done/SPRINT_fp8_rollout_gemm_kernel.md` 维护。
 
 ## 0. 核心结论
 

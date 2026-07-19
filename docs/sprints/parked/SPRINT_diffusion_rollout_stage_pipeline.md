@@ -144,7 +144,7 @@ beats data-parallel rollout.
 overlap 与 data-parallel rollout 路线时，才应该进入完整物理管线实现。
 
 当前 immediate work 以顶部 NEXT-STEP 为准：单卡 worker/pool I/O overlap、多卡 reward
-吞吐验证、data-parallel rollout verification。`docs/sprints/parked/SPRINT_runtime_block_policies.md`
+吞吐验证、data-parallel rollout verification。`docs/sprints/done/SPRINT_runtime_block_policies.md`
 仍是独立的 memory/config-policy track，不是本 sprint 当前执行路径。
 
 ## 0. Core Decision

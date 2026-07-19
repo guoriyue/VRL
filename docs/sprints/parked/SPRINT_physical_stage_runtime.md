@@ -591,7 +591,7 @@ memory 等长期 relay。没有 P2 收益，不做 P3。
 - `docs/sprints/parked/SPRINT_diffusion_rollout_stage_pipeline.md`
 - `docs/sprints/reading/SPRINT_diffusion_rollout_system.md`
 - `docs/sprints/parked/SPRINT_generation_scheduler.md`
-- `docs/sprints/planned/SPRINT_slime_overlap_strategy.md`
+- `docs/sprints/done/SPRINT_slime_overlap_strategy.md`
 - `vrl/generation/execution/planner.py`
 - `vrl/generation/execution/chunks.py`
 - `vrl/generation/protocols.py`

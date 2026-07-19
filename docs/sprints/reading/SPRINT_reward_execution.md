@@ -1,16 +1,18 @@
 # SPRINT: Reward execution —— 成本分层放置 + 异步打分
 
-> **Superseded status (2026-07-12):** this document preserves an earlier,
-> withdrawn design discussion. Its claims that VRL has no standalone reward
-> service, that reward execution uses a local/Ray switch, and that strict
-> streaming adds no capability are no longer current. The implemented source of
-> truth is `docs/sprints/done/SPRINT_reward_service.md`: reward inference now supports
-> typed `in_process` and `http` runtimes, strict streaming is gated by both
-> non-blocking execution and verified accelerator isolation, and unverified HTTP
-> endpoints fail closed. The cost-aware auto-placement proposal below remains a
-> non-implemented historical proposal, not a config contract.
+状态：**historical / superseded design（2026-07-12）**。KIND：**reading**；本文只保留
+早期设计讨论与撤回理由，不是待办、当前配置契约或尚待实施的计划。
 
-状态：**design / not-started（P1 + P2 都已撤回，2026-06-29）；P3 仍未实现**。本轮 CPU 落地了 P1（流式打分）+ P2（reward_cost 成本感知放置），评审后**两个都撤回**，只保留分析结论（§13/§13.1）和一个顺带的 stale 测试修复（`VRL_PROFILE_COLLECT`→`VRL_PROFILE`）。
+> 本文关于“VRL 没有独立 reward service”“reward execution 使用 local/Ray switch”以及
+> “strict streaming 没有新增能力”的判断都已过时。当前实现的 source of truth 是
+> `docs/sprints/done/SPRINT_reward_service.md`：reward inference 支持具名的 `in_process`
+> 与 `http` runtime；strict streaming 同时要求 non-blocking execution 和已验证的 accelerator
+> isolation；未验证的 HTTP endpoint 会 fail closed。下文的成本感知自动放置仅是未采纳的
+> 历史提案，不是 config contract。
+
+历史执行记录：本轮 CPU 曾落地 P1（流式打分）与 P2（`reward_cost` 成本感知放置），评审后
+**两者都已撤回**；这里只保留分析结论（§13/§13.1）和顺带完成的 stale 测试修复
+（`VRL_PROFILE_COLLECT`→`VRL_PROFILE`）。
 - **P2 撤回**：现形态只做了"显式标注"那半，**和已有的显式 `gpu_pool: rollout` 重复**；真正价值在自动测量（需 GPU run，未做），且和 P1 互斥（单卡 share = 串行卸载，不是并发）。
 - **P1 撤回**：reward 的 async **早已存在于 `continuous` 模式**（reward ∥ 别的 group 生成 + ∥ 训练，见 §13.1）；P1 改的 `collect_prompt_batches` 在 continuous 下每次只收一个 group → no-op，只对 strict_on_policy 默认路径有那一条窄的 call 内重叠，niche 太小、未实测、和 continuous 高度重叠。**没有引入新能力。**
 此前为 design / not-started。注意 §4.1/§4.2/§6/§10 旧文引用的 `inference_runtime: local|ray` 已被 8de3e63 改名为 `execution: inline|pool`；§9.1.1 的 factory reward-key 硬编码已由 `active_pool_reward_keys`（按 `execution` 派生）消除，无需再改。

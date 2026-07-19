@@ -256,7 +256,7 @@ tests/config/test_load_all_experiments.py:308  -> 改成断言派生出的 lifec
 相关 sprint：
 
 - `docs/sprints/done/SPRINT_ray_phase_lifecycle_plan.md`（本 sprint 是其刻意推迟的 P4）
-- `docs/sprints/planned/SPRINT_compile_rollout_lifecycle.md`（resident/on_demand 三态的下游消费者；本 sprint 不改三态语义，只改它们的公有命名入口）
+- `docs/sprints/done/SPRINT_compile_rollout_lifecycle.md`（resident/on_demand 三态的下游消费者；本 sprint 不改三态语义，只改它们的公有命名入口）
 
 reading：
 

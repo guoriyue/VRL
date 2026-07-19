@@ -61,7 +61,7 @@ sampling:
   # the uncond branch halves BOTH rollout and replay-backward transformer time
   # (measured account: ~114 -> ~57 min/update on 1x5090). GATE before any long
   # run: fixed-grid mp4 eyeball + reward level, see
-  # docs/sprints/planned/SPRINT_ppo_update_cycle_speedup.md P0. Curves generated
+  # docs/sprints/SPRINT_ppo_update_cycle_speedup.md P0. Curves generated
   # at guidance 7 are NOT comparable — re-baseline.
   guidance_scale: 0.0
 

@@ -1,15 +1,14 @@
 # Reading: Speculative Sampling for Diffusion Models (De Bortoli et al. 2025)
 
-状态：**P0 done（2026-06-24）**。这份 reading note 是
-`docs/sprints/planned/SPRINT_speculative_diffusion_rollout.md` 的 P0 产出：把
+状态：**P0 done（2026-06-24）**。这份 reading note 是负结果档案
+`docs/sprints/info/SPRINT_speculative_diffusion_rollout.md` 的 P0 产出：把
 *Accelerated Diffusion Models via Speculative Sampling*
 (https://arxiv.org/abs/2501.05370, PMLR v267) 的算法读到“能实现 toy version”，
 并明确它和 VRL `flow_matching.sde_step_with_logprob` 的对接关系、以及 RL
 `old_log_prob` contract 是否能保留。
 
-P1/P2 已经按这份 note 实现并验证：
-- 代码：`vrl/math/diffusion/speculative.py`
-- 测试：`tests/math/test_speculative_diffusion.py`（CPU，10 passed）
+P1/P2 曾按这份 note 实现并通过 CPU 验证；真实模型 P3 得到 acceptance≈0 的负结果后，
+原型与测试已删除，结论归档在上述 info 文档中。
 
 ---
 

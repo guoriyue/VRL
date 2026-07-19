@@ -1,10 +1,9 @@
 # SPRINT: NVFP4 rollout（fp4 生成 + bf16 训练重放）
 
-Status: **P1 implemented (2026-07-12), still experimental.** The production
-runtime now supports an explicit BF16-base NVFP4 rollout, MLP-only targeting,
-weight-sync requantization, compile coverage, and fail-fast hardware/zero-swap
-gates. P2 still requires a real MLP-only rollout-to-BF16-replay SDE-logprob and
-reward-curve validation; synthetic correction-path evidence is not sufficient.
+状态：**in progress（P1 已落地，P2 待验收；2026-07-12）**。生产 runtime 已支持显式的
+BF16-base NVFP4 rollout、MLP-only targeting、weight-sync requantization、compile coverage，
+以及 fail-fast hardware/zero-swap gate。P2 仍需完成真实 MLP-only rollout 到 BF16 replay 的
+SDE-logprob 与 reward-curve 验证；synthetic correction-path 证据不足以收口。
 
 > 来由：外部 SOTA `FP4 Explore, BF16 Train`（arXiv:2604.06916）同款契约（FP4 只跑
 > rollout、logprob 漂移交给重要性校正）报 ~2.5-3x rollout / 1.5-2x 端到端（H100 数，

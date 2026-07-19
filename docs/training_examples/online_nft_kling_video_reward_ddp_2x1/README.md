@@ -82,7 +82,7 @@ launcher in your own supervisor with this logic:
 
 See the engineering history in
 [`docs/sprints/done/SPRINT_symmetric_colocated_ddp.md`](../../sprints/done/SPRINT_symmetric_colocated_ddp.md)
-and [`SPRINT_ddp_2x1_first_run_findings.md`](../../sprints/planned/SPRINT_ddp_2x1_first_run_findings.md),
+and [`SPRINT_ddp_2x1_first_run_findings.md`](../../sprints/done/SPRINT_ddp_2x1_first_run_findings.md),
 and a full run record (config + reward trend + cost profile + the walls hit) in
 [`docs/runs/cosmos_predict25_nft_kling_480p33f_rbs16_20260620/`](../../runs/cosmos_predict25_nft_kling_480p33f_rbs16_20260620/).
 

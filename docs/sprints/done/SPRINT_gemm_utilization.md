@@ -208,5 +208,5 @@ cosmos 最大是因为 eager 碎得多（层更深 + AdaLN-LoRA modulation 每�
 
 **FP8 参考**
 - `docs/sprints/reading/SPRINT_cosmos_rl_scaling_learnings.md:73-86,104` — FP8 Tier2 规划、torchao `convert_to_float8_training` rowwise、DiT modulation/最终投影必须 FQN 过滤、"省吞吐不省显存"、"数值调参尾巴多天"
-- `docs/sprints/parked/SPRINT_low_precision_tis.md:24,97` — fp8 rollout 是激活 TIS 修正的触发条件
+- `docs/sprints/done/SPRINT_low_precision_tis.md:24,97` — fp8 rollout 是激活 TIS 修正的触发条件
 - cosmos-rl 本地源（`~/Desktop/cosmos-rl`）`vllm_rollout/monkey_patch_for_fp8.py` — 现成 fp8 path 可抄

@@ -4,7 +4,7 @@
 
 > 问题：对 diffusion/flow-matching RL 后训练(GRPO/Flow-GRPO，SD3.5/Flux/Wan/Cosmos)，有哪些**无损(不改输出分布)**的系统/kernel 手段能省显存(装更大 batch)或省计算?
 > 实测前提(本仓库已测，RTX 5090 / SD3.5-medium 1024²)：rollout DiT **compute-bound**(ms/sample batch 1→16 全平),compile 后 **94% MFU**(69%→94%，1.37x)。证据：记忆 `project_rollout_bound_class_probe`、`project_lossless_diffusion_rl_research`、`vrl/scripts/perf/{attention_fraction,rollout_bottleneck,dit_mfu,backward_mfu}_probe.py`。
-> 相关：[[SPRINT_signal_paged_rollout]]（shared-prefix = 唯一待证的无损 group 级杠杆）、[[SPRINT_training_mfu_compile]]、[[SPRINT_rl_safe_feature_cache_probe]]（近似路径的正确性门）、本轮证伪的 [[SPRINT_paged_trajectory_store]] / `SPRINT_diffusion_stepwise_batching_probe`。
+> 相关：[[SPRINT_signal_paged_rollout]]（shared-prefix P0 已得到负结果，现为 info 档案）、[[SPRINT_training_mfu_compile]]、[[SPRINT_rl_safe_feature_cache_probe]]（近似路径的正确性门）、本轮证伪的 [[SPRINT_paged_trajectory_store]] / `SPRINT_diffusion_stepwise_batching_probe`。
 
 ## 0. 一句话（诚实的天花板 —— 二次修正：image 和 video 都在 bf16 硬件天花板上）
 
@@ -48,7 +48,7 @@ side   img_tok   seq     lin TFLOP  attn TFLOP  attn%   ms/fwd
 
 **结论：attention 是 O(seq²),图像 ≤1024² 只占 4-13% FLOP → FA-3/注意力 kernel 升级天花板很低(linear/MLP-bound,compile 已啃)。1536²+ 升到 24-35%,video token 数更高才会 attn-dominated → 那时 FA-3 才值。** 所以无损 compute 杠杆随 seq 增长从"MLP 融合(compile,已有)"漂移到"attention(FA-3,video 才需要)"。
 
-### 验证 2：shared-prefix 多样性保留（→ 报告点名的唯一待证无损 group 杠杆）—— 负结果
+### 验证 2：shared-prefix 多样性保留（→ 曾被报告点名的候选）—— 负结果
 `vrl/scripts/eval/shared_prefix_divergence_probe.py`，G=6 T=28 768²，用 repo 真实 `sde_step_with_logprob`：
 
 ```
@@ -65,7 +65,7 @@ k    fwd_saved  retention            retention
 
 **结论:只共享前 4/28 步(省 12%)多样性就塌到 44%;[[SPRINT_signal_paged_rollout]] P0 的验收门(1.5x forward≈k14 时保留 ≥70%)实测只有 31-36%,直接没过。** 提高 SDE 噪声(1.0→1.4,已超 Flow-GRPO 默认)有缓解(k4 44→61%)但救不回来——扩散早期步锁全局结构是本质。**→ shared-prefix 作为无损 group 级杠杆,对 SD3.5 GRPO 实测为死。**
 
-> caveat:这是 latent 多样性(reward variance 的代理),非 reward 本身;单 prompt / SD3.5 / 768²。但 k=4 就塌到 44% 的悬崖太陡,reward-model 版 P0 翻盘概率很低。signal_paged 据此应 park(见该 sprint §9 自己写的关闭条件)。
+> caveat:这是 latent 多样性(reward variance 的代理),非 reward 本身;单 prompt / SD3.5 / 768²。但 k=4 就塌到 44% 的悬崖太陡,reward-model 版 P0 翻盘概率很低。signal-paged 已据此关闭并归档到 `info/`（见该 sprint §9 自己写的关闭条件）。
 
 ### 验证 4：CUDA graphs（→ SGLang 重投的 launch-bound 利器对我们有没有用）
 `vrl/scripts/perf/dit_mfu_probe.py --compile-mode reduce-overhead`（CUDA graphs）vs `default`（纯 inductor 融合），1024² batch4：
@@ -221,11 +221,17 @@ verl 逐字：**"old_log_prob 必须用 rollout 参数和 tokens 算,不能用 t
 近似项只能离 policy path:量化/cache/蒸馏 只能放 frozen reward/critic,绝不上 rollout/trainable 网络
 ```
 
+### 已关闭的候选
+
+- **shared-prefix group rollout：负结果。**同 prompt 的 GRPO group 共享早期去噪前缀时，
+  [[SPRINT_signal_paged_rollout]] 的真实 P0 只保留 31%–44% latent diversity，低于 70% 门；
+  P1–P3 已取消，不再列为待证无损杠杆。
+
 ### 待证开放问题(各自值得一个 probe)
-1. **shared-prefix 有没有无损版**(对我们最直接)：同 prompt 的 GRPO group 共享早期去噪前缀(SDE 分叉前确定性 latent),能不能既省 forward 又保住 per-sample `old_log_prob`?= [[SPRINT_signal_paged_rollout]] 核心。报告认为这是**唯一真正待证的无损 group 级杠杆**。
-2. **固定步 diffusion 的 rollout:train GPU 配比**：没有长尾可藏,async overlap 还剩多少(对照 LLM 的 2.3-2.8x)?
-3. **Flow-GRPO 的 stale/partial 能否用 IS 在 `sde_step_with_logprob` 上安全修正**,variance/bias 代价 vs LLM token 级 IS?
-4. **多卡 rollout/train pipeline 的真实 diffusion-RL 收益**——单卡 kernel 已到 bf16 上限，剩下的大无损空间在系统 pipeline，而不是 AdaLN/FA3 kernel。
+
+1. **固定步 diffusion 的 rollout:train GPU 配比**：没有长尾可藏,async overlap 还剩多少(对照 LLM 的 2.3-2.8x)?
+2. **Flow-GRPO 的 stale/partial 能否用 IS 在 `sde_step_with_logprob` 上安全修正**,variance/bias 代价 vs LLM token 级 IS?
+3. **多卡 rollout/train pipeline 的真实 diffusion-RL 收益**——单卡 kernel 已到 bf16 上限，剩下的大无损空间在系统 pipeline，而不是 AdaLN/FA3 kernel。
 
 ## 6. 非目标
 

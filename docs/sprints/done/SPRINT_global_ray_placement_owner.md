@@ -2,7 +2,9 @@
 
 状态：implemented / closeout（2026-06-14）。核心 run-level owner、role bundle
 mapping、rollout/reward owner-managed placement、online recipe cleanup 已落地；本文保留
-原设计作为决策记录，剩余吞吐主线转入 `SPRINT_reward_execution.md`。
+原设计作为决策记录。当前 reward execution contract 归
+`docs/sprints/done/SPRINT_reward_service.md`；多 GPU 吞吐测量归
+`docs/sprints/parked/SPRINT_video_rollout_stage_overlap.md`。
 
 ## Closeout 状态（2026-06-14）
 
@@ -28,10 +30,11 @@ mapping、rollout/reward owner-managed placement、online recipe cleanup 已落�
 
 剩余项 / 转出：
 
-- Reward async scoring、reward backlog 与 collect->score barrier 拆分：转入
-  `SPRINT_reward_execution.md` P1。
-- `vrl/scripts/common/factory.py` 里 reward key 硬编码派发和成本感知 auto placement：保留为
-  `SPRINT_reward_execution.md` P2 follow-up。
+- Reward async scoring 与 overlap capability contract 已由
+  `docs/sprints/done/SPRINT_reward_service.md` 收口；真实多 GPU 吞吐测量留在
+  `docs/sprints/parked/SPRINT_video_rollout_stage_overlap.md`。
+- 历史 `reward_cost` 成本感知 auto-placement 提案已撤回，没有 active owner；当前 device
+  placement 只认 `vrl/ray/resources.py` 的 typed resource contract。
 - Memory budget、ReplayModel parity、把 trainer 变成 Ray actor 都不是本 sprint 目标。
 - 不保留 `vrl/generation/ray/placement.py` 兼容 shim；调用方直接从 `vrl.ray.placement`
   导入全局 placement 边界。

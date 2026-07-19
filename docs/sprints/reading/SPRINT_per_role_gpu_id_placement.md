@@ -1,7 +1,8 @@
 # SPRINT：按 GPU 细化角色重叠与生命周期
 
-Status: **DONE / superseded (2026-07-11)** by
-[`SPRINT_miles_phase_lease_and_one_continuous.md`](../SPRINT_miles_phase_lease_and_one_continuous.md).
+状态：**historical / superseded design（2026-07-11）**。KIND：**reading**；本提案已被
+[`SPRINT_miles_phase_lease_and_one_continuous.md`](../SPRINT_miles_phase_lease_and_one_continuous.md)
+取代，只保留设计演进依据，不是待办或当前配置契约。
 
 > 本提案依赖 role `memory_fraction` 与同卡 resident lease；两者已经从产品面删除，因此 T2、
 > T3 和以它们为前提的 T4 不再实施。未来若需要逐卡 engine budget，必须从具体 backend 的真实

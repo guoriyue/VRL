@@ -1,10 +1,10 @@
 # SPRINT: Speculative Diffusion Rollout — target-exact acceleration for RL trajectories
 
-状态：**ABANDONED — exact-coupling 路线确认死亡（2026-06-25）**。实现代码
-（`vrl/math/diffusion/speculative.py` + 单测）已删除：whole-latent 单步 accept/reject
-被高维 maximal coupling 的方差墙击穿（接受率≈0），这是基本规律不是调参问题，不再投入。
-保留为**负结果档案**：本 sprint 文档 + reading note（实测数字记在 §9 P3）。
-探针 `speculative_draft_probe.py` 已删除——它回答的问题已记录在这里。
+状态：**negative measurement archive（2026-06-25）**。KIND：**info**；whole-latent
+exact-coupling 路线已被真实模型测量证伪，不是待办，也没有等待事件后重启的 parked trigger。
+历史实现代码、单测与 `speculative_draft_probe.py` 均已删除；它们回答的问题及实测数字保留在
+本文 §9 P3 和 reading note 中。whole-latent 单步 accept/reject 被高维 maximal coupling
+的方差墙击穿（接受率≈0），这是基本规律，不是调参问题。
 
 ---
 
@@ -15,19 +15,18 @@
 P4/P5 因此不跑。下面 P0–P2 仍是有效资产（exact-coupling 数学 + RL contract 已证），
 但「省 target NFE」这个 killer 诉求在 exact-coupling 路线上**当前不成立**。
 
-已落地：reading note
-`docs/sprints/reading/speculative_diffusion_sampling.md`（P0）、核心模块
-`vrl/math/diffusion/speculative.py`（reflection maximal coupling +
-`speculative_sde_step`，P1/P2）、CPU 证明测试
-`tests/math/test_speculative_diffusion.py`（10 passed）。关键结论：flow-matching
+历史验证曾落地 reading note
+`docs/sprints/reading/speculative_diffusion_sampling.md`（P0）、reflection maximal coupling
+原型（P1/P2）与 CPU 证明测试；原型和测试已在负结果收口后删除，数学结论保留。关键结论：flow-matching
 单步是“同协方差高斯对”，speculative sampling 退化成 **reflection maximal
 coupling**——输出精确等于 target 转移、不需 residual 采样、`old_log_prob` contract
 干净（= target 转移 logprob，可 replay 复算）。toy 实测在分布统计检验通过的前提下
-**省 ~72% 串行 target 评估**（draft 贴近 target 时）。P3+ 需要 GPU + 真模型，未在本轮跑。
+**省 ~72% 串行 target 评估**（draft 贴近 target 时），但 P3 的真实 SD3.5 测量得到
+acceptance≈0、省算 0%，因此 P4/P5 按 gate 不再执行。
 
 这份 sprint 回答一个更严格的问题：能不能像 speculative decoding 一样，用便宜 draft 先猜，再用 expensive target policy 校正，从而 **保持 target rollout distribution 不变**，但减少 target diffusion model 的 function evaluations。
 
-这比 `SPRINT_signal_paged_rollout` 更接近“PagedAttention 级别”的诉求：不是靠改变采样相关性省算，而是用接受/拒绝校正保留目标分布。它仍然不是 bitwise cache；它保证的是 **same target distribution / same target policy semantics**，不是“同一个 seed 下逐 tensor 完全相同”。
+这比 `docs/sprints/info/SPRINT_signal_paged_rollout.md` 更接近“PagedAttention 级别”的诉求：不是靠改变采样相关性省算，而是用接受/拒绝校正保留目标分布。它仍然不是 bitwise cache；它保证的是 **same target distribution / same target policy semantics**，不是“同一个 seed 下逐 tensor 完全相同”。
 
 ## 0. 一句话
 
@@ -486,7 +485,7 @@ previous-policy draft 在 early training 可能和 target 差很远。需要 acc
 
 ## 12. 与现有 sprint 的关系
 
-- `SPRINT_signal_paged_rollout`：shared-prefix 是 algorithmic tradeoff，可能省算但改变相关性；本 sprint 是 target-exact distribution path。若目标是“same target semantics”，本 sprint 优先级更高。
+- `docs/sprints/info/SPRINT_signal_paged_rollout.md`：shared-prefix 是已测得的负结果；它可能省算但会改变相关性并压低多样性。本 sprint 则研究 target-exact distribution path。
 - `SPRINT_rollout_vllm_migration`：TeaCache 是 approximate within-sample cache；本 sprint 只有在 target correction 明确时才算 exact。
 - `SPRINT_rollout_optimization_layer`：fp8/kernel patch 降低单次 forward 成本；本 sprint 尝试减少 target forward 次数。
 - `SPRINT_rollout_correction_rejection` / low-precision TIS：如果 speculative path 退化成 approximate rollout，就必须回到这些 correction；exact path 不应依赖它们兜底。

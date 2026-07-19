@@ -3,7 +3,7 @@
 性质：工程 profiling + 决策记录（长期资产）。本文是 FLUX/Qwen-Image 家族落地后，把**本仓库 naive
 扩散路径**与**真实 vLLM-Omni 引擎**在同口径下对照的结论沉淀。家族落地本身见
 [`docs/sprints/done/SPRINT_flux_t2i.md`](sprints/done/SPRINT_flux_t2i.md) /
-[`SPRINT_qwen_image_t2i.md`](sprints/planned/SPRINT_qwen_image_t2i.md)。
+[`SPRINT_qwen_image_t2i.md`](sprints/parked/SPRINT_qwen_image_t2i.md)。
 
 环境：单卡 RTX 5090（32GB，sm_120/Blackwell）。两侧各用各自 env——naive 跑主环境；vLLM-Omni 跑项目自带的
 `.venvs/vllm-omni`（vllm 0.22.0 + vllm_omni 0.22.0，torch 2.11+cu130）。weights 走本地缓存（offline）。
