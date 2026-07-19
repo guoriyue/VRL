@@ -24,12 +24,91 @@ def test_generation_layer_does_not_import_rollout_or_training_layers() -> None:
     assert not violations, _format_violations(violations)
 
 
+def test_ray_working_dir_keeps_pinned_chunk_runtime_inputs() -> None:
+    """Exercise Ray's real ignore traversal for required vendored runtime files."""
+
+    import logging
+
+    from ray._private import ray_constants
+    from ray._private.runtime_env import packaging
+
+    required = {
+        "third_party/CausVid/causvid/models/wan/causal_model.py",
+        "third_party/MAGI-1/example/4.5B/4.5B_base_config.json",
+        "third_party/MAGI-1/example/assets/special_tokens.npz",
+        "third_party/MAGI-1/inference/pipeline/entry.py",
+    }
+    excluded = {
+        "third_party/CausVid/.git/HEAD",
+        "third_party/MAGI-1/.git/HEAD",
+        "third_party/DynamicEval/docs/static/videos/prompt_id_024_compressed.mp4",
+        "third_party/VMBench/Grounded-SAM-2/assets/tracking_car.mp4",
+    }
+    targets = required | excluded
+    visited: set[str] = set()
+
+    def record(path: Path) -> None:
+        relative = path.relative_to(ROOT).as_posix()
+        if relative in targets:
+            visited.add(relative)
+
+    default_excludes = packaging._get_excludes(
+        ROOT,
+        ray_constants.get_runtime_env_default_excludes(),
+    )
+    packaging._dir_travel(
+        ROOT,
+        [default_excludes],
+        record,
+        include_gitignore=True,
+        logger=logging.getLogger("test-ray-package-contents"),
+    )
+
+    assert required <= visited
+    assert not excluded & visited
+
+
+def test_ray_ignore_excludes_submodule_git_pointer_files(tmp_path: Path) -> None:
+    """A normal submodule's .git is a file, unlike local standalone clones."""
+
+    import logging
+
+    from ray._private.runtime_env import packaging
+
+    (tmp_path / ".rayignore").write_text(
+        (ROOT / ".rayignore").read_text(encoding="utf-8"),
+        encoding="utf-8",
+    )
+    source_root = tmp_path / "third_party" / "CausVid"
+    source_root.mkdir(parents=True)
+    (source_root / ".git").write_text(
+        "gitdir: ../../../.git/modules/third_party/CausVid\n",
+        encoding="utf-8",
+    )
+    runtime_file = source_root / "causvid" / "models" / "runtime.py"
+    runtime_file.parent.mkdir(parents=True)
+    runtime_file.write_text("# runtime\n", encoding="utf-8")
+    visited: set[Path] = set()
+
+    packaging._dir_travel(
+        tmp_path,
+        [],
+        visited.add,
+        include_gitignore=True,
+        logger=logging.getLogger("test-ray-submodule-pointer"),
+    )
+
+    assert source_root / ".git" not in visited
+    assert runtime_file in visited
+
+
 def test_trajectory_layer_stays_family_neutral() -> None:
     """Checks trajectory layer stays family neutral."""
     violations = _forbidden_imports(
         VRL_ROOT / "trajectory",
         forbidden=(
             "vrl.algorithms",
+            "vrl.generation.bindings.chunk_autoregressive_denoise",
             "vrl.generation.bindings.token_autoregressive",
             "vrl.generation.bindings.full_sequence_denoise",
             "vrl.generation.ray",

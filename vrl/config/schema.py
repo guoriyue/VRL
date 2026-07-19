@@ -492,6 +492,35 @@ class FluxModelConfig(ModelConfig):
     nft_previous_adapter: Any = None
 
 
+class CausVidModelConfig(ModelConfig):
+    """CausVid's pinned upstream source, Wan base, and released checkpoint."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    accept_noncommercial_license: bool = False
+    base_model_path: Any = None
+    base_model_revision: Any = None
+    causvid_source_path: Any = None
+    causvid_source_revision: Any = None
+    checkpoint_file: Any = None
+    checkpoint_sha256: Any = None
+
+
+class Magi1ModelConfig(ModelConfig):
+    """MAGI-1's isolated upstream runtime and checkpoint component paths."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    checkpoint_path: Any = None
+    config_path: Any = None
+    python_executable: Any = None
+    source_path: Any = None
+    source_revision: Any = None
+    t5_pretrained_path: Any = None
+    timeout_seconds: Any = None
+    vae_pretrained_path: Any = None
+
+
 # Keyed by CANONICAL rollout-family name only. Aliases ("wan", "cosmos",
 # "janus_r1", ...) are owned by vrl/families/names.py — lookups
 # normalize through it, so a new declared alias works here for free.
@@ -508,6 +537,8 @@ _model_config_classes_by_family: dict[str, type[ModelConfig]] = {
     "nextstep_1": NextStep1ModelConfig,
     "llamagen": LlamaGenModelConfig,
     "echo": EchoModelConfig,
+    "causvid": CausVidModelConfig,
+    "magi_1": Magi1ModelConfig,
 }
 
 _model_config_variant_classes: tuple[type[ModelConfig], ...] = tuple(

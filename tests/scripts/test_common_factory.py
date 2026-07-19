@@ -76,6 +76,87 @@ def test_diffusion_factory_accepts_each_kind_exact_config_type(
     assert type(pair.algorithm) is expected_algorithm
 
 
+def test_chunk_autoregressive_factory_builds_grouped_grpo_evaluator() -> None:
+    cfg = load_config("experiment/sd3_5/online_grpo_ocr")
+
+    pair = build_algorithm_and_evaluator_from_cfg(
+        cfg,
+        family_entry=get_model_family_entry("causvid"),
+        built=build_configs(cfg),
+        collector_config=build_rollout_config_from_cfg(cfg),
+    )
+
+    assert type(pair.algorithm) is GRPO
+    assert type(pair.evaluator).__name__ == "ChunkAutoregressiveDenoiseLogProbEvaluator"
+
+
+def test_generation_only_chunk_family_fails_before_algorithm_construction() -> None:
+    cfg = load_config("experiment/sd3_5/online_grpo_ocr")
+
+    with pytest.raises(RuntimeError, match=r"generation-only.*no trainable actions"):
+        build_algorithm_and_evaluator_from_cfg(
+            cfg,
+            family_entry=get_model_family_entry("magi_1"),
+            built=build_configs(cfg),
+            collector_config=build_rollout_config_from_cfg(cfg),
+        )
+
+
+@pytest.mark.parametrize(
+    ("recipe", "message"),
+    [
+        ("flow_matching_dance_grpo", "random denoise-timestep subset"),
+        ("flow_matching_dppo", "reverse-SDE dt signals"),
+        ("flow_matching_grpo_guard", "reverse-SDE dt signals"),
+    ],
+)
+def test_chunk_autoregressive_factory_rejects_undefined_algorithm_semantics(
+    recipe: str,
+    message: str,
+) -> None:
+    cfg = load_config(
+        "experiment/sd3_5/online_grpo_ocr",
+        overrides=[f"/recipe/online={recipe}"],
+    )
+
+    with pytest.raises(ValueError, match=message):
+        build_algorithm_and_evaluator_from_cfg(
+            cfg,
+            family_entry=get_model_family_entry("causvid"),
+            built=build_configs(cfg),
+            collector_config=build_rollout_config_from_cfg(cfg),
+        )
+
+
+def test_chunk_autoregressive_factory_rejects_non_fp32_transition_math() -> None:
+    cfg = load_config(
+        "experiment/sd3_5/online_grpo_ocr",
+        overrides=["precision.diffusion_math.dtype=bf16"],
+    )
+
+    with pytest.raises(ValueError, match="exact fp32 Gaussian re-noise"):
+        build_algorithm_and_evaluator_from_cfg(
+            cfg,
+            family_entry=get_model_family_entry("causvid"),
+            built=build_configs(cfg),
+            collector_config=build_rollout_config_from_cfg(cfg),
+        )
+
+
+def test_chunk_autoregressive_factory_rejects_full_sequence_sft_regularizer() -> None:
+    cfg = load_config("experiment/sd3_5/online_grpo_ocr")
+    built = build_configs(cfg)
+    built["algorithm"].sft_weight = 0.1
+
+    with pytest.raises(ValueError, match=r"grouped causal-chunk replay.*sft_weight"):
+        build_algorithm_and_evaluator_from_cfg(
+            cfg,
+            family_entry=get_model_family_entry("causvid"),
+            built=built,
+            collector_config=build_rollout_config_from_cfg(cfg),
+        )
+
+
 @pytest.mark.parametrize(
     ("recipe", "wrong_config", "expected_name"),
     [

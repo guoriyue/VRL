@@ -8,9 +8,13 @@ from vrl.utils.config import import_from_path
 # Custom replay construction is the only place the registry cannot derive the
 # concrete replay class from the generic descriptor.
 _CUSTOM_REPLAY_MODEL_CLASSES = {
+    "causvid": "vrl.models.families.causvid.model:CausVidReplayModel",
     "cosmos-predict2-anima": "vrl.models.families.cosmos.anima.model:AnimaReplayModel",
     "cosmos3": "vrl.models.families.cosmos.cosmos3.model:Cosmos3ReplayModel",
     "echo": "vrl.models.families.echo.model:EchoReplayModel",
+    # MAGI-1 exposes the replay protocol only to fail closed with a clear
+    # generation-only error; it intentionally has no trainable replay model.
+    "magi_1": "vrl.models.families.magi_1.model:Magi1Model",
 }
 
 

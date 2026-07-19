@@ -303,13 +303,18 @@ def test_family_loaders_do_not_apply_memory_policy() -> None:
 
 
 def test_runtime_builders_apply_generation_memory_policy() -> None:
-    """Every full-generation runtime builder routes through the shared policy.
+    """Every in-process generation builder routes through the shared policy.
 
     Registry-descriptor families ship no family builder functions. Their shared
     ``build_family_runtime_bundle`` is the single home of the policy call.
+    Explicitly registered subprocess runtimes own decode memory in their
+    upstream process/config and must not pretend to expose an in-process VAE.
     """
 
+    import importlib
     from pathlib import Path
+
+    from vrl.families.registry import FAMILY_REGISTRY, DenoiseFamilyBuild
 
     # The shared denoise-step builder must own the policy call.
     shared = Path("vrl/models/steps/denoise/build.py").read_text()
@@ -319,6 +324,18 @@ def test_runtime_builders_apply_generation_memory_policy() -> None:
 
     import re
 
+    isolated_runtime_paths: set[Path] = set()
+    for entry in FAMILY_REGISTRY.values():
+        if not entry.runtime_capabilities.runs_in_isolated_subprocess:
+            continue
+        build = entry.family_build
+        assert isinstance(build, DenoiseFamilyBuild)
+        assert build.rollout_runtime_builder is not None
+        module_name = build.rollout_runtime_builder.partition(":")[0]
+        module_file = getattr(importlib.import_module(module_name), "__file__", None)
+        assert module_file is not None
+        isolated_runtime_paths.add(Path(module_file).resolve())
+
     runtimes = sorted(Path("vrl/models/families").rglob("runtime.py"))
     missing = []
     for path in runtimes:
@@ -327,6 +344,9 @@ def test_runtime_builders_apply_generation_memory_policy() -> None:
         # Replay builders own no VAE and never apply the policy; only files
         # that still define a full-generation (rollout) builder must route.
         defines_rollout_builder = any("replay" not in name for name in builder_names)
+        if path.resolve() in isolated_runtime_paths:
+            assert "apply_generation_memory_policy" not in source
+            continue
         if defines_rollout_builder and "apply_generation_memory_policy" not in source:
             missing.append(str(path))
     assert not missing, f"runtime builders missing the shared policy call: {missing}"

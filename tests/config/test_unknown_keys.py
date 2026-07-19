@@ -5,6 +5,7 @@ from __future__ import annotations
 import dataclasses
 import logging
 
+import pytest
 from omegaconf import OmegaConf
 
 from vrl.config.unknown_keys import find_unknown_keys, warn_unknown_keys
@@ -93,6 +94,45 @@ def test_removed_sampling_cfg_knob_is_unknown() -> None:
 def test_removed_model_dtype_is_unknown() -> None:
     cfg = OmegaConf.create({"model": {"family": "sd3_5", "dtype": "bf16"}})
     assert find_unknown_keys(cfg) == ["model.dtype"]
+
+
+@pytest.mark.parametrize(
+    ("family", "model_values"),
+    [
+        (
+            "causvid",
+            {
+                "accept_noncommercial_license": True,
+                "base_model_path": "Wan-AI/Wan2.1-T2V-1.3B",
+                "base_model_revision": "base-revision",
+                "causvid_source_path": "third_party/CausVid",
+                "causvid_source_revision": "source-revision",
+                "checkpoint_file": "autoregressive_checkpoint/model.pt",
+                "checkpoint_sha256": "digest",
+            },
+        ),
+        (
+            "magi_1",
+            {
+                "checkpoint_path": None,
+                "config_path": "example/4.5B/4.5B_base_config.json",
+                "python_executable": "third_party/MAGI-1/.venv/bin/python",
+                "source_path": "third_party/MAGI-1",
+                "source_revision": "source-revision",
+                "t5_pretrained_path": None,
+                "timeout_seconds": 3600,
+                "vae_pretrained_path": None,
+            },
+        ),
+    ],
+)
+def test_chunk_autoregressive_model_keys_are_registered(
+    family: str,
+    model_values: dict[str, object],
+) -> None:
+    cfg = OmegaConf.create({"model": {"family": family, **model_values}})
+
+    assert find_unknown_keys(cfg) == []
 
 
 def test_warn_unknown_keys_logs_one_line(caplog) -> None:

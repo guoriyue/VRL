@@ -1,9 +1,11 @@
-"""Typed semantics for the trainable policy exposed by a family entry.
+"""Typed temporal/action semantics exposed by a model-family entry.
 
 These fields classify the executable policy variant selected by the registry,
 not every component stored in a checkpoint.  A hybrid checkpoint may contain a
 causal reasoner, a token prior, and a frozen denoise renderer while exposing
-only one of those stages as the RL policy.
+only one of those stages as the RL policy. Generation-only entries retain the
+same routing vocabulary but declare ``supports_policy_replay=False`` in their
+runtime capabilities; semantics alone never imply trainability.
 """
 
 from __future__ import annotations
@@ -23,7 +25,7 @@ TrajectoryLayout = Literal["denoise", "token", "multisegment_token"]
 
 @dataclass(frozen=True, slots=True)
 class PolicySemantics:
-    """Generation semantics of the trainable, action-producing policy stage.
+    """Temporal organization and step shape of the selected executable stage.
 
     ``full_sequence`` updates all output positions together in each policy
     step. ``token_autoregressive`` advances one ordered token from a prefix;

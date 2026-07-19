@@ -30,6 +30,8 @@ class GenerationRuntimeCapabilities:
     accepts_samples_per_chunk: bool = False
     supports_cumem_pool: bool = False
     requires_frozen_component_parking: bool = False
+    supports_policy_replay: bool = True
+    runs_in_isolated_subprocess: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -51,6 +53,13 @@ class DenoiseFamilyBuild:
     # Only families whose replay construction cannot use the generic descriptor
     # path declare an override (echo/cosmos3/anima).
     replay_runtime_builder: str | None = None
+    # Non-diffusers families may own rollout assembly as well as replay
+    # assembly. The registry still carries ``model_cls`` as the importable
+    # family surface, while this hook owns checkpoint/component construction.
+    rollout_runtime_builder: str | None = None
+    # Driver-side normalization for deployment inputs that must be resolved
+    # before ModelBuild is serialized into a Ray launch contract.
+    model_build_normalizer: str | None = None
     # LoRA-only family: the generic builders fail loud BEFORE paying the
     # transformer load. The per-family WHY belongs in a comment on the entry
     # (and in the model's own apply_full_finetune error), not in runtime data.
@@ -210,6 +219,13 @@ class ModelFamilyEntry:
                 build.model_config["gradient_checkpointing"] = (
                     not for_rollout and checkpointing == "full"
                 )
+        if (
+            isinstance(self.family_build, DenoiseFamilyBuild)
+            and self.family_build.model_build_normalizer is not None
+        ):
+            from vrl.utils.config import import_from_path
+
+            build = import_from_path(self.family_build.model_build_normalizer)(build)
         return build
 
     def build_replay(self, build: Any) -> Any:
@@ -218,6 +234,10 @@ class ModelFamilyEntry:
         if build.family != self.family:
             raise ValueError(
                 f"replay build family {build.family!r} does not match entry {self.family!r}",
+            )
+        if not self.runtime_capabilities.supports_policy_replay:
+            raise RuntimeError(
+                f"{self.family} is generation-only and exposes no trainable policy replay",
             )
 
         if isinstance(self.family_build, DenoiseFamilyBuild):
@@ -240,6 +260,10 @@ class ModelFamilyEntry:
                 f"rollout build family {build.family!r} does not match entry {self.family!r}",
             )
         if isinstance(self.family_build, DenoiseFamilyBuild):
+            if self.family_build.rollout_runtime_builder is not None:
+                from vrl.utils.config import import_from_path
+
+                return import_from_path(self.family_build.rollout_runtime_builder)(build)
             from vrl.models.steps.denoise.build import build_family_runtime_bundle
 
             return build_family_runtime_bundle(build, entry=self)
@@ -333,6 +357,39 @@ def _token_autoregressive_entry(
     )
 
 
+def _chunk_autoregressive_denoise_entry(
+    *,
+    family: str,
+    executor_cls: str,
+    build: DenoiseFamilyBuild,
+    task: str = "t2v",
+    runtime_capabilities: GenerationRuntimeCapabilities | None = None,
+) -> ModelFamilyEntry:
+    """Construct the shared typed binding for causal temporal-chunk denoising."""
+
+    return ModelFamilyEntry(
+        family=family,
+        task=task,
+        policy_semantics=PolicySemantics(
+            generation_regime="chunk_autoregressive",
+            step_kind="denoise",
+            action_distribution="continuous",
+            trajectory_layout="denoise",
+        ),
+        executor_cls=executor_cls,
+        gatherer_cls=(
+            "vrl.generation.bindings.chunk_autoregressive_denoise.gather:"
+            "ChunkAutoregressiveDenoiseGatherer"
+        ),
+        family_build=build,
+        runtime_capabilities=(
+            runtime_capabilities
+            if runtime_capabilities is not None
+            else GenerationRuntimeCapabilities()
+        ),
+    )
+
+
 _register_model_family(
     _full_sequence_denoise_entry(
         family="sd3_5",
@@ -341,6 +398,51 @@ _register_model_family(
             model_cls="vrl.models.families.sd3_5.model:SD3_5Model",
             replay_cls="vrl.models.families.sd3_5.model:SD3_5ReplayModel",
             transformer_classname="SD3Transformer2DModel",
+        ),
+    ),
+)
+
+_register_model_family(
+    _chunk_autoregressive_denoise_entry(
+        family="causvid",
+        executor_cls="vrl.models.families.causvid.runtime:CausVidChunkExecutor",
+        build=DenoiseFamilyBuild(
+            model_cls="vrl.models.families.causvid.model:CausVidModel",
+            replay_runtime_builder=(
+                "vrl.models.families.causvid.runtime:build_causvid_replay_runtime_bundle"
+            ),
+            rollout_runtime_builder=(
+                "vrl.models.families.causvid.runtime:build_causvid_runtime_bundle"
+            ),
+        ),
+        runtime_capabilities=GenerationRuntimeCapabilities(
+            supports_torch_compile=True,
+            accepts_samples_per_chunk=True,
+            supports_cumem_pool=True,
+            requires_frozen_component_parking=True,
+        ),
+    ),
+)
+
+_register_model_family(
+    _chunk_autoregressive_denoise_entry(
+        family="magi_1",
+        executor_cls="vrl.models.families.magi_1.runtime:Magi1ChunkExecutor",
+        build=DenoiseFamilyBuild(
+            model_cls="vrl.models.families.magi_1.model:Magi1Model",
+            replay_runtime_builder=(
+                "vrl.models.families.magi_1.runtime:build_magi_1_replay_runtime_bundle"
+            ),
+            rollout_runtime_builder=(
+                "vrl.models.families.magi_1.runtime:build_magi_1_runtime_bundle"
+            ),
+            model_build_normalizer=(
+                "vrl.models.families.magi_1.model:normalize_magi_1_model_build"
+            ),
+        ),
+        runtime_capabilities=GenerationRuntimeCapabilities(
+            supports_policy_replay=False,
+            runs_in_isolated_subprocess=True,
         ),
     ),
 )
@@ -681,8 +783,10 @@ def get_model_family_entry(family: str) -> ModelFamilyEntry:
 __all__ = [
     "FAMILY_REGISTRY",
     "GENERIC_FULL_SEQUENCE_DENOISE_EXECUTOR",
+    "DenoiseFamilyBuild",
     "GenerationRuntimeCapabilities",
     "ModelFamilyEntry",
     "PolicySemantics",
+    "TokenFamilyBuild",
     "get_model_family_entry",
 ]

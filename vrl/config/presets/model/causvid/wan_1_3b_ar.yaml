@@ -1,0 +1,31 @@
+# CausVid causal Wan2.1 1.3B release. The released generator weights are
+# CC BY-NC-SA 4.0 / non-commercial; the explicit acknowledgement is checked
+# before the runtime resolves or downloads the checkpoint.
+model:
+  family: causvid
+  path: tianweiy/CausVid
+  revision: b545eb2728fc9d1515023a270b847f7b24b3aa89
+  checkpoint_file: autoregressive_checkpoint/model.pt
+  accept_noncommercial_license: true
+
+  base_model_path: Wan-AI/Wan2.1-T2V-1.3B
+  base_model_revision: 37ec512624d61f7aa208f7ea8140a131f93afc9a
+
+  # Source code is a separately pinned submodule; model weights stay in the
+  # shared Hugging Face cache and are never vendored into this repository.
+  causvid_source_path: third_party/CausVid
+  causvid_source_revision: adb6a5ecd07666b4d0290042915c8406e6d5ce22
+
+  use_lora: true
+  lora:
+    rank: 32
+    alpha: 64
+    # Upstream Wan self- and cross-attention projections share these names.
+    target_modules:
+      - q
+      - k
+      - v
+      - o
+  torch_compile:
+    enable: false
+    mode: default

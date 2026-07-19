@@ -116,6 +116,7 @@ def test_family_registry_entries_have_complete_protocol_wiring() -> None:
         assert entry.policy_semantics.generation_regime in {
             "full_sequence",
             "token_autoregressive",
+            "chunk_autoregressive",
         }
         if entry.policy_semantics.step_kind == "denoise":
             assert isinstance(entry.family_build, DenoiseFamilyBuild)
@@ -130,6 +131,16 @@ def test_family_registry_entries_have_complete_protocol_wiring() -> None:
             assert entry.executor_cls.startswith(
                 ("vrl.models.families.", "vrl.generation.bindings.token_autoregressive."),
             )
+
+
+def test_chunk_family_trainability_and_process_boundaries_are_explicit() -> None:
+    causvid = get_model_family_entry("causvid").runtime_capabilities
+    magi = get_model_family_entry("magi_1").runtime_capabilities
+
+    assert causvid.supports_policy_replay is True
+    assert causvid.runs_in_isolated_subprocess is False
+    assert magi.supports_policy_replay is False
+    assert magi.runs_in_isolated_subprocess is True
 
 
 def test_family_aliases_resolve_to_canonical_entries() -> None:

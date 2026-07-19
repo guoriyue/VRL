@@ -17,8 +17,10 @@ Pinned invariant per family x sde_type x step: replaying the recorded
 prev_sample under unchanged inputs reproduces the collection log-prob exactly,
 at O(1) magnitude.
 
-AR families (janus/nextstep) are out of scope: token-logit log-probs, no SDE
-replay path.
+Token-AR families (janus/nextstep) are out of scope: token-logit log-probs, no
+SDE replay path. Chunk-AR denoise families are also out of scope: they own
+grouped temporal transitions rather than the generic full-sequence scheduler
+and SDE evaluator exercised here.
 """
 
 from __future__ import annotations
@@ -52,11 +54,13 @@ def _echo_scheduler():
     return diffusers.FlowMatchEulerDiscreteScheduler(num_train_timesteps=1000)
 
 
-def _diffusion_families() -> list[str]:
+def _full_sequence_diffusion_families() -> list[str]:
+    """Return families backed by the generic full-sequence SDE evaluator."""
+
     return [
         family
         for family, entry in FAMILY_REGISTRY.items()
-        if entry.policy_semantics.step_kind == "denoise"
+        if entry.policy_semantics.generation_regime == "full_sequence"
     ]
 
 
@@ -64,7 +68,7 @@ def _model_repos_by_family() -> dict[str, set[str]]:
     """Derive denoise-family repositories from family-first model presets."""
 
     out: dict[str, set[str]] = {}
-    denoise_families = set(_diffusion_families())
+    denoise_families = set(_full_sequence_diffusion_families())
     for name in list_bundled_configs("model"):
         model = load_config(name).get("model", {})
         declared = model.get("family")
@@ -89,12 +93,12 @@ _MANUAL_SCHEDULERS = {
     "cosmos-predict2-anima": _anima_scheduler,
     "echo": _echo_scheduler,
 }
-assert set(_diffusion_families()) >= set(_MANUAL_SCHEDULERS)
+assert set(_full_sequence_diffusion_families()) >= set(_MANUAL_SCHEDULERS)
 
 # alphas_cumprod-ladder families: their rollout/replay log-probs run through
 # sde_type="ddim", never the flow SDE — the parity invariant is checked there.
 _DDIM_FAMILIES = {"cogvideox", "pixart_sigma"}
-assert set(_diffusion_families()) >= _DDIM_FAMILIES
+assert set(_full_sequence_diffusion_families()) >= _DDIM_FAMILIES
 
 
 def _scheduler_for(family: str):
@@ -131,7 +135,7 @@ def _scheduler_for(family: str):
 
 def _parity_cases() -> list[object]:
     cases = []
-    for family in sorted(_diffusion_families()):
+    for family in sorted(_full_sequence_diffusion_families()):
         sde_types = ("ddim",) if family in _DDIM_FAMILIES else ("flow_grpo", "cps")
         cases.extend(
             pytest.param(family, sde_type, id=f"{family}-{sde_type}") for sde_type in sde_types
@@ -154,7 +158,9 @@ def _set_timesteps(scheduler) -> None:
 
 def test_scheduler_fixtures_have_complete_pinned_provenance() -> None:
     """Every checkpoint-owned scheduler is pinned and tied to a model YAML."""
-    checkpoint_owned = set(_diffusion_families()) - set(_MANUAL_SCHEDULERS)
+    checkpoint_owned = set(_full_sequence_diffusion_families()) - set(
+        _MANUAL_SCHEDULERS,
+    )
     assert set(_SCHEDULER_FIXTURES) == checkpoint_owned
 
     model_repos = _model_repos_by_family()

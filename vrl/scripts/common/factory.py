@@ -128,6 +128,11 @@ def build_algorithm_and_evaluator_from_cfg(
 ) -> AlgorithmEvaluatorPair:
     """Build the algorithm/evaluator pair for a strict online recipe."""
 
+    if not family_entry.runtime_capabilities.supports_policy_replay:
+        raise RuntimeError(
+            f"{family_entry.family} is generation-only: its runtime exposes no "
+            "trainable actions, transition likelihoods, or policy replay evaluator",
+        )
     algorithm_config = built["algorithm"]
     kind = str(OmegaConf.select(cfg, "algorithm.kind", default=""))
     diffusion_logprob_kinds = {"grpo", "dance_grpo", "flow_dppo", "grpo_guard"}
@@ -153,9 +158,6 @@ def build_algorithm_and_evaluator_from_cfg(
             GRPOGuard,
             GRPOGuardConfig,
         )
-        from vrl.rollouts.evaluators.denoise.sde_logprob import (
-            DiffusionSDELogProbEvaluator,
-        )
 
         expected_config_type = {
             "grpo": GRPOConfig,
@@ -168,13 +170,54 @@ def build_algorithm_and_evaluator_from_cfg(
                 f"{family_entry.family} {kind} expects {expected_config_type.__name__}, got "
                 f"{type(algorithm_config).__name__}",
             )
+        is_chunk_autoregressive = (
+            family_entry.policy_semantics.generation_regime == "chunk_autoregressive"
+        )
+        if is_chunk_autoregressive and float(getattr(algorithm_config, "sft_weight", 0.0)) > 0:
+            raise ValueError(
+                f"{family_entry.family} grouped causal-chunk replay does not "
+                "implement the full-sequence scheduler target required by "
+                "algorithm.sft_weight; set sft_weight=0",
+            )
         if kind == "flow_dppo":
             algorithm: object = FlowDPPO(algorithm_config)
         elif kind == "grpo_guard":
             algorithm = GRPOGuard(algorithm_config)
         else:
             algorithm = GRPO(algorithm_config)
+        if is_chunk_autoregressive:
+            if precision.diffusion_math != "fp32":
+                raise ValueError(
+                    f"{family_entry.family} uses an exact fp32 Gaussian re-noise "
+                    "policy; precision.diffusion_math.dtype overrides are not "
+                    "implemented for grouped causal-chunk replay",
+                )
+            if kind == "dance_grpo":
+                raise ValueError(
+                    f"{family_entry.family} uses one ordered full-trajectory replay; "
+                    "DanceGRPO's random denoise-timestep subset is not defined for "
+                    "the [temporal_chunk, denoise_transition] policy axes. Use grpo.",
+                )
+            if kind in {"flow_dppo", "grpo_guard"}:
+                raise ValueError(
+                    f"{family_entry.family} uses grouped causal-chunk replay; "
+                    f"algorithm.kind={kind!r} requires reverse-SDE dt signals that "
+                    "the chunk re-noise policy does not expose. Use grpo.",
+                )
+            from vrl.rollouts.evaluators.denoise import (
+                ChunkAutoregressiveDenoiseLogProbEvaluator,
+            )
+
+            return AlgorithmEvaluatorPair(
+                algorithm=algorithm,
+                evaluator=ChunkAutoregressiveDenoiseLogProbEvaluator(),
+            )
+
         math_dtype = resolve_torch_dtype(precision.diffusion_math)
+        from vrl.rollouts.evaluators.denoise.sde_logprob import (
+            DiffusionSDELogProbEvaluator,
+        )
+
         return AlgorithmEvaluatorPair(
             algorithm=algorithm,
             evaluator=DiffusionSDELogProbEvaluator(

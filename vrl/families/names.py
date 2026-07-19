@@ -35,6 +35,8 @@ _ALIASES_BY_FAMILY: dict[str, tuple[str, ...]] = {
     "emu3": ("emu3_gen",),
     "glm_image": ("glm_image_t2i",),
     "llamagen": ("llamagen_t2i",),
+    "causvid": ("caus_vid",),
+    "magi_1": ("magi-1", "magi1"),
 }
 
 

@@ -1,0 +1,36 @@
+# MAGI-1 4.5B base causal-chunk generator. The official runtime is deliberately
+# executed in its own Python environment; current upstream inference is
+# no-grad and therefore this preset is generation only, not GRPO.
+model:
+  family: magi_1
+  path: sand-ai/MAGI-1
+  revision: ca8bdfb28b1d88a29ec2a3ea423029f801a891bd
+
+  source_path: third_party/MAGI-1
+  source_revision: 0fcefdef8ce2df37a3b8890979433c06eb003328
+  config_path: example/4.5B/4.5B_base_config.json
+  # Create this isolated environment from MAGI-1's own requirements. Its
+  # Torch/CUDA stack is intentionally not installed into the VRL environment.
+  python_executable: third_party/MAGI-1/.venv/bin/python
+  timeout_seconds: 3600
+
+  # Optional local overrides. When absent, the runtime resolves these paths
+  # from the immutable Hub snapshot above: ckpt/magi/4.5B_base, ckpt/t5, ckpt/vae.
+  checkpoint_path: null
+  t5_pretrained_path: null
+  vae_pretrained_path: null
+
+  use_lora: false
+  torch_compile:
+    enable: false
+    mode: default
+
+# The isolated official process owns its autocast policy. Its 4.5B base config
+# fixes the DiT to BF16 and the T5 prompt encoder to FP32.
+precision:
+  float32_precision: ieee
+  rollout:
+    dtype: bf16
+    outer_autocast: false
+    prompt_encoders:
+      dtype: fp32
