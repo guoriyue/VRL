@@ -1,6 +1,15 @@
 # SPRINT: Training-side MFU — turn on torch.compile for the replay forward
 
-状态：**done（2026-07-02）——本硬件（1×5090）可做的全部完成：flag 翻转落地（§2.5）+ anima e2e dry-run PASS（§4.5）；两个残留 gate 显式挂起：predict2_5 视频 compile-both live gate 等 ≥2 卡，FSDP 组等 inductor+fully_shard**。性质：**不是新机器,是把已有的 `model.torch_compile.enable` 开关在训练 replay 上逐 recipe 打开,再按实测显存重新评估 `microbatch_size`。** 这是本轮 probe 后仍站得住的训练侧 MFU 优化方向；注意这里的数字只描述 **SD3.5-medium 1024²、no-ckpt replay microbatch**，不能直接外推到 video / grad-checkpoint / FSDP recipe。
+状态：**done（2026-07-02）**。本 sprint 在 1×RTX 5090 可验证的范围已经完成：flag 翻转、
+config fail-fast 和 Anima compiled/eager dry-run 均落地。Predict2.5 大形状的后续 compile 验收已移交
+`docs/sprints/parked/SPRINT_video_context_parallel.md`；FSDP2+compile 在当前实现中是显式 non-goal，并由
+preflight hard error 保护，不是本 sprint 的未闭 gate。本文数字只描述 SD3.5-medium 1024²、
+no-checkpoint replay microbatch，不能外推到 video、gradient checkpointing 或 FSDP recipe。
+
+> **当前路径修正（2026-07-18）**：family-first 重构后，rollout 与 replay 的 compile 顺序由
+> `vrl/models/steps/denoise/build.py` 中的 `build_denoise_runtime_bundle` 和
+> `assemble_replay_bundle` 统一拥有；family model 只提供 `torch_compile_transformer` 能力。
+> 下文旧的 family-specific runtime 路径仅是当时实现记录，不再是 source of truth。
 
 > **2026-07-02 复核要点**：文档 06-26 定稿后仓库变了三件事——① model 层 defaults 已把 sd3_5/predict2_2b/wan14b/flux/qwen 翻成 `enable:true`，§2 原表"无 block=默认 off"前提失效（**absent ≠ off，判断一律用 loader resolve，别看单文件**）；② compile×grad-ckpt 从"软建议"变**硬互斥**（fab16aca，`activation_checkpointing.py`），并顺带撞出 4 个 240p recipe 启动即炸（已修，§2.5）；③ SAC（`gradient_checkpointing: selective`）落地，成为显存紧 recipe 上 compile 的**竞争方案**（§3.2）。
 
@@ -26,15 +35,19 @@ batch 2 no-ckpt:  65% / 26.8GB → 79% / 20.1GB   +14pp MFU, -25% 显存, 1.21x
 
 ## 1. 证据:flag 同时覆盖 rollout 和 replay
 
-每个家族有两个 runtime builder,**gate 在同一个 `build.torch_compile.enable`**:
+共享 denoise builder 为 rollout 与 replay 分别构建 runtime，**两条路径都读取同一个
+`build.torch_compile.enable`**：
 
 ```text
-vrl/models/diffusion/cosmos/predict2_5/runtime.py
-  build_cosmos_predict25_runtime_bundle        (rollout)  :80  torch_compile_transformer
-  build_cosmos_predict25_replay_runtime_bundle (train)    :140 torch_compile_transformer
+vrl/models/steps/denoise/build.py
+  build_denoise_runtime_bundle  (rollout) -> model.torch_compile_transformer(...)
+  assemble_replay_bundle        (train)   -> model.torch_compile_transformer(...)
 ```
 
-wan/anima/predict2 同构。所以 `model.torch_compile.enable=true` 一次开两条路,训练 replay 不需要单独旋钮。已有 `compile_benchmark.py` 同时测 rollout + train(forward / forward+backward under grad-ckpt)两条 path 的 latency、launches/step **和数值 parity**——本 sprint 直接复用它做验收,不重造。
+registry descriptor 让 Wan、Anima、Predict2/2.5 等 denoise family 共用这条顺序。因此
+`model.torch_compile.enable=true` 一次打开两条路，训练 replay 不需要第二个旋钮。已有
+`compile_benchmark.py` 同时测 rollout 与 train path 的 latency、launches/step 和数值 parity；
+本 sprint 复用它验收，不重造工具。
 
 ## 2. 现状盘点(online 训练 recipe 的 compile 态；2026-07-02 按 loader resolve 重列)
 
@@ -78,9 +91,9 @@ wan/anima/predict2 同构。所以 `model.torch_compile.enable=true` 一次开�
 ✅ 2. ckpt-locked 组处置定案:单 32GB 视频 recipe(cosmos_predict2 240p fullparam、
      predict2_5 video 单卡)结构性必须 ckpt → compile 排除;它们的 full-vs-selective
      选择归 SPRINT_training_mfu_selective_checkpointing,与 compile 无关
-⏸ 3. predict2_5 video compile-both live gate:等 ≥2 卡 DDP 环境(§4.5;单卡 replay 放不下,
-     历史 480p33f "真跑"其实是 ddp_2x1 双卡 eager)
-⏸ 4. FSDP 组等 inductor+fully_shard 对齐后解锁
+↪  3. predict2_5 video compile-both：单卡 replay 放不下，已移交
+     docs/sprints/parked/SPRINT_video_context_parallel.md 的 compile live gate
+—  4. FSDP2+compile：当前明确不支持并 fail-fast；依赖栈未来改变时另立 sprint，不阻塞本文
 □  5. 小尾巴(不 gate 本 sprint): wan offline DPO 入口单独判;videocon_physics
      sleep_offload 适配(§4.5 发现的 config 缺口,单列 follow-up)
 ```
@@ -102,11 +115,11 @@ wan/anima/predict2 同构。所以 `model.torch_compile.enable=true` 一次开�
 - **stock batch 几何（n=8/ppb=4/gas=4，microbatch=8）在干净 GPU 上复跑仍 OOM** → anima recipe 的默认几何本身超 1×32GB 预算（compiled 都放不下，eager 更不用说）。单 5090 跑 anima 的可行组合：`n=4/ppb=8/gas=8` + compile（本次验证 PASS），或 eager+full-ckpt。recipe 默认值面向更大显存，是否调整归 recipe 调参，不在本 sprint。
 - **已知 flake（与 compile 无关）**：两臂训练全部完成后，teardown 阶段 `collector shutdown failed`（RayGenerationWorker 在清理时暴死，SIGSEGV/connection error）。eager 臂同样触发 → 非 compile 问题；epoch 指标与 checkpoint 完整。单列 infra 问题跟进。
 
-### predict2_5 video（motion_physics / nft_kling）：单 5090 上 compile 结构性不可用 —— **live gate 保持 OPEN，等 2 卡**
+### predict2_5 video（motion_physics / nft_kling）：单 5090 上结构性不可用，已移交 video-CP
 
 按 480p_33f（历史真实 shape）与 512p_93f（recipe 默认）各试：**compiled replay（batch=1，14k/24.6k token，no-ckpt）驱动进程要 >31.3GB → 全部 OOM**（rollout + kling/videocon 打分全部跑通，mp4 正常生成，死在 replay 前向）。追查历史证据 `docs/runs/cosmos_predict25_nft_kling_480p33f_rbs16_20260620/launch.cmd`：那次是 **torchrun ddp_2x1 双卡**、且 `torch_compile.enable=false`——**这个 recipe 家族的目标环境从来是 ≥2 卡**，单卡从未跑通过 replay。结论：
 
-- 单 5090 上 predict2_5 视频训练必须 grad-ckpt → 硬门排除 compile → 属于 §2 的 ckpt-locked 组（同 cosmos_predict2 240p fullparam）。nft 家族 config 里的 `enable:true` 是**面向 2 卡 DDP 的声明**，compile-both 的 live drift gate（≤0.01）在 2 卡环境验证前保持 OPEN。
+- 单 5090 上 predict2_5 视频训练必须 grad-ckpt → 硬门排除 compile → 属于 §2 的 ckpt-locked 组（同 cosmos_predict2 240p fullparam）。nft 家族 config 里的 `enable:true` 是**面向多卡的声明**；compile-both 的 live drift gate（≤0.01）由 `docs/sprints/parked/SPRINT_video_context_parallel.md` 在目标形状跑通后重开，不再由本文持有。
 - **顺带发现的真 config 缺口**：`videocon_physics`（mPLUG-Owl 级大模型）没有 sleep_offload wiring——加 `sleep_offload=true` 会在 cumem `pool.sleep()` 崩 `invalid argument`（需要 kling 当年同款的 `.to()` 适配，见 reward runtime 记忆）。单卡跑 motion_physics 在 compile 之外还被这一条挡住。单列 follow-up。
 - anima 的 image 结论（drift 5.7e-4 ≪ 0.01、tight-clip 交互）覆盖的是同一条 compile-both 代码路径（同 cosmos DiT 家族、同 builder、同 trainer），视频侧剩下的主要是显存几何问题而非数值问题。
 
@@ -132,16 +145,17 @@ compile 后 batch 2 = 20.1GB  → 有头寸尝试 batch 3/4；是否 OOM/是否�
 ## 7. 非目标
 
 - 不重做 rollout 侧 compile 规划；rollout kernel/MFU 轴已有单独 sprint 和 probe 记录（[[project_cosmos_compile_p2]]）。
-- 不动 FSDP2+compile(`strategy.py:480` 硬门没解之前)。
+- 不动 FSDP2+compile；`vrl/trainers/strategy.py` 的硬门是当前正确行为。依赖栈未来支持该组合时另立聚焦 sprint。
 - 不做 compiled-backward 深水区优化(74-79% 之上的 slack 在梯度累加 bandwidth-bound 算子,要自定义 fused backward,收益递减)。
 - 不重写 `compile_benchmark` / probe;复用现有 parity + MFU 工具。
 - 不把 paged store / stepwise batching 拉回来(本轮实测证伪)。
 
 ## 8. 关键文件
 
-- `vrl/models/diffusion/*/runtime.py` —— 两个 builder（rollout + replay）共用 `torch_compile.enable`（9 家 diffusion family 同构）
-- `vrl/config/schema.py:325`（`torch_compile`）、`:251`（`microbatch_size`）、`:514`（`gradient_checkpointing`，off|full|selective）
-- `vrl/trainers/strategy.py:463` —— compile+FSDP2 硬门
+- `vrl/models/steps/denoise/build.py` —— rollout/replay 共享 `torch_compile.enable` 与构建顺序
+- `vrl/models/steps/denoise/base.py` —— family model 的 `torch_compile_transformer` 能力
+- `vrl/config/schema.py`（`torch_compile`、`microbatch_size`、`gradient_checkpointing`）
+- `vrl/trainers/strategy.py` —— compile+FSDP2 硬门
 - `vrl/trainers/activation_checkpointing.py` —— compile×ckpt 硬门（`require_compile_checkpointing_compatible`，trainer 启动 + config load 双层）
 - `vrl/scripts/perf/compile_benchmark.py` —— rollout+train parity + launch-bound profile（验收复用；仅 4 家 family）
 - `vrl/scripts/perf/backward_mfu_probe.py`（`--compile`）—— train fwd+bwd MFU before/after（SD3.5 专用）

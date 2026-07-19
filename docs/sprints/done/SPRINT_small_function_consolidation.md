@@ -1,6 +1,10 @@
-# SPRINT: Small-function consolidation (proposed)
+# SPRINT: Small-function consolidation（执行归档）
 
-状态：implemented（2026-06-10，Phase A/B/D 已落地；Phase C 热点逐文件整理与 A5 验证项未做）。实施中两处修正：WorkloadSignature 类型保留（planner.py:107 消费），timestep.py 保留（3 家族经包出口消费）。
+状态：**done（2026-07-18 收口）**。2026-06-10 已落地 Phase A/B/D；A5 的两个候选现已
+分别裁定为 REMOVE/KEEP，宽泛 Phase C 已退休为 non-goal，不再是本文件的未完成工作。
+实施当时 `WorkloadSignature` 因尚有 planner 消费而保留，之后随消费链消失由独立 dead-code
+cleanup 删除；`vrl/models/steps/denoise/common/timestep.py` 继续保留，当前由多个 model family
+直接消费，属于真实共享边界。
 
 ## 0. Core Decision
 
@@ -61,20 +65,31 @@ vrl/trajectory/resolver.py:188,199   resolve_training_view / resolve_loss_unit �
                                      (:192,:205)，保留（2026-06-10 复核修正）
 vrl/generation/ar/decode_loop.py:81    mark_finished — 零引用
 vrl/rewards/models/nsfw_safety.py:73   probability_batch — 仅自测引用
-vrl/models/diffusion/cosmos/predict2_5/model.py:235  sync_previous_policy_adapter — 仅自测引用
+历史的 predict2_5 `sync_previous_policy_adapter` 当时仅有自测引用
 ```
+
+**当前边界修正**：同名能力后来作为 DiffusionNFT 的真实协议重新落地，当前生产消费者在
+`vrl/algorithms/diffusion_nft.py`，family 实现在
+`vrl/models/families/cosmos/predict2_5/model.py` 与 `vrl/models/families/flux/model.py`。
+因此当前结论是 **KEEP**；上面的历史 A4 记录不授权再次删除它。
 
 降级（2026-06-10 复核）：`nextstep_1/model.py:193 trainable_param_count` 不做单边删除——
 janus_pro/model.py:309 日志字符串承诺 "will be reported by trainable_param_count()"，
 且 janus/nextstep 为跨家族对；要么成对删 + 改日志，要么保留。
 
-### A5. 需再核一层才能删（标 verify，不直接进 A）
+### A5. 二次核验结论（已关闭）
 
 ```text
-vrl/trainers/data/samplers.py:63  set_epoch — PyTorch Sampler 鸭子类型惯例，DataLoader/DDP
-                                  循环可能隐式调用；确认无 DDP 路径后才可删
-vrl/nn/layers/attention/paged.py:177,202  can_reuse / free — paged attention 是上轮审计
-                                  明确保留的 protocol 边界；"free" grep 噪声大，需人工核
+REMOVE  DistributedKRepeatSampler.set_epoch
+        旧 vrl/trainers/data/samplers.py 后续连同未使用 sampler 整体删除；当前生产、测试和
+        config 均无该符号，不再保留一个假想 PyTorch hook。
+
+REMOVE  ARPrefixCachePolicy.can_reuse
+        未接线的 prefix-cache policy 后续作为死面删除，当前树无该符号。
+
+KEEP    ARAttentionBackend.free
+        vrl/nn/layers/attention/paged.py 的 backend lifecycle protocol；具体 backend 可覆盖，
+        默认实现允许无外部资源的 backend 做 no-op。协议边界比少几行 LOC 更重要。
 ```
 
 ### 明确不删（扫描命中但为框架桩）
@@ -98,6 +113,9 @@ vrl/models/diffusion/cosmos/predict2_5/runtime.py:55   _skip_text_encoder_from_s
 vrl/scripts/data/videophy_i2v.py:384  _normalize_caption / video_world.py:126 _dl（2 行）
 ```
 
+这是 2026-06 的候选快照，不是当前删除清单。例如 `_normalize_caption` 当前有多个调用方，
+不再满足 single-caller 条件；任何再次清理都必须重读当前函数体与调用图。
+
 **已剔除、严禁 inline 的扫描命中**：
 
 ```text
@@ -112,23 +130,23 @@ trainers/online/trainer.py:109 _resolve_mixed_precision 等 own_occurrences>2 �
 实施口径：逐个打开确认"无 seam 价值"后 inline；任何一个有第二调用方/测试直调/protocol
 身份的，当场放弃该条，不强求清零。
 
-## 3. Phase C — 热点文件碎片整理（按文件做，不按符号做）
+## 3. Phase C — RETIRED / NON-GOAL
 
-单调用方 helper 密度最高的文件（个数 = 扫描命中）：
+原计划按“单调用 helper 密度”逐文件整理 `danbooru.py`、`trainer.py`、`launcher.py`、
+`batch_builder.py` 等热点。该指标本身不能证明 dead semantics，也不能证明 helper 缺少 protocol、
+lazy-import、framework-adapter 或跨 family consistency 价值，因此不作为可执行 backlog 保留。
 
-```text
-22  vrl/scripts/data/danbooru.py            — god file，用户已否决拆分；只 inline 2-5 行琐碎层
-11  vrl/trainers/online/trainer.py
- 9  vrl/generation/ray/launcher.py
- 9  vrl/rollouts/collector/batch_builder.py
- 9  vrl/rollouts/evaluators/ar/multi_segment_token_logprob.py
- 9  vrl/scripts/diffusion/cosmos/train.py   — bundle builder 是 entrypoint 接线，多数应保留
- 8  vrl/rollouts/orchestration/continuous/producer.py
-```
+后续工作已经用更窄、更可证的 owner 取代这项宽泛清理：
 
-做法：每文件一个独立小 commit，"读全文 → 标注每个 helper 的去留理由 → inline 无理由者"。
-预期不是清零，是把"读一个函数要跳 5 次"降为"跳 1-2 次"。trainer.py / launcher.py /
-batch_builder.py 优先（核心路径读得最多）。
+- `done/SPRINT_helper_passthrough_hygiene.md` 收口了 `online.py` 的具体 DI-by-arg 与 execution
+  controller 问题，并明确把其余热点排除在范围外；
+- `done/SPRINT_function_organization_audit.md` 对 12 个 package 复核后只找到两个真实组织异味，
+  一个修复、一个因 torch-free 边界而 KEEP；
+- `done/SPRINT_single_caller_inlines.md` 只执行有调用图与函数体证据的 single-caller inline，
+  同时保留 protocol、framework adapter 和跨 family 一致性边界。
+
+因此 Phase C 不移交新的 sprint，也不继续以“热点文件”名义制造 churn。未来若出现具体 smell，
+必须以定义、调用方、字符串 registry/getattr 引用和测试证据单独裁定。
 
 ## 4. Phase D — 薄文件合并（28 个里只动 2 个）
 
@@ -161,11 +179,11 @@ scripts/ar/nextstep_1/train.py — YAML entrypoint（configs 字符串引用，�
 5. 不做 rename / 文档化 / 新抽象——本 sprint 只有 inline / merge / delete 三种动作。
 ```
 
-## 6. 验收
+## 6. 关闭验收
 
 ```text
-每个 Phase 独立 commit；A 先行（零行为风险），B/D 次之，C 按文件分批。
-每批后：pytest -q tests/ 全绿；grep 确认被删符号无残留引用。
-LOC 预期：A ≈ -200 行死代码；B ≈ -60 行壳；C/D 视逐文件判断，不设指标
-（指标驱动的 LOC 清理正是上次被回滚的模式）。
+Phase A/B/D：已落地并由后续回归持续覆盖。
+A5：set_epoch/can_reuse 已 REMOVE；ARAttentionBackend.free 按 protocol boundary KEEP。
+Phase C：明确 RETIRED/NON-GOAL；具体高置信问题由三个后续 done sprint 收口。
+不以 LOC、helper 数量或文件长度作为重新打开本 sprint 的条件。
 ```

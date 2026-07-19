@@ -2,6 +2,12 @@
 
 状态：in progress（2026-07-11）。
 
+> **阅读边界（2026-07-18）**：顶部“实施记录”和 §0 的 topology contract 是当前事实；
+> §1 是固定 upstream commit 的源码审计；§2–§8 保留 2026-07-11 实施前计划与验收设计，
+> 其中的“当前”、旧路径和待删除清单描述的是当时基线，不是现在的仓库状态。当前已完成项与
+> 剩余 gate 只以上方实施记录为准。被删除的 single-GPU async debug preset 仅作为历史 producer
+> 证据保留在原计划中，不能再当作现有 config。
+
 ## 实施记录（2026-07-11）
 
 本轮已经落地代码合同，但 umbrella sprint 尚未完成；真实一卡多轮和真实两卡 overlap 两组硬件
@@ -139,8 +145,9 @@ parking。两个 track 应分别记录状态和 DoD；不能因为一卡 lease �
 也不能因两卡 owner 完成就宣称 shared lifecycle 完成。若执行阶段需要独立 sprint 文件，直接
 按这两个 track 拆，不复制本文件的共同决策。
 
-共同前置依赖：先完成 `SPRINT_remove_inline_fixed_eval.md` 的生产 surface 删除与独立 evaluator
-迁移。本 sprint 以“training loop 中不存在 inline eval”为输入合同，不同时维护新旧两套 lifecycle。
+共同前置依赖已经由 `done/SPRINT_remove_inline_fixed_eval.md` 完成：生产 surface 已删除并迁移到
+独立 evaluator。本 sprint 继续以“training loop 中不存在 inline eval”为输入合同，不同时维护
+新旧两套 lifecycle。
 
 ## 1. slime/MILES 源码结论
 
@@ -188,8 +195,9 @@ Trainer 侧不是只搬一个 `nn.Module`：
   使用相同 no-offload 形状与 `--sglang-mem-fraction-static 0.7`。
 
 这证明“shared GPU 必然 on-demand”不是上游事实；它不证明 VRL 必须实现同一子模式。VRL 的
-repo-owned producer 审计只有一个真实 `memory_fraction` preset：
-`online_grpo_ocr_single_gpu_async_debug.yaml`，其创建目的就是 single-GPU continuous probe。
+repo-owned producer 审计当时只有一个真实 `memory_fraction` preset：
+`online_grpo_ocr_single_gpu_async_debug.yaml`，其创建目的就是 single-GPU continuous probe；该
+preset 已按本 sprint 删除。
 本 sprint 禁止该 topology 后，bounded-resident feature 不再有 recipe、script、E2E 或 CI
 consumer。把旧 preset 改名成 strict resident harness 会是在制造消费者来保留功能，因此不做。
 
@@ -259,7 +267,7 @@ update、barrier、`continue_generation` 的顺序
 VRL 应搬的是这个**模式边界和 commit protocol**，不是照抄 example 里的 module-global
 worker、`Queue(maxsize=1000)`、一秒轮询和 minimal error handling。
 
-## 2. VRL 当前差距
+## 2. VRL 实施前差距（2026-07-11 历史快照）
 
 ### 2.1 Bounded resident 将失去唯一 producer，应连根删除
 
@@ -271,7 +279,7 @@ gpu_pool=trainer + memory_fraction    -> resident
 ```
 
 但“字段最终被 worker 读取”不能单独证明这是应保留的产品能力。Repo-owned producer 审计显示，
-唯一实际设置 role `memory_fraction` 的 active preset 是
+实施前唯一实际设置 role `memory_fraction` 的 active preset 是后来已删除的
 `vrl/config/presets/experiment/sd3_5/online_grpo_ocr_single_gpu_async_debug.yaml`；它只为
 same-GPU continuous probe 存在。本 sprint 禁止该 topology 后，仓库没有 bounded-resident recipe、
 script、E2E 或 CI consumer。把旧 preset 改名成 strict resident harness 会是在制造消费者来保留
@@ -356,11 +364,11 @@ OR explicit unsupported error before training starts
 
 ### 2.4 Inline fixed eval 不再是 training lifecycle 的消费者
 
-`docs/sprints/planned/SPRINT_remove_inline_fixed_eval.md` 已把根因定为：fixed eval 错误复用了
-live training collector/runtime，并手工复制了半套 handoff。该 companion sprint 负责从
+`docs/sprints/done/SPRINT_remove_inline_fixed_eval.md` 已把根因定为：fixed eval 错误复用了
+live training collector/runtime，并手工复制了半套 handoff。该 companion sprint 已从
 `vrl/scripts/common/online.py` 删除 inline eval、`trainer.eval` 与
-`vrl/scripts/common/fixed_eval.py`，并改由独立 evaluator 加载完整 checkpoint；它的迁移和测试必须
-先独立验收，不能只以当前 worktree 的部分删除为完成证据。
+`vrl/scripts/common/fixed_eval.py`，并改由独立 evaluator 加载完整 checkpoint；迁移和测试已经独立
+验收，而不是只凭某个 worktree 中的部分删除宣称完成。
 
 本 sprint 不应把这条待删除旁路重新包装成通用 `rollout_phase` context manager。删除 inline
 eval 后，live trainer phase lease 的唯一生产调用方就是 strict schedule；再抽一个只有它调用的
@@ -507,7 +515,7 @@ preflight 失败，或改用 disjoint GPUs。
 - launcher 的 `gpu_memory_fraction`、worker 的 `cap_cuda_memory_fraction(...)` 调用、
   `cap_cuda_memory_fraction` 本体及只验证该链路的测试；
 - runtime `_rollout_memory_fraction()`、chunk-probe fraction 参数/日志与相关 feature tests；
-- `online_grpo_ocr_single_gpu_async_debug.yaml`；不把它重命名成 resident harness。只有确实验证
+- `online_grpo_ocr_single_gpu_async_debug.yaml`（已删除）；不把它重命名成 resident harness。只有确实验证
   长期 phase lease 时，才新建 shared on-demand acceptance config；
 - 只验证 `require_separate_gpus` escape hatch 的 config/schedule tests；
 - E2E common override 里的 `trainer.rollout_orchestration.require_separate_gpus=false`。
@@ -971,7 +979,7 @@ a real runtime consumer's source of truth.
 
 ### Config/tests/docs migration
 
-- delete
+- delete（已完成）
   `vrl/config/presets/experiment/sd3_5/online_grpo_ocr_single_gpu_async_debug.yaml`；它是
   same-GPU continuous 一次性 probe，不重命名成 resident harness；
 - update `vrl/config/presets/base/distributed/ray_rollout_colocated_single_gpu.yaml`;
@@ -1051,7 +1059,7 @@ merge gate。整个 umbrella 只有两组 gate 都有对应硬件证据时才标
 ### VRL
 
 - `vrl/ray/resources.py:149-163,283-365,1158-1271`
-- `vrl/config/presets/experiment/sd3_5/online_grpo_ocr_single_gpu_async_debug.yaml:27-43`
+- `vrl/config/presets/experiment/sd3_5/online_grpo_ocr_single_gpu_async_debug.yaml:27-43`（历史路径，已删除）
 - `vrl/config/presets/experiment/cosmos_predict2_5/online_nft_kling_video_reward_ddp_2x1.yaml:48-54`
 - `vrl/config/presets/experiment/sd3_5/online_grpo_ocr_fsdp_2x1_fullparam.yaml:53-57`
 - `vrl/config/presets/experiment/cosmos_predict2_5/online_nft_kling_video_reward_fsdp_2x1.yaml:71-76`
@@ -1076,4 +1084,4 @@ merge gate。整个 umbrella 只有两组 gate 都有对应硬件证据时才标
 - `tests/rollouts/orchestration/continuous/test_schedule.py:325-359,470-542`
 - `tests/generation/pipeline/test_pipeline_contracts.py:25-66`
 - `tests/config/test_load_all_experiments.py:332-355`
-- `docs/sprints/planned/SPRINT_remove_inline_fixed_eval.md`
+- `docs/sprints/done/SPRINT_remove_inline_fixed_eval.md`

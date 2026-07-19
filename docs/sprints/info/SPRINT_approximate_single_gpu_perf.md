@@ -1,14 +1,13 @@
 # SPRINT: 单卡近似加速杠杆 —— bf16 饱和之后还能做什么（已验证研究 + 本机实测）
 
-Status: **INFO ARCHIVE (2026-07-18)**. This is validated research and local
-profiling, not an executable sprint. Follow-up implementations live in their
-own proof-gated sprint documents.
+状态：**INFO measurement archive（2026-07-18）**。本文只保存已验证研究与本机 profiling，
+不是可执行 Sprint，也不拥有后续 action；所有实现责任都归到下文列出的现有 proof-gated Sprint。
 
 > 来由:[[SPRINT_lossless_diffusion_rl_research]] 判"单卡 bf16 饱和 → 无无损杠杆"后,追问"Triton kernel / staged pipeline 是不是漏了"。研究纠正两处:① 单卡有真(近似)杠杆;② 我把"47% 空转"证据用错了(那是多卡训练阶段闲置,非单卡 stream 重叠)。
 
 ## 0. 一句话
 
-两个独立结论:① **per-step compute**:DiT forward bf16 已饱和,要省只能近似——video 稀疏注意力(当 policy)或 MXFP4(离 policy);Triton 在 policy bf16 GEMM 上打不过 cuBLAS(证伪)。② **rollout pipeline 吞吐(实测新发现,§2)**:整条 rollout 只 **49% GPU 利用率、31% 完全空转**——DiT forward 饱和 ≠ rollout 饱和,这里有 **~31% EXACT(无损)头空间**:调大 sample_batch_size(填欠载)+ 常驻 actor / async reward(填 orchestration 空转)。**所以"单卡只剩近似杠杆"也被修正了——rollout 吞吐有真无损头空间,只是不在 kernel 层,在 batching + 调度层。**
+两个独立结论:① **per-step compute**:DiT forward bf16 已饱和,要省只能近似——video 稀疏注意力(当 policy)或 MXFP4(离 policy);Triton 在 policy bf16 GEMM 上打不过 cuBLAS(证伪)。② **rollout pipeline 吞吐(实测新发现,§2)**:sbs=1 时整条 rollout 为 **49% GPU 利用率、31% 完全空转**；sbs=12 后完全空转降到 **14%**。DiT forward 饱和 ≠ rollout 饱和，但 31% 是 batching 前基线，不能全部算成 orchestration 收益；14% 才是 batching 后的残余上界。
 
 ## 1. 三个单卡近似杠杆（按 RL-safety × ROI 排）
 
@@ -16,9 +15,12 @@ own proof-gated sprint documents.
 - **数据**:**SLA 在 RTX 5090 实测 13.7x kernel / 2.2x 端到端(Wan2.1-1.3B)**——目标卡 + 目标模型族;VSA 2.53x e2e / 8x attn-FLOP（无 diffusion-loss 退化,after FT）;SVG2 2.30x;STA 2.98x(over FA2,可移植数)。video attention 极可压(13% 计算 = 95% recall）。
 - **为什么 video 才值**:本机实测 attention 占比随帧数 11%(1帧)→47%(16帧),image 只 4-13%。所以稀疏注意力是 **video-only** 杠杆。
 - **RL 正确性(关键)**:全部 approximate → **不能 drop 到冻结 policy(改 old_log_prob)**。RL-safe 的唯一方式:**稀疏注意力的网络 = 你训练的 policy**(in-loop 训,稀疏 forward 自洽就是 old_log_prob)。VSA/SLA 是 trainable 的(~2000-3000 FT 步,<0.1% 预训成本)。
-- **落地**:把 cosmos/wan 的 attention processor 换成 VSA/SLA(diffusers processor swap,同 fp8 swap 机制),**在 GRPO loop 里训**(不是 frozen 推理替换)。先 P0 验证稀疏 policy 不塌 reward variance。
+- **后续责任边界**：VSA/SLA 是否进入 cosmos/wan policy 由
+  `docs/sprints/parked/SPRINT_efficient_rollout_program.md` 的 attention/efficiency 轴负责；
+  若 processor seam 不足、确实需要 repo-owned layer semantics，再触发
+  `docs/sprints/parked/SPRINT_diffusion_native_transformer_executor.md` 的算法门。本文不拥有实现阶段。
 - 来源:SLA 2509.24006、VSA 2505.13389、SVG2 2505.18875、STA 2502.04507、Compact 2508.12969。
-- **2026-06-27 外部佐证(deep-research):VSA/SLA 确认是 trainable（稀疏模式烘焙进权重，非 inference-only），但跨 VSA/SLA/SLA2/PSA/LinVideo 全部检查——无一篇把稀疏注意力放进 RL 循环。** 所以"稀疏注意力当 policy 在 GRPO loop 里训"是干净的**原创方向**(杠杆里唯一兼具大数量级 2.2-2.5x 和无 prior-art 的)。唯一未被任何工作回答的正确性风险:若稀疏 top-k block routing 依赖 KV 内容,replay 时 batch 组成/数值微小差异可能改变选中 block → 破坏 old_log_prob 自洽。**P0 必须先验 routing 在 rollout vs replay 下确定性一致**,再谈 reward variance。
+- **2026-06-27 外部佐证(deep-research):VSA/SLA 确认是 trainable（稀疏模式烘焙进权重，非 inference-only），但跨 VSA/SLA/SLA2/PSA/LinVideo 全部检查——无一篇把稀疏注意力放进 RL 循环。** 所以"稀疏注意力当 policy 在 GRPO loop 里训"是干净的**原创方向**(杠杆里唯一兼具大数量级 2.2-2.5x 和无 prior-art 的)。唯一未被任何工作回答的正确性风险:若稀疏 top-k block routing 依赖 KV 内容,replay 时 batch 组成/数值微小差异可能改变选中 block → 破坏 old_log_prob 自洽。若归属 Sprint 解冻，第一道 proof gate 必须验证 rollout/replay routing 确定性一致。
 
 ### 杠杆 ②：MXFP4/NVFP4 离 policy path（Triton tcgen05）
 - **数据**:Blackwell 第 5 代 tensor core `tcgen05.mma` 硬件块缩放 → MXFP4/NVFP4 **~2x FP8 / ~4x bf16**;**sm_120(5090)确认有真 FP4 加速**。custom Triton/CUTLASS 可调(NVIDIA Triton Blocked-Scaled Matmul tutorial / CUTLASS SM100)。
@@ -26,10 +28,11 @@ own proof-gated sprint documents.
 - **caveat**:近无损 PTQ(≤1%)只在大 LLM 语言任务证过,**未在 video-DiT log-prob 上验**;且绝对数是 B200,5090 的吞吐没人测过(只有结构性 4x)。
 - **Triton 在 bf16 上证伪**:研究实测 Triton 在 Blackwell 只**追平** cuBLAS,不超 → 给 policy 的 bf16 GEMM 写 Triton = 白写。Triton 的真家在 FP4 + 离 policy 组件。
 
-### 杠杆 ③：单卡 staged pipeline（本机实测中,见 §2）
+### 杠杆 ③：单卡 staged pipeline（本机实测结论,见 §2）
 - 我之前把"47% 空转"(2606.19004)当依据是**错的**:那是多卡系统训练阶段 spot-GPU 闲置(扩散同时完成无 straggler),**和单卡 stream 重叠 VAE/reward/text-encode 完全两轴**。单卡真相未被任何引用量化。
 - 单卡逻辑:denoise/VAE/reward 都 GPU-bound → 抢 SM,真重叠不了;能回收的是 **orchestration 空转**(Ray actor 每轮 relaunch 重载模型、CPU 调度、stage 间数据搬运、denoise 步间 python)。靠**常驻 actor / prefetch / async reward**修,不是 kernel。
-- **§2 本机 profiling 给真数**:< TODO: 填 GPU-idle% >。
+- **§2 本机 profiling 的唯一事实口径**：sbs=1 时完全 idle 为 **31%**；增大到 sbs=12
+  后残余完全 idle 为 **14%**。前者不能全部归因给 orchestration，后者才是 batching 后的残余上界。
 
 ## 2. 本机 profiling：单卡 rollout 的 GPU-idle（staged pipeline 可回收多少）
 
@@ -71,7 +74,8 @@ cosmos video sbs=1   42%        4%(!)  26%       58%    41%     182s/8样本
 **Cosmos video 是双峰**:41% 时间满载(denoise 33帧×35步)、但 **58% 时间 <30%(median 仅 4%)**。video 比 image 更空,因为非-DiT stage 大得多:**33帧 VAE decode + Kling 视频 reward model 前向 + 33帧×35步的 SDE/logprob CPU 数学**——全是 GPU 在等。
 - video 的 sbs 难调大(240p_33f at sbs>1 可能 OOM)→ 欠载部分不好用 batch 填;
 - 更多 idle 是**真·串行的非-DiT stage**(VAE/reward/CPU 数学)→ 单卡上它们都 GPU-bound 抢不了,但 **reward model 可与下一批 denoise 错峰(async reward)、CPU SDE/logprob 数学可与 GPU denoise 重叠(stream)** → 这俩是 video 的真 staged-pipeline 杠杆,比 image 更值。
-- **要精确归因(VAE vs reward vs CPU 数学各占多少 idle)需 nsys 时间线**——这是下一步 P3 的细化。
+- **要精确归因(VAE vs reward vs CPU 数学各占多少 idle)需 nsys 时间线**；是否继续由
+  `docs/sprints/parked/SPRINT_diffusion_rollout_stage_pipeline.md` 的 profiling gate 裁决。
 
 
 ## 3. 诚实天花板（确认）
@@ -85,7 +89,7 @@ cosmos video sbs=1   42%        4%(!)  26%       58%    41%     182s/8样本
   ③ staged pipeline / 调大 batch → rollout 实测只 49% 利用率、31% 空转！
      - 小 batch 欠载 → 调大 sample_batch_size（exact，简单）
      - orchestration 空转 → 常驻 actor + async reward + stream 重叠（exact）
-策略修正:DiT forward 饱和 ≠ rollout 饱和。rollout pipeline 有 ~31% exact 头空间（③）;
+策略修正:DiT forward 饱和 ≠ rollout 饱和。基线完全 idle=31%，batching 后残余=14%（③）;
          per-step compute 杠杆是 video 的 ①②（近似）。
 ```
 
@@ -93,12 +97,17 @@ cosmos video sbs=1   42%        4%(!)  26%       58%    41%     182s/8样本
 
 任何动 policy denoise forward 的近似(稀疏 attn / FP4 / cache)都改 old_log_prob → **只在三种情况 RL-safe**:(a) 近似网络**就是**训练的 policy(稀疏 attn 当 policy);(b) 用在**离 policy path** 的组件(reward/VAE/text-enc);(c) 显式 IS 修正(TIS/RS,有 bias/variance 代价)。见 [[SPRINT_lossless_diffusion_rl_research]] §2.2 verl 铁律。
 
-## 5. Phase plan
+## 5. 结案与后续责任归属
 
-- **P0 ✅**:research + 本机 GPU-idle profiling（§2）——定 staged pipeline 值不值得。
-- **P1（最高 ROI,video）**:稀疏注意力当 policy——VSA/SLA processor swap 进 cosmos/wan,GRPO loop 内训;先验 reward variance 不塌(同 signal_paged 的 §6 多样性判据)。
-- **P2（离 policy,干净）**:reward model / VAE 上 MXFP4(Triton tcgen05);验数值不影响 reward 排序。
-- **P3（若 §2 显示 orchestration 空转大）**:常驻 rollout actor(去掉 per-cycle relaunch)+ async reward 填空转。
+- **P0 已完成**：§2 的测量已经回答问题；基线完全 idle=31%，batching 后残余=14%。
+- **稀疏视频 attention**：移交
+  `docs/sprints/parked/SPRINT_efficient_rollout_program.md`；需要自有层语义时再由
+  `docs/sprints/parked/SPRINT_diffusion_native_transformer_executor.md` 接实施边界。
+- **reward/VAE MXFP4**：移交
+  `docs/sprints/parked/SPRINT_fp4_off_policy_reward_vae.md` 的 profiling-triggered gate。
+- **request finalize / stage overlap**：分别由
+  `docs/sprints/planned/SPRINT_rollout_finalize_overlap_ga.md` 和
+  `docs/sprints/parked/SPRINT_diffusion_rollout_stage_pipeline.md` 持有；本文不再保留 P3。
 
 ## 6. 非目标
 

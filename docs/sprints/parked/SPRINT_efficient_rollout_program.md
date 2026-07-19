@@ -145,6 +145,12 @@ text-embed 算一次缓存；KL 的 ref log-prob frozen，collect 时算一次�
 
 > 设计默认值参考 Flash-GRPO/Flow-GRPO-Fast：可训子集可以小到 **1–2 步**，其余 ODE/cached；用熵（E-GRPO）选哪几步。先验证"1 trainable step + 全 cache 其余"再谈滑窗。
 
+**稀疏视频 attention 的责任归属**：研究与本机测量归档在
+`docs/sprints/info/SPRINT_approximate_single_gpu_perf.md`。VSA/SLA 作为 trainable policy 的
+proof gate 由本 efficiency 总纲持有，但不会仅因文档移交而解除当前 parked 状态。若未来选择的
+实现不能通过 Diffusers processor seam 落地、确实需要 repo-owned block/layer semantics，再触发
+`docs/sprints/parked/SPRINT_diffusion_native_transformer_executor.md` 的既有算法门。
+
 ### Lever G ⭐ — 同时完成调度（中心一，OPEN）
 
 问题（2606.19004）：扩散 rollout 同时完成 → 无 straggler → LLM 异步 overlap 失效 → 空转 47%。本 repo 已有底座：`continuous/`（producer+queue+consumer+staleness）、weight-sync barrier、Ray actor relaunch、TIS/RS。
@@ -167,7 +173,9 @@ rollout 是 `no_grad`（`run_denoise_steps` 在 `torch.no_grad()` 内），可�
 ### Lever A / C / E（降级为 cite + compose）
 
 - **A**：AEGPO(2602.06825) 扩散原生自适应分配已 5×；SuperFlow(2512.17951) 用 value-tracker 杀零优势。借其机理给 orchestration 补 per-prompt variance state（本 repo `RolloutScheduleState` 现仅 `rollout_id`），但作为工程对齐，不作 novelty。
-- **C**：见 `SPRINT_signal_paged_rollout.md`，但该 sprint 需加 prior-art 段（Tree/Branch/TMPO 已覆盖 ~80%）。唯一仍未占的角度：**antithetic / K-correlated noise（2506.06185, −1/(K−1)）压 group size 到 2**，且和 tree 结合做 image/video GRPO——检索称这是"最可利用的空白"。若要在 C 上保留 novelty，押这里。
+- **C**：`docs/sprints/info/SPRINT_signal_paged_rollout.md` 已归档 P0 负结果；Tree/Branch/TMPO
+  也已覆盖大部分方法空间，因此不再把 shared-prefix 当独立 killer capability。若未来研究
+  antithetic / K-correlated noise，应建立新的独立 proof gate，不能重开已失败的 P1–P3。
 - **E**：方法已解（RTDMD/AdvDMD/RAVEN/DiffusionNFT）。仍空的是**经验槽**：把成熟 image 配方扩到蒸馏 few-step **视频** at scale。本 repo `echo`（LTX-2.3 派生、DMD ~8 步）正是这个槽的活标本——拿 RAVEN 的 CM-GRPO（把蒸馏步显式参数化成高斯 z=α·x̂+σ·ε，只在选定步注 σ）在 Echo 上跑，是有价值的经验工作，但 cite RAVEN，不 claim 方法。
 
 ---
@@ -240,7 +248,8 @@ A/C: 不立项 novelty；按需 compose AEGPO/TreeGRPO 机理对齐工程
 
 ## 10. 与已有 sprint 的关系
 
-- `SPRINT_signal_paged_rollout.md` = 本总纲 **Lever C**，但**需补 prior-art 段**：BranchGRPO/TreeGRPO/Multi-GRPO/TMPO 已覆盖 ~80%，其唯一可保留的 novelty 是 antithetic-noise × tree 压 group size（§5-C）。建议把它从"独立 killer capability"降级为"compose + 一个窄 novelty 押注"。
+- `docs/sprints/info/SPRINT_signal_paged_rollout.md` = 本总纲 **Lever C** 的负结果档案；
+  不再拥有实施阶段。
 - `SPRINT_diffusion_rollout_system.md`（reading）= 旧"AR paged KV 不适用"边界；§6 用 2026 证据细化为"对 full-attention 视频不适用，但因果底座 + 分页分配器是新空白"。
 - `SPRINT_rollout_vllm_migration.md`（done）= TeaCache 结论 + vLLM-Omni 边界；§3.2 用 2606.19004 补"LLM 异步对扩散失效"。
 - 本总纲 = 上层战略 Bet 2（"RL-specific 扩散/视频系统能力"）的工程展开，且经 2026 核对后**收窄到系统层两中心**。

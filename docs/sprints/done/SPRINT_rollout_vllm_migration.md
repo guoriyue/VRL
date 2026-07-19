@@ -1,15 +1,16 @@
 # SPRINT: Best rollout system — TeaCache port + selective vLLM-omni adoption
 
-**Branch:** `rollout-vllm-teacache` (all work here; commit locally, do NOT push).
-**Owner:** autonomous overnight run (hourly cron). **Started:** 2026-06-20.
+状态：**done / 历史决策归档（2026-07-18 收口）**。2026-06-20 的 autonomous cron 与
+`rollout-vllm-teacache` branch owner 已结束，不再是当前执行协议。TeaCache port、负收益判定与
+AR 架构裁决继续保留；P1 组合 probe 已退休为 non-goal，diffusion vLLM-Omni 对照后来由
+`docs/flux_qwen_naive_vs_vllm_omni_profiling.md` 完成。
+
+**Historical branch:** `rollout-vllm-teacache`. **Started:** 2026-06-20.
 **Machine:** single RTX 5090 (Blackwell sm_120, 32GB). cosmos rollout is
 compute-bound (SM 100% / MEM ~20%).
 
-This file is the **source of truth** for the autonomous loop. Each cron firing:
-read "Next actions", do the next increment, verify (lint + pytest + profile when
-it fits), update the journal, commit. Never push. Never delete anything from the
-machine. Resolve choices yourself; only stop on a hard blocker (missing
-credentials / a real crash you cannot fix) and record it under "Blockers".
+本文不再是 autonomous loop 的 source of truth。下方 cron、branch 和 journal 叙述只记录当时的
+执行过程，不授权新的定时任务、commit、profile 或 GPU 实验。
 
 ---
 
@@ -25,7 +26,8 @@ enhance) vs execution model (only adopt when its value applies)**:
   denoise loop, import the pieces.
 - **AR rollout (janus / nextstep)** is autoregressive decode, KV-cache, variable
   length — vLLM's home turf (paged attention + continuous batching). Our
-  `vrl/nn/.../vllm_paged.py` + `paged_attention_helpers.py` is reinventing the
+  `vrl/nn/kernels/attention/vllm_paged.py` +
+  `vrl/models/steps/token/paged_attention_helpers.py` is reinventing the
   engine; continuous batching is the un-importable part. → AR is the ONLY place
   "replace with vLLM-omni" is justified, and only if a measured throughput gap
   warrants it.
@@ -42,17 +44,18 @@ the generic `DiffusersPipelineLoader`, EDM/conditioning unverified), **janus ❌
 Skip the transformer forward on low-change denoise steps, reuse cached
 `noise_pred`. Highest ROI, importable, low risk, default-OFF (baseline exact).
 
-- `vrl/generation/diffusion/teacache.py` — `TeaCacheConfig` + `TeaCacheState`
+- `vrl/generation/steps/denoise/teacache.py` — `TeaCacheConfig` + `TeaCacheState`
   (rel-L1 accumulator, warmup/last-step force-run, skip-ratio counters) +
   `teacache_signal`. v1 signal = rel-L1 of input latents.
-- Wired: `layout.py` (parse `sampling.teacache`), `executor.py` (gate
-  `model.forward_step` in `run_denoise_steps`, emit `teacache_*` counters).
-- Tests: `tests/generation/diffusion/test_teacache.py` (9 pass).
+- 当前接线：`vrl/generation/bindings/joint_denoise/layout.py` 解析
+  `sampling.teacache`，`vrl/generation/steps/denoise/loop.py` 在 denoise loop 中 gate
+  `model.forward_step` 并发出 `teacache_*` counters。
+- 测试：`tests/generation/steps/denoise/test_teacache.py`。
 - **RL note:** TeaCache adds rollout↔replay drift (skipped steps reuse an
   approximate noise_pred) — same class as fp8; rides the same drift-guard / TIS.
 
 ### P0.1 — Profile TeaCache speed + drift  ✅ DONE (with a correction)
-- ✅ **DRIFT measured (gating) — `teacache_drift_probe.py`, real cosmos denoise,
+- ✅ **DRIFT measured (gating) — `vrl/scripts/perf/teacache_drift_probe.py`, real cosmos denoise,
   two-pass rollout-with-teacache vs exact replay logprob:**
 
   | config | skip% | ratio_dev_mean | ratio_dev_max | mismatch_kl |
@@ -66,7 +69,7 @@ Skip the transformer forward on low-change denoise steps, reuse cached
   baseline=0 validates the two-pass logprob math.
 
 - 🔴 **CORRECTION — the earlier "2.3x / 50% skip" profiler number was a measurement
-  artifact, NOT real.** `generation_bottleneck_profile.py --teacache` reuses ONE
+  artifact, NOT real.** `vrl/scripts/perf/generation_bottleneck_profile.py --teacache` reuses ONE
   state and steps `idx % num_steps`, so consecutive profiled "steps" are nearly
   identical → the skip machine fires far too often. On a REAL 20-step denoise
   (fresh latents, large early-step change) the v1 raw-latent signal skips only
@@ -74,11 +77,11 @@ Skip the transformer forward on low-change denoise steps, reuse cached
   `--teacache` knob is therefore drift-blind AND skip-inflating; the drift probe /
   executor path is authoritative. (Left the knob for quick smoke, doc-flagged.)
 
-- ⬜ Threshold > 0.25 buys more skips but the latent signal makes drift climb fast
-  for little skip gain — the real lever is the signal, not the threshold (P0.2).
+- ❌ **RETIRED**：不再探索 threshold > 0.25。P0.2 已证明连续 noise prediction 没有足够
+  冗余；继续调 threshold 只会增加 drift，不能建立可用收益。
 
 ### P0.2 — Per-family timestep-modulated signal  ❌ RESOLVED — NOT WORTH BUILDING
-- `teacache_drift_probe.py --diagnose` (exact cosmos denoise, rel-L1 between
+- `vrl/scripts/perf/teacache_drift_probe.py --diagnose` (exact cosmos denoise, rel-L1 between
   CONSECUTIVE exact noise_preds = the model-intrinsic skip ceiling):
 
   | criterion | skippable |
@@ -98,10 +101,14 @@ Skip the transformer forward on low-change denoise steps, reuse cached
   The port stays (default-off, harmless, tested) as infra for longer-schedule
   families where redundancy exists — see P2 (sd3/wan step counts).
 
-### P1 — fp8 + TeaCache compose  ⬜
-- Confirm fp8 rollout + TeaCache stack (both rollout-only, both drift-corrected):
-  profile fp8+TeaCache, confirm no crash + additive speedup, combined drift still
-  under advantage signal.
+### P1 — fp8 + TeaCache compose  ❌ RETIRED / NON-GOAL
+
+TeaCache 在仓库 10–35 step schedule 上已经判定为结构性边际收益，因此不再为一个默认关闭、
+近零收益的 feature 建 fp8 组合 GPU probe。fp8/TIS 自身的长期 owner 是
+`docs/sprints/done/SPRINT_fp8_rollout_gemm_kernel.md` 与
+`docs/sprints/done/SPRINT_low_precision_tis.md`；它们不需要 TeaCache 组合结果才能成立。未来若
+重新验证 RL-safe cache，owner 是 `docs/sprints/planned/SPRINT_rl_safe_feature_cache_probe.md`；
+该 sprint 明确要求一次隔离一个变量，不复活 fp8+TeaCache 混合 probe。
 
 ### P2 — TeaCache viability across the repo + vLLM-omni diffusion spike
 - ✅ **P2-cheap (schedule survey) — every diffusion config's `num_steps`:**
@@ -125,13 +132,14 @@ Skip the transformer forward on low-change denoise steps, reuse cached
   change scales to ~0.19–0.79 — the SMALLEST (~19%) is still well above the <10%
   skip threshold. → 35 steps stays ~0% skippable; TeaCache marginal there too.
   Margin is large (19% » 10%), so the conclusion holds without the risky run.
-- ⬜ (deferred) vLLM-omni `DiffusersPipelineLoader` sd3 forward-consistency spike —
-  only worth it if a longer-schedule family makes the TeaCache+VAE-parallel bundle
-  pay. Given the survey, diffusion-side vLLM-omni adoption looks low-ROI here.
+- ✅ **HANDED OFF AND COMPLETED**：后续 FLUX/SD3 对照由长期 profiling 资产
+  `docs/flux_qwen_naive_vs_vllm_omni_profiling.md` 完成，工具为
+  `vrl/scripts/perf/vllm_omni_diffusion_profile.py`。结果仍支持本 sprint 的低 ROI 裁决；
+  本文件不再持有独立 `DiffusersPipelineLoader` spike。
 
 ### P3 — AR continuous-batching evaluation  ✅ DONE (architectural) — NOT worth replacing
 - **Reversed the earlier "AR is the biggest win" assumption.** Read the AR rollout
-  (`vrl/generation/ar/decode_loop.py`): it is NOT naive per-request decode — it is
+  (当前实现位于 `vrl/generation/composition/causal/token_loop.py`): it is NOT naive per-request decode — it is
   already a **token-batched lockstep decode with paged KV**:
   - `TokenScheduler` + `ARDecodeLoop`: `_max_batch_size` defaults to ALL samples
     (`scheduler_batch_size or len(sequences)`) → a chunk's whole sample set decodes
@@ -140,7 +148,7 @@ Skip the transformer forward on low-change denoise steps, reuse cached
     lockstep; `ActiveSequence.finished` is **position-only, no EOS early-stop** →
     the workload is **fixed-length** (image grids = fixed token count).
   - Paged KV via `ARCacheRows`; the vLLM paged *kernel* is already imported
-    (`vrl/nn/.../vllm_paged.py`).
+    (`vrl/nn/kernels/attention/vllm_paged.py`).
 - **Why vLLM continuous batching does NOT help here:** its two values are (1) ragged
   batching of variable-length sequences finishing at different times (EOS), and (2)
   injecting streaming-arrival requests into a running batch. Image AR rollout is
@@ -150,8 +158,10 @@ Skip the transformer forward on low-change denoise steps, reuse cached
   "reinventing vLLM" critique was wrong — we built the part that matters (batched
   paged decode) and correctly skipped the part the workload doesn't need (ragged
   continuous scheduling). KEEP the AR rollout.
-- ⬜ (optional, low-ROI) a GPU throughput measurement could *confirm* the batch
-  stays full, but the architecture already settles it; not a blocker.
+- ❌ **RETIRED / NON-GOAL**：可选 AR GPU throughput confirmation 不影响架构裁决，也没有
+  独立行为风险要关闭；不以“再测一个数字”重新打开本 sprint。当前 CPU contract 由
+  `tests/generation/composition/causal/test_token_loop.py` 与
+  `tests/generation/composition/causal/test_token_scheduler.py` 固定。
 
 ---
 
@@ -179,7 +189,8 @@ honest answer is the rollout was already near-optimal:**
   - ❌ vLLM-omni *engine* adoption for diffusion: low-ROI (compute-bound dense
     denoise doesn't use paged KV / continuous batching). NOT replaced — correct.
 - **AR (nextstep/janus)** — *already correctly built, no replace needed.*
-  - ✅ Already a lockstep token-batched paged-KV decode (`decode_loop.py`); vLLM
+  - ✅ Already a lockstep token-batched paged-KV decode
+    (`vrl/generation/composition/causal/token_loop.py`); vLLM
     paged kernel already imported. Continuous batching's value (ragged variable-
     length + streaming arrivals) does NOT apply to fixed-length image-token rollout.
   - ❌ vLLM-omni AR engine replace: adds ~nothing for this fixed-length workload.
@@ -204,7 +215,8 @@ assumed. No large untapped rollout headroom remains on this box.
   table above is the source for the morning report. Stopping autonomous changes.
 - **2026-06-20 h5** — P3 RESOLVED (architectural, reverses the "AR = biggest win"
   assumption). AR rollout is already a lockstep token-batched paged-KV decode
-  (`decode_loop.py`: full-width batch, position-locked, no-EOS fixed-length). vLLM
+  (`vrl/generation/composition/causal/token_loop.py`: full-width batch,
+  position-locked, no-EOS fixed-length). vLLM
   continuous batching's value (ragged/streaming) doesn't apply to fixed-length image
   AR → replacing adds ~nothing. Wrote the FINAL VERDICT section. Core sprint
   (P0/P0.1/P0.2/P2/P3) is complete; only optional GPU confirms remain.
@@ -221,7 +233,8 @@ assumed. No large untapped rollout headroom remains on this box.
   dropped. TeaCache = correct + drift-safe but ~0% real win on cosmos; port kept as
   infra for longer-schedule families. A 1.5-min diagnostic saved building a useless
   extractor. Pivot to P2 (do sd3/wan even use longer schedules?) and P3 (AR).
-- **2026-06-20 h2** — P0.1 DRIFT measured (`teacache_drift_probe.py`, real cosmos,
+- **2026-06-20 h2** — P0.1 DRIFT measured
+  (`vrl/scripts/perf/teacache_drift_probe.py`, real cosmos,
   two-pass). Drift SAFE at all thresholds (max 0.43% « fp8's 1%). BUT corrected the
   h1 number: profiler's 2.3x/50%-skip was a **measurement artifact** (state reuse +
   idx%num_steps). Real 20-step denoise skips only **~5%** with the v1 raw-latent
@@ -237,13 +250,13 @@ assumed. No large untapped rollout headroom remains on this box.
   ladder profiled (fp32 OOM; fp8 rowwise 1.15 s/step = 1.1x vs bf16 1.29; vLLM
   blockwise 5.97 s/step = a TRAP, reverted as a recommendation).
 
-## Next actions — ✅ NONE. SPRINT COMPLETE (h6).
-All core (P0/P0.1/P0.2/P2/P3) and optional confirms are resolved; FINAL VERDICT
-written; regression green. Subsequent cron firings: re-read this, confirm nothing
-new is warranted, and stop without changes. The morning report (cron 5d81d1a6)
-reads the FINAL VERDICT section above.
-- Only revisit if the USER asks for: a direct 35-step predict2 run (needs a
-  reference image), an AR GPU throughput number, or to land any of this on main.
+## 关闭状态——无 Next actions
+
+所有 core 项均已结案；P1 与可选 GPU confirmation 明确退休，diffusion vLLM-Omni 对照已由
+现有 profiling 资产承接并完成。旧 hourly cron 与 morning-report cron 均不再触发本文动作。
+当前 generation-engine 总体方向由
+`docs/sprints/SPRINT_native_generation_engine_program.md` 持有。只有新的、独立需求与可衡量
+验收条件出现时才建立新的 owner；不复活本文的 autonomous loop。
 
 ## Blockers
 (none)

@@ -4,10 +4,15 @@
 预告的"用户的 2x1 跑就是首次真实验证"）。两个首跑 bug 已修并验证（Bug A 在
 `vrl/trainers/strategy.py` DDPStrategy `_unwrapped_full_state`、Bug B 在 NFT adapter 边界，均在 main）；
 **§3 的 principled wrap/unwrap 重构其后亦已落地**——NFT 现走 model-owned `model.activate_adapter("previous")` /
-`disable_adapter()` 边界（`vrl/algorithms/diffusion_nft.py:235,238`），即 §3 主张的「通用机制下沉到 base
+`disable_adapter()` 边界（`vrl/algorithms/diffusion_nft.py`），即 §3 主张的「通用机制下沉到 base
 diffusion model」。分支 `fix/ddp-2x1-lora-nft-first-run`，修复 commit `ab7cab1`。
 
-配方：`configs/experiment/diffusion/cosmos_predict2_5/online_nft_kling_video_reward_ddp_2x1.yaml`
+当前配方路径：
+`vrl/config/presets/experiment/cosmos_predict2_5/online_nft_kling_video_reward_ddp_2x1.yaml`。
+该配置当前是 **capability-gated acceptance shape**：shared-GPU DDP 仍需 collective-safe
+phase parking，不能按旧首跑命令直接复跑；当前 `find_unused_parameters=false`，因为 previous
+adapter 参数已冻结。
+下列 override 是 2026-06 首验的历史运行口径，不是当前 config CLI 契约：
 首验覆盖：`/sampling/video=480p_33f sampling.guidance_scale=7.0 rollout.rollout_batch_size=4
 distributed.training.ddp.find_unused_parameters=true trainer.eval.enabled=false`。
 torchrun rank0=nodeA(master 172.31.36.21) / rank1=nodeB，`NCCL_SOCKET_IFNAME=enp39s0`，
@@ -40,10 +45,11 @@ transformer 包成 `DDP(PeftModel)`，而 `getattr(DDP(...), 'set_adapter')` →
 `RuntimeError: requires set_adapter('previous')`。
 **修复**：previous/reference 分支的 PEFT 方法从 `unwrap_compile_and_ddp(transformer)`
 取（DDP 包的是同一对象，切 adapter 对 wrapped 视图也可见）；grad forward 仍走 wrapper。
-另：`find_unused_parameters=true`——'previous' adapter 参数 requires_grad 但走 no_grad
-不拿梯度，reducer 默认会报缺梯度。
+首跑时曾需 `find_unused_parameters=true`：当时 'previous' adapter 参数仍 requires_grad，但
+no_grad 分支不产生梯度。当前 previous adapter 已冻结，maintained config 因而正确设置
+`find_unused_parameters=false`；不能把首跑 workaround 当成当前要求。
 
-## 3. wrap/unwrap 边界设计（principled，待实现）
+## 3. wrap/unwrap 边界设计（principled，已落地）
 
 **核心矛盾**：同一个 transformer handle 既要"包着"做 grad forward（DDP hook 必须触发），
 又要"剥开"做控制操作（set_adapter / state_dict）。**不是"包更多"——包更多会坏 grad
@@ -55,9 +61,9 @@ forward。** 真问题是边界要**集中、一致**。
 - **Model = adapter 控制边界**：`base.py:169 disable_adapter()`（context manager）、
   cosmos `sync_previous_policy_adapter()` 已是模型方法。
 
-漏的是：**NFT 算法绕过模型**，直接 `getattr(model.transformer, 'set_adapter')`。Bug B 的修复
-在算法层加 unwrap（**能跑、且因为在 `vrl/algorithms/` 所以已对所有 NFT 模型通用**），但与
-已有封装不一致。
+首跑时漏掉的是：**NFT 算法绕过模型**，直接
+`getattr(model.transformer, 'set_adapter')`。临时修复曾在算法层 unwrap；最终实现已把通用
+adapter 控制下沉到 model-owned 边界，不再保留该临时 helper。
 
 **三层划分（该放哪）**：
 - 通用机制（unwrap + 激活任意名字的 adapter）→ **base diffusion model**，与 `disable_adapter()`
@@ -80,8 +86,15 @@ forward。** 真问题是边界要**集中、一致**。
 等重复，且把已通用的算法层修复退化成专属。`'previous'` 这个名字是 NFT 概念，不该污染 base，
 所以 base 给的是"激活任意名字 adapter"的通用动作，名字由算法传。
 
-落地：base 加 `activate_adapter` + 算法改用它 + 删 `diffusion_nft.py` 里临时的 `_adapter_host`
-函数；跑 `tests/trainers/test_ddp.py` + NFT 相关 CPU 单测，下一轮 DDP 起跑回归验证。
+当前落地：
+
+- `vrl/models/steps/denoise/base.py` 提供 `activate_adapter(name)` 与
+  `disable_adapter()`；底层 wrapper 处理复用 `vrl/models/utils.py`。
+- `vrl/algorithms/diffusion_nft.py` 只决定 `"previous"` 名字与切换时机，并调用
+  `model.activate_adapter("previous")`；算法层不再自行 unwrap adapter host。
+- adapter 创建与 previous-policy 同步仍归各 model family，保持原协议边界。
+- `tests/models/steps/denoise/common/test_model_base.py` 覆盖成功切换/恢复与缺少
+  `set_adapter` 的 fail-fast；`tests/trainers/test_ddp.py` 固定 DDP state 边界。
 
 ## 4. Perf 画像（2x1, 480p/33f, rbs=4）
 
@@ -99,12 +112,18 @@ forward。** 真问题是边界要**集中、一致**。
 - ⚠️ `outputs/` 在慢的 EBS root 盘（非 NVMe）——当前数据小不影响；若 checkpoint 频繁可考虑
   指到 `/mnt/nvme`。
 
-提速杠杆（按收益）：降分辨率/步数/CFG（生成 + 训练 forward 都是 transformer 调用，最大头）>
-减少 NFT 每步 forward 次数 > resident rollout worker（`rollout.gpu_pool: trainer` +
-`memory_fraction` 省每组 ~20-30s 重载，但拆分显存）。
+当时的提速杠杆（按收益）是：降分辨率/步数/CFG > 减少 NFT 每步 forward 次数 > 共享卡
+phase handoff。旧 `memory_fraction` knob 已删除；当前 shared-GPU DDP parking 由
+`docs/sprints/SPRINT_miles_phase_lease_and_one_continuous.md` 持有，不由本 findings 文档继续设计。
 
-## 5. 待定
+## 5. 残留项裁定（全部关闭）
 
-- [ ] §3 的 `activate_adapter` 三层重构是否实现（当前算法层修复已能跑，重构是"通用解一致性"升级）
-- [ ] 双节点自愈 wrapper（torchrun 跨节点 + resume-from-checkpoint），用于长时无人值守
-- [ ] 是否放大到论文 batch（rbs↑）——受 §4 的 compute 成本约束
+- **DONE**：§3 `activate_adapter` 三层重构已经落地，并有成功/失败 CPU 回归测试。
+- **RETIRED / NON-GOAL**：不在首跑 findings 中维护独立“双节点自愈 wrapper”。当前
+  `vrl/scripts/supervise.py` 是 checkpoint-aware 单进程 supervisor，但这不等于两节点 torchrun
+  rank 自动恢复；`docs/sprints/SPRINT_ray_rollout_operation_deadlines.md` 也明确不恢复 trainer/FSDP
+  rank。没有独立需求与验收前，不把该能力伪装成已完成或另建重复 owner。
+- **NON-GOAL / HANDED OFF**：论文 batch 放大不是 DDP bug-fix 的完成条件。paper-shaped rollout
+  与硬件触发条件由
+  `docs/sprints/parked/SPRINT_cosmos_predict25_rl_paper_parity.md` 持有；本文件保留首跑 perf
+  画像，不拥有下一次训练规模决策。

@@ -1,22 +1,33 @@
 # SPRINT: Future Reward —— 给 V2W 世界模型 RLHF 一个站得住的奖励
 
-状态：**已落地（2026-06-28）= 探针 + DINOv2 + RAFT motion(零训练,都过探针);退役 pixel-L1**。目标：退役已被实测证伪的 `target_video_similarity`(64×64 像素 L1),换成一个**扛得住"糊/静止/均值"刷分**的 Future Reward,给 Cosmos Predict2 Video2World 世界模型的 GRPO 用。核心纪律:**任何 reward 进训练前,先过一个判别力探针**(就是杀掉 pixel-L1 那个)。
+状态：**done（2026-07-18 收口）**。本 sprint 的资产范围——判别探针、DINOv2 感知锚、
+RAFT motion guard、零训练 blend 与 pixel-L1 退役——均已落地并通过离线判别门。真实 GRPO
+学习曲线从来不是本 `done/` 文件的完成证据，现明确移交
+`docs/sprints/parked/SPRINT_cosmos_predict2_2b_trustworthy_curve.md`；IDM 仍由
+`docs/sprints/planned/SPRINT_idm_action_following_reward.md` 独立持有。
 
 > **IDM action-following 已拆为独立 sprint [[SPRINT_idm_action_following_reward]]（2026-06-29）。** 它是 §2 排序里唯一评 STRONG 的主信号候选，但需自训一个小 IDM（设计 + EVA 来源调查全部搬过去了），用户先走零训练路线（dino+motion）。本 doc 只保留已落地的零训练 blend 与判别探针；要做动作空间打分看那个 sprint。
 >
-> **唯一剩下的真门 = Phase 4 真机 GRPO run（never run）。** 当前所有 PASS 都是离线判别探针（8 条 DROID target 上算分），证明了"分不开糊/静止的 reward 不合格"这一关；但**还没在真实 GRPO 上证明 dino+motion blend 能让 reward 单调升、三个 component mean 不发散**。这和 [[SPRINT_cosmos_predict2_2b_trustworthy_curve]] 是同一道 GPU/数据门——需要一次真机 V2W GRPO run。
+> **范围边界：Phase 4 真机 GRPO run 没有在本 sprint 执行，也不是本 sprint 的残留项。**
+> 当前 PASS 都是离线判别探针（8 条 DROID target 上算分），只证明 reward 能区分糊/静止等
+> 退化候选，不证明训练后 reward 会单调上升或 component mean 不发散。该 GPU/数据门由
+> [[SPRINT_cosmos_predict2_2b_trustworthy_curve]] 独立持有。
 
 ## 0. 结论先行
 
-- **现 reward 已死,退役不调参**:`target_video_similarity` = `1 − 64×64 像素 L1`(`vrl/rewards/models/target_video_similarity.py:157-165`),最优解是条件均值=糊。实测刷分(同一真 DROID target):静止=0.984、模糊均值=0.988、乱序=0.988、倒放=0.981,vs 完美=1.000,**全在 1~2% 内**,动态范围才 0.31。
-- **已落地的零训练 blend（默认 recipe）**:
+- **历史 reward 已死,退役不调参**：`target_video_similarity` 曾实现为 `1 − 64×64 像素
+  L1`；相关 model/function/config 已删除，不是当前源码入口。实测刷分（同一真 DROID target）：
+  静止=0.984、模糊均值=0.988、乱序=0.988、倒放=0.981，vs 完美=1.000，**全在
+  1~2% 内**，动态范围才 0.31。
+- **已落地的零训练 blend（本 sprint 的历史 baseline，可继续组合）**:
   ```
   target_dino_similarity: 1.0  # 感知锚 —— DINOv2 特征(含 temporal 项),抗糊,过判别探针
   motion_dynamics      : 0.2   # 质量 guard —— RAFT 光流幅度,静止视频天然=0
   ```
   → 两个组件都已落地、都过 §4 探针、零训练可直接跑(见「实施状态」)。
 - **更强的主方案(IDM 当主信号) = 独立 sprint** [[SPRINT_idm_action_following_reward]]:`idm_action_following(1.0) + target_dino_similarity(0.3) + motion_dynamics(0.2)`,在低维动作空间打分,像素刷分全失效——但需自训一个小 IDM,故单列。
-- **通用 KILL-RISK 门**:7 个对照样本判别探针,好预测必须比所有刷分候选高出**指标动态范围的 ≥25%**。pixel-L1 只高 ~4%,直接挂。
+- **通用 KILL-RISK 门**：8 个候选的判别探针；好预测必须比所有刷分候选高出
+  **指标动态范围的 ≥25%**。pixel-L1 只高 ~4%，直接挂。
 - **元判断(别跑偏)**:如果你要的是**纯预测准** → 该用 **SFT(diffusion loss on target clips)**,不是 RL,无 reward-hack 面。这个 sprint 只为 RL 真正该管的**不可监督属性**:未见指令下的可执行性、发散合理未来的物理性。
 
 ## 1. 动机:为什么现 reward 必须退役(实测)
@@ -45,14 +56,21 @@
 
 ## 3. 落地方案
 
-- **零训练默认(本 sprint 落地) = `target_dino_similarity(1.0) + motion_dynamics(0.2)`**:DINOv2 感知锚(含 temporal 项,抗糊)当主 + RAFT 光流当静止 guard。两个都过 §4 探针、CPU 可跑、无新训练。这是两个 droid recipe 的默认。
+- **本 sprint 落地的零训练 baseline = `target_dino_similarity(1.0) + motion_dynamics(0.2)`**：
+  DINOv2 感知锚（含 temporal 项、抗糊）当主，RAFT 光流当静止 guard。两者都过 §4
+  探针且无需新训练。该组合仍可由具体 experiment 选择，但不是所有 DROID recipe 的全局默认。
 - **IDM-主变体(更强,独立 sprint)** = [[SPRINT_idm_action_following_reward]]:把主信号换成在动作空间打分的 IDM(DINOv2 降到 0.3 当锚、motion 0.2 当 guard)。需自训小 IDM,故拆出去。
-- **component 监控**:三个 component mean **每 epoch 都 log**(MultiReward 的 `last_components` 已自动 track),早期抓 hack。
+- **component 监控**：该 baseline 的两个 component mean 通过
+  `RolloutBatch.extras["reward_components"]` 汇入 `TrainStepMetrics.reward_components`，用于早期
+  发现 hack；不依赖已删除的 `MultiReward.last_components` 状态。
 - **VLM judge 不当主信号**:要么不进训练 reward,要么低权重当 held-out 诊断。
 
 ## 4. 通用 KILL-RISK 判别探针(每个 reward 必过 —— 这是核心门)
 
-**任何候选 reward 进训练前,先过这个;就是杀掉 pixel-L1 的同一套 harness。** 取一条真 DROID target(及其 32 步动作 `a*` 给 IDM),造 7 个候选:① exact ② perceptual-blur(模糊均值)③ static-frozen ④ temporal-mean ⑤ frame-shuffle ⑥ wrong-action(别的 episode 的片段,配本 episode 的 prompt/`a*`)⑦ random;时序候选另加 reverse。
+**任何候选 reward 进训练前,先过这个;就是杀掉 pixel-L1 的同一套 harness。** 取一条真
+DROID target（及其 32 步动作 `a*` 给 IDM），造 8 个候选：① exact ② perceptual-blur
+③ static-frozen ④ temporal-mean ⑤ frame-shuffle ⑥ reverse ⑦ wrong-action（别的 episode
+片段，配本 episode 的 prompt/`a*`）⑧ random。
 
 **PASS 要求**:`exact` 最高,**且 `exact − max(blur, static, temporal-mean) ≥ 指标动态范围的 0.25`**(pixel-L1 失败:gap≈0.012/0.31≈4%)。家族附加门:
 - **IDM(主，独立 sprint)**:family 门（exact≥0.7、static/blur/shuffle/reverse/wrong-action ≤0.4、exact>wrong-action 2σ）见 [[SPRINT_idm_action_following_reward]] §3。
@@ -66,8 +84,12 @@ CPU 跑 CLIP/DINOv2/LPIPS/RAFT(7 clip × 33 帧,torch.hub,无 GPU);reward-pool G
 已核实:torchvision 是 base dep(`pyproject.toml:46`,`raft_small` 在 `torchvision.models.optical_flow`),transformers(`:42`),kling 的 disk-artifact pool 模板,metadata plumbing。
 
 **(A) 感知锚 `target_dino_similarity`(便宜、本地、先做)**
-- 抄 `vrl/rewards/functions/target_video_similarity.py` + `models/target_video_similarity.py` 几乎原样(`default_execution="inline"`、`InProcessRewardRuntime`、解码 gen 帧 + 读 `metadata['target_video']`)。
-- **只换坏核心**:把 `_features()`/`_unit_similarity()`(`models/target_video_similarity.py:157-165`)换成"每帧过冻结 DINOv2(`torch.hub('facebookresearch/dinov2','dinov2_vits14')`)→ 帧 cosine 均值",保留 sequence/final 加权结构。
+- 历史实现从现已删除的 `target_video_similarity` wrapper/model 迁移 artifact 解码与
+  `metadata['target_video']` 契约；当前真源是
+  `vrl/rewards/functions/target_dino_similarity.py` 和
+  `vrl/rewards/models/target_dino_similarity.py`。
+- 坏掉的 pixel `_features()`/`_unit_similarity()` 已替换为冻结 DINOv2 frame cosine +
+  order-sensitive temporal 项；不保留指向已删除 pixel model 的当前源码引用。
 - `score_key=target_dino_similarity`;无新依赖;CPU 可。注册 `registry.py`:`"target_dino_similarity": TargetDinoSimilarityReward`。
 
 **(B) 主信号 `idm_action_following`（重、GPU-pool）→ 已拆到 [[SPRINT_idm_action_following_reward]]**
@@ -88,7 +110,10 @@ CPU 跑 CLIP/DINOv2/LPIPS/RAFT(7 clip × 33 帧,torch.hub,无 GPU);reward-pool G
 - **Phase 1 —— DINOv2 感知锚 ✅**:换核心 → 过探针(gap_ratio 0.298 PASS,需 temporal 项)。
 - **Phase 1.5 —— RAFT motion guard ✅**:static 塌到地板(gap_ratio 0.969 PASS)。
 - **Phase 2/3 —— IDM action-following → 拆到 [[SPRINT_idm_action_following_reward]]**(动作标签进 manifest + 自训 IDM + reward + 过探针)。
-- **Phase 4 —— 真机 GRPO 验证（唯一剩下的门，never run）**:把已落地的 `dino(1.0)+motion(0.2)` 零训练 blend 接 [[SPRINT_cosmos_predict2_2b_trustworthy_curve]] 的真机 V2W GRPO run,看 eval reward 升 >2σ + 两个 component mean 不发散(防 hack)。**离线探针 PASS ≠ 训练能学,这一步才闭环。**
+- **Phase 4 —— 已移交，不是本 sprint 的 closure gate**：把已落地的
+  `dino(1.0)+motion(0.2)` 零训练 blend 接入真机 V2W GRPO、判断 eval reward 是否上升
+  >2σ 与 component mean 是否发散，由 [[SPRINT_cosmos_predict2_2b_trustworthy_curve]] 持有。
+  **离线探针 PASS ≠ 训练能学**，因此本文件不冒充训练闭环。
 
 ## 验收
 
@@ -96,11 +121,16 @@ CPU 跑 CLIP/DINOv2/LPIPS/RAFT(7 clip × 33 帧,torch.hub,无 GPU);reward-pool G
 - [x] 可直接跑的零训练 recipe = dino(1.0)+motion(0.2),两组件都过探针(默认 recipe 已是此值)。
 - [x] `target_video_similarity` **彻底删除**(2026-06-28):model/function/config/registry 项 + 旧 `target_video_similarity_probe.py` 自比对脚本全删;production validation 的 `require_target_video` 改 key 到 `target_dino_similarity`(同样读 `metadata['target_video']`,语义不丢)。下方表里的 pixel-L1 数字保留为"为什么删它"的存档。
 - [→] action-following(IDM)**已拆为独立 sprint** [[SPRINT_idm_action_following_reward]](设计 + 自训步骤 + EVA 调查搬过去)。manifest 的 `target_actions` plumbing(commit d22d7d5d)留着但当前无 reward 读它。
-- [ ] **Phase 4 真机 GRPO 验证（唯一剩下的门，never run）**:dino(1.0)+motion(0.2) 接 [[SPRINT_cosmos_predict2_2b_trustworthy_curve]] 的真机 V2W run,eval reward 升 >2σ + component mean 不发散。当前全部 PASS 都是离线探针,不是训练曲线。
+- **HANDED OFF**：Phase 4 真机 GRPO 验证由
+  `docs/sprints/parked/SPRINT_cosmos_predict2_2b_trustworthy_curve.md` 持有；它不是本 sprint 的
+  未完成 checkbox。当前全部 PASS 都是离线探针，不是训练曲线。
 
 ## 实施状态（2026-06-28）
 
-**探针实测数字（8 条真 DROID target,`droid_targets_eval.jsonl`,5090）** —— PASS bar = `exact` 最高且 `gap = exact − max(blur,static,temporal-mean) ≥ 0.25 × 动态范围`(动态范围 = exact − 全候选最低）:
+**探针实测数字（8 条真 DROID target，当前 manifest 为
+`data/external/video_world/manifests/droid_full_targets_eval.jsonl`，5090）** —— PASS bar =
+`exact` 最高且 `gap = exact − max(blur,static,temporal-mean) ≥ 0.25 × 动态范围`（动态范围 =
+exact − 全候选最低）：
 
 | reward | exact | blur | static | temporal-mean | shuffle | reverse | wrong-clip | random | gap_ratio | 判定 |
 |---|---|---|---|---|---|---|---|---|---|---|
@@ -115,16 +145,23 @@ CPU 跑 CLIP/DINOv2/LPIPS/RAFT(7 clip × 33 帧,torch.hub,无 GPU);reward-pool G
 
 **落地的资产(留下来的)**:
 - 探针(keystone):`vrl/scripts/eval/future_reward_discrimination_probe.py` —— reward-agnostic,8 候选,dino/motion 两条支路 + 每家族 PASS 规则。任何新 reward 先过它。(pixel-L1 支路随 reward 一起删了;它的失败数字已存档在上表。)
-- DINOv2 锚:`vrl/rewards/{models,functions}/target_dino_similarity.py` + `configs/reward/target_dino_similarity.yaml`。
-- RAFT motion guard:`vrl/rewards/{models,functions}/motion_dynamics.py` + `configs/reward/motion_dynamics.yaml`。
+- DINOv2 锚：`vrl/rewards/{models,functions}/target_dino_similarity.py` +
+  `vrl/config/presets/reward/target_dino_similarity.yaml`。
+- RAFT motion guard：`vrl/rewards/{models,functions}/motion_dynamics.py` +
+  `vrl/config/presets/reward/motion_dynamics.yaml`。
 - 共享:帧解码 helper 进 `vrl/utils/media.py`(`read_video_frames`/`sample_frames`/`align_frame_counts`/`frames_thwc_to_float`)+ `decode_artifact_frames` 进 `vrl/rewards/base.py`(没动被退役的 pixel model)。
 - registry 注册 dino + motion(可复用积木);两个单 reward 组 config。**probe + 这两个组 = 真资产,任何实验按需 compose。**
-- **两个 droid recipe 默认 = dino(1.0)+ motion(0.2),零训练、可直接跑**(原本指向死掉的 pixel-L1,必须重指一个能用的;这是默认值不是承诺,每个实验可 override)。kling 等是 opt-in `/reward/*` 积木。
+- **历史 baseline recipes**：
+  `vrl/config/presets/experiment/cosmos_predict2/online_grpo_droid_target_480p.yaml` 与
+  `vrl/config/presets/experiment/cosmos_predict2/online_grpo_droid_full_target_480p_lora.yaml`
+  使用 dino(1.0)+motion(0.2)。其他 experiment 可选择不同 blend；这里不声明全局默认。
 - 测试:`tests/rewards/functions/test_future_reward.py`(探针候选构造 + 各家族判定逻辑的 CPU 单测)。
 
 **删掉的(给没在走的 IDM 路建的脚手架,从没端到端跑过)**:`vrl/rewards/{models,functions}/idm_action_following.py`、bridge scorer `idm_action_score.py`、训练脚本 `train_droid_idm.py`、`configs/reward/idm_action_following.yaml`。用户选了零训练 dino+motion;IDM 设计与重建步骤已搬到 [[SPRINT_idm_action_following_reward]],以后真要再建照那个 sprint。
 
-**怎么跑探针**:`python -m vrl.scripts.eval.future_reward_discrimination_probe --reward <name> --manifest data/external/video_world/manifests/droid_targets_eval.jsonl --out outputs/probe_<name>.jsonl --device cuda`(`<name>` = target_dino_similarity / motion_dynamics)。
+**怎么跑探针**：`python -m vrl.scripts.eval.future_reward_discrimination_probe --reward <name> --manifest data/external/video_world/manifests/droid_full_targets_eval.jsonl --out outputs/probe_<name>.jsonl --device cuda`
+（`<name>` = target_dino_similarity / motion_dynamics；这是 integration probe，会加载 reward
+model，不是 CPU unit test）。
 
 **IDM action-following（重建步骤 + 5 源来源调查 + EVA 架构结论）→ 全部搬到 [[SPRINT_idm_action_following_reward]]**。一句话:查证后没有现成 IDM 能直接插(契约对不上 DROID 单臂/只吃帧/7 维),只能自训一个 vision-only 小 IDM,设计与数据接线见那个 sprint。
 
@@ -135,4 +172,7 @@ CPU 跑 CLIP/DINOv2/LPIPS/RAFT(7 clip × 33 帧,torch.hub,无 GPU);reward-pool G
 **参考**
 - RLIR(inverse rewards,world-model post-train):arXiv:2509.23958 · EVA(IDM reward → executable actions):arXiv:2603.17808
 - DINOv2:2304.07193 · V-JEPA2:2506.09985 · VideoPhy-2:2503.06800 · VBench:2311.17982 · VideoScore2:2509.22799
-- Repo:`vrl/rewards/models/target_video_similarity.py:157-165`(死核心)、`vrl/rewards/functions/{registry,kling_video_reward,videoscore2,phymotion}.py`、`vrl/rewards/models/{videoscore2,phymotion}.py`、`vrl/trainers/data/artifacts.py:194-201`、`vrl/scripts/data/video_world.py:176-181,427`、`pyproject.toml:42,46`
+- Repo：已删除的 pixel-L1 核心只作为上表历史负结果保留。当前相关真源为
+  `vrl/rewards/functions/registry.py`、`vrl/rewards/functions/{kling_video_reward,videoscore2,phymotion}.py`、
+  `vrl/rewards/models/{videoscore2,phymotion}.py`、`vrl/trainers/data/artifacts.py`、
+  `vrl/scripts/data/video_world.py` 与 `pyproject.toml`。

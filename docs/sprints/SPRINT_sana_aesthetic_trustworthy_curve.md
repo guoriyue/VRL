@@ -8,14 +8,12 @@
 > report at `sana_aesthetic_fullparam_native_fp16_eval/report.json`. Legacy BF16
 > and LoRA evaluator protocols cannot be normalized into this protocol.
 
-Status: **TRAINING COMPLETE; HELD-OUT QUALITY PENDING**. The replacement run in
-`outputs/sana_aesthetic_fullparam_long/` completed all 300 updates and published
-`checkpoint-final` with `global_step=300`, `uses_lora=false`, and
-`run_verdict=success`. Its 300 metric rows cover epochs `0..299`, are finite,
-and have no zero-gradient update. No training process or tmux session remains.
-This completion proves the registered training job finished; it does not replace
-the standalone held-out report required for the quality verdict. The invalid
-first attempt is recorded in §3.5 and is not spliced into this run.
+状态：**训练已完成；held-out 质量判定待完成**。替代 run
+`outputs/sana_aesthetic_fullparam_long/` 已完成全部 300 次更新并发布
+`checkpoint-final`，其中 `global_step=300`、`uses_lora=false`、
+`run_verdict=success`。300 行 metric 覆盖 epoch `0..299`，全部有限且没有零梯度更新；
+当前没有残留 training process 或 tmux session。这只能证明注册的训练任务完成，不能替代质量判定
+要求的独立 held-out report。§3.5 记录的无效首次尝试没有拼接进本 run。
 
 The previous BF16 v1 run was stopped and invalidated on 2026-07-12 after metric
 row 231; `checkpoint-225` is its latest complete checkpoint. Do not resume that

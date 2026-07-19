@@ -1,17 +1,16 @@
 # Sprint: Cosmos Predict2.5 Training Field Notes (480p/49f NFT run)
 
-状态：observations (field report from a real single-L40S run; some items are
-actionable fixes, some are runbook knowledge)
+状态：**INFO field report（single-L40S historical run）**。本文按 KIND 归档当时的实跑观察，
+不是当前 launch runbook，也不拥有 action；旧问题的当前结论与责任归属统一写在 §8。
 
-> Context: brought up Cosmos Predict2.5 DiffusionNFT training at 832x480 / 49
-> frames on a single L40S (46GB) box. This documents every non-obvious thing
-> that bit us, in the order it bit, so the next run is a one-shot. Cross-refs:
-> `SPRINT_env_bootstrap.md` (dependency declaration), memories
-> `nvme-hf-cache-fast-model-load`, `env-bootstrap-undeclared-deps`.
+> Context: this report brought up Cosmos Predict2.5 DiffusionNFT training at
+> 832x480 / 49 frames on a single L40S (46GB). Current sources of truth are
+> `pyproject.toml`, `docs/sprints/parked/SPRINT_cosmos_predict25_rl_paper_parity.md`
+> and `docs/sprints/planned/SPRINT_model_training_quality_gates.md`.
 
-## 1. 结论 / TL;DR runbook
+## 1. 历史 runbook（不要直接用于当前 HEAD）
 
-To launch a correct, stable Cosmos Predict2.5 run on this box:
+以下命令记录当时机器与旧配置布局，只用于解释测量环境：
 
 ```bash
 # prerequisites (one-time)
@@ -66,13 +65,16 @@ base model's no-CFG samples are unusable, so the reward signal is meaningless
 at start. We chose `guidance_scale=7.0` so rollouts are correct *now* (user
 goal: "rollout correct videos"). The training replay carries `guidance_scale`
 via `export_batch_context`, so rollout and replay stay CFG-consistent
-(`vrl/models/diffusion/cosmos/predict2_5/model.py:399`). Note GRPO predict2
+(`vrl/models/families/cosmos/predict2_5/model.py:458`). Note GRPO predict2
 (`online_grpo_video_reward`) already ships with `35_step_cfg_7`, so CFG rollouts
 are a supported path in this codebase.
 
-**Action item:** either change the predict2.5 NFT default denoise to a CFG
-preset, or add a loud note in the config that no-CFG rollouts are blocks on the
-base model.
+**当前结案**：canonical NFT recipe 已明确选择 paper-shaped `20_step_no_cfg`，并在配置中解释
+其论文口径；field run 的 CFG 7.0 只是为了让当时的单卡诊断先得到可读输出，不是默认值。
+真实输出是否可接受由
+`docs/sprints/parked/SPRINT_cosmos_predict25_rl_paper_parity.md` 和
+`docs/sprints/planned/SPRINT_model_training_quality_gates.md` 的 native/production 证据门负责，
+本文不再持有“决定默认值”的 action。
 
 ## 3. Model loading: HF cache MUST be on local NVMe, not EBS
 
@@ -100,10 +102,13 @@ Gotchas:
 - Instance store is **ephemeral** (lost on stop/terminate) — re-copy after any
   instance stop. It's a cache, re-downloadable.
 
-## 4. Undeclared dependencies (two separate runtime crashes)
+## 4. 历史 dependency crashes
 
-`pyproject.toml` omits packages the reward path imports; each surfaced only at
-runtime (see `SPRINT_env_bootstrap.md` for the full list):
+当时环境缺少以下依赖，因此只在 runtime 暴露。当前 `pyproject.toml` 的 `reward` extra 已声明
+`qwen-vl-utils`、Transformers、PEFT、Torchvision 与 OpenCV；`decord` 仍不是通用依赖。
+目标环境究竟选择哪一个 video backend，必须由 quality producer 记录 dependency lock 并执行
+真实 reward preflight，责任归
+`docs/sprints/planned/SPRINT_model_training_quality_gates.md`，而不是由本 field report 维护安装清单：
 
 1. `qwen_vl_utils` — driver preflight `preflight_kling_video_reward_backend()`.
    Fix: `pip install qwen-vl-utils` (pulls `av`).
@@ -128,21 +133,20 @@ Per-phase footprints (832x480x49, 10 steps):
 - **generation** (RayGenerationWorker): ~28–29 GB at `sample_batch_size=2`.
 - **training** (replay/backward, main proc): the higher phase.
 
-Knob semantics (verified in code):
+以下是当时运行暴露的 knob 语义；当前公开 grammar 已统一为
+`rollout.n_samples_per_prompt`、`rollout.prompts_per_batch`、
+`rollout.samples_per_chunk`、`rollout.microbatch_size` 与
+`actor.replay_samples_per_chunk`，不要照抄旧名字：
 
-- `rollout.n` is the diffusion group-size field. **`n_samples_per_prompt` is
-  AR-only** (`collector/core.py:204`: `1 if kind=="diffusion" else
-  require("n_samples_per_prompt")`). Live proof: setting `rollout.n` made
-  `metrics.csv` `group_size` track 2→4→3. `builders.py:55` prefers
-  `n_samples_per_prompt` then falls back to `rollout.n`, so both *can* work, but
-  diffusion configs use `rollout.n`.
-- `rollout.sample_batch_size` = generation microbatch (`max_samples_per_chunk`,
-  from `cfg.rollout.sample_batch_size`, launcher.py:325). `sample_batch_size=4`
+- 历史 `rollout.n` 曾是 diffusion group size；当前统一使用
+  `rollout.n_samples_per_prompt`，不再按 AR/diffusion 分叉字段名。
+- 历史 `rollout.sample_batch_size` 当前名为 `rollout.samples_per_chunk`。
+  当时的 `sample_batch_size=4`
   **OOMs** at this resolution (~36 GB allocated for 4 parallel videos);
   `sample_batch_size=2` is the safe ceiling.
-- **`algorithm.mini_batch` is a DEAD parameter** — defined at
-  `vrl/algorithms/diffusion_nft.py:26` and consumed *nowhere* (grep proves it).
-  Setting it changes nothing.
+- **`algorithm.mini_batch` 是历史 dead parameter，当前已经删除**；不要恢复它。当前样本轴
+  replay 分块的唯一事实来源是 `actor.replay_samples_per_chunk`，prompt-group streaming 则由
+  `rollout.microbatch_size` 表达。
 
 Two wrong turns I made (recorded so the next person doesn't repeat them):
 
@@ -155,11 +159,10 @@ Two wrong turns I made (recorded so the next person doesn't repeat them):
    tune off `nvidia-smi` "used" with expandable_segments on; it is cache-padded.**
    Use `torch.cuda.max_memory_allocated()` if you need the real peak.
 
-**Real lever for higher `n` without OOM:** the NFT replay/backward processes all
-`n` samples of a prompt at once, so the *real* allocated training peak grows with
-`n`. To go past the ceiling, make `mini_batch` live — chunk the replay/backward
-over samples with gradient accumulation in `diffusion_nft.py`. That reduces the
-real allocated peak (not the cache). Not yet implemented.
+**当前结案**：没有把 dead `mini_batch` 变活。共享 trainer 已落地
+`actor.replay_samples_per_chunk`，两条 replay/backward 路径都消费它，并有分块前后梯度等价、
+默认 1、非法值拒绝和 DDP/FSDP 合约测试。Predict2.5 的 paper-shape / 大组真实硬件验收归
+`docs/sprints/parked/SPRINT_cosmos_predict25_rl_paper_parity.md`。
 
 ## 6. Training dynamics / reward reading
 
@@ -175,20 +178,23 @@ real allocated peak (not the cache). Not yet implemented.
   per-step prompt noise.
 - Throughput on this box: ~7–8 min/epoch at n=3/sb=2 → 50 epochs ≈ 6 h.
 
-## 7. Tools added this run
+## 7. 一次性验证资产生命周期
 
-- `configs/sampling/video/480p_49f.yaml` — 832x480, 49 frames (49 satisfies the
-  Cosmos temporal-VAE `(frames-1) % 4 == 0` constraint).
-- `vrl/scripts/diffusion/cosmos/generate_video.py` — single-load generation
-  probe (no Ray/reward/trainer) that replays the rollout denoise path
-  (`forward_step` + `sde_step_with_logprob`) and writes an mp4. Use it to verify
-  rollout correctness in ~1 min before committing to a multi-hour run. This is
-  how the CFG finding was isolated.
+- 当时的 `480p_49f` scratch config 与 single-load `generate_video.py` probe 已在回答问题后删除；
+  它们不是当前 import graph 或长期 runbook 的一部分。
+- 可长期复用的推理正确性入口归
+  `docs/sprints/planned/SPRINT_model_training_quality_gates.md` 的 test-owned producer，不能复活
+  一个 family-specific 一次性脚本并让它重新成为 action owner。
 
-## 8. Open / TODO
+## 8. 结案与责任归属（本 info 不持有 action）
 
-- Implement `mini_batch` chunking in `diffusion_nft.py` to unlock n≥8 safely.
-- Decide on the no-CFG-vs-CFG default for the predict2.5 NFT recipe (§2).
-- Fold `decord` into the `reward` extra in `SPRINT_env_bootstrap.md`.
-- predict2 (video2world) rollout verification still pending (model is on NVMe;
-  probe deferred to avoid GPU contention with the live training).
+- **mini_batch：CLOSED / REMOVE + replacement。** dead key 已删除；
+  `actor.replay_samples_per_chunk` 是当前 sample-axis replay 分块契约。
+- **no-CFG vs CFG：CLOSED / explicit decision。** canonical Predict2.5 NFT recipe 保留
+  paper-shaped `20_step_no_cfg`；真实质量证明归 paper-parity 与 model-training quality gate。
+- **reward video dependency：TRANSFERRED。** `qwen-vl-utils` 已进入 `reward` extra；`decord`
+  是否是目标环境必需 backend 由 model-training quality producer 的 dependency-lock + reward
+  preflight 判定，不在 field report 留未结事项。
+- **Predict2 V2W rollout verification：CLOSED。** 当前完成记录
+  `docs/sprints/done/SPRINT_cosmos_robotic_data_factory_domain_rl.md` 已验证原生
+  704p/93f 能生成连贯机器人视频，同时证明 240p/33f 是 OOD 垃圾；这不是仍待执行的 probe。
