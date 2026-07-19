@@ -1,197 +1,164 @@
-# SPRINT: Producer-backed inference quality tests
+# SPRINT：由证据生产器支撑的推理质量测试
 
-Status: **PLANNED; structural validator landed, evidence producers missing
-(2026-07-18)**.
+状态：**PLANNED；结构验证器已落地，证据生产器缺失（2026-07-18）**。
 
-## Outcome
+## 目标
 
-Before an expensive training launch, an opt-in test must prove that the exact
-resolved experiment can produce valid outputs through three independent paths:
+昂贵训练启动前，一个显式启用的测试必须证明：同一份 resolved experiment 能通过三条相互独立的路径生成有效输出：
 
-1. the official native/reference inference path;
-2. the production rollout path used by the repository;
-3. an independent replay reconstructed from persisted trajectory artifacts.
+1. 官方 native/reference 推理路径；
+2. 仓库实际使用的 production rollout 路径；
+3. 从持久化 trajectory artifact 独立重建的 replay 路径。
 
-The proof remains owned by `tests/quality/`. Production code must not import the
-test package, pause or resume training around a quality phase, cache a PASS, or
-make runtime policy decisions from test state. An operator or launch workflow
-runs the test immediately before `vrl-train` and treats a skip as **no proof**,
-not as a passing gate.
+证明仍由 `tests/quality/` 拥有。生产代码不得导入测试包，不得围绕质量阶段暂停或恢复训练，不得缓存 PASS，
+也不得根据测试状态做 runtime policy 决策。operator 或 launch workflow 在 `vrl-train` 前立即运行该测试；
+skip 表示**没有证明**，不能视为通过。
 
-This sprint proves inference correctness and detects collapse. It does not
-promise that training improves quality.
+本 sprint 证明推理正确并检测坍缩，不承诺训练一定提升质量。
 
-## Current repository truth
+## 当前仓库事实
 
-Already landed:
+已经落地：
 
-- `tests/quality/protocols/families/` covers all canonical entries derived from
-  `FAMILY_REGISTRY` without a second hand-maintained family vocabulary.
-- Protocols classify the trainable policy through the orthogonal axes in
-  `PolicySemantics`: temporal organization, step kind, action distribution, and
-  trajectory layout.
-- CPU tests validate config/model identity, artifact hashes, media decoding,
-  shape, condition sensitivity, replay tolerance, alignment direction, segment
-  order, and required corruption names.
-- `tests/quality/test_sana_real_inference.py` proves the correct SANA
-  FP16/no-autocast production path against an independent denoise loop and
-  demonstrates that the rejected BF16 outer-autocast path diverges.
-- `tests/quality/test_protocols.py` prevents `vrl/` from importing either
-  `tests.quality` or a production `vrl.quality` package.
+- `tests/quality/protocols/families/` 覆盖从 `FAMILY_REGISTRY` 派生的全部 canonical entry，
+  没有第二份手工维护的 family vocabulary。
+- 协议通过 `PolicySemantics` 的正交轴分类 trainable policy：temporal organization、step kind、
+  action distribution 和 trajectory layout。
+- CPU 测试验证 config/model identity、artifact hash、media decode、shape、condition sensitivity、
+  replay tolerance、alignment direction、segment order 和必需 corruption 名称。
+- `tests/quality/test_sana_real_inference.py` 使用独立 denoise loop 证明正确的 SANA FP16/no-autocast
+  production model-build/forward path，并证明已拒绝的 BF16 outer-autocast 路径会发生偏离；
+  该测试没有经过完整 `GenerationRuntime`、worker、binding 或 trajectory，因此不能冒充 rollout 证明。
+- `tests/quality/test_protocols.py` 阻止 `vrl/` 导入 `tests.quality`，也阻止新增 production
+  `vrl.quality` package。
 
-Still missing:
+仍然缺失：
 
-- No general producer actually runs the native, production, replay, and scorer
-  paths for a resolved experiment.
-- `tests/quality/evidence.py` currently accepts manifest scalars such as
-  `replay_max_abs_error`, matched/shuffled alignment, and corruption scores.
-  Threshold validation cannot prove that those numbers came from the declared
-  artifacts or scorer.
-- A checked-in profile is a test oracle, not evidence that its model has ever
-  passed real inference.
-- CI is CPU-only; opt-in real-checkpoint tests may skip when their model/GPU is
-  unavailable.
+- 没有通用 producer 真正为一份 resolved experiment 执行 native、production、replay 和 scorer 路径。
+- `tests/quality/evidence.py` 当前接受 `replay_max_abs_error`、matched/shuffled alignment 和
+  corruption score 等 manifest scalar。只验证阈值不能证明这些数字确实来自声明的 artifact 或 scorer。
+- checked-in profile 是 test oracle，不是该模型已经跑过真实推理的证据。
+- CI 是 CPU-only；模型或 GPU 不可用时，显式启用的 real-checkpoint test 可能 skip。
 
-## Required architecture
+## 必需架构
 
-### Test-owned producers
+### 测试拥有的 producer
 
-Add producer support under `tests/quality/producers/`. A producer may import
-production runtime code and the upstream/native library, but the dependency is
-one-way: production code never imports the producer.
+在 `tests/quality/producers/` 下增加 producer 支持。producer 可以导入 production runtime code 和
+upstream/native library，但依赖必须单向：生产代码绝不能导入 producer。
 
-Each producer invocation receives one resolved experiment config and writes raw
-records plus artifacts into a caller-selected output directory. It must:
+每次 producer 调用接收一份 resolved experiment config，并将 raw record 和 artifact 写入 caller 指定的
+输出目录。它必须：
 
-1. resolve one immutable model identity and revision;
-2. start the official native/reference path in a fresh process;
-3. start the exact production rollout path in a separate fresh process;
-4. persist the trajectory inputs needed for replay;
-5. rebuild replay without reusing rollout memory objects;
-6. execute the pinned independent scorer and every registered corruption;
-7. compute all reported metrics from those records;
-8. write hashes for inputs, outputs, source, dependency lock, resolved config,
-   scorer, protocol, optional checkpoint, and environment identity.
+1. resolve 唯一且不可变的 model identity 和 revision；
+2. 在全新进程中启动官方 native/reference path；
+3. 在另一个全新进程中启动完全一致的 production rollout path；
+4. 持久化 replay 所需的 trajectory input；
+5. 不复用 rollout memory object，独立重建 replay；
+6. 执行 pinned independent scorer 和所有已注册 corruption；
+7. 从这些 raw record 计算全部报告指标；
+8. 写入 input、output、source、dependency lock、resolved config、scorer、protocol、可选 checkpoint
+   和 environment identity 的 hash。
 
-The evidence validator must recompute summary values from raw per-sample records.
-It must not accept a caller-provided scalar as proof when the referenced
-artifacts contain enough information to derive that value.
+evidence validator 必须从逐样本 raw record 重新计算 summary。当引用的 artifact 已包含足够信息派生某个值时，
+不得接受 caller 提供的 scalar 作为证明。
 
-### Family-specific native boundaries
+### Family-specific native 边界
 
-Native adapters remain family-specific where upstream protocols differ. This is
-a justified thin-file boundary: the independent implementation must not call the
-production executor it is meant to check. Shared artifact, process, hashing,
-replay, and scorer machinery belongs in common producer support.
+upstream protocol 不同时，native adapter 保持 family-specific。这是合理的 thin-file boundary：
+独立实现不能调用它要验证的 production executor。共享 artifact、process、hashing、replay 和 scorer 机制放入
+通用 producer 支持。
 
-One adapter may cover multiple registry entries only when model identity,
-sampling protocol, conditioning, and trainable policy semantics are genuinely
-the same. Aliases do not create new coverage; distinct checkpoint/task variants
-do.
+只有当 model identity、sampling protocol、conditioning 和 trainable policy semantics 确实相同时，
+一个 adapter 才能覆盖多个 registry entry。alias 不产生新 coverage；不同 checkpoint/task variant 需要独立覆盖。
 
-### Artifact lifecycle
+### Artifact 生命周期
 
-Producer outputs are one-shot validation artifacts. Store them outside the
-import graph, with names such as `*_preflight`, and retain only the report,
-contact sheet, and minimal provenance needed to explain the launch decision.
-Do not check large generated media or scratch trajectories into the repository.
+producer output 是一次性验证 artifact。把它放在 import graph 之外，使用 `*_preflight` 这类可识别名称；
+只保留解释 launch 决策所需的 report、contact sheet 和最小 provenance。不要把大型生成媒体或 scratch trajectory
+提交到仓库。
 
-## Positive and negative proofs
+## 正反证明
 
-Every real producer test must contain at least one valid case and one deliberate
-breakage that proves the assertion can fail.
+每个真实 producer 测试至少包含一个有效正例和一个故意破坏的反例，证明断言确实会失败。
 
-Common negative cases:
+通用反例：
 
-- source/config/model/checkpoint hash mismatch;
-- replay tensor or scheduler-step perturbation;
-- prompt or reference permutation;
-- solid color, patch blocks, noise, blur, saturation, or confetti;
-- identical outputs across different seeds.
+- source/config/model/checkpoint hash 不匹配；
+- replay tensor 或 scheduler step 被扰动；
+- prompt 或 reference 被置换；
+- solid color、patch block、noise、blur、saturation 或 confetti；
+- 不同 seed 产生完全相同输出。
 
-Joint-denoise policies additionally cover wrong scheduler, timestep mapping,
-dtype, autocast, frame count/order, freeze, repeat, flicker, and reverse.
+joint-denoise policy 还必须覆盖错误 scheduler、timestep mapping、dtype、autocast、frame count/order、freeze、
+repeat、flicker 和 reverse。
 
-Causal-token policies additionally cover invalid token range, premature EOS,
-token repetition, prefix/schedule mutation, wrong decoder path, and segment
-reordering. Continuous-token policies must also run their complete flow decoder;
-a shortened smoke configuration is not a native-quality proof.
+causal-token policy 还必须覆盖非法 token range、premature EOS、token repetition、prefix/schedule mutation、
+错误 decoder path 和 segment reorder。continuous-token policy 还必须运行完整 flow decoder；缩短的 smoke config
+不是 native-quality proof。
 
-Reference-conditioned image/video/world policies must use real condition assets.
-Zero tensors and synthetic placeholders cannot prove conditioning correctness.
+reference-conditioned image/video/world policy 必须使用真实 condition asset。零 tensor 和 synthetic placeholder
+不能证明 conditioning 正确。
 
-## Human review boundary
+## 人工检查边界
 
-Pixel statistics alone cannot certify visual quality. The report must enumerate
-every native and production artifact with its prompt/condition, path, and hash,
-and must produce a contact sheet or video index for human inspection. Human
-review supplements machine assertions; it does not replace replay, identity, or
-corruption checks.
+pixel statistics 单独不能认证视觉质量。report 必须列出每个 native 和 production artifact 的 prompt/condition、
+path 和 hash，并生成供人工打开的 contact sheet 或 video index。人工检查补充 machine assertion，但不能替代 replay、
+identity 或 corruption check。
 
-## Implementation map
+## 实施范围
 
-Add or extend only test-owned assets:
+只新增或扩展 test-owned asset：
 
-- `tests/quality/producers/` — subprocess, artifact, replay, scorer, and
-  family-native producer support;
-- `tests/quality/test_real_inference_preflight.py` — run or validate produced
-  evidence for one resolved config;
-- `tests/quality/evidence.py` — recompute metrics from raw records;
-- `tests/quality/protocols/` — protocol/version fixtures;
-- `tests/quality/README.md` — exact pre-launch command and skip semantics;
-- focused real-checkpoint tests for family-specific independent paths.
+- `tests/quality/producers/`：subprocess、artifact、replay、scorer 和 family-native producer 支持；
+- `tests/quality/test_real_inference_preflight.py`：为一份 resolved config 运行或验证 produced evidence；
+- `tests/quality/evidence.py`：从 raw record 重新计算指标；
+- `tests/quality/protocols/`：protocol/version fixture；
+- `tests/quality/README.md`：精确的 pre-launch command 和 skip semantics；
+- family-specific independent path 的 focused real-checkpoint test。
 
-Do not add:
+不要新增：
 
-- `vrl/quality/`;
-- a quality field copied into `ModelFamilyEntry`;
-- `vrl/scripts/train_worker.py` or a training phase orchestrator;
-- trainer/Ray pause-resume state for quality testing;
-- YAML switches such as `quality.enabled` or `skip_preflight`;
-- a parallel `SUPPORTED_FAMILIES` constant.
+- `vrl/quality/`；
+- 复制进 `ModelFamilyEntry` 的 quality field；
+- `vrl/scripts/train_worker.py` 或 training phase orchestrator；
+- 为质量测试增加的 trainer/Ray pause-resume state；
+- `quality.enabled` 或 `skip_preflight` 一类 YAML switch；
+- 平行的 `SUPPORTED_FAMILIES` constant。
 
-## Completion gates
+## 完成门槛
 
-CPU-only gates:
+CPU-only gate：
 
-1. Registry-derived profile coverage remains complete when an entry is added or
-   renamed.
-2. Production-to-test imports remain impossible.
-3. Evidence summaries are recomputed and tampered scalar/artifact/hash cases
-   fail.
-4. Every modality corruption has a true and false regression test.
-5. Unknown protocol fields and stale model/config revisions fail closed.
+1. registry entry 新增或重命名时，registry-derived profile coverage 仍完整；
+2. production-to-test import 保持不可能；
+3. evidence summary 从 raw record 重算，篡改 scalar/artifact/hash 时会失败；
+4. 每种 modality corruption 都有 true/false regression test；
+5. 未知 protocol field 和过期 model/config revision fail closed。
 
-Real-checkpoint gates, per canonical entry before claiming it is validated:
+对每个 canonical entry，只有满足以下 real-checkpoint gate 才能声称已验证：
 
-1. Native/reference, production, and independent replay all execute.
-2. Correct outputs pass; the registered wrong dtype/scheduler/condition/segment
-   case fails.
-3. The pinned scorer ranks matched/clean artifacts above shuffled/corrupted
-   artifacts by the registered margin.
-4. Artifacts are opened and reviewed; the report records that review without
-   claiming it was automated.
-5. The report binds the exact source and experiment identity used by the later
-   training launch.
+1. native/reference、production 和 independent replay 都实际执行；
+2. 正确输出通过，注册的错误 dtype/scheduler/condition/segment case 失败；
+3. pinned scorer 按注册 margin 将 matched/clean artifact 排在 shuffled/corrupted artifact 之前；
+4. artifact 已被打开检查，report 记录人工检查但不谎称自动完成；
+5. report 绑定后续 training launch 使用的精确 source 和 experiment identity。
 
-The first vertical slice is SANA because it already has an independently proven
-correct and incorrect precision path. Next add one video joint-denoise and one
-causal-token image entry, then expand across the registry. An unimplemented
-producer means that family remains **unproven**, never implicitly passing.
+第一条 vertical slice 是 SANA，因为它已经有独立证明的正确和错误 precision path。随后增加一个 video
+joint-denoise entry 和一个 causal-token image entry，再扩展到整个 registry。producer 未实现的 family 始终是
+**unproven**，绝不能隐式通过。
 
-## Architecture hygiene
+## 架构卫生
 
-Keep `FAMILY_REGISTRY` as the single deliberately isolated taxonomy/config
-table. Derive profile coverage from it. Keep schema/version, protocol names,
-checkpoint names, and test fixture constants as legitimate ALL_CAPS boundaries;
-do not duplicate typed fields into hand-maintained validation sets.
+保留 `FAMILY_REGISTRY` 作为唯一、刻意隔离的 taxonomy/config table，并从中派生 profile coverage。
+schema/version、protocol name、checkpoint name 和 test fixture constant 都是真实 ALL_CAPS 边界；不要把 typed field
+复制成手工维护的 validation set。
 
-Keep thin native adapters, subprocess entrypoints, and artifact codecs only
-where they provide an independent protocol, process-ownership, or versioned wire
-boundary. Do not flatten these boundaries for line-count reduction, and do not
-create symmetric empty adapters for policy profiles without a real family.
+只有在提供独立 protocol、process ownership 或 versioned wire boundary 时，才保留 thin native adapter、subprocess
+entrypoint 和 artifact codec。不要为了减少行数而压平这些边界，也不要为没有真实 family 差异的 policy profile
+创建对称空 adapter。
 
-## References
+## 参考
 
 - `tests/quality/README.md`
 - `tests/quality/evidence.py`
