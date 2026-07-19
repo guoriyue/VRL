@@ -31,8 +31,7 @@ class DiffusionChunkGatherer:
         sample_rows: Sequence[GenerationSampleRow],
         chunks: Sequence[ChunkResult],
     ) -> GenerationOutput:
-        layout = DiffusionRequestLayout()
-        ordered_chunks = layout.ordered_chunks(
+        ordered_chunks = DiffusionRequestLayout.ordered_chunks(
             request,
             sample_rows,
             cast("Sequence[DiffusionChunkResult]", chunks),

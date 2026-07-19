@@ -19,14 +19,14 @@ def test_diffusion_layout_rejects_oversized_sde_window() -> None:
     )
 
     with pytest.raises(ValueError, match="sde_window_size"):
-        DiffusionRequestLayout().parse_sampling_params(request)
+        _layout().parse_sampling_params(request)
 
 
 def test_diffusion_layout_normalizes_native_denoise_mode() -> None:
     """Checks diffusion layout normalizes native denoise mode."""
     request = _request({"denoise_mode": "native"})
 
-    params = DiffusionRequestLayout().parse_sampling_params(request)
+    params = _layout().parse_sampling_params(request)
 
     assert params.denoise_mode == "native"
 
@@ -36,12 +36,12 @@ def test_diffusion_layout_rejects_unknown_denoise_mode() -> None:
     request = _request({"denoise_mode": "custom"})
 
     with pytest.raises(ValueError, match="denoise_mode"):
-        DiffusionRequestLayout().parse_sampling_params(request)
+        _layout().parse_sampling_params(request)
 
 
 def test_diffusion_layout_repeat_batch_rejects_unexpected_batch_size() -> None:
     """Checks diffusion layout repeat batch rejects unexpected batch size."""
-    layout = DiffusionRequestLayout()
+    layout = _layout()
 
     repeated = layout.repeat_batch(torch.ones(1, 2), 3)
     assert repeated.shape == (3, 2)
@@ -51,6 +51,17 @@ def test_diffusion_layout_repeat_batch_rejects_unexpected_batch_size() -> None:
 
     with pytest.raises(ValueError, match="cannot repeat tensor batch=2"):
         layout.repeat_batch(torch.ones(2, 2), 3)
+
+
+def _layout() -> DiffusionRequestLayout:
+    """A layout with explicit fallbacks (the executor is the real source)."""
+    return DiffusionRequestLayout(
+        default_samples_per_chunk=1,
+        default_num_frames=1,
+        default_fps=None,
+        default_max_sequence_length=512,
+        sde_type="flow_grpo",
+    )
 
 
 def _request(extra_sampling: dict[str, object]) -> GenerationRequest:

@@ -45,13 +45,20 @@ class DiffusionSamplingParams:
 
 @dataclass(frozen=True, slots=True)
 class DiffusionRequestLayout:
-    """Prompt-major request layout shared by diffusion executors and gatherers."""
+    """Prompt-major request parser owned by a diffusion executor.
 
-    default_samples_per_chunk: int = 1
-    default_num_frames: int = 1
-    default_fps: int | None = None
-    default_max_sequence_length: int = 512
-    sde_type: str = "flow_grpo"
+    The five fallback values have NO defaults: the executor is their single
+    source and always supplies its resolved values (generic execution starts at
+    eight samples per chunk, several custom families require one — these are
+    behaviorally meaningful, not a repository-wide constant). A default here
+    would be a silent second source that drifts from the executor.
+    """
+
+    default_samples_per_chunk: int
+    default_num_frames: int
+    default_fps: int | None
+    default_max_sequence_length: int
+    sde_type: str
 
     def parse_sampling_params(self, request: GenerationRequest) -> DiffusionSamplingParams:
         """Parse shared diffusion sampling fields from GenerationRequest."""
@@ -142,13 +149,19 @@ class DiffusionRequestLayout:
         repeat_shape = (count,) + (1,) * (value.ndim - 1)
         return value.repeat(*repeat_shape)
 
+    @staticmethod
     def ordered_chunks(
-        self,
         request: GenerationRequest,
         sample_rows: Sequence[GenerationSampleRow],
         chunks: Sequence[TChunk],
     ) -> list[TChunk]:
-        """Sort diffusion chunks and ensure they exactly cover sample rows."""
+        """Sort diffusion chunks and check they exactly cover the sample rows.
+
+        A ``@staticmethod`` so the gatherer can sort without building a throwaway
+        layout, while the ordering stays grouped with the parser it validates
+        for. Reads no parsing fallback; every row-bearing chunk tensor must carry
+        exactly ``sample_count`` leading rows.
+        """
 
         if not chunks:
             raise ValueError("chunks must be non-empty")
@@ -168,12 +181,14 @@ class DiffusionRequestLayout:
                 sample_start=sample_start,
                 sample_count=sample_count,
             )
-            self._require_rows("observations", chunk.observations, sample_count)
-            self._require_rows("actions", chunk.actions, sample_count)
-            self._require_rows("log_probs", chunk.log_probs, sample_count)
-            self._require_rows("timesteps", chunk.timesteps, sample_count)
-            self._require_rows("kl", chunk.kl, sample_count)
-            self._require_rows("video", chunk.video, sample_count)
+            for field in ("observations", "actions", "log_probs", "timesteps", "kl", "video"):
+                shape = getattr(getattr(chunk, field), "shape", None)
+                if shape is None or len(shape) < 1:
+                    raise ValueError(f"chunk {field} must have a leading batch dimension")
+                if int(shape[0]) != sample_count:
+                    raise ValueError(
+                        f"chunk {field} has {shape[0]} rows, expected {sample_count}",
+                    )
             actual.extend(
                 (prompt_index, sample_index)
                 for sample_index in range(sample_start, sample_start + sample_count)
@@ -196,14 +211,6 @@ class DiffusionRequestLayout:
         lo, hi = sde_window_range
         start = random.randint(lo, hi - sde_window_size)
         return (start, start + sde_window_size)
-
-    @staticmethod
-    def _require_rows(name: str, value: Any, count: int) -> None:
-        shape = getattr(value, "shape", None)
-        if shape is None or len(shape) < 1:
-            raise ValueError(f"chunk {name} must have a leading batch dimension")
-        if int(shape[0]) != count:
-            raise ValueError(f"chunk {name} has {shape[0]} rows, expected {count}")
 
     @staticmethod
     def _parse_sde_window_range(value: Any, *, num_steps: int) -> tuple[int, int]:
