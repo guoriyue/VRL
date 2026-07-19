@@ -6,7 +6,7 @@
 [FlashDreams execution provider](../planned/SPRINT_flashdreams_execution_provider.md) 的 F0–F3
 generic primitive、trainable-state installer 与 fake-adapter contract 完成；不等待
 Self-Forcing 自己关闭 provider production conformance。wm-infra 侧接入还要求
-`SPRINT_ray_rollout_fault_tolerance` 的阶段 3–6 先完成。
+`SPRINT_ray_rollout_operation_deadlines` 的 bounded-failure gate 先完成。
 
 ## 0. 结论先行
 
@@ -281,7 +281,7 @@ mock 冒充通过。
 
 - `docs/sprints/SPRINT_native_generation_engine_program.md`
 - `docs/sprints/planned/SPRINT_flashdreams_execution_provider.md`
-- `docs/sprints/SPRINT_ray_rollout_fault_tolerance.md`
+- `docs/sprints/SPRINT_ray_rollout_operation_deadlines.md`
 - `vrl/generation/execution/chunks.py`
 - `vrl/generation/diffusion/executor.py`
 - `vrl/trajectory/resolver.py`

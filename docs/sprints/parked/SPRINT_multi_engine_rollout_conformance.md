@@ -2,9 +2,9 @@
 
 日期：2026-07-13
 
-状态：**parked**。按 program 的严格顺序，触发事件是 SGLang Qwen-Image S4 pilot 完成，
-且 Ray fault-tolerance 阶段 7 的 observability + real-Ray twin 通过；不能在只有第一个
-FlashDreams binding 时提前解 park。C0 native oracle fixtures 已并入 active native-engine
+状态：**parked**。按 program 的严格顺序，触发事件是 SGLang Qwen-Image S4 pilot 完成；
+不能在只有第一个 FlashDreams binding 时提前解 park。每个 provider 仍必须通过共同的
+Ray operation-deadline gate。C0 native oracle fixtures 已并入 active native-engine
 program，不等待本 sprint 单独建 framework。本文不允许先造一个只有 fake/native
 implementation 的 provider framework，也不要求 step-level 与 full-chunk provider 共享
 一个虚假内部 API。
@@ -163,7 +163,7 @@ all required ACKs agree
 otherwise
   -> keep previous committed version
   -> close admission
-  -> quarantine unknown fleet
+  -> terminate the runtime with unknown worker state
 ```
 
 不支持 versioned slots 的 provider 只可声明 strict/draining。只有 request 能绑定具体
@@ -184,9 +184,9 @@ fake/process/local-Ray tests 覆盖：
 - cleanup failure retry；
 - no orphan actor/process/port/GPU lease。
 
-一个 chunk 失败时不能拼接其他 chunk 的未知 partial result。遵守现有 Ray fault-tolerance
-sprint 的边界：丢弃整个 request，并在相同 request id/seed/policy version 下做有上限的
-whole-request replay。
+一个 chunk 失败时不能拼接其他 chunk 的未知 partial result。丢弃整个 request，关闭当前
+runtime，并让当前 attempt fail closed；process supervisor 从 latest complete checkpoint
+启动新 attempt，不在同一进程重试该 request。
 
 ### C5 — Performance report
 
@@ -264,8 +264,8 @@ docs/sprints/info/
 - [ ] SGLang Qwen-Image 通过 `T+1` trajectory mapping 与 replay parity。
 - [ ] partial/mismatched/timeout weight update 都不推进 policy version。
 - [ ] strict 与 non-draining capability 无法被错误声明。
-- [ ] provider failure 触发 whole-request discard/replay，无 partial chunk 混合。
-- [ ] shutdown/recovery 后无 orphan process/actor/resource。
+- [ ] provider failure 丢弃 whole request 并终止当前 attempt，无 partial chunk 混合。
+- [ ] terminal cleanup 后无 orphan process/actor/resource。
 - [ ] performance report 分离 model compute、transport 与 lifecycle overhead。
 - [ ] wiring/parity 不会越过 Integrated；Runnable 不会自动标成 Validated。
 - [ ] 不选择 external provider 时 native imports/config/tests 行为不变。
@@ -284,7 +284,7 @@ docs/sprints/info/
 ## 参考
 
 - `docs/sprints/SPRINT_native_generation_engine_program.md`
-- `docs/sprints/SPRINT_ray_rollout_fault_tolerance.md`
+- `docs/sprints/SPRINT_ray_rollout_operation_deadlines.md`
 - `docs/sprints/done/SPRINT_explicit_rollout_activation.md`
 - `docs/sprints/planned/SPRINT_flashdreams_execution_provider.md`
 - `docs/sprints/parked/SPRINT_self_forcing_causal_family.md`

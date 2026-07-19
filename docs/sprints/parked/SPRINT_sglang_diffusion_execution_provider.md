@@ -3,9 +3,8 @@
 日期：2026-07-13
 
 状态：**parked**。触发事件：FlashDreams/Self-Forcing 已证明 native
-`GenerationChunkExecutor + trajectory` 能承载第一个外部 provider，且 Ray
-fault-tolerance 阶段 3–6 完成。按 program 顺序它是第二个外部实现；阶段 7 的
-observability + real-Ray twin 是 production promotion gate，不阻止 S0–S4 contract/pilot。
+`GenerationChunkExecutor + trajectory` 能承载第一个外部 provider，且 bounded Ray
+operation-deadline gate 完成。按 program 顺序它是第二个外部实现。
 
 ## 0. 结论先行
 
@@ -23,7 +22,7 @@ wm-infra GenerationRuntime
 
 child 不是 driver 旁路 service，也不是独立于 Ray worker 的第二个 fleet。它由构造
 executor 的 `GenerationWorkerCore` 持有、监控并终止；native runtime 仍拥有 admission、
-policy version、failure recovery 与 resource lease。
+policy version、terminal failure handoff 与 resource lease。
 
 首个 pilot 是官方已有 rollout mixin 的 Qwen-Image T2I。request schema 有 `num_frames`
 不证明 RL video pipeline 已实现；Wan/video 必须等真实 producer 和 parity。
@@ -60,7 +59,7 @@ policy version、failure recovery 与 resource lease。
 ### wm-infra owns
 
 - immutable source/image pin、child launch/readiness/deadline/termination；
-- request id、seed、admission/drain、policy version 与 fleet recovery；
+- request id、seed、admission/drain、policy version 与 supervisor handoff；
 - response → native trajectory/replay mapping；
 - native evaluator replay 与 old/fresh drift；
 - all-worker transactional weight commit；
@@ -179,8 +178,8 @@ wm-infra 从实际 trainable payload/target-module resolution 派生 expected se
 返回 observed parameter schema，先补最小 upstream/wrapper evidence；不能让 checksum
 替代 completeness。
 
-official disk update 可用于 pilot，但不是高频终局。timeout/rejection/mismatch quarantine
-整个 provider fleet；wrapper 只用 committed version stamp response；update 与 generate 不
+official disk update 可用于 pilot，但不是高频终局。timeout/rejection/mismatch terminates
+the provider runtime；wrapper 只用 committed version stamp response；update 与 generate 不
 并发。只有 request 能绑定具体 version 且 old slot 仍能执行时，才新增 non-draining。
 
 ### S4 — Qwen-Image GPU pilot
@@ -257,7 +256,7 @@ Wan replay 消费、parallel gather parity 与 strict transaction 全绿后才�
 - `/home/mingfeiguo/Desktop/sglang/python/sglang/multimodal_gen/runtime/post_training/scheduler_rl_mixin.py`
 - `/home/mingfeiguo/Desktop/sglang/python/sglang/multimodal_gen/runtime/entrypoints/http_server.py`
 - `docs/sprints/SPRINT_native_generation_engine_program.md`
-- `docs/sprints/SPRINT_ray_rollout_fault_tolerance.md`
+- `docs/sprints/SPRINT_ray_rollout_operation_deadlines.md`
 - `docs/sprints/parked/SPRINT_multi_engine_rollout_conformance.md`
 - https://github.com/sgl-project/sglang/pull/21204
 - https://github.com/sgl-project/sglang/pull/22604

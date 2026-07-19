@@ -1,8 +1,8 @@
 # SPRINT: Explicit rollout activation and schedule-owned draining
 
 Status: **DONE (2026-07-18)**. The contract and its regression coverage are
-implemented; later worker-fleet recovery work remains in the Ray fault-tolerance
-sprint.
+implemented; bounded remote waits and supervisor handoff remain in the Ray
+operation-deadline sprint.
 
 ## Decision
 
@@ -61,11 +61,11 @@ because they each provide real single-flight ownership for one concrete operatio
 On-demand policy state distinguishes:
 
 - `desired_policy`: latest complete trainer snapshot accepted by the facade;
-- `active_policy_version`: version acknowledged by the active worker fleet.
+- `active_policy_version`: version acknowledged by the active worker set.
 
 The desired version advances only after required worker acknowledgements when the
-fleet is active. A partial update failure preserves the previous desired snapshot,
-closes admission, and quarantines the fleet through terminal cleanup.
+workers are active. A partial update failure preserves the previous desired snapshot,
+closes admission, and destroys the unknown worker state through terminal cleanup.
 
 ## Non-goals
 
@@ -78,6 +78,6 @@ closes admission, and quarantines the fleet through terminal cleanup.
 ## Verification
 
 Tests cover explicit activation, activation/offload single-flight, staged policy
-restore, worker acknowledgements, update failure quarantine, shutdown joining
+restore, worker acknowledgements, update failure cleanup, shutdown joining
 runtime-owned control tasks, schedule-owned drain ordering, and rejection of an
 unsupported continuous mid-iteration handoff.

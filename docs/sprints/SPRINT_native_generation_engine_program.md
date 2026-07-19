@@ -93,8 +93,7 @@ transformer / kernel / provider scheduling   mostly upstream or parked
 
 | 缺口 | 当前代码事实 | 已有承载 sprint |
 |---|---|---|
-| Worker-fleet recovery | `run_actor_jobs` fail-fast 后只取消 asyncio waiter，不取消底层 Ray work；runtime 没有 recovery fleet/whole-request replay | [Ray rollout fault tolerance](SPRINT_ray_rollout_fault_tolerance.md) |
-| Verifiable weight commit | worker ACK 当前只有整数 policy version；没有 schema/digest ACK 与 weight-sync deadline | [Ray rollout fault tolerance](SPRINT_ray_rollout_fault_tolerance.md) |
+| Bounded Ray worker waits | `run_actor_jobs`、actor startup/metadata 与 weight-update ACK 仍存在无 deadline 的 ObjectRef wait | [Ray rollout operation deadlines](SPRINT_ray_rollout_operation_deadlines.md) |
 | Provider selection | `ModelFamilyEntry` 当前只有一个 `executor_cls`，launch contract 没有 provider identity/schema/provenance | 本 program N2 + [multi-engine conformance](parked/SPRINT_multi_engine_rollout_conformance.md) |
 | Full model ownership | diffusion backbone 最终调用 Diffusers transformer；pipeline/scheduler/text encoder/VAE 仍大量来自 upstream | [native transformer executor](parked/SPRINT_diffusion_native_transformer_executor.md)，继续 profile-gated |
 | Cross-request batching | joint-denoise binding 跑完整 denoise loop；`TokenScheduler` 每个 `CausalTokenLoop` 单独创建；不同 request 不共享 forward | [cross-request step scheduler](parked/SPRINT_cross_request_step_scheduler.md)，继续 workload-gated |
@@ -123,9 +122,9 @@ production profile 证明 native request scheduling 而非 model compute 是主�
 
 ### Sprint 0 — Native engine contract + oracle（当前）
 
-当前实现主项由
-[Ray rollout fault tolerance](SPRINT_ray_rollout_fault_tolerance.md) 承担；本 program
-不复制第二份 recovery/lifecycle 设计。
+当前 reliability 主项由
+[Ray rollout operation deadlines](SPRINT_ray_rollout_operation_deadlines.md) 承担；本
+program 不复制第二份 deadline/lifecycle 设计。
 
 1. 把 request/output、policy version、weight install、failure cleanup、trajectory/replay
    这些 engine-owned 语义钉成 provider-independent contract tests。
@@ -150,17 +149,12 @@ production profile 证明 native request scheduling 而非 model compute 是主�
 两个只剩 `__pycache__` 的已删除 package 目录属于 ignored one-shot 生成物：验证前清理同源
 缓存即可，不为它们创建 sprint、源码占位或 import compatibility package。
 
-Sprint 0 的 provider-integration 退出门不是“已有 lifecycle 骨架”。当前
-`SPRINT_ray_rollout_fault_tolerance` 明确仍缺阶段 3–7；其中阶段 3–6 必须先完成：
-
-- immutable worker-fleet owner 与可行为验证的 identity/quarantine；
-- request、drain、weight-update、recovery 的 typed deadline/failure；
-- key-schema + state digest + worker ACK 的 transactional version commit；
-- 同 request id/seed/policy version 的 deterministic whole-request replay。
-
-阶段 7 的 observability 与 real-Ray twin 是 provider production promotion gate：不阻止
-fork F0–F2 或 isolated fake adapter tests，但未完成时任何 provider 都不能标记
-production-ready。
+Sprint 0 的 provider-integration reliability gate 只有一个：provider startup、capability、
+generation 与 weight-update 的 blocking calls 必须进入 native configured deadline。超时必须
+拒绝 partial output、关闭 admission、完成 terminal cleanup，并把失败交给 process
+supervisor。一个 isolated real-Ray CPU blocking-actor test 是 production promotion gate；
+in-process actor recovery、fleet identity、request retry/replay 与 digest ACK 不是 provider
+integration 前置条件。
 
 ### Sprint 1 — FlashDreams execution provider
 
@@ -209,9 +203,9 @@ training recipe；provider-specific smoke 不依赖第二个 provider 已完成�
 - rollout output 在进入 trainer 前已经是 native trajectory schema。
 
 这些测试描述 wm-infra 的 engine，而不是某个模型库的 API。外部 provider adapter 必须
-通过同一组测试，不复制一套 provider 专用预期。deadline、fleet quarantine、
-whole-request replay、weight ACK digest/schema 等具体实现继续归
-`SPRINT_ray_rollout_fault_tolerance.md`；本 program 只要求 external provider 不绕过它。
+通过同一组测试，不复制一套 provider 专用预期。blocking call deadline、partial-result
+rejection 与 terminal supervisor handoff 继续归
+`SPRINT_ray_rollout_operation_deadlines.md`；本 program 只要求 external provider 不绕过它。
 
 ### N1 — 保留两种 provider 粒度
 

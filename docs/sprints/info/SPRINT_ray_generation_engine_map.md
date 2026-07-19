@@ -189,8 +189,9 @@ trainer weight syncer
 ```
 
 strict path drain 后原地覆盖；允许 versioned slots 的 continuous LoRA path可保留旧 request
-所需 slot。当前 ACK 只返回整数 policy version，没有 schema/digest 与 deadline；该缺口唯一
-归 `SPRINT_ray_rollout_fault_tolerance.md`。
+所需 slot。当前 ACK 只返回整数 policy version。weight-update ACK 的无界等待归
+`SPRINT_ray_rollout_operation_deadlines.md`；schema/digest strengthening 不是当前 native
+provider gate，确有 provider payload identity 要求时由该 provider 的 installer contract 验证。
 
 ### Offload and shutdown
 
@@ -226,8 +227,9 @@ diffusion capability，通过明确 guard/getattr 读取。它不属于所有 AR
 
 | Limitation | Current evidence | Owner |
 |---|---|---|
-| no automatic actor recovery | failed ObjectRef leaves underlying Ray work uncancelled | active fault-tolerance sprint |
-| version-only ACK | no schema/digest/deadline | active fault-tolerance sprint |
+| unbounded Ray worker waits | generation/startup/update ObjectRefs can block attempt exit | active operation-deadline sprint |
+| no in-process actor recovery | failed attempts rebuild the runtime only after process exit | accepted boundary: supervisor checkpoint resume |
+| version-only ACK | transaction validates the committed integer version | current native contract; stronger provider-local identity only when required |
 | no provider selector | one `executor_cls` per family; no provider provenance in launch contract | native-engine N2 + provider/conformance sprints |
 | no cross-request forward sharing | EnginePlan and AR decode scheduler are per request | parked step-scheduler sprint |
 | no native diffusion blocks | backbone calls upstream transformer | parked native-transformer sprint |
@@ -261,4 +263,4 @@ serving engine，也不支持为了“全栈自研”立即重写 transformer/ke
 - `vrl/ray/actor_pool.py`
 - `docs/sprints/SPRINT_native_generation_engine_program.md`
 - `docs/sprints/done/SPRINT_explicit_rollout_activation.md`
-- `docs/sprints/SPRINT_ray_rollout_fault_tolerance.md`
+- `docs/sprints/SPRINT_ray_rollout_operation_deadlines.md`

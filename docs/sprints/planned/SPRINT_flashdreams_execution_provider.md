@@ -4,7 +4,7 @@
 
 状态：**planned**。这是 native engine program 的下一个 implementation sprint。
 F0–F2 可在独立 fork 中完成；wm-infra F3 integration 只有在
-`SPRINT_ray_rollout_fault_tolerance` 阶段 3–6 完成后才可接入 runtime。
+`SPRINT_ray_rollout_operation_deadlines` 的 bounded-failure gate 完成后才可接入 runtime。
 
 ## 0. 结论先行
 
@@ -61,7 +61,7 @@ provider generic primitives
 ### wm-infra 拥有
 
 - `GenerationRuntime`、Ray actor、placement、admission/drain、sleep/wake/shutdown；
-- request id、seed derivation、policy version、fleet recovery；
+- request id、seed derivation、policy version 与 bounded failure handoff；
 - SDE/renoise math、old log-prob、trajectory schema、replay 与 autograd；
 - trainer canonical trainable-key mapping、reward、algorithm、family/provider binding；
 - provider source pin、capability/readiness validation 与 conformance。
@@ -169,7 +169,7 @@ CPU 门：对 raw destination payload 的 missing/unexpected/duplicate key、sha
 partial install 全部 fail closed；失败不发布新 schema/digest/version。GPU 门：eager、
 compiled、captured 三条路径在 fixed input 上都必须看到新权重。
 
-### F3 — wm-infra step adapter（fault-tolerance 3–6 后）
+### F3 — wm-infra step adapter（operation-deadline gate 后）
 
 新增一个薄的 `FlashDreamsStepAdapter`，先用 fork 内 test model/wm-infra fake model 验证：
 
@@ -177,7 +177,7 @@ compiled、captured 三条路径在 fixed input 上都必须看到新权重。
 - launch 前显式 provider choice 派生 executor/build/schema，外部-only family 缺省时拒绝；
 - native request seed/initial noise → provider state；
 - start/predict/finish/finalize lifecycle；
-- native worker quarantine/shutdown 关闭 session/cache；
+- native terminal cleanup 关闭 worker session/cache；
 - trainer canonical trainable keys → raw destination mapping → F2 installer；
 - malformed state、deadline、partial update 都 fail closed。
 
@@ -185,9 +185,9 @@ adapter 不拥有 renoise 数学、不导出 wm-infra trajectory，也不预建�
 step-provider framework。具体 trajectory mapping、temporal executor 与 grouped replay
 属于 Self-Forcing sprint。
 
-F3 接入 `GenerationWorkerCore` 前，native fault-tolerance 必须已有：typed request/update
-deadline、fleet quarantine/identity、schema+digest ACK transaction、相同 request id/seed/
-version 的 whole-request replay。否则 adapter 只能停留在隔离 fake contract tests。
+F3 接入 `GenerationWorkerCore` 前，provider startup、generation 与 update calls 必须使用
+native configured deadline；timeout 或 partial update 必须拒绝 partial output/version
+publication，关闭 admission，并通过 terminal cleanup 把当前 attempt 交给 supervisor。
 
 ### F4 — Generic compatibility gates
 
@@ -238,7 +238,7 @@ version 的 whole-request replay。否则 adapter 只能停留在隔离 fake con
   destination schema 只有一处。
 - [ ] partial install fail closed，strict/draining capability 无法被误报为 non-draining。
 - [ ] raw owner 与 eager/compiled/captured callable 的 update contract 有测试。
-- [ ] fake wm-infra adapter 不绕过 native runtime、deadline、quarantine 或 version transaction。
+- [ ] fake wm-infra adapter 不绕过 native runtime、deadline、terminal cleanup 或 version transaction。
 - [ ] provider provenance 只构造一次，external-only family 无显式 binding 时 fail closed。
 - [ ] adapter failure/shutdown 不留下 active session/cache。
 - [ ] native provider 未被删除或降级为 fallback。
@@ -264,6 +264,6 @@ version 的 whole-request replay。否则 adapter 只能停留在隔离 fake con
 - `/home/mingfeiguo/Desktop/flashdreams/CONTRIBUTING.md`
 - `/home/mingfeiguo/Desktop/flashdreams/LICENSE`
 - `docs/sprints/SPRINT_native_generation_engine_program.md`
-- `docs/sprints/SPRINT_ray_rollout_fault_tolerance.md`
+- `docs/sprints/SPRINT_ray_rollout_operation_deadlines.md`
 - `docs/sprints/parked/SPRINT_self_forcing_causal_family.md`
 - https://github.com/NVIDIA/flashdreams
