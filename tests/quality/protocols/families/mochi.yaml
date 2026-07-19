@@ -1,4 +1,0 @@
-extends: video.yaml
-model_identities:
-  - path: genmo/mochi-1-preview
-    revision: 14be5fcea23095ed330cb214647916a451e38b6e

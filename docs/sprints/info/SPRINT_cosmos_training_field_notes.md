@@ -6,7 +6,8 @@
 > Context: this report brought up Cosmos Predict2.5 DiffusionNFT training at
 > 832x480 / 49 frames on a single L40S (46GB). Current sources of truth are
 > `pyproject.toml`, `docs/sprints/parked/SPRINT_cosmos_predict25_rl_paper_parity.md`
-> and `docs/sprints/planned/SPRINT_model_training_quality_gates.md`.
+> and the rollout-preview scope recorded in
+> `docs/sprints/done/SPRINT_rollout_preview.md`.
 
 ## 1. 历史 runbook（不要直接用于当前 HEAD）
 
@@ -72,9 +73,9 @@ are a supported path in this codebase.
 **当前结案**：canonical NFT recipe 已明确选择 paper-shaped `20_step_no_cfg`，并在配置中解释
 其论文口径；field run 的 CFG 7.0 只是为了让当时的单卡诊断先得到可读输出，不是默认值。
 真实输出是否可接受由
-`docs/sprints/parked/SPRINT_cosmos_predict25_rl_paper_parity.md` 和
-`docs/sprints/planned/SPRINT_model_training_quality_gates.md` 的 native/production 证据门负责，
-本文不再持有“决定默认值”的 action。
+`docs/sprints/parked/SPRINT_cosmos_predict25_rl_paper_parity.md` 负责；当前 rollout preview
+只覆盖 image `t2i`，不能证明这条 Cosmos video 路径。本文不再持有“决定默认值”的 action，
+也不把缺失的 video 验证冒充为已通过。
 
 ## 3. Model loading: HF cache MUST be on local NVMe, not EBS
 
@@ -106,9 +107,9 @@ Gotchas:
 
 当时环境缺少以下依赖，因此只在 runtime 暴露。当前 `pyproject.toml` 的 `reward` extra 已声明
 `qwen-vl-utils`、Transformers、PEFT、Torchvision 与 OpenCV；`decord` 仍不是通用依赖。
-目标环境究竟选择哪一个 video backend，必须由 quality producer 记录 dependency lock 并执行
-真实 reward preflight，责任归
-`docs/sprints/planned/SPRINT_model_training_quality_gates.md`，而不是由本 field report 维护安装清单：
+目标环境究竟选择哪一个 video backend，必须由实际 Cosmos launch workflow 执行真实 reward
+preflight；当前 image-only rollout preview 不加载 reward，也不证明 video backend。本文只记录历史故障，
+不维护当前安装清单：
 
 1. `qwen_vl_utils` — driver preflight `preflight_kling_video_reward_backend()`.
    Fix: `pip install qwen-vl-utils` (pulls `av`).
@@ -182,19 +183,18 @@ Two wrong turns I made (recorded so the next person doesn't repeat them):
 
 - 当时的 `480p_49f` scratch config 与 single-load `generate_video.py` probe 已在回答问题后删除；
   它们不是当前 import graph 或长期 runbook 的一部分。
-- 可长期复用的推理正确性入口归
-  `docs/sprints/planned/SPRINT_model_training_quality_gates.md` 的 test-owned producer，不能复活
-  一个 family-specific 一次性脚本并让它重新成为 action owner。
+- 当前 test-owned rollout preview 的边界记录在
+  `docs/sprints/done/SPRINT_rollout_preview.md`；它尚不支持 video。未来 video preview 必须复用
+  registry/request/executor 路径，不能复活一个 family-specific 一次性脚本并让它重新成为 action owner。
 
 ## 8. 结案与责任归属（本 info 不持有 action）
 
 - **mini_batch：CLOSED / REMOVE + replacement。** dead key 已删除；
   `actor.replay_samples_per_chunk` 是当前 sample-axis replay 分块契约。
 - **no-CFG vs CFG：CLOSED / explicit decision。** canonical Predict2.5 NFT recipe 保留
-  paper-shaped `20_step_no_cfg`；真实质量证明归 paper-parity 与 model-training quality gate。
+  paper-shaped `20_step_no_cfg`；真实质量证明归 paper-parity，当前 image-only preview 不提供证明。
 - **reward video dependency：TRANSFERRED。** `qwen-vl-utils` 已进入 `reward` extra；`decord`
-  是否是目标环境必需 backend 由 model-training quality producer 的 dependency-lock + reward
-  preflight 判定，不在 field report 留未结事项。
+  是否是目标环境必需 backend 由实际 launch 的 reward preflight 判定，不在 field report 留未结事项。
 - **Predict2 V2W rollout verification：CLOSED。** 当前完成记录
   `docs/sprints/done/SPRINT_cosmos_robotic_data_factory_domain_rl.md` 已验证原生
   704p/93f 能生成连贯机器人视频，同时证明 240p/33f 是 OOD 垃圾；这不是仍待执行的 probe。

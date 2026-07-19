@@ -1,4 +1,0 @@
-extends: image.yaml
-model_identities:
-  - path: Efficient-Large-Model/Sana_1600M_1024px_diffusers
-    revision: d1b54936033cd7d45410ecadd692c5c502a19a38

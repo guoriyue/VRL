@@ -1,4 +1,0 @@
-extends: image.yaml
-model_identities:
-  - path: PixArt-alpha/PixArt-Sigma-XL-2-512-MS
-    revision: e102b3591cc82e97071b8b4cb90d834d0c487207

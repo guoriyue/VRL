@@ -123,7 +123,6 @@ Add model defaults and at least one experiment under the packaged preset tree:
 ```text
 vrl/config/presets/model/my_model/default.yaml
 vrl/config/presets/experiment/my_model/online_grpo_<reward>.yaml
-tests/quality/protocols/families/my_model.yaml
 ```
 
 Mirror
@@ -150,14 +149,21 @@ Add family tests that cover:
 - rollout-to-replay tensor/context projection;
 - backbone parity when the family wraps an upstream transformer;
 - any custom executor branch, if the generic executor is insufficient.
-- a test-owned inference profile for every supported checkpoint identity,
-  native vs production comparison mode, and true/false corruption cases.
 
 Keep family tests under `tests/models/families/<family>/`. Put reusable step
 contract tests under `tests/models/steps/{denoise,token}/`, and generation tests
 under the matching `tests/generation/{steps,composition,bindings}/` boundary.
 
-Run the CPU-safe structural gates before any real-model experiment:
+Before the first costly image training run, use the test-owned rollout preview
+with a real experiment config. It derives family support from `FAMILY_REGISTRY`,
+reads the configured prompt manifest, runs the registered production executor,
+and writes individual images plus the resolved settings. There is no per-family
+preview adapter, profile YAML, scorer, or automatic visual-quality verdict.
+Objective native/backbone/replay parity belongs in family-owned model and e2e
+tests; a human reviews the preview images for prompt adherence, color blocks,
+posterization, collapse, and other visible defects.
+
+Run the CPU-safe structural checks before any real-model experiment:
 
 ```bash
 CUDA_VISIBLE_DEVICES="" uv run --no-sync python -m vrl.config.lint
@@ -183,8 +189,10 @@ status.
       matching shared builders.
 - [ ] registry `PolicySemantics` describes the trainable policy rather than the
       whole checkpoint (especially for hybrid or staged models).
-- [ ] the test-owned quality profile names every supported immutable checkpoint
-      identity without adding quality state to the production registry.
+- [ ] the real experiment YAML generates individual images through the shared
+      rollout preview before a costly training run.
+- [ ] a human reviews those images and records whether the configured rollout is
+      fit for the planned training run.
 - [ ] every independent model dependency (text encoder, tokenizer, VAE) has
       its own revision field; never reuse the primary repository's commit.
 - [ ] no family `runtime.py` or executor exists without real custom semantics.

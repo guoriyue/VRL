@@ -43,13 +43,17 @@ def image_to_uint8_hwc(image: Any) -> np.ndarray:
     """
 
     if isinstance(image, torch.Tensor):
-        array = image.detach().float().cpu()
+        array = image.detach().cpu()
         if array.ndim == 4:
             if array.shape[0] != 1:
                 raise ValueError(f"expected one image, got batch shape {tuple(array.shape)}")
             array = array[0]
         if array.ndim == 3 and array.shape[0] in {1, 3, 4}:
             array = array[:3].permute(1, 2, 0)
+        if torch.is_floating_point(array):
+            # NumPy cannot represent bfloat16. Normalize tensor float dtypes to
+            # float32 while preserving integer values for the pass-through path.
+            array = array.float()
         array_np = array.numpy()
     else:
         array_np = np.asarray(image)

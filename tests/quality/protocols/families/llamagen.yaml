@@ -1,5 +1,0 @@
-extends: token_image.yaml
-model_identities:
-  - path: peizesun/llamagen_t2i
-    revision: 276f5c5a3d915b922899a03f1912605531574747
-protocol_overrides: {min_native_similarity: 0.90}

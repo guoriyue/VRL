@@ -1,5 +1,0 @@
-extends: video.yaml
-model_identities:
-  - path: hunyuanvideo-community/HunyuanVideo
-    revision: e8c2aaa66fe3742a32c11a6766aecbf07c56e773
-protocol_overrides: {min_native_similarity: 0.90}

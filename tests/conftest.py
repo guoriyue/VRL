@@ -1,6 +1,6 @@
 """Shared pytest configuration.
 
-Two collection-time gates live here:
+Opt-in test lanes live here:
 
 - ``gpu``: tests marked ``@pytest.mark.gpu`` auto-skip when no CUDA device is
   present, and run for real when one is. The marker is the single source of truth
@@ -13,8 +13,8 @@ Two collection-time gates live here:
   because local Ray smoke tests and multi-node/GPU distributed tests have very
   different resource profiles.
 - ``optional``: skipped unless ``--optional`` is passed (verbatim vLLM behavior).
-- ``quality_gate``: test-owned artifact preflight; it skips unless an exact
-  config and evidence manifest are supplied on the pytest command line.
+- ``rollout_preview``: test-owned few-shot preview; it skips unless an exact
+  experiment config and fresh output directory are supplied on the command line.
 """
 
 from __future__ import annotations
@@ -41,21 +41,16 @@ def pytest_addoption(parser):
         default=False,
         help="run distributed test",
     )
-    quality = parser.getgroup("inference quality")
-    quality.addoption(
-        "--quality-config",
+    preview = parser.getgroup("rollout preview")
+    preview.addoption(
+        "--rollout-preview-config",
         default=None,
-        help="bundled config or YAML path for the opt-in inference artifact test",
+        help="bundled experiment config or absolute YAML path to preview",
     )
-    quality.addoption(
-        "--quality-evidence",
+    preview.addoption(
+        "--rollout-preview-dir",
         default=None,
-        help="native/production/replay evidence manifest for the opt-in test",
-    )
-    quality.addoption(
-        "--quality-checkpoint",
-        default=None,
-        help="optional checkpoint.pt path bound to checkpoint evidence",
+        help="new directory where the preview writes individual images",
     )
 
 

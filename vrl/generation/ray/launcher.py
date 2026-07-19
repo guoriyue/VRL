@@ -235,7 +235,7 @@ class RayGenerationLauncher:
             launch_contract=GenerationRuntimeLaunchContract(
                 family=entry.family,
                 model_build=_model_build_payload(build),
-                executor_kwargs=_build_executor_kwargs(entry, cfg),
+                executor_kwargs=build_executor_kwargs(entry, cfg),
                 policy_version=0,
                 torch_profiler=_runtime_profiler(cfg),
                 # The schedule is the source of truth for whether a worker may
@@ -268,7 +268,12 @@ class RayGenerationLauncher:
         )
 
 
-def _build_executor_kwargs(entry: Any, cfg: Any) -> dict[str, Any]:
+def build_executor_kwargs(entry: Any, cfg: Any) -> dict[str, Any]:
+    """Project one experiment config into registered executor constructor kwargs.
+
+    The Ray launcher and test-owned rollout preview share this boundary so
+    family executor settings are interpreted in exactly one place.
+    """
     from vrl.families.registry import GENERIC_DENOISE_EXECUTOR
 
     kwargs: dict[str, Any] = {}
@@ -321,4 +326,5 @@ def _runtime_profiler(cfg: Any) -> dict[str, Any]:
 __all__ = [
     "RayGenerationLaunchInputs",
     "RayGenerationLauncher",
+    "build_executor_kwargs",
 ]

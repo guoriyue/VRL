@@ -192,7 +192,7 @@ markers = [
     "e2e: end-to-end tests requiring GPU and real model weights (opt-in via WM_RUN_REAL_MODEL_TESTS=1)",
     "slow_test: heavy/slow tests (e.g. Ray spin-up); excluded from the fast PR subset, run nightly",
     "gpu: requires a CUDA device; runs locally / on a future GPU runner and auto-skips on the CPU CI runner via tests/conftest.py",
-    "quality_gate: opt-in inference artifact test requiring --quality-config and --quality-evidence",
+    "rollout_preview: opt-in few-shot production rollout from an experiment config",
     "distributed: tests requiring an explicit distributed lane (run with --distributed or VRL_RUN_DISTRIBUTED_TESTS=1)",
     "optional: optional tests that are automatically skipped, include --optional to run them",
 ]

@@ -1,0 +1,198 @@
+"""Generate a few individual images through the configured production rollout."""
+
+from __future__ import annotations
+
+import json
+from pathlib import Path
+from typing import Any
+
+from vrl.rollouts.collector.requests import GenerationRequestBuilder
+
+# Stable test-fixture values make repeated config previews directly comparable.
+_PREVIEW_IMAGE_COUNT = 4
+_PREVIEW_BASE_SEED = 20260718
+
+
+def build_preview_request(
+    builder: GenerationRequestBuilder,
+    example: Any,
+    *,
+    seed: int,
+) -> Any:
+    """Adapt one real training example into a one-image production request."""
+
+    overrides = dict(example.request_overrides)
+    configured_chunk_size = overrides.get(
+        "samples_per_chunk",
+        builder.config.get("samples_per_chunk"),
+    )
+    # Ray resolves ``auto`` from runtime memory. The direct preview has exactly
+    # one sample, so only that unresolved sentinel needs a local value. Preserve
+    # every explicit numeric chunk size from the experiment YAML.
+    if configured_chunk_size == "auto":
+        overrides["samples_per_chunk"] = 1
+    return builder.build(
+        [example.generation_input()],
+        group_size=1,
+        metadata=example.reward_metadata(),
+        request_overrides=overrides,
+        seed=seed,
+    ).request
+
+
+def write_preview_image(output: Any, path: Path, *, expected_prompt: str, seed: int) -> None:
+    """Persist the sole image while checking request/output identity."""
+
+    from vrl.utils.media import write_png
+
+    if output.error is not None:
+        raise RuntimeError(f"production executor returned an error: {output.error}")
+    if len(output.sample_rows) != 1:
+        raise RuntimeError(
+            f"production executor returned {len(output.sample_rows)} sample rows; expected 1",
+        )
+    row = output.sample_rows[0]
+    if row.prompt != expected_prompt or row.seed != seed:
+        raise RuntimeError(
+            "production output changed prompt/seed identity: "
+            f"expected=({expected_prompt!r}, {seed}) actual=({row.prompt!r}, {row.seed})",
+        )
+    if len(output.output) != 1:
+        raise RuntimeError(
+            f"production executor returned {len(output.output)} images; expected 1",
+        )
+    write_png(output.output[0], path)
+
+
+def generate_rollout_preview(
+    cfg: Any,
+    output_dir: str | Path,
+    *,
+    config_name: str,
+) -> dict[str, Any]:
+    """Run the exact image rollout configured by an RL experiment YAML."""
+
+    import torch
+
+    if not torch.cuda.is_available():
+        raise RuntimeError("rollout preview requires a CUDA GPU")
+
+    from vrl.config.validation import require, validate_training_config
+    from vrl.families.registry import GENERIC_DENOISE_EXECUTOR, get_model_family_entry
+    from vrl.generation.execution.ids import build_sample_rows
+    from vrl.generation.ray.launcher import build_executor_kwargs
+    from vrl.models.dtypes import dtype_to_wire_name
+    from vrl.models.interfaces.replay import require_runtime_model
+    from vrl.models.loader import assert_rollout_quantization_applied
+    from vrl.rollouts.collector.config import build_rollout_config_from_cfg
+    from vrl.trainers.data import load_prompt_examples_from_config
+    from vrl.utils.config import cfg_path, import_from_path, to_builtin_deep
+
+    validate_training_config(cfg)
+    resume_from = str(cfg_path(cfg, "trainer.resume_from", "") or "").strip()
+    if resume_from:
+        raise ValueError(
+            "rollout preview does not restore trainer.resume_from checkpoints; "
+            "set model.path or model.lora.path to the exact inference weights",
+        )
+
+    family = str(require(cfg, "model.family"))
+    entry = get_model_family_entry(family)
+    if entry.task != "t2i":
+        raise ValueError(
+            f"image rollout preview requires a t2i family; {entry.family!r} has task {entry.task!r}",
+        )
+
+    examples = load_prompt_examples_from_config(cfg.data)
+    if not examples:
+        raise ValueError("rollout preview requires at least one prompt in data.manifest")
+    examples = examples[:_PREVIEW_IMAGE_COUNT]
+
+    target = Path(output_dir).expanduser().resolve()
+    try:
+        target.mkdir(parents=True, exist_ok=False)
+    except FileExistsError as error:
+        raise FileExistsError(
+            f"rollout preview output directory must not already exist: {target}",
+        ) from error
+
+    device = torch.device("cuda")
+    build = entry.resolve_model_build(cfg, device, for_rollout=True)
+    bundle = entry.build_rollout(build)
+    model = require_runtime_model(bundle.model, owner="RuntimeBundle.model")
+    assert_rollout_quantization_applied(model, build)
+
+    executor_kwargs = build_executor_kwargs(entry, cfg)
+    if entry.executor_cls == GENERIC_DENOISE_EXECUTOR:
+        executor_kwargs.update(family=entry.family, task=entry.task)
+    executor_cls = import_from_path(entry.executor_cls)
+    executor = executor_cls(model, **executor_kwargs)
+
+    request_builder = GenerationRequestBuilder(
+        entry=entry,
+        config=build_rollout_config_from_cfg(cfg),
+    )
+    items: list[dict[str, Any]] = []
+    for index, example in enumerate(examples):
+        seed = _PREVIEW_BASE_SEED + index
+        request = build_preview_request(request_builder, example, seed=seed)
+        request.request_id = f"{entry.family}-rollout-preview-{index}"
+        rows = build_sample_rows(request)
+        plan = executor.plan(request, rows)
+        with torch.inference_mode():
+            output = executor.forward_plan(request, rows, plan)
+
+        file_name = f"{index:03d}.png"
+        write_preview_image(
+            output,
+            target / file_name,
+            expected_prompt=example.prompt,
+            seed=seed,
+        )
+        items.append(
+            {
+                "file": file_name,
+                "prompt": example.prompt,
+                "seed": seed,
+                "sampling": to_builtin_deep(request.sampling),
+            },
+        )
+
+    rollout = build.require_rollout()
+    preview = {
+        "config": config_name,
+        "family": entry.family,
+        "task": entry.task,
+        "model": {
+            "path": str(build.model_name_or_path),
+            "revision": cfg_path(cfg, "model.revision", None),
+        },
+        "precision": {
+            "parameter_dtype": dtype_to_wire_name(build.parameter_dtype),
+            "prompt_encoder_dtype": dtype_to_wire_name(rollout.prompt_encoder_dtype),
+            "dtype": bundle.precision.dtype,
+            "outer_autocast": bundle.precision.outer_autocast,
+            "float32_precision": bundle.precision.float32_precision,
+            "quantization": (
+                None
+                if bundle.precision.quantization is None
+                else {
+                    "format": bundle.precision.quantization.format,
+                    "recipe": bundle.precision.quantization.recipe,
+                }
+            ),
+        },
+        "items": items,
+    }
+    (target / "preview.json").write_text(
+        json.dumps(preview, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    return preview
+
+
+__all__ = [
+    "build_preview_request",
+    "generate_rollout_preview",
+    "write_preview_image",
+]

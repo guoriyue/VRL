@@ -1,60 +1,57 @@
-# Inference Quality Preflight Tests
+# Few-Shot Rollout Preview
 
-This directory owns inference-quality checks. Nothing under `vrl/` imports this
-package, the assets are not included in the wheel, and `vrl-train` does not
-pause, resume, or make policy decisions from these tests.
+This directory owns a small, opt-in image preview for RL experiment configs. It
+does not score images, compare against a native pipeline, or make a training
+decision. Nothing under `vrl/` imports this package, and `vrl-train` does not
+pause or resume based on its output.
 
-Run the fast structural and synthetic corruption suite on CPU:
-
-```bash
-CUDA_VISIBLE_DEVICES="" pytest tests/quality -q
-```
-
-Before an expensive training launch, an evidence producer should run the fixed
-native/reference path, the exact production rollout path, and replay for one
-resolved experiment config. Then run the opt-in artifact test:
+Run it with a real bundled experiment name or an absolute YAML path:
 
 ```bash
-pytest tests/quality/test_real_inference_preflight.py -q \
-  --quality-config experiment/sana/online_grpo_aesthetic \
-  --quality-evidence /absolute/path/to/evidence.json
+uv run --no-sync pytest tests/quality/test_rollout_preview.py -q \
+  --rollout-preview-config experiment/sana/online_grpo_aesthetic \
+  --rollout-preview-dir /tmp/sana-rollout-preview
 ```
 
-For checkpoint evidence, also pass the exact `checkpoint.pt`:
+The output directory must not already exist. The preview takes up to the first
+four prompts from the experiment's real `data.manifest`, generates one image
+per prompt with deterministic seeds, and writes one to four numbered PNGs plus
+`preview.json`:
+
+```text
+000.png
+...
+preview.json
+```
+
+Open the PNG files individually. `preview.json` records each prompt, seed, exact
+request sampling values, model identity, and resolved precision so the visible
+result can be traced back to the YAML settings.
+
+The execution path is the registered production rollout path:
+
+- family, task, model builder, and executor come from `FAMILY_REGISTRY`;
+- sampling values come from the composed `rollout` and `sampling` YAML blocks;
+- prompts and per-row overrides come from the configured training manifest;
+- generation uses the registered executor's `plan()` and `forward_plan()` path.
+
+There is no SANA adapter or second family support table. Any registered `t2i`
+family with a usable experiment YAML uses the same preview. Video and
+reference-conditioned tasks are intentionally outside this first image-only
+slice.
+
+`trainer.resume_from` is rejected because the direct rollout builder cannot
+restore trainer state. To preview trained inference weights, point the model
+config at the exact checkpoint or LoRA adapter through its supported model
+fields; silently showing fresh base weights would be misleading.
+
+Run the CPU tests with:
 
 ```bash
-pytest tests/quality/test_real_inference_preflight.py -q \
-  --quality-config experiment/sana/online_grpo_aesthetic \
-  --quality-evidence /absolute/path/to/evidence.json \
-  --quality-checkpoint /absolute/path/to/checkpoint.pt
+CUDA_VISIBLE_DEVICES="" uv run --no-sync pytest tests/quality -q
 ```
 
-The test checks:
-
-- approved primary model path and immutable revision;
-- source/lockfile, installed inference dependencies, resolved config, protocol,
-  scorer, and optional checkpoint identity;
-- native and production media decoding, shape, and strict/guarded native
-  similarity;
-- conditioned-generation sensitivity;
-- replay maximum error, prompt-alignment direction, AR segment order, and every
-  modality-required corruption direction;
-- artifact and evidence hashes in the emitted diagnostic report.
-
-Visual quality is deliberately NOT scored by pixel statistics (noise scores
-high on range/edge/motion style metrics). Instead the report lists every
-native and production image/video with its prompt, path, and sha256 — the
-launch workflow must have a human open and review those files.
-
-The checked-in family profiles are deliberate test oracles, not runtime state.
-A preset revision change must update the corresponding fixture in the same
-review, otherwise the coverage test fails.
-
-## Important limitation
-
-This test evaluates artifacts; it does not itself implement 23 official native
-inference stacks. The evidence producer remains responsible for actually
-running native, production, replay, and the independent scorer. Hand-written
-scores are not a proof of correct inference. A launch workflow should execute
-the producer and this pytest command immediately before `vrl-train`; production
-training code must not cache or trust an old PASS.
+The old evidence schema, hashes, scores, corruption controls, native/BF16
+comparisons, replay bundle, status machine, producer coverage table, and contact
+sheet were removed. Objective model-math parity remains in model-owned tests;
+visual quality remains a human judgment of the generated files.

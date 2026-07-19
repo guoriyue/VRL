@@ -1,9 +1,0 @@
-extends: video.yaml
-model_identities:
-  - path: Wan-AI/Wan2.1-T2V-1.3B-Diffusers
-    revision: 0fad780a534b6463e45facd96134c9f345acfa5b
-  - path: Wan-AI/Wan2.1-T2V-14B-Diffusers
-    revision: 38ec498cb3208fb688890f8cc7e94ede2cbd7f68
-  - path: Wan-AI/Wan2.2-T2V-A14B-Diffusers
-    revision: 5be7df9619b54f4e2667b2755bc6a756675b5cd7
-protocol_overrides: {min_native_similarity: 0.90}

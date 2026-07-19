@@ -1,5 +1,0 @@
-extends: multisegment_token_image.yaml
-model_identities:
-  - path: deepseek-ai/Janus-Pro-1B
-    revision: 960ab33191f61342a4c60ae74d8dc356a39fafcb
-protocol_overrides: {min_native_similarity: 0.90}

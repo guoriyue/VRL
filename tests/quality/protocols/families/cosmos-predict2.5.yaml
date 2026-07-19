@@ -1,5 +1,0 @@
-extends: video.yaml
-model_identities:
-  - path: nvidia/Cosmos-Predict2.5-2B
-    revision: 0d37c7498f54cee3c599d438d895a0a4a8608064
-protocol_overrides: {min_native_similarity: 0.90}
