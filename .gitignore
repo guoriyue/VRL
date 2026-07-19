@@ -78,6 +78,11 @@ third_party/*
 !third_party/PhyMotion
 !third_party/VMBench
 !third_party/DynamicEval
+!third_party/CausVid
+!third_party/MAGI-1
+# Small audited MAGI prompt-token asset required at CLI import time. Model
+# weights remain ignored; this one file is part of the pinned runtime source.
+!third_party/MAGI-1/example/assets/special_tokens.npz
 # Single editable-install wrapper exposing the un-packaged submodule sources as
 # importable packages (so vrl/ needs no sys.path injection). Its generated
 # *.egg-info stays ignored by the third_party/* rule. See third_party/README.md.

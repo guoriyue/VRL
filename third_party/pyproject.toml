@@ -22,10 +22,12 @@ where = [
     "joyai_echo/ltx-pipelines/src",
     "joyai_echo/ltx-distillation/src",
     "videophy/videocon/training/pipeline_video",
+    "CausVid",
 ]
 include = [
     "ltx_core*",
     "ltx_pipelines*",
     "ltx_distillation*",
     "mplug_owl_video*",
+    "causvid*",
 ]

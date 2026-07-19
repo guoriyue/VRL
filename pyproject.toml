@@ -10,7 +10,7 @@ readme = "README.md"
 requires-python = ">=3.10"
 license = "Apache-2.0"
 dependencies = [
-    "torch>=2.2.0",
+    "torch>=2.5.0",          # CausVid requires torch.nn.attention.flex_attention
     "triton>=3.0.0",
     "numpy>=1.26.0",
     "einops>=0.7.0",
@@ -48,7 +48,9 @@ cosmos = [
     "accelerate>=0.30.0",
     "sentencepiece>=0.2.0",
     "peft>=0.11.0",          # LoRA adapters for denoise- and token-step model families
-    "torchvision>=0.17.0",   # diffusers cosmos transformer + preference data transforms
+    "torchvision>=0.20.0",   # CausVid/Wan and diffusers video/image transforms
+    "easydict>=1.13",         # pinned CausVid/Wan config objects
+    "ftfy>=6.2.0",            # pinned CausVid/Wan tokenizer cleanup
 ]
 # Video reward scoring. Covers Kling VideoReward / Qwen2-VL, VideoScore2 and
 # UnifiedReward-2.0 (Qwen2.5-VL, trust_remote_code), validated against the same

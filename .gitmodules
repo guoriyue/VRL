@@ -13,3 +13,9 @@
 [submodule "third_party/DynamicEval"]
 	path = third_party/DynamicEval
 	url = https://github.com/nithincbabu7/DynamicEval
+[submodule "third_party/CausVid"]
+	path = third_party/CausVid
+	url = https://github.com/tianweiy/CausVid.git
+[submodule "third_party/MAGI-1"]
+	path = third_party/MAGI-1
+	url = https://github.com/SandAI-org/MAGI-1.git
