@@ -1,6 +1,6 @@
 # SPRINT: Remove policy-reorganization residue and guard retired source paths
 
-**Date:** 2026-07-18  **Status:** PLANNED
+**Date:** 2026-07-18  **Status:** DONE (landed 2026-07-18)
 
 This is the small residue pass after the policy-axis reorganization and the
 executed dead-wrapper and single-caller sweeps. It contains two code actions;

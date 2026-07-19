@@ -1,6 +1,6 @@
 # SPRINT: Remove fallback defaults from the full-sequence denoise layout value object
 
-**Date:** 2026-07-18  **Status:** PLANNED
+**Date:** 2026-07-18  **Status:** DONE (landed 2026-07-18)
 
 This is a focused follow-up from the args/settings audit. The target is the
 second copy of executor fallback values stored on `DiffusionRequestLayout`, not
@@ -37,6 +37,17 @@ Finally, `DiffusionChunkGatherer.gather_chunks` creates a zero-argument layout
 only to call `ordered_chunks`. Sorting and row-coverage validation do not read
 any parsing fallback, so that construction falsely couples gathering to layout
 configuration.
+
+## Landed deviation from the plan
+
+Step 2 below planned a *module-level* `order_diffusion_chunks` function.
+It shipped instead as a `@staticmethod ordered_chunks` on `DiffusionRequestLayout`:
+the ordering stays grouped with the parser it validates for (keeping the value
+object intact), while a staticmethod still lets the gatherer sort via
+`DiffusionRequestLayout.ordered_chunks(...)` without constructing a throwaway
+layout — so the "gatherer must not build a layout to sort" goal holds either way.
+The six per-field row checks were folded into one field-name loop (matching the
+AR sibling `token_autoregressive/layout.py`).
 
 ## Planned change
 

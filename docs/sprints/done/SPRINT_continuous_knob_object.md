@@ -1,6 +1,6 @@
 # SPRINT: Freeze continuous rollout settings at the runtime boundary
 
-**Date:** 2026-07-18  **Status:** PLANNED
+**Date:** 2026-07-18  **Status:** DONE (landed 2026-07-18)
 
 This follows the policy-axis layout work and the args/settings audit. The goal
 is to replace repeated seven-argument plumbing with one immutable runtime
