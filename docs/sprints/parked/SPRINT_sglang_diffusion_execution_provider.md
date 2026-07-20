@@ -256,7 +256,7 @@ Wan replay 消费、parallel gather parity 与 strict transaction 全绿后才�
 - `/home/mingfeiguo/Desktop/sglang/python/sglang/multimodal_gen/runtime/post_training/scheduler_rl_mixin.py`
 - `/home/mingfeiguo/Desktop/sglang/python/sglang/multimodal_gen/runtime/entrypoints/http_server.py`
 - `docs/sprints/SPRINT_native_generation_engine_program.md`
-- `docs/sprints/SPRINT_ray_rollout_operation_deadlines.md`
+- `docs/sprints/done/SPRINT_rollout_worker_liveness.md`
 - `docs/sprints/parked/SPRINT_multi_engine_rollout_conformance.md`
 - https://github.com/sgl-project/sglang/pull/21204
 - https://github.com/sgl-project/sglang/pull/22604

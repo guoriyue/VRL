@@ -121,7 +121,7 @@ phase handoff。旧 `memory_fraction` knob 已删除；当前 shared-GPU DDP par
 - **DONE**：§3 `activate_adapter` 三层重构已经落地，并有成功/失败 CPU 回归测试。
 - **RETIRED / NON-GOAL**：不在首跑 findings 中维护独立“双节点自愈 wrapper”。当前
   `vrl/scripts/supervise.py` 是 checkpoint-aware 单进程 supervisor，但这不等于两节点 torchrun
-  rank 自动恢复；`docs/sprints/SPRINT_ray_rollout_operation_deadlines.md` 也明确不恢复 trainer/FSDP
+  rank 自动恢复；`docs/sprints/done/SPRINT_rollout_worker_liveness.md` 也明确不恢复 trainer/FSDP
   rank。没有独立需求与验收前，不把该能力伪装成已完成或另建重复 owner。
 - **NON-GOAL / HANDED OFF**：论文 batch 放大不是 DDP bug-fix 的完成条件。paper-shaped rollout
   与硬件触发条件由
