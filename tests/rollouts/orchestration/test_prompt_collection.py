@@ -495,9 +495,18 @@ async def test_per_group_serial_scores_each_group_before_the_next_generation() -
     assert [batch.group_ids.unique().tolist() for batch in batches] == [[0], [1], [2]]
 
 
+@pytest.mark.parametrize(
+    "mode",
+    [
+        RewardCollectionMode.PER_GROUP_SERIAL,
+        RewardCollectionMode.PER_GROUP_STREAMING,
+    ],
+)
 @pytest.mark.asyncio
-async def test_forcing_streaming_without_capability_raises_instead_of_downgrading() -> None:
-    """Checks an override can restrict arms but never grant overlap."""
+async def test_forcing_per_group_mode_without_capability_raises(
+    mode: RewardCollectionMode,
+) -> None:
+    """Checks an acceptance override cannot grant per-group execution."""
     collector = _DeferredCollector(supports_overlap=False)
 
     with pytest.raises(ValueError, match="cannot be forced on"):
@@ -507,7 +516,7 @@ async def test_forcing_streaming_without_capability_raises_instead_of_downgradin
             group_size=1,
             runtime_debug=False,
             policy_version=None,
-            reward_mode=RewardCollectionMode.PER_GROUP_STREAMING,
+            reward_mode=mode,
         )
 
     assert collector.events == []

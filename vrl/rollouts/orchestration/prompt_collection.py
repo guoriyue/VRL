@@ -30,36 +30,6 @@ class PromptCollectionCleanupError(RuntimeError):
         )
 
 
-def resolve_reward_collection_mode(
-    collector: Any,
-    requested: RewardCollectionMode | None,
-) -> RewardCollectionMode:
-    """Pick the collection mode, letting an override restrict but never grant.
-
-    The capability is the only thing that may *enable* overlap. An explicit
-    request can force a slower arm on a capable collector (that is what the
-    acceptance control arms need), but requesting streaming without the
-    capability raises instead of silently downgrading: a benchmark that
-    believed it measured arm C while running arm A would report a fabricated
-    result, and the isolation contract stays fail-closed.
-    """
-
-    capable = bool(getattr(collector, "supports_reward_generation_overlap", False))
-    if requested is None:
-        return (
-            RewardCollectionMode.PER_GROUP_STREAMING
-            if capable
-            else RewardCollectionMode.BATCHED_SERIAL
-        )
-    if requested is RewardCollectionMode.PER_GROUP_STREAMING and not capable:
-        raise ValueError(
-            "reward collection mode 'per_group_streaming' requires the collector's "
-            "reward/generation overlap capability (async scoring plus verified "
-            "accelerator isolation); it cannot be forced on",
-        )
-    return requested
-
-
 async def collect_prompt_batches(
     *,
     collector: Any,
@@ -79,8 +49,9 @@ async def collect_prompt_batches(
     backpressure and deterministic cleanup.
 
     ``reward_mode`` overrides that derived choice for acceptance measurement
-    only; see :class:`RewardCollectionMode`. It can restrict a capable collector
-    to a serial arm but can never enable overlap.
+    only; see :class:`RewardCollectionMode`. A capable collector may be forced
+    onto either control arm, while an incapable collector stays on the batched
+    baseline.
 
     ``stats`` (when given) accumulates this call's collect phase timings
     (``collect.engine_generate`` / ``collect.reward_score`` /
@@ -102,9 +73,26 @@ async def collect_prompt_batches(
     pending_prompts: list[str] = []
     pending_indices: list[int] = []
     # The collector combines topology and reward-runtime execution semantics.
-    # Missing capability must preserve the batched serial path: topology alone
-    # cannot prove that scoring yields the event loop or retains throughput.
-    mode = resolve_reward_collection_mode(collector, reward_mode)
+    # Only its capability may enable per-group collection: the acceptance
+    # override can restrict a capable collector, but cannot grant the runtime
+    # isolation needed to alternate generation and scoring safely.
+    overlap_capable = bool(
+        getattr(collector, "supports_reward_generation_overlap", False),
+    )
+    if reward_mode is None:
+        mode = (
+            RewardCollectionMode.PER_GROUP_STREAMING
+            if overlap_capable
+            else RewardCollectionMode.BATCHED_SERIAL
+        )
+    elif reward_mode is not RewardCollectionMode.BATCHED_SERIAL and not overlap_capable:
+        raise ValueError(
+            f"reward collection mode {reward_mode.value!r} requires the collector's "
+            "reward/generation overlap capability (async scoring plus verified "
+            "accelerator isolation); it cannot be forced on",
+        )
+    else:
+        mode = reward_mode
     per_group_scoring = mode is not RewardCollectionMode.BATCHED_SERIAL
     score_task: asyncio.Task[list[RolloutBatch]] | None = None
 
@@ -308,5 +296,4 @@ def _interval_overlap_seconds(
 __all__ = [
     "PromptCollectionCleanupError",
     "collect_prompt_batches",
-    "resolve_reward_collection_mode",
 ]

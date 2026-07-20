@@ -50,8 +50,8 @@ class StrictOnPolicyRolloutSchedule:
     ) -> None:
         self.lifecycle = lifecycle
         # None = derive the arm from the collector capability. A forced arm is an
-        # acceptance-measurement control; it can only restrict, never enable
-        # overlap (enforced in resolve_reward_collection_mode).
+        # acceptance-measurement control; prompt collection checks that it cannot
+        # grant per-group execution to an incapable collector.
         self.reward_mode = reward_mode
         self.state = RolloutScheduleState()
 

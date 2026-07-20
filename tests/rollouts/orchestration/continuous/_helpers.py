@@ -47,10 +47,11 @@ async def owner_snapshot(owner: ContinuousRolloutOwner) -> OwnerSnapshot:
 
     async def _copy() -> OwnerSnapshot:
         producer = runtime.producer
+        active_prompt_batch = None if producer is None else producer._active_batch
         return OwnerSnapshot(
             producer_state=(None if producer is None else replace(producer.state)),
             queue_stats={} if runtime.queue is None else dict(runtime.queue.stats()),
-            prompts=() if runtime._active_prompts is None else tuple(runtime._active_prompts),
+            prompts=(() if active_prompt_batch is None else active_prompt_batch.prompts),
             terminal_error=(
                 None if runtime._terminal_error is None else repr(runtime._terminal_error)
             ),

@@ -14,6 +14,7 @@ import concurrent.futures
 import logging
 import threading
 from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
 from typing import Any, TypeVar
 
 from vrl.rollouts.orchestration.continuous.consumer import ContinuousRolloutConsumer
@@ -42,20 +43,31 @@ _OWNER_STOP_TIMEOUT_S = 30.0
 _T = TypeVar("_T")
 
 
-def _prompt_batches_equal(left: list[Any], right: list[Any]) -> bool:
-    """Compare complete prompt inputs without assuming scalar equality."""
+@dataclass(frozen=True, slots=True)
+class _InstalledPromptBatch:
+    """Owner-side identity of one producer batch awaiting trainer consumption."""
 
-    if len(left) != len(right):
-        return False
-    for left_item, right_item in zip(left, right, strict=True):
-        if left_item is right_item:
-            continue
-        try:
-            if not bool(left_item == right_item):
-                return False
-        except (TypeError, ValueError, RuntimeError):
+    prompts: tuple[Any, ...]
+    group_size: int
+
+    def matches_presented_prompts(self, presented_prompts: list[Any]) -> bool:
+        """Fail closed when a prompt type has non-scalar or invalid equality."""
+
+        if len(self.prompts) != len(presented_prompts):
             return False
-    return True
+        for installed_prompt, presented_prompt in zip(
+            self.prompts,
+            presented_prompts,
+            strict=True,
+        ):
+            if installed_prompt is presented_prompt:
+                continue
+            try:
+                if not bool(installed_prompt == presented_prompt):
+                    return False
+            except (TypeError, ValueError, RuntimeError):
+                return False
+        return True
 
 
 class _ContinuousOwnerRuntime:
@@ -83,9 +95,7 @@ class _ContinuousOwnerRuntime:
         self.consumer: ContinuousRolloutConsumer | None = None
         self.producer: ContinuousRolloutProducer | None = None
         self.scheduler: RolloutScheduler | None = None
-        self._active_prompts: list[Any] | None = None
-        self._active_group_size: int | None = None
-        self._active_batch_consumed = True
+        self._installed_prompt_batch: _InstalledPromptBatch | None = None
 
         self._command_lock = asyncio.Lock()
         self._active_commands: set[asyncio.Task[Any]] = set()
@@ -116,24 +126,22 @@ class _ContinuousOwnerRuntime:
                     initial_weights=initial_weights,
                     phase_times=phase_times,
                 )
-            elif self._active_batch_consumed:
+            elif self._installed_prompt_batch is None:
                 self._set_prompt_batch(
                     prompts,
                     group_size=group_size,
                     runtime_debug=runtime_debug,
                 )
-            elif self._active_prompts is None or not _prompt_batches_equal(
-                self._active_prompts,
-                prompts,
-            ):
+            elif not self._installed_prompt_batch.matches_presented_prompts(prompts):
                 raise RuntimeError(
                     "continuous lookahead prompt batch does not match the next prompts "
                     "presented by the trainer",
                 )
-            elif self._active_group_size != int(group_size):
+            elif self._installed_prompt_batch.group_size != int(group_size):
                 raise RuntimeError(
                     "continuous lookahead group size does not match the batch "
-                    f"presented by the trainer: expected={self._active_group_size}, "
+                    "presented by the trainer: "
+                    f"expected={self._installed_prompt_batch.group_size}, "
                     f"requested={group_size}",
                 )
             assert self.consumer is not None
@@ -151,7 +159,7 @@ class _ContinuousOwnerRuntime:
                 poll_interval_s=self.queue_poll_interval_s,
                 producer_state=self.producer.state,
             )
-            self._active_batch_consumed = True
+            self._installed_prompt_batch = None
             lookahead_requested = 0.0
             if next_prompts is not None:
                 if not next_prompts:
@@ -196,9 +204,10 @@ class _ContinuousOwnerRuntime:
             group_size=group_size,
             runtime_debug=runtime_debug,
         )
-        self._active_prompts = list(prompts)
-        self._active_group_size = int(group_size)
-        self._active_batch_consumed = False
+        self._installed_prompt_batch = _InstalledPromptBatch(
+            prompts=tuple(prompts),
+            group_size=int(group_size),
+        )
         self.producer.admit_now()
 
     async def commit_weights(self, prepared_weights: Any) -> RolloutStats:
@@ -389,9 +398,10 @@ class _ContinuousOwnerRuntime:
             group_size=group_size,
             runtime_debug=runtime_debug,
         )
-        self._active_prompts = list(prompts)
-        self._active_group_size = int(group_size)
-        self._active_batch_consumed = False
+        self._installed_prompt_batch = _InstalledPromptBatch(
+            prompts=tuple(prompts),
+            group_size=int(group_size),
+        )
         await self.producer.start()
         self.producer.admit_now()
 
@@ -402,9 +412,7 @@ class _ContinuousOwnerRuntime:
         self.queue = None
         self.consumer = None
         self.scheduler = None
-        self._active_prompts = None
-        self._active_group_size = None
-        self._active_batch_consumed = True
+        self._installed_prompt_batch = None
         if producer is not None:
             await producer.stop(wait_timeout_s=_OWNER_STOP_TIMEOUT_S)
         if queue is not None:

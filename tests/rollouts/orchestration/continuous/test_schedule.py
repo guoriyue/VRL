@@ -21,6 +21,7 @@ from vrl.rollouts.orchestration import (
     RolloutScheduleMode,
     build_rollout_schedule,
 )
+from vrl.trainers.data.prompts import PromptExample
 from vrl.trainers.strategy import SingleProcessStrategy, TrainingMemoryState
 
 
@@ -875,5 +876,68 @@ async def test_lookahead_mismatch_fails_instead_of_training_the_wrong_prompt_bat
         )
         with pytest.raises(RuntimeError, match="lookahead prompt batch does not match"):
             await schedule.next_iteration(["p2", "different"], group_size=1)
+    finally:
+        await schedule.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_lookahead_group_size_mismatch_fails_before_consumption() -> None:
+    runtime = _Runtime()
+    schedule = _build(_continuous_config(), _Collector(runtime), _Syncer(runtime))
+
+    try:
+        await schedule.next_iteration(
+            ["p0"],
+            group_size=1,
+            next_prompts=["p1"],
+        )
+        with pytest.raises(RuntimeError, match="lookahead group size does not match"):
+            await schedule.next_iteration(["p1"], group_size=2)
+    finally:
+        await schedule.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_lookahead_accepts_identical_prompt_with_non_scalar_metadata() -> None:
+    """The sampler may present the same object whose structural equality is invalid."""
+    runtime = _Runtime()
+    schedule = _build(_continuous_config(), _Collector(runtime), _Syncer(runtime))
+    prompt = PromptExample(
+        prompt="p1",
+        metadata={"embedding": torch.tensor([1.0, 2.0])},
+    )
+
+    try:
+        await schedule.next_iteration(
+            ["p0"],
+            group_size=1,
+            next_prompts=[prompt],
+        )
+        await schedule.next_iteration([prompt], group_size=1)
+    finally:
+        await schedule.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_lookahead_fails_closed_when_prompt_equality_is_non_scalar() -> None:
+    runtime = _Runtime()
+    schedule = _build(_continuous_config(), _Collector(runtime), _Syncer(runtime))
+    installed = PromptExample(
+        prompt="p1",
+        metadata={"embedding": torch.tensor([1.0, 2.0])},
+    )
+    presented = PromptExample(
+        prompt="p1",
+        metadata={"embedding": torch.tensor([1.0, 2.0])},
+    )
+
+    try:
+        await schedule.next_iteration(
+            ["p0"],
+            group_size=1,
+            next_prompts=[installed],
+        )
+        with pytest.raises(RuntimeError, match="lookahead prompt batch does not match"):
+            await schedule.next_iteration([presented], group_size=1)
     finally:
         await schedule.shutdown()
