@@ -52,7 +52,9 @@ microbatch async 会把两个问题混在一起：
 
 这两个问题的风险完全不同。把 microbatch 作为 async item 会制造额外复杂度：
 
-- `collect_training_batch(prompts=...)` 当前会写 trainer 状态；并发 prefetch 前必须重构采集 API。
+- ~~`collect_training_batch(prompts=...)` 当前会写 trainer 状态；并发 prefetch 前必须重构采集 API。~~
+  已解除：`prompts` 现在是必填参数，直接转发给 schedule，不再经过 `self.prompts`
+  这个粘性字段（该字段已删除）。此项不再是并发 prefetch 的阻塞。
 - prefetch 会至少多持有一个 pending microbatch，直接增加 host RAM 峰值。
 - `global_std=true` 时，streaming 已经是 per-microbatch std；把 item 做得更异步会让这个差异更难读。
 - 单 GPU/colocated 场景下通常没有真 wall-clock overlap，容易得到复杂代码但收益很小。

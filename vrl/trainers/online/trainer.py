@@ -51,7 +51,13 @@ from vrl.utils.model_diagnostics import (
     trainable_state_digest,
     write_jsonl,
 )
-from vrl.utils.stats import LoggingStatsSink, RolloutStats, StatsSink
+from vrl.utils.stats import (
+    JsonlStatsSink,
+    LoggingStatsSink,
+    MultiStatsSink,
+    RolloutStats,
+    StatsSink,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -678,7 +684,6 @@ class OnlineTrainer(Trainer):
         ref_model: nn.Module | None = None,
         weight_syncer: WeightSyncer | None = None,
         sync_state_getter: TrainableStateGetter | None = None,
-        prompts: list[str] | None = None,
         device: torch.device | str = "cuda",
         strategy: Strategy | None = None,
         sft_latents: Mapping[str, Any] | None = None,
@@ -704,7 +709,6 @@ class OnlineTrainer(Trainer):
         # (importance-ratio algorithms hold a `precision_correction` slot).
         if hasattr(algorithm, "precision_correction"):
             algorithm.precision_correction = config.precision_correction
-        self.prompts = prompts or []
         # Clean fine-tuning latents ({target_video -> [C,T,H,W]}) for the GRPO
         # diffusion-loss regularizer; the recipe loads data.sft_latents and the
         # config layer already rejected sft_weight>0 without it.
@@ -735,9 +739,14 @@ class OnlineTrainer(Trainer):
         # fully_shard wrapping for FSDP2. Done before optimizer / grad-scaler / EMA
         # so they bind to the (possibly sharded) parameters the strategy returns.
         self.model = self._strategy.prepare_model(self.model)
-        # Sink for the per-step phase-timing line (recording decoupled from
-        # emitting); swap for a jsonl/Prometheus sink later.
-        self._stats_sink: StatsSink = LoggingStatsSink(logger)
+        # Sinks for the per-step phase timings (recording decoupled from
+        # emitting). The log line stays the human-facing view; the jsonl file is
+        # the machine-readable one, because collect.* phases appear in no other
+        # structured output (metrics.csv has no phase columns).
+        self._stats_sink: StatsSink = MultiStatsSink(
+            LoggingStatsSink(logger),
+            JsonlStatsSink(f"{self.config.output_dir}/rollout_stats.jsonl"),
+        )
         self._grad_scaler = _create_grad_scaler(
             self.device,
             self.model,
@@ -853,7 +862,10 @@ class OnlineTrainer(Trainer):
     # ------------------------------------------------------------------
 
     def _backward(self, loss: Any) -> None:
-        self._strategy.backward(loss, grad_scaler=self._grad_scaler)
+        from vrl.utils.profiling import record_function
+
+        with record_function("trainer.backward"):
+            self._strategy.backward(loss, grad_scaler=self._grad_scaler)
 
     def _compute_replay_loss(
         self,
@@ -999,7 +1011,12 @@ class OnlineTrainer(Trainer):
     # Training step — CEA pipeline
     # ------------------------------------------------------------------
 
-    async def step(self, prompts: list[str] | None = None) -> TrainStepMetrics:
+    async def step(
+        self,
+        prompts: list[Any],
+        *,
+        next_prompts: list[Any] | None = None,
+    ) -> TrainStepMetrics:
         """Run one full training step: collect -> evaluate -> advantage -> loss -> backward -> step."""
         from vrl.utils.profiling import capture_torch_trace
 
@@ -1010,16 +1027,23 @@ class OnlineTrainer(Trainer):
             device=self.device,
             worker_name="online_trainer",
         ):
-            return await self._step_impl(prompts)
+            return await self._step_impl(prompts, next_prompts=next_prompts)
 
-    async def _step_impl(self, prompts: list[str] | None = None) -> TrainStepMetrics:
+    async def _step_impl(
+        self,
+        prompts: list[Any],
+        *,
+        next_prompts: list[Any] | None = None,
+    ) -> TrainStepMetrics:
         """Run one full training step without profiler wrapping."""
-        batch = await self.collect_training_batch(prompts)
+        batch = await self.collect_training_batch(prompts, next_prompts=next_prompts)
         return await self.train_on_rollout_batch(batch)
 
     async def collect_training_batch(
         self,
-        prompts: list[str] | None = None,
+        prompts: list[Any],
+        *,
+        next_prompts: list[Any] | None = None,
     ) -> TrainingBatch:
         """Collect rollouts and compute + filter advantages — the data half.
 
@@ -1027,10 +1051,14 @@ class OnlineTrainer(Trainer):
         ``step()`` the two run back-to-back. The shared ``timer`` is created here
         and carried through the batch so both halves' phase timings land in one
         accumulator, exactly as the previous single method did.
-        """
-        if prompts is not None:
-            self.prompts = prompts
 
+        ``next_prompts`` is the recipe loop's lookahead: only that loop knows both
+        the gradient-accumulation split and the next epoch's draw (previewed off
+        the checkpointed RNG), so the value cannot be reconstructed downstream and
+        is forwarded verbatim. Continuous rollout installs it as the producer's
+        next prompt batch so generation overlaps this step's training; strict
+        on-policy discards it.
+        """
         cfg = self.config
 
         timer = PhaseTimer(enabled=cfg.profile)
@@ -1038,9 +1066,10 @@ class OnlineTrainer(Trainer):
 
         # 1. The rollout schedule owns collect/offload/release/sync timing.
         iteration = await self.rollout_schedule.next_iteration(
-            list(self.prompts),
+            prompts,
             group_size=cfg.n_samples_per_prompt,
             runtime_debug=runtime_debug_collect,
+            next_prompts=next_prompts,
         )
         all_batches: list[RolloutBatch] = iteration.batches
         reward_components = _rollout_reward_components(all_batches)
@@ -1193,6 +1222,7 @@ class OnlineTrainer(Trainer):
         self._update_ema = self._ensure_ema()
         self.model.train()
         self._update_agg_metrics = _ReplayMetrics()
+        self._update_had_training_work = False
         self._update_optimizer.zero_grad(set_to_none=True)
 
     async def backward_on_training_batch(
@@ -1218,6 +1248,7 @@ class OnlineTrainer(Trainer):
         # is balanced.
         if not _all_ranks_have_work(bool(batch.batches), self.device):
             return
+        self._update_had_training_work = True
         uses_evaluator = bool(getattr(self.algorithm, "uses_evaluator", True))
         algorithm_adapter = AlgorithmAdapter()
         defer = uses_evaluator and bool(
@@ -1271,7 +1302,7 @@ class OnlineTrainer(Trainer):
     async def finish_optimizer_update(
         self,
         *,
-        phase_times: dict[str, float],
+        stats: RolloutStats,
         reward_mean: float,
         reward_std: float,
         adv_mean: float,
@@ -1283,29 +1314,45 @@ class OnlineTrainer(Trainer):
     ) -> TrainStepMetrics:
         """Clip + optimizer.step + EMA/NFT (once) and build the one update's metrics.
 
-        ``phase_times`` is the caller-aggregated collect/timer phase dict summed
-        across the update's microbatches — the streaming recipe owns aggregation
-        so each microbatch's tensors are released before this runs.
+        ``stats`` is the caller-aggregated typed accumulator across the update's
+        microbatches. The streaming recipe owns aggregation so each microbatch's
+        tensors are released before this runs.
         """
         optimizer = self._update_optimizer
         agg = self._update_agg_metrics
-        local_initial, local_weight = agg.initial_replay_snapshot()
-        initial_replay = self._validate_first_update_parity(
-            local_initial,
-            local_weight=local_weight,
-        )
-        grad_norm, stepped = self._clip_and_step(optimizer)
-        agg.grad_norms.append(grad_norm)
-        if stepped:
-            after_optimizer_step = getattr(self.algorithm, "after_optimizer_step", None)
-            if callable(after_optimizer_step):
-                after_optimizer_step(self.model, self.state.global_step)
-            if self._update_ema is not None:
-                trainable = [p for p in self.model.parameters() if p.requires_grad]
-                self._update_ema.step(trainable, self.state.global_step)
-        self.state.global_step += 1
+        sync_stats = RolloutStats()
+        if self._update_had_training_work:
+            local_initial, local_weight = agg.initial_replay_snapshot()
+            initial_replay = self._validate_first_update_parity(
+                local_initial,
+                local_weight=local_weight,
+            )
+            grad_norm, stepped = self._clip_and_step(optimizer)
+            agg.grad_norms.append(grad_norm)
+            if stepped:
+                after_optimizer_step = getattr(self.algorithm, "after_optimizer_step", None)
+                if callable(after_optimizer_step):
+                    after_optimizer_step(self.model, self.state.global_step)
+                if self._update_ema is not None:
+                    trainable = [p for p in self.model.parameters() if p.requires_grad]
+                    self._update_ema.step(trainable, self.state.global_step)
+            self.state.global_step += 1
+            sync_stats = await self.rollout_schedule.after_train_step()
+        else:
+            initial_replay = None
+            agg.grad_norms.append(0.0)
+            logger.info(
+                "step %d: every streamed microbatch was filtered; skipping "
+                "optimizer and rollout weight sync",
+                self.state.step,
+            )
 
-        phase_times = dict(phase_times)
+        metric_step = self.state.step
+        self.state.step += 1
+        stats.merge(sync_stats)
+        if self.config.profile:
+            self._stats_sink.record(metric_step, stats)
+        phase_times = stats.as_phase_dict()
         metrics = agg.build(
             reward_mean=reward_mean,
             reward_std=reward_std,
@@ -1318,12 +1365,8 @@ class OnlineTrainer(Trainer):
             phase_times=phase_times,
             initial_replay=initial_replay,
         )
-        self.state.step += 1
         self.state.total_reward += metrics.reward_mean
         self.state.total_loss += metrics.loss
-        sync_phase_times = await self.rollout_schedule.after_train_step()
-        for key, value in sync_phase_times.items():
-            phase_times[key] = phase_times.get(key, 0.0) + value
         return metrics
 
     async def train_on_rollout_batch(self, batch: TrainingBatch) -> TrainStepMetrics:
@@ -1738,10 +1781,16 @@ class OnlineTrainer(Trainer):
         # schedule/consumer aggregates them per iteration. The trainer phases
         # (timer) merge on top into one typed accumulator, emitted via the sink.
         step_stats = self._step_stats(iteration, timer)
+        metric_step = self.state.step
+
+        # Update state
+        self.state.step += 1
+
+        step_stats.merge(await self.rollout_schedule.after_train_step())
         phase_times = step_stats.as_phase_dict()
         if cfg.profile and phase_times:
-            self._stats_sink.record(self.state.step, step_stats)
-            self._write_phase_events(timer)
+            self._stats_sink.record(metric_step, step_stats)
+            self._write_phase_events(timer, step=metric_step)
 
         metrics = agg_metrics.build(
             reward_mean=reward_mean,
@@ -1755,15 +1804,8 @@ class OnlineTrainer(Trainer):
             phase_times=phase_times,
             initial_replay=initial_replay,
         )
-
-        # Update state
-        self.state.step += 1
         self.state.total_reward += metrics.reward_mean
         self.state.total_loss += metrics.loss
-
-        sync_phase_times = await self.rollout_schedule.after_train_step()
-        for key, value in sync_phase_times.items():
-            phase_times[key] = phase_times.get(key, 0.0) + value
 
         if first_step_debug_record is not None:
             first_step_debug_record["driver_trainable_after_step"] = trainable_state_digest(
@@ -1789,7 +1831,7 @@ class OnlineTrainer(Trainer):
         stats.add_phases(timer.times)
         return stats
 
-    def _write_phase_events(self, timer: PhaseTimer) -> None:
+    def _write_phase_events(self, timer: PhaseTimer, *, step: int) -> None:
         """Append the per-phase start/end events to phase_events.jsonl."""
 
         try:
@@ -1803,7 +1845,7 @@ class OnlineTrainer(Trainer):
                     handle.write(
                         json.dumps(
                             {
-                                "step": self.state.step,
+                                "step": int(step),
                                 "phase": name,
                                 "start": start,
                                 "end": end,

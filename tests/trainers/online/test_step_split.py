@@ -26,6 +26,7 @@ from vrl.rollouts.evaluators.base import Evaluator
 from vrl.trainers.core.types import EMAConfig, OptimConfig, TrainerConfig
 from vrl.trainers.online import OnlineTrainer
 from vrl.trainers.online.trainer import TrainingBatch
+from vrl.utils.stats import RolloutStats
 
 
 class _Algorithm:
@@ -153,12 +154,115 @@ def test_weight_sync_happens_in_train_half_not_collect(tmp_path) -> None:
 
     async def _counting_after():
         calls.append(1)
-        return await real_after()
+        await real_after()
+        stats = RolloutStats()
+        stats.add_phase("continuous.weight_sync_pause_s", 0.25)
+        return stats
 
     trainer.rollout_schedule.after_train_step = _counting_after  # type: ignore[method-assign]
 
     batch = asyncio.run(trainer.collect_training_batch(["p"]))
     assert calls == []  # collect half does not sync
 
-    asyncio.run(trainer.train_on_rollout_batch(batch))
+    metrics = asyncio.run(trainer.train_on_rollout_batch(batch))
     assert calls == [1]  # train half syncs exactly once
+    assert metrics.phase_times["continuous.weight_sync_pause_s"] == 0.25
+
+
+def test_next_prompts_reaches_the_rollout_schedule(tmp_path) -> None:
+    """The lookahead must survive step -> _step_impl -> collect -> schedule.
+
+    Continuous rollout installs this as the producer's next prompt batch so
+    generation overlaps training. A dropped forward costs that overlap without failing
+    anything observable, and the owner-side tests all drive the schedule
+    directly — this pins the trainer half of the hop. ``None`` must stay
+    ``None`` rather than becoming ``[]``, which the owner rejects outright.
+    """
+    trainer = _build_trainer(tmp_path)
+    seen: list[tuple[list, list | None]] = []
+    real_next = trainer.rollout_schedule.next_iteration
+
+    async def _recording_next(prompts, **kwargs):
+        seen.append((list(prompts), kwargs.get("next_prompts")))
+        return await real_next(prompts, **kwargs)
+
+    trainer.rollout_schedule.next_iteration = _recording_next  # type: ignore[method-assign]
+
+    asyncio.run(trainer.step(["p"], next_prompts=["q"]))
+    asyncio.run(trainer.step(["q"]))
+
+    assert seen == [(["p"], ["q"]), (["q"], None)]
+
+
+def test_backward_uses_named_profile_range(tmp_path, monkeypatch) -> None:
+    """The shared backward boundary must remain visible to external profilers."""
+    import contextlib
+
+    from vrl.utils import profiling
+
+    trainer = _build_trainer(tmp_path)
+    events: list[str] = []
+
+    @contextlib.contextmanager
+    def _record(name: str):
+        events.append(f"enter:{name}")
+        try:
+            yield
+        finally:
+            events.append(f"exit:{name}")
+
+    monkeypatch.setattr(profiling, "record_function", _record)
+    trainer._backward(trainer.model.weight.sum())
+
+    assert events == ["enter:trainer.backward", "exit:trainer.backward"]
+
+
+def test_streaming_all_filtered_update_does_not_advance_policy(tmp_path) -> None:
+    """An all-zero streamed batch records a step without publishing new weights."""
+    from vrl.scripts.common.online import _run_streaming_optimizer_update
+
+    trainer = _build_trainer(tmp_path)
+    trainer.config.drop_zero_advantage = True
+    trainer.algorithm.compute_advantages_from_tensors = (  # type: ignore[method-assign]
+        lambda rewards, group_ids: torch.zeros_like(rewards)
+    )
+    sync_calls: list[int] = []
+
+    async def _unexpected_sync() -> RolloutStats:
+        sync_calls.append(1)
+        return RolloutStats()
+
+    trainer.rollout_schedule.after_train_step = _unexpected_sync  # type: ignore[method-assign]
+    initial_weight = trainer.model.weight.detach().clone()
+
+    metrics = asyncio.run(
+        _run_streaming_optimizer_update(
+            trainer,
+            ["p"],
+            gradient_accumulation_steps=1,
+            prompts_per_batch=1,
+            n_samples_per_prompt=2,
+        ),
+    )
+
+    assert trainer.state.step == 1
+    assert trainer.state.global_step == 0
+    assert sync_calls == []
+    assert metrics.grad_norm == 0.0
+    assert torch.equal(trainer.model.weight, initial_weight)
+
+
+def test_phase_events_use_the_metric_step(tmp_path) -> None:
+    """JSON phase events and the stats sink use the same zero-based step."""
+    import json
+
+    trainer = _build_trainer(tmp_path)
+    trainer.config.profile = True
+
+    asyncio.run(trainer.step(["p"]))
+
+    event_path = tmp_path / "phase_events.jsonl"
+    events = [json.loads(line) for line in event_path.read_text().splitlines()]
+    assert events
+    assert {event["step"] for event in events} == {0}
+    assert trainer.state.step == 1

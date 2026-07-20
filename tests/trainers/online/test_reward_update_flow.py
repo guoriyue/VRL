@@ -336,7 +336,16 @@ class TestRewardUpdateFlow:
             device="cpu",
         )
 
-        asyncio.run(
+        async def _sync_phases():
+            from vrl.utils.stats import RolloutStats
+
+            stats = RolloutStats()
+            stats.add_phase("continuous.weight_sync_pause_s", 0.25)
+            stats.observe_gauge("continuous.weight_sync_barrier_mode", 1.0)
+            return stats
+
+        trainer.rollout_schedule.after_train_step = _sync_phases  # type: ignore[method-assign]
+        metrics = asyncio.run(
             _run_streaming_optimizer_update(
                 trainer,
                 ["prompt-a", "prompt-b", "prompt-c", "prompt-d"],
@@ -352,6 +361,8 @@ class TestRewardUpdateFlow:
         assert trainer.state.step == 1
         assert trainer.state.global_step == 1
         assert after_step_calls == [0]
+        assert metrics.phase_times["continuous.weight_sync_pause_s"] == 0.25
+        assert metrics.phase_times["continuous.weight_sync_barrier_mode"] == 1.0
 
     def test_streaming_releases_microbatch_before_next_collect(self) -> None:
         """Streaming should not retain the previous rollout batch while collecting the next."""
@@ -360,6 +371,7 @@ class TestRewardUpdateFlow:
         import weakref
 
         from vrl.scripts.common.online import _run_streaming_optimizer_update
+        from vrl.utils.stats import RolloutStats
 
         class _Batch:
             __slots__ = (
@@ -386,10 +398,6 @@ class TestRewardUpdateFlow:
                 self.trained_prompt_num = 1
                 self.group_size = 2
 
-        class _Stats:
-            def as_phase_dict(self):
-                return {}
-
         class _Trainer:
             def __init__(self) -> None:
                 self.batch_refs = []
@@ -397,8 +405,8 @@ class TestRewardUpdateFlow:
             def begin_optimizer_update(self):
                 pass
 
-            async def collect_training_batch(self, prompts):
-                del prompts
+            async def collect_training_batch(self, prompts, *, next_prompts=None):
+                del prompts, next_prompts
                 if self.batch_refs:
                     gc.collect()
                     assert self.batch_refs[-1]() is None
@@ -411,7 +419,7 @@ class TestRewardUpdateFlow:
 
             def _step_stats(self, iteration, timer):
                 del iteration, timer
-                return _Stats()
+                return RolloutStats()
 
             async def finish_optimizer_update(self, **kwargs):
                 return kwargs
@@ -428,6 +436,128 @@ class TestRewardUpdateFlow:
         )
         gc.collect()
         assert trainer.batch_refs[-1]() is None
+
+    def test_streaming_stats_sum_phases_and_keep_peak_gauges(self) -> None:
+        """Microbatch stats retain durations and peak continuous state separately."""
+        import asyncio
+
+        from vrl.scripts.common.online import _run_streaming_optimizer_update
+        from vrl.utils.stats import RolloutStats
+
+        class _Batch:
+            def __init__(self) -> None:
+                self.iteration = object()
+                self.timer = object()
+                self.pre_filter_reward_mean = 1.0
+                self.pre_filter_reward_std = 0.0
+                self.pre_filter_adv_mean = 0.0
+                self.adv_zero_rate = 0.0
+                self.adv_saturation = 0.0
+                self.trained_prompt_num = 1
+                self.group_size = 2
+
+        class _Trainer:
+            def __init__(self) -> None:
+                self.stats_index = 0
+
+            def begin_optimizer_update(self):
+                pass
+
+            async def collect_training_batch(self, prompts, *, next_prompts=None):
+                del prompts, next_prompts
+                return _Batch()
+
+            async def backward_on_training_batch(self, batch, *, total_groups):
+                del batch, total_groups
+
+            def _step_stats(self, iteration, timer):
+                del iteration, timer
+                stats = RolloutStats()
+                stats.add_phase("collect.engine_generate", self.stats_index + 1)
+                stats.observe_gauge(
+                    "continuous.stale_policy_versions",
+                    (1, 0)[self.stats_index],
+                )
+                stats.observe_gauge(
+                    "continuous.producer_completed",
+                    (2, 2)[self.stats_index],
+                )
+                self.stats_index += 1
+                return stats
+
+            async def finish_optimizer_update(self, **kwargs):
+                return kwargs["stats"].as_phase_dict()
+
+        phases = asyncio.run(
+            _run_streaming_optimizer_update(
+                _Trainer(),
+                ["prompt-a", "prompt-b"],
+                gradient_accumulation_steps=2,
+                prompts_per_batch=2,
+                n_samples_per_prompt=2,
+            ),
+        )
+
+        assert phases["collect.engine_generate"] == 3.0
+        assert phases["continuous.stale_policy_versions"] == 1.0
+        assert phases["continuous.producer_completed"] == 2.0
+
+    def test_streaming_announces_the_next_prompt_batch_before_backward(self) -> None:
+        """Each collect announces the prompt batch that runs during its backward."""
+        import asyncio
+
+        from vrl.scripts.common.online import _run_streaming_optimizer_update
+        from vrl.utils.stats import RolloutStats
+
+        class _Batch:
+            def __init__(self) -> None:
+                self.iteration = object()
+                self.timer = object()
+                self.pre_filter_reward_mean = 1.0
+                self.pre_filter_reward_std = 0.0
+                self.pre_filter_adv_mean = 0.0
+                self.adv_zero_rate = 0.0
+                self.adv_saturation = 0.0
+                self.trained_prompt_num = 1
+                self.group_size = 2
+
+        class _Trainer:
+            def __init__(self) -> None:
+                self.requests: list[tuple[list[str], list[str] | None]] = []
+
+            def begin_optimizer_update(self):
+                pass
+
+            async def collect_training_batch(self, prompts, *, next_prompts=None):
+                self.requests.append((list(prompts), next_prompts))
+                return _Batch()
+
+            async def backward_on_training_batch(self, batch, *, total_groups):
+                del batch, total_groups
+
+            def _step_stats(self, iteration, timer):
+                del iteration, timer
+                return RolloutStats()
+
+            async def finish_optimizer_update(self, **kwargs):
+                return kwargs
+
+        trainer = _Trainer()
+        asyncio.run(
+            _run_streaming_optimizer_update(
+                trainer,
+                ["prompt-a", "prompt-b"],
+                next_example_batch=["prompt-c", "prompt-d"],
+                gradient_accumulation_steps=2,
+                prompts_per_batch=2,
+                n_samples_per_prompt=2,
+            ),
+        )
+
+        assert trainer.requests == [
+            (["prompt-a"], ["prompt-b"]),
+            (["prompt-b"], ["prompt-c"]),
+        ]
 
     def test_flow_grpo_loss_scaling_includes_timesteps(self) -> None:
         """Flow-GRPO accumulation scales loss by microbatches * train timesteps."""
