@@ -1,0 +1,35 @@
+# UnifiedReward-2.0 video reward served by an operator-owned HTTP service.
+#
+# Same judge as /reward/unified_reward_video, different deployment. Keep the two
+# separate rather than adding a transport switch to one preset: an HTTP component
+# must carry NO local execution keys. `worker_config`, `device`, and parking
+# fields describe how to run the model, and for this deployment that lives in the
+# service's own config (vrl/config/reward_service/*.yaml), not here. Composing the
+# in-process preset instead would inject both `worker_config` and a local reward
+# GPU bundle that an external-endpoint topology must not reserve.
+#
+# Consequently this preset declares no `distributed.resources.reward`: VRL cannot
+# see where the endpoint runs, so it reserves nothing for it.
+#
+# `endpoint` and `expected_model` below are placeholders — every experiment is
+# expected to override them to match the service it actually talks to. HTTP
+# scoring passes artifacts by shared-filesystem path, so `artifact_dir` must
+# resolve to the same absolute location for both trainer and service.
+#
+# An external service stays fail-closed for generation/reward overlap unless its
+# /info response advertises `generation_overlap_safe`; see presets/reward/README.md.
+reward:
+  components:
+    unified_reward_video: 1.0
+  kwargs:
+    unified_reward_video:
+      reward_name: unified_reward_video   # logical tag (request label)
+      score_key: overall
+      media_type: video
+      artifact_format: mp4
+      artifact_dir: ${trainer.output_dir}/reward_artifacts
+      inference:
+        kind: http
+        endpoint: http://127.0.0.1:8300
+        timeout_s: 1800
+        expected_model: unified-reward-video

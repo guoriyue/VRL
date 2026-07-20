@@ -40,6 +40,7 @@ defaults:
   - /sampling/video/240p_33f
   - /sampling/denoise/20_step_cfg_4_5
   - /dataset/videophy
+  - /reward/unified_reward_video_http
 
 actor:
   optim:
@@ -93,10 +94,11 @@ rollout:
   sde:
     type: cps
 
-# Declared inline rather than via /reward/videoscore2: that preset carries a
-# worker_config (model, device, dtype), and an HTTP component is rejected for
-# any local execution key -- model and device belong to the service config. It
-# also reserves a local reward GPU bundle this topology must not have.
+# Composed from /reward/unified_reward_video_http, not the in-process preset:
+# that one carries a worker_config (model, device, dtype), and an HTTP component
+# is rejected for any local execution key -- model and device belong to the
+# service config. It also reserves a local reward GPU bundle this topology must
+# not have. Only the endpoint identity is overridden below.
 reward:
   components:
     unified_reward_video: 1.0
@@ -106,7 +108,7 @@ reward:
       score_key: overall
       media_type: video
       artifact_format: mp4
-      # Resolves under the service's artifact_roots (/home/ubuntu/VRL/outputs).
+      # Resolves under the service's configured artifact_roots.
       # HTTP carries the control protocol; the mp4 moves as a filesystem path.
       artifact_dir: ${trainer.output_dir}/reward_artifacts
       # Transport only. Physical isolation is the service's own attestation.
