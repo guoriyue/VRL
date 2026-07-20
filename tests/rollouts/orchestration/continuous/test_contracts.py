@@ -105,22 +105,78 @@ def _producer(
     *,
     lifecycle: _Lifecycle | None = None,
     max_stale: int = 0,
+    prompts: list[str] | None = None,
+    group_size: int = 2,
+    runtime_debug: bool = False,
+    max_inflight: int = 1,
+    poll_interval_s: float = 0.001,
+    fail_fast_errors: int = 3,
 ) -> ContinuousRolloutProducer:
+    prompt_list = ["p0"] if prompts is None else list(prompts)
     scheduler = RolloutScheduler(
         staleness=StalenessPolicy(max_stale_policy_versions=max_stale),
-        max_inflight_groups=1,
-        capacity=2,
-        max_bytes=0,
-        groups_per_iteration=1,
+        max_inflight_groups=max_inflight,
+        max_bytes=queue.max_bytes,
     )
-    return ContinuousRolloutProducer(
+    producer = ContinuousRolloutProducer(
         lifecycle=lifecycle or _Lifecycle(collector),
-        prompts=["p0"],
         queue=queue,
         scheduler=scheduler,
-        group_size=2,
-        poll_interval_s=0.001,
+        poll_interval_s=poll_interval_s,
+        fail_fast_errors=fail_fast_errors,
     )
+    producer.set_prompt_batch(
+        prompt_list,
+        group_size=group_size,
+        runtime_debug=runtime_debug,
+    )
+    return producer
+
+
+class _FiniteCollector:
+    """Records prompt-batch inputs and optionally fails one attempt per prompt."""
+
+    requires_runtime_offload_before_reward = False
+    requires_driver_model_offload_for_reward = False
+    supports_reward_generation_overlap = False
+
+    def __init__(self, *, fail_once: set[str] | None = None) -> None:
+        self.fail_once = set(fail_once or ())
+        self.attempts: dict[str, int] = {}
+        self.active: dict[str, int] = {}
+        self.max_active: dict[str, int] = {}
+        self.calls: list[tuple[str, int | None, int, bool]] = []
+
+    async def collect_unscored(self, prompts: list[Any], **kwargs: Any) -> _Unscored:
+        prompt = str(getattr(prompts[0], "prompt", prompts[0]))
+        attempt = self.attempts.get(prompt, 0) + 1
+        self.attempts[prompt] = attempt
+        self.active[prompt] = self.active.get(prompt, 0) + 1
+        self.max_active[prompt] = max(
+            self.max_active.get(prompt, 0),
+            self.active[prompt],
+        )
+        self.calls.append(
+            (
+                prompt,
+                kwargs.get("policy_version"),
+                int(kwargs["group_size"]),
+                bool(kwargs["runtime_debug"]),
+            ),
+        )
+        try:
+            await asyncio.sleep(0)
+            if prompt in self.fail_once and attempt == 1:
+                raise RuntimeError(f"transient failure for {prompt}")
+            return _Unscored(
+                batch=_batch(prompt, int(kwargs["group_size"])),
+                phases={},
+            )
+        finally:
+            self.active[prompt] -= 1
+
+    async def score_rollouts(self, pendings: list[_Unscored]) -> list[RolloutBatch]:
+        return [pending.batch for pending in pendings]
 
 
 # ------------------------------------------------------------- ready queue
@@ -208,11 +264,237 @@ async def test_control_loop_failure_reaches_consumer_without_timeout() -> None:
         await producer.stop()
 
 
+@pytest.mark.asyncio
+async def test_finite_prompt_batch_completes_each_slot_once_then_idles() -> None:
+    collector = _FiniteCollector()
+    queue = ContinuousRolloutQueue(max_items=4)
+    producer = _producer(
+        collector,
+        queue,
+        prompts=["p0", "p1", "p2"],
+        max_inflight=2,
+    )
+
+    await producer.start()
+    producer.pause_admission()
+    try:
+        # The drain must admit p2 even though pause caught the batch with only
+        # the first two slots live.
+        await producer.drain_prompt_batch(wait_timeout_s=5.0)
+        assert {item.group_key for item in queue.snapshot()} == {0, 1, 2}
+        assert collector.attempts == {"p0": 1, "p1": 1, "p2": 1}
+        assert producer.state.submitted_count == 3
+        assert producer.state.completed_count == 3
+
+        producer.resume_admission()
+        await asyncio.sleep(0.02)
+        assert collector.attempts == {"p0": 1, "p1": 1, "p2": 1}
+        assert producer.state.inflight_count == 0
+    finally:
+        await producer.stop()
+
+
+@pytest.mark.asyncio
+async def test_prompt_batch_freezes_version_and_options_across_serial_retry() -> None:
+    collector = _FiniteCollector(fail_once={"p0"})
+    queue = ContinuousRolloutQueue(max_items=4)
+    lifecycle = _Lifecycle(collector, version=7)
+    producer = _producer(
+        collector,
+        queue,
+        lifecycle=lifecycle,
+        max_stale=1,
+        prompts=["p0", "p1"],
+        group_size=3,
+        runtime_debug=True,
+        poll_interval_s=60.0,
+    )
+    lifecycle.version = 8
+
+    await producer.start()
+    try:
+        await producer.drain_prompt_batch(wait_timeout_s=5.0)
+
+        assert collector.attempts == {"p0": 2, "p1": 1}
+        assert collector.max_active == {"p0": 1, "p1": 1}
+        assert {version for _, version, _, _ in collector.calls} == {7}
+        assert {group_size for _, _, group_size, _ in collector.calls} == {3}
+        assert {debug for _, _, _, debug in collector.calls} == {True}
+        assert producer.state.error_count == 1
+        assert producer.state.submitted_count == 3
+        assert producer.state.completed_count == 2
+        assert {item.group_key for item in queue.snapshot()} == {0, 1}
+    finally:
+        await producer.stop()
+
+
+@pytest.mark.asyncio
+async def test_prompt_batch_rejects_replacing_incomplete_work() -> None:
+    collector = _GatedCollector()
+    collector.allow_generate.clear()
+    producer = _producer(collector, ContinuousRolloutQueue(max_items=2))
+
+    await producer.start()
+    producer.admit_now()
+    try:
+        await asyncio.wait_for(collector.generation_started.wait(), 5.0)
+        with pytest.raises(RuntimeError, match="cannot replace an incomplete"):
+            producer.set_prompt_batch(
+                ["p1"],
+                group_size=2,
+                runtime_debug=False,
+            )
+    finally:
+        collector.allow_generate.set()
+        await producer.stop()
+
+
+@pytest.mark.asyncio
+async def test_prompt_batch_rejects_replacing_unconsumed_ready_work() -> None:
+    queue = ContinuousRolloutQueue(max_items=2)
+    producer = _producer(_FiniteCollector(), queue)
+
+    await producer.start()
+    try:
+        await producer.drain_prompt_batch(wait_timeout_s=5.0)
+        with pytest.raises(RuntimeError, match="before its ready items are consumed"):
+            producer.set_prompt_batch(
+                ["p1"],
+                group_size=2,
+                runtime_debug=False,
+            )
+    finally:
+        await producer.stop()
+
+
+@pytest.mark.asyncio
+async def test_finite_prompt_batch_fails_when_queue_hard_cap_evicts_a_slot() -> None:
+    collector = _FiniteCollector()
+    queue = ContinuousRolloutQueue(max_items=2, max_bytes=1)
+    producer = _producer(
+        collector,
+        queue,
+        max_stale=1,
+        poll_interval_s=60.0,
+    )
+
+    await producer.start()
+    try:
+        with pytest.raises(RuntimeError, match="hard cap evicted prompt-batch"):
+            await producer.drain_prompt_batch(wait_timeout_s=5.0)
+    finally:
+        await producer.stop()
+
+
+@pytest.mark.asyncio
+async def test_finite_prompt_batch_fails_after_one_slot_exhausts_retry_budget() -> None:
+    class _AlwaysFailCollector(_FiniteCollector):
+        async def collect_unscored(self, prompts: list[Any], **kwargs: Any) -> _Unscored:
+            prompt = str(getattr(prompts[0], "prompt", prompts[0]))
+            self.attempts[prompt] = self.attempts.get(prompt, 0) + 1
+            raise RuntimeError(f"deterministic failure for {prompt}")
+
+    collector = _AlwaysFailCollector()
+    queue = ContinuousRolloutQueue(max_items=2)
+    producer = _producer(
+        collector,
+        queue,
+        poll_interval_s=0.001,
+        fail_fast_errors=2,
+    )
+
+    await producer.start()
+    producer.pause_admission()
+    try:
+        with pytest.raises(RuntimeError, match="slot exceeded the failure budget") as caught:
+            await producer.drain_prompt_batch(wait_timeout_s=5.0)
+        assert "deterministic failure for p0" in str(caught.value.__cause__)
+        assert collector.attempts == {"p0": 2}
+        assert queue.size() == 0
+    finally:
+        await producer.stop()
+
+
+@pytest.mark.asyncio
+async def test_prompt_batch_drain_times_out_when_collect_never_returns() -> None:
+    collector = _GatedCollector()
+    collector.allow_generate.clear()
+    queue = ContinuousRolloutQueue(max_items=2)
+    producer = _producer(
+        collector,
+        queue,
+        poll_interval_s=0.001,
+        fail_fast_errors=0,
+    )
+
+    await producer.start()
+    producer.pause_admission()
+    try:
+        with pytest.raises(TimeoutError, match="weight-sync barrier timed out"):
+            await producer.drain_prompt_batch(wait_timeout_s=0.02)
+    finally:
+        collector.allow_generate.set()
+        await producer.stop()
+
+
+@pytest.mark.asyncio
+async def test_active_prompt_batch_fails_when_collect_is_cancelled() -> None:
+    class _CancelledCollector(_FiniteCollector):
+        async def collect_unscored(self, prompts: list[Any], **kwargs: Any) -> _Unscored:
+            del prompts, kwargs
+            raise asyncio.CancelledError
+
+    queue = ContinuousRolloutQueue(max_items=2)
+    producer = _producer(_CancelledCollector(), queue)
+
+    await producer.start()
+    producer.pause_admission()
+    try:
+        with pytest.raises(RuntimeError, match="prompt-batch collect was cancelled"):
+            await producer.drain_prompt_batch(wait_timeout_s=5.0)
+        assert producer.state.error_count == 1
+        assert queue.size() == 0
+    finally:
+        await producer.stop()
+
+
+@pytest.mark.asyncio
+async def test_producer_stop_does_not_wait_forever_for_cancel_suppression() -> None:
+    class _CancellationResistantCollector(_FiniteCollector):
+        def __init__(self) -> None:
+            super().__init__()
+            self.started = asyncio.Event()
+            self.cancelled = asyncio.Event()
+            self.release = asyncio.Event()
+
+        async def collect_unscored(self, prompts: list[Any], **kwargs: Any) -> _Unscored:
+            self.started.set()
+            while not self.release.is_set():
+                try:
+                    await self.release.wait()
+                except asyncio.CancelledError:
+                    self.cancelled.set()
+            return await super().collect_unscored(prompts, **kwargs)
+
+    collector = _CancellationResistantCollector()
+    producer = _producer(collector, ContinuousRolloutQueue(max_items=2))
+
+    await producer.start()
+    producer.admit_now()
+    await asyncio.wait_for(collector.started.wait(), 5.0)
+    await asyncio.wait_for(producer.stop(wait_timeout_s=0.02), 1.0)
+
+    assert collector.cancelled.is_set()
+    assert producer.state.inflight_count == 0
+    collector.release.set()
+    await asyncio.sleep(0)
+
+
 # ------------------------------------------------------- weight-sync drain
 
 
 @pytest.mark.asyncio
-async def test_drain_inflight_waits_for_generation_and_reward() -> None:
+async def test_drain_prompt_batch_waits_for_generation_and_reward() -> None:
     """The barrier drain returns only after gen + reward of in-flight work."""
     collector = _GatedCollector()
     collector.allow_generate.clear()
@@ -227,7 +509,7 @@ async def test_drain_inflight_waits_for_generation_and_reward() -> None:
         barrier: list[str] = []
 
         async def _drain_then_sync() -> None:
-            await producer.drain_inflight()
+            await producer.drain_prompt_batch(wait_timeout_s=5.0)
             barrier.append("sync")
 
         drain_task = asyncio.create_task(_drain_then_sync())
@@ -257,10 +539,10 @@ async def test_late_reward_finishes_before_version_bump_under_draining() -> None
     A reward that completes *after* generation but is still in-flight at the
     weight-sync barrier must finish before the policy-version bump, so the group
     is never trained off-policy. This is the reward-late timing variant of
-    ``test_drain_inflight_waits_for_generation_and_reward``: here generation is
+    ``test_drain_prompt_batch_waits_for_generation_and_reward``: here generation is
     already done and only ``score_rollouts`` is outstanding when the barrier
     starts. ``schedule.after_train_step`` (non_draining=False) runs
-    ``drain_inflight`` -> ``sync_weights_after_train``, so reward(N) must
+    ``drain_prompt_batch`` -> ``sync_weights_after_train``, so reward(N) must
     complete strictly before the version advances to N+1.
     """
     collector = _GatedCollector()
@@ -285,7 +567,7 @@ async def test_late_reward_finishes_before_version_bump_under_draining() -> None
         async def _drain_then_bump() -> None:
             # Mirror schedule.after_train_step's draining branch exactly:
             # drain in-flight (gen + reward) BEFORE syncing/bumping the version.
-            await producer.drain_inflight()
+            await producer.drain_prompt_batch(wait_timeout_s=5.0)
             order.append("drain_done")
             lifecycle.version = 2  # the weight-sync version bump
             order.append("version_bumped")
@@ -313,7 +595,6 @@ async def test_late_reward_finishes_before_version_bump_under_draining() -> None
         # A late reward cannot relabel the stamped version: reward is computed
         # from the rollout output by a frozen reward model, so the group's
         # policy version is fixed at generation time, never at scoring time.
-        assert producer.state.discarded_stale_count == 0
     finally:
         producer.resume_admission()
         await producer.stop()
@@ -340,11 +621,10 @@ async def test_items_carry_policy_version_captured_at_submission() -> None:
         producer.pause_admission()
         lifecycle.version = 2  # trainer syncs while the group is in flight
         collector.allow_generate.set()
-        await producer.drain_inflight()
+        await producer.drain_prompt_batch(wait_timeout_s=5.0)
 
         assert queue.size() == 1
         assert queue._items[0].rollout_policy_version == 1
-        assert producer.state.discarded_stale_count == 0
     finally:
         producer.resume_admission()
         await producer.stop()
@@ -354,8 +634,8 @@ async def test_items_carry_policy_version_captured_at_submission() -> None:
 
 
 @pytest.mark.asyncio
-async def test_producer_discards_group_too_stale_at_receipt() -> None:
-    """At the mechanism-only zero bound, a superseded group drops at receipt."""
+async def test_prompt_batch_fails_when_group_is_stale_at_receipt() -> None:
+    """An active prompt batch cannot recover after its fixed version expires."""
     collector = _GatedCollector()
     collector.allow_generate.clear()
     queue = ContinuousRolloutQueue(max_items=4)
@@ -368,12 +648,11 @@ async def test_producer_discards_group_too_stale_at_receipt() -> None:
         producer.pause_admission()
         lifecycle.version = 2  # trainer advanced while the group was in flight
         collector.allow_generate.set()
-        await producer.drain_inflight()
+        with pytest.raises(RuntimeError, match="became stale before completion"):
+            await producer.drain_prompt_batch(wait_timeout_s=5.0)
 
         # Generation completed, but the v1 group is stale=1 > 0 at receipt.
         assert queue.size() == 0
-        assert producer.state.discarded_stale_count == 1
-        # Still counted as completed work — discarded is a subset of completed.
         assert producer.state.completed_count == 1
     finally:
         producer.resume_admission()
@@ -381,7 +660,7 @@ async def test_producer_discards_group_too_stale_at_receipt() -> None:
 
 
 @pytest.mark.asyncio
-async def test_producer_discards_group_past_stale_window() -> None:
+async def test_prompt_batch_fails_when_group_is_past_stale_window() -> None:
     """The gate respects the configured window, not any version change: with
     max_stale=1 a two-version-old group is still dropped."""
     collector = _GatedCollector()
@@ -396,10 +675,10 @@ async def test_producer_discards_group_past_stale_window() -> None:
         producer.pause_admission()
         lifecycle.version = 3  # two versions ahead: staleness 2 > 1
         collector.allow_generate.set()
-        await producer.drain_inflight()
+        with pytest.raises(RuntimeError, match="became stale before completion"):
+            await producer.drain_prompt_batch(wait_timeout_s=5.0)
 
         assert queue.size() == 0
-        assert producer.state.discarded_stale_count == 1
     finally:
         producer.resume_admission()
         await producer.stop()
@@ -427,9 +706,7 @@ def _consumer(queue: ContinuousRolloutQueue, max_stale: int) -> ContinuousRollou
     scheduler = RolloutScheduler(
         staleness=StalenessPolicy(max_stale_policy_versions=max_stale),
         max_inflight_groups=1,
-        capacity=max(1, queue.max_items),
         max_bytes=0,
-        groups_per_iteration=1,
     )
     return ContinuousRolloutConsumer(queue=queue, scheduler=scheduler, fail_fast_errors=3)
 
@@ -470,45 +747,41 @@ async def test_consumer_consumes_stale_items_within_bound() -> None:
 
 
 @pytest.mark.asyncio
-async def test_consumer_drops_too_stale_items_and_times_out() -> None:
-    """max_stale=0 must drop pre-sync items instead of training on them."""
+async def test_consumer_rejects_a_too_stale_ready_batch() -> None:
+    """A finite batch fails instead of dropping slots it cannot regenerate."""
     queue = ContinuousRolloutQueue(max_items=8)
     queue.put(_item(group_key=0, version=1))
     queue.put(_item(group_key=1, version=1))
 
-    with pytest.raises(TimeoutError):
+    with pytest.raises(RuntimeError, match="older than the policy window"):
         await _drain(
             _consumer(queue, max_stale=0),
             min_groups=2,
             current_version=2,
-            timeout_s=0.05,
         )
-    assert queue.size() == 0
-    assert queue.dropped_stale == 2
+    assert queue.size() == 2
 
 
 @pytest.mark.asyncio
-async def test_late_reward_group_dropped_under_non_draining_max_stale_0() -> None:
+async def test_late_reward_batch_fails_under_non_draining_max_stale_0() -> None:
     """OFF-POLICY INVARIANT, non-draining branch (max_stale=0).
 
     When the runtime advertises ``supports_non_draining_weight_sync``, the
-    barrier skips ``drain_inflight`` and lets an in-flight collect (whose reward
+    barrier skips ``drain_prompt_batch`` and lets an in-flight collect (whose reward
     completes after the bump) finish concurrently with training. The group is
     version-stamped at submit time (the pre-bump version), so the post-sync
-    ``drop_stale`` purge -- and ``select_iteration``'s own drop-stale -- remove
-    it. It can NEVER reach a trained iteration, because reward is
-    policy-independent and cannot relabel the stamped version to the new one.
+    ready-version validation rejects it. It can NEVER reach a trained
+    iteration, because reward is policy-independent and cannot relabel the
+    stamped version to the new one.
 
     This drives the exact machinery the non-draining owner branch uses
-    (``scheduler.drop_stale`` after weight sync, then
+    (``scheduler.validate_ready_versions`` after weight sync, then
     ``consumer.drain_for_iteration`` -> ``scheduler.select_iteration``).
     """
     queue = ContinuousRolloutQueue(max_items=8)
     scheduler = RolloutScheduler(
         staleness=StalenessPolicy(max_stale_policy_versions=0),
         max_inflight_groups=1,
-        capacity=8,
-        groups_per_iteration=1,
         max_bytes=0,
     )
     consumer = ContinuousRolloutConsumer(queue=queue, scheduler=scheduler, fail_fast_errors=3)
@@ -519,27 +792,14 @@ async def test_late_reward_group_dropped_under_non_draining_max_stale_0() -> Non
     queue.put(_item(group_key=0, version=1))
     assert queue.size() == 1
 
-    # Trainer is now at v2; the post-sync purge runs drop_stale at the new
-    # version, matching the owner's commit path.
-    dropped = scheduler.drop_stale(queue, current_version=2)
-    assert dropped == 1
-    assert queue.size() == 0
-    assert queue.dropped_stale == 1
-
-    # Even if the purge had not run, the consumer's select would drop it: the
-    # superseded v1 group never fills an iteration at current_version=2, so the
-    # trainer never trains the late-reward group off-policy. With nothing fresh
-    # queued, drain times out rather than yielding the stale group.
-    with pytest.raises(TimeoutError):
-        await _drain(consumer, min_groups=1, current_version=2, timeout_s=0.05)
-
-    # Positive control: a FRESH v2 group (reward landed in time) is the one that
-    # gets trained -- proving the timeout above is a drop, not an empty-queue
-    # artifact, and that the machinery still admits in-window work.
-    queue.put(_item(group_key=0, version=2))
-    iteration = await _drain(consumer, min_groups=1, current_version=2)
-    assert iteration.policy_version == 2
-    assert queue.dropped_stale == 1  # the v1 late group, dropped exactly once
+    # Trainer is now at v2. Both the post-sync owner check and consumer selection
+    # fail immediately with the fixed-version cause instead of deleting one slot
+    # and waiting for a batch that can no longer complete.
+    with pytest.raises(RuntimeError, match="older than the policy window"):
+        scheduler.validate_ready_versions(queue, current_version=2)
+    assert queue.size() == 1
+    with pytest.raises(RuntimeError, match="older than the policy window"):
+        await _drain(consumer, min_groups=1, current_version=2)
 
 
 @pytest.mark.asyncio

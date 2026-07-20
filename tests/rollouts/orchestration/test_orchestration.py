@@ -436,3 +436,76 @@ async def test_failed_prepared_weight_push_does_not_publish_initialized_state() 
 
     assert initialized is False
     assert runtime.current_policy_version == 0
+
+
+@pytest.mark.asyncio
+async def test_strict_schedule_forwards_the_configured_reward_collection_arm() -> None:
+    """Checks the acceptance arm reaches collection instead of being ignored."""
+    import torch
+    import torch.nn as nn
+
+    from vrl.rollouts.orchestration import build_rollout_schedule
+    from vrl.rollouts.orchestration.types import RewardCollectionMode
+    from vrl.trainers.strategy import SingleProcessStrategy, TrainingMemoryState
+
+    runtime = _Runtime()
+    collector = _Collector(runtime)
+    # Capable collector: the forced arm must restrict it back to per-group serial.
+    collector.supports_reward_generation_overlap = True
+
+    config = _schedule_config("strict_on_policy")
+    config.reward_collection_mode = "per_group_serial"
+
+    schedule = build_rollout_schedule(
+        config,
+        collector=collector,
+        strategy=SingleProcessStrategy(),
+        training_state_getter=lambda: TrainingMemoryState(
+            model=nn.Linear(1, 1),
+            ref_model=None,
+            optimizer=None,
+            ema=None,
+            grad_scaler=None,
+            device=torch.device("cpu"),
+        ),
+        weight_syncer=_Syncer(runtime),
+        sync_state_getter=lambda: {"w": 1},
+        weights_initialized=lambda: True,
+        set_weights_initialized=lambda value: None,
+    )
+
+    assert schedule.reward_mode is RewardCollectionMode.PER_GROUP_SERIAL
+
+    iteration = await schedule.next_iteration(["p0", "p1"], group_size=1)
+    assert len(iteration.batches) == 2
+
+
+@pytest.mark.asyncio
+async def test_strict_schedule_defaults_to_capability_derived_arm() -> None:
+    """Checks omitting the override keeps the production derivation."""
+    import torch
+    import torch.nn as nn
+
+    from vrl.rollouts.orchestration import build_rollout_schedule
+    from vrl.trainers.strategy import SingleProcessStrategy, TrainingMemoryState
+
+    runtime = _Runtime()
+    schedule = build_rollout_schedule(
+        _schedule_config("strict_on_policy"),
+        collector=_Collector(runtime),
+        strategy=SingleProcessStrategy(),
+        training_state_getter=lambda: TrainingMemoryState(
+            model=nn.Linear(1, 1),
+            ref_model=None,
+            optimizer=None,
+            ema=None,
+            grad_scaler=None,
+            device=torch.device("cpu"),
+        ),
+        weight_syncer=_Syncer(runtime),
+        sync_state_getter=lambda: {"w": 1},
+        weights_initialized=lambda: True,
+        set_weights_initialized=lambda value: None,
+    )
+
+    assert schedule.reward_mode is None

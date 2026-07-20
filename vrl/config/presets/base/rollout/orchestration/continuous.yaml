@@ -1,6 +1,7 @@
-# Continuous rollout queue: a background producer generates + rewards groups
-# into a bounded ready queue; the trainer drains one homogeneous-policy
-# iteration per step.
+# Continuous rollout queue: after consuming the current finite request, the
+# trainer arms the exact next microbatch before backward. A background producer
+# generates and rewards that request into a bounded ready queue while the trainer
+# computes, then idles after every requested prompt group succeeds once.
 #
 # Continuous is the bounded-staleness path (default window: one policy version).
 # Use strict_on_policy for a zero-staleness serial run. The primary deployment is
@@ -13,15 +14,16 @@
 #     trainer.rollout_orchestration.continuous.max_inflight_groups=4 \
 #     trainer.rollout_orchestration.continuous.max_ready_groups=16
 #
-# This throughput profile replaces the removed one_batch_overlap mode. Unlike a
-# single pending iteration, continuous keeps per-prompt groups in flight and
-# drains only homogeneous-policy ready groups, so it is the overlap path for
-# remote rollout workers.
+# This throughput profile replaces the removed one_batch_overlap mode. It keeps
+# the next request's per-prompt groups in flight and drains only homogeneous-
+# policy ready groups, so it is the overlap path for remote rollout workers
+# without generating duplicate work for the current prompt set.
 #
-# Note: max_ready_groups must be >= prompts_per_batch (one iteration's worth of
-# prompt groups); the schedule raises the effective queue cap to fit if smaller.
-# Admission and weight-sync ordering are owned by the continuous schedule state
-# machine; there is no independent queue-capacity or barrier knob.
+# Note: max_ready_groups bounds one finite request's ready items; the schedule
+# raises the effective queue cap to fit the current microbatch if smaller.
+# max_inflight_groups controls parallel prompt-group collection inside that
+# request. Admission and weight-sync ordering are owned by the continuous
+# schedule state machine; there is no independent queue-capacity or barrier knob.
 # Queue/staleness tuning defaults (max_inflight_groups, max_ready_groups,
 # max_ready_bytes_mb, max_stale_policy_versions=1,
 # wait_timeout_s, queue_poll_interval_s) live on ContinuousRolloutConfig in

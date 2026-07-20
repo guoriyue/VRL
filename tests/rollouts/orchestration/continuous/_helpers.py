@@ -50,7 +50,7 @@ async def owner_snapshot(owner: ContinuousRolloutOwner) -> OwnerSnapshot:
         return OwnerSnapshot(
             producer_state=(None if producer is None else replace(producer.state)),
             queue_stats={} if runtime.queue is None else dict(runtime.queue.stats()),
-            prompts=() if producer is None else tuple(producer.prompts),
+            prompts=() if runtime._active_prompts is None else tuple(runtime._active_prompts),
             terminal_error=(
                 None if runtime._terminal_error is None else repr(runtime._terminal_error)
             ),

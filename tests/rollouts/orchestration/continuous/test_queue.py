@@ -1,6 +1,6 @@
 """Tests for the bounded continuous rollout ready queue (container mechanism).
 
-Version/staleness behavior (drop-stale, homogeneous select) lives on the
+Version/staleness behavior (validation and homogeneous select) lives on the
 ``RolloutScheduler`` now and is covered by ``test_scheduler.py``; this file pins
 only the container: byte/count backpressure and stats.
 """
@@ -48,8 +48,6 @@ def test_snapshot_and_remove_are_pure_container_ops() -> None:
     queue.remove([snap[0]])
     assert queue.size() == 1
     assert queue.ready_bytes() == 6
-    queue.note_dropped_stale(1)
-    assert queue.stats()["dropped_stale"] == 1.0
 
 
 def test_item_count_backpressure_drops_oldest() -> None:
@@ -57,9 +55,9 @@ def test_item_count_backpressure_drops_oldest() -> None:
     queue = ContinuousRolloutQueue(max_items=2)
     queue.put(_item(group_key=0, version=1))
     queue.put(_item(group_key=1, version=1))
-    queue.put(_item(group_key=2, version=1))
+    evicted = queue.put(_item(group_key=2, version=1))
     assert queue.size() == 2
-    assert queue.dropped_backpressure == 1
+    assert [item.group_key for item in evicted] == [0]
     # Oldest group (slot 0) evicted.
     remaining = {item.group_key for item in queue._items}
     assert remaining == {1, 2}
@@ -69,9 +67,9 @@ def test_byte_cap_backpressure() -> None:
     """Checks byte cap backpressure."""
     queue = ContinuousRolloutQueue(max_items=100, max_bytes=10)
     queue.put(_item(group_key=0, version=1, nbytes=6))
-    queue.put(_item(group_key=1, version=1, nbytes=6))  # 12 > 10 -> drop one
+    evicted = queue.put(_item(group_key=1, version=1, nbytes=6))
     assert queue.ready_bytes() <= 10
-    assert queue.dropped_backpressure == 1
+    assert [item.group_key for item in evicted] == [0]
 
 
 def test_stats_shape() -> None:

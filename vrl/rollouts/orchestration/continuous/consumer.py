@@ -58,7 +58,6 @@ class ContinuousRolloutConsumer:
         mode: RolloutScheduleMode,
         wait_timeout_s: float,
         poll_interval_s: float,
-        prompt_set_id: int = 0,
         producer_state: ContinuousRolloutProducerState | None = None,
     ) -> RolloutIteration:
         """Block until a homogeneous-version iteration is ready, then build it.
@@ -71,6 +70,9 @@ class ContinuousRolloutConsumer:
 
         deadline = time.monotonic() + float(wait_timeout_s)
         wait_start = time.perf_counter()
+        ready_groups_at_demand = len(
+            {item.group_key for item in self.queue.snapshot()},
+        )
         start_completed = producer_state.completed_count if producer_state else 0
         start_errors = producer_state.error_count if producer_state else 0
         while True:
@@ -83,7 +85,6 @@ class ContinuousRolloutConsumer:
                 self.queue,
                 min_groups=min_groups,
                 current_version=current_version,
-                prompt_set_id=prompt_set_id,
             )
             if selected is not None:
                 version, items = selected
@@ -95,6 +96,7 @@ class ContinuousRolloutConsumer:
                     mode=mode,
                     current_version=current_version,
                     queue_wait_s=wait_s,
+                    ready_groups_at_demand=ready_groups_at_demand,
                 )
             if time.monotonic() >= deadline:
                 raise TimeoutError(
@@ -169,6 +171,7 @@ class ContinuousRolloutConsumer:
         mode: RolloutScheduleMode,
         current_version: int | None,
         queue_wait_s: float,
+        ready_groups_at_demand: int,
     ) -> RolloutIteration:
         batches: list[RolloutBatch] = []
         for index, item in enumerate(items):
@@ -201,6 +204,7 @@ class ContinuousRolloutConsumer:
                 ),
                 "stale_policy_versions": (None if staleness is None else int(staleness)),
                 "continuous_item_age_s": float(item_age_s),
+                "continuous_ready_groups_at_demand": int(ready_groups_at_demand),
             },
         )
         return annotate_batch_context(iteration)

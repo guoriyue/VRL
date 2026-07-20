@@ -12,7 +12,12 @@ from vrl.rollouts.orchestration.continuous import (
 )
 from vrl.rollouts.orchestration.rollout_runtime import RolloutRuntimeCoordinator
 from vrl.rollouts.orchestration.strict_on_policy import StrictOnPolicyRolloutSchedule
-from vrl.rollouts.orchestration.types import RolloutIteration, RolloutScheduleMode
+from vrl.rollouts.orchestration.types import (
+    RewardCollectionMode,
+    RolloutIteration,
+    RolloutScheduleMode,
+)
+from vrl.utils.stats import RolloutStats
 
 logger = logging.getLogger(__name__)
 
@@ -26,9 +31,10 @@ class RolloutSchedule(Protocol):
         *,
         group_size: int,
         runtime_debug: bool = False,
+        next_prompts: list[Any] | None = None,
     ) -> RolloutIteration: ...
 
-    async def after_train_step(self) -> dict[str, float]: ...
+    async def after_train_step(self) -> RolloutStats: ...
 
     def reset(self) -> None: ...
 
@@ -74,7 +80,11 @@ def build_rollout_schedule(
     )
 
     if mode is RolloutScheduleMode.STRICT_ON_POLICY:
-        return StrictOnPolicyRolloutSchedule(lifecycle=lifecycle)
+        requested_arm = getattr(config, "reward_collection_mode", None)
+        return StrictOnPolicyRolloutSchedule(
+            lifecycle=lifecycle,
+            reward_mode=None if requested_arm is None else RewardCollectionMode(requested_arm),
+        )
     if mode is RolloutScheduleMode.CONTINUOUS:
         return _build_continuous_schedule(
             config,

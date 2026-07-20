@@ -256,9 +256,14 @@ async def test_owner_production_advances_while_trainer_loop_is_blocked() -> None
     schedule = _build(_continuous_config(), collector, _Syncer(runtime))
 
     try:
-        await schedule.next_iteration(["p0"], group_size=1)
+        await schedule.next_iteration(
+            ["p0"],
+            group_size=1,
+            next_prompts=["p1"],
+        )
         before = await owner_snapshot(schedule._owner)
         assert before.producer_state is not None
+        assert before.producer_state.submitted_count == 2
 
         # This blocks the trainer asyncio loop exactly like synchronous backward.
         time.sleep(0.12)
@@ -266,7 +271,7 @@ async def test_owner_production_advances_while_trainer_loop_is_blocked() -> None
         after = await owner_snapshot(schedule._owner)
         assert after.producer_state is not None
         assert after.producer_state.tick_count > before.producer_state.tick_count
-        assert after.producer_state.submitted_count > before.producer_state.submitted_count
+        assert after.producer_state.submitted_count == before.producer_state.submitted_count
         assert after.producer_state.completed_count > before.producer_state.completed_count
     finally:
         await schedule.shutdown()
@@ -437,8 +442,8 @@ async def test_partial_commit_failure_closes_admission_and_runtime() -> None:
 
 
 @pytest.mark.asyncio
-async def test_after_train_step_purges_items_outside_production_window() -> None:
-    """The first lag is retained; the next commit purges version-one items."""
+async def test_draining_sync_finishes_the_active_prompt_batch_before_commit() -> None:
+    """A draining backend completes every finite lookahead slot at one version."""
     runtime = _Runtime()
     collector = _Collector(runtime)
     syncer = _Syncer(runtime)
@@ -449,37 +454,27 @@ async def test_after_train_step_purges_items_outside_production_window() -> None
     )
 
     try:
-        first = await schedule.next_iteration(["p0", "p1"], group_size=2)
+        first = await schedule.next_iteration(
+            ["p0", "p1"],
+            group_size=2,
+            next_prompts=["p2", "p3"],
+        )
         assert first.policy_version == 1
-
-        # Simulate optimizer time: producer keeps filling the ready queue with
-        # v1 work while the trainer is still training that same v1 rollout.
-        before = await _snapshot_when(
-            schedule,
-            lambda item: item.queue_stats.get("ready_items", 0) > 0,
-        )
-        queued_before_sync = before.queue_stats
-        assert queued_before_sync["ready_items"] > 0
-        assert queued_before_sync["dropped_stale"] == 0
-
-        first_sync = await schedule.after_train_step()
+        await schedule.after_train_step()
         assert runtime.current_policy_version == 2
-        assert first_sync["continuous.post_sync_dropped_stale"] == 0.0
-
-        second_sync = await schedule.after_train_step()
         after = await owner_snapshot(schedule._owner)
-        assert runtime.current_policy_version == 3
-        assert (
-            second_sync["continuous.post_sync_dropped_stale"] >= queued_before_sync["ready_items"]
-        )
-        assert after.queue_stats["dropped_stale"] >= queued_before_sync["ready_items"]
+        assert after.queue_stats["ready_items"] == 2
+
+        second = await schedule.next_iteration(["p2", "p3"], group_size=2)
+        assert second.policy_version == 1
+        assert second.metadata["stale_policy_versions"] == 1
     finally:
         await schedule.shutdown()
 
 
 @pytest.mark.asyncio
-async def test_queue_capacity_autosizes_to_prompt_set() -> None:
-    # max_ready_groups (2) is smaller than the prompt set (3); the schedule must
+async def test_queue_capacity_autosizes_to_prompt_batch() -> None:
+    # max_ready_groups (2) is smaller than the prompt batch (3); the schedule must
     # still be able to assemble a full iteration rather than deadlock.
     """Checks queue capacity autosizes to prompt set."""
     runtime = _Runtime()
@@ -598,9 +593,12 @@ class _GatedScoreCollector(_Collector):
         self.allow_score = threading.Event()
         self.allow_score.set()
         self.score_blocked = threading.Event()
+        self.block_after_scores = 0
+        self.score_calls = 0
 
     async def score_rollouts(self, pendings: Any) -> list[RolloutBatch]:
-        if not self.allow_score.is_set():
+        self.score_calls += 1
+        if self.score_calls > self.block_after_scores and not self.allow_score.is_set():
             self.score_blocked.set()
             await asyncio.to_thread(self.allow_score.wait)
         return await super().score_rollouts(pendings)
@@ -617,12 +615,14 @@ async def test_weight_sync_waits_for_inflight_reward() -> None:
     schedule = _build(_continuous_config(), collector, syncer)
 
     try:
-        await schedule.next_iteration(["p0", "p1"], group_size=2)
-
-        # Gate scoring, then wait for the producer's next in-flight group to
-        # reach (and block inside) the reward phase.
+        collector.block_after_scores = 2
         collector.score_blocked.clear()
         collector.allow_score.clear()
+        await schedule.next_iteration(
+            ["p0", "p1"],
+            group_size=2,
+            next_prompts=["p2", "p3"],
+        )
         assert await asyncio.to_thread(collector.score_blocked.wait, 5.0)
 
         sync_calls_before = len(syncer.calls)
@@ -655,7 +655,7 @@ async def test_draining_barrier_reports_mode_zero() -> None:
     try:
         await schedule.next_iteration(["p0", "p1"], group_size=2)
         phases = await schedule.after_train_step()
-        assert phases["continuous.weight_sync_barrier_mode"] == 0.0
+        assert phases.as_phase_dict()["continuous.weight_sync_barrier_mode"] == 0.0
     finally:
         await schedule.shutdown()
 
@@ -674,11 +674,14 @@ async def test_non_draining_sync_skips_inflight_wait() -> None:
     schedule = _build(_continuous_config(), collector, syncer)
 
     try:
-        await schedule.next_iteration(["p0", "p1"], group_size=2)
-
-        # Block reward and wait for the producer's next group to be in-flight.
+        collector.block_after_scores = 2
         collector.score_blocked.clear()
         collector.allow_score.clear()
+        await schedule.next_iteration(
+            ["p0", "p1"],
+            group_size=2,
+            next_prompts=["p2", "p3"],
+        )
         assert await asyncio.to_thread(collector.score_blocked.wait, 5.0)
 
         sync_calls_before = len(syncer.calls)
@@ -686,13 +689,92 @@ async def test_non_draining_sync_skips_inflight_wait() -> None:
         # canary test, where this would block until allow_score.set()).
         phases = await asyncio.wait_for(schedule.after_train_step(), 5.0)
 
-        assert phases["continuous.weight_sync_barrier_mode"] == 1.0
+        assert phases.as_phase_dict()["continuous.weight_sync_barrier_mode"] == 1.0
         assert len(syncer.calls) == sync_calls_before + 1
         snapshot = await owner_snapshot(schedule._owner)
         assert snapshot.producer_state is not None
         assert snapshot.producer_state.paused_for_weight_sync is False
     finally:
         collector.allow_score.set()
+        await schedule.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_three_gas2_updates_consume_exact_finite_lookahead_sequence() -> None:
+    """Three GAS2 updates consume each announced prompt batch once within stale bound."""
+    runtime = _Runtime()
+    runtime.supports_non_draining_weight_sync = True
+    collector = _Collector(runtime)
+    schedule = _build(
+        _continuous_config(
+            max_inflight_groups=6,
+            max_ready_groups=8,
+            max_stale_policy_versions=1,
+        ),
+        collector,
+        _Syncer(runtime),
+    )
+    prompts = [[f"update-{update}-micro-{micro}"] for update in range(3) for micro in range(2)]
+    iterations = []
+    sync_stats = []
+
+    try:
+        for index, current_prompts in enumerate(prompts):
+            next_prompts = prompts[index + 1] if index + 1 < len(prompts) else None
+            iterations.append(
+                await schedule.next_iteration(
+                    current_prompts,
+                    group_size=4,
+                    next_prompts=next_prompts,
+                ),
+            )
+            if index % 2 == 1:
+                sync_stats.append(await schedule.after_train_step())
+
+        assert [
+            [batch.prompts[0] for batch in iteration.batches] for iteration in iterations
+        ] == prompts
+        assert [iteration.policy_version for iteration in iterations] == [1, 1, 1, 2, 2, 3]
+        assert [iteration.metadata["consume_policy_version"] for iteration in iterations] == [
+            1,
+            1,
+            2,
+            2,
+            3,
+            3,
+        ]
+        assert [iteration.metadata["stale_policy_versions"] for iteration in iterations] == [
+            0,
+            0,
+            1,
+            0,
+            1,
+            0,
+        ]
+        assert [
+            iteration.stats.as_phase_dict()["continuous.lookahead_requested"]
+            for iteration in iterations
+        ] == [1.0, 1.0, 1.0, 1.0, 1.0, 0.0]
+        assert [
+            (call["prompts"], call["group_size"], call["policy_version"])
+            for call in collector.calls
+        ] == [
+            (current_prompts, 4, rollout_version)
+            for current_prompts, rollout_version in zip(
+                prompts,
+                [1, 1, 1, 2, 2, 3],
+                strict=True,
+            )
+        ]
+        assert [
+            stats.as_phase_dict()["continuous.weight_sync_barrier_mode"] for stats in sync_stats
+        ] == [1.0, 1.0, 1.0]
+        assert runtime.current_policy_version == 4
+
+        snapshot = await owner_snapshot(schedule._owner)
+        assert snapshot.producer_state is not None
+        assert snapshot.queue_stats["ready_items"] == 0
+    finally:
         await schedule.shutdown()
 
 
@@ -708,11 +790,8 @@ class _StaleSlotCollector(_Collector):
 
 
 @pytest.mark.asyncio
-async def test_stale_slot_discard_counts_as_discard_not_error() -> None:
-    # A StaleSlotDiscard from generation is an expected graceful discard under a
-    # non-draining weight sync: the producer must count it as discarded_stale, not
-    # as a collect error (which would inflate error_count and trip fail-fast).
-    """Checks stale-slot discard increments discarded_stale_count, not error_count."""
+async def test_stale_slot_discard_fails_the_fixed_version_prompt_batch() -> None:
+    """A prompt batch cannot replace one slot without violating version identity."""
     runtime = _Runtime()
     runtime.supports_non_draining_weight_sync = True
     collector = _StaleSlotCollector(runtime)
@@ -723,37 +802,27 @@ async def test_stale_slot_discard_counts_as_discard_not_error() -> None:
         syncer,
     )
 
-    request = asyncio.create_task(
-        schedule.next_iteration(["p0", "p1"], group_size=2),
-    )
     try:
-        # Let the background loop submit + harvest several stale-slot groups.
-        snapshot = await _snapshot_when(
-            schedule,
-            lambda item: (
-                item.producer_state is not None and item.producer_state.discarded_stale_count >= 2
-            ),
-        )
-        # Discards never become errors, so fail-fast (2) is never tripped.
-        assert snapshot.producer_state is not None
-        assert snapshot.producer_state.error_count == 0
-        assert snapshot.producer_state.last_error is None
-        assert snapshot.queue_stats["ready_items"] == 0
+        with pytest.raises(RuntimeError, match="producer control loop failed") as exc_info:
+            await schedule.next_iteration(["p0", "p1"], group_size=2)
+        assert exc_info.value.__cause__ is not None
+        assert "lost its fixed policy-version slot" in str(exc_info.value.__cause__)
     finally:
-        request.cancel()
-        with pytest.raises(asyncio.CancelledError):
-            await request
         await schedule.shutdown()
 
 
 @pytest.mark.asyncio
-async def test_prompt_set_update_swaps_producer_source() -> None:
-    """Checks prompt set update swaps producer source."""
+async def test_lookahead_installs_the_next_prompt_batch() -> None:
+    """The producer advances to exactly the prompt batch announced as lookahead."""
     runtime = _Runtime()
     schedule = _build(_continuous_config(), _Collector(runtime), _Syncer(runtime))
 
     try:
-        await schedule.next_iteration(["p0", "p1"], group_size=2)
+        await schedule.next_iteration(
+            ["p0", "p1"],
+            group_size=2,
+            next_prompts=["p0", "p2"],
+        )
         await schedule.next_iteration(["p0", "p2"], group_size=2)
         assert (await owner_snapshot(schedule._owner)).prompts == ("p0", "p2")
     finally:
@@ -761,8 +830,31 @@ async def test_prompt_set_update_swaps_producer_source() -> None:
 
 
 @pytest.mark.asyncio
-async def test_prompt_set_update_purges_old_ready_items_before_wait() -> None:
-    """Old prompt-set ready items must not block admission for the new set."""
+async def test_lookahead_freezes_runtime_debug_at_generation_time() -> None:
+    runtime = _Runtime()
+    collector = _Collector(runtime)
+    schedule = _build(_continuous_config(), collector, _Syncer(runtime))
+
+    try:
+        await schedule.next_iteration(
+            ["p0"],
+            group_size=1,
+            runtime_debug=True,
+            next_prompts=["p1"],
+        )
+        await schedule.next_iteration(
+            ["p1"],
+            group_size=1,
+            runtime_debug=False,
+        )
+        assert [call["runtime_debug"] for call in collector.calls] == [True, True]
+    finally:
+        await schedule.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_lookahead_mismatch_fails_instead_of_training_the_wrong_prompt_batch() -> None:
+    """The trainer must consume the exact prompt batch it announced as lookahead."""
     runtime = _Runtime()
     schedule = _build(
         _continuous_config(
@@ -776,19 +868,12 @@ async def test_prompt_set_update_purges_old_ready_items_before_wait() -> None:
     )
 
     try:
-        await schedule.next_iteration(["p0", "p1"], group_size=1)
-        await _snapshot_when(
-            schedule,
-            lambda item: item.queue_stats.get("ready_items", 0) >= 4,
+        await schedule.next_iteration(
+            ["p0", "p1"],
+            group_size=1,
+            next_prompts=["p2", "p3"],
         )
-        await schedule.after_train_step()
-        after_sync = await owner_snapshot(schedule._owner)
-        assert after_sync.queue_stats["ready_items"] >= 4
-
-        second = await schedule.next_iteration(["p2", "p3"], group_size=1)
-
-        assert sorted(batch.prompts[0] for batch in second.batches) == ["p2", "p3"]
-        assert second.stats.as_phase_dict()["continuous.prompt_set_dropped"] >= 4.0
-        assert (await owner_snapshot(schedule._owner)).queue_stats["dropped_prompt_set"] >= 4.0
+        with pytest.raises(RuntimeError, match="lookahead prompt batch does not match"):
+            await schedule.next_iteration(["p2", "different"], group_size=1)
     finally:
         await schedule.shutdown()

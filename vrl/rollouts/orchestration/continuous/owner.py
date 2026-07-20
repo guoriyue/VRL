@@ -31,6 +31,7 @@ from vrl.rollouts.orchestration.types import (
     RolloutScheduleMode,
     RolloutScheduleState,
 )
+from vrl.utils.stats import RolloutStats
 
 logger = logging.getLogger(__name__)
 
@@ -39,6 +40,22 @@ _OWNER_START_TIMEOUT_S = 10.0
 _OWNER_STOP_TIMEOUT_S = 30.0
 
 _T = TypeVar("_T")
+
+
+def _prompt_batches_equal(left: list[Any], right: list[Any]) -> bool:
+    """Compare complete prompt inputs without assuming scalar equality."""
+
+    if len(left) != len(right):
+        return False
+    for left_item, right_item in zip(left, right, strict=True):
+        if left_item is right_item:
+            continue
+        try:
+            if not bool(left_item == right_item):
+                return False
+        except (TypeError, ValueError, RuntimeError):
+            return False
+    return True
 
 
 class _ContinuousOwnerRuntime:
@@ -66,8 +83,9 @@ class _ContinuousOwnerRuntime:
         self.consumer: ContinuousRolloutConsumer | None = None
         self.producer: ContinuousRolloutProducer | None = None
         self.scheduler: RolloutScheduler | None = None
-        self._prompt_key: tuple[str, ...] | None = None
-        self._prompt_set_id = 0
+        self._active_prompts: list[Any] | None = None
+        self._active_group_size: int | None = None
+        self._active_batch_consumed = True
 
         self._command_lock = asyncio.Lock()
         self._active_commands: set[asyncio.Task[Any]] = set()
@@ -83,9 +101,11 @@ class _ContinuousOwnerRuntime:
         group_size: int,
         runtime_debug: bool,
         initial_weights: Any,
+        next_prompts: list[Any] | None = None,
     ) -> RolloutIteration:
         async def operation() -> RolloutIteration:
-            prompt_key = tuple(str(getattr(item, "prompt", item)) for item in prompts)
+            if not prompts:
+                raise ValueError("continuous rollout requires at least one prompt")
             phase_times: dict[str, float] = {}
 
             if self.producer is None:
@@ -96,23 +116,26 @@ class _ContinuousOwnerRuntime:
                     initial_weights=initial_weights,
                     phase_times=phase_times,
                 )
-                self._prompt_key = prompt_key
-            elif prompt_key != self._prompt_key:
-                self._prompt_set_id += 1
-                self.producer.update_prompts(
+            elif self._active_batch_consumed:
+                self._set_prompt_batch(
                     prompts,
-                    prompt_set_id=self._prompt_set_id,
+                    group_size=group_size,
+                    runtime_debug=runtime_debug,
                 )
-                assert self.queue is not None
-                assert self.scheduler is not None
-                phase_times["continuous.prompt_set_dropped"] = float(
-                    self.scheduler.drop_obsolete_prompt_sets(
-                        self.queue,
-                        prompt_set_id=self._prompt_set_id,
-                    ),
+            elif self._active_prompts is None or not _prompt_batches_equal(
+                self._active_prompts,
+                prompts,
+            ):
+                raise RuntimeError(
+                    "continuous lookahead prompt batch does not match the next prompts "
+                    "presented by the trainer",
                 )
-                self._prompt_key = prompt_key
-
+            elif self._active_group_size != int(group_size):
+                raise RuntimeError(
+                    "continuous lookahead group size does not match the batch "
+                    f"presented by the trainer: expected={self._active_group_size}, "
+                    f"requested={group_size}",
+                )
             assert self.consumer is not None
             assert self.producer is not None
             rollout_id = self.state.rollout_id
@@ -126,27 +149,72 @@ class _ContinuousOwnerRuntime:
                 mode=RolloutScheduleMode.CONTINUOUS,
                 wait_timeout_s=self.wait_timeout_s,
                 poll_interval_s=self.queue_poll_interval_s,
-                prompt_set_id=self._prompt_set_id,
                 producer_state=self.producer.state,
             )
+            self._active_batch_consumed = True
+            lookahead_requested = 0.0
+            if next_prompts is not None:
+                if not next_prompts:
+                    raise ValueError("continuous lookahead prompts must be non-empty")
+                # Debug metadata belongs to generation time. This lookahead runs
+                # during the current training step, even when the trainer consumes
+                # it after state.step (and therefore runtime_debug) changes.
+                self._set_prompt_batch(
+                    next_prompts,
+                    group_size=group_size,
+                    runtime_debug=runtime_debug,
+                )
+                lookahead_requested = 1.0
             iteration.stats.add_phases(phase_times)
+            iteration.stats.observe_gauge(
+                "continuous.lookahead_requested",
+                lookahead_requested,
+            )
             self._attach_producer_metrics(iteration)
             return iteration
 
         return await self._run_command(operation)
 
-    async def commit_weights(self, prepared_weights: Any) -> dict[str, float]:
+    def _set_prompt_batch(
+        self,
+        prompts: list[Any],
+        *,
+        group_size: int,
+        runtime_debug: bool,
+    ) -> None:
+        """Install the next finite prompt batch and dispatch it immediately."""
+
+        assert self.producer is not None
+        assert self.queue is not None
+        if len(prompts) > self.queue.max_items:
+            raise ValueError(
+                "continuous prompt batch exceeds ready-queue item capacity: "
+                f"prompts={len(prompts)}, capacity={self.queue.max_items}",
+            )
+        self.producer.set_prompt_batch(
+            list(prompts),
+            group_size=group_size,
+            runtime_debug=runtime_debug,
+        )
+        self._active_prompts = list(prompts)
+        self._active_group_size = int(group_size)
+        self._active_batch_consumed = False
+        self.producer.admit_now()
+
+    async def commit_weights(self, prepared_weights: Any) -> RolloutStats:
         """Commit one main-thread snapshot and reopen admission only on success."""
 
-        async def operation() -> dict[str, float]:
+        async def operation() -> RolloutStats:
             phase_times: dict[str, float] = {}
+            stats = RolloutStats()
             producer = self.producer
             if producer is None:
                 await self.lifecycle.push_prepared_weights(
                     prepared_weights,
                     phase_times,
                 )
-                return phase_times
+                stats.add_phases(phase_times)
+                return stats
 
             non_draining = self.lifecycle.supports_non_draining_weight_sync()
             with record_phase(phase_times, "continuous.weight_sync_pause_s"):
@@ -155,24 +223,24 @@ class _ContinuousOwnerRuntime:
                 # update leaves the fleet's installed version unknown, so failure
                 # keeps admission closed and _run_command quarantines the owner.
                 if not non_draining:
-                    await producer.drain_inflight()
+                    await producer.drain_prompt_batch(wait_timeout_s=self.wait_timeout_s)
                 await self.lifecycle.push_prepared_weights(
                     prepared_weights,
                     phase_times,
                 )
                 assert self.queue is not None
                 assert self.scheduler is not None
-                phase_times["continuous.post_sync_dropped_stale"] = float(
-                    self.scheduler.drop_stale(
-                        self.queue,
-                        current_version=self.lifecycle.current_policy_version(),
-                    ),
-                )
-                phase_times["continuous.weight_sync_barrier_mode"] = float(
-                    non_draining,
+                self.scheduler.validate_ready_versions(
+                    self.queue,
+                    current_version=self.lifecycle.current_policy_version(),
                 )
                 producer.resume_admission()
-            return phase_times
+            stats.add_phases(phase_times)
+            stats.observe_gauge(
+                "continuous.weight_sync_barrier_mode",
+                float(non_draining),
+            )
+            return stats
 
         return await self._run_command(operation)
 
@@ -302,9 +370,7 @@ class _ContinuousOwnerRuntime:
         self.scheduler = RolloutScheduler(
             staleness=self.staleness,
             max_inflight_groups=self.max_inflight_groups,
-            capacity=capacity,
             max_bytes=self.max_ready_bytes,
-            groups_per_iteration=len(prompts),
         )
         self.consumer = ContinuousRolloutConsumer(
             queue=self.queue,
@@ -313,15 +379,21 @@ class _ContinuousOwnerRuntime:
         )
         self.producer = ContinuousRolloutProducer(
             lifecycle=self.lifecycle,
-            prompts=list(prompts),
             queue=self.queue,
             scheduler=self.scheduler,
-            group_size=group_size,
             poll_interval_s=self.queue_poll_interval_s,
-            prompt_set_id=self._prompt_set_id,
+            fail_fast_errors=self.fail_fast_errors,
+        )
+        self.producer.set_prompt_batch(
+            list(prompts),
+            group_size=group_size,
             runtime_debug=runtime_debug,
         )
+        self._active_prompts = list(prompts)
+        self._active_group_size = int(group_size)
+        self._active_batch_consumed = False
         await self.producer.start()
+        self.producer.admit_now()
 
     async def _stop_pipeline(self) -> None:
         producer = self.producer
@@ -330,10 +402,11 @@ class _ContinuousOwnerRuntime:
         self.queue = None
         self.consumer = None
         self.scheduler = None
-        self._prompt_key = None
-        self._prompt_set_id = 0
+        self._active_prompts = None
+        self._active_group_size = None
+        self._active_batch_consumed = True
         if producer is not None:
-            await producer.stop()
+            await producer.stop(wait_timeout_s=_OWNER_STOP_TIMEOUT_S)
         if queue is not None:
             queue.close()
 
@@ -344,7 +417,7 @@ class _ContinuousOwnerRuntime:
         queue_stats = self.queue.stats()
         version = iteration.policy_version
         metadata = iteration.metadata
-        iteration.stats.add_phases(
+        iteration.stats.observe_gauges(
             {
                 "continuous.producer_inflight": float(state.inflight_count),
                 "continuous.producer_tick_count": float(state.tick_count),
@@ -352,27 +425,15 @@ class _ContinuousOwnerRuntime:
                 "continuous.producer_max_tick_gap_s": float(state.max_tick_gap_s),
                 "continuous.producer_submitted": float(state.submitted_count),
                 "continuous.producer_completed": float(state.completed_count),
-                "continuous.producer_discarded_stale": float(
-                    state.discarded_stale_count,
-                ),
-                "continuous.producer_discarded_prompt_set": float(
-                    state.discarded_prompt_set_count,
-                ),
-                "continuous.predicted_admit_staleness": float(
-                    state.predicted_admit_staleness,
-                ),
-                "continuous.admit_blocked_on_staleness": float(
-                    state.admit_blocked_reason == "would_land_too_stale",
-                ),
                 "continuous.queue_ready_items": queue_stats["ready_items"],
                 "continuous.queue_ready_groups": queue_stats["ready_groups"],
+                "continuous.ready_groups_at_demand": float(
+                    metadata.get("continuous_ready_groups_at_demand", 0),
+                ),
                 "continuous.queue_ready_bytes": queue_stats["ready_bytes"],
                 "continuous.item_age_s": float(
                     metadata.get("continuous_item_age_s", 0.0),
                 ),
-                "continuous.dropped_stale": queue_stats["dropped_stale"],
-                "continuous.dropped_prompt_set": queue_stats["dropped_prompt_set"],
-                "continuous.dropped_backpressure": queue_stats["dropped_backpressure"],
                 "continuous.producer_errors": float(state.error_count),
                 "continuous.consume_policy_version": float(
                     metadata.get("consume_policy_version") or 0,
@@ -415,6 +476,7 @@ class ContinuousRolloutOwner:
         group_size: int,
         runtime_debug: bool,
         initial_weights: Any,
+        next_prompts: list[Any] | None = None,
     ) -> RolloutIteration:
         runtime, loop = self._ensure_thread()
         future = asyncio.run_coroutine_threadsafe(
@@ -423,12 +485,13 @@ class ContinuousRolloutOwner:
                 group_size=group_size,
                 runtime_debug=runtime_debug,
                 initial_weights=initial_weights,
+                next_prompts=(None if next_prompts is None else list(next_prompts)),
             ),
             loop,
         )
         return await _await_owner_future(future)
 
-    async def commit_weights(self, prepared_weights: Any) -> dict[str, float]:
+    async def commit_weights(self, prepared_weights: Any) -> RolloutStats:
         runtime, loop = self._ensure_thread()
         future = asyncio.run_coroutine_threadsafe(
             runtime.commit_weights(prepared_weights),

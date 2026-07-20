@@ -10,6 +10,7 @@ from vrl.rollouts.orchestration.rollout_runtime import (
     record_phase,
 )
 from vrl.rollouts.orchestration.types import (
+    RewardCollectionMode,
     RolloutIteration,
     RolloutScheduleMode,
     RolloutScheduleState,
@@ -41,8 +42,17 @@ class StrictOnPolicyRolloutSchedule:
 
     mode = RolloutScheduleMode.STRICT_ON_POLICY
 
-    def __init__(self, *, lifecycle: RolloutRuntimeCoordinator) -> None:
+    def __init__(
+        self,
+        *,
+        lifecycle: RolloutRuntimeCoordinator,
+        reward_mode: RewardCollectionMode | None = None,
+    ) -> None:
         self.lifecycle = lifecycle
+        # None = derive the arm from the collector capability. A forced arm is an
+        # acceptance-measurement control; it can only restrict, never enable
+        # overlap (enforced in resolve_reward_collection_mode).
+        self.reward_mode = reward_mode
         self.state = RolloutScheduleState()
 
     async def next_iteration(
@@ -51,7 +61,9 @@ class StrictOnPolicyRolloutSchedule:
         *,
         group_size: int,
         runtime_debug: bool = False,
+        next_prompts: list[Any] | None = None,
     ) -> RolloutIteration:
+        del next_prompts
         # Schedule-level phases (weight init / driver offload / activate / collect /
         # sync) are timed into a local dict via the lifecycle's record_phase;
         # the per-request collect stats accumulate into a typed RolloutStats.
@@ -81,6 +93,7 @@ class StrictOnPolicyRolloutSchedule:
                     runtime_debug=runtime_debug,
                     policy_version=policy_version,
                     stats=stats,
+                    reward_mode=self.reward_mode,
                 )
         except BaseException as error:
             phase_error = error
@@ -126,10 +139,12 @@ class StrictOnPolicyRolloutSchedule:
             )
         )
 
-    async def after_train_step(self) -> dict[str, float]:
+    async def after_train_step(self) -> RolloutStats:
         phase_times: dict[str, float] = {}
         await self.lifecycle.sync_weights_after_train(phase_times)
-        return phase_times
+        stats = RolloutStats()
+        stats.add_phases(phase_times)
+        return stats
 
     def reset(self) -> None:
         """No-op reset; the schedule holds no resume-sensitive state."""

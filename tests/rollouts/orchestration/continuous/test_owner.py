@@ -62,9 +62,12 @@ class _OwnerCollector:
             return self._blocked_calls
 
     def block_future_scores(self) -> None:
+        self.block_scores_after(0)
+
+    def block_scores_after(self, successful_calls: int) -> None:
         self.allow_score.clear()
         with self._score_lock:
-            self._block_from_call = self.score_calls + 1
+            self._block_from_call = self.score_calls + int(successful_calls) + 1
             self._blocked_calls = 0
             self.score_blocked.clear()
 
@@ -181,6 +184,7 @@ async def test_owner_cadence_survives_blocked_trainer_event_loop() -> None:
             group_size=1,
             runtime_debug=False,
             initial_weights={"w": 0},
+            next_prompts=["p1"],
         )
         before = await owner_snapshot(owner)
 
@@ -227,13 +231,14 @@ async def test_draining_commit_waits_for_reward_then_resumes() -> None:
     owner = _owner(lifecycle)
 
     try:
+        collector.block_scores_after(1)
         await owner.next_iteration(
             ["p0"],
             group_size=1,
             runtime_debug=False,
             initial_weights={"w": 0},
+            next_prompts=["p1"],
         )
-        collector.block_future_scores()
         await _wait_until(lambda: collector.blocked_calls > 0)
 
         push_count = len(lifecycle.push_calls)
@@ -250,7 +255,7 @@ async def test_draining_commit_waits_for_reward_then_resumes() -> None:
         phases = await asyncio.wait_for(commit, 5.0)
         resumed = await owner_snapshot(owner)
 
-        assert phases["continuous.weight_sync_barrier_mode"] == 0.0
+        assert phases.as_phase_dict()["continuous.weight_sync_barrier_mode"] == 0.0
         assert lifecycle.version == 2
         assert resumed.producer_state is not None
         assert resumed.producer_state.paused_for_weight_sync is False
@@ -266,19 +271,20 @@ async def test_version_slots_skip_drain_but_still_gate_new_admission() -> None:
     owner = _owner(lifecycle)
 
     try:
+        collector.block_scores_after(1)
         await owner.next_iteration(
             ["p0"],
             group_size=1,
             runtime_debug=False,
             initial_weights={"w": 0},
+            next_prompts=["p1"],
         )
-        collector.block_future_scores()
         await _wait_until(lambda: collector.blocked_calls > 0)
 
         phases = await asyncio.wait_for(owner.commit_weights({"w": 1}), 5.0)
         snapshot = await owner_snapshot(owner)
 
-        assert phases["continuous.weight_sync_barrier_mode"] == 1.0
+        assert phases.as_phase_dict()["continuous.weight_sync_barrier_mode"] == 1.0
         assert lifecycle.version == 2
         assert collector.blocked_calls > 0
         assert snapshot.producer_state is not None

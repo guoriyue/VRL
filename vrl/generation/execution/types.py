@@ -16,9 +16,9 @@ class StaleSlotDiscard(Exception):
     Raised by the executor when a chunk comes back as a TYPED stale-slot result
     (``ChunkExecutionResult.stale_slot``) — the request's policy version was
     evicted under a non-draining weight sync, NOT a real generation failure. The
-    continuous producer catches this distinct type and counts the group as a
-    graceful stale discard (``discarded_stale_count``) instead of a collect error
-    (``error_count``). See SPRINT_shadow_model_weight_sync.md §3.1 / §4.
+    continuous finite-batch producer catches this distinct type and terminates
+    the batch with the fixed-version cause instead of retrying it as a collect
+    error. See SPRINT_shadow_model_weight_sync.md §3.1 / §4.
     """
 
 

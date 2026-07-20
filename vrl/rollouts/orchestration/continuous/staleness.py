@@ -40,14 +40,6 @@ class StalenessPolicy:
         staleness = self.staleness(item_version, current_version)
         return staleness is not None and staleness < 0
 
-    def admit(self, item_version: int | None, current_version: int | None) -> bool:
-        """True when an item is fresh enough to train on."""
-
-        staleness = self.staleness(item_version, current_version)
-        if staleness is None:
-            return True
-        return 0 <= staleness <= int(self.max_stale_policy_versions)
-
     def too_stale(self, item_version: int | None, current_version: int | None) -> bool:
         staleness = self.staleness(item_version, current_version)
         return staleness is not None and staleness > int(self.max_stale_policy_versions)

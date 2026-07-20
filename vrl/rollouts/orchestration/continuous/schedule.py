@@ -16,6 +16,7 @@ from vrl.rollouts.orchestration.continuous.owner import (
 from vrl.rollouts.orchestration.continuous.types import ContinuousRolloutSettings
 from vrl.rollouts.orchestration.rollout_runtime import RolloutRuntimeCoordinator
 from vrl.rollouts.orchestration.types import RolloutIteration, RolloutScheduleMode
+from vrl.utils.stats import RolloutStats
 
 
 class ContinuousRolloutSchedule:
@@ -43,6 +44,7 @@ class ContinuousRolloutSchedule:
         *,
         group_size: int,
         runtime_debug: bool = False,
+        next_prompts: list[Any] | None = None,
     ) -> RolloutIteration:
         initial_weights = None
         if self._needs_initial_weights:
@@ -55,9 +57,10 @@ class ContinuousRolloutSchedule:
             group_size=group_size,
             runtime_debug=runtime_debug,
             initial_weights=initial_weights,
+            next_prompts=next_prompts,
         )
 
-    async def after_train_step(self) -> dict[str, float]:
+    async def after_train_step(self) -> RolloutStats:
         prepared_weights = self.lifecycle.prepare_weight_sync_state()
         return await self._owner.commit_weights(prepared_weights)
 
