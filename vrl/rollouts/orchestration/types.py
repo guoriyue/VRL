@@ -17,6 +17,22 @@ class RolloutScheduleMode(str, Enum):
     CONTINUOUS = "continuous"
 
 
+class RewardCollectionMode(str, Enum):
+    """How prompt collection interleaves group generation and reward scoring.
+
+    Production picks between ``BATCHED_SERIAL`` and ``PER_GROUP_STREAMING`` from
+    the collector's overlap capability alone. ``PER_GROUP_SERIAL`` is the
+    acceptance control arm required by ``docs/sprints/done/SPRINT_reward_service.md``:
+    it moves scoring to per-group granularity *without* overlap, so the
+    per-group call/transport tax can be measured separately from the overlap
+    gain. Without it a streaming benchmark changes two variables at once and
+    cannot attribute its own result.
+    """
+
+    BATCHED_SERIAL = "batched_serial"
+    PER_GROUP_SERIAL = "per_group_serial"
+    PER_GROUP_STREAMING = "per_group_streaming"
+
 
 @dataclass(slots=True)
 class RolloutScheduleState:
@@ -66,9 +82,7 @@ def build_rollout_iteration(
     sample_count = sum(int(batch.rewards.shape[0]) for batch in batches)
     metadata: dict[str, Any] = {
         "rollout_id": int(rollout_id),
-        "rollout_policy_version": (
-            None if policy_version is None else int(policy_version)
-        ),
+        "rollout_policy_version": (None if policy_version is None else int(policy_version)),
         "schedule_mode": mode.value,
         "prompt_count": int(prompt_count),
         "sample_count": int(sample_count),
@@ -94,6 +108,7 @@ def annotate_batch_context(iteration: RolloutIteration) -> RolloutIteration:
 
 
 __all__ = [
+    "RewardCollectionMode",
     "RolloutIteration",
     "RolloutScheduleMode",
     "RolloutScheduleState",

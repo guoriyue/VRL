@@ -9,6 +9,7 @@ from typing import Any
 from vrl.generation import GenerationInput
 from vrl.rollouts.batch import RolloutBatch
 from vrl.rollouts.batch.ops import remap_group_ids_, split_batch_by_group
+from vrl.rollouts.orchestration.types import RewardCollectionMode
 from vrl.utils.stats import RolloutStats
 
 
@@ -29,6 +30,36 @@ class PromptCollectionCleanupError(RuntimeError):
         )
 
 
+def resolve_reward_collection_mode(
+    collector: Any,
+    requested: RewardCollectionMode | None,
+) -> RewardCollectionMode:
+    """Pick the collection mode, letting an override restrict but never grant.
+
+    The capability is the only thing that may *enable* overlap. An explicit
+    request can force a slower arm on a capable collector (that is what the
+    acceptance control arms need), but requesting streaming without the
+    capability raises instead of silently downgrading: a benchmark that
+    believed it measured arm C while running arm A would report a fabricated
+    result, and the isolation contract stays fail-closed.
+    """
+
+    capable = bool(getattr(collector, "supports_reward_generation_overlap", False))
+    if requested is None:
+        return (
+            RewardCollectionMode.PER_GROUP_STREAMING
+            if capable
+            else RewardCollectionMode.BATCHED_SERIAL
+        )
+    if requested is RewardCollectionMode.PER_GROUP_STREAMING and not capable:
+        raise ValueError(
+            "reward collection mode 'per_group_streaming' requires the collector's "
+            "reward/generation overlap capability (async scoring plus verified "
+            "accelerator isolation); it cannot be forced on",
+        )
+    return requested
+
+
 async def collect_prompt_batches(
     *,
     collector: Any,
@@ -37,6 +68,7 @@ async def collect_prompt_batches(
     runtime_debug: bool,
     policy_version: int | None,
     stats: RolloutStats | None = None,
+    reward_mode: RewardCollectionMode | None = None,
 ) -> list[RolloutBatch]:
     """Collect trainer prompts through ``RolloutCollector`` and split by group.
 
@@ -45,6 +77,10 @@ async def collect_prompt_batches(
     A capable collector may score group N while generating group N+1. The
     streaming path owns at most one scoring task, so reward work has bounded
     backpressure and deterministic cleanup.
+
+    ``reward_mode`` overrides that derived choice for acceptance measurement
+    only; see :class:`RewardCollectionMode`. It can restrict a capable collector
+    to a serial arm but can never enable overlap.
 
     ``stats`` (when given) accumulates this call's collect phase timings
     (``collect.engine_generate`` / ``collect.reward_score`` /
@@ -68,9 +104,8 @@ async def collect_prompt_batches(
     # The collector combines topology and reward-runtime execution semantics.
     # Missing capability must preserve the batched serial path: topology alone
     # cannot prove that scoring yields the event loop or retains throughput.
-    overlap_reward_scoring = bool(
-        getattr(collector, "supports_reward_generation_overlap", False),
-    )
+    mode = resolve_reward_collection_mode(collector, reward_mode)
+    per_group_scoring = mode is not RewardCollectionMode.BATCHED_SERIAL
     score_task: asyncio.Task[list[RolloutBatch]] | None = None
 
     async def collect_unscored(
@@ -90,6 +125,14 @@ async def collect_prompt_batches(
         finally:
             reward_intervals.append((started, time.perf_counter()))
 
+    def take_single(batches: list[RolloutBatch]) -> None:
+        if len(batches) != 1:
+            raise RuntimeError(
+                "per-group reward scoring must return one batch for one unscored group, "
+                f"got {len(batches)}",
+            )
+        scored_batches.extend(batches)
+
     async def drain_score_task() -> None:
         nonlocal score_task
         task = score_task
@@ -98,13 +141,7 @@ async def collect_prompt_batches(
         # Clear ownership before awaiting so a task failure is not mistaken for
         # a second cleanup failure by the outer exception handler.
         score_task = None
-        batches = await task
-        if len(batches) != 1:
-            raise RuntimeError(
-                "streamed reward scoring must return one batch for one unscored group, "
-                f"got {len(batches)}",
-            )
-        scored_batches.extend(batches)
+        take_single(await task)
 
     async def record_unscored(
         unscored: Any,
@@ -112,7 +149,13 @@ async def collect_prompt_batches(
     ) -> None:
         nonlocal score_task
         unscored_groups.append((unscored, remap))
-        if not overlap_reward_scoring:
+        if not per_group_scoring:
+            return
+        if mode is RewardCollectionMode.PER_GROUP_SERIAL:
+            # Control arm: same per-group call granularity as streaming, but the
+            # score completes before the next generation starts. The measured
+            # difference against streaming is overlap alone.
+            take_single(await score_unscored([unscored]))
             return
         # Generation of this group ran while the previous scoring task was in
         # flight. Drain it before starting this group's task: at most one reward
@@ -159,7 +202,9 @@ async def collect_prompt_batches(
         if not unscored_groups:
             return []
 
-        if overlap_reward_scoring:
+        if per_group_scoring:
+            # PER_GROUP_SERIAL already drained inline; only streaming can still
+            # own a task here.
             await drain_score_task()
             batches = scored_batches
         else:
@@ -260,4 +305,8 @@ def _interval_overlap_seconds(
     return overlap
 
 
-__all__ = ["PromptCollectionCleanupError", "collect_prompt_batches"]
+__all__ = [
+    "PromptCollectionCleanupError",
+    "collect_prompt_batches",
+    "resolve_reward_collection_mode",
+]

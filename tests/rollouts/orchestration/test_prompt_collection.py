@@ -14,6 +14,7 @@ from vrl.rollouts.orchestration.prompt_collection import (
     PromptCollectionCleanupError,
     collect_prompt_batches,
 )
+from vrl.rollouts.orchestration.types import RewardCollectionMode
 from vrl.trainers.data import PromptExample
 
 
@@ -462,3 +463,128 @@ async def test_generation_failure_cancels_and_settles_inflight_score(
 
     assert collector.active_scores == 0
     assert collector.score_cancelled.is_set()
+
+
+@pytest.mark.asyncio
+async def test_per_group_serial_scores_each_group_before_the_next_generation() -> None:
+    """Checks the acceptance control arm keeps per-group calls without overlap."""
+    collector = _DeferredCollector(
+        rollout_reward_handoff=False,
+        supports_overlap=True,
+    )
+    prompts = [PromptExample(prompt=f"p{i}") for i in range(3)]
+
+    batches = await collect_prompt_batches(
+        collector=collector,
+        prompts=prompts,
+        group_size=1,
+        runtime_debug=False,
+        policy_version=5,
+        reward_mode=RewardCollectionMode.PER_GROUP_SERIAL,
+    )
+
+    # Per-group call granularity (same as streaming), strictly interleaved.
+    assert collector.events == [
+        "generate:p0",
+        "score_rollouts:[p0]",
+        "generate:p1",
+        "score_rollouts:[p1]",
+        "generate:p2",
+        "score_rollouts:[p2]",
+    ]
+    assert [batch.group_ids.unique().tolist() for batch in batches] == [[0], [1], [2]]
+
+
+@pytest.mark.asyncio
+async def test_forcing_streaming_without_capability_raises_instead_of_downgrading() -> None:
+    """Checks an override can restrict arms but never grant overlap."""
+    collector = _DeferredCollector(supports_overlap=False)
+
+    with pytest.raises(ValueError, match="cannot be forced on"):
+        await collect_prompt_batches(
+            collector=collector,
+            prompts=[PromptExample(prompt="p0")],
+            group_size=1,
+            runtime_debug=False,
+            policy_version=None,
+            reward_mode=RewardCollectionMode.PER_GROUP_STREAMING,
+        )
+
+    assert collector.events == []
+
+
+@pytest.mark.asyncio
+async def test_capable_collector_can_be_restricted_to_the_batched_serial_arm() -> None:
+    """Checks arm A stays reachable on a collector that could stream."""
+    collector = _DeferredCollector(
+        rollout_reward_handoff=False,
+        supports_overlap=True,
+    )
+
+    await collect_prompt_batches(
+        collector=collector,
+        prompts=[PromptExample(prompt="p0"), PromptExample(prompt="p1")],
+        group_size=1,
+        runtime_debug=False,
+        policy_version=None,
+        reward_mode=RewardCollectionMode.BATCHED_SERIAL,
+    )
+
+    assert collector.events == [
+        "generate:p0",
+        "generate:p1",
+        "score_rollouts:[p0;p1]",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_three_acceptance_arms_isolate_overlap_from_per_group_call_tax() -> None:
+    """Checks A/B/C produce identical batches and only C reports overlap.
+
+    This is the in-repo shape of the hardware acceptance in
+    ``docs/sprints/done/SPRINT_reward_service.md``: B exists so a C-vs-A wall
+    win cannot be attributed to overlap without first pricing the per-group
+    call granularity that C also introduces.
+    """
+    from vrl.utils.stats import RolloutStats
+
+    prompts = [PromptExample(prompt="p0"), PromptExample(prompt="p1")]
+    arms = {
+        RewardCollectionMode.BATCHED_SERIAL: RolloutStats(),
+        RewardCollectionMode.PER_GROUP_SERIAL: RolloutStats(),
+        RewardCollectionMode.PER_GROUP_STREAMING: RolloutStats(),
+    }
+    rewards: dict[RewardCollectionMode, list[list[float]]] = {}
+
+    for mode, stats in arms.items():
+        batches = await collect_prompt_batches(
+            # Every arm runs on a capable collector so the only difference is
+            # the requested mode, not the collector fake.
+            collector=_TimedCollector(supports_overlap=True),
+            prompts=prompts,
+            group_size=1,
+            runtime_debug=False,
+            policy_version=3,
+            stats=stats,
+            reward_mode=mode,
+        )
+        rewards[mode] = [batch.rewards.tolist() for batch in batches]
+
+    # Correctness: the arms are pure scheduling variants, so results match.
+    assert (
+        rewards[RewardCollectionMode.BATCHED_SERIAL]
+        == rewards[RewardCollectionMode.PER_GROUP_SERIAL]
+        == rewards[RewardCollectionMode.PER_GROUP_STREAMING]
+    )
+
+    overlap_key = "collect.generation_reward_overlap"
+    assert arms[RewardCollectionMode.BATCHED_SERIAL].phase_seconds[overlap_key] == 0.0
+    assert arms[RewardCollectionMode.PER_GROUP_SERIAL].phase_seconds[overlap_key] == 0.0
+    assert arms[RewardCollectionMode.PER_GROUP_STREAMING].phase_seconds[overlap_key] >= 0.02
+
+    # Only the streaming arm may shorten the collection wall.
+    serial_wall = arms[RewardCollectionMode.BATCHED_SERIAL].phase_seconds["collect.wall"]
+    control_wall = arms[RewardCollectionMode.PER_GROUP_SERIAL].phase_seconds["collect.wall"]
+    streaming_wall = arms[RewardCollectionMode.PER_GROUP_STREAMING].phase_seconds["collect.wall"]
+    assert streaming_wall < serial_wall * 0.9
+    assert streaming_wall < control_wall * 0.9
