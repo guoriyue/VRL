@@ -38,7 +38,9 @@ def test_ray_actor_group_launch_lifecycle() -> None:
     ray.shutdown()
     group = None
     try:
-        ray.init(ignore_reinit_error=True, include_dashboard=False, num_cpus=2, log_to_driver=False)
+        ray.init(
+            ignore_reinit_error=True, include_dashboard=False, num_cpus=2, log_to_driver=False
+        )
         group = RayActorGroup.launch(
             worker_cls=_EchoWorker,
             worker_configs=[{"offset": 10}, {"offset": 20}],
@@ -85,7 +87,9 @@ def test_run_actor_jobs_awaits_real_object_refs() -> None:
     ray = pytest.importorskip("ray")
     ray.shutdown()
     try:
-        ray.init(ignore_reinit_error=True, include_dashboard=False, num_cpus=2, log_to_driver=False)
+        ray.init(
+            ignore_reinit_error=True, include_dashboard=False, num_cpus=2, log_to_driver=False
+        )
         actor_cls = ray.remote(num_cpus=0)(_PayloadWorker)
         w0 = actor_cls.remote("w0")
         w1 = actor_cls.remote("w1")
@@ -99,10 +103,18 @@ def test_run_actor_jobs_awaits_real_object_refs() -> None:
             )
             for i in range(4)
         ]
-        pairs = asyncio.run(run_actor_jobs(bound, max_inflight_per_actor=1))
+        pairs = asyncio.run(
+            run_actor_jobs(
+                bound,
+                max_inflight_per_actor=1,
+            ),
+        )
         assert [index for index, _ in pairs] == [0, 1, 2, 3]
         assert [result for _, result in pairs] == [
-            ("w0", 0), ("w1", 2), ("w0", 4), ("w1", 6),
+            ("w0", 0),
+            ("w1", 2),
+            ("w0", 4),
+            ("w1", 6),
         ]
 
         unbound = [

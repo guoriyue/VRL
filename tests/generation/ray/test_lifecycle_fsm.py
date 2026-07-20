@@ -21,7 +21,11 @@ def _resident_runtime() -> RayGenerationRuntime:
 
 
 def _request() -> SimpleNamespace:
-    return SimpleNamespace(sampling={}, policy_version=None)
+    return SimpleNamespace(
+        request_id="request-0",
+        sampling={},
+        policy_version=None,
+    )
 
 
 def test_resident_runtime_tracks_only_worker_ownership() -> None:
@@ -75,7 +79,7 @@ def test_terminated_runtime_fail_fasts_public_operations() -> None:
     assert runtime.lifecycle.phase is RuntimePhase.TERMINATED
     asyncio.run(runtime.shutdown())
     with pytest.raises(RuntimeLifecycleError, match="generate"):
-        asyncio.run(runtime.generate(SimpleNamespace()))
+        asyncio.run(runtime.generate(_request()))
     with pytest.raises(RuntimeLifecycleError, match="update_weights"):
         asyncio.run(runtime.update_weights({}, 1))
     with pytest.raises(RuntimeLifecycleError, match="activate"):

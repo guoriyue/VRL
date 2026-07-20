@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from typing import Any
 
+import ray
+
 from vrl.generation.execution.types import (
     ChunkExecutionEnvelope,
     ChunkExecutionResult,
@@ -14,6 +16,11 @@ from vrl.generation.execution.worker import GenerationWorkerCore
 from vrl.generation.launch_contract import GenerationRuntimeLaunchContract
 from vrl.generation.types import GenerationOutput
 from vrl.ray.dependencies import current_gpu_ids, current_node_ip
+
+# Ray binds a method to a concurrency group by name across two separate APIs --
+# @ray.method here and ray.remote(concurrency_groups=...) at actor creation --
+# so the name is shared; the group's thread count belongs to the creation site.
+HEALTH_CONCURRENCY_GROUP = "health"
 
 
 class RayGenerationWorker:
@@ -29,6 +36,19 @@ class RayGenerationWorker:
             launch_contract,
             metadata_provider=self._ray_metadata,
         )
+
+    @ray.method(concurrency_group=HEALTH_CONCURRENCY_GROUP)
+    def health(self) -> str:
+        """Answer a liveness probe without touching model or GPU state.
+
+        Runs in its own concurrency group so it never queues behind
+        ``execute_chunk`` — a queued probe would measure queue depth, not
+        liveness. The group is deliberately not a raw ``max_concurrency``
+        bump: that would also let two chunks execute concurrently on one GPU
+        worker whenever ``max_inflight_chunks_per_worker`` exceeds one.
+        """
+
+        return self.core.worker_id
 
     def load_policy(self) -> None:
         self.core.load_policy()

@@ -16,7 +16,11 @@ from vrl.generation.execution.types import (
 from vrl.generation.launch_contract import GenerationRuntimeLaunchContract
 from vrl.generation.ray.config import RayGenerationConfig
 from vrl.generation.ray.launch_inputs import RayGenerationLaunchInputs
-from vrl.generation.ray.lifecycle_fsm import RuntimeLifecycleError, RuntimePhase
+from vrl.generation.ray.lifecycle_fsm import (
+    RuntimeLifecycle,
+    RuntimeLifecycleError,
+    RuntimePhase,
+)
 from vrl.generation.ray.runtime import (
     RayGenerationRuntime,
     _PolicySnapshot,
@@ -31,6 +35,9 @@ class _FakeInner:
     def __init__(self) -> None:
         self.calls: list[Any] = []
         self.current_policy_version: int | None = 0
+        self._owned_workers: list[Any] = []
+        self.executor = SimpleNamespace(workers=[])
+        self.lifecycle = RuntimeLifecycle()
 
     async def sleep_workers(self) -> None:
         self.calls.append("sleep")
@@ -44,6 +51,9 @@ class _FakeInner:
     async def update_weights(self, state_ref: Any, version: int) -> None:
         self.calls.append(("update", state_ref, version))
         self.current_policy_version = version
+
+    async def _install_policy(self, policy: Any) -> None:
+        await self.update_weights(policy.state_ref, policy.policy_version)
 
 
 class _BlockingRestoreInner(_FakeInner):
@@ -236,7 +246,10 @@ def _parking_runtime(*reports: Any) -> RayGenerationRuntime:
         )
         for index, report in enumerate(reports)
     ]
-    return RayGenerationRuntime(SimpleNamespace(), owned_workers=workers)
+    return RayGenerationRuntime(
+        SimpleNamespace(),
+        owned_workers=workers,
+    )
 
 
 @pytest.mark.asyncio
@@ -358,7 +371,11 @@ def test_on_demand_factory_requires_on_demand_plan() -> None:
 @pytest.mark.asyncio
 async def test_generate_requires_explicit_activation() -> None:
     runtime = _on_demand_runtime()
-    request = SimpleNamespace(sampling={}, policy_version=None)
+    request = SimpleNamespace(
+        request_id="request-0",
+        sampling={},
+        policy_version=None,
+    )
 
     with pytest.raises(RuntimeError, match=r"await activate\(\) first"):
         await runtime.generate(request)
@@ -779,6 +796,33 @@ async def test_activation_restore_failure_cleans_candidate_and_terminates(monkey
     assert candidate.calls == ["shutdown"]
     assert state.inner_runtime is None
     assert runtime.lifecycle.failure is restore_error
+    assert runtime.lifecycle.phase is RuntimePhase.TERMINATED
+
+
+@pytest.mark.asyncio
+async def test_activation_launch_failure_terminalizes_without_publishing_candidate(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runtime = _on_demand_runtime()
+    state = runtime._on_demand
+    assert state is not None
+    launch_error = RuntimeError("rollout worker startup failed")
+
+    class _Launcher:
+        async def launch_async(self, *args: Any, **kwargs: Any) -> Any:
+            del args, kwargs
+            raise launch_error
+
+    import vrl.generation.ray.launcher as launcher_module
+
+    monkeypatch.setattr(launcher_module, "RayGenerationLauncher", _Launcher)
+
+    with pytest.raises(RuntimeError, match="rollout worker startup failed") as caught:
+        await runtime.activate()
+
+    assert caught.value is launch_error
+    assert state.inner_runtime is None
+    assert runtime.lifecycle.failure is launch_error
     assert runtime.lifecycle.phase is RuntimePhase.TERMINATED
 
 

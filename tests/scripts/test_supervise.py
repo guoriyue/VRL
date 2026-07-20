@@ -116,17 +116,26 @@ def test_restart_resumes_from_latest_complete_checkpoint(tmp_path) -> None:
         rng_state={},
     )
 
+    attempts_file = tmp_path / "attempts"
     argv_log = tmp_path / "argv.log"
     command = _child_script(
         tmp_path,
         "import sys\n"
         + _write_verdict_snippet(out)
+        + f"attempts = pathlib.Path({str(attempts_file)!r})\n"
+        + "n = int(attempts.read_text()) + 1 if attempts.exists() else 1\n"
+        + "attempts.write_text(str(n))\n"
+        + "if n == 1:\n"
+        + "    (out / 'run_verdict.json').write_text(json.dumps("
+        + "{'verdict': 'failed', 'error_class': 'TransientRuntimeError'}))\n"
+        + "    raise SystemExit(1)\n"
         + f"pathlib.Path({str(argv_log)!r}).write_text('\\n'.join(sys.argv[1:]))\n"
         + "(out / 'run_verdict.json').write_text(json.dumps({'verdict': 'success'}))\n",
     )
     supervisor = RunSupervisor(command=command, output_dir=out, sleep=lambda _: None)
     assert supervisor.run() == 0
 
+    assert attempts_file.read_text() == "2"
     argv = argv_log.read_text().splitlines()
     assert f"trainer.resume_from={out / 'checkpoint-4'}" in argv
     assert "model.lora.path=" in argv  # warm-start adapter cleared on resume

@@ -699,12 +699,37 @@ class RolloutWorkerSection(ConfigBase):
 
     cpus_per_worker: float = 1.0
     max_inflight_chunks_per_worker: int = 1
+    # Background liveness probing of rollout workers. interval <= 0 disables it;
+    # a worker that stops answering kills the fleet so the training attempt
+    # fails closed and the supervisor resumes from the latest checkpoint.
+    health_check_interval_s: float = 30.0
+    health_check_timeout_s: float = 30.0
+    health_check_first_wait_s: float = 0.0
     chunk_placement_strategy: ChunkPlacementStrategy = "round_robin"
     sync_trainable_state: bool = True
     # Opt-in single-worker pipelined rollout. Config resolution rejects multiple
     # workers; requests with fewer than two chunks use the standard per-chunk path,
     # and a pipeline OOM falls back to that path's split-and-retry behavior.
     pipelined: bool = False
+
+    @model_validator(mode="after")
+    def _validate_health_check(self) -> RolloutWorkerSection:
+        if not math.isfinite(self.health_check_interval_s):
+            raise ValueError(
+                "distributed.rollout.health_check_interval_s must be finite",
+            )
+        if self.health_check_interval_s > 0 and (
+            not math.isfinite(self.health_check_timeout_s) or self.health_check_timeout_s <= 0
+        ):
+            raise ValueError(
+                "distributed.rollout.health_check_timeout_s must be finite and > 0 "
+                "when health checking is enabled",
+            )
+        if not math.isfinite(self.health_check_first_wait_s) or self.health_check_first_wait_s < 0:
+            raise ValueError(
+                "distributed.rollout.health_check_first_wait_s must be finite and >= 0",
+            )
+        return self
 
 
 class DistributedSection(ConfigBase):

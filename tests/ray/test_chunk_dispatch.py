@@ -107,7 +107,12 @@ def test_bound_jobs_keep_plan_time_binding_and_order() -> None:
         for i in range(4)
     ]
 
-    pairs = asyncio.run(run_actor_jobs(jobs, max_inflight_per_actor=1))
+    pairs = asyncio.run(
+        run_actor_jobs(
+            jobs,
+            max_inflight_per_actor=1,
+        ),
+    )
 
     assert [index for index, _ in pairs] == [0, 1, 2, 3]
     # Even though w1 is slow, its chunks never migrate to w0.
@@ -183,7 +188,13 @@ def test_schedule_telemetry_rows_are_emitted() -> None:
     ]
     schedule: list[dict[str, Any]] = []
 
-    asyncio.run(run_actor_jobs(jobs, max_inflight_per_actor=1, schedule=schedule))
+    asyncio.run(
+        run_actor_jobs(
+            jobs,
+            max_inflight_per_actor=1,
+            schedule=schedule,
+        ),
+    )
 
     assert sorted(row["job_index"] for row in schedule) == [0, 1]
     for row in schedule:

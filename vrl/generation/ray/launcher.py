@@ -24,7 +24,7 @@ from vrl.generation.ray.utils import (
     validate_worker_gpu_ids,
 )
 from vrl.generation.ray.weight_sync import RayGenerationWeightSync
-from vrl.generation.ray.worker import RayGenerationWorker
+from vrl.generation.ray.worker import HEALTH_CONCURRENCY_GROUP, RayGenerationWorker
 from vrl.models.dtypes import dtype_to_wire_name
 from vrl.ray.actor_group import RayActorGroup
 from vrl.ray.dependencies import require_ray
@@ -89,7 +89,6 @@ class RayGenerationLauncher:
 
         worker_ids = [f"rollout-{logical_idx}" for logical_idx in range(len(bundle_indices))]
         worker_configs = [contract for _ in bundle_indices]
-
         try:
             actor_group = RayActorGroup.launch(
                 worker_cls=RayGenerationWorker,
@@ -100,6 +99,9 @@ class RayGenerationLauncher:
                 placement_group=placement_group,
                 bundle_indices=bundle_indices,
                 startup_method="load_policy",
+                # One dedicated thread so liveness probes never queue behind
+                # generation; the default group keeps its serialization.
+                concurrency_groups={HEALTH_CONCURRENCY_GROUP: 1},
             )
             metadata = [
                 {
@@ -114,53 +116,60 @@ class RayGenerationLauncher:
                 metadata,
                 expected_gpu_ids=expected_gpu_ids,
             )
-        except Exception:
+            workers = [
+                DistributedWorkerHandle(
+                    worker_id=handle.worker_id,
+                    actor=handle.actor,
+                )
+                for handle in actor_group.handles
+            ]
+
+            executor = RayGenerationExecutor(
+                DistributedExecutionPlanner(
+                    policy=ChunkPlacementPolicy(
+                        strategy=rollout_config.chunk_placement_strategy,
+                    ),
+                ),
+                workers,
+                chunk_gatherer,
+                max_inflight_chunks_per_worker=(rollout_config.max_inflight_chunks_per_worker),
+                pipelined=rollout_config.pipelined,
+            )
+            weight_sync = (
+                RayGenerationWeightSync(workers) if rollout_config.sync_trainable_state else None
+            )
+            runtime = RayGenerationRuntime(
+                executor,
+                weight_sync=weight_sync,
+                owned_workers=workers,
+                colocated=rollout_config.resources.colocated,
+                health_check_interval_s=rollout_config.health_check_interval_s,
+                health_check_timeout_s=rollout_config.health_check_timeout_s,
+                health_check_first_wait_s=rollout_config.health_check_first_wait_s,
+            )
+            if contract.policy_version is not None:
+                runtime.current_policy_version = contract.policy_version
+            # Non-draining weight sync is safe only when EVERY worker retains
+            # versioned trainable-state slots (a chunk stamped v1 may land on any
+            # worker). Query the AND before publishing the runtime candidate.
+            runtime.supports_non_draining_weight_sync = all_workers_support_versioned_slots(
+                ray,
+                workers,
+                weight_sync=weight_sync,
+            )
+            runtime.start_health_monitoring()
+            return runtime
+        except BaseException as error:
             if "actor_group" in locals():
-                actor_group.shutdown()
+                try:
+                    actor_group.shutdown()
+                except BaseException as cleanup_error:
+                    error.add_note(
+                        f"rollout startup actor cleanup also failed: {cleanup_error!r}",
+                    )
             # The launcher only created the workers; the placement group belongs
             # to the GlobalRayPlacementOwner.
             raise
-
-        workers = [
-            DistributedWorkerHandle(
-                worker_id=handle.worker_id,
-                actor=handle.actor,
-            )
-            for handle in actor_group.handles
-        ]
-
-        executor = RayGenerationExecutor(
-            DistributedExecutionPlanner(
-                policy=ChunkPlacementPolicy(
-                    strategy=rollout_config.chunk_placement_strategy,
-                ),
-            ),
-            workers,
-            chunk_gatherer,
-            max_inflight_chunks_per_worker=rollout_config.max_inflight_chunks_per_worker,
-            pipelined=rollout_config.pipelined,
-        )
-        weight_sync = (
-            RayGenerationWeightSync(workers) if rollout_config.sync_trainable_state else None
-        )
-        runtime = RayGenerationRuntime(
-            executor,
-            weight_sync=weight_sync,
-            owned_workers=workers,
-            colocated=rollout_config.resources.colocated,
-        )
-        if contract.policy_version is not None:
-            runtime.current_policy_version = contract.policy_version
-        # Non-draining weight sync is safe only when EVERY worker retains versioned
-        # trainable-state slots (a chunk stamped v1 may land on any worker). Workers
-        # already loaded their model (startup_method="load_policy"), so query the
-        # AND once here; absence/error keeps the safe draining barrier.
-        runtime.supports_non_draining_weight_sync = all_workers_support_versioned_slots(
-            ray,
-            workers,
-            weight_sync=weight_sync,
-        )
-        return runtime
 
     async def launch_async(
         self,

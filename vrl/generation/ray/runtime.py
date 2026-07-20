@@ -15,6 +15,7 @@ from vrl.generation.execution.types import (
 from vrl.generation.protocols import GenerationRuntime
 from vrl.generation.ray.config import RayGenerationConfig
 from vrl.generation.ray.executor import RayGenerationExecutor
+from vrl.generation.ray.health_monitor import RolloutWorkerHealthMonitor
 from vrl.generation.ray.launch_inputs import RayGenerationLaunchInputs
 from vrl.generation.ray.lifecycle_fsm import RuntimeLifecycle, RuntimePhase
 from vrl.generation.ray.weight_sync import GenerationWeightSync
@@ -69,11 +70,23 @@ class RayGenerationRuntime(GenerationRuntime):
         weight_sync: GenerationWeightSync | None = None,
         owned_workers: list[DistributedWorkerHandle] | None = None,
         colocated: bool = False,
+        health_check_interval_s: float = 0.0,
+        health_check_timeout_s: float = 30.0,
+        health_check_first_wait_s: float = 0.0,
     ) -> None:
         self.executor = executor
         self.weight_sync = weight_sync
         self._owned_workers = list(owned_workers or [])
         self._colocated = bool(colocated)
+        # Owned workers have no in-band RPC bound; this background probe is the
+        # only detector that turns a wedged worker into a failed attempt the
+        # supervisor can resume from.
+        self._health_monitor = RolloutWorkerHealthMonitor(
+            self,
+            interval_s=health_check_interval_s,
+            timeout_s=health_check_timeout_s,
+            first_wait_s=health_check_first_wait_s,
+        )
         self._on_demand: _OnDemandRuntimeState | None = None
         # Rollout schedules own pause/drain. The runtime lifecycle only closes
         # terminal admission and records the first cleanup-worthy failure.
@@ -114,9 +127,7 @@ class RayGenerationRuntime(GenerationRuntime):
                 sleep_offload=True,
             )
 
-        runtime = cls(
-            executor=None,
-        )
+        runtime = cls(executor=None)
         runtime._on_demand = _OnDemandRuntimeState(
             config=config,
             # GPU workers pool their model in CuMemAllocator so offload/activate
@@ -155,6 +166,12 @@ class RayGenerationRuntime(GenerationRuntime):
         if state is not None:
             return bool(state.config.sync_trainable_state)
         return self.weight_sync is not None
+
+    def start_health_monitoring(self) -> None:
+        """Begin probing this runtime's own workers. Idempotent and opt-in."""
+
+        if self._health_monitor.start():
+            self._health_monitor.resume()
 
     async def activate(self) -> None:
         """Launch or wake on-demand workers and install the desired policy.
@@ -272,6 +289,10 @@ class RayGenerationRuntime(GenerationRuntime):
         return self._colocated
 
     async def update_weights(self, state_ref: Any, policy_version: int) -> None:
+        # Contract/precondition failures do not make installed worker state
+        # unknown and therefore must not enter terminal quarantine. In
+        # particular, shutdown cannot join an activation task whose caller is
+        # still waiting for this validation to return before releasing it.
         self.lifecycle.require_running("update_weights")
         state = self._on_demand
         if state is not None:
@@ -285,49 +306,63 @@ class RayGenerationRuntime(GenerationRuntime):
                     "update_weights requires rollout activation to be idle; "
                     "the rollout schedule must pause/drain before syncing",
                 )
-            snapshot = _PolicySnapshot(
-                state_ref=state_ref,
-                policy_version=int(policy_version),
+        elif self.weight_sync is None:
+            raise RuntimeError("RayGenerationRuntime has no GenerationWeightSync")
+
+        try:
+            await self._install_policy(
+                _PolicySnapshot(state_ref=state_ref, policy_version=int(policy_version)),
             )
+        except BaseException as error:
+            await self._terminalize_after_failure(error)
+            raise
+
+    async def _install_policy(self, policy: _PolicySnapshot) -> None:
+        self.lifecycle.require_running("update_weights")
+        state = self._on_demand
+        if state is not None:
             inner_runtime = state.inner_runtime
             if inner_runtime is not None and not state.workers_offloaded:
-                try:
-                    await inner_runtime.update_weights(
-                        snapshot.state_ref,
-                        snapshot.policy_version,
-                    )
-                except BaseException as error:
-                    await self._quarantine_after_update_failure(error)
-                    raise
-                state.active_policy_version = snapshot.policy_version
-            state.desired_policy = snapshot
-            self.current_policy_version = snapshot.policy_version
+                await inner_runtime._install_policy(policy)
+                state.active_policy_version = policy.policy_version
+            state.desired_policy = policy
+            self.current_policy_version = policy.policy_version
             return
 
         if self.weight_sync is None:
+            # Internal activation only reaches this boundary after a launcher
+            # contract mismatch; public calls reject it before quarantine.
             raise RuntimeError("RayGenerationRuntime has no GenerationWeightSync")
-        try:
-            await self.weight_sync.push_to_rollout_workers(
-                state_ref,
-                policy_version,
-            )
-        except BaseException as error:
-            await self._quarantine_after_update_failure(error)
-            raise
-        self.current_policy_version = int(policy_version)
+        await self.weight_sync.push_to_rollout_workers(
+            policy.state_ref,
+            policy.policy_version,
+        )
+        self.current_policy_version = policy.policy_version
 
-    async def _quarantine_after_update_failure(self, error: BaseException) -> None:
-        """Close admission and clean a fleet whose installed version is unknown."""
+    async def _terminalize_after_failure(
+        self,
+        error: BaseException,
+        *,
+        join_control_tasks: bool = True,
+    ) -> None:
+        """Close admission and preserve the operation error across cleanup."""
 
         self.lifecycle.fail(error)
         try:
-            await self.shutdown()
+            if join_control_tasks:
+                await self.shutdown()
+            else:
+                # A runtime-owned control task cannot await shutdown(): the
+                # shutdown task joins that same control task. It already owns
+                # its completion, so tear down resources directly.
+                await self._teardown_owned_resources()
+                self.lifecycle.finish_shutdown()
         except BaseException as cleanup_error:
             # The failed install/ACK is the transaction's root cause. Cleanup is
             # retryable by the schedule owner, so it must never replace that
             # first failure at the trainer boundary.
             logger.error(
-                "generation quarantine cleanup failed after weight update error %r",
+                "generation terminal cleanup failed after operation error %r",
                 error,
                 exc_info=(
                     type(cleanup_error),
@@ -335,6 +370,7 @@ class RayGenerationRuntime(GenerationRuntime):
                     cleanup_error.__traceback__,
                 ),
             )
+            error.add_note(f"generation terminal cleanup also failed: {cleanup_error!r}")
 
     async def offload(self) -> None:
         """Park explicitly idle on-demand workers between GPU phases.
@@ -464,6 +500,7 @@ class RayGenerationRuntime(GenerationRuntime):
             await asyncio.gather(*pending, return_exceptions=True)
 
     async def _teardown_owned_resources(self) -> None:
+        self._health_monitor.stop()
         state = self._on_demand
         if state is not None:
             # Terminal shutdown is not a phase handoff: parked actors must be
@@ -519,6 +556,9 @@ class RayGenerationRuntime(GenerationRuntime):
         weights leave the GPU. Failures are not suppressed: a worker that fails to
         offload would otherwise hold the GPU a colocated trainer is about to use.
         """
+        # A parked worker is intentionally unresponsive; probing it would read
+        # as a death and kill a healthy fleet.
+        self._health_monitor.pause()
         if not self._owned_workers:
             return ()
         missing_actor_ids = tuple(
@@ -555,6 +595,7 @@ class RayGenerationRuntime(GenerationRuntime):
     async def wake_workers(self) -> None:
         """Restore every owned worker's model from host RAM back onto its GPU."""
         if not self._owned_workers:
+            self._health_monitor.resume()
             return None
         refs = [
             worker.actor.wake.remote()
@@ -563,6 +604,7 @@ class RayGenerationRuntime(GenerationRuntime):
         ]
         if refs:
             await asyncio.wait_for(asyncio.gather(*refs), timeout=120)
+        self._health_monitor.resume()
         return None
 
     def _active_runtime(self) -> RayGenerationRuntime:
@@ -599,10 +641,7 @@ class RayGenerationRuntime(GenerationRuntime):
                 state.workers_offloaded = False
                 desired = state.desired_policy
                 if desired is not None and desired.policy_version != state.active_policy_version:
-                    await inner_runtime.update_weights(
-                        desired.state_ref,
-                        desired.policy_version,
-                    )
+                    await inner_runtime._install_policy(desired)
                     state.active_policy_version = desired.policy_version
                 return inner_runtime
             if state.inner_runtime is not None:
@@ -617,14 +656,10 @@ class RayGenerationRuntime(GenerationRuntime):
             )
             try:
                 desired = state.desired_policy
+                active_policy_version = candidate.current_policy_version
                 if desired is not None:
-                    await candidate.update_weights(
-                        desired.state_ref,
-                        desired.policy_version,
-                    )
-                    state.active_policy_version = desired.policy_version
-                else:
-                    state.active_policy_version = candidate.current_policy_version
+                    await candidate._install_policy(desired)
+                    active_policy_version = desired.policy_version
             except BaseException as restore_error:
                 # A candidate is not published until restore succeeds;
                 # clean it here so a failed cold activation cannot leak actors.
@@ -641,6 +676,7 @@ class RayGenerationRuntime(GenerationRuntime):
                         exc_info=cleanup_error,
                     )
                 raise
+            state.active_policy_version = active_policy_version
             state.inner_runtime = candidate
             return candidate
         except BaseException as error:

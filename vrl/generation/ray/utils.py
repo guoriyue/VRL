@@ -44,7 +44,7 @@ def all_workers_support_versioned_slots(
     if weight_sync is None:
         return False
     actors = [worker.actor for worker in workers if worker.actor is not None]
-    if not actors:
+    if not actors or len(actors) != len(workers):
         return False
     try:
         results = ray.get(

@@ -339,6 +339,9 @@ def test_rollout_keys_are_registered_not_unknown() -> None:
             "rollout": {
                 "cpus_per_worker": 2.0,
                 "max_inflight_chunks_per_worker": 2,
+                "health_check_interval_s": 45.0,
+                "health_check_timeout_s": 30.0,
+                "health_check_first_wait_s": 5.0,
                 "chunk_placement_strategy": "dynamic",
                 "sync_trainable_state": False,
                 "pipelined": True,
@@ -347,6 +350,88 @@ def test_rollout_keys_are_registered_not_unknown() -> None:
     )
     unknown = find_unknown_keys(cfg)
     assert not [k for k in unknown if k.startswith("distributed.rollout")]
+
+
+def test_rollout_health_check_defaults_and_accepts_override() -> None:
+    default = parse_config(_minimal_grpo_cfg(distributed={"rollout": {}}))
+    assert default.distributed.rollout.health_check_interval_s == 30.0
+    assert default.distributed.rollout.health_check_timeout_s == 30.0
+    assert default.distributed.rollout.health_check_first_wait_s == 0.0
+
+    cfg = _minimal_grpo_cfg(
+        distributed={
+            "rollout": {
+                "health_check_interval_s": 12.5,
+                "health_check_timeout_s": 7.5,
+                "health_check_first_wait_s": 2.5,
+            }
+        },
+    )
+    rollout = parse_config(cfg).distributed.rollout
+    assert rollout.health_check_interval_s == 12.5
+    assert rollout.health_check_timeout_s == 7.5
+    assert rollout.health_check_first_wait_s == 2.5
+
+
+@pytest.mark.parametrize("interval_s", [0.0, -1.0])
+def test_rollout_health_check_interval_le_zero_disables_probe(interval_s: float) -> None:
+    """A non-positive interval turns the probe off; the timeout is then unchecked."""
+
+    cfg = _minimal_grpo_cfg(
+        distributed={
+            "rollout": {
+                "health_check_interval_s": interval_s,
+                "health_check_timeout_s": 0.0,
+            }
+        },
+    )
+
+    assert parse_config(cfg).distributed.rollout.health_check_interval_s == interval_s
+
+
+@pytest.mark.parametrize("interval_s", [float("inf"), float("-inf"), float("nan")])
+def test_rollout_health_check_interval_must_be_finite(interval_s: float) -> None:
+    cfg = _minimal_grpo_cfg(
+        distributed={"rollout": {"health_check_interval_s": interval_s}},
+    )
+
+    with pytest.raises(ValueError, match=r"health_check_interval_s must be finite"):
+        parse_config(cfg)
+
+
+@pytest.mark.parametrize(
+    "timeout_s",
+    [0.0, -1.0, float("inf"), float("-inf"), float("nan")],
+)
+def test_rollout_health_check_timeout_must_be_finite_and_positive_when_enabled(
+    timeout_s: float,
+) -> None:
+    cfg = _minimal_grpo_cfg(
+        distributed={
+            "rollout": {
+                "health_check_interval_s": 30.0,
+                "health_check_timeout_s": timeout_s,
+            }
+        },
+    )
+
+    with pytest.raises(ValueError, match=r"health_check_timeout_s must be finite and > 0"):
+        parse_config(cfg)
+
+
+@pytest.mark.parametrize(
+    "first_wait_s",
+    [-1.0, float("inf"), float("-inf"), float("nan")],
+)
+def test_rollout_health_check_first_wait_must_be_finite_and_non_negative(
+    first_wait_s: float,
+) -> None:
+    cfg = _minimal_grpo_cfg(
+        distributed={"rollout": {"health_check_first_wait_s": first_wait_s}},
+    )
+
+    with pytest.raises(ValueError, match=r"health_check_first_wait_s must be finite and >= 0"):
+        parse_config(cfg)
 
 
 def test_removed_rollout_memory_fraction_is_unknown() -> None:
