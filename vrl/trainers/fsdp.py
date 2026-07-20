@@ -20,7 +20,7 @@ the torchrun↔Ray rollout coordination, and optimizer/EMA state sharding.
 
 from __future__ import annotations
 
-from collections.abc import Iterator
+from collections.abc import Iterator, Mapping
 from typing import Any
 
 import torch
@@ -245,7 +245,117 @@ def gather_full_state_dict(module: nn.Module) -> dict[str, Any]:
     }
 
 
-def load_full_state_dict(module: nn.Module, state: dict[str, Any]) -> None:
+def gather_trainable_state_dict(module: nn.Module) -> dict[str, Any]:
+    """Gather only trainable parameters as full CPU tensors on every rank.
+
+    Asking DCP for a full state before filtering materializes the frozen base on
+    every rank, which defeats LoRA's memory scaling. Keep the state sharded while
+    selecting the ``requires_grad`` parameter keys, then all-gather only those
+    DTensor leaves. Buffers are deliberately excluded: this is the mutable
+    trainable-state contract, not a standalone model checkpoint.
+    """
+
+    from torch.distributed.checkpoint.state_dict import (
+        StateDictOptions,
+        get_model_state_dict,
+    )
+    from torch.distributed.tensor import DTensor
+
+    trainable_names = {
+        str(name) for name, parameter in module.named_parameters() if parameter.requires_grad
+    }
+    if not trainable_names:
+        raise ValueError(f"{type(module).__name__} has no trainable parameters")
+
+    sharded_state = get_model_state_dict(
+        module,
+        options=StateDictOptions(
+            full_state_dict=False,
+            cpu_offload=False,
+            ignore_frozen_params=True,
+        ),
+    )
+    missing = sorted(trainable_names - set(sharded_state))
+    if missing:
+        preview = ", ".join(missing[:5])
+        suffix = " ..." if len(missing) > 5 else ""
+        raise ValueError(f"sharded state is missing trainable parameters: {preview}{suffix}")
+
+    gathered: dict[str, Any] = {}
+    # All ranks must enter DTensor collectives in the same order.
+    for name in sorted(trainable_names):
+        value = sharded_state[name]
+        if isinstance(value, DTensor):
+            value = value.full_tensor()
+        if not isinstance(value, torch.Tensor):
+            raise TypeError(f"trainable state {name!r} must be a tensor")
+        gathered[name] = value.detach().cpu().clone()
+    return gathered
+
+
+def load_trainable_state_dict(
+    module: nn.Module,
+    state: Mapping[str, Any],
+    *,
+    strict: bool = True,
+) -> None:
+    """Load full trainable tensors into their local DTensor shards.
+
+    New checkpoints contain exactly the trainable parameters. Known frozen
+    parameters and buffers are also accepted for compatibility with legacy full
+    checkpoints. In strict mode, every current trainable parameter must exist and
+    unknown keys are rejected; frozen keys need not exist because the immutable
+    base model is reconstructed before resume.
+    """
+
+    from torch.distributed.checkpoint.state_dict import (
+        StateDictOptions,
+        get_model_state_dict,
+        set_model_state_dict,
+    )
+
+    if not isinstance(state, Mapping):
+        raise TypeError("trainable state must be a mapping")
+
+    local_state = get_model_state_dict(
+        module,
+        options=StateDictOptions(full_state_dict=False, cpu_offload=False),
+    )
+    known_names = set(local_state)
+    trainable_names = {
+        str(name) for name, parameter in module.named_parameters() if parameter.requires_grad
+    }
+    missing = sorted(trainable_names - set(state))
+    unexpected = sorted(set(state) - known_names)
+    if strict and (missing or unexpected):
+        raise ValueError(
+            "checkpoint trainable parameter keys mismatch: "
+            f"missing={missing}, unexpected={unexpected}",
+        )
+
+    compatible = {name: value for name, value in state.items() if name in known_names}
+    if not compatible:
+        return
+    # DCP performs the layout-aware full-tensor -> DTensor scatter. Its own
+    # strict=False is intentional: strictness above applies to mutable trainable
+    # state, while absent frozen base keys are valid in the new checkpoint format.
+    set_model_state_dict(
+        module,
+        compatible,
+        options=StateDictOptions(
+            full_state_dict=True,
+            broadcast_from_rank0=True,
+            strict=False,
+        ),
+    )
+
+
+def load_full_state_dict(
+    module: nn.Module,
+    state: dict[str, Any],
+    *,
+    strict: bool = True,
+) -> None:
     """Load a full (unsharded) state dict back into a sharded module on all ranks.
 
     ``broadcast_from_rank0=True`` lets rank0 hold the only full copy (the others
@@ -262,7 +372,11 @@ def load_full_state_dict(module: nn.Module, state: dict[str, Any]) -> None:
     set_model_state_dict(
         module,
         state,
-        options=StateDictOptions(full_state_dict=True, broadcast_from_rank0=True),
+        options=StateDictOptions(
+            full_state_dict=True,
+            broadcast_from_rank0=True,
+            strict=strict,
+        ),
     )
 
 

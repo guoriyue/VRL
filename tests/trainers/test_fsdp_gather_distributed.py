@@ -1,4 +1,4 @@
-"""gather_full_state_dict must materialize the full state on EVERY rank.
+"""Selective FSDP state must materialize trainable tensors on EVERY rank.
 
 Regression for the rank0-only trap: ``get_model_state_dict(full_state_dict=True,
 cpu_offload=True)`` returns the full dict only on rank0 and an EMPTY dict on every
@@ -8,7 +8,7 @@ report every (LoRA) param "missing" — which is exactly what a real 2x1 NCCL ru
 and the world_size=1 CPU test could never catch (the gather is a no-op there).
 
 This spawns a real gloo 2-rank group, shards a PEFT-LoRA toy transformer with FSDP2,
-and asserts BOTH ranks gather the full set of trainable keys as plain CPU tensors.
+and asserts BOTH ranks gather only the LoRA tensors, then scatter them back on load.
 """
 
 from __future__ import annotations
@@ -30,6 +30,8 @@ from vrl.trainers.fsdp import (  # noqa: E402
     apply_fsdp,
     build_fsdp_mesh,
     gather_full_state_dict,
+    gather_trainable_state_dict,
+    load_trainable_state_dict,
     mixed_precision_policy,
 )
 
@@ -73,14 +75,21 @@ def _run_rank(rank: int, world_size: int, port: int, q: mp.Queue) -> None:
     os.environ["MASTER_PORT"] = str(port)
     dist.init_process_group(backend="gloo", rank=rank, world_size=world_size)
     try:
+        base = _ToyTransformer()
+        base.register_buffer("frozen_cache", torch.ones(8))
         model = get_peft_model(
-            _ToyTransformer(),
+            base,
             LoraConfig(r=4, target_modules=["to_q", "to_k", "to_v"], lora_alpha=8),
         )
         trainable = {n for n, p in model.named_parameters() if p.requires_grad}
         ctx = DistributedTrainingContext(
-            strategy="fsdp", distributed=True, rank=rank, local_rank=0,
-            world_size=world_size, is_primary=(rank == 0), device=torch.device("cpu"),
+            strategy="fsdp",
+            distributed=True,
+            rank=rank,
+            local_rank=0,
+            world_size=world_size,
+            is_primary=(rank == 0),
+            device=torch.device("cpu"),
         )
         apply_fsdp(
             model,
@@ -88,17 +97,53 @@ def _run_rank(rank: int, world_size: int, port: int, q: mp.Queue) -> None:
             mp_policy=mixed_precision_policy("none"),
             reshard_after_forward=True,
         )
-        gathered = gather_full_state_dict(model)
-        missing = sorted(trainable - set(gathered))
+        frozen_before = {
+            name: value
+            for name, value in gather_full_state_dict(model).items()
+            if name not in trainable
+        }
+
+        from torch.distributed.tensor import DTensor
+
+        full_tensor_calls = 0
+        original_full_tensor = DTensor.full_tensor
+
+        def _record_full_tensor(self, *args, **kwargs):
+            nonlocal full_tensor_calls
+            full_tensor_calls += 1
+            return original_full_tensor(self, *args, **kwargs)
+
+        DTensor.full_tensor = _record_full_tensor
+        try:
+            gathered = gather_trainable_state_dict(model)
+        finally:
+            DTensor.full_tensor = original_full_tensor
+
         all_cpu = all(
             isinstance(v, torch.Tensor) and v.device.type == "cpu" for v in gathered.values()
         )
-        q.put((rank, len(gathered), missing, all_cpu))
+        selective = set(gathered) == trainable and full_tensor_calls == len(trainable)
+
+        replacement = {name: torch.full_like(value, 9.0) for name, value in gathered.items()}
+        load_trainable_state_dict(model, replacement, strict=True)
+        restored = gather_trainable_state_dict(model)
+        trainable_restored = all(
+            torch.equal(value, torch.full_like(value, 9.0)) for value in restored.values()
+        )
+        frozen_after = {
+            name: value
+            for name, value in gather_full_state_dict(model).items()
+            if name not in trainable
+        }
+        frozen_unchanged = frozen_before.keys() == frozen_after.keys() and all(
+            torch.equal(value, frozen_after[name]) for name, value in frozen_before.items()
+        )
+        q.put((rank, selective, all_cpu, trainable_restored, frozen_unchanged))
     finally:
         dist.destroy_process_group()
 
 
-def test_gather_full_state_dict_is_full_on_every_rank() -> None:
+def test_trainable_state_is_selective_and_round_trips_on_every_rank() -> None:
     ctx = mp.get_context("spawn")
     q: mp.Queue = ctx.Queue()
     port = _free_port()
@@ -107,19 +152,18 @@ def test_gather_full_state_dict_is_full_on_every_rank() -> None:
         p.start()
     results = {}
     for _ in range(2):
-        rank, n, missing, all_cpu = q.get(timeout=60)
-        results[rank] = (n, missing, all_cpu)
+        rank, *flags = q.get(timeout=60)
+        results[rank] = flags
     for p in procs:
         p.join(timeout=10)
         assert p.exitcode == 0
 
-    # BOTH ranks must gather the full trainable key set as plain CPU tensors —
-    # non-rank0 must NOT be empty.
     for rank in (0, 1):
-        n, missing, all_cpu = results[rank]
-        assert not missing, f"rank{rank} missing trainable keys: {missing[:5]}"
-        assert n > 0, f"rank{rank} gathered an empty state dict"
+        selective, all_cpu, trainable_restored, frozen_unchanged = results[rank]
+        assert selective, f"rank{rank} gathered a frozen tensor or skipped a LoRA tensor"
         assert all_cpu, f"rank{rank} gathered non-CPU tensors"
+        assert trainable_restored, f"rank{rank} did not restore the full LoRA tensors"
+        assert frozen_unchanged, f"rank{rank} changed frozen base state during LoRA load"
 
 
 def _run_optim_ema_rank(rank: int, world_size: int, port: int, q: mp.Queue) -> None:
@@ -141,8 +185,13 @@ def _run_optim_ema_rank(rank: int, world_size: int, port: int, q: mp.Queue) -> N
         model = _ToyTransformer()
         global_shapes = {n: tuple(p.shape) for n, p in model.named_parameters()}
         ctx = DistributedTrainingContext(
-            strategy="fsdp", distributed=True, rank=rank, local_rank=0,
-            world_size=world_size, is_primary=(rank == 0), device=torch.device("cpu"),
+            strategy="fsdp",
+            distributed=True,
+            rank=rank,
+            local_rank=0,
+            world_size=world_size,
+            is_primary=(rank == 0),
+            device=torch.device("cpu"),
         )
         apply_fsdp(
             model,
@@ -193,8 +242,7 @@ def _run_optim_ema_rank(rank: int, world_size: int, port: int, q: mp.Queue) -> N
         restored = EMAModuleWrapper(params, decay=0.5, update_step_interval=1)
         restored.load_state_dict(state)
         ema_round_trip = all(
-            isinstance(got, DTensor)
-            and torch.equal(got.full_tensor(), want.full_tensor())
+            isinstance(got, DTensor) and torch.equal(got.full_tensor(), want.full_tensor())
             for got, want in zip(restored.ema_parameters, ema.ema_parameters, strict=True)
         )
 

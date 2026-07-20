@@ -99,7 +99,13 @@ class Strategy(Protocol):
         """Rollout-facing flat trainable state (unwrapped, policy-facing keys)."""
         ...
 
-    def load_trainable_state(self, bundle: Any, state: dict[str, Any]) -> None:
+    def load_trainable_state(
+        self,
+        bundle: Any,
+        state: dict[str, Any],
+        *,
+        strict: bool = True,
+    ) -> None:
         """Load a checkpoint-facing trainable state back into the bundle."""
         ...
 
@@ -181,10 +187,16 @@ class SingleProcessStrategy(Strategy):
 
         return to_cpu_snapshot(build_trainable_state_sync_getter(bundle)())
 
-    def load_trainable_state(self, bundle: Any, state: dict[str, Any]) -> None:
+    def load_trainable_state(
+        self,
+        bundle: Any,
+        state: dict[str, Any],
+        *,
+        strict: bool = True,
+    ) -> None:
         from vrl.trainers.checkpointing import load_trainable_state
 
-        load_trainable_state(bundle, state)
+        load_trainable_state(bundle, state, strict=strict)
 
     def export_optimizer_state(
         self,
@@ -462,9 +474,10 @@ class FSDPStrategy(Strategy):
 
     The model wraps once in ``prepare_model``; thereafter params/grads/optimizer
     state live as DTensor shards over the mesh. Checkpoint and rollout export both
-    gather a full, unwrapped, policy-facing state on rank0 — the trainer and the
-    Ray rollout workers never see a shard or a wrapper key. The collective work
-    lives in ``vrl/trainers/fsdp.py``; this class is the trainer-facing adapter.
+    gather full trainable tensors in the unwrapped, policy-facing key space on
+    every rank; frozen base tensors remain sharded. The trainer and Ray rollout
+    workers never see a shard or wrapper key. The collective work lives in
+    ``vrl/trainers/fsdp.py``; this class is the trainer-facing adapter.
 
     This is the strategy *layer* of ``SPRINT_multi_gpu_training.md``. The online
     recipe drives it through the same per-rank-local symmetric-colocated path as
@@ -546,60 +559,53 @@ class FSDPStrategy(Strategy):
         # replicated norm scalar to a Python float for logging.
         return float(nn.utils.clip_grad_norm_(parameters, max_norm))
 
-    def _gather_unwrapped(self, module: Any) -> tuple[Any, dict[str, Any]]:
-        """Peel compile/DDP, then gather the sharded module to a full state.
-
-        Mirrors single-process: ``get_model_state_dict`` strips the
-        ``_orig_mod.`` compile prefix while ``named_parameters()`` keeps it, so a
-        sharded gather + trainable-key select must run on the SAME uncompiled
-        module or the two key sets disagree (the select would drop everything).
-        Returns the unwrapped module (for trainable-name selection) and its full
-        state. PEFT is kept so LoRA keys stay policy-facing.
-        """
-        from vrl.trainers.fsdp import gather_full_state_dict
-        from vrl.trainers.weight_sync import unwrap_compile_and_ddp
-
-        inner = unwrap_compile_and_ddp(module)
-        return inner, gather_full_state_dict(inner)
-
     def export_trainable_state(self, bundle: Any) -> dict[str, dict[str, Any]]:
-        from vrl.trainers.weight_sync import require_trainable_modules, to_cpu
-
-        modules = require_trainable_modules(bundle)
-        return {
-            name: to_cpu(self._gather_unwrapped(module)[1]) for name, module in modules.items()
-        }
-
-    def export_rollout_state(self, bundle: Any) -> dict[str, Any]:
-        from vrl.trainers.weight_sync import (
-            require_trainable_modules,
-            select_trainable_state,
-            to_cpu_snapshot,
-        )
-
-        modules = require_trainable_modules(bundle)
-        state: dict[str, Any] = {}
-        # Gather each sharded module to a full state, then pick the trainable keys
-        # the same way single process does — so the rollout-facing key space is
-        # identical whether or not the trainer was sharded.
-        for module_name, module in modules.items():
-            inner, full = self._gather_unwrapped(module)
-            state.update(select_trainable_state(inner, str(module_name), full))
-        if not state:
-            raise ValueError("trainable module state is empty")
-        return to_cpu_snapshot(state)
-
-    def load_trainable_state(self, bundle: Any, state: dict[str, Any]) -> None:
-        from vrl.trainers.fsdp import load_full_state_dict
+        from vrl.trainers.fsdp import gather_trainable_state_dict
         from vrl.trainers.weight_sync import require_trainable_modules, unwrap_compile_and_ddp
 
         modules = require_trainable_modules(bundle)
-        # `state` is the checkpoint-facing shape: nested by trainable module name
-        # (what export_trainable_state produced). Load into the same uncompiled
-        # namespace the export gathered from.
+        return {
+            name: gather_trainable_state_dict(unwrap_compile_and_ddp(module))
+            for name, module in modules.items()
+        }
+
+    def export_rollout_state(self, bundle: Any) -> dict[str, Any]:
+        from vrl.trainers.fsdp import gather_trainable_state_dict
+        from vrl.trainers.weight_sync import require_trainable_modules, unwrap_compile_and_ddp
+
+        modules = require_trainable_modules(bundle)
+        state: dict[str, Any] = {}
+        for module_name, module in modules.items():
+            gathered = gather_trainable_state_dict(unwrap_compile_and_ddp(module))
+            state.update({f"{module_name}.{name}": value for name, value in gathered.items()})
+        if not state:
+            raise ValueError("trainable module state is empty")
+        return state
+
+    def load_trainable_state(
+        self,
+        bundle: Any,
+        state: dict[str, Any],
+        *,
+        strict: bool = True,
+    ) -> None:
+        from vrl.trainers.fsdp import load_trainable_state_dict
+        from vrl.trainers.weight_sync import require_trainable_modules, unwrap_compile_and_ddp
+
+        modules = require_trainable_modules(bundle)
+        missing = sorted(set(modules) - set(state))
+        extra = sorted(set(state) - set(modules))
+        if strict and (missing or extra):
+            raise ValueError(
+                f"checkpoint trainable module keys mismatch: missing={missing}, extra={extra}",
+            )
         for name, module in modules.items():
             if name in state:
-                load_full_state_dict(unwrap_compile_and_ddp(module), state[name])
+                load_trainable_state_dict(
+                    unwrap_compile_and_ddp(module),
+                    state[name],
+                    strict=strict,
+                )
 
     def export_optimizer_state(
         self,
@@ -758,14 +764,30 @@ class DDPStrategy(Strategy):
             raise ValueError("trainable module state is empty")
         return to_cpu_snapshot(state)
 
-    def load_trainable_state(self, bundle: Any, state: dict[str, Any]) -> None:
+    def load_trainable_state(
+        self,
+        bundle: Any,
+        state: dict[str, Any],
+        *,
+        strict: bool = True,
+    ) -> None:
         from vrl.trainers.fsdp import load_full_state_dict
         from vrl.trainers.weight_sync import require_trainable_modules, unwrap_compile_and_ddp
 
         modules = require_trainable_modules(bundle)
+        missing = sorted(set(modules) - set(state))
+        extra = sorted(set(state) - set(modules))
+        if strict and (missing or extra):
+            raise ValueError(
+                f"checkpoint trainable module keys mismatch: missing={missing}, extra={extra}",
+            )
         for name, module in modules.items():
             if name in state:
-                load_full_state_dict(unwrap_compile_and_ddp(module), state[name])
+                load_full_state_dict(
+                    unwrap_compile_and_ddp(module),
+                    state[name],
+                    strict=strict,
+                )
 
     def export_optimizer_state(
         self,

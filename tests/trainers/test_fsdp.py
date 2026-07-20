@@ -14,7 +14,7 @@ the build_strategy §10 gates need no process group and run unconditionally.
 from __future__ import annotations
 
 from types import SimpleNamespace
-from typing import ClassVar
+from typing import Any, ClassVar
 
 import pytest
 import torch
@@ -324,19 +324,20 @@ def test_fsdp_rollout_export_unwraps_torch_compile_to_clean_keys(cpu_process_gro
 
 
 def test_fsdp_rollout_export_filters_frozen_params(cpu_process_group) -> None:
-    """export_rollout_state drops frozen params (the LoRA shape) even on the
-    sharded DTensor path; export_trainable_state (checkpoint) keeps them."""
+    """Rollout and checkpoint export gather only mutable LoRA-style parameters."""
     net = _ToyTransformer()
     net.head.requires_grad_(False)  # freeze the non-block head
+    net.register_buffer("frozen_cache", torch.ones(4))
     _shard(net)
     strategy = FSDPStrategy(_cpu_fsdp_context(), precision_policy="none")
+    expected = {name for name, parameter in net.named_parameters() if parameter.requires_grad}
 
     rollout = strategy.export_rollout_state(_Bundle(net))
-    assert rollout  # blocks are still trainable
-    assert not any("head" in key for key in rollout)
+    assert set(rollout) == {f"transformer.{name}" for name in expected}
 
     checkpoint = strategy.export_trainable_state(_Bundle(net))["transformer"]
-    assert any("head" in key for key in checkpoint)  # checkpoint keeps frozen state
+    assert set(checkpoint) == expected
+    assert not any("head" in key or "frozen_cache" in key for key in checkpoint)
 
 
 def test_fsdp_prepare_model_rejects_multi_transformer_model(cpu_process_group) -> None:
@@ -349,19 +350,65 @@ def test_fsdp_prepare_model_rejects_multi_transformer_model(cpu_process_group) -
 
 def test_fsdp_export_then_load_trainable_state_round_trip(cpu_process_group) -> None:
     strategy = FSDPStrategy(_cpu_fsdp_context(), precision_policy="none")
-    src = _shard(_ToyTransformer())
+    src_module = _ToyTransformer()
+    src_module.head.requires_grad_(False)
     with torch.no_grad():
-        load_full_state_dict(
-            src, {k: torch.full_like(v, 3.0) for k, v in gather_full_state_dict(src).items()}
-        )
+        for parameter in src_module.parameters():
+            parameter.fill_(3.0 if parameter.requires_grad else 5.0)
+    src = _shard(src_module)
 
     snapshot = strategy.export_trainable_state(_Bundle(src))
     assert set(snapshot) == {"transformer"}
+    assert not any("head" in key for key in snapshot["transformer"])
 
-    dst = _shard(_ToyTransformer())
+    dst_module = _ToyTransformer()
+    dst_module.head.requires_grad_(False)
+    with torch.no_grad():
+        dst_module.head.weight.fill_(11.0)
+        dst_module.head.bias.fill_(11.0)
+    dst = _shard(dst_module)
     strategy.load_trainable_state(_Bundle(dst), snapshot)
+    restored = gather_full_state_dict(dst)
+    for name, value in restored.items():
+        expected = 11.0 if name.startswith("head.") else 3.0
+        assert torch.allclose(value, torch.full_like(value, expected))
+
+
+def test_fsdp_load_trainable_state_accepts_legacy_full_checkpoint(cpu_process_group) -> None:
+    strategy = FSDPStrategy(_cpu_fsdp_context(), precision_policy="none")
+    src_module = _ToyTransformer()
+    src_module.head.requires_grad_(False)
+    with torch.no_grad():
+        for parameter in src_module.parameters():
+            parameter.fill_(7.0)
+    src = _shard(src_module)
+    legacy = {"transformer": gather_full_state_dict(src)}
+
+    dst_module = _ToyTransformer()
+    dst_module.head.requires_grad_(False)
+    dst = _shard(dst_module)
+    strategy.load_trainable_state(_Bundle(dst), legacy, strict=True)
+
     for value in gather_full_state_dict(dst).values():
-        assert torch.allclose(value, torch.full_like(value, 3.0))
+        assert torch.allclose(value, torch.full_like(value, 7.0))
+
+
+def test_fsdp_load_trainable_state_strictly_validates_mutable_keys(cpu_process_group) -> None:
+    strategy = FSDPStrategy(_cpu_fsdp_context(), precision_policy="none")
+    net = _ToyTransformer()
+    net.head.requires_grad_(False)
+    sharded = _shard(net)
+    snapshot = strategy.export_trainable_state(_Bundle(sharded))
+    state = snapshot["transformer"]
+
+    missing = {"transformer": dict(state)}
+    missing["transformer"].pop(next(iter(state)))
+    with pytest.raises(ValueError, match="missing="):
+        strategy.load_trainable_state(_Bundle(sharded), missing, strict=True)
+
+    unexpected = {"transformer": {**state, "unknown.weight": torch.ones(1)}}
+    with pytest.raises(ValueError, match="unexpected="):
+        strategy.load_trainable_state(_Bundle(sharded), unexpected, strict=True)
 
 
 def test_fsdp_prepare_model_wraps_diffusion_handle(cpu_process_group) -> None:
@@ -373,6 +420,86 @@ def test_fsdp_prepare_model_wraps_diffusion_handle(cpu_process_group) -> None:
     assert out is policy
     assert policy.set_calls == 1
     assert any(isinstance(p, DTensor) for p in policy.transformer.parameters())
+
+
+def test_wan_fsdp_replay_build_defers_full_gpu_move_until_sharding(
+    cpu_process_group,
+    monkeypatch,
+) -> None:
+    """Wan replay attaches LoRA on CPU before FSDP2 owns materialization."""
+    from omegaconf import OmegaConf
+    from torch.distributed.tensor import DTensor
+
+    from vrl.families.registry import get_model_family_entry
+    from vrl.models.steps.denoise import build as denoise_build
+
+    class _TrackingWanTransformer(_ToyTransformer):
+        def __init__(self) -> None:
+            super().__init__()
+            self.to_calls = 0
+
+        def to(self, *args: Any, **kwargs: Any) -> _TrackingWanTransformer:
+            self.to_calls += 1
+            return super().to(*args, **kwargs)
+
+    transformer = _TrackingWanTransformer()
+    monkeypatch.setattr(
+        denoise_build,
+        "load_diffusers_transformer",
+        lambda _build, _class_name: transformer,
+    )
+    monkeypatch.setattr(
+        denoise_build,
+        "load_diffusers_scheduler",
+        lambda _build, _class_name: object(),
+    )
+    cfg = OmegaConf.create(
+        {
+            "model": {
+                "path": "fake/Wan2.1-I2V",
+                "use_lora": True,
+                "lora": {
+                    "rank": 2,
+                    "alpha": 4,
+                    "target_modules": ["lin"],
+                },
+            },
+            "precision": {
+                "float32_precision": "ieee",
+                "training": {"dtype": "fp32"},
+                "rollout": {"dtype": "fp32"},
+            },
+            "distributed": {"training": {"strategy": "fsdp"}},
+        },
+    )
+    entry = get_model_family_entry("wan_2_1_i2v")
+    build = entry.resolve_model_build(
+        cfg,
+        torch.device("cpu"),
+        for_rollout=False,
+    )
+
+    assert build.defer_trainable_device_move is True
+    assert (
+        entry.resolve_model_build(
+            cfg, torch.device("cpu"), for_rollout=True
+        ).defer_trainable_device_move
+        is False
+    )
+    bundle = entry.build_replay(build)
+    assert transformer.to_calls == 0
+    trainable_names = [
+        name for name, parameter in bundle.model.named_parameters() if parameter.requires_grad
+    ]
+    assert trainable_names
+    assert all("lora_" in name for name in trainable_names)
+
+    FSDPStrategy(_cpu_fsdp_context(), precision_policy="none").prepare_model(
+        bundle.model,
+    )
+
+    assert transformer.to_calls == 0
+    assert any(isinstance(parameter, DTensor) for parameter in bundle.model.parameters())
 
 
 def test_fsdp_prepare_model_initializes_process_group(cpu_process_group, monkeypatch) -> None:
@@ -503,6 +630,7 @@ def test_fsdp_export_modules_writes_gathered_hf_adapter(cpu_process_group, tmp_p
 
     from vrl.trainers.checkpointing import (
         LORA_WEIGHTS_NAME,
+        load_training_checkpoint,
         save_training_checkpoint,
     )
 
@@ -537,6 +665,9 @@ def test_fsdp_export_modules_writes_gathered_hf_adapter(cpu_process_group, tmp_p
     # Every exported tensor equals the gathered full state (PEFT strips the
     # ".default" adapter infix on save, so map keys back before comparing).
     gathered = strategy.export_trainable_state(bundle)["transformer"]
+    checkpoint_state = load_training_checkpoint(tmp_path).trainable_state["transformer"]
+    assert checkpoint_state.keys() == gathered.keys()
+    assert all("lora_" in key for key in checkpoint_state)
     for key, tensor in adapter.items():
         assert isinstance(tensor, torch.Tensor)
         assert not isinstance(tensor, DTensor)
