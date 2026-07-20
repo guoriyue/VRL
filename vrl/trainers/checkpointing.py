@@ -109,14 +109,14 @@ def save_training_checkpoint(
     the raw training weights are restored.
 
     Trainable-state export goes through the training ``strategy`` when one is
-    wired (the strategy seam owns state export; single_process today, FSDP2
-    full-state export later). ``export_trainable_state`` below is that
+    wired (the strategy seam owns state export; FSDP2 gathers only mutable
+    trainable tensors). ``export_trainable_state`` below is the
     single_process implementation -- the strategy delegates to it -- and stays
     the default for callers without a strategy (e.g. the Wan DPO trainer).
 
     ``is_primary`` MUST be passed under a multi-rank strategy. The trainable-state
-    export is a COLLECTIVE under FSDP2 (``get_model_state_dict`` all-gathers across
-    every rank), so it runs on all ranks below; only the primary rank then writes
+    export is a COLLECTIVE under FSDP2 (each trainable DTensor is all-gathered
+    across every rank), so it runs on all ranks below; only the primary rank then writes
     the files. Gating the whole call to rank0 (the natural "only rank0 owns IO"
     instinct) deadlocks FSDP: rank0 waits at the all-gather for peers that never
     join. single_process / ddp gather locally, so for them this is a no-op.
@@ -379,7 +379,14 @@ def restore_training_checkpoint(
         raise ValueError(
             f"checkpoint family mismatch: checkpoint={checkpoint_family!r}, runtime={family!r}",
         )
-    load_trainable_state(bundle, checkpoint.trainable_state, strict=strict)
+    strategy = getattr(trainer, "_strategy", None)
+    strategy_loader = getattr(strategy, "load_trainable_state", None)
+    if callable(strategy_loader):
+        # Model state must use the same distributed seam as save: FSDP resumes
+        # full LoRA tensors by scattering them back into local DTensor shards.
+        strategy_loader(bundle, checkpoint.trainable_state, strict=strict)
+    else:
+        load_trainable_state(bundle, checkpoint.trainable_state, strict=strict)
     trainer.load_state_dict(checkpoint.trainer_state, strict=strict)
 
 
@@ -511,31 +518,6 @@ def prepare_metrics_csv(csv_path: str | Path, header: str, *, resume: bool) -> N
     if resume:
         logger.warning("Resume requested but metrics file does not exist; creating %s", path)
     path.write_text(header)
-
-
-def sample_prompt_indices(
-    rng: torch.Generator,
-    *,
-    num_examples: int,
-    prompts_per_batch: int,
-    strategy: str = "random_without_replacement",
-    epoch: int = 0,
-) -> list[int]:
-    """Sample prompt indices with the training prompt generator."""
-
-    if num_examples < 1:
-        raise ValueError("prompt manifest must contain at least one example")
-    if prompts_per_batch < 1:
-        raise ValueError("prompts_per_batch must be >= 1")
-    if strategy == "random_without_replacement":
-        return torch.randperm(num_examples, generator=rng)[:prompts_per_batch].tolist()
-    if strategy == "sequential_window":
-        start = (max(0, int(epoch)) * prompts_per_batch) % num_examples
-        return [(start + offset) % num_examples for offset in range(prompts_per_batch)]
-    raise ValueError(
-        "data.sampler.type must be random_without_replacement or sequential_window; "
-        f"got {strategy!r}",
-    )
 
 
 def read_checkpoint_meta(checkpoint_dir: str | Path) -> dict[str, Any]:
@@ -706,7 +688,6 @@ __all__ = [
     "read_checkpoint_meta",
     "restore_rng_state",
     "restore_training_checkpoint",
-    "sample_prompt_indices",
     "save_resolved_config",
     "save_training_checkpoint",
     "write_checkpoint_meta",

@@ -13,7 +13,6 @@ from vrl.trainers.checkpointing import (
     load_trainable_state,
     load_training_checkpoint,
     restore_training_checkpoint,
-    sample_prompt_indices,
     save_training_checkpoint,
 )
 
@@ -73,6 +72,41 @@ def test_restore_training_checkpoint_rejects_family_mismatch(tmp_path) -> None:
             family="wan_2_1",
             strict=True,
         )
+
+
+def test_restore_training_checkpoint_routes_model_load_through_strategy(tmp_path) -> None:
+    """Distributed model restore must use the same strategy seam as export."""
+
+    class _SpyStrategy:
+        def __init__(self) -> None:
+            self.calls = []
+
+        def load_trainable_state(self, bundle, state, *, strict=True):
+            self.calls.append((bundle, state, strict))
+
+    source = _Bundle()
+    save_training_checkpoint(
+        tmp_path / "checkpoint-strategy-restore",
+        trainer=_Trainer(),
+        bundle=source,
+        family="unit",
+        progress={"next_epoch": 1},
+        rng_state={},
+    )
+    checkpoint = load_training_checkpoint(tmp_path / "checkpoint-strategy-restore")
+    trainer = _Trainer()
+    trainer._strategy = _SpyStrategy()
+    restored = _Bundle()
+
+    restore_training_checkpoint(
+        checkpoint,
+        trainer=trainer,
+        bundle=restored,
+        family="unit",
+        strict=True,
+    )
+
+    assert trainer._strategy.calls == [(restored, checkpoint.trainable_state, True)]
 
 
 def test_save_training_checkpoint_routes_export_through_strategy(tmp_path) -> None:
@@ -312,27 +346,6 @@ def test_infer_next_epoch_falls_back_to_numeric_checkpoint_suffix(tmp_path) -> N
     ckpt.mkdir()
 
     assert infer_next_epoch(ckpt, {}, {}) == 42
-
-
-def test_sample_prompt_indices_uses_configured_sampler_strategy() -> None:
-    """Checks sample prompt indices uses configured sampler strategy."""
-    sequential = sample_prompt_indices(
-        torch.Generator().manual_seed(0),
-        num_examples=5,
-        prompts_per_batch=3,
-        strategy="sequential_window",
-        epoch=1,
-    )
-    random_batch = sample_prompt_indices(
-        torch.Generator().manual_seed(0),
-        num_examples=5,
-        prompts_per_batch=3,
-        strategy="random_without_replacement",
-    )
-
-    assert sequential == [3, 4, 0]
-    assert len(random_batch) == 3
-    assert len(set(random_batch)) == 3
 
 
 def test_load_training_checkpoint_rejects_non_object_meta(tmp_path) -> None:
