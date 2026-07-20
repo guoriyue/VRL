@@ -263,8 +263,8 @@ def test_online_metrics_csv_includes_logprob_mismatch_metrics(tmp_path):
                 "continuous.stale_policy_versions": 1.0,
                 "continuous.queue_ready_groups": 3.0,
                 "continuous.weight_sync_pause_s": 0.25,
-                "continuous.predicted_admit_staleness": 2.0,
-                "continuous.admit_blocked_on_staleness": 1.0,
+                "continuous.lookahead_requested": 1.0,
+                "continuous.producer_completed": 2.0,
             },
         ),
     )
@@ -277,8 +277,8 @@ def test_online_metrics_csv_includes_logprob_mismatch_metrics(tmp_path):
     assert "ratio_abs_dev_max" in header
     assert "mismatch_k3_kl" in header
     assert "continuous_stale_versions" in header
-    assert "continuous_predicted_admit_staleness" in header
-    assert "continuous_admit_blocked_on_staleness" in header
+    assert "continuous_lookahead_requested" in header
+    assert "continuous_producer_completed" in header
     values = dict(zip(header.split(","), row.split(","), strict=True))
     # Assert the numeric value landed in the right column, not the CSV float
     # format width (.6f / .4f zero-padding is a display detail, not a contract).
@@ -296,9 +296,8 @@ def test_online_metrics_csv_includes_logprob_mismatch_metrics(tmp_path):
     assert float(values["continuous_stale_versions"]) == pytest.approx(1.0)
     assert float(values["continuous_ready_groups"]) == pytest.approx(3.0)
     assert float(values["continuous_weight_sync_pause_s"]) == pytest.approx(0.25)
-    # Admit-time predicted-version throttle observability.
-    assert float(values["continuous_predicted_admit_staleness"]) == pytest.approx(2.0)
-    assert float(values["continuous_admit_blocked_on_staleness"]) == pytest.approx(1.0)
+    assert float(values["continuous_lookahead_requested"]) == pytest.approx(1.0)
+    assert float(values["continuous_producer_completed"]) == pytest.approx(2.0)
 
 
 @pytest.mark.parametrize(

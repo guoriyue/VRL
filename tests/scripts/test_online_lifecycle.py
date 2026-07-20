@@ -159,8 +159,18 @@ class _FakeTrainer:
         self.state = SimpleNamespace(global_step=0)
         self.rollout_schedule = _FakeSchedule(state, kwargs["collector"])
 
-    async def step(self, example_batch: list[Any]) -> Any:
-        del example_batch
+    async def step(
+        self,
+        example_batch: list[Any],
+        *,
+        next_prompts: list[Any] | None = None,
+    ) -> Any:
+        self._state["trainer_prompt_batches"].append(
+            {
+                "current": list(example_batch),
+                "next": None if next_prompts is None else list(next_prompts),
+            },
+        )
         self._state["trainer_steps"] += 1
         if self._state.get("trainer_step_raises"):
             raise RuntimeError("train boom")
@@ -180,6 +190,7 @@ def _state() -> dict[str, Any]:
         "launches": 0,
         "model_builds": 0,
         "trainer_steps": 0,
+        "trainer_prompt_batches": [],
         "checkpoint_paths": [],
         "shutdown_order": [],
     }
@@ -276,6 +287,7 @@ def _install_common_fakes(
     state: dict[str, Any],
 ) -> _FakeReward:
     trainer_config = _trainer_config(tmp_path)
+    trainer_config.total_epochs = int(state.get("total_epochs", trainer_config.total_epochs))
     reward = _FakeReward(state)
     collector = _FakeCollector(state, reward)
     resources = SimpleNamespace(
@@ -323,7 +335,11 @@ def _install_common_fakes(
         "reward_torch_device",
         lambda resources, *, trainer_device: "cpu",
     )
-    monkeypatch.setattr(online, "load_prompt_examples_from_config", lambda cfg: ["prompt"])
+    monkeypatch.setattr(
+        online,
+        "load_prompt_examples_from_config",
+        lambda cfg: list(state.get("prompt_examples", ["prompt"])),
+    )
     monkeypatch.setattr(online, "require_runtime_model", lambda model, **kwargs: model)
     monkeypatch.setattr(
         online,
@@ -360,7 +376,6 @@ def _install_common_fakes(
         "prepare_metrics_csv",
         lambda *args, **kwargs: None,
     )
-    monkeypatch.setattr(online, "sample_prompt_indices", lambda *args, **kwargs: [0])
     monkeypatch.setattr(online.OnlineRecipeRun, "write_metric_row", lambda *args, **kwargs: None)
     monkeypatch.setattr(
         online.OnlineRecipeRun,
@@ -398,6 +413,27 @@ async def test_run_online_recipe_shutdowns_owner_after_success(monkeypatch, tmp_
         "owner",
     ]
     assert not ray.is_initialized()
+
+
+@pytest.mark.slow_test
+@pytest.mark.asyncio
+async def test_online_preview_matches_the_next_epoch_prompt_batch(
+    monkeypatch,
+    tmp_path,
+    preinitialized_ray,
+) -> None:
+    state = _state()
+    state["total_epochs"] = 2
+    state["prompt_examples"] = ["prompt-0", "prompt-1", "prompt-2"]
+    _install_common_fakes(monkeypatch, tmp_path, state)
+
+    await online.run_online_recipe(_cfg())
+
+    batches = state["trainer_prompt_batches"]
+    assert len(batches) == 2
+    assert batches[0]["next"] == batches[1]["current"]
+    assert batches[1]["next"] is None
+    assert preinitialized_ray.is_initialized()
 
 
 def test_require_supported_online_strategy_allows_fsdp() -> None:
@@ -446,6 +482,57 @@ def test_require_supported_online_strategy_allows_ddp() -> None:
         device=torch.device("cuda:0"),
     )
     online._require_supported_online_strategy(ctx)  # no raise
+
+
+@pytest.mark.asyncio
+async def test_distributed_disjoint_rollout_fails_before_model_or_ray_launch(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    """Multi-rank ranks must not duplicate one global dedicated rollout plan."""
+
+    from vrl.trainers.distributed import DistributedTrainingContext
+
+    state = _state()
+    _install_common_fakes(monkeypatch, tmp_path, state)
+    resources = SimpleNamespace(
+        cross_node=False,
+        colocated=False,
+        rollout_num_gpus=2,
+        lifecycle=SimpleNamespace(
+            handoff=SimpleNamespace(
+                release_rollout_before_train=False,
+                release_rollout_before_reward=False,
+                release_trainer_before_reward=False,
+                release_reward_after_score=False,
+            ),
+        ),
+    )
+    context = DistributedTrainingContext(
+        strategy="fsdp",
+        distributed=True,
+        rank=0,
+        local_rank=0,
+        world_size=2,
+        is_primary=True,
+        device=torch.device("cuda:0"),
+    )
+    monkeypatch.setattr(online, "resolve_distributed_resources", lambda _cfg: resources)
+    monkeypatch.setattr(
+        online,
+        "resolve_training_context",
+        lambda _cfg, *, device: context,
+    )
+
+    with pytest.raises(
+        NotImplementedError,
+        match="every torchrun rank would independently initialize Ray",
+    ):
+        await online.run_online_recipe(_cfg())
+
+    assert state["model_builds"] == 0
+    assert state["owner_creates"] == 0
+    assert state["launches"] == 0
 
 
 @pytest.mark.asyncio

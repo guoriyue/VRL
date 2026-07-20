@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import csv
 import os
 import socket
 from pathlib import Path
@@ -109,6 +110,78 @@ def test_online_resume_rejects_changed_reward_component_schema(tmp_path) -> None
 
     with pytest.raises(ValueError, match="different metrics schema"):
         resumed.prepare_metrics_csv()
+
+
+def test_metrics_csv_writes_continuous_request_diagnostics(tmp_path) -> None:
+    path = tmp_path / "metrics.csv"
+    run = OnlineRecipeRun(
+        bundle=None,
+        trainer=None,
+        strategy=None,
+        family="unit",
+        component_names=(),
+        export_modules=None,
+        csv_path=path,
+        rng=None,
+        resume=False,
+    )
+    run.prepare_metrics_csv()
+    update = SimpleNamespace(
+        clip_fraction=0.0,
+        active_clip_fraction=0.0,
+        tis_clip_fraction=0.0,
+        rs_seq_masked_fraction=0.0,
+        approx_kl=0.0,
+    )
+    initial = SimpleNamespace(
+        clip_fraction=0.0,
+        active_clip_fraction=0.0,
+        logprob_abs_diff_max=0.0,
+    )
+    mismatch = SimpleNamespace(
+        logprob_abs_diff_mean=0.0,
+        logprob_abs_diff_max=0.0,
+        ratio_abs_dev_mean=0.0,
+        ratio_abs_dev_max=0.0,
+        mismatch_kl=0.0,
+        mismatch_k3_kl=0.0,
+    )
+    metrics = SimpleNamespace(
+        loss=0.0,
+        policy_loss=0.0,
+        sft_loss=0.0,
+        kl_penalty=0.0,
+        weighted_kl_loss=0.0,
+        reward_mean=1.0,
+        reward_std=0.0,
+        update=update,
+        initial_replay=initial,
+        logprob_mismatch=mismatch,
+        advantage_mean=0.0,
+        grad_norm=1.0,
+        adv_saturation=0.0,
+        adv_zero_rate=0.0,
+        group_size=4.0,
+        trained_prompt_num=1,
+        reward_components={},
+        phase_times={
+            "continuous.ready_groups_at_demand": 1.0,
+            "continuous.lookahead_requested": 1.0,
+            "continuous.producer_submitted": 2.0,
+            "continuous.producer_completed": 1.0,
+        },
+    )
+
+    run.write_metric_row(0, metrics)
+
+    with path.open(newline="", encoding="utf-8") as handle:
+        rows = list(csv.DictReader(handle))
+    assert len(rows) == 1
+    assert None not in rows[0]
+    assert rows[0]["continuous_ready_groups_at_demand"] == "1.0"
+    assert rows[0]["continuous_lookahead_requested"] == "1.0"
+    assert rows[0]["continuous_producer_submitted"] == "2.0"
+    assert rows[0]["continuous_producer_completed"] == "1.0"
 
 
 def test_metrics_csv_preflight_broadcasts_primary_failure(

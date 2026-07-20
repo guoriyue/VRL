@@ -47,16 +47,17 @@ from vrl.trainers.checkpointing import (
     prepare_model_config_for_training_resume,
     restore_rng_state,
     restore_training_checkpoint,
-    sample_prompt_indices,
     save_resolved_config,
     save_training_checkpoint,
 )
-from vrl.trainers.data import load_prompt_examples_from_config
+from vrl.trainers.data import PromptBatchSampler, load_prompt_examples_from_config
 from vrl.trainers.distributed import DistributedTrainingContext, resolve_training_context
 from vrl.trainers.online import OnlineTrainer
 from vrl.trainers.strategy import build_strategy
 from vrl.trainers.weight_sync import build_runtime_weight_syncer
 from vrl.utils.memory import capture_host_memory, format_host_memory, log_host_memory
+from vrl.utils.profiling import profile_range
+from vrl.utils.stats import RolloutStats
 
 logger = logging.getLogger(__name__)
 
@@ -178,6 +179,33 @@ def _require_supported_online_strategy(context: DistributedTrainingContext) -> N
             "run_online_recipe. Use single_process, ddp, or fsdp "
             "(SPRINT_multi_gpu_training.md / SPRINT_symmetric_colocated_ddp.md).",
         )
+
+
+def _require_supported_distributed_rollout_topology(
+    context: DistributedTrainingContext,
+    resources: Any,
+) -> None:
+    """Reject multi-rank rollout ownership that the recipe cannot coordinate.
+
+    The implemented DDP/FSDP orchestration is per-rank-local and colocated: each
+    rank owns its own Ray runtime on its trainer GPU. With disjoint rollout GPUs,
+    every rank would instead resolve the same global rollout plan, start or attach
+    Ray independently, and launch duplicate workers onto those GPUs. Supporting
+    that topology needs one explicit owner (for example rank-0 collection plus a
+    broadcast), not a resource-only YAML change.
+    """
+
+    if not context.distributed:
+        return
+    if bool(resources.colocated) or int(resources.rollout_num_gpus) == 0:
+        return
+    raise NotImplementedError(
+        "distributed training with disjoint rollout GPUs is not supported by "
+        "run_online_recipe: every torchrun rank would independently initialize Ray "
+        "and launch the same rollout device plan. Use single_process with dedicated "
+        "rollout GPUs. Multi-rank DDP/FSDP needs rank-owned rollout placement or "
+        "rank-0 collection/broadcast before this topology can run.",
+    )
 
 
 def _log_rollout_memory_plan(trainer_config: Any) -> None:
@@ -377,6 +405,7 @@ async def _run_streaming_optimizer_update(
     trainer: OnlineTrainer,
     example_batch: list[Any],
     *,
+    next_example_batch: list[Any] | None = None,
     gradient_accumulation_steps: int,
     prompts_per_batch: int,
     n_samples_per_prompt: int,
@@ -402,14 +431,23 @@ async def _run_streaming_optimizer_update(
 
     trainer.begin_optimizer_update()
 
-    phase_times: dict[str, float] = {}
+    update_stats = RolloutStats()
     reward_mean_w = reward_std_w = adv_mean_w = adv_zero_w = adv_sat_w = 0.0
     weight_total = 0
     trained_prompt_num = 0
     group_size = float(n_samples_per_prompt)
     reward_component_values: dict[str, list[float]] = {}
     for mb_index, microbatch in enumerate(microbatches):
-        batch = await trainer.collect_training_batch(microbatch)
+        if mb_index + 1 < len(microbatches):
+            next_prompts = microbatches[mb_index + 1]
+        elif next_example_batch:
+            next_prompts = next_example_batch[:micro]
+        else:
+            next_prompts = None
+        batch = await trainer.collect_training_batch(
+            microbatch,
+            next_prompts=next_prompts,
+        )
         try:
             # Host-RAM fail-fast on the first microbatch: one slice is the host
             # peak under streaming, so if it is already over budget, stop now.
@@ -434,9 +472,7 @@ async def _run_streaming_optimizer_update(
                 group_size = float(batch.group_size)
             for name, values in getattr(batch, "reward_components", {}).items():
                 reward_component_values.setdefault(name, []).extend(values)
-            mb_phase = trainer._step_stats(batch.iteration, batch.timer).as_phase_dict()
-            for key, value in mb_phase.items():
-                phase_times[key] = phase_times.get(key, 0.0) + value
+            update_stats.merge(trainer._step_stats(batch.iteration, batch.timer))
         finally:
             # Release this microbatch's rollout/replay tensors before the next,
             # including exception paths where traceback locals can otherwise keep
@@ -445,7 +481,7 @@ async def _run_streaming_optimizer_update(
 
     weight_total = max(1, weight_total)
     return await trainer.finish_optimizer_update(
-        phase_times=phase_times,
+        stats=update_stats,
         reward_mean=reward_mean_w / weight_total,
         reward_std=reward_std_w / weight_total,
         adv_mean=adv_mean_w / weight_total,
@@ -495,22 +531,16 @@ class OnlineRecipeRun:
             # Continuous-rollout async diagnostics (0 in strict_on_policy mode). These
             # answer "is the run actually async?": observed staleness of consumed
             # samples, prefetched ready-queue depth, weight-sync barrier pause, and
-            # producer starvation. The two *_dropped/discarded columns quantify
-            # wasted generation: groups dropped past the staleness window at receipt
-            # (producer) and ready items purged right after a weight sync (schedule).
-            # Both stay ~0 on a single fast-refilling card and only grow under real
-            # disaggregated overlap. Sourced from TrainStepMetrics.phase_times.
+            # producer starvation. Sourced from TrainStepMetrics.phase_times.
             "continuous_stale_versions,continuous_ready_groups,"
+            "continuous_ready_groups_at_demand,continuous_queue_wait_s,"
+            "continuous_item_age_s,continuous_lookahead_requested,"
             "continuous_weight_sync_pause_s,continuous_producer_max_gap_s,"
-            "continuous_producer_discarded_stale,continuous_post_sync_dropped_stale,"
+            "continuous_producer_submitted,"
+            "continuous_producer_completed,continuous_producer_errors,"
             # 0 = draining weight-sync barrier (waited for in-flight generation),
             # 1 = non-draining (versioned trainable-state slots let it skip the wait).
-            "continuous_weight_sync_barrier_mode,"
-            # Admit-time predicted-version throttle (RolloutScheduler): how many
-            # versions a group submitted now would trail by when consumed, and 1
-            # when that staleness throttle is what stopped admission (proactive
-            # backpressure, vs the reactive *_dropped/discarded columns above).
-            "continuous_predicted_admit_staleness,continuous_admit_blocked_on_staleness"
+            "continuous_weight_sync_barrier_mode"
         )
         if component_cols:
             header = f"{header},{component_cols}"
@@ -559,26 +589,32 @@ class OnlineRecipeRun:
             "trained_prompt_num": metrics.trained_prompt_num,
             "continuous_stale_versions": phases.get("continuous.stale_policy_versions", 0.0),
             "continuous_ready_groups": phases.get("continuous.queue_ready_groups", 0.0),
-            "continuous_weight_sync_pause_s": phases.get("continuous.weight_sync_pause_s", 0.0),
-            "continuous_producer_max_gap_s": phases.get("continuous.producer_max_tick_gap_s", 0.0),
-            "continuous_producer_discarded_stale": phases.get(
-                "continuous.producer_discarded_stale",
+            "continuous_ready_groups_at_demand": phases.get(
+                "continuous.ready_groups_at_demand",
                 0.0,
             ),
-            "continuous_post_sync_dropped_stale": phases.get(
-                "continuous.post_sync_dropped_stale",
+            "continuous_queue_wait_s": phases.get("continuous.queue_wait_s", 0.0),
+            "continuous_item_age_s": phases.get("continuous.item_age_s", 0.0),
+            "continuous_lookahead_requested": phases.get(
+                "continuous.lookahead_requested",
+                0.0,
+            ),
+            "continuous_weight_sync_pause_s": phases.get("continuous.weight_sync_pause_s", 0.0),
+            "continuous_producer_max_gap_s": phases.get("continuous.producer_max_tick_gap_s", 0.0),
+            "continuous_producer_submitted": phases.get(
+                "continuous.producer_submitted",
+                0.0,
+            ),
+            "continuous_producer_completed": phases.get(
+                "continuous.producer_completed",
+                0.0,
+            ),
+            "continuous_producer_errors": phases.get(
+                "continuous.producer_errors",
                 0.0,
             ),
             "continuous_weight_sync_barrier_mode": phases.get(
                 "continuous.weight_sync_barrier_mode",
-                0.0,
-            ),
-            "continuous_predicted_admit_staleness": phases.get(
-                "continuous.predicted_admit_staleness",
-                0.0,
-            ),
-            "continuous_admit_blocked_on_staleness": phases.get(
-                "continuous.admit_blocked_on_staleness",
                 0.0,
             ),
             **{f"r_{name}": component_means[name] for name in component_names},
@@ -617,13 +653,16 @@ class OnlineRecipeRun:
                         str(row["trained_prompt_num"]),
                         f"{row['continuous_stale_versions']:.1f}",
                         f"{row['continuous_ready_groups']:.1f}",
+                        f"{row['continuous_ready_groups_at_demand']:.1f}",
+                        f"{row['continuous_queue_wait_s']:.4f}",
+                        f"{row['continuous_item_age_s']:.4f}",
+                        f"{row['continuous_lookahead_requested']:.1f}",
                         f"{row['continuous_weight_sync_pause_s']:.4f}",
                         f"{row['continuous_producer_max_gap_s']:.4f}",
-                        f"{row['continuous_producer_discarded_stale']:.1f}",
-                        f"{row['continuous_post_sync_dropped_stale']:.1f}",
+                        f"{row['continuous_producer_submitted']:.1f}",
+                        f"{row['continuous_producer_completed']:.1f}",
+                        f"{row['continuous_producer_errors']:.1f}",
                         f"{row['continuous_weight_sync_barrier_mode']:.1f}",
-                        f"{row['continuous_predicted_admit_staleness']:.1f}",
-                        f"{row['continuous_admit_blocked_on_staleness']:.1f}",
                         *(f"{row[f'r_{name}']:.4f}" for name in component_names),
                     ],
                 )
@@ -768,6 +807,7 @@ async def run_online_recipe(
     # model / Ray runtime.
     training_context = resolve_training_context(cfg, device=device)
     _require_supported_online_strategy(training_context)
+    _require_supported_distributed_rollout_topology(training_context, resources)
     # Construct the strategy before any model or Ray actor. Shared-GPU on-demand
     # execution needs complete trainer-state parking; distributed strategies must
     # reject that topology here instead of failing after expensive launch work.
@@ -986,48 +1026,46 @@ async def run_online_recipe(
             trainer_config.n_samples_per_prompt,
         )
 
-        # Both ddp and fsdp are data-parallel (fsdp shards the MODEL, not the data):
-        # every rank shares the prompt RNG (identical draw), so draw world_size *
-        # prompts_per_batch prompts and hand each rank a DISJOINT slice. The
-        # cross-rank gradient (DDP all-reduce / FSDP reduce-scatter) then covers
-        # world_size * prompts_per_batch DISTINCT prompts (the effective batch)
-        # instead of every rank redundantly training the SAME prompts_per_batch
-        # prompts and averaging identical gradients. single_process (world_size=1,
-        # rank=0) takes the whole draw unchanged. Requires the prompt manifest to
-        # hold >= world_size * prompts_per_batch prompts for a without-replacement
-        # sampler.
         rank_batch = int(trainer_config.prompts_per_batch)
-        sampler_strategy = str(
-            OmegaConf.select(cfg, "data.sampler.type", default="random_without_replacement"),
+        prompt_sampler = PromptBatchSampler(
+            generator=rng,
+            num_examples=len(examples),
+            prompts_per_rank=rank_batch,
+            num_replicas=training_context.world_size,
+            rank=training_context.rank,
+            strategy=str(require(cfg, "data.sampler.type")),
         )
         for epoch in range(start_epoch, trainer_config.total_epochs):
-            idx = sample_prompt_indices(
-                rng,
-                num_examples=len(examples),
-                prompts_per_batch=rank_batch * training_context.world_size,
-                strategy=sampler_strategy,
-                epoch=epoch,
-            )
-            shard = idx[
-                training_context.rank * rank_batch : (training_context.rank + 1) * rank_batch
-            ]
-            example_batch = [examples[i] for i in shard]
-            if gradient_accumulation_steps > 0:
-                # Streaming accumulation: split the optimizer-target batch into
-                # microbatches collected/trained/released one at a time so host
-                # RAM does not have to hold the whole batch at once.
-                metrics = await _run_streaming_optimizer_update(
-                    trainer,
-                    example_batch,
-                    gradient_accumulation_steps=gradient_accumulation_steps,
-                    prompts_per_batch=int(trainer_config.prompts_per_batch),
-                    n_samples_per_prompt=int(trainer_config.n_samples_per_prompt),
-                    host_memory_budget_fraction=float(
-                        getattr(trainer_config, "host_memory_budget_fraction", 0.0),
-                    ),
-                )
-            else:
-                metrics = await trainer.step(example_batch)
+            indices = prompt_sampler.sample(epoch=epoch)
+            example_batch = [examples[i] for i in indices]
+            next_example_batch: list[Any] | None = None
+            if epoch + 1 < trainer_config.total_epochs:
+                next_indices = prompt_sampler.preview(epoch=epoch + 1)
+                next_example_batch = [examples[i] for i in next_indices]
+            # This wall range deliberately encloses collect, replay/backward,
+            # optimizer step, and the post-step rollout weight sync. It is the
+            # denominator for update-level barrier attribution in nsys traces.
+            with profile_range("trainer.optimizer_update"):
+                if gradient_accumulation_steps > 0:
+                    # Streaming accumulation: split the optimizer-target batch into
+                    # microbatches collected/trained/released one at a time so host
+                    # RAM does not have to hold the whole batch at once.
+                    metrics = await _run_streaming_optimizer_update(
+                        trainer,
+                        example_batch,
+                        next_example_batch=next_example_batch,
+                        gradient_accumulation_steps=gradient_accumulation_steps,
+                        prompts_per_batch=int(trainer_config.prompts_per_batch),
+                        n_samples_per_prompt=int(trainer_config.n_samples_per_prompt),
+                        host_memory_budget_fraction=float(
+                            getattr(trainer_config, "host_memory_budget_fraction", 0.0),
+                        ),
+                    )
+                else:
+                    metrics = await trainer.step(
+                        example_batch,
+                        next_prompts=next_example_batch,
+                    )
             if is_primary:
                 run.write_metric_row(epoch, metrics)
 
