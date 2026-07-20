@@ -402,6 +402,39 @@ def test_rollout_orchestration_group_override_uses_rollout_namespace() -> None:
     assert typed.continuous.max_stale_policy_versions >= 1
 
 
+def test_sd35_continuous_4gpu_acceptance_resolves_disjoint_resident_topology() -> None:
+    """The reusable hardware gate must preserve the topology it validates."""
+
+    cfg = load_config("experiment/sd3_5/online_grpo_ocr_continuous_4gpu_acceptance")
+    validate_training_config(cfg)
+    built = build_configs(cfg)
+    resources = resolve_distributed_resources(cfg)
+    validate_rollout_schedule_topology(
+        built["trainer"].rollout_orchestration,
+        resources,
+    )
+    validate_reward_memory_parking(resources=resources, built=built)
+
+    assert resources.trainer_devices == (0,)
+    assert resources.rollout_devices == (1, 2, 3)
+    assert resources.reward_devices == ()
+    assert resources.rollout_num_workers == 3
+    assert resources.lifecycle.rollout.mode == "resident"
+    assert not any(
+        (
+            resources.lifecycle.handoff.release_rollout_before_train,
+            resources.lifecycle.handoff.release_rollout_before_reward,
+            resources.lifecycle.handoff.release_trainer_before_reward,
+            resources.lifecycle.handoff.release_reward_after_score,
+        ),
+    )
+    assert built["trainer"].rollout_orchestration.schedule_mode == "continuous"
+    assert cfg.actor.drop_zero_advantage is False
+    assert cfg.rollout.n_samples_per_prompt == 6
+    assert cfg.rollout.samples_per_chunk == 2
+    assert cfg.actor.replay_samples_per_chunk == 2
+
+
 def test_algorithm_config_dispatches_representative_kinds() -> None:
     """Checks algorithm config dispatches representative kinds."""
     examples = {
@@ -835,3 +868,38 @@ def test_dpo_allows_explicit_null_max_train_samples() -> None:
 
     assert optional_none(cfg, "data.max_train_samples") is None
     validate_training_config(cfg)
+
+
+def test_reward_collection_mode_accepts_the_three_acceptance_arms() -> None:
+    """Checks the measurement override survives YAML -> typed config."""
+    from vrl.trainers.core.types import RolloutOrchestrationConfig
+
+    for arm in ("batched_serial", "per_group_serial", "per_group_streaming"):
+        typed = RolloutOrchestrationConfig(reward_collection_mode=arm)
+        assert typed.reward_collection_mode == arm
+
+    assert RolloutOrchestrationConfig().reward_collection_mode is None
+
+
+def test_reward_collection_mode_rejects_unknown_arm() -> None:
+    """Checks a typo fails fast instead of silently running the default arm."""
+    from vrl.trainers.core.types import RolloutOrchestrationConfig
+
+    with pytest.raises(ValueError, match=r"reward_collection_mode must be one of"):
+        RolloutOrchestrationConfig(reward_collection_mode="streaming")
+
+
+def test_reward_collection_mode_rejected_under_continuous_scheduling() -> None:
+    """Checks the knob is refused where it could have no effect.
+
+    Continuous collects one group per call, so no arm can overlap inside a
+    collection; accepting the key would be a no-op knob the user sets expecting
+    a measurable difference.
+    """
+    from vrl.trainers.core.types import RolloutOrchestrationConfig
+
+    with pytest.raises(ValueError, match=r"strict_on_policy collection only"):
+        RolloutOrchestrationConfig(
+            schedule_mode="continuous",
+            reward_collection_mode="per_group_streaming",
+        )

@@ -1,0 +1,80 @@
+# SD3.5 OCR continuous scheduling acceptance on one four-GPU host.
+#
+# This is a reusable hardware gate, not a production-quality training recipe. It
+# keeps the workload small enough to profile quickly while preserving the real
+# replay/backward and rollout weight-sync paths. The GPU pools are intentionally
+# disjoint because continuous scheduling requires rollout generation to remain
+# resident while the trainer computes.
+#
+# Physical topology (CUDA_VISIBLE_DEVICES=0,1,2,3):
+#   GPU 0: single-process trainer
+#   GPU 1/2/3: one dedicated rollout worker each
+#   CPU: OCR reward
+#
+# Profile with:
+#   CUDA_VISIBLE_DEVICES=0,1,2,3 \
+#   PYTORCH_ALLOC_CONF=expandable_segments:True \
+#   nsys profile --trace=cuda,nvtx --sample=none --cpuctxsw=none \
+#     --trace-fork-before-exec=true --wait=all --discard-environment=true \
+#     --output outputs/sd35_continuous_4gpu_acceptance_nsys \
+#     .venv/bin/python -m vrl.scripts.train \
+#       --config experiment/sd3_5/online_grpo_ocr_continuous_4gpu_acceptance
+defaults:
+  - /experiment/sd3_5/online_grpo_ocr
+  - /base/rollout/orchestration/continuous
+
+distributed:
+  training:
+    strategy: single_process
+    num_nodes: 1
+    gpus_per_node: 1
+  resources:
+    visible_devices: [0, 1, 2, 3]
+    trainer:
+      devices: [0]
+      num_gpus: 1
+    rollout:
+      devices: [1, 2, 3]
+      num_gpus: 3
+      gpus_per_worker: 1.0
+      num_workers: 3
+      gpu_pool: dedicated
+    allow_overlap: false
+
+sampling:
+  height: 128
+  width: 128
+  num_steps: 4
+
+rollout:
+  # Three workers each receive one two-sample chunk. Keeping the generation and
+  # replay batch shapes equal preserves the pre-update log-prob parity gate.
+  n_samples_per_prompt: 6
+  prompts_per_batch: 2
+  samples_per_chunk: 2
+  sde:
+    window_range: [0, 4]
+
+actor:
+  # Preserve the full backward path even when the tiny OCR samples all score the
+  # same. This gate validates scheduling overlap, not reward quality.
+  drop_zero_advantage: false
+  gradient_accumulation_steps: 2
+  replay_samples_per_chunk: 2
+
+model:
+  torch_compile:
+    enable: false
+
+trainer:
+  output_dir: outputs/sd3_5_ocr_continuous_4gpu_acceptance
+  total_epochs: 3
+  save_freq: 3
+  profile: true
+  debug:
+    first_step: false
+  rollout_orchestration:
+    continuous:
+      max_inflight_groups: 6
+      max_ready_groups: 8
+      max_stale_policy_versions: 1
