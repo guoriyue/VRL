@@ -31,6 +31,73 @@
 > 的多卡形态失去了传输层：cross_node 配方已在 header 标注 STALE；若将来要跨节点 reward，
 > 需要新的 remote 传输而不是复活 actor pool。
 
+> **2026-07-20 reward 可用性实测（4×L4）。** 本条修正下一条 2026-07-19 更新里
+> 「reward 太轻、该按 kill 规则放弃」的结论——那个结论建立在「Kling 是唯一能跑的
+> reward」这个当时为真的前提上，而该前提是**依赖损坏造成的假象**。
+>
+> 真实加载验证（真 7B/2B checkpoint + 真 rollout mp4，不是 tiny-input smoke —— 下面
+> 的每一个 bug 都能骗过 fake smoke）：
+>
+> | 组件 | 结论 | 延迟/条 | 确定性 |
+> | --- | --- | ---: | --- |
+> | `kling_video_reward` | 可用（修 2 处后） | 0.44 s | 逐位一致 |
+> | `unified_reward_video` | 可用（修 1 处后） | 8.0 s | 逐位一致 |
+> | `videoscore2` | **不可用**：贪心解码退化，4/4 撞满 token 上限不出分数；按 checkpoint 自带采样配置显式传参后仍只有 2/4 | 20–63 s | — |
+> | `phymotion` | 未验证：需独立 SMPL+MuJoCo conda 环境，本机无法加载 | — | — |
+>
+> 关键推论：**`unified_reward_video` 的 8.0 s/条让 R ≈ G**（实测 `generation_wall`
+> 66.2 s / 四组八样本 vs UnifiedReward 约 68 s），理论上界 `1 + min/max` ≈ **1.97x**，
+> 扣掉不可重叠的首次生成后实际约 **1.58x**——远高于 1.10x 的 kill 线。而 Kling 的
+> 0.44 s 只给出 1.12x 上界、实际约 1.09x，卡在门槛下。**让这个 sprint 有意义的那个
+> reward 一直坏着**，所以「reward 太轻」是结论倒果为因。
+>
+> 臂 B 的实测价值（这是它存在的理由第一次被兑现）：稳态下臂 A（一次批量调用）
+> `collect.wall` 73.98/74.04 s，臂 B（四次逐组调用）73.94/73.93 s ——**逐组调用的粒度税
+> = 0.1%，实测为零**。这意味着 A→C 的差值可以整个归给重叠，而不必假设。
+>
+> 复现资产：`vrl/config/reward_service/unified_reward_overlap_gate.yaml`（service）与
+> `experiment/wan_2_1/online_grpo_unified_reward_overlap_gate`（gate 配方，
+> trainer GPU0 / rollout GPU1,2 / reward service GPU3）。Kling 版本保留为对照：
+> `kling_overlap_gate.yaml`。
+>
+> **2026-07-19 实测更新（4×L4，probe 完成，campaign 未跑）。** 触发条件已满足（4 张
+> 空闲 L4），本轮做了 G/R 定标并把 A/B/C 验收所缺的代码补齐。三条结论推翻了本文
+> §3 的前提：
+>
+> - **R/G 反转。** wan 2.1 1.3B @240p33f 在 L4 上实测 588 ms/step（编译后）=
+>   11.8 s/sample = **94 s/组**（8 samples），denoise 峰值仅 **3.1 GB**；
+>   VideoScore2 (Qwen2.5-VL-7B) 实测 **19.47 s/video**（p95 19.50）= **156 s/组**，
+>   峰值 16.2 GB。**reward 比生成贵**，不是本文 §3 记的"reward 占 14%"。理论上界
+>   `1 + G/R` ≈ **1.6x**（单张 rollout 卡），远高于 kill 线 1.10x。
+> - **显存不是约束。** 本文和 smoke 文档里"video 装不下 23GB"的结论全部来自**共卡**
+>   进程（trainer+VAE+text encoder 常驻）。分卡拓扑下 rollout 卡只要 3.1 GB。
+> - **两个会让实验失效的结构问题。** ① `prompts_per_batch: 1` 时一次 collection 只有
+>   一组，没有 N+1，A/B/C 是同一个程序——必须 ≥2；② rollout 用两张卡会把 G 的墙钟砍半，
+>   使 `1 + G/R` 从 1.6x 降到 1.3x。reward 已是瓶颈，再加速生成只会压低可测上界，
+>   **单张 rollout 卡反而是更好的实验拓扑**。
+>
+> 本轮落地的代码（都不依赖 GPU，已测）：
+>
+> - `RewardCollectionMode`（`vrl/rollouts/orchestration/types.py`）+ `collect_prompt_batches`
+>   的三分支。此前只有一个布尔量，**对照臂 B（per-group serial）在代码里不存在**，
+>   验收无法归因。override 只能收紧不能放宽：无 capability 强制 streaming 直接抛错。
+> - `trainer.rollout_orchestration.reward_collection_mode` 配置键（continuous 下拒绝，
+>   因为那里一次只收一组，接受即是无效旋钮）。
+> - `JsonlStatsSink` → 每步写 `rollout_stats.jsonl`。此前 `collect.*` 只出现在日志行里，
+>   `metrics.csv` 无对应列，harness 没有可靠数据源。
+> - `vrl/scripts/perf/reward_overlap_benchmark.py` — 3 臂 × N 重复，跑真实训练 run，
+>   计算改善率、置信下界、generation p95 回退、实测/理论 `min(G,R)` 比值，判据有单测覆盖。
+>
+> 顺带修掉三个让整个重型视频 reward 家族无法运行的依赖 bug：`AutoModelForVision2Seq`
+> 在仓库自己 pin 的 transformers 5 里已删（改用 `AutoModelForImageTextToText`，影响
+> videoscore2 + unified_reward_video）；`qwen-vl-utils` 声明了但未安装；**没有任何可用
+> 的视频解码后端**（torchvision 0.22+ 删了 `io.read_video`，torchcodec 需要未声明的系统
+> FFmpeg），已把 `decord` 加进 `reward` extra——Kling 走同一条 `process_vision_info`
+> 路径，所以三个视频 reward 此前在干净环境里都解不了码。
+>
+> **仍未做：** A/B/C 真机 campaign（估算 6–8 小时，配置为 `n_samples_per_prompt=4`、
+> `prompts_per_batch=2`、rollout 单卡）。阻塞项：根分区 98% 满，产物空间不足。
+
 状态：**parked：机制基本落地，等待多卡吞吐验证（2026-07-09 复核）**。
 触发条件：有可独占的 ≥2/3 GPU，按当前 reward runtime 架构重新测量剩余收益。性质：EXACT(无损)吞吐杠杆。二次复核（对照通过的测试 + 既有配置）发现：async-reward + reward-role placement 这条线的 placement/release 契约、continuous producer 的 reward(N)∥generate(N+1) 调度能力、late-group 版本丢弃都已存在；实际 overlap 仍必须通过 reward runtime capability gate。真正剩的是 ≥2/3-GPU 吞吐验证和单卡 staged I/O overlap。详见 §7。文中旧 `execution=pool` 分析是历史测量背景，不得作为当前实现说明。
 

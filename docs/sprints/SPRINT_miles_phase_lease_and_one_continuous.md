@@ -10,8 +10,8 @@
 
 ## 实施记录（2026-07-11）
 
-本轮已经落地代码合同，但 umbrella sprint 尚未完成；真实一卡多轮和真实两卡 overlap 两组硬件
-acceptance 仍是完成门槛。
+本轮已经落地代码合同。Track B 的真实分卡 continuous hardware acceptance 已于 2026-07-19
+完成；umbrella sprint 仍未完成，因为 Track A 的真实单卡多轮 acceptance 仍是完成门槛。
 
 已完成：
 
@@ -67,10 +67,100 @@ acceptance 仍是完成门槛。
 聚焦回归、全量 active online config preflight、Ruff、`compileall` 与 `git diff --check` 全部通过。
 skip 是需要外部真实 checkpoint 的既有 E2E gate，不作为本轮硬件 acceptance 的替代。
 
+## Hardware acceptance update (2026-07-19)
+
+Track B passed a three-update SD3.5 OCR acceptance run on four NVIDIA L4 GPUs. The
+resolved topology was trainer on physical GPU 0, one rollout worker on each of physical
+GPUs 1/2/3, and the OCR reward on CPU. All three GPU pools were disjoint and the resolved
+lifecycle contained no phase handoff.
+
+The pre-run audit found that the producer could repeatedly generate the current prompt
+set instead of the six distinct microbatches required by three updates with gradient
+accumulation two. Continuous scheduling now uses finite prompt-batch state: each batch
+freezes its complete prompt identity, runtime-debug state, group size, and policy version;
+the training loop explicitly passes the next microbatch prompt set, including the first
+microbatch of the next update. Failed slots retry with bounded drain and shutdown behavior.
+
+Acceptance evidence:
+
+- The run completed epochs 0/1/2, wrote complete `checkpoint-3` and `checkpoint-final`
+  checkpoints, terminated all three owned Ray workers, and left all four GPUs at zero
+  allocated memory.
+- Producer completion advanced exactly `2 -> 4 -> 6`; all producer errors, stale drops,
+  prompt-set drops, and backpressure drops remained zero. Updates 1 and 2 consumed ready
+  lookahead immediately with zero queue wait.
+- Nsight recorded 72 `trainer.backward` ranges and 96
+  `generation.denoise_forward` ranges. Backward kernels appeared only on physical GPU 0;
+  denoise kernels appeared only on physical GPUs 1/2/3.
+- Real CUDA-kernel overlap between trainer backward and rollout denoise was positive on
+  every rollout GPU: 105.8 ms on GPU 1, 43.6 ms on GPU 2, and 45.1 ms on GPU 3. NVTX wall
+  overlap was 2.007 s, 0.784 s, and 0.795 s respectively.
+- The focused regression suite passed `539` tests; Ruff, `compileall`, and
+  `git diff --check` also passed.
+
+Artifacts are under
+`outputs/sd35_continuous_4gpu_acceptance_20260719T213505Z/`, with the topology and runtime
+configuration in `train/resolved_config.yaml`, schedule metrics in `train/metrics.csv`,
+physical-GPU trace attribution in `trace_validation.json`, utilization in
+`dmon_validation.json`, and the source Nsight report in `profile.nsys-rep`. The reusable
+gate configuration is
+`experiment/sd3_5/online_grpo_ocr_continuous_4gpu_acceptance`.
+
+A replay-vectorization follow-up first tested `actor.replay_samples_per_chunk=2` and `4`
+against generation chunk one. Replay four reduced steady replay/backward wall from
+12.364 s/update to 3.020 s/update (4.09x), reduced `trainer.backward` ranges from 72 to
+18, and increased real trainer/rollout CUDA-kernel overlap. That mismatched shape did not
+pass the correctness gate: replay two produced
+`pre_update_logprob_abs_diff_max` up to 0.028499 and replay four up to 0.017972; with
+`clip_ratio=0.0001`, 66.67-79.17% and 75.00-79.17% of samples respectively were clipped
+before the first policy update. The accepted replay-one baseline remained exactly zero
+for both metrics. Because this OCR smoke has zero advantage and zero gradient, its success
+verdict cannot override that parity failure.
+
+The matching shape `n_samples_per_prompt=6`, generation chunk two, and replay chunk two
+then passed a clean three-update four-GPU run. Each request dispatched exactly one
+two-sample chunk to each of the three rollout workers; rollout memory peaked at 15,877 MiB
+per card and steady generation wall was 0.589-0.648 s/group. All three updates reported
+zero pre-update log-prob difference and zero pre-update clipping, producer completion
+advanced `2 -> 4 -> 6` with zero errors or drops, and steady queue wait was effectively
+zero. The reusable preset now uses this aligned shape. It changes the smoke-only GRPO
+group size from four to six and samples/update from eight to twelve; it is not a production
+learning-hyperparameter recommendation.
+
+The final preset was then captured under Nsight at
+`outputs/sd35_continuous_4gpu_aligned_chunk2_nsys_20260719T231300Z/`. The trace contains
+exactly 54 replay ranges, 54 backward ranges, and 72 denoise-forward ranges. Backward ran
+only on physical GPU 0; the three rollout GPUs each contain 24 denoise ranges and 97,857
+attributed kernels. Real backward/denoise kernel overlap was 84.78 ms, 85.01 ms, and
+88.83 ms on physical GPUs 1/2/3 respectively. The profiled metrics again reported zero
+pre-update log-prob difference, zero clipping, steady queue wait near zero, staleness
+`[0, 1, 1]`, final submitted/completed `6/6`, and no errors or drops.
+
+The aligned acceptance remains trainer-rate-limited: steady optimizer-update wall is
+about 10.0 s while collect wall is about 2.7 s, and rollout items arrive 4.1-4.2 s before
+demand. GPU 0 kernel-union busy inside replay plus backward is only 31.26%. This tiny
+128x128, compile-disabled workload is dominated by small-batch launch/host overhead;
+FSDP would add communication without addressing it. A larger replay chunk is not a safe
+YAML-only fix because mismatched generation/replay batch shapes already failed parity.
+The three late unmatched outer `engine.forward_chunk` ranges are excluded from chunk
+utilization; all 72 inner denoise ranges and the physical-GPU overlap attribution are
+complete. See `trace_validation.json` for the machine-readable result.
+
+Multi-rank training with a disjoint rollout pool remains intentionally gated. The
+current online multi-rank implementation is per-rank-local and colocated; without a
+rank-owned rollout plan or rank-0 collect/broadcast path, every torchrun rank would
+independently launch the same disjoint Ray rollout workers. The entrypoint now rejects
+that topology before model or Ray construction instead of allowing duplicate workers
+to contend for the same GPUs.
+
+This is a scheduling and hardware acceptance, not a learning-quality acceptance. At
+128x128 with four denoise steps, OCR reward was zero for every sample, so advantage and
+gradient norm were also zero. `actor.drop_zero_advantage=false` deliberately preserved
+the backward path needed to validate overlap.
+
 仍未完成，因此状态保持 `in progress`：
 
 - 尚未用真实 production model 跑完一卡三轮 rollout/train + checkpoint + clean shutdown；
-- 当前机器只有一张 GPU，尚无真实两卡 generate/backward interval overlap 与 placement-release 证据；
 - worker host RSS 目前只有 load bookend logging，没有可信 host-memory budget/raise consumer，不能宣称
   host-OOM gate 完成；
 - DDP/FSDP collective-safe shared parking 未实现；原 2x1 colocated configs 保留为明确

@@ -1,5 +1,24 @@
 # SPRINT: Wan 2.1 I2V 14B GRPO proof run（图生视频 RL 落地验证）
 
+> **2026-07-20 FSDP readiness update:** the replay build is now capacity-safe on
+> GPU: FSDP training builds keep the CPU-loaded transformer on CPU while PEFT is
+> attached, and `fully_shard` moves and shards it block by block. FSDP rollout
+> sync and checkpoints gather only trainable LoRA tensors, not the 16.4B frozen
+> base. A real two-rank gloo test using a config-built diffusers Wan I2V
+> transformer now passes forward, backward, nonzero gradient, optimizer update,
+> serialized checkpoint restore, and a continued update. A four-rank NCCL form
+> of the same test is available as the opt-in `gpu + distributed` lane.
+>
+> This does **not** close the production proof. On the validation host, all four
+> L4 GPUs were owned by another run, the pinned I2V repository was absent, and
+> the repository requires 90,104,322,037 bytes while the root filesystem had
+> only 22,843,568,128 bytes free. More importantly, the requested same-four-GPU
+> online topology still fails before model load: FSDP collective trainer-state
+> parking is not implemented, and the current symmetric Ray plan resolves one
+> full rollout replica per rank instead of one four-GPU-sharded rollout model.
+> Keep this sprint parked until a real generate -> replay -> backward -> step and
+> checkpoint/resume run completes with the pinned 16.4B weights.
+
 > Superseded wiring note (2026-07-13): Wan I2V now uses
 > `vrl.scripts.diffusion.train:train_diffusion_online`. Reference-image
 > validation is derived from the registry `i2v` task in the common runner; the
