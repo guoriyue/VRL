@@ -1,0 +1,133 @@
+# Wan 2.1 1.3B + remote VideoScore2 generation/reward overlap acceptance gate.
+#
+# This is a reusable scheduling gate, not a production training recipe. It is the
+# workload for the A/B/C acceptance in docs/sprints/done/SPRINT_reward_service.md
+# and the throughput measurement parked in
+# docs/sprints/parked/SPRINT_video_rollout_stage_overlap.md.
+#
+# Physical topology (four L4s):
+#   GPU 0:   single-process trainer
+#   GPU 1/2: one dedicated rollout worker each
+#   GPU 3:   standalone UnifiedReward-2.0 HTTP service (separate process, see below)
+#
+# Measured on this host (2026-07-19), which is what the shape below is sized for:
+#   generation  588 ms/denoise step -> 11.8 s/sample   (peak 3.1 GB)
+#   reward       8.0 s/video, bit-identical repeats     (7B judge on its own L4)
+# Kling was measured at 0.44 s/video, which leaves only a 1.12x ideal ceiling
+# against a 66 s generation phase -- under the sprint's own 1.10x kill line once
+# the un-overlappable first generation is priced in. UnifiedReward puts R next
+# to G, so the gate can resolve a real effect instead of arguing about noise.
+# Reward is the bottleneck, so the ideal steady-state speedup is 1 + G/R. Two
+# rollout workers halve G, which LOWERS that ceiling to ~1.30x; prompts_per_batch
+# is what walks the realized speedup toward it, because the first generation and
+# the last score can never overlap.
+#
+# Start the reward service FIRST (it must answer /ready before the trainer's
+# preflight, which runs before Ray actors launch):
+#
+#   CUDA_VISIBLE_DEVICES=3 .venv/bin/vrl-reward-service \
+#     --config vrl/config/reward_service/unified_reward_overlap_gate.yaml
+#
+# Then run the three-arm campaign:
+#
+#   CUDA_VISIBLE_DEVICES=0,1,2 python -m vrl.scripts.perf.reward_overlap_benchmark \
+#     --config experiment/wan_2_1/online_grpo_unified_reward_overlap_gate \
+#     --repeats 5 --iterations 5 --warmup-iterations 1 \
+#     --out outputs/perf/reward_overlap
+defaults:
+  - /recipe/online/wan_2_1_grpo
+  - /model/wan_2_1/1_3b
+  - /sampling/video/240p_33f
+  - /sampling/denoise/20_step_cfg_4_5
+  - /dataset/videophy
+
+actor:
+  optim:
+    lr: 1.0e-5
+  ppo_epochs: 1
+  # Keep the backward path alive even when a small group scores flat. This gate
+  # measures collection scheduling, not reward quality.
+  drop_zero_advantage: false
+
+algorithm:
+  kl_coef: 0.004
+
+model:
+  # Compile is measured in, not out: the 11.8 s/sample figure above is compiled,
+  # and every arm must share one generation cost.
+  torch_compile:
+    enable: true
+    mode: default
+
+distributed:
+  training:
+    strategy: single_process
+    num_nodes: 1
+    gpus_per_node: 1
+  resources:
+    # Only the trainer and rollout pools are local. A fully-HTTP reward set
+    # reserves no local reward bundle, so GPU 3 is intentionally absent here --
+    # VRL cannot see where an external endpoint runs.
+    visible_devices: [0, 1, 2]
+    trainer:
+      devices: [0]
+      num_gpus: 1
+    rollout:
+      devices: [1, 2]
+      num_gpus: 2
+      gpus_per_worker: 1.0
+      num_workers: 2
+      gpu_pool: dedicated
+    allow_overlap: false
+
+rollout:
+  # Four groups per collection: streaming needs a group N+1 to hide group N's
+  # scoring behind, and the realized fraction of the ideal speedup grows with the
+  # group count. One group per collection would make all three arms the same
+  # program.
+  prompts_per_batch: 4
+  n_samples_per_prompt: 2
+  # One sample per chunk, two chunks per group, one chunk per rollout worker.
+  samples_per_chunk: 1
+  noise_level: 0.7
+  sde:
+    type: cps
+
+# Declared inline rather than via /reward/videoscore2: that preset carries a
+# worker_config (model, device, dtype), and an HTTP component is rejected for
+# any local execution key -- model and device belong to the service config. It
+# also reserves a local reward GPU bundle this topology must not have.
+reward:
+  components:
+    unified_reward_video: 1.0
+  kwargs:
+    unified_reward_video:
+      reward_name: unified_reward_video
+      score_key: overall
+      media_type: video
+      artifact_format: mp4
+      # Resolves under the service's artifact_roots (/home/ubuntu/VRL/outputs).
+      # HTTP carries the control protocol; the mp4 moves as a filesystem path.
+      artifact_dir: ${trainer.output_dir}/reward_artifacts
+      # Transport only. Physical isolation is the service's own attestation.
+      inference:
+        kind: http
+        endpoint: http://127.0.0.1:8300
+        timeout_s: 1800
+        expected_model: unified-reward-overlap-gate
+
+trainer:
+  output_dir: outputs/wan_videoscore2_overlap_gate
+  total_epochs: 5
+  # No periodic checkpoints: the gate measures wall-clock, and writing state
+  # every epoch adds I/O that differs across arms only by run length. The final
+  # checkpoint is written unconditionally (~3 GB); the benchmark harness deletes
+  # it after reading the run's phase stats.
+  save_freq: 1000
+  # Required, not cosmetic: the per-step phase sink (and therefore every
+  # collect.* timing this gate compares) is emitted only when profile is on.
+  # It also enables PhaseTimer's cuda.synchronize around trainer phases, which
+  # costs the same in all three arms and so cannot bias the comparison.
+  profile: true
+  debug:
+    first_step: false

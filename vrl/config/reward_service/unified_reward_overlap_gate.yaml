@@ -1,0 +1,57 @@
+# Operator-owned UnifiedReward-2.0 service for the generation/reward overlap
+# acceptance gate (docs/sprints/parked/SPRINT_video_rollout_stage_overlap.md).
+#
+# This is NOT a hydra preset — it is the standalone service process's own config,
+# passed with `--config`. It lives outside vrl/config/presets/ so the trainer
+# config loader never picks it up.
+#
+# Why this reward and not Kling: the gate measures how much reward work can hide
+# behind generation, so it needs R comparable to G. Measured on this host's L4s,
+# generation is 66 s per four-group collection while Kling scores the same eight
+# videos in 7.8 s -- a 1.12x ideal ceiling, under the sprint's 1.10x kill line
+# once the first generation is excluded. UnifiedReward takes 8.0 s/video, which
+# puts R next to G and makes the measurement able to resolve a real effect.
+#
+# Launch on a four-GPU host, pinning the service to physical GPU 3 so it is
+# disjoint from the trainer (GPU 0) and rollout workers (GPU 1/2):
+#
+#   CUDA_VISIBLE_DEVICES=3 \
+#     .venv/bin/vrl-reward-service \
+#       --config vrl/config/reward_service/unified_reward_overlap_gate.yaml
+#
+# CUDA_VISIBLE_DEVICES is how the physical disjointness is actually enforced;
+# `device: cuda:0` below is the device *within* that masked view. The wire
+# protocol carries no GPU UUIDs, so generation_overlap_safe is an operator
+# assertion the service cannot verify for itself.
+host: 127.0.0.1
+port: 8300
+model_name: unified-reward-overlap-gate
+model_version: CodeGoat24/UnifiedReward-2.0-qwen-7b@main
+
+# Trainer and service share this filesystem; reward artifacts move as paths, not
+# bytes. Must be absolute and already exist, and must contain the trainer's
+# reward artifact_dir.
+artifact_roots:
+  - /home/ubuntu/VRL/outputs
+
+# One in-flight scoring call: this is a single generative judge on one GPU, so
+# concurrency above 1 would only queue inside the model. The pending cap bounds
+# admission so a producer that outruns scoring gets explicit 429 backpressure
+# instead of unbounded queue growth.
+max_concurrency: 1
+max_pending_requests: 8
+max_cached_requests: 1024
+
+# The acceptance gate's entire premise: scoring may overlap generation because
+# this service owns a GPU no trainer or rollout worker can touch.
+generation_overlap_safe: true
+
+worker_config:
+  model_factory: vrl.rewards.models.unified_reward_video:UnifiedRewardVideoModel
+  reward_model_name: CodeGoat24/UnifiedReward-2.0-qwen-7b@main
+  reward_model_version: CodeGoat24/UnifiedReward-2.0-qwen-7b@main
+  device: cuda:0
+  dtype: bfloat16
+  num_frames: 16
+  max_new_tokens: 256
+  local_files_only: true
