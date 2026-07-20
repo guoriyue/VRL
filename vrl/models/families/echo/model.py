@@ -161,9 +161,10 @@ class EchoModel(LoraModelMixin, DiffusionModelBase):
     def raw_handle(self) -> Any:
         return self._echo
 
-    def apply_full_finetune(self) -> None:
+    def apply_full_finetune(self, build: ModelBuild) -> None:
         self.transformer.requires_grad_(True)
-        self.transformer.to(self.device)
+        if not build.defer_trainable_device_move:
+            self.transformer.to(self.device)
 
     def enable_gradient_checkpointing(self) -> None:
         """Turn on activation checkpointing in the LTX velocity blocks.

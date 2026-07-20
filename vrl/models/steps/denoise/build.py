@@ -65,7 +65,7 @@ def build_denoise_runtime_bundle(
             model.transformer.to(model.device)
     else:
         apply_rollout_quantization(model, build)
-        model.apply_full_finetune()
+        model.apply_full_finetune(build)
 
     compile_cfg = build.torch_compile or {}
     if compile_cfg.get("enable"):
@@ -103,7 +103,7 @@ def assemble_replay_bundle(
     if build.use_lora:
         model.apply_lora(build)
     else:
-        model.apply_full_finetune()
+        model.apply_full_finetune(build)
 
     compile_cfg = build.torch_compile or {}
     if compile_cfg.get("enable"):

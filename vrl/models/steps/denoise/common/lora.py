@@ -57,17 +57,18 @@ class LoraModelMixin:
         transformer = self._lora_transformer()
         transformer.requires_grad_(False)
         dtype = self._lora_dtype(build)
-        # Quantized LoRA rollouts attach PEFT while the checkpoint is still on
-        # CPU. The shared builder then swaps the wrapped base linears, drops
-        # their unsynced masters, and only moves the compact policy to the GPU.
-        # Moving here would make a 17B bf16 checkpoint exceed a 32GB card before
-        # quantization has a chance to compact it. Plain-precision LoRA keeps
-        # the historical direct move; replay builders never request rollout
-        # quantization.
+        # Quantized rollouts keep the checkpoint on CPU until base-weight
+        # compaction. FSDP replay keeps it there until fully_shard can move and
+        # shard one transformer block at a time. Either path would otherwise
+        # materialize the full base model on one GPU before its memory-saving
+        # transform owns the parameters.
         rollout = getattr(build, "rollout", None)
         defer_device_move = bool(
-            rollout is not None
-            and getattr(getattr(build, "precision", None), "quantization", None),
+            getattr(build, "defer_trainable_device_move", False)
+            or (
+                rollout is not None
+                and getattr(getattr(build, "precision", None), "quantization", None)
+            ),
         )
         if not defer_device_move:
             if dtype is None:

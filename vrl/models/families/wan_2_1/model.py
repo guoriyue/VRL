@@ -191,10 +191,11 @@ class WanT2VDiffusersModel(
             modules["transformer_2"] = self.transformer_2
         return modules
 
-    def apply_full_finetune(self) -> None:
+    def apply_full_finetune(self, build: ModelBuild) -> None:
         for module in self.trainable_modules.values():
             module.requires_grad_(True)
-            module.to(self.device)
+            if not build.defer_trainable_device_move:
+                module.to(self.device)
 
     def apply_lora(self, build: ModelBuild) -> None:
         """Attach LoRA to the configured Wan trainable transformer(s)."""
@@ -216,7 +217,8 @@ class WanT2VDiffusersModel(
         for name in names:
             transformer = self._wan_transformers()[name]
             transformer.requires_grad_(False)
-            transformer.to(self.device)
+            if not build.defer_trainable_device_move:
+                transformer.to(self.device)
             if lora_path:
                 wrapped = PeftModel.from_pretrained(
                     transformer,

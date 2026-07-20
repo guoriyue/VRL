@@ -246,7 +246,8 @@ class CosmosPredict25Model(CosmosReplayForward, DiffusersPipelineModelBase):
 
         base = self.transformer
         base.requires_grad_(False)
-        base.to(self.device)
+        if not build.defer_trainable_device_move:
+            base.to(self.device)
         lora_config = build.lora
         if build.lora_path:
             transformer = PeftModel.from_pretrained(
@@ -293,7 +294,8 @@ class CosmosPredict25Model(CosmosReplayForward, DiffusersPipelineModelBase):
             decay=decay,
         )
 
-    def apply_full_finetune(self) -> None:
+    def apply_full_finetune(self, build: ModelBuild) -> None:
+        del build
         raise RuntimeError(
             "Cosmos Predict2.5 DiffusionNFT requires LoRA with default+previous "
             "adapters; set model.use_lora=true.",

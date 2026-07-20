@@ -127,6 +127,10 @@ class ModelBuild:
     precision: RolePrecision | Mapping[str, Any]
     model_config: dict[str, Any] | None = None
     sampling_config: dict[str, Any] | None = None
+    # Generic denoise FSDP replay keeps the CPU-loaded trainable root on CPU
+    # until fully_shard can move and shard it block by block. This is resolved
+    # from the training strategy, not exposed as a user config knob.
+    defer_trainable_device_move: bool = False
     # Full-generation build inputs. ``None`` is the replay contract: replay owns
     # only differentiable policy modules and must not react to rollout FP8/frozen
     # component settings. A nested primitive mapping is accepted only for the Ray
@@ -169,6 +173,13 @@ class ModelBuild:
         elif self.rollout is not None and not isinstance(self.rollout, RolloutBuildOptions):
             raise TypeError(
                 "ModelBuild.rollout must be RolloutBuildOptions, a mapping, or None",
+            )
+        if not isinstance(self.defer_trainable_device_move, bool):
+            raise TypeError("ModelBuild.defer_trainable_device_move must be a bool")
+        if self.defer_trainable_device_move and self.rollout is not None:
+            raise ValueError(
+                "defer_trainable_device_move is replay-only and cannot be set "
+                "with ModelBuild.rollout",
             )
 
     def require_rollout(self) -> RolloutBuildOptions:

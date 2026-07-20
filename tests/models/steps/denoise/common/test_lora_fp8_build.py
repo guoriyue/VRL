@@ -41,13 +41,18 @@ class _LoraPolicy(LoraModelMixin):
         self.transformer = transformer
 
 
-def _build(*, quantization_format: str | None) -> SimpleNamespace:
+def _build(
+    *,
+    quantization_format: str | None,
+    defer_trainable_device_move: bool = False,
+) -> SimpleNamespace:
     quantization = (
         None if quantization_format is None else QuantizationPolicy(format=quantization_format)
     )
     return SimpleNamespace(
         precision=RolePrecision("fp16", "tf32", quantization),
         rollout=SimpleNamespace(),
+        defer_trainable_device_move=defer_trainable_device_move,
         parameter_dtype=torch.float16,
         lora_path=None,
         lora={"rank": 2, "alpha": 2, "target_modules": ["proj"]},
@@ -98,6 +103,24 @@ def test_plain_lora_attach_keeps_direct_device_move(monkeypatch) -> None:
     policy.apply_lora(_build(quantization_format=None))
     assert events == ["move"]
     assert policy.transformer.proj.weight.dtype is torch.float16
+
+
+def test_fsdp_replay_lora_attach_defers_device_move(monkeypatch) -> None:
+    events: list[str] = []
+    fake_peft = ModuleType("peft")
+    fake_peft.LoraConfig = lambda **_kwargs: object()
+    fake_peft.PeftModel = object
+    fake_peft.get_peft_model = lambda transformer, _cfg: transformer
+    monkeypatch.setitem(sys.modules, "peft", fake_peft)
+
+    _LoraPolicy(events).apply_lora(
+        _build(
+            quantization_format=None,
+            defer_trainable_device_move=True,
+        ),
+    )
+
+    assert events == []
 
 
 def test_fp8_config_replay_build_does_not_defer_device_move(monkeypatch) -> None:
@@ -216,7 +239,7 @@ def test_shared_builder_preserves_resolved_role_precision() -> None:
         def trainable_modules(self) -> dict[str, Any]:
             return {"transformer": self.transformer}
 
-        def apply_full_finetune(self) -> None:
+        def apply_full_finetune(self, _build: Any) -> None:
             self.transformer.requires_grad_(True)
 
         def generation_memory_targets(self) -> dict[str, Any]:
@@ -313,7 +336,7 @@ def test_full_finetune_dtype_move_preserves_quantized_cache(
             self.transformer[0] = Fp4Linear(self.transformer[0])
             return ["0"]
 
-        def apply_full_finetune(self) -> None:
+        def apply_full_finetune(self, _build: Any) -> None:
             self.transformer.to(self.device, dtype=torch.bfloat16)
 
         def generation_memory_targets(self) -> dict[str, Any]:

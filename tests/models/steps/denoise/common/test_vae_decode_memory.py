@@ -117,7 +117,7 @@ def test_wan_runtime_bundle_applies_model_build_memory_policy(
         def generation_memory_targets(self) -> dict[str, Any]:
             return {"vae_decode": self.vae}
 
-        def apply_full_finetune(self) -> None:
+        def apply_full_finetune(self, _build: Any) -> None:
             return None
 
         def set_num_steps(self, _num_steps: int) -> None:
@@ -210,7 +210,7 @@ def test_full_generation_runtime_bundles_apply_model_build_memory_policy(
             loaded_builds.append(build)
             return cls()
 
-        def apply_full_finetune(self) -> None:
+        def apply_full_finetune(self, _build: Any) -> None:
             return None
 
         def set_num_steps(self, _num_steps: int) -> None:

@@ -141,7 +141,7 @@ class ModelFamilyEntry:
 
         from vrl.config.precision import resolve_precision_policy
         from vrl.models.interfaces.runtime import ModelBuild, RolloutBuildOptions
-        from vrl.utils.config import plain_mapping
+        from vrl.utils.config import cfg_path, plain_mapping
 
         model_config = plain_mapping(cfg.model, field_name="model")
         configured_dtype = model_config.get("dtype")
@@ -196,6 +196,19 @@ class ModelFamilyEntry:
             model_config=model_config,
             sampling_config=sampling_config,
             rollout=rollout,
+            defer_trainable_device_move=(
+                isinstance(self.family_build, DenoiseFamilyBuild)
+                and self.family_build.replay_cls is not None
+                and not for_rollout
+                and str(
+                    cfg_path(
+                        cfg,
+                        "distributed.training.strategy",
+                        "single_process",
+                    ),
+                )
+                == "fsdp"
+            ),
         )
 
         if (

@@ -352,7 +352,10 @@ class DiffusionModelBase(nn.Module, ABC):
     def apply_lora(self, build: ModelBuild) -> None:  # pragma: no cover (default no-op)
         raise NotImplementedError
 
-    def apply_full_finetune(self) -> None:  # pragma: no cover (default no-op)
+    def apply_full_finetune(
+        self,
+        build: ModelBuild,
+    ) -> None:  # pragma: no cover (default no-op)
         raise NotImplementedError
 
     def torch_compile_transformer(self, mode: str) -> None:
@@ -557,10 +560,11 @@ class DiffusersPipelineModelBase(DiffusionModelBase):
     def raw_handle(self) -> Any:
         return self.pipeline
 
-    def apply_full_finetune(self) -> None:
+    def apply_full_finetune(self, build: ModelBuild) -> None:
         """Mark the transformer fully trainable (no-LoRA path)."""
         self.transformer.requires_grad_(True)
-        self.transformer.to(self.device)
+        if not build.defer_trainable_device_move:
+            self.transformer.to(self.device)
 
     def set_num_steps(self, n: int) -> None:
         """Initialize the scheduler timesteps for sampling.

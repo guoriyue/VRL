@@ -103,7 +103,8 @@ class _DiffusionModelBaseStub(DiffusionModelBase):
     def apply_lora(self, build):
         del build
 
-    def apply_full_finetune(self):
+    def apply_full_finetune(self, build):
+        del build
         return None
 
     def torch_compile_transformer(self, mode: str):

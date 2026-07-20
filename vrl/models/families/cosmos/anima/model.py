@@ -179,9 +179,10 @@ class AnimaModel(CosmosReplayForward, LoraModelMixin, DiffusionModelBase):
         del build
         return self._dtype
 
-    def apply_full_finetune(self) -> None:
+    def apply_full_finetune(self, build: ModelBuild) -> None:
         self.transformer.requires_grad_(True)
-        self.transformer.to(self.device, dtype=self._dtype)
+        if not build.defer_trainable_device_move:
+            self.transformer.to(self.device, dtype=self._dtype)
 
     def set_num_steps(self, n: int) -> None:
         self.scheduler.set_timesteps(int(n), device=self.device)
