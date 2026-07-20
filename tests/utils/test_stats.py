@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 
 from vrl.utils.stats import LoggingStatsSink, RolloutStats
@@ -22,6 +23,23 @@ def test_counter_sums_without_entering_phase_percentage_base() -> None:
 
     assert s.counters == {"collect.sample_count": 5.0}
     assert s.as_phase_dict()["collect.sample_count"] == 5.0
+
+
+def test_gauge_merge_retains_peak_without_summing_snapshots() -> None:
+    first = RolloutStats()
+    first.observe_gauge("continuous.stale_policy_versions", 1)
+    first.observe_gauge("continuous.queue_ready_groups", 4)
+    second = RolloutStats()
+    second.observe_gauge("continuous.stale_policy_versions", 0)
+    second.observe_gauge("continuous.queue_ready_groups", 3)
+
+    first.merge(second)
+
+    assert first.gauges == {
+        "continuous.stale_policy_versions": 1.0,
+        "continuous.queue_ready_groups": 4.0,
+    }
+    assert first.as_phase_dict()["continuous.stale_policy_versions"] == 1.0
 
 
 def test_merge_sums_phases_and_all_reward_calls() -> None:
@@ -105,3 +123,56 @@ def test_logging_sink_noop_on_empty(caplog) -> None:
     with caplog.at_level(logging.INFO, logger="vrl.stats.empty"):
         sink.record(0, RolloutStats())
     assert caplog.records == []
+
+
+def test_jsonl_stats_sink_writes_one_row_per_step(tmp_path) -> None:
+    """Checks collect.* phases reach a machine-readable file, not just the log."""
+    from vrl.utils.stats import JsonlStatsSink
+
+    path = tmp_path / "nested" / "rollout_stats.jsonl"
+    sink = JsonlStatsSink(path)
+
+    first = RolloutStats()
+    first.add_phases({"collect.wall": 2.0, "collect.generation_reward_overlap": 0.5})
+    first.add_counter("collect.group_count", 2)
+    sink.record(3, first)
+
+    second = RolloutStats()
+    second.add_phases({"collect.wall": 1.5})
+    sink.record(4, second)
+
+    rows = [json.loads(line) for line in path.read_text().splitlines()]
+    assert [row["step"] for row in rows] == [3, 4]
+    assert rows[0]["collect.wall"] == 2.0
+    assert rows[0]["collect.generation_reward_overlap"] == 0.5
+    assert rows[0]["collect.group_count"] == 2
+    assert rows[1]["collect.wall"] == 1.5
+
+
+def test_jsonl_stats_sink_skips_empty_stats(tmp_path) -> None:
+    """Checks an empty record does not create a file or a blank row."""
+    from vrl.utils.stats import JsonlStatsSink
+
+    path = tmp_path / "rollout_stats.jsonl"
+    JsonlStatsSink(path).record(0, RolloutStats())
+
+    assert not path.exists()
+
+
+def test_multi_stats_sink_fans_out_in_order() -> None:
+    """Checks one record reaches every sink, so the log line survives the jsonl."""
+    from vrl.utils.stats import MultiStatsSink
+
+    seen: list[tuple[str, int]] = []
+
+    class _Recorder:
+        def __init__(self, name: str) -> None:
+            self.name = name
+
+        def record(self, step: int, stats: RolloutStats) -> None:
+            del stats
+            seen.append((self.name, step))
+
+    MultiStatsSink(_Recorder("a"), _Recorder("b")).record(7, RolloutStats())
+
+    assert seen == [("a", 7), ("b", 7)]

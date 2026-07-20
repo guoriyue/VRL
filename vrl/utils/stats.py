@@ -16,19 +16,21 @@ Two design choices make this robust:
   today, a jsonl/Prometheus sink later) without touching the accumulation
   sites.
 
-Phase keys are a *dynamic* namespace (``collect.*``, ``continuous.*``,
-``advantage``, ``backward``, ``optim_step``, plus model-family phases), so the
-timings stay a string-keyed map — but one that lives *inside* the typed object
-with explicit ``add_phase`` / ``merge`` semantics, not a bare dict the caller
-mutates directly.
+Metric keys are a *dynamic* namespace (``collect.*``, ``continuous.*``,
+``advantage``, ``backward``, ``optim_step``, plus model-family phases), so they
+stay string-keyed maps. The typed object keeps their reduction semantics
+explicit: phase durations and counters sum, while gauge observations retain
+their peak across merged microbatches.
 """
 
 from __future__ import annotations
 
+import json
 import logging
 import math
 from collections.abc import Mapping
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Protocol
 
 
@@ -44,6 +46,7 @@ class RolloutStats:
 
     phase_seconds: dict[str, float] = field(default_factory=dict)
     counters: dict[str, float] = field(default_factory=dict)
+    gauges: dict[str, float] = field(default_factory=dict)
     reward_queue_wait_ms: float | None = None
     reward_inference_ms: float | None = None
     reward_extra_ms: dict[str, float] = field(default_factory=dict)
@@ -75,12 +78,35 @@ class RolloutStats:
             raise ValueError(f"counter {name!r} must be finite")
         self.counters[name] = self.counters.get(name, 0.0) + normalized
 
+    def observe_gauge(self, name: str, value: float) -> None:
+        """Record a point-in-time value, retaining the peak when merged.
+
+        Continuous rollout diagnostics are state snapshots, not elapsed time or
+        deltas. Keeping the peak makes a streamed optimizer update report its
+        worst observed staleness, queue depth, and producer gap instead of
+        summing snapshots into impossible values.
+        """
+
+        if not name:
+            raise ValueError("gauge name must be non-empty")
+        normalized = float(value)
+        if not math.isfinite(normalized):
+            raise ValueError(f"gauge {name!r} must be finite")
+        self.gauges[name] = max(self.gauges.get(name, normalized), normalized)
+
+    def observe_gauges(self, gauges: Mapping[str, float]) -> None:
+        """Record every gauge observation in ``gauges``."""
+
+        for name, value in gauges.items():
+            self.observe_gauge(str(name), float(value))
+
     def merge(self, other: RolloutStats) -> None:
         """Fold another accumulator into this one without losing concurrent calls."""
 
         self.add_phases(other.phase_seconds)
         for name, value in other.counters.items():
             self.add_counter(name, value)
+        self.observe_gauges(other.gauges)
         self.reward_queue_wait_ms = _sum_optional(
             self.reward_queue_wait_ms,
             other.reward_queue_wait_ms,
@@ -145,6 +171,7 @@ class RolloutStats:
 
         out = dict(self.phase_seconds)
         out.update(self.counters)
+        out.update(self.gauges)
         for key, ms in (
             ("reward.queue_wait_s", self.reward_queue_wait_ms),
             ("reward.inference_s", self.reward_inference_ms),
@@ -217,8 +244,43 @@ class LoggingStatsSink:
         self._logger.info("phase_times[step=%d] total=%.3fs | %s", step, total, parts)
 
 
+class JsonlStatsSink:
+    """Append one JSON object per step to a JSONL file.
+
+    The log line that :class:`LoggingStatsSink` emits is the only place phase
+    timings surface today, which makes ``collect.*`` unreadable to any
+    programmatic consumer (``metrics.csv`` carries no phase columns). A
+    benchmark comparing collection arms needs those numbers per step as data,
+    not as text to re-parse out of a log.
+    """
+
+    def __init__(self, path: str | Path) -> None:
+        self._path = Path(path)
+
+    def record(self, step: int, stats: RolloutStats) -> None:
+        phases = stats.as_phase_dict()
+        if not phases:
+            return
+        self._path.parent.mkdir(parents=True, exist_ok=True)
+        with self._path.open("a", encoding="utf-8") as handle:
+            handle.write(json.dumps({"step": int(step), **phases}, sort_keys=True) + "\n")
+
+
+class MultiStatsSink:
+    """Fan one record out to several sinks, keeping one sink per owner."""
+
+    def __init__(self, *sinks: StatsSink) -> None:
+        self._sinks = sinks
+
+    def record(self, step: int, stats: RolloutStats) -> None:
+        for sink in self._sinks:
+            sink.record(step, stats)
+
+
 __all__ = [
+    "JsonlStatsSink",
     "LoggingStatsSink",
+    "MultiStatsSink",
     "RolloutStats",
     "StatsSink",
 ]
