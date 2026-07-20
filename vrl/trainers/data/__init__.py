@@ -13,6 +13,7 @@ from vrl.trainers.data.preferences import (
     collate_preference,
     load_pickapic,
 )
+from vrl.trainers.data.prompt_sampler import PromptBatchSampler, PromptSamplingStrategy
 from vrl.trainers.data.prompts import (
     ImageCaptionPromptDataset,
     JsonlPromptDataset,
@@ -28,7 +29,9 @@ __all__ = [
     "JsonlPromptDataset",
     "PickAPicPreferenceDataset",
     "PreferenceBatch",
+    "PromptBatchSampler",
     "PromptExample",
+    "PromptSamplingStrategy",
     "ResolvedArtifact",
     "collate_preference",
     "load_pickapic",
