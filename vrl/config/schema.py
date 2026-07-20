@@ -39,6 +39,7 @@ from vrl.trainers.core.types import (
     PrecisionDriftGuardConfig,
     RolloutOrchestrationConfig,
 )
+from vrl.trainers.data.prompt_sampler import PromptSamplingStrategy
 from vrl.trajectory.storage import TrajectoryStoragePolicy
 from vrl.utils.profiling import TorchProfilerConfig
 
@@ -245,10 +246,13 @@ class DataConfig(ConfigBase):
         sampler_type = str(sampler.get("type", "")) if "type" in sampler else ""
         if not sampler_type:
             raise ValueError("config missing required field: data.sampler.type")
-        valid_samplers = {"random_without_replacement", "sequential_window"}
-        if sampler_type not in valid_samplers:
-            expected = " / ".join(sorted(valid_samplers))
-            raise ValueError(f"unknown data.sampler.type={sampler_type!r}; expected {expected}")
+        try:
+            PromptSamplingStrategy(sampler_type)
+        except ValueError as exc:
+            expected = " / ".join(strategy.value for strategy in PromptSamplingStrategy)
+            raise ValueError(
+                f"unknown data.sampler.type={sampler_type!r}; expected {expected}",
+            ) from exc
 
 
 # ── Supporting sections for cross-field validation ────────────────────────────
