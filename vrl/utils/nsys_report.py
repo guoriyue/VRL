@@ -254,8 +254,16 @@ def open_report(path: str | Path) -> tuple[sqlite3.Connection, str]:
         out = Path(tempfile.mkdtemp(prefix="nsys_report_")) / (src.stem + ".sqlite")
         logger.info("Exporting %s -> %s via nsys export", src.name, out)
         subprocess.run(
-            [nsys, "export", "--type", "sqlite", "--force-overwrite=true",
-             "--output", str(out), str(src)],
+            [
+                nsys,
+                "export",
+                "--type",
+                "sqlite",
+                "--force-overwrite=true",
+                "--output",
+                str(out),
+                str(src),
+            ],
             check=True,
             capture_output=True,
         )
@@ -269,17 +277,69 @@ def _device_names(conn: sqlite3.Connection) -> dict[int, str]:
     return {int(i): str(n) for i, n in conn.execute("select id, name from TARGET_INFO_GPU")}
 
 
+def _physical_cuda_devices(conn: sqlite3.Connection) -> dict[tuple[int, int], int]:
+    """Map ``(pid, process-local CUDA id)`` to the host's physical GPU id.
+
+    Ray assigns each rollout actor a one-device ``CUDA_VISIBLE_DEVICES`` view, so
+    CUPTI records ``deviceId=0`` for every actor even when they run on different
+    physical GPUs. Nsight preserves the real mapping in
+    ``TARGET_INFO_CUDA_DEVICE``; use it whenever the capture contains that table.
+    """
+
+    if not _has_table(conn, "TARGET_INFO_CUDA_DEVICE"):
+        return {}
+    columns = {str(row[1]) for row in conn.execute("pragma table_info(TARGET_INFO_CUDA_DEVICE)")}
+    if not {"gpuId", "cudaId", "pid"}.issubset(columns):
+        return {}
+    return {
+        (int(pid), int(cuda_id)): int(gpu_id)
+        for gpu_id, cuda_id, pid in conn.execute(
+            "select gpuId, cudaId, pid from TARGET_INFO_CUDA_DEVICE"
+        )
+    }
+
+
+def _process_ids(conn: sqlite3.Connection) -> dict[int, int]:
+    """Map Nsight serialized process ids to operating-system process ids."""
+
+    if not _has_table(conn, "PROCESSES"):
+        return {}
+    columns = {str(row[1]) for row in conn.execute("pragma table_info(PROCESSES)")}
+    if not {"globalPid", "pid"}.issubset(columns):
+        return {}
+    return {
+        int(global_pid): int(pid)
+        for global_pid, pid in conn.execute(
+            "select globalPid, pid from PROCESSES where globalPid is not null and pid is not null"
+        )
+    }
+
+
 def _kernels_by_device(
     conn: sqlite3.Connection, window: Interval | None
 ) -> dict[int, list[Interval]]:
-    """All kernel intervals bucketed by deviceId, optionally clipped to ``window``."""
+    """All kernel intervals bucketed by physical GPU, optionally window-clipped.
 
-    rows = conn.execute(
-        "select start, end, deviceId from CUPTI_ACTIVITY_KIND_KERNEL"
-    ).fetchall()
+    Older/minimal captures do not expose process-to-physical-device metadata. In
+    that case the CUPTI ``deviceId`` remains the best available identity and the
+    behavior is identical to the legacy reader.
+    """
+
+    kernel_columns = {
+        str(row[1]) for row in conn.execute("pragma table_info(CUPTI_ACTIVITY_KIND_KERNEL)")
+    }
+    has_global_pid = "globalPid" in kernel_columns
+    query = (
+        "select start, end, deviceId, globalPid from CUPTI_ACTIVITY_KIND_KERNEL"
+        if has_global_pid
+        else "select start, end, deviceId, null from CUPTI_ACTIVITY_KIND_KERNEL"
+    )
+    rows = conn.execute(query).fetchall()
+    process_ids = _process_ids(conn)
+    physical_devices = _physical_cuda_devices(conn)
     by_dev: dict[int, list[Interval]] = {}
     lo, hi = window if window else (None, None)
-    for start, end, dev in rows:
+    for start, end, local_dev, global_pid in rows:
         if end <= start:
             continue
         if window is not None:
@@ -287,7 +347,12 @@ def _kernels_by_device(
             end = min(end, hi)
             if end <= start:
                 continue
-        by_dev.setdefault(int(dev), []).append((int(start), int(end)))
+        device_id = int(local_dev)
+        if global_pid is not None:
+            pid = process_ids.get(int(global_pid))
+            if pid is not None:
+                device_id = physical_devices.get((pid, device_id), device_id)
+        by_dev.setdefault(device_id, []).append((int(start), int(end)))
     return by_dev
 
 
@@ -298,9 +363,7 @@ def capture_window(conn: sqlite3.Connection) -> Interval:
     (so an empty/CUPTI-less capture is visibly empty, not silently zero-wall).
     """
 
-    row = conn.execute(
-        "select min(start), max(end) from CUPTI_ACTIVITY_KIND_KERNEL"
-    ).fetchone()
+    row = conn.execute("select min(start), max(end) from CUPTI_ACTIVITY_KIND_KERNEL").fetchone()
     if row and row[0] is not None:
         return int(row[0]), int(row[1])
     if _has_table(conn, "ANALYSIS_DETAILS"):
@@ -322,8 +385,7 @@ def nvtx_window(conn: sqlite3.Connection, name: str) -> Interval:
     if not _has_table(conn, "NVTX_EVENTS"):
         raise RuntimeError("capture has no NVTX_EVENTS; rerun nsys with --trace=...,nvtx")
     row = conn.execute(
-        "select min(start), max(end) from NVTX_EVENTS "
-        "where text like ? and end is not null",
+        "select min(start), max(end) from NVTX_EVENTS where text like ? and end is not null",
         (f"%{name}%",),
     ).fetchone()
     if not row or row[0] is None:
@@ -361,8 +423,7 @@ def _api_breakdown(conn: sqlite3.Connection, lo: int, hi: int) -> tuple[list[Api
     memcpy_bytes = 0
     if _has_table(conn, "CUPTI_ACTIVITY_KIND_MEMCPY"):
         rows = conn.execute(
-            "select start, end, bytes from CUPTI_ACTIVITY_KIND_MEMCPY "
-            "where start < ? and end > ?",
+            "select start, end, bytes from CUPTI_ACTIVITY_KIND_MEMCPY where start < ? and end > ?",
             (hi, lo),
         ).fetchall()
         for start, end, nbytes in rows:

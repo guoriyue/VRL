@@ -77,11 +77,14 @@ def _make_db(path) -> str:
         create table META_DATA_EXPORT (name text, value text);
         """
     )
-    db.executemany("insert into StringIds values (?,?)", [
-        (1, "matmul_kernel"),
-        (2, "cudaLaunchKernel_v7000"),
-        (3, "cudaMemcpyAsync_v3020"),
-    ])
+    db.executemany(
+        "insert into StringIds values (?,?)",
+        [
+            (1, "matmul_kernel"),
+            (2, "cudaLaunchKernel_v7000"),
+            (3, "cudaMemcpyAsync_v3020"),
+        ],
+    )
     # two kernels with a 200..500 idle gap
     db.executemany(
         "insert into CUPTI_ACTIVITY_KIND_KERNEL values (?,?,?,?,?,?)",
@@ -93,7 +96,9 @@ def _make_db(path) -> str:
         [(250, 300, 2, 11, 99), (300, 420, 3, 12, 99)],
     )
     # copy-engine memcpy inside the gap (overlaps compute-idle but is copy-engine work)
-    db.execute("insert into CUPTI_ACTIVITY_KIND_MEMCPY values (?,?,?,?,?)", (310, 410, 0, 1_000_000, 8))
+    db.execute(
+        "insert into CUPTI_ACTIVITY_KIND_MEMCPY values (?,?,?,?,?)", (310, 410, 0, 1_000_000, 8)
+    )
     db.execute("insert into NVTX_EVENTS values (?,?,?,?)", ("rollout", 0, 800, 59))
     db.execute("insert into TARGET_INFO_GPU values (?,?,?)", (0, "Synthetic GPU", 170))
     db.execute("insert into META_DATA_EXPORT values (?,?)", ("Export Version", "2025.3.2"))
@@ -174,6 +179,62 @@ def test_multi_device_busy_is_per_device(tmp_path) -> None:
     # dev0 union = 500 (the gap stays idle); dev1 = 800 (one continuous kernel).
     # They are NOT merged across devices even though they overlap in wall time.
     assert busy == {0: 500, 1: 800}
+
+
+def test_ray_local_device_ids_are_mapped_to_physical_gpus(tmp_path) -> None:
+    """Ray workers each see cuda:0, but their kernels belong to distinct cards."""
+
+    path = _make_db(tmp_path / "ray.sqlite")
+    db = sqlite3.connect(path)
+    db.execute("alter table CUPTI_ACTIVITY_KIND_KERNEL add column globalPid integer")
+    db.executescript(
+        """
+        create table PROCESSES (globalPid integer, pid integer, name text);
+        create table TARGET_INFO_CUDA_DEVICE (
+            gpuId integer,
+            cudaId integer,
+            pid integer,
+            uuid text,
+            numMultiprocessors integer
+        );
+        """
+    )
+    db.execute("delete from CUPTI_ACTIVITY_KIND_KERNEL")
+    db.executemany(
+        "insert into CUPTI_ACTIVITY_KIND_KERNEL values (?,?,?,?,?,?,?)",
+        [
+            (0, 200, 0, 1, 1, 7, 101),
+            (0, 800, 0, 1, 1, 7, 202),
+        ],
+    )
+    db.executemany(
+        "insert into PROCESSES values (?,?,?)",
+        [(101, 1101, "python"), (202, 2202, "python")],
+    )
+    db.executemany(
+        "insert into TARGET_INFO_CUDA_DEVICE values (?,?,?,?,?)",
+        [
+            (1, 0, 1101, "gpu-1", 58),
+            (3, 0, 2202, "gpu-3", 58),
+        ],
+    )
+    db.executemany(
+        "insert into TARGET_INFO_GPU values (?,?,?)",
+        [
+            (1, "Synthetic GPU 1", 170),
+            (3, "Synthetic GPU 3", 170),
+        ],
+    )
+    db.commit()
+    db.close()
+
+    rep = analyze(path)
+    busy = {device.device_id: device.busy_ns for device in rep.per_device}
+    assert busy == {1: 200, 3: 800}
+    assert {device.name for device in rep.per_device} == {
+        "Synthetic GPU 1",
+        "Synthetic GPU 3",
+    }
 
 
 def test_report_renders_and_serialises(tmp_path) -> None:
