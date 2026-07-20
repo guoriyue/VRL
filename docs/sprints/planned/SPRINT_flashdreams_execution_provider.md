@@ -2,9 +2,10 @@
 
 日期：2026-07-13
 
-状态：**planned**。这是 native engine program 的下一个 implementation sprint。
-F0–F2 可在独立 fork 中完成；wm-infra F3 integration 只有在
-`SPRINT_ray_rollout_operation_deadlines` 的 bounded-failure gate 完成后才可接入 runtime。
+Status: **planned**. This is the native-engine program's next implementation
+sprint. F0-F2 may proceed in the isolated fork. The bounded-failure gate for F3
+runtime integration is complete under the
+[Ray operation-deadline sprint](../done/SPRINT_rollout_worker_liveness.md).
 
 ## 0. 结论先行
 
@@ -264,6 +265,6 @@ publication，关闭 admission，并通过 terminal cleanup 把当前 attempt �
 - `/home/mingfeiguo/Desktop/flashdreams/CONTRIBUTING.md`
 - `/home/mingfeiguo/Desktop/flashdreams/LICENSE`
 - `docs/sprints/SPRINT_native_generation_engine_program.md`
-- `docs/sprints/SPRINT_ray_rollout_operation_deadlines.md`
+- `docs/sprints/done/SPRINT_rollout_worker_liveness.md`
 - `docs/sprints/parked/SPRINT_self_forcing_causal_family.md`
 - https://github.com/NVIDIA/flashdreams

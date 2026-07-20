@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import patch
 
@@ -262,13 +263,17 @@ def test_runtime_capability_is_and_over_all_workers(local_ray) -> None:
 
     assert (
         all_workers_support_versioned_slots(
-            local_ray, _slot_handles(local_ray, True, True), weight_sync=weight_sync
+            local_ray,
+            _slot_handles(local_ray, True, True),
+            weight_sync=weight_sync,
         )
         is True
     )
     assert (
         all_workers_support_versioned_slots(
-            local_ray, _slot_handles(local_ray, True, False), weight_sync=weight_sync
+            local_ray,
+            _slot_handles(local_ray, True, False),
+            weight_sync=weight_sync,
         )
         is False
     )
@@ -280,11 +285,20 @@ def test_runtime_capability_false_without_weight_sync_or_workers(local_ray) -> N
     barrier (False), never a silent True."""
     assert (
         all_workers_support_versioned_slots(
-            local_ray, _slot_handles(local_ray, True, True), weight_sync=None
+            local_ray,
+            _slot_handles(local_ray, True, True),
+            weight_sync=None,
         )
         is False
     )
-    assert all_workers_support_versioned_slots(local_ray, [], weight_sync=object()) is False
+    assert (
+        all_workers_support_versioned_slots(
+            local_ray,
+            [],
+            weight_sync=object(),
+        )
+        is False
+    )
 
 
 @pytest.mark.slow_test
@@ -302,6 +316,70 @@ def test_runtime_capability_false_when_a_worker_query_raises(local_ray) -> None:
     )
 
 
+def test_launcher_capability_failure_kills_candidate_actor_group(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import vrl.generation.ray.launcher as launcher_module
+
+    query_error = RuntimeError("versioned-slot capability query failed")
+
+    class _ActorGroup:
+        def __init__(self) -> None:
+            self.handles = [
+                SimpleNamespace(
+                    worker_id="rollout-0",
+                    node_ip="node",
+                    gpu_ids=(),
+                    actor=object(),
+                ),
+            ]
+            self.shutdown_calls = 0
+
+        def shutdown(self) -> None:
+            self.shutdown_calls += 1
+
+    actor_group = _ActorGroup()
+    monkeypatch.setattr(launcher_module, "require_ray", lambda: object())
+    monkeypatch.setattr(
+        launcher_module.RayActorGroup,
+        "launch",
+        staticmethod(lambda **_kwargs: actor_group),
+    )
+
+    def _failing_query(*_args: Any, **_kwargs: Any) -> bool:
+        raise query_error
+
+    monkeypatch.setattr(
+        launcher_module,
+        "all_workers_support_versioned_slots",
+        _failing_query,
+    )
+    cfg = _launch_cfg()
+    config = _ray_config(cfg)
+    entry = get_model_family_entry("sd3_5")
+    inputs = RayGenerationLaunchInputs(
+        launch_contract=GenerationRuntimeLaunchContract(
+            family=entry.family,
+            model_build={},
+        ),
+        gatherer=entry.new_gatherer(),
+    )
+
+    with pytest.raises(RuntimeError, match="capability query failed") as caught:
+        RayGenerationLauncher(init_ray=False).launch(
+            config,
+            inputs,
+            placement=RolePlacement(
+                placement_group=object(),
+                bundle_indices=(0,),
+                expected_gpu_ids=(),
+            ),
+        )
+
+    assert caught.value is query_error
+    assert actor_group.shutdown_calls == 1
+
+
 def test_chunk_placement_strategy_switches_from_cfg() -> None:
     """Checks distributed.rollout.chunk_placement_strategy flips the policy."""
     assert _ray_config(_cfg()).chunk_placement_strategy == "round_robin"
@@ -313,6 +391,44 @@ def test_chunk_placement_strategy_switches_from_cfg() -> None:
     # Invalid values are now rejected at the typed schema boundary
     # (RolloutWorkerSection Literal) at parse time, not in RayGenerationConfig —
     # see tests/config/test_schema.py::test_unknown_chunk_placement_strategy_raises.
+
+
+def test_health_check_settings_default_and_project_overrides() -> None:
+    default = _ray_config(_cfg())
+    assert default.health_check_interval_s == 30.0
+    assert default.health_check_timeout_s == 30.0
+    assert default.health_check_first_wait_s == 0.0
+
+    cfg = _cfg()
+    cfg.distributed.rollout.health_check_interval_s = 5.0
+    cfg.distributed.rollout.health_check_timeout_s = 37.5
+    cfg.distributed.rollout.health_check_first_wait_s = 12.0
+    override = _ray_config(cfg)
+    assert override.health_check_interval_s == 5.0
+    assert override.health_check_timeout_s == 37.5
+    assert override.health_check_first_wait_s == 12.0
+
+
+@pytest.mark.parametrize(
+    "timeout_s",
+    [0.0, -1.0, float("inf"), float("-inf"), float("nan")],
+)
+def test_ray_generation_config_rejects_invalid_health_check_timeout(
+    timeout_s: float,
+) -> None:
+    cfg = _cfg()
+    cfg.distributed.rollout.health_check_timeout_s = timeout_s
+
+    with pytest.raises(ValueError, match="health_check_timeout_s must be finite and > 0"):
+        _ray_config(cfg)
+
+
+def test_ray_generation_config_rejects_negative_health_check_first_wait() -> None:
+    cfg = _cfg()
+    cfg.distributed.rollout.health_check_first_wait_s = -1.0
+
+    with pytest.raises(ValueError, match="health_check_first_wait_s must be >= 0"):
+        _ray_config(cfg)
 
 
 def test_pipelined_switches_from_cfg() -> None:

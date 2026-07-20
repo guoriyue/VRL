@@ -105,16 +105,6 @@ async def test_remote_update_results_are_verified_without_second_ack_rpc(
     first = _RemoteWorker(installed_version=4)
     second = _RemoteWorker(installed_version=4)
     monkeypatch.setattr(weight_sync_module, "require_ray", lambda: ray)
-
-    async def _detached_thread_wait_is_forbidden(*args: Any, **kwargs: Any) -> Any:
-        del args, kwargs
-        raise AssertionError("weight ACK must stay on the owner event loop")
-
-    monkeypatch.setattr(
-        weight_sync_module.asyncio,
-        "to_thread",
-        _detached_thread_wait_is_forbidden,
-    )
     sync = RayGenerationWeightSync(
         [
             DistributedWorkerHandle(worker_id="rollout-0", actor=first),

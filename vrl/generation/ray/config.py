@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import math
 import os
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
@@ -26,6 +27,9 @@ class RayGenerationConfig:
     resources: ResolvedDistributedResources
     cpus_per_worker: float = 1.0
     max_inflight_chunks_per_worker: int = 1
+    health_check_interval_s: float = 30.0
+    health_check_timeout_s: float = 30.0
+    health_check_first_wait_s: float = 0.0
     # Opt-in single-worker pipelined rollout. Multi-worker execution is rejected
     # because per-worker request partitioning is not implemented.
     pipelined: bool = False
@@ -42,6 +46,9 @@ class RayGenerationConfig:
     sync_trainable_state: bool = True
 
     def __post_init__(self) -> None:
+        self.health_check_interval_s = float(self.health_check_interval_s)
+        self.health_check_timeout_s = float(self.health_check_timeout_s)
+        self.health_check_first_wait_s = float(self.health_check_first_wait_s)
         if self.resources.rollout_num_workers < 1:
             raise ValueError("distributed.resources.rollout.num_workers must be >= 1")
         if self.resources.rollout_gpus_per_worker < 0:
@@ -50,6 +57,12 @@ class RayGenerationConfig:
             raise ValueError("cpus_per_worker must be > 0")
         if self.max_inflight_chunks_per_worker < 1:
             raise ValueError("max_inflight_chunks_per_worker must be >= 1")
+        if self.health_check_interval_s > 0 and (
+            not math.isfinite(self.health_check_timeout_s) or self.health_check_timeout_s <= 0
+        ):
+            raise ValueError("health_check_timeout_s must be finite and > 0 when enabled")
+        if self.health_check_first_wait_s < 0:
+            raise ValueError("health_check_first_wait_s must be >= 0")
         if self.pipelined and self.resources.rollout_num_workers != 1:
             raise ValueError(
                 "distributed.rollout.pipelined=true requires exactly one rollout "
@@ -80,6 +93,15 @@ class RayGenerationConfig:
                     "max_inflight_chunks_per_worker",
                     1,
                 ),
+            ),
+            health_check_interval_s=float(
+                cfg_get(rollout, "health_check_interval_s", 30.0),
+            ),
+            health_check_timeout_s=float(
+                cfg_get(rollout, "health_check_timeout_s", 30.0),
+            ),
+            health_check_first_wait_s=float(
+                cfg_get(rollout, "health_check_first_wait_s", 0.0),
             ),
             pipelined=bool(
                 cfg_get(rollout, "pipelined", False),

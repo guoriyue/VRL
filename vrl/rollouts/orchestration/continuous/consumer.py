@@ -74,6 +74,11 @@ class ContinuousRolloutConsumer:
         start_completed = producer_state.completed_count if producer_state else 0
         start_errors = producer_state.error_count if producer_state else 0
         while True:
+            self._fail_fast_if_producer_stalled(
+                producer_state,
+                start_completed=start_completed,
+                start_errors=start_errors,
+            )
             selected = self.scheduler.select_iteration(
                 self.queue,
                 min_groups=min_groups,
@@ -91,11 +96,6 @@ class ContinuousRolloutConsumer:
                     current_version=current_version,
                     queue_wait_s=wait_s,
                 )
-            self._fail_fast_if_producer_stalled(
-                producer_state,
-                start_completed=start_completed,
-                start_errors=start_errors,
-            )
             if time.monotonic() >= deadline:
                 raise TimeoutError(
                     self._timeout_message(min_groups, wait_timeout_s, producer_state),

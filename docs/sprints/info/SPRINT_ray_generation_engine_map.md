@@ -188,10 +188,12 @@ trainer weight syncer
            -> GenerationWorkerCore.update_weights
 ```
 
-strict path drain 后原地覆盖；允许 versioned slots 的 continuous LoRA path可保留旧 request
-所需 slot。当前 ACK 只返回整数 policy version。weight-update ACK 的无界等待归
-`SPRINT_ray_rollout_operation_deadlines.md`；schema/digest strengthening 不是当前 native
-provider gate，确有 provider payload identity 要求时由该 provider 的 installer contract 验证。
+Strict updates overwrite in place after draining; the continuous LoRA path may
+retain the slots required by older requests. ACKs still return integer policy
+versions. Their barrier is watched by the liveness monitor implemented by the
+[completed operation-deadline sprint](../done/SPRINT_rollout_worker_liveness.md).
+Schema/digest strengthening is not a native-provider gate; a provider that
+needs payload identity must validate it in its installer contract.
 
 ### Offload and shutdown
 
@@ -223,11 +225,11 @@ single-worker `forward_plan_pipelined`/`execute_request_pipelined` 继续是 opt
 diffusion capability，通过明确 guard/getattr 读取。它不属于所有 AR family 的共同协议，不能
 为了“接口完整”给 AR 添加无行为空实现。
 
-## 7. Current limitations and decision
+## 7. Current limitations, completed gates, and decision
 
 | Limitation | Current evidence | Owner |
 |---|---|---|
-| unbounded Ray worker waits | generation/startup/update ObjectRefs can block attempt exit | active operation-deadline sprint |
+| bounded rollout worker liveness | an out-of-band probe kills the fleet when a worker stops answering, so blocked waits fail closed | completed worker-liveness sprint |
 | no in-process actor recovery | failed attempts rebuild the runtime only after process exit | accepted boundary: supervisor checkpoint resume |
 | version-only ACK | transaction validates the committed integer version | current native contract; stronger provider-local identity only when required |
 | no provider selector | one `executor_cls` per family; no provider provenance in launch contract | native-engine N2 + provider/conformance sprints |
@@ -263,4 +265,4 @@ serving engine，也不支持为了“全栈自研”立即重写 transformer/ke
 - `vrl/ray/actor_pool.py`
 - `docs/sprints/SPRINT_native_generation_engine_program.md`
 - `docs/sprints/done/SPRINT_explicit_rollout_activation.md`
-- `docs/sprints/SPRINT_ray_rollout_operation_deadlines.md`
+- `docs/sprints/done/SPRINT_rollout_worker_liveness.md`

@@ -1,8 +1,8 @@
 # SPRINT: Explicit rollout activation and schedule-owned draining
 
 Status: **DONE (2026-07-18)**. The contract and its regression coverage are
-implemented; bounded remote waits and supervisor handoff remain in the Ray
-operation-deadline sprint.
+implemented; bounded remote waits and supervisor handoff were subsequently
+completed by the [Ray operation-deadline sprint](SPRINT_rollout_worker_liveness.md).
 
 ## Decision
 

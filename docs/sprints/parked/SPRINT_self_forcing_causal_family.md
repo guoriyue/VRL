@@ -2,11 +2,12 @@
 
 日期：2026-07-13
 
-状态：**parked**。触发事件是
-[FlashDreams execution provider](../planned/SPRINT_flashdreams_execution_provider.md) 的 F0–F3
-generic primitive、trainable-state installer 与 fake-adapter contract 完成；不等待
-Self-Forcing 自己关闭 provider production conformance。wm-infra 侧接入还要求
-`SPRINT_ray_rollout_operation_deadlines` 的 bounded-failure gate 先完成。
+Status: **parked**. Its trigger remains completion of the F0-F3 generic
+primitives, trainable-state installer, and fake-adapter contract in the
+[FlashDreams execution provider](../planned/SPRINT_flashdreams_execution_provider.md);
+it does not wait for Self-Forcing to close provider production conformance. The
+additional bounded-failure gate is already complete under the
+[Ray operation-deadline sprint](../done/SPRINT_rollout_worker_liveness.md).
 
 ## 0. 结论先行
 
@@ -281,7 +282,7 @@ mock 冒充通过。
 
 - `docs/sprints/SPRINT_native_generation_engine_program.md`
 - `docs/sprints/planned/SPRINT_flashdreams_execution_provider.md`
-- `docs/sprints/SPRINT_ray_rollout_operation_deadlines.md`
+- `docs/sprints/done/SPRINT_rollout_worker_liveness.md`
 - `vrl/generation/execution/chunks.py`
 - `vrl/generation/diffusion/executor.py`
 - `vrl/trajectory/resolver.py`

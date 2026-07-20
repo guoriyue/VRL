@@ -332,12 +332,12 @@ def test_create_failure_retains_placement_for_cleanup_retry(monkeypatch) -> None
     )
     monkeypatch.setattr(
         "vrl.ray.placement.require_ray",
-        lambda: type("_Ray", (), {"get": staticmethod(lambda *_args, **_kwargs: None)})(),
+        lambda: type("_Ray", (), {"get": staticmethod(lambda *_args, **_kwargs: [None])})(),
     )
     monkeypatch.setattr(
         GlobalRayPlacementOwner,
         "_probe_gpu_bundles",
-        lambda *_args: (_ for _ in ()).throw(RuntimeError("probe failed")),
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("probe failed")),
     )
 
     def remove(pg):
@@ -497,6 +497,7 @@ def test_probe_actor_kill_failure_is_a_create_failure(monkeypatch) -> None:
 
         @staticmethod
         def get(refs, **_kwargs):
+            # Readiness is awaited on the bare ref; the probe fans out over a list.
             if refs == "ready-ref":
                 return None
             assert refs == ["probe-ref"]

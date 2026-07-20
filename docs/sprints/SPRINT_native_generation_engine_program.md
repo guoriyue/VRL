@@ -86,6 +86,7 @@ transformer / kernel / provider scheduling   mostly upstream or parked
 | RL trajectory | `generation/steps/denoise/loop.py` 产出 observations/actions/log-probs；binding 与 `trajectory/builders.py` 构造 trainer-facing trajectory，validator 检查 role 与 axis | 这是 trainer-facing source of truth，不是 inference-only artifact wrapper |
 | Policy freshness | worker 按 request version 激活 slot；slot 被逐出时 `RayGenerationExecutor` 丢弃整条 request | mixed-policy partial result fail closed |
 | GPU/runtime lifecycle | `GenerationRuntime` 暴露 activate/generate/offload/shutdown；Ray runtime 对 activate/offload/shutdown 做 single-flight 与资源清理 | shared-GPU handoff 与 terminal ownership 是 engine 行为 |
+| Bounded rollout worker liveness | a background probe watches owned workers out of band | an unreachable worker kills the fleet, closes admission, and hands checkpoint resume to the supervisor |
 | Full-sequence denoise + token-autoregressive | denoise step 自有 SDE loop；token-autoregressive composition 自有 token scheduler/cache row routing；两者汇入同一 `GenerationOutput`/trajectory | 一个顶层 engine 可以保留两种不同数学执行形态 |
 | RL group integrity | sample chunk OOM 时有序二分，gather 再检查完整覆盖 | OOM 不会静默少样本、重复样本或重排 GRPO group |
 
@@ -93,7 +94,6 @@ transformer / kernel / provider scheduling   mostly upstream or parked
 
 | 缺口 | 当前代码事实 | 已有承载 sprint |
 |---|---|---|
-| Bounded Ray worker waits | `run_actor_jobs`、actor startup/metadata 与 weight-update ACK 仍存在无 deadline 的 ObjectRef wait | [Ray rollout operation deadlines](SPRINT_ray_rollout_operation_deadlines.md) |
 | Provider selection | `ModelFamilyEntry` 当前只有一个 `executor_cls`，launch contract 没有 provider identity/schema/provenance | 本 program N2 + [multi-engine conformance](parked/SPRINT_multi_engine_rollout_conformance.md) |
 | Full model ownership | diffusion backbone 最终调用 Diffusers transformer；pipeline/scheduler/text encoder/VAE 仍大量来自 upstream | [native transformer executor](parked/SPRINT_diffusion_native_transformer_executor.md)，继续 profile-gated |
 | Cross-request batching | full-sequence denoise binding 跑完整 denoise loop；`TokenScheduler` 每个 `TokenAutoregressiveLoop` 单独创建；不同 request 不共享 forward | [cross-request step scheduler](parked/SPRINT_cross_request_step_scheduler.md)，继续 workload-gated |
@@ -122,9 +122,9 @@ production profile 证明 native request scheduling 而非 model compute 是主�
 
 ### Sprint 0 — Native engine contract + oracle（当前）
 
-当前 reliability 主项由
-[Ray rollout operation deadlines](SPRINT_ray_rollout_operation_deadlines.md) 承担；本
-program 不复制第二份 deadline/lifecycle 设计。
+The reliability gate is complete under
+[Rollout worker liveness](done/SPRINT_rollout_worker_liveness.md).
+This program keeps that liveness/lifecycle owner and does not duplicate it.
 
 1. 把 request/output、policy version、weight install、failure cleanup、trajectory/replay
    这些 engine-owned 语义钉成 provider-independent contract tests。
@@ -202,10 +202,12 @@ training recipe；provider-specific smoke 不依赖第二个 provider 已完成�
 - provider failure 关闭 admission，并由 native runtime 完成清理；
 - rollout output 在进入 trainer 前已经是 native trajectory schema。
 
-这些测试描述 wm-infra 的 engine，而不是某个模型库的 API。外部 provider adapter 必须
-通过同一组测试，不复制一套 provider 专用预期。blocking call deadline、partial-result
-rejection 与 terminal supervisor handoff 继续归
-`SPRINT_ray_rollout_operation_deadlines.md`；本 program 只要求 external provider 不绕过它。
+These tests describe the wm-infra engine rather than a model-library API.
+External provider adapters must pass the same suite instead of copying private
+expectations. Blocking-call deadlines, partial-result rejection, and terminal
+supervisor handoff are enforced by the
+[completed operation-deadline sprint](done/SPRINT_rollout_worker_liveness.md);
+external providers must preserve that boundary.
 
 ### N1 — 保留两种 provider 粒度
 

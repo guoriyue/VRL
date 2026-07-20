@@ -59,9 +59,7 @@ async def run_actor_jobs(
     # Stable sort: equal priorities (the static path always submits 0.0)
     # preserve caller order bit-for-bit.
     pending = deque(sorted(jobs, key=lambda job: -job.priority))
-    inflight_by_worker = {
-        job.worker_id: 0 for job in jobs if job.worker_id is not None
-    }
+    inflight_by_worker = {job.worker_id: 0 for job in jobs if job.worker_id is not None}
     for worker_id in worker_methods or ():
         inflight_by_worker.setdefault(worker_id, 0)
     ref_to_job: dict[Any, tuple[int, str]] = {}

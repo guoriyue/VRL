@@ -40,6 +40,7 @@ class RayActorGroup:
         bundle_indices: Sequence[int] | None = None,
         startup_method: str | None = None,
         metadata_method: str = "worker_metadata",
+        concurrency_groups: Mapping[str, int] | None = None,
     ) -> RayActorGroup:
         """Launch actors for ``worker_cls`` using serializable worker configs."""
 
@@ -49,7 +50,13 @@ class RayActorGroup:
             raise ValueError("bundle_indices and worker_ids must have the same length")
 
         ray = require_ray()
-        remote_worker = ray.remote(num_cpus=float(num_cpus), num_gpus=float(num_gpus))(worker_cls)
+        remote_options: dict[str, Any] = {
+            "num_cpus": float(num_cpus),
+            "num_gpus": float(num_gpus),
+        }
+        if concurrency_groups:
+            remote_options["concurrency_groups"] = dict(concurrency_groups)
+        remote_worker = ray.remote(**remote_options)(worker_cls)
         actors: list[Any] = []
         try:
             for index, (worker_id, worker_config) in enumerate(
@@ -72,19 +79,29 @@ class RayActorGroup:
 
             metadata_refs = [getattr(actor, metadata_method).remote() for actor in actors]
             metadata = ray.get(metadata_refs)
-        except Exception:
-            kill_actors(ray, actors)
+            handles = [
+                RayActorHandle(
+                    worker_id=worker_id,
+                    node_ip=str(_meta_get(meta, "node_ip", "unknown")),
+                    gpu_ids=tuple(int(gpu_id) for gpu_id in _meta_get(meta, "gpu_ids", ())),
+                    actor=actor,
+                )
+                for worker_id, actor, meta in zip(
+                    worker_ids,
+                    actors,
+                    metadata,
+                    strict=True,
+                )
+            ]
+        except BaseException as error:
+            failures = kill_actors(ray, actors)
+            if failures:
+                error.add_note(
+                    "rollout startup actor cleanup incomplete: "
+                    f"{len(failures)} actor kill(s) failed",
+                )
             raise
 
-        handles = [
-            RayActorHandle(
-                worker_id=worker_id,
-                node_ip=str(_meta_get(meta, "node_ip", "unknown")),
-                gpu_ids=tuple(int(gpu_id) for gpu_id in _meta_get(meta, "gpu_ids", ())),
-                actor=actor,
-            )
-            for worker_id, actor, meta in zip(worker_ids, actors, metadata, strict=True)
-        ]
         return cls(handles=handles)
 
     def shutdown(self) -> None:
@@ -92,8 +109,17 @@ class RayActorGroup:
 
         ray = require_ray()
         actors = [handle.actor for handle in self.handles if handle.actor is not None]
-        kill_actors(ray, actors)
-        self.handles.clear()
+        failures = kill_actors(ray, actors)
+        failed_actor_ids = {id(actor) for actor, _ in failures}
+        self.handles[:] = [
+            handle
+            for handle in self.handles
+            if handle.actor is not None and id(handle.actor) in failed_actor_ids
+        ]
+        if failures:
+            raise RuntimeError(
+                f"Ray actor-group cleanup incomplete: {len(failures)} actor kill(s) failed",
+            ) from failures[0][1]
 
 
 def _meta_get(meta: Any, key: str, default: Any) -> Any:
