@@ -397,10 +397,20 @@ class KlingQwen2VLRewardModel(Qwen2VLForConditionalGeneration):
         output_dim: int = 4,
         reward_token: str = "last",
         special_token_ids: list[int] | None = None,
+        # Transformers 5 forwards loading kwargs (use_cache, ...) into the model
+        # constructor, so a fixed signature raises TypeError before any weight is
+        # read. They describe generation behavior this reward head never uses --
+        # it runs one forward and reads a head over selected tokens -- so absorb
+        # them rather than widening the parent call.
+        **kwargs: Any,
     ) -> None:
+        del kwargs
         super().__init__(config)
         self.output_dim = output_dim
-        self.rm_head = nn.Linear(config.hidden_size, output_dim, bias=False)
+        # Transformers 5 moved the language dimensions off the top-level
+        # multimodal config into a nested text config; get_text_config() is the
+        # accessor that survives both layouts.
+        self.rm_head = nn.Linear(config.get_text_config().hidden_size, output_dim, bias=False)
         self.reward_token = "special" if special_token_ids is not None else reward_token
         self.special_token_ids = special_token_ids
 

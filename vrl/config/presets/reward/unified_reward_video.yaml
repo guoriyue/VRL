@@ -1,6 +1,6 @@
 # UnifiedReward-2.0 video reward (CodeGoat24/UnifiedReward-2.0-qwen-7b, Qwen2.5-VL).
 # General image/video judge used pointwise: samples 16 frames, emits 1-5 float
-# Alignment / Physics / Style scores. Loaded via AutoModelForVision2Seq with
+# Alignment / Physics / Style scores. Loaded via AutoModelForImageTextToText with
 # trust_remote_code. Default score_key is overall; use physics for cloth/skirt
 # plausibility and set worker_config.rubric_path to steer with a task rubric.
 distributed:

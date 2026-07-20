@@ -10,7 +10,7 @@ three axes the model is trained to emit:
 
 VideoScore2 is a *generative* judge: it reasons (chain-of-thought) and then
 prints the three scores as text in a fixed format (each a 1-5 integer). We load
-it via ``AutoModelForVision2Seq`` + ``AutoProcessor`` with ``trust_remote_code``
+it via ``AutoModelForImageTextToText`` + ``AutoProcessor`` with ``trust_remote_code``
 (the checkpoint ships its own model code), greedily generate one judgement, and
 parse the three scores with the upstream regex.
 
@@ -124,14 +124,14 @@ class VideoScore2Model(RewardModel):
             ),
         )
 
-        from transformers import AutoModelForVision2Seq, AutoProcessor
+        from transformers import AutoModelForImageTextToText, AutoProcessor
 
         processor = AutoProcessor.from_pretrained(
             str(self.model_root),
             trust_remote_code=True,
             local_files_only=self.local_files_only,
         )
-        model = AutoModelForVision2Seq.from_pretrained(
+        model = AutoModelForImageTextToText.from_pretrained(
             str(self.model_root),
             torch_dtype=self.dtype,
             trust_remote_code=True,
@@ -189,10 +189,22 @@ class VideoScore2Model(RewardModel):
         ).to(self.device)
 
         with torch.no_grad():
+            # Greedy decoding makes this judge degenerate on real video: it
+            # repeats "</multi-dimensional analysis></summary>" until
+            # max_new_tokens and never emits the score block the parser needs
+            # (measured on 480x832 rollout video: 0/4 parses, identical 63 s
+            # runs, and still no score line at 2048/3072/4096 tokens). The
+            # checkpoint ships the working recipe in generation_config.json, but
+            # it must be passed explicitly -- relying on the loaded config
+            # reproduces the greedy loop. With these values scoring converges in
+            # ~363 tokens. Temperature 1e-6 is argmax in all but name, so this
+            # does not make rewards meaningfully stochastic.
             generated = self.model.generate(
                 **inputs,
                 max_new_tokens=self.max_new_tokens,
-                do_sample=False,
+                do_sample=True,
+                temperature=1e-6,
+                repetition_penalty=1.05,
                 output_scores=self.soft_scores,
                 return_dict_in_generate=True,
             )

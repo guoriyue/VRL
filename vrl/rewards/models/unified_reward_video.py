@@ -97,14 +97,14 @@ class UnifiedRewardVideoModel(RewardModel):
             kv(root=self.model_root, device=self.device, dtype=self.dtype, frames=self.num_frames),
         )
 
-        from transformers import AutoModelForVision2Seq, AutoProcessor
+        from transformers import AutoModelForImageTextToText, AutoProcessor
 
         self.processor = AutoProcessor.from_pretrained(
             str(self.model_root),
             trust_remote_code=True,
             local_files_only=self.local_files_only,
         )
-        model = AutoModelForVision2Seq.from_pretrained(
+        model = AutoModelForImageTextToText.from_pretrained(
             str(self.model_root),
             torch_dtype=self.dtype,
             trust_remote_code=True,
