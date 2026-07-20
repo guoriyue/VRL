@@ -1,5 +1,10 @@
 # SPRINT: Multi-GPU rollout perf — per-worker pipeline + async weight-sync
 
+> **DONE — negative gate result (2026-07-19).** Two- and three-worker L4 runs
+> gave every worker exactly two chunks per request. Per-worker between-chunk
+> bubble was 0.62-0.76%, and weight sync was at most 3.49% of exact update wall.
+> Neither gate fired, so this sprint intentionally adds no rollout optimization.
+>
 > **Two multi-GPU rollout levers, both hardware-gated (cannot be validated on 1 GPU).**
 > A rollout-dedicated GPU wastes any idle. On multi-GPU the denoise already
 > data-parallels across workers (near-linear, each card MFU-bound), so the remaining
@@ -7,8 +12,7 @@
 > weight-sync barrier. This sprint documents the design + a **measurement gate** so
 > the work is built only where a real run shows the idle is worth it. Grounded in
 > this session's code reads (file:line) + `[[project_real_run_profiling]]` (~36%
-> rollout idle, ~33% between-chunk orchestration on 1 GPU). Status: **DESIGN ONLY —
-> build when a multi-GPU box is available and the gate below fires.**
+> rollout idle, ~33% between-chunk orchestration on 1 GPU).
 
 ## Why this is not "class-ify" or single-GPU work
 
@@ -43,6 +47,63 @@ Gate thresholds (from the 1-GPU baseline, re-measure on the real box):
 - Idle ~few % (max `samples_per_chunk`, ~1 chunk/worker) → **do nothing**; it is the
   MFU-bound floor.
 
+## Final gate measurement (2026-07-19)
+
+Both runs used SD3.5 OCR continuous LoRA on L4s, `128x128`, four denoise steps,
+`samples_per_chunk=1`, one request at a time, one prompt per update, and four complete
+updates. One trainer used physical GPU 0. Round-robin assignment was deliberately exact:
+
+- two workers: four samples -> `2/2` chunks on physical GPUs 1/2;
+- three workers: six samples -> `2/2/2` chunks on physical GPUs 1/2/3.
+
+The busy metric is the union of CUPTI kernel `[start,end]` intervals per physical GPU,
+clipped to complete two-chunk request spans. Ray exposes every actor's card as local
+`cuda:0`; the analysis therefore maps `(PID, local CUDA id)` through Nsight's
+`TARGET_INFO_CUDA_DEVICE` table before unioning. Never merge actor-local `deviceId=0`
+rows directly.
+
+| workers | physical GPU | kernel busy | kernel idle | between-chunk bubble |
+|---:|---:|---:|---:|---:|
+| 2 | 1 | 34.10% | 65.90% | 0.739% |
+| 2 | 2 | 33.86% | 66.14% | 0.758% |
+| 3 | 1 | 33.91% | 66.09% | 0.693% |
+| 3 | 2 | 34.43% | 65.57% | 0.730% |
+| 3 | 3 | 33.30% | 66.70% | 0.616% |
+
+The large total idle is mostly *inside* the tiny acceptance-scale chunk (prompt encode,
+host launch/synchronization, and decode), not between its two worker-local chunks. Lever 1
+only targets the latter, which is 26-49x below its 20-30% gate.
+
+`trainer.optimizer_update` encloses collect, replay/backward, optimizer step, and post-step
+weight sync, so its NVTX wall is the exact denominator rather than an estimate:
+
+| workers | sync / all update wall | sync / steady update wall | worst update |
+|---:|---:|---:|---:|
+| 2 | 2.85% | 3.28% | 3.49% |
+| 3 | 2.23% | 2.50% | 2.75% |
+
+All updates reported `continuous_weight_sync_barrier_mode=1`: the existing versioned
+trainable-state slot path from `SPRINT_shadow_model_weight_sync` was active. This sprint
+does not extend it into a new double-buffered transport because even the measured pause is
+well below the 10% gate.
+
+Nsight emitted one late `engine.forward_chunk` range without temporally matching kernels
+per worker. Each is excluded, along with the otherwise valid unpaired range from that
+request; three complete two-chunk request pairs remain on every GPU. The launch logs and
+resolved configs still verify all four requests had exactly two assigned chunks per worker.
+
+Evidence:
+
+- `outputs/multigpu_rollout_perf_2w_20260719/rollout_perf_validation.json`
+- `outputs/multigpu_rollout_perf_2w_20260719/profile.nsys-rep`
+- `outputs/multigpu_rollout_perf_2w_20260719/train/metrics.csv`
+- `outputs/multigpu_rollout_perf_3w_20260719/rollout_perf_validation.json`
+- `outputs/multigpu_rollout_perf_3w_20260719/profile.nsys-rep`
+- `outputs/multigpu_rollout_perf_3w_20260719/train/metrics.csv`
+
+Decision: neither lever fires. Record the negative result, write no optimization code,
+and close the sprint.
+
 ## Lever 1 — per-worker pipeline (ungate the chunk-pipeline)
 
 **Problem (verified):** the chunk-pipeline that hides chunk N's teardown behind chunk
@@ -68,19 +129,19 @@ oversubscription (2 workers/GPU = 2× model+activations).
 
 ## Lever 2 — async weight-sync (hide the barrier)
 
-**Problem (verified):** the continuous schedule's weight sync is a barrier —
-`vrl/rollouts/orchestration/continuous/schedule.py` pause→drain→sync→resume. Every step,
-all rollout workers pause while the trainer broadcasts new weights. This cost does NOT
-scale with card count (it's a fixed per-step stall); small for LoRA, large for full-param.
+**Candidate cost:** continuous weight sync still pauses new admission while workers install
+the payload and return ACKs. The capability fallback also drains in-flight work; the
+versioned-slot path active in these runs safely skips that drain. The remaining synchronous
+install/ACK pause does not scale away with card count; it is small for LoRA and may be larger
+for a future full-parameter workload.
 
 **Fix direction:** overlap the sync with generation — start generating the next group
 under the current weights while the new weights stream in, and swap at a version boundary
 (the workers already refuse version-mismatched chunks: `execution/worker.py` version
-guard). Requires: non-draining sync path (the launcher already computes
-`supports_non_draining_weight_sync` when every worker keeps versioned slots —
-`ray/launcher.py`), plus a double-buffered weight slot so in-flight chunks finish on the
-old version. Design-only until measured; this is the larger multi-GPU win when
-full-param sync dominates.
+guard). The launcher already enables the safe non-draining versioned-slot path when every
+worker supports it. A further transport lever would need a true double-buffered install so
+transfer itself overlaps useful generation, with the new version visible only after complete
+fleet ACK. The measured gate did not justify building that extension here.
 
 ## Non-goals
 
@@ -92,6 +153,7 @@ full-param sync dominates.
 
 ## Status
 
-DESIGN + GATE only. No code — both levers need a multi-GPU box to validate, and the
-gate decides whether each is worth building there. Single-GPU perf is already at the
-MFU-bound floor.
+DONE — NEGATIVE RESULT. The required two- and three-worker measurements both stayed far
+below their decision gates. Lever 1 and the proposed Lever 2 extension were not
+implemented. Re-open a new sprint only if a different representative workload crosses a
+gate; do not infer that from total within-chunk GPU idle alone.
