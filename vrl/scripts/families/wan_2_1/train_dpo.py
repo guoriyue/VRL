@@ -315,7 +315,9 @@ def train_wan_2_1_dpo(cfg: DictConfig) -> None:
     prepare_metrics_csv(
         csv_path,
         "step," + ",".join(metric_fields) + "\n",
-        resume=resume_checkpoint is not None,
+        resume_at=(
+            ("step", resume_checkpoint.next_step) if resume_checkpoint is not None else None
+        ),
     )
 
     # 6. Training loop

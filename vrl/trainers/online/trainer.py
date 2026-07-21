@@ -8,6 +8,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+import math
 import time
 from collections import defaultdict
 from collections.abc import Mapping, Sequence
@@ -993,6 +994,17 @@ class OnlineTrainer(Trainer):
                 if p.grad is not None:
                     sq_sum += float(p.grad.detach().pow(2).sum().item())
             grad_norm = sq_sum**0.5
+        grad_norm_value = float(grad_norm)
+        if self._grad_scaler is None and not math.isfinite(grad_norm_value):
+            # BF16 training has no GradScaler to skip a poisoned update. Refuse
+            # the optimizer step here so an external metrics monitor never sees
+            # NaN only after corrupt weights have already been committed. With a
+            # GradScaler, inf grads are a designed event (scale overshoot): the
+            # scaler skips the step and backs off, so it must not raise here.
+            optimizer.zero_grad()
+            raise FloatingPointError(
+                f"non-finite gradient norm {grad_norm_value}; optimizer step refused",
+            )
         stepped = True
         if self._grad_scaler is not None:
             scale_before = self._grad_scaler.get_scale()
@@ -1005,7 +1017,7 @@ class OnlineTrainer(Trainer):
         else:
             optimizer.step()
         optimizer.zero_grad()
-        return float(grad_norm), stepped
+        return grad_norm_value, stepped
 
     # ------------------------------------------------------------------
     # Training step — CEA pipeline
@@ -2046,6 +2058,7 @@ class OnlineTrainer(Trainer):
                 self.model,
                 self._optimizer,
             )
+            d["optimizer_parameter_manifest"] = self._optimizer_parameter_manifest()
         if self._grad_scaler is not None:
             d["grad_scaler"] = self._grad_scaler.state_dict()
         ema = self._ensure_ema()
@@ -2077,6 +2090,17 @@ class OnlineTrainer(Trainer):
             logger.warning("%s; initializing fresh masters from model weights", message)
 
         if "optimizer" in state:
+            saved_manifest = state.get("optimizer_parameter_manifest")
+            if saved_manifest is not None:
+                current_manifest = self._optimizer_parameter_manifest()
+                if saved_manifest != current_manifest:
+                    message = (
+                        "checkpoint optimizer parameter identity mismatch: "
+                        f"checkpoint={saved_manifest!r}, runtime={current_manifest!r}"
+                    )
+                    if strict:
+                        raise ValueError(message)
+                    logger.warning("%s", message)
             optimizer = self._ensure_optimizer()
             optimizer_state = state["optimizer"]
             checkpoint_uses_fp32_master = isinstance(optimizer_state, Mapping) and (
@@ -2158,6 +2182,19 @@ class OnlineTrainer(Trainer):
         # concerns, not persisted as an initialized rollout flag.
         self._rollout_weights_initialized = False
         self.rollout_schedule.reset()
+
+    def _optimizer_parameter_manifest(self) -> list[dict[str, Any]]:
+        """Stable named identity for positional optimizer checkpoint slots."""
+
+        return [
+            {
+                "name": name,
+                "shape": list(parameter.shape),
+                "dtype": str(parameter.dtype),
+            }
+            for name, parameter in self.model.named_parameters()
+            if parameter.requires_grad
+        ]
 
 
 def _validate_ema_state_shapes(

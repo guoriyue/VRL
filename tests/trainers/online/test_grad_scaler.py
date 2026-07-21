@@ -141,6 +141,45 @@ def test_clip_and_step_prepares_fp32_master_before_standard_unscale() -> None:
     assert model.weight.item() == pytest.approx(0.89990234375)
 
 
+def test_clip_and_step_refuses_nonfinite_gradient_without_scaler() -> None:
+    model = nn.Linear(1, 1, bias=False)
+    with torch.no_grad():
+        model.weight.fill_(1.0)
+    optimizer = torch.optim.SGD(model.parameters(), lr=0.1)
+    model.weight.grad = torch.full_like(model.weight, float("nan"))
+    trainer = SimpleNamespace(
+        config=SimpleNamespace(max_norm=1.0),
+        model=model,
+        _grad_scaler=None,
+        _strategy=SingleProcessStrategy(),
+    )
+
+    with pytest.raises(FloatingPointError, match="non-finite gradient norm"):
+        OnlineTrainer._clip_and_step(trainer, optimizer)
+
+    assert model.weight.item() == pytest.approx(1.0)
+    assert model.weight.grad is None
+
+
+def test_clip_and_step_lets_scaler_skip_nonfinite_gradient() -> None:
+    """inf grads under a GradScaler are its designed backoff event, not an error.
+
+    Unlike test_clip_and_step_reports_skipped this does NOT monkeypatch
+    clip_grad_norm_, so the real (infinite) norm reaches the finiteness guard —
+    the exact path the guard must leave to the scaler.
+    """
+    trainer, optimizer, model = _scaler_trainer()
+    model.weight.grad.fill_(float("inf"))
+    scale_before = trainer._grad_scaler.get_scale()
+
+    grad_norm, stepped = OnlineTrainer._clip_and_step(trainer, optimizer)
+
+    assert grad_norm == float("inf")
+    assert stepped is False
+    assert model.weight.item() == pytest.approx(1.0)  # skipped, not corrupted
+    assert trainer._grad_scaler.get_scale() < scale_before  # real backoff happened
+
+
 def test_low_precision_trainables_derive_master_optimizer_without_config_knob() -> None:
     trainer = object.__new__(OnlineTrainer)
     trainer.model = nn.Linear(1, 1, bias=False).half()

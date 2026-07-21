@@ -10,9 +10,11 @@ import pytest
 import torch
 import torch.distributed as dist
 import torch.multiprocessing as mp
+from omegaconf import OmegaConf
 
 from vrl.scripts.common.online import (
     OnlineRecipeRun,
+    _export_transformer_lora,
     _prepare_metrics_csv_rank_consistent,
 )
 from vrl.trainers.distributed import DistributedTrainingContext
@@ -34,6 +36,22 @@ def _free_port() -> int:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
         sock.bind(("127.0.0.1", 0))
         return int(sock.getsockname()[1])
+
+
+def test_dual_transformer_lora_export_is_namespaced() -> None:
+    high = SimpleNamespace(save_pretrained=lambda _path: None)
+    low = SimpleNamespace(save_pretrained=lambda _path: None)
+    bundle = SimpleNamespace(
+        trainable_modules={"transformer": high, "transformer_2": low},
+    )
+    cfg = OmegaConf.create({"model": {"use_lora": True}})
+
+    exported = _export_transformer_lora(bundle, cfg)
+
+    assert exported == {
+        "lora_weights/transformer": high,
+        "lora_weights/transformer_2": low,
+    }
 
 
 def _run_metrics_preflight_rank(
@@ -93,7 +111,7 @@ def test_online_resume_rejects_changed_reward_component_schema(tmp_path) -> None
         export_modules=None,
         csv_path=path,
         rng=None,
-        resume=False,
+        resume_epoch=None,
     ).prepare_metrics_csv()
 
     resumed = OnlineRecipeRun(
@@ -105,7 +123,7 @@ def test_online_resume_rejects_changed_reward_component_schema(tmp_path) -> None
         export_modules=None,
         csv_path=path,
         rng=None,
-        resume=True,
+        resume_epoch=0,
     )
 
     with pytest.raises(ValueError, match="different metrics schema"):
@@ -123,7 +141,7 @@ def test_metrics_csv_writes_continuous_request_diagnostics(tmp_path) -> None:
         export_modules=None,
         csv_path=path,
         rng=None,
-        resume=False,
+        resume_epoch=None,
     )
     run.prepare_metrics_csv()
     update = SimpleNamespace(

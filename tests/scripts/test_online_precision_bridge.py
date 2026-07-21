@@ -232,7 +232,7 @@ def test_online_metrics_csv_includes_logprob_mismatch_metrics(tmp_path):
         export_modules=None,
         csv_path=csv_path,
         rng=None,
-        resume=False,
+        resume_epoch=None,
     )
     run.prepare_metrics_csv()
     run.write_metric_row(

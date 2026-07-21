@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import csv
 import json
 import logging
 import os
@@ -57,6 +58,18 @@ class TrainingCheckpoint:
         return state
 
     @property
+    def model_identity(self) -> dict[str, Any] | None:
+        model = self.payload.get("model")
+        if not isinstance(model, dict):
+            raise TypeError("checkpoint payload missing dict field: model")
+        identity = model.get("identity")
+        if identity is None:
+            return None
+        if not isinstance(identity, dict):
+            raise TypeError("checkpoint payload field model.identity must be a dict")
+        return identity
+
+    @property
     def progress(self) -> dict[str, Any]:
         progress = self.payload.get("progress", {})
         if not isinstance(progress, dict):
@@ -97,6 +110,7 @@ def save_training_checkpoint(
     rng_state: dict[str, Any] | None = None,
     export_modules: dict[str, Any] | None = None,
     export_ema: Any | None = None,
+    model_identity: dict[str, Any] | None = None,
     strategy: Any | None = None,
     is_primary: bool = True,
 ) -> dict[str, Any]:
@@ -150,6 +164,7 @@ def save_training_checkpoint(
         "trainer": trainer_state,
         "model": {
             "trainable_modules": trainable_modules,
+            **({"identity": dict(model_identity)} if model_identity is not None else {}),
         },
         "progress": dict(progress),
         "rng": rng_state or capture_rng_state(),
@@ -273,7 +288,10 @@ def _write_checkpoint_artifacts_and_publish(
         trainer_state=trainer_state,
         completed_epoch=int(progress.get("completed_epoch", progress.get("next_epoch", 0))),
         next_epoch=int(progress.get("next_epoch", progress.get("next_step", 0))),
-        uses_lora=export_modules.get(LORA_WEIGHTS_NAME) is not None,
+        uses_lora=any(
+            name == LORA_WEIGHTS_NAME or name.startswith(f"{LORA_WEIGHTS_NAME}/")
+            for name in export_modules
+        ),
         checkpoint_file_bytes=checkpoint_file.stat().st_size,
     )
     _publish_checkpoint_dir(staging, final_path)
@@ -366,6 +384,7 @@ def restore_training_checkpoint(
     trainer: Any,
     bundle: Any,
     family: str,
+    expected_model_identity: dict[str, Any] | None = None,
     strict: bool = True,
 ) -> None:
     """Restore model trainable modules and trainer state from checkpoint."""
@@ -379,6 +398,17 @@ def restore_training_checkpoint(
         raise ValueError(
             f"checkpoint family mismatch: checkpoint={checkpoint_family!r}, runtime={family!r}",
         )
+    if strict and expected_model_identity is not None:
+        saved_identity = checkpoint.model_identity
+        if saved_identity is None:
+            raise ValueError(
+                "checkpoint is missing model identity required by this runtime",
+            )
+        if saved_identity != expected_model_identity:
+            raise ValueError(
+                "checkpoint model identity mismatch: "
+                f"checkpoint={saved_identity!r}, runtime={expected_model_identity!r}",
+            )
     strategy = getattr(trainer, "_strategy", None)
     strategy_loader = getattr(strategy, "load_trainable_state", None)
     if callable(strategy_loader):
@@ -388,6 +418,57 @@ def restore_training_checkpoint(
     else:
         load_trainable_state(bundle, checkpoint.trainable_state, strict=strict)
     trainer.load_state_dict(checkpoint.trainer_state, strict=strict)
+    if strict and expected_model_identity is not None:
+        restored_trainable = (
+            strategy.export_trainable_state(bundle)
+            if callable(getattr(strategy, "export_trainable_state", None))
+            else export_trainable_state(bundle)
+        )
+        _require_equal_tensor_tree(
+            checkpoint.trainable_state,
+            restored_trainable,
+            label="restored dual-expert weights",
+        )
+        if "optimizer" in checkpoint.trainer_state:
+            restored_trainer = trainer.state_dict()
+            _require_equal_tensor_tree(
+                checkpoint.trainer_state["optimizer"],
+                restored_trainer.get("optimizer"),
+                label="restored dual-expert optimizer state",
+            )
+
+
+def _require_equal_tensor_tree(expected: Any, actual: Any, *, label: str) -> None:
+    """Fail closed unless two checkpoint state trees are tensor-exact."""
+
+    if isinstance(expected, torch.Tensor) and isinstance(actual, torch.Tensor):
+        if not torch.equal(expected, actual):
+            raise ValueError(f"{label} tensor mismatch")
+        return
+    if isinstance(expected, dict) and isinstance(actual, dict):
+        if expected.keys() != actual.keys():
+            raise ValueError(
+                f"{label} keys mismatch: expected={sorted(expected)}, actual={sorted(actual)}",
+            )
+        for key in expected:
+            _require_equal_tensor_tree(expected[key], actual[key], label=f"{label}.{key}")
+        return
+    if isinstance(expected, (list, tuple)) and isinstance(actual, (list, tuple)):
+        if len(expected) != len(actual):
+            raise ValueError(
+                f"{label} length mismatch: expected={len(expected)}, actual={len(actual)}",
+            )
+        for index, (expected_item, actual_item) in enumerate(
+            zip(expected, actual, strict=True),
+        ):
+            _require_equal_tensor_tree(
+                expected_item,
+                actual_item,
+                label=f"{label}[{index}]",
+            )
+        return
+    if expected != actual:
+        raise ValueError(f"{label} mismatch: expected={expected!r}, actual={actual!r}")
 
 
 def export_trainable_state(bundle: Any) -> dict[str, dict[str, Any]]:
@@ -496,28 +577,99 @@ def save_resolved_config(cfg: Any, output_dir: str | Path, *, resumed: bool) -> 
     OmegaConf.save(cfg, path / f"resume_config_{stamp}.yaml")
 
 
-def prepare_metrics_csv(csv_path: str | Path, header: str, *, resume: bool) -> None:
-    """Create metrics CSV unless resume should append to an existing file.
+def prepare_metrics_csv(
+    csv_path: str | Path,
+    header: str,
+    *,
+    resume_at: tuple[str, int] | None,
+) -> None:
+    """Create a metrics CSV or align it atomically with a resume checkpoint.
 
-    Appending to a file with a different header would silently shift every
-    column for csv.DictReader consumers (the curve verdict reads this file),
-    so a resume across a metrics-schema change must refuse instead.
+    A checkpoint at position N cannot support metrics already written for N or
+    later: those updates were not captured in the checkpoint and will be
+    recomputed. Keeping them would create duplicate positions after resume.
     """
 
     path = Path(csv_path)
-    if resume and path.exists():
-        with path.open() as f:
-            existing_header = f.readline()
-        if existing_header.rstrip("\n") != header.rstrip("\n"):
-            raise ValueError(
-                f"{path} was written by a different metrics schema; appending "
-                "would silently misalign columns. Move the old file aside or "
-                "start a fresh output_dir.",
-            )
+    normalized_header = header.rstrip("\r\n") + "\n"
+    if resume_at is None:
+        path.write_text(normalized_header)
         return
-    if resume:
+
+    position_column, resume_position = resume_at
+    if resume_position < 0:
+        raise ValueError(f"metrics resume position must be >= 0, got {resume_position}")
+    if not path.exists():
         logger.warning("Resume requested but metrics file does not exist; creating %s", path)
-    path.write_text(header)
+        path.write_text(normalized_header)
+        return
+
+    text = path.read_text(encoding="utf-8")
+    complete_text = text if text.endswith("\n") else text.rpartition("\n")[0] + "\n"
+    lines = complete_text.splitlines(keepends=True)
+    existing_header = lines[0] if lines else ""
+    if existing_header.rstrip("\r\n") != normalized_header.rstrip("\n"):
+        raise ValueError(
+            f"{path} was written by a different metrics schema; appending "
+            "would silently misalign columns. Move the old file aside or "
+            "start a fresh output_dir.",
+        )
+
+    columns = next(csv.reader([existing_header]))
+    if position_column not in columns:
+        raise ValueError(f"metrics CSV is missing resume column {position_column!r}: {path}")
+    position_index = columns.index(position_column)
+    retained_lines: list[str] = []
+    previous_position = -1
+    truncated_rows = 0
+    for line_number, line in enumerate(lines[1:], start=2):
+        values = next(csv.reader([line]))
+        if len(values) != len(columns):
+            raise ValueError(
+                f"metrics CSV row {line_number} has {len(values)} columns; "
+                f"expected {len(columns)}: {path}",
+            )
+        raw_position = values[position_index]
+        try:
+            position = int(raw_position)
+        except ValueError as exc:
+            raise ValueError(
+                f"metrics CSV row {line_number} has a non-integer "
+                f"{position_column}: {raw_position!r}",
+            ) from exc
+        if position < 0 or position <= previous_position:
+            raise ValueError(
+                f"metrics CSV {position_column} must be strictly increasing "
+                f"non-negative integers; row {line_number} has {position}",
+            )
+        previous_position = position
+        if position < resume_position:
+            retained_lines.append(line)
+        else:
+            truncated_rows += 1
+
+    aligned_text = normalized_header + "".join(retained_lines)
+    if aligned_text != text:
+        temporary = path.with_suffix(f"{path.suffix}.tmp")
+        with temporary.open("w", encoding="utf-8") as handle:
+            handle.write(aligned_text)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary, path)
+    if truncated_rows:
+        logger.warning(
+            "Discarded %d metrics row(s) at %s >= %d before checkpoint resume",
+            truncated_rows,
+            position_column,
+            resume_position,
+        )
+    elif previous_position + 1 < resume_position:
+        logger.warning(
+            "Metrics end at %s=%d before checkpoint resume position %d",
+            position_column,
+            previous_position,
+            resume_position,
+        )
 
 
 def read_checkpoint_meta(checkpoint_dir: str | Path) -> dict[str, Any]:

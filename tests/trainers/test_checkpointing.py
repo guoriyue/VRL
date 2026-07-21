@@ -74,6 +74,45 @@ def test_restore_training_checkpoint_rejects_family_mismatch(tmp_path) -> None:
         )
 
 
+def test_restore_training_checkpoint_strictly_checks_model_identity(tmp_path) -> None:
+    identity = {
+        "model_path": "Wan-AI/Wan2.2-I2V-A14B-Diffusers",
+        "revision": "pinned",
+        "boundary_ratio": 0.9,
+        "trainable_transformers": ["transformer", "transformer_2"],
+    }
+    path = tmp_path / "checkpoint-dual-expert"
+    save_training_checkpoint(
+        path,
+        trainer=_Trainer(),
+        bundle=_Bundle(),
+        family="wan_2_1_i2v",
+        progress={"next_epoch": 1},
+        rng_state={},
+        model_identity=identity,
+    )
+    checkpoint = load_training_checkpoint(path)
+
+    restore_training_checkpoint(
+        checkpoint,
+        trainer=_Trainer(),
+        bundle=_Bundle(),
+        family="wan_2_1_i2v",
+        expected_model_identity=identity,
+        strict=True,
+    )
+    wrong = {**identity, "boundary_ratio": 0.8}
+    with pytest.raises(ValueError, match="model identity mismatch"):
+        restore_training_checkpoint(
+            checkpoint,
+            trainer=_Trainer(),
+            bundle=_Bundle(),
+            family="wan_2_1_i2v",
+            expected_model_identity=wrong,
+            strict=True,
+        )
+
+
 def test_restore_training_checkpoint_routes_model_load_through_strategy(tmp_path) -> None:
     """Distributed model restore must use the same strategy seam as export."""
 
@@ -498,8 +537,44 @@ def test_prepare_metrics_csv_rejects_resume_across_schema_change(tmp_path) -> No
     path = tmp_path / "metrics.csv"
     header = "epoch,loss,approx_kl\n"
 
-    prepare_metrics_csv(path, header, resume=False)
-    prepare_metrics_csv(path, header, resume=True)  # same schema appends fine
+    prepare_metrics_csv(path, header, resume_at=None)
+    prepare_metrics_csv(path, header, resume_at=("epoch", 0))
 
     with pytest.raises(ValueError, match="different metrics schema"):
-        prepare_metrics_csv(path, "epoch,loss,active_clip_fraction,approx_kl\n", resume=True)
+        prepare_metrics_csv(
+            path,
+            "epoch,loss,active_clip_fraction,approx_kl\n",
+            resume_at=("epoch", 0),
+        )
+
+
+def test_prepare_metrics_csv_discards_rows_not_covered_by_checkpoint(tmp_path) -> None:
+    from vrl.trainers.checkpointing import prepare_metrics_csv
+
+    path = tmp_path / "metrics.csv"
+    header = "epoch,loss\n"
+    path.write_text(header + "38,1.0\n39,0.9\n40,0.8\n41,0.7\n42,0")
+
+    prepare_metrics_csv(path, header, resume_at=("epoch", 40))
+
+    assert path.read_text() == header + "38,1.0\n39,0.9\n"
+
+
+@pytest.mark.parametrize(
+    "rows",
+    [
+        "0,1.0\n0,0.9\n",
+        "1,1.0\n0,0.9\n",
+        "0.5,1.0\n",
+        "-1,1.0\n",
+    ],
+)
+def test_prepare_metrics_csv_rejects_invalid_resume_positions(tmp_path, rows) -> None:
+    from vrl.trainers.checkpointing import prepare_metrics_csv
+
+    path = tmp_path / "metrics.csv"
+    header = "epoch,loss\n"
+    path.write_text(header + rows)
+
+    with pytest.raises(ValueError, match=r"integer|strictly increasing"):
+        prepare_metrics_csv(path, header, resume_at=("epoch", 2))

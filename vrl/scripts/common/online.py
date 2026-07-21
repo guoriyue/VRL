@@ -347,18 +347,18 @@ def _export_transformer_lora(bundle: Any, cfg: DictConfig) -> dict[str, Any] | N
 
     if not bool(OmegaConf.select(cfg, "model.use_lora", default=False)):
         return None
-    exportable = [
-        module
-        for module in getattr(bundle, "trainable_modules", {}).values()
+    exportable = {
+        str(name): module
+        for name, module in getattr(bundle, "trainable_modules", {}).items()
         if hasattr(module, "save_pretrained")
-    ]
+    }
     if len(exportable) == 1:
-        return {LORA_WEIGHTS_NAME: exportable[0]}
+        return {LORA_WEIGHTS_NAME: next(iter(exportable.values()))}
     if len(exportable) > 1:
-        raise ValueError(
-            "diffusion LoRA export only supports one exportable transformer; "
-            "set model.trainable_transformers to a single module before exporting",
-        )
+        # checkpoint.pt remains the resume source of truth. Namespaced adapter
+        # artifacts make each expert independently inspectable/publishable while
+        # preserving the legacy lora_weights/ path for ordinary one-root models.
+        return {f"{LORA_WEIGHTS_NAME}/{name}": module for name, module in exportable.items()}
     return None
 
 
@@ -368,6 +368,24 @@ def _export_language_model_lora(bundle: Any, cfg: DictConfig) -> dict[str, Any] 
     if bool(OmegaConf.select(cfg, "model.use_lora", default=False)):
         return {LORA_WEIGHTS_NAME: bundle.model.language_model}
     return None
+
+
+def _dual_expert_checkpoint_identity(bundle: Any, cfg: DictConfig) -> dict[str, Any] | None:
+    """Immutable resume identity for a timestep-routed two-expert policy."""
+
+    boundary_ratio = getattr(bundle.model, "boundary_ratio", None)
+    if boundary_ratio is None:
+        return None
+    modules = getattr(bundle, "trainable_modules", {})
+    # The high/low-noise expert mapping (transformer / transformer_2) is fixed
+    # by the Wan family contract, so recording it here would add a constant with
+    # zero discriminating power to the identity equality check.
+    return {
+        "model_path": str(OmegaConf.select(cfg, "model.path", default="") or ""),
+        "revision": str(OmegaConf.select(cfg, "model.revision", default="") or ""),
+        "boundary_ratio": float(boundary_ratio),
+        "trainable_transformers": sorted(str(name) for name in modules),
+    }
 
 
 def _check_host_memory_budget(
@@ -514,7 +532,8 @@ class OnlineRecipeRun:
     export_modules: dict[str, Any] | None
     csv_path: Path
     rng: Any
-    resume: bool
+    resume_epoch: int | None
+    model_identity: dict[str, Any] | None = None
 
     def prepare_metrics_csv(self) -> None:
         component_cols = ",".join(f"r_{name}" for name in self.component_names)
@@ -544,7 +563,11 @@ class OnlineRecipeRun:
         )
         if component_cols:
             header = f"{header},{component_cols}"
-        prepare_metrics_csv(self.csv_path, header + "\n", resume=self.resume)
+        prepare_metrics_csv(
+            self.csv_path,
+            header + "\n",
+            resume_at=("epoch", self.resume_epoch) if self.resume_epoch is not None else None,
+        )
 
     def write_metric_row(self, epoch: int, metrics: Any) -> None:
         component_names = self.component_names
@@ -690,6 +713,7 @@ class OnlineRecipeRun:
             rng_state=capture_rng_state(prompt_generator=self.rng),
             export_modules=self.export_modules,
             export_ema=getattr(self.trainer, "_ema", None),
+            model_identity=self.model_identity,
             strategy=self.strategy,
             is_primary=context.is_primary,
         )
@@ -868,6 +892,7 @@ async def run_online_recipe(
         bundle.model,
         owner=f"{family_entry.family}.bundle.model",
     )
+    model_identity = _dual_expert_checkpoint_identity(bundle, cfg)
     # Scheduler feeds the flow-matching evaluator when the family bundle has one.
     scheduler = getattr(bundle, "scheduler", None)
 
@@ -969,6 +994,7 @@ async def run_online_recipe(
                 trainer=trainer,
                 bundle=bundle,
                 family=family_entry.family,
+                expected_model_identity=model_identity,
                 strict=trainer_config.resume_strict,
             )
             logger.info(
@@ -1014,7 +1040,8 @@ async def run_online_recipe(
             export_modules=export_modules,
             csv_path=output_dir / "metrics.csv",
             rng=rng,
-            resume=resume_checkpoint is not None,
+            resume_epoch=(resume_checkpoint.next_epoch if resume_checkpoint is not None else None),
+            model_identity=model_identity,
         )
         _prepare_metrics_csv_rank_consistent(run, training_context)
 
