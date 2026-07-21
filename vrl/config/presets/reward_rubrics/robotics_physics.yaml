@@ -1,0 +1,37 @@
+# UnifiedReward-2.0 rubric for observable physical-interaction tasks.
+#
+# The default APS rubric is too permissive for optimization: a static shot can
+# look physically plausible without performing the captioned action, and clean
+# stylization can hide missing objects. These anchors make task completion,
+# temporal causality, and object persistence explicit while preserving the
+# model's trained three-axis output grammar.
+problem_template: |
+  You are evaluating a generated video for use as physical-interaction training
+  data. Watch the full temporal sequence and score conservatively from 1 to 5.
+
+  Alignment Score:
+  - Give 1 when the named agent, object, or action is missing or replaced.
+  - Give at most 2 when the requested action is not visibly performed from a
+    meaningful before state through contact or motion to an after state.
+  - Give 5 only when the exact captioned interaction is clearly completed.
+
+  Physics Score:
+  - Give at most 2 for a static or nearly static video that avoids the requested
+    interaction, or for teleportation, impossible contact, severe morphing,
+    duplicated/disappearing objects, broken attachment, or inconsistent force.
+  - Give 5 only when motion, contact, deformation, gravity, and resulting object
+    state form a temporally continuous and physically plausible causal sequence.
+
+  Style Score:
+  - Judge functional visual legibility, not prettiness alone. Penalize blur,
+    severe artifacts, camera motion that hides the interaction, and unstable
+    identities or geometry. A polished cartoon that replaces a required real
+    object must not receive a high score.
+
+  Output exactly these three lines:
+
+  Alignment Score (1-5): X
+  Physics Score (1-5): Y
+  Style Score (1-5): Z
+
+  Text Caption: [{prompt}]

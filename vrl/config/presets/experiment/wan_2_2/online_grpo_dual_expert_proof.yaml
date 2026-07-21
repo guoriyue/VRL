@@ -1,0 +1,90 @@
+# Wan 2.2 A14B T2V dual-expert lifecycle proof.
+#
+# The acceptance target is the real two-expert policy contract, not production
+# video quality. A small 320p/17f shape, two samples, CPU OCR reward, and ten
+# denoise steps keep the run bounded while still crossing the checkpoint's real
+# timestep boundary in both rollout and replay.
+#
+# Launch on one visible GPU:
+#
+#   CUDA_VISIBLE_DEVICES=<gpu0> torchrun --standalone --nproc-per-node=1 \
+#     -m vrl.scripts.train \
+#     --config experiment/wan_2_2/online_grpo_dual_expert_proof
+#
+# Resume proof (the second update must match a continuous two-update baseline):
+#
+#   CUDA_VISIBLE_DEVICES=<gpu0> torchrun --standalone --nproc-per-node=1 \
+#     -m vrl.scripts.train \
+#     --config experiment/wan_2_2/online_grpo_dual_expert_proof \
+#     trainer.total_epochs=2 \
+#     trainer.resume_from=outputs/wan_2_2_dual_expert_proof/checkpoint-1
+defaults:
+  - /recipe/online/wan_2_1_grpo
+  - /model/wan_2_2/a14b
+  - /sampling/video/320p_17f
+  - /sampling/denoise/10_step_cfg_4_5
+  - /reward/ocr
+  - /dataset/ocr
+  - /base/distributed/training_fsdp
+
+distributed:
+  training:
+    strategy: fsdp
+    num_nodes: 1
+    # One rank is deliberate on the 181 GiB proof host. Two symmetric ranks
+    # would duplicate two complete 64 GiB rollout pipelines in addition to the
+    # replay shards and exceed host RAM. Multi-rank dual-root FSDP is covered by
+    # the tiny-real distributed acceptance test; this run proves real weights.
+    gpus_per_node: 1
+    fsdp:
+      mesh: ["dp_shard"]
+      precision_policy: actor
+      reshard_after_forward: true
+      # Both 14B roots stay on host between forwards. FSDP materializes only the
+      # expert selected by the current timestep, so the inactive root does not
+      # consume the active GPU budget.
+      cpu_offload: true
+  resources:
+    trainer:
+      num_gpus: 1
+    rollout:
+      # The online distributed path is symmetric-colocated: every torchrun rank
+      # owns one local rollout worker and time-shares its trainer GPU.
+      gpu_pool: trainer
+      num_gpus: 1
+      gpus_per_worker: 1.0
+      num_workers: 1
+
+model:
+  trainable_transformers: both
+  # Diffusers' Wan sequence includes transformer -> transformer_2. Sequential
+  # offload is the bounded-memory rollout path on 24 GiB L4s.
+  offload_mode: sequential
+  expert_lifecycle_profiling: true
+  torch_compile:
+    # FSDP2 reshard hooks are intentionally incompatible with inductor capture.
+    enable: false
+    mode: default
+
+actor:
+  optim:
+    lr: 5.0e-5
+  ppo_epochs: 1
+
+rollout:
+  n_samples_per_prompt: 2
+  prompts_per_batch: 1
+  microbatch_size: 1
+  samples_per_chunk: 2
+  host_memory_budget_fraction: 0.95
+  denoise_mode: native
+  sde:
+    type: cps
+
+trainer:
+  total_epochs: 1
+  output_dir: outputs/wan_2_2_dual_expert_proof
+  save_freq: 1
+  profile: true
+  debug:
+    first_step: true

@@ -1,0 +1,59 @@
+# Throughput-balanced continuation of the four-L4 robotics-physics run.
+#
+# The strict recipe spends about 154 seconds collecting one update and about
+# 1,257 seconds replaying 19 timesteps twice. Increasing the rollout batch scales
+# both phases and leaves the imbalance intact. This variant instead overlaps the
+# next policy-version-bounded rollout with replay and trains an evenly spaced
+# quarter of the denoise trajectory once. On the target host that makes the two pipeline
+# stages roughly equal without generating samples that the optimizer discards.
+#
+# Physical topology (CUDA_VISIBLE_DEVICES=0,1,2):
+#   GPU 0:   single-process trainer
+#   GPU 1/2: two resident rollout workers
+#   GPU 3:   external UnifiedReward service, intentionally hidden from Ray
+#
+# Continuous GRPO admits at most one-version-old trajectories. Its importance
+# ratio therefore remains active with one PPO pass. The five evenly spaced
+# replay steps intentionally stop at index 16: Wan CPS has zero transition
+# variance at terminal index 19, so that deterministic endpoint is not a valid
+# KL action. The supervisor applies the 0.01 numerical-parity bound to fresh
+# rows and a separate bounded-drift limit to intentional one-version-old rows.
+#
+# Supervise an accepted long run with:
+#   CUDA_VISIBLE_DEVICES=0,1,2 .venv/bin/python -m vrl.scripts.supervise \
+#     --config experiment/wan_2_1/online_grpo_robotics_physics_4x_l4_continuous \
+#     --health-metrics --health-failure-limit 3 \
+#     --health-max-pre-update-logprob-diff 0.01 \
+#     --health-max-stale-policy-versions 1 \
+#     --health-max-stale-logprob-diff 0.05 \
+#     --health-min-reward-std 0.05 --health-min-grad-norm 0.000001
+defaults:
+  - /experiment/wan_2_1/online_grpo_robotics_physics_4x_l4
+  - /base/rollout/orchestration/continuous
+
+actor:
+  ppo_epochs: 1
+  timestep_fraction: 0.25
+  timestep_selection: strided
+  replay_samples_per_chunk: 1
+
+rollout:
+  # One continuous batch contains all four prompt groups. The producer submits
+  # them independently, allowing GPU 3 to score a completed group while GPUs
+  # 1/2 generate the remaining groups. The next full batch is prefetched beside
+  # GPU 0 replay, while each optimizer update remains exactly 16 trajectories.
+  microbatch_size: 4
+
+trainer:
+  output_dir: outputs/wan_robotics_physics_4x_l4/continuous_run
+  rollout_orchestration:
+    # This strict-only selector is inherited from the base experiment; nulling it
+    # is required because continuous collection owns one prompt group per call.
+    reward_collection_mode: null
+    continuous:
+      # Four slots expose the complete finite prompt batch to the producer so
+      # generation and isolated reward inference can overlap across groups.
+      max_inflight_groups: 4
+      max_ready_groups: 4
+      max_stale_policy_versions: 1
+      wait_timeout_s: 1800

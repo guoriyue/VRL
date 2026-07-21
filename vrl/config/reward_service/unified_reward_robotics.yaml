@@ -1,0 +1,25 @@
+# Operator-owned UnifiedReward-2.0 service for observable physical interactions.
+# Pin this process to physical GPU 3; trainer and rollout workers use GPUs 0-2.
+host: 127.0.0.1
+port: 8300
+model_name: unified-reward-robotics
+model_version: CodeGoat24/UnifiedReward-2.0-qwen-7b@main+robotics-physics-rubric-v1
+
+artifact_roots:
+  - /home/ubuntu/VRL/outputs
+
+max_concurrency: 1
+max_pending_requests: 8
+max_cached_requests: 1024
+generation_overlap_safe: true
+
+worker_config:
+  model_factory: vrl.rewards.models.unified_reward_video:UnifiedRewardVideoModel
+  reward_model_name: CodeGoat24/UnifiedReward-2.0-qwen-7b@main
+  reward_model_version: CodeGoat24/UnifiedReward-2.0-qwen-7b@main+robotics-physics-rubric-v1
+  device: cuda:0
+  dtype: bfloat16
+  num_frames: 16
+  max_new_tokens: 256
+  local_files_only: true
+  rubric_path: vrl/config/presets/reward_rubrics/robotics_physics.yaml

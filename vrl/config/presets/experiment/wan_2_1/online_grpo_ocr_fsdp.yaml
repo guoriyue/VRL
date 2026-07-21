@@ -1,0 +1,73 @@
+# Wan 2.1 1.3B OCR GRPO under FSDP2, symmetric-colocated on one multi-GPU host.
+#
+# Topology (the only multi-rank shape run_online_recipe implements):
+#   every torchrun rank owns ONE GPU and runs trainer + its own local Ray
+#   rollout on that same card, drawing a disjoint prompt slice; rank 0 writes IO.
+#   Params/grads/optimizer are sharded as DTensor (ZeRO-3); the export seam
+#   gathers a full policy-facing state per rank, so rollout weight sync and
+#   checkpointing look identical to single_process.
+#
+# `rollout.gpu_pool: trainer` is REQUIRED, not a preference. The default `auto`
+# pool prefers a spare GPU, which on a multi-GPU host resolves to a DISJOINT
+# rollout plan -- and `_require_supported_distributed_rollout_topology`
+# (vrl/scripts/common/online.py) rejects that before model or Ray construction,
+# because every rank would independently launch the same rollout device plan
+# onto the same cards. Forcing the trainer pool keeps each rank self-contained.
+#
+# Reward stays on CPU (OCR) so all visible GPUs are available as ranks. A heavy
+# GPU reward here would have to share each rank's card through the phase lease.
+#
+# Launch (WORLD_SIZE must equal num_nodes * gpus_per_node):
+#
+#   torchrun --standalone --nproc_per_node=4 \
+#     -m vrl.scripts.train \
+#     --config experiment/wan_2_1/online_grpo_ocr_fsdp
+defaults:
+  - /experiment/wan_2_1/online_grpo_ocr
+  - /base/distributed/training_fsdp
+
+distributed:
+  training:
+    strategy: fsdp
+    num_nodes: 1
+    gpus_per_node: 4
+    fsdp:
+      mesh: ["dp_shard"]
+      precision_policy: actor
+      reshard_after_forward: true
+  resources:
+    trainer:
+      num_gpus: 1
+    rollout:
+      # Colocated on the rank's own trainer GPU. See the header: `auto` would
+      # resolve to a disjoint plan and be rejected.
+      gpu_pool: trainer
+      num_gpus: 1
+      gpus_per_worker: 1.0
+      num_workers: 1
+
+model:
+  # Required by FSDP2, not a tuning choice: build_strategy fail-fasts on
+  # fsdp + compile because inductor graph capture is unsound with fully_shard's
+  # reshard-after-forward all-gathers. The wan model preset turns compile on, so
+  # this override is what makes the recipe launchable at all. Cost is real --
+  # the single-process baseline runs compiled kernels and this does not.
+  torch_compile:
+    enable: false
+
+rollout:
+  # Each rank draws its own disjoint prompt slice, so per-rank batch stays small
+  # while the effective global batch is prompts_per_batch * world_size.
+  prompts_per_batch: 1
+  microbatch_size: 1
+  # One chunk per rank: the rank owns a single colocated rollout worker, so
+  # splitting further only adds boundaries without adding parallelism.
+  samples_per_chunk: 2
+
+trainer:
+  output_dir: outputs/wan_1_3b_ocr_fsdp
+  total_epochs: 3
+  save_freq: 1000
+  profile: true
+  debug:
+    first_step: false

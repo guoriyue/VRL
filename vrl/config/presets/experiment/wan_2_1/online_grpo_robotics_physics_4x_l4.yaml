@@ -1,0 +1,116 @@
+# Wan 2.1 1.3B GRPO for physical-interaction video post-training on four L4s.
+#
+# This is a robotics-adjacent world-model/data-generation example, not a robot
+# action policy or simulator-in-the-loop task. VideoPhy supplies manipulation,
+# contact, rigid-body, and fluid-interaction prompts. UnifiedReward optimizes
+# `alignment+physics`: alignment prevents a static "physically plausible" reward
+# hack, while physics judges motion/contact plausibility. Style stays in the raw
+# debug record, but is excluded from optimization because the directionality
+# gate showed that polish can reward a clean cartoon replacing the target object.
+#
+# Physical topology (validated on the target four-L4 host):
+#   GPU 0:   single-process LoRA trainer
+#   GPU 1/2: one dedicated rollout worker each
+#   GPU 3:   standalone UnifiedReward-2.0 HTTP service
+#
+# Start the service before training:
+#   CUDA_VISIBLE_DEVICES=3 .venv/bin/vrl-reward-service \
+#     --config vrl/config/reward_service/unified_reward_robotics.yaml
+#
+# Run a three-update acceptance before an unattended launch:
+#   CUDA_VISIBLE_DEVICES=0,1,2 .venv/bin/vrl-train \
+#     --config experiment/wan_2_1/online_grpo_robotics_physics_4x_l4 \
+#     trainer.total_epochs=3 \
+#     trainer.output_dir=outputs/wan_robotics_physics_4x_l4/smoke
+#
+# Then supervise the long run. The supervisor resumes only complete checkpoints
+# and stops after a repeated deterministic failure or three consecutive updates
+# with collapsed rewards, zero gradients, or excessive rollout/replay drift:
+#   CUDA_VISIBLE_DEVICES=0,1,2 .venv/bin/python -m vrl.scripts.supervise \
+#     --config experiment/wan_2_1/online_grpo_robotics_physics_4x_l4 \
+#     --health-metrics --health-failure-limit 3 \
+#     --health-max-pre-update-logprob-diff 0.01 \
+#     --health-min-reward-std 0.05 --health-min-grad-norm 0.000001
+defaults:
+  - /recipe/online/wan_2_1_grpo
+  - /model/wan_2_1/1_3b
+  - /sampling/video/240p_33f
+  - /sampling/denoise/20_step_cfg_4_5
+  - /dataset/videophy
+  - /reward/unified_reward_video_http
+
+actor:
+  optim:
+    lr: 1.0e-5
+  drop_zero_advantage: true
+  # A second replay pass makes the trust-region clip observable; one pass only
+  # measures the behavior policy before the optimizer changes it.
+  ppo_epochs: 2
+
+algorithm:
+  kl_coef: 0.004
+
+model:
+  # Rollout and replay use the same compiled transformer kernels so numerical
+  # drift is checked against the actual production execution path.
+  torch_compile:
+    enable: true
+    mode: default
+
+distributed:
+  training:
+    strategy: single_process
+    num_nodes: 1
+    gpus_per_node: 1
+  resources:
+    # GPU 3 belongs to the external reward service and must remain invisible to
+    # Ray; its /info capability attests that generation/reward overlap is safe.
+    visible_devices: [0, 1, 2]
+    trainer:
+      devices: [0]
+      num_gpus: 1
+    rollout:
+      devices: [1, 2]
+      num_gpus: 2
+      gpus_per_worker: 1.0
+      num_workers: 2
+      gpu_pool: dedicated
+    allow_overlap: false
+
+rollout:
+  prompts_per_batch: 4
+  # Four samples give the pointwise VLM judge enough within-prompt variation for
+  # stable group advantages; two was sufficient only for the scheduling gate.
+  n_samples_per_prompt: 4
+  samples_per_chunk: 1
+  noise_level: 0.7
+  sde:
+    type: cps
+
+reward:
+  components:
+    unified_reward_video: 1.0
+  kwargs:
+    unified_reward_video:
+      reward_name: unified_reward_video
+      score_key: alignment+physics
+      media_type: video
+      artifact_format: mp4
+      artifact_dir: ${trainer.output_dir}/reward_artifacts
+      inference:
+        kind: http
+        endpoint: http://127.0.0.1:8300
+        timeout_s: 1800
+        expected_model: unified-reward-robotics
+
+trainer:
+  rollout_orchestration:
+    schedule_mode: strict_on_policy
+    # The service owns a physically disjoint GPU, so score group N while the two
+    # rollout workers generate group N+1 without introducing policy staleness.
+    reward_collection_mode: per_group_streaming
+  output_dir: outputs/wan_robotics_physics_4x_l4/run
+  total_epochs: 200
+  save_freq: 10
+  debug:
+    first_step: true

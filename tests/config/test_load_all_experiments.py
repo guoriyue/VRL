@@ -435,6 +435,39 @@ def test_sd35_continuous_4gpu_acceptance_resolves_disjoint_resident_topology() -
     assert cfg.actor.replay_samples_per_chunk == 2
 
 
+def test_wan_robotics_continuous_resolves_balanced_four_l4_topology() -> None:
+    """The robotics run must keep trainer, rollout, and reward GPUs disjoint."""
+
+    cfg = load_config(
+        "experiment/wan_2_1/online_grpo_robotics_physics_4x_l4_continuous",
+    )
+    validate_training_config(cfg)
+    built = build_configs(cfg)
+    resources = resolve_distributed_resources(cfg)
+    validate_rollout_schedule_topology(
+        built["trainer"].rollout_orchestration,
+        resources,
+    )
+    validate_reward_memory_parking(resources=resources, built=built)
+
+    orchestration = built["trainer"].rollout_orchestration
+    assert resources.trainer_devices == (0,)
+    assert resources.rollout_devices == (1, 2)
+    assert resources.reward_devices == ()
+    assert resources.rollout_num_workers == 2
+    assert resources.lifecycle.rollout.mode == "resident"
+    assert orchestration.schedule_mode == "continuous"
+    assert orchestration.reward_collection_mode is None
+    assert orchestration.continuous.max_stale_policy_versions == 1
+    assert orchestration.continuous.max_inflight_groups == 4
+    assert cfg.actor.ppo_epochs == 1
+    assert cfg.actor.timestep_fraction == 0.25
+    assert cfg.actor.replay_samples_per_chunk == 1
+    assert cfg.rollout.microbatch_size == cfg.rollout.prompts_per_batch == 4
+    assert built["trainer"].timestep_selection == "strided"
+    assert built["trainer"].gradient_accumulation_steps == 1
+
+
 def test_algorithm_config_dispatches_representative_kinds() -> None:
     """Checks algorithm config dispatches representative kinds."""
     examples = {
