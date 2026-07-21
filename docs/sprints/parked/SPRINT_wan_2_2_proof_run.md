@@ -1,5 +1,60 @@
 # SPRINT: Wan 2.2 A14B GRPO proof run（落地验证）
 
+> **2026-07-20 dual-expert readiness update:** the original recipe could not
+> satisfy this sprint: it trained only `transformer_2`, used no rollout
+> offload, distributed strategies rejected every trainable root except
+> `transformer`, dual-LoRA artifact export failed before the loop, and strict
+> resume could not distinguish Wan 2.1 from Wan 2.2 because both share the
+> `wan` / `wan_2_1_i2v` family contracts.
+>
+> The code-side blockers are now fixed locally:
+>
+> - FSDP2 and DDP wrap every named trainable root, including
+>   `transformer_2` and `both`.
+> - FSDP2 supports CPU-offloaded parameter/gradient shards. Its global gradient
+>   clipping uses local CPU shard norms plus one CUDA scalar all-reduce, because
+>   NCCL cannot reduce a CPU DTensor directly.
+> - the Wan runtime validates complete dual-expert weight-sync payloads before
+>   ACK and applies them only after both experts pass key/shape/dtype checks;
+> - dual LoRA artifacts export under
+>   `lora_weights/{transformer,transformer_2}/`;
+> - strict checkpoints record model path, immutable revision, boundary ratio,
+>   high/low expert mapping, and trainable expert names; optimizer checkpoints
+>   carry an ordered name/shape/dtype manifest;
+> - strict dual-expert resume re-exports weights and optimizer state and compares
+>   them tensor-exactly before the next rollout;
+> - opt-in lifecycle profiling emits `WAN_EXPERT_LIFECYCLE` JSON for every
+>   timestep with active expert, switch flag, allocator/physical peaks, and
+>   active/inactive CUDA parameter bytes.
+>
+> The canonical real-weight entry is now
+> `experiment/wan_2_2/online_grpo_dual_expert_proof`: pinned T2V A14B, both
+> experts trainable, `320x320x17`, ten denoise steps crossing the real `0.875`
+> boundary, CPU OCR reward, sequential rollout offload, and one-rank FSDP CPU
+> offload. One rank is deliberate on this 181 GiB host: the pinned repository is
+> 117.53 GiB (`53.23 GiB` per on-disk expert plus `10.58 GiB` text encoder), and
+> the symmetric two-rank online topology would duplicate two full rollout
+> pipelines and exceed host RAM.
+>
+> Validation completed before the 14B run:
+>
+> - two-rank gloo with real tiny `WanTransformer3DModel`: high stage changes
+>   only `transformer`, low stage changes only `transformer_2`, both sync
+>   prefixes are present, and both weights plus optimizer slots survive a
+>   tensor-exact serialized resume;
+> - one-rank and two-rank NCCL on real L4 GPUs with FSDP CPU offload: both stages
+>   produce nonzero gradients, high→low switching succeeds, and inactive CUDA
+>   parameter bytes are zero after each forward;
+> - focused regression suites: `221 passed`; config/schema suite: `131 passed`;
+>   dual-expert checkpoint subset: `32 passed`; Ruff clean on touched Python.
+>
+> **Only remaining blocker:** the pinned model is not cached and the 300 GB root
+> volume has only about 22 GB free. The host has four raw 875 GB EC2
+> instance-store NVMe devices, but formatting one is destructive and awaits
+> explicit authorization. After mounting one, run the real epoch, resume for a
+> second epoch, retain the lifecycle logs/checkpoints, and move this sprint to
+> `done/` only if the full acceptance below passes.
+
 状态：**parked（2026-07-09 复核）**。实现与 experiment recipe 已完成；触发条件：
 有足够多卡资源完成 A14B 真实 GRPO proof run。实现 sprint 已归档（`done/SPRINT_wan_2_2_dual_expert.md`：dual-stage
 加载 / boundary 路由 / replay `transformer_2` / 默认 low-noise 训练 + 23 项 CPU 单测全过）。本 sprint =
