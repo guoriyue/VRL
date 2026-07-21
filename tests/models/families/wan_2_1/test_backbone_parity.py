@@ -19,6 +19,7 @@ from __future__ import annotations
 from types import SimpleNamespace
 from typing import Any
 
+import pytest
 import torch
 
 from tests.models.steps.denoise.fixtures import (
@@ -31,6 +32,7 @@ from vrl.models.families.wan_2_1.model import (
     WanI2VDiffusersModel,
     WanI2VSamplingState,
     WanT2VDiffusersModel,
+    WanT2VReplayModel,
     WanT2VSamplingState,
 )
 
@@ -177,6 +179,32 @@ def test_wan_i2v_dual_stage_routes_by_diffusers_boundary() -> None:
     torch.testing.assert_close(low_calls[0]["timestep"], torch.full((2,), 250.0))
     assert set(model.trainable_modules) == {"transformer_2"}
     assert not torch.allclose(high_out["noise_pred"], low_out["noise_pred"])
+
+
+def test_wan_dual_expert_slot_install_rejects_partial_state_before_mutation() -> None:
+    high = torch.nn.Linear(2, 2)
+    low = torch.nn.Linear(2, 2)
+    model = WanT2VReplayModel(
+        transformer=high,
+        transformer_2=low,
+        scheduler=None,
+        boundary_ratio=0.5,
+        trainable_transformers="both",
+    )
+    high.requires_grad_(True)
+    low.requires_grad_(True)
+    before = {name: value.detach().clone() for name, value in model.state_dict().items()}
+    partial = {
+        f"transformer.{name}": torch.full_like(value, 3.0)
+        for name, value in high.state_dict().items()
+    }
+
+    with pytest.raises(ValueError, match="empty state dict"):
+        model.install_trainable_state(1, partial)
+
+    assert not model.has_trainable_state(1)
+    for name, value in model.state_dict().items():
+        torch.testing.assert_close(value, before[name])
 
 
 def test_wan_i2v_replay_state_roundtrip_keeps_conditioning_tensors() -> None:

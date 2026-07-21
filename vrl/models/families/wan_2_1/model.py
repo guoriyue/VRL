@@ -25,9 +25,11 @@ Differences from SD3:
 from __future__ import annotations
 
 import contextlib
+import json
+import logging
 import random
 import sys
-from collections.abc import Iterator, Mapping
+from collections.abc import Callable, Iterator, Mapping
 from dataclasses import dataclass
 from typing import Any
 
@@ -53,7 +55,9 @@ from vrl.models.steps.denoise.common import (
 )
 from vrl.models.steps.denoise.common.lora import LoraModelMixin
 from vrl.models.steps.denoise.common.tensors import require_tensor
-from vrl.models.utils import disable_adapter_on, load_weights_into
+from vrl.models.utils import disable_adapter_on, validate_weights_for
+
+logger = logging.getLogger(__name__)
 
 
 def _batch_align_tensor(value: torch.Tensor, batch_size: int) -> torch.Tensor:
@@ -129,6 +133,7 @@ class WanT2VDiffusersModel(
         pipeline: Any,
         device: Any = None,
         trainable_transformers: Any = None,
+        expert_lifecycle_profiling: bool = False,
     ) -> None:
         super().__init__(pipeline=pipeline, device=device)
         self.transformer_2 = getattr(pipeline, "transformer_2", None)
@@ -140,6 +145,8 @@ class WanT2VDiffusersModel(
             trainable_transformers,
             dual_stage=self._boundary_ratio is not None,
         )
+        self._expert_lifecycle_profiling = bool(expert_lifecycle_profiling)
+        self._last_expert_name: str | None = None
         for module in self._wan_transformers().values():
             module.requires_grad_(False)
 
@@ -180,6 +187,9 @@ class WanT2VDiffusersModel(
             pipeline=pipeline,
             device=build.device,
             trainable_transformers=(build.model_config or {}).get("trainable_transformers"),
+            expert_lifecycle_profiling=bool(
+                (build.model_config or {}).get("expert_lifecycle_profiling", False),
+            ),
         )
 
     # Empty training adapters must initially preserve base Wan output.
@@ -260,6 +270,22 @@ class WanT2VDiffusersModel(
             yield
 
     def load_trainable_state(self, state_dict: Mapping[str, Any]) -> Any:
+        validated = self._validate_wan_trainable_state(state_dict)
+        results = {}
+        for name, module in self.trainable_modules.items():
+            target = getattr(module, "_orig_mod", module)
+            results[name] = target.load_state_dict(validated[name], strict=False)
+        return results
+
+    def validate_trainable_state(self, state_dict: Mapping[str, Any]) -> None:
+        """Reject partial dual-expert payloads before a weight-sync ACK."""
+
+        self._validate_wan_trainable_state(state_dict)
+
+    def _validate_wan_trainable_state(
+        self,
+        state_dict: Mapping[str, Any],
+    ) -> dict[str, dict[str, Any]]:
         state = dict(state_dict)
         modules = self.trainable_modules
         accepted_prefixes = tuple(f"{name}." for name in modules)
@@ -268,17 +294,17 @@ class WanT2VDiffusersModel(
             raise ValueError(
                 f"{type(self).__name__}: unexpected trainable state keys {unexpected[:5]}",
             )
-        results = {}
+        validated: dict[str, dict[str, Any]] = {}
         for name, module in modules.items():
             prefix = f"{name}."
             module_state = {key: value for key, value in state.items() if key.startswith(prefix)}
-            results[name] = load_weights_into(
+            validated[name] = validate_weights_for(
                 module,
                 module_state,
                 prefix=name,
                 label=type(module).__name__,
             )
-        return results
+        return validated
 
     def _set_wan_transformer(self, name: str, transformer: Any) -> None:
         if name == "transformer":
@@ -293,9 +319,9 @@ class WanT2VDiffusersModel(
         self,
         state: WanT2VSamplingState | WanI2VSamplingState,
         timestep: torch.Tensor,
-    ) -> tuple[Any, float]:
+    ) -> tuple[str, Any, float]:
         if state.boundary_ratio is None:
-            return self.transformer, state.guidance_scale
+            return "transformer", self.transformer, state.guidance_scale
         if _uses_low_noise_transformer(
             timestep,
             boundary_ratio=state.boundary_ratio,
@@ -304,8 +330,92 @@ class WanT2VDiffusersModel(
             transformer_2 = self.transformer_2
             if transformer_2 is None:
                 raise RuntimeError("Wan dual-stage sampling requires transformer_2")
-            return transformer_2, state.guidance_scale_2 or state.guidance_scale
-        return self.transformer, state.guidance_scale
+            return "transformer_2", transformer_2, state.guidance_scale_2 or state.guidance_scale
+        return "transformer", self.transformer, state.guidance_scale
+
+    def _forward_wan_backbone(
+        self,
+        state: WanT2VSamplingState | WanI2VSamplingState,
+        timestep: torch.Tensor,
+        *,
+        extra_builder: Callable[[torch.dtype], dict[str, Any]] | None = None,
+    ) -> dict[str, Any]:
+        bsz = state.latents.shape[0]
+        expert_name, transformer, guidance_scale = self._transformer_for_timestep(
+            state,
+            timestep,
+        )
+        td = _module_dtype(transformer)
+        latent_input = state.latents.to(td)
+        timestep_batch = expand_batch_timestep(timestep, bsz).to(
+            device=latent_input.device,
+            dtype=td,
+        )
+        prompt_embeds = state.prompt_embeds.to(td)
+        negative_prompt_embeds = (
+            None if state.negative_prompt_embeds is None else state.negative_prompt_embeds.to(td)
+        )
+        with self._expert_lifecycle_trace(expert_name, timestep):
+            output = DiffusionBackboneCaller(
+                transformer,
+                self,
+            )(
+                DiffusionBackboneInput(
+                    hidden_states=latent_input,
+                    timestep=timestep_batch,
+                    prompt_embeds=prompt_embeds,
+                    negative_prompt_embeds=negative_prompt_embeds,
+                    guidance_scale=guidance_scale,
+                    do_cfg=state.do_cfg,
+                    output_dtype=td,
+                    extra=extra_builder(td) if extra_builder is not None else {},
+                ),
+            )
+        return output.as_dict()
+
+    @contextlib.contextmanager
+    def _expert_lifecycle_trace(
+        self,
+        expert_name: str,
+        timestep: torch.Tensor,
+    ) -> Iterator[None]:
+        if not self._expert_lifecycle_profiling or not torch.cuda.is_available():
+            yield
+            return
+
+        device = torch.device(self.device)
+        if device.type != "cuda":
+            yield
+            return
+        torch.cuda.synchronize(device)
+        switched = self._last_expert_name not in {None, expert_name}
+        before_allocated = torch.cuda.memory_allocated(device)
+        before_reserved = torch.cuda.memory_reserved(device)
+        before_free, total = torch.cuda.mem_get_info(device)
+        torch.cuda.reset_peak_memory_stats(device)
+        with torch.cuda.nvtx.range(f"wan.expert.{expert_name}"):
+            yield
+        torch.cuda.synchronize(device)
+        after_free, _ = torch.cuda.mem_get_info(device)
+        modules = self._wan_transformers()
+        inactive_name = "transformer_2" if expert_name == "transformer" else "transformer"
+        record = {
+            "event": "wan_expert_lifecycle",
+            "expert": expert_name,
+            "timestep": float(torch.as_tensor(timestep).reshape(-1)[0].item()),
+            "switched": switched,
+            "allocated_before_bytes": before_allocated,
+            "allocated_after_bytes": torch.cuda.memory_allocated(device),
+            "reserved_before_bytes": before_reserved,
+            "reserved_after_bytes": torch.cuda.memory_reserved(device),
+            "peak_allocated_bytes": torch.cuda.max_memory_allocated(device),
+            "physical_used_before_bytes": total - before_free,
+            "physical_used_after_bytes": total - after_free,
+            "active_cuda_parameter_bytes": _cuda_parameter_bytes(modules[expert_name]),
+            "inactive_cuda_parameter_bytes": _cuda_parameter_bytes(modules[inactive_name]),
+        }
+        logger.info("WAN_EXPERT_LIFECYCLE %s", json.dumps(record, sort_keys=True))
+        self._last_expert_name = expert_name
 
     # -- encode_prompt -------------------------------------------------
 
@@ -417,31 +527,7 @@ class WanT2VDiffusersModel(
         - eval/training: collector packs per-sample timestep as ``[B]``; expand is a no-op.
         """
         t = state.timesteps[step_idx]
-        bsz = state.latents.shape[0]
-        transformer, guidance_scale = self._transformer_for_timestep(state, t)
-        td = _module_dtype(transformer)
-
-        latent_input = state.latents.to(td)
-        timestep_batch = expand_batch_timestep(t, bsz).to(device=latent_input.device, dtype=td)
-        prompt_embeds = state.prompt_embeds.to(td)
-        negative_prompt_embeds = (
-            None if state.negative_prompt_embeds is None else state.negative_prompt_embeds.to(td)
-        )
-        output = DiffusionBackboneCaller(
-            transformer,
-            self,
-        )(
-            DiffusionBackboneInput(
-                hidden_states=latent_input,
-                timestep=timestep_batch,
-                prompt_embeds=prompt_embeds,
-                negative_prompt_embeds=negative_prompt_embeds,
-                guidance_scale=guidance_scale,
-                do_cfg=state.do_cfg,
-                output_dtype=td,
-            ),
-        )
-        return output.as_dict()
+        return self._forward_wan_backbone(state, t)
 
     # -- collector boundary --------------------------------------------
 
@@ -542,6 +628,7 @@ class WanT2VReplayModel(ReplayRolloutStubs, WanT2VDiffusersModel):
         transformer_2: Any = None,
         boundary_ratio: float | None = None,
         trainable_transformers: Any = None,
+        expert_lifecycle_profiling: bool = False,
     ) -> None:
         DiffusionModelBase.__init__(self)
         self.transformer = transformer
@@ -553,6 +640,8 @@ class WanT2VReplayModel(ReplayRolloutStubs, WanT2VDiffusersModel):
             trainable_transformers,
             dual_stage=boundary_ratio is not None,
         )
+        self._expert_lifecycle_profiling = bool(expert_lifecycle_profiling)
+        self._last_expert_name = None
         for module in self._wan_transformers().values():
             module.requires_grad_(False)
 
@@ -578,6 +667,9 @@ class WanT2VReplayModel(ReplayRolloutStubs, WanT2VDiffusersModel):
         self._trainable_transformer_names = _normalize_trainable_transformers(
             (build.model_config or {}).get("trainable_transformers"),
             dual_stage=boundary_ratio is not None,
+        )
+        self._expert_lifecycle_profiling = bool(
+            (build.model_config or {}).get("expert_lifecycle_profiling", False),
         )
         for module in self._wan_transformers().values():
             module.requires_grad_(False)
@@ -689,6 +781,9 @@ class WanI2VDiffusersModel(WanT2VDiffusersModel):
             pipeline=pipeline,
             device=build.device,
             trainable_transformers=(build.model_config or {}).get("trainable_transformers"),
+            expert_lifecycle_profiling=bool(
+                (build.model_config or {}).get("expert_lifecycle_profiling", False),
+            ),
         )
 
     def encode_prompt(
@@ -809,37 +904,16 @@ class WanI2VDiffusersModel(WanT2VDiffusersModel):
         """Wan I2V transformer forward + optional batched CFG."""
 
         t = state.timesteps[step_idx]
-        bsz = state.latents.shape[0]
-        transformer, guidance_scale = self._transformer_for_timestep(state, t)
-        td = _module_dtype(transformer)
-
-        latent_input = state.latents.to(td)
-        timestep_batch = expand_batch_timestep(t, bsz).to(device=latent_input.device, dtype=td)
-        prompt_embeds = state.prompt_embeds.to(td)
-        negative_prompt_embeds = (
-            None if state.negative_prompt_embeds is None else state.negative_prompt_embeds.to(td)
+        return self._forward_wan_backbone(
+            state,
+            t,
+            extra_builder=lambda td: {
+                "condition": state.condition.to(td),
+                "image_embeds": (
+                    None if state.image_embeds is None else state.image_embeds.to(td)
+                ),
+            },
         )
-        output = DiffusionBackboneCaller(
-            transformer,
-            self,
-        )(
-            DiffusionBackboneInput(
-                hidden_states=latent_input,
-                timestep=timestep_batch,
-                prompt_embeds=prompt_embeds,
-                negative_prompt_embeds=negative_prompt_embeds,
-                guidance_scale=guidance_scale,
-                do_cfg=state.do_cfg,
-                output_dtype=td,
-                extra={
-                    "condition": state.condition.to(td),
-                    "image_embeds": (
-                        None if state.image_embeds is None else state.image_embeds.to(td)
-                    ),
-                },
-            ),
-        )
-        return output.as_dict()
 
     def export_batch_context(self, state: WanI2VSamplingState) -> dict[str, Any]:
         """Project SamplingState -> RolloutBatch.context (shared metadata)."""
@@ -1090,6 +1164,17 @@ def _module_dtype(module: Any) -> torch.dtype:
         raise RuntimeError(
             f"{type(module).__name__} has no parameters to infer dtype",
         ) from exc
+
+
+def _cuda_parameter_bytes(module: Any) -> int:
+    """Bytes of this expert's parameter shards currently resident on CUDA."""
+
+    total = 0
+    for parameter in module.parameters():
+        local = getattr(parameter, "_local_tensor", parameter)
+        if local.device.type == "cuda":
+            total += local.numel() * local.element_size()
+    return total
 
 
 def _optional_float(value: Any, field_name: str) -> float | None:

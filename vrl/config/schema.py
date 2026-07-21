@@ -405,6 +405,7 @@ class WanModelConfig(ModelConfig):
     model_config = ConfigDict(extra="ignore")
 
     boundary_ratio: Any = None
+    expert_lifecycle_profiling: bool = False
     offload_mode: Literal["none", "model", "sequential"] = "none"
     trainable_transformers: Any = None
 

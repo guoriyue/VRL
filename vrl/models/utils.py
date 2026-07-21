@@ -29,6 +29,25 @@ def load_weights_into(
     silently leaving weights stale.
     """
 
+    stripped = validate_weights_for(
+        module,
+        state_dict,
+        prefix=prefix,
+        label=label,
+    )
+    module = getattr(module, "_orig_mod", module)
+    return module.load_state_dict(stripped, strict=False)
+
+
+def validate_weights_for(
+    module: Any,
+    state_dict: Mapping[str, Any],
+    *,
+    prefix: str,
+    label: str,
+) -> dict[str, Any]:
+    """Validate one flattened sync payload without changing live weights."""
+
     state = dict(state_dict)
     if not state:
         raise ValueError(f"{label}: load_trainable_state received an empty state dict")
@@ -40,16 +59,19 @@ def load_weights_into(
             f"{label}: load_trainable_state only accepts trainable keys prefixed "
             f"with {dot!r}; got {bad[:5]}",
         )
-    stripped = {key[len(dot):]: value for key, value in state.items()}
+    stripped = {key[len(dot) :]: value for key, value in state.items()}
 
     module = getattr(module, "_orig_mod", module)
 
     named_parameters = getattr(module, "named_parameters", None)
     if not callable(named_parameters):
         raise TypeError(f"{label} must expose named_parameters()")
-    trainable_keys = {
-        name for name, parameter in named_parameters() if bool(getattr(parameter, "requires_grad", False))
+    trainable = {
+        name: parameter
+        for name, parameter in named_parameters()
+        if bool(getattr(parameter, "requires_grad", False))
     }
+    trainable_keys = set(trainable)
     if not trainable_keys:
         raise ValueError(f"{label} has no trainable parameters to sync")
 
@@ -60,8 +82,21 @@ def load_weights_into(
             f"{label}: load_trainable_state must receive exactly trainable keys; "
             f"missing={missing[:5]}, extra={extra[:5]}",
         )
-
-    return module.load_state_dict(stripped, strict=False)
+    for name, value in stripped.items():
+        parameter = trainable[name]
+        if not hasattr(value, "shape") or not hasattr(value, "dtype"):
+            raise TypeError(f"{label}: trainable state {name!r} must be a tensor")
+        if tuple(value.shape) != tuple(parameter.shape):
+            raise ValueError(
+                f"{label}: trainable state {name!r} shape mismatch: "
+                f"payload={tuple(value.shape)}, runtime={tuple(parameter.shape)}",
+            )
+        if value.dtype != parameter.dtype:
+            raise ValueError(
+                f"{label}: trainable state {name!r} dtype mismatch: "
+                f"payload={value.dtype}, runtime={parameter.dtype}",
+            )
+    return stripped
 
 
 class TrainableStateSlots:
@@ -163,9 +198,7 @@ def disable_adapter_on(module: Any) -> contextlib.AbstractContextManager[None]:
         def _disabled() -> Iterator[None]:
             disabled_before = _plural_adapter_disable_flags(host)
             restore_enabled = (
-                any(not disabled for disabled in disabled_before)
-                if disabled_before
-                else True
+                any(not disabled for disabled in disabled_before) if disabled_before else True
             )
             disable_adapters()
             try:

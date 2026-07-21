@@ -300,6 +300,19 @@ class DiffusionModelBase(nn.Module, ABC):
             label=type(transformer).__name__,
         )
 
+    def validate_trainable_state(self, state_dict: Mapping[str, Any]) -> None:
+        """Validate a sync payload without mutating the active policy."""
+
+        from vrl.models.utils import validate_weights_for
+
+        transformer = self._require_transformer()
+        validate_weights_for(
+            transformer,
+            state_dict,
+            prefix="transformer",
+            label=type(transformer).__name__,
+        )
+
     # -- versioned trainable-state slots (non-draining weight sync) ---------
     # Diffusion families support versioned slots generically: activation reuses
     # ``load_trainable_state`` to copy a retained version onto the live model, so
@@ -327,6 +340,8 @@ class DiffusionModelBase(nn.Module, ABC):
         version can still be activated after the trainer advances.
         """
 
+        if state_dict is not None:
+            self.validate_trainable_state(state_dict)
         self._versioned_state_slots().install(version, state_dict)
 
     def has_trainable_state(self, version: int) -> bool:
