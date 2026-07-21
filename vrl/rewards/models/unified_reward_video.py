@@ -64,10 +64,18 @@ _DEFAULT_PROBLEM_TEMPLATE = (
     "Text Caption: [{prompt}]"
 )
 
+_NUMBER_PATTERN = r"([0-9]+(?:\.[0-9]+)?)"
 _AXIS_PATTERNS = {
-    "alignment": re.compile(r"Alignment Score \(1-5\):\s*([0-9]+(?:\.[0-9]+)?)", re.IGNORECASE),
-    "physics": re.compile(r"Physics Score \(1-5\):\s*([0-9]+(?:\.[0-9]+)?)", re.IGNORECASE),
-    "style": re.compile(r"Style Score \(1-5\):\s*([0-9]+(?:\.[0-9]+)?)", re.IGNORECASE),
+    axis: re.compile(
+        rf"{label} Score\s*\(\s*{_NUMBER_PATTERN}\s*-\s*{_NUMBER_PATTERN}\s*\)"
+        rf"\s*:\s*{_NUMBER_PATTERN}",
+        re.IGNORECASE,
+    )
+    for axis, label in (
+        ("alignment", "Alignment"),
+        ("physics", "Physics"),
+        ("style", "Style"),
+    )
 }
 
 
@@ -167,7 +175,7 @@ class UnifiedRewardVideoModel(RewardModel):
 
 
 def _parse_axis_scores(text: str) -> dict[str, float]:
-    """Parse the three 1-5 float axes; raise if any is missing (fail-fast)."""
+    """Parse declared score ranges and normalize every axis to the public 1-5 scale."""
 
     scores: dict[str, float] = {}
     for axis, pattern in _AXIS_PATTERNS.items():
@@ -176,7 +184,21 @@ def _parse_axis_scores(text: str) -> dict[str, float]:
             raise ValueError(
                 f"UnifiedReward-2.0 output missing {axis!r} score; head was: {text[:200]!r}",
             )
-        scores[axis] = float(match.group(1))
+        lower, upper, value = (float(group) for group in match.groups())
+        if lower >= upper:
+            raise ValueError(
+                f"UnifiedReward-2.0 output has invalid {axis!r} score range "
+                f"{lower:g}-{upper:g}; head was: {text[:200]!r}",
+            )
+        if not lower <= value <= upper:
+            raise ValueError(
+                f"UnifiedReward-2.0 output has out-of-range {axis!r} score "
+                f"{value:g} for declared range {lower:g}-{upper:g}; head was: {text[:200]!r}",
+            )
+        # The model occasionally emits a self-consistent 1-10 label despite the
+        # upstream 1-5 prompt. Respecting the declared range preserves ordering
+        # while keeping the reward contract comparable across generations.
+        scores[axis] = 1.0 + 4.0 * (value - lower) / (upper - lower)
     scores["overall"] = sum(scores[a] for a in ("alignment", "physics", "style")) / 3.0
     return scores
 

@@ -73,6 +73,7 @@ class HttpRewardRuntime:
         self._timeout = aiohttp.ClientTimeout(total=float(timeout_s))
         self._expected_model = str(expected_model).strip()
         self._session: aiohttp.ClientSession | None = None
+        self._session_loop: asyncio.AbstractEventLoop | None = None
         self._session_lock = asyncio.Lock()
         self._identity_lock = asyncio.Lock()
         self._identity_checked = False
@@ -150,14 +151,22 @@ class HttpRewardRuntime:
         trainer fails at launch rather than after the first generation batch.
         """
 
-        if not await self.ready():
-            raise RemoteRewardServiceError(
-                RewardServiceErrorCode.NOT_READY.value,
-                f"reward service at {self._base_url} is not accepting requests",
-                status_code=503,
-                retryable=True,
-            )
-        await self._ensure_identity()
+        try:
+            if not await self.ready():
+                raise RemoteRewardServiceError(
+                    RewardServiceErrorCode.NOT_READY.value,
+                    f"reward service at {self._base_url} is not accepting requests",
+                    status_code=503,
+                    retryable=True,
+                )
+            await self._ensure_identity()
+        finally:
+            # Online preflight runs on the trainer loop, while continuous rollout
+            # owns scoring on a dedicated loop/thread. aiohttp sessions are bound
+            # to their creation loop, so preflight must hand off only validated
+            # identity state and let the scoring owner create its own connection
+            # pool. Strict scheduling recreates the pool on the same loop.
+            await self._close_session()
 
     async def info(self) -> RewardServiceInfo:
         body, status = await self._request_json("GET", "/info")
@@ -190,6 +199,17 @@ class HttpRewardRuntime:
             self._closed = True
             session = self._session
             self._session = None
+            self._session_loop = None
+        if session is not None:
+            await session.close()
+
+    async def _close_session(self) -> None:
+        """Close the current-loop pool without shutting down the runtime."""
+
+        async with self._session_lock:
+            session = self._session
+            self._session = None
+            self._session_loop = None
         if session is not None:
             await session.close()
 
@@ -235,14 +255,21 @@ class HttpRewardRuntime:
             self._identity_checked = True
 
     async def _get_session(self) -> aiohttp.ClientSession:
+        current_loop = asyncio.get_running_loop()
         async with self._session_lock:
             if self._closed:
                 raise RuntimeError("reward HTTP runtime is shut down")
+            if self._session is not None and self._session_loop is not current_loop:
+                raise RuntimeError(
+                    "reward HTTP session cannot cross event loops; close the owning "
+                    "pipeline before transferring runtime ownership",
+                )
             if self._session is None:
                 self._session = aiohttp.ClientSession(
                     timeout=self._timeout,
                     headers={"Accept": "application/json"},
                 )
+                self._session_loop = current_loop
             return self._session
 
     async def _request_json(

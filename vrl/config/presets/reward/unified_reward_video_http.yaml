@@ -28,6 +28,9 @@ reward:
       media_type: video
       artifact_format: mp4
       artifact_dir: ${trainer.output_dir}/reward_artifacts
+      # Persist raw axes for reward-hacking audits; the selected scalar alone
+      # cannot reveal alignment, physics, and style moving in opposite directions.
+      debug_dir: ${trainer.output_dir}/reward_debug
       inference:
         kind: http
         endpoint: http://127.0.0.1:8300

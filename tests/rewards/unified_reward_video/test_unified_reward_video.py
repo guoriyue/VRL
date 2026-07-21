@@ -67,6 +67,34 @@ def test_parse_axis_scores_reads_floats() -> None:
     assert scores["overall"] == pytest.approx((2.4036 + 3.0987 + 3.3889) / 3.0)
 
 
+def test_parse_axis_scores_normalizes_model_declared_scale() -> None:
+    text = (
+        "Alignment Score (1-5): 2.7907\n"
+        "Physics Score (1.0-10.0): 4.8017\n"
+        "Style Score (1-5): 2.7633"
+    )
+    scores = _parse_axis_scores(text)
+    assert scores["alignment"] == pytest.approx(2.7907)
+    assert scores["physics"] == pytest.approx(1.0 + 4.0 * (4.8017 - 1.0) / 9.0)
+    assert scores["style"] == pytest.approx(2.7633)
+
+
+@pytest.mark.parametrize(
+    ("physics_line", "message"),
+    [
+        ("Physics Score (5-1): 3", "invalid 'physics' score range"),
+        ("Physics Score (1-5): 7", "out-of-range 'physics' score"),
+    ],
+)
+def test_parse_axis_scores_rejects_invalid_declared_scale(
+    physics_line: str,
+    message: str,
+) -> None:
+    text = f"Alignment Score (1-5): 4\n{physics_line}\nStyle Score (1-5): 3"
+    with pytest.raises(ValueError, match=message):
+        _parse_axis_scores(text)
+
+
 def test_parse_axis_scores_missing_axis_raises() -> None:
     with pytest.raises(ValueError, match="missing 'style'"):
         _parse_axis_scores("Alignment Score (1-5): 4\nPhysics Score (1-5): 3")

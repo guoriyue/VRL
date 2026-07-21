@@ -227,6 +227,37 @@ async def test_client_scores_through_async_server_and_validates_identity(tmp_pat
 
 
 @pytest.mark.asyncio
+async def test_client_preflight_hands_session_to_continuous_owner_loop(tmp_path) -> None:
+    """Preflight must not strand an aiohttp pool on the trainer event loop."""
+
+    artifact_file = tmp_path / "a0.mp4"
+    artifact_file.write_bytes(b"x")
+    runtime = _FakeRuntime()
+    request = _request(str(artifact_file))
+
+    async with _running_service(
+        runtime,
+        tmp_path,
+        generation_overlap_safe=True,
+    ) as (_service, client):
+        await client.ensure_ready()
+        assert client._session is None
+
+        def score_on_owner_loop():
+            async def run():
+                try:
+                    return await client.score_batch(request)
+                finally:
+                    await client.shutdown()
+
+            return asyncio.run(run())
+
+        results = await asyncio.to_thread(score_on_owner_loop)
+
+    assert [result.selected_score for result in results] == [0.75]
+
+
+@pytest.mark.asyncio
 async def test_client_verifies_isolation_only_after_safe_service_preflight(tmp_path) -> None:
     runtime = _FakeRuntime()
 
