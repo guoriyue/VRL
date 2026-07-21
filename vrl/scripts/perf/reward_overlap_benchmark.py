@@ -335,6 +335,12 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--repeats", type=int, default=5)
     parser.add_argument("--iterations", type=int, default=6, help="training epochs per run")
     parser.add_argument("--warmup-iterations", type=int, default=2)
+    parser.add_argument(
+        "--start-repeat",
+        type=int,
+        default=0,
+        help="First repeat index to run; earlier repeats are kept and analyzed.",
+    )
     parser.add_argument("--arms", default="A,B,C")
     parser.add_argument("--analyze-only", action="store_true")
     parser.add_argument("override", nargs="*", help="extra OmegaConf dotlist overrides")
@@ -359,8 +365,14 @@ def main(argv: list[str] | None = None) -> None:
         # Interleave repeats across arms so a machine that drifts (thermal, page
         # cache, another tenant) biases every arm equally instead of whichever
         # arm happened to run last.
-        for repeat in range(args.repeats):
+        for repeat in range(args.start_repeat, args.repeats):
             for arm in arms:
+                if (out_dir / f"arm{arm}_run{repeat}" / "rollout_stats.jsonl").exists():
+                    # A campaign is hours long and has already been interrupted
+                    # once here (host disk filled mid-run). Completed repeats are
+                    # valid evidence; re-running them only burns GPU time.
+                    print(f"[{arm}/{repeat}] already complete, skipping", flush=True)
+                    continue
                 run_arm(
                     config=args.config,
                     arm=arm,
