@@ -180,6 +180,7 @@ def apply_fsdp(
     mesh: Any,
     mp_policy: Any,
     reshard_after_forward: bool = True,
+    cpu_offload: bool = False,
 ) -> nn.Module:
     """Shard ``handle`` in place with FSDP2 and return it.
 
@@ -190,15 +191,25 @@ def apply_fsdp(
     parameters are DTensors sharded over ``mesh``; its ``forward`` is unchanged.
     """
 
-    from torch.distributed.fsdp import fully_shard
+    from torch.distributed.fsdp import CPUOffloadPolicy, fully_shard
+
+    offload_kwargs = {"offload_policy": CPUOffloadPolicy()} if cpu_offload else {}
 
     base = unwrap_module(handle)
     for block in iter_blocks(base):
         fully_shard(
-            block, mesh=mesh, mp_policy=mp_policy, reshard_after_forward=reshard_after_forward
+            block,
+            mesh=mesh,
+            mp_policy=mp_policy,
+            reshard_after_forward=reshard_after_forward,
+            **offload_kwargs,
         )
     fully_shard(
-        handle, mesh=mesh, mp_policy=mp_policy, reshard_after_forward=reshard_after_forward
+        handle,
+        mesh=mesh,
+        mp_policy=mp_policy,
+        reshard_after_forward=reshard_after_forward,
+        **offload_kwargs,
     )
     return handle
 

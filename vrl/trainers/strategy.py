@@ -147,73 +147,19 @@ class Strategy(Protocol):
         ...
 
 
-class SingleProcessStrategy(Strategy):
-    """The current single-GPU behavior, moved behind the strategy protocol.
+class _TrainingStateParking:
+    """Move live trainer state off a shared GPU for a rollout phase, and back.
 
-    Every method here is the existing trainer / checkpoint / weight-sync logic
-    verbatim; this installs the seam without changing what a single-process run
-    does. ``context`` defaults to a rank0/world1 identity.
+    Shared by single-process and FSDP2. Once ``_move_tensor_data`` understands
+    DTensor the traversal is identical for both, because parking only ever
+    touches the shard a rank already owns: it issues no collective, so ranks
+    cannot desynchronize by parking. What a distributed strategy adds on top is
+    *failure* agreement -- see ``FSDPStrategy.park_training_state``.
     """
 
-    def __init__(self, context: DistributedTrainingContext | None = None) -> None:
-        self.context = context or _single_process_context()
-        self._parked_training_state: _ParkedTrainingState | None = None
-
-    def prepare_model(self, model: Any) -> Any:
-        # Single process trains the model as-is; the seam exists so FSDP2 can wrap
-        # without the trainer changing.
-        return model
-
-    def backward(self, loss: torch.Tensor, *, grad_scaler: Any | None = None) -> None:
-        if grad_scaler is not None:
-            grad_scaler.scale(loss).backward()
-        else:
-            loss.backward()
-
-    def clip_grad_norm(
-        self,
-        parameters: Iterable[nn.Parameter],
-        max_norm: float,
-    ) -> float:
-        return float(nn.utils.clip_grad_norm_(parameters, max_norm))
-
-    def export_trainable_state(self, bundle: Any) -> dict[str, dict[str, Any]]:
-        from vrl.trainers.checkpointing import export_trainable_state
-
-        return export_trainable_state(bundle)
-
-    def export_rollout_state(self, bundle: Any) -> dict[str, Any]:
-        from vrl.trainers.weight_sync import build_trainable_state_sync_getter, to_cpu_snapshot
-
-        return to_cpu_snapshot(build_trainable_state_sync_getter(bundle)())
-
-    def load_trainable_state(
-        self,
-        bundle: Any,
-        state: dict[str, Any],
-        *,
-        strict: bool = True,
-    ) -> None:
-        from vrl.trainers.checkpointing import load_trainable_state
-
-        load_trainable_state(bundle, state, strict=strict)
-
-    def export_optimizer_state(
-        self,
-        model: nn.Module,
-        optimizer: torch.optim.Optimizer,
-    ) -> dict[str, Any]:
-        del model  # plain tensors: torch's native (positional-id) format suffices
-        return optimizer.state_dict()
-
-    def load_optimizer_state(
-        self,
-        model: nn.Module,
-        optimizer: torch.optim.Optimizer,
-        state: dict[str, Any],
-    ) -> None:
-        del model
-        optimizer.load_state_dict(state)
+    # Class-level default so a strategy that inherits this cannot forget to
+    # initialize it; the first park assigns a per-instance value.
+    _parked_training_state: _ParkedTrainingState | None = None
 
     def validate_training_state_parking(self) -> None:
         return None
@@ -226,6 +172,9 @@ class SingleProcessStrategy(Strategy):
         appears through two live structures from being moved twice.
         """
 
+        self._park_training_state_locally(state)
+
+    def _park_training_state_locally(self, state: TrainingMemoryState) -> None:
         self.validate_training_state_parking()
         if not isinstance(state, TrainingMemoryState):
             raise TypeError("training state parking requires TrainingMemoryState")
@@ -337,6 +286,74 @@ class SingleProcessStrategy(Strategy):
             ema.device = parked.ema_device
         empty_cuda_cache()
 
+
+class SingleProcessStrategy(_TrainingStateParking, Strategy):
+    """The current single-GPU behavior, moved behind the strategy protocol.
+
+    Every method here is the existing trainer / checkpoint / weight-sync logic
+    verbatim; this installs the seam without changing what a single-process run
+    does. ``context`` defaults to a rank0/world1 identity.
+    """
+
+    def __init__(self, context: DistributedTrainingContext | None = None) -> None:
+        self.context = context or _single_process_context()
+
+    def prepare_model(self, model: Any) -> Any:
+        # Single process trains the model as-is; the seam exists so FSDP2 can wrap
+        # without the trainer changing.
+        return model
+
+    def backward(self, loss: torch.Tensor, *, grad_scaler: Any | None = None) -> None:
+        if grad_scaler is not None:
+            grad_scaler.scale(loss).backward()
+        else:
+            loss.backward()
+
+    def clip_grad_norm(
+        self,
+        parameters: Iterable[nn.Parameter],
+        max_norm: float,
+    ) -> float:
+        return float(nn.utils.clip_grad_norm_(parameters, max_norm))
+
+    def export_trainable_state(self, bundle: Any) -> dict[str, dict[str, Any]]:
+        from vrl.trainers.checkpointing import export_trainable_state
+
+        return export_trainable_state(bundle)
+
+    def export_rollout_state(self, bundle: Any) -> dict[str, Any]:
+        from vrl.trainers.weight_sync import build_trainable_state_sync_getter, to_cpu_snapshot
+
+        return to_cpu_snapshot(build_trainable_state_sync_getter(bundle)())
+
+    def load_trainable_state(
+        self,
+        bundle: Any,
+        state: dict[str, Any],
+        *,
+        strict: bool = True,
+    ) -> None:
+        from vrl.trainers.checkpointing import load_trainable_state
+
+        load_trainable_state(bundle, state, strict=strict)
+
+    def export_optimizer_state(
+        self,
+        model: nn.Module,
+        optimizer: torch.optim.Optimizer,
+    ) -> dict[str, Any]:
+        del model  # plain tensors: torch's native (positional-id) format suffices
+        return optimizer.state_dict()
+
+    def load_optimizer_state(
+        self,
+        model: nn.Module,
+        optimizer: torch.optim.Optimizer,
+        state: dict[str, Any],
+    ) -> None:
+        del model
+        optimizer.load_state_dict(state)
+
     def barrier(self) -> None:
         return None
 
@@ -406,7 +423,7 @@ def _move_tensor_tree_in_place(
         if tensor_id in seen:
             return
         seen.add(tensor_id)
-        original_device = torch.device(value.device)
+        original_device = _tensor_device(value)
         if original_device != device:
             restores.append(_TensorRestore(tensor=value, device=original_device))
             _move_tensor_data(value, device)
@@ -420,7 +437,26 @@ def _move_tensor_tree_in_place(
             _move_tensor_tree_in_place(child, device, seen=seen, restores=restores)
 
 
+def _tensor_device(tensor: torch.Tensor) -> torch.device:
+    """Where this tensor's storage actually lives (local shard for a DTensor)."""
+
+    local = getattr(tensor, "_local_tensor", None)
+    return torch.device(local.device if local is not None else tensor.device)
+
+
 def _move_tensor_data(tensor: torch.Tensor, device: torch.device) -> None:
+    # A DTensor (FSDP2 parameter, its gradient, or an Adam moment) must move by
+    # its LOCAL shard: assigning `.data` re-points the storage and torch rejects
+    # a cross-device storage swap ("Attempted to set the storage of a tensor on
+    # device cuda:0 to a storage on different device cpu"). Moving the local
+    # shard keeps the DTensor wrapper -- device mesh and placements -- intact, so
+    # the parameter still participates in later collectives, and it issues no
+    # collective itself: every rank touches only the shard it already owns.
+    local = getattr(tensor, "_local_tensor", None)
+    if local is not None:
+        if torch.device(local.device) != device:
+            tensor._local_tensor = local.to(device=device)
+        return
     if torch.device(tensor.device) == device:
         return
     tensor.data = tensor.data.to(device=device)
@@ -437,39 +473,40 @@ def _release_training_cuda_memory() -> None:
     torch.cuda.synchronize()
 
 
-def _single_transformer_handle(model: Any) -> tuple[Any, Any]:
-    """The trainable ``transformer`` handle + its writer, shared by FSDP2 and DDP.
+def _trainable_module_handles(model: Any) -> list[tuple[str, Any, Any]]:
+    """Return every explicitly named trainable root and its writer.
 
-    Diffusion policies expose the trainable root as a ``transformer`` handle plus
-    ``_set_transformer`` to write the wrapped module back (so the pipeline and
-    attention processors keep pointing at it). AR families do not yet expose
-    explicit trainable roots, and dual-stage Wan exposes a second trainable root
-    (whose DEFAULT trainable set is ``("transformer_2",)``), so both fail-fast here
-    — blindly wrapping ``transformer`` could wrap a frozen module and leave the real
-    trainable one unmanaged (SPRINT_multi_gpu_training.md §5).
+    Diffusion policies already expose the source-of-truth mapping through
+    ``trainable_modules``. Each named root must also expose ``_set_<name>`` so a
+    distributed wrapper can be written back into every alias owned by the model
+    or pipeline. This supports ordinary ``transformer`` policies and Wan's
+    timestep-routed ``transformer`` / ``transformer_2`` without teaching the
+    strategy about either family.
     """
 
-    handle = getattr(model, "transformer", None)
-    set_transformer = getattr(model, "_set_transformer", None)
-    if handle is None or not callable(set_transformer):
-        raise NotImplementedError(
-            "multi-GPU model wrapping needs a diffusion policy exposing a `transformer` "
-            f"handle and `_set_transformer`; {type(model).__name__} exposes neither. "
-            "AR families (janus_pro / nextstep_1) need explicit trainable roots first "
-            "(SPRINT_multi_gpu_training.md §5).",
-        )
     trainable = getattr(model, "trainable_modules", None)
-    if isinstance(trainable, Mapping) and set(trainable) != {"transformer"}:
+    if not isinstance(trainable, Mapping) or not trainable:
         raise NotImplementedError(
-            f"multi-GPU wrapping wraps only the single 'transformer' handle, but "
-            f"{type(model).__name__}.trainable_modules = {sorted(trainable)}. "
-            "Multi-transformer wrapping (e.g. dual-stage Wan transformer_2) needs "
-            "per-handle writers and is not wired yet (SPRINT_multi_gpu_training.md §5).",
+            "multi-GPU model wrapping needs a non-empty `trainable_modules` mapping "
+            f"with matching `_set_<name>` writers; {type(model).__name__} exposes no "
+            "explicit trainable roots. AR families (janus_pro / nextstep_1) need "
+            "explicit trainable roots first (SPRINT_multi_gpu_training.md §5).",
         )
-    return handle, set_transformer
+
+    handles: list[tuple[str, Any, Any]] = []
+    for raw_name, handle in trainable.items():
+        name = str(raw_name)
+        writer = getattr(model, f"_set_{name}", None)
+        if handle is None or not callable(writer):
+            raise NotImplementedError(
+                f"multi-GPU trainable root {name!r} on {type(model).__name__} "
+                f"requires a non-null handle and callable `_set_{name}` writer",
+            )
+        handles.append((name, handle, writer))
+    return handles
 
 
-class FSDPStrategy(Strategy):
+class FSDPStrategy(_TrainingStateParking, Strategy):
     """FSDP2 (``fully_shard`` + DTensor) training behind the same seam.
 
     The model wraps once in ``prepare_model``; thereafter params/grads/optimizer
@@ -492,11 +529,13 @@ class FSDPStrategy(Strategy):
         mesh_dims: list[str] | None = None,
         precision_policy: str = "actor",
         reshard_after_forward: bool = True,
+        cpu_offload: bool = False,
     ) -> None:
         self.context = context
         self._mesh_dims = mesh_dims or ["dp_shard"]
         self._precision_policy = precision_policy
         self._reshard_after_forward = reshard_after_forward
+        self._cpu_offload = cpu_offload
         self._mesh: Any | None = None  # built on first prepare_model (needs a live PG)
 
     def _ensure_mesh(self) -> Any:
@@ -514,9 +553,9 @@ class FSDPStrategy(Strategy):
             mixed_precision_policy,
         )
 
-        # Validate the trainable handle BEFORE touching the process group so a bad
+        # Validate the trainable handles BEFORE touching the process group so a bad
         # model fails fast (mirrors DDPStrategy; the guard tests need no live PG).
-        handle, set_transformer = _single_transformer_handle(model)
+        handles = _trainable_module_handles(model)
         # Create the process group + bind this rank's cuda device up front, exactly
         # like DDPStrategy. init_device_mesh would lazily auto-init a default group,
         # but it would NOT call torch.cuda.set_device(local_rank) first, so the NCCL
@@ -526,22 +565,25 @@ class FSDPStrategy(Strategy):
         # when a group already exists (the CPU gloo test fixture pre-inits one).
         backend = "gloo" if self.context.device.type == "cpu" else "nccl"
         init_training_process_group(self.context, backend=backend)
-        parameter_dtype = getattr(handle, "dtype", None)
-        if not isinstance(parameter_dtype, torch.dtype):
-            try:
-                parameter_dtype = next(handle.parameters()).dtype
-            except StopIteration as exc:
-                raise ValueError("FSDP trainable handle has no parameters") from exc
-        wrapped = apply_fsdp(
-            handle,
-            mesh=self._ensure_mesh(),
-            mp_policy=mixed_precision_policy(
-                self._precision_policy,
-                parameter_dtype=parameter_dtype,
-            ),
-            reshard_after_forward=self._reshard_after_forward,
-        )
-        set_transformer(wrapped)
+        mesh = self._ensure_mesh()
+        for name, handle, writer in handles:
+            parameter_dtype = getattr(handle, "dtype", None)
+            if not isinstance(parameter_dtype, torch.dtype):
+                try:
+                    parameter_dtype = next(handle.parameters()).dtype
+                except StopIteration as exc:
+                    raise ValueError(f"FSDP trainable handle {name!r} has no parameters") from exc
+            wrapped = apply_fsdp(
+                handle,
+                mesh=mesh,
+                mp_policy=mixed_precision_policy(
+                    self._precision_policy,
+                    parameter_dtype=parameter_dtype,
+                ),
+                reshard_after_forward=self._reshard_after_forward,
+                cpu_offload=self._cpu_offload,
+            )
+            writer(wrapped)
         return model
 
     def backward(self, loss: torch.Tensor, *, grad_scaler: Any | None = None) -> None:
@@ -557,7 +599,53 @@ class FSDPStrategy(Strategy):
         # torch.nn.utils.clip_grad_norm_ is DTensor-aware: it reduces the global
         # norm across the mesh and clips the local shards. float() collapses the
         # replicated norm scalar to a Python float for logging.
-        return float(nn.utils.clip_grad_norm_(parameters, max_norm))
+        parameter_list = list(parameters)
+        if self.context.device.type == "cuda" and any(
+            _tensor_device(parameter.grad).type == "cpu"
+            for parameter in parameter_list
+            if parameter.grad is not None
+        ):
+            return self._clip_cpu_offloaded_grad_norm(parameter_list, max_norm)
+        return float(nn.utils.clip_grad_norm_(parameter_list, max_norm))
+
+    def _clip_cpu_offloaded_grad_norm(
+        self,
+        parameters: list[nn.Parameter],
+        max_norm: float,
+    ) -> float:
+        """Clip CPU-offloaded FSDP shards with a CUDA scalar collective.
+
+        NCCL cannot all-reduce the CPU DTensor produced by ``CPUOffloadPolicy``.
+        The gradient payload itself stays on host: each rank computes its local
+        shard's squared norm, copies one scalar to the mesh device, all-reduces
+        that scalar, then applies the global clip coefficient to its CPU shards.
+        """
+
+        local_squared = torch.zeros((), dtype=torch.float64)
+        local_gradients: list[torch.Tensor] = []
+        for parameter in parameters:
+            gradient = parameter.grad
+            if gradient is None:
+                continue
+            local = getattr(gradient, "_local_tensor", gradient)
+            if local.device.type != "cpu":
+                raise RuntimeError(
+                    "FSDP CPU-offload gradient clipping requires every active "
+                    f"gradient shard on CPU; got {local.device}",
+                )
+            local_gradients.append(local)
+            local_squared.add_(local.detach().double().square().sum())
+
+        reduced = local_squared.to(self.context.device)
+        import torch.distributed as dist
+
+        if dist.is_initialized():
+            dist.all_reduce(reduced, op=dist.ReduceOp.SUM)
+        total_norm = float(reduced.sqrt().item())
+        clip_coefficient = min(float(max_norm) / (total_norm + 1e-6), 1.0)
+        for gradient in local_gradients:
+            gradient.mul_(clip_coefficient)
+        return total_norm
 
     def export_trainable_state(self, bundle: Any) -> dict[str, dict[str, Any]]:
         from vrl.trainers.fsdp import gather_trainable_state_dict
@@ -629,17 +717,57 @@ class FSDPStrategy(Strategy):
         load_full_optimizer_state_dict(model, optimizer, state)
 
     def validate_training_state_parking(self) -> None:
-        raise NotImplementedError(
-            "shared-GPU on-demand rollout is not supported with FSDP: DTensor model, "
-            "optimizer, EMA, GradScaler, and live-gradient parking has not been "
-            "implemented collectively. Use disjoint rollout GPUs.",
-        )
+        return None
 
     def park_training_state(self, state: TrainingMemoryState) -> None:
-        self.validate_training_state_parking()
+        """Park this rank's shards, then agree with every peer before returning.
+
+        The move itself is rank-local: ``_move_tensor_data`` relocates a DTensor's
+        local shard and leaves the mesh and placements alone, so no collective is
+        issued and ranks cannot drift apart by parking.
+
+        Failure is the part that needs coordination. If one rank raised (CUDA
+        OOM while staging to host, a module without ``to()``) and rolled itself
+        back while the others stayed parked, the ranks would hold different
+        residency and the next all-gather would hang instead of reporting the
+        real error. So every rank reports its own outcome, takes the minimum, and
+        a single failure rolls everyone back to the same resident state.
+        """
+
+        failure: BaseException | None = None
+        try:
+            self._park_training_state_locally(state)
+        except BaseException as error:
+            failure = error
+        if not self._all_ranks_succeeded(failure is None):
+            if failure is None:
+                # A peer failed while this rank parked cleanly. Undo locally so
+                # the whole world is resident again, and say why.
+                self.restore_training_state(state)
+                raise RuntimeError(
+                    "training-state parking was rolled back: a peer rank failed to park, "
+                    "so every rank restored to keep shard residency identical",
+                )
+            raise failure
+        if failure is not None:
+            raise failure
 
     def restore_training_state(self, state: TrainingMemoryState) -> None:
-        self.validate_training_state_parking()
+        _TrainingStateParking.restore_training_state(self, state)
+
+    def _all_ranks_succeeded(self, ok: bool) -> bool:
+        """Reduce a per-rank success flag to one answer shared by every rank."""
+
+        import torch.distributed as dist
+
+        if not dist.is_initialized():
+            return ok
+        flag = torch.tensor(
+            [1 if ok else 0],
+            device=self.context.device if self.context.device.type == "cuda" else None,
+        )
+        dist.all_reduce(flag, op=dist.ReduceOp.MIN)
+        return bool(flag.item())
 
     def barrier(self) -> None:
         import torch.distributed as dist
@@ -694,18 +822,19 @@ class DDPStrategy(Strategy):
 
         from vrl.trainers.fsdp import init_training_process_group
 
-        # Validate the trainable handle BEFORE touching the process group so a bad
+        # Validate the trainable handles BEFORE touching the process group so a bad
         # model fails fast (and the guard tests need no live PG).
-        handle, set_transformer = _single_transformer_handle(model)
+        handles = _trainable_module_handles(model)
         backend = "gloo" if self.context.device.type == "cpu" else "nccl"
         init_training_process_group(self.context, backend=backend)
         device_ids = [self.context.local_rank] if self.context.device.type == "cuda" else None
-        wrapped = DistributedDataParallel(
-            handle,
-            device_ids=device_ids,
-            find_unused_parameters=self._find_unused_parameters,
-        )
-        set_transformer(wrapped)
+        for _name, handle, writer in handles:
+            wrapped = DistributedDataParallel(
+                handle,
+                device_ids=device_ids,
+                find_unused_parameters=self._find_unused_parameters,
+            )
+            writer(wrapped)
         return model
 
     def backward(self, loss: torch.Tensor, *, grad_scaler: Any | None = None) -> None:
@@ -857,6 +986,9 @@ def build_strategy(cfg: Any, context: DistributedTrainingContext) -> Strategy:
             ),
             reshard_after_forward=bool(
                 cfg_path(cfg, "distributed.training.fsdp.reshard_after_forward", True),
+            ),
+            cpu_offload=bool(
+                cfg_path(cfg, "distributed.training.fsdp.cpu_offload", False),
             ),
         )
     if context.strategy == "ddp":

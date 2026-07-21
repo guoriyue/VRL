@@ -79,11 +79,20 @@ class _FakePolicy:
 
 
 class _DualStagePolicy(_FakePolicy):
-    """Wan-style policy with a second trainable transformer the wrapper can't wrap."""
+    """Wan-style policy with two independently writable trainable roots."""
+
+    def __init__(self, transformer: nn.Module) -> None:
+        super().__init__(transformer)
+        self.transformer_2 = _ToyTransformer()
+        self.set_2_calls = 0
+
+    def _set_transformer_2(self, transformer: nn.Module) -> None:
+        self.transformer_2 = transformer
+        self.set_2_calls += 1
 
     @property
     def trainable_modules(self) -> dict[str, nn.Module]:
-        return {"transformer": self.transformer, "transformer_2": self.transformer}
+        return {"transformer": self.transformer, "transformer_2": self.transformer_2}
 
 
 class _ARLikePolicy:
@@ -162,11 +171,18 @@ def test_ddp_prepare_model_rejects_model_without_transformer_handle() -> None:
         DDPStrategy(_cpu_ddp_context()).prepare_model(_ARLikePolicy())
 
 
-def test_ddp_prepare_model_rejects_multi_transformer_model() -> None:
-    """Dual-stage Wan must fail-fast before touching the process group."""
+def test_ddp_prepare_model_wraps_multi_transformer_model(cpu_process_group) -> None:
+    """Dual-stage Wan wraps both named roots and writes both aliases back."""
+    from torch.nn.parallel import DistributedDataParallel
+
     policy = _DualStagePolicy(_ToyTransformer())
-    with pytest.raises(NotImplementedError, match="Multi-transformer"):
-        DDPStrategy(_cpu_ddp_context()).prepare_model(policy)
+    out = DDPStrategy(_cpu_ddp_context()).prepare_model(policy)
+
+    assert out is policy
+    assert policy.set_calls == 1
+    assert policy.set_2_calls == 1
+    assert isinstance(policy.transformer, DistributedDataParallel)
+    assert isinstance(policy.transformer_2, DistributedDataParallel)
 
 
 # ── wrapping + export (need a process group) ─────────────────────────────────

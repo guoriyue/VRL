@@ -119,6 +119,27 @@ def resolve_training_context(
                 f"distributed.training: LOCAL_RANK={local_rank} is out of range for "
                 f"gpus_per_node={gpus_per_node} (expected 0..{gpus_per_node - 1})."
             )
+        # The rank's device is an index into the devices THIS PROCESS can see,
+        # which is not always the local rank. Symmetric-colocated placement is
+        # resolved per rank as "my one local GPU" (vrl/ray/resources.py), so a
+        # single-node launch narrows each rank to its own card with
+        # CUDA_VISIBLE_DEVICES; that rank then sees exactly one device and
+        # cuda:<local_rank> would be out of range for every rank but 0. Only the
+        # two known shapes map implicitly; a partial mask (more ranks than
+        # visible devices, but not exactly one) must fail here instead of
+        # silently double-mapping ranks onto one card and dying later in NCCL.
+        visible_device_count = torch.cuda.device_count() if torch.cuda.is_available() else 0
+        if visible_device_count == 0 or local_rank < visible_device_count:
+            device_index = local_rank
+        elif visible_device_count == 1:
+            device_index = 0
+        else:
+            raise ValueError(
+                f"distributed.training: LOCAL_RANK={local_rank} but this process sees "
+                f"only {visible_device_count} CUDA devices; either expose every GPU "
+                "(unset/expand CUDA_VISIBLE_DEVICES) or narrow each rank to exactly "
+                "its own single device.",
+            )
         return DistributedTrainingContext(
             strategy=strategy,
             distributed=True,
@@ -126,7 +147,7 @@ def resolve_training_context(
             local_rank=local_rank,
             world_size=world_size,
             is_primary=(rank == 0),
-            device=torch.device(f"cuda:{local_rank}"),
+            device=torch.device(f"cuda:{device_index}"),
         )
 
     # Schema (TrainingSection.strategy Literal) rejects other values before we get

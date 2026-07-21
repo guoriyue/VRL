@@ -666,9 +666,9 @@ class FSDPConfig(ConfigBase):
     Only the fields a reader consumes are declared (the same philosophy as
     ``TrainingSection``): ``vrl/trainers/strategy.py`` build_strategy +
     ``vrl/trainers/fsdp.py`` read ``mesh`` / ``precision_policy`` /
-    ``reshard_after_forward``. The remaining FSDP2 knobs from
-    SPRINT_multi_gpu_training.md §3 (activation_checkpointing, cpu_offload,
-    state_dict, process-group backend/init) land here when their readers do —
+    ``reshard_after_forward`` / ``cpu_offload``. The remaining FSDP2 knobs from
+    SPRINT_multi_gpu_training.md §3 (activation_checkpointing, state_dict,
+    process-group backend/init) land here when their readers do —
     declaring an unread knob is a user-facing no-op footgun.
     """
 
@@ -681,6 +681,9 @@ class FSDPConfig(ConfigBase):
     precision_policy: Literal["actor", "none"] = "actor"
     # True = re-gather params after forward (ZeRO-3, lowest memory).
     reshard_after_forward: bool = True
+    # Keep parameter/gradient shards on CPU between forwards. This is slower but
+    # lets timestep-routed multi-root models materialize only the active expert.
+    cpu_offload: bool = False
 
 
 class DDPConfig(ConfigBase):

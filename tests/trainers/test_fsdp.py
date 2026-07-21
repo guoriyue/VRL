@@ -93,11 +93,20 @@ class _FakePolicy:
 
 
 class _DualStagePolicy(_FakePolicy):
-    """Wan-style policy with a second trainable transformer the applier can't wrap."""
+    """Wan-style policy with two independently writable trainable roots."""
+
+    def __init__(self, transformer: nn.Module) -> None:
+        super().__init__(transformer)
+        self.transformer_2 = _ToyTransformer()
+        self.set_2_calls = 0
+
+    def _set_transformer_2(self, transformer: nn.Module) -> None:
+        self.transformer_2 = transformer
+        self.set_2_calls += 1
 
     @property
     def trainable_modules(self) -> dict[str, nn.Module]:
-        return {"transformer": self.transformer, "transformer_2": self.transformer}
+        return {"transformer": self.transformer, "transformer_2": self.transformer_2}
 
 
 class _Bundle:
@@ -340,12 +349,18 @@ def test_fsdp_rollout_export_filters_frozen_params(cpu_process_group) -> None:
     assert not any("head" in key or "frozen_cache" in key for key in checkpoint)
 
 
-def test_fsdp_prepare_model_rejects_multi_transformer_model(cpu_process_group) -> None:
-    """Dual-stage Wan (transformer + transformer_2) must fail-fast, not silently
-    shard one handle and leave the other replicated."""
+def test_fsdp_prepare_model_wraps_multi_transformer_model(cpu_process_group) -> None:
+    """Dual-stage Wan shards both named roots and writes both aliases back."""
+    from torch.distributed.tensor import DTensor
+
     policy = _DualStagePolicy(_ToyTransformer())
-    with pytest.raises(NotImplementedError, match="Multi-transformer"):
-        FSDPStrategy(_cpu_fsdp_context(), precision_policy="none").prepare_model(policy)
+    out = FSDPStrategy(_cpu_fsdp_context(), precision_policy="none").prepare_model(policy)
+
+    assert out is policy
+    assert policy.set_calls == 1
+    assert policy.set_2_calls == 1
+    assert any(isinstance(parameter, DTensor) for parameter in policy.transformer.parameters())
+    assert any(isinstance(parameter, DTensor) for parameter in policy.transformer_2.parameters())
 
 
 def test_fsdp_export_then_load_trainable_state_round_trip(cpu_process_group) -> None:
@@ -562,6 +577,7 @@ def test_build_strategy_fsdp_reads_knobs() -> None:
                     "mesh": ["dp_shard"],
                     "precision_policy": "none",
                     "reshard_after_forward": False,
+                    "cpu_offload": True,
                 },
             },
         },
@@ -570,11 +586,52 @@ def test_build_strategy_fsdp_reads_knobs() -> None:
     assert isinstance(strategy, FSDPStrategy)
     assert strategy._precision_policy == "none"
     assert strategy._reshard_after_forward is False
+    assert strategy._cpu_offload is True
 
 
-def test_fsdp_rejects_shared_gpu_training_state_parking_preflight() -> None:
-    with pytest.raises(NotImplementedError, match="Use disjoint rollout GPUs"):
-        FSDPStrategy(_cpu_fsdp_context()).validate_training_state_parking()
+def test_fsdp_accepts_shared_gpu_training_state_parking_preflight() -> None:
+    """Shared-GPU parking is implemented for FSDP, so preflight must not refuse.
+
+    Refusing here is what made symmetric-colocated multi-rank online RL
+    unreachable: the rollout topology gate requires colocation and this gate
+    rejected colocation, so no configuration satisfied both.
+    """
+
+    assert FSDPStrategy(_cpu_fsdp_context()).validate_training_state_parking() is None
+
+
+def test_fsdp_parking_rolls_every_rank_back_when_one_peer_fails() -> None:
+    """A peer's failure must restore this rank too, not leave residency split.
+
+    Parking itself issues no collective, so ranks cannot drift apart by parking.
+    They drift apart on FAILURE: one rank rolls back while the others stay
+    parked, and the next all-gather hangs instead of surfacing the real error.
+    """
+
+    import torch
+    import torch.nn as nn
+
+    from vrl.trainers.strategy import TrainingMemoryState
+
+    strategy = FSDPStrategy(_cpu_fsdp_context())
+    # This rank parks cleanly; the agreement reports that a peer did not.
+    strategy._all_ranks_succeeded = lambda ok: False
+
+    model = nn.Linear(4, 4)
+    state = TrainingMemoryState(
+        model=model,
+        ref_model=None,
+        optimizer=None,
+        ema=None,
+        grad_scaler=None,
+        device=torch.device("cpu"),
+    )
+
+    with pytest.raises(RuntimeError, match="a peer rank failed to park"):
+        strategy.park_training_state(state)
+
+    # Rolled back: nothing stays parked, so the world is resident again.
+    assert strategy._parked_training_state is None
 
 
 def test_fsdp_shutdown_releases_training_process_group(monkeypatch) -> None:
