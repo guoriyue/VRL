@@ -1,12 +1,12 @@
 # 4-row overfit-validation slice of the DROID full-target eval manifest.
 # train == eval on purpose: the overfit-validation recipe asks "can the curve
 # move at all", not "does it generalize". Rows are the 4 eval episodes with the
-# largest dino exact-vs-static headroom (0.37-0.39), picked by
-#   python -m vrl.scripts.eval.future_reward_discrimination_probe \
-#     --reward target_dino_similarity \
-#     --manifest data/external/video_world/manifests/droid_full_targets_eval.jsonl \
-#     --data-root data/external --num-anchors 16 --out <report>
-# then taking top-4 by (exact - static_frozen). Each row carries a fixed
+# largest dino exact-vs-static headroom (0.37-0.39): during SPRINT_future_reward the
+# eval episodes in droid_full_targets_eval.jsonl were scored with target_dino_similarity
+# against an adversarial candidate battery and the top-4 by (exact - static_frozen) were
+# kept (the probe script that did this has since been removed in favor of human review;
+# the battery builder survives in unified_reward_robotics_discrimination_probe.py).
+# Each row carries a fixed
 # request_overrides.seed so rollouts/eval are paired across epochs (and
 # same_latent has the explicit seed it requires).
 data:

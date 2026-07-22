@@ -8,11 +8,10 @@
 # movement within ~30 updates is detectable without a block test).
 #
 # Why these knobs differ from online_grpo_droid_full_target_480p:
-# - data: 4-row manifest (droid_overfit_validation.jsonl) picked by the dino
-#   discrimination probe = the eval rows with the LARGEST exact-vs-static
-#   headroom (0.37-0.39), i.e. where the reward is most climbable. Regenerate:
-#   future_reward_discrimination_probe on droid_full_targets_eval.jsonl, take
-#   top-4 (exact - static_frozen).
+# - data: 4-row manifest (droid_overfit_validation.jsonl) = the eval rows with
+#   the LARGEST dino exact-vs-static headroom (0.37-0.39), i.e. where the reward
+#   is most climbable (selection recorded in the dataset preset's header; the
+#   probe script that picked them has been removed in favor of human review).
 # - num_steps 10 (not 35): ~3.5x faster generation, and the SDE window [0, 10)
 #   now covers EVERY denoise step -> full gradient coverage. 10-step output
 #   EYEBALLED 2026-07-02 (outputs/_overfit_preflight/10step_93f.mp4): scene +
@@ -28,7 +27,7 @@
 #   key does not exist. Same row seed every epoch -> paired rollouts/eval.
 # - EMA off: its lag would mask the first ~10-20 updates of movement, which is
 #   exactly the signal this run exists to detect.
-# - motion_dynamics at weight 1.0 (not 0.2): the discrimination probe shows a
+# - motion_dynamics at weight 1.0 (not 0.2): battery measurements showed a
 #   frozen-static video scores ~0.50-0.56 on dino vs ~0.05 on-policy, so at
 #   guard weight 0.2 static collapse is a NET-POSITIVE hack (+0.5 dino - 0.2
 #   motion). At 1.0 it is net-negative; for honest (moving) samples motion

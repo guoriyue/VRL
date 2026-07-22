@@ -41,7 +41,7 @@
 
 ## 3. KILL-RISK 判别探针（进训练前必过 —— 核心门）
 
-复用 [[SPRINT_future_reward]] 落地的 reward-agnostic harness：`vrl/scripts/eval/future_reward_discrimination_probe.py`（8 候选：exact / blur / static / temporal-mean / shuffle / reverse / wrong-action / random）。给探针**加回 idm 支路**，要求：
+[[SPRINT_future_reward]] 的自动探针脚本已删除（决定：判别质量由**人工可视化 rollouts** 判断，不再走自动 PASS/FAIL 门）。候选 battery 生成逻辑保留在 `vrl/scripts/eval/unified_reward_robotics_discrimination_probe.py` 的 `build_discrimination_candidates`（8 候选：exact / blur / static / temporal-mean / shuffle / reverse / wrong-action / random）——用它生成候选、给 IDM 打分后由人工比对排序，参考标准：
 
 - **`exact ≥ 0.7`**，且 **static / blur / shuffle / reverse / wrong-action 全 ≤ 0.4**（差 >0.3，>5× 噪声地板）；
 - **`exact` 比 `wrong-action` 高 >2σ**（wrong-action 是决定性测试：运动一样真，只是指令不同）；
@@ -90,7 +90,7 @@
 
 - 数据：`vrl/scripts/data/video_world.py:176-181,427`（emit `target_actions`）、commit d22d7d5d（plumbing）
 - reward 模板：`vrl/rewards/functions/kling_video_reward.py`（disk-artifact pool）、`vrl/rewards/models/phymotion.py`（外部进程 bridge 范式）、`vrl/rewards/functions/registry.py`
-- 探针：`vrl/scripts/eval/future_reward_discrimination_probe.py`（加 idm 支路）
+- 判别候选 battery：`vrl/scripts/eval/unified_reward_robotics_discrimination_probe.py` 的 `build_discrimination_candidates`（判别结论由人工可视化判断）
 - 共享积木：`vrl/utils/media.py`、`vrl/rewards/base.py:decode_artifact_frames`、dino/motion 的 `{models,functions}` + config
 - 真机曲线接入点：[[SPRINT_cosmos_predict2_2b_trustworthy_curve]]
 

@@ -7,8 +7,9 @@
 # retired target_video_similarity -- but only as a LOW-WEIGHT anchor (it still imitates a
 # single recorded future). Local CPU/GPU; no separate reward GPU pool.
 #
-# These weights pass vrl.scripts.eval.future_reward_discrimination_probe (gap_ratio ~0.30,
-# temporal-mean ~0.25 cosine below exact). A low temporal_weight FAILS the probe.
+# These weights were validated on the SPRINT_future_reward adversarial battery (gap_ratio
+# ~0.30, temporal-mean ~0.25 cosine below exact); a low temporal_weight failed it. The
+# automated probe was removed -- judge discrimination by human review of rollouts.
 reward:
   components:
     target_dino_similarity: 1.0

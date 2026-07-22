@@ -6,8 +6,9 @@
 # GRPO. NOT a temporal-order judge -- a reversed/shuffled clip may score high; that is the
 # IDM/DINOv2 temporal terms' job. Local CPU/GPU; no separate reward GPU pool.
 #
-# Passes vrl.scripts.eval.future_reward_discrimination_probe (static -> ~0.03 floor vs
-# exact ~0.36). magnitude_scale maps fraction-of-diagonal flow to [0,1] and is domain-tunable.
+# Validated on the SPRINT_future_reward adversarial battery (static -> ~0.03 floor vs
+# exact ~0.36); the automated probe was removed -- judge regressions by human review.
+# magnitude_scale maps fraction-of-diagonal flow to [0,1] and is domain-tunable.
 reward:
   components:
     motion_dynamics: 1.0
