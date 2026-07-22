@@ -1,0 +1,75 @@
+# Cosmos Predict2 2B DROID overfit validation on one host with four L4 GPUs.
+#
+# This keeps the parent's per-rank optimization geometry: every rank collects 16
+# rollouts for one prompt with the same PPO replay budget. Four disjoint prompt
+# groups make the global rollout batch 64, while guidance 7 and CPU DINO/RAFT
+# rewards remain unchanged. The same-seed guidance A/B gate rejected guidance 0
+# as post-first-frame noise and accepted guidance 7 as a coherent DROID
+# manipulation. Evaluation remains an external run; the online trainer does not
+# consume the parent's eval manifest.
+# FSDP2 shards the trainable policy across four torchrun ranks; every rank runs
+# one rank-local Ray rollout worker on the same L4 and draws a disjoint prompt
+# slice. The rollout actor yields the card before the collective training phase.
+#
+# The training entrypoint narrows each rank's CUDA view before importing Torch or
+# Ray, so ordinary torchrun is the canonical launcher:
+#
+#   CUDA_VISIBLE_DEVICES=0,1,2,3 \
+#   .venv/bin/torchrun --standalone --nproc_per_node=4 \
+#     -m vrl.scripts.train \
+#     --config experiment/cosmos_predict2/online_grpo_droid_overfit_validation_fsdp_4x_l4
+#
+# Use CLI overrides for a smoke run; do not weaken this file's long-run settings.
+defaults:
+  - /experiment/cosmos_predict2/online_grpo_droid_overfit_validation
+  - /base/distributed/training_fsdp
+
+distributed:
+  training:
+    strategy: fsdp
+    num_nodes: 1
+    gpus_per_node: 4
+    fsdp:
+      mesh: ["dp_shard"]
+      # Activation-checkpoint recompute must see the same parameter dtype as the
+      # original forward. Trainer autocast still provides bf16 compute.
+      precision_policy: none
+      reshard_after_forward: true
+      cpu_offload: false
+  resources:
+    trainer:
+      num_gpus: 1
+    rollout:
+      # Required for same-host multi-rank ownership: every rank may reserve only
+      # the one logical GPU that its trainer owns.
+      gpu_pool: trainer
+      num_gpus: 1
+      gpus_per_worker: 1.0
+      num_workers: 1
+    reward:
+      # DINOv2 and RAFT remain CPU-only so all four L4s can be FSDP ranks.
+      num_gpus: 0
+      devices: []
+      gpus_per_worker: 0.0
+      num_workers: 1
+
+model:
+  # FSDP2 reshard hooks are not compatible with the compiled transformer path.
+  torch_compile:
+    enable: false
+
+sampling:
+  guidance_scale: 7.0
+
+rollout:
+  # Measured rollout PASS on one L4 (2026-07-21): production 832x480x93f,
+  # 15-step, guidance-7 generation peaked at 15,898.9 MiB in the executor
+  # (18,607 MiB observed by nvidia-smi), and passed the visual gate with DINO
+  # target similarity 0.2516. This proves the rollout floor, not trainer peak.
+  samples_per_chunk: 1
+
+trainer:
+  output_dir: outputs/cosmos_pred2_droid_overfit_validation_fsdp_4x_l4
+  # Every production epoch is expensive. The supervisor can resume only from a
+  # complete checkpoint, so saving every epoch bounds restart loss to one epoch.
+  save_freq: 1

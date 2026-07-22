@@ -1,6 +1,32 @@
 # SPRINT: Wan 2.1 I2V 14B GRPO proof run（图生视频 RL 落地验证）
 
-> **2026-07-20 FSDP readiness update:** the replay build is now capacity-safe on
+> **2026-07-21 production-weight validation update:** the exact pinned
+> `Wan-AI/Wan2.1-I2V-14B-480P-Diffusers` revision is now present locally and
+> verified byte-for-byte (the transformer is 16,395,083,584 parameters). The
+> canonical L4 capacity recipe is
+> `vrl/config/presets/experiment/wan_2_1/online_grpo_i2v_fsdp_2x_l4.yaml`:
+> two FSDP2 ranks with CPU-offloaded trainer shards, one on-demand sequentially
+> offloaded rollout replica per rank on the same GPUs, and CPU motion reward.
+> Four ranks are not the L4-host recipe because four complete rollout replicas
+> exceed the 181 GiB host-memory budget.
+>
+> The implementation gates pass, including FSDP mechanism tests, transactional
+> Wan offload-hook reset/weight sync, FP32 VAE decode under sequential offload,
+> rank-local physical GPU mapping, and placement-derived local Ray capacity
+> (5 CPUs/rank instead of the detected 48). The related suite passed with
+> `160 passed, 1 skipped`; CPU/FSDP tests added another `39 passed`.
+>
+> The fresh production-weight run on physical GPUs 1/2 started at 05:49 UTC and
+> correctly resolved rank 0 -> GPU 1 and rank 1 -> GPU 2. It was cooperatively
+> cancelled during checkpoint loading (10/14 transformer shards) after a separate
+> 200-epoch four-GPU Cosmos run started 23 seconds later and occupied every GPU.
+> No Wan Ray cluster had started, and post-cancel checks found no Wan process,
+> Ray, NCCL, or CUDA residue. This attempt therefore provides no generate ->
+> replay -> backward -> optimizer or checkpoint/resume acceptance evidence. The
+> sprint remains parked until the same recipe completes on an exclusively leased
+> two-GPU window; do not report this hardware-race cancellation as a model pass.
+
+> **Superseded 2026-07-20 readiness record:** the replay build became capacity-safe on
 > GPU: FSDP training builds keep the CPU-loaded transformer on CPU while PEFT is
 > attached, and `fully_shard` moves and shards it block by block. FSDP rollout
 > sync and checkpoints gather only trainable LoRA tensors, not the 16.4B frozen
@@ -9,15 +35,11 @@
 > serialized checkpoint restore, and a continued update. A four-rank NCCL form
 > of the same test is available as the opt-in `gpu + distributed` lane.
 >
-> This does **not** close the production proof. On the validation host, all four
-> L4 GPUs were owned by another run, the pinned I2V repository was absent, and
-> the repository requires 90,104,322,037 bytes while the root filesystem had
-> only 22,843,568,128 bytes free. More importantly, the requested same-four-GPU
-> online topology still fails before model load: FSDP collective trainer-state
-> parking is not implemented, and the current symmetric Ray plan resolves one
-> full rollout replica per rank instead of one four-GPU-sharded rollout model.
-> Keep this sprint parked until a real generate -> replay -> backward -> step and
-> checkpoint/resume run completes with the pinned 16.4B weights.
+> At that point the validation host lacked the pinned repository and shared-GPU
+> FSDP parking was still gated. Both blockers are now removed as described in the
+> 2026-07-21 update above. This record is retained only as provenance; the current
+> open gate is the production-weight generate -> replay -> backward -> optimizer
+> step and checkpoint/resume run on an exclusively leased two-GPU window.
 
 > Superseded wiring note (2026-07-13): Wan I2V now uses
 > `vrl.scripts.diffusion.train:train_diffusion_online`. Reference-image
@@ -25,9 +47,9 @@
 > former family train wrapper and `supports_reference_conditioning` capability
 > no longer exist. Historical details below remain as run provenance.
 
-状态：**parked（2026-07-09 复核）**。§6 核心契约已在真权重上验证 PASS；
-单卡 GRPO 被 16.4B transformer 的驻留需求结构性阻塞。触发条件：至少两卡且 replay
-分片路径可用，完成剩余 multi-GPU train step。
+状态：**parked（2026-07-21 复核）**。§6 核心契约已在真权重上验证 PASS；
+单卡 GRPO 被 16.4B transformer 的驻留需求结构性阻塞。当前两卡 FSDP recipe 已就绪，
+剩余 gate 是在独占两卡窗口完成 production-weight train step 与 checkpoint resume。
 
 > **2026-07-11 reward lease 更新：**active 母配方不再声称两个 7B reward 能在同一
 > 进程共享一张 GPU。Kling 是唯一共享 GPU/CuMem owner，VideoCon-Physics 显式在 CPU

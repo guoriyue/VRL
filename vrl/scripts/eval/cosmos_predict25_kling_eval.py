@@ -18,17 +18,30 @@ from omegaconf import DictConfig, OmegaConf
 from vrl.config.builders import build_configs
 from vrl.config.loading import load_config
 from vrl.families.registry import get_model_family_entry
-from vrl.generation.types import VideoGenerationRequest
-from vrl.math.denoise.flow_matching import sde_step_with_logprob
 from vrl.models.dtypes import resolve_torch_dtype
 from vrl.rewards.inference import RewardInferenceArtifact, RewardInferenceRequest
 from vrl.rewards.models.kling_video_reward import KlingVideoRewardModel
+from vrl.scripts.eval.denoise_video_generation import (
+    generate_one_video as _generate_one_video,
+)
+from vrl.scripts.eval.denoise_video_generation import (
+    seed_for as _seed_for,
+)
+from vrl.scripts.eval.denoise_video_generation import (
+    video_to_cthw,
+)
 from vrl.trainers.checkpointing import load_trainable_state, load_training_checkpoint
 from vrl.trainers.data import load_prompt_manifest
 from vrl.trainers.precision import torch_dtype_for_trainer_precision
 from vrl.utils.media import write_mp4
 
 logger = logging.getLogger(__name__)
+
+
+def _video_to_cthw(video: torch.Tensor) -> torch.Tensor:
+    """Compatibility facade for the public checkpoint-eval layout helper."""
+
+    return video_to_cthw(video)
 
 
 @dataclass(frozen=True, slots=True)
@@ -395,88 +408,6 @@ def _generate_checkpoint_videos(
                 ),
             )
     return videos
-
-
-def _seed_for(
-    *,
-    base_seed: int,
-    prompt_index: int,
-    sample_index: int,
-    samples_per_prompt: int,
-) -> int:
-    # Keep seeds identical across checkpoints so reward changes reflect weights,
-    # not a different latent-noise draw.
-    return int(base_seed) + int(prompt_index) * int(samples_per_prompt) + int(sample_index)
-
-
-def _generate_one_video(
-    model: Any,
-    *,
-    prompt: str,
-    seed: int,
-    sampling: dict[str, Any],
-) -> torch.Tensor:
-    encoded = model.encode_prompt(
-        prompt,
-        None,
-        max_sequence_length=int(sampling["max_sequence_length"]),
-        guidance_scale=float(sampling["guidance_scale"]),
-    )
-    request = VideoGenerationRequest(
-        prompt=prompt,
-        width=int(sampling["width"]),
-        height=int(sampling["height"]),
-        frame_count=int(sampling["num_frames"]),
-        num_steps=int(sampling["num_steps"]),
-        guidance_scale=float(sampling["guidance_scale"]),
-        seed=int(seed),
-        fps=int(sampling["fps"]),
-        extra={"max_sequence_length": int(sampling["max_sequence_length"])},
-    )
-    state = model.prepare_sampling(request, encoded)
-    generator = torch.Generator(device=state.latents.device)
-    generator.manual_seed(int(seed))
-    with torch.no_grad():
-        for step_idx, timestep in enumerate(state.timesteps):
-            step_output = model.forward_step(state, step_idx)
-            if str(sampling["denoise_mode"]) == "native":
-                state.latents = state.scheduler.step(
-                    step_output["noise_pred"].float(),
-                    timestep,
-                    state.latents.float(),
-                    return_dict=False,
-                )[0]
-            else:
-                state.latents = sde_step_with_logprob(
-                    state.scheduler,
-                    step_output["noise_pred"].float(),
-                    timestep.unsqueeze(0),
-                    state.latents.float(),
-                    generator=generator,
-                    deterministic=False,
-                    return_dt=False,
-                    noise_level=float(sampling["noise_level"]),
-                    sde_type=str(sampling["sde_type"]),
-                    step_index=step_idx,
-                ).prev_sample
-        decoded = model.decode_latents(state.latents)
-    return _video_to_cthw(decoded.detach().cpu())
-
-
-def _video_to_cthw(video: torch.Tensor) -> torch.Tensor:
-    """Normalize decoded video to channel-first [C,T,H,W]."""
-
-    if video.ndim == 5:
-        if video.shape[0] != 1:
-            raise ValueError(f"expected one decoded video, got shape={tuple(video.shape)}")
-        video = video[0]
-    if video.ndim != 4:
-        raise ValueError(f"expected decoded video rank 4/5, got shape={tuple(video.shape)}")
-    if video.shape[0] in {1, 3, 4}:
-        return video[:3]
-    if video.shape[1] in {1, 3, 4}:
-        return video[:, :3].permute(1, 0, 2, 3).contiguous()
-    raise ValueError(f"cannot infer channel axis for decoded video shape={tuple(video.shape)}")
 
 
 def _score_generated_videos(

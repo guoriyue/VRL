@@ -1,0 +1,104 @@
+# Wan 2.1 I2V 14B end-to-end FSDP acceptance on two 24 GiB L4 GPUs.
+#
+# The checkpoint's I2V transformer is 16.4B parameters even though the public
+# model name says 14B. Two FSDP ranks shard replay/backward; CPU offload keeps
+# each rank's shard out of GPU memory between block forwards. Each rank also owns
+# one sequentially-offloaded rollout replica on the same GPU and time-shares it
+# through the strict collect -> train handoff.
+#
+# Two ranks are deliberate on a 181 GiB host. Four ranks would create four full
+# host-resident rollout pipelines, while FSDP only shards the trainer, and can
+# exhaust RAM before the first sample. This recipe proves real weights, replay,
+# backward, optimizer, checkpoint, and resume; it is not a throughput recipe.
+#
+# Launch (point HF_HOME at a filesystem with at least 100 GB free):
+#
+#   CUDA_VISIBLE_DEVICES=0,1 \
+#   torchrun --standalone --nproc_per_node=2 \
+#     -m vrl.scripts.train \
+#     --config experiment/wan_2_1/online_grpo_i2v_fsdp_2x_l4
+defaults:
+  - /recipe/online/wan_2_1_i2v_grpo
+  - /model/wan_2_1/i2v_14b
+  - /reward/motion_dynamics
+  - /dataset/videophy_i2v
+  - /base/distributed/training_fsdp
+  - _self_
+
+distributed:
+  training:
+    strategy: fsdp
+    num_nodes: 1
+    gpus_per_node: 2
+    fsdp:
+      mesh: ["dp_shard"]
+      precision_policy: actor
+      reshard_after_forward: true
+      cpu_offload: true
+  resources:
+    trainer:
+      num_gpus: 1
+    rollout:
+      gpu_pool: trainer
+      num_gpus: 1
+      gpus_per_worker: 1.0
+      num_workers: 1
+    reward:
+      devices: []
+      num_gpus: 0
+      gpus_per_worker: 0.0
+      num_workers: 1
+
+model:
+  # Sequential layer offload is required for a complete rollout replica on L4.
+  # Trainer residency is independently controlled by fsdp.cpu_offload above.
+  offload_mode: sequential
+  torch_compile:
+    enable: false
+    mode: default
+
+sampling:
+  width: 128
+  height: 128
+  num_frames: 9
+  num_steps: 4
+  guidance_scale: 4.5
+  max_sequence_length: 512
+
+actor:
+  ppo_epochs: 1
+  gradient_accumulation_steps: 0
+  gradient_checkpointing: true
+  drop_zero_advantage: false
+  ema:
+    update_interval: 1
+
+algorithm:
+  # Motion reward should already separate the two stochastic samples. A small
+  # reference KL also keeps the acceptance objective faithful to the real recipe.
+  kl_coef: 0.01
+
+rollout:
+  n_samples_per_prompt: 2
+  prompts_per_batch: 1
+  microbatch_size: 1
+  samples_per_chunk: 1
+  host_memory_budget_fraction: 0.95
+  sde:
+    window_range: [0, 4]
+
+reward:
+  kwargs:
+    motion_dynamics:
+      worker_config:
+        device: cpu
+        num_frames: 8
+        flow_size: 128
+
+trainer:
+  total_epochs: 1
+  output_dir: outputs/wan_i2v_14b_fsdp_2x_l4
+  save_freq: 1
+  profile: true
+  debug:
+    first_step: true

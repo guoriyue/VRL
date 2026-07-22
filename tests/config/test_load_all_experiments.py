@@ -18,7 +18,12 @@ from vrl.algorithms.dpo import DiffusionDPOConfig
 from vrl.algorithms.grpo.continuous import GRPOConfig
 from vrl.algorithms.grpo.multisegment import MultiSegmentTokenGRPOConfig
 from vrl.algorithms.grpo.token import TokenGRPOConfig
-from vrl.config.builders import build_algorithm_config, build_configs, build_reward_config
+from vrl.config.builders import (
+    build_algorithm_config,
+    build_configs,
+    build_reward_config,
+    build_trainer_config,
+)
 from vrl.config.loading import (
     bundled_config_resource,
     list_bundled_configs,
@@ -29,7 +34,7 @@ from vrl.config.validation import (
     validate_reward_config,
     validate_training_config,
 )
-from vrl.ray.resources import resolve_distributed_resources
+from vrl.ray.resources import resolve_distributed_resources, reward_torch_device
 from vrl.rollouts.orchestration import validate_rollout_schedule_topology
 from vrl.scripts.common.factory import validate_reward_memory_parking
 
@@ -435,6 +440,137 @@ def test_sd35_continuous_4gpu_acceptance_resolves_disjoint_resident_topology() -
     assert cfg.actor.replay_samples_per_chunk == 2
 
 
+def test_cosmos_predict2_overfit_fsdp_4x_l4_resolves_rank_local_topology(
+    monkeypatch,
+) -> None:
+    """The four-L4 recipe keeps one colocated rollout and CPU reward per rank."""
+
+    monkeypatch.setattr("vrl.ray.resources._auto_visible_cuda_devices", lambda: (0,))
+    name = "experiment/cosmos_predict2/online_grpo_droid_overfit_validation_fsdp_4x_l4"
+    cfg = load_config(name)
+    parent = load_config("experiment/cosmos_predict2/online_grpo_droid_overfit_validation")
+    validate_training_config(cfg)
+    built = build_configs(cfg)
+    resources = resolve_distributed_resources(cfg)
+    validate_rollout_schedule_topology(
+        built["trainer"].rollout_orchestration,
+        resources,
+    )
+    validate_reward_memory_parking(resources=resources, built=built)
+
+    assert cfg.distributed.training.strategy == "fsdp"
+    assert cfg.distributed.training.num_nodes * cfg.distributed.training.gpus_per_node == 4
+    assert cfg.distributed.training.fsdp.precision_policy == "none"
+    assert cfg.model.torch_compile.enable is False
+    assert cfg.sampling.guidance_scale == 7
+    assert cfg.rollout.samples_per_chunk == 1
+    assert resources.trainer_devices == resources.rollout_devices == (0,)
+    assert resources.rollout_num_workers == 1
+    assert resources.reward_devices == ()
+    assert resources.reward_gpus_per_worker == 0
+    assert resources.lifecycle.rollout.mode == "on_demand"
+    assert resources.lifecycle.handoff.release_rollout_before_train is True
+
+    # Per-rank geometry remains inherited from the parent, while four disjoint
+    # prompt groups make the global rollout batch four times larger. Compare the
+    # local knobs against their source of truth instead of duplicating literals.
+    # Evaluation remains an external workflow.
+    for path in (
+        "actor.ppo_epochs",
+        "actor.timestep_fraction",
+        "rollout.n_samples_per_prompt",
+        "rollout.prompts_per_batch",
+        "trainer.total_epochs",
+    ):
+        assert OmegaConf.select(cfg, path) == OmegaConf.select(parent, path)
+    assert cfg.rollout.n_samples_per_prompt * cfg.distributed.training.gpus_per_node == 64
+    assert cfg.trainer.save_freq == 1
+
+
+def test_cosmos_predict2_full_curve_fsdp_4x_l4_preserves_training_semantics(
+    monkeypatch,
+) -> None:
+    """The durable full-DROID run changes topology without changing its curve."""
+
+    monkeypatch.setattr("vrl.ray.resources._auto_visible_cuda_devices", lambda: (0,))
+    name = "experiment/cosmos_predict2/online_grpo_droid_lora_480p_curve_fsdp_4x_l4"
+    cfg = load_config(name)
+    parent = load_config("experiment/cosmos_predict2/online_grpo_droid_lora_480p_curve")
+    validate_training_config(cfg)
+    built = build_configs(cfg)
+    resources = resolve_distributed_resources(cfg)
+    validate_rollout_schedule_topology(
+        built["trainer"].rollout_orchestration,
+        resources,
+    )
+    validate_reward_memory_parking(resources=resources, built=built)
+
+    assert cfg.distributed.training.strategy == "fsdp"
+    assert cfg.distributed.training.num_nodes * cfg.distributed.training.gpus_per_node == 4
+    assert cfg.distributed.training.fsdp.precision_policy == "none"
+    assert cfg.distributed.resources.rollout.gpu_pool == "trainer"
+    assert cfg.distributed.resources.trainer.num_gpus == 1
+    assert cfg.distributed.resources.rollout.num_workers == 1
+    assert resources.trainer_devices == resources.rollout_devices == (0,)
+    assert resources.rollout_num_workers == 1
+    assert resources.reward_devices == ()
+    assert resources.reward_gpus_per_worker == 0
+    assert resources.lifecycle.rollout.mode == "on_demand"
+    assert resources.lifecycle.handoff.release_rollout_before_train is True
+
+    assert cfg.model.torch_compile.enable is False
+    assert cfg.sampling.guidance_scale == 7
+    assert cfg.rollout.samples_per_chunk == 1
+    assert cfg.trainer.save_freq == 1
+    assert not Path(str(cfg.trainer.output_dir)).is_absolute()
+    world_size = cfg.distributed.training.num_nodes * cfg.distributed.training.gpus_per_node
+    assert cfg.rollout.n_samples_per_prompt * world_size == 64
+
+    # The parent is the single source of truth for learning, dataset, and reward
+    # semantics. Only the validated hardware-specific leaves may differ here.
+    assert OmegaConf.to_container(cfg.algorithm, resolve=True) == OmegaConf.to_container(
+        parent.algorithm,
+        resolve=True,
+    )
+    assert OmegaConf.to_container(cfg.actor, resolve=True) == OmegaConf.to_container(
+        parent.actor,
+        resolve=True,
+    )
+    assert OmegaConf.to_container(cfg.model, resolve=True) == OmegaConf.to_container(
+        parent.model,
+        resolve=True,
+    )
+    assert OmegaConf.to_container(cfg.data, resolve=True) == OmegaConf.to_container(
+        parent.data,
+        resolve=True,
+    )
+    assert OmegaConf.to_container(cfg.reward, resolve=True) == OmegaConf.to_container(
+        parent.reward,
+        resolve=True,
+    )
+    sampling = OmegaConf.to_container(cfg.sampling, resolve=True)
+    parent_sampling = OmegaConf.to_container(parent.sampling, resolve=True)
+    assert isinstance(sampling, dict) and isinstance(parent_sampling, dict)
+    sampling.pop("guidance_scale")
+    parent_sampling.pop("guidance_scale")
+    assert sampling == parent_sampling
+
+    rollout = OmegaConf.to_container(cfg.rollout, resolve=True)
+    parent_rollout = OmegaConf.to_container(parent.rollout, resolve=True)
+    assert isinstance(rollout, dict) and isinstance(parent_rollout, dict)
+    rollout.pop("samples_per_chunk")
+    parent_rollout.pop("samples_per_chunk")
+    assert rollout == parent_rollout
+
+    trainer = OmegaConf.to_container(cfg.trainer, resolve=True)
+    parent_trainer = OmegaConf.to_container(parent.trainer, resolve=True)
+    assert isinstance(trainer, dict) and isinstance(parent_trainer, dict)
+    for key in ("output_dir", "save_freq"):
+        trainer.pop(key)
+        parent_trainer.pop(key)
+    assert trainer == parent_trainer
+
+
 def test_wan_robotics_continuous_resolves_balanced_four_l4_topology() -> None:
     """The robotics run must keep trainer, rollout, and reward GPUs disjoint."""
 
@@ -466,6 +602,127 @@ def test_wan_robotics_continuous_resolves_balanced_four_l4_topology() -> None:
     assert cfg.rollout.microbatch_size == cfg.rollout.prompts_per_batch == 4
     assert built["trainer"].timestep_selection == "strided"
     assert built["trainer"].gradient_accumulation_steps == 1
+
+
+def test_wan_droid_fullparam_fsdp_3x_l4_preserves_launch_contract(
+    monkeypatch,
+) -> None:
+    """The long run keeps full-param training and rank-local rollout semantics."""
+
+    monkeypatch.setattr("vrl.ray.resources._auto_visible_cuda_devices", lambda: (0,))
+    cfg = load_config(
+        "experiment/wan_2_1/online_grpo_droid_fullparam_fsdp_3x_l4",
+    )
+    validate_training_config(cfg)
+    built = build_configs(cfg)
+    resources = resolve_distributed_resources(cfg)
+    validate_rollout_schedule_topology(
+        built["trainer"].rollout_orchestration,
+        resources,
+    )
+    validate_reward_memory_parking(resources=resources, built=built)
+
+    assert cfg.model.family == "wan"
+    assert cfg.model.use_lora is False
+    assert cfg.model.torch_compile.enable is False
+    assert cfg.precision.training.dtype == "bf16"
+    assert cfg.actor.gradient_checkpointing == "full"
+    assert cfg.actor.optim.optim_8bit is False
+    assert cfg.actor.ema.enable is False
+    assert cfg.algorithm.kl_coef == 0.0
+    assert cfg.algorithm.sft_weight > 0.0
+
+    assert cfg.distributed.training.strategy == "fsdp"
+    assert cfg.distributed.training.num_nodes * cfg.distributed.training.gpus_per_node == 3
+    assert cfg.distributed.training.fsdp.precision_policy == "actor"
+    assert cfg.distributed.training.fsdp.cpu_offload is False
+    assert resources.trainer_devices == resources.rollout_devices == (0,)
+    assert resources.rollout_num_workers == 1
+    assert resources.reward_devices == ()
+    assert resources.lifecycle.rollout.mode == "on_demand"
+    assert resources.lifecycle.handoff.release_rollout_before_train is True
+    assert built["trainer"].rollout_orchestration.schedule_mode == "strict_on_policy"
+
+    assert (cfg.sampling.width, cfg.sampling.height, cfg.sampling.num_frames) == (
+        832,
+        480,
+        33,
+    )
+    assert cfg.sampling.fps == 15
+    assert cfg.sampling.guidance_scale == 6.0
+    assert cfg.rollout.prompts_per_batch == 2
+    assert (
+        cfg.rollout.prompts_per_batch
+        * cfg.rollout.n_samples_per_prompt
+        * cfg.distributed.training.gpus_per_node
+        == 24
+    )
+    assert cfg.data.task_type == "text_to_video"
+    assert cfg.data.preprocessing.conditioning == "text_only"
+    assert str(cfg.data.sft_latents).endswith("wan_1_3b_480p_33f_bf16.pt")
+
+    assert cfg.reward.components == {"robotics_video_reward": 1.0}
+    reward = cfg.reward.kwargs.robotics_video_reward
+    assert reward.score_key == "robotics_blend"
+    assert reward.inference.kind == "http"
+    assert reward.inference.expected_model == "robotics-video-reward-v1"
+
+
+@pytest.mark.parametrize("physical_device", [0, 1])
+def test_wan_droid_fullparam_fsdp_4x_l4_uses_symmetric_reward_handoffs(
+    monkeypatch,
+    physical_device,
+) -> None:
+    """All four ranks time-share local rollout and the complete robotics reward."""
+
+    monkeypatch.setattr(
+        "vrl.ray.resources._auto_visible_cuda_devices",
+        lambda: (physical_device,),
+    )
+    cfg = load_config(
+        "experiment/wan_2_1/online_grpo_droid_fullparam_fsdp_4x_l4",
+    )
+    validate_training_config(cfg)
+    built = build_configs(cfg)
+    resources = resolve_distributed_resources(cfg)
+    validate_rollout_schedule_topology(
+        built["trainer"].rollout_orchestration,
+        resources,
+    )
+    validate_reward_memory_parking(resources=resources, built=built)
+
+    assert cfg.model.use_lora is False
+    assert cfg.distributed.training.strategy == "fsdp"
+    assert cfg.distributed.training.gpus_per_node == 4
+    assert resources.trainer_devices == resources.rollout_devices == (physical_device,)
+    assert resources.reward_devices == ()
+    assert resources.reward_uses_trainer_device is True
+    assert reward_torch_device(resources, trainer_device="cuda:0") == "cuda:0"
+    assert resources.lifecycle.rollout.mode == "on_demand"
+    assert resources.lifecycle.reward.mode == "on_demand"
+    handoff = resources.lifecycle.handoff
+    assert handoff.release_rollout_before_train is True
+    assert handoff.release_rollout_before_reward is True
+    assert handoff.release_trainer_before_reward is True
+    assert handoff.release_reward_after_score is True
+    assert "inference" not in cfg.reward.kwargs.robotics_video_reward
+    assert cfg.reward.kwargs.robotics_video_reward.worker_config.weights == {
+        "target_dino_similarity": 1.0,
+        "motion_dynamics": 0.2,
+        "kling_text_alignment": 0.3,
+    }
+    assert (
+        cfg.rollout.prompts_per_batch
+        * cfg.rollout.n_samples_per_prompt
+        * cfg.distributed.training.gpus_per_node
+        == 32
+    )
+    trainer = build_trainer_config(cfg)
+    assert trainer.microbatch_size == 1
+    assert trainer.gradient_accumulation_steps == 2
+    assert trainer.host_memory_budget_fraction == pytest.approx(0.98)
+    assert trainer.ppo_epochs == 1
+    assert cfg.trainer.save_freq == 5
 
 
 def test_algorithm_config_dispatches_representative_kinds() -> None:
@@ -754,6 +1011,40 @@ def test_wan_i2v_production_validation_accepts_source_backed_data(tmp_path: Path
     )
 
     validate_training_config(cfg)
+
+
+def test_wan_i2v_fsdp_2x_l4_resolves_bounded_shared_topology(monkeypatch) -> None:
+    """The real-weight I2V gate shards replay and sequentially offloads rollout."""
+
+    monkeypatch.setattr("vrl.ray.resources._auto_visible_cuda_devices", lambda: (0,))
+    cfg = load_config("experiment/wan_2_1/online_grpo_i2v_fsdp_2x_l4")
+    validate_training_config(cfg)
+    built = build_configs(cfg)
+    resources = resolve_distributed_resources(cfg)
+    validate_rollout_schedule_topology(
+        built["trainer"].rollout_orchestration,
+        resources,
+    )
+    validate_reward_memory_parking(resources=resources, built=built)
+
+    assert cfg.model.family == "wan_2_1_i2v"
+    assert cfg.model.offload_mode == "sequential"
+    assert cfg.model.torch_compile.enable is False
+    assert cfg.distributed.training.strategy == "fsdp"
+    assert cfg.distributed.training.gpus_per_node == 2
+    assert cfg.distributed.training.fsdp.cpu_offload is True
+    assert resources.trainer_devices == resources.rollout_devices == (0,)
+    assert resources.rollout_num_workers == 1
+    assert resources.reward_devices == ()
+    assert resources.lifecycle.rollout.mode == "on_demand"
+    assert resources.lifecycle.handoff.release_rollout_before_train is True
+    assert cfg.reward.components == {"motion_dynamics": 1.0}
+    assert cfg.reward.kwargs.motion_dynamics.worker_config.device == "cpu"
+    assert cfg.rollout.n_samples_per_prompt == 2
+    assert cfg.rollout.samples_per_chunk == cfg.rollout.microbatch_size == 1
+    assert (cfg.sampling.width, cfg.sampling.height, cfg.sampling.num_frames) == (128, 128, 9)
+    assert cfg.sampling.num_steps == cfg.rollout.sde.window_range[1] == 4
+    assert cfg.trainer.save_freq == cfg.trainer.total_epochs == 1
 
 
 def test_wan_video_reward_production_config_requires_reward_name() -> None:

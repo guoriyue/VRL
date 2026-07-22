@@ -1,0 +1,93 @@
+# Wan 2.1 1.3B full-parameter robotics T2V post-training on four L4 GPUs.
+#
+# Every torchrun rank owns one physical L4 and executes the same strict phases:
+#   trainer parked -> Wan rollout -> rollout parked -> robotics reward
+#   -> reward parked -> FSDP trainer restored.
+# This makes all four GPUs useful in rollout, reward, and training without
+# colocating the 16.8 GiB Wan residency with the 5.7 GiB reward residency.
+#
+# The audited Wan workload leaves 266 MiB of deterministic CUDA/library pages
+# above its pre-load baseline after complete model parking. Launch with
+# VRL_CUDA_RESIDUAL_BYTES_LIMIT_MIB=512 so the physical-memory gate retains a
+# strict bound while accommodating that measured process-lifetime footprint.
+defaults:
+  - /recipe/online/wan_2_1_grpo
+  - /model/wan_2_1/1_3b
+  - /sampling/video/480p_33f
+  - /sampling/denoise/20_step_cfg_6
+  - /reward/robotics_video_reward
+  - /dataset/droid_full_target_t2v
+  - /base/distributed/training_fsdp
+
+model:
+  use_lora: false
+  local_files_only: true
+  torch_compile:
+    enable: false
+
+algorithm:
+  kl_coef: 0.0
+  sft_weight: 0.1
+
+actor:
+  optim:
+    lr: 2.0e-6
+    optim_8bit: false
+  gradient_checkpointing: full
+  # Streaming releases each prompt group after backward, so it cannot replay a
+  # released trajectory. One PPO pass is the repository's exact streaming
+  # contract and avoids retaining both groups solely for a second replay.
+  ppo_epochs: 1
+  timestep_fraction: 0.25
+  timestep_selection: strided
+  replay_samples_per_chunk: 1
+  ema:
+    enable: false
+
+sampling:
+  fps: 15
+
+rollout:
+  prompts_per_batch: 2
+  n_samples_per_prompt: 4
+  # Collect/train/release one prompt group at a time. Four CPU-parked Wan
+  # rollout actors already consume about 68 GiB between phases; retaining both
+  # prompt groups' video trajectories until backward crosses the host-memory
+  # safety margin even though the GPU batch itself fits.
+  microbatch_size: 1
+  host_memory_budget_fraction: 0.98
+  samples_per_chunk: 1
+  noise_level: 0.7
+  sde:
+    type: cps
+
+distributed:
+  training:
+    strategy: fsdp
+    num_nodes: 1
+    gpus_per_node: 4
+    fsdp:
+      mesh: ["dp_shard"]
+      precision_policy: actor
+      reshard_after_forward: true
+      cpu_offload: false
+  resources:
+    # Reward borrows each rank-local trainer/rollout GPU only after both owners
+    # have returned a complete parking proof.
+    trainer:
+      num_gpus: 1
+    rollout:
+      gpu_pool: trainer
+      num_gpus: 1
+      gpus_per_worker: 1.0
+      num_workers: 1
+
+trainer:
+  output_dir: outputs/wan_robotics_physics_4x_l4/droid_fullparam_fsdp_4x_l4
+  # At roughly one update per hour this is a multi-night run. Saving every five
+  # updates prevents another pre-checkpoint loss while keeping 20 periodic full
+  # checkpoints plus the final checkpoint within the dedicated NVMe volume.
+  total_epochs: 100
+  save_freq: 5
+  debug:
+    first_step: true

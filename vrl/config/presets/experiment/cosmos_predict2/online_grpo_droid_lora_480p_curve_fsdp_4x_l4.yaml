@@ -1,0 +1,64 @@
+# Cosmos Predict2 2B full-DROID curve on one host with four L4 GPUs.
+#
+# The full-curve parent remains the source of truth for the canonical train and
+# held-out eval manifests, LoRA/EMA policy, PPO replay budget, timestep sampling,
+# and DINO-plus-motion reward. Evaluation is an external workflow: this online
+# run consumes only data.manifest, and the presence of data.eval_manifest is not
+# evidence that model quality improved.
+#
+# Every torchrun rank owns one L4 and collects 16 rollouts for one prompt. Four
+# disjoint per-rank prompt groups therefore produce 64 rollouts globally while
+# preserving the parent's per-rank PPO2 and timestep_fraction=0.5 geometry. Each
+# rank starts one rank-local Ray rollout worker on its trainer GPU, then yields
+# that GPU before FSDP training. DINO and RAFT rewards remain on CPU.
+#
+# Guidance 0 failed the same-seed visual rollout gate, so this durable recipe
+# keeps guidance 7. The canonical model and dataset paths stay repo-relative;
+# deployment-specific staging paths belong in launch-time CLI overrides.
+defaults:
+  - /experiment/cosmos_predict2/online_grpo_droid_lora_480p_curve
+  - /base/distributed/training_fsdp
+
+distributed:
+  training:
+    strategy: fsdp
+    num_nodes: 1
+    gpus_per_node: 4
+    fsdp:
+      mesh: ["dp_shard"]
+      # Checkpoint recompute must observe the same parameter dtype as forward;
+      # trainer autocast still supplies bf16 compute.
+      precision_policy: none
+      reshard_after_forward: true
+      cpu_offload: false
+  resources:
+    trainer:
+      num_gpus: 1
+    rollout:
+      gpu_pool: trainer
+      num_gpus: 1
+      gpus_per_worker: 1.0
+      num_workers: 1
+    reward:
+      num_gpus: 0
+      devices: []
+      gpus_per_worker: 0.0
+      num_workers: 1
+
+model:
+  # FSDP2 reshard hooks are not compatible with the compiled transformer path.
+  torch_compile:
+    enable: false
+
+sampling:
+  guidance_scale: 7.0
+
+rollout:
+  # One production 832x480x93f guidance-7 sample fits an L4; larger chunks are
+  # not part of the validated memory envelope.
+  samples_per_chunk: 1
+
+trainer:
+  output_dir: outputs/cosmos_pred2_droid_lora_480p_curve_fsdp_4x_l4
+  # A complete checkpoint every epoch bounds unattended restart loss.
+  save_freq: 1

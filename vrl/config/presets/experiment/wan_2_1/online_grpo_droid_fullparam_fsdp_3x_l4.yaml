@@ -1,0 +1,113 @@
+# Wan 2.1 1.3B full-parameter robotics T2V post-training on four L4 GPUs.
+#
+# GPU 0-2: three FSDP ranks. Each rank alternates a colocated rollout worker and
+# its BF16 trainer shard; FP32 master/Adam states remain sharded by FSDP.
+# GPU 3: operator-owned robotics reward service. It combines DINOv2 target
+# fidelity, RAFT motion, and Kling text alignment while generation continues.
+#
+# DROID targets are 33 frames at 15 FPS. Keep that duration for supervised
+# diffusion regularization; 81-frame Wan rollout versus 33-frame target would
+# compare different physical time spans. 832x480 stays in Wan 1.3B's supported
+# spatial domain, unlike the collapsed historical 416x240 run.
+#
+# Prepare clean target latents once:
+#   CUDA_VISIBLE_DEVICES=0 .venv/bin/python -m vrl.scripts.denoise.encode_targets \
+#     --experiment wan_2_1/online_grpo_droid_fullparam_fsdp_3x_l4 \
+#     --out outputs/wan_robotics_physics_4x_l4/cosmos_assets/droid_full_targets_staging_1000_64_20260721/video_world/sft_latents/wan_1_3b_480p_33f_bf16.pt \
+#     --storage-dtype bf16
+#
+# Launch the reward service separately on physical GPU 3, then train:
+#   CUDA_VISIBLE_DEVICES=3 .venv/bin/vrl-reward-service \
+#     --config vrl/config/reward_service/robotics_video_reward.yaml
+#   CUDA_VISIBLE_DEVICES=0,1,2 torchrun --standalone --nproc_per_node=3 \
+#     -m vrl.scripts.train \
+#     --config experiment/wan_2_1/online_grpo_droid_fullparam_fsdp_3x_l4
+defaults:
+  - /recipe/online/wan_2_1_grpo
+  - /model/wan_2_1/1_3b
+  - /sampling/video/480p_33f
+  - /sampling/denoise/20_step_cfg_6
+  - /reward/robotics_video_reward_http
+  - /dataset/droid_full_target_t2v
+  - /base/distributed/training_fsdp
+
+model:
+  use_lora: false
+  # This audited long run is revision-pinned and fully cached. Fail instead of
+  # consulting the Hub if a required file is missing overnight.
+  local_files_only: true
+  torch_compile:
+    enable: false
+
+algorithm:
+  # Full-param has no adapter-disable base reference. The clean-target diffusion
+  # term is the anti-reward-hacking anchor instead.
+  kl_coef: 0.0
+  sft_weight: 0.1
+
+actor:
+  optim:
+    lr: 2.0e-6
+    optim_8bit: false
+  gradient_checkpointing: full
+  ppo_epochs: 2
+  timestep_fraction: 0.25
+  timestep_selection: strided
+  replay_samples_per_chunk: 1
+  ema:
+    enable: false
+
+sampling:
+  fps: 15
+
+rollout:
+  # Two prompt groups let the external reward service score group N on GPU 3
+  # while each rank generates group N+1. This remains strict on-policy because
+  # both groups use the same frozen policy version and training starts only
+  # after both rewards have returned.
+  prompts_per_batch: 2
+  n_samples_per_prompt: 4
+  samples_per_chunk: 1
+  noise_level: 0.7
+  sde:
+    type: cps
+
+distributed:
+  training:
+    strategy: fsdp
+    num_nodes: 1
+    gpus_per_node: 3
+    fsdp:
+      mesh: ["dp_shard"]
+      precision_policy: actor
+      reshard_after_forward: true
+      cpu_offload: false
+  resources:
+    trainer:
+      num_gpus: 1
+    rollout:
+      gpu_pool: trainer
+      num_gpus: 1
+      gpus_per_worker: 1.0
+      num_workers: 1
+
+reward:
+  components:
+    robotics_video_reward: 1.0
+  kwargs:
+    robotics_video_reward:
+      score_key: robotics_blend
+      artifact_dir: ${trainer.output_dir}/reward_artifacts
+      debug_dir: ${trainer.output_dir}/reward_debug
+      inference:
+        endpoint: http://127.0.0.1:8301
+        expected_model: robotics-video-reward-v1
+
+trainer:
+  output_dir: outputs/wan_robotics_physics_4x_l4/droid_fullparam_fsdp_3x_l4
+  total_epochs: 200
+  # Full optimizer checkpoints are large, so ten updates balances recovery
+  # distance against retaining the whole 200-update curve on the NVMe volume.
+  save_freq: 10
+  debug:
+    first_step: true

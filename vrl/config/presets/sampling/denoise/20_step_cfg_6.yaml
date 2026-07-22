@@ -1,0 +1,4 @@
+# Wan 2.1 T2V 1.3B recommended classifier-free guidance at 20 steps.
+sampling:
+  num_steps: 20
+  guidance_scale: 6.0
