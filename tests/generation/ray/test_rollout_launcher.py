@@ -115,14 +115,22 @@ def _worker_setup_hook(repo_root: str) -> Any:
 
 
 def _init_ray(ray: Any) -> None:
+    from ray._private import ray_constants
+
     ray.shutdown()
     repo_root = str(Path(__file__).resolve().parents[3])
+    # Same local-cluster contract as the shared conftest fixture: Ray's uv hook
+    # would package the whole checkout and re-resolve a project environment
+    # without the driver's dev dependencies, so workers could not unpickle the
+    # pytest-module-defined setup hook (ModuleNotFoundError: _pytest).
+    ray_constants.RAY_ENABLE_UV_RUN_RUNTIME_ENV = False
     ray.init(
         ignore_reinit_error=True,
         include_dashboard=False,
         num_cpus=2,
         log_to_driver=False,
         runtime_env={"worker_process_setup_hook": _worker_setup_hook(repo_root)},
+        _skip_env_hook=True,
     )
 
 

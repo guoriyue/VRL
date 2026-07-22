@@ -60,7 +60,10 @@ EVAL_SAMPLES_PER_PROMPT = 2
 # This is the fixed scientific comparison interval, not a training IO knob.
 EVAL_CHECKPOINT_INTERVAL = 25
 CANONICAL_CONFIG_NAME = "experiment/sana/online_grpo_aesthetic_fullparam_long"
-CANONICAL_PROTOCOL_SHA256 = "b898129d24642ceb97c2aea2608e81406e06d413cde69c73460e9917bce1dbdd"
+# Re-pinned after transport-neutral config keys (reward health_check_interval_s /
+# health_check_timeout_s, inference device) gained defaults; sampling, reward, and
+# optimization protocol values are unchanged from the b898129d pin.
+CANONICAL_PROTOCOL_SHA256 = "6710452dafd656b53e2ef4b0716a8022832d00fca7bc9689356b30e2450aa667"
 # Frozen protocol-asset identities. These hashes name two concrete datasets;
 # they are not a duplicated prompt taxonomy or a user-facing config table.
 TRAIN_MANIFEST_SHA256 = "86580c8136a4b6d9fc6bbcc6d8e8e172b15fca6b5c6c956cc770255d8011de56"
