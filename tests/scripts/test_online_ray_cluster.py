@@ -49,9 +49,11 @@ def test_local_run_starts_owned_cluster_even_when_environment_has_address(
         _resources(cross_node=False),
         isolated_ray,
         environ={"RAY_ADDRESS": "10.0.0.9:6379"},
+        local_num_cpus=3,
     )
 
     assert isolated_ray.is_initialized()
+    assert isolated_ray.cluster_resources()["CPU"] == 3
     session.shutdown()
     session.shutdown()  # idempotent: the second call must be a no-op
     assert not isolated_ray.is_initialized()
@@ -106,6 +108,9 @@ def test_cross_node_attaches_only_to_explicit_address(isolated_ray) -> None:
             _resources(cross_node=True),
             isolated_ray,
             environ={"RAY_ADDRESS": address},
+            # Attached clusters own their resources; this local-only capacity
+            # must not be forwarded to ray.init(address=<existing>).
+            local_num_cpus=5,
         )
 
         assert isolated_ray.is_initialized()
@@ -137,6 +142,7 @@ def test_preinitialized_connection_remains_owned_by_embedding_caller(
         _resources(cross_node=False),
         isolated_ray,
         environ={},
+        local_num_cpus=5,
     )
     session.shutdown()
 

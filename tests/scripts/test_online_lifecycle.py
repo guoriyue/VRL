@@ -140,6 +140,10 @@ class _FakePlacementOwner:
         self._state = state
         self.rollout_placement = object()
 
+    def required_local_cluster_cpus(self) -> int:
+        self._state["owner_cpu_plans"] += 1
+        return 1
+
     def create(self) -> None:
         self._state["owner_creates"] += 1
         if self._state.get("owner_create_raises"):
@@ -186,6 +190,7 @@ def _state() -> dict[str, Any]:
         "schedule_shutdowns": 0,
         "reward_shutdowns": 0,
         "owner_creates": 0,
+        "owner_cpu_plans": 0,
         "owner_shutdowns": 0,
         "launches": 0,
         "model_builds": 0,
@@ -398,6 +403,7 @@ async def test_run_online_recipe_shutdowns_owner_after_success(monkeypatch, tmp_
     await online.run_online_recipe(_cfg())
 
     assert state["owner_creates"] == 1
+    assert state["owner_cpu_plans"] == 1
     assert state["trainer_steps"] == 1
     assert state["checkpoint_paths"] == ["checkpoint-final"]
     assert state["collector_shutdowns"] == 1
@@ -413,6 +419,37 @@ async def test_run_online_recipe_shutdowns_owner_after_success(monkeypatch, tmp_
         "owner",
     ]
     assert not ray.is_initialized()
+
+
+@pytest.mark.slow_test
+@pytest.mark.asyncio
+async def test_resume_releases_full_checkpoint_payload_before_training(
+    monkeypatch,
+    tmp_path,
+    preinitialized_ray,
+) -> None:
+    del preinitialized_ray
+    state = _state()
+    state["total_epochs"] = 2
+    checkpoint = SimpleNamespace(
+        next_epoch=1,
+        next_step=3,
+        checkpoint_dir=tmp_path / "checkpoint-1",
+        payload={"large_model_state": object()},
+        rng_state={},
+    )
+    _install_common_fakes(monkeypatch, tmp_path, state)
+    monkeypatch.setattr(online, "load_training_checkpoint_from_config", lambda cfg: checkpoint)
+    monkeypatch.setattr(online, "restore_training_checkpoint", lambda *args, **kwargs: None)
+    monkeypatch.setattr(online, "restore_rng_state", lambda *args, **kwargs: None)
+    collect_calls: list[bool] = []
+    monkeypatch.setattr(online.gc, "collect", lambda: collect_calls.append(True))
+
+    await online.run_online_recipe(_cfg())
+
+    assert checkpoint.payload == {}
+    assert collect_calls == [True]
+    assert state["trainer_steps"] == 1
 
 
 @pytest.mark.slow_test
@@ -444,7 +481,6 @@ def test_require_supported_online_strategy_allows_fsdp() -> None:
         strategy="fsdp",
         distributed=True,
         rank=0,
-        local_rank=0,
         world_size=2,
         is_primary=True,
         device=torch.device("cpu"),
@@ -459,7 +495,6 @@ def test_require_supported_online_strategy_allows_single_process() -> None:
         strategy="single_process",
         distributed=False,
         rank=0,
-        local_rank=0,
         world_size=1,
         is_primary=True,
         device=torch.device("cpu"),
@@ -476,7 +511,6 @@ def test_require_supported_online_strategy_allows_ddp() -> None:
         strategy="ddp",
         distributed=True,
         rank=1,
-        local_rank=0,
         world_size=2,
         is_primary=False,
         device=torch.device("cuda:0"),
@@ -512,7 +546,6 @@ async def test_distributed_disjoint_rollout_fails_before_model_or_ray_launch(
         strategy="fsdp",
         distributed=True,
         rank=0,
-        local_rank=0,
         world_size=2,
         is_primary=True,
         device=torch.device("cuda:0"),

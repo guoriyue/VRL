@@ -29,6 +29,24 @@ def _validate_topology_derived_reward_kwargs(
                 )
 
 
+def _all_rewards_use_external_inference(
+    reward_weights: dict[str, float],
+    reward_kwargs: dict[str, Any],
+) -> bool:
+    """Return whether every configured component is an external runtime client."""
+
+    from vrl.config.reward_inference import parse_reward_inference_config
+
+    return bool(reward_weights) and all(
+        parse_reward_inference_config(
+            dict(reward_kwargs.get(name) or {}).get("inference"),
+            context=f"reward.kwargs.{name}.inference",
+        ).kind
+        == "http"
+        for name in reward_weights
+    )
+
+
 @dataclass(frozen=True, slots=True)
 class AlgorithmEvaluatorPair:
     """Algorithm instance plus its optional evaluator."""
@@ -62,12 +80,35 @@ def build_reward(
     from vrl.rewards.functions.registry import MultiReward
 
     memory_parking_required: bool | None = None
-    if resources is not None:
-        expected_device = reward_torch_device(resources)
-        if str(device).strip().lower() != expected_device.strip().lower():
+    external_only = _all_rewards_use_external_inference(
+        dict(reward_weights),
+        dict(reward_kwargs),
+    )
+    if resources is not None and not external_only:
+        # Symmetric torchrun ranks keep physical ordinals in the resource plan
+        # for Ray placement, but CUDA_VISIBLE_DEVICES narrows each rank to local
+        # logical cuda:0. The caller passes that actual trainer/reward device;
+        # let an unreserved shared reward inherit it instead of comparing it to
+        # the placement-only physical ordinal.
+        placement_device = reward_torch_device(resources)
+        expected_device = reward_torch_device(
+            resources,
+            trainer_device=device,
+        )
+        actual_device = str(device).strip().lower()
+        expected_device = expected_device.strip().lower()
+        same_device_kind = actual_device.startswith("cuda") == placement_device.startswith(
+            "cuda",
+        )
+        matches_resource_plan = (
+            same_device_kind
+            if resources.reward_uses_trainer_device
+            else actual_device == expected_device
+        )
+        if not matches_resource_plan:
             raise ValueError(
                 f"reward device {str(device)!r} conflicts with distributed resources "
-                f"resolved device {expected_device!r}; resource topology is the "
+                f"resolved device {placement_device!r}; resource topology is the "
                 "execution-device source of truth.",
             )
         validate_reward_memory_parking(
@@ -78,6 +119,11 @@ def build_reward(
         memory_parking_required = bool(
             resources.lifecycle.handoff.release_reward_after_score,
         )
+    elif resources is not None:
+        # HTTP components execute as CPU clients in this process; their model
+        # device belongs to the standalone service and is absent from the local
+        # resource plan. A torchrun rank's logical CUDA name is irrelevant here.
+        memory_parking_required = False
 
     return MultiReward.from_dict(
         reward_weights,

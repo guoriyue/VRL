@@ -23,6 +23,7 @@ GPU (or vice versa) and silently collide the driver with a rollout worker.
 from __future__ import annotations
 
 import logging
+import math
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any
@@ -280,6 +281,22 @@ class GlobalRayPlacementOwner:
             probed,
             self._role_bundles,
         )
+
+    def required_local_cluster_cpus(self) -> int:
+        """Return the Ray node CPU capacity needed by this placement plan."""
+
+        quantities = [float(bundle["CPU"]) for bundle in self._bundle_requirements()]
+        invalid = [
+            quantity for quantity in quantities if not math.isfinite(quantity) or quantity <= 0
+        ]
+        if invalid:
+            raise ValueError(
+                f"Ray placement CPU quantities must be finite and > 0, got {invalid}",
+            )
+        # Placement bundles accept fractional CPU reservations, while Ray node
+        # startup requires an integer capacity. Sum the actual bundle plan so
+        # colocated roles retain its max-not-sum semantics.
+        return max(1, math.ceil(math.fsum(quantities)))
 
     def shutdown(self) -> None:
         """Remove the placement group, retaining ownership until success."""

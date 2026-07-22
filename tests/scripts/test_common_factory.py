@@ -450,6 +450,77 @@ def test_reward_factory_passes_the_selected_local_device(monkeypatch) -> None:
     }
 
 
+def test_http_reward_accepts_torchrun_rank_local_device(monkeypatch) -> None:
+    """External scoring must not compare logical cuda:0 with a physical ordinal."""
+    from vrl.rewards.functions.registry import MultiReward
+
+    captured: dict[str, object] = {}
+
+    def fake_from_dict(
+        cls,
+        score_dict,
+        device="cuda",
+        reward_kwargs=None,
+        memory_parking_required=None,
+    ):
+        del cls, score_dict, reward_kwargs
+        captured.update(
+            device=device,
+            memory_parking_required=memory_parking_required,
+        )
+        return object()
+
+    monkeypatch.setattr(MultiReward, "from_dict", classmethod(fake_from_dict))
+    cfg = OmegaConf.create(
+        {
+            "distributed": {
+                "resources": {
+                    "visible_devices": [2],
+                    "trainer": {"devices": [2]},
+                    "rollout": {
+                        "devices": [2],
+                        "gpus_per_worker": 1,
+                        "gpu_pool": "trainer",
+                    },
+                },
+            },
+            "reward": {
+                "components": {"unified_reward_video": 1.0},
+                "kwargs": {
+                    "unified_reward_video": {
+                        "inference": {
+                            "kind": "http",
+                            "endpoint": "http://127.0.0.1:8300",
+                            "expected_model": "unified-reward-robotics",
+                        },
+                    },
+                },
+            },
+        },
+    )
+
+    build_reward(
+        built={
+            "reward": (
+                {"unified_reward_video": 1.0},
+                {
+                    "unified_reward_video": {
+                        "inference": {
+                            "kind": "http",
+                            "endpoint": "http://127.0.0.1:8300",
+                            "expected_model": "unified-reward-robotics",
+                        },
+                    },
+                },
+            ),
+        },
+        resources=resolve_distributed_resources(cfg),
+        device="cuda:0",
+    )
+
+    assert captured == {"device": "cuda:0", "memory_parking_required": False}
+
+
 def test_reward_factory_rejects_an_all_zero_objective() -> None:
     """Checks observation-only components cannot replace the training objective."""
     with pytest.raises(ValueError, match="At least one reward component"):
@@ -538,6 +609,48 @@ def test_shared_reward_topology_automatically_enables_parking(monkeypatch) -> No
 
     assert reward is sentinel
     assert captured["memory_parking_required"] is True
+
+
+def test_shared_reward_accepts_rank_local_cuda_after_physical_placement(
+    monkeypatch,
+) -> None:
+    """A torchrun rank scores on logical cuda:0 while Ray keeps its physical ID."""
+    from vrl.rewards.functions.registry import MultiReward
+
+    captured: dict[str, object] = {}
+    sentinel = object()
+
+    def fake_from_dict(
+        cls,
+        score_dict,
+        device="cuda",
+        reward_kwargs=None,
+        memory_parking_required=None,
+    ):
+        del cls, score_dict, reward_kwargs
+        captured.update(
+            device=device,
+            memory_parking_required=memory_parking_required,
+        )
+        return sentinel
+
+    monkeypatch.setattr(MultiReward, "from_dict", classmethod(fake_from_dict))
+    cfg = _shared_reward_cfg("aesthetic")
+    cfg.distributed.resources.visible_devices = [2]
+    cfg.distributed.resources.trainer.devices = [2]
+    cfg.distributed.resources.rollout.devices = [2]
+
+    reward = build_reward(
+        built={"reward": ({"aesthetic": 1.0}, {"aesthetic": {}})},
+        resources=resolve_distributed_resources(cfg),
+        device="cuda:0",
+    )
+
+    assert reward is sentinel
+    assert captured == {
+        "device": "cuda:0",
+        "memory_parking_required": True,
+    }
 
 
 def test_reward_preflight_rejects_yaml_lifecycle_override() -> None:

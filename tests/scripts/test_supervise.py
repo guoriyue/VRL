@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import signal
@@ -11,6 +12,7 @@ import time
 from pathlib import Path
 
 import pytest
+from omegaconf import OmegaConf
 
 from vrl.scripts.supervise import (
     HEALTH_VERDICT_NAME,
@@ -18,6 +20,7 @@ from vrl.scripts.supervise import (
     MetricsHealthGate,
     RunSupervisor,
     build_parser,
+    build_train_launch,
 )
 
 _METRICS_HEADER = "epoch,loss,reward_mean,reward_std,grad_norm,pre_update_logprob_abs_diff_max\n"
@@ -76,6 +79,18 @@ def _child_script(tmp_path: Path, body: str) -> list[str]:
     script = tmp_path / "child.py"
     script.write_text(body)
     return [sys.executable, str(script)]
+
+
+def _torchrun_command(script: Path, *, workers: int = 2) -> list[str]:
+    return [
+        sys.executable,
+        "-m",
+        "torch.distributed.run",
+        "--standalone",
+        f"--nproc-per-node={workers}",
+        "--max-restarts=0",
+        str(script),
+    ]
 
 
 def _write_verdict_snippet(out_dir: Path) -> str:
@@ -201,6 +216,55 @@ def test_restart_resumes_from_latest_complete_checkpoint(tmp_path) -> None:
     assert "model.lora.path=" in argv  # warm-start adapter cleared on resume
 
 
+def test_torchrun_failure_restarts_all_ranks_from_complete_checkpoint(tmp_path) -> None:
+    out = tmp_path / "run"
+    worker = tmp_path / "restart_worker.py"
+    worker.write_text(
+        "import json, os, pathlib, sys, time\n"
+        "from vrl.scripts.train import write_run_verdict\n"
+        f"out = pathlib.Path({str(out)!r})\n"
+        "rank = int(os.environ['RANK'])\n"
+        "resume = next((arg for arg in sys.argv[1:] "
+        "if arg.startswith('trainer.resume_from=')), '')\n"
+        "if not resume:\n"
+        "    checkpoint = out / 'checkpoint-4'\n"
+        "    if rank == 0:\n"
+        "        checkpoint.mkdir(parents=True, exist_ok=True)\n"
+        "        payload = b'complete-checkpoint'\n"
+        "        (checkpoint / 'checkpoint.pt').write_bytes(payload)\n"
+        "        meta = {'schema_version': 1, 'checkpoint_file_bytes': len(payload), "
+        "'global_step': 4, 'next_epoch': 4}\n"
+        "        (checkpoint / 'checkpoint_meta.json').write_text(json.dumps(meta))\n"
+        "        write_run_verdict(str(out))\n"
+        "        raise SystemExit(0)\n"
+        "    for _ in range(100):\n"
+        "        if (checkpoint / 'checkpoint_meta.json').exists():\n"
+        "            break\n"
+        "        time.sleep(0.02)\n"
+        "    write_run_verdict(str(out), error=ValueError('transient rank failure'))\n"
+        "    raise SystemExit(1)\n"
+        "(out / f'resume-rank-{rank}.txt').write_text('\\n'.join(sys.argv[1:]))\n"
+        "write_run_verdict(str(out))\n",
+    )
+    supervisor = RunSupervisor(
+        command=[*_torchrun_command(worker), str(out)],
+        output_dir=out,
+        expected_world_size=2,
+        max_attempts=2,
+        sleep=lambda _: None,
+    )
+
+    assert supervisor.run() == 0
+    checkpoint = out / "checkpoint-4"
+    for rank in range(2):
+        argv = (out / f"resume-rank-{rank}.txt").read_text().splitlines()
+        assert f"trainer.resume_from={checkpoint}" in argv
+        assert "model.lora.path=" in argv
+    aggregate = json.loads((out / "run_verdict.json").read_text())
+    assert aggregate["verdict"] == "success"
+    assert len(aggregate["rank_verdicts"]) == 2
+
+
 def test_stop_kills_whole_child_process_group(tmp_path) -> None:
     out = tmp_path / "run"
     grandchild_pid_file = tmp_path / "grandchild.pid"
@@ -245,11 +309,224 @@ def test_stop_kills_whole_child_process_group(tmp_path) -> None:
         raise AssertionError("grandchild survived supervisor stop")
 
 
+def test_stop_kills_torchrun_workers(tmp_path) -> None:
+    out = tmp_path / "run"
+    worker = tmp_path / "sleep_worker.py"
+    worker.write_text(
+        "import os, pathlib, time\n"
+        f"out = pathlib.Path({str(out)!r})\n"
+        "out.mkdir(parents=True, exist_ok=True)\n"
+        "rank = int(os.environ['RANK'])\n"
+        "(out / f'worker-{rank}.pid').write_text(str(os.getpid()))\n"
+        "time.sleep(600)\n",
+    )
+    supervisor = RunSupervisor(
+        command=_torchrun_command(worker),
+        output_dir=out,
+        expected_world_size=2,
+        term_grace_seconds=3.0,
+        sleep=lambda _: None,
+    )
+    result: list[int] = []
+    runner = threading.Thread(target=lambda: result.append(supervisor.run()))
+    runner.start()
+    deadline = time.monotonic() + 15
+    pid_files = [out / f"worker-{rank}.pid" for rank in range(2)]
+    while not all(path.exists() for path in pid_files) and time.monotonic() < deadline:
+        time.sleep(0.05)
+    assert all(path.exists() for path in pid_files), "torchrun workers did not start"
+    worker_pids = [int(path.read_text()) for path in pid_files]
+
+    supervisor.request_stop(signal.SIGTERM)
+    runner.join(timeout=15)
+    assert not runner.is_alive()
+    assert result and result[0] != 0
+    deadline = time.monotonic() + 5
+    while time.monotonic() < deadline:
+        if all(not Path(f"/proc/{pid}").exists() for pid in worker_pids):
+            break
+        time.sleep(0.1)
+    else:
+        for pid in worker_pids:
+            with contextlib.suppress(ProcessLookupError):
+                os.kill(pid, signal.SIGKILL)
+        raise AssertionError("torchrun worker survived supervisor stop")
+
+
 def test_verdict_file_contract_matches_train_cli() -> None:
     """The supervisor reads the same file name vrl-train writes."""
     from vrl.scripts import supervise, train
 
     assert supervise.RUN_VERDICT_NAME == train.RUN_VERDICT_NAME
+
+
+def test_build_train_launch_keeps_single_process_direct() -> None:
+    cfg = OmegaConf.create(
+        {"distributed": {"training": {"strategy": "single_process"}}},
+    )
+
+    launch = build_train_launch(
+        cfg,
+        config="experiment/unit",
+        overrides=["trainer.seed=7"],
+        python_executable="/venv/python",
+    )
+
+    assert launch.expected_world_size == 1
+    assert launch.command == (
+        "/venv/python",
+        "-m",
+        "vrl.scripts.train",
+        "--config",
+        "experiment/unit",
+        "trainer.seed=7",
+    )
+
+
+@pytest.mark.parametrize("strategy", ["ddp", "fsdp"])
+def test_build_train_launch_uses_one_host_torchrun(strategy: str) -> None:
+    cfg = OmegaConf.create(
+        {
+            "distributed": {
+                "training": {
+                    "strategy": strategy,
+                    "num_nodes": 1,
+                    "gpus_per_node": 4,
+                },
+            },
+        },
+    )
+
+    launch = build_train_launch(
+        cfg,
+        config="experiment/cosmos",
+        overrides=["trainer.total_epochs=2"],
+        python_executable="/venv/python",
+    )
+
+    assert launch.expected_world_size == 4
+    assert launch.command == (
+        "/venv/python",
+        "-m",
+        "torch.distributed.run",
+        "--standalone",
+        "--nnodes=1",
+        "--nproc-per-node=4",
+        "--max-restarts=0",
+        "--module",
+        "vrl.scripts.train",
+        "--config",
+        "experiment/cosmos",
+        "trainer.total_epochs=2",
+    )
+
+
+def test_build_train_launch_rejects_unowned_multi_node_rendezvous() -> None:
+    cfg = OmegaConf.create(
+        {
+            "distributed": {
+                "training": {
+                    "strategy": "fsdp",
+                    "num_nodes": 2,
+                    "gpus_per_node": 4,
+                },
+            },
+        },
+    )
+
+    with pytest.raises(ValueError, match="rendezvous"):
+        build_train_launch(
+            cfg,
+            config="experiment/cosmos",
+            overrides=[],
+        )
+
+
+def test_supervisor_rejects_nested_torchrun_owners() -> None:
+    from vrl.scripts import supervise
+
+    with pytest.raises(ValueError, match="exactly one owner"):
+        supervise._require_single_supervisor_owner(
+            {"RANK": "1", "WORLD_SIZE": "4"},
+        )
+
+
+def test_train_writes_atomic_rank_verdicts_and_failure_wins_aggregation(tmp_path) -> None:
+    from vrl.scripts import train
+
+    out = tmp_path / "run"
+    train.write_run_verdict(
+        str(out),
+        environ={"RANK": "0", "WORLD_SIZE": "4"},
+    )
+    train.write_run_verdict(
+        str(out),
+        received_signal=signal.SIGTERM,
+        environ={"RANK": "1", "WORLD_SIZE": "4"},
+    )
+    train.write_run_verdict(
+        str(out),
+        error=ValueError("rank 2 root cause"),
+        environ={"RANK": "2", "WORLD_SIZE": "4"},
+    )
+    train.write_run_verdict(
+        str(out),
+        environ={"RANK": "3", "WORLD_SIZE": "4"},
+    )
+    assert not (out / "run_verdict.json").exists()
+
+    supervisor = RunSupervisor(
+        command=[],
+        output_dir=out,
+        expected_world_size=4,
+    )
+    aggregate = supervisor._collect_attempt_verdict()
+
+    assert aggregate is not None
+    assert aggregate["verdict"] == "failed"
+    assert aggregate["error_class"] == "ValueError"
+    assert aggregate["failed_ranks"] == [2]
+    assert json.loads((out / "run_verdict.json").read_text()) == aggregate
+    assert not list(out.glob(".*.tmp-*"))
+
+
+def test_train_keeps_single_process_verdict_name(tmp_path) -> None:
+    from vrl.scripts import train
+
+    out = tmp_path / "run"
+    train.write_run_verdict(str(out), environ={})
+
+    assert json.loads((out / "run_verdict.json").read_text())["verdict"] == "success"
+    assert not list(out.glob("run_verdict.rank-*.json"))
+
+
+def test_distributed_success_requires_every_rank_verdict(tmp_path) -> None:
+    from vrl.scripts import train
+
+    out = tmp_path / "run"
+    train.write_run_verdict(
+        str(out),
+        environ={"RANK": "0", "WORLD_SIZE": "2"},
+    )
+    supervisor = RunSupervisor(
+        command=[],
+        output_dir=out,
+        expected_world_size=2,
+    )
+
+    incomplete = supervisor._collect_attempt_verdict()
+    assert incomplete is not None
+    assert incomplete["verdict"] == "failed"
+    assert incomplete["error_class"] == "MissingRankVerdict"
+    assert incomplete["missing_ranks"] == [1]
+
+    train.write_run_verdict(
+        str(out),
+        environ={"RANK": "1", "WORLD_SIZE": "2"},
+    )
+    complete = supervisor._collect_attempt_verdict()
+    assert complete is not None
+    assert complete["verdict"] == "success"
 
 
 def test_metrics_health_gate_is_disabled_by_default() -> None:

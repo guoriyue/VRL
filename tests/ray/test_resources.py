@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import pytest
+import torch
 from omegaconf import OmegaConf
 
 from vrl.ray.resources import (
@@ -12,6 +13,7 @@ from vrl.ray.resources import (
     reward_torch_device,
     trainer_torch_device,
 )
+from vrl.trainers.distributed import resolve_training_context
 
 
 def _cfg(
@@ -1307,6 +1309,49 @@ def test_fsdp_colocate_resolves_per_rank_local_single_gpu() -> None:
     assert resolved.colocated is True
     assert resolved.lifecycle.rollout.mode == "on_demand"
     assert resolved.cross_node is False  # per-rank-local: no shared Ray cluster
+
+
+@pytest.mark.parametrize("rank", range(4))
+def test_fsdp_4x_l4_rank_mask_resolves_one_logical_gpu(monkeypatch, rank: int) -> None:
+    """Resource ownership stays physical while Torch uses rank-local cuda:0."""
+
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: True)
+    monkeypatch.setattr(torch.cuda, "device_count", lambda: 1)
+    cfg = OmegaConf.create(
+        {
+            "distributed": {
+                "training": {"strategy": "fsdp", "num_nodes": 1, "gpus_per_node": 4},
+                "resources": {
+                    # The entrypoint rewrites this to the selected physical
+                    # ordinal before resource resolution.
+                    "visible_devices": [rank],
+                    "trainer": {"num_gpus": 1},
+                    "rollout": {
+                        "gpu_pool": "trainer",
+                        "num_gpus": 1,
+                        "gpus_per_worker": 1,
+                        "num_workers": 1,
+                    },
+                    "reward": {"num_gpus": 0, "devices": [], "gpus_per_worker": 0},
+                },
+            },
+        },
+    )
+
+    resolved = resolve_distributed_resources(cfg)
+    context = resolve_training_context(
+        cfg,
+        device=torch.device(trainer_torch_device(resolved)),
+        env={"RANK": str(rank), "LOCAL_RANK": str(rank), "WORLD_SIZE": "4"},
+    )
+
+    assert resolved.visible_devices == (rank,)
+    assert resolved.trainer_devices == (rank,)
+    assert resolved.rollout_devices == (rank,)
+    assert resolved.rollout_num_workers == 1
+    assert resolved.colocated is True
+    assert resolved.lifecycle.rollout.mode == "on_demand"
+    assert context.device == torch.device("cuda:0")
 
 
 def test_single_gpu_colocate_without_cross_node_still_rejects_excess_rollout() -> None:

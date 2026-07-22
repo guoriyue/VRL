@@ -3,14 +3,15 @@
 Replaces the out-of-repo ``run-until-success`` shell guardian. The contract
 differences that make this one trustworthy:
 
-- **Explicit verdicts, not exit-code guessing.** ``vrl-train`` publishes
-  ``run_verdict.json`` (success / failed+error class / terminated+signal);
-  a missing verdict means the process died without unwinding (SIGKILL, OOM
-  kill) and is treated as an infrastructure failure.
+- **Explicit verdicts, not exit-code guessing.** A single ``vrl-train`` process
+  publishes ``run_verdict.json``; torchrun workers publish rank-specific verdicts
+  that this supervisor joins into the same aggregate contract. A missing verdict
+  means a worker died without unwinding (SIGKILL, OOM kill) and is treated as an
+  infrastructure failure.
 - **Process-group ownership.** The child runs in its own session; stop means
   SIGTERM to the whole group, a bounded grace period for the child's own
-  cleanup (Ray teardown, checkpoint flush), then SIGKILL to the group. No
-  orphaned Ray workers.
+  cleanup (torchrun workers, Ray teardown, checkpoint flush), then SIGKILL to
+  the group. No orphaned workers.
 - **Checkpoint-verified resume.** Restarts resume from the latest COMPLETE
   checkpoint (atomic-publish + size-verified, see
   ``vrl.trainers.checkpointing``); a fresh start happens only when no
@@ -19,7 +20,8 @@ differences that make this one trustworthy:
   class stop the loop instead of burning GPU re-hitting a deterministic bug.
 - **Optional metrics health gate.** When explicitly enabled, consecutive new
   non-finite or out-of-bound training rows stop the child group without a
-  restart and publish a machine-readable health verdict.
+  restart and publish a machine-readable health verdict. This is a numerical
+  training-invariant gate, not a reward-trend or evaluation-quality judge.
 """
 
 from __future__ import annotations
@@ -39,9 +41,10 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from vrl.scripts.train import RUN_VERDICT_NAME, rank_run_verdict_name
+
 logger = logging.getLogger(__name__)
 
-RUN_VERDICT_NAME = "run_verdict.json"
 HEALTH_VERDICT_NAME = "health_verdict.json"
 _REQUIRED_HEALTH_METRICS = (
     "loss",
@@ -87,13 +90,24 @@ class AttemptOutcome:
 
 
 @dataclass(frozen=True, slots=True)
+class TrainLaunch:
+    """One supervised trainer command and the worker verdicts it must produce."""
+
+    command: tuple[str, ...]
+    expected_world_size: int
+
+
+@dataclass(frozen=True, slots=True)
 class HealthGateConfig:
     """Thresholds for the opt-in metrics health gate.
 
     Presence of this config is what enables the gate (``RunSupervisor.health``),
     so "enabled but unconfigured" and "thresholds set but disabled" cannot be
     expressed. ``max_stale_policy_versions`` additionally opts into the
-    continuous-rollout metrics.
+    continuous-rollout metrics. The gate intentionally does not infer learning
+    progress from ``reward_mean``: rotating prompts and stochastic rollouts make
+    such a threshold experiment-specific. Fixed evaluation remains an external
+    checkpoint-evaluation concern.
     """
 
     poll_seconds: float = 5.0
@@ -347,12 +361,15 @@ class RunSupervisor:
     backoff_seconds: float = 5.0
     sleep: Any = time.sleep  # injectable for tests
     health: HealthGateConfig | None = None  # presence enables the metrics gate
+    expected_world_size: int = 1
 
     _child: subprocess.Popen | None = field(default=None, init=False, repr=False)
     _stop_requested: bool = field(default=False, init=False, repr=False)
     _health_gate: MetricsHealthGate | None = field(default=None, init=False, repr=False)
 
     def __post_init__(self) -> None:
+        if self.expected_world_size < 1:
+            raise ValueError("expected_world_size must be >= 1")
         if self.health is not None:
             self._health_gate = MetricsHealthGate(self.health, self.output_dir)
 
@@ -416,8 +433,7 @@ class RunSupervisor:
         return [f"trainer.resume_from={latest}", "model.lora.path="]
 
     def _run_attempt(self, extra_overrides: list[str]) -> AttemptOutcome:
-        verdict_path = self.output_dir / RUN_VERDICT_NAME
-        verdict_path.unlink(missing_ok=True)
+        self._clear_attempt_verdicts()
         if self._health_gate is not None:
             self._health_gate.start_attempt()
         # start_new_session puts the child in its own process group so stop
@@ -433,7 +449,121 @@ class RunSupervisor:
                 exit_code = self._wait_with_health_checks(self._child, self._health_gate)
         finally:
             self._child = None
-        return AttemptOutcome(exit_code=exit_code, verdict=self._read_verdict(verdict_path))
+        return AttemptOutcome(exit_code=exit_code, verdict=self._collect_attempt_verdict())
+
+    def _clear_attempt_verdicts(self) -> None:
+        (self.output_dir / RUN_VERDICT_NAME).unlink(missing_ok=True)
+        for path in self.output_dir.glob("run_verdict.rank-*.json"):
+            path.unlink(missing_ok=True)
+
+    def _collect_attempt_verdict(self) -> dict[str, Any] | None:
+        aggregate_path = self.output_dir / RUN_VERDICT_NAME
+        if self.expected_world_size == 1:
+            return self._read_verdict(aggregate_path)
+
+        rank_verdicts: dict[int, dict[str, Any]] = {}
+        missing_ranks: list[int] = []
+        for rank in range(self.expected_world_size):
+            verdict = self._read_verdict(
+                self.output_dir / rank_run_verdict_name(rank),
+            )
+            if (
+                verdict is None
+                or verdict.get("rank") != rank
+                or verdict.get("world_size") != self.expected_world_size
+            ):
+                missing_ranks.append(rank)
+                continue
+            rank_verdicts[rank] = verdict
+
+        aggregate = self._aggregate_rank_verdicts(rank_verdicts, missing_ranks)
+        self._write_aggregate_verdict(aggregate_path, aggregate)
+        return aggregate
+
+    def _aggregate_rank_verdicts(
+        self,
+        rank_verdicts: dict[int, dict[str, Any]],
+        missing_ranks: list[int],
+    ) -> dict[str, Any]:
+        """Choose one deterministic outcome without letting teardown hide failure."""
+
+        observed = [{"rank": rank, **verdict} for rank, verdict in sorted(rank_verdicts.items())]
+        common = {
+            "schema_version": 1,
+            "world_size": self.expected_world_size,
+            "rank_verdicts": observed,
+        }
+        failures = [
+            (rank, verdict)
+            for rank, verdict in sorted(rank_verdicts.items())
+            if verdict.get("verdict") == "failed"
+        ]
+        if failures:
+            classes = [
+                (rank, str(verdict.get("error_class", "unknown-error")))
+                for rank, verdict in failures
+            ]
+            distinct_classes = {error_class for _, error_class in classes}
+            error_class = (
+                classes[0][1]
+                if len(distinct_classes) == 1
+                else "DistributedRankFailure["
+                + ",".join(f"rank{rank}:{kind}" for rank, kind in classes)
+                + "]"
+            )
+            return {
+                **common,
+                "verdict": "failed",
+                "error_class": error_class,
+                "failed_ranks": [rank for rank, _ in failures],
+            }
+
+        invalid_ranks = [
+            rank
+            for rank, verdict in sorted(rank_verdicts.items())
+            if verdict.get("verdict") not in {"success", "terminated"}
+        ]
+        if invalid_ranks:
+            return {
+                **common,
+                "verdict": "failed",
+                "error_class": "InvalidRankVerdict",
+                "invalid_ranks": invalid_ranks,
+            }
+        if missing_ranks:
+            return {
+                **common,
+                "verdict": "failed",
+                "error_class": "MissingRankVerdict",
+                "missing_ranks": missing_ranks,
+            }
+
+        terminated = [
+            (rank, verdict)
+            for rank, verdict in sorted(rank_verdicts.items())
+            if verdict.get("verdict") == "terminated"
+        ]
+        if terminated:
+            rank, verdict = terminated[0]
+            return {
+                **common,
+                "verdict": "terminated",
+                "signal": verdict.get("signal"),
+                "signal_name": verdict.get("signal_name"),
+                "terminated_ranks": [item_rank for item_rank, _ in terminated],
+                "representative_rank": rank,
+            }
+        return {**common, "verdict": "success"}
+
+    @staticmethod
+    def _write_aggregate_verdict(path: Path, verdict: dict[str, Any]) -> None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        temporary = path.with_name(f".{path.name}.tmp-{os.getpid()}")
+        with temporary.open("w", encoding="utf-8") as handle:
+            handle.write(json.dumps(verdict, indent=2, sort_keys=True) + "\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        temporary.replace(path)
 
     def _wait_with_health_checks(
         self,
@@ -518,6 +648,84 @@ def _bounded_number(cast: type, minimum: float, *, exclusive: bool = False) -> A
     return parse
 
 
+def build_train_launch(
+    cfg: Any,
+    *,
+    config: str,
+    overrides: list[str],
+    python_executable: str | None = None,
+) -> TrainLaunch:
+    """Build the one-host trainer launcher implied by the resolved strategy."""
+
+    from vrl.utils.config import cfg_path
+
+    executable = python_executable or sys.executable
+    train_args = ("--config", config, *overrides)
+    strategy = str(
+        cfg_path(
+            cfg,
+            "distributed.training.strategy",
+            "single_process",
+        ),
+    )
+    if strategy not in {"ddp", "fsdp"}:
+        return TrainLaunch(
+            command=(executable, "-m", "vrl.scripts.train", *train_args),
+            expected_world_size=1,
+        )
+
+    try:
+        num_nodes = int(cfg_path(cfg, "distributed.training.num_nodes", 1))
+        gpus_per_node = int(cfg_path(cfg, "distributed.training.gpus_per_node", 1))
+    except (TypeError, ValueError) as exc:
+        raise ValueError(
+            "distributed.training.num_nodes and gpus_per_node must be integers",
+        ) from exc
+    if num_nodes < 1 or gpus_per_node < 1:
+        raise ValueError(
+            "distributed.training.num_nodes and gpus_per_node must be >= 1",
+        )
+    if num_nodes != 1:
+        raise ValueError(
+            "supervise cannot auto-launch multi-node DDP/FSDP without an explicit "
+            "rendezvous and one cross-node supervisor owner; launch torchrun externally",
+        )
+
+    return TrainLaunch(
+        command=(
+            executable,
+            "-m",
+            "torch.distributed.run",
+            "--standalone",
+            "--nnodes=1",
+            f"--nproc-per-node={gpus_per_node}",
+            "--max-restarts=0",
+            "--module",
+            "vrl.scripts.train",
+            *train_args,
+        ),
+        expected_world_size=gpus_per_node,
+    )
+
+
+def _require_single_supervisor_owner(environ: Any = None) -> None:
+    """Reject nesting this one-owner restart loop inside a multi-rank launcher."""
+
+    environment = os.environ if environ is None else environ
+    world_size_raw = environment.get("WORLD_SIZE", "1")
+    try:
+        world_size = int(world_size_raw)
+    except ValueError as exc:
+        raise ValueError(
+            f"supervisor WORLD_SIZE must be an integer, got {world_size_raw!r}"
+        ) from exc
+    if world_size != 1:
+        raise ValueError(
+            "supervise must have exactly one owner; do not launch it under torchrun. "
+            "It launches the configured single-node DDP/FSDP workers itself",
+        )
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Supervise a vrl-train run: restart on failure, resume from "
@@ -539,7 +747,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--health-metrics",
         action="store_true",
-        help="Stop without restarting when consecutive new metrics.csv rows are unhealthy.",
+        help="Stop without restarting when consecutive training-invariant rows are unhealthy; "
+        "does not judge reward trends or evaluation quality.",
     )
     # Threshold defaults live on HealthGateConfig; the CLI only mirrors them so
     # the two layers cannot drift apart.
@@ -613,6 +822,15 @@ def main(argv: list[str] | None = None) -> None:
     output_dir = str(cfg_path(cfg, "trainer.output_dir", "") or "").strip()
     if not output_dir:
         raise SystemExit("supervise requires trainer.output_dir in the resolved config")
+    try:
+        _require_single_supervisor_owner()
+        launch = build_train_launch(
+            cfg,
+            config=args.config,
+            overrides=args.overrides,
+        )
+    except ValueError as exc:
+        raise SystemExit(str(exc)) from exc
 
     health = (
         HealthGateConfig(
@@ -628,15 +846,9 @@ def main(argv: list[str] | None = None) -> None:
         else None
     )
     supervisor = RunSupervisor(
-        command=[
-            sys.executable,
-            "-m",
-            "vrl.scripts.train",
-            "--config",
-            args.config,
-            *args.overrides,
-        ],
+        command=list(launch.command),
         output_dir=Path(output_dir),
+        expected_world_size=launch.expected_world_size,
         max_attempts=args.max_attempts,
         same_cause_limit=args.same_cause_limit,
         health=health,

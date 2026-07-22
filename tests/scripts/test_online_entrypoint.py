@@ -9,6 +9,7 @@ import pytest
 from omegaconf import OmegaConf
 
 import vrl.scripts.train as train
+from vrl.ray.resources import resolve_distributed_resources
 
 
 def _cfg(family: str, algorithm_kind: str) -> Any:
@@ -16,6 +17,25 @@ def _cfg(family: str, algorithm_kind: str) -> Any:
         {
             "model": {"family": family},
             "algorithm": {"kind": algorithm_kind},
+        },
+    )
+
+
+def _distributed_cfg(
+    *,
+    strategy: str = "fsdp",
+    gpu_pool: str = "trainer",
+    gpus_per_node: int = 4,
+) -> Any:
+    return OmegaConf.create(
+        {
+            "distributed": {
+                "training": {
+                    "strategy": strategy,
+                    "gpus_per_node": gpus_per_node,
+                },
+                "resources": {"rollout": {"gpu_pool": gpu_pool}},
+            },
         },
     )
 
@@ -46,3 +66,108 @@ def test_train_online_keeps_family_owned_by_config(
     asyncio.run(train.train_online(_cfg(family, algorithm_kind)))
 
     assert captured == {"family": family}
+
+
+@pytest.mark.parametrize(
+    ("local_rank", "expected"),
+    [(0, "2"), (1, "4"), (2, "6"), (3, "7")],
+)
+def test_same_host_fsdp_selects_one_physical_gpu_per_rank(
+    local_rank: int,
+    expected: str,
+) -> None:
+    environ = {
+        "LOCAL_RANK": str(local_rank),
+        "LOCAL_WORLD_SIZE": "4",
+        "WORLD_SIZE": "4",
+        "CUDA_VISIBLE_DEVICES": "2,4,6,7",
+    }
+    cfg = _distributed_cfg()
+
+    selected = train._narrow_rank_local_cuda_visibility(
+        cfg,
+        environ=environ,
+    )
+
+    assert selected == expected
+    assert environ["CUDA_VISIBLE_DEVICES"] == expected
+    assert list(cfg.distributed.resources.visible_devices) == [int(expected)]
+    resources = resolve_distributed_resources(cfg)
+    assert resources.trainer_devices == (int(expected),)
+    assert resources.rollout_devices == (int(expected),)
+
+
+def test_same_host_ddp_selects_local_rank_when_visibility_is_unset() -> None:
+    environ = {"LOCAL_RANK": "1", "LOCAL_WORLD_SIZE": "2", "WORLD_SIZE": "2"}
+
+    selected = train._narrow_rank_local_cuda_visibility(
+        _distributed_cfg(strategy="ddp", gpus_per_node=2),
+        environ=environ,
+    )
+
+    assert selected == "1"
+    assert environ["CUDA_VISIBLE_DEVICES"] == "1"
+
+
+def test_one_rank_per_node_preserves_an_existing_single_device_view() -> None:
+    environ = {
+        "LOCAL_RANK": "0",
+        "LOCAL_WORLD_SIZE": "1",
+        "WORLD_SIZE": "4",
+        "CUDA_VISIBLE_DEVICES": "7",
+    }
+
+    selected = train._narrow_rank_local_cuda_visibility(
+        _distributed_cfg(gpus_per_node=1),
+        environ=environ,
+    )
+
+    assert selected == "7"
+    assert environ["CUDA_VISIBLE_DEVICES"] == "7"
+
+
+def test_disjoint_rollout_does_not_change_cuda_visibility() -> None:
+    environ = {
+        "LOCAL_RANK": "1",
+        "LOCAL_WORLD_SIZE": "2",
+        "WORLD_SIZE": "2",
+        "CUDA_VISIBLE_DEVICES": "0,1,2,3",
+    }
+
+    selected = train._narrow_rank_local_cuda_visibility(
+        _distributed_cfg(gpu_pool="dedicated"),
+        environ=environ,
+    )
+
+    assert selected is None
+    assert environ["CUDA_VISIBLE_DEVICES"] == "0,1,2,3"
+
+
+def test_rank_local_cuda_selection_rejects_partial_device_masks() -> None:
+    environ = {
+        "LOCAL_RANK": "2",
+        "LOCAL_WORLD_SIZE": "4",
+        "WORLD_SIZE": "4",
+        "CUDA_VISIBLE_DEVICES": "0,1",
+    }
+
+    with pytest.raises(ValueError, match="cannot supply every local torchrun rank"):
+        train._narrow_rank_local_cuda_visibility(
+            _distributed_cfg(),
+            environ=environ,
+        )
+
+
+def test_rank_local_cuda_selection_rejects_duplicate_devices() -> None:
+    environ = {
+        "LOCAL_RANK": "1",
+        "LOCAL_WORLD_SIZE": "2",
+        "WORLD_SIZE": "2",
+        "CUDA_VISIBLE_DEVICES": "0,0",
+    }
+
+    with pytest.raises(ValueError, match="duplicate devices"):
+        train._narrow_rank_local_cuda_visibility(
+            _distributed_cfg(gpus_per_node=2),
+            environ=environ,
+        )

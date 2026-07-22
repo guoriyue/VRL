@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import gc
 import inspect
 import logging
 import os
@@ -92,6 +93,7 @@ def _initialize_ray_cluster(
     ray: Any,
     *,
     environ: Mapping[str, str] | None = None,
+    local_num_cpus: int | None = None,
 ) -> _RayClusterSession:
     """Connect to exactly the Ray cluster selected by the resource topology.
 
@@ -136,8 +138,19 @@ def _initialize_ray_cluster(
     previous_handlers = {
         signum: signal.getsignal(signum) for signum in (signal.SIGINT, signal.SIGTERM)
     }
+    init_kwargs: dict[str, Any] = {"address": address}
+    if ownership == "owned_local":
+        if local_num_cpus is not None:
+            if (
+                isinstance(local_num_cpus, bool)
+                or not isinstance(local_num_cpus, int)
+                or local_num_cpus <= 0
+            ):
+                raise ValueError("local Ray num_cpus must be a positive integer")
+            init_kwargs["num_cpus"] = local_num_cpus
+        init_kwargs["include_dashboard"] = False
     try:
-        context = ray.init(address=address)
+        context = ray.init(**init_kwargs)
     finally:
         for signum, handler in previous_handlers.items():
             if handler is not None:
@@ -820,6 +833,10 @@ async def run_online_recipe(
         resume_checkpoint,
         strict=trainer_config.resume_strict,
     )
+    resumed = resume_checkpoint is not None
+    resume_epoch = resume_checkpoint.next_epoch if resume_checkpoint is not None else None
+    resume_step = resume_checkpoint.next_step if resume_checkpoint is not None else None
+    resume_dir = resume_checkpoint.checkpoint_dir if resume_checkpoint is not None else None
 
     resources = resolve_distributed_resources(cfg)
     validate_rollout_schedule_topology(trainer_config.rollout_orchestration, resources)
@@ -914,7 +931,11 @@ async def run_online_recipe(
     trainer: OnlineTrainer | None = None
     run_error: BaseException | None = None
     try:
-        ray_session = _initialize_ray_cluster(resources, ray)
+        ray_session = _initialize_ray_cluster(
+            resources,
+            ray,
+            local_num_cpus=placement_owner.required_local_cluster_cpus(),
+        )
         if resources.cross_node:
             cross_node_preflight(ray, resources)
         placement_owner.create()
@@ -972,9 +993,7 @@ async def run_online_recipe(
             ref_model=ref_model,
             weight_syncer=build_runtime_weight_syncer(
                 collector.runtime,
-                initial_policy_version=resume_checkpoint.next_step
-                if resume_checkpoint is not None
-                else None,
+                initial_policy_version=resume_step,
             ),
             # Rollout weight sync re-reads live trainable state on every push, so
             # bind the strategy export lazily instead of snapshotting once.
@@ -999,8 +1018,8 @@ async def run_online_recipe(
             )
             logger.info(
                 "Resuming from %s, start_epoch=%d",
-                resume_checkpoint.checkpoint_dir,
-                resume_checkpoint.next_epoch,
+                resume_dir,
+                resume_epoch,
             )
 
         # Under any multi-rank strategy (ddp/fsdp) only rank0 owns run IO
@@ -1012,12 +1031,12 @@ async def run_online_recipe(
         output_dir = Path(trainer_config.output_dir)
         output_dir.mkdir(parents=True, exist_ok=True)
         if is_primary:
-            save_resolved_config(cfg, output_dir, resumed=resume_checkpoint is not None)
+            save_resolved_config(cfg, output_dir, resumed=resumed)
 
         component_names = tuple(built["reward"][0].keys())
 
         rng = torch.Generator().manual_seed(trainer_config.seed)
-        start_epoch = resume_checkpoint.next_epoch if resume_checkpoint is not None else 0
+        start_epoch = resume_epoch if resume_epoch is not None else 0
         if start_epoch > trainer_config.total_epochs:
             raise ValueError(
                 "resume checkpoint starts after configured total_epochs: "
@@ -1025,6 +1044,15 @@ async def run_online_recipe(
             )
         if resume_checkpoint is not None:
             restore_rng_state(resume_checkpoint.rng_state, prompt_generator=rng)
+            # A full-param checkpoint is ~20 GB. Each torchrun rank loads its own
+            # CPU payload, so retaining these dicts while three colocated rollout
+            # models park on CPU exceeds this host's Ray memory threshold. All
+            # consumers above have restored/captured their values; clear the
+            # mutable payload before rollout actors load, then return pages now.
+            resume_checkpoint.payload.clear()
+            resume_checkpoint = None
+            gc.collect()
+            log_host_memory("after_resume_checkpoint_release", log=logger)
 
         export_modules = (
             _export_transformer_lora(bundle, cfg)
@@ -1040,7 +1068,7 @@ async def run_online_recipe(
             export_modules=export_modules,
             csv_path=output_dir / "metrics.csv",
             rng=rng,
-            resume_epoch=(resume_checkpoint.next_epoch if resume_checkpoint is not None else None),
+            resume_epoch=resume_epoch,
             model_identity=model_identity,
         )
         _prepare_metrics_csv_rank_consistent(run, training_context)

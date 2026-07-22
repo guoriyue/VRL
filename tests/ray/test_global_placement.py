@@ -280,6 +280,53 @@ def test_bundle_requirements_size_shared_bundle_to_max_role_cpu() -> None:
     assert requirements[trainer_bundle] == {"CPU": 0.001, "GPU": 1.0}
 
 
+def test_required_local_cluster_cpus_uses_placement_bundle_sum() -> None:
+    """Fractional role bundles are summed and rounded once at node startup."""
+    owner = _owner(
+        {
+            "visible_devices": [0],
+            "trainer": {"devices": [0]},
+            "rollout": {
+                "gpu_pool": "trainer",
+                "devices": [0],
+                "gpus_per_worker": 1,
+                "num_workers": 1,
+            },
+            "reward": {
+                "num_gpus": 0,
+                "gpus_per_worker": 0,
+                "num_workers": 1,
+            },
+        },
+    )
+    owner.rollout_cpus_per_worker = 4.0
+
+    assert owner._bundle_requirements() == [
+        {"CPU": 4.0, "GPU": 1.0},
+        {"CPU": 0.5},
+    ]
+    assert owner.required_local_cluster_cpus() == 5
+
+
+@pytest.mark.parametrize("quantity", [0.0, -1.0, float("nan"), float("inf")])
+def test_required_local_cluster_cpus_rejects_invalid_bundle_cpu(quantity: float) -> None:
+    owner = _owner(
+        {
+            "visible_devices": [0],
+            "trainer": {"devices": [0]},
+            "rollout": {
+                "gpu_pool": "trainer",
+                "devices": [0],
+                "gpus_per_worker": 1,
+            },
+        },
+    )
+    owner.rollout_cpus_per_worker = quantity
+
+    with pytest.raises(ValueError, match="finite and > 0"):
+        owner.required_local_cluster_cpus()
+
+
 def test_shutdown_retries_same_placement_group_after_remove_failure(monkeypatch) -> None:
     owner = _owner(
         {

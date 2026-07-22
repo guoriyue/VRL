@@ -6,6 +6,7 @@ from collections.abc import Callable
 from typing import Any
 
 import pytest
+from omegaconf import OmegaConf
 
 from vrl.scripts import train
 
@@ -37,7 +38,10 @@ def _install_cli_fakes(
     result: Any,
 ) -> _SignalHandlers:
     handlers = _SignalHandlers()
-    monkeypatch.setattr("vrl.config.loading.load_config", lambda *args, **kwargs: object())
+    monkeypatch.setattr(
+        "vrl.config.loading.load_config",
+        lambda *args, **kwargs: OmegaConf.create({}),
+    )
     monkeypatch.setattr(train, "run_config", lambda cfg: result)
     monkeypatch.setattr(signal, "getsignal", handlers.get)
     monkeypatch.setattr(signal, "signal", handlers.install)
@@ -101,7 +105,10 @@ def test_main_keeps_synchronous_trainer_path_signal_free(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     result = object()
-    monkeypatch.setattr("vrl.config.loading.load_config", lambda *args, **kwargs: object())
+    monkeypatch.setattr(
+        "vrl.config.loading.load_config",
+        lambda *args, **kwargs: OmegaConf.create({}),
+    )
     monkeypatch.setattr(train, "run_config", lambda cfg: result)
 
     def reject_signal_install(signum: signal.Signals, handler: Callable[..., Any]) -> None:
