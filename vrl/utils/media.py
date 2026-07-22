@@ -134,16 +134,26 @@ def video_tensor_to_uint8_frames(tensor: torch.Tensor) -> np.ndarray:
     # single-worker pipelined rollout (forward_chunks_pipelined) can hand the reward
     # an artifact whose video tensor is still on CUDA, unlike the per-chunk path's
     # worker._to_cpu. Mirror image_to_uint8_hwc's intake so any device works.
-    video = tensor.detach().float().cpu()
-    if float(video.min().item()) < -0.01:
-        video = (video + 1.0) / 2.0
-    video = video.clamp(0.0, 1.0)
+    video = tensor.detach().cpu()
+    input_is_float = torch.is_floating_point(video)
+    if input_is_float:
+        video = video.float()
+        if float(video.min().item()) < -0.01:
+            video = (video + 1.0) / 2.0
+        video = video.clamp(0.0, 1.0)
+    else:
+        # Generation workers pack decoded videos as uint8 before the Ray wire.
+        # Preserve those byte values when a direct executor consumer writes an
+        # artifact instead of interpreting every nonzero byte as unit-range 1.0.
+        video = video.clamp(0, 255).to(torch.uint8)
     if video.shape[0] == 1:
         video = video.repeat(3, 1, 1, 1)
     if video.shape[0] == 4:
         video = video[:3]
     video = video.permute(1, 2, 3, 0).contiguous()
-    return (video.numpy() * 255.0).round().astype(np.uint8)
+    if input_is_float:
+        return (video.numpy() * 255.0).round().astype(np.uint8)
+    return video.numpy()
 
 
 def frames_thwc_to_float(frames: torch.Tensor) -> torch.Tensor:

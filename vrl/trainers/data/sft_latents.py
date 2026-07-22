@@ -105,8 +105,55 @@ def load_sft_latents(
     return latents
 
 
+def merge_sft_latent_shards(
+    inputs: list[str | Path],
+    output: str | Path,
+) -> None:
+    """Merge disjoint encoder shards while preserving exact model provenance."""
+
+    import torch
+
+    if not inputs:
+        raise ValueError("at least one SFT latent shard is required")
+    merged: dict[str, Any] = {}
+    provenance: dict[str, Any] | None = None
+    for raw_path in inputs:
+        path = Path(raw_path).expanduser()
+        payload = torch.load(path, map_location="cpu", weights_only=True)
+        if not isinstance(payload, dict):
+            raise ValueError(f"{path} is not an SFT latent shard")
+        current = {
+            key: payload.get(key)
+            for key in ("schema_version", "family", "model_path", "model_revision")
+        }
+        if provenance is None:
+            provenance = current
+        elif current != provenance:
+            raise ValueError(
+                f"{path} provenance does not match the first SFT latent shard",
+            )
+        latents = payload.get("latents")
+        if not isinstance(latents, dict) or not latents:
+            raise ValueError(f"{path}: empty SFT latent shard")
+        overlap = sorted(set(merged) & set(latents))
+        if overlap:
+            raise ValueError(f"{path}: duplicate target keys across shards: {overlap[:5]}")
+        merged.update(latents)
+    assert provenance is not None
+    if int(provenance["schema_version"] or 0) != SFT_LATENTS_SCHEMA_VERSION:
+        raise ValueError("unsupported SFT latent shard schema version")
+    save_sft_latents(
+        output,
+        family=str(provenance["family"]),
+        model_path=str(provenance["model_path"]),
+        model_revision=str(provenance["model_revision"]),
+        latents_by_target=merged,
+    )
+
+
 __all__ = [
     "SFT_LATENTS_SCHEMA_VERSION",
     "load_sft_latents",
+    "merge_sft_latent_shards",
     "save_sft_latents",
 ]

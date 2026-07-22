@@ -5,7 +5,11 @@ from __future__ import annotations
 import pytest
 import torch
 
-from vrl.trainers.data.sft_latents import load_sft_latents, save_sft_latents
+from vrl.trainers.data.sft_latents import (
+    load_sft_latents,
+    merge_sft_latent_shards,
+    save_sft_latents,
+)
 
 
 def test_sft_latents_round_trip(tmp_path) -> None:
@@ -104,3 +108,79 @@ def test_sft_latents_rejects_foreign_payload(tmp_path) -> None:
     torch.save({"weights": torch.zeros(1)}, shard)
     with pytest.raises(ValueError, match="not an sft-latents shard"):
         load_sft_latents(shard)
+
+
+def test_merge_sft_latents_preserves_tensor_geometry_and_dtype(tmp_path) -> None:
+    first = tmp_path / "first.pt"
+    second = tmp_path / "second.pt"
+    output = tmp_path / "merged.pt"
+    first_latent = torch.randn(16, 9, 60, 104, dtype=torch.bfloat16)
+    second_latent = torch.randn(16, 9, 60, 104, dtype=torch.bfloat16)
+    provenance = {
+        "family": "wan",
+        "model_path": "Wan-AI/Wan2.1-T2V-1.3B-Diffusers",
+        "model_revision": "pinned-revision",
+    }
+    save_sft_latents(
+        first,
+        **provenance,
+        latents_by_target={"targets/first.mp4": first_latent},
+    )
+    save_sft_latents(
+        second,
+        **provenance,
+        latents_by_target={"targets/second.mp4": second_latent},
+    )
+
+    merge_sft_latent_shards([first, second], output)
+
+    loaded = load_sft_latents(output, **provenance)
+    assert set(loaded) == {"targets/first.mp4", "targets/second.mp4"}
+    for value in loaded.values():
+        assert value.shape == (16, 9, 60, 104)
+        assert value.dtype == torch.bfloat16
+    torch.testing.assert_close(loaded["targets/first.mp4"], first_latent)
+    torch.testing.assert_close(loaded["targets/second.mp4"], second_latent)
+
+
+def test_merge_sft_latents_rejects_provenance_mismatch(tmp_path) -> None:
+    first = tmp_path / "first.pt"
+    second = tmp_path / "second.pt"
+    common = {
+        "model_path": "Wan-AI/Wan2.1-T2V-1.3B-Diffusers",
+        "model_revision": "pinned-revision",
+    }
+    save_sft_latents(
+        first,
+        family="wan",
+        **common,
+        latents_by_target={"targets/first.mp4": torch.zeros(1)},
+    )
+    save_sft_latents(
+        second,
+        family="cosmos-predict2",
+        **common,
+        latents_by_target={"targets/second.mp4": torch.zeros(1)},
+    )
+
+    with pytest.raises(ValueError, match="provenance does not match"):
+        merge_sft_latent_shards([first, second], tmp_path / "merged.pt")
+
+
+def test_merge_sft_latents_rejects_duplicate_target_keys(tmp_path) -> None:
+    first = tmp_path / "first.pt"
+    second = tmp_path / "second.pt"
+    provenance = {
+        "family": "wan",
+        "model_path": "Wan-AI/Wan2.1-T2V-1.3B-Diffusers",
+        "model_revision": "pinned-revision",
+    }
+    for path in (first, second):
+        save_sft_latents(
+            path,
+            **provenance,
+            latents_by_target={"targets/shared.mp4": torch.zeros(1)},
+        )
+
+    with pytest.raises(ValueError, match="duplicate target keys"):
+        merge_sft_latent_shards([first, second], tmp_path / "merged.pt")

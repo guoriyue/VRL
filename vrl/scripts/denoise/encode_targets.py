@@ -53,6 +53,14 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         default=None,
         help="decode the first encoded target and write an mp4 round-trip preview",
     )
+    parser.add_argument(
+        "--storage-dtype",
+        choices=("preserve", "bf16", "fp16", "fp32"),
+        default="preserve",
+        help="On-disk latent dtype; bf16 reduces replicated trainer host memory.",
+    )
+    parser.add_argument("--shard-index", type=int, default=0)
+    parser.add_argument("--num-shards", type=int, default=1)
     return parser
 
 
@@ -158,6 +166,11 @@ def main() -> None:
     examples = load_prompt_examples_from_config(cfg.data)
     if args.limit is not None:
         examples = examples[: int(args.limit)]
+    if args.num_shards < 1:
+        raise ValueError("--num-shards must be >= 1")
+    if not 0 <= args.shard_index < args.num_shards:
+        raise ValueError("--shard-index must be in [0, --num-shards)")
+    examples = examples[args.shard_index :: args.num_shards]
     if not examples:
         raise ValueError("the training manifest resolved to zero examples")
 
@@ -190,6 +203,12 @@ def main() -> None:
         )
 
     latents_by_target: dict[str, Any] = {}
+    storage_dtype = {
+        "preserve": None,
+        "bf16": torch.bfloat16,
+        "fp16": torch.float16,
+        "fp32": torch.float32,
+    }[args.storage_dtype]
     for index, (target_key, target) in enumerate(targets):
         video = _video_at_sampling_geometry(
             str(target),
@@ -198,7 +217,10 @@ def main() -> None:
             num_frames=num_frames,
         )
         latents = encode(video.to(device))
-        latents_by_target[target_key] = latents.squeeze(0).detach().cpu()
+        stored = latents.squeeze(0).detach()
+        if storage_dtype is not None:
+            stored = stored.to(dtype=storage_dtype)
+        latents_by_target[target_key] = stored.cpu()
         if args.preview_out and index == 0:
             from vrl.utils.media import write_mp4
 
