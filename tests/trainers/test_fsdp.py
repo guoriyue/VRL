@@ -25,9 +25,11 @@ from vrl.trainers.fsdp import (
     apply_fsdp,
     build_fsdp_mesh,
     gather_full_state_dict,
+    init_training_process_group,
     iter_blocks,
     load_full_state_dict,
     mixed_precision_policy,
+    normalize_fsdp_parameter_dtype,
     unwrap_module,
 )
 from vrl.trainers.strategy import (
@@ -44,7 +46,6 @@ def _cpu_fsdp_context() -> DistributedTrainingContext:
         strategy="fsdp",
         distributed=True,
         rank=0,
-        local_rank=0,
         world_size=1,
         is_primary=True,
         device=torch.device("cpu"),
@@ -204,6 +205,54 @@ def test_mixed_precision_policy_actor_requires_resolved_parameter_dtype() -> Non
 def test_mixed_precision_policy_rejects_unknown() -> None:
     with pytest.raises(ValueError, match="precision_policy"):
         mixed_precision_policy("fp8")
+
+
+def test_apply_fsdp_casts_only_root_forward_inputs(monkeypatch) -> None:
+    import torch.distributed.fsdp as torch_fsdp
+
+    calls: list[tuple[nn.Module, object]] = []
+
+    def record_fully_shard(module, **kwargs):
+        calls.append((module, kwargs["mp_policy"]))
+        return module
+
+    monkeypatch.setattr(torch_fsdp, "fully_shard", record_fully_shard)
+    policy = mixed_precision_policy("actor", parameter_dtype=torch.bfloat16)
+    net = _ToyTransformer()
+
+    apply_fsdp(net, mesh=object(), mp_policy=policy)
+
+    assert len(calls) == 3
+    assert all(not call_policy.cast_forward_inputs for _, call_policy in calls[:-1])
+    assert calls[-1] == (net, policy)
+    assert calls[-1][1].cast_forward_inputs
+
+
+def test_normalize_fsdp_parameter_dtype_casts_mixed_actor_sources(caplog) -> None:
+    net = _ToyTransformer().to(dtype=torch.bfloat16)
+    net.head.to(dtype=torch.float32)
+
+    with caplog.at_level("INFO", logger="vrl.trainers.fsdp"):
+        normalize_fsdp_parameter_dtype(
+            net,
+            torch.bfloat16,
+            allow_cast=True,
+        )
+
+    assert {parameter.dtype for parameter in net.parameters()} == {torch.bfloat16}
+    assert "head.weight:torch.float32" in caplog.text
+
+
+def test_normalize_fsdp_parameter_dtype_rejects_mixed_native_policy() -> None:
+    net = _ToyTransformer().to(dtype=torch.bfloat16)
+    net.head.to(dtype=torch.float32)
+
+    with pytest.raises(ValueError, match=r"precision_policy='none'.*head\.weight"):
+        normalize_fsdp_parameter_dtype(
+            net,
+            torch.bfloat16,
+            allow_cast=False,
+        )
 
 
 def test_build_fsdp_mesh_rejects_2d_hsdp() -> None:
@@ -437,6 +486,18 @@ def test_fsdp_prepare_model_wraps_diffusion_handle(cpu_process_group) -> None:
     assert any(isinstance(p, DTensor) for p in policy.transformer.parameters())
 
 
+def test_fsdp_actor_prepare_normalizes_mixed_sources_before_first_forward(
+    cpu_process_group,
+) -> None:
+    policy = _FakePolicy(_ToyTransformer().to(dtype=torch.bfloat16))
+    policy.transformer.head.to(dtype=torch.float32)
+
+    FSDPStrategy(_cpu_fsdp_context(), precision_policy="actor").prepare_model(policy)
+    output = policy.transformer(torch.randn(2, 4, dtype=torch.bfloat16))
+
+    assert output.dtype is torch.bfloat16
+
+
 def test_wan_fsdp_replay_build_defers_full_gpu_move_until_sharding(
     cpu_process_group,
     monkeypatch,
@@ -521,7 +582,7 @@ def test_fsdp_prepare_model_initializes_process_group(cpu_process_group, monkeyp
     """prepare_model explicitly owns PG init + device bind, symmetric with DDP.
 
     init_device_mesh would lazily auto-init a default group, but it would NOT call
-    torch.cuda.set_device(local_rank) first, so the NCCL group and per-block
+    torch.cuda.set_device(context.device) first, so the NCCL group and per-block
     fully_shard could bind the wrong card on a single-node multi-GPU box.
     FSDPStrategy.prepare_model therefore calls init_training_process_group up front.
     Spy on it to lock the wiring in (the gloo PG already exists here, so the real
@@ -545,6 +606,31 @@ def test_fsdp_prepare_model_initializes_process_group(cpu_process_group, monkeyp
     assert calls == [("fsdp", "gloo")]
 
 
+def test_process_group_binds_resolved_device_after_per_rank_mask(monkeypatch) -> None:
+    """Physical rank 3 still owns logical cuda:0 after launcher masking."""
+
+    import torch.distributed as dist
+
+    context = DistributedTrainingContext(
+        strategy="fsdp",
+        distributed=True,
+        rank=3,
+        world_size=4,
+        is_primary=False,
+        device=torch.device("cuda:0"),
+    )
+    bound_devices: list[torch.device] = []
+    init_calls: list[dict[str, object]] = []
+    monkeypatch.setattr(dist, "is_initialized", lambda: False)
+    monkeypatch.setattr(torch.cuda, "set_device", bound_devices.append)
+    monkeypatch.setattr(dist, "init_process_group", lambda **kwargs: init_calls.append(kwargs))
+
+    init_training_process_group(context, backend="nccl")
+
+    assert bound_devices == [torch.device("cuda:0")]
+    assert init_calls == [{"backend": "nccl", "rank": 3, "world_size": 4}]
+
+
 # ── prepare_model family gate / build_strategy §10 gates (no process group) ──
 
 
@@ -561,7 +647,6 @@ def test_build_strategy_single_process_returns_single_process() -> None:
         strategy="single_process",
         distributed=False,
         rank=0,
-        local_rank=0,
         world_size=1,
         is_primary=True,
         device=torch.device("cpu"),

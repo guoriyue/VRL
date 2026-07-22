@@ -6,6 +6,10 @@
 #   Params/grads/optimizer are sharded as DTensor (ZeRO-3); the export seam
 #   gathers a full policy-facing state per rank, so rollout weight sync and
 #   checkpointing look identical to single_process.
+#   The train entrypoint narrows CUDA_VISIBLE_DEVICES by LOCAL_RANK before any
+#   Torch or Ray import. This is required on a one-host multi-rank launch: without
+#   the rank-local view, each independent Ray cluster could reserve another
+#   rank's physical GPU.
 #
 # `rollout.gpu_pool: trainer` is REQUIRED, not a preference. The default `auto`
 # pool prefers a spare GPU, which on a multi-GPU host resolves to a DISJOINT
@@ -19,6 +23,7 @@
 #
 # Launch (WORLD_SIZE must equal num_nodes * gpus_per_node):
 #
+#   CUDA_VISIBLE_DEVICES=0,1,2,3 \
 #   torchrun --standalone --nproc_per_node=4 \
 #     -m vrl.scripts.train \
 #     --config experiment/wan_2_1/online_grpo_ocr_fsdp

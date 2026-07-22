@@ -182,6 +182,43 @@ def test_save_training_checkpoint_routes_export_through_strategy(tmp_path) -> No
     assert checkpoint.trainable_state["module"]["weight"].item() == pytest.approx(9.0)
 
 
+def test_save_training_checkpoint_prefers_primary_only_snapshot_seams(tmp_path) -> None:
+    class _CheckpointStrategy:
+        def __init__(self) -> None:
+            self.calls: list[object] = []
+
+        def export_checkpoint_trainable_state(self, bundle):
+            self.calls.append(bundle)
+            return {"module": {"weight": torch.full((1, 1), 7.0)}}
+
+        def export_trainable_state(self, bundle):
+            raise AssertionError(f"generic export used for checkpoint: {bundle!r}")
+
+    class _CheckpointTrainer(_Trainer):
+        def checkpoint_state_dict(self):
+            return {"step": 3, "global_step": 8}
+
+        def state_dict(self):
+            raise AssertionError("generic trainer state used for checkpoint")
+
+    strategy = _CheckpointStrategy()
+    bundle = _Bundle()
+    save_training_checkpoint(
+        tmp_path / "checkpoint-primary-only",
+        trainer=_CheckpointTrainer(),
+        bundle=bundle,
+        family="unit",
+        progress={"next_epoch": 3},
+        rng_state={},
+        strategy=strategy,
+    )
+
+    checkpoint = load_training_checkpoint(tmp_path / "checkpoint-primary-only")
+    assert strategy.calls == [bundle]
+    assert checkpoint.trainer_state == {"step": 3, "global_step": 8}
+    assert checkpoint.trainable_state["module"]["weight"].item() == pytest.approx(7.0)
+
+
 def test_save_training_checkpoint_non_primary_gathers_but_writes_nothing(tmp_path) -> None:
     """Multi-rank contract: the trainable-state export (a COLLECTIVE under FSDP2)
     runs on every rank, but only the primary rank writes files.

@@ -34,7 +34,6 @@ def _cpu_ddp_context() -> DistributedTrainingContext:
         strategy="ddp",
         distributed=True,
         rank=0,
-        local_rank=0,
         world_size=1,
         is_primary=True,
         device=torch.device("cpu"),
@@ -169,6 +168,36 @@ def test_ddp_shutdown_releases_training_process_group(monkeypatch) -> None:
 def test_ddp_prepare_model_rejects_model_without_transformer_handle() -> None:
     with pytest.raises(NotImplementedError, match="trainable roots"):
         DDPStrategy(_cpu_ddp_context()).prepare_model(_ARLikePolicy())
+
+
+def test_ddp_wraps_resolved_device_after_per_rank_mask(monkeypatch) -> None:
+    """Physical rank 3 passes logical cuda:0 to DDP after launcher masking."""
+
+    import torch.nn.parallel
+
+    context = DistributedTrainingContext(
+        strategy="ddp",
+        distributed=True,
+        rank=3,
+        world_size=4,
+        is_primary=False,
+        device=torch.device("cuda:0"),
+    )
+    wrap_calls: list[dict[str, object]] = []
+    monkeypatch.setattr(
+        "vrl.trainers.fsdp.init_training_process_group",
+        lambda _context, *, backend: None,
+    )
+
+    def _wrap(module, **kwargs):
+        wrap_calls.append(kwargs)
+        return module
+
+    monkeypatch.setattr(torch.nn.parallel, "DistributedDataParallel", _wrap)
+
+    DDPStrategy(context).prepare_model(_FakePolicy(_ToyTransformer()))
+
+    assert wrap_calls == [{"device_ids": [0], "find_unused_parameters": False}]
 
 
 def test_ddp_prepare_model_wraps_multi_transformer_model(cpu_process_group) -> None:

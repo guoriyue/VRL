@@ -86,7 +86,6 @@ def _run_rank(rank: int, world_size: int, port: int, q: mp.Queue) -> None:
             strategy="fsdp",
             distributed=True,
             rank=rank,
-            local_rank=0,
             world_size=world_size,
             is_primary=(rank == 0),
             device=torch.device("cpu"),
@@ -188,7 +187,6 @@ def _run_optim_ema_rank(rank: int, world_size: int, port: int, q: mp.Queue) -> N
             strategy="fsdp",
             distributed=True,
             rank=rank,
-            local_rank=0,
             world_size=world_size,
             is_primary=(rank == 0),
             device=torch.device("cpu"),
@@ -225,6 +223,14 @@ def _run_optim_ema_rank(rank: int, world_size: int, port: int, q: mp.Queue) -> N
             and torch.equal(entry["exp_avg_sq"], reexported["state"][fqn]["exp_avg_sq"])
             for fqn, entry in exported["state"].items()
         )
+        checkpoint_optimizer = gather_full_optimizer_state_dict(
+            model,
+            fresh,
+            rank0_only=True,
+        )
+        primary_only_optimizer = (
+            bool(checkpoint_optimizer.get("state")) if rank == 0 else checkpoint_optimizer == {}
+        )
 
         # EMA over sharded params: step + checkpoint gather + reshard on load.
         ema = EMAModuleWrapper(params, decay=0.5, update_step_interval=1)
@@ -245,8 +251,22 @@ def _run_optim_ema_rank(rank: int, world_size: int, port: int, q: mp.Queue) -> N
             isinstance(got, DTensor) and torch.equal(got.full_tensor(), want.full_tensor())
             for got, want in zip(restored.ema_parameters, ema.ema_parameters, strict=True)
         )
+        checkpoint_ema = ema.checkpoint_state_dict(is_primary=rank == 0)
+        primary_only_ema = (
+            bool(checkpoint_ema.get("ema_parameters")) if rank == 0 else checkpoint_ema == {}
+        )
 
-        q.put((rank, moments_full, optim_round_trip, ema_full, ema_round_trip))
+        q.put(
+            (
+                rank,
+                moments_full,
+                optim_round_trip,
+                ema_full,
+                ema_round_trip,
+                primary_only_optimizer,
+                primary_only_ema,
+            ),
+        )
     finally:
         dist.destroy_process_group()
 
@@ -267,8 +287,17 @@ def test_optimizer_and_ema_full_state_on_every_rank() -> None:
         assert p.exitcode == 0
 
     for rank in (0, 1):
-        moments_full, optim_round_trip, ema_full, ema_round_trip = results[rank]
+        (
+            moments_full,
+            optim_round_trip,
+            ema_full,
+            ema_round_trip,
+            primary_only_optimizer,
+            primary_only_ema,
+        ) = results[rank]
         assert moments_full, f"rank{rank}: optimizer moments not full plain tensors"
         assert optim_round_trip, f"rank{rank}: optimizer state round trip diverged"
         assert ema_full, f"rank{rank}: EMA checkpoint state not full plain tensors"
         assert ema_round_trip, f"rank{rank}: EMA reshard-on-load diverged"
+        assert primary_only_optimizer, f"rank{rank}: checkpoint optimizer ownership diverged"
+        assert primary_only_ema, f"rank{rank}: checkpoint EMA ownership diverged"

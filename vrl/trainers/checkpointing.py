@@ -136,14 +136,26 @@ def save_training_checkpoint(
     join. single_process / ddp gather locally, so for them this is a no-op.
     """
 
+    checkpoint_export_trainable = (
+        getattr(strategy, "export_checkpoint_trainable_state", None)
+        if strategy is not None
+        else None
+    )
     export_trainable = (
-        strategy.export_trainable_state if strategy is not None else export_trainable_state
+        checkpoint_export_trainable
+        if callable(checkpoint_export_trainable)
+        else strategy.export_trainable_state
+        if strategy is not None
+        else export_trainable_state
     )
     # Collectives on ALL ranks (FSDP all-gathers) — before the is_primary gate:
     # the trainable-state gather, and trainer.state_dict() (whose optimizer
     # moments and EMA shadows are DTensor shards that gather to full tensors).
     trainable_modules = export_trainable(bundle)
-    trainer_state = trainer.state_dict()
+    checkpoint_state_dict = getattr(trainer, "checkpoint_state_dict", None)
+    trainer_state = (
+        checkpoint_state_dict() if callable(checkpoint_state_dict) else trainer.state_dict()
+    )
     if not is_primary:
         # Non-primary ranks joined the gathers above; only rank0 writes the files.
         return {}

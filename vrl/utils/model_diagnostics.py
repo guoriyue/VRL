@@ -16,6 +16,15 @@ def trainable_state_digest(module: Any) -> dict[str, Any]:
     The digest intentionally uses only tensors with ``requires_grad=True`` when
     ``named_parameters`` is available. That keeps SD3 LoRA parity checks focused
     on adapter state instead of hashing the frozen base checkpoint.
+
+    FSDP2 parameters are DTensors. Hashing a full logical parameter would make
+    this low-overhead first-step probe an all-gather on every rank, and turning a
+    diagnostic call into a collective would also make rank-local failure paths
+    capable of deadlocking. Each rank therefore hashes and summarizes only the
+    DTensor value it already owns, either a shard or a replica. Partial
+    placements are rejected because one rank's unreduced contribution is not a
+    stable parameter value. Plain tensors keep their existing full-tensor
+    behavior because their local value is the tensor itself.
     """
 
     import torch
@@ -52,17 +61,20 @@ def trainable_state_digest(module: Any) -> dict[str, Any]:
     square_sum = 0.0
     abs_sum = 0.0
     max_abs = 0.0
+    has_local_dtensors = False
 
     for name, tensor in sorted(tensors, key=lambda item: item[0]):
         if not isinstance(tensor, torch.Tensor):
             continue
         detached = tensor.detach()
-        dtype = str(detached.dtype)
-        device = str(detached.device)
+        local, is_dtensor = _local_diagnostic_tensor(detached)
+        has_local_dtensors = has_local_dtensors or is_dtensor
+        dtype = str(local.dtype)
+        device = str(local.device)
         dtype_counts[dtype] = dtype_counts.get(dtype, 0) + 1
         device_counts[device] = device_counts.get(device, 0) + 1
 
-        cpu = detached.float().cpu().contiguous()
+        cpu = local.float().cpu().contiguous()
         digest.update(name.encode("utf-8"))
         digest.update(str(tuple(detached.shape)).encode("utf-8"))
         digest.update(dtype.encode("utf-8"))
@@ -85,7 +97,29 @@ def trainable_state_digest(module: Any) -> dict[str, Any]:
         "max_abs": max_abs,
         "dtypes": dtype_counts,
         "devices": device_counts,
+        "scope": "rank_local_dtensor_values" if has_local_dtensors else "full_tensors",
     }
+
+
+def _local_diagnostic_tensor(tensor: Any) -> tuple[Any, bool]:
+    """Return a plain local tensor without materializing a DTensor globally."""
+
+    from torch.distributed.tensor import DTensor
+
+    if not isinstance(tensor, DTensor):
+        return tensor, False
+    if any(placement.is_partial() for placement in tensor.placements):
+        raise ValueError(
+            "trainable_state_digest cannot summarize a DTensor with a Partial "
+            "placement; a rank-local partial contribution is not a stable "
+            "parameter value",
+        )
+    # no_grad makes to_local return the already-owned shard directly instead of
+    # installing an autograd conversion node. No communication is performed.
+    import torch
+
+    with torch.no_grad():
+        return tensor.to_local().detach(), True
 
 
 def parameter_state_summary(module: Any) -> dict[str, Any]:

@@ -95,7 +95,9 @@ class EMAModuleWrapper:
             for p in self.ema_parameters
         ]
 
-    def copy_ema_to(self, parameters: Iterable[torch.nn.Parameter], store_temp: bool = True) -> None:
+    def copy_ema_to(
+        self, parameters: Iterable[torch.nn.Parameter], store_temp: bool = True
+    ) -> None:
         """Replace model parameters with EMA values; optionally save originals."""
         parameters = list(parameters)
         if store_temp:
@@ -105,9 +107,7 @@ class EMAModuleWrapper:
             # restore EMA values instead of the pre-swap weights. copy=True keeps
             # the CPU-offload intent while guaranteeing an independent buffer.
             # (DTensor params stage as CPU-local DTensors — same code path.)
-            self.temp_stored_parameters = [
-                p.detach().to("cpu", copy=True) for p in parameters
-            ]
+            self.temp_stored_parameters = [p.detach().to("cpu", copy=True) for p in parameters]
 
         for ema_param, param in zip(self.ema_parameters, parameters, strict=True):
             param.data.copy_(ema_param.to(param.device).data)
@@ -136,6 +136,24 @@ class EMAModuleWrapper:
                 p.full_tensor().detach().cpu() if isinstance(p, DTensor) else p
                 for p in self.ema_parameters
             ],
+            "num_updates": self.num_updates,
+        }
+
+    def checkpoint_state_dict(self, *, is_primary: bool) -> dict[str, Any]:
+        """Join FSDP gathers everywhere while retaining shadows only on rank0."""
+
+        from torch.distributed.tensor import DTensor
+
+        gathered: list[torch.Tensor] = []
+        for parameter in self.ema_parameters:
+            full = parameter.full_tensor() if isinstance(parameter, DTensor) else parameter
+            if is_primary:
+                gathered.append(full.detach().cpu().clone())
+        if not is_primary:
+            return {}
+        return {
+            "decay": self.decay,
+            "ema_parameters": gathered,
             "num_updates": self.num_updates,
         }
 

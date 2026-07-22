@@ -725,16 +725,18 @@ class OnlineTrainer(Trainer):
         # default keeps current single-GPU behavior; FSDP2 swaps this in later
         # without the trainer loop changing. See vrl/trainers/strategy.py.
         self._strategy: Strategy = strategy or SingleProcessStrategy()
-        if (
-            _requires_fp32_master_weights(self.model)
-            and self._strategy.context.strategy != "single_process"
+        if self._strategy.context.strategy != "single_process" and any(
+            parameter.requires_grad and parameter.dtype == torch.float16
+            for parameter in self.model.parameters()
         ):
-            # Reject before prepare_model can initialize a process group or wrap
-            # modules. Independent masters need explicit distributed sharding,
-            # found-inf agreement, and checkpoint mapping that are not built yet.
+            # BF16 masters follow the FSDP/DTensor shard layout and need no loss
+            # scaling. FP16 additionally needs a cross-rank found-inf decision;
+            # letting independent scalers skip different optimizer steps would
+            # desynchronize the policy even though gradients were reduced.
             raise NotImplementedError(
-                "low-precision trainable parameters require FP32 master weights, "
-                "which are currently supported only by the single_process strategy",
+                "distributed FP16 trainable parameters require cross-rank GradScaler "
+                "found-inf agreement; use BF16 or single_process until that collective "
+                "decision is implemented",
             )
         # Route the model through the strategy once: identity for single process,
         # fully_shard wrapping for FSDP2. Done before optimizer / grad-scaler / EMA
@@ -2044,6 +2046,14 @@ class OnlineTrainer(Trainer):
     # ------------------------------------------------------------------
 
     def state_dict(self) -> dict:
+        return self._state_dict(checkpoint_primary_only=False)
+
+    def checkpoint_state_dict(self) -> dict:
+        """Build a resume snapshot without full state copies on every FSDP rank."""
+
+        return self._state_dict(checkpoint_primary_only=True)
+
+    def _state_dict(self, *, checkpoint_primary_only: bool) -> dict:
         # COLLECTIVE under fsdp (optimizer-moment + EMA-shadow gathers): the
         # checkpoint writer must call this on EVERY rank before its
         # primary-only file write, like the trainable-state gather.
@@ -2054,7 +2064,17 @@ class OnlineTrainer(Trainer):
             "total_loss": self.state.total_loss,
         }
         if self._optimizer is not None:
-            d["optimizer"] = self._strategy.export_optimizer_state(
+            checkpoint_exporter = getattr(
+                self._strategy,
+                "export_checkpoint_optimizer_state",
+                None,
+            )
+            exporter = (
+                checkpoint_exporter
+                if checkpoint_primary_only and callable(checkpoint_exporter)
+                else self._strategy.export_optimizer_state
+            )
+            d["optimizer"] = exporter(
                 self.model,
                 self._optimizer,
             )
@@ -2063,7 +2083,13 @@ class OnlineTrainer(Trainer):
             d["grad_scaler"] = self._grad_scaler.state_dict()
         ema = self._ensure_ema()
         if ema is not None:
-            d["ema"] = ema.state_dict()
+            checkpoint_ema = getattr(ema, "checkpoint_state_dict", None)
+            if checkpoint_primary_only and callable(checkpoint_ema):
+                d["ema"] = checkpoint_ema(
+                    is_primary=self._strategy.context.is_primary,
+                )
+            else:
+                d["ema"] = ema.state_dict()
         return d
 
     def load_state_dict(self, state: dict, *, strict: bool = True) -> None:

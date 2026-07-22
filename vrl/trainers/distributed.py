@@ -36,14 +36,13 @@ class DistributedTrainingContext:
     """Identity of the current training process — pure description.
 
     Creates no process group and wraps no model; it only records who this process
-    is (rank / local_rank / world_size / primary) and which device it owns, so the
+    is (rank / world_size / primary) and which device it owns, so the
     trainer and rank0-only output paths can branch without reading env directly.
     """
 
     strategy: str
     distributed: bool
     rank: int
-    local_rank: int
     world_size: int
     is_primary: bool
     device: torch.device
@@ -92,7 +91,6 @@ def resolve_training_context(
             strategy=strategy,
             distributed=False,
             rank=0,
-            local_rank=0,
             world_size=1,
             is_primary=True,
             device=device,
@@ -144,7 +142,6 @@ def resolve_training_context(
             strategy=strategy,
             distributed=True,
             rank=rank,
-            local_rank=local_rank,
             world_size=world_size,
             is_primary=(rank == 0),
             device=torch.device(f"cuda:{device_index}"),

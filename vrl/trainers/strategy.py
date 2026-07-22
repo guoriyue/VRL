@@ -551,21 +551,13 @@ class FSDPStrategy(_TrainingStateParking, Strategy):
             apply_fsdp,
             init_training_process_group,
             mixed_precision_policy,
+            normalize_fsdp_parameter_dtype,
         )
 
         # Validate the trainable handles BEFORE touching the process group so a bad
         # model fails fast (mirrors DDPStrategy; the guard tests need no live PG).
         handles = _trainable_module_handles(model)
-        # Create the process group + bind this rank's cuda device up front, exactly
-        # like DDPStrategy. init_device_mesh would lazily auto-init a default group,
-        # but it would NOT call torch.cuda.set_device(local_rank) first, so the NCCL
-        # group and the per-block fully_shard could bind the wrong card on a
-        # single-node multi-GPU box. Doing it here keeps the two strategies
-        # symmetric and the device choice explicit. No-op for single_process and
-        # when a group already exists (the CPU gloo test fixture pre-inits one).
-        backend = "gloo" if self.context.device.type == "cpu" else "nccl"
-        init_training_process_group(self.context, backend=backend)
-        mesh = self._ensure_mesh()
+        prepared_handles: list[tuple[str, nn.Module, Any, torch.dtype]] = []
         for name, handle, writer in handles:
             parameter_dtype = getattr(handle, "dtype", None)
             if not isinstance(parameter_dtype, torch.dtype):
@@ -573,6 +565,23 @@ class FSDPStrategy(_TrainingStateParking, Strategy):
                     parameter_dtype = next(handle.parameters()).dtype
                 except StopIteration as exc:
                     raise ValueError(f"FSDP trainable handle {name!r} has no parameters") from exc
+            normalize_fsdp_parameter_dtype(
+                handle,
+                parameter_dtype,
+                allow_cast=self._precision_policy == "actor",
+            )
+            prepared_handles.append((name, handle, writer, parameter_dtype))
+        # Create the process group + bind this rank's cuda device up front, exactly
+        # like DDPStrategy. init_device_mesh would lazily auto-init a default group,
+        # but it would NOT bind the process's resolved rank-local CUDA device first,
+        # so the NCCL group and per-block fully_shard could bind the wrong card on a
+        # single-node multi-GPU box. Doing it here keeps the two strategies symmetric
+        # and the device choice explicit. No-op for single_process and when a group
+        # already exists (the CPU gloo test fixture pre-inits one).
+        backend = "gloo" if self.context.device.type == "cpu" else "nccl"
+        init_training_process_group(self.context, backend=backend)
+        mesh = self._ensure_mesh()
+        for _name, handle, writer, parameter_dtype in prepared_handles:
             wrapped = apply_fsdp(
                 handle,
                 mesh=mesh,
@@ -657,6 +666,25 @@ class FSDPStrategy(_TrainingStateParking, Strategy):
             for name, module in modules.items()
         }
 
+    def export_checkpoint_trainable_state(
+        self,
+        bundle: Any,
+    ) -> dict[str, dict[str, Any]]:
+        """Gather checkpoint weights but retain full CPU tensors only on rank0."""
+
+        from vrl.trainers.fsdp import gather_trainable_state_dict
+        from vrl.trainers.weight_sync import require_trainable_modules, unwrap_compile_and_ddp
+
+        modules = require_trainable_modules(bundle)
+        gathered = {
+            name: gather_trainable_state_dict(
+                unwrap_compile_and_ddp(module),
+                rank0_only=True,
+            )
+            for name, module in modules.items()
+        }
+        return gathered if self.context.is_primary else {}
+
     def export_rollout_state(self, bundle: Any) -> dict[str, Any]:
         from vrl.trainers.fsdp import gather_trainable_state_dict
         from vrl.trainers.weight_sync import require_trainable_modules, unwrap_compile_and_ddp
@@ -705,6 +733,21 @@ class FSDPStrategy(_TrainingStateParking, Strategy):
         from vrl.trainers.fsdp import gather_full_optimizer_state_dict
 
         return gather_full_optimizer_state_dict(model, optimizer)
+
+    def export_checkpoint_optimizer_state(
+        self,
+        model: nn.Module,
+        optimizer: torch.optim.Optimizer,
+    ) -> dict[str, Any]:
+        """Gather resume state without rank-replicated full host snapshots."""
+
+        from vrl.trainers.fsdp import gather_full_optimizer_state_dict
+
+        return gather_full_optimizer_state_dict(
+            model,
+            optimizer,
+            rank0_only=True,
+        )
 
     def load_optimizer_state(
         self,
@@ -794,10 +837,10 @@ class DDPStrategy(Strategy):
     "gather" is a no-op at the plain-tensor level). Only ``prepare_model`` (wrap)
     diverges from FSDPStrategy.
 
-    Symmetric half of ``SPRINT_symmetric_colocated_ddp.md``. The online multi-rank
-    loop that drives N ranks is a separate, not-yet-wired phase, so the online
-    recipe still gates non-single_process strategies (see ``run_online_recipe``);
-    the strategy itself is exercised on a single CPU rank in
+    The online recipe drives this through the symmetric-colocated multi-rank path:
+    each torchrun rank owns one local trainer/rollout GPU and draws a disjoint
+    prompt slice, while DDP synchronizes gradients across ranks. The strategy's
+    wrapping and export seams are also exercised on a single CPU rank in
     ``tests/trainers/test_ddp.py``.
     """
 
@@ -827,7 +870,11 @@ class DDPStrategy(Strategy):
         handles = _trainable_module_handles(model)
         backend = "gloo" if self.context.device.type == "cpu" else "nccl"
         init_training_process_group(self.context, backend=backend)
-        device_ids = [self.context.local_rank] if self.context.device.type == "cuda" else None
+        device_ids = None
+        if self.context.device.type == "cuda":
+            if self.context.device.index is None:
+                raise ValueError("DDP requires an explicit rank-local CUDA device index")
+            device_ids = [self.context.device.index]
         for _name, handle, writer in handles:
             wrapped = DistributedDataParallel(
                 handle,
@@ -1031,7 +1078,6 @@ def _single_process_context() -> DistributedTrainingContext:
         strategy="single_process",
         distributed=False,
         rank=0,
-        local_rank=0,
         world_size=1,
         is_primary=True,
         device=torch.device("cpu"),

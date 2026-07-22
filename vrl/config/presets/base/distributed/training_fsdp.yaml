@@ -1,9 +1,6 @@
-# FSDP2 trainer strategy (torch-native fully_shard + DTensor). The strategy
-# layer is implemented (vrl/trainers/fsdp.py + FSDPStrategy, exercised on a
-# single CPU rank in tests/trainers/test_fsdp.py). The online GRPO multi-rank
-# orchestration (rank0 collect / all-rank train + torchrun<->Ray coordination)
-# is a separate, not-yet-wired phase, so run_online_recipe still fail-fasts on
-# fsdp (SPRINT_multi_gpu_training.md Phase 4/6). Launch under torchrun so RANK /
+# FSDP2 trainer strategy (torch-native fully_shard + DTensor). The online path
+# supports symmetric-colocated torchrun ranks: each rank owns one trainer GPU and
+# one rank-local Ray rollout on that card. Launch under torchrun so RANK /
 # LOCAL_RANK / WORLD_SIZE are set; WORLD_SIZE must equal num_nodes * gpus_per_node.
 distributed:
   training:

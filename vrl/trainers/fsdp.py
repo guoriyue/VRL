@@ -13,20 +13,24 @@ exercised on a single CPU rank (``world_size=1`` + gloo) in
 ``tests/trainers/test_fsdp.py``, which is enough to prove wrapping, forward /
 backward, full-state gather, and load round-trip without real multi-GPU.
 
-Boundaries this module does NOT cross (they belong to later phases of
-``SPRINT_multi_gpu_training.md``): the online GRPO rank-split collect/train loop,
-the torchrun↔Ray rollout coordination, and optimizer/EMA state sharding.
+The online GRPO rank-split loop and torchrun↔Ray phase leasing live in the
+recipe/resource layers; this module owns only process-group setup, FSDP wrapping,
+and collective model/optimizer state conversion.
 """
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Iterator, Mapping
+from dataclasses import replace
 from typing import Any
 
 import torch
 from torch import nn
 
 from vrl.trainers.distributed import DistributedTrainingContext
+
+logger = logging.getLogger(__name__)
 
 
 def init_training_process_group(
@@ -48,7 +52,9 @@ def init_training_process_group(
     if not context.distributed or dist.is_initialized():
         return
     if context.device.type == "cuda":
-        torch.cuda.set_device(context.local_rank)
+        # ``LOCAL_RANK`` is the launcher's pre-mask process ordinal;
+        # ``context.device`` is the CUDA ordinal inside this rank's masked view.
+        torch.cuda.set_device(context.device)
     dist.init_process_group(
         backend=backend,
         rank=context.rank,
@@ -117,6 +123,62 @@ def mixed_precision_policy(
         )
     raise ValueError(
         f"distributed.training.fsdp.precision_policy must be 'actor' or 'none', got {name!r}",
+    )
+
+
+def normalize_fsdp_parameter_dtype(
+    module: nn.Module,
+    target_dtype: torch.dtype,
+    *,
+    allow_cast: bool,
+) -> None:
+    """Make an FSDP parameter group uniform without hiding dtype provenance.
+
+    FSDP2 validates original parameter dtypes before its mixed-precision cast.
+    Diffusers deliberately leaves a small set of normalization/conditioning
+    parameters in FP32 even when the resolved model dtype is BF16. The actor
+    policy stores all model parameters in its resolved low precision and relies
+    on the FP32-master optimizer for update precision, so normalize those source
+    tensors before sharding. A ``none`` policy promises native dtype semantics
+    and therefore fails instead of silently changing them.
+    """
+
+    if not target_dtype.is_floating_point:
+        raise TypeError(f"FSDP target parameter dtype must be floating, got {target_dtype}")
+    mismatched = [
+        (name, parameter)
+        for name, parameter in module.named_parameters()
+        if parameter.dtype != target_dtype
+    ]
+    if not mismatched:
+        return
+    unsupported = [
+        (name, parameter.dtype)
+        for name, parameter in mismatched
+        if not parameter.is_floating_point()
+    ]
+    preview = ", ".join(f"{name}:{parameter.dtype}" for name, parameter in mismatched[:8])
+    if unsupported or not allow_cast:
+        reason = "non-floating parameters" if unsupported else "precision_policy='none'"
+        raise ValueError(
+            f"FSDP parameter dtype normalization is disabled for {reason}; "
+            f"target={target_dtype}, mismatched={preview}",
+        )
+
+    source_counts: dict[torch.dtype, int] = {}
+    cast_numel = 0
+    with torch.no_grad():
+        for _, parameter in mismatched:
+            source_counts[parameter.dtype] = source_counts.get(parameter.dtype, 0) + 1
+            cast_numel += parameter.numel()
+            parameter.data = parameter.data.to(dtype=target_dtype)
+    logger.info(
+        "FSDP parameter dtype normalization: target=%s tensors=%d numel=%d sources=%s examples=%s",
+        target_dtype,
+        len(mismatched),
+        cast_numel,
+        {str(dtype): count for dtype, count in source_counts.items()},
+        preview,
     )
 
 
@@ -196,11 +258,19 @@ def apply_fsdp(
     offload_kwargs = {"offload_policy": CPUOffloadPolicy()} if cpu_offload else {}
 
     base = unwrap_module(handle)
+    # The root owns the role-boundary cast. Recasting every block input is both
+    # redundant and unsafe with non-reentrant activation checkpointing: the
+    # first forward enters through FSDP's block pre-hook, while checkpoint
+    # recomputation may reuse already-materialized inputs. Wan's FP32 RoPE
+    # tensors then become BF16 only in the original pass, so checkpoint detects
+    # BF16/FP32 intermediate metadata drift. This matches FSDP1's established
+    # root-casts/non-root-does-not-cast policy while retaining BF16 parameters.
+    block_mp_policy = replace(mp_policy, cast_forward_inputs=False)
     for block in iter_blocks(base):
         fully_shard(
             block,
             mesh=mesh,
-            mp_policy=mp_policy,
+            mp_policy=block_mp_policy,
             reshard_after_forward=reshard_after_forward,
             **offload_kwargs,
         )
@@ -256,7 +326,11 @@ def gather_full_state_dict(module: nn.Module) -> dict[str, Any]:
     }
 
 
-def gather_trainable_state_dict(module: nn.Module) -> dict[str, Any]:
+def gather_trainable_state_dict(
+    module: nn.Module,
+    *,
+    rank0_only: bool = False,
+) -> dict[str, Any]:
     """Gather only trainable parameters as full CPU tensors on every rank.
 
     Asking DCP for a full state before filtering materializes the frozen base on
@@ -292,6 +366,9 @@ def gather_trainable_state_dict(module: nn.Module) -> dict[str, Any]:
         suffix = " ..." if len(missing) > 5 else ""
         raise ValueError(f"sharded state is missing trainable parameters: {preview}{suffix}")
 
+    import torch.distributed as dist
+
+    keep = not rank0_only or not dist.is_initialized() or dist.get_rank() == 0
     gathered: dict[str, Any] = {}
     # All ranks must enter DTensor collectives in the same order.
     for name in sorted(trainable_names):
@@ -300,7 +377,8 @@ def gather_trainable_state_dict(module: nn.Module) -> dict[str, Any]:
             value = value.full_tensor()
         if not isinstance(value, torch.Tensor):
             raise TypeError(f"trainable state {name!r} must be a tensor")
-        gathered[name] = value.detach().cpu().clone()
+        if keep:
+            gathered[name] = value.detach().cpu().clone()
     return gathered
 
 
@@ -391,31 +469,45 @@ def load_full_state_dict(
     )
 
 
-def _materialize_full_cpu(value: Any) -> Any:
-    """Recursively gather DTensor leaves to full CPU tensors.
+def _materialize_full_cpu(value: Any, *, keep: bool = True) -> Any:
+    """Recursively gather DTensor leaves, retaining them only when requested.
 
     Optimizer state nests tensors inside dicts/lists (per-param exp_avg /
     exp_avg_sq plus scalar step counters); everything non-tensor passes
-    through untouched.
+    through untouched. ``keep=False`` still enters every DTensor collective but
+    releases each full tensor immediately. Checkpoint export uses that path on
+    non-primary ranks so only the file-writing rank retains the full CPU tree.
     """
 
     from torch.distributed.tensor import DTensor
 
     if isinstance(value, DTensor):
-        return value.full_tensor().detach().cpu()
+        full = value.full_tensor()
+        return full.detach().cpu().clone() if keep else None
     if isinstance(value, torch.Tensor):
-        return value.detach().cpu()
+        # ``Tensor.cpu()`` aliases an already-CPU scalar such as Adam's step
+        # counter. A checkpoint snapshot must not change when the live optimizer
+        # takes its next step, so clone every ordinary tensor as well as DTensors.
+        return value.detach().cpu().clone() if keep else None
     if isinstance(value, dict):
-        return {key: _materialize_full_cpu(inner) for key, inner in value.items()}
+        if keep:
+            return {key: _materialize_full_cpu(inner, keep=True) for key, inner in value.items()}
+        for inner in value.values():
+            _materialize_full_cpu(inner, keep=False)
+        return {}
     if isinstance(value, (list, tuple)):
-        materialized = [_materialize_full_cpu(inner) for inner in value]
+        materialized = [_materialize_full_cpu(inner, keep=keep) for inner in value]
+        if not keep:
+            return () if isinstance(value, tuple) else []
         return tuple(materialized) if isinstance(value, tuple) else materialized
-    return value
+    return value if keep else None
 
 
 def gather_full_optimizer_state_dict(
     model: nn.Module,
     optimizer: torch.optim.Optimizer,
+    *,
+    rank0_only: bool = False,
 ) -> dict[str, Any]:
     """Gather a sharded model's optimizer state into a full CPU dict ON EVERY RANK.
 
@@ -425,8 +517,25 @@ def gather_full_optimizer_state_dict(
     ``full_state_dict=True``, all-gathers each moment to a full tensor. Same
     ``cpu_offload=False`` rationale as ``gather_full_state_dict``: with offload
     DCP returns the state only on rank0 and empties elsewhere, which breaks
-    every-rank symmetric callers; we move to CPU ourselves.
+    every-rank symmetric callers; we move to CPU ourselves. Checkpoint export
+    passes ``rank0_only=True`` so every rank joins the collectives while only
+    rank0 retains the full CPU tree needed by the sole file writer.
     """
+
+    import torch.distributed as dist
+
+    keep = not rank0_only or not dist.is_initialized() or dist.get_rank() == 0
+
+    from vrl.trainers.optimizer import FP32MasterWeightOptimizer
+
+    if isinstance(optimizer, FP32MasterWeightOptimizer):
+        # DCP maps optimizer parameters back to model FQNs by object identity.
+        # FP32 masters are deliberately distinct from the BF16 model DTensors,
+        # so that mapping cannot apply. The wrapper's state_dict is positional,
+        # and OnlineTrainer checkpoints an independent ordered FQN manifest that
+        # rejects any parameter-order drift before restore. Non-primary ranks
+        # gather one DTensor leaf at a time and discard it immediately.
+        return _materialize_full_cpu(optimizer.state_dict(), keep=keep)
 
     from torch.distributed.checkpoint.state_dict import (
         StateDictOptions,
@@ -436,9 +545,12 @@ def gather_full_optimizer_state_dict(
     state = get_optimizer_state_dict(
         model,
         optimizer,
-        options=StateDictOptions(full_state_dict=True, cpu_offload=False),
+        options=StateDictOptions(
+            full_state_dict=True,
+            cpu_offload=rank0_only,
+        ),
     )
-    return _materialize_full_cpu(state)
+    return _materialize_full_cpu(state, keep=keep)
 
 
 def load_full_optimizer_state_dict(
@@ -453,6 +565,14 @@ def load_full_optimizer_state_dict(
     and DCP re-shards each moment onto the local DTensor layout. A no-op
     broadcast at ``world_size=1``.
     """
+
+    from vrl.trainers.optimizer import FP32MasterWeightOptimizer
+
+    if isinstance(optimizer, FP32MasterWeightOptimizer):
+        optimizer.load_state_dict(
+            _distribute_fp32_master_optimizer_state(optimizer, state),
+        )
+        return
 
     from torch.distributed.checkpoint.state_dict import (
         StateDictOptions,
@@ -472,3 +592,83 @@ def load_full_optimizer_state_dict(
         state,
         options=StateDictOptions(full_state_dict=True, broadcast_from_rank0=True),
     )
+
+
+def _distribute_fp32_master_optimizer_state(
+    optimizer: Any,
+    state: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Restore full positional optimizer tensors onto the masters' DTensor shards.
+
+    ``FP32MasterWeightOptimizer.state_dict`` uses ordinary optimizer parameter
+    ids plus an ordered master list. Checkpoint validation separately proves the
+    source-parameter FQN order, so this function only owns tensor layout: full
+    CPU moment/master tensors become DTensors with the same mesh/placements as
+    the corresponding live FP32 master. Scalar step counters remain ordinary
+    tensors on the master's local device.
+    """
+
+    from torch.distributed.tensor import DTensor, distribute_tensor
+
+    if not isinstance(state, Mapping):
+        raise TypeError("distributed FP32-master optimizer state must be a mapping")
+    if "state" not in state or "param_groups" not in state:
+        raise ValueError("distributed FP32-master optimizer state is incomplete")
+
+    masters = tuple(optimizer.parameters())
+    current = optimizer.state_dict()
+    current_groups = current.get("param_groups")
+    saved_groups = state.get("param_groups")
+    if not isinstance(current_groups, list) or not isinstance(saved_groups, list):
+        raise ValueError("distributed optimizer param_groups must be lists")
+    current_ids = [item for group in current_groups for item in group.get("params", [])]
+    saved_ids = [item for group in saved_groups for item in group.get("params", [])]
+    if len(current_ids) != len(masters) or len(saved_ids) != len(masters):
+        raise ValueError(
+            "distributed FP32-master checkpoint parameter count does not match runtime",
+        )
+    master_by_saved_id = dict(zip(saved_ids, masters, strict=True))
+
+    def distribute_like(value: Any, master: torch.Tensor) -> Any:
+        if isinstance(value, Mapping):
+            return {key: distribute_like(inner, master) for key, inner in value.items()}
+        if isinstance(value, list):
+            return [distribute_like(inner, master) for inner in value]
+        if isinstance(value, tuple):
+            return tuple(distribute_like(inner, master) for inner in value)
+        if not isinstance(value, torch.Tensor):
+            return value
+        if isinstance(master, DTensor) and tuple(value.shape) == tuple(master.shape):
+            full = value.to(device=master.device, dtype=value.dtype)
+            return distribute_tensor(
+                full,
+                device_mesh=master.device_mesh,
+                placements=master.placements,
+                src_data_rank=0,
+            )
+        return value.to(device=master.device)
+
+    saved_entries = state.get("state")
+    if not isinstance(saved_entries, Mapping):
+        raise ValueError("distributed optimizer state entries must be a mapping")
+    local_entries = {
+        saved_id: distribute_like(entry, master_by_saved_id[saved_id])
+        for saved_id, entry in saved_entries.items()
+    }
+
+    master_state = state.get("fp32_master_weights")
+    if not isinstance(master_state, Mapping):
+        raise ValueError("optimizer checkpoint is missing fp32_master_weights")
+    saved_masters = master_state.get("parameters")
+    if not isinstance(saved_masters, list) or len(saved_masters) != len(masters):
+        raise ValueError("distributed FP32-master checkpoint master list is invalid")
+    local_master_state = dict(master_state)
+    local_master_state["parameters"] = [
+        None if value is None else distribute_like(value, master)
+        for value, master in zip(saved_masters, masters, strict=True)
+    ]
+
+    local = dict(state)
+    local["state"] = local_entries
+    local["fp32_master_weights"] = local_master_state
+    return local

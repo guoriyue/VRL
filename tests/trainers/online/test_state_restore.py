@@ -136,7 +136,7 @@ class TestOnlineTrainerResumeState:
                 return getattr(self._delegate, name)
 
         distributed = _SpyStrategy("ddp")
-        with pytest.raises(NotImplementedError, match="only by the single_process"):
+        with pytest.raises(NotImplementedError, match="use BF16 or single_process"):
             _make_resume_trainer(model_dtype="float16", strategy=distributed)
         assert distributed.prepared is False
 
