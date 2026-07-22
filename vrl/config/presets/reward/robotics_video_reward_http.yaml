@@ -1,0 +1,19 @@
+# Audited DROID reward blend served on a GPU isolated from generation/training.
+# Model placement, component weights, and target-data resolution belong to the
+# service config; this preset contains only the HTTP transport contract.
+reward:
+  components:
+    robotics_video_reward: 1.0
+  kwargs:
+    robotics_video_reward:
+      reward_name: robotics_video_reward
+      score_key: robotics_blend
+      media_type: video
+      artifact_format: mp4
+      artifact_dir: ${trainer.output_dir}/reward_artifacts
+      debug_dir: ${trainer.output_dir}/reward_debug
+      inference:
+        kind: http
+        endpoint: http://127.0.0.1:8301
+        timeout_s: 1800
+        expected_model: robotics-video-reward

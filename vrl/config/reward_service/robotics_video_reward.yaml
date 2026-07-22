@@ -1,0 +1,39 @@
+# Operator-owned DROID reward service. Physical GPU 3 is disjoint from the
+# three colocated FSDP trainer/rollout ranks on physical GPUs 0-2.
+host: 127.0.0.1
+port: 8301
+model_name: robotics-video-reward-v1
+model_version: KlingTeam/VideoReward@4f266001+DINOv2-vits14+RAFT-small+droid-blend-v1
+
+artifact_roots:
+  - /home/ubuntu/VRL/outputs
+
+max_concurrency: 1
+max_pending_requests: 8
+max_cached_requests: 1024
+generation_overlap_safe: true
+
+worker_config:
+  model_factory: vrl.rewards.models.robotics_video_reward:RoboticsVideoRewardModel
+  reward_model_version: KlingTeam/VideoReward@4f266001+DINOv2-vits14+RAFT-small+droid-blend-v1
+  device: cuda:0
+  data_root: /home/ubuntu/VRL/outputs/wan_robotics_physics_4x_l4/cosmos_assets/droid_full_targets_staging_1000_64_20260721
+  weights:
+    target_dino_similarity: 1.0
+    motion_dynamics: 0.2
+    kling_text_alignment: 0.3
+  kling:
+    reward_model_name: KlingTeam/VideoReward@main
+    dtype: bfloat16
+    local_files_only: true
+    min_frame_pixels: 200704
+    disable_flash_attn2: true
+  dino:
+    num_frames: 16
+    sequence_weight: 0.4
+    final_weight: 0.2
+    temporal_weight: 0.4
+  motion:
+    num_frames: 16
+    flow_size: 256
+    magnitude_scale: 50.0

@@ -354,10 +354,16 @@ class RewardFunction:
             ).strip()
             model_path = str(worker_cfg.get("model_path", "")).strip()
             # YAML names the public model; the loader needs the private factory.
-            if not has_model_factory and (reward_model_name or model_path):
+            if not has_model_factory:
+                # ``runtime is None`` is the in-process path: HTTP components
+                # inject their ready client runtime in MultiReward before they
+                # reach this constructor. Every local disk reward therefore
+                # needs its concrete factory even when it is a composite model
+                # rather than one Hugging Face repository.
+                worker_cfg["model_factory"] = model_factory
+            if reward_model_name or model_path:
                 if reward_model_name:
                     worker_cfg["reward_model_name"] = reward_model_name
-                worker_cfg["model_factory"] = model_factory
                 if not str(worker_cfg.get("reward_model_version", "")).strip():
                     worker_cfg["reward_model_version"] = reward_model_name or model_path
             # Resource resolution is the device source of truth. A nested model

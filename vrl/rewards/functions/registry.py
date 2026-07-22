@@ -35,6 +35,7 @@ def _register_builtins() -> None:
     from vrl.rewards.functions.ocr import OCRReward
     from vrl.rewards.functions.phymotion import PhyMotionReward
     from vrl.rewards.functions.pickscore import PickScoreReward
+    from vrl.rewards.functions.robotics_video_reward import RoboticsVideoReward
     from vrl.rewards.functions.target_dino_similarity import TargetDinoSimilarityReward
     from vrl.rewards.functions.unified_reward_video import UnifiedRewardVideoReward
     from vrl.rewards.functions.videocon_physics import VideoConPhysicsReward
@@ -53,6 +54,7 @@ def _register_builtins() -> None:
             # not shipped.
             "target_dino_similarity": TargetDinoSimilarityReward,
             "motion_dynamics": MotionDynamicsReward,
+            "robotics_video_reward": RoboticsVideoReward,
             "kling_video_reward": KlingVideoReward,
             "cosmos3_reasoner": Cosmos3ReasonerReward,
             "videocon_physics": VideoConPhysicsReward,

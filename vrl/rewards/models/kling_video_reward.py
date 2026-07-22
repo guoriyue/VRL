@@ -262,6 +262,12 @@ class KlingVideoRewardModel(RewardModel):
         self.inference_config = inference_config
         logger.info("loaded Kling VideoReward model %s", kv(device=self.device))
 
+    def move_to(self, device: str) -> None:
+        """Move the complete reward backbone for shared-GPU phase handoff."""
+
+        self.model = self.model.to(device)
+        self.device = str(device)
+
     def __call__(
         self,
         *,
@@ -315,7 +321,9 @@ class KlingVideoRewardModel(RewardModel):
                             "video": f"file://{video_path}",
                             "max_pixels": max_pixels,
                             **({"min_pixels": min_pixels} if min_pixels is not None else {}),
-                            **({"nframes": num_frames} if num_frames is not None else {"fps": fps}),
+                            **(
+                                {"nframes": num_frames} if num_frames is not None else {"fps": fps}
+                            ),
                         },
                         {
                             "type": "text",
@@ -375,15 +383,15 @@ class KlingVideoRewardModel(RewardModel):
         ]
         for reward in rewards:
             if use_norm and self.inference_config is not None:
-                reward["VQ"] = (
-                    reward["VQ"] - float(self.inference_config["VQ_mean"])
-                ) / float(self.inference_config["VQ_std"])
-                reward["MQ"] = (
-                    reward["MQ"] - float(self.inference_config["MQ_mean"])
-                ) / float(self.inference_config["MQ_std"])
-                reward["TA"] = (
-                    reward["TA"] - float(self.inference_config["TA_mean"])
-                ) / float(self.inference_config["TA_std"])
+                reward["VQ"] = (reward["VQ"] - float(self.inference_config["VQ_mean"])) / float(
+                    self.inference_config["VQ_std"]
+                )
+                reward["MQ"] = (reward["MQ"] - float(self.inference_config["MQ_mean"])) / float(
+                    self.inference_config["MQ_std"]
+                )
+                reward["TA"] = (reward["TA"] - float(self.inference_config["TA_mean"])) / float(
+                    self.inference_config["TA_std"]
+                )
             reward["Overall"] = reward["VQ"] + reward["MQ"] + reward["TA"]
         return rewards
 
@@ -436,9 +444,7 @@ class KlingQwen2VLRewardModel(Qwen2VLForConditionalGeneration):
     ) -> dict[str, torch.Tensor]:
         del labels, return_dict
         output_attentions = (
-            output_attentions
-            if output_attentions is not None
-            else self.config.output_attentions
+            output_attentions if output_attentions is not None else self.config.output_attentions
         )
         output_hidden_states = (
             output_hidden_states
@@ -479,7 +485,9 @@ class KlingQwen2VLRewardModel(Qwen2VLForConditionalGeneration):
             sequence_lengths = sequence_lengths.to(logits.device)
 
         if self.reward_token == "last":
-            pooled_logits = logits[torch.arange(batch_size, device=logits.device), sequence_lengths]
+            pooled_logits = logits[
+                torch.arange(batch_size, device=logits.device), sequence_lengths
+            ]
         elif self.reward_token == "mean":
             valid_lengths = torch.clamp(sequence_lengths, min=0, max=logits.size(1) - 1)
             pooled_logits = torch.stack(
@@ -662,13 +670,11 @@ def _resolve_model_root(worker_config: Mapping[str, Any]) -> Path:
         raise FileNotFoundError(f"Kling VideoReward model path does not exist: {root}")
     if not (root / "model_config.json").exists():
         raise FileNotFoundError(
-            "Kling VideoReward model root must contain model_config.json: "
-            f"{root}",
+            f"Kling VideoReward model root must contain model_config.json: {root}",
         )
     if not any(root.glob("checkpoint-*")):
         raise FileNotFoundError(
-            "Kling VideoReward model root must contain a checkpoint-* subdir: "
-            f"{root}",
+            f"Kling VideoReward model root must contain a checkpoint-* subdir: {root}",
         )
     return root
 
@@ -764,7 +770,9 @@ def _create_model_and_processor(
     return model, processor
 
 
-def _load_configs(root: Path) -> tuple[_DataConfig, _ModelConfig, _PeftLoraConfig, dict[str, float] | None]:
+def _load_configs(
+    root: Path,
+) -> tuple[_DataConfig, _ModelConfig, _PeftLoraConfig, dict[str, float] | None]:
     with (root / "model_config.json").open("r", encoding="utf-8") as handle:
         config = json.load(handle)
     return (
@@ -812,10 +820,7 @@ def _remap_qwen2vl_state_dict(
     state: Mapping[str, Any],
     target_state: Mapping[str, Any],
 ) -> Mapping[str, Any]:
-    remapped = {
-        _remap_qwen2vl_key(str(key)): value
-        for key, value in state.items()
-    }
+    remapped = {_remap_qwen2vl_key(str(key)): value for key, value in state.items()}
     return remapped if set(remapped) == set(target_state) else state
 
 

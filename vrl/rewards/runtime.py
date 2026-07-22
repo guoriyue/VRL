@@ -49,6 +49,30 @@ def _build_prepared_model_in_pool(
         return model
 
 
+def _build_prepared_model(factory: Any, worker_config: Mapping[str, Any]) -> Any:
+    """Build one reward model and materialize any lazy accelerator weights."""
+
+    model = factory(worker_config)
+    prepare = getattr(model, "prepare_for_inference", None)
+    if callable(prepare):
+        prepare()
+    return model
+
+
+def _reward_model_mover(model: Any) -> Any:
+    """Return the model's complete device-move hook or fail closed."""
+
+    move = getattr(model, "move_to", None)
+    if not callable(move):
+        move = getattr(model, "to", None)
+    if not callable(move):
+        raise RuntimeError(
+            f"reward model {type(model).__name__} cannot completely park on CPU: "
+            "shared-GPU fallback requires move_to(device) or to(device)",
+        )
+    return move
+
+
 class InProcessRewardRuntime:
     """``RewardInferenceRuntime`` that runs a ``RewardModel`` in this process.
 
@@ -59,13 +83,15 @@ class InProcessRewardRuntime:
     before rewards score) already guarantees the card is free at that point.
     Small in-memory rewards (CLIP-class) leave the knob off and stay resident.
 
-    Offload is cumem-only (vLLM's CuMemAllocator is a hard requirement of
-    ``sleep_offload``): the model is built under a backup tag, so process-wide
-    ``sleep`` releases physical pages while preserving this reward's contents
-    in pinned host RAM, and ``wake`` remaps without cudaMalloc. CuMem tags do
-    not isolate sleep operations; the shared-topology preflight therefore
-    permits at most one configured GPU reward component per process; zero-weight
-    observation-only scorers still execute and therefore count.
+    When vLLM's CuMemAllocator is present, the model is built under a backup tag,
+    so process-wide ``sleep`` releases physical pages while preserving this
+    reward's contents in pinned host RAM. The diffusers/reward environment keeps
+    vLLM isolated because it pins a different Torch ABI, so the verified fallback
+    moves a model with a complete ``move_to``/``to`` contract to CPU and back.
+    Both backends publish the same physical-memory proof before trainer handoff.
+    CuMem tags do not isolate sleep operations; the shared-topology preflight
+    therefore permits at most one configured GPU reward component per process;
+    zero-weight observation-only scorers still execute and therefore count.
     """
 
     scoring_is_nonblocking = False
@@ -82,11 +108,12 @@ class InProcessRewardRuntime:
         if model is not None and self._sleep_offload:
             raise ValueError(
                 "sleep_offload requires the runtime to build the model itself "
-                "(worker_config.model_factory) so its allocations land in the "
-                "cumem pool; an already-built injected model cannot be pooled.",
+                "(worker_config.model_factory) so it can capture the pre-load "
+                "GPU baseline and validate a complete parking backend.",
             )
         self._model = model
         self._pool: CumemPool | None = None
+        self._cpu_parked_device: str | None = None
         self._last_request_id: str | None = None
         self._preload_gpu_used_bytes: int | None = None
         self._parking_residual_bytes_limit = int(
@@ -113,15 +140,36 @@ class InProcessRewardRuntime:
             raise RuntimeError(
                 "reward runtime cannot park before a score request has started",
             )
-        pool = self._pool
-        if pool is None:
+        model = self._model
+        if model is None:
             raise RuntimeError(
-                "reward runtime cannot prove memory parking before its pooled model is built",
+                "reward runtime cannot prove memory parking before its model is built",
             )
-        if not pool.asleep:
+        pool = self._pool
+        if pool is not None and not pool.asleep:
             # CumemPool marks itself asleep only after allocator.sleep returns.
             # A failure therefore leaves this branch retryable on the next call.
             pool.sleep()
+        elif pool is None and self._cpu_parked_device is None:
+            restore_device = str(self._worker_config.get("device", "")).strip()
+            if not restore_device.startswith("cuda"):
+                raise RuntimeError(
+                    "reward CPU parking fallback requires a CUDA execution device, "
+                    f"got {restore_device!r}",
+                )
+            move = _reward_model_mover(model)
+            try:
+                move("cpu")
+            except BaseException as move_error:
+                try:
+                    move(restore_device)
+                except BaseException as rollback_error:
+                    raise RuntimeError(
+                        "reward CPU parking and rollback both failed: "
+                        f"move={move_error!r}; rollback={rollback_error!r}",
+                    ) from rollback_error
+                raise
+            self._cpu_parked_device = restore_device
         self._release_cuda_memory_for_parking()
         baseline_bytes = self._preload_gpu_used_bytes
         if baseline_bytes is None:
@@ -151,31 +199,44 @@ class InProcessRewardRuntime:
                 # makes (from_pretrained, .to(device), buffers) is tagged and
                 # sleep/wake can release/restore it wholesale.
                 self._preload_gpu_used_bytes = self._gpu_used_bytes()
-                pool = CumemPool.require()
-                try:
-                    model = _build_prepared_model_in_pool(
-                        pool,
-                        factory,
-                        self._worker_config,
-                    )
-                except BaseException as load_error:
-                    # Commit neither half of a failed model/pool build. Dropping
-                    # traceback-held helper locals first lets terminal pool close
-                    # release partial CUDA allocations before a future retry.
-                    traceback.clear_frames(load_error.__traceback__)
+                pool = CumemPool.try_create()
+                if pool is not None:
                     try:
-                        self._release_cuda_memory_for_parking()
-                        pool.close()
-                    except BaseException as cleanup_error:
+                        model = _build_prepared_model_in_pool(
+                            pool,
+                            factory,
+                            self._worker_config,
+                        )
+                    except BaseException as load_error:
+                        # Commit neither half of a failed model/pool build. Dropping
+                        # traceback-held helper locals first lets terminal pool close
+                        # release partial CUDA allocations before a future retry.
+                        traceback.clear_frames(load_error.__traceback__)
+                        try:
+                            self._release_cuda_memory_for_parking()
+                            pool.close()
+                        except BaseException as cleanup_error:
+                            self._preload_gpu_used_bytes = None
+                            raise RuntimeError(
+                                "reward model preparation and CuMem cleanup both failed: "
+                                f"load={load_error!r}; cleanup={cleanup_error!r}",
+                            ) from cleanup_error
                         self._preload_gpu_used_bytes = None
-                        raise RuntimeError(
-                            "reward model preparation and CuMem cleanup both failed: "
-                            f"load={load_error!r}; cleanup={cleanup_error!r}",
-                        ) from cleanup_error
-                    self._preload_gpu_used_bytes = None
-                    raise
-                self._pool = pool
-                self._model = model
+                        raise
+                    self._pool = pool
+                    self._model = model
+                else:
+                    model = None
+                    try:
+                        model = _build_prepared_model(factory, self._worker_config)
+                        _reward_model_mover(model)
+                    except BaseException as load_error:
+                        traceback.clear_frames(load_error.__traceback__)
+                        model = None
+                        self._release_cuda_memory_for_parking()
+                        self._preload_gpu_used_bytes = None
+                        raise
+                    self._model = model
             else:
                 self._model = factory(self._worker_config)
         return self._model
@@ -190,6 +251,10 @@ class InProcessRewardRuntime:
         model = self._ensure_model()
         if self._pool is not None:
             self._pool.wake()
+        elif self._cpu_parked_device is not None:
+            restore_device = self._cpu_parked_device
+            _reward_model_mover(model)(restore_device)
+            self._cpu_parked_device = None
         # CuMem's model-building scope is one-shot. Execution uses the normal
         # allocator; park_memory's physical baseline gate rejects any lazy
         # long-lived CUDA allocation that survives scoring.
@@ -218,10 +283,8 @@ class InProcessRewardRuntime:
         # release the configured device cache for every runtime. The shared
         # path additionally proves the release against its pre-load baseline.
         self._release_cuda_memory_for_parking()
-        if pool is not None:
+        if self._sleep_offload and self._preload_gpu_used_bytes is not None:
             baseline_bytes = self._preload_gpu_used_bytes
-            if baseline_bytes is None:
-                raise RuntimeError("reward runtime has no pre-load shutdown baseline")
             # A failure retains the pool/baseline so terminal cleanup can retry
             # cache release; the trainer remains parked until this succeeds.
             validate_reward_parking_residual(
@@ -231,6 +294,7 @@ class InProcessRewardRuntime:
                 context="reward memory release during shutdown",
             )
         self._pool = None
+        self._cpu_parked_device = None
         self._last_request_id = None
         self._preload_gpu_used_bytes = None
 

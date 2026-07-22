@@ -11,8 +11,10 @@ Why this is not pixel-L1 in disguise: a DINOv2 embedding is a learned semantic
 feature, so the conditional-mean ("blur the prediction to the temporal average")
 solution that maximizes pixel L1 no longer maximizes cosine similarity -- a blurry
 or frozen frame lands off the real-image manifold and its embedding drifts away
-from the target's. The probe in ``future_reward_discrimination_probe`` enforces
-this: blur / temporal-mean must score >0.15 cosine below the exact match.
+from the target's. Measured on the SPRINT_future_reward adversarial battery:
+blur / temporal-mean scored >0.15 cosine below the exact match. Discrimination
+regressions are now caught by a human reviewing rollouts (the automated probe
+was removed).
 
 This is a *perceptual anchor* that still scores against a single recorded future, so
 it penalizes plausible divergent rollouts -- the weaker "imitate one recording"
@@ -71,6 +73,18 @@ class TargetDinoSimilarityModel:
                 param.requires_grad_(False)
             self._model = model
         return self._model
+
+    def prepare_for_inference(self) -> None:
+        """Materialize DINO weights inside the owning reward memory pool."""
+
+        self._encoder()
+
+    def move_to(self, device: str) -> None:
+        """Move all materialized DINO state for shared-GPU phase handoff."""
+
+        if self._model is not None:
+            self._model = self._model.to(device)
+        self.device = str(device)
 
     def __call__(self, *, artifact: Any, request: Any) -> Mapping[str, float]:
         del request

@@ -1,4 +1,4 @@
-# Operator-owned VideoScore2 reward service for the generation/reward overlap
+# Operator-owned Kling VideoReward service for the generation/reward overlap
 # acceptance gate (docs/sprints/parked/SPRINT_video_rollout_stage_overlap.md).
 #
 # This is NOT a hydra preset — it is the standalone service process's own config,
@@ -6,7 +6,7 @@
 # config loader never picks it up.
 #
 # Launch on a four-GPU host, pinning the service to physical GPU 3 so it is
-# disjoint from the trainer (GPU 0) and rollout workers (GPU 1/2):
+# disjoint from the three colocated trainer/rollout ranks (physical GPUs 0-2):
 #
 #   CUDA_VISIBLE_DEVICES=3 \
 #     .venv/bin/vrl-reward-service \
@@ -27,7 +27,7 @@ model_version: KlingTeam/VideoReward@main
 artifact_roots:
   - /home/ubuntu/VRL/outputs
 
-# One in-flight scoring call: VideoScore2 is a single generative judge on one
+# One in-flight scoring call: Kling VideoReward is a single learned judge on one
 # GPU, so concurrency above 1 would only queue inside the model. The pending cap
 # bounds admission so a producer that outruns scoring gets explicit 429
 # backpressure instead of unbounded queue growth.

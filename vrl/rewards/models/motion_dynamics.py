@@ -62,6 +62,18 @@ class MotionDynamicsModel:
             self._model = model
         return self._model
 
+    def prepare_for_inference(self) -> None:
+        """Materialize RAFT weights inside the owning reward memory pool."""
+
+        self._flow_model()
+
+    def move_to(self, device: str) -> None:
+        """Move all materialized RAFT state for shared-GPU phase handoff."""
+
+        if self._model is not None:
+            self._model = self._model.to(device)
+        self.device = str(device)
+
     def __call__(self, *, artifact: Any, request: Any) -> Mapping[str, float]:
         del request
         frames = decode_artifact_frames(artifact, self.num_frames)
