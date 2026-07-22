@@ -196,6 +196,32 @@ def test_pretraining_pair_flow_matching_uses_scheduler_scale_noise() -> None:
     torch.testing.assert_close(target, noise - latents)
 
 
+def test_pretraining_pair_unipc_flow_prediction_uses_shifted_sigma_ladder() -> None:
+    """Wan UniPC noising and velocity target reconstruct the clean latent."""
+    from diffusers import UniPCMultistepScheduler
+
+    from vrl.math.denoise.flow_matching import diffusion_pretraining_pair
+
+    scheduler = UniPCMultistepScheduler(
+        prediction_type="flow_prediction",
+        use_flow_sigmas=True,
+        flow_shift=3.0,
+    )
+    scheduler.set_timesteps(8)
+    torch.manual_seed(0)
+    latents = torch.randn(2, 3, 4)
+    noise = torch.randn(2, 3, 4)
+    t = scheduler.timesteps[[2, 5]]
+
+    noisy, target = diffusion_pretraining_pair(scheduler, latents, noise, t)
+
+    torch.testing.assert_close(noisy, scheduler.add_noise(latents, noise, t))
+    torch.testing.assert_close(target, noise - latents)
+    indices = [scheduler.index_for_timestep(step, scheduler.timesteps) for step in t]
+    sigma = scheduler.sigmas[indices].reshape(2, 1, 1)
+    torch.testing.assert_close(noisy - sigma * target, latents)
+
+
 @pytest.mark.parametrize("prediction_type", ["epsilon", "v_prediction"])
 def test_pretraining_pair_ddpm_ladder_targets(prediction_type: str) -> None:
     from diffusers import DDPMScheduler

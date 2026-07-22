@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Literal, get_args
 
 from vrl.config.precision import QuantizationPolicy, RolePrecision
 from vrl.models.interfaces.replay import RuntimeModel
@@ -26,6 +26,7 @@ MODEL_MEMORY_SECTIONS: tuple[str, ...] = ("vae_decode",)
 # Single source of truth for the model_config compile block that the
 # ``ModelBuild.torch_compile`` property below consumes.
 TORCH_COMPILE_MODEL_KEY = "torch_compile"
+PipelineOffloadMode = Literal["none", "model", "sequential"]
 
 # The trainer and Ray rollout worker load different runtime surfaces: rollout
 # workers own full generation state for sampling/decoding; trainers own only
@@ -62,8 +63,10 @@ class RolloutBuildOptions:
     """Generation-only precision and lifecycle inputs for a rollout model.
 
     ``prompt_encoder_dtype`` names the generation-only encoder precision policy
-    the runtime actually consumes. VAEs remain family-owned fp32 fidelity boundaries;
-    putting their dtype under this option would advertise a knob they ignore.
+    the runtime actually consumes. ``pipeline_offload_mode`` owns optional
+    Diffusers/Accelerate residency hooks that exist only on full generation
+    pipelines. VAEs remain family-owned fp32 fidelity boundaries; putting their
+    dtype under this option would advertise a knob they ignore.
 
     Replay builds carry ``rollout=None`` instead of hauling these fields through
     a path that must never quantize or load generation-only prompt encoders.
@@ -71,6 +74,7 @@ class RolloutBuildOptions:
 
     prompt_encoder_dtype: Any
     base_weight_sync: bool = True
+    pipeline_offload_mode: PipelineOffloadMode = "none"
 
     def __post_init__(self) -> None:
         from vrl.models.dtypes import (
@@ -92,6 +96,13 @@ class RolloutBuildOptions:
 
         if not isinstance(self.base_weight_sync, bool):
             raise TypeError("rollout base_weight_sync must be a bool")
+        allowed_offload_modes = get_args(PipelineOffloadMode)
+        if self.pipeline_offload_mode not in allowed_offload_modes:
+            raise ValueError(
+                "rollout pipeline_offload_mode must be one of "
+                f"{list(allowed_offload_modes)}, got "
+                f"{self.pipeline_offload_mode!r}",
+            )
 
 
 @dataclass

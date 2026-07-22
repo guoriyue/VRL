@@ -525,11 +525,27 @@ def test_launch_from_cfg_projects_model_compile_and_precision() -> None:
         "outer_autocast": True,
     }
     assert model_build["rollout"]["prompt_encoder_dtype"] == "float16"
+    assert "pipeline_offload_mode" not in model_build["rollout"]
     assert model_build["model_config"]["marker"] == "driver-config"
     assert model_build["model_config"]["torch_compile"] == {
         "enable": True,
         "mode": "default",
     }
+
+
+def test_launch_from_cfg_projects_wan_offload_to_rollout_contract() -> None:
+    cfg = _launch_cfg()
+    cfg.model.family = "wan_2_1_i2v"
+    cfg.model.offload_mode = "sequential"
+
+    launch_inputs = _capture_launch_inputs(
+        cfg,
+        get_model_family_entry("wan_2_1_i2v"),
+    )
+
+    model_build = launch_inputs.launch_contract.model_build
+    assert model_build["rollout"]["pipeline_offload_mode"] == "sequential"
+    assert "offload_mode" not in model_build["model_config"]
 
 
 def test_launch_from_cfg_preserves_disabled_model_compile_config() -> None:

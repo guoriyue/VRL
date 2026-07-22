@@ -9,11 +9,13 @@ from types import SimpleNamespace
 
 import pytest
 
+from vrl.generation.execution.memory_parking import WorkerMemoryParking
 from vrl.generation.execution.types import (
     PipelinedRequestOutOfMemory,
     StaleSlotDiscard,
 )
 from vrl.generation.execution.worker import GenerationWorkerCore
+from vrl.generation.launch_contract import GenerationRuntimeLaunchContract
 
 
 class _Model:
@@ -47,6 +49,10 @@ def _core(*, executor, uses_slots: bool, policy_version: int | None):
     core.worker_id = "w0"
     core._uses_versioned_slots = uses_slots
     core._policy_version = policy_version
+    core._memory_parking = WorkerMemoryParking(
+        "w0",
+        GenerationRuntimeLaunchContract(family="sd3_5", model_build={}),
+    )
     core.load_policy = lambda: None  # type: ignore[method-assign]
     return core
 

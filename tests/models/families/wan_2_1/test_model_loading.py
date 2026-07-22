@@ -8,11 +8,11 @@ exercise: single-GPU offload mode is selected from the ``model.offload_mode`` co
 key
 (``WanI2VDiffusersModel.from_build`` in ``vrl/models/wan_2_1/model.py``):
 
-  * ``offload_mode: sequential`` -> ``pipeline.enable_sequential_cpu_offload(gpu_id=...)``
-    and frozen modules are NOT eagerly staged to the device (accelerate streams
-    them per layer);
-  * ``offload_mode: model`` -> ``pipeline.enable_model_cpu_offload(gpu_id=...)``,
-    likewise no eager staging;
+  * ``offload_mode: sequential`` -> frozen modules stay on CPU until the shared
+    rollout builder attaches LoRA, then ``enable_sequential_cpu_offload`` installs
+    the streaming hooks;
+  * ``offload_mode: model`` follows the same adapter-before-hook ordering with
+    ``enable_model_cpu_offload``;
   * ``offload_mode: none`` -> vae fp32 + text_encoder/image_encoder build dtype staged to
     the build device.
 
@@ -30,6 +30,15 @@ from typing import Any
 import pytest
 import torch
 
+from vrl.models.interfaces.runtime import RolloutBuildOptions
+
+
+def _rollout_build_options(offload_mode: str) -> RolloutBuildOptions:
+    return RolloutBuildOptions(
+        prompt_encoder_dtype=torch.bfloat16,
+        pipeline_offload_mode=offload_mode,
+    )
+
 
 class _FakeModule:
     def __init__(self) -> None:
@@ -40,7 +49,12 @@ class _FakeModule:
     def requires_grad_(self, enabled: bool) -> None:
         self.requires_grad_enabled = enabled
 
-    def to(self, device: Any, dtype: torch.dtype | None = None) -> _FakeModule:
+    def to(
+        self,
+        device: Any = None,
+        *,
+        dtype: torch.dtype | None = None,
+    ) -> _FakeModule:
         self.to_calls.append((device, dtype))
         if dtype is not None:
             self.dtype = dtype
@@ -102,8 +116,42 @@ def _assert_frozen_and_loaded(pipeline: _FakePipeline, calls: list[dict[str, Any
         assert module.requires_grad_enabled is False
 
 
+@pytest.mark.parametrize("family", ("wan_2_1", "wan_2_1_i2v"))
+def test_wan_resolver_projects_pipeline_offload_to_rollout_only(family: str) -> None:
+    from omegaconf import OmegaConf
+
+    from vrl.families.registry import get_model_family_entry
+
+    cfg = OmegaConf.create(
+        {
+            "model": {
+                "family": family,
+                "path": "fake/repo",
+                "offload_mode": "sequential",
+                "use_lora": False,
+            },
+            "precision": {
+                "float32_precision": "tf32",
+                "training": {"dtype": "bf16"},
+                "rollout": {"dtype": "bf16"},
+            },
+            "distributed": {"training": {"strategy": "single_process"}},
+        },
+    )
+    entry = get_model_family_entry(family)
+
+    rollout = entry.resolve_model_build(cfg, "cpu", for_rollout=True)
+    replay = entry.resolve_model_build(cfg, "cpu", for_rollout=False)
+
+    assert cfg.model.offload_mode == "sequential"
+    assert rollout.require_rollout().pipeline_offload_mode == "sequential"
+    assert replay.rollout is None
+    assert "offload_mode" not in (rollout.model_config or {})
+    assert "offload_mode" not in (replay.model_config or {})
+
+
 def test_wan_i2v_from_build_sequential_cpu_offload(monkeypatch) -> None:
-    """Sequential-offload branch uses the build GPU and skips eager staging."""
+    """Sequential hooks are deferred until after the loader returns."""
     from vrl.models.families.wan_2_1.model import WanI2VDiffusersModel
 
     pipeline, calls = _patch_from_pretrained(monkeypatch)
@@ -112,24 +160,27 @@ def test_wan_i2v_from_build_sequential_cpu_offload(monkeypatch) -> None:
         model_name_or_path="Wan-AI/Wan2.1-I2V-14B-480P-Diffusers",
         parameter_dtype=torch.bfloat16,
         device=torch.device("cuda:3"),
-        model_config={"offload_mode": "sequential"},
+        model_config={},
+        rollout=_rollout_build_options("sequential"),
     )
 
     model = WanI2VDiffusersModel.from_build(build)
 
     assert model.pipeline is pipeline
     _assert_frozen_and_loaded(pipeline, calls)
+    assert pipeline.sequential_offload_gpu is None
+    model.apply_generation_offload(build)
     # gpu_id is taken from the build device index.
     assert pipeline.sequential_offload_gpu == 3
     assert pipeline.model_offload_gpu is None
-    # accelerate streams the frozen modules per layer -> no eager .to(device).
-    assert pipeline.vae.to_calls == []
-    assert pipeline.text_encoder.to_calls == []
-    assert pipeline.image_encoder.to_calls == []
+    # Dtype-only staging keeps every module on CPU until Accelerate streams it.
+    assert pipeline.vae.to_calls == [(None, torch.float32)]
+    assert pipeline.text_encoder.to_calls == [(None, torch.bfloat16)]
+    assert pipeline.image_encoder.to_calls == [(None, torch.bfloat16)]
 
 
 def test_wan_i2v_from_build_model_cpu_offload(monkeypatch) -> None:
-    """Model-offload branch uses the build GPU and skips eager staging."""
+    """Model-offload hooks are also deferred until adapter setup is complete."""
     from vrl.models.families.wan_2_1.model import WanI2VDiffusersModel
 
     pipeline, calls = _patch_from_pretrained(monkeypatch)
@@ -138,18 +189,391 @@ def test_wan_i2v_from_build_model_cpu_offload(monkeypatch) -> None:
         model_name_or_path="Wan-AI/Wan2.1-I2V-14B-480P-Diffusers",
         parameter_dtype=torch.bfloat16,
         device=torch.device("cuda:2"),
-        model_config={"offload_mode": "model"},
+        model_config={},
+        rollout=_rollout_build_options("model"),
     )
 
     model = WanI2VDiffusersModel.from_build(build)
 
     assert model.pipeline is pipeline
     _assert_frozen_and_loaded(pipeline, calls)
+    assert pipeline.model_offload_gpu is None
+    model.apply_generation_offload(build)
     assert pipeline.model_offload_gpu == 2
     assert pipeline.sequential_offload_gpu is None
-    assert pipeline.vae.to_calls == []
-    assert pipeline.text_encoder.to_calls == []
-    assert pipeline.image_encoder.to_calls == []
+    assert pipeline.vae.to_calls == [(None, torch.float32)]
+    assert pipeline.text_encoder.to_calls == [(None, torch.bfloat16)]
+    assert pipeline.image_encoder.to_calls == [(None, torch.bfloat16)]
+
+
+def test_wan_i2v_sequential_offload_attaches_lora_without_full_gpu_move(monkeypatch) -> None:
+    """The 16.4B rollout stays on CPU until its final module tree is hooked."""
+
+    import peft
+
+    from vrl.models.families.wan_2_1.model import WanI2VDiffusersModel
+
+    pipeline, _ = _patch_from_pretrained(monkeypatch)
+    monkeypatch.setattr(peft, "get_peft_model", lambda transformer, _cfg: transformer)
+    build = SimpleNamespace(
+        model_name_or_path="Wan-AI/Wan2.1-I2V-14B-480P-Diffusers",
+        parameter_dtype=torch.bfloat16,
+        device=torch.device("cuda:0"),
+        model_config={},
+        rollout=_rollout_build_options("sequential"),
+        lora_path=None,
+        lora={"rank": 2, "alpha": 2, "target_modules": ["to_q"]},
+    )
+
+    model = WanI2VDiffusersModel.from_build(build)
+    model.apply_lora(build)
+
+    assert pipeline.transformer.to_calls == []
+    assert pipeline.sequential_offload_gpu is None
+    model.apply_generation_offload(build)
+    assert pipeline.sequential_offload_gpu == 0
+
+
+def test_wan_full_finetune_normalizes_rollout_parameter_dtype() -> None:
+    """Rollout storage must accept the exact BF16 payload exported by FSDP."""
+    from torch import nn
+
+    from vrl.models.families.wan_2_1.model import WanT2VDiffusersModel
+
+    class _MixedTransformer(nn.Module):
+        def __init__(self) -> None:
+            super().__init__()
+            self.bf16_weight = nn.Parameter(torch.ones(2, dtype=torch.bfloat16))
+            self.fp32_table = nn.Parameter(torch.ones(2, dtype=torch.float32))
+
+    pipeline = SimpleNamespace(
+        transformer=_MixedTransformer(),
+        transformer_2=None,
+        config=SimpleNamespace(boundary_ratio=None),
+    )
+    model = WanT2VDiffusersModel(pipeline=pipeline, device=torch.device("cpu"))
+    build = SimpleNamespace(
+        parameter_dtype=torch.bfloat16,
+        defer_trainable_device_move=False,
+        model_config={},
+    )
+
+    model.apply_full_finetune(build)
+    payload = {
+        f"transformer.{name}": torch.zeros_like(parameter)
+        for name, parameter in pipeline.transformer.named_parameters()
+    }
+    model.validate_trainable_state(payload)
+
+    assert {parameter.dtype for parameter in pipeline.transformer.parameters()} == {
+        torch.bfloat16,
+    }
+    assert all(parameter.requires_grad for parameter in pipeline.transformer.parameters())
+
+
+def test_wan_full_finetune_defers_dtype_normalization_to_fsdp() -> None:
+    """Replay construction leaves CPU storage untouched until FSDP shards it."""
+    from torch import nn
+
+    from vrl.models.families.wan_2_1.model import WanT2VDiffusersModel
+
+    pipeline = SimpleNamespace(
+        transformer=nn.Linear(2, 2, dtype=torch.float32),
+        transformer_2=None,
+        config=SimpleNamespace(boundary_ratio=None),
+    )
+    model = WanT2VDiffusersModel(pipeline=pipeline, device=torch.device("cuda:0"))
+    build = SimpleNamespace(
+        parameter_dtype=torch.bfloat16,
+        defer_trainable_device_move=True,
+        model_config={},
+    )
+
+    model.apply_full_finetune(build)
+
+    assert {parameter.dtype for parameter in pipeline.transformer.parameters()} == {
+        torch.float32,
+    }
+    assert all(parameter.device.type == "cpu" for parameter in pipeline.transformer.parameters())
+
+
+def test_wan_replay_full_finetune_ignores_rollout_pipeline_offload() -> None:
+    """A normalized replay build moves its transformer through the trainer path."""
+    from vrl.models.families.wan_2_1.model import WanT2VReplayModel
+
+    transformer = _FakeModule()
+    model = WanT2VReplayModel(
+        transformer=transformer,
+        scheduler=object(),
+        device=torch.device("cuda:1"),
+    )
+    build = SimpleNamespace(
+        parameter_dtype=torch.bfloat16,
+        defer_trainable_device_move=False,
+        model_config={},
+        rollout=None,
+    )
+
+    model.apply_full_finetune(build)
+
+    assert transformer.to_calls == [(torch.device("cuda:1"), torch.bfloat16)]
+
+
+def test_wan_sequential_offload_weight_sync_changes_forward() -> None:
+    """Weight sync detaches public hooks, updates LoRA, and reinstalls streaming."""
+
+    from accelerate import cpu_offload
+    from accelerate.hooks import remove_hook_from_module
+    from torch import nn
+
+    from vrl.models.families.wan_2_1.model import WanI2VDiffusersModel
+
+    class _FailingLinear(nn.Linear):
+        def __init__(self) -> None:
+            super().__init__(3, 2, bias=False)
+            self.fail_forward = False
+
+        def forward(self, value: torch.Tensor) -> torch.Tensor:
+            output = super().forward(value)
+            if self.fail_forward:
+                raise RuntimeError("injected leaf failure")
+            return output
+
+    class _TinyTransformer(nn.Module):
+        def __init__(self) -> None:
+            super().__init__()
+            self.proj = _FailingLinear()
+
+        def forward(self, value: torch.Tensor) -> torch.Tensor:
+            return self.proj(value)
+
+    class _HookedPipeline:
+        def __init__(self) -> None:
+            self.transformer = _TinyTransformer()
+            self.original_proj = self.transformer.proj
+            self.transformer_2 = None
+            self.config = SimpleNamespace(boundary_ratio=None, expand_timesteps=False)
+            self.enable_calls = 0
+            self.remove_calls = 0
+
+        def enable_sequential_cpu_offload(self, *, gpu_id: int) -> None:
+            assert gpu_id == 0
+            self.enable_calls += 1
+            cpu_offload(
+                self.transformer,
+                execution_device=torch.device("cpu"),
+                offload_buffers=True,
+            )
+
+        def remove_all_hooks(self) -> None:
+            self.remove_calls += 1
+            remove_hook_from_module(self.transformer, recurse=True)
+
+    pipeline = _HookedPipeline()
+    build = SimpleNamespace(
+        device=torch.device("cpu"),
+        parameter_dtype=torch.float32,
+        defer_trainable_device_move=False,
+        model_config={},
+        rollout=_rollout_build_options("sequential"),
+        lora_path=None,
+        lora={"rank": 2, "alpha": 2, "target_modules": ["proj"]},
+    )
+    model = WanI2VDiffusersModel(
+        pipeline=pipeline,
+        device=build.device,
+    )
+    model.apply_lora(build)
+    model.apply_generation_offload(build)
+    assert model.uses_pipeline_cpu_offload
+    assert all(parameter.device.type == "meta" for parameter in model.transformer.parameters())
+
+    with pytest.raises(ValueError, match="unexpected trainable state keys"):
+        model.load_trainable_state({"unknown.weight": torch.ones(1)})
+    assert pipeline.remove_calls == 0
+    assert pipeline.enable_calls == 1
+    assert model.pipeline_cpu_offload_healthy
+
+    sample = torch.tensor([[0.25, -0.5, 1.0]])
+    before = model.transformer(sample).detach().clone()
+    payload = {
+        f"transformer.{name}": torch.full(parameter.shape, 0.5, dtype=parameter.dtype)
+        for name, parameter in model.transformer.named_parameters()
+        if parameter.requires_grad
+    }
+    model.load_trainable_state(payload)
+    after = model.transformer(sample).detach()
+
+    assert not torch.equal(after, before)
+    assert pipeline.remove_calls == 1
+    assert pipeline.enable_calls == 2
+    assert model.uses_pipeline_cpu_offload
+    assert all(parameter.device.type == "meta" for parameter in model.transformer.parameters())
+
+    # Accelerate does not run a leaf's post-forward hook when that leaf raises.
+    # The public reset must materialize the stranded weight on CPU, then re-arm
+    # the full tree before the worker is allowed to retry or hand off its GPU.
+    pipeline.original_proj.fail_forward = True
+    with pytest.raises(RuntimeError, match="injected leaf failure"):
+        model.transformer(sample)
+    assert pipeline.original_proj.weight.device.type != "meta"
+
+    pipeline.original_proj.fail_forward = False
+    model.reset_pipeline_cpu_offload()
+
+    assert pipeline.remove_calls == 2
+    assert pipeline.enable_calls == 3
+    assert model.pipeline_cpu_offload_healthy
+    assert all(parameter.device.type == "meta" for parameter in model.transformer.parameters())
+    assert model.transformer(sample).shape == (1, 2)
+
+
+def test_wan_pipeline_offload_remove_failure_is_permanently_broken() -> None:
+    from vrl.models.families.wan_2_1.model import WanI2VDiffusersModel
+
+    pipeline = _FakePipeline()
+    model = WanI2VDiffusersModel(
+        pipeline=pipeline,
+        device=torch.device("cuda:0"),
+    )
+    build = SimpleNamespace(
+        device=model.device,
+        model_config={},
+        rollout=_rollout_build_options("sequential"),
+    )
+    model.apply_generation_offload(build)
+    pipeline.remove_all_hooks = lambda: (_ for _ in ()).throw(RuntimeError("remove failed"))
+
+    with pytest.raises(RuntimeError, match="hook removal failed"):
+        model.reset_pipeline_cpu_offload()
+    with pytest.raises(RuntimeError, match="not reusable"):
+        model.reset_pipeline_cpu_offload()
+
+    assert model.uses_pipeline_cpu_offload
+    assert not model.pipeline_cpu_offload_healthy
+
+
+def test_wan_pipeline_offload_initial_install_failure_is_permanently_broken() -> None:
+    from vrl.models.families.wan_2_1.model import WanI2VDiffusersModel
+
+    pipeline = _FakePipeline()
+    pipeline.enable_sequential_cpu_offload = lambda **_kwargs: (_ for _ in ()).throw(
+        RuntimeError("install failed"),
+    )
+    model = WanI2VDiffusersModel(
+        pipeline=pipeline,
+        device=torch.device("cuda:0"),
+    )
+    build = SimpleNamespace(
+        device=model.device,
+        model_config={},
+        rollout=_rollout_build_options("sequential"),
+    )
+
+    with pytest.raises(RuntimeError, match="install failed"):
+        model.apply_generation_offload(build)
+    with pytest.raises(RuntimeError, match="not reusable"):
+        model.apply_generation_offload(build)
+
+    assert model.uses_pipeline_cpu_offload
+    assert not model.pipeline_cpu_offload_healthy
+
+
+def test_wan_pipeline_offload_operation_failure_never_publishes_healthy_hooks() -> None:
+    from vrl.models.families.wan_2_1.model import WanI2VDiffusersModel
+
+    pipeline = _FakePipeline()
+    pipeline.remove_all_hooks = lambda: None
+    model = WanI2VDiffusersModel(
+        pipeline=pipeline,
+        device=torch.device("cuda:0"),
+    )
+    model.apply_generation_offload(
+        SimpleNamespace(
+            device=model.device,
+            model_config={},
+            rollout=_rollout_build_options("sequential"),
+        ),
+    )
+
+    with pytest.raises(RuntimeError, match="partial state") as failure:
+        model._with_pipeline_cpu_offload_suspended(
+            lambda: (_ for _ in ()).throw(RuntimeError("copy failed")),
+            operation="trainable weight sync",
+        )
+
+    assert isinstance(failure.value.__cause__, RuntimeError)
+    assert str(failure.value.__cause__) == "copy failed"
+    assert pipeline.sequential_offload_gpu == 0
+    assert not model.pipeline_cpu_offload_healthy
+
+
+def test_wan_pipeline_offload_reinstall_failure_is_permanently_broken() -> None:
+    from vrl.models.families.wan_2_1.model import WanI2VDiffusersModel
+
+    pipeline = _FakePipeline()
+    pipeline.remove_all_hooks = lambda: None
+    model = WanI2VDiffusersModel(
+        pipeline=pipeline,
+        device=torch.device("cuda:0"),
+    )
+    model.apply_generation_offload(
+        SimpleNamespace(
+            device=model.device,
+            model_config={},
+            rollout=_rollout_build_options("sequential"),
+        ),
+    )
+    pipeline.enable_sequential_cpu_offload = lambda **_kwargs: (_ for _ in ()).throw(
+        RuntimeError("reinstall failed"),
+    )
+
+    with pytest.raises(RuntimeError, match="hook reinstall failed") as failure:
+        model.reset_pipeline_cpu_offload()
+
+    assert isinstance(failure.value.__cause__, RuntimeError)
+    assert str(failure.value.__cause__) == "reinstall failed"
+    assert not model.pipeline_cpu_offload_healthy
+
+
+def test_wan_model_cpu_offload_reset_cycles_public_pipeline_hooks() -> None:
+    from vrl.models.families.wan_2_1.model import WanI2VDiffusersModel
+
+    pipeline = _FakePipeline()
+    remove_calls: list[bool] = []
+    pipeline.remove_all_hooks = lambda: remove_calls.append(True)
+    build = SimpleNamespace(
+        device=torch.device("cuda:2"),
+        model_config={},
+        rollout=_rollout_build_options("model"),
+    )
+    model = WanI2VDiffusersModel(
+        pipeline=pipeline,
+        device=build.device,
+    )
+
+    model.apply_generation_offload(build)
+    model.reset_pipeline_cpu_offload()
+
+    assert remove_calls == [True]
+    assert pipeline.model_offload_gpu == 2
+    assert model.pipeline_cpu_offload_healthy
+
+
+def test_wan_pipeline_offload_has_one_state_source() -> None:
+    from vrl.models.families.wan_2_1.model import WanI2VDiffusersModel
+
+    model = WanI2VDiffusersModel(
+        pipeline=_FakePipeline(),
+        device=torch.device("cuda:0"),
+    )
+
+    assert "_pipeline_offload" in vars(model)
+    assert {
+        "_pipeline_offload_mode",
+        "_pipeline_offload_hooks_installed",
+        "_pipeline_offload_broken",
+    }.isdisjoint(vars(model))
 
 
 def test_wan_i2v_from_build_no_offload_stages_frozen_modules(monkeypatch) -> None:
@@ -175,6 +599,22 @@ def test_wan_i2v_from_build_no_offload_stages_frozen_modules(monkeypatch) -> Non
     assert pipeline.vae.to_calls == [(build.device, torch.float32)]
     assert pipeline.text_encoder.to_calls == [(build.device, torch.bfloat16)]
     assert pipeline.image_encoder.to_calls == [(build.device, torch.bfloat16)]
+
+
+def test_wan_i2v_from_build_honors_local_files_only(monkeypatch) -> None:
+    from vrl.models.families.wan_2_1.model import WanI2VDiffusersModel
+
+    _, calls = _patch_from_pretrained(monkeypatch)
+    build = SimpleNamespace(
+        model_name_or_path="Wan-AI/Wan2.1-I2V-14B-480P-Diffusers",
+        parameter_dtype=torch.bfloat16,
+        device=torch.device("cuda:0"),
+        model_config={"local_files_only": True},
+    )
+
+    WanI2VDiffusersModel.from_build(build)
+
+    assert calls[0]["local_files_only"] is True
 
 
 def test_wan_i2v_from_build_rejects_legacy_offload_keys(monkeypatch) -> None:

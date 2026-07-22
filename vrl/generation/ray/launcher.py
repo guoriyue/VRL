@@ -316,6 +316,10 @@ def _model_build_payload(build: Any) -> dict[str, Any]:
         rollout["prompt_encoder_dtype"] = dtype_to_wire_name(
             rollout["prompt_encoder_dtype"],
         )
+        # Absence is the wire representation of the universal no-offload
+        # default. Only a selected pipeline residency mode needs to cross Ray.
+        if rollout.get("pipeline_offload_mode") == "none":
+            rollout.pop("pipeline_offload_mode")
     return payload
 
 

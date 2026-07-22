@@ -7,6 +7,7 @@ single family table shared by model construction, generation, and collection.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from enum import Enum
 from typing import Any, Literal
 
 from vrl.families.names import (
@@ -22,14 +23,20 @@ GENERIC_FULL_SEQUENCE_DENOISE_EXECUTOR = (
 )
 
 
+class GenerationParkingProfile(Enum):
+    """Family-level preference for the worker's single parking backend."""
+
+    MODEL = "model"
+    CUMEM = "cumem"
+
+
 @dataclass(frozen=True, slots=True)
 class GenerationRuntimeCapabilities:
     """Concrete executor/runtime behaviors, separate from model semantics."""
 
     supports_torch_compile: bool = False
     accepts_samples_per_chunk: bool = False
-    supports_cumem_pool: bool = False
-    requires_frozen_component_parking: bool = False
+    memory_parking: GenerationParkingProfile = GenerationParkingProfile.MODEL
     supports_policy_replay: bool = True
     runs_in_isolated_subprocess: bool = False
 
@@ -322,8 +329,7 @@ def _full_sequence_denoise_entry(
         runtime_capabilities = GenerationRuntimeCapabilities(
             supports_torch_compile=True,
             accepts_samples_per_chunk=True,
-            supports_cumem_pool=True,
-            requires_frozen_component_parking=True,
+            memory_parking=GenerationParkingProfile.CUMEM,
         )
     return ModelFamilyEntry(
         family=family,
@@ -431,8 +437,7 @@ _register_model_family(
         runtime_capabilities=GenerationRuntimeCapabilities(
             supports_torch_compile=True,
             accepts_samples_per_chunk=True,
-            supports_cumem_pool=True,
-            requires_frozen_component_parking=True,
+            memory_parking=GenerationParkingProfile.CUMEM,
         ),
     ),
 )
@@ -592,6 +597,7 @@ _register_model_family(
             transformer_classname="WanTransformer3DModel",
             # Replay recomputes log-probs on the schedule the rollout sampled.
             scheduler_classname="UniPCMultistepScheduler",
+            model_build_normalizer=("vrl.models.families.wan_2_1.model:normalize_wan_model_build"),
         ),
     ),
 )
@@ -606,6 +612,7 @@ _register_model_family(
             replay_cls="vrl.models.families.wan_2_1.model:WanI2VReplayModel",
             transformer_classname="WanTransformer3DModel",
             scheduler_classname="UniPCMultistepScheduler",
+            model_build_normalizer=("vrl.models.families.wan_2_1.model:normalize_wan_model_build"),
         ),
     ),
 )
@@ -797,6 +804,7 @@ __all__ = [
     "FAMILY_REGISTRY",
     "GENERIC_FULL_SEQUENCE_DENOISE_EXECUTOR",
     "DenoiseFamilyBuild",
+    "GenerationParkingProfile",
     "GenerationRuntimeCapabilities",
     "ModelFamilyEntry",
     "PolicySemantics",

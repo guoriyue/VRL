@@ -375,6 +375,9 @@ class ModelConfig(ConfigBase):
     path: Any = None
     # Immutable Hub snapshot used by full-pipeline rollout and component replay.
     revision: Any = None
+    # Reader: vrl.models.loader.model_pretrained_kwargs. Long-run configs can
+    # fail closed on a missing cached artifact instead of consulting the Hub.
+    local_files_only: bool = False
     torch_compile: Annotated[Any, ConfigBlock(("enable", "mode"))] = None
     use_lora: Any = None
     # model.executor: pure-data chunk-executor config for families using the

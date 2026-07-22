@@ -12,6 +12,16 @@ def model_revision_kwargs(build: Any) -> dict[str, str]:
     return model_config_revision_kwargs(build, "revision")
 
 
+def model_pretrained_kwargs(build: Any) -> dict[str, Any]:
+    """Return repository-wide options shared by full and component loaders."""
+
+    kwargs: dict[str, Any] = model_revision_kwargs(build)
+    model_config = getattr(build, "model_config", None) or {}
+    if "local_files_only" in model_config:
+        kwargs["local_files_only"] = bool(model_config["local_files_only"])
+    return kwargs
+
+
 def model_config_revision_kwargs(build: Any, field: str) -> dict[str, str]:
     """Return an optional revision kwarg owned by one model-config repository."""
 
@@ -29,7 +39,7 @@ def load_diffusers_transformer(
 
     import diffusers
 
-    load_kwargs = model_revision_kwargs(build)
+    load_kwargs = model_pretrained_kwargs(build)
     transformer_cls = getattr(diffusers, class_name)
     return transformer_cls.from_pretrained(
         build.model_name_or_path,
@@ -49,7 +59,7 @@ def load_diffusers_scheduler(
 
     import diffusers
 
-    load_kwargs = model_revision_kwargs(build)
+    load_kwargs = model_pretrained_kwargs(build)
     scheduler_cls = getattr(diffusers, class_name)
     scheduler = scheduler_cls.from_pretrained(
         build.model_name_or_path,
@@ -254,6 +264,7 @@ __all__ = [
     "load_diffusers_transformer",
     "load_flow_match_scheduler",
     "model_config_revision_kwargs",
+    "model_pretrained_kwargs",
     "model_revision_kwargs",
     "validate_rollout_quantization_support",
 ]

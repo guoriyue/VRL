@@ -249,6 +249,9 @@ def diffusion_pretraining_pair(
     - flow matching (``scale_noise``): x_t = (1-sigma)x0 + sigma*eps in the
       scheduler's own sigma table; the model predicts the velocity
       ``eps - x0``.
+    - UniPC flow prediction (``add_noise`` with ``use_flow_sigmas``): the
+      scheduler's shifted sigma ladder still constructs
+      ``x_t = (1-sigma)x0 + sigma*eps``; the target is ``eps - x0``.
     - epsilon / v-prediction (``add_noise`` ladder): x_t from alphas_cumprod;
       the target is ``eps`` or ``get_velocity`` per
       ``scheduler.config.prediction_type``.
@@ -262,6 +265,12 @@ def diffusion_pretraining_pair(
         return scheduler.scale_noise(latents, timesteps, noise), noise - latents
     prediction_type = str(getattr(scheduler.config, "prediction_type", "epsilon"))
     noisy = scheduler.add_noise(latents, noise, timesteps)
+    if prediction_type == "flow_prediction":
+        if not bool(getattr(scheduler.config, "use_flow_sigmas", False)):
+            raise ValueError(
+                "flow_prediction pretraining requires scheduler.config.use_flow_sigmas=true",
+            )
+        return noisy, noise - latents
     if prediction_type == "epsilon":
         return noisy, noise
     if prediction_type == "v_prediction":
@@ -269,7 +278,8 @@ def diffusion_pretraining_pair(
     raise ValueError(
         f"unsupported scheduler prediction_type={prediction_type!r} for the "
         "diffusion pretraining pair (expected a flow-matching scheduler with "
-        "scale_noise, or an add_noise scheduler with epsilon/v_prediction)",
+        "scale_noise, UniPC flow_prediction/use_flow_sigmas, or an add_noise "
+        "scheduler with epsilon/v_prediction)",
     )
 
 

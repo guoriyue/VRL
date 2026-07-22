@@ -42,11 +42,18 @@ def build_denoise_runtime_bundle(
 ) -> RuntimeBundle:
     """Load one diffusion rollout model and apply the shared runtime policy."""
 
-    build.require_rollout()
+    rollout = build.require_rollout()
     # Reject unsupported NVFP4 hardware before checkpoint loading, LoRA wrapping,
     # or any other model mutation.
     validate_rollout_quantization_support(build)
     model = model_cls.from_build(build)
+    apply_generation_offload = getattr(model, "apply_generation_offload", None)
+    pipeline_offload = rollout.pipeline_offload_mode != "none"
+    if pipeline_offload and not callable(apply_generation_offload):
+        raise RuntimeError(
+            f"{type(model).__name__} does not implement the requested pipeline "
+            f"CPU-offload mode {rollout.pipeline_offload_mode!r}",
+        )
 
     # PEFT can wrap only plain nn.Linear, while full-finetune owns the model's
     # device move. Both paths therefore quantize before the compact policy moves
@@ -61,7 +68,7 @@ def build_denoise_runtime_bundle(
                 lora_config["alpha"],
             )
         apply_rollout_quantization(model, build)
-        if build.precision.quantization:
+        if build.precision.quantization and not pipeline_offload:
             model.transformer.to(model.device)
     else:
         apply_rollout_quantization(model, build)
@@ -71,6 +78,26 @@ def build_denoise_runtime_bundle(
     if compile_cfg.get("enable"):
         logger.info("Compiling transformer with mode=%s", compile_cfg["mode"])
         model.torch_compile_transformer(compile_cfg["mode"])
+
+    # Accelerate hooks must see the final module tree. Wan's sequential path
+    # keeps the 16.4B transformer on CPU through LoRA, quantization, and compile;
+    # installing hooks any earlier would leave wrappers outside the hook graph.
+    if callable(apply_generation_offload):
+        apply_generation_offload(build)
+    uses_pipeline_offload = bool(
+        getattr(model, "uses_pipeline_cpu_offload", False),
+    )
+    if pipeline_offload and not uses_pipeline_offload:
+        raise RuntimeError(
+            f"{type(model).__name__} did not commit the requested pipeline "
+            f"CPU-offload mode {rollout.pipeline_offload_mode!r}",
+        )
+    if uses_pipeline_offload and not bool(
+        getattr(model, "pipeline_cpu_offload_healthy", False),
+    ):
+        raise RuntimeError(
+            f"{type(model).__name__} installed unusable pipeline CPU-offload hooks",
+        )
 
     num_steps = build.num_steps
     if num_steps is not None:

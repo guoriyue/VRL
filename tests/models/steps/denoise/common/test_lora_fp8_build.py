@@ -221,6 +221,86 @@ def test_shared_builder_drops_master_before_quantized_lora_gpu_move(monkeypatch)
     assert events == ["attach", "quantize", "drop", "move"]
 
 
+def test_shared_builder_installs_pipeline_offload_after_final_cpu_module_tree(
+    monkeypatch,
+) -> None:
+    """Hooks follow wrappers without first staging quantized weights on GPU."""
+
+    events: list[str] = []
+
+    class _Policy:
+        def __init__(self) -> None:
+            self.transformer = _TrackingTransformer(events)
+            self.device = "cpu"
+            self.scheduler = object()
+            self.raw_handle = object()
+            self.trainable_modules = {"transformer": self.transformer}
+            self.uses_pipeline_cpu_offload = False
+            self.pipeline_cpu_offload_healthy = True
+
+        @classmethod
+        def from_build(cls, _build: Any) -> _Policy:
+            return cls()
+
+        def apply_lora(self, _build: Any) -> None:
+            events.append("attach_lora")
+
+        def quantize_rollout_fp8(self, recipe: str = "rowwise") -> list[str]:
+            assert recipe == "rowwise"
+            events.append("quantize")
+            return ["proj"]
+
+        def torch_compile_transformer(self, mode: str) -> None:
+            assert mode == "default"
+            events.append("compile")
+
+        def apply_generation_offload(self, _build: Any) -> None:
+            events.append("install_offload_hooks")
+            self.uses_pipeline_cpu_offload = True
+
+        def generation_memory_targets(self) -> dict[str, Any]:
+            return {}
+
+    import vrl.nn.quantization as quantization
+
+    monkeypatch.setattr(
+        quantization,
+        "drop_quantized_masters",
+        lambda _model: events.append("drop") or 4,
+    )
+    build = ModelBuild(
+        model_name_or_path="fake",
+        device="cpu",
+        parameter_dtype=torch.bfloat16,
+        family="sd3_5",
+        precision=RolePrecision(
+            "bf16",
+            "tf32",
+            QuantizationPolicy(format="fp8"),
+        ),
+        rollout=RolloutBuildOptions(
+            prompt_encoder_dtype=torch.bfloat16,
+            base_weight_sync=False,
+            pipeline_offload_mode="sequential",
+        ),
+        model_config={
+            "use_lora": True,
+            "lora": {"rank": 2, "alpha": 2, "target_modules": ["proj"]},
+            "torch_compile": {"enable": True, "mode": "default"},
+        },
+    )
+
+    _build_sd35_rollout(monkeypatch, build, _Policy)
+
+    assert events == [
+        "attach_lora",
+        "quantize",
+        "drop",
+        "compile",
+        "install_offload_hooks",
+    ]
+
+
 def test_shared_builder_preserves_resolved_role_precision() -> None:
     """The builder carries the resolved contract without model introspection."""
 

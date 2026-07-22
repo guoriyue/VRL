@@ -494,11 +494,11 @@ def diffusers_pipeline_dtypes(
     if prompt_encoder_dtype is None:
         prompt_encoder_dtype = torch.float16 if model_dtype == torch.float32 else model_dtype
     load_kwargs: dict[str, Any] = {}
-    from vrl.models.loader import model_revision_kwargs
+    from vrl.models.loader import model_pretrained_kwargs
 
     # Full-pipeline rollout and component-only replay must resolve the same
     # immutable Hub snapshot; otherwise parity can compare different weights.
-    load_kwargs.update(model_revision_kwargs(build))
+    load_kwargs.update(model_pretrained_kwargs(build))
     if model_dtype == torch.float32 and prompt_encoder_dtype != torch.float32:
         load_kwargs["torch_dtype"] = {
             "transformer": torch.float32,

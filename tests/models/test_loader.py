@@ -24,6 +24,22 @@ def test_full_pipeline_propagates_revision_like_component_loader() -> None:
     assert kwargs["revision"] == "immutable-revision"
 
 
+def test_full_pipeline_propagates_local_files_only_like_component_loader() -> None:
+    build = ModelBuild(
+        model_name_or_path="org/model",
+        device="cpu",
+        parameter_dtype=torch.float16,
+        family="sd3_5",
+        precision=RolePrecision("fp16", "tf32"),
+        model_config={"revision": "immutable-revision", "local_files_only": True},
+    )
+
+    _, kwargs = diffusers_pipeline_dtypes(build, torch.float16)
+
+    assert kwargs["revision"] == "immutable-revision"
+    assert kwargs["local_files_only"] is True
+
+
 def test_full_pipeline_omits_absent_revision() -> None:
     build = ModelBuild(
         model_name_or_path="org/model",
@@ -37,6 +53,7 @@ def test_full_pipeline_omits_absent_revision() -> None:
     _, kwargs = diffusers_pipeline_dtypes(build, torch.float16)
 
     assert "revision" not in kwargs
+    assert "local_files_only" not in kwargs
 
 
 def test_flow_match_replay_maps_sana_flow_shift(monkeypatch) -> None:

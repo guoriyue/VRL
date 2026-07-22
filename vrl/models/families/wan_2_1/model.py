@@ -30,13 +30,14 @@ import logging
 import random
 import sys
 from collections.abc import Callable, Iterator, Mapping
-from dataclasses import dataclass
-from typing import Any
+from dataclasses import dataclass, replace
+from enum import Enum
+from typing import Any, get_args
 
 import torch
 
 from vrl.generation.types import VideoGenerationRequest
-from vrl.models.interfaces.runtime import ModelBuild
+from vrl.models.interfaces.runtime import ModelBuild, PipelineOffloadMode
 from vrl.models.steps.denoise import (
     DiffusersPipelineModelBase,
     DiffusionModelBase,
@@ -55,9 +56,17 @@ from vrl.models.steps.denoise.common import (
 )
 from vrl.models.steps.denoise.common.lora import LoraModelMixin
 from vrl.models.steps.denoise.common.tensors import require_tensor
-from vrl.models.utils import disable_adapter_on, validate_weights_for
+from vrl.models.utils import disable_adapter_on, load_weights_into, validate_weights_for
 
 logger = logging.getLogger(__name__)
+
+
+class _PipelineOffloadState(Enum):
+    """One committed Wan hook lifecycle state."""
+
+    MODEL = "model"
+    SEQUENTIAL = "sequential"
+    BROKEN = "broken"
 
 
 def _batch_align_tensor(value: torch.Tensor, batch_size: int) -> torch.Tensor:
@@ -136,6 +145,7 @@ class WanT2VDiffusersModel(
         expert_lifecycle_profiling: bool = False,
     ) -> None:
         super().__init__(pipeline=pipeline, device=device)
+        self._pipeline_offload: _PipelineOffloadState | None = None
         self.transformer_2 = getattr(pipeline, "transformer_2", None)
         self._boundary_ratio = _optional_float(
             _config_value(getattr(pipeline, "config", None), "boundary_ratio"),
@@ -165,19 +175,21 @@ class WanT2VDiffusersModel(
         """Load the diffusers WanPipeline + freeze non-trainable modules."""
         from diffusers import WanPipeline
 
-        from vrl.models.loader import model_revision_kwargs
+        from vrl.models.loader import model_pretrained_kwargs
 
         pipeline = WanPipeline.from_pretrained(
             build.model_name_or_path,
             torch_dtype=build.parameter_dtype,
-            **model_revision_kwargs(build),
+            **model_pretrained_kwargs(build),
         )
         _validate_wan_pipeline(pipeline, task="Wan T2V")
         pipeline.vae.requires_grad_(False)
         pipeline.text_encoder.requires_grad_(False)
-        _apply_offload_mode(
+        offload_mode = _resolve_wan_offload_mode(build)
+        _stage_eager_wan_modules(
             pipeline,
             build,
+            offload_mode=offload_mode,
             eager_module_dtypes={
                 "vae": torch.float32,
                 "text_encoder": build.parameter_dtype,
@@ -204,8 +216,18 @@ class WanT2VDiffusersModel(
     def apply_full_finetune(self, build: ModelBuild) -> None:
         for module in self.trainable_modules.values():
             module.requires_grad_(True)
-            if not build.defer_trainable_device_move:
-                module.to(self.device)
+            if getattr(build, "defer_trainable_device_move", False):
+                # FSDP owns the CPU-to-device transition and normalizes storage
+                # dtype immediately before sharding. Moving or duplicating the
+                # full parameter set here defeats block-wise FSDP construction.
+                continue
+            if _resolve_wan_offload_mode(build) == "none":
+                module.to(self.device, dtype=build.parameter_dtype)
+            else:
+                # Accelerate installs its hooks after this method. Normalize the
+                # CPU storage now so trainer payloads and rollout parameters have
+                # one exact dtype without prematurely occupying the whole GPU.
+                module.to(dtype=build.parameter_dtype)
 
     def apply_lora(self, build: ModelBuild) -> None:
         """Attach LoRA to the configured Wan trainable transformer(s)."""
@@ -227,7 +249,7 @@ class WanT2VDiffusersModel(
         for name in names:
             transformer = self._wan_transformers()[name]
             transformer.requires_grad_(False)
-            if not build.defer_trainable_device_move:
+            if not _defer_wan_trainable_device_move(build):
                 transformer.to(self.device)
             if lora_path:
                 wrapped = PeftModel.from_pretrained(
@@ -250,6 +272,42 @@ class WanT2VDiffusersModel(
                 wrapped = get_peft_model(transformer, cfg)
             self._set_wan_transformer(name, wrapped)
 
+    @property
+    def uses_pipeline_cpu_offload(self) -> bool:
+        """Whether this model is configured for Accelerate-owned residency."""
+
+        return self._pipeline_offload is not None
+
+    @property
+    def pipeline_cpu_offload_healthy(self) -> bool:
+        """Whether configured pipeline hooks are installed and reusable."""
+
+        return self._pipeline_offload is not _PipelineOffloadState.BROKEN
+
+    def apply_generation_offload(self, build: ModelBuild) -> None:
+        """Install pipeline offload hooks after LoRA has changed the module tree."""
+
+        mode = _resolve_wan_offload_mode(build)
+        state = self._pipeline_offload
+        if state is _PipelineOffloadState.BROKEN:
+            raise RuntimeError("Wan pipeline CPU offload is not reusable")
+        loaded_mode = "none" if state is None else state.value
+        if state is not None and mode != loaded_mode:
+            raise RuntimeError(
+                "Wan pipeline offload mode changed during rollout construction: "
+                f"loaded={loaded_mode!r}, final={mode!r}",
+            )
+        if mode == "none":
+            return
+        target = _PipelineOffloadState(mode)
+        if state is target:
+            return
+        # Initial installation is transactional too. A partial hook graph must
+        # never be published as a reusable rollout model.
+        self._pipeline_offload = _PipelineOffloadState.BROKEN
+        _enable_wan_pipeline_offload(self.pipeline, self.device, mode=mode)
+        self._pipeline_offload = target
+
     def torch_compile_transformer(self, mode: str) -> None:
         for name, module in self.trainable_modules.items():
             self._set_wan_transformer(
@@ -271,10 +329,113 @@ class WanT2VDiffusersModel(
 
     def load_trainable_state(self, state_dict: Mapping[str, Any]) -> Any:
         validated = self._validate_wan_trainable_state(state_dict)
+        if not self.uses_pipeline_cpu_offload:
+            return self._load_validated_wan_trainable_state(validated)
+
+        return self._with_pipeline_cpu_offload_suspended(
+            lambda: self._load_validated_wan_trainable_state(validated),
+            operation="trainable weight sync",
+        )
+
+    def reset_pipeline_cpu_offload(self) -> None:
+        """Return every component to CPU and reinstall fresh streaming hooks.
+
+        Accelerate post-forward hooks do not run when a module forward raises,
+        and model-level offload deliberately leaves the final component on the
+        execution device. Cycling Diffusers' public hook API is the common
+        phase-parking and error-recovery boundary for both cases.
+        """
+
+        if not self.uses_pipeline_cpu_offload:
+            return
+        self._with_pipeline_cpu_offload_suspended(
+            lambda: None,
+            operation="pipeline residency reset",
+        )
+
+    def _with_pipeline_cpu_offload_suspended(
+        self,
+        operation_fn: Callable[[], Any],
+        *,
+        operation: str,
+    ) -> Any:
+        """Run one CPU-resident operation and transactionally re-arm hooks."""
+
+        if not self.pipeline_cpu_offload_healthy:
+            raise RuntimeError(
+                "Wan pipeline CPU offload is not reusable: its hook lifecycle "
+                "is incomplete or previously failed",
+            )
+
+        state = self._pipeline_offload
+        if state is None:
+            return operation_fn()
+        mode = state.value
+        # Publish the transition before touching hooks. Partial removal, hook
+        # reinstall, or weight mutation must leave one terminal state.
+        self._pipeline_offload = _PipelineOffloadState.BROKEN
+
+        remove_hooks = getattr(self.pipeline, "remove_all_hooks", None)
+        if not callable(remove_hooks):
+            raise RuntimeError(
+                f"Wan pipeline CPU offload requires pipeline.remove_all_hooks() for {operation}",
+            )
+
+        try:
+            remove_hooks()
+        except BaseException as remove_error:
+            raise RuntimeError(
+                f"Wan pipeline CPU offload hook removal failed during {operation}; "
+                "the rollout model is no longer reusable",
+            ) from remove_error
+
+        result: Any = None
+        operation_error: BaseException | None = None
+        try:
+            result = operation_fn()
+        except BaseException as error:
+            operation_error = error
+
+        try:
+            _enable_wan_pipeline_offload(
+                self.pipeline,
+                self.device,
+                mode=mode,
+            )
+        except BaseException as reinstall_error:
+            detail = f"Wan pipeline CPU offload hook reinstall failed during {operation}"
+            if operation_error is not None:
+                detail += f" after operation failure {operation_error!r}"
+            raise RuntimeError(
+                f"{detail}; the rollout model is no longer reusable",
+            ) from reinstall_error
+
+        if operation_error is not None:
+            # A state-dict copy can fail after mutating an arbitrary prefix. Fresh
+            # hooks make teardown safe, but they cannot make partially updated
+            # policy weights valid. Never publish this model as reusable.
+            raise RuntimeError(
+                f"Wan {operation} failed after pipeline hooks were removed; "
+                "the rollout model may contain partial state and is no longer reusable",
+            ) from operation_error
+
+        self._pipeline_offload = state
+        return result
+
+    def _load_validated_wan_trainable_state(
+        self,
+        validated: Mapping[str, Mapping[str, Any]],
+    ) -> dict[str, Any]:
         results = {}
         for name, module in self.trainable_modules.items():
             target = getattr(module, "_orig_mod", module)
-            results[name] = target.load_state_dict(validated[name], strict=False)
+            prefixed = {f"{name}.{key}": value for key, value in validated[name].items()}
+            results[name] = load_weights_into(
+                target,
+                prefixed,
+                prefix=name,
+                label=type(target).__name__,
+            )
         return results
 
     def validate_trainable_state(self, state_dict: Mapping[str, Any]) -> None:
@@ -578,6 +739,36 @@ class WanT2VDiffusersModel(
 
     # -- decode_latents ------------------------------------------------
 
+    def encode_video_to_latents(self, video: torch.Tensor) -> torch.Tensor:
+        """Encode clean target video into Wan's normalized latent domain.
+
+        ``video`` is ``[B,C,T,H,W]`` in ``[0,1]`` at the training geometry.
+        This is the exact inverse of :meth:`decode_latents`'s per-channel
+        denormalization and uses the deterministic posterior mode so an offline
+        SFT shard is reproducible.
+        """
+
+        pipe = self.pipeline
+        x = (video.to(device=self.device, dtype=pipe.vae.dtype) * 2.0) - 1.0
+        with torch.no_grad():
+            encoded = torch.cat(
+                [pipe.vae.encode(sample.unsqueeze(0)).latent_dist.mode() for sample in x],
+                dim=0,
+            )
+        latents_mean = (
+            torch.tensor(pipe.vae.config.latents_mean)
+            .view(1, pipe.vae.config.z_dim, 1, 1, 1)
+            .to(encoded.device, encoded.dtype)
+        )
+        latents_std = 1.0 / torch.tensor(pipe.vae.config.latents_std).view(
+            1,
+            pipe.vae.config.z_dim,
+            1,
+            1,
+            1,
+        ).to(encoded.device, encoded.dtype)
+        return (encoded - latents_mean) * latents_std
+
     def decode_latents(self, latents: torch.Tensor) -> torch.Tensor:
         """Decode 5D latents -> video [B, C, T, H, W] via Wan VAE.
 
@@ -753,12 +944,12 @@ class WanI2VDiffusersModel(WanT2VDiffusersModel):
         """Load WanImageToVideoPipeline + freeze generation-only modules."""
         from diffusers import WanImageToVideoPipeline
 
-        from vrl.models.loader import model_revision_kwargs
+        from vrl.models.loader import model_pretrained_kwargs
 
         pipeline = WanImageToVideoPipeline.from_pretrained(
             build.model_name_or_path,
             torch_dtype=build.parameter_dtype,
-            **model_revision_kwargs(build),
+            **model_pretrained_kwargs(build),
         )
         _validate_wan_pipeline(pipeline, task="Wan I2V")
         pipeline.set_progress_bar_config(disable=True)
@@ -768,9 +959,11 @@ class WanI2VDiffusersModel(WanT2VDiffusersModel):
             if module is not None:
                 module.requires_grad_(False)
 
-        _apply_offload_mode(
+        offload_mode = _resolve_wan_offload_mode(build)
+        _stage_eager_wan_modules(
             pipeline,
             build,
+            offload_mode=offload_mode,
             eager_module_dtypes={
                 "vae": torch.float32,
                 "text_encoder": build.parameter_dtype,
@@ -1066,13 +1259,47 @@ def _validate_wan_pipeline(pipeline: Any, *, task: str) -> None:
         raise ValueError(f"{task} dual-stage pipeline is missing transformer_2")
 
 
-def _apply_offload_mode(
-    pipeline: Any,
-    build: ModelBuild,
-    *,
-    eager_module_dtypes: Mapping[str, torch.dtype],
-) -> None:
-    """Apply model.offload_mode inside the Wan Diffusers loaders."""
+def normalize_wan_model_build(build: ModelBuild) -> ModelBuild:
+    """Project public Wan offload config into rollout-only runtime state."""
+
+    if build.family not in {"wan_2_1", "wan_2_1_i2v"}:
+        raise ValueError(f"Wan build normalizer received family {build.family!r}")
+
+    extra = dict(build.model_config or {})
+    legacy = sorted(
+        key
+        for key in ("enable_model_cpu_offload", "enable_sequential_cpu_offload")
+        if key in extra
+    )
+    if legacy:
+        raise ValueError(
+            f"removed Wan model config key(s): {', '.join('model.' + key for key in legacy)}; "
+            "use model.offload_mode='none', 'model', or 'sequential'",
+        )
+
+    mode = extra.get("offload_mode")
+    if "offload_mode" not in extra and build.rollout is not None:
+        mode = build.rollout.pipeline_offload_mode
+    if mode is None or mode == "":
+        mode = "none"
+    mode = str(mode)
+    allowed_modes = get_args(PipelineOffloadMode)
+    if mode not in allowed_modes:
+        raise ValueError(
+            f"model.offload_mode must be one of {list(allowed_modes)}, got {mode!r}",
+        )
+    extra.pop("offload_mode", None)
+    build.model_config = extra
+    if build.rollout is not None:
+        build.rollout = replace(
+            build.rollout,
+            pipeline_offload_mode=mode,
+        )
+    return build
+
+
+def _resolve_wan_offload_mode(build: ModelBuild) -> str:
+    """Return normalized rollout residency without affecting replay builds."""
 
     extra = build.model_config or {}
     legacy = sorted(
@@ -1085,31 +1312,59 @@ def _apply_offload_mode(
             f"removed Wan model config key(s): {', '.join('model.' + key for key in legacy)}; "
             "use model.offload_mode='none', 'model', or 'sequential'",
         )
+    rollout = getattr(build, "rollout", None)
+    return str(getattr(rollout, "pipeline_offload_mode", "none"))
 
-    mode = extra.get("offload_mode", "none")
-    if mode is None or mode == "":
-        mode = "none"
-    mode = str(mode)
-    if mode not in {"none", "model", "sequential"}:
-        raise ValueError(
-            f"model.offload_mode must be one of ['none', 'model', 'sequential'], got {mode!r}",
-        )
+
+def _defer_wan_trainable_device_move(build: ModelBuild) -> bool:
+    """Keep the full transformer on CPU for FSDP or pipeline CPU offload."""
+
+    return bool(
+        getattr(build, "defer_trainable_device_move", False)
+        or _resolve_wan_offload_mode(build) != "none"
+    )
+
+
+def _stage_eager_wan_modules(
+    pipeline: Any,
+    build: ModelBuild,
+    *,
+    offload_mode: str,
+    eager_module_dtypes: Mapping[str, torch.dtype],
+) -> None:
+    """Apply frozen-module dtypes before optional pipeline offload hooks."""
+
+    for module_name, dtype in eager_module_dtypes.items():
+        module = getattr(pipeline, module_name, None)
+        if module is not None:
+            # Diffusers loads the whole pipeline at the actor dtype. Wan's VAE
+            # must still decode in fp32, including when Accelerate will later
+            # stream it from CPU. A dtype-only conversion preserves CPU
+            # residency; the no-offload path additionally stages the module on
+            # the execution device.
+            if offload_mode == "none":
+                module.to(build.device, dtype=dtype)
+            else:
+                module.to(dtype=dtype)
+
+
+def _enable_wan_pipeline_offload(
+    pipeline: Any,
+    device: Any,
+    *,
+    mode: str,
+) -> None:
+    """Install Accelerate hooks after adapters and wrappers are final."""
 
     # Diffusers exposes two mutually exclusive accelerate hooks here:
     # sequential streams per layer and is the 32 GB Wan I2V escape hatch; model
     # offload stages full modules and only works when the transformer fits.
-    gpu_id = getattr(build.device, "index", None) or 0
+    gpu_id = getattr(device, "index", None) or 0
     if mode == "sequential":
         pipeline.enable_sequential_cpu_offload(gpu_id=gpu_id)
         return
     if mode == "model":
         pipeline.enable_model_cpu_offload(gpu_id=gpu_id)
-        return
-
-    for module_name, dtype in eager_module_dtypes.items():
-        module = getattr(pipeline, module_name, None)
-        if module is not None:
-            module.to(build.device, dtype=dtype)
 
 
 def _resolve_guidance_scale_2(
@@ -1239,4 +1494,5 @@ __all__ = [
     "WanT2VDiffusersModel",
     "WanT2VReplayModel",
     "WanT2VSamplingState",
+    "normalize_wan_model_build",
 ]
