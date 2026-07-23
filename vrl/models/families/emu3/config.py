@@ -15,6 +15,7 @@ class Emu3Config:
 
     # LoRA — Emu3's text model uses LLaMA-style projection names.
     use_lora: bool = True
+    lora_path: str | None = None
     lora_rank: int = 32
     lora_alpha: int = 64
     lora_dropout: float = 0.0

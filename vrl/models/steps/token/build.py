@@ -24,6 +24,11 @@ from vrl.models.interfaces.runtime import (
 from vrl.models.precision import apply_float32_precision
 
 
+def _validate_token_lora_path(build: ModelBuild) -> None:
+    if build.lora_path is not None and not build.use_lora:
+        raise ValueError("model.lora.path requires model.use_lora=true")
+
+
 def token_model_config_base(build: ModelBuild) -> dict[str, Any]:
     """Project shared identity keys and explicit LoRA overrides.
 
@@ -40,7 +45,11 @@ def token_model_config_base(build: ModelBuild) -> dict[str, Any]:
         "device": str(build.device),
         "use_lora": build.use_lora,
     }
+    _validate_token_lora_path(build)
+    lora_path = build.lora_path
     if build.use_lora:
+        if lora_path is not None:
+            config["lora_path"] = lora_path
         lora = (build.model_config or {}).get("lora") or {}
         if "rank" in lora:
             config["lora_rank"] = int(lora["rank"])
@@ -76,6 +85,7 @@ def build_token_family_bundle(
         raise ValueError(
             f"token build family {build.family!r} does not match entry {entry.family!r}",
         )
+    _validate_token_lora_path(build)
     from vrl.families.registry import TokenFamilyBuild
 
     recipe = entry.family_build

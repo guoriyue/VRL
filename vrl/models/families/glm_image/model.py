@@ -68,6 +68,7 @@ from vrl.models.interfaces import (
     require_zero_replay_timestep,
 )
 from vrl.models.steps.token.base import ARModelBase, ARReplayRolloutStubs
+from vrl.models.steps.token.lora import install_token_lora_adapter
 from vrl.utils.logging import init_logger
 
 logger = init_logger(__name__)
@@ -324,24 +325,11 @@ class GlmImageModel(ARModelBase):
 
     def _apply_lora(self) -> None:
         """Attach a PEFT LoRA adapter to the text-model trunk."""
-        try:
-            from peft import LoraConfig, get_peft_model
-        except ImportError as e:  # pragma: no cover
-            raise ImportError("PEFT is required for use_lora=True. pip install peft>=0.12") from e
-
-        lora_cfg = LoraConfig(
-            r=self.config.lora_rank,
-            lora_alpha=self.config.lora_alpha,
-            lora_dropout=self.config.lora_dropout,
-            init_lora_weights=self.config.lora_init,
-            target_modules=list(self.config.lora_target_modules),
-            bias="none",
-        )
         # Wrap ONLY the text trunk — lm_head / vision tower / VQ encoder stay
         # frozen. ``glm.model.language_model`` is the real submodule path.
-        self.glm.model.language_model = get_peft_model(
+        self.glm.model.language_model = install_token_lora_adapter(
             self.glm.model.language_model,
-            lora_cfg,
+            self.config,
         )
         logger.info(
             "Applied LoRA (rank=%d, alpha=%d) to the GLM-Image text trunk.",

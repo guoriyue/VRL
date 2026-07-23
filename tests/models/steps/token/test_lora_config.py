@@ -19,6 +19,29 @@ _FAMILY_TARGETS = (
 )
 
 
+def _model_build(
+    family: str,
+    *,
+    use_lora: bool,
+    lora: dict[str, Any] | None = None,
+) -> ModelBuild:
+    entry = get_model_family_entry(family)
+    recipe = entry.family_build
+    assert isinstance(recipe, TokenFamilyBuild)
+    model_config: dict[str, Any] = {"use_lora": use_lora}
+    if lora is not None:
+        model_config["lora"] = lora
+    return ModelBuild(
+        model_name_or_path=recipe.default_model_path,
+        device="cpu",
+        parameter_dtype="fp32",
+        family=family,
+        precision=RolePrecision(dtype="fp32", float32_precision="tf32"),
+        model_config=model_config,
+        sampling_config={},
+    )
+
+
 def _project_and_resolve(
     family: str,
     *,
@@ -28,24 +51,14 @@ def _project_and_resolve(
     entry = get_model_family_entry(family)
     recipe = entry.family_build
     assert isinstance(recipe, TokenFamilyBuild)
-    model_config: dict[str, Any] = {"use_lora": use_lora}
-    if lora is not None:
-        model_config["lora"] = lora
-    build = ModelBuild(
-        model_name_or_path=recipe.default_model_path,
-        device="cpu",
-        parameter_dtype="fp32",
-        family=family,
-        precision=RolePrecision(dtype="fp32", float32_precision="tf32"),
-        model_config=model_config,
-        sampling_config={},
-    )
+    build = _model_build(family, use_lora=use_lora, lora=lora)
     projected = import_from_path(recipe.config_builder)(build)
     resolved = import_from_path(recipe.config_cls)(**projected)
     return projected, resolved
 
 
 def _assert_default_lora_values(config: Any, expected_targets: tuple[str, ...]) -> None:
+    assert config.lora_path is None
     assert config.lora_rank == 32
     assert config.lora_alpha == 64
     assert config.lora_target_modules == expected_targets
@@ -67,6 +80,53 @@ def test_family_config_supplies_lora_defaults_when_block_is_absent(
     assert _lora_field_names(resolved).isdisjoint(projected)
     assert resolved.use_lora is True
     _assert_default_lora_values(resolved, expected_targets)
+
+
+@pytest.mark.parametrize("family", [family for family, _ in _FAMILY_TARGETS])
+def test_active_lora_projects_warm_start_path(family: str) -> None:
+    projected, resolved = _project_and_resolve(
+        family,
+        use_lora=True,
+        lora={"path": "/adapter/checkpoint"},
+    )
+
+    assert projected["lora_path"] == "/adapter/checkpoint"
+    assert resolved.lora_path == "/adapter/checkpoint"
+
+
+@pytest.mark.parametrize("family", [family for family, _ in _FAMILY_TARGETS])
+def test_disabled_lora_rejects_warm_start_path_before_family_import(
+    family: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    with pytest.raises(
+        ValueError,
+        match=r"model\.lora\.path requires model\.use_lora=true",
+    ):
+        _project_and_resolve(
+            family,
+            use_lora=False,
+            lora={"path": "/adapter/checkpoint"},
+        )
+
+    build = _model_build(
+        family,
+        use_lora=False,
+        lora={"path": "/adapter/checkpoint"},
+    )
+    imported_paths: list[str] = []
+    monkeypatch.setattr(
+        "vrl.utils.config.import_from_path",
+        lambda path: imported_paths.append(path),
+    )
+
+    with pytest.raises(
+        ValueError,
+        match=r"model\.lora\.path requires model\.use_lora=true",
+    ):
+        get_model_family_entry(family).build_rollout(build)
+
+    assert imported_paths == []
 
 
 @pytest.mark.parametrize(("family", "expected_targets"), _FAMILY_TARGETS)

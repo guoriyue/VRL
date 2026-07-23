@@ -48,6 +48,7 @@ from vrl.models.interfaces import (
     require_zero_replay_timestep,
 )
 from vrl.models.steps.token.base import ARModelBase, ARReplayRolloutStubs
+from vrl.models.steps.token.lora import install_token_lora_adapter
 from vrl.utils.logging import init_logger
 
 logger = init_logger(__name__)
@@ -266,25 +267,12 @@ class Emu3Model(ARModelBase):
 
     def _apply_lora(self) -> None:
         """Attach a PEFT LoRA adapter to the text-model trunk."""
-        try:
-            from peft import LoraConfig, get_peft_model
-        except ImportError as e:  # pragma: no cover
-            raise ImportError("PEFT is required for use_lora=True. pip install peft>=0.12") from e
-
-        lora_cfg = LoraConfig(
-            r=self.config.lora_rank,
-            lora_alpha=self.config.lora_alpha,
-            lora_dropout=self.config.lora_dropout,
-            init_lora_weights=self.config.lora_init,
-            target_modules=list(self.config.lora_target_modules),
-            bias="none",
-        )
         # Wrap ONLY the text model — lm_head / VQ stay frozen. Note the
         # top-level ``emu3.text_model`` is a read-only property; the real
         # submodule lives at ``emu3.model.text_model``.
-        self.emu3.model.text_model = get_peft_model(
+        self.emu3.model.text_model = install_token_lora_adapter(
             self.emu3.model.text_model,
-            lora_cfg,
+            self.config,
         )
         logger.info(
             "Applied LoRA (rank=%d, alpha=%d) to the Emu3 text model.",

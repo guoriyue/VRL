@@ -58,6 +58,7 @@ from vrl.models.interfaces import (
     require_zero_replay_timestep,
 )
 from vrl.models.steps.token.base import ARModelBase, ARReplayRolloutStubs
+from vrl.models.steps.token.lora import install_token_lora_adapter
 from vrl.trajectory import role_tensor
 from vrl.utils.logging import init_logger
 
@@ -233,22 +234,11 @@ class JanusProModel(ARModelBase):
 
     def _apply_lora(self, mmgpt: Any) -> Any:
         """Attach a PEFT LoRA adapter to the language-model trunk."""
-        try:
-            from peft import LoraConfig, get_peft_model
-        except ImportError as e:  # pragma: no cover
-            raise ImportError("PEFT is required for use_lora=True. pip install peft>=0.12") from e
-
-        lora_cfg = LoraConfig(
-            r=self.config.lora_rank,
-            lora_alpha=self.config.lora_alpha,
-            lora_dropout=self.config.lora_dropout,
-            init_lora_weights=self.config.lora_init,
-            target_modules=list(self.config.lora_target_modules),
-            bias="none",
+        mmgpt.language_model = install_token_lora_adapter(
+            mmgpt.language_model,
+            self.config,
             task_type="CAUSAL_LM",
         )
-        # Wrap ONLY the language model — vq / vision / aligner stay frozen.
-        mmgpt.language_model = get_peft_model(mmgpt.language_model, lora_cfg)
         logger.info(
             "Applied LoRA (rank=%d, alpha=%d) to Janus language model.",
             self.config.lora_rank,

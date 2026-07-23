@@ -49,6 +49,7 @@ from vrl.models.interfaces import (
     require_zero_replay_timestep,
 )
 from vrl.models.steps.token.base import ARModelBase, ARReplayRolloutStubs
+from vrl.models.steps.token.lora import install_token_lora_adapter
 from vrl.utils.logging import init_logger
 
 logger = init_logger(__name__)
@@ -134,19 +135,13 @@ class NextStep1Model(ARModelBase):
         )
 
     def _attach_lora(self) -> None:
-        from peft import LoraConfig, get_peft_model
-
-        lora_cfg = LoraConfig(
-            r=self.config.lora_rank,
-            lora_alpha=self.config.lora_alpha,
-            lora_dropout=self.config.lora_dropout,
-            target_modules=list(self.config.lora_target_modules),
-            init_lora_weights=self.config.lora_init,
-        )
         # The whole NextStepModel becomes the PEFT-wrapped module. Since
         # the pipeline holds the model by reference, the upstream
         # ``decoding()`` path automatically sees the LoRA'd weights.
-        self.language_model = get_peft_model(self.language_model, lora_cfg)
+        self.language_model = install_token_lora_adapter(
+            self.language_model,
+            self.config,
+        )
         self._pipeline.model = self.language_model
 
     # ------------------------------------------------------------------
@@ -413,16 +408,10 @@ class NextStep1ReplayModel(ARReplayRolloutStubs, NextStep1Model):
             self._attach_lora()
 
     def _attach_lora(self) -> None:
-        from peft import LoraConfig, get_peft_model
-
-        lora_cfg = LoraConfig(
-            r=self.config.lora_rank,
-            lora_alpha=self.config.lora_alpha,
-            lora_dropout=self.config.lora_dropout,
-            target_modules=list(self.config.lora_target_modules),
-            init_lora_weights=self.config.lora_init,
+        self.language_model = install_token_lora_adapter(
+            self.language_model,
+            self.config,
         )
-        self.language_model = get_peft_model(self.language_model, lora_cfg)
 
 
 def _load_nextstep_replay_model(config: NextStep1Config) -> Any:

@@ -59,6 +59,13 @@ def _cfg():
     )
 
 
+class _TinyGpt(torch.nn.Module):
+    def __init__(self) -> None:
+        super().__init__()
+        self.wqkv = torch.nn.Linear(2, 2, bias=False)
+        self.wo = torch.nn.Linear(2, 2, bias=False)
+
+
 @pytest.mark.parametrize("use_lora", [True, False])
 def test_runtime_config_defaults_and_model_compatibility_export(use_lora: bool) -> None:
     config = LlamaGenConfig(use_lora=use_lora)
@@ -124,12 +131,6 @@ def test_config_from_build_uses_fused_projection_lora_targets() -> None:
 def test_false_lora_initialization_reaches_peft_as_bool() -> None:
     pytest.importorskip("peft")
 
-    class TinyGpt(torch.nn.Module):
-        def __init__(self) -> None:
-            super().__init__()
-            self.wqkv = torch.nn.Linear(2, 2, bias=False)
-            self.wo = torch.nn.Linear(2, 2, bias=False)
-
     cfg = _cfg()
     cfg.model.lora = {"init_lora_weights": False}
     build = get_model_family_entry("llamagen").resolve_model_build(cfg, device="cpu")
@@ -137,10 +138,73 @@ def test_false_lora_initialization_reaches_peft_as_bool() -> None:
 
     wrapped = LlamaGenModel._apply_lora(
         SimpleNamespace(config=config),
-        TinyGpt(),
+        _TinyGpt(),
     )
 
     assert wrapped.peft_config["default"].init_lora_weights is False
+
+
+def test_lora_checkpoint_roundtrip_loads_trainable_adapter_weights(tmp_path) -> None:
+    pytest.importorskip("peft")
+
+    fresh = LlamaGenModel._apply_lora(
+        SimpleNamespace(
+            config=LlamaGenConfig(
+                lora_rank=2,
+                lora_alpha=4,
+                lora_init=False,
+            ),
+        ),
+        _TinyGpt(),
+    )
+    with torch.no_grad():
+        expected = {}
+        for index, (name, parameter) in enumerate(fresh.named_parameters(), start=1):
+            if "lora_" not in name:
+                continue
+            parameter.fill_(index + 0.25)
+            expected[name] = parameter.detach().clone()
+    assert expected
+    adapter_path = tmp_path / "adapter"
+    fresh.save_pretrained(adapter_path)
+
+    cfg = _cfg()
+    cfg.model.lora = {"path": str(adapter_path)}
+    build = get_model_family_entry("llamagen").resolve_model_build(cfg, device="cpu")
+    config = LlamaGenConfig(**llamagen_config_from_build(build))
+    loaded = LlamaGenModel._apply_lora(
+        SimpleNamespace(config=config),
+        _TinyGpt(),
+    )
+    actual = {
+        name: parameter.detach()
+        for name, parameter in loaded.named_parameters()
+        if "lora_" in name
+    }
+
+    assert actual.keys() == expected.keys()
+    assert all(torch.equal(actual[name], expected[name]) for name in expected)
+    assert all(
+        parameter.requires_grad for name, parameter in loaded.named_parameters() if "lora_" in name
+    )
+
+
+def test_lora_checkpoint_error_names_the_bad_path(tmp_path) -> None:
+    pytest.importorskip("peft")
+
+    missing_path = tmp_path / "missing-adapter"
+    config = LlamaGenConfig(lora_path=str(missing_path))
+
+    with pytest.raises(
+        RuntimeError,
+        match="failed to load trainable token LoRA adapter",
+    ) as error:
+        LlamaGenModel._apply_lora(
+            SimpleNamespace(config=config),
+            _TinyGpt(),
+        )
+
+    assert str(missing_path) in str(error.value)
 
 
 def test_executor_layout_defaults_match_xl_stage1_256() -> None:

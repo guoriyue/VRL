@@ -47,6 +47,7 @@ class LlamaGenConfig:
 
     # LoRA — attaches to the vendored GPT's fused attention projections.
     use_lora: bool = True
+    lora_path: str | None = None
     lora_rank: int = 32
     lora_alpha: int = 64
     lora_dropout: float = 0.0
