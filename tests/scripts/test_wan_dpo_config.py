@@ -128,10 +128,13 @@ def test_offline_dpo_recipe_does_not_inherit_online_only_state() -> None:
     assert "rollout" not in cfg
 
 
+@pytest.mark.parametrize("family", ["wan_2_1", "wan"])
 def test_offline_dpo_builds_its_full_model_through_the_family_registry(
     monkeypatch: pytest.MonkeyPatch,
+    family: str,
 ) -> None:
     cfg = load_config("experiment/wan_2_1/offline_dpo_pickapic")
+    cfg.model.family = family
     captured: dict[str, object] = {}
 
     class _ReachedRegistryBoundary(RuntimeError):
@@ -157,7 +160,7 @@ def test_offline_dpo_builds_its_full_model_through_the_family_registry(
             raise _ReachedRegistryBoundary
 
     import vrl.families.registry as registry
-    from vrl.scripts.families.wan_2_1 import train_dpo
+    import vrl.ray.resources as ray_resources
 
     def _entry_for(family: str) -> _Entry:
         captured["family"] = family
@@ -168,17 +171,62 @@ def test_offline_dpo_builds_its_full_model_through_the_family_registry(
         "get_model_family_entry",
         _entry_for,
     )
-    monkeypatch.setattr(train_dpo, "resolve_distributed_resources", lambda _cfg: object())
-    monkeypatch.setattr(train_dpo, "format_distributed_resource_plan", lambda _plan: "")
-    monkeypatch.setattr(train_dpo, "trainer_torch_device", lambda _plan: "cpu")
+    monkeypatch.setattr(ray_resources, "resolve_distributed_resources", lambda _cfg: object())
+    monkeypatch.setattr(ray_resources, "format_distributed_resource_plan", lambda _plan: "")
+    monkeypatch.setattr(ray_resources, "trainer_torch_device", lambda _plan: "cpu")
 
     with pytest.raises(_ReachedRegistryBoundary):
         train_wan_2_1_dpo(cfg)
 
-    assert captured["family"] == "wan"
+    assert captured["family"] == "wan_2_1"
     assert captured["cfg"] is cfg
     assert captured["for_rollout"] is True
     assert captured["precision_role"] == "training"
+
+
+@pytest.mark.parametrize("family", ["wan_2_1_i2v", "wan_i2v", "sd3_5"])
+def test_offline_dpo_rejects_non_t2v_wan_family_before_runtime_side_effects(
+    monkeypatch: pytest.MonkeyPatch,
+    family: str,
+) -> None:
+    cfg = load_config("experiment/wan_2_1/offline_dpo_pickapic")
+    cfg.model.family = family
+    calls: list[str] = []
+
+    import vrl.families.registry as registry
+    import vrl.ray.resources as ray_resources
+    import vrl.trainers.checkpointing as checkpointing
+
+    def _unexpected(name: str):
+        def fail(*_args: object, **_kwargs: object) -> object:
+            calls.append(name)
+            raise AssertionError(f"{name} must not run before the Wan DPO family guard")
+
+        return fail
+
+    monkeypatch.setattr(
+        checkpointing,
+        "load_training_checkpoint_for_resume",
+        _unexpected("checkpoint"),
+    )
+    monkeypatch.setattr(
+        ray_resources,
+        "resolve_distributed_resources",
+        _unexpected("resources"),
+    )
+    monkeypatch.setattr(
+        registry,
+        "get_model_family_entry",
+        _unexpected("registry"),
+    )
+
+    with pytest.raises(
+        ValueError,
+        match=rf"Wan Diffusion-DPO requires model\.family='wan_2_1'.*got '{family}'",
+    ):
+        train_wan_2_1_dpo(cfg)
+
+    assert calls == []
 
 
 @pytest.mark.parametrize(
@@ -233,17 +281,20 @@ def test_offline_dpo_uses_shared_gradient_checkpointing_policy(
             return bundle
 
     import vrl.families.registry as registry
-    from vrl.scripts.families.wan_2_1 import train_dpo
+    import vrl.ray.resources as ray_resources
 
     monkeypatch.setattr(registry, "get_model_family_entry", lambda _family: _Entry())
-    monkeypatch.setattr(train_dpo, "resolve_distributed_resources", lambda _cfg: object())
-    monkeypatch.setattr(train_dpo, "format_distributed_resource_plan", lambda _plan: "")
-    monkeypatch.setattr(train_dpo, "trainer_torch_device", lambda _plan: "cpu")
+    monkeypatch.setattr(ray_resources, "resolve_distributed_resources", lambda _cfg: object())
+    monkeypatch.setattr(ray_resources, "format_distributed_resource_plan", lambda _plan: "")
+    monkeypatch.setattr(ray_resources, "trainer_torch_device", lambda _plan: "cpu")
 
     def _stop_at_encoder(*args: object, **kwargs: object) -> None:
         raise _ReachedEncoderBoundary
 
-    monkeypatch.setattr(train_dpo, "_build_encoders", _stop_at_encoder)
+    monkeypatch.setattr(
+        "vrl.scripts.families.wan_2_1.train_dpo._build_encoders",
+        _stop_at_encoder,
+    )
 
     with pytest.raises(_ReachedEncoderBoundary):
         train_wan_2_1_dpo(cfg)

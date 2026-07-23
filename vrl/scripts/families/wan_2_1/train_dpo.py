@@ -17,26 +17,6 @@ from typing import TYPE_CHECKING
 
 from omegaconf import DictConfig, OmegaConf
 
-from vrl.models.dtypes import resolve_torch_dtype
-from vrl.ray.resources import (
-    format_distributed_resource_plan,
-    resolve_distributed_resources,
-    trainer_torch_device,
-)
-from vrl.trainers.activation_checkpointing import enable_transformer_gradient_checkpointing
-from vrl.trainers.checkpointing import (
-    LORA_WEIGHTS_NAME,
-    capture_rng_state,
-    load_training_checkpoint_for_resume,
-    prepare_metrics_csv,
-    prepare_model_config_for_training_resume,
-    restore_rng_state,
-    restore_training_checkpoint,
-    save_resolved_config,
-    save_training_checkpoint,
-)
-from vrl.trainers.core.types import OptimConfig
-
 if TYPE_CHECKING:
     from vrl.algorithms.dpo import DiffusionDPOConfig
     from vrl.trainers.offline import OfflineDPOTrainerConfig
@@ -54,6 +34,7 @@ def _build_offline_dpo_trainer_config(
     """Resolve the DPO trainer from the public actor optimizer config."""
 
     from vrl.config.validation import require
+    from vrl.trainers.core.types import OptimConfig
     from vrl.trainers.offline import OfflineDPOTrainerConfig
 
     raw_optim = OmegaConf.to_container(
@@ -150,20 +131,48 @@ def _build_encoders(pipeline, num_frames: int, device, dtype):
 
 def train_wan_2_1_dpo(cfg: DictConfig) -> None:
     """Run Wan-family Diffusion-DPO training driven by a merged YAML config."""
+
+    from vrl.config.builders import build_configs
+    from vrl.families.names import normalize_model_family
+
+    built = build_configs(cfg)
+    configured_family = None if built.root.model is None else built.root.model.family
+    family = normalize_model_family(str(configured_family or ""))
+    if family != "wan_2_1":
+        raise ValueError(
+            "Wan Diffusion-DPO requires model.family='wan_2_1' "
+            f"(alias 'wan' is accepted); got {configured_family!r}",
+        )
+
     import torch
     from torch.utils.data import DataLoader
 
     from vrl.algorithms.dpo import DiffusionDPOConfig
-    from vrl.config.builders import build_configs
     from vrl.config.validation import optional_none, require
     from vrl.families.registry import get_model_family_entry
+    from vrl.models.dtypes import resolve_torch_dtype
+    from vrl.ray.resources import (
+        format_distributed_resource_plan,
+        resolve_distributed_resources,
+        trainer_torch_device,
+    )
+    from vrl.trainers.activation_checkpointing import enable_transformer_gradient_checkpointing
+    from vrl.trainers.checkpointing import (
+        LORA_WEIGHTS_NAME,
+        capture_rng_state,
+        load_training_checkpoint_for_resume,
+        prepare_metrics_csv,
+        prepare_model_config_for_training_resume,
+        restore_rng_state,
+        restore_training_checkpoint,
+        save_resolved_config,
+        save_training_checkpoint,
+    )
     from vrl.trainers.data import collate_preference, load_pickapic
     from vrl.trainers.offline import (
         OfflineDPOTrainer,
         wan_forward,
     )
-
-    built = build_configs(cfg)
 
     trainer_cfg_yaml = cfg.trainer
     sampling = cfg.sampling
@@ -200,7 +209,7 @@ def train_wan_2_1_dpo(cfg: DictConfig) -> None:
     # DPO needs the full family bundle because its VAE and text encoder prepare
     # preference pairs. Registry selection and model projection stay identical
     # to generation; only the downstream optimizer makes this a training path.
-    family_entry = get_model_family_entry(str(require(cfg, "model.family")))
+    family_entry = get_model_family_entry(family)
     build = family_entry.resolve_model_build(
         cfg,
         device,
