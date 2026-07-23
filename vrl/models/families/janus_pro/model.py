@@ -792,24 +792,12 @@ class JanusProModel(ARModelBase):
             "selfcheck": selfcheck,
             "segments": segments,
             "context": {
-                "guidance_scale": float(guidance_scale),
                 "temperature": float(temperature),
-                "image_token_num": int(image_token_num),
-                "image_size": int(image_size),
-                "max_reflect_len": int(max_reflect_len),
+                # Display/provenance-only: OnlineTrainer persists these R1
+                # policy choices in its first-step ``rollout_context`` record.
+                "guidance_scale": float(guidance_scale),
                 "refine_mode": mode,
                 "task_stages": stages,
-                "selfcheck_prompt": JANUS_R1_SELFCHECK_PROMPT,
-                "regeneration_prompt": JANUS_R1_REGEN_PROMPT,
-                "yes_token_id": int(yes_token_id),
-                "no_token_id": int(no_token_id),
-                "eos_token_id": int(eos_token_id),
-                "pad_token_id": int(pad_token_id),
-                "refine_mask": use_refined,
-                "prompt_input_ids": prompt_input_ids,
-                "prompt_attention_mask": prompt_attention_mask,
-                "uncond_input_ids": uncond_input_ids,
-                "uncond_attention_mask": uncond_attention_mask,
             },
         }
 

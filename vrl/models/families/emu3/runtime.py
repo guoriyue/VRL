@@ -11,7 +11,6 @@ from vrl.generation.execution.chunks import SampleChunk
 from vrl.generation.types import GenerationRequest
 from vrl.models.families.emu3.model import (
     emu3_forced_token_schedule,
-    emu3_grid_token_num,
 )
 from vrl.models.families.emu3.runner import Emu3TokenRunner
 from vrl.models.interfaces.runtime import ModelBuild
@@ -131,7 +130,6 @@ class Emu3ChunkExecutor(ARDiscreteChunkExecutorBase):
         cond_embeds = self._embed(prompt_ids)
         uncond_embeds = self._embed(uncond_ids)
 
-        total_token_num = emu3_grid_token_num(height, width)
         return ARChunkInputs(
             init_args=(cond_embeds, uncond_embeds, prompt_mask, uncond_mask),
             init_kwargs={
@@ -146,11 +144,12 @@ class Emu3ChunkExecutor(ARDiscreteChunkExecutorBase):
             uncond_input_ids=uncond_ids,
             uncond_attention_mask=uncond_mask,
             context={
-                "guidance_scale": guidance_scale,
                 "temperature": temperature,
                 "image_height": height,
                 "image_width": width,
-                "image_token_num": total_token_num,
+                # Display/provenance-only: OnlineTrainer writes the sampling
+                # policy into its first-step ``rollout_context`` debug record.
+                "guidance_scale": guidance_scale,
             },
         )
 

@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+from typing import Any
+
 import pytest
 import torch
 from omegaconf import OmegaConf
@@ -9,9 +12,12 @@ from omegaconf import OmegaConf
 from vrl.families.registry import get_model_family_entry
 from vrl.generation import GenerationRequest
 from vrl.generation.bindings.token_autoregressive import ARRequestLayout
+from vrl.generation.execution.chunks import SampleChunk
 from vrl.generation.execution.ids import build_sample_rows
+from vrl.models.families.nextstep_1 import runtime as nextstep_runtime
 from vrl.models.families.nextstep_1.runtime import (
     NextStep1ARChunkResult,
+    NextStep1ChunkExecutor,
     NextStep1ChunkGatherer,
 )
 
@@ -172,3 +178,74 @@ def test_nextstep_gather_uses_canonical_output_as_reward_source() -> None:
     assert output.trajectory.reward_views["image"].metadata == {
         "output_ref": "GenerationOutput.output"
     }
+
+
+def test_chunk_context_keeps_only_flow_replay_parameters(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    loop_kwargs: dict[str, Any] = {}
+
+    class _FakeLoop:
+        def __init__(self, **kwargs: Any) -> None:
+            loop_kwargs.update(kwargs)
+
+        def run(self) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+            tokens = torch.zeros(1, 4, 2)
+            return tokens, torch.ones_like(tokens), torch.zeros(1, 4)
+
+    decoded_sizes: list[int] = []
+
+    def decode_image_tokens(tokens: torch.Tensor, *, image_size: int) -> torch.Tensor:
+        assert tokens.shape == (1, 4, 2)
+        decoded_sizes.append(image_size)
+        return torch.zeros(1, 3, 2, 2)
+
+    model = SimpleNamespace(
+        processor=SimpleNamespace(pad_token_id=0),
+        device=torch.device("cpu"),
+        decode_image_tokens=decode_image_tokens,
+    )
+    executor = NextStep1ChunkExecutor(model)
+    ids = torch.tensor([[1, 2]], dtype=torch.long)
+    mask = torch.ones_like(ids)
+    monkeypatch.setattr(
+        executor,
+        "_tokenize_prompts",
+        lambda prompts, *, max_text_length: (ids, mask),
+    )
+    monkeypatch.setattr(executor, "_embed", lambda token_ids: token_ids.unsqueeze(-1).float())
+    monkeypatch.setattr(executor, "_ar_runner", lambda request: object())
+    monkeypatch.setattr(nextstep_runtime, "TokenAutoregressiveLoop", _FakeLoop)
+    request = GenerationRequest(
+        request_id="req",
+        family="nextstep_1",
+        task="ar_t2i",
+        inputs=["draw text"],
+        samples_per_prompt=1,
+        sampling={
+            "guidance_scale": 2.5,
+            "num_steps": 4,
+            "noise_level": 0.8,
+            "image_token_num": 4,
+            "image_size": 32,
+            "max_text_length": 8,
+        },
+    )
+
+    result = executor.forward_chunk_plan(
+        request,
+        SampleChunk(
+            prompt_index=0,
+            prompt="draw text",
+            sample_start=0,
+            sample_count=1,
+        ),
+    )
+
+    assert result.context == {
+        "guidance_scale": 2.5,
+        "num_steps": 4,
+        "noise_level": 0.8,
+    }
+    assert loop_kwargs["init_kwargs"]["image_token_num"] == 4
+    assert decoded_sizes == [32]

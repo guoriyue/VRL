@@ -2,10 +2,14 @@
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import pytest
+import torch
 from omegaconf import OmegaConf
 
 from vrl.families.registry import get_model_family_entry
+from vrl.generation.execution.chunks import SampleChunk
 from vrl.generation.types import GenerationRequest
 from vrl.models.families.glm_image.runner import GlmImageTokenRunner
 from vrl.models.families.glm_image.runtime import (
@@ -108,3 +112,67 @@ def test_executor_rejects_explicit_attention_backend() -> None:
     )
     runner = executor._ar_runner(request_native)
     assert isinstance(runner, GlmImageTokenRunner)
+
+
+def test_chunk_context_keeps_replay_shape_and_sampling_provenance_only(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    ids = torch.tensor([[1, 2]], dtype=torch.long)
+    mask = torch.ones_like(ids)
+    model = SimpleNamespace(
+        config=SimpleNamespace(
+            temperature=0.9,
+            top_p=0.75,
+            image_height=64,
+            image_width=96,
+        ),
+    )
+
+    def encode_generation_prompts(
+        prompts: list[str],
+        *,
+        max_text_length: int,
+        image_height: int,
+        image_width: int,
+    ) -> tuple[torch.Tensor, torch.Tensor, tuple[int, int, int, int]]:
+        assert prompts == ["draw text"]
+        assert max_text_length == 8
+        assert (image_height, image_width) == (64, 96)
+        return ids, mask, (4, 6, 2, 3)
+
+    model.encode_generation_prompts = encode_generation_prompts
+    executor = GlmImageChunkExecutor(model)
+    monkeypatch.setattr(executor, "_embed", lambda token_ids: token_ids.unsqueeze(-1).float())
+    request = GenerationRequest(
+        request_id="req",
+        family="glm_image",
+        task="ar_t2i",
+        inputs=["draw text"],
+        samples_per_prompt=1,
+        sampling={
+            "temperature": 0.8,
+            "top_p": 0.6,
+            "image_height": 64,
+            "image_width": 96,
+            "max_text_length": 8,
+            "decode_guidance_scale": 2.0,
+        },
+    )
+
+    prepared = executor.prepare_chunk_inputs(
+        request,
+        SampleChunk(
+            prompt_index=0,
+            prompt="draw text",
+            sample_start=0,
+            sample_count=1,
+        ),
+    )
+
+    assert prepared.context == {
+        "temperature": 0.8,
+        "image_height": 64,
+        "image_width": 96,
+        "top_p": 0.6,
+    }
+    assert prepared.image_decode_kwargs["guidance_scale"] == 2.0

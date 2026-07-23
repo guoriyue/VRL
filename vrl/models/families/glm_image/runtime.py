@@ -9,9 +9,6 @@ import torch
 from vrl.generation.bindings.token_autoregressive import ARChunkInputs, ARDiscreteChunkExecutorBase
 from vrl.generation.execution.chunks import SampleChunk
 from vrl.generation.types import GenerationRequest
-from vrl.models.families.glm_image.model import (
-    glm_image_token_num,
-)
 from vrl.models.families.glm_image.runner import GlmImageTokenRunner
 from vrl.models.interfaces.runtime import ModelBuild
 from vrl.models.steps.token.build import token_model_config_base
@@ -142,7 +139,6 @@ class GlmImageChunkExecutor(ARDiscreteChunkExecutorBase):
         )
         cond_embeds = self._embed(prompt_ids)
 
-        total_token_num = glm_image_token_num(image_height, image_width)
         return ARChunkInputs(
             init_args=(cond_embeds, prompt_mask),
             init_kwargs={
@@ -168,10 +164,11 @@ class GlmImageChunkExecutor(ARDiscreteChunkExecutorBase):
             uncond_attention_mask=torch.zeros_like(prompt_mask),
             context={
                 "temperature": temperature,
-                "top_p": top_p,
                 "image_height": image_height,
                 "image_width": image_width,
-                "image_token_num": total_token_num,
+                # Display/provenance-only: OnlineTrainer writes the behavior
+                # sampler policy into its first-step ``rollout_context`` record.
+                "top_p": top_p,
             },
             # Every generated position is a free codebook draw, so the
             # default all-ones token mask is correct.

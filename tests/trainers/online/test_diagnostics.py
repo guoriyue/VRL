@@ -80,6 +80,7 @@ class TestDiagnostics:
                     group_ids=torch.zeros(group_size, dtype=torch.long),
                     num_steps=2,
                     context={
+                        "guidance_scale": 4.5,
                         "runtime_debug": {
                             "ray_chunks": [
                                 {
@@ -179,6 +180,8 @@ class TestDiagnostics:
         assert record["ratio"]["mean"] == pytest.approx(1.0)
         assert record["driver_trainable_before_step"]["tensor_count"] == 1
         assert record["driver_trainable_after_step"]["tensor_count"] == 1
+        assert record["rollout_context"]["guidance_scale"] == 4.5
+        assert "runtime_debug" not in record["rollout_context"]
         assert record["runtime_debug"]["ray_chunks"][0]["worker_id"] == "rollout-0"
         assert grad_enabled[0] is False
         assert any(grad_enabled[1:])

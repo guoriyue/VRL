@@ -102,10 +102,10 @@ def test_janus_executor_parse_sampling_params_reads_scheduler_batch_size() -> No
     assert params.ar_scheduler_batch_size == 8
 
 
-def test_janus_chunk_context_records_temperature(
+def test_janus_chunk_context_keeps_temperature_and_sampling_provenance_only(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Replay must receive the same temperature used by rollout sampling."""
+    """Replay keeps temperature without carrying the derivable token count."""
     executor = JanusProChunkExecutor(
         model=SimpleNamespace(
             processor=SimpleNamespace(
@@ -157,5 +157,8 @@ def test_janus_chunk_context_records_temperature(
         ),
     )
 
-    assert prepared.context["temperature"] == 0.7
+    assert prepared.context == {
+        "temperature": 0.7,
+        "guidance_scale": 5.0,
+    }
     assert tokenized_prompts == [["draw text"], [""]]

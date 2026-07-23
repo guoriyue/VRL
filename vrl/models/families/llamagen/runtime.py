@@ -148,12 +148,12 @@ class LlamaGenChunkExecutor(ARDiscreteChunkExecutorBase):
             uncond_input_ids=torch.zeros_like(prompt_ids),
             uncond_attention_mask=torch.zeros_like(prompt_mask),
             context={
-                "guidance_scale": guidance_scale,
                 "temperature": temperature,
+                # Display/provenance-only: OnlineTrainer writes these behavior
+                # sampler knobs into its first-step ``rollout_context`` record.
+                "guidance_scale": guidance_scale,
                 "top_k": top_k,
                 "top_p": top_p,
-                "image_token_num": params.image_token_num,
-                "uncond_source": "caption_embedder_uncond_embedding",
             },
         )
 

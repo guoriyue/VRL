@@ -261,6 +261,12 @@ def test_generate_with_refine_returns_three_segments_and_selects_final_image() -
     )
 
     assert sample_calls == [10, 20]
+    assert out["context"] == {
+        "temperature": 0.9,
+        "guidance_scale": 5.0,
+        "refine_mode": "selfcheck",
+        "task_stages": JANUS_R1_SEGMENTS,
+    }
     assert set(out["segments"]) == set(JANUS_R1_SEGMENTS)
     assert out["segments"]["initial_image"]["token_ids"].shape == (2, 4)
     assert out["segments"]["selfcheck_text"]["token_ids"].shape == (2, 3)

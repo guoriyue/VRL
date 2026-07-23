@@ -193,8 +193,6 @@ class NextStep1ChunkExecutor(ARChunkExecutorBase):
                 "guidance_scale": guidance_scale,
                 "num_steps": num_steps,
                 "noise_level": noise_level,
-                "image_token_num": params.image_token_num,
-                "image_size": params.image_size,
             },
             peak_memory_mb=peak_mem_mb,
         )

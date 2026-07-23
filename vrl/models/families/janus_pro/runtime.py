@@ -165,9 +165,10 @@ class JanusProChunkExecutor(ARDiscreteChunkExecutorBase):
             uncond_input_ids=uncond_ids,
             uncond_attention_mask=uncond_mask,
             context={
-                "guidance_scale": guidance_scale,
                 "temperature": temperature,
-                "image_token_num": params.image_token_num,
+                # Display/provenance-only: OnlineTrainer writes the sampling
+                # policy into its first-step ``rollout_context`` debug record.
+                "guidance_scale": guidance_scale,
             },
         )
 
