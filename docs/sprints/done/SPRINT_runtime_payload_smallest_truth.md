@@ -207,7 +207,7 @@ header/row/format区域。
 ## 6. T5 — ALL_CAPS prompt table移到正确 owner
 
 `kling_video_reward.py` 同时承载 load/inference/parser和大型 domain prompt table。移动到
-`vrl/rewards/models/kling_prompt_templates.py`：
+`vrl/rewards/assets/kling_prompt_templates.py`：
 
 ```text
 _DIMENSION_DESCRIPTIONS

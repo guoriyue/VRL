@@ -429,7 +429,7 @@ family 名（`cosmos-predict2`、`cosmos-predict2.5`、`wan_2_1`、`sd3_5`、`co
 | `_JANUS_LORA_DEFAULTS` | `vrl/models/ar/janus_pro/runtime.py:141` | LoRA 配方默认值，config `model.lora` 可覆盖（已有 override 路径） |
 | `_NEXTSTEP_LORA_DEFAULTS` | `vrl/models/ar/nextstep_1/runtime.py:134` | 同上 |
 | `_ARTIFACT_DIRS` | `vrl/scripts/data/setup.py:24` | init-dirs 命令的本地小 wiring 表（P3 改判 KEEP，见 §0/§4） |
-| `_DIMENSION_DESCRIPTIONS` | `vrl/rewards/models/kling_video_reward.py:39` | 唯一边界项：是 prose 描述文本，但与 Kling 模型 prompt 格式耦合——倾向保留；若想搬只有它够格 |
+| `_DIMENSION_DESCRIPTIONS` | `vrl/rewards/assets/kling_prompt_templates.py` | Kling checkpoint prompt taxonomy；隔离于 model workflow，作为协议资产保留 |
 
 ### A.2 已迁出的 3 个（danbooru 领域数据，P0 完成）
 

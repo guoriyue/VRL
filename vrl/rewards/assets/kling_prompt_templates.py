@@ -1,8 +1,8 @@
 """Prompt protocol for KlingTeam/VideoReward checkpoint configurations.
 
 This module is adapted from KwaiVGI/VideoAlign's prompt-template code under
-the MIT license. Keeping the checkpoint-owned taxonomy here lets the model
-loader focus on artifact resolution and inference.
+the MIT license. Keeping the checkpoint-owned taxonomy in the assets package
+lets the model loader focus on artifact resolution and inference.
 """
 
 from __future__ import annotations

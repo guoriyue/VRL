@@ -2,7 +2,7 @@
 
 import pytest
 
-from vrl.rewards.models.kling_prompt_templates import (
+from vrl.rewards.assets.kling_prompt_templates import (
     build_kling_video_reward_prompt,
 )
 
