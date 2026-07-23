@@ -76,7 +76,7 @@ def _strategy_config(
         training[strategy] = strategy_config
     payload: dict[str, Any] = {"distributed": {"training": training}}
     if model is not None:
-        payload["model"] = model
+        payload["model"] = {"family": "sana", **model}
     return RootConfig.model_validate(payload)
 
 

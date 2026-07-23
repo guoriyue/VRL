@@ -7,11 +7,19 @@ import typing
 import pytest
 from omegaconf import OmegaConf
 
-from vrl.config.model_schema import ModelSection
+from vrl.config.model_schema import (
+    LoraSection,
+    ModelExecutorSection,
+    ModelMemorySection,
+    ModelSection,
+    TorchCompileSection,
+    VaeDecodeMemorySection,
+)
 from vrl.config.schema import (
     AlgorithmConfig,
     DataConfig,
     RewardConfig,
+    RootConfig,
     SamplingConfig,
     parse_config,
 )
@@ -719,6 +727,93 @@ def test_model_runtime_capability_matrix_covers_every_registered_family() -> Non
         )
 
 
+def test_shared_nested_model_sections_preserve_explicit_falsy_presence() -> None:
+    raw_model = {
+        "family": "flux",
+        "lora": {
+            "rank": 0,
+            "alpha": 0,
+            "path": None,
+            "target_modules": [],
+            "init_lora_weights": False,
+            "dropout": 0.0,
+            "init": None,
+        },
+        "memory": {
+            "vae_decode": {
+                "tiling": False,
+                "slicing": None,
+            },
+        },
+        "torch_compile": {
+            "enable": False,
+            "mode": None,
+        },
+        "executor": {
+            "num_frames": 0,
+            "max_sequence_length": 0,
+            "fps": None,
+            "chunk_passthrough_keys": [],
+        },
+    }
+
+    parsed = parse_config(OmegaConf.create({"model": raw_model}))
+
+    assert isinstance(parsed.model, ModelSection)
+    assert isinstance(parsed.model.lora, LoraSection)
+    assert isinstance(parsed.model.memory, ModelMemorySection)
+    assert isinstance(parsed.model.memory.vae_decode, VaeDecodeMemorySection)
+    assert isinstance(parsed.model.torch_compile, TorchCompileSection)
+    assert isinstance(parsed.model.executor, ModelExecutorSection)
+    assert parsed.model.model_dump(exclude_unset=True) == raw_model
+
+    # Re-selecting a family subclass from an already-typed shared section must
+    # not materialize omitted defaults into the runtime projection.
+    reparsed = RootConfig.model_validate(
+        {"model": ModelSection.model_validate(raw_model)},
+    )
+    assert reparsed.model is not None
+    assert reparsed.model.model_dump(exclude_unset=True) == raw_model
+
+
+@pytest.mark.parametrize(
+    ("model_fragment", "path"),
+    [
+        ({"lora": {"rnak": 16}}, "model.lora.rnak"),
+        (
+            {"memory": {"vae_decode": {"tileing": True}}},
+            "model.memory.vae_decode.tileing",
+        ),
+        ({"memory": {"transformer": {}}}, "model.memory.transformer"),
+        ({"torch_compile": {"enabled": True}}, "model.torch_compile.enabled"),
+        (
+            {"executor": {"max_seq_length": 300}},
+            "model.executor.max_seq_length",
+        ),
+        ({"pth": "org/model"}, "model.pth"),
+    ],
+)
+def test_model_subtree_typos_fail_closed_with_complete_paths(
+    model_fragment: dict[str, object],
+    path: str,
+) -> None:
+    from vrl.config.unknown_keys import find_unknown_keys
+
+    cfg = OmegaConf.create(
+        {
+            "model": {
+                "family": "flux",
+                **model_fragment,
+            },
+        },
+    )
+
+    assert find_unknown_keys(cfg) == [path]
+    with pytest.raises(ValueError) as error:
+        parse_config(cfg)
+    assert str(error.value) == f"unknown {path}"
+
+
 @pytest.mark.parametrize(
     ("family", "supports_executor", "supports_memory"),
     [
@@ -742,7 +837,12 @@ def test_model_runtime_sections_follow_family_capabilities(
         },
     )
     if supports_executor:
-        assert parse_config(executor_cfg).model.executor == {"max_sequence_length": 123}
+        parsed = parse_config(executor_cfg)
+        assert parsed.model is not None
+        assert parsed.model.executor is not None
+        assert parsed.model.executor.model_dump(exclude_unset=True) == {
+            "max_sequence_length": 123,
+        }
     else:
         with pytest.raises(
             ValueError,
@@ -760,7 +860,10 @@ def test_model_runtime_sections_follow_family_capabilities(
             },
         )
         if supports_memory:
-            assert parse_config(memory_cfg).model.memory == {
+            parsed = parse_config(memory_cfg)
+            assert parsed.model is not None
+            assert parsed.model.memory is not None
+            assert parsed.model.memory.model_dump(exclude_unset=True) == {
                 "vae_decode": {"tiling": tiling},
             }
         else:

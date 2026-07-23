@@ -303,6 +303,9 @@ def test_model_section_imports_do_not_load_model_runtimes() -> None:
             "-c",
             (
                 "import sys; "
+                "from vrl.config.model_schema import "
+                "LoraSection, ModelExecutorSection, ModelMemorySection, "
+                "TorchCompileSection, VaeDecodeMemorySection; "
                 "from vrl.families.registry import FAMILY_REGISTRY; "
                 "from vrl.utils.config import import_from_path; "
                 "[import_from_path(entry.model_section_cls) "
@@ -331,6 +334,10 @@ def test_model_section_imports_do_not_load_model_runtimes() -> None:
                 "assert Magi1ModelSection.__module__.endswith('.magi_1.config'); "
                 "assert NextStep1ModelSection.__module__.endswith("
                 "'.nextstep_1.config'); "
+                "assert all(section.__module__ == 'vrl.config.model_schema' "
+                "for section in (LoraSection, ModelExecutorSection, "
+                "ModelMemorySection, TorchCompileSection, "
+                "VaeDecodeMemorySection)); "
                 "assert 'torch' not in sys.modules; "
                 "assert 'diffusers' not in sys.modules; "
                 "assert 'transformers' not in sys.modules; "

@@ -6,16 +6,15 @@ single family table shared by model construction, generation, and collection.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
+from vrl.config.model_schema import MODEL_MEMORY_SECTIONS
 from vrl.families.names import (
     normalize_model_family,
     validate_model_family_aliases,
 )
 from vrl.families.semantics import PolicySemantics, TrajectoryLayout
-from vrl.models.interfaces.runtime import MODEL_MEMORY_SECTIONS
 
 # Import-path protocol value shared by registry dispatch and generation workers.
 # Keeping it here avoids making the neutral family table import a runtime module.
@@ -170,8 +169,8 @@ class ModelFamilyEntry:
     def validate_model_runtime_sections(
         self,
         *,
-        executor_config: Mapping[str, Any] | None,
-        memory_config: Mapping[str, Any] | None,
+        executor_config: Any | None,
+        memory_config: Any | None,
     ) -> None:
         """Reject model runtime blocks that this family cannot consume."""
 

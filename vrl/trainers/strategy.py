@@ -21,6 +21,7 @@ import torch
 from torch import nn
 
 from vrl.trainers.distributed import DistributedTrainingContext
+from vrl.utils.config import cfg_path
 from vrl.utils.cuda_memory import empty_cuda_cache
 
 if TYPE_CHECKING:
@@ -1028,8 +1029,7 @@ def _assert_fsdp_config_supported(config: RootConfig) -> None:
     torch.compile remains gated.
     """
 
-    torch_compile = config.model.torch_compile if config.model is not None else None
-    if isinstance(torch_compile, Mapping) and bool(torch_compile.get("enable")):
+    if bool(cfg_path(config, "model.torch_compile.enable", False)):
         raise NotImplementedError(
             "distributed.training.strategy=fsdp with model.torch_compile.enable=true "
             "is not supported: torch.compile (inductor graph capture) is unsound with "

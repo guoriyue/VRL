@@ -11,6 +11,7 @@ import pytest
 from omegaconf import OmegaConf
 
 from vrl.config.loading import load_config
+from vrl.config.schema import parse_config
 from vrl.families.registry import (
     FAMILY_REGISTRY,
     GENERIC_FULL_SEQUENCE_DENOISE_EXECUTOR,
@@ -368,19 +369,22 @@ def test_executor_kwargs_use_configured_chunk_size() -> None:
 
 
 def test_generic_executor_kwargs_project_the_complete_model_block() -> None:
-    cfg = OmegaConf.create(
-        {
-            "model": {
-                "executor": {
-                    "num_frames": 17,
-                    "max_sequence_length": 256,
-                    "fps": 24,
-                    "chunk_passthrough_keys": ["text_ids"],
+    cfg = parse_config(
+        OmegaConf.create(
+            {
+                "model": {
+                    "family": "flux",
+                    "executor": {
+                        "num_frames": 17,
+                        "max_sequence_length": 256,
+                        "fps": 24,
+                        "chunk_passthrough_keys": ["text_ids"],
+                    },
+                    "memory": {"vae_decode": {"tiling": False}},
                 },
-                "memory": {"vae_decode": {"tiling": False}},
+                "rollout": {"samples_per_chunk": 3},
             },
-            "rollout": {"samples_per_chunk": 3},
-        },
+        ),
     )
 
     assert build_executor_kwargs(get_model_family_entry("flux"), cfg) == {

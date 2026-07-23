@@ -447,7 +447,7 @@ def _parse_model_section(value: Any) -> ModelSection | None:
             parsed = value
             payload = None
         else:
-            payload = value.model_dump()
+            payload = value.model_dump(exclude_unset=True)
     elif isinstance(value, Mapping):
         payload = dict(value)
         section_cls = _model_section_class_for_family(payload.get("family"))
@@ -993,6 +993,8 @@ def _extract_error_message(exc: ValidationError) -> str:
     # Missing required field — remap to repo-standard message format
     if error_type == "missing":
         return f"config missing required field: {loc}"
+    if error_type == "extra_forbidden":
+        return f"unknown {loc}"
     # Literal enum mismatch — reformat to "unknown {loc}={input!r}; expected ..."
     if error_type == "literal_error":
         input_val = first.get("input", "")

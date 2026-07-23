@@ -46,6 +46,35 @@ def test_config_block_known_keys_derive_from_dataclass_fields() -> None:
     )
 
 
+def test_model_nested_keys_derive_from_public_section_types() -> None:
+    """Shared model blocks must not maintain separate hand-written key tuples."""
+    from vrl.config.model_schema import (
+        MODEL_MEMORY_SECTIONS,
+        LoraSection,
+        ModelExecutorSection,
+        ModelMemorySection,
+        ModelSection,
+        TorchCompileSection,
+        VaeDecodeMemorySection,
+    )
+    from vrl.config.unknown_keys import ConfigBlock
+
+    block = ConfigBlock(ModelSection)
+
+    assert block.children["lora"].known == frozenset(LoraSection.model_fields)
+    assert block.children["memory"].known == frozenset(ModelMemorySection.model_fields)
+    assert tuple(ModelMemorySection.model_fields) == MODEL_MEMORY_SECTIONS
+    assert block.children["torch_compile"].known == frozenset(
+        TorchCompileSection.model_fields,
+    )
+    assert block.children["executor"].known == frozenset(
+        ModelExecutorSection.model_fields,
+    )
+    assert block.children["memory"].children["vae_decode"].known == frozenset(
+        VaeDecodeMemorySection.model_fields,
+    )
+
+
 def test_future_runtime_metadata_fields_enter_their_public_section_automatically() -> None:
     from vrl.config.schema import _online_runtime_section_shape
 

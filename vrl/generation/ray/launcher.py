@@ -29,7 +29,7 @@ from vrl.models.dtypes import dtype_to_wire_name
 from vrl.ray.actor_group import RayActorGroup
 from vrl.ray.dependencies import require_ray
 from vrl.ray.placement import RolePlacement
-from vrl.utils.config import cfg_path, to_builtin_deep
+from vrl.utils.config import cfg_path, plain_mapping, to_builtin_deep
 
 logger = logging.getLogger(__name__)
 
@@ -301,8 +301,16 @@ def build_executor_kwargs(entry: Any, cfg: Any) -> dict[str, Any]:
     # from yaml in ONE pass (config is homogeneous — no per-field extraction);
     # family/task identity comes from the registry entry. Families with their
     # own executor hardcode these as class attrs and skip this.
-    if entry.executor_cls == GENERIC_FULL_SEQUENCE_DENOISE_EXECUTOR:
-        kwargs.update(dict(executor_config or {}))
+    if (
+        entry.executor_cls == GENERIC_FULL_SEQUENCE_DENOISE_EXECUTOR
+        and executor_config is not None
+    ):
+        kwargs.update(
+            plain_mapping(
+                executor_config,
+                field_name="model.executor",
+            ),
+        )
     return kwargs
 
 
