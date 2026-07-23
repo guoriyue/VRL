@@ -259,11 +259,15 @@ class NextStep1Model(ARModelBase):
             )
             out[:, j] = lp.float()
 
-            proj = self._image_in_projector(tokens[:, j])
-            kv_cond, c_cond = self._step_llm(kv_cond, proj)
-            if kv_uncond is not None:
-                proj_u = self._image_in_projector(tokens[:, j])
-                kv_uncond, c_uncond = self._step_llm(kv_uncond, proj_u)
+            # The stepped hidden state is only an input to the next token's
+            # log-prob. The final token has no successor, so advancing its KV
+            # state would build an unused autograd graph.
+            if j + 1 < L_img:
+                proj = self._image_in_projector(tokens[:, j])
+                kv_cond, c_cond = self._step_llm(kv_cond, proj)
+                if kv_uncond is not None:
+                    proj_u = self._image_in_projector(tokens[:, j])
+                    kv_uncond, c_uncond = self._step_llm(kv_uncond, proj_u)
 
         return out
 

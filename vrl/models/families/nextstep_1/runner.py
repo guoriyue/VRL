@@ -203,12 +203,16 @@ class NextStep1ARModelRunner:
         state.saved_noise[rows, position] = replay_noise
         state.logprobs[rows, position] = log_prob.float()
 
-        cache_updates, row_updates = self._advance_paged_attention(
-            state,
-            batch=batch,
-            token=token,
-        )
-        return cache_updates, row_updates
+        # The advanced hidden state only conditions the next image token.
+        # Advancing after the final token mutates KV state that finalize_token
+        # never reads and pays for one unnecessary transformer forward.
+        if position + 1 < state.image_token_num:
+            return self._advance_paged_attention(
+                state,
+                batch=batch,
+                token=token,
+            )
+        return {}, {}
 
     def _prefill_paged(
         self,
