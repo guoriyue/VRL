@@ -440,24 +440,13 @@ def restore_training_checkpoint(
 
     if checkpoint is None:
         return
-    if strict and not family:
-        raise ValueError("strict checkpoint restore requires a non-empty family")
-    checkpoint_family = checkpoint.payload.get("family")
-    if strict and checkpoint_family and str(checkpoint_family) != str(family):
-        raise ValueError(
-            f"checkpoint family mismatch: checkpoint={checkpoint_family!r}, runtime={family!r}",
-        )
-    if strict and expected_model_identity is not None:
-        saved_identity = checkpoint.model_identity
-        if saved_identity is None:
-            raise ValueError(
-                "checkpoint is missing model identity required by this runtime",
-            )
-        if saved_identity != expected_model_identity:
-            raise ValueError(
-                "checkpoint model identity mismatch: "
-                f"checkpoint={saved_identity!r}, runtime={expected_model_identity!r}",
-            )
+    validate_checkpoint_compatibility(
+        checkpoint,
+        family=family,
+        expected_model_identity=expected_model_identity,
+        strict=strict,
+    )
+
     strategy = getattr(trainer, "_strategy", None)
     strategy_loader = getattr(strategy, "load_trainable_state", None)
     if callable(strategy_loader):
@@ -476,14 +465,45 @@ def restore_training_checkpoint(
         _require_equal_tensor_tree(
             checkpoint.trainable_state,
             restored_trainable,
-            label="restored dual-expert weights",
+            label="restored model weights",
         )
         if "optimizer" in checkpoint.trainer_state:
             restored_trainer = trainer.state_dict()
             _require_equal_tensor_tree(
                 checkpoint.trainer_state["optimizer"],
                 restored_trainer.get("optimizer"),
-                label="restored dual-expert optimizer state",
+                label="restored optimizer state",
+            )
+
+
+def validate_checkpoint_compatibility(
+    checkpoint: TrainingCheckpoint | None,
+    *,
+    family: str,
+    expected_model_identity: dict[str, Any] | None = None,
+    strict: bool = DEFAULT_CHECKPOINT_STRICT,
+) -> None:
+    """Validate family and immutable model identity before runtime construction."""
+
+    if checkpoint is None:
+        return
+    if strict and not family:
+        raise ValueError("strict checkpoint restore requires a non-empty family")
+    checkpoint_family = checkpoint.payload.get("family")
+    if strict and checkpoint_family and str(checkpoint_family) != str(family):
+        raise ValueError(
+            f"checkpoint family mismatch: checkpoint={checkpoint_family!r}, runtime={family!r}",
+        )
+    if strict and expected_model_identity is not None:
+        saved_identity = checkpoint.model_identity
+        if saved_identity is None:
+            raise ValueError(
+                "checkpoint is missing model identity required by this runtime",
+            )
+        if saved_identity != expected_model_identity:
+            raise ValueError(
+                "checkpoint model identity mismatch: "
+                f"checkpoint={saved_identity!r}, runtime={expected_model_identity!r}",
             )
 
 
@@ -907,5 +927,6 @@ __all__ = [
     "restore_training_checkpoint",
     "save_resolved_config",
     "save_training_checkpoint",
+    "validate_checkpoint_compatibility",
     "write_checkpoint_meta",
 ]

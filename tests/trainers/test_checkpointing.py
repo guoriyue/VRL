@@ -19,6 +19,7 @@ from vrl.trainers.checkpointing import (
     resolve_training_resume_strict,
     restore_training_checkpoint,
     save_training_checkpoint,
+    validate_checkpoint_compatibility,
 )
 
 
@@ -169,6 +170,76 @@ def test_restore_training_checkpoint_strictly_checks_model_identity(tmp_path) ->
             expected_model_identity=wrong,
             strict=True,
         )
+
+
+def test_checkpoint_compatibility_preflight_accepts_matching_identity(tmp_path) -> None:
+    identity = {"schema": "vrl.model-identity/v1", "sources": {}, "build": {}}
+    checkpoint = TrainingCheckpoint(
+        checkpoint_dir=tmp_path,
+        checkpoint_path=tmp_path / TRAINING_CHECKPOINT_NAME,
+        payload={"family": "sana", "model": {"identity": identity}},
+        meta={},
+    )
+
+    validate_checkpoint_compatibility(
+        checkpoint,
+        family="sana",
+        expected_model_identity=identity,
+        strict=True,
+    )
+
+
+@pytest.mark.parametrize(
+    ("family", "identity"),
+    [
+        ("flux", {"schema": "vrl.model-identity/v1", "sources": {}, "build": {}}),
+        ("sana", {"schema": "vrl.model-identity/v1", "sources": {"base": {}}, "build": {}}),
+    ],
+)
+def test_checkpoint_compatibility_preflight_rejects_strict_mismatch(
+    tmp_path,
+    family,
+    identity,
+) -> None:
+    checkpoint = TrainingCheckpoint(
+        checkpoint_dir=tmp_path,
+        checkpoint_path=tmp_path / TRAINING_CHECKPOINT_NAME,
+        payload={
+            "family": "sana",
+            "model": {
+                "identity": {
+                    "schema": "vrl.model-identity/v1",
+                    "sources": {},
+                    "build": {},
+                },
+            },
+        },
+        meta={},
+    )
+
+    with pytest.raises(ValueError, match=r"family mismatch|model identity mismatch"):
+        validate_checkpoint_compatibility(
+            checkpoint,
+            family=family,
+            expected_model_identity=identity,
+            strict=True,
+        )
+
+
+def test_checkpoint_compatibility_preflight_allows_non_strict_mismatch(tmp_path) -> None:
+    checkpoint = TrainingCheckpoint(
+        checkpoint_dir=tmp_path,
+        checkpoint_path=tmp_path / TRAINING_CHECKPOINT_NAME,
+        payload={"family": "sana", "model": {}},
+        meta={},
+    )
+
+    validate_checkpoint_compatibility(
+        checkpoint,
+        family="flux",
+        expected_model_identity={"schema": "other"},
+        strict=False,
+    )
 
 
 def test_restore_training_checkpoint_routes_model_load_through_strategy(tmp_path) -> None:
