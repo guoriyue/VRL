@@ -16,7 +16,6 @@ from vrl.trajectory import (
     TrajectorySegment,
     TrajectoryStoragePolicy,
     apply_trajectory_storage_policy,
-    build_training_view,
     named_tensor,
     role_tensor,
 )
@@ -129,7 +128,6 @@ class TrajectoryRolloutBatchBuilder:
             extras={},
             context=rollout_context,
             trajectory=self.trajectory,
-            training_view=build_training_view(self.trajectory),
         )
 
     def _pack_ar_tokens(
@@ -149,7 +147,6 @@ class TrajectoryRolloutBatchBuilder:
             extras={},
             context=dict(self.trajectory.context),
             trajectory=self.trajectory,
-            training_view=build_training_view(self.trajectory),
         )
 
     def _pack_ar_multisegment(
@@ -177,7 +174,6 @@ class TrajectoryRolloutBatchBuilder:
             extras={},
             context=dict(self.trajectory.context),
             trajectory=self.trajectory,
-            training_view=build_training_view(self.trajectory),
         )
 
     def _reward_output(self, view: RewardView) -> Any:

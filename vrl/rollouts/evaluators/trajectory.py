@@ -8,7 +8,7 @@ from typing import Any
 import torch
 
 from vrl.rollouts.evaluators.types import SegmentSignal, TrajectorySignalBatch
-from vrl.trajectory import TrainingView, TrajectoryBatch, role_tensor
+from vrl.trajectory import TrajectoryBatch, role_tensor
 from vrl.trajectory.device import move_value_to_device
 
 
@@ -18,11 +18,9 @@ class TrajectorySignalBuilder:
 
     batch: Any
     trajectory: TrajectoryBatch | None = field(init=False)
-    training_view: TrainingView | None = field(init=False)
 
     def __post_init__(self) -> None:
         self.trajectory = getattr(self.batch, "trajectory", None)
-        self.training_view = getattr(self.batch, "training_view", None)
 
     def single_segment(
         self,

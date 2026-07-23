@@ -27,7 +27,6 @@ def select_batch(batch: RolloutBatch, selector: torch.Tensor) -> RolloutBatch:
         extras=new_extras,
         context=batch.context,
         trajectory=select_trajectory_batch(batch.trajectory, selector),
-        training_view=batch.training_view,
     )
 
 
@@ -115,7 +114,6 @@ def move_training_batch_to_device(
         trajectory=batch.trajectory
         if defer_replay_tensors
         else move_trajectory_batch(batch.trajectory, device),
-        training_view=batch.training_view,
     )
 
 

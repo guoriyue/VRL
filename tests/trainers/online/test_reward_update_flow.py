@@ -1117,7 +1117,7 @@ def test_select_move_and_remap_preserve_rollout_trajectory_fields() -> None:
         remap_group_ids_,
         select_batch,
     )
-    from vrl.trajectory import build_ar_discrete_trajectory, build_training_view
+    from vrl.trajectory import build_ar_discrete_trajectory
 
     request = GenerationRequest(
         request_id="req",
@@ -1157,13 +1157,12 @@ def test_select_move_and_remap_preserve_rollout_trajectory_fields() -> None:
         rewards=torch.arange(4, dtype=torch.float32),
         group_ids=torch.tensor([0, 0, 1, 1]),
         trajectory=trajectory,
-        training_view=build_training_view(trajectory),
     )
 
     selected = select_batch(batch, torch.tensor([True, False, True, False]))
 
     assert selected.trajectory is not None
-    assert selected.training_view == batch.training_view
+    assert selected.trajectory.primary_segment == "image_tokens"
     assert selected.trajectory.axes["sample"].length == 2
     assert [row.group_id for row in selected.trajectory.sample_rows] == ["g0", "g1"]
     assert torch.equal(

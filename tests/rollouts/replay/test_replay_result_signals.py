@@ -9,7 +9,7 @@ from vrl.generation import GenerationRequest, GenerationSampleRow
 from vrl.models.interfaces import ReplayResult, ReplaySegmentResult
 from vrl.rollouts.batch import RolloutBatch
 from vrl.rollouts.evaluators.trajectory import TrajectorySignalBuilder
-from vrl.trajectory import build_ar_discrete_trajectory, build_training_view
+from vrl.trajectory import build_ar_discrete_trajectory
 
 
 def _request() -> GenerationRequest:
@@ -60,7 +60,6 @@ def _discrete_batch() -> tuple[RolloutBatch, torch.Tensor, torch.Tensor]:
         rewards=torch.zeros(2),
         group_ids=torch.tensor([0, 0]),
         trajectory=trajectory,
-        training_view=build_training_view(trajectory),
     )
     return batch, old_log_prob, token_mask
 

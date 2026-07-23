@@ -15,7 +15,7 @@ from tests.models.families.llamagen.fixtures import (
 from vrl.generation import GenerationRequest, GenerationSampleRow
 from vrl.models.interfaces import ReplayResult
 from vrl.rollouts.batch import RolloutBatch
-from vrl.trajectory import build_ar_discrete_trajectory, build_training_view
+from vrl.trajectory import build_ar_discrete_trajectory
 
 
 def _request(samples: int = 2) -> GenerationRequest:
@@ -68,7 +68,6 @@ def _rollout_batch(model) -> RolloutBatch:
         rewards=torch.zeros(2),
         group_ids=torch.tensor([0, 0]),
         trajectory=trajectory,
-        training_view=build_training_view(trajectory),
     )
 
 

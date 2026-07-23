@@ -237,6 +237,8 @@ def _validate_stack_compatible(batches: list[TrajectoryBatch]) -> None:
     for batch in batches[1:]:
         if batch.family != first.family or batch.task != first.task:
             raise ValueError("cannot stack trajectories from different family/task")
+        if batch.primary_segment != first.primary_segment:
+            raise ValueError("cannot stack trajectories with different primary segments")
         if set(batch.axes) != set(first.axes):
             raise ValueError("cannot stack trajectories with different axes")
         for name, axis in first.axes.items():

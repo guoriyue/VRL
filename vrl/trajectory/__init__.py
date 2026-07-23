@@ -34,14 +34,10 @@ from vrl.trajectory.types import (
 from vrl.trajectory.validation import (
     TrajectoryValidationError,
     TrajectoryValidator,
-    replay_input_ref,
     tensor_ref,
 )
 from vrl.trajectory.views import (
-    LossUnit,
     RewardView,
-    TrainingView,
-    build_training_view,
     named_tensor,
     role_tensor,
 )
@@ -50,12 +46,10 @@ __all__ = [
     "AdvantageScope",
     "AxisKind",
     "DistributionKind",
-    "LossUnit",
     "ReplayInput",
     "RewardView",
     "SegmentModality",
     "TensorRole",
-    "TrainingView",
     "TrajectoryAxis",
     "TrajectoryBatch",
     "TrajectoryMetrics",
@@ -73,9 +67,7 @@ __all__ = [
     "build_chunk_autoregressive_denoise_trajectory",
     "build_chunk_autoregressive_generation_trajectory",
     "build_diffusion_trajectory",
-    "build_training_view",
     "named_tensor",
-    "replay_input_ref",
     "role_tensor",
     "tensor_ref",
     "trajectory_storage_policy_from_cfg",

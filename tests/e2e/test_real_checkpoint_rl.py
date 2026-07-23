@@ -761,7 +761,7 @@ def _synthetic_diffusion_replay_batch(
 ) -> Any:
     from vrl.math.denoise.flow_matching import sde_step_with_logprob
     from vrl.rollouts.batch import RolloutBatch
-    from vrl.trajectory import build_diffusion_trajectory, build_training_view
+    from vrl.trajectory import build_diffusion_trajectory
 
     num_steps = max(1, int(cfg.sampling.num_steps))
     height = int(cfg.sampling.height)
@@ -887,7 +887,6 @@ def _synthetic_diffusion_replay_batch(
         extras={},
         context=dict(trajectory.context),
         trajectory=trajectory,
-        training_view=build_training_view(trajectory),
     )
 
 

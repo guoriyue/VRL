@@ -21,7 +21,6 @@ class RolloutBatch:
     extras: dict[str, Any] = field(default_factory=dict)
     context: dict[str, Any] = field(default_factory=dict)  # shared metadata (not stacked)
     trajectory: Any | None = None
-    training_view: Any | None = None
 
 
 __all__ = ["RolloutBatch"]

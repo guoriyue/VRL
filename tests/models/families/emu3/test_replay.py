@@ -20,7 +20,7 @@ from vrl.models.families.emu3.model import emu3_grid_token_num
 from vrl.models.interfaces import ReplayResult
 from vrl.models.utils import count_trainable_params
 from vrl.rollouts.batch import RolloutBatch
-from vrl.trajectory import build_ar_discrete_trajectory, build_training_view
+from vrl.trajectory import build_ar_discrete_trajectory
 
 HEIGHT, WIDTH = 2, 3
 TOTAL = emu3_grid_token_num(HEIGHT, WIDTH)  # 11
@@ -85,7 +85,6 @@ def _discrete_batch(context: dict | None = None) -> RolloutBatch:
         rewards=torch.zeros(2),
         group_ids=torch.tensor([0, 0]),
         trajectory=trajectory,
-        training_view=build_training_view(trajectory),
     )
 
 

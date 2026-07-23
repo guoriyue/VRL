@@ -5,6 +5,7 @@ from __future__ import annotations
 import pytest
 import torch
 
+import vrl.trajectory as trajectory_api
 from vrl.generation.execution.ids import build_sample_rows
 from vrl.generation.types import GenerationRequest
 from vrl.trajectory import (
@@ -12,6 +13,7 @@ from vrl.trajectory import (
     build_ar_multisegment_trajectory,
     build_diffusion_trajectory,
 )
+from vrl.trajectory.ops import stack_trajectory_batches
 
 
 def test_diffusion_replay_extras_only_declare_sample_axis_when_sample_aligned() -> None:
@@ -102,6 +104,40 @@ def test_multisegment_primary_rejects_unknown_or_nontrainable_segment(
             primary_segment=primary_segment,
             context={},
         )
+
+
+def test_stack_rejects_different_primary_segments() -> None:
+    request = GenerationRequest(
+        request_id="stack-primary",
+        family="janus_pro_r1",
+        task="ar_t2i_r1",
+        inputs=["draw"],
+        samples_per_prompt=1,
+    )
+    trajectories = [
+        build_ar_multisegment_trajectory(
+            request=request,
+            sample_rows=build_sample_rows(request),
+            segments={
+                "initial_image": _segment_payload(train=True),
+                "final_image": _segment_payload(train=True),
+            },
+            primary_segment=primary,
+            context={},
+        )
+        for primary in ("initial_image", "final_image")
+    ]
+
+    with pytest.raises(ValueError, match="different primary segments"):
+        stack_trajectory_batches(trajectories)
+
+
+@pytest.mark.parametrize(
+    "symbol",
+    ["LossUnit", "TrainingView", "build_training_view", "replay_input_ref"],
+)
+def test_derived_training_view_symbols_are_not_public(symbol: str) -> None:
+    assert not hasattr(trajectory_api, symbol)
 
 
 def _segment_payload(*, train: bool) -> dict[str, object]:

@@ -15,7 +15,6 @@ from vrl.trajectory.validation import (
     TrajectoryValidator,
     tensor_ref,
 )
-from vrl.trajectory.views import TrainingView
 from vrl.trajectory.views import role_tensor as _role_tensor_of_segment
 
 
@@ -28,7 +27,6 @@ class TrajectoryResolver:
     """Object entry point for reading and resolving trajectory-backed batches."""
 
     trajectory: TrajectoryBatch
-    training_view: TrainingView | None = None
 
     def __post_init__(self) -> None:
         TrajectoryValidator(self.trajectory).validate_batch()
@@ -40,19 +38,13 @@ class TrajectoryResolver:
         trajectory = getattr(batch, "trajectory", None)
         if not isinstance(trajectory, TrajectoryBatch):
             _fail("RolloutBatch is missing first-class TrajectoryBatch")
-        training_view = getattr(batch, "training_view", None)
-        return cls(
-            trajectory=trajectory,
-            training_view=training_view if isinstance(training_view, TrainingView) else None,
-        )
+        return cls(trajectory=trajectory)
 
-    def primary_trainable_segment_name(self, fallback: str | None = None) -> str:
+    def primary_trainable_segment_name(self) -> str:
         """Resolve the primary trainable segment for replay."""
 
         if self.trajectory.primary_segment is not None:
             return self.trajectory.primary_segment
-        if fallback is not None:
-            return fallback
         _fail("TrajectoryBatch has no trainable segment")
 
     def tensor(self, segment_name: str, tensor_name: str) -> TrajectoryTensor:

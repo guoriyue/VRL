@@ -294,7 +294,7 @@ def test_collector_routes_request_through_runtime_reward_and_trajectory_batch() 
         "g1",
         "g1",
     ]
-    assert batch.training_view is not None
+    assert not hasattr(batch, "training_view")
     assert not hasattr(batch, "dones")
     assert not hasattr(batch, "videos")
     assert not hasattr(batch, "prompts")
@@ -960,8 +960,8 @@ def test_chunk_denoise_kl_reward_sums_chunk_and_transition_axes() -> None:
     assert packed.observations.shape[:3] == policy_shape
     assert packed.actions.shape[:3] == policy_shape
     assert packed.rewards.tolist() == pytest.approx([8.5, 17.0])
-    assert packed.training_view is not None
-    assert packed.training_view.primary_segment == "denoise"
+    assert packed.trajectory is not None
+    assert packed.trajectory.primary_segment == "denoise"
 
 
 def test_nonlatent_gaussian_keeps_autoregressive_packing() -> None:
@@ -987,8 +987,8 @@ def test_nonlatent_gaussian_keeps_autoregressive_packing() -> None:
 
     assert packed.observations.shape == (1, 1, 3)
     assert packed.actions.shape == (1, 2)
-    assert packed.training_view is not None
-    assert packed.training_view.primary_segment == "image_tokens"
+    assert packed.trajectory is not None
+    assert packed.trajectory.primary_segment == "image_tokens"
 
 
 def test_collector_forwards_reference_metadata_to_request() -> None:

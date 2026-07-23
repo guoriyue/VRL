@@ -17,7 +17,7 @@ from vrl.rollouts.batch import RolloutBatch
 from vrl.rollouts.evaluators.token.multi_segment_token_logprob import (
     MultiSegmentTokenLogProbEvaluator,
 )
-from vrl.trajectory import build_ar_multisegment_trajectory, build_training_view
+from vrl.trajectory import build_ar_multisegment_trajectory
 
 _PRECISION = RolePrecision(
     dtype="fp32",
@@ -112,7 +112,6 @@ def _trajectory_batch(context: dict | None = None) -> RolloutBatch:
         group_ids=torch.tensor([0, 0]),
         extras={},
         trajectory=trajectory,
-        training_view=build_training_view(trajectory),
     )
 
 

@@ -16,7 +16,7 @@ from vrl.models.families.janus_pro.model import (
 from vrl.models.families.janus_pro.runtime import JanusProR1ChunkExecutor
 from vrl.models.interfaces import ReplayRequest, ReplayResult
 from vrl.rollouts.batch import RolloutBatch
-from vrl.trajectory import build_ar_multisegment_trajectory, build_training_view
+from vrl.trajectory import build_ar_multisegment_trajectory
 
 HIDDEN = 16
 TEXT_VOCAB = 128
@@ -182,7 +182,6 @@ def _r1_rollout_batch() -> RolloutBatch:
         rewards=torch.zeros(2),
         group_ids=torch.tensor([0, 0]),
         trajectory=trajectory,
-        training_view=build_training_view(trajectory),
     )
 
 

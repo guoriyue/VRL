@@ -15,7 +15,7 @@ from vrl.models.families.glm_image.model import glm_image_token_num
 from vrl.models.interfaces import ReplayResult
 from vrl.models.utils import count_trainable_params
 from vrl.rollouts.batch import RolloutBatch
-from vrl.trajectory import build_ar_discrete_trajectory, build_training_view
+from vrl.trajectory import build_ar_discrete_trajectory
 
 # 128x192 target -> large 4x6 (24 tokens) + preview 13x19 (247 tokens).
 HEIGHT, WIDTH = 128, 192
@@ -77,7 +77,6 @@ def _discrete_batch(context: dict | None = None) -> RolloutBatch:
         rewards=torch.zeros(2),
         group_ids=torch.tensor([0, 0]),
         trajectory=trajectory,
-        training_view=build_training_view(trajectory),
     )
 
 

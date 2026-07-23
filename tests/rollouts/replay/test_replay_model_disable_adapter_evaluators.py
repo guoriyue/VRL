@@ -19,7 +19,6 @@ from vrl.rollouts.evaluators.types import SignalRequest
 from vrl.trajectory import (
     build_ar_continuous_trajectory,
     build_ar_discrete_trajectory,
-    build_training_view,
 )
 
 _PRECISION = RolePrecision(
@@ -75,7 +74,6 @@ def _discrete_batch(context: dict | None = None) -> RolloutBatch:
         rewards=torch.zeros(2),
         group_ids=torch.tensor([0, 0]),
         trajectory=trajectory,
-        training_view=build_training_view(trajectory),
     )
 
 
@@ -100,7 +98,6 @@ def _continuous_batch() -> RolloutBatch:
         rewards=torch.zeros(2),
         group_ids=torch.tensor([0, 0]),
         trajectory=trajectory,
-        training_view=build_training_view(trajectory),
     )
 
 

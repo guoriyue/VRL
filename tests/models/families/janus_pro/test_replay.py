@@ -18,7 +18,7 @@ from vrl.models.interfaces import ReplayResult
 from vrl.rollouts.batch import RolloutBatch
 from vrl.rollouts.collector import build_rollout_collector
 from vrl.rollouts.collector.config import RolloutCollectorConfig
-from vrl.trajectory import build_ar_discrete_trajectory, build_training_view
+from vrl.trajectory import build_ar_discrete_trajectory
 
 HIDDEN = 32
 TEXT_VOCAB = 64
@@ -113,7 +113,6 @@ def _discrete_batch() -> RolloutBatch:
         rewards=torch.zeros(2),
         group_ids=torch.tensor([0, 0]),
         trajectory=trajectory,
-        training_view=build_training_view(trajectory),
     )
 
 

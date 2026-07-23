@@ -22,7 +22,10 @@ class TestRolloutBatch:
         )
         assert b.context == {}
 
-    @pytest.mark.parametrize("field_name", ["dones", "videos", "prompts"])
+    @pytest.mark.parametrize(
+        "field_name",
+        ["dones", "videos", "prompts", "training_view"],
+    )
     def test_post_reward_transport_fields_are_not_constructor_inputs(
         self,
         field_name: str,

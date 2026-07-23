@@ -288,7 +288,7 @@ class TestAdvantageAndMetrics:
         from vrl.trainers.core.types import DebugConfig, EMAConfig, OptimConfig
         from vrl.trainers.online import OnlineTrainer
         from vrl.trainers.online.config import OnlineBatchPlan, TrainerConfig
-        from vrl.trajectory import build_ar_discrete_trajectory, build_training_view
+        from vrl.trajectory import build_ar_discrete_trajectory
 
         class _Algorithm:
             class _Config:
@@ -359,7 +359,6 @@ class TestAdvantageAndMetrics:
                     group_ids=torch.zeros(batch_size, dtype=torch.long),
                     context={},
                     trajectory=trajectory,
-                    training_view=build_training_view(trajectory),
                 )
 
         class _Evaluator(Evaluator):
