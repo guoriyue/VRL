@@ -92,10 +92,18 @@ def test_config_projection_preserves_trust_remote_code_boolean(
     )
 
     projected = janus_config_from_build(build)
+    resolved = JanusProConfig(**projected)
 
     assert projected["trust_remote_code"] is trust_remote_code
-    assert projected["lora_target_modules"] == ("q_proj", "v_proj")
-    assert projected["lora_init"] == "gaussian"
+    assert "lora_target_modules" not in projected
+    assert "lora_init" not in projected
+    assert resolved.lora_target_modules == (
+        "q_proj",
+        "k_proj",
+        "v_proj",
+        "o_proj",
+    )
+    assert resolved.lora_init == "gaussian"
 
 
 def test_package_facade_preserves_transition_table_and_public_symbols() -> None:

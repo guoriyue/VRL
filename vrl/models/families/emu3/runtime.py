@@ -16,20 +16,10 @@ from vrl.models.families.emu3.runner import Emu3TokenRunner
 from vrl.models.interfaces.runtime import ModelBuild
 from vrl.models.steps.token.build import token_model_config_base
 
-# Emu3 LoRA defaults; applied at read time so the carried ``model.lora`` block
-# only needs the values it overrides (same shape as the janus/nextstep stubs).
-_EMU3_LORA_DEFAULTS: dict[str, Any] = {
-    "rank": 32,
-    "alpha": 64,
-    "target_modules": ("q_proj", "v_proj"),
-    "dropout": 0.0,
-    "init": "gaussian",
-}
-
 
 def emu3_config_from_build(build: ModelBuild) -> dict[str, Any]:
     sampling_config = build.sampling_config or {}
-    config = token_model_config_base(build, _EMU3_LORA_DEFAULTS)
+    config = token_model_config_base(build)
 
     for key in ("guidance_scale", "temperature", "image_area", "ratio"):
         if key in sampling_config:

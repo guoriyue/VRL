@@ -222,9 +222,8 @@ class ModelBuild:
 
         ``None`` when ``use_lora`` is off. Casts and the ``init_lora_weights`` /
         ``dropout`` / ``init`` extras are carried from the raw ``model.lora``
-        block only when present, preserving per-family presence semantics. AR
-        families layer their own defaults via
-        ``vrl.models.steps.token.build.token_model_config_base``.
+        block only when present, preserving per-family presence semantics.
+        Token-family config dataclasses own their resolved LoRA defaults.
         """
         if not self.use_lora:
             return None

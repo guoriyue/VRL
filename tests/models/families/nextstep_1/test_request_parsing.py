@@ -93,13 +93,18 @@ def test_config_projection_preserves_boolean_states(
     )
 
     projected = nextstep_config_from_build(build)
+    resolved = NextStep1Config(**projected)
 
     assert projected["use_lora"] is use_lora
     assert projected["freeze_vae"] is freeze_vae
-    if use_lora:
-        assert projected["lora_target_modules"] == ("q_proj", "v_proj")
-    else:
-        assert "lora_target_modules" not in projected
+    assert "lora_target_modules" not in projected
+    assert resolved.use_lora is use_lora
+    assert resolved.lora_target_modules == (
+        "q_proj",
+        "k_proj",
+        "v_proj",
+        "o_proj",
+    )
 
 
 def test_config_projection_ignores_sampling_fields_without_schema_producers() -> None:

@@ -78,6 +78,7 @@ def test_resolve_model_build_carries_sampling_and_lora_overrides() -> None:
 
     build = get_model_family_entry("glm_image").resolve_model_build(cfg, device="cpu")
     config = glm_image_config_from_build(build)
+    resolved = GlmImageConfig(**config)
 
     assert build.model_name_or_path == "/ckpt/glm-image"
     assert config["temperature"] == 0.8
@@ -86,9 +87,16 @@ def test_resolve_model_build_carries_sampling_and_lora_overrides() -> None:
     assert config["image_width"] == 1152
     assert config["decode_num_inference_steps"] == 50
     assert config["decode_guidance_scale"] == 2.0
-    # Carried lora block overrides the family defaults, rest stays default.
+    # Only the explicit override is projected; the config owns all defaults.
     assert config["lora_rank"] == 8
-    assert config["lora_alpha"] == 64
+    assert "lora_alpha" not in config
+    assert resolved.lora_alpha == 64
+    assert resolved.lora_target_modules == (
+        "q_proj",
+        "k_proj",
+        "v_proj",
+        "o_proj",
+    )
     # image_token_num/image_size are grid-derived; guidance_scale does not
     # exist for the AR (no CFG) — never config knobs.
     assert "image_token_num" not in config

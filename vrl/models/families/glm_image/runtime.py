@@ -13,20 +13,10 @@ from vrl.models.families.glm_image.runner import GlmImageTokenRunner
 from vrl.models.interfaces.runtime import ModelBuild
 from vrl.models.steps.token.build import token_model_config_base
 
-# GLM-Image LoRA defaults; applied at read time so the carried ``model.lora``
-# block only needs the values it overrides (same shape as the emu3 stub).
-_GLM_IMAGE_LORA_DEFAULTS: dict[str, Any] = {
-    "rank": 32,
-    "alpha": 64,
-    "target_modules": ("q_proj", "v_proj"),
-    "dropout": 0.0,
-    "init": "gaussian",
-}
-
 
 def glm_image_config_from_build(build: ModelBuild) -> dict[str, Any]:
     sampling_config = build.sampling_config or {}
-    config = token_model_config_base(build, _GLM_IMAGE_LORA_DEFAULTS)
+    config = token_model_config_base(build)
 
     for key in (
         "temperature",

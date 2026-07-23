@@ -24,15 +24,12 @@ from vrl.models.interfaces.runtime import (
 from vrl.models.precision import apply_float32_precision
 
 
-def token_model_config_base(
-    build: ModelBuild,
-    lora_defaults: dict[str, Any],
-) -> dict[str, Any]:
-    """Family-shared model_config head: identity keys + typed LoRA block.
+def token_model_config_base(build: ModelBuild) -> dict[str, Any]:
+    """Project shared identity keys and explicit LoRA overrides.
 
-    Merges the carried ``model.lora`` block over the family's LoRA defaults so
-    the yaml only needs the values it overrides. The caller appends its
-    family-specific sampling / checkpoint keys to the returned dict.
+    The family config dataclass owns LoRA defaults. This projection only
+    carries fields explicitly provided by ``model.lora`` so partial overrides
+    cannot shadow or duplicate those defaults.
     """
 
     config: dict[str, Any] = {
@@ -43,17 +40,17 @@ def token_model_config_base(
         "use_lora": build.use_lora,
     }
     if build.use_lora:
-        lora = dict(lora_defaults)
-        lora.update((build.model_config or {}).get("lora") or {})
-        config.update(
-            {
-                "lora_rank": int(lora["rank"]),
-                "lora_alpha": int(lora["alpha"]),
-                "lora_target_modules": tuple(lora["target_modules"]),
-                "lora_dropout": float(lora["dropout"]),
-                "lora_init": str(lora["init"]),
-            },
-        )
+        lora = (build.model_config or {}).get("lora") or {}
+        if "rank" in lora:
+            config["lora_rank"] = int(lora["rank"])
+        if "alpha" in lora:
+            config["lora_alpha"] = int(lora["alpha"])
+        if "target_modules" in lora:
+            config["lora_target_modules"] = tuple(lora["target_modules"])
+        if "dropout" in lora:
+            config["lora_dropout"] = float(lora["dropout"])
+        if "init" in lora:
+            config["lora_init"] = str(lora["init"])
     return config
 
 

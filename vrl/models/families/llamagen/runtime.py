@@ -17,22 +17,11 @@ from vrl.models.families.llamagen.runner import LlamaGenARModelRunner
 from vrl.models.interfaces.runtime import ModelBuild
 from vrl.models.steps.token.build import token_model_config_base
 
-# LlamaGen LoRA defaults: the vendored GPT uses fused llama-style projection
-# names (wqkv / wo), not per-head q_proj/k_proj/v_proj. Applied at read time so
-# the carried ``model.lora`` block only needs the values it overrides.
-_LLAMAGEN_LORA_DEFAULTS: dict[str, Any] = {
-    "rank": 32,
-    "alpha": 64,
-    "target_modules": ("wqkv", "wo"),
-    "dropout": 0.0,
-    "init": "gaussian",
-}
-
 
 def llamagen_config_from_build(build: ModelBuild) -> dict[str, Any]:
     model_config = build.model_config or {}
     sampling_config = build.sampling_config or {}
-    config = token_model_config_base(build, _LLAMAGEN_LORA_DEFAULTS)
+    config = token_model_config_base(build)
 
     for key in ("guidance_scale", "temperature", "top_k", "top_p", "image_token_num"):
         if key in sampling_config:

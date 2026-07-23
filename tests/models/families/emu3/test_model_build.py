@@ -73,15 +73,23 @@ def test_resolve_model_build_carries_sampling_and_lora_overrides() -> None:
 
     build = get_model_family_entry("emu3").resolve_model_build(cfg, device="cpu")
     config = emu3_config_from_build(build)
+    resolved = Emu3Config(**config)
 
     assert build.model_name_or_path == "/ckpt/emu3-gen"
     assert config["guidance_scale"] == 4.0
     assert config["temperature"] == 0.9
     assert config["image_area"] == 262144
     assert config["ratio"] == "1:1"
-    # Carried lora block overrides the family defaults, rest stays default.
+    # Only the explicit override is projected; the config owns all defaults.
     assert config["lora_rank"] == 8
-    assert config["lora_alpha"] == 64
+    assert "lora_alpha" not in config
+    assert resolved.lora_alpha == 64
+    assert resolved.lora_target_modules == (
+        "q_proj",
+        "k_proj",
+        "v_proj",
+        "o_proj",
+    )
     # image_token_num/image_size are grid-derived, never config knobs.
     assert "image_token_num" not in config
     assert "image_size" not in config

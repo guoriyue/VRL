@@ -112,7 +112,9 @@ def test_config_from_build_uses_fused_projection_lora_targets() -> None:
         device="cpu",
     )
     config = llamagen_config_from_build(build)
-    assert config["lora_target_modules"] == ("wqkv", "wo")
+    resolved = LlamaGenConfig(**config)
+    assert "lora_target_modules" not in config
+    assert resolved.lora_target_modules == ("wqkv", "wo")
     assert config["guidance_scale"] == 7.5
     assert config["top_k"] == 1000
     assert config["image_token_num"] == 256
