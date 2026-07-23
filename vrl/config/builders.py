@@ -24,7 +24,7 @@ if TYPE_CHECKING:
     from vrl.algorithms.logprob_mismatch import PrecisionCorrectionConfig
     from vrl.trainers.checkpointing import TrainingResumeConfig
     from vrl.trainers.core.types import PrecisionDriftGuardConfig
-    from vrl.trainers.online.config import TrainerConfig
+    from vrl.trainers.online.config import OnlineBatchPlan, TrainerConfig
 
 
 @dataclass(frozen=True, slots=True)
@@ -136,7 +136,12 @@ def _dataclass_payload(cls: type[Any], node: DictConfig) -> dict[str, Any]:
     return {key: value for key, value in raw.items() if key in allowed}
 
 
-def _validate_yaml_home(field_name: str, home: str) -> None:
+def _validate_yaml_home(
+    field_name: str,
+    home: str,
+    *,
+    owner: str = "TrainerConfig",
+) -> None:
     """Reject metadata addresses whose top-level section is not a known one.
 
     Guards the silent failure mode of a typo'd address on an OPTIONAL field
@@ -152,9 +157,65 @@ def _validate_yaml_home(field_name: str, home: str) -> None:
     if top not in RootConfig.model_fields:
         expected = ", ".join(sorted(RootConfig.model_fields))
         raise AssertionError(
-            f"TrainerConfig.{field_name} declares unknown yaml home {home!r}; "
+            f"{owner}.{field_name} declares unknown yaml home {home!r}; "
             f"the top-level section must be one of: {expected}",
         )
+
+
+def _optional_non_negative_int(cfg: DictConfig, path: str) -> int | None:
+    if not path_exists(cfg, path):
+        return None
+    value = require(cfg, path)
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        raise ValueError(f"{path} must be a non-negative integer (got {value!r})")
+    return value
+
+
+def build_online_batch_plan(cfg: DictConfig) -> OnlineBatchPlan:
+    """Resolve public size/count inputs into one canonical optimizer batch plan."""
+
+    from vrl.trainers.online.config import OnlineBatchPlan
+
+    base = OnlineBatchPlan(
+        prompts_per_batch=require(cfg, "rollout.prompts_per_batch"),
+        n_samples_per_prompt=require(cfg, "rollout.n_samples_per_prompt"),
+    )
+    prompts = base.prompts_per_batch
+    accumulation_steps = _optional_non_negative_int(
+        cfg,
+        "actor.gradient_accumulation_steps",
+    )
+    microbatch_size = _optional_non_negative_int(cfg, "actor.microbatch_size")
+
+    active_accumulation = int(accumulation_steps or 0)
+    active_microbatch = int(microbatch_size or 0)
+    if active_accumulation > 0 and active_microbatch > 0:
+        if active_accumulation * active_microbatch != prompts:
+            raise ValueError(
+                "actor.microbatch_size * actor.gradient_accumulation_steps "
+                f"must equal rollout.prompts_per_batch "
+                f"({active_microbatch} * {active_accumulation} != {prompts}); "
+                "set only one of them.",
+            )
+    elif active_microbatch > 0:
+        if prompts % active_microbatch != 0:
+            raise ValueError(
+                "actor.microbatch_size must evenly divide "
+                f"rollout.prompts_per_batch ({prompts} % {active_microbatch} != 0)",
+            )
+        active_accumulation = prompts // active_microbatch
+
+    payload: dict[str, Any] = {
+        "prompts_per_batch": prompts,
+        "n_samples_per_prompt": base.n_samples_per_prompt,
+    }
+    if active_accumulation > 0:
+        payload["gradient_accumulation_steps"] = active_accumulation
+    for field_name in ("replay_samples_per_chunk", "host_memory_budget_fraction"):
+        path = f"actor.{field_name}"
+        if path_exists(cfg, path):
+            payload[field_name] = require(cfg, path)
+    return OnlineBatchPlan(**payload)
 
 
 def build_trainer_config(
@@ -172,7 +233,7 @@ def build_trainer_config(
     collected and reported together with full YAML paths.
     """
 
-    from vrl.trainers.online.config import TrainerConfig
+    from vrl.trainers.online.config import OnlineBatchPlan, TrainerConfig
 
     trainer_block = getattr(cfg, "trainer", None)
     if trainer_block is not None and "eval" in trainer_block:
@@ -198,6 +259,25 @@ def build_trainer_config(
     hints = get_type_hints(TrainerConfig)
     payload: dict[str, Any] = {}
     missing: list[str] = []
+
+    # ``batch_plan`` is bridged because its public inputs span rollout and actor.
+    # Derive its required public paths from the plan fields so missing-key
+    # reporting cannot drift when the typed plan changes.
+    for plan_field in fields(OnlineBatchPlan):
+        home = plan_field.metadata.get("yaml")
+        if home is None:
+            raise AssertionError(
+                f"OnlineBatchPlan.{plan_field.name} does not declare its YAML home "
+                "(field metadata {'yaml': ...})",
+            )
+        _validate_yaml_home(plan_field.name, home, owner="OnlineBatchPlan")
+        path = f"{home}.{plan_field.name}"
+        if (
+            plan_field.default is MISSING
+            and plan_field.default_factory is MISSING
+            and not path_exists(cfg, path)
+        ):
+            missing.append(path)
 
     for f in fields(TrainerConfig):
         if not f.init:
@@ -235,6 +315,7 @@ def build_trainer_config(
     # Resolve the public policy once; trainer fields are its runtime projection.
     precision = precision or resolve_precision_policy(cfg)
     payload.update(
+        batch_plan=build_online_batch_plan(cfg),
         train_precision=precision.training.label,
         rollout_precision=precision.rollout.label,
     )
@@ -311,6 +392,7 @@ __all__ = [
     "RewardRuntimeConfig",
     "build_algorithm_config",
     "build_configs",
+    "build_online_batch_plan",
     "build_reward_config",
     "build_trainer_config",
 ]

@@ -347,25 +347,13 @@ def test_cosmos_predict25_kling_reward_uses_paper_rl_batch() -> None:
     # microbatch_size) is declarative YAML a tuner is free to change. Assert the real
     # coupling instead of pinning the paper's magic numbers.
     assert cfg.rollout.prompts_per_batch % cfg.rollout.n_samples_per_prompt == 0
-    # gradient_accumulation_steps is a DERIVED TrainerConfig value — this stays: it
-    # tests the prompts_per_batch / microbatch_size derivation, not a literal.
-    from vrl.trainers.core.types import OptimConfig
-    from vrl.trainers.online.config import TrainerConfig
-
-    derived = TrainerConfig(
-        optim=OptimConfig(lr=1e-4),
-        n_samples_per_prompt=cfg.rollout.n_samples_per_prompt,
-        prompts_per_batch=cfg.rollout.prompts_per_batch,
-        microbatch_size=cfg.rollout.microbatch_size,
-        timestep_fraction=0.5,
-        total_epochs=1,
-        output_dir="x",
-        drop_zero_advantage=False,
-    )
+    # The runtime stores one canonical accumulation count and derives the size view.
+    batch_plan = build_configs(cfg).trainer.batch_plan
     assert (
-        derived.gradient_accumulation_steps
-        == cfg.rollout.prompts_per_batch // cfg.rollout.microbatch_size
+        batch_plan.gradient_accumulation_steps
+        == cfg.rollout.prompts_per_batch // cfg.actor.microbatch_size
     )
+    assert batch_plan.microbatch_size == cfg.actor.microbatch_size
 
 
 def test_experiments_do_not_use_legacy_precision_fields() -> None:
@@ -464,9 +452,9 @@ def test_wan_robotics_continuous_resolves_balanced_four_l4_topology() -> None:
     assert cfg.actor.ppo_epochs == 1
     assert cfg.actor.timestep_fraction == 0.25
     assert cfg.actor.replay_samples_per_chunk == 1
-    assert cfg.rollout.microbatch_size == cfg.rollout.prompts_per_batch == 4
+    assert cfg.actor.microbatch_size == cfg.rollout.prompts_per_batch == 4
     assert built.trainer.timestep_selection == "strided"
-    assert built.trainer.gradient_accumulation_steps == 1
+    assert built.trainer.batch_plan.gradient_accumulation_steps == 1
 
 
 def test_algorithm_config_dispatches_representative_kinds() -> None:
@@ -826,7 +814,7 @@ def test_generation_chunk_auto_does_not_change_fixed_replay_default() -> None:
 
     assert built.root.rollout is not None
     assert built.root.rollout.samples_per_chunk == "auto"
-    assert built.trainer.replay_samples_per_chunk == 1
+    assert built.trainer.batch_plan.replay_samples_per_chunk == 1
 
 
 @pytest.mark.parametrize("value", ["0", "-1", "largest", "true"])

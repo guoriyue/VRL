@@ -251,7 +251,10 @@ def test_sana_family_defaults_to_native_fp16() -> None:
     )
     assert built.trainer.train_precision == built.trainer.rollout_precision
     assert built.root.rollout is not None
-    assert built.trainer.replay_samples_per_chunk == built.root.rollout.samples_per_chunk
+    assert (
+        built.trainer.batch_plan.replay_samples_per_chunk
+        == built.root.rollout.samples_per_chunk
+    )
     assert build.parameter_dtype is torch.float16
     assert build.precision == expected
     assert (
@@ -296,12 +299,12 @@ def test_sana_fullparam_pilot_disables_tf32_and_gates_backend_drift() -> None:
     assert trainer.optim.optim_8bit is True
     assert trainer.ema.enable is False
     assert trainer.ppo_epochs == 1
-    assert trainer.gradient_accumulation_steps == 1
-    assert trainer.prompts_per_batch == 1
-    assert trainer.n_samples_per_prompt == 8
+    assert trainer.batch_plan.gradient_accumulation_steps == 1
+    assert trainer.batch_plan.prompts_per_batch == 1
+    assert trainer.batch_plan.n_samples_per_prompt == 8
     assert built.root.rollout is not None
     assert built.root.rollout.samples_per_chunk == 1
-    assert trainer.replay_samples_per_chunk == 1
+    assert trainer.batch_plan.replay_samples_per_chunk == 1
     assert trainer.total_epochs == 5
     assert trainer.save_freq == 1
     assert trainer.debug.first_step is True
@@ -361,7 +364,7 @@ def test_sana_experiments_pin_the_validated_symmetric_chunk_shape(
 
     assert built.root.rollout is not None
     assert built.root.rollout.samples_per_chunk == 8
-    assert built.trainer.replay_samples_per_chunk == 8
+    assert built.trainer.batch_plan.replay_samples_per_chunk == 8
 
 
 @pytest.mark.parametrize("configured_dtype", ["fp16", "bf16"])

@@ -292,7 +292,7 @@ def _make_resume_trainer(
 
     from vrl.trainers.core.types import DebugConfig, EMAConfig, OptimConfig
     from vrl.trainers.online import OnlineTrainer
-    from vrl.trainers.online.config import TrainerConfig
+    from vrl.trainers.online.config import OnlineBatchPlan, TrainerConfig
 
     model = nn.Linear(1, 1, bias=False)
     with torch.no_grad():
@@ -322,7 +322,7 @@ def _make_resume_trainer(
         ),
         strategy=strategy,
         config=TrainerConfig(
-            prompts_per_batch=1,
+            batch_plan=OnlineBatchPlan(prompts_per_batch=1, n_samples_per_prompt=2),
             timestep_fraction=1.0,
             total_epochs=1,
             drop_zero_advantage=False,
@@ -330,7 +330,6 @@ def _make_resume_trainer(
             optim=OptimConfig(lr=0.01),
             ema=EMAConfig(enable=ema),
             debug=DebugConfig(),
-            n_samples_per_prompt=2,
             train_precision=train_precision,
         ),
         device=device,

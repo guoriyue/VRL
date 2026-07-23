@@ -31,7 +31,7 @@ from vrl.algorithms.types import InitialReplayStats, PolicyUpdateStats, TrainSte
 from vrl.rollouts.batch import RolloutBatch
 from vrl.trainers.core.types import DebugConfig, EMAConfig, OptimConfig
 from vrl.trainers.online import trainer as trainer_module
-from vrl.trainers.online.config import TrainerConfig
+from vrl.trainers.online.config import OnlineBatchPlan, TrainerConfig
 from vrl.trainers.online.trainer import (
     OnlineTrainer,
     PhaseTimer,
@@ -370,7 +370,7 @@ def _run_replay_loop_rank(
             evaluator=_Evaluator(),
             model=model,
             config=TrainerConfig(
-                prompts_per_batch=1,
+                batch_plan=OnlineBatchPlan(prompts_per_batch=1, n_samples_per_prompt=8),
                 timestep_fraction=1.0,
                 total_epochs=1,
                 drop_zero_advantage=False,
@@ -378,7 +378,6 @@ def _run_replay_loop_rank(
                 optim=OptimConfig(lr=0.0),
                 ema=EMAConfig(),
                 debug=DebugConfig(),
-                n_samples_per_prompt=8,
             ),
             device="cpu",
         )

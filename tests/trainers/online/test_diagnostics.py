@@ -44,7 +44,7 @@ class TestDiagnostics:
         from vrl.rollouts.batch import RolloutBatch
         from vrl.trainers.core.types import DebugConfig, EMAConfig, OptimConfig
         from vrl.trainers.online import OnlineTrainer
-        from vrl.trainers.online.config import TrainerConfig
+        from vrl.trainers.online.config import OnlineBatchPlan, TrainerConfig
 
         class _Algorithm:
             class _Config:
@@ -122,14 +122,13 @@ class TestDiagnostics:
             evaluator=_Evaluator(),
             model=model,
             config=TrainerConfig(
-                prompts_per_batch=1,
+                batch_plan=OnlineBatchPlan(prompts_per_batch=1, n_samples_per_prompt=2),
                 timestep_fraction=1.0,
                 total_epochs=1,
                 drop_zero_advantage=False,
                 optim=OptimConfig(lr=0.01),
                 ema=EMAConfig(),
                 debug=DebugConfig(first_step=True),
-                n_samples_per_prompt=2,
                 train_precision="no",
                 output_dir=str(tmp_path),
             ),
@@ -203,7 +202,7 @@ class TestDiagnostics:
 
         from vrl.trainers.core.types import DebugConfig, EMAConfig, OptimConfig
         from vrl.trainers.online import OnlineTrainer
-        from vrl.trainers.online.config import TrainerConfig
+        from vrl.trainers.online.config import OnlineBatchPlan, TrainerConfig
         from vrl.trainers.online.trainer import _ReplayMetrics
 
         class _Algorithm:
@@ -230,7 +229,7 @@ class TestDiagnostics:
             evaluator=_Evaluator(),
             model=model,
             config=TrainerConfig(
-                prompts_per_batch=1,
+                batch_plan=OnlineBatchPlan(prompts_per_batch=1, n_samples_per_prompt=2),
                 timestep_fraction=1.0,
                 total_epochs=1,
                 drop_zero_advantage=True,
@@ -238,7 +237,6 @@ class TestDiagnostics:
                 optim=OptimConfig(lr=0.01),
                 ema=EMAConfig(),
                 debug=DebugConfig(first_step=True),
-                n_samples_per_prompt=2,
             ),
             device="cpu",
         )

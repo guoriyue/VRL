@@ -301,7 +301,7 @@ def test_online_trainer_precision_guard_fails_before_optimizer_when_ratio_drifts
     from vrl.rollouts.evaluators.base import Evaluator
     from vrl.trainers.core.types import EMAConfig, OptimConfig
     from vrl.trainers.online import OnlineTrainer
-    from vrl.trainers.online.config import TrainerConfig
+    from vrl.trainers.online.config import OnlineBatchPlan, TrainerConfig
 
     class _Algorithm:
         class _Config:
@@ -359,14 +359,13 @@ def test_online_trainer_precision_guard_fails_before_optimizer_when_ratio_drifts
         evaluator=_Evaluator(),
         model=model,
         config=TrainerConfig(
-            prompts_per_batch=1,
+            batch_plan=OnlineBatchPlan(prompts_per_batch=1, n_samples_per_prompt=2),
             timestep_fraction=1.0,
             total_epochs=1,
             drop_zero_advantage=False,
             output_dir="outputs/",
             optim=OptimConfig(lr=0.01),
             ema=EMAConfig(),
-            n_samples_per_prompt=2,
             train_precision="no",
             rollout_precision="bf16",
         ),

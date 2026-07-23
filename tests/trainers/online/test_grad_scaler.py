@@ -26,7 +26,7 @@ from vrl.rollouts.batch import RolloutBatch
 from vrl.rollouts.evaluators.base import Evaluator
 from vrl.trainers.core.types import EMAConfig, OptimConfig
 from vrl.trainers.online import OnlineTrainer
-from vrl.trainers.online.config import TrainerConfig
+from vrl.trainers.online.config import OnlineBatchPlan, TrainerConfig
 from vrl.trainers.online.trainer import _create_grad_scaler
 from vrl.trainers.optimizer import FP32MasterWeightOptimizer
 from vrl.trainers.strategy import SingleProcessStrategy
@@ -310,13 +310,12 @@ def _build_trainer(tmp_path):
         evaluator=_Evaluator(),
         model=model,
         config=TrainerConfig(
-            prompts_per_batch=1,
+            batch_plan=OnlineBatchPlan(prompts_per_batch=1, n_samples_per_prompt=2),
             timestep_fraction=1.0,
             total_epochs=1,
             drop_zero_advantage=False,
             optim=OptimConfig(lr=0.01),
             ema=EMAConfig(enable=True, update_interval=1),
-            n_samples_per_prompt=2,
             train_precision="no",
             output_dir=str(tmp_path),
         ),

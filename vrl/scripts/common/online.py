@@ -54,6 +54,7 @@ from vrl.trainers.checkpointing import (
 from vrl.trainers.data import PromptBatchSampler, load_prompt_examples_from_config
 from vrl.trainers.distributed import DistributedTrainingContext, resolve_training_context
 from vrl.trainers.online import OnlineTrainer
+from vrl.trainers.online.config import OnlineBatchPlan
 from vrl.trainers.strategy import build_strategy
 from vrl.trainers.weight_sync import build_runtime_weight_syncer
 from vrl.utils.memory import capture_host_memory, format_host_memory, log_host_memory
@@ -210,16 +211,16 @@ def _require_supported_distributed_rollout_topology(
 
 
 def _log_rollout_memory_plan(
-    trainer_config: Any,
+    batch_plan: OnlineBatchPlan,
     *,
     generation_samples_per_chunk: int | str | None,
 ) -> None:
     """Log how many rollout tensors one optimizer update can hold at once."""
 
-    prompts_per_batch = int(trainer_config.prompts_per_batch)
-    samples_per_prompt = int(trainer_config.n_samples_per_prompt)
+    prompts_per_batch = batch_plan.prompts_per_batch
+    samples_per_prompt = batch_plan.n_samples_per_prompt
     target_samples = prompts_per_batch * samples_per_prompt
-    replay_chunk = getattr(trainer_config, "replay_samples_per_chunk", 0)
+    replay_chunk = batch_plan.replay_samples_per_chunk
 
     def describe_chunk(value: Any) -> str:
         if value == "auto":
@@ -229,11 +230,9 @@ def _log_rollout_memory_plan(
 
     generation_chunk_text = describe_chunk(generation_samples_per_chunk)
     replay_chunk_text = describe_chunk(replay_chunk)
-    gas = int(getattr(trainer_config, "gradient_accumulation_steps", 0))
-    if gas > 0:
-        # Read the reconciled microbatch_size (TrainerConfig.__post_init__ sets it
-        # to prompts_per_batch // gas) rather than recomputing the same quotient.
-        microbatch_prompts = int(trainer_config.microbatch_size)
+    gas = batch_plan.gradient_accumulation_steps
+    if batch_plan.streaming:
+        microbatch_prompts = batch_plan.microbatch_size
         microbatch_samples = microbatch_prompts * samples_per_prompt
         logger.info(
             "Rollout memory plan: streaming accumulation enabled "
@@ -272,7 +271,7 @@ def _log_rollout_memory_plan(
         )
 
 
-def _warn_global_std_streaming_divergence(cfg: Any, trainer_config: Any) -> None:
+def _warn_global_std_streaming_divergence(cfg: Any, batch_plan: OnlineBatchPlan) -> None:
     """Warn when global_std advantage normalization is silently per-microbatch.
 
     GRPO ``global_std=true`` normalizes advantages by the std across ALL prompt
@@ -284,13 +283,13 @@ def _warn_global_std_streaming_divergence(cfg: Any, trainer_config: Any) -> None
     makes per-group and "global" std identical. Surfaced, not blocked, because
     keeping global_std is an experiment-owner decision.
     """
-    gas = int(getattr(trainer_config, "gradient_accumulation_steps", 0))
-    if gas <= 0:
+    gas = batch_plan.gradient_accumulation_steps
+    if not batch_plan.streaming:
         return
     if not bool(OmegaConf.select(cfg, "algorithm.global_std", default=False)):
         return
-    rbs = int(trainer_config.prompts_per_batch)
-    groups_per_microbatch = rbs // gas
+    rbs = batch_plan.prompts_per_batch
+    groups_per_microbatch = batch_plan.microbatch_size
     if groups_per_microbatch <= 1:
         return
     logger.warning(
@@ -299,7 +298,7 @@ def _warn_global_std_streaming_divergence(cfg: Any, trainer_config: Any) -> None
         "global-std advantage normalization is computed per microbatch, not over "
         "the full %d-group batch, so the gradient differs from the full-batch "
         "global-std intent. Set algorithm.global_std=false (per-group std, which "
-        "is streaming-equivalent), rollout.microbatch_size=1 (one group per "
+        "is streaming-equivalent), actor.microbatch_size=1 (one group per "
         "microbatch), or drop streaming to keep the full-batch global std.",
         gas,
         groups_per_microbatch,
@@ -415,9 +414,9 @@ def _check_host_memory_budget(
     raise MemoryError(
         f"Host RAM is at used={used:.1%} after collecting one streamed microbatch "
         f"({microbatch_prompts} prompt group(s) x {n_samples_per_prompt} samples), "
-        f"above rollout.host_memory_budget_fraction={budget_fraction:.1%} "
+        f"above actor.host_memory_budget_fraction={budget_fraction:.1%} "
         f"({format_host_memory(snapshot)}). One microbatch already does not fit the "
-        "host-RAM budget; reduce rollout.microbatch_size to stream smaller "
+        "host-RAM budget; reduce actor.microbatch_size to stream smaller "
         "slices, or lower rollout.n_samples_per_prompt / sample resolution if it is "
         "already 1.",
     )
@@ -427,11 +426,8 @@ async def _run_streaming_optimizer_update(
     trainer: OnlineTrainer,
     example_batch: list[Any],
     *,
+    batch_plan: OnlineBatchPlan,
     next_example_batch: list[Any] | None = None,
-    gradient_accumulation_steps: int,
-    prompts_per_batch: int,
-    n_samples_per_prompt: int,
-    host_memory_budget_fraction: float = 0.0,
 ) -> Any:
     """One optimizer update streamed over ``gradient_accumulation_steps`` microbatches.
 
@@ -447,9 +443,11 @@ async def _run_streaming_optimizer_update(
     checked against the host-RAM budget and the run fails fast if it is already
     over budget (SPRINT_memory_budgeted_microbatch T2).
     """
-    micro = prompts_per_batch // gradient_accumulation_steps
+    if not batch_plan.streaming:
+        raise ValueError("_run_streaming_optimizer_update requires a streaming batch plan")
+    micro = batch_plan.microbatch_size
     microbatches = [example_batch[k : k + micro] for k in range(0, len(example_batch), micro)]
-    total_groups = int(prompts_per_batch)
+    total_groups = batch_plan.prompts_per_batch
 
     trainer.begin_optimizer_update()
 
@@ -457,7 +455,7 @@ async def _run_streaming_optimizer_update(
     reward_mean_w = reward_std_w = adv_mean_w = adv_zero_w = adv_sat_w = 0.0
     weight_total = 0
     trained_prompt_num = 0
-    group_size = float(n_samples_per_prompt)
+    group_size = float(batch_plan.n_samples_per_prompt)
     reward_component_values: dict[str, list[float]] = {}
     for mb_index, microbatch in enumerate(microbatches):
         if mb_index + 1 < len(microbatches):
@@ -473,16 +471,16 @@ async def _run_streaming_optimizer_update(
         try:
             # Host-RAM fail-fast on the first microbatch: one slice is the host
             # peak under streaming, so if it is already over budget, stop now.
-            if host_memory_budget_fraction > 0.0 and mb_index == 0:
+            if batch_plan.host_memory_budget_fraction > 0.0 and mb_index == 0:
                 _check_host_memory_budget(
-                    host_memory_budget_fraction,
+                    batch_plan.host_memory_budget_fraction,
                     microbatch_prompts=len(microbatch),
-                    n_samples_per_prompt=n_samples_per_prompt,
+                    n_samples_per_prompt=batch_plan.n_samples_per_prompt,
                 )
             await trainer.backward_on_training_batch(batch, total_groups=total_groups)
             # Sample-count-weighted aggregation of this microbatch's pre-filter stats
             # so the one metric row reflects ALL samples, not the last microbatch.
-            weight = max(1, len(microbatch) * n_samples_per_prompt)
+            weight = max(1, len(microbatch) * batch_plan.n_samples_per_prompt)
             reward_mean_w += batch.pre_filter_reward_mean * weight
             reward_std_w += batch.pre_filter_reward_std * weight
             adv_mean_w += batch.pre_filter_adv_mean * weight
@@ -814,17 +812,17 @@ async def run_online_recipe(
     trainer_config = built.trainer
     if trainer_config is None:
         raise ValueError("online recipe cannot use an offline-only trainer config")
+    batch_plan = trainer_config.batch_plan
     reward_config = built.reward
     if reward_config is None:
         raise ValueError("online recipe requires a reward section")
     _log_rollout_memory_plan(
-        trainer_config,
+        batch_plan,
         generation_samples_per_chunk=(
             built.root.rollout.samples_per_chunk if built.root.rollout is not None else None
         ),
     )
-    _warn_global_std_streaming_divergence(cfg, trainer_config)
-    gradient_accumulation_steps = int(getattr(trainer_config, "gradient_accumulation_steps", 0))
+    _warn_global_std_streaming_divergence(cfg, batch_plan)
     if trainer_config.profile:
         os.environ["VRL_PROFILE"] = "1"
 
@@ -1067,10 +1065,10 @@ async def run_online_recipe(
             family_entry.family,
             trainer_config.total_epochs,
             len(examples),
-            trainer_config.n_samples_per_prompt,
+            batch_plan.n_samples_per_prompt,
         )
 
-        rank_batch = int(trainer_config.prompts_per_batch)
+        rank_batch = batch_plan.prompts_per_batch
         prompt_sampler = PromptBatchSampler(
             generator=rng,
             num_examples=len(examples),
@@ -1090,20 +1088,15 @@ async def run_online_recipe(
             # optimizer step, and the post-step rollout weight sync. It is the
             # denominator for update-level barrier attribution in nsys traces.
             with profile_range("trainer.optimizer_update"):
-                if gradient_accumulation_steps > 0:
+                if batch_plan.streaming:
                     # Streaming accumulation: split the optimizer-target batch into
                     # microbatches collected/trained/released one at a time so host
                     # RAM does not have to hold the whole batch at once.
                     metrics = await _run_streaming_optimizer_update(
                         trainer,
                         example_batch,
+                        batch_plan=batch_plan,
                         next_example_batch=next_example_batch,
-                        gradient_accumulation_steps=gradient_accumulation_steps,
-                        prompts_per_batch=int(trainer_config.prompts_per_batch),
-                        n_samples_per_prompt=int(trainer_config.n_samples_per_prompt),
-                        host_memory_budget_fraction=float(
-                            getattr(trainer_config, "host_memory_budget_fraction", 0.0),
-                        ),
                     )
                 else:
                     metrics = await trainer.step(

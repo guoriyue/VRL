@@ -10,9 +10,6 @@ defaults:
 actor:
   optim:
     lr: 1.0e-4
-
-rollout:
-  prompts_per_batch: 4
   # Stream the 4 video prompt-groups one at a time (derives
   # gradient_accumulation_steps=4) so host RAM holds ~1 group's heavy video
   # replay trajectories instead of all 4 before backward. Gradient-identical to
@@ -20,6 +17,9 @@ rollout:
   microbatch_size: 1
   # Fail fast if one streamed group already uses >90% of host RAM (0.0 disables).
   host_memory_budget_fraction: 0.9
+
+rollout:
+  prompts_per_batch: 4
   samples_per_chunk: 8   # GPM: sbs=4 leaves SM occupancy at ~18%; next safe T2V scale.
 
 trainer:

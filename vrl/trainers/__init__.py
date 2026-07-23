@@ -11,6 +11,7 @@ if TYPE_CHECKING:
         RolloutOrchestrationConfig as RolloutOrchestrationConfig,
     )
     from vrl.trainers.core.types import TrainState as TrainState
+    from vrl.trainers.online.config import OnlineBatchPlan as OnlineBatchPlan
     from vrl.trainers.online.config import TrainerConfig as TrainerConfig
     from vrl.trainers.online.ema import EMAModuleWrapper as EMAModuleWrapper
     from vrl.trainers.online.trainer import OnlineTrainer as OnlineTrainer
@@ -35,6 +36,7 @@ if TYPE_CHECKING:
 # avoids importing torch-heavy trainer implementations during config parsing.
 _PUBLIC_EXPORTS = {
     "EMAModuleWrapper": ("vrl.trainers.online.ema", "EMAModuleWrapper"),
+    "OnlineBatchPlan": ("vrl.trainers.online.config", "OnlineBatchPlan"),
     "OnlineTrainer": ("vrl.trainers.online.trainer", "OnlineTrainer"),
     "RayRuntimeWeightSyncer": ("vrl.trainers.weight_sync", "RayRuntimeWeightSyncer"),
     "RolloutOrchestrationConfig": (

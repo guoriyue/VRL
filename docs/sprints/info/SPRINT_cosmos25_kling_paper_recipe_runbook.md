@@ -25,7 +25,7 @@
 | 论文 | 配置（`online_nft_kling_video_reward.yaml`） | 状态 |
 |---|---|---|
 | trained for **256 steps** | `trainer.total_epochs: 256`（每 epoch = 一次 optimizer update） | ✅ 已改 |
-| **batch size 32**、8 outputs/condition | `rollout_batch_size: 32`、`n_samples_per_prompt: 8` | ✅（streaming 让单卡也放得下） |
+| **batch size 32**、8 outputs/condition | `rollout.prompts_per_batch: 32`、`rollout.n_samples_per_prompt: 8` | ✅（streaming 让单卡也放得下） |
 | 20 diffusion steps，训 10（½） | `sampling.num_steps: 20`、`timestep_fraction: 0.5` | ✅ |
 | reward 组内归一（GRPO） | `algorithm.global_std: false` | ✅ |
 | diffusion loss 正则（抗 reward hacking） | DiffusionNFT 双 adapter（trainable `default` + frozen `previous`，`kl_beta=1`） | ✅ 内建 |
@@ -52,8 +52,8 @@
 
 - **512p 单卡装不下**（policy + 同卡常驻 ~5GB VideoReward；512p/93f 峰值 ~28–31GB 还差几 GB）。单卡只能 256p；
   想要 ≥448p 的 native-res reward 需要给 reward 第二张卡。
-- `microbatch_size=1` streaming 让 host RAM 只持有 ~1 组，所以 `rbs` 大小不再撑爆 host；GPU 峰值由
-  `sample_batch_size=1`（单段视频前向）决定，与 `rbs` 无关。
+- `actor.microbatch_size=1` streaming 让 host RAM 只持有 ~1 组，所以 `rbs` 大小不再撑爆 host；GPU 峰值由
+  `rollout.samples_per_chunk=1`（单段视频前向）决定，与 `rbs` 无关。
 
 ---
 
@@ -73,10 +73,10 @@ RESUME=${CKPT:+trainer.resume_from=$OUT/$CKPT}   # 空=全新跑；非空=从最
 HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 CUDA_VISIBLE_DEVICES=0 \
   PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True python -u -m vrl.scripts.train \
   --config experiment/diffusion/cosmos_predict2_5/online_nft_kling_video_reward \
-  rollout.rollout_batch_size=16 trainer.total_epochs=64 \
+  rollout.prompts_per_batch=16 trainer.total_epochs=64 \
   trainer.save_freq=4 trainer.eval.freq=8 \
   sampling.width=256 sampling.height=256 sampling.num_frames=49 \
-  rollout.host_memory_budget_fraction=0.95 production.kling_video_reward.enabled=false \
+  actor.host_memory_budget_fraction=0.95 production.kling_video_reward.enabled=false \
   trainer.output_dir="$OUT" $RESUME 2>&1 | tee -a "$OUT.log"
 ```
 
@@ -90,7 +90,7 @@ HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 CUDA_VISIBLE_DEVICES=0 \
   为腾 GPU），不是崩。HF 瞬时超时是**更早**那次（还没加 offline）的死因。当前长跑的真瓶颈是 ① 被抢占 kill +
   ② `release_after_collect` 每 epoch 把 cosmos-2B + Kling-2B 两个模型 kill 后从磁盘重载（日志 ~2 min/cycle），
   不是 HF。offline 三件套仍要带（命中本地缓存、杜绝任何 hub ping）。
-- overnight 版：`rollout.rollout_batch_size=8 trainer.total_epochs=80 trainer.save_freq=4 trainer.eval.freq=8`。
+- overnight 版：`rollout.prompts_per_batch=8 trainer.total_epochs=80 trainer.save_freq=4 trainer.eval.freq=8`。
 
 ---
 

@@ -15,7 +15,7 @@ from vrl.rollouts.batch import RolloutBatch
 from vrl.rollouts.evaluators.base import Evaluator
 from vrl.trainers.core.types import EMAConfig, OptimConfig
 from vrl.trainers.online import OnlineTrainer
-from vrl.trainers.online.config import TrainerConfig
+from vrl.trainers.online.config import OnlineBatchPlan, TrainerConfig
 from vrl.trainers.online.trainer import _ReplayMetrics
 from vrl.trajectory import build_diffusion_trajectory
 
@@ -114,13 +114,12 @@ def _trainer(tmp_path, *, sft_weight: float, sft_latents) -> OnlineTrainer:
         evaluator=_Evaluator(),
         model=model,
         config=TrainerConfig(
-            prompts_per_batch=1,
+            batch_plan=OnlineBatchPlan(prompts_per_batch=1, n_samples_per_prompt=1),
             timestep_fraction=1.0,
             total_epochs=1,
             drop_zero_advantage=False,
             optim=OptimConfig(lr=0.01),
             ema=EMAConfig(),
-            n_samples_per_prompt=1,
             train_precision="no",
             output_dir=str(tmp_path),
         ),

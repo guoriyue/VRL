@@ -13,6 +13,7 @@ from vrl.config.schema import RootConfig
 from vrl.families.semantics import PolicySemantics
 from vrl.models.interfaces import ReplayResult
 from vrl.scripts.common import online
+from vrl.trainers.online.config import OnlineBatchPlan
 
 ray = pytest.importorskip("ray")
 
@@ -207,9 +208,10 @@ def _trainer_config(tmp_path: Any) -> SimpleNamespace:
         output_dir=str(tmp_path),
         total_epochs=1,
         seed=0,
-        prompts_per_batch=1,
-        n_samples_per_prompt=1,
-        gradient_accumulation_steps=0,
+        batch_plan=OnlineBatchPlan(
+            prompts_per_batch=1,
+            n_samples_per_prompt=1,
+        ),
         save_freq=0,
         rollout_orchestration=SimpleNamespace(schedule_mode="strict_on_policy"),
     )

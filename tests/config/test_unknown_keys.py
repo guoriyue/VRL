@@ -130,6 +130,24 @@ def test_removed_rollout_queue_knob_is_unknown() -> None:
     ]
 
 
+@pytest.mark.parametrize(
+    ("field_name", "value"),
+    [
+        ("microbatch_size", 1),
+        ("host_memory_budget_fraction", 0.9),
+    ],
+)
+def test_online_update_memory_keys_are_owned_by_actor(
+    field_name: str,
+    value: object,
+) -> None:
+    actor_cfg = OmegaConf.create({"actor": {field_name: value}})
+    rollout_cfg = OmegaConf.create({"rollout": {field_name: value}})
+
+    assert find_unknown_keys(actor_cfg) == []
+    assert find_unknown_keys(rollout_cfg) == [f"rollout.{field_name}"]
+
+
 def test_removed_sampling_r1_duplicate_is_unknown() -> None:
     cfg = OmegaConf.create(
         {"sampling": {"r1": {"train_segments": {"initial_image": True}}}},

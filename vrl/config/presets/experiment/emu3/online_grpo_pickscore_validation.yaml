@@ -21,8 +21,6 @@ actor:
   optim:
     # LoRA lr scale (project lesson: 1e-4, not full-param scale).
     lr: 1.0e-4
-
-rollout:
   # Stream one prompt group at a time so host RAM holds ~1 group's AR replay
   # tensors instead of all 8 before backward (janus validation precedent).
   microbatch_size: 1

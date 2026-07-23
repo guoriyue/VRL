@@ -6,11 +6,13 @@ from importlib import import_module
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
+    from vrl.trainers.online.config import OnlineBatchPlan as OnlineBatchPlan
     from vrl.trainers.online.config import TrainerConfig as TrainerConfig
     from vrl.trainers.online.trainer import OnlineTrainer as OnlineTrainer
 
 
 _PUBLIC_EXPORTS = {
+    "OnlineBatchPlan": ("vrl.trainers.online.config", "OnlineBatchPlan"),
     "OnlineTrainer": ("vrl.trainers.online.trainer", "OnlineTrainer"),
     "TrainerConfig": ("vrl.trainers.online.config", "TrainerConfig"),
 }

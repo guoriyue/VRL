@@ -17,10 +17,10 @@ Entrypoint `vrl.scripts.diffusion.train:train_diffusion_online`, config
 `experiment/diffusion/cosmos_predict2_5/online_nft_kling_video_reward`，override：
 
 ```
-rollout.rollout_batch_size=16
-rollout.microbatch_size=1            # -> gradient_accumulation_steps 派生 = 16
+rollout.prompts_per_batch=16
+actor.microbatch_size=1              # -> gradient_accumulation_steps 派生 = 16
 rollout.n_samples_per_prompt=8
-rollout.host_memory_budget_fraction=0.95
+actor.host_memory_budget_fraction=0.95
 sampling.width=256 sampling.height=256 sampling.num_frames=49 sampling.num_steps=20
 trainer.total_epochs=50 trainer.save_freq=10
 production.kling_video_reward.enabled=false      # 跳过 production-report preflight，仍作训练 reward
@@ -73,8 +73,8 @@ resume 支持：`trainer.resume_from=<checkpoint dir>`（`vrl/trainers/checkpoin
 cd ~/Desktop/VRL && HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 CUDA_VISIBLE_DEVICES=0 \
   PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True python -u -m vrl.scripts.train \
   --config experiment/diffusion/cosmos_predict2_5/online_nft_kling_video_reward \
-  rollout.rollout_batch_size=16 rollout.microbatch_size=1 rollout.n_samples_per_prompt=8 \
-  rollout.host_memory_budget_fraction=0.95 \
+  rollout.prompts_per_batch=16 actor.microbatch_size=1 rollout.n_samples_per_prompt=8 \
+  actor.host_memory_budget_fraction=0.95 \
   sampling.width=256 sampling.height=256 sampling.num_frames=49 sampling.num_steps=20 \
   trainer.total_epochs=50 trainer.save_freq=10 \
   trainer.resume_from=outputs/cosmos25_kling_50ep/checkpoint-10 \
@@ -99,6 +99,7 @@ cd ~/Desktop/VRL && HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 CUDA_VISIBLE_DEVICES
 
 - config：`configs/experiment/diffusion/cosmos_predict2_5/online_nft_kling_video_reward.yaml`
 - streaming + host-RAM guard：`vrl/scripts/common/online.py:_run_streaming_optimizer_update`
-- size↔count 派生：`vrl/trainers/core/types.py:TrainerConfig.__post_init__`
+- size↔count 派生：`vrl/config/builders.py:build_online_batch_plan`、
+  `vrl/trainers/online/config.py:OnlineBatchPlan`
 - resume：`vrl/trainers/checkpointing.py`、`trainer.resume_from`
 - 本次产物：`outputs/cosmos25_kling_50ep/metrics.csv`（14 行）、`outputs/cosmos25_kling_50ep/checkpoint-10/`

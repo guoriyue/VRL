@@ -277,13 +277,6 @@ class RolloutConfig(ConfigBase):
     final_image_policy: Literal["always_generate", "use_selfcheck"] | None = None
     n_samples_per_prompt: int | None = None
     prompts_per_batch: int | None = None
-    # "Set the slice once" size knob: prompt groups per streamed microbatch.
-    # reader: TrainerConfig.__post_init__ derives actor.gradient_accumulation_steps
-    # from it (vrl/trainers/core/types.py).
-    microbatch_size: int | None = None
-    # Fail-fast host-RAM guard fraction for streaming accumulation (0.0 = off).
-    # reader: vrl/scripts/common/online.py:_run_streaming_optimizer_update.
-    host_memory_budget_fraction: float | None = None
     # reader: vrl/generation/bindings/full_sequence_denoise/layout.py
     # _parse_denoise_mode (request boundary).
     # Allowed set is the type; the layout guard stays for over-the-wire request dicts.
@@ -626,6 +619,12 @@ class ActorSection(ConfigBase):
     max_norm: Any = None
     ppo_epochs: Any = None
     gradient_accumulation_steps: Any = None
+    # Training-side size view of the optimizer update: prompt groups collected,
+    # replayed, and released per microstep. The builder derives the canonical
+    # gradient_accumulation_steps count and stores only that count at runtime.
+    microbatch_size: Any = None
+    # Fail-fast host-RAM guard checked after the first streamed training slice.
+    host_memory_budget_fraction: Any = None
     drop_zero_advantage: Any = None
     gradient_checkpointing: Any = None  # off | full | selective (or bool: true=full, false=off)
     timestep_fraction: Any = None

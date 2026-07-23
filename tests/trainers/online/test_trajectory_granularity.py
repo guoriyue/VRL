@@ -24,7 +24,7 @@ from vrl.trainers.core.types import (
     PrecisionDriftGuardConfig,
 )
 from vrl.trainers.online import OnlineTrainer
-from vrl.trainers.online.config import TrainerConfig
+from vrl.trainers.online.config import OnlineBatchPlan, TrainerConfig
 
 
 class _Algorithm:
@@ -88,13 +88,19 @@ def test_trajectory_evaluator_runs_once_for_chunk_transition_axes(streaming: boo
     _stamp_model_precision(model)
     with torch.no_grad():
         model.weight.zero_()
+    batch_plan = OnlineBatchPlan(
+        prompts_per_batch=1,
+        n_samples_per_prompt=2,
+        gradient_accumulation_steps=1 if streaming else 0,
+        replay_samples_per_chunk=0,
+    )
     trainer = OnlineTrainer(
         algorithm=_Algorithm(),
         collector=_Collector(),
         evaluator=evaluator,
         model=model,
         config=TrainerConfig(
-            prompts_per_batch=1,
+            batch_plan=batch_plan,
             timestep_fraction=0.25,
             total_epochs=1,
             drop_zero_advantage=False,
@@ -103,9 +109,6 @@ def test_trajectory_evaluator_runs_once_for_chunk_transition_axes(streaming: boo
             ema=EMAConfig(),
             debug=DebugConfig(),
             precision_drift_guard=PrecisionDriftGuardConfig(mode="off"),
-            n_samples_per_prompt=2,
-            gradient_accumulation_steps=1 if streaming else 0,
-            replay_samples_per_chunk=0,
         ),
         device="cpu",
     )
@@ -115,9 +118,7 @@ def test_trajectory_evaluator_runs_once_for_chunk_transition_axes(streaming: boo
             _run_streaming_optimizer_update(
                 trainer,
                 ["prompt"],
-                gradient_accumulation_steps=1,
-                prompts_per_batch=1,
-                n_samples_per_prompt=2,
+                batch_plan=batch_plan,
             ),
         )
     else:

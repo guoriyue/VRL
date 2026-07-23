@@ -18,8 +18,6 @@ algorithm:
 actor:
   optim:
     lr: 1.0e-4
-
-rollout:
   microbatch_size: 1
   host_memory_budget_fraction: 0.9
 

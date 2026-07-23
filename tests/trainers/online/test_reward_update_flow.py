@@ -9,6 +9,7 @@ from tests.trainers.online._helpers import (
     _trajectory_signals,
 )
 from vrl.rollouts.evaluators.base import Evaluator
+from vrl.trainers.online.config import OnlineBatchPlan
 
 
 class TestRewardUpdateFlow:
@@ -98,7 +99,7 @@ class TestRewardUpdateFlow:
             evaluator=_Evaluator(),
             model=model,
             config=TrainerConfig(
-                prompts_per_batch=1,
+                batch_plan=OnlineBatchPlan(prompts_per_batch=1, n_samples_per_prompt=2),
                 timestep_fraction=1.0,
                 total_epochs=1,
                 drop_zero_advantage=False,
@@ -106,7 +107,6 @@ class TestRewardUpdateFlow:
                 optim=OptimConfig(lr=0.01),
                 ema=EMAConfig(),
                 debug=DebugConfig(),
-                n_samples_per_prompt=2,
             ),
             device="cpu",
         )
@@ -221,7 +221,11 @@ class TestRewardUpdateFlow:
             evaluator=_Evaluator(),
             model=model,
             config=TrainerConfig(
-                prompts_per_batch=1,
+                batch_plan=OnlineBatchPlan(
+                    prompts_per_batch=1,
+                    n_samples_per_prompt=2,
+                    replay_samples_per_chunk=0,
+                ),
                 timestep_fraction=1.0,
                 total_epochs=1,
                 drop_zero_advantage=False,
@@ -229,8 +233,6 @@ class TestRewardUpdateFlow:
                 optim=OptimConfig(lr=0.01),
                 ema=EMAConfig(),
                 debug=DebugConfig(),
-                n_samples_per_prompt=2,
-                replay_samples_per_chunk=0,
             ),
             device="cpu",
         )
@@ -325,7 +327,11 @@ class TestRewardUpdateFlow:
             evaluator=_Evaluator(),
             model=model,
             config=TrainerConfig(
-                prompts_per_batch=4,
+                batch_plan=OnlineBatchPlan(
+                    prompts_per_batch=4,
+                    n_samples_per_prompt=2,
+                    gradient_accumulation_steps=4,
+                ),
                 timestep_fraction=1.0,
                 total_epochs=1,
                 drop_zero_advantage=False,
@@ -333,8 +339,6 @@ class TestRewardUpdateFlow:
                 optim=OptimConfig(lr=0.01),
                 ema=EMAConfig(),
                 debug=DebugConfig(),
-                n_samples_per_prompt=2,
-                gradient_accumulation_steps=4,
             ),
             device="cpu",
         )
@@ -352,9 +356,7 @@ class TestRewardUpdateFlow:
             _run_streaming_optimizer_update(
                 trainer,
                 ["prompt-a", "prompt-b", "prompt-c", "prompt-d"],
-                gradient_accumulation_steps=4,
-                prompts_per_batch=4,
-                n_samples_per_prompt=2,
+                batch_plan=trainer.config.batch_plan,
             ),
         )
 
@@ -432,9 +434,11 @@ class TestRewardUpdateFlow:
             _run_streaming_optimizer_update(
                 trainer,
                 ["prompt-a", "prompt-b"],
-                gradient_accumulation_steps=2,
-                prompts_per_batch=2,
-                n_samples_per_prompt=2,
+                batch_plan=OnlineBatchPlan(
+                    prompts_per_batch=2,
+                    n_samples_per_prompt=2,
+                    gradient_accumulation_steps=2,
+                ),
             ),
         )
         gc.collect()
@@ -495,9 +499,11 @@ class TestRewardUpdateFlow:
             _run_streaming_optimizer_update(
                 _Trainer(),
                 ["prompt-a", "prompt-b"],
-                gradient_accumulation_steps=2,
-                prompts_per_batch=2,
-                n_samples_per_prompt=2,
+                batch_plan=OnlineBatchPlan(
+                    prompts_per_batch=2,
+                    n_samples_per_prompt=2,
+                    gradient_accumulation_steps=2,
+                ),
             ),
         )
 
@@ -550,10 +556,12 @@ class TestRewardUpdateFlow:
             _run_streaming_optimizer_update(
                 trainer,
                 ["prompt-a", "prompt-b"],
+                batch_plan=OnlineBatchPlan(
+                    prompts_per_batch=2,
+                    n_samples_per_prompt=2,
+                    gradient_accumulation_steps=2,
+                ),
                 next_example_batch=["prompt-c", "prompt-d"],
-                gradient_accumulation_steps=2,
-                prompts_per_batch=2,
-                n_samples_per_prompt=2,
             ),
         )
 
@@ -641,7 +649,11 @@ class TestRewardUpdateFlow:
             evaluator=_Evaluator(),
             model=model,
             config=TrainerConfig(
-                prompts_per_batch=4,
+                batch_plan=OnlineBatchPlan(
+                    prompts_per_batch=4,
+                    n_samples_per_prompt=2,
+                    gradient_accumulation_steps=4,
+                ),
                 timestep_fraction=1.0,
                 total_epochs=1,
                 drop_zero_advantage=False,
@@ -649,8 +661,6 @@ class TestRewardUpdateFlow:
                 optim=OptimConfig(lr=0.1, weight_decay=0.0),
                 ema=EMAConfig(),
                 debug=DebugConfig(),
-                n_samples_per_prompt=2,
-                gradient_accumulation_steps=4,
             ),
             device="cpu",
         )
@@ -668,9 +678,7 @@ class TestRewardUpdateFlow:
             _run_streaming_optimizer_update(
                 trainer,
                 ["prompt-a", "prompt-b", "prompt-c", "prompt-d"],
-                gradient_accumulation_steps=4,
-                prompts_per_batch=4,
-                n_samples_per_prompt=2,
+                batch_plan=trainer.config.batch_plan,
             ),
         )
 
@@ -753,7 +761,11 @@ class TestRewardUpdateFlow:
                 evaluator=_Evaluator(),
                 model=model,
                 config=TrainerConfig(
-                    prompts_per_batch=4,
+                    batch_plan=OnlineBatchPlan(
+                        prompts_per_batch=4,
+                        n_samples_per_prompt=2,
+                        gradient_accumulation_steps=gas,
+                    ),
                     timestep_fraction=1.0,
                     total_epochs=1,
                     drop_zero_advantage=False,
@@ -761,8 +773,6 @@ class TestRewardUpdateFlow:
                     optim=OptimConfig(lr=0.1),
                     ema=EMAConfig(),
                     debug=DebugConfig(),
-                    n_samples_per_prompt=2,
-                    gradient_accumulation_steps=gas,
                 ),
                 device="cpu",
             )
@@ -776,9 +786,7 @@ class TestRewardUpdateFlow:
             _run_streaming_optimizer_update(
                 trainer_stream,
                 list(prompts),
-                gradient_accumulation_steps=4,
-                prompts_per_batch=4,
-                n_samples_per_prompt=2,
+                batch_plan=trainer_stream.config.batch_plan,
             ),
         )
 
@@ -883,7 +891,12 @@ def test_replay_samples_per_chunk_splits_backward_and_preserves_gradient(monkeyp
             evaluator=_Evaluator(replay_calls),
             model=model,
             config=TrainerConfig(
-                prompts_per_batch=1,
+                batch_plan=OnlineBatchPlan(
+                    prompts_per_batch=1,
+                    n_samples_per_prompt=4,
+                    gradient_accumulation_steps=1 if streaming else 0,
+                    replay_samples_per_chunk=replay_samples_per_chunk,
+                ),
                 timestep_fraction=1.0,
                 total_epochs=1,
                 drop_zero_advantage=False,
@@ -891,9 +904,6 @@ def test_replay_samples_per_chunk_splits_backward_and_preserves_gradient(monkeyp
                 optim=OptimConfig(lr=0.0),
                 ema=EMAConfig(),
                 debug=DebugConfig(),
-                n_samples_per_prompt=4,
-                gradient_accumulation_steps=1 if streaming else 0,
-                replay_samples_per_chunk=replay_samples_per_chunk,
             ),
             device="cpu",
         )
@@ -924,9 +934,7 @@ def test_replay_samples_per_chunk_splits_backward_and_preserves_gradient(monkeyp
                 _run_streaming_optimizer_update(
                     trainer,
                     ["prompt"],
-                    gradient_accumulation_steps=1,
-                    prompts_per_batch=1,
-                    n_samples_per_prompt=4,
+                    batch_plan=trainer.config.batch_plan,
                 ),
             )
         else:
@@ -959,116 +967,6 @@ def test_replay_samples_per_chunk_splits_backward_and_preserves_gradient(monkeyp
     assert streaming_split_grad == pytest.approx(full_grad)
 
 
-def test_gradient_accumulation_steps_validation() -> None:
-    """gradient_accumulation_steps must evenly divide prompts_per_batch when > 0."""
-    import pytest
-
-    from vrl.trainers.core.types import OptimConfig
-    from vrl.trainers.online.config import TrainerConfig
-
-    def _cfg(rbs: int, gas: int, ppo: int = 1) -> TrainerConfig:
-        return TrainerConfig(
-            optim=OptimConfig(lr=1e-4),
-            n_samples_per_prompt=2,
-            prompts_per_batch=rbs,
-            timestep_fraction=0.5,
-            total_epochs=1,
-            output_dir="x",
-            drop_zero_advantage=False,
-            gradient_accumulation_steps=gas,
-            ppo_epochs=ppo,
-        )
-
-    # Valid: divisible (streaming) or 0 (legacy full-batch, any ppo_epochs).
-    for rbs, gas, ppo in [(32, 32, 1), (8, 4, 1), (4, 4, 1), (4, 0, 1), (4, 0, 3)]:
-        _cfg(rbs, gas, ppo)
-
-    with pytest.raises(ValueError, match="evenly divide"):
-        _cfg(6, 4)
-    with pytest.raises(ValueError, match="evenly divide"):
-        _cfg(1, 2)
-    with pytest.raises(ValueError, match="ppo_epochs"):
-        _cfg(4, 2, ppo=3)
-    with pytest.raises(ValueError, match=">= 0"):
-        _cfg(4, -1)
-
-
-def test_microbatch_size_reconciles_with_gradient_accumulation_steps() -> None:
-    """microbatch_size (size) and gradient_accumulation_steps (count) derive each other."""
-    import pytest
-
-    from vrl.trainers.core.types import OptimConfig
-    from vrl.trainers.online.config import TrainerConfig
-
-    def _cfg(**kw: object) -> TrainerConfig:
-        base = dict(
-            optim=OptimConfig(lr=1e-4),
-            n_samples_per_prompt=2,
-            prompts_per_batch=32,
-            timestep_fraction=0.5,
-            total_epochs=1,
-            output_dir="x",
-            drop_zero_advantage=False,
-        )
-        base.update(kw)
-        return TrainerConfig(**base)  # type: ignore[arg-type]
-
-    # Declare the SIZE -> the microstep count derives.
-    c = _cfg(microbatch_size=4)
-    assert c.gradient_accumulation_steps == 8
-    assert c.microbatch_size == 4
-    # Declare the COUNT (legacy) -> the slice size derives.
-    c = _cfg(gradient_accumulation_steps=8)
-    assert c.microbatch_size == 4
-    assert c.gradient_accumulation_steps == 8
-    # Both declared + consistent is allowed.
-    _cfg(microbatch_size=4, gradient_accumulation_steps=8)
-    # Neither -> legacy full-batch (no streaming).
-    c = _cfg()
-    assert c.gradient_accumulation_steps == 0
-    assert c.microbatch_size == 0
-
-    with pytest.raises(ValueError, match="evenly divide"):
-        _cfg(microbatch_size=5)
-    with pytest.raises(ValueError, match="set only one"):
-        _cfg(microbatch_size=4, gradient_accumulation_steps=4)
-    with pytest.raises(ValueError, match="ppo_epochs"):
-        _cfg(microbatch_size=4, ppo_epochs=2)
-    with pytest.raises(ValueError, match=">= 0"):
-        _cfg(microbatch_size=-1)
-
-
-def test_replay_samples_per_chunk_is_an_independent_fixed_integer() -> None:
-    """Replay chunking keeps its own fixed training-side contract."""
-    import pytest
-
-    from vrl.trainers.core.types import OptimConfig
-    from vrl.trainers.online.config import TrainerConfig
-
-    def _cfg(**kw: object) -> TrainerConfig:
-        base = dict(
-            optim=OptimConfig(lr=1e-4),
-            n_samples_per_prompt=2,
-            prompts_per_batch=32,
-            timestep_fraction=0.5,
-            total_epochs=1,
-            output_dir="x",
-            drop_zero_advantage=False,
-        )
-        base.update(kw)
-        return TrainerConfig(**base)  # type: ignore[arg-type]
-
-    assert _cfg().replay_samples_per_chunk == 1
-    c = _cfg(replay_samples_per_chunk=2)
-    assert c.replay_samples_per_chunk == 2
-    assert _cfg(replay_samples_per_chunk=0).replay_samples_per_chunk == 0
-
-    with pytest.raises(ValueError, match="replay_samples_per_chunk"):
-        _cfg(replay_samples_per_chunk=-1)
-    with pytest.raises(ValueError, match="replay_samples_per_chunk"):
-        _cfg(replay_samples_per_chunk="auto")
-
-
 def test_fixed_replay_chunk_remains_available_to_distributed_strategies() -> None:
     """DDP/FSDP accept the same explicit replay chunk configuration."""
     from types import SimpleNamespace
@@ -1099,18 +997,20 @@ def test_fixed_replay_chunk_remains_available_to_distributed_strategies() -> Non
             model=model,
             config=TrainerConfig(
                 optim=OptimConfig(lr=1e-4),
-                n_samples_per_prompt=2,
-                prompts_per_batch=1,
+                batch_plan=OnlineBatchPlan(
+                    prompts_per_batch=1,
+                    n_samples_per_prompt=2,
+                    replay_samples_per_chunk=1,
+                ),
                 timestep_fraction=1.0,
                 total_epochs=1,
                 output_dir="x",
                 drop_zero_advantage=False,
-                replay_samples_per_chunk=1,
             ),
             strategy=strategy,  # type: ignore[arg-type]
             device="cpu",
         )
-        assert trainer.config.replay_samples_per_chunk == 1
+        assert trainer.config.batch_plan.replay_samples_per_chunk == 1
 
 
 def test_rollout_memory_plan_logs_streaming_and_legacy_warning(caplog) -> None:
@@ -1118,25 +1018,18 @@ def test_rollout_memory_plan_logs_streaming_and_legacy_warning(caplog) -> None:
     import logging
 
     from vrl.scripts.common.online import _log_rollout_memory_plan
-    from vrl.trainers.core.types import OptimConfig
-    from vrl.trainers.online.config import TrainerConfig
 
-    def _cfg(rbs: int, gas: int) -> TrainerConfig:
-        return TrainerConfig(
-            optim=OptimConfig(lr=1e-4),
-            n_samples_per_prompt=2,
+    def _plan(rbs: int, gas: int) -> OnlineBatchPlan:
+        return OnlineBatchPlan(
             prompts_per_batch=rbs,
-            timestep_fraction=1.0,
-            total_epochs=1,
-            output_dir="x",
-            drop_zero_advantage=False,
+            n_samples_per_prompt=2,
             gradient_accumulation_steps=gas,
         )
 
     logger_name = "vrl.scripts.common.online"
     with caplog.at_level(logging.INFO, logger=logger_name):
         _log_rollout_memory_plan(
-            _cfg(4, 4),
+            _plan(4, 4),
             generation_samples_per_chunk=2,
         )
     streaming_messages = [record.getMessage() for record in caplog.records]
@@ -1149,7 +1042,7 @@ def test_rollout_memory_plan_logs_streaming_and_legacy_warning(caplog) -> None:
     caplog.clear()
     with caplog.at_level(logging.INFO, logger=logger_name):
         _log_rollout_memory_plan(
-            _cfg(4, 0),
+            _plan(4, 0),
             generation_samples_per_chunk=2,
         )
     legacy_messages = [record.getMessage() for record in caplog.records]
@@ -1169,38 +1062,31 @@ def test_global_std_streaming_divergence_warning(caplog) -> None:
     from omegaconf import OmegaConf
 
     from vrl.scripts.common.online import _warn_global_std_streaming_divergence
-    from vrl.trainers.core.types import OptimConfig
-    from vrl.trainers.online.config import TrainerConfig
 
-    def _tc(rbs: int, gas: int) -> TrainerConfig:
-        return TrainerConfig(
-            optim=OptimConfig(lr=1e-4),
-            n_samples_per_prompt=2,
+    def _plan(rbs: int, gas: int) -> OnlineBatchPlan:
+        return OnlineBatchPlan(
             prompts_per_batch=rbs,
-            timestep_fraction=0.5,
-            total_epochs=1,
-            output_dir="x",
-            drop_zero_advantage=False,
+            n_samples_per_prompt=2,
             gradient_accumulation_steps=gas,
         )
 
     logger_name = "vrl.scripts.common.online"
     cfg_true = OmegaConf.create({"algorithm": {"global_std": True}})
 
-    def _warns(cfg, tc) -> bool:
+    def _warns(cfg, plan) -> bool:
         caplog.clear()
         with caplog.at_level(logging.WARNING, logger=logger_name):
-            _warn_global_std_streaming_divergence(cfg, tc)
+            _warn_global_std_streaming_divergence(cfg, plan)
         return any("global_std=true with streaming" in r.getMessage() for r in caplog.records)
 
     # global_std=true + 2 groups/microbatch (rbs=8, gas=4) -> warn (the sd3 case).
-    assert _warns(cfg_true, _tc(8, 4))
+    assert _warns(cfg_true, _plan(8, 4))
     # Exempt: microbatch_size=1 (gas=8 -> 1 group/microbatch; per-group == global).
-    assert not _warns(cfg_true, _tc(8, 8))
+    assert not _warns(cfg_true, _plan(8, 8))
     # Exempt: global_std=false (per-group std is streaming-equivalent).
-    assert not _warns(OmegaConf.create({"algorithm": {"global_std": False}}), _tc(8, 4))
+    assert not _warns(OmegaConf.create({"algorithm": {"global_std": False}}), _plan(8, 4))
     # Exempt: legacy full-batch (gas=0, no streaming).
-    assert not _warns(cfg_true, _tc(8, 0))
+    assert not _warns(cfg_true, _plan(8, 0))
 
 
 def test_host_memory_budget_fail_fast(monkeypatch) -> None:
@@ -1222,7 +1108,7 @@ def test_host_memory_budget_fail_fast(monkeypatch) -> None:
 
     # Over budget -> fail fast with an actionable message.
     _inject(0.95)
-    with pytest.raises(MemoryError, match=r"rollout\.microbatch_size"):
+    with pytest.raises(MemoryError, match=r"actor\.microbatch_size"):
         online._check_host_memory_budget(0.9, microbatch_prompts=1, n_samples_per_prompt=8)
 
     # Exactly at / under budget -> pass (<= budget does not trip).
@@ -1238,40 +1124,6 @@ def test_host_memory_budget_fail_fast(monkeypatch) -> None:
         lambda: HostMemorySnapshot(rss_mb=None, available_mb=None, total_mb=None),
     )
     online._check_host_memory_budget(0.9, microbatch_prompts=1, n_samples_per_prompt=8)
-
-
-def test_host_memory_budget_fraction_bounds() -> None:
-    """host_memory_budget_fraction in [0.0,1.0); >0 requires streaming (no footgun)."""
-    import pytest
-
-    from vrl.trainers.core.types import OptimConfig
-    from vrl.trainers.online.config import TrainerConfig
-
-    def _cfg(fraction: float, *, microbatch_size: int = 0) -> TrainerConfig:
-        return TrainerConfig(
-            optim=OptimConfig(lr=1e-4),
-            n_samples_per_prompt=2,
-            prompts_per_batch=4,
-            timestep_fraction=0.5,
-            total_epochs=1,
-            output_dir="x",
-            drop_zero_advantage=False,
-            microbatch_size=microbatch_size,
-            host_memory_budget_fraction=fraction,
-        )
-
-    # >0 budget is valid when streaming is on (microbatch_size>0 -> gas>0).
-    for ok in (0.5, 0.9, 0.999):
-        assert _cfg(ok, microbatch_size=1).host_memory_budget_fraction == ok
-    # 0.0 (guard off) is valid with or without streaming.
-    assert _cfg(0.0).host_memory_budget_fraction == 0.0
-    # Out-of-range always rejected.
-    for bad in (-0.1, 1.0, 1.5):
-        with pytest.raises(ValueError, match="host_memory_budget_fraction"):
-            _cfg(bad, microbatch_size=1)
-    # Footgun: >0 budget with no streaming is a config error, not a silent no-op.
-    with pytest.raises(ValueError, match="requires streaming"):
-        _cfg(0.9)
 
 
 def test_select_move_and_remap_preserve_rollout_trajectory_fields() -> None:

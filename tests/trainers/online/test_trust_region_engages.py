@@ -30,7 +30,7 @@ from vrl.trainers.core.types import (
     RolloutOrchestrationConfig,
 )
 from vrl.trainers.online import OnlineTrainer
-from vrl.trainers.online.config import TrainerConfig
+from vrl.trainers.online.config import OnlineBatchPlan, TrainerConfig
 
 
 class _Collector(CollectorControlFake):
@@ -78,14 +78,13 @@ def _build_trainer(
         evaluator=_Evaluator(),
         model=model,
         config=TrainerConfig(
-            prompts_per_batch=1,
+            batch_plan=OnlineBatchPlan(prompts_per_batch=1, n_samples_per_prompt=2),
             timestep_fraction=1.0,
             total_epochs=1,
             ppo_epochs=ppo_epochs,
             drop_zero_advantage=False,
             optim=OptimConfig(lr=0.01),
             ema=EMAConfig(),
-            n_samples_per_prompt=2,
             rollout_orchestration=RolloutOrchestrationConfig(
                 schedule_mode=schedule_mode,
                 continuous=ContinuousRolloutConfig(
