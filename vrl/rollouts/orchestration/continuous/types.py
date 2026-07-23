@@ -9,6 +9,7 @@ from typing import Any
 import torch
 
 from vrl.rollouts.batch import RolloutBatch
+from vrl.trajectory import trajectory_tensor_bytes
 from vrl.utils.stats import RolloutStats
 
 
@@ -47,25 +48,25 @@ class ContinuousRolloutSettings:
 def estimate_batch_bytes(batch: RolloutBatch) -> int:
     """Rough host-memory footprint of a queued ``RolloutBatch``.
 
-    Used only for the queue byte-cap backpressure heuristic, so an approximate
-    walk over the obvious tensor fields is enough; we deliberately avoid a deep
-    traversal of arbitrary ``extras`` to keep ``put`` cheap.
+    The trajectory owns replay tensors. Legacy flat observation/action aliases
+    are counted only when no trajectory exists, and shared tensor objects are
+    deduplicated so queue backpressure does not charge the same storage twice.
+    Arbitrary nested extras stay outside this cheap heuristic.
     """
 
-    total = 0
-    candidates: list[Any] = [
-        batch.observations,
-        batch.actions,
-        batch.rewards,
-        batch.group_ids,
-    ]
-    for value in candidates:
-        if isinstance(value, torch.Tensor):
-            total += value.element_size() * value.nelement()
-    for value in batch.extras.values():
-        if isinstance(value, torch.Tensor):
-            total += value.element_size() * value.nelement()
-    return int(total)
+    payload: dict[str, Any] = {
+        "rewards": batch.rewards,
+        "group_ids": batch.group_ids,
+        "tensor_extras": tuple(
+            value for value in batch.extras.values() if isinstance(value, torch.Tensor)
+        ),
+    }
+    if batch.trajectory is not None:
+        payload["trajectory"] = batch.trajectory
+    else:
+        payload["observations"] = batch.observations
+        payload["actions"] = batch.actions
+    return trajectory_tensor_bytes(payload)
 
 
 @dataclass(slots=True)

@@ -9,12 +9,14 @@ from __future__ import annotations
 
 import torch
 
+from vrl.generation import GenerationRequest, GenerationSampleRow
 from vrl.rollouts.batch import RolloutBatch
 from vrl.rollouts.orchestration.continuous.queue import ContinuousRolloutQueue
 from vrl.rollouts.orchestration.continuous.types import (
     ContinuousRolloutItem,
     estimate_batch_bytes,
 )
+from vrl.trajectory import build_ar_discrete_trajectory, trajectory_tensor_bytes
 
 
 def _item(
@@ -86,6 +88,56 @@ def test_batch_byte_estimate_counts_only_trainer_transport_tensors() -> None:
             batch.group_ids,
             batch.extras["component"],
         )
+    )
+
+    assert estimate_batch_bytes(batch) == expected
+
+
+def test_batch_byte_estimate_counts_trajectory_without_flat_aliases_twice() -> None:
+    token_ids = torch.tensor([[1, 2]], dtype=torch.long)
+    prompt_input_ids = torch.tensor([[3, 4, 5]], dtype=torch.long)
+    request = GenerationRequest(
+        request_id="req",
+        family="janus_pro",
+        task="ar_t2i",
+        inputs=["p"],
+        samples_per_prompt=1,
+    )
+    trajectory = build_ar_discrete_trajectory(
+        request=request,
+        sample_rows=[
+            GenerationSampleRow(
+                prompt_index=0,
+                sample_index=0,
+                prompt="p",
+                group_id="g0",
+                sample_id="s0",
+                trajectory_id="t0",
+                seed=None,
+            )
+        ],
+        token_ids=token_ids,
+        token_log_probs=torch.zeros(1, 2),
+        token_mask=torch.ones(1, 2),
+        prompt_input_ids=prompt_input_ids,
+        prompt_attention_mask=torch.ones(1, 3, dtype=torch.long),
+        uncond_input_ids=torch.zeros(1, 3, dtype=torch.long),
+        uncond_attention_mask=torch.ones(1, 3, dtype=torch.long),
+        context={},
+    )
+    rewards = torch.zeros(1)
+    component = torch.zeros(3, dtype=torch.float64)
+    batch = RolloutBatch(
+        observations=prompt_input_ids.unsqueeze(1),
+        actions=token_ids,
+        rewards=rewards,
+        group_ids=trajectory.group_ids,
+        extras={"component": component},
+        trajectory=trajectory,
+    )
+
+    expected = trajectory_tensor_bytes(trajectory) + sum(
+        tensor.numel() * tensor.element_size() for tensor in (rewards, component)
     )
 
     assert estimate_batch_bytes(batch) == expected
