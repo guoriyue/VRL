@@ -24,18 +24,20 @@ from vrl.ray.resources import (
     resolve_distributed_resources,
     trainer_torch_device,
 )
+from vrl.trainers.activation_checkpointing import enable_transformer_gradient_checkpointing
 from vrl.trainers.checkpointing import (
     LORA_WEIGHTS_NAME,
     capture_rng_state,
     load_training_checkpoint_from_config,
     prepare_metrics_csv,
     prepare_model_config_for_training_resume,
+    resolve_training_resume_strict,
     restore_rng_state,
     restore_training_checkpoint,
     save_resolved_config,
     save_training_checkpoint,
 )
-from vrl.trainers.core.types import OptimConfig, TrainerConfig
+from vrl.trainers.core.types import OptimConfig
 
 if TYPE_CHECKING:
     from vrl.algorithms.dpo import DiffusionDPOConfig
@@ -81,7 +83,9 @@ def _build_offline_dpo_trainer_config(
     scale_lr = bool(require(cfg, "actor.scale_lr"))
     effective_batch_size = train_batch_size * gradient_accumulation_steps
     lr = float(optim.lr) * effective_batch_size if scale_lr else float(optim.lr)
-    trainer_fields = TrainerConfig.__dataclass_fields__
+    max_grad_norm = OmegaConf.select(cfg, "actor.max_norm")
+    if max_grad_norm is None:
+        max_grad_norm = OfflineDPOTrainerConfig().max_grad_norm
     return OfflineDPOTrainerConfig(
         beta=float(dpo_config.beta),
         sft_weight=float(dpo_config.sft_weight),
@@ -90,13 +94,7 @@ def _build_offline_dpo_trainer_config(
         adam_beta2=float(optim.adam_beta2),
         adam_weight_decay=float(optim.weight_decay),
         adam_epsilon=float(optim.eps),
-        max_grad_norm=float(
-            OmegaConf.select(
-                cfg,
-                "actor.max_norm",
-                default=trainer_fields["max_norm"].default,
-            ),
-        ),
+        max_grad_norm=float(max_grad_norm),
         gradient_accumulation_steps=gradient_accumulation_steps,
         prediction_type=str(require(cfg, "actor.prediction_type")),
         use_adafactor=use_adafactor,
@@ -190,13 +188,7 @@ def train_wan_2_1_dpo(cfg: DictConfig) -> None:
         train_batch_size=train_batch_size,
         gradient_accumulation_steps=grad_accum,
     )
-    # Optional knobs: base yaml no longer restates dataclass defaults, so an
-    # absent key falls back to the typed default — derived, never copied.
-    _trainer_fields = TrainerConfig.__dataclass_fields__
-    resume_strict = OmegaConf.select(cfg, "trainer.resume_strict")
-    if resume_strict is None:
-        resume_strict = _trainer_fields["resume_strict"].default
-    resume_strict = bool(resume_strict)
+    resume_strict = resolve_training_resume_strict(cfg)
     resume_checkpoint = load_training_checkpoint_from_config(cfg)
     prepare_model_config_for_training_resume(
         cfg,
@@ -225,11 +217,7 @@ def train_wan_2_1_dpo(cfg: DictConfig) -> None:
     pipeline = bundle.raw_handle
     transformer = wan_model.transformer
 
-    gradient_checkpointing = OmegaConf.select(cfg, "actor.gradient_checkpointing")
-    if gradient_checkpointing is None:
-        gradient_checkpointing = _trainer_fields["gradient_checkpointing"].default
-    if bool(gradient_checkpointing):
-        transformer.enable_gradient_checkpointing()
+    enable_transformer_gradient_checkpointing(bundle, cfg)
 
     # 2. Encoders bound to the loaded pipeline
     num_frames = int(sampling.num_frames)

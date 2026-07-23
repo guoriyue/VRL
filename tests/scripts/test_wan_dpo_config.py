@@ -57,6 +57,29 @@ def test_offline_dpo_uses_typed_optimizer_defaults_when_keys_are_absent() -> Non
     assert resolved.adam_epsilon == pytest.approx(1e-8)
 
 
+def test_offline_dpo_max_grad_norm_default_belongs_to_offline_trainer(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from vrl.trainers.core.types import TrainerConfig
+    from vrl.trainers.offline import OfflineDPOTrainerConfig
+
+    monkeypatch.setattr(
+        TrainerConfig.__dataclass_fields__["max_norm"],
+        "default",
+        9.0,
+    )
+
+    resolved = _resolved_trainer_config()
+
+    assert resolved.max_grad_norm == OfflineDPOTrainerConfig().max_grad_norm
+
+
+def test_offline_dpo_bridges_explicit_max_grad_norm() -> None:
+    resolved = _resolved_trainer_config(["actor.max_norm=0.25"])
+
+    assert resolved.max_grad_norm == pytest.approx(0.25)
+
+
 def test_offline_dpo_rejects_unsupported_8bit_optimizer() -> None:
     with pytest.raises(ValueError, match=r"optim_8bit=true is not supported"):
         _resolved_trainer_config(["actor.optim.optim_8bit=true"])
@@ -156,3 +179,79 @@ def test_offline_dpo_builds_its_full_model_through_the_family_registry(
     assert captured["cfg"] is cfg
     assert captured["for_rollout"] is True
     assert captured["precision_role"] == "training"
+
+
+@pytest.mark.parametrize(
+    ("checkpointing", "expected_mode"),
+    [
+        ('"off"', "off"),
+        ("false", "off"),
+        ('"full"', "full"),
+        ("true", "full"),
+        ('"selective"', "selective"),
+    ],
+)
+def test_offline_dpo_uses_shared_gradient_checkpointing_policy(
+    monkeypatch: pytest.MonkeyPatch,
+    checkpointing: str,
+    expected_mode: str,
+) -> None:
+    cfg = load_config(
+        "experiment/wan_2_1/offline_dpo_pickapic",
+        overrides=[f"actor.gradient_checkpointing={checkpointing}"],
+    )
+    calls: list[dict[str, object]] = []
+
+    class _ReachedEncoderBoundary(RuntimeError):
+        pass
+
+    class _Transformer:
+        def enable_gradient_checkpointing(self, **kwargs: object) -> None:
+            calls.append(kwargs)
+
+    transformer = _Transformer()
+
+    class _Model:
+        pass
+
+    model = _Model()
+    model.transformer = transformer
+
+    class _Bundle:
+        def __init__(self) -> None:
+            self.raw_handle = object()
+            self.trainable_modules = {"transformer": transformer}
+
+    bundle = _Bundle()
+    bundle.model = model
+
+    class _Entry:
+        def resolve_model_build(self, *args: object, **kwargs: object) -> object:
+            return object()
+
+        def build_rollout(self, build: object) -> _Bundle:
+            return bundle
+
+    import vrl.families.registry as registry
+    from vrl.scripts.families.wan_2_1 import train_dpo
+
+    monkeypatch.setattr(registry, "get_model_family_entry", lambda _family: _Entry())
+    monkeypatch.setattr(train_dpo, "resolve_distributed_resources", lambda _cfg: object())
+    monkeypatch.setattr(train_dpo, "format_distributed_resource_plan", lambda _plan: "")
+    monkeypatch.setattr(train_dpo, "trainer_torch_device", lambda _plan: "cpu")
+
+    def _stop_at_encoder(*args: object, **kwargs: object) -> None:
+        raise _ReachedEncoderBoundary
+
+    monkeypatch.setattr(train_dpo, "_build_encoders", _stop_at_encoder)
+
+    with pytest.raises(_ReachedEncoderBoundary):
+        train_wan_2_1_dpo(cfg)
+
+    if expected_mode == "off":
+        assert calls == []
+    elif expected_mode == "full":
+        assert calls == [{}]
+    else:
+        assert len(calls) == 1
+        assert callable(calls[0]["gradient_checkpointing_func"])

@@ -25,6 +25,9 @@ CHECKPOINT_SCHEMA_VERSION = 1
 TRAINING_CHECKPOINT_NAME = "checkpoint.pt"
 LORA_WEIGHTS_NAME = "lora_weights"
 CHECKPOINT_META_NAME = "checkpoint_meta.json"
+# Strict restore is the checkpoint protocol default, independent of any
+# particular trainer implementation.
+DEFAULT_CHECKPOINT_STRICT = True
 
 
 @dataclass(frozen=True, slots=True)
@@ -351,11 +354,24 @@ def load_training_checkpoint_from_config(cfg: Any) -> TrainingCheckpoint | None:
     return load_training_checkpoint(resume_from)
 
 
+def resolve_training_resume_strict(cfg: Any) -> bool:
+    """Resolve the shared checkpoint-restore strictness policy."""
+
+    value = cfg_path(cfg, "trainer.resume_strict", None)
+    if value is None:
+        return DEFAULT_CHECKPOINT_STRICT
+    if not isinstance(value, bool):
+        raise TypeError(
+            f"trainer.resume_strict must be a boolean, got {type(value).__name__}: {value!r}",
+        )
+    return value
+
+
 def prepare_model_config_for_training_resume(
     cfg: Any,
     checkpoint: TrainingCheckpoint | None,
     *,
-    strict: bool = True,
+    strict: bool = DEFAULT_CHECKPOINT_STRICT,
 ) -> None:
     """Remove warm-start adapter paths when doing full training resume.
 
@@ -385,7 +401,7 @@ def restore_training_checkpoint(
     bundle: Any,
     family: str,
     expected_model_identity: dict[str, Any] | None = None,
-    strict: bool = True,
+    strict: bool = DEFAULT_CHECKPOINT_STRICT,
 ) -> None:
     """Restore model trainable modules and trainer state from checkpoint."""
 
@@ -488,7 +504,7 @@ def load_trainable_state(
     bundle: Any,
     state: dict[str, Any],
     *,
-    strict: bool = True,
+    strict: bool = DEFAULT_CHECKPOINT_STRICT,
 ) -> None:
     """Load trainable module state_dicts into a runtime bundle."""
 
@@ -824,6 +840,7 @@ def _set_cfg_path(cfg: Any, path: str, value: Any) -> None:
 __all__ = [
     "CHECKPOINT_META_NAME",
     "CHECKPOINT_SCHEMA_VERSION",
+    "DEFAULT_CHECKPOINT_STRICT",
     "LORA_WEIGHTS_NAME",
     "TRAINING_CHECKPOINT_NAME",
     "TrainingCheckpoint",
@@ -838,6 +855,7 @@ __all__ = [
     "prepare_metrics_csv",
     "prepare_model_config_for_training_resume",
     "read_checkpoint_meta",
+    "resolve_training_resume_strict",
     "restore_rng_state",
     "restore_training_checkpoint",
     "save_resolved_config",

@@ -4,6 +4,7 @@ import json
 
 import pytest
 import torch
+from omegaconf import OmegaConf
 
 from vrl.trainers.checkpointing import (
     CHECKPOINT_META_NAME,
@@ -12,9 +13,31 @@ from vrl.trainers.checkpointing import (
     infer_next_epoch,
     load_trainable_state,
     load_training_checkpoint,
+    resolve_training_resume_strict,
     restore_training_checkpoint,
     save_training_checkpoint,
 )
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [(None, True), (True, True), (False, False)],
+)
+def test_resume_strict_uses_checkpoint_policy(
+    value: bool | None,
+    expected: bool,
+) -> None:
+    trainer = {} if value is None else {"resume_strict": value}
+    cfg = OmegaConf.create({"trainer": trainer})
+
+    assert resolve_training_resume_strict(cfg) is expected
+
+
+def test_resume_strict_rejects_string_truthiness() -> None:
+    cfg = OmegaConf.create({"trainer": {"resume_strict": "false"}})
+
+    with pytest.raises(TypeError, match="must be a boolean"):
+        resolve_training_resume_strict(cfg)
 
 
 def test_training_checkpoint_round_trips_trainer_and_trainable_modules(tmp_path) -> None:
