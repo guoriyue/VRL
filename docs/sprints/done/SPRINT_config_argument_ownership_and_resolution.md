@@ -1,10 +1,10 @@
 # SPRINT：Config argument ownership and resolution
 
-状态：**planned（2026-07-22）**。
+状态：**done（2026-07-22）**。
 
-父 program：[Argument and state ownership](SPRINT_argument_and_state_ownership_program.md)
+父 program：[Argument and state ownership](../SPRINT_argument_and_state_ownership_program.md)
 
-前置：[Contract truthfulness and no-op inputs](../done/SPRINT_contract_truthfulness_and_noop_inputs.md)
+前置：[Contract truthfulness and no-op inputs](SPRINT_contract_truthfulness_and_noop_inputs.md)
 
 ## 0. 结论先行
 
@@ -290,15 +290,33 @@ supervisor已经 load resolved training config，因此：
 - snapshot是一-shot artifact，验收后删除；
 - `ruff` touched files、`git diff --check`。
 
+### 实施记录
+
+- `a6a2cd2b`：validation/build 返回一个 typed `BuiltConfigs`，reward 不再用 tuple 下标。
+- `456f7069`：data loader 选择只有一个 derivation owner。
+- `520ab5a8`：rollout worker defaults 由 public schema 一次解析为 frozen runtime settings。
+- `4c13b2ee`：checkpoint resume policy 回到 checkpoint owner。
+- `877ef23e`：FSDP/DDP strategy 只消费已解析设置，不维护第二份默认。
+- `217b7c32`、`78e0242c`、`8d65d2af`、`a13cd3c6`：online trainer、batch geometry 与
+  run lifecycle 按 consumer 拆分，删除 generation/model-setup/checkpoint 镜像。
+- `080ebb53`：generation request 改为 typed 正向投影，local knobs fail closed。
+- `cb6e2db2`：online schema keys 从各自 typed owner 派生。
+- `978ee3c8`：supervisor health policy 从训练 contract 派生，同时保留独立进程控制边界。
+
+整个迁移保留 OmegaConf → Pydantic → resolver/builder → runtime config 四层、public facade、
+experiment-level 显式 pin、offline allow-list 与 Ray/checkpoint/strategy 协议边界。没有启动 Ray 或
+GPU。包含本 Sprint 改动面的 program 累计 CPU gate 为 `1703 passed, 23 deselected`；deselect
+仅来自显式非 CPU lane 与缺失 vendored source 的两个 digest 用例。
+
 ## 11. Definition of Done
 
-- [ ] Root/precision/reward每次 build只解析一次。
-- [ ] `BuiltConfigs` / reward result无字符串或 tuple下标。
-- [ ] TrainerConfig无 generation/model-setup/checkpoint死镜像。
-- [ ] batch split只有一个 canonical stored value。
-- [ ] request projection fail closed。
-- [ ] Ray/FSDP/DDP/supervisor defaults无平行副本。
-- [ ] public/runtime/offline key集合都从各自 source派生。
+- [x] Root/precision/reward每次 build只解析一次。
+- [x] `BuiltConfigs` / reward result无字符串或 tuple下标。
+- [x] TrainerConfig无 generation/model-setup/checkpoint死镜像。
+- [x] batch split只有一个 canonical stored value。
+- [x] request projection fail closed。
+- [x] Ray/FSDP/DDP/supervisor defaults无平行副本。
+- [x] public/runtime/offline key集合都从各自 source派生。
 
 ## 12. References
 

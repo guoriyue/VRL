@@ -2,7 +2,7 @@
 
 状态：**done（2026-07-22）**。
 
-父 program：[Argument and state ownership](../planned/SPRINT_argument_and_state_ownership_program.md)
+父 program：[Argument and state ownership](../SPRINT_argument_and_state_ownership_program.md)
 
 前置：无。这是 program 的正确性 Sprint。
 

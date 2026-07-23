@@ -1,12 +1,12 @@
 # SPRINT：Runtime payload smallest truth
 
-状态：**planned（2026-07-22）**。
+状态：**done（2026-07-22）**。
 
-父 program：[Argument and state ownership](SPRINT_argument_and_state_ownership_program.md)
+父 program：[Argument and state ownership](../SPRINT_argument_and_state_ownership_program.md)
 
 前置：
 
-- [Contract truthfulness and no-op inputs](../done/SPRINT_contract_truthfulness_and_noop_inputs.md)
+- [Contract truthfulness and no-op inputs](SPRINT_contract_truthfulness_and_noop_inputs.md)
 - Config typed build result可并行落地；本 Sprint不改变 public config shape。
 
 ## 0. 结论先行
@@ -215,7 +215,7 @@ _SIMPLE_PROMPT
 _VIDEOSCORE_QUERY_PROMPT
 _DETAILED_PROMPT_WITH_SPECIAL_TOKEN
 _DETAILED_PROMPT
-_build_video_reward_prompt
+build_kling_video_reward_prompt
 ```
 
 这个薄文件是合理的独立 prompt protocol/taxonomy asset。
@@ -230,6 +230,44 @@ _build_video_reward_prompt
 VideoScore2/Cosmos3/UnifiedReward/VideoCon的短 prompt/regex与 parser紧耦合，不拆。
 
 测试所有 template type输出保持，并覆盖非法 template/dimension。
+
+## 7. 实施结果与审计判定
+
+| Suspect | 判定 | 落地证据 |
+|---|---|---|
+| generation request/output fields 与 preview argument | **REMOVE** | `f73d2751` 删除零 reader 字段和三个未读参数；request/output 边界保留 |
+| `DiffusionBackboneOutput.metrics`、`RenoiseStepResult` 中间量 | **REMOVE** | `6ed86b60` 改由测试观察真实 transformer/math 边界 |
+| CausVid resolved revisions/source | **REMOVE** | `a8848c12` 只保留两个 runtime path；pin/revision/SHA 仍在 resolver 内校验 |
+| replay capability bool 与 fake Magi builder | **DERIVE/FIX** | `e9bb20d0` 从严格 recipe 派生；generation-only reason 在 import 前失败 |
+| resource/context summary fields | **DERIVE** | `2da85f62` 改 property，constructor 无法接收矛盾 topology summary |
+| `RunMetrics.run_dir` | **REMOVE** | `7ac288d2` 只删 dead stored field；行为所需函数参数仍保留 |
+| `TrainState.total_reward/total_loss` | **REMOVE** | `a9bc6072` 删除无消费累计与新 checkpoint key；旧 key 兼容忽略 |
+| MultiSegment inner input context | **REMOVE ASSIGNMENT** | `d3b3c7e8` 只删确定 callee 不读的 assignment，public input fields 保留 |
+| reward scoring metadata/count/batch facts | **REMOVE/DERIVE** | `7cfe90ef` 从 context、rows 与 outputs 派生，保留 mismatch validation 与 lineage |
+| Kling 大型 prompt table | **MOVE/FIX** | `ef0a04db` 移到独立 prompt protocol/taxonomy module，并让非法 dimension/template fail fast |
+
+明确 **KEEP**：
+
+- request/result/math dataclass、registry dotted import 与 lazy dispatch；
+- Magi `ReplayModel` protocol stubs和跨 family 一致方法形状；
+- Ray lifecycle、placement、rank/device 与 async ownership state；
+- reward request/artifact/result lineage、request ID、长度 mismatch 与 async lock；
+- `_DEFAULT_REWARD_MODEL`、`_SPECIAL_TOKENS`、`_SCORE_KEY_MAP` 等 checkpoint/token/output protocol
+  常量；
+- CausVid pin/checkpoint/glob 常量及三个 resolver 薄边界。
+
+Kling 的新薄文件是有意隔离的 checkpoint prompt protocol 与 domain taxonomy，不是为减少 LOC
+拆出的 helper；CausVid resolver、registry facade、placement helper 等薄函数继续承担 lazy import、
+protocol 或 cross-family consistency 边界。
+
+包含本 Sprint 全部改动面的累计 CPU gate 为：
+
+```text
+1703 passed, 23 deselected, 32 warnings
+```
+
+deselect 只包含显式排除的 `e2e/gpu/distributed/slow_test/rollout_preview` lane，以及当前工作区缺少
+vendored source tree 的 CausVid/Magi runtime digest 两个用例；没有启动 Ray cluster 或 GPU。
 
 ## 8. What changes / what stays
 
@@ -268,11 +306,11 @@ VideoScore2/Cosmos3/UnifiedReward/VideoCon的短 prompt/regex与 parser紧耦合
 
 ## 11. Definition of Done
 
-- [ ] 每个删除字段零 production reader且测试改为观察真实边界。
-- [ ] 每个 derived property无可传矛盾 constructor参数。
-- [ ] Magi generation-only由 build recipe表达，无 fake replay builder。
-- [ ] 旧 TrainState checkpoint兼容读取。
-- [ ] Kling大型 prompt taxonomy离开 workflow module。
+- [x] 每个删除字段零 production reader且测试改为观察真实边界。
+- [x] 每个 derived property无可传矛盾 constructor参数。
+- [x] Magi generation-only由 build recipe表达，无 fake replay builder。
+- [x] 旧 TrainState checkpoint兼容读取。
+- [x] Kling大型 prompt taxonomy离开 workflow module。
 
 ## 12. References
 

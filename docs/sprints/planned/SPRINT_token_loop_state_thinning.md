@@ -2,7 +2,7 @@
 
 状态：**planned（2026-07-22）**。
 
-父 program：[Argument and state ownership](SPRINT_argument_and_state_ownership_program.md)
+父 program：[Argument and state ownership](../SPRINT_argument_and_state_ownership_program.md)
 
 前置：无行为依赖；建议在
 [Trajectory and rollout single source](SPRINT_trajectory_rollout_single_source.md) 的 token reader迁移

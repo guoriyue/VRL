@@ -1,11 +1,11 @@
 # SPRINT：Online metrics IO contract
 
-状态：**planned（2026-07-22）**。
+状态：**done（2026-07-22）**。
 
-父 program：[Argument and state ownership](SPRINT_argument_and_state_ownership_program.md)
+父 program：[Argument and state ownership](../SPRINT_argument_and_state_ownership_program.md)
 
 前置：无。现有
-[Continuous stage contracts and baseline](SPRINT_continuous_stage_contracts_and_baseline.md)
+[Continuous stage contracts and baseline](../planned/SPRINT_continuous_stage_contracts_and_baseline.md)
 在新增 telemetry columns前依赖本 Sprint。
 
 ## 0. 结论先行
@@ -189,14 +189,27 @@ Continuous stage后续新增 column时：
 - `git diff --check`；
 -无 Ray/GPU。
 
+### 实施记录
+
+`9c2344c2` 新增 `OnlineMetricRow` 与唯一 row builder；fixed columns、顺序和格式从 dataclass fields
+及 metadata 派生，dynamic reward component columns 在 run 开始时冻结。header 创建、row 写入、
+resume/truncate 与 supervisor required-subset validation 共用同一 column contract。
+
+保留了 `TrainStepMetrics` nested runtime 结构、health required subset、metrics filename、
+`prepare_metrics_csv` IO 边界和 `OnlineRecipeRun` controller facade。没有新增完整 columns
+ALL_CAPS 副本，也没有改变 metric 数值、列名或列顺序。验证只使用 temporary file 与 CPU tests；
+没有启动 trainer、Ray 或 GPU。包含本 Sprint 改动面的 program 累计 CPU gate 为
+`1703 passed, 23 deselected`；deselect 仅来自显式非 CPU lane 与缺失 vendored source 的两个
+digest 用例。
+
 ## 10. Definition of Done
 
-- [ ] fixed CSV schema只存在于 `OnlineMetricRow`。
-- [ ] header、order、format从同一 field source派生。
-- [ ] dynamic component columns在 run开始时冻结。
-- [ ] supervisor required subset被 schema验证。
-- [ ] continuous Sprint新增 metric只需改一个 row定义和一个 mapping。
-- [ ]现有 CSV names/order/value保持。
+- [x] fixed CSV schema只存在于 `OnlineMetricRow`。
+- [x] header、order、format从同一 field source派生。
+- [x] dynamic component columns在 run开始时冻结。
+- [x] supervisor required subset被 schema验证。
+- [x] continuous Sprint新增 metric只需改一个 row定义和一个 mapping。
+- [x]现有 CSV names/order/value保持。
 
 ## 11. References
 

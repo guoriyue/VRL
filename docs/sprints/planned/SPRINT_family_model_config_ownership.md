@@ -2,11 +2,11 @@
 
 状态：**planned（2026-07-22）**。
 
-父 program：[Argument and state ownership](SPRINT_argument_and_state_ownership_program.md)
+父 program：[Argument and state ownership](../SPRINT_argument_and_state_ownership_program.md)
 
 承接：`docs/sprints/done/SPRINT_config_as_signatures.md` deferred P3/P4。
 
-前置：[Config argument ownership and resolution](SPRINT_config_argument_ownership_and_resolution.md)
+前置：[Config argument ownership and resolution](../done/SPRINT_config_argument_ownership_and_resolution.md)
 的 typed parse/build contract。
 
 ## 0. 结论先行

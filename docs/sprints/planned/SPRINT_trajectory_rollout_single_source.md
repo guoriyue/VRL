@@ -2,13 +2,13 @@
 
 状态：**planned（2026-07-22）**。
 
-父 program：[Argument and state ownership](SPRINT_argument_and_state_ownership_program.md)
+父 program：[Argument and state ownership](../SPRINT_argument_and_state_ownership_program.md)
 
 前置：
 
 - [Contract truthfulness and no-op inputs](../done/SPRINT_contract_truthfulness_and_noop_inputs.md)
   的 scalar group-remap修复；
-- [Runtime payload smallest truth](SPRINT_runtime_payload_smallest_truth.md) 可并行，但不应同时改同一
+- [Runtime payload smallest truth](../done/SPRINT_runtime_payload_smallest_truth.md) 已完成；不应同时改同一
   batch constructor。
 
 ## 0. 结论先行

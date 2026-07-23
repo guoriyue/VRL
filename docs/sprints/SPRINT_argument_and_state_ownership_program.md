@@ -1,6 +1,6 @@
 # SPRINT：Argument and state ownership program
 
-状态：**planned（2026-07-22）**。
+状态：**active（2026-07-22 开始；Sprint 1–4 done，Sprint 5–7 planned）**。
 
 ## 0. 结论先行
 
@@ -19,6 +19,18 @@ dataclass、wire payload 和 async ownership state 压成一层。当前问题�
 本次审计已覆盖目标定义、构造点、生产 reader、测试 reader、YAML writer、OmegaConf path、
 `getattr`/`.get()` adapter、registry dotted string、`__all__` 和历史 Sprint 判定。发现的正确性
 问题先处理，结构清理后处理；不能用一次大重构同时改变行为与状态形状。
+
+当前进度：
+
+| Sprint | 状态 | 结果 |
+|---|---|---|
+| Contract truthfulness | **done** | silent no-op、错误 derivation 与 stale grouping 已修复 |
+| Config argument ownership | **done** | public parse、runtime owner、defaults 与 request projection 已收口 |
+| Online metrics IO contract | **done** | CSV column/order/format/value mapping 已归一 |
+| Runtime payload smallest truth | **done** | dead/test-only state 已删除，派生摘要与 capability 已改为单一真值 |
+| Trajectory and rollout single source | **planned** | 下一阶段 |
+| Token loop state thinning | **planned** | 等 trajectory token reader 稳定后执行 |
+| Family model config ownership | **planned** | 等 shared config contract 稳定后执行 |
 
 ## 1. 哪些层应该存在
 
@@ -121,22 +133,22 @@ dataclass 的放置规则：
 
 ## 3. 实施 Sprint 与依赖
 
-1. [Contract truthfulness and no-op inputs](../done/SPRINT_contract_truthfulness_and_noop_inputs.md)
+1. [Contract truthfulness and no-op inputs](done/SPRINT_contract_truthfulness_and_noop_inputs.md)
    先修 silent no-op、错误 derivation 和 stale group IDs。
-2. [Config argument ownership and resolution](SPRINT_config_argument_ownership_and_resolution.md)
+2. [Config argument ownership and resolution](done/SPRINT_config_argument_ownership_and_resolution.md)
    建立一次解析和明确 owner；依赖 Sprint 1 的 public key 决策。
-3. [Online metrics IO contract](SPRINT_online_metrics_io_contract.md)
+3. [Online metrics IO contract](done/SPRINT_online_metrics_io_contract.md)
    先建立稳定 row protocol，供 supervisor与 continuous telemetry共同使用。
-4. [Runtime payload smallest truth](SPRINT_runtime_payload_smallest_truth.md)
+4. [Runtime payload smallest truth](done/SPRINT_runtime_payload_smallest_truth.md)
    机械删除 dead/derived payload；可与 Sprint 2 的后半段并行，但不能抢先改变 config shape。
-5. [Trajectory and rollout single source](SPRINT_trajectory_rollout_single_source.md)
+5. [Trajectory and rollout single source](planned/SPRINT_trajectory_rollout_single_source.md)
    先迁 consumer，再删 flat mirrors；依赖 scalar remap 修复。
-6. [Token loop state thinning](SPRINT_token_loop_state_thinning.md)
+6. [Token loop state thinning](planned/SPRINT_token_loop_state_thinning.md)
    删除当前单请求 runtime 中为未来 cross-request 功能预存的状态。
-7. [Family model config ownership](SPRINT_family_model_config_ownership.md)
+7. [Family model config ownership](planned/SPRINT_family_model_config_ownership.md)
    承接 `SPRINT_config_as_signatures.md` deferred P3/P4；在 shared config resolution 稳定后迁移。
 
-现有 [Continuous stage contracts and baseline](SPRINT_continuous_stage_contracts_and_baseline.md)
+现有 [Continuous stage contracts and baseline](planned/SPRINT_continuous_stage_contracts_and_baseline.md)
 仍是独立 program 的首个 Sprint。它新增 metrics 前，应先复用 Sprint 3 的 typed metrics row，避免
 继续同步手写 header/dict/format list；不需要把 continuous ownership state并入本 program。
 
@@ -201,7 +213,7 @@ dataclass 的放置规则：
 4. load 全部 bundled experiments并 import dotted entrypoint；
 5. 只跑 CPU/mocked-Ray 测试，不启动 Ray cluster，不运行 GPU；
 6. `ruff` touched files、`git diff --check`；
-7. 不 commit、不 push。
+7. 每个小里程碑单独 commit，便于审查；不 push。
 
 本次只读基线：
 
@@ -215,6 +227,17 @@ bundled experiments:                 64 loaded, 0 entrypoint import errors
 
 这些测试集有重叠，不能相加当作“总测试数”；它们证明审计入口可在 CPU 环境稳定复现，不证明待修
 行为已经正确。
+
+Sprint 1–4 落地后的累计 CPU gate（2026-07-22）：
+
+```text
+1703 passed, 23 deselected, 32 warnings
+```
+
+23 个 deselect 来自显式的 `e2e/gpu/distributed/slow_test/rollout_preview` 排除，以及当前工作区缺少
+vendored source tree 的 CausVid/Magi runtime digest 两个用例。其余同目录 contract、resolver、
+registry、resource、config、metrics、trainer、collector、algorithm 与 reward tests 均执行通过。
+该 gate 未启动 Ray cluster，未运行 GPU。
 
 ## 8. Definition of Done
 
