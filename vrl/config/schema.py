@@ -17,7 +17,14 @@ from typing import Annotated, Any, Literal, get_args
 
 from omegaconf import DictConfig, OmegaConf
 from omegaconf.errors import MissingMandatoryValue
-from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    ValidationError,
+    field_validator,
+    model_validator,
+)
 
 from vrl.algorithms.logprob_mismatch import PrecisionCorrectionConfig
 from vrl.config.algorithm import algorithm_config_class
@@ -293,9 +300,22 @@ class RolloutConfig(ConfigBase):
     # fixed chunk size; "auto" = the Ray runtime's startup chunk-size probe
     # resolves it before the first request (SPRINT_chunk_size_probe; Ray-only,
     # the planner rejects "auto" on other runtimes); null = samples_per_prompt.
-    samples_per_chunk: Any = None
+    samples_per_chunk: int | Literal["auto"] | None = None
     torch_profiler: Annotated[Any, ConfigBlock(TorchProfilerConfig)] = None
     trajectory_storage: Annotated[Any, ConfigBlock(TrajectoryStoragePolicy)] = None
+
+    @field_validator("samples_per_chunk", mode="before")
+    @classmethod
+    def _validate_samples_per_chunk(cls, value: Any) -> Any:
+        """Keep fixed generation chunks positive; the runtime owns ``auto``."""
+
+        if value is None or value == "auto":
+            return value
+        if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+            raise ValueError(
+                "rollout.samples_per_chunk must be a positive integer, 'auto', or null",
+            )
+        return value
 
 
 class SamplingConfig(ConfigBase):

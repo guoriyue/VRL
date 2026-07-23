@@ -209,13 +209,16 @@ def _require_supported_distributed_rollout_topology(
     )
 
 
-def _log_rollout_memory_plan(trainer_config: Any) -> None:
+def _log_rollout_memory_plan(
+    trainer_config: Any,
+    *,
+    generation_samples_per_chunk: int | str | None,
+) -> None:
     """Log how many rollout tensors one optimizer update can hold at once."""
 
     prompts_per_batch = int(trainer_config.prompts_per_batch)
     samples_per_prompt = int(trainer_config.n_samples_per_prompt)
     target_samples = prompts_per_batch * samples_per_prompt
-    generation_chunk = getattr(trainer_config, "samples_per_chunk", 0)
     replay_chunk = getattr(trainer_config, "replay_samples_per_chunk", 0)
 
     def describe_chunk(value: Any) -> str:
@@ -224,7 +227,7 @@ def _log_rollout_memory_plan(trainer_config: Any) -> None:
         size = int(value or 0)
         return str(samples_per_prompt if size <= 0 else min(samples_per_prompt, size))
 
-    generation_chunk_text = describe_chunk(generation_chunk)
+    generation_chunk_text = describe_chunk(generation_samples_per_chunk)
     replay_chunk_text = describe_chunk(replay_chunk)
     gas = int(getattr(trainer_config, "gradient_accumulation_steps", 0))
     if gas > 0:
@@ -814,7 +817,12 @@ async def run_online_recipe(
     reward_config = built.reward
     if reward_config is None:
         raise ValueError("online recipe requires a reward section")
-    _log_rollout_memory_plan(trainer_config)
+    _log_rollout_memory_plan(
+        trainer_config,
+        generation_samples_per_chunk=(
+            built.root.rollout.samples_per_chunk if built.root.rollout is not None else None
+        ),
+    )
     _warn_global_std_streaming_divergence(cfg, trainer_config)
     gradient_accumulation_steps = int(getattr(trainer_config, "gradient_accumulation_steps", 0))
     if trainer_config.profile:
@@ -898,7 +906,7 @@ async def run_online_recipe(
     bundle = family_entry.build_replay(replay_build)
     log_host_memory("after_trainer_bundle_build", log=logger)
     if family_entry.policy_semantics.step_kind == "denoise":
-        enable_transformer_gradient_checkpointing(bundle, cfg)
+        enable_transformer_gradient_checkpointing(bundle, built.root)
     model = require_runtime_model(
         bundle.model,
         owner=f"{family_entry.family}.bundle.model",

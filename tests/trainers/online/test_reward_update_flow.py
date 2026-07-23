@@ -1036,12 +1036,10 @@ def test_microbatch_size_reconciles_with_gradient_accumulation_steps() -> None:
         _cfg(microbatch_size=4, ppo_epochs=2)
     with pytest.raises(ValueError, match=">= 0"):
         _cfg(microbatch_size=-1)
-    with pytest.raises(ValueError, match="samples_per_chunk"):
-        _cfg(samples_per_chunk=-1)
 
 
 def test_replay_samples_per_chunk_is_an_independent_fixed_integer() -> None:
-    """Replay defaults to one and never inherits generation's chunk declaration."""
+    """Replay chunking keeps its own fixed training-side contract."""
     import pytest
 
     from vrl.trainers.core.types import OptimConfig
@@ -1061,11 +1059,7 @@ def test_replay_samples_per_chunk_is_an_independent_fixed_integer() -> None:
         return TrainerConfig(**base)  # type: ignore[arg-type]
 
     assert _cfg().replay_samples_per_chunk == 1
-    assert _cfg(samples_per_chunk=4).replay_samples_per_chunk == 1
-    assert _cfg(samples_per_chunk="auto").samples_per_chunk == "auto"
-    assert _cfg(samples_per_chunk="auto").replay_samples_per_chunk == 1
-    c = _cfg(samples_per_chunk=4, replay_samples_per_chunk=2)
-    assert c.samples_per_chunk == 4
+    c = _cfg(replay_samples_per_chunk=2)
     assert c.replay_samples_per_chunk == 2
     assert _cfg(replay_samples_per_chunk=0).replay_samples_per_chunk == 0
 
@@ -1073,8 +1067,6 @@ def test_replay_samples_per_chunk_is_an_independent_fixed_integer() -> None:
         _cfg(replay_samples_per_chunk=-1)
     with pytest.raises(ValueError, match="replay_samples_per_chunk"):
         _cfg(replay_samples_per_chunk="auto")
-    with pytest.raises(ValueError, match="samples_per_chunk"):
-        _cfg(samples_per_chunk="largest")
 
 
 def test_fixed_replay_chunk_remains_available_to_distributed_strategies() -> None:
@@ -1139,12 +1131,14 @@ def test_rollout_memory_plan_logs_streaming_and_legacy_warning(caplog) -> None:
             output_dir="x",
             drop_zero_advantage=False,
             gradient_accumulation_steps=gas,
-            samples_per_chunk=2,
         )
 
     logger_name = "vrl.scripts.common.online"
     with caplog.at_level(logging.INFO, logger=logger_name):
-        _log_rollout_memory_plan(_cfg(4, 4))
+        _log_rollout_memory_plan(
+            _cfg(4, 4),
+            generation_samples_per_chunk=2,
+        )
     streaming_messages = [record.getMessage() for record in caplog.records]
     assert any("streaming accumulation enabled" in msg for msg in streaming_messages)
     assert any("microbatch_prompts=1" in msg for msg in streaming_messages)
@@ -1154,7 +1148,10 @@ def test_rollout_memory_plan_logs_streaming_and_legacy_warning(caplog) -> None:
 
     caplog.clear()
     with caplog.at_level(logging.INFO, logger=logger_name):
-        _log_rollout_memory_plan(_cfg(4, 0))
+        _log_rollout_memory_plan(
+            _cfg(4, 0),
+            generation_samples_per_chunk=2,
+        )
     legacy_messages = [record.getMessage() for record in caplog.records]
     assert any("legacy full-batch accumulation" in msg for msg in legacy_messages)
     assert any("generation_samples_per_chunk=2" in msg for msg in legacy_messages)

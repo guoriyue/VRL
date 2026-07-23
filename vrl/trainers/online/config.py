@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Literal
 
 from vrl.algorithms.logprob_mismatch import PrecisionCorrectionConfig
 from vrl.trainers.core.types import (
@@ -28,14 +27,6 @@ def _parse_non_negative_int(value: object, *, path: str) -> int:
     if parsed < 0:
         raise ValueError(f"{path} must be >= 0 (got {parsed})")
     return parsed
-
-
-def _parse_samples_per_chunk(value: object, *, path: str) -> int | Literal["auto"]:
-    """Validate generation chunking without resolving its runtime ``auto`` mode."""
-
-    if value == "auto":
-        return "auto"
-    return _parse_non_negative_int(value, path=path)
 
 
 @dataclass(slots=True)
@@ -118,14 +109,6 @@ class TrainerConfig:
     # knob: you declare how many groups fit in one slice, the microstep count
     # falls out (SPRINT_memory_budgeted_microbatch).
     microbatch_size: int = field(default=0, metadata={"yaml": "rollout"})
-    # Generation-side sample chunk size. ``auto`` is resolved by the Ray
-    # generation runtime; 0 keeps the legacy full-group fallback. This field is
-    # carried here only because TrainerConfig bridges the merged online recipe --
-    # the trainer must not treat the generation verdict as a replay capacity.
-    samples_per_chunk: int | Literal["auto"] = field(
-        default=0,
-        metadata={"yaml": "rollout"},
-    )
     # Training-replay sample chunk size, independent of generation because
     # backward has a lower memory ceiling. Default 1 is the safe video-training
     # floor; recipes with measured headroom may explicitly raise it. 0 requests
@@ -148,15 +131,6 @@ class TrainerConfig:
     # Empty -> fp32 ("no"). Production bridges the resolved public role; legacy
     # consumers extract its base dtype instead of re-resolving execution policy.
     train_precision: str = field(default="", metadata={"yaml": "bridged"})
-    # off | full | selective (or bool: true=full, false=off). Activation
-    # checkpointing is a recompute tax that lowers MFU; it only pays for itself
-    # when activations would otherwise OOM -- i.e. video / high-resolution x
-    # high-batch. ``full`` recomputes every block (~1.3-2x slower backward).
-    # ``selective`` (SAC) saves the expensive GEMM/attention outputs and recomputes
-    # only cheap norm/pointwise, recovering ~2/3 of full's tax while still reaching
-    # larger batches than off -- the MFU-preferred mode for large-batch runs that
-    # OOM without checkpointing (measured: SPRINT_training_mfu_selective_checkpointing).
-    gradient_checkpointing: bool | str = field(default=False, metadata={"yaml": "actor"})
     # Rollout execution signature (for example bf16 or bf16+fp8). Empty ->
     # treated as the training precision. The drift guard compares the two to
     # decide whether to enforce parity without adding rollout-only build fields
@@ -187,12 +161,6 @@ class TrainerConfig:
         rbs = int(self.prompts_per_batch)
         gas = int(self.gradient_accumulation_steps)
         mbs = int(self.microbatch_size)
-        # _parse_samples_per_chunk already enforces non-negative for the int form
-        # and passes the "auto" sentinel through (resolved by the runtime, not here).
-        samples_per_chunk = _parse_samples_per_chunk(
-            self.samples_per_chunk,
-            path="rollout.samples_per_chunk",
-        )
         if gas < 0:
             raise ValueError(
                 f"actor.gradient_accumulation_steps must be >= 0 (got {gas})",
@@ -201,7 +169,6 @@ class TrainerConfig:
             raise ValueError(
                 f"rollout.microbatch_size must be >= 0 (got {mbs})",
             )
-        self.samples_per_chunk = samples_per_chunk
         replay_samples_per_chunk = _parse_non_negative_int(
             self.replay_samples_per_chunk,
             path="actor.replay_samples_per_chunk",

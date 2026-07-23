@@ -347,7 +347,7 @@ def validate_training_config(cfg: DictConfig) -> ValidatedTrainingInput:
     # flip compile on underneath an experiment that needs checkpointing.
     from vrl.trainers.activation_checkpointing import require_compile_checkpointing_compatible
 
-    require_compile_checkpointing_compatible(cfg)
+    require_compile_checkpointing_compatible(root)
     if bool(OmegaConf.select(cfg, "production.kling_video_reward.enabled", default=False)):
         validate_production_kling_video_reward_config(cfg)
     return ValidatedTrainingInput(root=root, precision=precision)

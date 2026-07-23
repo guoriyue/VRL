@@ -379,7 +379,6 @@ def _run_replay_loop_rank(
                 ema=EMAConfig(),
                 debug=DebugConfig(),
                 n_samples_per_prompt=8,
-                samples_per_chunk=1,
             ),
             device="cpu",
         )

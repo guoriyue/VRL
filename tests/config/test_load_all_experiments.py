@@ -812,7 +812,8 @@ def test_cli_overrides_reach_typed_trainer_config() -> None:
     assert trainer.torch_profiler.enabled is True
     assert trainer.torch_profiler.activities == ("cpu",)
     assert trainer.drop_zero_advantage is False
-    assert trainer.samples_per_chunk == 2
+    assert built.root.rollout is not None
+    assert built.root.rollout.samples_per_chunk == 2
 
 
 def test_generation_chunk_auto_does_not_change_fixed_replay_default() -> None:
@@ -821,10 +822,22 @@ def test_generation_chunk_auto_does_not_change_fixed_replay_default() -> None:
         "experiment/sd3_5/online_grpo_ocr",
         overrides=["rollout.samples_per_chunk=auto"],
     )
-    trainer = build_configs(cfg).trainer
+    built = build_configs(cfg)
 
-    assert trainer.samples_per_chunk == "auto"
-    assert trainer.replay_samples_per_chunk == 1
+    assert built.root.rollout is not None
+    assert built.root.rollout.samples_per_chunk == "auto"
+    assert built.trainer.replay_samples_per_chunk == 1
+
+
+@pytest.mark.parametrize("value", ["0", "-1", "largest", "true"])
+def test_generation_chunk_rejects_non_positive_or_non_integer_values(value: str) -> None:
+    cfg = load_config(
+        "experiment/sd3_5/online_grpo_ocr",
+        overrides=[f"rollout.samples_per_chunk={value}"],
+    )
+
+    with pytest.raises(ValueError, match=r"rollout\.samples_per_chunk"):
+        build_configs(cfg)
 
 
 def test_invalid_algorithm_kind_fails_fast() -> None:

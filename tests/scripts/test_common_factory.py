@@ -250,7 +250,8 @@ def test_sana_family_defaults_to_native_fp16() -> None:
         outer_autocast=False,
     )
     assert built.trainer.train_precision == built.trainer.rollout_precision
-    assert built.trainer.replay_samples_per_chunk == built.trainer.samples_per_chunk
+    assert built.root.rollout is not None
+    assert built.trainer.replay_samples_per_chunk == built.root.rollout.samples_per_chunk
     assert build.parameter_dtype is torch.float16
     assert build.precision == expected
     assert (
@@ -285,7 +286,8 @@ def test_sana_role_precision_follows_yaml(role: str, dtype: str) -> None:
 def test_sana_fullparam_pilot_disables_tf32_and_gates_backend_drift() -> None:
     """The strict first update must not consume clipping on backend mismatch."""
     cfg = load_config("experiment/sana/online_grpo_aesthetic_fullparam")
-    trainer = build_configs(cfg).trainer
+    built = build_configs(cfg)
+    trainer = built.trainer
 
     assert cfg.model.use_lora is False
     assert cfg.precision.float32_precision == "ieee"
@@ -297,7 +299,8 @@ def test_sana_fullparam_pilot_disables_tf32_and_gates_backend_drift() -> None:
     assert trainer.gradient_accumulation_steps == 1
     assert trainer.prompts_per_batch == 1
     assert trainer.n_samples_per_prompt == 8
-    assert trainer.samples_per_chunk == 1
+    assert built.root.rollout is not None
+    assert built.root.rollout.samples_per_chunk == 1
     assert trainer.replay_samples_per_chunk == 1
     assert trainer.total_epochs == 5
     assert trainer.save_freq == 1
@@ -354,10 +357,11 @@ def test_sana_experiments_pin_the_validated_symmetric_chunk_shape(
     experiment: str,
 ) -> None:
     """The measured 8/8 shape is a parity and memory contract, not a tuning default."""
-    trainer = build_configs(load_config(experiment)).trainer
+    built = build_configs(load_config(experiment))
 
-    assert trainer.samples_per_chunk == 8
-    assert trainer.replay_samples_per_chunk == 8
+    assert built.root.rollout is not None
+    assert built.root.rollout.samples_per_chunk == 8
+    assert built.trainer.replay_samples_per_chunk == 8
 
 
 @pytest.mark.parametrize("configured_dtype", ["fp16", "bf16"])

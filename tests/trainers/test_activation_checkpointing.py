@@ -19,6 +19,22 @@ def _config(mode: str | bool):
     )
 
 
+def test_absent_gradient_checkpointing_defaults_to_off() -> None:
+    class _Transformer:
+        def enable_gradient_checkpointing(self) -> None:
+            raise AssertionError("an absent public key must not enable checkpointing")
+
+    cfg = OmegaConf.create(
+        {
+            "actor": {},
+            "model": {"torch_compile": {"enable": False}},
+        },
+    )
+    bundle = type("_Bundle", (), {"trainable_modules": {"transformer": _Transformer()}})()
+
+    enable_transformer_gradient_checkpointing(bundle, cfg)
+
+
 @pytest.mark.parametrize("mode", ["off", False])
 def test_gradient_checkpointing_off_skips_trainable_modules(mode: str | bool) -> None:
     class _Transformer:
