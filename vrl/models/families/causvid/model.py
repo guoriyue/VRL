@@ -25,6 +25,11 @@ from vrl.generation.bindings.chunk_autoregressive_denoise import (
     ChunkAutoregressiveDenoiseResult,
 )
 from vrl.math.denoise.renoise import renoise_step_with_logprob
+from vrl.models.checkpoint_identity import validate_checkpoint_source_member
+from vrl.models.families.causvid.config import (
+    CAUSVID_CHECKPOINT_FILE,
+    CAUSVID_SOURCE_REVISION,
+)
 from vrl.models.families.causvid.runner import (
     OFFICIAL_CAUSVID_GEOMETRY,
     OFFICIAL_CAUSVID_SCHEDULE,
@@ -46,10 +51,8 @@ from vrl.models.steps.denoise.base import DiffusionModelBase
 from vrl.models.steps.denoise.common.lora import LoraModelMixin
 
 # Immutable upstream/checkpoint identifiers are genuine external boundaries.
-CAUSVID_SOURCE_REVISION = "adb6a5ecd07666b4d0290042915c8406e6d5ce22"
 CAUSVID_CHECKPOINT_REPOSITORY = "tianweiy/CausVid"
 CAUSVID_CHECKPOINT_REVISION = "b545eb2728fc9d1515023a270b847f7b24b3aa89"
-CAUSVID_CHECKPOINT_FILE = "autoregressive_checkpoint/model.pt"
 CAUSVID_CHECKPOINT_SHA256 = "8b75a848a525a6ab0b8cefa7f2a3997aefb581eb5824ad60bafb5337e81e521c"
 CAUSVID_BASE_REPOSITORY = "Wan-AI/Wan2.1-T2V-1.3B"
 CAUSVID_RUNTIME_SOURCE_SHA256 = "fe5e028a84beb2799adea1952ab428be0a1f82b90ee4c552874c81c67c2820b1"
@@ -916,10 +919,18 @@ def _resolve_checkpoint(build: ModelBuild) -> Path:
     if local.is_file():
         checkpoint = local
     elif local.is_dir():
+        relative_file = validate_checkpoint_source_member(
+            relative_file,
+            field_name="model.checkpoint_file",
+        )
         checkpoint = local / relative_file
         if not checkpoint.is_file():
             raise FileNotFoundError(f"CausVid checkpoint file not found: {checkpoint}")
     else:
+        relative_file = validate_checkpoint_source_member(
+            relative_file,
+            field_name="model.checkpoint_file",
+        )
         if revision is None and reference == CAUSVID_CHECKPOINT_REPOSITORY:
             revision = CAUSVID_CHECKPOINT_REVISION
         if revision is None:

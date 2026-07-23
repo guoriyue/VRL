@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
@@ -60,8 +61,23 @@ def test_anima_hub_artifact_uses_optional_revision(
     assert calls == [expected]
 
 
+@pytest.mark.parametrize("relative_file", ["../outside.safetensors", "/tmp/outside"])
+def test_anima_member_cannot_escape_checkpoint_source(relative_file: str) -> None:
+    from vrl.models.families.cosmos.anima.model import _resolve_artifact
+
+    with pytest.raises(ValueError, match="stay within its checkpoint source"):
+        _resolve_artifact(
+            "org/anima",
+            explicit_path="",
+            relative_file=relative_file,
+            field_name="transformer_path",
+            revision="immutable",
+        )
+
+
 @pytest.mark.parametrize("revision", [None, "anima-immutable-revision"])
 def test_anima_rollout_resolves_every_artifact_at_model_revision(
+    tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     revision: str | None,
 ) -> None:
@@ -69,21 +85,25 @@ def test_anima_rollout_resolves_every_artifact_at_model_revision(
     from vrl.models.families.cosmos.anima import model as anima_model
 
     calls: list[dict[str, Any]] = []
+    artifact = tmp_path / "artifact.safetensors"
+    from safetensors.torch import save_file
+
+    save_file({"marker": torch.ones(1)}, artifact)
 
     def fake_resolve(root: str, **kwargs: Any) -> str:
         calls.append({"root": root, **kwargs})
-        return f"/cache/{kwargs['field_name']}.safetensors"
+        return str(artifact)
 
     class _StopAfterResolution(RuntimeError):
         pass
 
-    def stop_load(*_args: Any, **_kwargs: Any) -> Any:
+    def stop_after_load(state: dict[str, torch.Tensor], *, dtype: torch.dtype) -> Any:
+        assert set(state) == {"marker"}
+        assert dtype == torch.float32
         raise _StopAfterResolution
 
-    import safetensors.torch
-
     monkeypatch.setattr(anima_model, "_resolve_artifact", fake_resolve)
-    monkeypatch.setattr(safetensors.torch, "load_file", stop_load)
+    monkeypatch.setattr(anima_model, "_load_anima_transformer", stop_after_load)
 
     with pytest.raises(_StopAfterResolution):
         anima_model.AnimaModel.from_build(_build(revision))
@@ -99,30 +119,106 @@ def test_anima_rollout_resolves_every_artifact_at_model_revision(
         assert {call["revision"] for call in calls} == {revision}
 
 
-@pytest.mark.parametrize("revision", [None, "anima-immutable-revision"])
-def test_anima_replay_resolves_transformer_at_model_revision(
+def test_anima_rollout_resolution_preserves_build_identity(
+    tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
-    revision: str | None,
 ) -> None:
-    """Replay forwards the same model revision to its transformer resolver."""
-    from vrl.models.families.cosmos.anima import runtime as anima_runtime
+    from vrl.models.checkpoint_identity import resolve_checkpoint_model_identity
+    from vrl.models.families.cosmos.anima import model as anima_model
 
-    calls: list[dict[str, Any]] = []
+    root = tmp_path / "anima"
+    artifact_files = {
+        "transformer_file": "weights/transformer.safetensors",
+        "text_encoder_file": "weights/text_encoder.safetensors",
+        "vae_file": "weights/vae.safetensors",
+    }
+    from safetensors.torch import save_file
 
-    def fake_resolve(root: str, **kwargs: Any) -> str:
-        calls.append({"root": root, **kwargs})
-        return "/cache/transformer.safetensors"
+    for relative_file in artifact_files.values():
+        path = root / relative_file
+        path.parent.mkdir(parents=True, exist_ok=True)
+        save_file({f"{path.stem}_marker": torch.ones(1)}, path)
+    qwen_tokenizer = tmp_path / "qwen-tokenizer"
+    t5_tokenizer = tmp_path / "t5-tokenizer"
+    qwen_tokenizer.mkdir()
+    t5_tokenizer.mkdir()
+    (qwen_tokenizer / "tokenizer.json").write_text("qwen")
+    (t5_tokenizer / "tokenizer.json").write_text("t5")
+
+    model_config: dict[str, Any] = {
+        **artifact_files,
+        "qwen_tokenizer_path": str(qwen_tokenizer),
+        "qwen_tokenizer_revision": None,
+        "t5_tokenizer_path": str(t5_tokenizer),
+        "t5_tokenizer_revision": None,
+    }
+    build = SimpleNamespace(
+        family="cosmos-predict2-anima",
+        model_name_or_path=str(root),
+        revision=None,
+        model_config=model_config,
+        parameter_dtype=torch.float32,
+        device=torch.device("cpu"),
+    )
+    configured_model_config = dict(model_config)
+    identity_before = resolve_checkpoint_model_identity(build)
 
     class _StopAfterResolution(RuntimeError):
         pass
 
-    def stop_load(*_args: Any, **_kwargs: Any) -> Any:
+    def stop_after_transformer_load(
+        state: dict[str, torch.Tensor],
+        *,
+        dtype: torch.dtype,
+    ) -> Any:
+        assert set(state) == {"transformer_marker"}
+        assert dtype == torch.float32
         raise _StopAfterResolution
 
-    import safetensors.torch
+    monkeypatch.setattr(
+        anima_model,
+        "_load_anima_transformer",
+        stop_after_transformer_load,
+    )
+
+    with pytest.raises(_StopAfterResolution):
+        anima_model.AnimaModel.from_build(build)
+    identity_after = resolve_checkpoint_model_identity(build)
+
+    assert build.model_config == configured_model_config
+    assert identity_after == identity_before
+
+
+@pytest.mark.parametrize("revision", [None, "anima-immutable-revision"])
+def test_anima_replay_resolves_transformer_at_model_revision(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    revision: str | None,
+) -> None:
+    """Replay forwards the same model revision to its transformer resolver."""
+    from vrl.models.families.cosmos.anima import model as anima_model
+    from vrl.models.families.cosmos.anima import runtime as anima_runtime
+
+    calls: list[dict[str, Any]] = []
+    artifact = tmp_path / "transformer.safetensors"
+    from safetensors.torch import save_file
+
+    save_file({"marker": torch.ones(1)}, artifact)
+
+    def fake_resolve(root: str, **kwargs: Any) -> str:
+        calls.append({"root": root, **kwargs})
+        return str(artifact)
+
+    class _StopAfterResolution(RuntimeError):
+        pass
+
+    def stop_after_load(state: dict[str, torch.Tensor], *, dtype: torch.dtype) -> Any:
+        assert set(state) == {"marker"}
+        assert dtype == torch.float32
+        raise _StopAfterResolution
 
     monkeypatch.setattr(anima_runtime, "_resolve_artifact", fake_resolve)
-    monkeypatch.setattr(safetensors.torch, "load_file", stop_load)
+    monkeypatch.setattr(anima_model, "_load_anima_transformer", stop_after_load)
 
     with pytest.raises(_StopAfterResolution):
         anima_runtime.load_anima_transformer(_build(revision))

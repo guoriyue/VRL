@@ -17,7 +17,7 @@ import torch.nn as nn
 from diffusers import FlowMatchEulerDiscreteScheduler
 
 from tests.models.steps.denoise.fixtures import stamp_model_precision
-from vrl.generation.types import VideoGenerationRequest
+from vrl.generation.types import GenerationRequest, VideoGenerationRequest
 from vrl.models.families.echo.model import (
     EchoModel,
     EchoReplayModel,
@@ -30,10 +30,18 @@ from vrl.models.families.echo.runtime import EchoChunkExecutor
 class _FakeEcho(nn.Module):
     """Stand-in for LTX2DiffusionWrapper: returns a preset x0 for any input."""
 
-    def __init__(self, channels: int = 128) -> None:
+    def __init__(
+        self,
+        channels: int = 128,
+        *,
+        video_height: int = 256,
+        video_width: int = 256,
+    ) -> None:
         super().__init__()
         # A real nn.Module so `_transformer_dtype()` / trainable_modules work.
         self.model = nn.Linear(channels, channels)
+        self.video_height = video_height
+        self.video_width = video_width
         self.x0: torch.Tensor | None = None
         self.last_timestep: torch.Tensor | None = None
 
@@ -188,6 +196,44 @@ def test_prepare_sampling_rejects_unbaked_guidance() -> None:
 
     with pytest.raises(ValueError, match=r"guidance_scale must be 1\.0"):
         model.prepare_sampling(request, encoded)
+
+
+def test_prepare_sampling_rejects_dimensions_different_from_model_construction() -> None:
+    model, _ = _build_model()
+    encoded = {"video_context": torch.randn(1, 3, 16), "attention_mask": torch.ones(1, 3)}
+    request = _request()
+    request.width = 224
+
+    with pytest.raises(
+        ValueError,
+        match=r"request dimensions 256x224.*construction dimensions 256x256",
+    ):
+        model.prepare_sampling(request, encoded)
+
+
+def test_executor_rejects_dimension_mismatch_before_prompt_encoding() -> None:
+    model, _ = _build_model()
+    executor = EchoChunkExecutor(model)
+    request = GenerationRequest(
+        request_id="req",
+        family="echo",
+        task="t2v",
+        inputs=["a cat"],
+        samples_per_prompt=1,
+        sampling={
+            "height": 256,
+            "width": 224,
+            "num_frames": 25,
+            "num_steps": 4,
+            "guidance_scale": 1.0,
+        },
+    )
+
+    with pytest.raises(
+        ValueError,
+        match=r"sampling dimensions 256x224.*construction dimensions 256x256",
+    ):
+        executor.parse_sampling_params(request)
 
 
 def test_export_restore_roundtrip_feeds_forward_step() -> None:

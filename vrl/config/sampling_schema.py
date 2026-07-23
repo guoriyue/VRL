@@ -65,10 +65,9 @@ class MagiSamplingSection(SamplingSection):
 
 
 class ARSamplingSection(SamplingSection):
-    """Request-local controls shared by autoregressive image generators."""
+    """Request-local scheduler controls shared by autoregressive generators."""
 
     ar_scheduler_batch_size: int | None = None
-    max_text_length: Any = None
 
     @field_validator("ar_scheduler_batch_size", mode="before")
     @classmethod
@@ -82,7 +81,13 @@ class ARSamplingSection(SamplingSection):
         return value
 
 
-class SharedAttentionARSamplingSection(ARSamplingSection):
+class TextEncodedARSamplingSection(ARSamplingSection):
+    """AR sampling whose prompt encoder exposes a sequence-length knob."""
+
+    max_text_length: Any = None
+
+
+class SharedAttentionARSamplingSection(TextEncodedARSamplingSection):
     """AR sampling for families using the shared selectable attention adapter."""
 
     attention_backend: Literal["vllm_paged", "torch_native"] | None = None
@@ -121,7 +126,7 @@ class Emu3SamplingSection(SharedAttentionARSamplingSection):
     temperature: Any = None
 
 
-class GlmImageSamplingSection(ARSamplingSection):
+class GlmImageSamplingSection(TextEncodedARSamplingSection):
     """GLM-Image native-cache AR prior and frozen DiT decode controls."""
 
     decode_guidance_scale: Any = None
@@ -136,8 +141,6 @@ class LlamaGenSamplingSection(ARSamplingSection):
     """LlamaGen native-cache discrete image-token sampling."""
 
     guidance_scale: Any = None
-    image_size: Any = None
-    image_token_num: Any = None
     temperature: Any = None
     top_k: Any = None
     top_p: Any = None
@@ -156,6 +159,7 @@ __all__ = [
     "NextStepSamplingSection",
     "SamplingSection",
     "SharedAttentionARSamplingSection",
+    "TextEncodedARSamplingSection",
     "TextEncodedImageSamplingSection",
     "TextEncodedVideoSamplingSection",
     "VideoSamplingSection",

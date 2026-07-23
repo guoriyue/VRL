@@ -499,11 +499,19 @@ def test_wan_fsdp_replay_build_defers_full_gpu_move_until_sharding(
         "load_diffusers_scheduler",
         lambda _build, _class_name: object(),
     )
+    monkeypatch.setattr(
+        "diffusers.DiffusionPipeline.load_config",
+        lambda *_args, **_kwargs: {
+            "boundary_ratio": None,
+            "expand_timesteps": False,
+        },
+    )
     cfg = OmegaConf.create(
         {
             "model": {
                 "family": "wan_2_1_i2v",
                 "path": "fake/Wan2.1-I2V",
+                "revision": "a" * 40,
                 "use_lora": True,
                 "lora": {
                     "rank": 2,

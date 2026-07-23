@@ -160,7 +160,9 @@ def test_model_build_resolver_projects_nvfp4_over_the_rollout_base_dtype() -> No
     assert build.precision.quantization.recipe is None
 
 
-def test_full_generation_build_with_training_role_excludes_rollout_quantization() -> None:
+def test_full_generation_build_with_training_role_excludes_rollout_quantization(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """Offline DPO may load generation modules without adopting rollout kernels."""
 
     from omegaconf import OmegaConf
@@ -169,9 +171,20 @@ def test_full_generation_build_with_training_role_excludes_rollout_quantization(
     from vrl.config.schema import parse_config
     from vrl.families.registry import get_model_family_entry
 
+    monkeypatch.setattr(
+        "diffusers.DiffusionPipeline.load_config",
+        lambda *_args, **_kwargs: {
+            "boundary_ratio": None,
+            "expand_timesteps": False,
+        },
+    )
     cfg = OmegaConf.create(
         {
-            "model": {"family": "wan_2_1", "path": "fake/repo"},
+            "model": {
+                "family": "wan_2_1",
+                "path": "fake/repo",
+                "revision": "a" * 40,
+            },
             "precision": {
                 "float32_precision": "tf32",
                 "training": {"dtype": "bf16"},
@@ -266,6 +279,12 @@ def _build(**overrides: Any) -> ModelBuild:
         "sampling_config": dict(scheduler_config),
     }
     values.update(overrides)
+    if str(values["family"]).startswith("wan_2_1"):
+        model_config.setdefault("boundary_ratio", None)
+        model_config.setdefault(
+            "trainable_transformers",
+            ["transformer_2"] if model_config["boundary_ratio"] is not None else ["transformer"],
+        )
     return ModelBuild(**values)
 
 

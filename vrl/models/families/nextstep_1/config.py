@@ -5,7 +5,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
+from pydantic import Field
+
 from vrl.config.model_schema import ModelSection
+from vrl.models.checkpoint_identity import checkpoint_identity_metadata
 
 # NextStep-1 image grid defaults for the f8ch16 VAE checkpoint.
 NEXTSTEP_DEFAULT_TOKEN_NUM = 1024  # 32 x 32 patches per 256^2 image
@@ -15,9 +18,25 @@ NEXTSTEP_DEFAULT_TOKEN_DIM = 64  # latent_patch_size^2 * f8ch16 channels
 class NextStep1ModelSection(ModelSection):
     """NextStep-1 tokenizer and frozen-module keys."""
 
-    freeze_vae: Any = None
-    vae_path: Any = None
-    vae_revision: Any = None
+    freeze_vae: Any = Field(
+        default=None,
+        json_schema_extra=checkpoint_identity_metadata("exclude"),
+    )
+    vae_path: Any = Field(
+        default=None,
+        json_schema_extra=checkpoint_identity_metadata(
+            "source",
+            source="vae",
+            revision_field="vae_revision",
+        ),
+    )
+    vae_revision: Any = Field(
+        default=None,
+        json_schema_extra=checkpoint_identity_metadata(
+            "source_revision",
+            source="vae",
+        ),
+    )
 
 
 @dataclass(slots=True)

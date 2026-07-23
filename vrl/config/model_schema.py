@@ -9,9 +9,10 @@ from __future__ import annotations
 
 from typing import Any
 
-from pydantic import ConfigDict
+from pydantic import ConfigDict, Field
 
 from vrl.config.base import ConfigBase
+from vrl.models.checkpoint_identity import checkpoint_identity_metadata
 
 
 class _ClosedModelSection(ConfigBase):
@@ -23,13 +24,38 @@ class _ClosedModelSection(ConfigBase):
 class LoraSection(_ClosedModelSection):
     """Shared adapter inputs consumed by ``ModelBuild.lora``."""
 
-    rank: int | None = None
-    alpha: int | None = None
-    path: str | None = None
-    target_modules: list[str] | None = None
-    init_lora_weights: str | bool | None = None
-    dropout: float | None = None
-    init: str | bool | None = None
+    rank: int | None = Field(
+        default=None,
+        json_schema_extra=checkpoint_identity_metadata("value", required=True),
+    )
+    alpha: int | None = Field(
+        default=None,
+        json_schema_extra=checkpoint_identity_metadata("value", required=True),
+    )
+    path: str | None = Field(
+        default=None,
+        json_schema_extra=checkpoint_identity_metadata("exclude"),
+    )
+    target_modules: list[str] | None = Field(
+        default=None,
+        json_schema_extra=checkpoint_identity_metadata(
+            "value",
+            required=True,
+            canonicalize="sorted_unique",
+        ),
+    )
+    init_lora_weights: str | bool | None = Field(
+        default=None,
+        json_schema_extra=checkpoint_identity_metadata("exclude"),
+    )
+    dropout: float | None = Field(
+        default=None,
+        json_schema_extra=checkpoint_identity_metadata("value", default=0.0),
+    )
+    init: str | bool | None = Field(
+        default=None,
+        json_schema_extra=checkpoint_identity_metadata("exclude"),
+    )
 
 
 class VaeDecodeMemorySection(_ClosedModelSection):
@@ -70,19 +96,52 @@ class ModelExecutorSection(_ClosedModelSection):
 class ModelSection(_ClosedModelSection):
     """Keys shared by every registered model family."""
 
-    family: str
+    family: str = Field(
+        json_schema_extra=checkpoint_identity_metadata("exclude"),
+    )
     # Readers: ModelBuild plus family runtime LoRA projections.
-    lora: LoraSection | None = None
+    lora: LoraSection | None = Field(
+        default=None,
+        json_schema_extra=checkpoint_identity_metadata(
+            "lora",
+            enabled_by="use_lora",
+        ),
+    )
     # Global section shape; the selected family validates supported targets.
-    memory: ModelMemorySection | None = None
-    path: Any = None
+    memory: ModelMemorySection | None = Field(
+        default=None,
+        json_schema_extra=checkpoint_identity_metadata("exclude"),
+    )
+    path: Any = Field(
+        default=None,
+        json_schema_extra=checkpoint_identity_metadata(
+            "source",
+            source="main",
+            revision_field="revision",
+        ),
+    )
     # Immutable Hub snapshot used by full-pipeline rollout and component replay.
-    revision: str | None = None
-    torch_compile: TorchCompileSection | None = None
-    use_lora: Any = None
+    revision: str | None = Field(
+        default=None,
+        json_schema_extra=checkpoint_identity_metadata(
+            "source_revision",
+            source="main",
+        ),
+    )
+    torch_compile: TorchCompileSection | None = Field(
+        default=None,
+        json_schema_extra=checkpoint_identity_metadata("exclude"),
+    )
+    use_lora: Any = Field(
+        default=None,
+        json_schema_extra=checkpoint_identity_metadata("value", default=False),
+    )
     # Shared DiffusionChunkExecutor constructor values. The selected family
     # validates this block at typed parse and again at launch projection.
-    executor: ModelExecutorSection | None = None
+    executor: ModelExecutorSection | None = Field(
+        default=None,
+        json_schema_extra=checkpoint_identity_metadata("exclude"),
+    )
 
 
 __all__ = [

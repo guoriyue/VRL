@@ -8,6 +8,7 @@ import pytest
 import torch
 from omegaconf import OmegaConf
 
+from vrl.config.loading import load_config
 from vrl.config.precision import resolve_precision_policy
 from vrl.config.schema import parse_config
 from vrl.families.registry import get_model_family_entry
@@ -23,6 +24,7 @@ from vrl.models.families.llamagen.config import (
     LLAMAGEN_T5_PATH,
     LLAMAGEN_VQ_CKPT,
     LlamaGenConfig,
+    llamagen_image_size,
 )
 from vrl.models.families.llamagen.model import (
     LLAMAGEN_IMAGE_VOCAB_SIZE,
@@ -36,6 +38,8 @@ from vrl.models.families.llamagen.runtime import (
     LlamaGenChunkExecutor,
     llamagen_config_from_build,
 )
+from vrl.rollouts.collector.config import build_rollout_config_from_cfg
+from vrl.rollouts.collector.requests import GenerationRequestBuilder
 
 
 def _cfg():
@@ -44,6 +48,7 @@ def _cfg():
             "model": {
                 "family": "llamagen",
                 "path": "peizesun/llamagen_t2i",
+                "image_token_num": 256,
                 "use_lora": True,
             },
             "precision": {
@@ -55,7 +60,6 @@ def _cfg():
                 "guidance_scale": 7.5,
                 "temperature": 1.0,
                 "top_k": 1000,
-                "image_token_num": 256,
             },
         }
     )
@@ -66,6 +70,21 @@ class _TinyGpt(torch.nn.Module):
         super().__init__()
         self.wqkv = torch.nn.Linear(2, 2, bias=False)
         self.wo = torch.nn.Linear(2, 2, bias=False)
+
+
+def _executor_model(
+    *,
+    image_token_num: int = LLAMAGEN_IMAGE_TOKEN_NUM,
+    cls_token_num: int = LLAMAGEN_CAPTION_TOKEN_NUM,
+    downsample_size: int = LLAMAGEN_DOWNSAMPLE_SIZE,
+) -> SimpleNamespace:
+    return SimpleNamespace(
+        config=SimpleNamespace(
+            image_token_num=image_token_num,
+            cls_token_num=cls_token_num,
+            downsample_size=downsample_size,
+        ),
+    )
 
 
 @pytest.mark.parametrize("use_lora", [True, False])
@@ -138,6 +157,115 @@ def test_config_from_build_uses_fused_projection_lora_targets() -> None:
     assert config["top_k"] == 1000
     assert config["image_token_num"] == 256
     assert config["model_path"] == "peizesun/llamagen_t2i"
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "message"),
+    [
+        (
+            "image_token_num",
+            1024,
+            r"sampling\.image_token_num=1024.*model\.image_token_num=256",
+        ),
+        (
+            "image_size",
+            512,
+            r"sampling\.image_size=512.*decoded size.*\(256\)",
+        ),
+        (
+            "max_text_length",
+            80,
+            r"sampling\.max_text_length=80.*caption-prefix length.*\(120\)",
+        ),
+    ],
+)
+def test_config_from_build_rejects_sampling_topology_different_from_model(
+    field: str,
+    value: int,
+    message: str,
+) -> None:
+    root = parse_config(_cfg())
+    precision = resolve_precision_policy(root)
+    build = get_model_family_entry("llamagen").resolve_model_build(
+        root,
+        device="cpu",
+        precision=precision,
+    )
+    assert build.sampling_config is not None
+    build.sampling_config[field] = value
+
+    with pytest.raises(ValueError, match=message):
+        llamagen_config_from_build(build)
+
+
+def test_schema_and_direct_model_build_share_square_grid_validation() -> None:
+    invalid_cfg = _cfg()
+    invalid_cfg.model.image_token_num = 255
+    with pytest.raises(ValueError, match="square grid"):
+        parse_config(invalid_cfg)
+
+    root = parse_config(_cfg())
+    precision = resolve_precision_policy(root)
+    build = get_model_family_entry("llamagen").resolve_model_build(
+        root,
+        device="cpu",
+        precision=precision,
+    )
+    assert build.model_config is not None
+    build.model_config["image_token_num"] = 255
+    with pytest.raises(ValueError, match="square grid"):
+        llamagen_config_from_build(build)
+
+
+def test_llamagen_preset_omits_model_derived_request_topology() -> None:
+    cfg = load_config("experiment/llamagen/online_grpo_pickscore_validation")
+    topology_fields = {
+        "image_token_num",
+        "image_size",
+        "max_text_length",
+    }
+
+    assert cfg.model.image_token_num == LLAMAGEN_IMAGE_TOKEN_NUM
+    assert topology_fields.isdisjoint(cfg.sampling)
+    parsed = parse_config(cfg)
+    assert parsed.sampling is not None
+    assert topology_fields.isdisjoint(type(parsed.sampling).model_fields)
+
+
+def test_llamagen_collector_request_derives_omitted_topology_from_model() -> None:
+    root = parse_config(
+        load_config("experiment/llamagen/online_grpo_pickscore_validation"),
+    )
+    collector_config = build_rollout_config_from_cfg(root)
+    request = (
+        GenerationRequestBuilder(
+            entry=get_model_family_entry("llamagen"),
+            config=collector_config,
+        )
+        .build(["draw text"], 1)
+        .request
+    )
+
+    assert {
+        "image_token_num",
+        "image_size",
+        "max_text_length",
+    }.isdisjoint(request.sampling)
+    params = LlamaGenChunkExecutor(
+        model=_executor_model(),
+    ).layout.parse_sampling_params(request)
+    assert (
+        params.image_token_num,
+        params.image_size,
+        params.max_text_length,
+    ) == (
+        LLAMAGEN_IMAGE_TOKEN_NUM,
+        llamagen_image_size(
+            LLAMAGEN_IMAGE_TOKEN_NUM,
+            LLAMAGEN_DOWNSAMPLE_SIZE,
+        ),
+        LLAMAGEN_CAPTION_TOKEN_NUM,
+    )
 
 
 def test_false_lora_initialization_reaches_peft_as_bool() -> None:
@@ -281,7 +409,7 @@ def test_executor_layout_defaults_match_xl_stage1_256() -> None:
         samples_per_prompt=1,
         sampling={},
     )
-    params = LlamaGenChunkExecutor(model=object()).layout.parse_sampling_params(request)
+    params = LlamaGenChunkExecutor(model=_executor_model()).layout.parse_sampling_params(request)
     assert params.image_token_num == 256
     assert params.image_size == 256
     assert params.max_text_length == 120
@@ -298,7 +426,7 @@ def test_executor_rejects_shared_attention_backend_selection() -> None:
         sampling={"attention_backend": "vllm_paged"},
     )
     with pytest.raises(ValueError, match="attention_backend"):
-        LlamaGenChunkExecutor(model=object())._ar_runner(request)
+        LlamaGenChunkExecutor(model=_executor_model())._ar_runner(request)
 
 
 @pytest.mark.parametrize(
@@ -318,7 +446,7 @@ def test_executor_allows_scheduler_bounds_covering_full_static_kv_chunk(
         sampling={"ar_scheduler_batch_size": batch_size},
     )
 
-    resolved = LlamaGenChunkExecutor(model=object()).resolve_scheduler_batch_size(
+    resolved = LlamaGenChunkExecutor(model=_executor_model()).resolve_scheduler_batch_size(
         request,
         row_count=2,
     )
@@ -329,7 +457,7 @@ def test_executor_allows_scheduler_bounds_covering_full_static_kv_chunk(
 def test_executor_rejects_partial_scheduler_before_static_kv_preparation(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    executor = LlamaGenChunkExecutor(model=object())
+    executor = LlamaGenChunkExecutor(model=_executor_model())
     prepare_calls = 0
 
     def prepare_chunk_inputs(*_args, **_kwargs):
@@ -366,6 +494,8 @@ def test_chunk_context_keeps_temperature_and_sampling_provenance_only(
     mask = torch.ones_like(ids)
     model = SimpleNamespace(
         config=SimpleNamespace(
+            image_token_num=4,
+            downsample_size=16,
             cls_token_num=120,
             top_k=0,
             top_p=1.0,
@@ -415,3 +545,93 @@ def test_chunk_context_keeps_temperature_and_sampling_provenance_only(
         "top_k": 32,
         "top_p": 0.9,
     }
+
+
+def test_executor_rejects_request_grid_different_from_model_topology() -> None:
+    executor = LlamaGenChunkExecutor(model=_executor_model(image_token_num=16))
+    request = GenerationRequest(
+        request_id="req",
+        family="llamagen",
+        task="ar_t2i",
+        inputs=["draw text"],
+        samples_per_prompt=1,
+        sampling={
+            "image_token_num": 4,
+            "image_size": 32,
+            "max_text_length": LLAMAGEN_CAPTION_TOKEN_NUM,
+        },
+    )
+
+    with pytest.raises(
+        ValueError,
+        match=r"image_token_num == model\.image_token_num \(16\); got 4",
+    ):
+        executor.prepare_chunk_inputs(
+            request,
+            SampleChunk(
+                prompt_index=0,
+                prompt="draw text",
+                sample_start=0,
+                sample_count=1,
+            ),
+        )
+
+
+def test_executor_rejects_decode_size_different_from_model_topology() -> None:
+    executor = LlamaGenChunkExecutor(model=_executor_model(image_token_num=16))
+    request = GenerationRequest(
+        request_id="req",
+        family="llamagen",
+        task="ar_t2i",
+        inputs=["draw text"],
+        samples_per_prompt=1,
+        sampling={
+            "image_token_num": 16,
+            "image_size": 32,
+            "max_text_length": LLAMAGEN_CAPTION_TOKEN_NUM,
+        },
+    )
+
+    with pytest.raises(
+        ValueError,
+        match=r"image_size=64.*model\.image_token_num=16.*got 32",
+    ):
+        executor.prepare_chunk_inputs(
+            request,
+            SampleChunk(
+                prompt_index=0,
+                prompt="draw text",
+                sample_start=0,
+                sample_count=1,
+            ),
+        )
+
+
+def test_executor_rejects_caption_length_different_from_model_topology() -> None:
+    executor = LlamaGenChunkExecutor(model=_executor_model(image_token_num=16))
+    request = GenerationRequest(
+        request_id="req",
+        family="llamagen",
+        task="ar_t2i",
+        inputs=["draw text"],
+        samples_per_prompt=1,
+        sampling={
+            "image_token_num": 16,
+            "image_size": 64,
+            "max_text_length": 80,
+        },
+    )
+
+    with pytest.raises(
+        ValueError,
+        match=r"max_text_length == cls_token_num \(120\); got 80",
+    ):
+        executor.prepare_chunk_inputs(
+            request,
+            SampleChunk(
+                prompt_index=0,
+                prompt="draw text",
+                sample_start=0,
+                sample_count=1,
+            ),
+        )

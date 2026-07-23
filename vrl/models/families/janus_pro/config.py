@@ -5,7 +5,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
+from pydantic import Field
+
 from vrl.config.model_schema import ModelSection
+from vrl.models.checkpoint_identity import checkpoint_identity_metadata
 
 # Default latent-grid length for Janus-Pro image generation.
 JANUS_IMAGE_TOKEN_NUM = 576  # 24 x 24 latent grid per image
@@ -14,8 +17,14 @@ JANUS_IMAGE_TOKEN_NUM = 576  # 24 x 24 latent grid per image
 class JanusProModelSection(ModelSection):
     """Janus-Pro optional model-wrapper keys."""
 
-    trust_remote_code: Any = None
-    vq_latent_channels: Any = None
+    trust_remote_code: Any = Field(
+        default=None,
+        json_schema_extra=checkpoint_identity_metadata("exclude"),
+    )
+    vq_latent_channels: Any = Field(
+        default=None,
+        json_schema_extra=checkpoint_identity_metadata("value"),
+    )
 
 
 @dataclass(slots=True)

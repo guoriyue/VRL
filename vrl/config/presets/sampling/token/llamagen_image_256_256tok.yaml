@@ -1,11 +1,6 @@
-# LlamaGen discrete AR image sampling: 16x16 grid -> 256 tokens -> 256 px via
-# VQ-16. max_text_length MUST equal the checkpoint's cls_token_num (120) — the
-# caption prefix length is baked into the GPT's rope table (the runtime
-# rejects anything else). cfg 7.5 + top_k 1000 are the upstream demo values.
+# LlamaGen request behavior matching the upstream demo. GPT token-grid, decoded
+# size, and caption-prefix length are model topology and are derived at runtime.
 sampling:
-  image_token_num: 256
-  image_size: 256
   guidance_scale: 7.5
   temperature: 1.0
   top_k: 1000
-  max_text_length: 120

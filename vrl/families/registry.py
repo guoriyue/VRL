@@ -754,6 +754,9 @@ _register_model_family(
             transformer_classname="WanTransformer3DModel",
             # Replay recomputes log-probs on the schedule the rollout sampled.
             scheduler_classname="UniPCMultistepScheduler",
+            model_build_normalizer=(
+                "vrl.models.families.wan_2_1.config:normalize_wan_model_build"
+            ),
         ),
     ),
 )
@@ -771,6 +774,9 @@ _register_model_family(
             replay_cls="vrl.models.families.wan_2_1.model:WanI2VReplayModel",
             transformer_classname="WanTransformer3DModel",
             scheduler_classname="UniPCMultistepScheduler",
+            model_build_normalizer=(
+                "vrl.models.families.wan_2_1.config:normalize_wan_model_build"
+            ),
         ),
     ),
 )

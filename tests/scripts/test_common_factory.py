@@ -201,8 +201,17 @@ def test_diffusion_factory_rejects_a_sibling_config_type(
         )
 
 
-def test_wan_empty_lora_preserves_base_policy_initially() -> None:
+def test_wan_empty_lora_preserves_base_policy_initially(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """Checks Wan empty LoRA preserves base policy initially."""
+    monkeypatch.setattr(
+        "diffusers.DiffusionPipeline.load_config",
+        lambda *_args, **_kwargs: {
+            "boundary_ratio": None,
+            "expand_timesteps": False,
+        },
+    )
     cfg = load_config("experiment/wan_2_1/online_grpo_physics")
     built = build_configs(cfg)
 

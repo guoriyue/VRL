@@ -5,7 +5,6 @@ model:
     max_sequence_length: 256
   path: Wan-AI/Wan2.2-T2V-A14B-Diffusers
   revision: 5be7df9619b54f4e2667b2755bc6a756675b5cd7
-  boundary_ratio: 0.875
   trainable_transformers:
     - transformer_2
 

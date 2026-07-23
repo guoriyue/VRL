@@ -1,8 +1,8 @@
 # LlamaGen GPT-XL (775M) + PickScore GRPO — first-landing training validation.
 # The lightest AR family (256 tokens -> 256 px): the cheap end-to-end check
 # that the generic AR GRPO path trains a vendored (non-HF) family. CFG's
-# uncond branch is the checkpoint's learned null-caption embedding, and
-# max_text_length is pinned to cls_token_num=120 by the runtime.
+# uncond branch is the checkpoint's learned null-caption embedding. Request
+# topology is derived from the selected model checkpoint.
 defaults:
   - /recipe/online/categorical_token_grpo
   - /model/llamagen/xl_256

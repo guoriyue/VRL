@@ -326,6 +326,43 @@ def test_native_cache_family_rejects_typed_attention_backend(family: str) -> Non
         parse_config(cfg)
 
 
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("image_token_num", 256),
+        ("image_size", 256),
+        ("max_text_length", 120),
+    ],
+)
+def test_llamagen_sampling_rejects_model_derived_topology(
+    field: str,
+    value: object,
+) -> None:
+    cfg = _minimal_grpo_cfg(
+        model={"family": "llamagen"},
+        sampling={field: value},
+    )
+
+    with pytest.raises(ValueError, match=rf"unknown sampling\.{field}"):
+        parse_config(cfg)
+
+
+@pytest.mark.parametrize(
+    "family",
+    ["janus_pro", "nextstep_1", "emu3", "glm_image"],
+)
+def test_text_encoded_ar_families_keep_request_text_length(family: str) -> None:
+    cfg = _minimal_grpo_cfg(
+        model={"family": family},
+        sampling={"max_text_length": 128},
+    )
+
+    sampling = parse_config(cfg).sampling
+
+    assert sampling is not None
+    assert sampling.max_text_length == 128
+
+
 def test_sampling_schema_is_selected_from_model_family() -> None:
     cfg = _minimal_grpo_cfg(model={"family": "sana"})
     cfg.sampling = {"max_sequence_length": 300}
@@ -450,7 +487,7 @@ def test_training_keys_are_registered_not_unknown() -> None:
 
 
 def test_wan_model_keys_are_scoped_to_wan_family() -> None:
-    """Wan dual-stage/offload keys are accepted only for Wan model families."""
+    """Wan trainable-topology/offload keys are accepted only for Wan families."""
     from vrl.config.unknown_keys import find_unknown_keys
 
     wan_cfg = OmegaConf.create(
@@ -458,7 +495,6 @@ def test_wan_model_keys_are_scoped_to_wan_family() -> None:
             "model": {
                 "family": "wan_2_1_i2v",
                 "path": "Wan-AI/Wan2.2-I2V-A14B-Diffusers",
-                "boundary_ratio": 0.9,
                 "trainable_transformers": ["transformer_2"],
                 "offload_mode": "sequential",
             },
@@ -471,7 +507,6 @@ def test_wan_model_keys_are_scoped_to_wan_family() -> None:
             "model": {
                 "family": "wan_i2v",
                 "path": "Wan-AI/Wan2.2-I2V-A14B-Diffusers",
-                "boundary_ratio": 0.9,
                 "trainable_transformers": ["transformer_2"],
                 "offload_mode": "sequential",
             },
@@ -495,6 +530,25 @@ def test_wan_model_keys_are_scoped_to_wan_family() -> None:
         "model.offload_mode",
         "model.trainable_transformers",
     ]
+
+
+@pytest.mark.parametrize("family", ["wan_2_1", "wan_2_1_i2v", "wan", "wan_i2v"])
+def test_wan_boundary_ratio_is_source_derived_not_public_config(family: str) -> None:
+    from vrl.config.unknown_keys import find_unknown_keys
+
+    cfg = OmegaConf.create(
+        {
+            "model": {
+                "family": family,
+                "path": "Wan-AI/Wan2.2-I2V-A14B-Diffusers",
+                "boundary_ratio": 0.9,
+            },
+        },
+    )
+
+    assert find_unknown_keys(cfg) == ["model.boundary_ratio"]
+    with pytest.raises(ValueError, match=r"unknown model\.boundary_ratio"):
+        parse_config(cfg)
 
 
 @pytest.mark.parametrize(
@@ -703,6 +757,7 @@ def test_llamagen_keys_and_alias_select_family_section(family: str) -> None:
     payload = {
         "gpt_ckpt": "custom-gpt.pt",
         "gpt_model": "GPT-XL",
+        "image_token_num": 256,
         "t5_path": "org/t5",
         "t5_revision": "immutable",
         "vq_ckpt": "custom-vq.pt",
@@ -719,7 +774,14 @@ def test_llamagen_keys_and_alias_select_family_section(family: str) -> None:
 
 @pytest.mark.parametrize(
     "field",
-    ["gpt_ckpt", "gpt_model", "t5_path", "t5_revision", "vq_ckpt"],
+    [
+        "gpt_ckpt",
+        "gpt_model",
+        "image_token_num",
+        "t5_path",
+        "t5_revision",
+        "vq_ckpt",
+    ],
 )
 def test_llamagen_keys_are_unknown_for_shared_token_sibling(field: str) -> None:
     from vrl.config.unknown_keys import find_unknown_keys
@@ -736,7 +798,12 @@ def test_llamagen_keys_are_unknown_for_shared_token_sibling(field: str) -> None:
         (
             "echo",
             EchoModelSection,
-            {"gemma_path": "google/gemma-3-12b-it", "gemma_revision": "revision"},
+            {
+                "gemma_path": "google/gemma-3-12b-it",
+                "gemma_revision": "revision",
+                "video_height": 256,
+                "video_width": 256,
+            },
         ),
         (
             "causvid",

@@ -282,6 +282,7 @@ def test_checkpoint_sha_and_source_revision_fail_closed(
     digest = hashlib.sha256(checkpoint.read_bytes()).hexdigest()
     build = SimpleNamespace(
         model_name_or_path=str(checkpoint),
+        revision=None,
         model_config={"checkpoint_sha256": digest},
     )
 
@@ -391,6 +392,7 @@ def test_checkpoint_resolution_preserves_remote_revision_and_sha(
 ) -> None:
     build = SimpleNamespace(
         model_name_or_path="example/checkpoint",
+        revision=None,
         model_config={"checkpoint_file": "weights/model.pt"},
     )
     with pytest.raises(ValueError, match=r"requires immutable model\.revision"):
@@ -417,12 +419,8 @@ def test_checkpoint_resolution_preserves_remote_revision_and_sha(
         return str(downloaded)
 
     monkeypatch.setattr("huggingface_hub.hf_hub_download", fake_hf_hub_download)
-    build.model_config.update(
-        {
-            "revision": "checkpoint-revision",
-            "checkpoint_sha256": digest,
-        },
-    )
+    build.revision = "checkpoint-revision"
+    build.model_config["checkpoint_sha256"] = digest
 
     assert _resolve_checkpoint(build) == downloaded
     assert calls == [
@@ -435,6 +433,23 @@ def test_checkpoint_resolution_preserves_remote_revision_and_sha(
 
     build.model_config["checkpoint_sha256"] = "0" * 64
     with pytest.raises(ValueError, match="SHA256 mismatch"):
+        _resolve_checkpoint(build)
+
+
+@pytest.mark.parametrize("checkpoint_file", ["../outside.pt", "/tmp/outside.pt"])
+def test_checkpoint_member_cannot_escape_local_source(
+    tmp_path: Path,
+    checkpoint_file: str,
+) -> None:
+    root = tmp_path / "checkpoint"
+    root.mkdir()
+    build = SimpleNamespace(
+        model_name_or_path=str(root),
+        revision=None,
+        model_config={"checkpoint_file": checkpoint_file},
+    )
+
+    with pytest.raises(ValueError, match="stay within its checkpoint source"):
         _resolve_checkpoint(build)
 
 

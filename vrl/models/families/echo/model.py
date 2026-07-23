@@ -28,6 +28,7 @@ from typing import Any
 import torch
 
 from vrl.generation.types import VideoGenerationRequest
+from vrl.models.families.echo.config import resolve_echo_video_dimensions
 from vrl.models.interfaces.runtime import ModelBuild
 from vrl.models.steps.denoise.base import (
     DiffusionModelBase,
@@ -161,6 +162,18 @@ class EchoModel(LoraModelMixin, DiffusionModelBase):
     def raw_handle(self) -> Any:
         return self._echo
 
+    @property
+    def video_height(self) -> int:
+        """Fixed pixel height used to construct the Echo latent-grid wrapper."""
+
+        return int(self._echo.video_height)
+
+    @property
+    def video_width(self) -> int:
+        """Fixed pixel width used to construct the Echo latent-grid wrapper."""
+
+        return int(self._echo.video_width)
+
     def apply_full_finetune(self, build: ModelBuild) -> None:
         self.transformer.requires_grad_(True)
         if not build.defer_trainable_device_move:
@@ -220,6 +233,7 @@ class EchoModel(LoraModelMixin, DiffusionModelBase):
         ``build.model_config['gemma_path']`` is the separate Gemma-3-12B directory.
         """
 
+        video_height, video_width = resolve_echo_video_dimensions(build)
         from diffusers import FlowMatchEulerDiscreteScheduler
         from ltx_distillation.models.ltx_wrapper import create_ltx2_wrapper
         from ltx_distillation.models.text_encoder_wrapper import (
@@ -245,13 +259,6 @@ class EchoModel(LoraModelMixin, DiffusionModelBase):
             gemma_ref,
             **model_config_revision_kwargs(build, "gemma_revision"),
         )
-
-        # Sampling resolution sizes the wrapper's RoPE/patch grid; the rollout
-        # request can override per call, but the wrapper wants a build-time
-        # default. Read it from the sampling block when present.
-        sampling = getattr(build, "sampling_config", None) or {}
-        video_height = int(sampling.get("height", 512))
-        video_width = int(sampling.get("width", 768))
 
         text_encoder = create_text_encoder_wrapper(
             checkpoint_path=checkpoint,
@@ -327,6 +334,11 @@ class EchoModel(LoraModelMixin, DiffusionModelBase):
             raise ValueError(
                 "Echo has classifier-free guidance baked into its checkpoint; "
                 "guidance_scale must be 1.0",
+            )
+        if (request.height, request.width) != (self.video_height, self.video_width):
+            raise ValueError(
+                f"Echo request dimensions {request.height}x{request.width} must equal "
+                f"the model construction dimensions {self.video_height}x{self.video_width}",
             )
         device = self.device
         video_context = encoded["video_context"]

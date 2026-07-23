@@ -13,6 +13,13 @@ from vrl.generation.bindings.token_autoregressive import (
 )
 from vrl.generation.execution.chunks import SampleChunk
 from vrl.generation.types import GenerationRequest
+from vrl.models.families.llamagen.config import (
+    LLAMAGEN_CAPTION_TOKEN_NUM,
+    LLAMAGEN_DOWNSAMPLE_SIZE,
+    LLAMAGEN_IMAGE_TOKEN_NUM,
+    llamagen_image_grid_side,
+    llamagen_image_size,
+)
 from vrl.models.families.llamagen.runner import LlamaGenARModelRunner
 from vrl.models.interfaces.runtime import ModelBuild
 from vrl.models.steps.token.build import token_model_config_base
@@ -23,11 +30,45 @@ def llamagen_config_from_build(build: ModelBuild) -> dict[str, Any]:
     sampling_config = build.sampling_config or {}
     config = token_model_config_base(build)
 
-    for key in ("guidance_scale", "temperature", "top_k", "top_p", "image_token_num"):
+    for key in ("guidance_scale", "temperature", "top_k", "top_p"):
         if key in sampling_config:
             config[key] = sampling_config[key]
 
-    for key in ("gpt_ckpt", "vq_ckpt", "gpt_model", "t5_path", "t5_revision"):
+    image_token_num = int(
+        model_config.get("image_token_num", LLAMAGEN_IMAGE_TOKEN_NUM),
+    )
+    llamagen_image_grid_side(image_token_num)
+    for name, expected, owner in (
+        (
+            "image_token_num",
+            image_token_num,
+            f"model.image_token_num={image_token_num}",
+        ),
+        (
+            "image_size",
+            llamagen_image_size(image_token_num, LLAMAGEN_DOWNSAMPLE_SIZE),
+            "the decoded size derived from model.image_token_num and VQ stride",
+        ),
+        (
+            "max_text_length",
+            LLAMAGEN_CAPTION_TOKEN_NUM,
+            "the checkpoint caption-prefix length",
+        ),
+    ):
+        requested = sampling_config.get(name)
+        if requested is not None and int(requested) != expected:
+            raise ValueError(
+                f"sampling.{name}={int(requested)} must equal {owner} ({expected})",
+            )
+    config["image_token_num"] = image_token_num
+
+    for key in (
+        "gpt_ckpt",
+        "vq_ckpt",
+        "gpt_model",
+        "t5_path",
+        "t5_revision",
+    ):
         # ``None`` means "unset" in YAML; defer to LlamaGenConfig's own default.
         value = model_config.get(key)
         if value is not None:
@@ -56,12 +97,30 @@ class LlamaGenChunkExecutor(ARDiscreteChunkExecutorBase):
 
     family: str = "llamagen"
     task: str = "ar_t2i"
-    default_image_token_num: int | None = 256
-    default_image_size: int | None = 256
-    default_max_text_length: int | None = 120
 
     def __init__(self, model: Any) -> None:
         self.model = model
+
+    @property
+    def default_image_token_num(self) -> int:
+        """Derive the request default from the GPT construction topology."""
+
+        return int(self.model.config.image_token_num)
+
+    @property
+    def default_image_size(self) -> int:
+        """Derive decoded pixels from the fixed token grid and VQ stride."""
+
+        return llamagen_image_size(
+            self.default_image_token_num,
+            int(self.model.config.downsample_size),
+        )
+
+    @property
+    def default_max_text_length(self) -> int:
+        """Derive the request default from the checkpoint caption prefix."""
+
+        return int(self.model.config.cls_token_num)
 
     # -- protocol ------------------------------------------------------
 
@@ -112,6 +171,19 @@ class LlamaGenChunkExecutor(ARDiscreteChunkExecutorBase):
         sampling = request.sampling
         params: ARSamplingParams = self.layout.parse_sampling_params(request)
 
+        image_token_num = int(self.model.config.image_token_num)
+        if params.image_token_num != image_token_num:
+            raise ValueError(
+                f"llamagen requires image_token_num == model.image_token_num "
+                f"({image_token_num}); got {params.image_token_num}. The token "
+                "grid is baked into the GPT's 2D RoPE table."
+            )
+        expected_image_size = self.default_image_size
+        if params.image_size != expected_image_size:
+            raise ValueError(
+                f"llamagen requires image_size={expected_image_size} for "
+                f"model.image_token_num={image_token_num}; got {params.image_size}."
+            )
         cls_token_num = int(self.model.config.cls_token_num)
         if params.max_text_length != cls_token_num:
             raise ValueError(
