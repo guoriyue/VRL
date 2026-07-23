@@ -261,11 +261,18 @@ def test_offline_dpo_applies_float32_policy(monkeypatch, float32_precision: str)
     ("sft_weight", "expected_loss", "expected_sft_calls"),
     [(0.0, 2.0, 0), (0.5, 3.5, 1)],
 )
+@pytest.mark.parametrize(
+    ("max_grad_norm", "expected_clip_calls", "expected_grad_norm"),
+    [(0.0, 0, 0.0), (0.25, 1, 2.5)],
+)
 def test_step_metrics_report_the_optimized_loss(
     monkeypatch,
     sft_weight: float,
     expected_loss: float,
     expected_sft_calls: int,
+    max_grad_norm: float,
+    expected_clip_calls: int,
+    expected_grad_norm: float,
 ) -> None:
     import vrl.trainers.offline.dpo as dpo_module
 
@@ -318,6 +325,14 @@ def test_step_metrics_report_the_optimized_loss(
     monkeypatch.setattr(dpo_module, "model_autocast", track_model_autocast)
     monkeypatch.setattr(dpo_module, "diffusion_dpo_loss", fake_dpo_loss)
     monkeypatch.setattr(dpo_module, "diffusion_sft_loss", fake_sft_loss)
+    clip_calls: list[float] = []
+
+    def fake_clip_grad_norm(parameters, limit):
+        list(parameters)
+        clip_calls.append(float(limit))
+        return torch.tensor(2.5)
+
+    monkeypatch.setattr(dpo_module.nn.utils, "clip_grad_norm_", fake_clip_grad_norm)
     model.precision = PRECISION
     trainer = OfflineDPOTrainer(
         model=model,
@@ -330,6 +345,7 @@ def test_step_metrics_report_the_optimized_loss(
             prediction_type="epsilon",
             sft_weight=sft_weight,
             lr=0.0,
+            max_grad_norm=max_grad_norm,
         ),
         device="cpu",
     )
@@ -343,6 +359,8 @@ def test_step_metrics_report_the_optimized_loss(
 
     assert metrics.loss == pytest.approx(expected_loss)
     assert sft_calls == expected_sft_calls
+    assert clip_calls == [max_grad_norm] * expected_clip_calls
+    assert metrics.grad_norm == pytest.approx(expected_grad_norm)
 
 
 def _adam_exp_avg_values(optimizer) -> list[float]:
