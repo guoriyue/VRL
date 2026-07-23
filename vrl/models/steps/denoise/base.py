@@ -43,13 +43,17 @@ class DiffusionSamplingStateBase:
     ``timesteps`` and ``scheduler`` — nothing else. Every other field a
     family declares in its subclass is private to its own ``forward_step``
     / replay path and MUST NOT be introspected by the engine.
-    ``guidance_scale`` is engine-invisible but present in all 17 families,
-    so it is lifted here purely for dedup.
     """
 
     latents: torch.Tensor
     timesteps: torch.Tensor
     scheduler: Any
+
+
+@dataclass
+class GuidedDiffusionSamplingStateBase(DiffusionSamplingStateBase):
+    """Private state shared by families whose forward/replay path reads guidance."""
+
     guidance_scale: float
 
 
@@ -673,5 +677,7 @@ __all__ = [
     "DiffusersPipelineModelBase",
     "DiffusersReplayModelBase",
     "DiffusionModelBase",
+    "DiffusionSamplingStateBase",
+    "GuidedDiffusionSamplingStateBase",
     "diffusers_pipeline_dtypes",
 ]

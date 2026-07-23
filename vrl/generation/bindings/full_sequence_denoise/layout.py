@@ -28,9 +28,17 @@ class DiffusionBaseParams:
     num_frames: int
     fps: int | None
     samples_per_chunk: int
-    max_sequence_length: int
+    max_sequence_length: int | None
     seed: int | None
     negative_prompt: str | None
+
+    def text_encode_kwargs(self) -> dict[str, Any]:
+        """Build shared prompt-encoder knobs without inventing a text length."""
+
+        kwargs: dict[str, Any] = {"guidance_scale": self.guidance_scale}
+        if self.max_sequence_length is not None:
+            kwargs["max_sequence_length"] = self.max_sequence_length
+        return kwargs
 
 
 @dataclass(frozen=True, slots=True)
@@ -59,7 +67,7 @@ class DiffusionRequestLayout:
     default_samples_per_chunk: int
     default_num_frames: int
     default_fps: int | None
-    default_max_sequence_length: int
+    default_max_sequence_length: int | None
     sde_type: str
 
     def parse_sampling_params(self, request: GenerationRequest) -> DiffusionSamplingParams:
@@ -68,6 +76,10 @@ class DiffusionRequestLayout:
         sampling = request.sampling
         num_steps = int(sampling["num_steps"])
         fps_value = sampling.get("fps", self.default_fps)
+        max_sequence_length = sampling.get(
+            "max_sequence_length",
+            self.default_max_sequence_length,
+        )
         seed = sampling.get("seed")
         base = DiffusionBaseParams(
             num_steps=num_steps,
@@ -90,11 +102,8 @@ class DiffusionRequestLayout:
                     )
                 ),
             ),
-            max_sequence_length=int(
-                sampling.get(
-                    "max_sequence_length",
-                    self.default_max_sequence_length,
-                )
+            max_sequence_length=(
+                None if max_sequence_length is None else int(max_sequence_length)
             ),
             seed=None if seed is None else int(seed),
             negative_prompt=sampling.get("negative_prompt"),

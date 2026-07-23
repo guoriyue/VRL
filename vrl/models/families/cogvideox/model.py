@@ -40,7 +40,7 @@ from vrl.models.interfaces.runtime import ModelBuild
 from vrl.models.steps.denoise import (
     DiffusersPipelineModelBase,
     DiffusersReplayModelBase,
-    DiffusionSamplingStateBase,
+    GuidedDiffusionSamplingStateBase,
     diffusers_pipeline_dtypes,
 )
 from vrl.models.steps.denoise.common import (
@@ -113,7 +113,7 @@ def cogvideox_rotary_embeds(
 
 
 @dataclass
-class CogVideoXSamplingState(DiffusionSamplingStateBase):
+class CogVideoXSamplingState(GuidedDiffusionSamplingStateBase):
     """Private CogVideoX sampling state. Engine MUST NOT introspect."""
 
     prompt_embeds: torch.Tensor

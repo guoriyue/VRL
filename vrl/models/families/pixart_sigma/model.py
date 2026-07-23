@@ -45,7 +45,7 @@ from vrl.models.interfaces.runtime import ModelBuild
 from vrl.models.steps.denoise import (
     DiffusersPipelineModelBase,
     DiffusersReplayModelBase,
-    DiffusionSamplingStateBase,
+    GuidedDiffusionSamplingStateBase,
     diffusers_pipeline_dtypes,
 )
 from vrl.models.steps.denoise.common import (
@@ -98,7 +98,7 @@ def pixart_ddim_scheduler(scheduler_config: Any, num_steps: int, device: Any) ->
 
 
 @dataclass
-class PixArtSigmaSamplingState(DiffusionSamplingStateBase):
+class PixArtSigmaSamplingState(GuidedDiffusionSamplingStateBase):
     """Private PixArt-Sigma sampling state. Engine MUST NOT introspect."""
 
     prompt_embeds: torch.Tensor

@@ -38,7 +38,7 @@ from vrl.models.interfaces.runtime import ModelBuild
 from vrl.models.steps.denoise import (
     DiffusersPipelineModelBase,
     DiffusersReplayModelBase,
-    DiffusionSamplingStateBase,
+    GuidedDiffusionSamplingStateBase,
     diffusers_pipeline_dtypes,
 )
 from vrl.models.steps.denoise.common import (
@@ -60,7 +60,7 @@ from vrl.models.steps.denoise.common.lora import (
 
 
 @dataclass
-class FluxSamplingState(DiffusionSamplingStateBase):
+class FluxSamplingState(GuidedDiffusionSamplingStateBase):
     """Private FLUX sampling state. Engine MUST NOT introspect."""
 
     prompt_embeds: torch.Tensor

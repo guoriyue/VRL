@@ -15,7 +15,7 @@ from vrl.models.interfaces.runtime import ModelBuild
 from vrl.models.steps.denoise import (
     DiffusersPipelineModelBase,
     DiffusersReplayModelBase,
-    DiffusionSamplingStateBase,
+    GuidedDiffusionSamplingStateBase,
 )
 from vrl.models.steps.denoise.common import (
     ChunkedLatentDecoder,
@@ -162,7 +162,7 @@ def _load_pipeline_without_text_encoder(
 
 
 @dataclass
-class CosmosPredict25SamplingState(DiffusionSamplingStateBase):
+class CosmosPredict25SamplingState(GuidedDiffusionSamplingStateBase):
     prompt_embeds: torch.Tensor
     negative_prompt_embeds: torch.Tensor | None
     do_cfg: bool

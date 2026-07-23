@@ -2,11 +2,23 @@
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import pytest
 import torch
 
-from vrl.generation.bindings.full_sequence_denoise import DiffusionRequestLayout
+from vrl.generation.bindings.full_sequence_denoise import (
+    DiffusionChunkExecutor,
+    DiffusionRequestLayout,
+)
 from vrl.generation.types import GenerationRequest
+from vrl.models.families.cosmos.cosmos3.runtime import Cosmos3ChunkExecutor
+from vrl.models.families.cosmos.predict2.runtime import CosmosChunkExecutor
+from vrl.models.families.cosmos.predict2_5.runtime import (
+    CosmosPredict25ChunkExecutor,
+)
+from vrl.models.families.echo.runtime import EchoChunkExecutor
+from vrl.models.families.wan_2_1.runtime import Wan_2_1I2VChunkExecutor
 
 
 def test_diffusion_layout_rejects_oversized_sde_window() -> None:
@@ -93,6 +105,60 @@ def test_diffusion_layout_repeat_batch_rejects_unexpected_batch_size() -> None:
 
     with pytest.raises(ValueError, match="cannot repeat tensor batch=2"):
         layout.repeat_batch(torch.ones(2, 2), 3)
+
+
+@pytest.mark.parametrize(
+    ("max_sequence_length", "expected_extra"),
+    [
+        (None, {}),
+        (123, {"max_sequence_length": 123}),
+    ],
+)
+def test_diffusion_executor_only_projects_real_text_length(
+    max_sequence_length: int | None,
+    expected_extra: dict[str, int],
+) -> None:
+    """An absent family/request value stays absent at both model boundaries."""
+
+    model = SimpleNamespace()
+    executor = DiffusionChunkExecutor(
+        model,
+        family="test",
+        task="t2i",
+        max_sequence_length=max_sequence_length,
+    )
+    params = executor.parse_sampling_params(_request({}))
+    video_request = executor.build_video_request("p0", params)
+
+    assert params.base.max_sequence_length == max_sequence_length
+    assert params.base.text_encode_kwargs() == {
+        "guidance_scale": 4.5,
+        **expected_extra,
+    }
+    assert video_request.extra == expected_extra
+
+
+@pytest.mark.parametrize(
+    ("executor_cls", "expected"),
+    [
+        (CosmosChunkExecutor, None),
+        (Cosmos3ChunkExecutor, None),
+        (EchoChunkExecutor, None),
+        (CosmosPredict25ChunkExecutor, 512),
+        (Wan_2_1I2VChunkExecutor, 512),
+    ],
+)
+def test_custom_family_text_length_defaults_match_encoder_capability(
+    executor_cls: type,
+    expected: int | None,
+) -> None:
+    executor = executor_cls(object())
+    params = executor.parse_sampling_params(_request({}))
+
+    assert params.base.max_sequence_length == expected
+    assert executor.build_video_request("p0", params).extra == (
+        {} if expected is None else {"max_sequence_length": expected}
+    )
 
 
 def _layout() -> DiffusionRequestLayout:

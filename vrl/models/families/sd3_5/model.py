@@ -40,7 +40,7 @@ from vrl.models.interfaces.runtime import ModelBuild
 from vrl.models.steps.denoise import (
     DiffusersPipelineModelBase,
     DiffusersReplayModelBase,
-    DiffusionSamplingStateBase,
+    GuidedDiffusionSamplingStateBase,
     diffusers_pipeline_dtypes,
 )
 from vrl.models.steps.denoise.common import (
@@ -88,7 +88,7 @@ def _candidate_transformers(transformer: object) -> tuple[object, ...]:
 
 
 @dataclass
-class SD3SamplingState(DiffusionSamplingStateBase):
+class SD3SamplingState(GuidedDiffusionSamplingStateBase):
     """Private SD3 sampling state. Engine MUST NOT introspect."""
 
     prompt_embeds: torch.Tensor

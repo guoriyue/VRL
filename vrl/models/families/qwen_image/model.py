@@ -33,7 +33,7 @@ from vrl.models.interfaces.runtime import ModelBuild
 from vrl.models.steps.denoise import (
     DiffusersPipelineModelBase,
     DiffusersReplayModelBase,
-    DiffusionSamplingStateBase,
+    GuidedDiffusionSamplingStateBase,
     diffusers_pipeline_dtypes,
 )
 from vrl.models.steps.denoise.common import (
@@ -51,7 +51,7 @@ from vrl.models.steps.denoise.common.tensors import require_tensor
 
 
 @dataclass
-class QwenImageSamplingState(DiffusionSamplingStateBase):
+class QwenImageSamplingState(GuidedDiffusionSamplingStateBase):
     """Private Qwen-Image sampling state. Engine MUST NOT introspect."""
 
     prompt_embeds: torch.Tensor

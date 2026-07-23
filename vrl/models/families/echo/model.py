@@ -323,6 +323,11 @@ class EchoModel(LoraModelMixin, DiffusionModelBase):
         """Build initial flow-matching noise latents + the sigma schedule."""
 
         del kwargs
+        if request.guidance_scale != 1.0:
+            raise ValueError(
+                "Echo has classifier-free guidance baked into its checkpoint; "
+                "guidance_scale must be 1.0",
+            )
         device = self.device
         video_context = encoded["video_context"]
         batch_size = int(video_context.shape[0])
@@ -363,7 +368,6 @@ class EchoModel(LoraModelMixin, DiffusionModelBase):
             video_context=video_context,
             attention_mask=encoded.get("attention_mask"),
             num_train_timesteps=int(self._scheduler.config.num_train_timesteps),
-            guidance_scale=request.guidance_scale,
         )
 
     # -- forward_step --------------------------------------------------
@@ -408,7 +412,6 @@ class EchoModel(LoraModelMixin, DiffusionModelBase):
 
     def export_batch_context(self, state: EchoSamplingState) -> dict[str, Any]:
         return {
-            "guidance_scale": state.guidance_scale,
             "num_train_timesteps": state.num_train_timesteps,
         }
 
@@ -442,7 +445,6 @@ class EchoModel(LoraModelMixin, DiffusionModelBase):
             video_context=replay_tensors["video_context"],
             attention_mask=replay_tensors.get("attention_mask"),
             num_train_timesteps=int(batch_context["num_train_timesteps"]),
-            guidance_scale=batch_context.get("guidance_scale", 1.0),
         )
 
     # -- decode_latents ------------------------------------------------

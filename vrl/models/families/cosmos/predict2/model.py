@@ -30,7 +30,7 @@ from vrl.models.interfaces.runtime import ModelBuild
 from vrl.models.steps.denoise import (
     DiffusersPipelineModelBase,
     DiffusersReplayModelBase,
-    DiffusionSamplingStateBase,
+    GuidedDiffusionSamplingStateBase,
 )
 from vrl.models.steps.denoise.common import (
     ChunkedLatentDecoder,
@@ -150,7 +150,7 @@ class CosmosPredict2DiffusionBackboneRunner:
 
 
 @dataclass
-class CosmosPredict2SamplingState(DiffusionSamplingStateBase):
+class CosmosPredict2SamplingState(GuidedDiffusionSamplingStateBase):
     """Private Cosmos Predict2 sampling state. Collector MUST NOT introspect.
 
     Cosmos Predict2 Video2World needs the full conditioning bundle

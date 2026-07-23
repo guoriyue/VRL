@@ -23,7 +23,7 @@ from vrl.models.families.cosmos.anima.adapter import AnimaLLMAdapter
 from vrl.models.interfaces.runtime import ModelBuild
 from vrl.models.steps.denoise import (
     DiffusionModelBase,
-    DiffusionSamplingStateBase,
+    GuidedDiffusionSamplingStateBase,
     ReplayRolloutStubs,
 )
 from vrl.models.steps.denoise.common import (
@@ -36,7 +36,7 @@ from vrl.models.steps.denoise.common.lora import LoraModelMixin
 
 
 @dataclass
-class AnimaSamplingState(DiffusionSamplingStateBase):
+class AnimaSamplingState(GuidedDiffusionSamplingStateBase):
     """Private Anima sampling state."""
 
     prompt_embeds: torch.Tensor

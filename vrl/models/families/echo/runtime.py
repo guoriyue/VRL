@@ -100,7 +100,6 @@ class EchoChunkExecutor(DiffusionChunkExecutorBase):
     # smoke/proof runs override these down for single-card feasibility.
     default_num_frames: int = 25
     default_fps: int | None = 24
-    default_max_sequence_length: int = 512
 
     def __init__(
         self,

@@ -113,7 +113,6 @@ def test_forward_step_velocity_is_rectified_flow_of_x0() -> None:
         video_context=torch.randn(2, 3, 16),
         attention_mask=torch.ones(2, 3),
         num_train_timesteps=num_train,
-        guidance_scale=1.0,
     )
     out = model.forward_step(state, 0)
     v = out["noise_pred"]
@@ -178,6 +177,17 @@ def test_prepare_sampling_builds_noise_latents_and_schedule() -> None:
     assert state.latents.dtype == torch.float32
     assert len(state.timesteps) == 4
     assert state.num_train_timesteps == 1000
+    assert not hasattr(state, "guidance_scale")
+
+
+def test_prepare_sampling_rejects_unbaked_guidance() -> None:
+    model, _ = _build_model()
+    encoded = {"video_context": torch.randn(1, 3, 16), "attention_mask": torch.ones(1, 3)}
+    request = _request()
+    request.guidance_scale = 4.5
+
+    with pytest.raises(ValueError, match=r"guidance_scale must be 1\.0"):
+        model.prepare_sampling(request, encoded)
 
 
 def test_export_restore_roundtrip_feeds_forward_step() -> None:
@@ -193,12 +203,11 @@ def test_export_restore_roundtrip_feeds_forward_step() -> None:
         video_context=torch.randn(2, 3, 16),
         attention_mask=torch.ones(2, 3),
         num_train_timesteps=1000,
-        guidance_scale=1.0,
     )
     replay = model.export_replay_tensors(state)
     ctx = model.export_batch_context(state)
     assert set(replay) == {"video_context", "attention_mask"}
-    assert ctx["num_train_timesteps"] == 1000
+    assert ctx == {"num_train_timesteps": 1000}
 
     # Stored denoise timesteps are [B, num_steps]; restore one step.
     stored_ts = torch.tensor([[300.0, 600.0, 700.0, 900.0]] * 2)
@@ -292,7 +301,6 @@ def test_replay_model_is_transformer_only_and_runs_velocity_forward() -> None:
         video_context=torch.randn(2, 3, 16),
         attention_mask=torch.ones(2, 3),
         num_train_timesteps=1000,
-        guidance_scale=1.0,
     )
     out = replay.forward_step(state, 0)
     assert out["noise_pred"].shape == latents.shape

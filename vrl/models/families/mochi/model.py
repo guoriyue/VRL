@@ -39,7 +39,7 @@ from vrl.models.interfaces.runtime import ModelBuild
 from vrl.models.steps.denoise import (
     DiffusersPipelineModelBase,
     DiffusersReplayModelBase,
-    DiffusionSamplingStateBase,
+    GuidedDiffusionSamplingStateBase,
     diffusers_pipeline_dtypes,
 )
 from vrl.models.steps.denoise.common import (
@@ -77,7 +77,7 @@ def standard_mochi_scheduler(scheduler_config: Any, num_steps: int, device: Any)
 
 
 @dataclass
-class MochiSamplingState(DiffusionSamplingStateBase):
+class MochiSamplingState(GuidedDiffusionSamplingStateBase):
     """Private Mochi sampling state. Engine MUST NOT introspect."""
 
     prompt_embeds: torch.Tensor

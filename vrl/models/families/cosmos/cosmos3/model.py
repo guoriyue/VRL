@@ -41,7 +41,7 @@ from vrl.models.interfaces.runtime import ModelBuild
 from vrl.models.steps.denoise import (
     DiffusersPipelineModelBase,
     DiffusionModelBase,
-    DiffusionSamplingStateBase,
+    GuidedDiffusionSamplingStateBase,
     ReplayRolloutStubs,
 )
 from vrl.models.steps.denoise.common import align_replay_tensor
@@ -55,7 +55,7 @@ _DEFAULT_GUIDANCE = 7.0
 
 
 @dataclass
-class Cosmos3SamplingState(DiffusionSamplingStateBase):
+class Cosmos3SamplingState(GuidedDiffusionSamplingStateBase):
     """Per-rollout sampling state. The packed_static dicts are step-invariant;
     forward_step splices the live latents + per-step timestep each call.
 
