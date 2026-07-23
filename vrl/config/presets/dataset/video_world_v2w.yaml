@@ -9,8 +9,6 @@ data:
   task_type: video2world
   preprocessing:
     format: jsonl
-    target_text: none
-    media_type: video
     conditioning: reference_image
   sampler:
     type: random_without_replacement

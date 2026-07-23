@@ -2,7 +2,6 @@
 # Used by Diffusion-DPO recipes.
 data:
   loader: pickapic_preference
-  source: huggingface
   dataset_name: yuvalkirstain/pickapic_v2
   cache_dir: ""
   split: train

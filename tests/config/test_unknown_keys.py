@@ -70,6 +70,57 @@ def test_open_blocks_accept_arbitrary_keys() -> None:
     assert find_unknown_keys(cfg) == []
 
 
+@pytest.mark.parametrize(
+    ("config", "path"),
+    [
+        ({"data": {"source": "huggingface"}}, "data.source"),
+        (
+            {"data": {"preprocessing": {"metadata_schema": "geneval"}}},
+            "data.preprocessing.metadata_schema",
+        ),
+        (
+            {"data": {"preprocessing": {"target_text": "quoted_substring"}}},
+            "data.preprocessing.target_text",
+        ),
+        (
+            {"data": {"preprocessing": {"media_type": "video"}}},
+            "data.preprocessing.media_type",
+        ),
+    ],
+)
+def test_removed_data_noop_keys_are_unknown(
+    config: dict[str, object],
+    path: str,
+) -> None:
+    assert find_unknown_keys(OmegaConf.create(config)) == [path]
+
+
+@pytest.mark.parametrize("removed_key", ["enabld", "report_path"])
+def test_production_gate_is_closed(removed_key: str) -> None:
+    cfg = OmegaConf.create(
+        {
+            "production": {
+                "kling_video_reward": {
+                    "enabled": False,
+                    removed_key: "unused",
+                },
+            },
+        },
+    )
+
+    assert find_unknown_keys(cfg) == [
+        f"production.kling_video_reward.{removed_key}",
+    ]
+
+
+def test_production_enabled_is_a_known_key() -> None:
+    cfg = OmegaConf.create(
+        {"production": {"kling_video_reward": {"enabled": True}}},
+    )
+
+    assert find_unknown_keys(cfg) == []
+
+
 def test_removed_rollout_queue_knob_is_unknown() -> None:
     cfg = OmegaConf.create(
         {"trainer": {"rollout_orchestration": {"max_pending_rollouts": 2}}},

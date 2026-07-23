@@ -89,4 +89,3 @@ reward:
 production:
   kling_video_reward:
     enabled: true
-    report_path: outputs/cosmos_world_model_production_report.md

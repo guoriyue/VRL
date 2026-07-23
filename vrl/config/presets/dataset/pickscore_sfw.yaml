@@ -5,6 +5,5 @@ data:
   eval_manifest: datasets/pickscore_sfw/test.txt
   preprocessing:
     format: text
-    target_text: none
   sampler:
     type: random_without_replacement

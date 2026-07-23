@@ -82,4 +82,3 @@ reward:
 production:
   kling_video_reward:
     enabled: true
-    report_path: outputs/cosmos_predict2_5_2b_motion_physics/production_report.md

@@ -505,7 +505,6 @@ def test_valid_data_loaders_are_accepted(loader: str) -> None:
                 "format": "image_caption_jsonl",
                 "image_field": "image",
                 "caption_field": "caption",
-                "media_type": "video",
                 "conditioning": "reference_image",
             },
             sampler={"type": "random_without_replacement"},
@@ -548,7 +547,6 @@ def test_omitted_loader_derives_from_preprocessing_format(fmt: str, expected: st
                 "format": fmt,
                 "image_field": "image",
                 "caption_field": "caption",
-                "media_type": "video",
                 "conditioning": "reference_image",
             },
             sampler={"type": "random_without_replacement"},
@@ -572,7 +570,6 @@ def test_prompt_image_manifest_requires_image_caption_fields() -> None:
             preprocessing={
                 "format": "image_caption_jsonl",
                 "image_field": "image",
-                "media_type": "video",
                 "conditioning": "reference_image",
             },
             sampler={"type": "random_without_replacement"},
@@ -809,7 +806,6 @@ def test_production_video_reward_accepts_image_to_video_task_type() -> None:
                     "format": "image_caption_jsonl",
                     "image_field": "image",
                     "caption_field": "caption",
-                    "media_type": "video",
                     "conditioning": "reference_image",
                 },
                 "sampler": {"type": "random_without_replacement"},
@@ -836,6 +832,26 @@ def test_production_video_reward_accepts_image_to_video_task_type() -> None:
     parsed = parse_config(cfg)
 
     assert parsed.data.task_type == "image_to_video"
+
+
+def test_production_schema_defaults_known_gate_to_disabled() -> None:
+    cfg = OmegaConf.create({"production": {}})
+
+    parsed = parse_config(cfg)
+
+    assert parsed.production is not None
+    assert parsed.production.kling_video_reward.enabled is False
+
+
+def test_production_schema_accepts_enabled_gate() -> None:
+    cfg = OmegaConf.create(
+        {"production": {"kling_video_reward": {"enabled": True}}},
+    )
+
+    parsed = parse_config(cfg)
+
+    assert parsed.production is not None
+    assert parsed.production.kling_video_reward.enabled is True
 
 
 def test_production_video_reward_missing_reward_name_raises() -> None:

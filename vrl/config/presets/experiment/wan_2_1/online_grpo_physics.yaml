@@ -60,4 +60,3 @@ reward:
 production:
   kling_video_reward:
     enabled: true
-    report_path: outputs/wan_1_3b_physics/production_report.md

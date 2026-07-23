@@ -164,11 +164,8 @@ class DataConfig(ConfigBase):
                 "format",
                 "image_field",
                 "caption_field",
-                "media_type",
                 "conditioning",
                 "reference_image",
-                "metadata_schema",
-                "target_text",
             )
         ),
     ] = None
@@ -188,7 +185,6 @@ class DataConfig(ConfigBase):
     # Key registry: consumed by data/eval tooling, not validated here.
     allow_absolute_artifact_paths: Any = None
     artifact_data_root: Any = None
-    source: Any = None
     source_report: Any = None
 
     @model_validator(mode="after")
@@ -218,7 +214,7 @@ class DataConfig(ConfigBase):
                 raise ValueError("config missing required field: data.eval_manifest")
             if self.preprocessing is None:
                 raise ValueError("config missing required field: data.preprocessing")
-            for field in ("format", "image_field", "caption_field", "media_type", "conditioning"):
+            for field in ("format", "image_field", "caption_field", "conditioning"):
                 if field not in self.preprocessing:
                     raise ValueError(f"config missing required field: data.preprocessing.{field}")
             self._validate_sampler_type()
@@ -813,6 +809,20 @@ class DistributedSection(ConfigBase):
 # ── Root config ───────────────────────────────────────────────────────────────
 
 
+class KlingVideoRewardProductionConfig(ConfigBase):
+    """Production enablement for the Kling VideoReward contract gate."""
+
+    enabled: bool = False
+
+
+class ProductionSection(ConfigBase):
+    """Closed registry of production gates with runtime consumers."""
+
+    kling_video_reward: KlingVideoRewardProductionConfig = Field(
+        default_factory=KlingVideoRewardProductionConfig,
+    )
+
+
 class RootConfig(ConfigBase):
     """Top-level typed boundary for all training config sections.
 
@@ -842,9 +852,9 @@ class RootConfig(ConfigBase):
         ),
     ] = None
     sampling: SamplingConfig | None = None
-    # per-component production gates; contract checks live in
+    # Per-component production gates; contract checks live in
     # vrl/config/validation.py validate_production_* (raw-cfg checks)
-    production: Annotated[dict[str, Any] | None, OPEN] = None
+    production: ProductionSection | None = None
     trainer: TrainerSection | None = None
     actor: ActorSection | None = None
     distributed: DistributedSection | None = None
