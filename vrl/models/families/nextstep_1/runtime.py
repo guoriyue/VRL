@@ -291,7 +291,6 @@ class NextStep1ChunkGatherer:
             prompt_attention_mask=cat["prompt_attention_mask"],
             uncond_input_ids=cat["uncond_input_ids"],
             uncond_attention_mask=cat["uncond_attention_mask"],
-            images_for_reward=cat["output"],
             context=trajectory_context,
         )
 

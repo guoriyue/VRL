@@ -397,11 +397,6 @@ class JanusProR1ChunkGatherer:
             request=request,
             sample_rows=list(sample_rows),
             segments=segment_extra,
-            decoded_outputs={
-                "initial_image": cat["initial_image"],
-                "final_image": cat["final_image"],
-                "selfcheck": cat["selfcheck"],
-            },
             primary_segment="final_image",
             context=dict(ordered[0].context),
         )

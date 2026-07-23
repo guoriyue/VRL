@@ -529,7 +529,6 @@ class _TrajectoryBatchBuilder:
         prompt_attention_mask: Any,
         uncond_input_ids: Any,
         uncond_attention_mask: Any,
-        images_for_reward: Any | None,
         context: dict[str, Any],
     ) -> TrajectoryBatch:
         """Build a continuous image-token trajectory from NextStep rollout tensors."""
@@ -609,24 +608,6 @@ class _TrajectoryBatchBuilder:
                 },
             )
         }
-        reward_refs: tuple[str, ...] = ()
-        if images_for_reward is not None:
-            segments["decoded"] = TrajectorySegment(
-                name="decoded",
-                modality="image",
-                trainable=False,
-                distribution="deterministic",
-                tensors={
-                    "images_for_reward": TrajectoryTensor(
-                        "images_for_reward",
-                        images_for_reward,
-                        ("sample",),
-                        "replay_input",
-                    )
-                },
-            )
-            reward_refs = (tensor_ref("decoded", "images_for_reward"),)
-
         trajectory = TrajectoryBatch(
             request_id=self.request.request_id,
             family=self.request.family,
@@ -641,7 +622,6 @@ class _TrajectoryBatchBuilder:
             reward_views={
                 "image": RewardView(
                     name="image",
-                    tensor_refs=reward_refs,
                     value_range="tanh",
                     metadata={"output_ref": "GenerationOutput.output"},
                 )
@@ -659,9 +639,7 @@ class _TrajectoryBatchBuilder:
         self,
         *,
         segments: dict[str, dict[str, Any]],
-        decoded_outputs: dict[str, Any],
         primary_segment: str,
-        reward_segments: tuple[str, ...] | None = None,
         context: dict[str, Any],
     ) -> TrajectoryBatch:
         """Build a multi-segment categorical trajectory without flattening segments."""
@@ -756,32 +734,6 @@ class _TrajectoryBatchBuilder:
                 },
             )
 
-        decoded_tensors = {
-            name: TrajectoryTensor(
-                name,
-                value,
-                ("sample",),
-                "replay_input",
-            )
-            for name, value in decoded_outputs.items()
-            if value is not None
-        }
-        reward_segment_names = reward_segments or (primary_segment,)
-        reward_refs: tuple[str, ...] = ()
-        if decoded_tensors:
-            trajectory_segments["decoded"] = TrajectorySegment(
-                name="decoded",
-                modality="mixed",
-                trainable=False,
-                distribution="deterministic",
-                tensors=decoded_tensors,
-            )
-            reward_refs = tuple(
-                tensor_ref("decoded", name)
-                for name in reward_segment_names
-                if name in decoded_tensors
-            )
-
         axis_lengths = {
             name: axis.length for name, axis in axes.items() if axis.length is not None
         }
@@ -796,7 +748,6 @@ class _TrajectoryBatchBuilder:
             reward_views={
                 "image": RewardView(
                     name="image",
-                    tensor_refs=reward_refs,
                     value_range="tanh",
                     metadata={"output_ref": "GenerationOutput.output"},
                 )
@@ -1078,7 +1029,6 @@ def build_ar_continuous_trajectory(
     prompt_attention_mask: Any,
     uncond_input_ids: Any,
     uncond_attention_mask: Any,
-    images_for_reward: Any | None,
     context: dict[str, Any],
 ) -> TrajectoryBatch:
     """Build a continuous image-token trajectory from NextStep rollout tensors."""
@@ -1095,7 +1045,6 @@ def build_ar_continuous_trajectory(
         prompt_attention_mask=prompt_attention_mask,
         uncond_input_ids=uncond_input_ids,
         uncond_attention_mask=uncond_attention_mask,
-        images_for_reward=images_for_reward,
         context=context,
     )
 
@@ -1105,9 +1054,7 @@ def build_ar_multisegment_trajectory(
     request: GenerationRequest,
     sample_rows: list[GenerationSampleRow],
     segments: dict[str, dict[str, Any]],
-    decoded_outputs: dict[str, Any],
     primary_segment: str,
-    reward_segments: tuple[str, ...] | None = None,
     context: dict[str, Any],
 ) -> TrajectoryBatch:
     """Build a multi-segment categorical trajectory without flattening segments."""
@@ -1117,9 +1064,7 @@ def build_ar_multisegment_trajectory(
         sample_rows=sample_rows,
     ).build_ar_multisegment_trajectory(
         segments=segments,
-        decoded_outputs=decoded_outputs,
         primary_segment=primary_segment,
-        reward_segments=reward_segments,
         context=context,
     )
 

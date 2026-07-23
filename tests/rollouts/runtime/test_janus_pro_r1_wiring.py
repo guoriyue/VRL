@@ -104,9 +104,7 @@ def test_r1_collector_uses_r1_task_request_and_trajectory_batch() -> None:
 def test_r1_trajectory_batch_keeps_segments_separate() -> None:
     """Checks R1 trajectory batch keeps segments separate."""
     batch_size = 2
-    initial_images = torch.ones(batch_size, 3, 2, 2)
     final_images = torch.zeros(batch_size, 3, 2, 2)
-    selfcheck = torch.ones(batch_size, 2, dtype=torch.long)
     request = GenerationRequest(
         request_id="r1",
         family="janus_pro_r1",
@@ -123,11 +121,6 @@ def test_r1_trajectory_batch_keeps_segments_separate() -> None:
         request=request,
         sample_rows=_sample_rows(),
         segments=segments,
-        decoded_outputs={
-            "initial_image": initial_images,
-            "final_image": final_images,
-            "selfcheck": selfcheck,
-        },
         primary_segment="final_image",
         context={"mode": "r1"},
     )
@@ -154,6 +147,9 @@ def test_r1_trajectory_batch_keeps_segments_separate() -> None:
         2,
     )
     assert trajectory.segments["final_image"].tensors["token_ids"].value.shape == (batch_size, 5)
+    assert "decoded" not in trajectory.segments
+    assert trajectory.reward_views["image"].tensor_refs == ()
+    assert trajectory.reward_views["image"].metadata == {"output_ref": "GenerationOutput.output"}
     assert "log_probs" not in packed.extras
     assert packed.actions.shape == (batch_size, 5)
     assert packed.context["mode"] == "r1"

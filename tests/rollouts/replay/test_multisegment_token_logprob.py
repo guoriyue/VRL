@@ -102,11 +102,6 @@ def _trajectory_batch(context: dict | None = None) -> RolloutBatch:
                 modality="image",
             ),
         },
-        decoded_outputs={
-            "initial_image": torch.zeros(2, 3, 4, 4),
-            "final_image": torch.ones(2, 3, 4, 4),
-            "selfcheck": selfcheck_ids,
-        },
         primary_segment="final_image",
         context=context or {},
     )

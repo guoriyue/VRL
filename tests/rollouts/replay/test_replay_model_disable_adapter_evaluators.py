@@ -92,7 +92,6 @@ def _continuous_batch() -> RolloutBatch:
         prompt_attention_mask=torch.ones(2, 3, dtype=torch.long),
         uncond_input_ids=torch.zeros(2, 3, dtype=torch.long),
         uncond_attention_mask=torch.ones(2, 3, dtype=torch.long),
-        images_for_reward=None,
         context={"model_family": "nextstep_1"},
     )
     return RolloutBatch(

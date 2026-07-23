@@ -32,6 +32,7 @@ from vrl.rollouts.collector.rewards import (
 from vrl.rollouts.orchestration.prompt_collection import collect_prompt_batches
 from vrl.trajectory import (
     RewardView,
+    TrajectoryStoragePolicy,
     build_ar_discrete_trajectory,
     build_chunk_autoregressive_denoise_trajectory,
 )
@@ -831,6 +832,72 @@ def test_reward_view_selection_fails_fast_when_ambiguous() -> None:
     )
 
     with pytest.raises(RuntimeError, match="multiple reward views"):
+        TrajectoryRolloutBatchBuilder(
+            output,
+            RolloutBatchBuildContext(metadata={}),
+        ).reward_outputs()
+
+
+def test_reward_output_is_independent_of_trajectory_storage_dtype() -> None:
+    """Trainer replay compression must not change the artifact being scored."""
+    import asyncio
+
+    request = GenerationRequest(
+        request_id="unit-request",
+        family="unit",
+        task="collect",
+        inputs=["p0"],
+        samples_per_prompt=1,
+    )
+    output = asyncio.run(_Runtime().generate(request))
+    canonical = torch.tensor(
+        [[[[0.1234567, -0.2345678], [0.3456789, -0.4567891]]]],
+        dtype=torch.float32,
+    )
+    output.output = canonical
+
+    builder = TrajectoryRolloutBatchBuilder(
+        output,
+        RolloutBatchBuildContext(
+            metadata={},
+            trajectory_storage_policy=TrajectoryStoragePolicy(dtype="float16"),
+        ),
+    )
+    replay_log_probs = builder.trajectory.segments["image_tokens"].tensors["old_log_prob"].value
+
+    assert replay_log_probs.dtype == torch.float16
+    assert output.output is canonical
+    assert torch.equal(
+        builder.reward_outputs(),
+        ((canonical + 1.0) * 0.5).clamp(0.0, 1.0),
+    )
+
+
+@pytest.mark.parametrize(
+    "metadata",
+    [{}, {"output_ref": "TrajectoryBatch.output"}],
+)
+def test_reward_output_rejects_missing_or_unsupported_output_ref(
+    metadata: dict[str, str],
+) -> None:
+    import asyncio
+
+    request = GenerationRequest(
+        request_id="unit-request",
+        family="unit",
+        task="collect",
+        inputs=["p0"],
+        samples_per_prompt=1,
+    )
+    output = asyncio.run(_Runtime().generate(request))
+    assert output.trajectory is not None
+    output.trajectory.reward_views["image"] = RewardView(
+        name="image",
+        value_range="tanh",
+        metadata=metadata,
+    )
+
+    with pytest.raises(RuntimeError, match="no supported output_ref"):
         TrajectoryRolloutBatchBuilder(
             output,
             RolloutBatchBuildContext(metadata={}),

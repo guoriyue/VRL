@@ -144,8 +144,8 @@ def test_rollout_build_disables_gradient_checkpointing() -> None:
     assert build.model_config["gradient_checkpointing"] is False
 
 
-def test_nextstep_gather_derives_reward_image_from_canonical_output() -> None:
-    """Decoded output is the single source for both generation and reward views."""
+def test_nextstep_gather_uses_canonical_output_as_reward_source() -> None:
+    """Decoded output stays outside replay state and remains the reward source."""
     request = GenerationRequest(
         request_id="req",
         family="nextstep_1",
@@ -176,7 +176,9 @@ def test_nextstep_gather_derives_reward_image_from_canonical_output() -> None:
         sample_rows,
         [chunk],
     )
-    reward_images = output.trajectory.segments["decoded"].tensors["images_for_reward"].value
-
-    assert output.output is reward_images
     assert torch.equal(output.output, images)
+    assert "decoded" not in output.trajectory.segments
+    assert output.trajectory.reward_views["image"].tensor_refs == ()
+    assert output.trajectory.reward_views["image"].metadata == {
+        "output_ref": "GenerationOutput.output"
+    }
