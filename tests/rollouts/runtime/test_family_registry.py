@@ -21,6 +21,7 @@ from vrl.families.registry import (
     FAMILY_REGISTRY,
     SHARED_MODEL_SECTION_CLS,
     DenoiseFamilyBuild,
+    GenerationRuntimeCapabilities,
     TokenFamilyBuild,
     get_model_family_entry,
 )
@@ -47,6 +48,22 @@ def test_family_entry_rejects_a_policy_step_build_mismatch() -> None:
                 trajectory_layout="token",
             ),
         )
+
+
+def test_generation_runtime_capabilities_reject_unknown_memory_sections() -> None:
+    with pytest.raises(
+        ValueError,
+        match=r"unknown model.memory section\(s\): transformer_offload",
+    ):
+        GenerationRuntimeCapabilities(
+            supported_model_memory_sections=frozenset({"transformer_offload"}),
+        )
+
+
+def test_executor_config_support_is_not_duplicated_as_a_capability_field() -> None:
+    assert (
+        "supports_model_executor_config" not in GenerationRuntimeCapabilities.__dataclass_fields__
+    )
 
 
 def test_generation_regime_vocabulary_uses_paper_familiar_names() -> None:

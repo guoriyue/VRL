@@ -444,26 +444,36 @@ def _parse_model_section(value: Any) -> ModelSection | None:
         family = value.family
         section_cls = _model_section_class_for_family(family)
         if isinstance(value, section_cls):
-            return value
-        payload = value.model_dump()
+            parsed = value
+            payload = None
+        else:
+            payload = value.model_dump()
     elif isinstance(value, Mapping):
         payload = dict(value)
         section_cls = _model_section_class_for_family(payload.get("family"))
     else:
         raise ValueError("model must be a mapping")
 
-    try:
-        return section_cls.model_validate(payload)
-    except ValidationError as exc:
-        # The selected class validates the bare model payload. Re-anchor its
-        # error so callers still receive the public YAML path.
-        message = _extract_error_message(exc)
-        if message.startswith("unknown ") and not message.startswith("unknown model."):
-            message = f"unknown model.{message[len('unknown ') :]}"
-        elif message.startswith("config missing required field: "):
-            rest = message[len("config missing required field: ") :]
-            message = f"config missing required field: model.{rest}"
-        raise ValueError(message) from exc
+    if payload is not None:
+        try:
+            parsed = section_cls.model_validate(payload)
+        except ValidationError as exc:
+            # The selected class validates the bare model payload. Re-anchor its
+            # error so callers still receive the public YAML path.
+            message = _extract_error_message(exc)
+            if message.startswith("unknown ") and not message.startswith("unknown model."):
+                message = f"unknown model.{message[len('unknown ') :]}"
+            elif message.startswith("config missing required field: "):
+                rest = message[len("config missing required field: ") :]
+                message = f"config missing required field: model.{rest}"
+            raise ValueError(message) from exc
+
+    entry = get_model_family_entry(str(parsed.family))
+    entry.validate_model_runtime_sections(
+        executor_config=parsed.executor,
+        memory_config=parsed.memory,
+    )
+    return parsed
 
 
 # ── Section key registries (values validated by their own layers) ────────────

@@ -33,15 +33,15 @@ class ModelSection(ConfigBase):
             )
         ),
     ] = None
-    # The generation memory policy strictly validates each named subsection.
+    # Global section shape; the selected family validates supported targets.
     memory: Annotated[Any, ConfigBlock(MODEL_MEMORY_SECTIONS)] = None
     path: Any = None
     # Immutable Hub snapshot used by full-pipeline rollout and component replay.
     revision: Any = None
     torch_compile: Annotated[Any, ConfigBlock(("enable", "mode"))] = None
     use_lora: Any = None
-    # Shared DiffusionChunkExecutor constructor values. Family capability
-    # validation remains at the runtime boundary.
+    # Shared DiffusionChunkExecutor constructor values. The selected family
+    # validates this block at typed parse and again at launch projection.
     executor: Annotated[
         Any,
         ConfigBlock(

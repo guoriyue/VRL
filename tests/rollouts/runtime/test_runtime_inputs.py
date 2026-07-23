@@ -8,14 +8,21 @@ from typing import Any
 from unittest.mock import patch
 
 import pytest
+from omegaconf import OmegaConf
 
 from vrl.config.loading import load_config
-from vrl.families.registry import ModelFamilyEntry, get_model_family_entry
+from vrl.families.registry import (
+    FAMILY_REGISTRY,
+    GENERIC_FULL_SEQUENCE_DENOISE_EXECUTOR,
+    ModelFamilyEntry,
+    get_model_family_entry,
+)
 from vrl.generation.bindings.full_sequence_denoise import DiffusionChunkGatherer
 from vrl.generation.bindings.token_autoregressive.executor import ARDiscreteChunkGatherer
 from vrl.generation.protocols import GenerationChunkExecutor
 from vrl.generation.ray import RayGenerationLauncher, RayGenerationLaunchInputs
 from vrl.generation.ray.config import RayGenerationConfig
+from vrl.generation.ray.launcher import build_executor_kwargs
 from vrl.models.families.janus_pro.runtime import JanusProR1ChunkGatherer
 from vrl.models.families.nextstep_1.runtime import NextStep1ChunkGatherer
 from vrl.ray.placement import RolePlacement
@@ -358,3 +365,89 @@ def test_executor_kwargs_use_configured_chunk_size() -> None:
 
     assert isinstance(inputs, RayGenerationLaunchInputs)
     assert inputs.launch_contract.executor_kwargs["samples_per_chunk"] == 8
+
+
+def test_generic_executor_kwargs_project_the_complete_model_block() -> None:
+    cfg = OmegaConf.create(
+        {
+            "model": {
+                "executor": {
+                    "num_frames": 17,
+                    "max_sequence_length": 256,
+                    "fps": 24,
+                    "chunk_passthrough_keys": ["text_ids"],
+                },
+                "memory": {"vae_decode": {"tiling": False}},
+            },
+            "rollout": {"samples_per_chunk": 3},
+        },
+    )
+
+    assert build_executor_kwargs(get_model_family_entry("flux"), cfg) == {
+        "samples_per_chunk": 3,
+        "num_frames": 17,
+        "max_sequence_length": 256,
+        "fps": 24,
+        "chunk_passthrough_keys": ["text_ids"],
+    }
+
+
+@pytest.mark.parametrize(
+    "family",
+    [
+        family
+        for family, entry in FAMILY_REGISTRY.items()
+        if entry.executor_cls != GENERIC_FULL_SEQUENCE_DENOISE_EXECUTOR
+    ],
+)
+def test_custom_executors_reject_model_executor_instead_of_silently_dropping_it(
+    family: str,
+) -> None:
+    cfg = OmegaConf.create(
+        {
+            "model": {
+                "executor": {"max_sequence_length": 123},
+            },
+        },
+    )
+
+    with pytest.raises(ValueError, match=r"does not support model\.executor"):
+        build_executor_kwargs(get_model_family_entry(family), cfg)
+
+
+@pytest.mark.parametrize(
+    "family",
+    [
+        family
+        for family, entry in FAMILY_REGISTRY.items()
+        if not entry.runtime_capabilities.supported_model_memory_sections
+    ],
+)
+def test_executor_projection_defensively_rejects_unsupported_memory(
+    family: str,
+) -> None:
+    cfg = OmegaConf.create(
+        {
+            "model": {
+                "memory": {"vae_decode": {"tiling": False}},
+            },
+        },
+    )
+
+    with pytest.raises(ValueError, match=r"does not support model\.memory"):
+        build_executor_kwargs(get_model_family_entry(family), cfg)
+
+
+def test_custom_executor_keeps_independent_supported_memory_config() -> None:
+    cfg = OmegaConf.create(
+        {
+            "model": {
+                "memory": {"vae_decode": {"tiling": True}},
+            },
+            "rollout": {"samples_per_chunk": 2},
+        },
+    )
+
+    assert build_executor_kwargs(get_model_family_entry("wan_2_1_i2v"), cfg) == {
+        "samples_per_chunk": 2,
+    }

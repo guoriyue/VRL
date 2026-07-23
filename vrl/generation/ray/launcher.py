@@ -281,6 +281,12 @@ def build_executor_kwargs(entry: Any, cfg: Any) -> dict[str, Any]:
     """
     from vrl.families.registry import GENERIC_FULL_SEQUENCE_DENOISE_EXECUTOR
 
+    executor_config = cfg_path(cfg, "model.executor", None)
+    entry.validate_model_runtime_sections(
+        executor_config=executor_config,
+        memory_config=cfg_path(cfg, "model.memory", None),
+    )
+
     kwargs: dict[str, Any] = {}
     # Only executors that publish this constructor capability receive the
     # request-chunk size; generation regime does not determine their API.
@@ -296,7 +302,7 @@ def build_executor_kwargs(entry: Any, cfg: Any) -> dict[str, Any]:
     # family/task identity comes from the registry entry. Families with their
     # own executor hardcode these as class attrs and skip this.
     if entry.executor_cls == GENERIC_FULL_SEQUENCE_DENOISE_EXECUTOR:
-        kwargs.update(dict(cfg_path(cfg, "model.executor", {}) or {}))
+        kwargs.update(dict(executor_config or {}))
     return kwargs
 
 

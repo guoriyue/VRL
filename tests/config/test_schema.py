@@ -16,7 +16,12 @@ from vrl.config.schema import (
     parse_config,
 )
 from vrl.families.names import _FAMILY_BY_ALIAS
-from vrl.families.registry import FAMILY_REGISTRY, SHARED_MODEL_SECTION_CLS
+from vrl.families.registry import (
+    FAMILY_REGISTRY,
+    GENERIC_FULL_SEQUENCE_DENOISE_EXECUTOR,
+    SHARED_MODEL_SECTION_CLS,
+    get_model_family_entry,
+)
 from vrl.models.families.causvid.config import CausVidModelSection
 from vrl.models.families.cosmos.anima.config import CosmosAnimaModelSection
 from vrl.models.families.cosmos.predict2_5.config import (
@@ -31,6 +36,38 @@ from vrl.models.families.nextstep_1.config import NextStep1ModelSection
 from vrl.models.families.wan_2_1.config import WanModelSection
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
+
+# This independent fixture pins the public capability contract for every
+# canonical family. Production derives executor support from its binding and
+# records memory support as target-section names; the test intentionally does
+# not derive either expected value from those production fields.
+_MODEL_RUNTIME_CAPABILITY_MATRIX = {
+    "sd3_5": (True, True),
+    "causvid": (False, False),
+    "magi_1": (False, False),
+    "flux": (True, True),
+    "qwen_image": (True, True),
+    "sana": (True, True),
+    "lumina2": (True, True),
+    "hunyuan_video": (True, True),
+    "mochi": (True, True),
+    "hunyuan_image": (True, True),
+    "pixart_sigma": (True, True),
+    "cogvideox": (True, True),
+    "wan_2_1": (True, True),
+    "wan_2_1_i2v": (False, True),
+    "cosmos-predict2": (False, True),
+    "cosmos-predict2.5": (False, True),
+    "cosmos3": (False, True),
+    "cosmos-predict2-anima": (True, True),
+    "echo": (False, False),
+    "janus_pro": (False, False),
+    "janus_pro_r1": (False, False),
+    "nextstep_1": (False, False),
+    "emu3": (False, False),
+    "glm_image": (False, False),
+    "llamagen": (False, False),
+}
 
 
 def _literal_args(annotation) -> tuple[str, ...]:
@@ -668,6 +705,118 @@ def test_model_family_aliases_select_their_canonical_section_classes() -> None:
 
         assert type(parsed_alias.model) is type(canonical.model)
         assert parsed_alias.model.family == alias
+
+
+def test_model_runtime_capability_matrix_covers_every_registered_family() -> None:
+    assert set(_MODEL_RUNTIME_CAPABILITY_MATRIX) == set(FAMILY_REGISTRY)
+
+    for family, (supports_executor, supports_memory) in _MODEL_RUNTIME_CAPABILITY_MATRIX.items():
+        entry = get_model_family_entry(family)
+
+        assert (entry.executor_cls == GENERIC_FULL_SEQUENCE_DENOISE_EXECUTOR) is supports_executor
+        assert entry.runtime_capabilities.supported_model_memory_sections == (
+            frozenset({"vae_decode"}) if supports_memory else frozenset()
+        )
+
+
+@pytest.mark.parametrize(
+    ("family", "supports_executor", "supports_memory"),
+    [
+        (family, supports_executor, supports_memory)
+        for family, (supports_executor, supports_memory) in sorted(
+            _MODEL_RUNTIME_CAPABILITY_MATRIX.items(),
+        )
+    ],
+)
+def test_model_runtime_sections_follow_family_capabilities(
+    family: str,
+    supports_executor: bool,
+    supports_memory: bool,
+) -> None:
+    executor_cfg = OmegaConf.create(
+        {
+            "model": {
+                "family": family,
+                "executor": {"max_sequence_length": 123},
+            },
+        },
+    )
+    if supports_executor:
+        assert parse_config(executor_cfg).model.executor == {"max_sequence_length": 123}
+    else:
+        with pytest.raises(
+            ValueError,
+            match=rf"model family {family!r} does not support model\.executor",
+        ):
+            parse_config(executor_cfg)
+
+    for tiling in (False, True):
+        memory_cfg = OmegaConf.create(
+            {
+                "model": {
+                    "family": family,
+                    "memory": {"vae_decode": {"tiling": tiling}},
+                },
+            },
+        )
+        if supports_memory:
+            assert parse_config(memory_cfg).model.memory == {
+                "vae_decode": {"tiling": tiling},
+            }
+        else:
+            with pytest.raises(
+                ValueError,
+                match=(
+                    rf"model family {family!r} does not support "
+                    r"model\.memory section\(s\): vae_decode"
+                ),
+            ):
+                parse_config(memory_cfg)
+
+
+@pytest.mark.parametrize("empty_value", [None, {}])
+def test_empty_model_runtime_sections_are_valid_for_every_family(
+    empty_value: object,
+) -> None:
+    for family in _MODEL_RUNTIME_CAPABILITY_MATRIX:
+        parsed = parse_config(
+            OmegaConf.create(
+                {
+                    "model": {
+                        "family": family,
+                        "executor": empty_value,
+                        "memory": empty_value,
+                    },
+                },
+            ),
+        )
+
+        assert parsed.model is not None
+
+
+def test_model_family_aliases_preserve_runtime_section_capabilities() -> None:
+    def parse_error(family: str, section: str, value: object) -> str | None:
+        try:
+            parse_config(
+                OmegaConf.create(
+                    {"model": {"family": family, section: value}},
+                ),
+            )
+        except ValueError as error:
+            return str(error)
+        return None
+
+    runtime_sections = {
+        "executor": {"max_sequence_length": 123},
+        "memory": {"vae_decode": {"tiling": True}},
+    }
+    for alias, family in _FAMILY_BY_ALIAS.items():
+        for section, value in runtime_sections.items():
+            assert parse_error(alias, section, value) == parse_error(
+                family,
+                section,
+                value,
+            )
 
 
 def test_shared_only_families_use_the_shared_model_section() -> None:
