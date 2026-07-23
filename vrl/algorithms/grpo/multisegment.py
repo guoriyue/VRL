@@ -93,10 +93,7 @@ class MultiSegmentTokenGRPO(TokenGRPO):
                         context=signals.context,
                         primary_segment=name,
                     ),
-                    rewards=inputs.rewards,
-                    group_ids=inputs.group_ids,
                     advantages=segment_advantages,
-                    metadata=inputs.metadata,
                 ),
             )
             weighted = loss * weight

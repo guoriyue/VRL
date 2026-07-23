@@ -119,7 +119,8 @@ def test_replay_branch_reports_missing_and_available() -> None:
     inputs = AlgorithmInput(
         advantages=torch.zeros(_BATCH),
         group_ids=torch.zeros(_BATCH, dtype=torch.long),
-        metadata={"rollout_batch": _nft_batch(latents_clean=None), "timestep_index": 0},
+        rollout_batch=_nft_batch(latents_clean=None),
+        timestep_index=0,
     )
     with pytest.raises(KeyError) as exc:
         AlgorithmAdapter().compute_loss(DiffusionNFT(), inputs)
@@ -145,6 +146,6 @@ def test_well_formed_inputs_pass_validation() -> None:
         DiffusionNFT(),
         AlgorithmInput(
             advantages=torch.zeros(_BATCH),
-            metadata={"rollout_batch": _nft_batch(latents_clean=torch.randn(*_LATENT_SHAPE))},
+            rollout_batch=_nft_batch(latents_clean=torch.randn(*_LATENT_SHAPE)),
         ),
     )

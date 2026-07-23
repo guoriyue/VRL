@@ -892,11 +892,9 @@ class OnlineTrainer(Trainer):
                         rewards=chunk_batch.rewards,
                         group_ids=chunk_batch.group_ids,
                         advantages=chunk_advantages,
-                        metadata={
-                            "model": self.model,
-                            "rollout_batch": chunk_batch,
-                            "timestep_index": timestep_index,
-                        },
+                        model=self.model,
+                        rollout_batch=chunk_batch,
+                        timestep_index=timestep_index,
                     ),
                 )
 

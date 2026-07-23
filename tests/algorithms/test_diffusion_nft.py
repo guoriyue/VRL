@@ -35,6 +35,7 @@ from tests.models.steps.denoise.fixtures import (
 )
 from vrl.algorithms.diffusion_nft import DiffusionNFT, DiffusionNFTConfig
 from vrl.algorithms.grpo.continuous import GRPO, GRPOConfig
+from vrl.algorithms.trajectory import AlgorithmInput
 from vrl.config.precision import RolePrecision
 from vrl.generation.types import GenerationRequest, GenerationSampleRow, VideoGenerationRequest
 from vrl.models.families.cosmos.predict2_5.model import _copy_adapter_weights
@@ -167,7 +168,7 @@ def _build_batch(
     x0: torch.Tensor,
     noise: torch.Tensor,
     prompt_embeds: torch.Tensor,
-    timestep: float,
+    timestep: float | tuple[float, ...],
 ) -> RolloutBatch:
     """Build a real RolloutBatch carrying a real denoise TrajectoryBatch."""
 
@@ -192,15 +193,17 @@ def _build_batch(
     ]
     # Core role-triple tensors are required by the trajectory validator but
     # unused by NFT; the NFT inputs ride along as replay tensors.
-    log_prob = torch.zeros(_BATCH, 1)
+    timestep_values = (timestep,) if isinstance(timestep, float) else timestep
+    timestep_count = len(timestep_values)
+    log_prob = torch.zeros(_BATCH, timestep_count)
     trajectory = build_diffusion_trajectory(
         request=request,
         sample_rows=sample_rows,
-        observations=torch.zeros(_BATCH, 1, *_LATENT_SHAPE[1:]),
-        actions=torch.zeros(_BATCH, 1, *_LATENT_SHAPE[1:]),
+        observations=torch.zeros(_BATCH, timestep_count, *_LATENT_SHAPE[1:]),
+        actions=torch.zeros(_BATCH, timestep_count, *_LATENT_SHAPE[1:]),
         old_log_prob=log_prob,
-        timesteps=torch.full((_BATCH, 1), timestep),
-        kl=torch.zeros(_BATCH, 1),
+        timesteps=torch.tensor(timestep_values).repeat(_BATCH, 1),
+        kl=torch.zeros(_BATCH, timestep_count),
         replay_tensors={
             "latents_clean": x0,
             "prompt_embeds": prompt_embeds,
@@ -217,6 +220,71 @@ def _build_batch(
         context={"num_frames": 1, "height": 4, "width": 4},
         trajectory=trajectory,
     )
+
+
+@pytest.mark.parametrize(
+    ("inputs", "message"),
+    [
+        (
+            AlgorithmInput(rollout_batch=object(), timestep_index=0, advantages=torch.ones(1)),
+            "AlgorithmInput.model is required",
+        ),
+        (
+            AlgorithmInput(model=object(), timestep_index=0, advantages=torch.ones(1)),
+            "AlgorithmInput.rollout_batch is required",
+        ),
+        (
+            AlgorithmInput(model=object(), rollout_batch=object(), advantages=torch.ones(1)),
+            "AlgorithmInput.timestep_index is required",
+        ),
+    ],
+)
+def test_nft_requires_explicit_execution_inputs(
+    inputs: AlgorithmInput,
+    message: str,
+) -> None:
+    with pytest.raises(RuntimeError, match=message):
+        DiffusionNFT().compute_loss(inputs)
+
+
+@pytest.mark.parametrize("timestep_index", [-1, 2])
+def test_nft_rejects_timestep_index_outside_trajectory(
+    timestep_index: int,
+) -> None:
+    model = _build_model()
+    batch = _build_batch(
+        x0=torch.randn(_LATENT_SHAPE),
+        noise=torch.randn(_LATENT_SHAPE),
+        prompt_embeds=torch.randn(_BATCH, _TEXT_LEN, _TEXT_DIM),
+        timestep=(250.0, 500.0),
+    )
+
+    with pytest.raises(RuntimeError, match="timestep_index out of range"):
+        DiffusionNFT().compute_batch_timestep_loss(
+            model,
+            batch,
+            timestep_index,
+            torch.ones(_BATCH),
+        )
+
+
+def test_nft_accepts_last_trajectory_timestep() -> None:
+    model = _build_model()
+    batch = _build_batch(
+        x0=torch.randn(_LATENT_SHAPE),
+        noise=torch.randn(_LATENT_SHAPE),
+        prompt_embeds=torch.randn(_BATCH, _TEXT_LEN, _TEXT_DIM),
+        timestep=(250.0, 500.0),
+    )
+
+    loss, _ = DiffusionNFT().compute_batch_timestep_loss(
+        model,
+        batch,
+        1,
+        torch.ones(_BATCH),
+    )
+
+    assert torch.isfinite(loss)
 
 
 def _default_forward(
