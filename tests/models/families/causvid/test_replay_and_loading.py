@@ -668,6 +668,7 @@ def test_generation_executor_builds_trainable_chunk_trajectory() -> None:
         "denoise_transition",
     )
     assert segment.tensors["prompt_embeds"].axes == ("sample",)
+    assert trajectory.context == {}
 
 
 def test_runtime_import_does_not_import_upstream_causal_model() -> None:

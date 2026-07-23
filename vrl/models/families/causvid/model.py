@@ -672,17 +672,7 @@ class CausVidModel(_CausVidPolicyModel):
             from vrl.utils.media import to_uint8
 
             video = to_uint8(video)
-        context = {
-            "model_family": "causvid",
-            "temporal_organization": "chunk_autoregressive_denoise",
-            "prediction_timesteps": self._schedule.prediction_timesteps,
-            "transition_sigmas": self._schedule.transition_sigmas,
-            "cache_finalization_timestep": self._schedule.cache_timestep,
-            "latent_shape": self.geometry.latent_shape,
-            "frames_per_chunk": self.geometry.frames_per_chunk,
-            "replay_temporary_cost": "O(C^2) full-prefix block-causal recomputation",
-        }
-        mapping = run.trajectory_mapping(context=context)
+        mapping = run.trajectory_mapping(context={})
         return ChunkAutoregressiveDenoiseResult(
             prompt_index=int(chunk.prompt_index),
             sample_start=int(chunk.sample_start),

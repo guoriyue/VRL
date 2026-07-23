@@ -304,10 +304,7 @@ class _TrajectoryBatchBuilder:
                     metadata={"output_ref": "GenerationOutput.output"},
                 )
             },
-            context={
-                **self._serializable_context(context),
-                "trajectory_mode": "trainable_chunk_denoise",
-            },
+            context=self._serializable_context(context),
         )
         return TrajectoryValidator(trajectory).validate_batch()
 
@@ -374,10 +371,7 @@ class _TrajectoryBatchBuilder:
                     value_range="unit",
                 )
             },
-            context={
-                **self._serializable_context(context),
-                "trajectory_mode": "generation_only",
-            },
+            context=self._serializable_context(context),
         )
         return TrajectoryValidator(trajectory).validate_batch()
 
