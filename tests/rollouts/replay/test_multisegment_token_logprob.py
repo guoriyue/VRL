@@ -173,6 +173,7 @@ def test_evaluator_can_replay_text_segment_without_using_image_path() -> None:
     signals = evaluator.evaluate(model, batch)
 
     assert model.calls == [("selfcheck_text", "text")]
+    assert signals.primary_segment == "selfcheck_text"
     assert signals.segments["selfcheck_text"].log_prob.shape == (2, 2)
 
 
