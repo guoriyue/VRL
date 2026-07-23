@@ -12,6 +12,31 @@ from vrl.config.unknown_keys import find_unknown_keys, warn_unknown_keys
 from vrl.utils.profiling import TorchProfilerConfig
 
 
+@dataclasses.dataclass
+class _FixtureNestedConfig:
+    enabled: bool = False
+
+
+@dataclasses.dataclass
+class _FixtureRuntimeConfig:
+    actor_scalar: int = dataclasses.field(
+        default=1,
+        metadata={"yaml": "actor"},
+    )
+    actor_nested: _FixtureNestedConfig = dataclasses.field(
+        default_factory=_FixtureNestedConfig,
+        metadata={"yaml": "actor.actor_nested"},
+    )
+    bridged_value: int = dataclasses.field(
+        default=0,
+        metadata={"yaml": "bridged"},
+    )
+    rollout_value: int = dataclasses.field(
+        default=0,
+        metadata={"yaml": "rollout"},
+    )
+
+
 def test_config_block_known_keys_derive_from_dataclass_fields() -> None:
     """The mechanism must not maintain a second dataclass field allow-list."""
     from vrl.config.unknown_keys import ConfigBlock
@@ -19,6 +44,76 @@ def test_config_block_known_keys_derive_from_dataclass_fields() -> None:
     assert ConfigBlock(TorchProfilerConfig).known == frozenset(
         field.name for field in dataclasses.fields(TorchProfilerConfig)
     )
+
+
+def test_future_runtime_metadata_fields_enter_their_public_section_automatically() -> None:
+    from vrl.config.schema import _online_runtime_section_shape
+
+    known, children = _online_runtime_section_shape(
+        "actor",
+        (_FixtureRuntimeConfig,),
+    )
+
+    assert known == frozenset({"actor_scalar", "actor_nested"})
+    assert children["actor_nested"].known == frozenset({"enabled"})
+
+
+@pytest.mark.parametrize("section", ["actor", "trainer"])
+def test_online_section_keys_derive_from_runtime_yaml_owners(section: str) -> None:
+    from vrl.config.schema import ActorSection, TrainerSection
+    from vrl.config.unknown_keys import ConfigBlock, _root_block
+    from vrl.trainers.online.config import OnlineBatchPlan, TrainerConfig
+
+    public_section = {
+        "actor": ActorSection,
+        "trainer": TrainerSection,
+    }[section]
+    runtime_fields = {
+        field.name
+        for owner in (TrainerConfig, OnlineBatchPlan)
+        for field in dataclasses.fields(owner)
+        if str(field.metadata.get("yaml", "")).partition(".")[0] == section
+    }
+    nested_fields = {
+        field.name
+        for owner in (TrainerConfig, OnlineBatchPlan)
+        for field in dataclasses.fields(owner)
+        if str(field.metadata.get("yaml", "")).startswith(f"{section}.")
+    }
+
+    block = _root_block().children[section]
+
+    assert isinstance(block, ConfigBlock)
+    assert runtime_fields.isdisjoint(public_section.model_fields)
+    assert block.known == runtime_fields | set(public_section.model_fields)
+    assert nested_fields <= set(block.children)
+
+
+def test_typed_online_sections_keep_derived_fields_and_drop_unknown_extras() -> None:
+    from vrl.config.schema import parse_config
+
+    parsed = parse_config(
+        OmegaConf.create(
+            {
+                "actor": {"ppo_epochs": 2, "future_typo": "ignored"},
+                "trainer": {
+                    "output_dir": "outputs/test",
+                    "profile": True,
+                    "future_typo": "ignored",
+                },
+            },
+        ),
+    )
+
+    assert parsed.actor is not None
+    assert parsed.actor.ppo_epochs == 2
+    assert "future_typo" not in parsed.actor.model_fields_set
+    assert "future_typo" not in parsed.actor.model_dump()
+    assert parsed.trainer is not None
+    assert parsed.trainer.output_dir == "outputs/test"
+    assert parsed.trainer.profile is True
+    assert "future_typo" not in parsed.trainer.model_fields_set
+    assert "future_typo" not in parsed.trainer.model_dump()
 
 
 def test_unknown_keys_are_found_at_every_depth() -> None:
