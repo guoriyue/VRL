@@ -92,6 +92,9 @@ def test_inner_token_grpo_input_contains_only_loss_inputs(monkeypatch) -> None:
         torch.zeros(1, 2),
     )
     inputs = _inputs({"initial_image": signal}, torch.ones(1))
+    inputs.signals.context.update(
+        {"segment_order": ["initial_image"], "unused_by_token_grpo": object()},
+    )
     inputs.rewards = object()
     inputs.group_ids = object()
     inputs.model = object()
@@ -117,6 +120,9 @@ def test_inner_token_grpo_input_contains_only_loss_inputs(monkeypatch) -> None:
     inner_inputs = captured[0]
     assert inner_inputs.signals is not None
     assert torch.equal(inner_inputs.advantages, torch.ones(1))
+    assert torch.equal(inner_inputs.signals.group_ids, inputs.signals.group_ids)
+    assert inner_inputs.signals.primary_segment == "initial_image"
+    assert inner_inputs.signals.context == {}
     assert inner_inputs.rewards is None
     assert inner_inputs.group_ids is None
     assert inner_inputs.model is None

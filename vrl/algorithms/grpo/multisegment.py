@@ -90,7 +90,6 @@ class MultiSegmentTokenGRPO(TokenGRPO):
                     signals=TrajectorySignalBatch(
                         segments={name: segment_signal},
                         group_ids=signals.group_ids,
-                        context=signals.context,
                         primary_segment=name,
                     ),
                     advantages=segment_advantages,
