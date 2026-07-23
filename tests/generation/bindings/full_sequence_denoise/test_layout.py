@@ -152,7 +152,12 @@ def test_custom_family_text_length_defaults_match_encoder_capability(
     executor_cls: type,
     expected: int | None,
 ) -> None:
-    executor = executor_cls(object())
+    model = (
+        SimpleNamespace(video_height=64, video_width=64)
+        if executor_cls is EchoChunkExecutor
+        else object()
+    )
+    executor = executor_cls(model)
     params = executor.parse_sampling_params(_request({}))
 
     assert params.base.max_sequence_length == expected
