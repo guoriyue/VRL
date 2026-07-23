@@ -324,10 +324,11 @@ def test_runtime_builders_apply_generation_memory_policy() -> None:
 
     import re
 
+    # This is a source-layout exception for the architecture test, not a
+    # production runtime capability. MAGI owns VAE memory in its subprocess.
     isolated_runtime_paths: set[Path] = set()
-    for entry in FAMILY_REGISTRY.values():
-        if not entry.runtime_capabilities.runs_in_isolated_subprocess:
-            continue
+    for family in ("magi_1",):
+        entry = FAMILY_REGISTRY[family]
         build = entry.family_build
         assert isinstance(build, DenoiseFamilyBuild)
         assert build.rollout_runtime_builder is not None

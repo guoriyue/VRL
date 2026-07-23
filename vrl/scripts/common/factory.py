@@ -129,7 +129,7 @@ def build_algorithm_and_evaluator_from_cfg(
 ) -> AlgorithmEvaluatorPair:
     """Build the algorithm/evaluator pair for a strict online recipe."""
 
-    if not family_entry.runtime_capabilities.supports_policy_replay:
+    if not family_entry.supports_policy_replay:
         raise RuntimeError(
             f"{family_entry.family} is generation-only: its runtime exposes no "
             "trainable actions, transition likelihoods, or policy replay evaluator",

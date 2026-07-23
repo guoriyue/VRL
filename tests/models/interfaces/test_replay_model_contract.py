@@ -7,7 +7,7 @@ from typing import Any
 
 import pytest
 
-from tests.models.interfaces import registered_family_model_classes
+from tests.models.interfaces import registered_replay_model_classes
 from vrl.models.interfaces import (
     ReplayModel,
     ReplayRequest,
@@ -144,7 +144,7 @@ def test_replay_timestep_guard_rejects_nonzero_index() -> None:
 def test_single_segment_ar_replay_rejects_unsupported_protocol_values(
     family: str,
 ) -> None:
-    replay_cls = registered_family_model_classes()[family][1]
+    replay_cls = registered_replay_model_classes()[family]
     with pytest.raises(ValueError, match="timestep_idx must be 0"):
         replay_cls.replay_forward(object(), object(), timestep_idx=1)
     with pytest.raises(ValueError, match="supports segments"):
@@ -181,7 +181,7 @@ def test_single_segment_ar_replay_rejects_unsupported_protocol_values(
 def test_denoise_replay_rejects_unsupported_segment_selection(
     family: str,
 ) -> None:
-    replay_cls = registered_family_model_classes()[family][1]
+    replay_cls = registered_replay_model_classes()[family]
     with pytest.raises(ValueError, match="supports segments"):
         replay_cls.replay_forward(
             object(),
@@ -195,7 +195,7 @@ def test_denoise_replay_rejects_unsupported_segment_selection(
 def test_grouped_or_multisegment_replay_rejects_nonzero_timestep(
     family: str,
 ) -> None:
-    replay_cls = registered_family_model_classes()[family][1]
+    replay_cls = registered_replay_model_classes()[family]
     with pytest.raises(ValueError, match="timestep_idx must be 0"):
         replay_cls.replay_forward(object(), object(), timestep_idx=1)
 
@@ -204,7 +204,7 @@ def test_grouped_or_multisegment_replay_rejects_nonzero_timestep(
 def test_grouped_or_multisegment_replay_rejects_unsupported_segment(
     family: str,
 ) -> None:
-    replay_cls = registered_family_model_classes()[family][1]
+    replay_cls = registered_replay_model_classes()[family]
     with pytest.raises(ValueError, match="supports segments"):
         replay_cls.replay_forward(
             object(),
@@ -220,7 +220,7 @@ def test_replay_model_protocol_accepts_minimal_shape() -> None:
 
 @pytest.mark.parametrize(
     "family",
-    sorted(registered_family_model_classes()),
+    sorted(registered_replay_model_classes()),
 )
 def test_registered_family_replay_model_satisfies_contract(family: str) -> None:
     """Every registered family's replay-model class satisfies ReplayModel.
@@ -230,7 +230,7 @@ def test_registered_family_replay_model_satisfies_contract(family: str) -> None:
     class-level — ``callable(getattr(cls, m))`` like ``_missing_callables`` —
     because instantiating a real family model needs weights/GPU.
     """
-    _runtime_cls, replay_cls = registered_family_model_classes()[family]
+    replay_cls = registered_replay_model_classes()[family]
     missing = [m for m in _REPLAY_MODEL_METHODS if not callable(getattr(replay_cls, m, None))]
     assert not missing, f"{family}: {replay_cls.__name__} missing ReplayModel methods {missing}"
 

@@ -28,7 +28,6 @@ from vrl.models.families.magi_1.model import (
 )
 from vrl.models.families.magi_1.runtime import (
     Magi1ChunkExecutor,
-    build_magi_1_replay_runtime_bundle,
     build_magi_1_runtime_bundle,
 )
 from vrl.models.interfaces.runtime import ModelBuild, RolloutBuildOptions
@@ -385,13 +384,6 @@ def test_driver_normalizes_external_python_before_ray_serialization(
     assert executable == (
         Path(__file__).resolve().parents[4] / "third_party" / "MAGI-1" / ".venv" / "bin" / "python"
     )
-
-
-def test_replay_builder_fails_before_loading_upstream(tmp_path: Path) -> None:
-    config, _ = _installation(tmp_path)
-
-    with pytest.raises(RuntimeError, match="final-video inference only"):
-        build_magi_1_replay_runtime_bundle(_build(config, rollout=False))
 
 
 def test_executor_calls_generation_model_one_sample_at_a_time(

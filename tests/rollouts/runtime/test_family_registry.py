@@ -6,6 +6,7 @@ import subprocess
 import sys
 from dataclasses import replace
 from pathlib import Path
+from types import SimpleNamespace
 from typing import get_args
 
 import pytest
@@ -134,14 +135,68 @@ def test_family_registry_entries_have_complete_protocol_wiring() -> None:
             )
 
 
-def test_chunk_family_trainability_and_process_boundaries_are_explicit() -> None:
-    causvid = get_model_family_entry("causvid").runtime_capabilities
-    magi = get_model_family_entry("magi_1").runtime_capabilities
+def test_policy_replay_support_is_derived_from_family_recipes() -> None:
+    causvid = get_model_family_entry("causvid")
+    magi = get_model_family_entry("magi_1")
+    sana = get_model_family_entry("sana")
+    llamagen = get_model_family_entry("llamagen")
 
     assert causvid.supports_policy_replay is True
-    assert causvid.runs_in_isolated_subprocess is False
     assert magi.supports_policy_replay is False
-    assert magi.runs_in_isolated_subprocess is True
+    assert sana.supports_policy_replay is True
+    assert llamagen.supports_policy_replay is True
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        {},
+        {"replay_cls": "example:Replay"},
+        {"transformer_classname": "Transformer"},
+        {
+            "replay_cls": "example:Replay",
+            "transformer_classname": "Transformer",
+            "replay_runtime_builder": "example:build_replay",
+        },
+        {
+            "replay_cls": "example:Replay",
+            "transformer_classname": "Transformer",
+            "replay_unavailable_reason": "generation only",
+        },
+        {
+            "replay_runtime_builder": "example:build_replay",
+            "replay_unavailable_reason": "generation only",
+        },
+        {"replay_unavailable_reason": "  "},
+        {
+            "replay_runtime_builder": "example:build_replay",
+            "scheduler_classname": "Scheduler",
+        },
+        {
+            "replay_unavailable_reason": "generation only",
+            "scheduler_classname": "Scheduler",
+        },
+    ],
+)
+def test_denoise_family_build_rejects_ambiguous_replay_modes(
+    kwargs: dict[str, str],
+) -> None:
+    with pytest.raises(ValueError):
+        DenoiseFamilyBuild(model_cls="example:Model", **kwargs)
+
+
+def test_generation_only_entry_fails_before_dynamic_import(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    entry = get_model_family_entry("magi_1")
+
+    def fail_import(path: str) -> None:
+        pytest.fail(f"generation-only replay unexpectedly imported {path}")
+
+    monkeypatch.setattr("vrl.utils.config.import_from_path", fail_import)
+
+    with pytest.raises(RuntimeError, match="final-video inference only"):
+        entry.build_replay(SimpleNamespace(family="magi_1"))
 
 
 def test_family_aliases_resolve_to_canonical_entries() -> None:
@@ -277,7 +332,7 @@ def test_token_family_build_descriptors_are_importable() -> None:
             assert callable(import_from_path(path))
 
 
-def test_denoise_family_build_descriptors_have_one_replay_path() -> None:
+def test_denoise_family_build_descriptors_have_one_explicit_replay_mode() -> None:
     denoise_entries = [
         entry
         for entry in FAMILY_REGISTRY.values()
@@ -287,10 +342,18 @@ def test_denoise_family_build_descriptors_have_one_replay_path() -> None:
     for entry in denoise_entries:
         build = entry.family_build
         assert isinstance(build, DenoiseFamilyBuild)
+        if not entry.supports_policy_replay:
+            assert build.replay_cls is None
+            assert build.transformer_classname is None
+            assert build.replay_runtime_builder is None
+            assert build.replay_unavailable_reason
+            continue
         if build.replay_cls is not None:
             assert callable(import_from_path(build.replay_cls))
             assert build.transformer_classname
             assert build.replay_runtime_builder is None
+            assert build.replay_unavailable_reason is None
         else:
             assert build.replay_runtime_builder
             assert callable(import_from_path(build.replay_runtime_builder))
+            assert build.replay_unavailable_reason is None

@@ -30,8 +30,6 @@ class GenerationRuntimeCapabilities:
     accepts_samples_per_chunk: bool = False
     supports_cumem_pool: bool = False
     requires_frozen_component_parking: bool = False
-    supports_policy_replay: bool = True
-    runs_in_isolated_subprocess: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -64,20 +62,31 @@ class DenoiseFamilyBuild:
     # transformer load. The per-family WHY belongs in a comment on the entry
     # (and in the model's own apply_full_finetune error), not in runtime data.
     requires_lora: bool = False
+    # Generation-only denoise families retain their concrete reason so trainer
+    # construction can fail before importing an upstream runtime or weights.
+    replay_unavailable_reason: str | None = None
 
     def __post_init__(self) -> None:
         generic_replay = self.replay_cls is not None and self.transformer_classname is not None
         partial_generic_replay = (self.replay_cls is None) != (self.transformer_classname is None)
         custom_replay = self.replay_runtime_builder is not None
-        if partial_generic_replay or generic_replay == custom_replay:
+        unavailable = self.replay_unavailable_reason is not None
+        if partial_generic_replay:
             raise ValueError(
-                "denoise family build must declare either replay_cls plus "
-                "transformer_classname, or one custom replay_runtime_builder",
+                "denoise family generic replay requires both replay_cls and transformer_classname",
             )
-        if custom_replay and self.scheduler_classname is not None:
+        if unavailable and not self.replay_unavailable_reason.strip():
+            raise ValueError("replay_unavailable_reason must be non-empty when set")
+        if sum((generic_replay, custom_replay, unavailable)) != 1:
+            raise ValueError(
+                "denoise family build must declare exactly one replay mode: "
+                "replay_cls plus transformer_classname, replay_runtime_builder, "
+                "or replay_unavailable_reason",
+            )
+        if not generic_replay and self.scheduler_classname is not None:
             raise ValueError(
                 "scheduler_classname belongs to the generic replay builder and "
-                "cannot accompany replay_runtime_builder",
+                "cannot accompany custom or unavailable replay",
             )
 
 
@@ -121,6 +130,17 @@ class ModelFamilyEntry:
             raise ValueError(f"model family {self.family!r} requires a gatherer binding")
         if self.request_metadata_namespace == "":
             raise ValueError("request_metadata_namespace must be non-empty when set")
+
+    @property
+    def supports_policy_replay(self) -> bool:
+        """Whether this entry declares a concrete trainer replay recipe."""
+
+        if isinstance(self.family_build, TokenFamilyBuild):
+            return True
+        return (
+            self.family_build.replay_cls is not None
+            or self.family_build.replay_runtime_builder is not None
+        )
 
     def resolve_model_build(
         self,
@@ -248,9 +268,9 @@ class ModelFamilyEntry:
             raise ValueError(
                 f"replay build family {build.family!r} does not match entry {self.family!r}",
             )
-        if not self.runtime_capabilities.supports_policy_replay:
+        if not self.supports_policy_replay:
             raise RuntimeError(
-                f"{self.family} is generation-only and exposes no trainable policy replay",
+                f"{self.family} is generation-only: {self.family_build.replay_unavailable_reason}",
             )
 
         if isinstance(self.family_build, DenoiseFamilyBuild):
@@ -443,19 +463,16 @@ _register_model_family(
         executor_cls="vrl.models.families.magi_1.runtime:Magi1ChunkExecutor",
         build=DenoiseFamilyBuild(
             model_cls="vrl.models.families.magi_1.model:Magi1Model",
-            replay_runtime_builder=(
-                "vrl.models.families.magi_1.runtime:build_magi_1_replay_runtime_bundle"
-            ),
             rollout_runtime_builder=(
                 "vrl.models.families.magi_1.runtime:build_magi_1_runtime_bundle"
             ),
             model_build_normalizer=(
                 "vrl.models.families.magi_1.model:normalize_magi_1_model_build"
             ),
-        ),
-        runtime_capabilities=GenerationRuntimeCapabilities(
-            supports_policy_replay=False,
-            runs_in_isolated_subprocess=True,
+            replay_unavailable_reason=(
+                "the official 4.5B runtime exposes final-video inference only and no "
+                "replayable transition likelihood or autograd model"
+            ),
         ),
     ),
 )
