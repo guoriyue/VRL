@@ -90,6 +90,10 @@ real NCCL" lesson), each now fixed with a regression test:
    `test_save_training_checkpoint_non_primary_gathers_but_writes_nothing` and
    `test_checkpoint_keeps_raw_state_and_exports_ema_on_every_fsdp_rank`.
 
+后续 exact-owned-state、immutable identity与 artifact failure agreement的完整判定见
+[Checkpoint identity and owned state](SPRINT_checkpoint_identity_and_owned_state.md) 和
+[EMA adapter artifact export](SPRINT_ema_adapter_artifact_export.md)。
+
 **Done (2026-06-22) — FULL-PARAM FSDP validated:** the case FSDP actually earns its
 keep. `online_grpo_ocr_fsdp_2x1_fullparam` (SD3.5 GRPO OCR, `model.use_lora=false`)
 ran 2 epochs on the same 2×1 rig: the WHOLE ~2.47B transformer is sharded (ZeRO-3),
