@@ -560,6 +560,41 @@ def test_omitted_loader_derives_from_preprocessing_format(fmt: str, expected: st
     assert data.loader == expected
 
 
+@pytest.mark.parametrize(
+    ("loader", "fmt", "message"),
+    [
+        (
+            "prompt_manifest",
+            "image_caption_jsonl",
+            r"requires.*prompt_image_manifest",
+        ),
+        (
+            "prompt_image_manifest",
+            "text",
+            r"requires.*image_caption_jsonl",
+        ),
+    ],
+)
+def test_explicit_data_loader_rejects_preprocessing_format_conflict(
+    loader: str,
+    fmt: str,
+    message: str,
+) -> None:
+    with pytest.raises(ValueError, match=message):
+        DataConfig(
+            loader=loader,
+            manifest="train.jsonl",
+            eval_manifest="eval.jsonl",
+            preprocessing={
+                "format": fmt,
+                "image_field": "image",
+                "caption_field": "caption",
+                "conditioning": "reference_image",
+            },
+            sampler={"type": "random_without_replacement"},
+        )
+
+
 def test_prompt_image_manifest_requires_image_caption_fields() -> None:
     """Checks prompt image manifest requires image caption fields."""
     with pytest.raises(ValueError, match=r"data\.preprocessing\.caption_field"):

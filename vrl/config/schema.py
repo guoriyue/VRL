@@ -21,6 +21,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_valida
 
 from vrl.algorithms.logprob_mismatch import PrecisionCorrectionConfig
 from vrl.config.algorithm import algorithm_config_class
+from vrl.config.data import DataLoaderName, resolve_data_loader
 from vrl.config.precision import PrecisionConfig
 from vrl.config.reward_inference import parse_reward_inference_config
 from vrl.config.unknown_keys import OPEN, ConfigBlock
@@ -148,9 +149,7 @@ _algorithm_config_variant_blocks: tuple[ConfigBlock, ...] = tuple(
 
 
 class DataConfig(ConfigBase):
-    loader: Literal["pickapic_preference", "prompt_manifest", "prompt_image_manifest"] | None = (
-        None
-    )
+    loader: DataLoaderName | None = None
     manifest: str | None = None
     eval_manifest: str | None = None
     # readers: _validate_data + loader tooling
@@ -189,17 +188,10 @@ class DataConfig(ConfigBase):
 
     @model_validator(mode="after")
     def _validate_data(self) -> DataConfig:
-        # loader is optional for the prompt-* family: when omitted, derive it from
-        # preprocessing.format (image_caption_jsonl is the only image-caption
-        # schema; everything else is the plain prompt manifest). pickapic_preference
-        # cannot be derived and must be set explicitly. Keep this rule in sync with
-        # load_prompt_examples_from_config in vrl/trainers/data/prompts.py.
-        # Explicit values (enforced by the Literal type) are unchanged.
-        if self.loader is None:
-            fmt = (self.preprocessing or {}).get("format", "")
-            self.loader = (
-                "prompt_image_manifest" if fmt == "image_caption_jsonl" else "prompt_manifest"
-            )
+        self.loader = resolve_data_loader(
+            self.loader,
+            (self.preprocessing or {}).get("format"),
+        )
         if self.loader == "prompt_manifest":
             if not self.manifest:
                 raise ValueError("config missing required field: data.manifest")
