@@ -13,195 +13,49 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from vrl.generation.steps.token import TokenLoopInit, TokenStepBatch, TokenStepOutput
-from vrl.generation.types import GenerationRequest, GenerationSampleRow
 from vrl.nn.layers.attention.cache_rows import ARCacheRows, ar_concat_rows, ar_split_rows
-
-
-@dataclass(frozen=True, slots=True)
-class TokenAutoregressiveSequenceKey:
-    """Grouping key for token-autoregressive batching."""
-
-    family: str
-    task: str
-    tokenizer_key: str
-    dtype: str
-    max_new_tokens: int
-
-
-@dataclass(slots=True)
-class ActiveSequence:
-    """One in-flight token-autoregressive image sequence."""
-
-    request_id: str
-    sample_id: str
-    family: str
-    task: str
-    tokenizer_key: str
-    dtype: str
-    max_new_tokens: int
-    position: int = 0
-    finished: bool = False
-    metadata: dict[str, Any] = field(default_factory=dict)
-
-    def __post_init__(self) -> None:
-        if not self.request_id:
-            raise ValueError("ActiveSequence.request_id must be non-empty")
-        if not self.sample_id:
-            raise ValueError("ActiveSequence.sample_id must be non-empty")
-        if self.max_new_tokens < 1:
-            raise ValueError("ActiveSequence.max_new_tokens must be >= 1")
-        if self.position < 0:
-            raise ValueError("ActiveSequence.position must be >= 0")
-        if self.position >= self.max_new_tokens:
-            self.finished = True
-
-    @property
-    def key(self) -> TokenAutoregressiveSequenceKey:
-        return TokenAutoregressiveSequenceKey(
-            family=self.family,
-            task=self.task,
-            tokenizer_key=self.tokenizer_key,
-            dtype=self.dtype,
-            max_new_tokens=self.max_new_tokens,
-        )
-
-    @property
-    def remaining_tokens(self) -> int:
-        return max(0, self.max_new_tokens - self.position)
-
-    def advance(self, steps: int = 1) -> None:
-        if steps < 1:
-            raise ValueError("steps must be >= 1")
-        if self.finished:
-            return
-        self.position += steps
-        if self.position >= self.max_new_tokens:
-            self.position = self.max_new_tokens
-            self.finished = True
-
-
-@dataclass(slots=True)
-class TokenBatch:
-    """One token-forward batch inside the scheduled decode loop."""
-
-    key: TokenAutoregressiveSequenceKey
-    sequences: list[ActiveSequence]
-
-    def __post_init__(self) -> None:
-        if not self.sequences:
-            raise ValueError("TokenBatch.sequences must be non-empty")
-        for sequence in self.sequences:
-            if sequence.key != self.key:
-                raise ValueError("TokenBatch sequences must share the same key")
-
-    @property
-    def request_ids(self) -> list[str]:
-        return [sequence.request_id for sequence in self.sequences]
-
-    @property
-    def sample_ids(self) -> list[str]:
-        return [sequence.sample_id for sequence in self.sequences]
-
-
-class TokenScheduler:
-    """Group active token-autoregressive sequences into same-shape batches."""
-
-    def __init__(self, max_batch_size: int) -> None:
-        if max_batch_size < 1:
-            raise ValueError("max_batch_size must be >= 1")
-        self.max_batch_size = max_batch_size
-        self._pending: list[ActiveSequence] = []
-
-    def __len__(self) -> int:
-        return sum(not sequence.finished for sequence in self._pending)
-
-    def add(self, sequence: ActiveSequence) -> None:
-        if not sequence.finished:
-            self._pending.append(sequence)
-
-    def add_many(self, sequences: list[ActiveSequence]) -> None:
-        for sequence in sequences:
-            self.add(sequence)
-
-    def pop_batch(self) -> TokenBatch | None:
-        groups: dict[tuple[TokenAutoregressiveSequenceKey, int], list[ActiveSequence]] = {}
-        ordered_keys: list[tuple[TokenAutoregressiveSequenceKey, int]] = []
-        retained: list[ActiveSequence] = []
-
-        for sequence in self._pending:
-            if sequence.finished:
-                continue
-            group_key = (sequence.key, sequence.position)
-            if group_key not in groups:
-                groups[group_key] = []
-                ordered_keys.append(group_key)
-            groups[group_key].append(sequence)
-            retained.append(sequence)
-
-        self._pending = retained
-        if not groups:
-            return None
-
-        key, _position = ordered_keys[0]
-        selected_group = groups[ordered_keys[0]]
-        selected = selected_group[: self.max_batch_size]
-        selected_ids = {id(sequence) for sequence in selected}
-        self._pending = [
-            sequence for sequence in self._pending if id(sequence) not in selected_ids
-        ]
-        return TokenBatch(key=key, sequences=selected)
-
-    def push_back_unfinished(self, batch: TokenBatch) -> None:
-        for sequence in batch.sequences:
-            if not sequence.finished:
-                self._pending.append(sequence)
 
 
 @dataclass(slots=True)
 class TokenAutoregressiveEnvelope:
     """Generation-owned row-state envelope scheduled by the decode loop."""
 
-    state: Any
     row_lanes: dict[str, ARCacheRows] = field(default_factory=dict)
 
     @classmethod
     def from_init(
         cls,
         init: TokenLoopInit,
-        *,
-        batch_size: int,
     ) -> TokenAutoregressiveEnvelope:
-        if batch_size < 1:
-            raise ValueError("batch_size must be >= 1")
+        if not init.row_lanes:
+            raise ValueError("TokenLoopInit.row_lanes must be non-empty")
         return cls(
-            state=init.state,
             row_lanes={
                 name: ARCacheRows.from_batched(
                     value,
-                    batch_size,
+                    init.row_count,
                     owner=f"ar.row_lanes.{name}",
                 )
                 for name, value in init.row_lanes.items()
             },
         )
 
-    def build_step_batch(self, sequences: Sequence[ActiveSequence]) -> TokenStepBatch:
-        row_indices = _row_indices(sequences, size=self.row_count)
+    def build_step_batch(
+        self,
+        row_indices: Sequence[int],
+        *,
+        position: int,
+    ) -> TokenStepBatch:
+        rows = [int(index) for index in row_indices]
         return TokenStepBatch(
-            row_indices=row_indices,
-            position=int(sequences[0].position),
-            row_lanes={name: lane.gather(row_indices) for name, lane in self.row_lanes.items()},
+            row_indices=rows,
+            position=position,
+            row_lanes={name: lane.gather(rows) for name, lane in self.row_lanes.items()},
         )
 
     def apply_step_output(self, batch: TokenStepBatch, output: TokenStepOutput) -> None:
         for name, value in output.updated_row_lanes.items():
             self._require_row_lane(name).scatter(batch.row_indices, value)
-
-    @property
-    def row_count(self) -> int:
-        for lane in self.row_lanes.values():
-            return len(lane)
-        raise ValueError("TokenAutoregressiveEnvelope requires at least one row lane")
 
     def _require_row_lane(self, name: str) -> ARCacheRows:
         try:
@@ -211,72 +65,55 @@ class TokenAutoregressiveEnvelope:
 
 
 @dataclass(slots=True)
-class TokenAutoregressiveResult:
-    """Result of one scheduled token-autoregressive loop."""
-
-    finalized: Any
-
-
-@dataclass(slots=True)
 class TokenAutoregressiveLoop:
     """Family-neutral token-autoregressive composition over token policy steps."""
 
-    request: GenerationRequest
-    sample_rows: Sequence[GenerationSampleRow]
     runner: Any
-    max_new_tokens: int
-    tokenizer_key: str
-    dtype: str
     scheduler_batch_size: int | None = None
     init_args: Sequence[Any] = ()
     init_kwargs: Mapping[str, Any] | None = None
 
-    def run(self) -> TokenAutoregressiveResult:
-        rows = list(self.sample_rows)
-        if not rows:
-            raise ValueError("sample_rows must be non-empty")
-        if self.max_new_tokens < 1:
-            raise ValueError("max_new_tokens must be >= 1")
+    def __post_init__(self) -> None:
+        if self.scheduler_batch_size is None:
+            return
+        if (
+            isinstance(self.scheduler_batch_size, bool)
+            or not isinstance(self.scheduler_batch_size, int)
+            or self.scheduler_batch_size < 1
+        ):
+            raise ValueError("scheduler_batch_size must be a positive integer")
 
+    def run(self) -> Any:
         self._require_hooks(("init_token", "step_token", "finalize_token"))
 
-        init_state = call_with_supported_kwargs(
+        init = call_with_supported_kwargs(
             self.runner.init_token,
             *self.init_args,
             **dict(self.init_kwargs or {}),
         )
-        if not isinstance(init_state, TokenLoopInit):
+        if not isinstance(init, TokenLoopInit):
             raise TypeError(
                 "token model runner init_token must return TokenLoopInit; "
-                f"got {type(init_state).__name__}",
+                f"got {type(init).__name__}",
             )
-        envelope = TokenAutoregressiveEnvelope.from_init(init_state, batch_size=len(rows))
-        state = envelope.state
-        sequences = self._build_sequences(rows)
-        scheduler = TokenScheduler(max_batch_size=self._max_batch_size(sequences))
-        scheduler.add_many(sequences)
+        envelope = TokenAutoregressiveEnvelope.from_init(init)
+        batch_size = self.scheduler_batch_size or init.row_count
 
-        while True:
-            batch = scheduler.pop_batch()
-            if batch is None:
-                break
-            step_batch = envelope.build_step_batch(batch.sequences)
-            step_output = self.runner.step_token(state, step_batch)
-            if not isinstance(step_output, TokenStepOutput):
-                raise TypeError(
-                    "token model runner step_token must return TokenStepOutput; "
-                    f"got {type(step_output).__name__}",
+        for position in range(init.step_count):
+            for start in range(0, init.row_count, batch_size):
+                step_batch = envelope.build_step_batch(
+                    range(start, min(start + batch_size, init.row_count)),
+                    position=position,
                 )
-            envelope.apply_step_output(step_batch, step_output)
-            for sequence in batch.sequences:
-                sequence.advance()
-            scheduler.push_back_unfinished(batch)
+                step_output = self.runner.step_token(init.state, step_batch)
+                if not isinstance(step_output, TokenStepOutput):
+                    raise TypeError(
+                        "token model runner step_token must return TokenStepOutput; "
+                        f"got {type(step_output).__name__}",
+                    )
+                envelope.apply_step_output(step_batch, step_output)
 
-        return TokenAutoregressiveResult(finalized=self.runner.finalize_token(state))
-
-    def _max_batch_size(self, sequences: Sequence[ActiveSequence]) -> int:
-        max_batch_size = int(self.scheduler_batch_size or len(sequences))
-        return max(1, max_batch_size)
+        return self.runner.finalize_token(init.state)
 
     def _require_hooks(self, names: Sequence[str]) -> None:
         missing = [name for name in names if not hasattr(self.runner, name)]
@@ -284,29 +121,6 @@ class TokenAutoregressiveLoop:
             raise TypeError(
                 "token-autoregressive loop requires model runner hooks: " + ", ".join(missing),
             )
-
-    def _build_sequences(
-        self,
-        sample_rows: Sequence[GenerationSampleRow],
-    ) -> list[ActiveSequence]:
-        return [
-            ActiveSequence(
-                request_id=self.request.request_id,
-                sample_id=row.sample_id,
-                family=self.request.family,
-                task=self.request.task,
-                tokenizer_key=self.tokenizer_key,
-                dtype=self.dtype,
-                max_new_tokens=self.max_new_tokens,
-                metadata={
-                    **dict(row.metadata),
-                    "row_index": row_index,
-                    "prompt_index": row.prompt_index,
-                    "sample_index": row.sample_index,
-                },
-            )
-            for row_index, row in enumerate(sample_rows)
-        ]
 
 
 def call_with_supported_kwargs(fn: Any, *args: Any, **kwargs: Any) -> Any:
@@ -323,27 +137,10 @@ def call_with_supported_kwargs(fn: Any, *args: Any, **kwargs: Any) -> Any:
     return fn(*args, **supported)
 
 
-def _row_indices(sequences: Sequence[ActiveSequence], *, size: int) -> list[int]:
-    row_indices = [int(sequence.metadata.get("row_index", -1)) for sequence in sequences]
-    if not row_indices:
-        raise ValueError("scheduled token step requires at least one row")
-    invalid = [index for index in row_indices if index < 0 or index >= size]
-    if invalid:
-        raise ValueError(
-            f"scheduled token row indices out of range for {size} rows: {invalid}",
-        )
-    return row_indices
-
-
 __all__ = [
     "ARCacheRows",
-    "ActiveSequence",
     "TokenAutoregressiveEnvelope",
     "TokenAutoregressiveLoop",
-    "TokenAutoregressiveResult",
-    "TokenAutoregressiveSequenceKey",
-    "TokenBatch",
-    "TokenScheduler",
     "ar_concat_rows",
     "ar_split_rows",
     "call_with_supported_kwargs",

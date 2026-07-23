@@ -129,6 +129,8 @@ class GlmImageTokenRunner(ARDiscreteTokenRunner):
                 prompt_valid_lens=prompt_valid_lens,
                 kv_rows=kv_rows,
             ),
+            row_count=batch_size,
+            step_count=total_token_num,
             row_lanes={
                 "cond_last_hidden": last_hidden,
                 "cond_attn": cond_attention_mask,

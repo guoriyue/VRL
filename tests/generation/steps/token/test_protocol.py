@@ -4,7 +4,42 @@ from __future__ import annotations
 
 import pytest
 
-from vrl.generation.steps.token import TokenStepBatch
+from vrl.generation.steps.token import TokenLoopInit, TokenStepBatch
+
+
+def test_token_loop_init_accepts_positive_shape() -> None:
+    init = TokenLoopInit(
+        state=object(),
+        row_count=2,
+        step_count=3,
+    )
+
+    assert init.row_count == 2
+    assert init.step_count == 3
+
+
+@pytest.mark.parametrize(
+    ("row_count", "step_count", "message"),
+    [
+        (True, 1, "row_count must be a positive integer"),
+        (0, 1, "row_count must be a positive integer"),
+        (-1, 1, "row_count must be a positive integer"),
+        (1, True, "step_count must be a positive integer"),
+        (1, 0, "step_count must be a positive integer"),
+        (1, -1, "step_count must be a positive integer"),
+    ],
+)
+def test_token_loop_init_rejects_invalid_shape(
+    row_count: int | bool,
+    step_count: int | bool,
+    message: str,
+) -> None:
+    with pytest.raises(ValueError, match=message):
+        TokenLoopInit(
+            state=object(),
+            row_count=row_count,
+            step_count=step_count,
+        )
 
 
 @pytest.mark.parametrize("position", [0, 3])

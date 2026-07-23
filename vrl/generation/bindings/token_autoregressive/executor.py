@@ -166,9 +166,6 @@ class ARChunkInputs:
     context.
     """
 
-    max_new_tokens: int
-    # str(cond_embeds.dtype) — the decode loop's activation dtype source.
-    decode_dtype: str
     init_args: tuple[Any, ...]
     init_kwargs: dict[str, Any]
     # Passed verbatim to ``model.decode_image_tokens(token_ids, **kwargs)``.
@@ -266,18 +263,12 @@ class ARDiscreteChunkExecutorBase(ARChunkExecutorBase):
             record_function("engine.cache_read"),
             record_function("engine.cache_write"),
         ):
-            decode_result = TokenAutoregressiveLoop(
-                request=request,
-                sample_rows=self.layout.chunk_sample_rows(request, chunk),
+            token_ids, token_log_probs = TokenAutoregressiveLoop(
                 runner=self._ar_runner(request),
-                max_new_tokens=inputs.max_new_tokens,
-                tokenizer_key=self.family,
-                dtype=inputs.decode_dtype,
                 scheduler_batch_size=chunk.sample_count,
                 init_args=inputs.init_args,
                 init_kwargs=inputs.init_kwargs,
             ).run()
-        token_ids, token_log_probs = decode_result.finalized
         with record_function("engine.vq_decode"):
             images = self.model.decode_image_tokens(
                 token_ids,

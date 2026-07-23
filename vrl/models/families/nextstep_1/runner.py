@@ -120,6 +120,8 @@ class NextStep1ARModelRunner:
                 paged_cond_states=paged_cond_states,
                 paged_uncond_states=paged_uncond_states,
             ),
+            row_count=batch_size,
+            step_count=int(image_token_num),
             row_lanes=row_lanes,
         )
 

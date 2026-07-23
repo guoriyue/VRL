@@ -193,6 +193,8 @@ class PagedCFGTokenRunner(ARDiscreteTokenRunner):
                 paged_uncond_states=list(uncond_prefill.sequence_states),
                 **(state_kwargs or {}),
             ),
+            row_count=batch_size,
+            step_count=total_token_num,
             row_lanes={
                 "cond_last_hidden": cond_prefill.last_hidden,
                 "uncond_last_hidden": uncond_prefill.last_hidden,

@@ -149,31 +149,6 @@ class ARRequestLayout:
 
         return chunk.prompt_index * int(request.samples_per_prompt) + chunk.sample_start
 
-    def chunk_sample_rows(
-        self,
-        request: GenerationRequest,
-        chunk: SampleChunk,
-    ) -> list[GenerationSampleRow]:
-        """Build prompt-major sample rows for an AR sample chunk."""
-
-        return [
-            GenerationSampleRow(
-                prompt_index=chunk.prompt_index,
-                sample_index=sample_index,
-                prompt=chunk.prompt,
-                group_id=f"{request.request_id}:group:{chunk.prompt_index}",
-                sample_id=(f"{request.request_id}:sample:{chunk.prompt_index}:{sample_index}"),
-                trajectory_id=(
-                    f"{request.request_id}:trajectory:{chunk.prompt_index}:{sample_index}"
-                ),
-                seed=None
-                if request.sampling.get("seed") is None
-                else int(request.sampling.get("seed")),
-                metadata={},
-            )
-            for sample_index in range(chunk.sample_start, chunk.sample_end)
-        ]
-
     def cat_chunk_fields(
         self,
         chunks: Sequence[Any],

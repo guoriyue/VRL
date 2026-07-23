@@ -12,7 +12,6 @@ import torch
 from vrl.generation.composition.token_autoregressive.token_loop import (
     TokenAutoregressiveLoop,
 )
-from vrl.generation.types import GenerationRequest, GenerationSampleRow
 from vrl.models.families.nextstep_1.model import NextStep1Model
 from vrl.models.families.nextstep_1.runner import NextStep1ARModelRunner
 
@@ -140,7 +139,7 @@ def test_replay_advances_each_cfg_branch_only_between_tokens(
     expected_advance_count: int,
 ) -> None:
     result, _backend, model, conditioning = _run_rollout(token_count)
-    tokens, saved_noise, _rollout_logprobs = result.finalized
+    tokens, saved_noise, _rollout_logprobs = result
     replay = _ReplayHarness(model)
 
     NextStep1Model.recompute_logprobs(
@@ -155,7 +154,7 @@ def test_replay_advances_each_cfg_branch_only_between_tokens(
 
 def test_skipping_final_advance_preserves_rollout_replay_logprob_parity() -> None:
     result, _backend, model, conditioning = _run_rollout(token_count=3)
-    tokens, saved_noise, rollout_logprobs = result.finalized
+    tokens, saved_noise, rollout_logprobs = result
     replay = _ReplayHarness(model)
 
     replay_logprobs = NextStep1Model.recompute_logprobs(
@@ -201,35 +200,11 @@ def _run_rollout(
     generator = torch.Generator(device="cpu")
     generator.manual_seed(123)
 
-    request = GenerationRequest(
-        request_id="nextstep-final-advance",
-        family="nextstep_1",
-        task="ar_t2i",
-        inputs=["prompt"],
-        samples_per_prompt=_BATCH_SIZE,
-    )
-    sample_rows = [
-        GenerationSampleRow(
-            prompt_index=0,
-            sample_index=index,
-            prompt="prompt",
-            group_id="group-0",
-            sample_id=f"sample-{index}",
-            trajectory_id=f"trajectory-{index}",
-            seed=None,
-        )
-        for index in range(_BATCH_SIZE)
-    ]
     result = TokenAutoregressiveLoop(
-        request=request,
-        sample_rows=sample_rows,
         runner=NextStep1ARModelRunner(
             model,
             attention_backend=backend,
         ),
-        max_new_tokens=token_count,
-        tokenizer_key="nextstep_1",
-        dtype="float32",
         scheduler_batch_size=_BATCH_SIZE,
         init_args=conditioning,
         init_kwargs={

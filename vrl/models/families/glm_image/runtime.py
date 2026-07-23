@@ -144,8 +144,6 @@ class GlmImageChunkExecutor(ARDiscreteChunkExecutorBase):
 
         total_token_num = glm_image_token_num(image_height, image_width)
         return ARChunkInputs(
-            max_new_tokens=total_token_num,
-            decode_dtype=str(cond_embeds.dtype),
             init_args=(cond_embeds, prompt_mask),
             init_kwargs={
                 "token_h": token_h,

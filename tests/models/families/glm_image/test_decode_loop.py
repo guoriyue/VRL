@@ -17,7 +17,6 @@ from tests.models.families.glm_image.fixtures import (
     build_tiny_glm_image_model,
 )
 from vrl.generation.composition.token_autoregressive.token_loop import TokenAutoregressiveLoop
-from vrl.generation.types import GenerationRequest, GenerationSampleRow
 from vrl.models.families.glm_image.runner import GlmImageTokenRunner
 
 # Tiny grids: large 4x6 + preview 2x3 -> 30 generated tokens.
@@ -27,38 +26,13 @@ GRIDS = ((TOKEN_H, TOKEN_W), (PREV_H, PREV_W))
 
 
 def _run_tiny_decode_loop(model, batch_size: int = 2, *, top_p: float = 1.0):
-    request = GenerationRequest(
-        request_id="test-glm-image-decode",
-        family="glm_image",
-        task="ar_t2i",
-        inputs=["test prompt"],
-        samples_per_prompt=batch_size,
-    )
-    rows = [
-        GenerationSampleRow(
-            prompt_index=0,
-            sample_index=index,
-            prompt="test prompt",
-            group_id="group-0",
-            sample_id=f"sample-{index}",
-            trajectory_id=f"trajectory-{index}",
-            seed=None,
-            metadata={},
-        )
-        for index in range(batch_size)
-    ]
     embed = model.language_model.get_input_embeddings()
     # t2i-shaped prompt: text ids then the trailing image_start token; row
     # padding is on the left like the checkpoint tokenizer produces.
     cond_ids = torch.tensor([[30, 31, 32, TINY_IMAGE_START_ID]] * batch_size)
     cond_mask = torch.ones(batch_size, 4, dtype=torch.long)
     result = TokenAutoregressiveLoop(
-        request=request,
-        sample_rows=rows,
         runner=GlmImageTokenRunner(model),
-        max_new_tokens=TOTAL,
-        tokenizer_key="glm_image",
-        dtype="float32",
         scheduler_batch_size=batch_size,
         init_args=(embed(cond_ids), cond_mask),
         init_kwargs={
@@ -78,7 +52,7 @@ def test_decode_loop_produces_codebook_raster_end_to_end() -> None:
     model = build_tiny_glm_image_model()
 
     result, _ids, _mask = _run_tiny_decode_loop(model)
-    token_ids, logprobs = result.finalized
+    token_ids, logprobs = result
 
     assert token_ids.shape == (2, TOTAL)
     assert logprobs.shape == (2, TOTAL)
@@ -101,7 +75,7 @@ def test_rollout_logprobs_match_teacher_forced_replay() -> None:
     model = build_tiny_glm_image_model()
 
     result, cond_ids, cond_mask = _run_tiny_decode_loop(model)
-    token_ids, rollout_logprobs = result.finalized
+    token_ids, rollout_logprobs = result
 
     embed = model.language_model.get_input_embeddings()
     logits = model.forward_image_logits(

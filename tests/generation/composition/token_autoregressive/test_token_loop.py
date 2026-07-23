@@ -1,47 +1,34 @@
-"""Tests for the shared AR decode loop driver."""
+"""Tests for the shared token-autoregressive loop."""
 
 from __future__ import annotations
 
+from dataclasses import fields
 from typing import Any
 
+import pytest
 import torch
 
-from vrl.generation.composition.token_autoregressive.token_loop import TokenAutoregressiveLoop
+from vrl.generation.composition.token_autoregressive.token_loop import (
+    TokenAutoregressiveEnvelope,
+    TokenAutoregressiveLoop,
+)
 from vrl.generation.steps.token import TokenLoopInit, TokenStepBatch, TokenStepOutput
-from vrl.generation.types import GenerationRequest, GenerationSampleRow
 
 
-def _request() -> GenerationRequest:
-    return GenerationRequest(
-        request_id="req",
-        family="janus_pro",
-        task="ar_t2i",
-        inputs=["p0"],
-        samples_per_prompt=3,
-    )
-
-
-def _sample_row(index: int) -> GenerationSampleRow:
-    return GenerationSampleRow(
-        prompt_index=0,
-        sample_index=index,
-        prompt="p0",
-        group_id="group-0",
-        sample_id=f"sample-{index}",
-        trajectory_id=f"traj-{index}",
-        seed=None,
-        metadata={"existing": index},
-    )
-
-
-class _DeterministicARContractRunner:
-    def __init__(self) -> None:
+class _DeterministicRunner:
+    def __init__(self, *, row_count: int = 3, step_count: int = 2) -> None:
+        self.row_count = row_count
+        self.step_count = step_count
+        self.state = {"step_calls": 0}
         self.step_inputs: list[tuple[list[int], int, list[float]]] = []
 
     def init_token(self) -> TokenLoopInit:
+        hidden = torch.arange(1, self.row_count + 1, dtype=torch.float32).unsqueeze(-1) * 10
         return TokenLoopInit(
-            state={},
-            row_lanes={"hidden": torch.tensor([[10.0], [20.0], [30.0]])},
+            state=self.state,
+            row_count=self.row_count,
+            step_count=self.step_count,
+            row_lanes={"hidden": hidden},
         )
 
     def step_token(
@@ -49,8 +36,9 @@ class _DeterministicARContractRunner:
         state: dict[str, Any],
         batch: TokenStepBatch,
     ) -> TokenStepOutput:
-        del state
+        assert state is self.state
         hidden = batch.row_lanes["hidden"]
+        state["step_calls"] += 1
         self.step_inputs.append(
             (
                 batch.row_indices,
@@ -61,47 +49,186 @@ class _DeterministicARContractRunner:
         return TokenStepOutput(updated_row_lanes={"hidden": hidden + 1.0})
 
     def finalize_token(self, state: dict[str, Any]) -> dict[str, Any]:
+        assert state is self.state
         return state
 
 
-def test_ar_decode_loop_schedules_contract_row_lanes() -> None:
-    """Checks AR decode loop schedules contract row lanes."""
-    runner = _DeterministicARContractRunner()
+@pytest.mark.parametrize(
+    ("batch_size", "expected"),
+    [
+        (
+            2,
+            [
+                ([0, 1], 0, [10.0, 20.0]),
+                ([2], 0, [30.0]),
+                ([0, 1], 1, [11.0, 21.0]),
+                ([2], 1, [31.0]),
+            ],
+        ),
+        (
+            3,
+            [
+                ([0, 1, 2], 0, [10.0, 20.0, 30.0]),
+                ([0, 1, 2], 1, [11.0, 21.0, 31.0]),
+            ],
+        ),
+        (
+            4,
+            [
+                ([0, 1, 2], 0, [10.0, 20.0, 30.0]),
+                ([0, 1, 2], 1, [11.0, 21.0, 31.0]),
+            ],
+        ),
+    ],
+)
+def test_loop_runs_position_major_bounded_row_batches(
+    batch_size: int,
+    expected: list[tuple[list[int], int, list[float]]],
+) -> None:
+    runner = _DeterministicRunner()
 
     result = TokenAutoregressiveLoop(
-        request=_request(),
-        sample_rows=[_sample_row(index) for index in range(3)],
         runner=runner,
-        max_new_tokens=2,
-        tokenizer_key="janus_pro",
-        dtype="float32",
-        scheduler_batch_size=2,
+        scheduler_batch_size=batch_size,
+        init_kwargs={"unsupported_init_kwarg": True},
     ).run()
 
-    assert result.finalized == {}
-    assert runner.step_inputs == [
-        ([0, 1], 0, [10.0, 20.0]),
-        ([2], 0, [30.0]),
-        ([0, 1], 1, [11.0, 21.0]),
-        ([2], 1, [31.0]),
-    ]
+    assert result is runner.state
+    assert result["step_calls"] == len(expected)
+    assert runner.step_inputs == expected
 
 
-def test_ar_decode_loop_requires_family_hooks() -> None:
-    """Checks AR decode loop requires family hooks."""
-    try:
+def test_loop_defaults_to_one_full_row_batch() -> None:
+    runner = _DeterministicRunner(row_count=2, step_count=1)
+
+    TokenAutoregressiveLoop(runner=runner).run()
+
+    assert runner.step_inputs == [([0, 1], 0, [10.0, 20.0])]
+
+
+@pytest.mark.parametrize("batch_size", [True, False, 0, -1, 1.5])
+def test_loop_rejects_invalid_batch_size(batch_size: int | float | bool) -> None:
+    with pytest.raises(ValueError, match="scheduler_batch_size must be a positive integer"):
         TokenAutoregressiveLoop(
-            request=_request(),
-            sample_rows=[_sample_row(0)],
-            runner=object(),
-            max_new_tokens=1,
-            tokenizer_key="janus_pro",
-            dtype="float32",
-            scheduler_batch_size=None,
+            runner=_DeterministicRunner(),
+            scheduler_batch_size=batch_size,
         ).run()
-    except TypeError as exc:
-        assert "init_token" in str(exc)
-        assert "step_token" in str(exc)
-        assert "finalize_token" in str(exc)
-    else:
-        raise AssertionError("TokenAutoregressiveLoop should reject models without AR hooks")
+
+
+def test_loop_requires_family_hooks() -> None:
+    with pytest.raises(TypeError, match=r"init_token.*step_token.*finalize_token"):
+        TokenAutoregressiveLoop(runner=object()).run()
+
+
+def test_loop_rejects_invalid_init_output() -> None:
+    class _Runner:
+        @staticmethod
+        def init_token() -> object:
+            return object()
+
+        @staticmethod
+        def step_token(_state: Any, _batch: TokenStepBatch) -> TokenStepOutput:
+            return TokenStepOutput()
+
+        @staticmethod
+        def finalize_token(state: Any) -> Any:
+            return state
+
+    with pytest.raises(TypeError, match="init_token must return TokenLoopInit"):
+        TokenAutoregressiveLoop(runner=_Runner()).run()
+
+
+def test_envelope_rejects_init_without_row_lanes() -> None:
+    init = TokenLoopInit(
+        state=object(),
+        row_count=1,
+        step_count=1,
+    )
+
+    with pytest.raises(ValueError, match="row_lanes must be non-empty"):
+        TokenAutoregressiveEnvelope.from_init(init)
+
+
+def test_envelope_rejects_row_lane_count_mismatch() -> None:
+    init = TokenLoopInit(
+        state=object(),
+        row_count=2,
+        step_count=1,
+        row_lanes={"hidden": torch.zeros(1, 1)},
+    )
+
+    with pytest.raises(ValueError, match="cannot split tensor with batch=1 into 2 rows"):
+        TokenAutoregressiveEnvelope.from_init(init)
+
+
+def test_loop_rejects_invalid_step_output() -> None:
+    class _Runner(_DeterministicRunner):
+        def step_token(
+            self,
+            state: dict[str, Any],
+            batch: TokenStepBatch,
+        ) -> object:
+            del state, batch
+            return object()
+
+    with pytest.raises(TypeError, match="step_token must return TokenStepOutput"):
+        TokenAutoregressiveLoop(runner=_Runner()).run()
+
+
+def test_loop_rejects_unknown_row_update() -> None:
+    class _Runner(_DeterministicRunner):
+        def step_token(
+            self,
+            state: dict[str, Any],
+            batch: TokenStepBatch,
+        ) -> TokenStepOutput:
+            del state
+            return TokenStepOutput(
+                updated_row_lanes={
+                    "unknown": torch.zeros(len(batch.row_indices), 1),
+                },
+            )
+
+    with pytest.raises(KeyError, match="unknown AR row lane"):
+        TokenAutoregressiveLoop(runner=_Runner()).run()
+
+
+@pytest.mark.parametrize(
+    ("row_indices", "error", "message"),
+    [
+        ([], ValueError, "at least one row index"),
+        ([-1], IndexError, "out of range"),
+        ([3], IndexError, "out of range"),
+        ([0, 0], ValueError, "must be unique"),
+    ],
+)
+def test_envelope_rejects_invalid_or_duplicate_rows(
+    row_indices: list[int],
+    error: type[Exception],
+    message: str,
+) -> None:
+    envelope = TokenAutoregressiveEnvelope.from_init(_DeterministicRunner().init_token())
+
+    with pytest.raises(error, match=message):
+        envelope.build_step_batch(row_indices, position=0)
+
+
+def test_envelope_rejects_unknown_row_update() -> None:
+    envelope = TokenAutoregressiveEnvelope.from_init(_DeterministicRunner().init_token())
+    batch = envelope.build_step_batch([0], position=0)
+
+    with pytest.raises(KeyError, match="unknown AR row lane"):
+        envelope.apply_step_output(
+            batch,
+            TokenStepOutput(updated_row_lanes={"unknown": torch.zeros(1, 1)}),
+        )
+
+
+def test_loop_structs_do_not_mirror_request_or_family_state() -> None:
+    assert [field.name for field in fields(TokenAutoregressiveEnvelope)] == ["row_lanes"]
+    assert [field.name for field in fields(TokenAutoregressiveLoop)] == [
+        "runner",
+        "scheduler_batch_size",
+        "init_args",
+        "init_kwargs",
+    ]

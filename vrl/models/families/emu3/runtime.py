@@ -133,8 +133,6 @@ class Emu3ChunkExecutor(ARDiscreteChunkExecutorBase):
 
         total_token_num = emu3_grid_token_num(height, width)
         return ARChunkInputs(
-            max_new_tokens=total_token_num,
-            decode_dtype=str(cond_embeds.dtype),
             init_args=(cond_embeds, uncond_embeds, prompt_mask, uncond_mask),
             init_kwargs={
                 "guidance_scale": guidance_scale,

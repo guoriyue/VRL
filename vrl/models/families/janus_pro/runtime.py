@@ -153,8 +153,6 @@ class JanusProChunkExecutor(ARDiscreteChunkExecutorBase):
         uncond_embeds = self._embed(uncond_ids)
 
         return ARChunkInputs(
-            max_new_tokens=params.image_token_num,
-            decode_dtype=str(cond_embeds.dtype),
             init_args=(cond_embeds, uncond_embeds, prompt_mask, uncond_mask),
             init_kwargs={
                 "guidance_scale": guidance_scale,
@@ -271,7 +269,6 @@ class JanusProR1ChunkExecutor(JanusProChunkExecutor):
             record_function("engine.cache_read"),
             record_function("engine.cache_write"),
         ):
-            chunk_specs = self.layout.chunk_sample_rows(request, chunk)
             result = call_with_supported_kwargs(
                 self.model.generate_with_refine,
                 prompt_ids,
@@ -287,7 +284,6 @@ class JanusProR1ChunkExecutor(JanusProChunkExecutor):
                 refine_mode=_resolve_refine_mode(sampling, self.model),
                 image_sampler=self._r1_image_sampler(
                     request=request,
-                    sample_rows=chunk_specs,
                     params=params,
                 ),
             )
@@ -316,15 +312,11 @@ class JanusProR1ChunkExecutor(JanusProChunkExecutor):
         self,
         *,
         request: GenerationRequest,
-        sample_rows: Sequence[GenerationSampleRow],
         params: ARSamplingParams,
     ) -> Any:
         """Build an R1 image sampler backed by the shared AR decode loop driver."""
 
-        rows = list(sample_rows)
-        scheduler_batch_size = (
-            params.ar_scheduler_batch_size if params.use_ar_scheduler else len(rows)
-        )
+        scheduler_batch_size = params.ar_scheduler_batch_size if params.use_ar_scheduler else None
 
         def sample(
             cond_embeds: torch.Tensor,
@@ -333,19 +325,12 @@ class JanusProR1ChunkExecutor(JanusProChunkExecutor):
             uncond_mask: torch.Tensor,
             **kwargs: Any,
         ) -> tuple[torch.Tensor, torch.Tensor]:
-            image_token_num = int(kwargs.get("image_token_num", params.image_token_num))
-            decode_result = TokenAutoregressiveLoop(
-                request=request,
-                sample_rows=rows,
+            return TokenAutoregressiveLoop(
                 runner=self._ar_runner(request),
-                max_new_tokens=image_token_num,
-                tokenizer_key="janus_pro_r1",
-                dtype=str(cond_embeds.dtype),
                 scheduler_batch_size=scheduler_batch_size,
                 init_args=(cond_embeds, uncond_embeds, cond_mask, uncond_mask),
                 init_kwargs=kwargs,
             ).run()
-            return decode_result.finalized
 
         return sample
 

@@ -9,7 +9,6 @@ from omegaconf import OmegaConf
 from vrl.families.registry import get_model_family_entry
 from vrl.generation import GenerationRequest
 from vrl.generation.bindings.token_autoregressive import ARRequestLayout
-from vrl.generation.composition.token_autoregressive.token_loop import ActiveSequence
 from vrl.generation.execution.ids import build_sample_rows
 from vrl.models.families.nextstep_1.runtime import (
     NextStep1ARChunkResult,
@@ -35,18 +34,9 @@ def test_nextstep_ar_sampling_params_carry_scheduler_batch_size() -> None:
     )
 
     params = ARRequestLayout().parse_sampling_params(request)
-    sequence = ActiveSequence(
-        request_id=request.request_id,
-        sample_id="s0",
-        family=request.family,
-        task=request.task,
-        tokenizer_key="nextstep_1",
-        dtype="bfloat16",
-        max_new_tokens=params.image_token_num,
-    )
 
     assert params.ar_scheduler_batch_size == 3
-    assert sequence.key.max_new_tokens == 8
+    assert params.image_token_num == 8
 
 
 def test_ar_layout_requires_shape_sampling_fields() -> None:

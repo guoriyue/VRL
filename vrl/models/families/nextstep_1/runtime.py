@@ -167,18 +167,12 @@ class NextStep1ChunkExecutor(ARChunkExecutorBase):
         if generator is not None:
             sample_kwargs["generator"] = generator
 
-        decode_result = TokenAutoregressiveLoop(
-            request=request,
-            sample_rows=self.layout.chunk_sample_rows(request, chunk),
+        tokens, saved_noise, old_logprobs = TokenAutoregressiveLoop(
             runner=self._ar_runner(request),
-            max_new_tokens=params.image_token_num,
-            tokenizer_key="nextstep_1",
-            dtype=str(cond_embeds.dtype),
             scheduler_batch_size=chunk.sample_count,
             init_args=(cond_embeds, uncond_embeds, prompt_mask, uncond_mask),
             init_kwargs=sample_kwargs,
         ).run()
-        tokens, saved_noise, old_logprobs = decode_result.finalized
 
         images = self.model.decode_image_tokens(tokens, image_size=params.image_size)
         peak_mem_mb = self.layout.peak_memory_mb()

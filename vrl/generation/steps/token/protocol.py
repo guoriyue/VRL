@@ -12,7 +12,23 @@ class TokenLoopInit:
     """Model-provided state and row lanes for a token loop."""
 
     state: Any
+    row_count: int
+    step_count: int
     row_lanes: Mapping[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        if (
+            isinstance(self.row_count, bool)
+            or not isinstance(self.row_count, int)
+            or self.row_count < 1
+        ):
+            raise ValueError("TokenLoopInit.row_count must be a positive integer")
+        if (
+            isinstance(self.step_count, bool)
+            or not isinstance(self.step_count, int)
+            or self.step_count < 1
+        ):
+            raise ValueError("TokenLoopInit.step_count must be a positive integer")
 
 
 @dataclass(slots=True)

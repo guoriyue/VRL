@@ -127,6 +127,8 @@ class LlamaGenARModelRunner(ARDiscreteTokenRunner):
                 total_token_num=int(image_token_num),
                 caption_len=int(caption_len),
             ),
+            row_count=batch_size,
+            step_count=int(image_token_num),
             row_lanes={
                 "cond_logits": last[:batch_size],
                 "uncond_logits": last[batch_size:],

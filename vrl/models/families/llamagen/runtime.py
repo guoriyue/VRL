@@ -126,8 +126,6 @@ class LlamaGenChunkExecutor(ARDiscreteChunkExecutorBase):
         uncond_embeds = self.model.uncond_caption_embeds(chunk.sample_count)
 
         return ARChunkInputs(
-            max_new_tokens=params.image_token_num,
-            decode_dtype=str(cond_embeds.dtype),
             # Upstream generate() drives the uncond branch with the COND
             # prompt's mask (cat([emb_masks, emb_masks])). Full-batch
             # scheduling is a hard requirement: the vendored static KV cache

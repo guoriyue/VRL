@@ -21,7 +21,6 @@ from tests.models.families.emu3.fixtures import (
     build_tiny_emu3_model,
 )
 from vrl.generation.composition.token_autoregressive.token_loop import TokenAutoregressiveLoop
-from vrl.generation.types import GenerationRequest, GenerationSampleRow
 from vrl.models.families.emu3.model import (
     emu3_allowed_token_mask,
     emu3_forced_token_schedule,
@@ -71,39 +70,14 @@ def test_allowed_token_mask_free_vs_forced_rows() -> None:
 
 
 def _run_tiny_decode_loop(model, batch_size: int = 2):
-    request = GenerationRequest(
-        request_id="test-emu3-decode",
-        family="emu3",
-        task="ar_t2i",
-        inputs=["test prompt"],
-        samples_per_prompt=batch_size,
-    )
-    rows = [
-        GenerationSampleRow(
-            prompt_index=0,
-            sample_index=index,
-            prompt="test prompt",
-            group_id="group-0",
-            sample_id=f"sample-{index}",
-            trajectory_id=f"trajectory-{index}",
-            seed=None,
-            metadata={},
-        )
-        for index in range(batch_size)
-    ]
     embed = model.language_model.get_input_embeddings()
     cond_ids = torch.tensor([[1, 5, 6, 51]] * batch_size)
     uncond_ids = torch.tensor([[1, 0, 0, 51]] * batch_size)
     return TokenAutoregressiveLoop(
-        request=request,
-        sample_rows=rows,
         runner=Emu3TokenRunner(
             model,
             attention_backend=build_torch_native_backend(model, family="emu3"),
         ),
-        max_new_tokens=TOTAL,
-        tokenizer_key="emu3",
-        dtype="float32",
         scheduler_batch_size=batch_size,
         init_args=(
             embed(cond_ids),
@@ -126,7 +100,7 @@ def test_decode_loop_enforces_structural_schedule_end_to_end() -> None:
     torch.manual_seed(0)
     model = build_tiny_emu3_model()
 
-    token_ids, logprobs = _run_tiny_decode_loop(model).finalized
+    token_ids, logprobs = _run_tiny_decode_loop(model)
 
     assert token_ids.shape == (2, TOTAL)
     assert logprobs.shape == (2, TOTAL)
@@ -154,7 +128,7 @@ def test_decode_loop_enforces_structural_schedule_end_to_end() -> None:
 def test_decode_loop_output_decodes_through_tiny_vq() -> None:
     torch.manual_seed(0)
     model = build_tiny_emu3_model()
-    token_ids, _ = _run_tiny_decode_loop(model).finalized
+    token_ids, _ = _run_tiny_decode_loop(model)
 
     image = model.decode_image_tokens(token_ids, height=HEIGHT, width=WIDTH)
 

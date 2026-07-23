@@ -12,7 +12,7 @@ import torch.nn as nn
 
 from tests.models.steps.token.fixtures import RecordingHead, build_stub_janus_model
 from vrl.generation.composition.token_autoregressive.token_loop import TokenAutoregressiveLoop
-from vrl.generation.types import GenerationRequest, GenerationSampleRow
+from vrl.generation.types import GenerationRequest
 from vrl.models.families.janus_pro.model import (
     JANUS_IMAGE_VOCAB_SIZE,
     JanusProModel,
@@ -120,12 +120,7 @@ def test_janus_runner_can_drive_one_paged_attention_image_step() -> None:
     backend = _RecordingPagedBackend()
 
     TokenAutoregressiveLoop(
-        request=_request(),
-        sample_rows=_rows(batch_size=2),
         runner=JanusProARModelRunner(model, attention_backend=backend),
-        max_new_tokens=2,
-        tokenizer_key="janus_pro",
-        dtype="float32",
         scheduler_batch_size=2,
         init_args=_prompt_tensors(),
         init_kwargs={"image_token_num": 2},
@@ -212,19 +207,3 @@ def _request() -> GenerationRequest:
         inputs=["test prompt"],
         samples_per_prompt=2,
     )
-
-
-def _rows(*, batch_size: int) -> list[GenerationSampleRow]:
-    return [
-        GenerationSampleRow(
-            prompt_index=0,
-            sample_index=index,
-            prompt="test prompt",
-            group_id="group-0",
-            sample_id=f"sample-{index}",
-            trajectory_id=f"trajectory-{index}",
-            seed=None,
-            metadata={},
-        )
-        for index in range(batch_size)
-    ]
