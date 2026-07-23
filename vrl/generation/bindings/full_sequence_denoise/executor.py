@@ -249,10 +249,6 @@ class DiffusionChunkExecutorBase(
     ) -> DenoiseLoopConfig:
         """Build the SDE denoise config for one sample chunk."""
 
-        if params.sde is None:
-            raise NotImplementedError(
-                f"{type(self).__name__} must override denoise for non-SDE diffusion",
-            )
         layout = self.layout
         return DenoiseLoopConfig(
             prompt_index=chunk.prompt_index,
@@ -260,10 +256,7 @@ class DiffusionChunkExecutorBase(
             sample_count=chunk.sample_count,
             seed=params.base.seed,
             sde=params.sde,
-            sde_window=layout.select_sde_window(
-                params.sde.sde_window_size,
-                params.sde.sde_window_range,
-            ),
+            sde_window=layout.select_sde_window(params),
             denoise_mode=params.denoise_mode,
             teacache=params.teacache,
         )

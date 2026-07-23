@@ -49,8 +49,6 @@ def _config(*, cache_ref_noise_pred: bool) -> DenoiseLoopConfig:
         sde=DenoiseSDEParams(
             noise_level=1.0,
             sde_type="flow_grpo",
-            sde_window_size=0,
-            sde_window_range=(0, 0),
             same_latent=False,
             return_kl=False,
             cache_ref_noise_pred=cache_ref_noise_pred,
@@ -108,7 +106,6 @@ def test_layout_parses_cache_ref_noise_pred_flag() -> None:
         sampling=sampling,
     )
     params = layout.parse_sampling_params(request)
-    assert params.sde is not None
     assert params.sde.cache_ref_noise_pred is True
     # Default stays off when the key is absent.
     default_request = GenerationRequest(

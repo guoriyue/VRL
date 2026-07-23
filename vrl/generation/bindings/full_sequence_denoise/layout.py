@@ -38,7 +38,9 @@ class DiffusionSamplingParams:
     """Parsed diffusion sampling fields for one generation request."""
 
     base: DiffusionBaseParams
-    sde: DenoiseSDEParams | None
+    sde: DenoiseSDEParams
+    sde_window_size: int
+    sde_window_range: tuple[int, int]
     denoise_mode: str
     teacache: TeaCacheConfig | None = None
 
@@ -107,8 +109,6 @@ class DiffusionRequestLayout:
         sde = DenoiseSDEParams(
             noise_level=float(sampling.get("noise_level", 1.0)),
             sde_type=self._parse_sde_type(sampling.get("sde_type", self.sde_type)),
-            sde_window_size=sde_window_size,
-            sde_window_range=sde_window_range,
             same_latent=bool(sampling.get("same_latent", False)),
             return_kl=bool(sampling.get("return_kl", False)),
             return_prev_sample_mean=bool(
@@ -121,6 +121,8 @@ class DiffusionRequestLayout:
         return DiffusionSamplingParams(
             base=base,
             sde=sde,
+            sde_window_size=sde_window_size,
+            sde_window_range=sde_window_range,
             denoise_mode=denoise_mode,
             teacache=TeaCacheConfig.from_sampling(sampling.get("teacache")),
         )
@@ -201,14 +203,14 @@ class DiffusionRequestLayout:
 
     def select_sde_window(
         self,
-        sde_window_size: int,
-        sde_window_range: tuple[int, int],
+        params: DiffusionSamplingParams,
     ) -> tuple[int, int] | None:
         """Pick the stochastic denoise-step window for a request."""
 
+        sde_window_size = params.sde_window_size
         if sde_window_size <= 0:
             return None
-        lo, hi = sde_window_range
+        lo, hi = params.sde_window_range
         start = random.randint(lo, hi - sde_window_size)
         return (start, start + sde_window_size)
 

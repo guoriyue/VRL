@@ -192,8 +192,6 @@ def _config(*, sample_count: int = 2, return_kl: bool = False) -> DenoiseLoopCon
         sde=DenoiseSDEParams(
             noise_level=1.0,
             sde_type="flow_grpo",
-            sde_window_size=0,
-            sde_window_range=(0, 0),
             same_latent=False,
             return_kl=return_kl,
         ),

@@ -22,13 +22,55 @@ def test_diffusion_layout_rejects_oversized_sde_window() -> None:
         _layout().parse_sampling_params(request)
 
 
-def test_diffusion_layout_normalizes_native_denoise_mode() -> None:
-    """Checks diffusion layout normalizes native denoise mode."""
-    request = _request({"denoise_mode": "native"})
+@pytest.mark.parametrize("denoise_mode", ["native", "sde"])
+def test_diffusion_layout_always_builds_sde_math_params(denoise_mode: str) -> None:
+    """Checks both denoise modes carry the non-optional loop math contract."""
+    request = _request({"denoise_mode": denoise_mode})
 
     params = _layout().parse_sampling_params(request)
 
-    assert params.denoise_mode == "native"
+    assert params.denoise_mode == denoise_mode
+    assert params.sde.sde_type == "flow_grpo"
+    assert params.sde_window_size == 0
+    assert params.sde_window_range == (0, 20)
+
+
+def test_diffusion_layout_selects_request_owned_sde_window(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Checks request window policy resolves before entering the denoise loop."""
+    layout = _layout()
+    params = layout.parse_sampling_params(
+        _request(
+            {
+                "sde_window_size": 2,
+                "sde_window_range": (3, 8),
+            },
+        ),
+    )
+    monkeypatch.setattr(
+        "vrl.generation.bindings.full_sequence_denoise.layout.random.randint",
+        lambda lo, hi: hi,
+    )
+
+    assert layout.select_sde_window(params) == (6, 8)
+
+    no_window = layout.parse_sampling_params(_request({"sde_window_size": 0}))
+    assert layout.select_sde_window(no_window) is None
+
+
+@pytest.mark.parametrize(
+    "window_range",
+    [(-1, 2), (2, 2), (2, 21), (2,), "bad"],
+)
+def test_diffusion_layout_rejects_invalid_sde_window_range(
+    window_range: object,
+) -> None:
+    """Checks malformed request window policies fail at request parsing."""
+    with pytest.raises(ValueError, match="sde_window_range"):
+        _layout().parse_sampling_params(
+            _request({"sde_window_range": window_range}),
+        )
 
 
 def test_diffusion_layout_rejects_unknown_denoise_mode() -> None:

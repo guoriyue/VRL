@@ -31,8 +31,6 @@ def test_native_denoise_mode_uses_scheduler_step() -> None:
             sde=DenoiseSDEParams(
                 noise_level=0.7,
                 sde_type="flow_grpo",
-                sde_window_size=0,
-                sde_window_range=(0, 0),
                 same_latent=False,
                 return_kl=False,
             ),
