@@ -879,7 +879,11 @@ def _synthetic_diffusion_replay_batch(
         observations=observations.detach(),
         actions=actions,
         rewards=rewards,
-        group_ids=trajectory.group_ids,
+        group_ids=torch.tensor(
+            [row.prompt_index for row in sample_rows],
+            dtype=torch.long,
+            device=device,
+        ),
         extras={},
         context=dict(trajectory.context),
         trajectory=trajectory,

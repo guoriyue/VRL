@@ -269,10 +269,11 @@ class TrajectoryRolloutBatchBuilder:
         return None if tensor is None else tensor.value
 
     def _group_ids(self, *, device: Any) -> torch.Tensor:
-        group_ids = self.trajectory.group_ids
-        if isinstance(group_ids, torch.Tensor):
-            return group_ids.to(device=device, dtype=torch.long)
-        return torch.tensor(group_ids, dtype=torch.long, device=device)
+        return torch.tensor(
+            [row.prompt_index for row in self.output.sample_rows],
+            dtype=torch.long,
+            device=device,
+        )
 
     def _primary_segment_name(self) -> str | None:
         value = self.trajectory.context.get("primary_segment")

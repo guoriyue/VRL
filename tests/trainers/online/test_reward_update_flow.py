@@ -1165,7 +1165,7 @@ def test_select_move_and_remap_preserve_rollout_trajectory_fields() -> None:
     assert selected.trajectory is not None
     assert selected.training_view == batch.training_view
     assert selected.trajectory.axes["sample"].length == 2
-    assert torch.equal(selected.trajectory.group_ids, torch.tensor([0, 1]))
+    assert [row.group_id for row in selected.trajectory.sample_rows] == ["g0", "g1"]
     assert torch.equal(
         selected.trajectory.segments["image_tokens"].tensors["token_ids"].value,
         torch.tensor([[0, 1], [4, 5]]),
@@ -1173,9 +1173,8 @@ def test_select_move_and_remap_preserve_rollout_trajectory_fields() -> None:
 
     moved = move_training_batch_to_device(selected, torch.device("cpu"))
     assert moved.trajectory is not None
-    assert moved.trajectory.group_ids.device.type == "cpu"
 
     remap_group_ids_(moved, [10, 11])
     assert torch.equal(moved.group_ids, torch.tensor([10, 11]))
     assert moved.trajectory is not None
-    assert torch.equal(moved.trajectory.group_ids, torch.tensor([10, 11]))
+    assert [row.group_id for row in moved.trajectory.sample_rows] == ["g0", "g1"]

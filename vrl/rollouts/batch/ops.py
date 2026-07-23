@@ -81,10 +81,6 @@ def remap_group_ids_(batch: RolloutBatch, global_prompt_indices: list[int]) -> N
     for local_idx, global_idx in enumerate(global_prompt_indices):
         remapped[batch.group_ids == local_idx] = global_idx
     batch.group_ids = remapped
-    if batch.trajectory is not None:
-        trajectory_group_ids = batch.trajectory.group_ids
-        device = getattr(trajectory_group_ids, "device", remapped.device)
-        batch.trajectory.group_ids = remapped.to(device)
 
 
 def _move_tensor_tree(value: Any, device: torch.device) -> Any:

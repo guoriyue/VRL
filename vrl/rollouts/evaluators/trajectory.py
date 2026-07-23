@@ -133,8 +133,6 @@ class TrajectorySignalBuilder:
 
     @property
     def group_ids(self) -> Any:
-        if self.trajectory is not None:
-            return self.trajectory.group_ids
         return getattr(self.batch, "group_ids", None)
 
     @property
@@ -215,9 +213,8 @@ class TrajectorySignalBuilder:
         log_prob_shape = getattr(log_prob, "shape", None)
         if value_shape is None or log_prob_shape is None:
             return value
-        if (
-            len(value_shape) == len(log_prob_shape) + 1
-            and int(value_shape[0]) == int(log_prob_shape[0])
+        if len(value_shape) == len(log_prob_shape) + 1 and int(value_shape[0]) == int(
+            log_prob_shape[0]
         ):
             selected = value[:, timestep_idx]
             if cls._same_shape(selected, log_prob):

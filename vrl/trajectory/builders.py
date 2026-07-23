@@ -51,7 +51,6 @@ class _TrajectoryBatchBuilder:
 
         batch_size = len(self.sample_rows)
         timestep_count = int(old_log_prob.shape[1])
-        device = getattr(old_log_prob, "device", None)
         tensors: dict[str, TrajectoryTensor] = {
             "observations": TrajectoryTensor(
                 "observations",
@@ -111,7 +110,6 @@ class _TrajectoryBatchBuilder:
             family=self.request.family,
             task=self.request.task,
             sample_rows=list(self.sample_rows),
-            group_ids=self._prompt_group_ids(device=device),
             axes={
                 "sample": TrajectoryAxis("sample", "sample", batch_size),
                 "denoise": TrajectoryAxis("denoise", "denoise_step", timestep_count),
@@ -265,13 +263,11 @@ class _TrajectoryBatchBuilder:
             tensor_ref("denoise", "finalized_chunk_latents"),
             *(tensor_ref("denoise", name) for name in replay_tensor_names),
         )
-        device = getattr(old_log_prob, "device", None)
         trajectory = TrajectoryBatch(
             request_id=self.request.request_id,
             family=self.request.family,
             task=self.request.task,
             sample_rows=list(self.sample_rows),
-            group_ids=self._prompt_group_ids(device=device),
             axes={
                 "sample": TrajectoryAxis("sample", "sample", batch_size),
                 "temporal_chunk": TrajectoryAxis(
@@ -355,13 +351,11 @@ class _TrajectoryBatchBuilder:
                 f"output has {output_rows} rows, expected {batch_size}",
             )
         reward_modality = self._reward_modality_for_task()
-        device = getattr(output, "device", None)
         trajectory = TrajectoryBatch(
             request_id=self.request.request_id,
             family=self.request.family,
             task=self.request.task,
             sample_rows=list(self.sample_rows),
-            group_ids=self._prompt_group_ids(device=device),
             axes={
                 "sample": TrajectoryAxis("sample", "sample", batch_size),
                 "temporal_chunk": TrajectoryAxis(
@@ -426,13 +420,11 @@ class _TrajectoryBatchBuilder:
 
         batch_size = len(self.sample_rows)
         token_count = int(token_ids.shape[1])
-        device = getattr(token_ids, "device", None)
         trajectory = TrajectoryBatch(
             request_id=self.request.request_id,
             family=self.request.family,
             task=self.request.task,
             sample_rows=list(self.sample_rows),
-            group_ids=self._prompt_group_ids(device=device),
             axes={
                 "sample": TrajectoryAxis("sample", "sample", batch_size),
                 "token": TrajectoryAxis("token", "discrete_token", token_count),
@@ -535,7 +527,6 @@ class _TrajectoryBatchBuilder:
 
         batch_size = len(self.sample_rows)
         token_count = int(token_log_probs.shape[1])
-        device = getattr(token_log_probs, "device", None)
         segments: dict[str, TrajectorySegment] = {
             "image_tokens": TrajectorySegment(
                 name="image_tokens",
@@ -613,7 +604,6 @@ class _TrajectoryBatchBuilder:
             family=self.request.family,
             task=self.request.task,
             sample_rows=list(self.sample_rows),
-            group_ids=self._prompt_group_ids(device=device),
             axes={
                 "sample": TrajectoryAxis("sample", "sample", batch_size),
                 "token": TrajectoryAxis("token", "continuous_token", token_count),
@@ -647,8 +637,6 @@ class _TrajectoryBatchBuilder:
         if not segments:
             raise ValueError("segments must be non-empty")
         batch_size = len(self.sample_rows)
-        first_segment = next(iter(segments.values()))
-        device = getattr(first_segment.get("token_ids"), "device", None)
 
         axes = {"sample": TrajectoryAxis("sample", "sample", batch_size)}
         trajectory_segments: dict[str, TrajectorySegment] = {}
@@ -742,7 +730,6 @@ class _TrajectoryBatchBuilder:
             family=self.request.family,
             task=self.request.task,
             sample_rows=list(self.sample_rows),
-            group_ids=self._prompt_group_ids(device=device),
             axes=axes,
             segments=trajectory_segments,
             reward_views={
@@ -764,17 +751,6 @@ class _TrajectoryBatchBuilder:
             },
         )
         return TrajectoryValidator(trajectory).validate_batch()
-
-    def _prompt_group_ids(
-        self,
-        *,
-        device: Any,
-    ) -> Any:
-        return torch.tensor(
-            [row.prompt_index for row in self.sample_rows],
-            dtype=torch.long,
-            device=device,
-        )
 
     def _chunk_denoise_shape(self, value: Any) -> tuple[int, int]:
         shape = getattr(value, "shape", None)

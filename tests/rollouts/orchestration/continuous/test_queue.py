@@ -126,18 +126,19 @@ def test_batch_byte_estimate_counts_trajectory_without_flat_aliases_twice() -> N
         context={},
     )
     rewards = torch.zeros(1)
+    group_ids = torch.zeros(1, dtype=torch.long)
     component = torch.zeros(3, dtype=torch.float64)
     batch = RolloutBatch(
         observations=prompt_input_ids.unsqueeze(1),
         actions=token_ids,
         rewards=rewards,
-        group_ids=trajectory.group_ids,
+        group_ids=group_ids,
         extras={"component": component},
         trajectory=trajectory,
     )
 
     expected = trajectory_tensor_bytes(trajectory) + sum(
-        tensor.numel() * tensor.element_size() for tensor in (rewards, component)
+        tensor.numel() * tensor.element_size() for tensor in (rewards, group_ids, component)
     )
 
     assert estimate_batch_bytes(batch) == expected

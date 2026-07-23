@@ -214,13 +214,6 @@ def _assign_group_index(batch: RolloutBatch, index: int) -> None:
     """Force every sample in a single-group batch to one contiguous group id."""
 
     batch.group_ids = torch.full_like(batch.group_ids, int(index))
-    if batch.trajectory is not None:
-        trajectory_group_ids = getattr(batch.trajectory, "group_ids", None)
-        if isinstance(trajectory_group_ids, torch.Tensor):
-            batch.trajectory.group_ids = torch.full_like(
-                trajectory_group_ids,
-                int(index),
-            )
 
 
 __all__ = ["ContinuousRolloutConsumer"]

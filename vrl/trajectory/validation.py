@@ -75,14 +75,6 @@ class TrajectoryValidator:
                 "sample axis length does not match sample_rows: "
                 f"{sample_axis.length} != {len(batch.sample_rows)}",
             )
-        group_length = self._leading_length(batch.group_ids)
-        if group_length is None:
-            self._fail("TrajectoryBatch.group_ids must be a sample-aligned sequence")
-        if group_length != len(batch.sample_rows):
-            self._fail(
-                "group_ids length does not match sample_rows: "
-                f"{group_length} != {len(batch.sample_rows)}",
-            )
         if batch.metrics.num_samples is not None and batch.metrics.num_samples != len(
             batch.sample_rows,
         ):
@@ -326,16 +318,6 @@ class TrajectoryValidator:
         actual = refs[ref].role
         if actual != role:
             self._fail(f"{field_name} must reference role {role!r}, got {actual!r}")
-
-    @staticmethod
-    def _leading_length(value: Any) -> int | None:
-        shape = getattr(value, "shape", None)
-        if shape is not None and len(shape) > 0:
-            return int(shape[0])
-        try:
-            return len(value)
-        except TypeError:
-            return None
 
     def _reject_runtime_state(
         self,

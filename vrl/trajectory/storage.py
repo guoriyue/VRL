@@ -66,7 +66,6 @@ def apply_trajectory_storage_policy(
     if policy == TrajectoryStoragePolicy():
         return batch
 
-    batch.group_ids = _apply_value_policy(batch.group_ids, policy)
     for segment in batch.segments.values():
         for tensor in segment.tensors.values():
             tensor.value = _apply_value_policy(tensor.value, policy)
@@ -124,7 +123,7 @@ def _tensor_bytes(value: object, *, seen: set[int]) -> int:
     seen.add(value_id)
 
     if isinstance(value, TrajectoryBatch):
-        total = _tensor_bytes(value.group_ids, seen=seen)
+        total = 0
         for segment in value.segments.values():
             for tensor in segment.tensors.values():
                 total += _tensor_bytes(tensor.value, seen=seen)

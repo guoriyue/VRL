@@ -36,7 +36,7 @@ def _batch(prompts: list[str], group_size: int) -> RolloutBatch:
 
 
 def _batch_with_trajectory(prompts: list[str], group_size: int) -> RolloutBatch:
-    """Build independent batch/trajectory group tensors for remap regressions."""
+    """Build a trajectory-backed trainer batch for remap regressions."""
 
     batch = _batch(prompts, group_size)
     sample_rows = [
@@ -72,7 +72,6 @@ def _batch_with_trajectory(prompts: list[str], group_size: int) -> RolloutBatch:
         uncond_attention_mask=torch.ones(batch_size, 1, dtype=torch.long),
         context={},
     )
-    assert batch.group_ids.data_ptr() != batch.trajectory.group_ids.data_ptr()
     return batch
 
 
@@ -168,8 +167,8 @@ async def test_mixed_prompts_preserve_group_id_remap() -> None:
 
 
 @pytest.mark.asyncio
-async def test_prompt_example_scalar_remap_updates_batch_and_trajectory_group_ids() -> None:
-    """Checks scalar remaps update the evaluator's non-alias trajectory tensor."""
+async def test_prompt_example_scalar_remap_updates_trainer_group_ids() -> None:
+    """Checks remaps update trainer grouping without rewriting stable identity."""
 
     batches = await collect_prompt_batches(
         collector=_TrajectoryDeferredCollector(),
@@ -183,13 +182,16 @@ async def test_prompt_example_scalar_remap_updates_batch_and_trajectory_group_id
         expected = torch.full((2,), expected_group, dtype=torch.long)
         assert torch.equal(batch.group_ids, expected)
         assert batch.trajectory is not None
-        assert torch.equal(batch.trajectory.group_ids, expected)
         assert torch.equal(TrajectorySignalBuilder(batch).group_ids, expected)
+        assert [row.group_id for row in batch.trajectory.sample_rows] == [
+            "group-0",
+            "group-0",
+        ]
 
 
 @pytest.mark.asyncio
-async def test_plain_string_list_remap_updates_batch_and_trajectory_group_ids() -> None:
-    """Checks list remaps retain the same batch/trajectory synchronization."""
+async def test_plain_string_list_remap_updates_signal_group_ids() -> None:
+    """Checks evaluator signals consume the remapped trainer-owned groups."""
 
     batches = await collect_prompt_batches(
         collector=_TrajectoryDeferredCollector(),

@@ -37,10 +37,11 @@ def select_trajectory_batch(data: Any, selector: Any) -> Any:
         family=data.family,
         task=data.task,
         sample_rows=[data.sample_rows[i] for i in positions],
-        group_ids=_select_value(data.group_ids, selector, len(data.sample_rows)),
-        tensor_value_fn=lambda tensor: _select_value(tensor.value, selector, len(data.sample_rows))
-        if tensor.axes and tensor.axes[0] == "sample"
-        else tensor.value,
+        tensor_value_fn=lambda tensor: (
+            _select_value(tensor.value, selector, len(data.sample_rows))
+            if tensor.axes and tensor.axes[0] == "sample"
+            else tensor.value
+        ),
         axes_sample_length=count,
         metrics_sample_count=count,
         metrics_values=_select_value(data.metrics.values, selector, len(data.sample_rows)),
@@ -73,17 +74,18 @@ def stack_trajectory_batches(batches: list[TrajectoryBatch | None]) -> Trajector
         family=first.family,
         task=first.task,
         sample_rows=sample_rows,
-        group_ids=_stack_values([batch.group_ids for batch in typed]),
-        tensor_value_fn=lambda tensor: _stack_values(
-            [
-                batch.segments[_segment_name_for_tensor(first, tensor)]
-                .tensors[tensor.name]
-                .value
-                for batch in typed
-            ]
-        )
-        if tensor.axes and tensor.axes[0] == "sample"
-        else tensor.value,
+        tensor_value_fn=lambda tensor: (
+            _stack_values(
+                [
+                    batch.segments[_segment_name_for_tensor(first, tensor)]
+                    .tensors[tensor.name]
+                    .value
+                    for batch in typed
+                ]
+            )
+            if tensor.axes and tensor.axes[0] == "sample"
+            else tensor.value
+        ),
         axes_sample_length=sample_count,
         metrics_sample_count=sample_count,
         metrics_values=dict(first.metrics.values),
@@ -105,7 +107,6 @@ def move_trajectory_batch(data: Any, device: Any) -> Any:
         family=data.family,
         task=data.task,
         sample_rows=list(data.sample_rows),
-        group_ids=move_value_to_device(data.group_ids, device),
         tensor_value_fn=lambda tensor: move_value_to_device(tensor.value, device),
         axes_sample_length=data.axes["sample"].length,
         metrics_sample_count=data.metrics.num_samples,
@@ -121,7 +122,6 @@ def _rebuild_trajectory(
     family: str,
     task: str,
     sample_rows: list[GenerationSampleRow],
-    group_ids: Any,
     tensor_value_fn: Any,
     axes_sample_length: int | None,
     metrics_sample_count: int | None,
@@ -164,7 +164,6 @@ def _rebuild_trajectory(
         family=family,
         task=task,
         sample_rows=sample_rows,
-        group_ids=group_ids,
         axes=axes,
         segments=segments,
         reward_views=dict(data.reward_views),

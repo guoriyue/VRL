@@ -286,6 +286,14 @@ def test_collector_routes_request_through_runtime_reward_and_trajectory_batch() 
     assert batch.rewards.tolist() == [0.0, 1.0, 2.0, 3.0]
     assert batch.context == {"collector": "test"}
     assert batch.trajectory is not None
+    assert batch.group_ids.tolist() == [0, 0, 1, 1]
+    assert not hasattr(batch.trajectory, "group_ids")
+    assert [row.group_id for row in batch.trajectory.sample_rows] == [
+        "g0",
+        "g0",
+        "g1",
+        "g1",
+    ]
     assert batch.training_view is not None
     assert not hasattr(batch, "dones")
     assert not hasattr(batch, "videos")

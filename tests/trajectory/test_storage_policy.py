@@ -57,7 +57,6 @@ def test_cpu_storage_policy_moves_tensor_leaves_to_cpu() -> None:
         TrajectoryStoragePolicy(device="cpu"),
     )
 
-    assert str(result.group_ids.device) == "cpu"
     for tensor in result.segments["image_tokens"].tensors.values():
         assert str(tensor.value.device) == "cpu"
 

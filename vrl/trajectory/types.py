@@ -141,7 +141,6 @@ class TrajectoryBatch:
     family: str
     task: str
     sample_rows: list[GenerationSampleRow]
-    group_ids: Any
     axes: dict[str, TrajectoryAxis]
     segments: dict[str, TrajectorySegment]
     reward_views: dict[str, RewardView] = field(default_factory=dict)
