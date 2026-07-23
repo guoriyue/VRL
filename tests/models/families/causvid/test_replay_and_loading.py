@@ -6,6 +6,7 @@ import hashlib
 import shutil
 import subprocess
 import sys
+from dataclasses import fields
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -19,11 +20,14 @@ from vrl.models.families.causvid.model import (
     CAUSVID_SOURCE_REVISION,
     CausVidModel,
     CausVidReplayModel,
+    CausVidResolvedArtifacts,
     _load_generator_state_dict,
     _OfficialCausVidBackend,
     _require_causvid_flash_attention,
     _require_noncommercial_license,
     _require_pinned_source_import,
+    _resolve_artifacts,
+    _resolve_base_model,
     _resolve_checkpoint,
     _resolve_source_root,
     _verified_source_revision,
@@ -281,15 +285,16 @@ def test_checkpoint_sha_and_source_revision_fail_closed(
         model_config={"checkpoint_sha256": digest},
     )
 
-    resolved, revision = _resolve_checkpoint(build)
+    resolved = _resolve_checkpoint(build)
 
     assert resolved == checkpoint
-    assert revision is None
     build.model_config["checkpoint_sha256"] = "0" * 64
     with pytest.raises(ValueError, match="SHA256 mismatch"):
         _resolve_checkpoint(build)
 
-    source_root = Path(__file__).resolve().parents[4] / "third_party" / "CausVid"
+    source_root = tmp_path / "CausVid"
+    (source_root / "causvid").mkdir(parents=True)
+    (source_root / ".git").touch()
     with pytest.raises(ValueError, match="source revision mismatch"):
         _resolve_source_root(
             {
@@ -310,6 +315,166 @@ def test_checkpoint_sha_and_source_revision_fail_closed(
         ),
     )
     _require_pinned_source_import(source_root)
+
+
+def test_resolved_artifacts_retain_only_runtime_paths() -> None:
+    assert [field.name for field in fields(CausVidResolvedArtifacts)] == [
+        "base_model_dir",
+        "checkpoint_file",
+    ]
+
+
+def test_source_root_returns_verified_path_and_rejects_wrong_checkout(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source_root = tmp_path / "CausVid"
+    (source_root / "causvid").mkdir(parents=True)
+    revision_probe = "vrl.models.families.causvid.model._verified_source_revision"
+    monkeypatch.setattr(revision_probe, lambda path: CAUSVID_SOURCE_REVISION)
+
+    resolved = _resolve_source_root(
+        {
+            "causvid_source_path": str(source_root),
+            "causvid_source_revision": CAUSVID_SOURCE_REVISION,
+        },
+    )
+
+    assert resolved == source_root
+
+    monkeypatch.setattr(revision_probe, lambda path: "0" * 40)
+    with pytest.raises(ValueError, match="source revision mismatch"):
+        _resolve_source_root(
+            {
+                "causvid_source_path": str(source_root),
+                "causvid_source_revision": CAUSVID_SOURCE_REVISION,
+            },
+        )
+
+
+def test_base_model_resolution_preserves_remote_revision_pin(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    local_model = tmp_path / "local-model"
+    local_model.mkdir()
+    assert _resolve_base_model({"base_model_path": str(local_model)}) == local_model
+
+    with pytest.raises(ValueError, match=r"requires immutable model\.base_model_revision"):
+        _resolve_base_model({"base_model_path": "example/base-model"})
+
+    downloaded = tmp_path / "downloaded-model"
+    downloaded.mkdir()
+    calls: list[dict[str, str]] = []
+
+    def fake_snapshot_download(*, repo_id: str, revision: str) -> str:
+        calls.append({"repo_id": repo_id, "revision": revision})
+        return str(downloaded)
+
+    monkeypatch.setattr("huggingface_hub.snapshot_download", fake_snapshot_download)
+
+    assert (
+        _resolve_base_model(
+            {
+                "base_model_path": "example/base-model",
+                "base_model_revision": "base-revision",
+            },
+        )
+        == downloaded
+    )
+    assert calls == [{"repo_id": "example/base-model", "revision": "base-revision"}]
+
+
+def test_checkpoint_resolution_preserves_remote_revision_and_sha(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    build = SimpleNamespace(
+        model_name_or_path="example/checkpoint",
+        model_config={"checkpoint_file": "weights/model.pt"},
+    )
+    with pytest.raises(ValueError, match=r"requires immutable model\.revision"):
+        _resolve_checkpoint(build)
+
+    downloaded = tmp_path / "model.pt"
+    downloaded.write_bytes(b"remote checkpoint")
+    digest = hashlib.sha256(downloaded.read_bytes()).hexdigest()
+    calls: list[dict[str, str]] = []
+
+    def fake_hf_hub_download(
+        *,
+        repo_id: str,
+        filename: str,
+        revision: str,
+    ) -> str:
+        calls.append(
+            {
+                "repo_id": repo_id,
+                "filename": filename,
+                "revision": revision,
+            },
+        )
+        return str(downloaded)
+
+    monkeypatch.setattr("huggingface_hub.hf_hub_download", fake_hf_hub_download)
+    build.model_config.update(
+        {
+            "revision": "checkpoint-revision",
+            "checkpoint_sha256": digest,
+        },
+    )
+
+    assert _resolve_checkpoint(build) == downloaded
+    assert calls == [
+        {
+            "repo_id": "example/checkpoint",
+            "filename": "weights/model.pt",
+            "revision": "checkpoint-revision",
+        },
+    ]
+
+    build.model_config["checkpoint_sha256"] = "0" * 64
+    with pytest.raises(ValueError, match="SHA256 mismatch"):
+        _resolve_checkpoint(build)
+
+
+def test_artifact_resolution_keeps_source_import_gate(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source_root = tmp_path / "source"
+    base_model_dir = tmp_path / "base"
+    checkpoint_file = tmp_path / "model.pt"
+    gated_paths: list[Path] = []
+    monkeypatch.setattr(
+        "vrl.models.families.causvid.model._resolve_source_root",
+        lambda config: source_root,
+    )
+    monkeypatch.setattr(
+        "vrl.models.families.causvid.model._require_pinned_source_import",
+        gated_paths.append,
+    )
+    monkeypatch.setattr(
+        "vrl.models.families.causvid.model._require_causvid_flash_attention",
+        lambda: None,
+    )
+    monkeypatch.setattr(
+        "vrl.models.families.causvid.model._resolve_base_model",
+        lambda config: base_model_dir,
+    )
+    monkeypatch.setattr(
+        "vrl.models.families.causvid.model._resolve_checkpoint",
+        lambda build: checkpoint_file,
+    )
+    build = SimpleNamespace(model_config={"accept_noncommercial_license": True})
+
+    resolved = _resolve_artifacts(build)
+
+    assert gated_paths == [source_root]
+    assert resolved == CausVidResolvedArtifacts(
+        base_model_dir=base_model_dir,
+        checkpoint_file=checkpoint_file,
+    )
 
 
 def test_packaged_source_without_git_uses_audited_runtime_digest(

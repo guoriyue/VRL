@@ -61,12 +61,8 @@ _CAUSVID_RUNTIME_SOURCE_EXCLUDES = ("causvid/evaluation",)
 class CausVidResolvedArtifacts:
     """Pinned local paths used to construct one CausVid runtime."""
 
-    source_root: Path
-    source_revision: str
     base_model_dir: Path
-    base_model_revision: str | None
     checkpoint_file: Path
-    checkpoint_revision: str | None
 
 
 @dataclass(slots=True)
@@ -861,24 +857,20 @@ def _load_official_backend(build: ModelBuild, *, generation: bool) -> _OfficialC
 def _resolve_artifacts(build: ModelBuild) -> CausVidResolvedArtifacts:
     model_config = build.model_config or {}
     _require_noncommercial_license(model_config)
-    source_root, source_revision = _resolve_source_root(model_config)
+    source_root = _resolve_source_root(model_config)
     # Fail on a missing/wrong editable install before either multi-gigabyte
     # checkpoint resolver is allowed to touch the Hub cache.
     _require_pinned_source_import(source_root)
     _require_causvid_flash_attention()
-    base_model_dir, base_revision = _resolve_base_model(model_config)
-    checkpoint, checkpoint_revision = _resolve_checkpoint(build)
+    base_model_dir = _resolve_base_model(model_config)
+    checkpoint = _resolve_checkpoint(build)
     return CausVidResolvedArtifacts(
-        source_root=source_root,
-        source_revision=source_revision,
         base_model_dir=base_model_dir,
-        base_model_revision=base_revision,
         checkpoint_file=checkpoint,
-        checkpoint_revision=checkpoint_revision,
     )
 
 
-def _resolve_source_root(model_config: Mapping[str, Any]) -> tuple[Path, str]:
+def _resolve_source_root(model_config: Mapping[str, Any]) -> Path:
     requested_revision = str(
         model_config.get("causvid_source_revision", CAUSVID_SOURCE_REVISION),
     )
@@ -910,26 +902,26 @@ def _resolve_source_root(model_config: Mapping[str, Any]) -> tuple[Path, str]:
             "CausVid source revision mismatch: "
             f"expected {requested_revision}, got {revision} at {source_root}",
         )
-    return source_root, revision
+    return source_root
 
 
-def _resolve_base_model(model_config: Mapping[str, Any]) -> tuple[Path, str | None]:
+def _resolve_base_model(model_config: Mapping[str, Any]) -> Path:
     reference = str(model_config.get("base_model_path", CAUSVID_BASE_REPOSITORY))
     local = _resolve_configured_path(reference)
     revision_value = model_config.get("base_model_revision")
     revision = str(revision_value) if revision_value else None
     if local.is_dir():
-        return local, revision
+        return local
     if revision is None:
         raise ValueError(
             "remote CausVid base_model_path requires immutable model.base_model_revision",
         )
     from huggingface_hub import snapshot_download
 
-    return Path(snapshot_download(repo_id=reference, revision=revision)), revision
+    return Path(snapshot_download(repo_id=reference, revision=revision))
 
 
-def _resolve_checkpoint(build: ModelBuild) -> tuple[Path, str | None]:
+def _resolve_checkpoint(build: ModelBuild) -> Path:
     model_config = build.model_config or {}
     reference = str(build.model_name_or_path)
     relative_file = str(model_config.get("checkpoint_file", CAUSVID_CHECKPOINT_FILE))
@@ -973,7 +965,7 @@ def _resolve_checkpoint(build: ModelBuild) -> tuple[Path, str | None]:
                 f"CausVid checkpoint SHA256 mismatch for {checkpoint}: "
                 f"expected {expected_sha}, got {actual_sha}",
             )
-    return checkpoint, revision
+    return checkpoint
 
 
 def _load_generator_state_dict(checkpoint: Path) -> dict[str, Any]:
