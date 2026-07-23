@@ -16,10 +16,14 @@ from vrl.config.schema import (
 )
 from vrl.families.names import _FAMILY_BY_ALIAS
 from vrl.families.registry import FAMILY_REGISTRY, SHARED_MODEL_SECTION_CLS
+from vrl.models.families.causvid.config import CausVidModelSection
 from vrl.models.families.cosmos.anima.config import CosmosAnimaModelSection
 from vrl.models.families.cosmos.predict2_5.config import (
     CosmosPredict25ModelSection,
 )
+from vrl.models.families.echo.config import EchoModelSection
+from vrl.models.families.flux.config import FluxModelSection
+from vrl.models.families.magi_1.config import Magi1ModelSection
 from vrl.models.families.wan_2_1.config import WanModelSection
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -459,6 +463,91 @@ def test_cosmos_anima_key_is_unknown_for_shared_predict2() -> None:
     )
 
     assert find_unknown_keys(cfg) == ["model.scheduler_shift"]
+
+
+@pytest.mark.parametrize(
+    ("family", "section_cls", "payload"),
+    [
+        ("flux", FluxModelSection, {"nft_previous_adapter": True}),
+        (
+            "echo",
+            EchoModelSection,
+            {"gemma_path": "google/gemma-3-12b-it", "gemma_revision": "revision"},
+        ),
+        (
+            "causvid",
+            CausVidModelSection,
+            {
+                "accept_noncommercial_license": True,
+                "base_model_path": "Wan-AI/Wan2.1-T2V-1.3B",
+                "checkpoint_file": "autoregressive_checkpoint/model.pt",
+            },
+        ),
+        (
+            "magi_1",
+            Magi1ModelSection,
+            {
+                "python_executable": "third_party/MAGI-1/.venv/bin/python",
+                "source_path": "third_party/MAGI-1",
+                "timeout_seconds": 3600,
+            },
+        ),
+    ],
+)
+def test_family_owned_denoise_keys_select_their_public_sections(
+    family: str,
+    section_cls: type[ModelSection],
+    payload: dict[str, object],
+) -> None:
+    from vrl.config.unknown_keys import find_unknown_keys
+
+    cfg = OmegaConf.create({"model": {"family": family, **payload}})
+
+    assert find_unknown_keys(cfg) == []
+    parsed = parse_config(cfg)
+    assert type(parsed.model) is section_cls
+    assert parsed.model is not None
+    parsed_payload = parsed.model.model_dump()
+    assert {key: parsed_payload[key] for key in payload} == payload
+
+
+@pytest.mark.parametrize("accepted", [False, True])
+def test_causvid_license_acknowledgement_preserves_both_public_states(
+    accepted: bool,
+) -> None:
+    parsed = parse_config(
+        OmegaConf.create(
+            {
+                "model": {
+                    "family": "causvid",
+                    "accept_noncommercial_license": accepted,
+                },
+            },
+        ),
+    )
+
+    assert isinstance(parsed.model, CausVidModelSection)
+    assert parsed.model.accept_noncommercial_license is accepted
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("nft_previous_adapter", True),
+        ("gemma_path", "google/gemma-3-12b-it"),
+        ("accept_noncommercial_license", True),
+        ("source_path", "third_party/MAGI-1"),
+    ],
+)
+def test_family_owned_denoise_keys_are_unknown_for_shared_sibling(
+    field: str,
+    value: object,
+) -> None:
+    from vrl.config.unknown_keys import find_unknown_keys
+
+    cfg = OmegaConf.create({"model": {"family": "sd3_5", field: value}})
+
+    assert find_unknown_keys(cfg) == [f"model.{field}"]
 
 
 def test_model_family_aliases_select_their_canonical_section_classes() -> None:

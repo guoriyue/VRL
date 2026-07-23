@@ -80,52 +80,9 @@ class LlamaGenModelSection(ModelSection):
     vq_ckpt: Any = None
 
 
-class EchoModelSection(ModelSection):
-    """JoyAI-Echo checkpoint and Gemma text-encoder keys."""
-
-    gemma_path: Any = None
-    gemma_revision: Any = None
-
-
-class FluxModelSection(ModelSection):
-    """FLUX public model keys."""
-
-    # DiffusionNFT's frozen ``previous`` adapter switch.
-    nft_previous_adapter: Any = None
-
-
-class CausVidModelSection(ModelSection):
-    """CausVid pinned source, Wan base, and released checkpoint keys."""
-
-    accept_noncommercial_license: bool = False
-    base_model_path: Any = None
-    base_model_revision: Any = None
-    causvid_source_path: Any = None
-    causvid_source_revision: Any = None
-    checkpoint_file: Any = None
-    checkpoint_sha256: Any = None
-
-
-class Magi1ModelSection(ModelSection):
-    """MAGI-1 isolated runtime and checkpoint component paths."""
-
-    checkpoint_path: Any = None
-    config_path: Any = None
-    python_executable: Any = None
-    source_path: Any = None
-    source_revision: Any = None
-    t5_pretrained_path: Any = None
-    timeout_seconds: Any = None
-    vae_pretrained_path: Any = None
-
-
 __all__ = [
-    "CausVidModelSection",
-    "EchoModelSection",
-    "FluxModelSection",
     "JanusProModelSection",
     "LlamaGenModelSection",
-    "Magi1ModelSection",
     "ModelSection",
     "NextStep1ModelSection",
 ]

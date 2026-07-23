@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import importlib
 import subprocess
 import sys
 from dataclasses import replace
@@ -147,6 +148,7 @@ def test_family_registry_entries_own_importable_model_sections() -> None:
 
 def test_migrated_model_sections_are_owned_by_their_family_packages() -> None:
     expected_paths = {
+        "causvid": "vrl.models.families.causvid.config:CausVidModelSection",
         "wan_2_1": "vrl.models.families.wan_2_1.config:WanModelSection",
         "wan_2_1_i2v": "vrl.models.families.wan_2_1.config:WanModelSection",
         "cosmos-predict2.5": (
@@ -155,11 +157,46 @@ def test_migrated_model_sections_are_owned_by_their_family_packages() -> None:
         "cosmos-predict2-anima": (
             "vrl.models.families.cosmos.anima.config:CosmosAnimaModelSection"
         ),
+        "echo": "vrl.models.families.echo.config:EchoModelSection",
+        "flux": "vrl.models.families.flux.config:FluxModelSection",
+        "magi_1": "vrl.models.families.magi_1.config:Magi1ModelSection",
     }
 
     assert {
         family: get_model_family_entry(family).model_section_cls for family in expected_paths
     } == expected_paths
+
+
+def test_migrated_family_packages_keep_their_public_facades() -> None:
+    expected_exports = {
+        "vrl.models.families.causvid": {
+            "CausVidCausalRunner",
+            "CausVidGeometry",
+            "CausVidModel",
+            "CausVidModelSection",
+            "CausVidReplayModel",
+            "CausVidRunResult",
+            "CausVidSchedule",
+        },
+        "vrl.models.families.echo": {
+            "EchoModel",
+            "EchoModelSection",
+            "EchoReplayModel",
+            "EchoSamplingState",
+        },
+        "vrl.models.families.flux": {"FluxModelSection"},
+        "vrl.models.families.magi_1": {
+            "Magi1Model",
+            "Magi1ModelSection",
+            "Magi1SubprocessConfig",
+            "Magi1SubprocessModel",
+        },
+    }
+
+    for module_name, expected in expected_exports.items():
+        module = importlib.import_module(module_name)
+        assert expected == set(module.__all__)
+        assert expected <= set(dir(module))
 
 
 def test_model_section_imports_do_not_load_model_runtimes() -> None:
@@ -173,15 +210,23 @@ def test_model_section_imports_do_not_load_model_runtimes() -> None:
                 "from vrl.utils.config import import_from_path; "
                 "[import_from_path(entry.model_section_cls) "
                 "for entry in FAMILY_REGISTRY.values()]; "
+                "from vrl.models.families.causvid import CausVidModelSection; "
                 "from vrl.models.families.cosmos.anima "
                 "import CosmosAnimaModelSection; "
                 "from vrl.models.families.cosmos.predict2_5 "
                 "import CosmosPredict25ModelSection; "
+                "from vrl.models.families.echo import EchoModelSection; "
+                "from vrl.models.families.flux import FluxModelSection; "
+                "from vrl.models.families.magi_1 import Magi1ModelSection; "
                 "from vrl.models.families.wan_2_1 import WanModelSection; "
+                "assert CausVidModelSection.__module__.endswith('.causvid.config'); "
                 "assert WanModelSection.__module__.endswith('.wan_2_1.config'); "
                 "assert CosmosPredict25ModelSection.__module__.endswith("
                 "'.predict2_5.config'); "
                 "assert CosmosAnimaModelSection.__module__.endswith('.anima.config'); "
+                "assert EchoModelSection.__module__.endswith('.echo.config'); "
+                "assert FluxModelSection.__module__.endswith('.flux.config'); "
+                "assert Magi1ModelSection.__module__.endswith('.magi_1.config'); "
                 "assert 'torch' not in sys.modules; "
                 "assert 'diffusers' not in sys.modules; "
                 "assert 'transformers' not in sys.modules; "
@@ -190,7 +235,7 @@ def test_model_section_imports_do_not_load_model_runtimes() -> None:
                 "assert 'huggingface_hub' not in sys.modules; "
                 "assert not any("
                 "name.startswith('vrl.models.families.') and "
-                "any(part in {'model', 'runtime', 'adapter'} "
+                "any(part in {'model', 'runtime', 'runner', 'adapter'} "
                 "for part in name.split('.')) "
                 "for name in sys.modules)"
             ),

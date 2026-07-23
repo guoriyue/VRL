@@ -451,7 +451,7 @@ _register_model_family(
 _register_model_family(
     _chunk_autoregressive_denoise_entry(
         family="causvid",
-        model_section_cls="vrl.config.model_schema:CausVidModelSection",
+        model_section_cls="vrl.models.families.causvid.config:CausVidModelSection",
         executor_cls="vrl.models.families.causvid.runtime:CausVidChunkExecutor",
         build=DenoiseFamilyBuild(
             model_cls="vrl.models.families.causvid.model:CausVidModel",
@@ -474,7 +474,7 @@ _register_model_family(
 _register_model_family(
     _chunk_autoregressive_denoise_entry(
         family="magi_1",
-        model_section_cls="vrl.config.model_schema:Magi1ModelSection",
+        model_section_cls="vrl.models.families.magi_1.config:Magi1ModelSection",
         executor_cls="vrl.models.families.magi_1.runtime:Magi1ChunkExecutor",
         build=DenoiseFamilyBuild(
             model_cls="vrl.models.families.magi_1.model:Magi1Model",
@@ -496,7 +496,7 @@ _register_model_family(
     _full_sequence_denoise_entry(
         family="flux",
         task="t2i",
-        model_section_cls="vrl.config.model_schema:FluxModelSection",
+        model_section_cls="vrl.models.families.flux.config:FluxModelSection",
         build=DenoiseFamilyBuild(
             model_cls="vrl.models.families.flux.model:FluxModel",
             replay_cls="vrl.models.families.flux.model:FluxReplayModel",
@@ -724,7 +724,7 @@ _register_model_family(
     _full_sequence_denoise_entry(
         family="echo",
         task="t2v",
-        model_section_cls="vrl.config.model_schema:EchoModelSection",
+        model_section_cls="vrl.models.families.echo.config:EchoModelSection",
         executor_cls="vrl.models.families.echo.runtime:EchoChunkExecutor",
         build=DenoiseFamilyBuild(
             model_cls="vrl.models.families.echo.model:EchoModel",
