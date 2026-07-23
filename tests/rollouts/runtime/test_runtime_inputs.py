@@ -11,6 +11,7 @@ import pytest
 from omegaconf import OmegaConf
 
 from vrl.config.loading import load_config
+from vrl.config.precision import resolve_precision_policy
 from vrl.config.schema import parse_config
 from vrl.families.registry import (
     FAMILY_REGISTRY,
@@ -38,8 +39,10 @@ def _capture_launch_inputs(
     """Intercept the public launch boundary without starting Ray actors."""
 
     captured: list[RayGenerationLaunchInputs] = []
+    root = parse_config(cfg)
+    precision = resolve_precision_policy(root)
     config = RayGenerationConfig.from_cfg(
-        cfg,
+        root,
         resources=resolve_distributed_resources(cfg),
     )
 
@@ -57,7 +60,8 @@ def _capture_launch_inputs(
 
     with patch.object(RayGenerationLauncher, "launch", new=capture_launch):
         result = RayGenerationLauncher(init_ray=False).launch_from_cfg(
-            cfg,
+            root,
+            precision=precision,
             config=config,
             entry=entry,
             driver_bundle=SimpleNamespace(

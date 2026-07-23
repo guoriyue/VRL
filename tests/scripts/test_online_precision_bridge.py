@@ -313,9 +313,11 @@ def test_prompt_encoder_axis_in_model_build(prompt_encoder, expected):
     block = _plain_policy("fp32")
     block["rollout"]["prompt_encoders"] = {"dtype": prompt_encoder}
     cfg = _with_precision("sd3_5/online_grpo_ocr", block)
+    built = build_configs(cfg)
     build = get_model_family_entry("sd3_5").resolve_model_build(
-        cfg,
+        built.root,
         torch.device("cpu"),
+        precision=built.precision,
     )
     assert build.family == "sd3_5"
     assert build.rollout is not None
@@ -334,11 +336,17 @@ def test_family_parameter_dtype_is_derived_from_runtime_role() -> None:
         },
     )
 
+    built = build_configs(cfg)
     entry = get_model_family_entry("sd3_5")
-    rollout = entry.resolve_model_build(cfg, torch.device("cpu"))
-    replay = entry.resolve_model_build(
-        cfg,
+    rollout = entry.resolve_model_build(
+        built.root,
         torch.device("cpu"),
+        precision=built.precision,
+    )
+    replay = entry.resolve_model_build(
+        built.root,
+        torch.device("cpu"),
+        precision=built.precision,
         for_rollout=False,
     )
 
@@ -351,9 +359,11 @@ def test_direct_tool_parameter_dtype_override_is_explicit() -> None:
     from vrl.families.registry import get_model_family_entry
 
     cfg = _with_precision("sd3_5/online_grpo_ocr", _plain_policy("bf16"))
+    built = build_configs(cfg)
     build = get_model_family_entry("sd3_5").resolve_model_build(
-        cfg,
+        built.root,
         torch.device("cpu"),
+        precision=built.precision,
         parameter_dtype_override="fp32",
     )
 

@@ -12,6 +12,8 @@ import torch
 from omegaconf import OmegaConf
 
 from vrl.config.loading import bundled_config_resource
+from vrl.config.precision import resolve_precision_policy
+from vrl.config.schema import parse_config
 from vrl.families.registry import ModelFamilyEntry, get_model_family_entry
 from vrl.generation.execution.types import DistributedWorkerHandle
 from vrl.generation.launch_contract import GenerationRuntimeLaunchContract
@@ -154,7 +156,7 @@ def _launch_cfg(
     model_config = {
         "family": "sd3_5",
         "path": "unit-test",
-        "marker": "driver-config",
+        "revision": "driver-config",
         "use_lora": False,
         "torch_compile": model_torch_compile
         or {
@@ -204,6 +206,8 @@ def _capture_launch_inputs(
 
     captured: list[RayGenerationLaunchInputs] = []
     config = _ray_config(cfg)
+    root = parse_config(cfg)
+    precision = resolve_precision_policy(root)
 
     def capture_launch(
         _launcher: RayGenerationLauncher,
@@ -219,7 +223,8 @@ def _capture_launch_inputs(
 
     with patch.object(RayGenerationLauncher, "launch", new=capture_launch):
         result = RayGenerationLauncher(init_ray=False).launch_from_cfg(
-            cfg,
+            root,
+            precision=precision,
             config=config,
             entry=entry,
             driver_bundle=_Bundle(model=_CpuPolicy(), trainable_modules={}),
@@ -654,7 +659,7 @@ def test_launch_from_cfg_projects_model_compile_and_precision() -> None:
         "outer_autocast": True,
     }
     assert model_build["rollout"]["prompt_encoder_dtype"] == "float16"
-    assert model_build["model_config"]["marker"] == "driver-config"
+    assert model_build["model_config"]["revision"] == "driver-config"
     assert model_build["model_config"]["torch_compile"] == {
         "enable": True,
         "mode": "default",
@@ -669,7 +674,7 @@ def test_launch_from_cfg_preserves_disabled_model_compile_config() -> None:
     )
 
     model_config = launch_inputs.launch_contract.model_build["model_config"]
-    assert model_config["marker"] == "driver-config"
+    assert model_config["revision"] == "driver-config"
     assert model_config["torch_compile"] == {
         "enable": False,
         "mode": "default",
@@ -742,10 +747,13 @@ def test_launch_from_cfg_rejects_model_compile_for_ar_family() -> None:
         },
     )
     cfg.model.family = "janus_pro"
+    root = parse_config(cfg)
+    precision = resolve_precision_policy(root)
 
     with pytest.raises(ValueError, match="does not support torch compile"):
         RayGenerationLauncher(init_ray=False).launch_from_cfg(
-            cfg,
+            root,
+            precision=precision,
             config=_ray_config(cfg),
             entry=get_model_family_entry("janus_pro"),
             driver_bundle=_Bundle(model=_CpuPolicy(), trainable_modules={}),

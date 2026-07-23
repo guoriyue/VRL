@@ -8,6 +8,8 @@ import pytest
 import torch
 from omegaconf import OmegaConf
 
+from vrl.config.precision import resolve_precision_policy
+from vrl.config.schema import parse_config
 from vrl.families.registry import get_model_family_entry
 from vrl.generation import GenerationRequest
 from vrl.generation.execution.chunks import SampleChunk
@@ -108,15 +110,25 @@ def test_resolve_model_build_defaults() -> None:
             },
         },
     )
-    build = get_model_family_entry("llamagen").resolve_model_build(cfg, device="cpu")
+    root = parse_config(cfg)
+    precision = resolve_precision_policy(root)
+    build = get_model_family_entry("llamagen").resolve_model_build(
+        root,
+        device="cpu",
+        precision=precision,
+    )
     assert build.model_name_or_path == "peizesun/llamagen_t2i"
 
 
 def test_config_from_build_uses_fused_projection_lora_targets() -> None:
     """The vendored GPT has wqkv/wo, not q_proj/k_proj/v_proj."""
+    cfg = _cfg()
+    root = parse_config(cfg)
+    precision = resolve_precision_policy(root)
     build = get_model_family_entry("llamagen").resolve_model_build(
-        _cfg(),
+        root,
         device="cpu",
+        precision=precision,
     )
     config = llamagen_config_from_build(build)
     resolved = LlamaGenConfig(**config)
@@ -133,7 +145,13 @@ def test_false_lora_initialization_reaches_peft_as_bool() -> None:
 
     cfg = _cfg()
     cfg.model.lora = {"init_lora_weights": False}
-    build = get_model_family_entry("llamagen").resolve_model_build(cfg, device="cpu")
+    root = parse_config(cfg)
+    precision = resolve_precision_policy(root)
+    build = get_model_family_entry("llamagen").resolve_model_build(
+        root,
+        device="cpu",
+        precision=precision,
+    )
     config = LlamaGenConfig(**llamagen_config_from_build(build))
 
     wrapped = LlamaGenModel._apply_lora(
@@ -170,7 +188,13 @@ def test_lora_checkpoint_roundtrip_loads_trainable_adapter_weights(tmp_path) -> 
 
     cfg = _cfg()
     cfg.model.lora = {"path": str(adapter_path)}
-    build = get_model_family_entry("llamagen").resolve_model_build(cfg, device="cpu")
+    root = parse_config(cfg)
+    precision = resolve_precision_policy(root)
+    build = get_model_family_entry("llamagen").resolve_model_build(
+        root,
+        device="cpu",
+        precision=precision,
+    )
     config = LlamaGenConfig(**llamagen_config_from_build(build))
     loaded = LlamaGenModel._apply_lora(
         SimpleNamespace(config=config),

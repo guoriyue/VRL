@@ -32,7 +32,8 @@ import torch
 from omegaconf import OmegaConf
 
 from vrl.config.loading import load_config
-from vrl.config.precision import normalize_precision
+from vrl.config.precision import normalize_precision, resolve_precision_policy
+from vrl.config.schema import parse_config
 from vrl.generation.steps.denoise.teacache import TeaCacheConfig
 from vrl.scripts.perf.common.diffusion_runtime import build_runtime, make_step_fn, run_e2e
 
@@ -129,7 +130,9 @@ def main(argv=None):
         flush=True,
     )
 
-    runtime = build_runtime(cfg, device)
+    root = parse_config(cfg)
+    precision_policy = resolve_precision_policy(root)
+    runtime = build_runtime(root, device, precision=precision_policy)
     model = runtime.model
     if fp8:
         swapped = model.quantize_rollout_fp8(recipe=args.fp8_recipe)

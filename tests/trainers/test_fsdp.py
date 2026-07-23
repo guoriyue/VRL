@@ -474,6 +474,8 @@ def test_wan_fsdp_replay_build_defers_full_gpu_move_until_sharding(
     from omegaconf import OmegaConf
     from torch.distributed.tensor import DTensor
 
+    from vrl.config.precision import resolve_precision_policy
+    from vrl.config.schema import parse_config
     from vrl.families.registry import get_model_family_entry
     from vrl.models.steps.denoise import build as denoise_build
 
@@ -500,6 +502,7 @@ def test_wan_fsdp_replay_build_defers_full_gpu_move_until_sharding(
     cfg = OmegaConf.create(
         {
             "model": {
+                "family": "wan_2_1_i2v",
                 "path": "fake/Wan2.1-I2V",
                 "use_lora": True,
                 "lora": {
@@ -516,17 +519,23 @@ def test_wan_fsdp_replay_build_defers_full_gpu_move_until_sharding(
             "distributed": {"training": {"strategy": "fsdp"}},
         },
     )
+    root = parse_config(cfg)
+    precision = resolve_precision_policy(root)
     entry = get_model_family_entry("wan_2_1_i2v")
     build = entry.resolve_model_build(
-        cfg,
+        root,
         torch.device("cpu"),
+        precision=precision,
         for_rollout=False,
     )
 
     assert build.defer_trainable_device_move is True
     assert (
         entry.resolve_model_build(
-            cfg, torch.device("cpu"), for_rollout=True
+            root,
+            torch.device("cpu"),
+            precision=precision,
+            for_rollout=True,
         ).defer_trainable_device_move
         is False
     )

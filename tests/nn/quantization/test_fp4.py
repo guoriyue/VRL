@@ -310,11 +310,13 @@ def test_loader_allows_torch_compile_after_shape_gate(monkeypatch) -> None:
 def test_resolve_model_build_derives_nvfp4_from_nested_precision() -> None:
     from omegaconf import OmegaConf
 
+    from vrl.config.precision import resolve_precision_policy
+    from vrl.config.schema import parse_config
     from vrl.families.registry import get_model_family_entry
 
     cfg = OmegaConf.create(
         {
-            "model": {"path": "x"},
+            "model": {"family": "sd3_5", "path": "x"},
             "precision": {
                 "float32_precision": "tf32",
                 "training": {"dtype": "bf16"},
@@ -325,7 +327,13 @@ def test_resolve_model_build_derives_nvfp4_from_nested_precision() -> None:
             },
         },
     )
-    build = get_model_family_entry("sd3_5").resolve_model_build(cfg, "cuda")
+    root = parse_config(cfg)
+    precision = resolve_precision_policy(root)
+    build = get_model_family_entry("sd3_5").resolve_model_build(
+        root,
+        "cuda",
+        precision=precision,
+    )
     assert build.rollout is not None
     assert build.precision.quantization is not None
     assert build.precision.quantization.format == "nvfp4"

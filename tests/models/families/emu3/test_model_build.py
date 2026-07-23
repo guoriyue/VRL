@@ -8,7 +8,8 @@ import pytest
 import torch
 from omegaconf import OmegaConf
 
-from vrl.config.precision import RolePrecision
+from vrl.config.precision import RolePrecision, resolve_precision_policy
+from vrl.config.schema import parse_config
 from vrl.families.registry import get_model_family_entry
 from vrl.generation import GenerationRequest
 from vrl.generation.execution.chunks import SampleChunk
@@ -41,7 +42,13 @@ def test_resolve_model_build_defaults_to_gen_hf_checkpoint() -> None:
         },
     )
 
-    build = get_model_family_entry("emu3").resolve_model_build(cfg, device="cpu")
+    root = parse_config(cfg)
+    precision = resolve_precision_policy(root)
+    build = get_model_family_entry("emu3").resolve_model_build(
+        root,
+        device="cpu",
+        precision=precision,
+    )
 
     assert build.model_name_or_path == "BAAI/Emu3-Gen-hf"
     assert build.precision == RolePrecision("fp32", "tf32")
@@ -71,7 +78,13 @@ def test_resolve_model_build_carries_sampling_and_lora_overrides() -> None:
         }
     )
 
-    build = get_model_family_entry("emu3").resolve_model_build(cfg, device="cpu")
+    root = parse_config(cfg)
+    precision = resolve_precision_policy(root)
+    build = get_model_family_entry("emu3").resolve_model_build(
+        root,
+        device="cpu",
+        precision=precision,
+    )
     config = emu3_config_from_build(build)
     resolved = Emu3Config(**config)
 

@@ -35,8 +35,16 @@ def _write_run(tmp_path: Path, *, empty_manifest: bool = False) -> Path:
                 "use_lora": False,
                 "lora": None,
             },
-            "data": {"eval_manifest": str(manifest)},
-            "precision": "bf16",
+            "data": {
+                "manifest": str(manifest),
+                "eval_manifest": str(manifest),
+                "preprocessing": {},
+                "sampler": {"type": "sequential_window"},
+            },
+            "precision": {
+                "float32_precision": "ieee",
+                "training": {"dtype": "fp16"},
+            },
             "sampling": {
                 "width": 8,
                 "height": 8,
@@ -93,7 +101,11 @@ def _write_run(tmp_path: Path, *, empty_manifest: bool = False) -> Path:
 
 def _allow_minimal_protocol(monkeypatch) -> None:
     monkeypatch.setattr(checkpoint_eval, "_normalize_run_config", lambda cfg: cfg)
-    monkeypatch.setattr(checkpoint_eval, "_materialize_model_snapshot", lambda cfg: cfg)
+    monkeypatch.setattr(
+        checkpoint_eval,
+        "_materialize_model_snapshot",
+        checkpoint_eval.parse_config,
+    )
     monkeypatch.setattr(
         checkpoint_eval,
         "_materialize_reward_model_snapshots",
@@ -123,8 +135,8 @@ def test_main_writes_provenance_bound_report(monkeypatch, tmp_path, capsys) -> N
     run_dir = _write_run(tmp_path)
     _allow_minimal_protocol(monkeypatch)
 
-    def fake_generate(cfg, targets, prompts, *, output_dir, sampling, device):
-        del cfg, sampling, device
+    def fake_generate(root, precision, targets, prompts, *, output_dir, sampling, device):
+        del root, precision, sampling, device
         generated = []
         for target in targets:
             for sample_index in range(checkpoint_eval.EVAL_SAMPLES_PER_PROMPT):
@@ -228,8 +240,8 @@ def test_report_reader_rejects_changed_config_provenance(monkeypatch, tmp_path) 
     run_dir = _write_run(tmp_path)
     _allow_minimal_protocol(monkeypatch)
 
-    def fake_generate(cfg, targets, prompts, *, output_dir, sampling, device):
-        del cfg, sampling, device
+    def fake_generate(root, precision, targets, prompts, *, output_dir, sampling, device):
+        del root, precision, sampling, device
         images = []
         for target in targets:
             for sample_index in range(2):
@@ -834,8 +846,21 @@ def test_generation_uses_fresh_base_before_reading_fullparam_checkpoints(
         ),
     ]
 
+    root = checkpoint_eval.parse_config(
+        OmegaConf.create(
+            {
+                "model": {"family": "sana", "path": "unit-checkpoint"},
+                "precision": {
+                    "float32_precision": "ieee",
+                    "training": {"dtype": "fp32"},
+                },
+            },
+        ),
+    )
+    precision = checkpoint_eval.resolve_precision_policy(root)
     generated = checkpoint_eval._generate_images(
-        OmegaConf.create({"model": {"family": "sana"}}),
+        root,
+        precision,
         targets,
         ["fox"],
         output_dir=tmp_path / "eval",

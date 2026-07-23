@@ -37,6 +37,8 @@ import torch
 
 from vrl.algorithms.logprob_mismatch import compute_logprob_mismatch_stats
 from vrl.config.loading import load_config
+from vrl.config.precision import resolve_precision_policy
+from vrl.config.schema import parse_config
 from vrl.generation.steps.denoise.teacache import TeaCacheConfig, TeaCacheState
 from vrl.generation.types import VideoGenerationRequest
 from vrl.math.denoise.flow_matching import sde_step_with_logprob
@@ -215,9 +217,11 @@ def main(argv=None):
     args = p.parse_args(argv)
 
     cfg = load_config(args.config)
+    root = parse_config(cfg)
+    precision = resolve_precision_policy(root)
     device = torch.device(args.device)
     dtype = torch.bfloat16
-    model = build_model(cfg, device, dtype)
+    model = build_model(root, device, dtype, precision=precision)
 
     if args.diagnose:
         _diagnose(model, cfg, device, dtype)

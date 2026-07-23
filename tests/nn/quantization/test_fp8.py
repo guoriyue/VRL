@@ -523,11 +523,13 @@ def test_apply_rollout_quantization_dispatches_by_scheme():
 def test_resolve_model_build_derives_fp8_from_precision_rollout():
     from omegaconf import OmegaConf
 
+    from vrl.config.precision import resolve_precision_policy
+    from vrl.config.schema import parse_config
     from vrl.families.registry import get_model_family_entry
 
     fp8_cfg = OmegaConf.create(
         {
-            "model": {"path": "x"},
+            "model": {"family": "sd3_5", "path": "x"},
             "precision": {
                 "float32_precision": "tf32",
                 "training": {"dtype": "bf16"},
@@ -538,8 +540,14 @@ def test_resolve_model_build_derives_fp8_from_precision_rollout():
             },
         }
     )
+    fp8_root = parse_config(fp8_cfg)
+    fp8_precision = resolve_precision_policy(fp8_root)
     entry = get_model_family_entry("sd3_5")
-    build = entry.resolve_model_build(fp8_cfg, "cuda")
+    build = entry.resolve_model_build(
+        fp8_root,
+        "cuda",
+        precision=fp8_precision,
+    )
     assert build.rollout is not None
     assert build.precision.quantization is not None
     assert build.precision.quantization.format == "fp8"
@@ -550,7 +558,7 @@ def test_resolve_model_build_derives_fp8_from_precision_rollout():
 
     bf16_cfg = OmegaConf.create(
         {
-            "model": {"path": "x"},
+            "model": {"family": "sd3_5", "path": "x"},
             "precision": {
                 "float32_precision": "tf32",
                 "training": {"dtype": "bf16"},
@@ -558,7 +566,13 @@ def test_resolve_model_build_derives_fp8_from_precision_rollout():
             },
         }
     )
-    plain_build = entry.resolve_model_build(bf16_cfg, "cuda")
+    bf16_root = parse_config(bf16_cfg)
+    bf16_precision = resolve_precision_policy(bf16_root)
+    plain_build = entry.resolve_model_build(
+        bf16_root,
+        "cuda",
+        precision=bf16_precision,
+    )
     assert plain_build.rollout is not None
     assert plain_build.precision.quantization is None
     assert plain_build.precision.dtype == "bf16"

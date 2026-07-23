@@ -9,6 +9,8 @@ import torch
 from omegaconf import OmegaConf
 
 from vrl.config.loading import load_config
+from vrl.config.precision import resolve_precision_policy
+from vrl.config.schema import parse_config
 from vrl.families.registry import get_model_family_entry
 from vrl.generation import GenerationRequest
 from vrl.generation.execution.chunks import SampleChunk
@@ -86,9 +88,13 @@ def test_config_projection_preserves_trust_remote_code_boolean(
     trust_remote_code: bool,
 ) -> None:
     entry = get_model_family_entry(family)
+    cfg = _build_cfg(family=family, trust_remote_code=trust_remote_code)
+    root = parse_config(cfg)
+    precision = resolve_precision_policy(root)
     build = entry.resolve_model_build(
-        _build_cfg(family=family, trust_remote_code=trust_remote_code),
+        root,
         device="cpu",
+        precision=precision,
     )
 
     projected = janus_config_from_build(build)
@@ -125,15 +131,18 @@ def test_package_facade_preserves_transition_table_and_public_symbols() -> None:
 
 def test_janus_r1_replay_build_keeps_the_explicit_runtime_family() -> None:
     cfg = load_config("experiment/janus_pro/online_r1_grpo_ocr")
+    root = parse_config(cfg)
+    precision = resolve_precision_policy(root)
 
     build = get_model_family_entry("janus_pro_r1").resolve_model_build(
-        cfg,
+        root,
         device="cpu",
+        precision=precision,
         for_rollout=False,
     )
 
     assert cfg.model.family == "janus_pro_r1"
-    assert build.family == cfg.model.family
+    assert build.family == root.model.family
 
 
 def test_janus_model_build_does_not_expose_decode_strategy() -> None:
@@ -159,14 +168,20 @@ def test_janus_model_build_does_not_expose_decode_strategy() -> None:
         }
     )
 
-    build = get_model_family_entry("janus_pro").resolve_model_build(cfg, device="cpu")
+    root = parse_config(cfg)
+    precision = resolve_precision_policy(root)
+    build = get_model_family_entry("janus_pro").resolve_model_build(
+        root,
+        device="cpu",
+        precision=precision,
+    )
 
     assert build.sampling_config is not None
     assert "ar_decode_strategy" not in build.sampling_config
     assert build.sampling_config["ar_scheduler_batch_size"] == 2
 
 
-def test_ar_runtime_rejects_duplicate_model_dtype() -> None:
+def test_schema_rejects_duplicate_model_dtype() -> None:
     cfg = OmegaConf.create(
         {
             "model": {
@@ -183,8 +198,8 @@ def test_ar_runtime_rejects_duplicate_model_dtype() -> None:
         },
     )
 
-    with pytest.raises(ValueError, match=r"model\.dtype.*top-level precision"):
-        get_model_family_entry("janus_pro").resolve_model_build(cfg, device="cpu")
+    with pytest.raises(ValueError, match=r"unknown model\.dtype"):
+        parse_config(cfg)
 
 
 def test_janus_executor_layout_resolves_scheduler_batch_size() -> None:

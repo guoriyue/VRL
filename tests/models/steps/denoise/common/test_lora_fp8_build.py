@@ -127,6 +127,8 @@ def test_fp8_config_replay_build_does_not_defer_device_move(monkeypatch) -> None
     """Replay owns no rollout options even when collection uses fp8."""
     from omegaconf import OmegaConf
 
+    from vrl.config.precision import resolve_precision_policy
+    from vrl.config.schema import parse_config
     from vrl.families.registry import get_model_family_entry
 
     events: list[str] = []
@@ -138,6 +140,7 @@ def test_fp8_config_replay_build_does_not_defer_device_move(monkeypatch) -> None
     cfg = OmegaConf.create(
         {
             "model": {
+                "family": "sd3_5",
                 "path": "fake",
                 "use_lora": True,
                 "lora": {"rank": 2, "alpha": 2, "target_modules": ["proj"]},
@@ -152,9 +155,12 @@ def test_fp8_config_replay_build_does_not_defer_device_move(monkeypatch) -> None
             },
         },
     )
+    root = parse_config(cfg)
+    precision = resolve_precision_policy(root)
     build = get_model_family_entry("sd3_5").resolve_model_build(
-        cfg,
+        root,
         "cpu",
+        precision=precision,
         for_rollout=False,
     )
 

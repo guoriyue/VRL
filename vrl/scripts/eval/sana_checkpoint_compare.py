@@ -27,6 +27,7 @@ from typing import Any
 import torch
 
 from vrl.config.loading import load_config
+from vrl.config.precision import resolve_precision_policy
 from vrl.config.schema import parse_config
 from vrl.models.dtypes import dtype_to_wire_name
 from vrl.models.precision import float32_precision_state, model_precision
@@ -106,7 +107,8 @@ def run_comparison(args: argparse.Namespace) -> dict[str, str]:
     if not config_path.is_file():
         raise FileNotFoundError(f"training run has no resolved config: {config_path}")
     cfg = load_config(config_path)
-    parse_config(cfg)
+    root = parse_config(cfg)
+    precision = resolve_precision_policy(root)
     _validate_resolved_config(cfg)
     _validate_sampling_args(args)
 
@@ -139,7 +141,12 @@ def run_comparison(args: argparse.Namespace) -> dict[str, str]:
         resolve_family_model_build,
     )
 
-    build = resolve_family_model_build(cfg, device, for_rollout=True)
+    build = resolve_family_model_build(
+        root,
+        device,
+        precision=precision,
+        for_rollout=True,
+    )
     bundle = build_family_runtime_bundle(build)
     model = bundle.model.eval()
     dtype_record = _model_precision_snapshot(model)

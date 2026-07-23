@@ -239,8 +239,15 @@ class _FakeFamilyEntry:
         self._state = state
         self.task = str(state.get("family_task", "t2i"))
 
-    def resolve_model_build(self, cfg: Any, device: Any, **kwargs: Any) -> Any:
-        del cfg, device, kwargs
+    def resolve_model_build(
+        self,
+        root: Any,
+        device: Any,
+        *,
+        precision: Any,
+        **kwargs: Any,
+    ) -> Any:
+        del root, device, precision, kwargs
         self._state["model_builds"] += 1
         return SimpleNamespace(family=self.family)
 
@@ -331,6 +338,11 @@ def _install_common_fakes(
                         "save_freq": 0,
                         "seed": 0,
                     },
+                    "model": {
+                        "family": "sd3_5",
+                        "path": "unit-checkpoint",
+                        "use_lora": False,
+                    },
                 },
             ),
             trainer=trainer_config,
@@ -343,11 +355,6 @@ def _install_common_fakes(
         ),
     )
     monkeypatch.setattr(online, "load_training_checkpoint_for_resume", lambda resume: None)
-    monkeypatch.setattr(
-        online,
-        "prepare_model_config_for_training_resume",
-        lambda cfg, checkpoint, *, strict: None,
-    )
     monkeypatch.setattr(online, "resolve_distributed_resources", lambda cfg, **kwargs: resources)
     monkeypatch.setattr(online, "format_distributed_resource_plan", lambda resources: "resources")
     monkeypatch.setattr(online, "trainer_torch_device", lambda resources: "cpu")

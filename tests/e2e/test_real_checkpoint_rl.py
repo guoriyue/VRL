@@ -21,6 +21,8 @@ from omegaconf import OmegaConf
 from tests import ci_envs
 from vrl.config.builders import build_configs
 from vrl.config.loading import load_config
+from vrl.config.precision import PrecisionPolicy
+from vrl.config.schema import RootConfig
 from vrl.families.registry import ModelFamilyEntry, get_model_family_entry
 from vrl.generation import GenerationOutput, GenerationRequest, build_sample_rows
 from vrl.generation.execution.planner import build_engine_plan
@@ -572,7 +574,14 @@ def test_real_checkpoint_online_rl_updates_trainable_weights(
         built = build_configs(cfg)
         trainer_config = built.trainer
         dtype = torch_dtype_for_trainer_precision(trainer_config, torch)
-        bundle = _build_runtime_bundle(case, entry, cfg, device, dtype)
+        bundle = _build_runtime_bundle(
+            case,
+            entry,
+            built.root,
+            built.precision,
+            device,
+            dtype,
+        )
         collector_config = build_rollout_config_from_cfg(cfg)
         if case.synthetic_replay_rollout:
             collector = _SyntheticDiffusionReplayCollector(
@@ -714,14 +723,16 @@ async def _shutdown_if_present(value: Any) -> None:
 def _build_runtime_bundle(
     case: RealCheckpointCase,
     entry: ModelFamilyEntry,
-    cfg: Any,
+    root: RootConfig,
+    precision: PrecisionPolicy,
     device: torch.device,
     dtype: torch.dtype,
 ) -> Any:
     for_rollout = not case.synthetic_replay_rollout
     build = entry.resolve_model_build(
-        cfg,
+        root,
         device,
+        precision=precision,
         for_rollout=for_rollout,
         parameter_dtype_override=dtype,
     )

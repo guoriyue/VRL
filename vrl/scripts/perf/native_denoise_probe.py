@@ -30,6 +30,8 @@ from pathlib import Path
 import torch
 
 from vrl.config.loading import load_config
+from vrl.config.precision import resolve_precision_policy
+from vrl.config.schema import parse_config
 from vrl.scripts.perf.common.diffusion_runtime import build_runtime, make_step_fn
 
 
@@ -46,8 +48,10 @@ def main(argv=None) -> None:
     cfg = load_config(args.config)
     # Match the omni side: base weights, no LoRA adapter.
     cfg.model.use_lora = False
+    root = parse_config(cfg)
+    precision = resolve_precision_policy(root)
     device = torch.device(args.device)
-    runtime = build_runtime(cfg, device)
+    runtime = build_runtime(root, device, precision=precision)
     model = runtime.model
     if args.compile:
         print("torch.compile(default) the transformer ...", flush=True)

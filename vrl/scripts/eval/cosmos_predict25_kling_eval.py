@@ -16,7 +16,7 @@ import torch
 from omegaconf import DictConfig, OmegaConf
 
 from vrl.config.loading import load_config
-from vrl.config.precision import resolve_precision_policy
+from vrl.config.precision import PrecisionPolicy, resolve_precision_policy
 from vrl.config.schema import RootConfig, parse_config
 from vrl.families.registry import get_model_family_entry
 from vrl.generation.types import VideoGenerationRequest
@@ -131,7 +131,8 @@ def main(argv: list[str] | None = None) -> None:
     keep_model_between_checkpoints = _keep_model_between_checkpoints(args)
 
     cfg = load_config(args.config, overrides=args.overrides)
-    validated_cfg = parse_config(cfg)
+    root = parse_config(cfg)
+    precision = resolve_precision_policy(root)
     prompts = _load_prompts(args, cfg)
     if args.limit:
         prompts = prompts[: args.limit]
@@ -140,7 +141,12 @@ def main(argv: list[str] | None = None) -> None:
     checkpoint_targets = _parse_checkpoint_targets(args.checkpoint)
 
     device = _resolve_device(args.device)
-    dtype = _resolve_dtype(args.dtype, validated_cfg, device=device)
+    dtype = _resolve_dtype(
+        args.dtype,
+        root,
+        precision=precision,
+        device=device,
+    )
     sampling = _resolve_sampling(args, cfg)
     output_dir = Path(args.output_dir).expanduser().resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -163,7 +169,8 @@ def main(argv: list[str] | None = None) -> None:
     )
 
     generated = _generate_all(
-        cfg,
+        root,
+        precision,
         checkpoint_targets,
         prompts,
         samples_per_prompt=int(args.samples_per_prompt),
@@ -246,15 +253,16 @@ def _resolve_device(device_arg: str) -> torch.device:
 
 def _resolve_dtype(
     dtype_arg: str,
-    cfg: RootConfig,
+    root: RootConfig,
     *,
+    precision: PrecisionPolicy,
     device: torch.device,
 ) -> torch.dtype:
     if dtype_arg != "auto":
         return resolve_torch_dtype(dtype_arg)
-    if cfg.trainer is None:
+    if root.trainer is None:
         raise ValueError("Cosmos checkpoint evaluation requires an online trainer config")
-    dtype = resolve_torch_dtype(resolve_precision_policy(cfg).training.dtype)
+    dtype = resolve_torch_dtype(precision.training.dtype)
     if getattr(device, "type", str(device)) == "cpu":
         return torch.float32
     return dtype
@@ -294,7 +302,8 @@ def _keep_model_between_checkpoints(args: argparse.Namespace) -> bool:
 
 
 def _generate_all(
-    cfg: DictConfig,
+    root: RootConfig,
+    precision: PrecisionPolicy,
     checkpoint_targets: list[CheckpointTarget],
     prompts: list[str],
     *,
@@ -308,7 +317,9 @@ def _generate_all(
 ) -> list[GeneratedVideo]:
     generated: list[GeneratedVideo] = []
     bundle: Any | None = None
-    entry = get_model_family_entry(str(cfg.model.family))
+    if root.model is None:
+        raise ValueError("Cosmos checkpoint evaluation requires model configuration")
+    entry = get_model_family_entry(str(root.model.family))
     try:
         for target in checkpoint_targets:
             if bundle is None or not keep_model_between_checkpoints:
@@ -318,8 +329,9 @@ def _generate_all(
                     target.label,
                 )
                 build = entry.resolve_model_build(
-                    cfg,
+                    root,
                     device,
+                    precision=precision,
                     parameter_dtype_override=dtype,
                 )
                 bundle = entry.build_rollout(build)

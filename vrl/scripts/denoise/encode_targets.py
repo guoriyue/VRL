@@ -135,6 +135,7 @@ def main(argv: list[str] | None = None) -> None:
     from omegaconf import OmegaConf
 
     from vrl.config.loading import load_config
+    from vrl.config.precision import resolve_precision_policy
     from vrl.config.schema import parse_config
     from vrl.families.registry import (
         get_model_family_entry,
@@ -143,8 +144,11 @@ def main(argv: list[str] | None = None) -> None:
     from vrl.trainers.data.sft_latents import save_sft_latents
 
     cfg = load_config(f"experiment/{args.experiment}")
-    parse_config(cfg)
-    entry = get_model_family_entry(str(cfg.model.family))
+    root = parse_config(cfg)
+    precision = resolve_precision_policy(root)
+    if root.model is None:
+        raise ValueError("target encoding requires model configuration")
+    entry = get_model_family_entry(str(root.model.family))
     family = entry.family
 
     device = torch.device(
@@ -174,12 +178,16 @@ def main(argv: list[str] | None = None) -> None:
     )
 
     # Use the same resolved family entry and build path as rollout workers.
-    weight_dtype = torch.bfloat16 if device.type == "cuda" else torch.float32
+    # CUDA follows the experiment's rollout precision. CPU explicitly promotes
+    # parameter storage because several diffusion kernels do not support BF16
+    # there; that compatibility override is owned by this offline tool.
+    parameter_dtype_override = torch.float32 if device.type == "cpu" else None
     bundle = entry.build_rollout(
         entry.resolve_model_build(
-            cfg,
+            root,
             device,
-            parameter_dtype_override=weight_dtype,
+            precision=precision,
+            parameter_dtype_override=parameter_dtype_override,
         ),
     )
     model = bundle.model

@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from dataclasses import asdict, dataclass, field, replace
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from vrl.generation.execution import (
     ChunkPlacementPolicy,
@@ -32,6 +32,10 @@ from vrl.ray.placement import RolePlacement
 from vrl.utils.config import cfg_path, plain_mapping, to_builtin_deep
 
 logger = logging.getLogger(__name__)
+
+if TYPE_CHECKING:
+    from vrl.config.precision import PrecisionPolicy
+    from vrl.config.schema import RootConfig
 
 
 @dataclass(slots=True)
@@ -197,8 +201,9 @@ class RayGenerationLauncher:
 
     def launch_from_cfg(
         self,
-        cfg: Any,
+        root: RootConfig,
         *,
+        precision: PrecisionPolicy,
         config: RayGenerationConfig,
         entry: Any,
         driver_bundle: Any,
@@ -210,7 +215,11 @@ class RayGenerationLauncher:
             driver_bundle=driver_bundle,
         )
         runtime_device = "cuda" if config.resources.rollout_gpus_per_worker > 0 else "cpu"
-        build = entry.resolve_model_build(cfg, runtime_device)
+        build = entry.resolve_model_build(
+            root,
+            runtime_device,
+            precision=precision,
+        )
         # The lifecycle resolver, not the model config, owns whether rollout
         # workers will receive trainable-state updates. Thread that resolved fact
         # into the one build option that needs it before the Ray payload is frozen.
@@ -222,7 +231,7 @@ class RayGenerationLauncher:
                 # quantizer does not have to reinterpret model configuration.
                 base_weight_sync=(config.worker.sync_trainable_state and not build.use_lora),
             )
-        if bool(cfg_path(cfg, "model.torch_compile.enable", False)) and not (
+        if bool(cfg_path(root, "model.torch_compile.enable", False)) and not (
             entry.runtime_capabilities.supports_torch_compile
         ):
             raise ValueError(
@@ -231,7 +240,7 @@ class RayGenerationLauncher:
             )
         schedule_mode = str(
             cfg_path(
-                cfg,
+                root,
                 "trainer.rollout_orchestration.schedule_mode",
                 "strict_on_policy",
             ),
@@ -240,9 +249,9 @@ class RayGenerationLauncher:
             launch_contract=GenerationRuntimeLaunchContract(
                 family=entry.family,
                 model_build=_model_build_payload(build),
-                executor_kwargs=build_executor_kwargs(entry, cfg),
+                executor_kwargs=build_executor_kwargs(entry, root),
                 policy_version=0,
-                torch_profiler=_runtime_profiler(cfg),
+                torch_profiler=_runtime_profiler(root),
                 # The schedule is the source of truth for whether a worker may
                 # serve an older request after a weight sync. Full-parameter
                 # payloads fail closed to the draining path until a byte-budget

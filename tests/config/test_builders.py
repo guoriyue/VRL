@@ -5,12 +5,56 @@ from typing import Any
 
 import pytest
 import torch
+from omegaconf import OmegaConf
 
 import vrl.config.builders as builders
 import vrl.config.validation as validation
 from vrl.config.builders import BuiltConfigs, RewardRuntimeConfig, build_configs
 from vrl.config.loading import load_config
 from vrl.config.schema import RootConfig
+
+
+def test_build_rejects_strict_resume_with_a_warm_start_adapter() -> None:
+    cfg = load_config("experiment/sd3_5/online_grpo_ocr")
+    OmegaConf.update(cfg, "trainer.resume_from", "/tmp/checkpoint-4")
+    OmegaConf.update(cfg, "trainer.resume_strict", True)
+    OmegaConf.update(cfg, "model.lora.path", "/tmp/warm-start-adapter")
+
+    with pytest.raises(
+        ValueError,
+        match=r"trainer\.resume_from cannot be combined with model\.lora\.path",
+    ):
+        build_configs(cfg)
+
+
+def test_build_clears_nonstrict_resume_adapter_in_raw_and_typed_sources() -> None:
+    cfg = load_config("experiment/sd3_5/online_grpo_ocr")
+    OmegaConf.update(cfg, "trainer.resume_from", "/tmp/checkpoint-4")
+    OmegaConf.update(cfg, "trainer.resume_strict", False)
+    OmegaConf.update(cfg, "model.lora.path", "/tmp/warm-start-adapter")
+
+    built = build_configs(cfg)
+
+    assert built.resume.checkpoint_path == "/tmp/checkpoint-4"
+    assert built.resume.strict is False
+    assert cfg.model.lora.path == ""
+    assert built.root.model is not None
+    assert built.root.model.lora is not None
+    assert built.root.model.lora.path == ""
+
+
+def test_build_preserves_warm_start_adapter_without_full_resume() -> None:
+    cfg = load_config("experiment/sd3_5/online_grpo_ocr")
+    OmegaConf.update(cfg, "trainer.resume_from", "")
+    OmegaConf.update(cfg, "model.lora.path", "/tmp/warm-start-adapter")
+
+    built = build_configs(cfg)
+
+    assert built.resume.checkpoint_path is None
+    assert cfg.model.lora.path == "/tmp/warm-start-adapter"
+    assert built.root.model is not None
+    assert built.root.model.lora is not None
+    assert built.root.model.lora.path == "/tmp/warm-start-adapter"
 
 
 def test_build_resolves_public_config_precision_and_reward_once(

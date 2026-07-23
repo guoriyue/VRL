@@ -363,8 +363,16 @@ def build_reward_config(cfg: DictConfig | RewardConfig) -> RewardRuntimeConfig:
 def build_configs(cfg: DictConfig) -> BuiltConfigs:
     """Bundle typed configs for downstream training scripts."""
 
-    from vrl.trainers.checkpointing import resolve_training_resume_config
+    from vrl.trainers.checkpointing import (
+        prepare_model_config_for_training_resume,
+        resolve_training_resume_config,
+    )
 
+    resume = resolve_training_resume_config(cfg)
+    # A full checkpoint, not model.lora.path, owns trainable state on resume.
+    # Normalize the raw source before typed parsing so persisted config and all
+    # runtime consumers receive one truthful model tree.
+    prepare_model_config_for_training_resume(cfg, resume)
     validated = validate_training_config(cfg)
     root = validated.root
     precision = validated.precision
@@ -383,7 +391,7 @@ def build_configs(cfg: DictConfig) -> BuiltConfigs:
         precision=precision,
         trainer=trainer,
         reward=reward,
-        resume=resolve_training_resume_config(root),
+        resume=resume,
     )
 
 

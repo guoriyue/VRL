@@ -30,7 +30,8 @@ from typing import Any
 from omegaconf import DictConfig, OmegaConf
 
 from vrl.config.loading import load_config
-from vrl.config.schema import parse_config
+from vrl.config.precision import PrecisionPolicy, resolve_precision_policy
+from vrl.config.schema import RootConfig, parse_config
 from vrl.scripts.eval.sana_inference import (
     OFFICIAL_SAMPLING_PROTOCOL,
     SCHEDULER_PROTOCOL,
@@ -148,7 +149,8 @@ def main(argv: list[str] | None = None) -> None:
     targets = _discover_checkpoint_targets(run_dir, cfg)
     device = _resolve_device(args.device)
     sampling = _resolve_sampling()
-    build_cfg = _materialize_model_snapshot(cfg)
+    build_root = _materialize_model_snapshot(cfg)
+    build_precision = resolve_precision_policy(build_root)
     reward_models = _materialize_reward_model_snapshots(
         _build_reward_model_definitions(cfg, generation_device=str(device)),
     )
@@ -156,7 +158,8 @@ def main(argv: list[str] | None = None) -> None:
     eval_dir.mkdir(parents=True, exist_ok=True)
 
     generated = _generate_images(
-        build_cfg,
+        build_root,
+        build_precision,
         targets,
         prompts,
         output_dir=eval_dir,
@@ -806,7 +809,7 @@ def _build_reward_model_definitions(
     return reward_models
 
 
-def _materialize_model_snapshot(cfg: DictConfig) -> DictConfig:
+def _materialize_model_snapshot(cfg: DictConfig) -> RootConfig:
     """Pin SANA architecture/frozen modules through the official Hub API."""
 
     from huggingface_hub import snapshot_download
@@ -821,7 +824,7 @@ def _materialize_model_snapshot(cfg: DictConfig) -> DictConfig:
     materialized = OmegaConf.create(plain)
     OmegaConf.resolve(materialized)
     assert isinstance(materialized, DictConfig)
-    return materialized
+    return parse_config(materialized)
 
 
 def _materialize_reward_model_snapshots(
@@ -905,7 +908,8 @@ def _aesthetic_asset_record() -> dict[str, Any]:
 
 
 def _generate_images(
-    cfg: DictConfig,
+    root: RootConfig,
+    precision: PrecisionPolicy,
     targets: list[CheckpointTarget],
     prompts: list[str],
     *,
@@ -916,8 +920,15 @@ def _generate_images(
     from vrl.families.registry import get_model_family_entry
     from vrl.utils.media import write_png
 
-    entry = get_model_family_entry(str(cfg.model.family))
-    build = entry.resolve_model_build(cfg, device, for_rollout=True)
+    if root.model is None:
+        raise ValueError("SANA checkpoint evaluation requires model configuration")
+    entry = get_model_family_entry(str(root.model.family))
+    build = entry.resolve_model_build(
+        root,
+        device,
+        precision=precision,
+        for_rollout=True,
+    )
     bundle = entry.build_rollout(build)
     model = bundle.model.eval()
     generated: list[GeneratedImage] = []

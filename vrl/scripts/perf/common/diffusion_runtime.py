@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import time
+from typing import TYPE_CHECKING
 
 import torch
 
@@ -13,21 +14,37 @@ from vrl.models.interfaces import RuntimeBundle
 
 _PROMPT = "a physical scene, high quality"
 
+if TYPE_CHECKING:
+    from vrl.config.precision import PrecisionPolicy
+    from vrl.config.schema import RootConfig
 
-def build_runtime(cfg, device) -> RuntimeBundle:
+
+def build_runtime(
+    root: RootConfig,
+    device,
+    *,
+    precision: PrecisionPolicy,
+) -> RuntimeBundle:
     """Build a registered diffusion rollout runtime from its resolved config."""
 
     from vrl.families.registry import (
         get_model_family_entry,
     )
 
-    cfg.model.use_lora = True
-    entry = get_model_family_entry(str(cfg.model.family))
-    build = entry.resolve_model_build(cfg, device)
+    if root.model is None:
+        raise ValueError("diffusion performance probe requires model configuration")
+    entry = get_model_family_entry(str(root.model.family))
+    build = entry.resolve_model_build(root, device, precision=precision)
     return entry.build_rollout(build)
 
 
-def build_model(cfg, device, dtype):
+def build_model(
+    root: RootConfig,
+    device,
+    dtype,
+    *,
+    precision: PrecisionPolicy,
+):
     """Compatibility facade for the recorded TeaCache drift probe.
 
     That one-shot probe owns its historical BF16 context locally. Refuse a
@@ -37,7 +54,7 @@ def build_model(cfg, device, dtype):
 
     from vrl.models.dtypes import dtype_to_precision_token
 
-    runtime = build_runtime(cfg, device)
+    runtime = build_runtime(root, device, precision=precision)
     token = dtype_to_precision_token(dtype)
     if runtime.precision.dtype != token:
         raise ValueError(

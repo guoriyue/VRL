@@ -9,6 +9,8 @@ import pytest
 import torch
 from omegaconf import OmegaConf
 
+from vrl.config.precision import resolve_precision_policy
+from vrl.config.schema import parse_config
 from vrl.families.registry import get_model_family_entry
 from vrl.generation import GenerationRequest
 from vrl.generation.bindings.token_autoregressive import ARRequestLayout
@@ -87,9 +89,13 @@ def test_config_projection_preserves_boolean_states(
     freeze_vae: bool,
 ) -> None:
     entry = get_model_family_entry("nextstep_1")
+    cfg = _build_cfg(use_lora=use_lora, freeze_vae=freeze_vae)
+    root = parse_config(cfg)
+    precision = resolve_precision_policy(root)
     build = entry.resolve_model_build(
-        _build_cfg(use_lora=use_lora, freeze_vae=freeze_vae),
+        root,
         device="cpu",
+        precision=precision,
     )
 
     projected = nextstep_config_from_build(build)
@@ -109,9 +115,13 @@ def test_config_projection_preserves_boolean_states(
 
 def test_config_projection_ignores_sampling_fields_without_schema_producers() -> None:
     entry = get_model_family_entry("nextstep_1")
+    cfg = _build_cfg(use_lora=False, freeze_vae=True)
+    root = parse_config(cfg)
+    precision = resolve_precision_policy(root)
     build = entry.resolve_model_build(
-        _build_cfg(use_lora=False, freeze_vae=True),
+        root,
         device="cpu",
+        precision=precision,
     )
     assert build.sampling_config is not None
     build.sampling_config.update({"noise_level": 0.25, "token_dim": 7})
@@ -197,9 +207,12 @@ def test_replay_build_resolves_gradient_checkpointing_mode(
         },
     )
 
+    root = parse_config(cfg)
+    precision = resolve_precision_policy(root)
     build = get_model_family_entry("nextstep_1").resolve_model_build(
-        cfg,
+        root,
         "cpu",
+        precision=precision,
         for_rollout=False,
     )
 
@@ -220,10 +233,13 @@ def test_replay_build_rejects_selective_gradient_checkpointing() -> None:
         },
     )
 
+    root = parse_config(cfg)
+    precision = resolve_precision_policy(root)
     with pytest.raises(ValueError, match="does not support selective"):
         get_model_family_entry("nextstep_1").resolve_model_build(
-            cfg,
+            root,
             "cpu",
+            precision=precision,
             for_rollout=False,
         )
 
@@ -241,9 +257,12 @@ def test_rollout_build_disables_gradient_checkpointing() -> None:
         },
     )
 
+    root = parse_config(cfg)
+    precision = resolve_precision_policy(root)
     build = get_model_family_entry("nextstep_1").resolve_model_build(
-        cfg,
+        root,
         "cpu",
+        precision=precision,
         for_rollout=True,
     )
 

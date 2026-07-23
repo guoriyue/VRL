@@ -13,6 +13,8 @@ from typing import get_args
 import pytest
 from omegaconf import OmegaConf
 
+from vrl.config.precision import resolve_precision_policy
+from vrl.config.schema import parse_config
 from vrl.families.names import (
     _FAMILY_BY_ALIAS,
     normalize_model_family,
@@ -33,6 +35,214 @@ from vrl.rollouts.collector.config import (
 )
 from vrl.trajectory import TrajectoryStoragePolicy
 from vrl.utils.config import cfg_get, import_from_path
+
+
+def _typed_model_build_inputs(payload):
+    cfg = OmegaConf.create(payload)
+    root = parse_config(cfg)
+    return cfg, root, resolve_precision_policy(root)
+
+
+def test_model_build_projects_typed_sections_without_losing_falsy_presence() -> None:
+    _, root, precision = _typed_model_build_inputs(
+        {
+            "model": {
+                "family": "sana",
+                "path": "unit-checkpoint",
+                "revision": None,
+                "use_lora": False,
+                "lora": {
+                    "path": None,
+                    "target_modules": [],
+                    "dropout": 0,
+                },
+                "memory": {
+                    "vae_decode": {
+                        "tiling": False,
+                        "slicing": False,
+                    },
+                },
+                "torch_compile": {
+                    "enable": False,
+                    "mode": "",
+                },
+                "executor": {
+                    "chunk_passthrough_keys": [],
+                },
+            },
+            "sampling": {
+                "guidance_scale": 0,
+                "num_steps": 0,
+                "max_sequence_length": None,
+            },
+            "precision": {
+                "float32_precision": "ieee",
+                "training": {"dtype": "fp32"},
+            },
+        },
+    )
+
+    build = get_model_family_entry("sana").resolve_model_build(
+        root,
+        "cpu",
+        precision=precision,
+    )
+
+    assert build.model_name_or_path == "unit-checkpoint"
+    assert build.model_config == {
+        "revision": None,
+        "use_lora": False,
+        "lora": {
+            "path": None,
+            "target_modules": [],
+            "dropout": 0.0,
+        },
+        "memory": {
+            "vae_decode": {
+                "tiling": False,
+                "slicing": False,
+            },
+        },
+        "torch_compile": {
+            "enable": False,
+            "mode": "",
+        },
+    }
+    assert build.sampling_config == {
+        "guidance_scale": 0,
+        "num_steps": 0,
+        "max_sequence_length": None,
+    }
+
+
+def test_model_build_rejects_raw_config_and_wrong_precision_types() -> None:
+    cfg, root, precision = _typed_model_build_inputs(
+        {
+            "model": {"family": "sana", "path": "unit-checkpoint"},
+            "precision": {
+                "float32_precision": "ieee",
+                "training": {"dtype": "fp32"},
+            },
+        },
+    )
+    entry = get_model_family_entry("sana")
+
+    with pytest.raises(TypeError, match="validated RootConfig"):
+        entry.resolve_model_build(cfg, "cpu", precision=precision)
+    with pytest.raises(TypeError, match="resolved PrecisionPolicy"):
+        entry.resolve_model_build(root, "cpu", precision=object())
+
+
+def test_model_build_rejects_entry_and_typed_family_mismatch() -> None:
+    _, root, precision = _typed_model_build_inputs(
+        {
+            "model": {"family": "sana", "path": "unit-checkpoint"},
+            "precision": {
+                "float32_precision": "ieee",
+                "training": {"dtype": "fp32"},
+            },
+        },
+    )
+
+    with pytest.raises(ValueError, match="does not match registry entry"):
+        get_model_family_entry("sd3_5").resolve_model_build(
+            root,
+            "cpu",
+            precision=precision,
+        )
+
+
+def test_model_build_cannot_bypass_unknown_model_keys_with_raw_config() -> None:
+    cfg = OmegaConf.create(
+        {
+            "model": {
+                "family": "sana",
+                "path": "unit-checkpoint",
+                "use_lorra": True,
+            },
+            "precision": {
+                "float32_precision": "ieee",
+                "training": {"dtype": "fp32"},
+            },
+        },
+    )
+
+    with pytest.raises(ValueError, match=r"unknown model\.use_lorra"):
+        parse_config(cfg)
+    with pytest.raises(TypeError, match="validated RootConfig"):
+        get_model_family_entry("sana").resolve_model_build(
+            cfg,
+            "cpu",
+            precision=resolve_precision_policy(cfg),
+        )
+
+
+@pytest.mark.parametrize("path", [None, ""])
+def test_denoise_model_build_requires_a_nonempty_path(path) -> None:
+    _, root, precision = _typed_model_build_inputs(
+        {
+            "model": {"family": "sana", "path": path},
+            "precision": {
+                "float32_precision": "ieee",
+                "training": {"dtype": "fp32"},
+            },
+        },
+    )
+
+    with pytest.raises(
+        ValueError,
+        match=r"^config missing required field: model\.path$",
+    ):
+        get_model_family_entry("sana").resolve_model_build(
+            root,
+            "cpu",
+            precision=precision,
+        )
+
+
+@pytest.mark.parametrize("model_payload", [{"family": "emu3"}, {"family": "emu3", "path": None}])
+def test_token_model_build_derives_only_an_omitted_or_null_default_path(
+    model_payload,
+) -> None:
+    _, root, precision = _typed_model_build_inputs(
+        {
+            "model": model_payload,
+            "precision": {
+                "float32_precision": "ieee",
+                "training": {"dtype": "fp32"},
+            },
+        },
+    )
+
+    build = get_model_family_entry("emu3").resolve_model_build(
+        root,
+        "cpu",
+        precision=precision,
+    )
+
+    assert build.model_name_or_path == "BAAI/Emu3-Gen-hf"
+
+
+def test_token_model_build_rejects_an_explicit_empty_path() -> None:
+    _, root, precision = _typed_model_build_inputs(
+        {
+            "model": {"family": "emu3", "path": ""},
+            "precision": {
+                "float32_precision": "ieee",
+                "training": {"dtype": "fp32"},
+            },
+        },
+    )
+
+    with pytest.raises(
+        ValueError,
+        match=r"^config missing required field: model\.path$",
+    ):
+        get_model_family_entry("emu3").resolve_model_build(
+            root,
+            "cpu",
+            precision=precision,
+        )
 
 
 def test_family_entry_rejects_a_policy_step_build_mismatch() -> None:

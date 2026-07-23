@@ -21,6 +21,10 @@ def _minimal_generate_config():
                 "use_lora": False,
                 "lora": {"path": ""},
             },
+            "precision": {
+                "float32_precision": "ieee",
+                "training": {"dtype": "fp32"},
+            },
         },
     )
 
@@ -167,6 +171,10 @@ def test_generate_records_the_batch_seed_for_every_sample(monkeypatch, tmp_path)
                 "num_steps": 1,
                 "guidance_scale": 1.0,
                 "max_sequence_length": 8,
+            },
+            "precision": {
+                "float32_precision": "ieee",
+                "training": {"dtype": "fp32"},
             },
         },
     )

@@ -7,7 +7,7 @@ single family table shared by model construction, generation, and collection.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 from vrl.config.model_schema import MODEL_MEMORY_SECTIONS
 from vrl.families.names import (
@@ -15,6 +15,10 @@ from vrl.families.names import (
     validate_model_family_aliases,
 )
 from vrl.families.semantics import PolicySemantics, TrajectoryLayout
+
+if TYPE_CHECKING:
+    from vrl.config.precision import PrecisionPolicy
+    from vrl.config.schema import RootConfig
 
 # Import-path protocol value shared by registry dispatch and generation workers.
 # Keeping it here avoids making the neutral family table import a runtime module.
@@ -203,52 +207,65 @@ class ModelFamilyEntry:
 
     def resolve_model_build(
         self,
-        cfg: Any,
+        root: RootConfig,
         device: Any,
         *,
+        precision: PrecisionPolicy,
         for_rollout: bool = True,
         precision_role: Literal["training", "rollout"] | None = None,
         parameter_dtype_override: Any | None = None,
     ) -> Any:
-        """Project user config into the model inputs owned by this family.
+        """Project validated config into the model inputs owned by this family.
 
         This is the only config-to-``ModelBuild`` boundary. Family identity was
-        already selected by ``get_model_family_entry`` and is never read from
-        the config again; execution precision comes from the top-level precision
-        policy.
+        already selected by ``get_model_family_entry`` and must match the typed
+        root. Execution precision is resolved once by the caller and cannot be
+        reinterpreted at this boundary.
         """
 
-        from vrl.config.precision import resolve_precision_policy
+        from vrl.config.precision import PrecisionPolicy
+        from vrl.config.schema import RootConfig
         from vrl.models.interfaces.runtime import ModelBuild, RolloutBuildOptions
-        from vrl.utils.config import cfg_path, plain_mapping
+        from vrl.utils.config import cfg_path
 
-        model_config = plain_mapping(cfg.model, field_name="model")
-        configured_dtype = model_config.get("dtype")
-        model_path = model_config.get("path")
+        if not isinstance(root, RootConfig):
+            raise TypeError(
+                "root must be a validated RootConfig; raw DictConfig/Mapping "
+                f"inputs are not accepted (got {type(root).__name__})",
+            )
+        if not isinstance(precision, PrecisionPolicy):
+            raise TypeError(
+                f"precision must be a resolved PrecisionPolicy; got {type(precision).__name__}",
+            )
+        if root.model is None:
+            raise ValueError("validated root is missing model configuration")
+        configured_family = normalize_model_family(str(root.model.family))
+        if configured_family != self.family:
+            raise ValueError(
+                f"model config family {configured_family!r} does not match "
+                f"registry entry {self.family!r}",
+            )
 
-        if isinstance(self.family_build, DenoiseFamilyBuild):
-            if configured_dtype is not None:
-                raise ValueError(
-                    f"model.dtype is not configurable for denoise family "
-                    f"{self.family!r}; parameter precision follows the top-level "
-                    "precision block. Remove model.dtype.",
-                )
-        else:
-            if configured_dtype is not None:
-                raise ValueError(
-                    "model.dtype is not configurable for token families; remove it and "
-                    "use the top-level precision block so rollout and replay cannot "
-                    "diverge",
-                )
-            model_path = model_path or self.family_build.default_model_path
-
-        for routing_key in ("executor", "family", "path"):
-            model_config.pop(routing_key, None)
-        sampling = cfg.get("sampling")
-        sampling_config = (
-            None if sampling is None else plain_mapping(sampling, field_name="sampling")
+        model_config = root.model.model_dump(
+            mode="python",
+            exclude_unset=True,
         )
-        precision = resolve_precision_policy(cfg)
+        model_path = model_config.pop("path", None)
+        model_config.pop("family", None)
+        model_config.pop("executor", None)
+        if isinstance(self.family_build, TokenFamilyBuild) and model_path is None:
+            model_path = self.family_build.default_model_path
+        if model_path is None or not str(model_path).strip():
+            raise ValueError("config missing required field: model.path")
+
+        sampling_config = (
+            None
+            if root.sampling is None
+            else root.sampling.model_dump(
+                mode="python",
+                exclude_unset=True,
+            )
+        )
         resolved_precision_role = precision_role or ("rollout" if for_rollout else "training")
         if resolved_precision_role not in ("training", "rollout"):
             raise ValueError(
@@ -281,7 +298,7 @@ class ModelFamilyEntry:
                 and not for_rollout
                 and str(
                     cfg_path(
-                        cfg,
+                        root,
                         "distributed.training.strategy",
                         "single_process",
                     ),
@@ -301,7 +318,7 @@ class ModelFamilyEntry:
                 resolve_gradient_checkpointing_mode,
             )
 
-            checkpointing = resolve_gradient_checkpointing_mode(cfg)
+            checkpointing = resolve_gradient_checkpointing_mode(root)
             if checkpointing == "selective" and not for_rollout:
                 raise ValueError(
                     "nextstep_1 replay does not support selective gradient "

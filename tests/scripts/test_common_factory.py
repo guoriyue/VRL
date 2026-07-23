@@ -17,6 +17,7 @@ from vrl.algorithms.grpo.continuous import (
 from vrl.config.builders import RewardRuntimeConfig, build_configs
 from vrl.config.loading import load_config
 from vrl.config.precision import RolePrecision
+from vrl.config.schema import parse_config
 from vrl.families.registry import get_model_family_entry
 from vrl.ray.resources import resolve_distributed_resources
 from vrl.rollouts.collector.config import build_rollout_config_from_cfg
@@ -203,10 +204,12 @@ def test_diffusion_factory_rejects_a_sibling_config_type(
 def test_wan_empty_lora_preserves_base_policy_initially() -> None:
     """Checks Wan empty LoRA preserves base policy initially."""
     cfg = load_config("experiment/wan_2_1/online_grpo_physics")
+    built = build_configs(cfg)
 
     build = get_model_family_entry("wan_2_1").resolve_model_build(
-        cfg,
+        built.root,
         torch.device("cpu"),
+        precision=built.precision,
     )
 
     assert build.use_lora is True
@@ -242,7 +245,11 @@ def test_sana_family_defaults_to_native_fp16() -> None:
     cfg = load_config("experiment/sana/online_grpo_aesthetic")
     built = build_configs(cfg)
     entry = get_model_family_entry("sana")
-    build = entry.resolve_model_build(cfg, torch.device("cpu"))
+    build = entry.resolve_model_build(
+        built.root,
+        torch.device("cpu"),
+        precision=built.precision,
+    )
 
     assert cfg.model.get("dtype") is None
     expected = RolePrecision(
@@ -258,7 +265,12 @@ def test_sana_family_defaults_to_native_fp16() -> None:
     assert build.parameter_dtype is torch.float16
     assert build.precision == expected
     assert (
-        entry.resolve_model_build(cfg, torch.device("cpu"), for_rollout=False).precision
+        entry.resolve_model_build(
+            built.root,
+            torch.device("cpu"),
+            precision=built.precision,
+            for_rollout=False,
+        ).precision
         == expected
     )
     assert build.rollout is not None
@@ -271,10 +283,12 @@ def test_sana_role_precision_follows_yaml(role: str, dtype: str) -> None:
     """The selected YAML role owns SANA's transformer execution policy."""
     cfg = load_config("experiment/sana/online_grpo_aesthetic")
     cfg.precision[role].dtype = dtype
+    built = build_configs(cfg)
 
     build = get_model_family_entry("sana").resolve_model_build(
-        cfg,
+        built.root,
         torch.device("cpu"),
+        precision=built.precision,
         for_rollout=role == "rollout",
     )
 
@@ -377,31 +391,27 @@ def test_sana_rejects_redundant_or_conflicting_model_dtype(
     cfg = load_config("experiment/sana/online_grpo_aesthetic")
     cfg.model.dtype = configured_dtype
 
-    with pytest.raises(ValueError, match=r"model\.dtype is not configurable.*sana"):
-        get_model_family_entry("sana").resolve_model_build(
-            cfg,
-            torch.device("cpu"),
-        )
+    with pytest.raises(ValueError, match=r"unknown model\.dtype"):
+        parse_config(cfg)
 
 
 def test_ordinary_diffusion_family_rejects_duplicate_model_dtype() -> None:
     cfg = load_config("experiment/sd3_5/online_grpo_ocr")
     cfg.model.dtype = "fp16"
 
-    with pytest.raises(ValueError, match=r"model\.dtype.*top-level precision"):
-        get_model_family_entry("sd3_5").resolve_model_build(
-            cfg,
-            torch.device("cpu"),
-        )
+    with pytest.raises(ValueError, match=r"unknown model\.dtype"):
+        parse_config(cfg)
 
 
 @pytest.mark.parametrize("dtype", ["bf16", "fp32"])
 def test_sana_direct_tool_override_changes_storage_only(dtype: str) -> None:
     cfg = load_config("experiment/sana/online_grpo_aesthetic")
+    built = build_configs(cfg)
 
     build = get_model_family_entry("sana").resolve_model_build(
-        cfg,
+        built.root,
         torch.device("cpu"),
+        precision=built.precision,
         parameter_dtype_override=dtype,
     )
 

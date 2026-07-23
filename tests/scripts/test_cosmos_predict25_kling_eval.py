@@ -9,7 +9,8 @@ import pytest
 import torch
 from omegaconf import OmegaConf
 
-from vrl.config.precision import RolePrecision
+from vrl.config.precision import RolePrecision, resolve_precision_policy
+from vrl.config.schema import parse_config
 from vrl.scripts.eval import cosmos_predict25_kling_eval as eval_script
 
 
@@ -260,8 +261,11 @@ def test_generate_all_releases_model_before_rebuilding(monkeypatch, tmp_path) ->
     )
     monkeypatch.setattr(eval_script, "_generate_checkpoint_videos", lambda *args, **kwargs: [])
 
+    root = parse_config(_minimal_eval_config())
+    precision = resolve_precision_policy(root)
     videos = eval_script._generate_all(
-        OmegaConf.create({"model": {"family": "cosmos-predict2.5"}}),
+        root,
+        precision,
         [
             eval_script.CheckpointTarget("base", tmp_path / "base"),
             eval_script.CheckpointTarget("trained", tmp_path / "trained"),

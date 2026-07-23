@@ -6,6 +6,8 @@ import pytest
 
 from vrl.algorithms.dpo import DiffusionDPOConfig
 from vrl.config.loading import load_config
+from vrl.config.precision import PrecisionPolicy
+from vrl.config.schema import RootConfig
 from vrl.scripts.families.wan_2_1.train_dpo import (
     _build_offline_dpo_trainer_config,
     train_wan_2_1_dpo,
@@ -143,19 +145,19 @@ def test_offline_dpo_builds_its_full_model_through_the_family_registry(
     class _Entry:
         def resolve_model_build(
             self,
-            received_cfg: object,
+            root: object,
             device: object,
             *,
+            precision: object,
             for_rollout: bool,
             precision_role: str,
-            parameter_dtype_override: object,
         ) -> object:
             captured.update(
-                cfg=received_cfg,
+                root=root,
                 device=device,
+                precision=precision,
                 for_rollout=for_rollout,
                 precision_role=precision_role,
-                parameter_dtype_override=parameter_dtype_override,
             )
             raise _ReachedRegistryBoundary
 
@@ -179,7 +181,8 @@ def test_offline_dpo_builds_its_full_model_through_the_family_registry(
         train_wan_2_1_dpo(cfg)
 
     assert captured["family"] == "wan_2_1"
-    assert captured["cfg"] is cfg
+    assert isinstance(captured["root"], RootConfig)
+    assert isinstance(captured["precision"], PrecisionPolicy)
     assert captured["for_rollout"] is True
     assert captured["precision_role"] == "training"
 

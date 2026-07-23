@@ -394,7 +394,7 @@ def resolve_training_resume_strict(cfg: Any) -> bool:
 
 def prepare_model_config_for_training_resume(
     cfg: Any,
-    checkpoint: TrainingCheckpoint | None,
+    checkpoint: TrainingCheckpoint | TrainingResumeConfig | None,
     *,
     strict: bool = DEFAULT_CHECKPOINT_STRICT,
 ) -> None:
@@ -403,9 +403,17 @@ def prepare_model_config_for_training_resume(
     Full resume restores ``RuntimeBundle.trainable_modules`` from
     ``checkpoint.pt``. Loading an unrelated ``model.lora.path`` before that can
     silently alter adapter structure, so strict mode rejects the combination.
+    ``TrainingResumeConfig`` lets the config-build boundary normalize before
+    checkpoint I/O; accepting a loaded checkpoint preserves the public
+    compatibility facade for direct callers.
     """
 
-    if checkpoint is None:
+    if isinstance(checkpoint, TrainingResumeConfig):
+        has_checkpoint = checkpoint.checkpoint_path is not None
+        strict = checkpoint.strict
+    else:
+        has_checkpoint = checkpoint is not None
+    if not has_checkpoint:
         return
     lora_path = cfg_path(cfg, "model.lora.path", None)
     if lora_path is None:

@@ -116,11 +116,13 @@ def test_model_build_reconstructs_nested_rollout_payload() -> None:
 def test_model_build_resolver_projects_nvfp4_over_the_rollout_base_dtype() -> None:
     from omegaconf import OmegaConf
 
+    from vrl.config.precision import resolve_precision_policy
+    from vrl.config.schema import parse_config
     from vrl.families.registry import get_model_family_entry
 
     cfg = OmegaConf.create(
         {
-            "model": {"path": "fake/repo"},
+            "model": {"family": "sd3_5", "path": "fake/repo"},
             "precision": {
                 "float32_precision": "tf32",
                 "training": {"dtype": "bf16"},
@@ -132,10 +134,13 @@ def test_model_build_resolver_projects_nvfp4_over_the_rollout_base_dtype() -> No
             },
         },
     )
+    root = parse_config(cfg)
+    precision = resolve_precision_policy(root)
 
     build = get_model_family_entry("sd3_5").resolve_model_build(
-        cfg,
+        root,
         "cuda",
+        precision=precision,
         for_rollout=True,
     )
     rollout = build.require_rollout()
@@ -158,11 +163,13 @@ def test_full_generation_build_with_training_role_excludes_rollout_quantization(
 
     from omegaconf import OmegaConf
 
+    from vrl.config.precision import resolve_precision_policy
+    from vrl.config.schema import parse_config
     from vrl.families.registry import get_model_family_entry
 
     cfg = OmegaConf.create(
         {
-            "model": {"path": "fake/repo"},
+            "model": {"family": "wan_2_1", "path": "fake/repo"},
             "precision": {
                 "float32_precision": "tf32",
                 "training": {"dtype": "bf16"},
@@ -173,10 +180,13 @@ def test_full_generation_build_with_training_role_excludes_rollout_quantization(
             },
         },
     )
+    root = parse_config(cfg)
+    precision = resolve_precision_policy(root)
 
     build = get_model_family_entry("wan_2_1").resolve_model_build(
-        cfg,
+        root,
         "cpu",
+        precision=precision,
         for_rollout=True,
         precision_role="training",
     )
@@ -534,10 +544,19 @@ def test_anima_model_build_uses_explicit_local_paths() -> None:
             "model.use_lora=false",
         ],
     )
+    from vrl.config.precision import resolve_precision_policy
+    from vrl.config.schema import parse_config
 
+    root = parse_config(cfg)
+    precision = resolve_precision_policy(root)
     entry = get_model_family_entry("cosmos-predict2-anima")
-    full = entry.resolve_model_build(cfg, "cpu")
-    replay = entry.resolve_model_build(cfg, "cpu", for_rollout=False)
+    full = entry.resolve_model_build(root, "cpu", precision=precision)
+    replay = entry.resolve_model_build(
+        root,
+        "cpu",
+        precision=precision,
+        for_rollout=False,
+    )
 
     assert isinstance(full.rollout, RolloutBuildOptions)
     assert replay.rollout is None
@@ -563,9 +582,15 @@ def test_anima_artifact_resolution_fails_loud_when_hub_fetch_fails(
             "model.use_lora=false",
         ],
     )
+    from vrl.config.precision import resolve_precision_policy
+    from vrl.config.schema import parse_config
+
+    root = parse_config(cfg)
+    precision = resolve_precision_policy(root)
     build = get_model_family_entry("cosmos-predict2-anima").resolve_model_build(
-        cfg,
+        root,
         "cpu",
+        precision=precision,
         for_rollout=False,
     )
 

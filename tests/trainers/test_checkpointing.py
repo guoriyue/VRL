@@ -10,9 +10,11 @@ from vrl.trainers.checkpointing import (
     CHECKPOINT_META_NAME,
     LORA_WEIGHTS_NAME,
     TRAINING_CHECKPOINT_NAME,
+    TrainingCheckpoint,
     infer_next_epoch,
     load_trainable_state,
     load_training_checkpoint,
+    prepare_model_config_for_training_resume,
     resolve_training_resume_config,
     resolve_training_resume_strict,
     restore_training_checkpoint,
@@ -57,6 +59,20 @@ def test_resume_config_resolves_fresh_and_checkpoint_paths(
 
     assert resolved.checkpoint_path == expected_path
     assert resolved.strict is False
+
+
+def test_loaded_checkpoint_resume_facade_still_clears_warm_start_path(tmp_path) -> None:
+    cfg = OmegaConf.create({"model": {"lora": {"path": "/tmp/warm-start"}}})
+    checkpoint = TrainingCheckpoint(
+        checkpoint_dir=tmp_path,
+        checkpoint_path=tmp_path / TRAINING_CHECKPOINT_NAME,
+        payload={},
+        meta={},
+    )
+
+    prepare_model_config_for_training_resume(cfg, checkpoint, strict=False)
+
+    assert cfg.model.lora.path == ""
 
 
 def test_training_checkpoint_round_trips_trainer_and_trainable_modules(tmp_path) -> None:

@@ -46,7 +46,6 @@ from vrl.trainers.checkpointing import (
     capture_rng_state,
     load_training_checkpoint_for_resume,
     prepare_metrics_csv,
-    prepare_model_config_for_training_resume,
     restore_rng_state,
     restore_training_checkpoint,
     save_resolved_config,
@@ -705,7 +704,9 @@ async def run_online_recipe(
     _preflight_production_video_reward(cfg)
     built = build_configs(cfg)
     run_config = OnlineRunConfig.from_root(built.root)
-    family_entry = get_model_family_entry(str(require(cfg, "model.family")))
+    if built.root.model is None:
+        raise ValueError("online recipe requires model configuration")
+    family_entry = get_model_family_entry(str(built.root.model.family))
     trainer_config = built.trainer
     if trainer_config is None:
         raise ValueError("online recipe cannot use an offline-only trainer config")
@@ -725,12 +726,6 @@ async def run_online_recipe(
 
     resume_config = built.resume
     resume_checkpoint = load_training_checkpoint_for_resume(resume_config)
-    prepare_model_config_for_training_resume(
-        cfg,
-        resume_checkpoint,
-        strict=resume_config.strict,
-    )
-
     resources = resolve_distributed_resources(cfg)
     generation_config = RayGenerationConfig.from_cfg(
         built.root,
@@ -794,8 +789,9 @@ async def run_online_recipe(
         )
     log_host_memory("before_trainer_bundle_build", log=logger)
     replay_build = family_entry.resolve_model_build(
-        cfg,
+        built.root,
         device,
+        precision=built.precision,
         for_rollout=False,
     )
     bundle = family_entry.build_replay(replay_build)
@@ -857,7 +853,8 @@ async def run_online_recipe(
         log_host_memory("before_rollout_backend_build", log=logger)
         collector.set_runtime(
             generation_launcher.launch_from_cfg(
-                cfg,
+                built.root,
+                precision=built.precision,
                 config=generation_config,
                 entry=family_entry,
                 driver_bundle=bundle,

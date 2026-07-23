@@ -162,7 +162,6 @@ def train_wan_2_1_dpo(cfg: DictConfig) -> None:
         capture_rng_state,
         load_training_checkpoint_for_resume,
         prepare_metrics_csv,
-        prepare_model_config_for_training_resume,
         restore_rng_state,
         restore_training_checkpoint,
         save_resolved_config,
@@ -195,12 +194,6 @@ def train_wan_2_1_dpo(cfg: DictConfig) -> None:
     )
     resume_config = built.resume
     resume_checkpoint = load_training_checkpoint_for_resume(resume_config)
-    prepare_model_config_for_training_resume(
-        cfg,
-        resume_checkpoint,
-        strict=resume_config.strict,
-    )
-
     resources = resolve_distributed_resources(cfg)
     logger.info(format_distributed_resource_plan(resources))
     device = torch.device(trainer_torch_device(resources))
@@ -211,11 +204,11 @@ def train_wan_2_1_dpo(cfg: DictConfig) -> None:
     # to generation; only the downstream optimizer makes this a training path.
     family_entry = get_model_family_entry(family)
     build = family_entry.resolve_model_build(
-        cfg,
+        built.root,
         device,
+        precision=precision,
         for_rollout=True,
         precision_role="training",
-        parameter_dtype_override=weight_dtype,
     )
     bundle = family_entry.build_rollout(build)
     wan_model = bundle.model

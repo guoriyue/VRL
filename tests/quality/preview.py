@@ -77,7 +77,7 @@ def generate_rollout_preview(
     if not torch.cuda.is_available():
         raise RuntimeError("rollout preview requires a CUDA GPU")
 
-    from vrl.config.validation import require, validate_training_config
+    from vrl.config.validation import validate_training_config
     from vrl.families.registry import (
         GENERIC_FULL_SEQUENCE_DENOISE_EXECUTOR,
         get_model_family_entry,
@@ -91,7 +91,10 @@ def generate_rollout_preview(
     from vrl.trainers.data import load_prompt_examples_from_config
     from vrl.utils.config import cfg_path, import_from_path, to_builtin_deep
 
-    validate_training_config(cfg)
+    validated = validate_training_config(cfg)
+    root = validated.root
+    if root.model is None:
+        raise ValueError("rollout preview requires model configuration")
     resume_from = str(cfg_path(cfg, "trainer.resume_from", "") or "").strip()
     if resume_from:
         raise ValueError(
@@ -99,7 +102,7 @@ def generate_rollout_preview(
             "set model.path or model.lora.path to the exact inference weights",
         )
 
-    family = str(require(cfg, "model.family"))
+    family = str(root.model.family)
     entry = get_model_family_entry(family)
     if entry.task != "t2i":
         raise ValueError(
@@ -120,12 +123,17 @@ def generate_rollout_preview(
         ) from error
 
     device = torch.device("cuda")
-    build = entry.resolve_model_build(cfg, device, for_rollout=True)
+    build = entry.resolve_model_build(
+        root,
+        device,
+        precision=validated.precision,
+        for_rollout=True,
+    )
     bundle = entry.build_rollout(build)
     model = require_runtime_model(bundle.model, owner="RuntimeBundle.model")
     assert_rollout_quantization_applied(model, build)
 
-    executor_kwargs = build_executor_kwargs(entry, cfg)
+    executor_kwargs = build_executor_kwargs(entry, root)
     if entry.executor_cls == GENERIC_FULL_SEQUENCE_DENOISE_EXECUTOR:
         executor_kwargs.update(family=entry.family, task=entry.task)
     executor_cls = import_from_path(entry.executor_cls)
@@ -133,7 +141,7 @@ def generate_rollout_preview(
 
     request_builder = GenerationRequestBuilder(
         entry=entry,
-        config=build_rollout_config_from_cfg(cfg),
+        config=build_rollout_config_from_cfg(root),
     )
     items: list[dict[str, Any]] = []
     for index, example in enumerate(examples):
