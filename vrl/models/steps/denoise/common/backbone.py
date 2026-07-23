@@ -39,7 +39,6 @@ class DiffusionBackboneOutput:
     noise_pred: torch.Tensor
     noise_pred_cond: torch.Tensor
     noise_pred_uncond: torch.Tensor
-    metrics: dict[str, Any] = field(default_factory=dict)
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -124,11 +123,9 @@ class DiffusionBackboneCaller:
                 batched = pack_batched_cfg(cond=cond_branch, uncond=uncond_branch)
                 raw = self._call_transformer(batched.as_transformer_kwargs())
                 raw_uncond, raw_cond = split_batched_cfg_output(raw)
-                raw_calls = 1
             elif self.runner.cfg_mode == "separate_cfg":
                 raw_cond = self._call_transformer(cond_branch.as_transformer_kwargs())
                 raw_uncond = self._call_transformer(uncond_branch.as_transformer_kwargs())
-                raw_calls = 2
             else:
                 raise ValueError("single_branch runner cannot run CFG")
             noise_pred_uncond = self.runner.postprocess_branch(
@@ -138,7 +135,6 @@ class DiffusionBackboneCaller:
             )
         else:
             raw_cond = self._call_transformer(cond_branch.as_transformer_kwargs())
-            raw_calls = 1
             noise_pred_uncond = None
 
         noise_pred_cond = self.runner.postprocess_branch(request, cond_branch, raw_cond)
@@ -166,10 +162,6 @@ class DiffusionBackboneCaller:
             noise_pred=noise_pred,
             noise_pred_cond=noise_pred_cond,
             noise_pred_uncond=noise_pred_uncond,
-            # transformer_calls is the CFG-batching contract observable asserted
-            # by tests/models/steps/denoise/common/test_backbone_contract.py
-            # (batched_cfg=1 call vs separate_cfg=2); no production reader.
-            metrics={"transformer_calls": raw_calls},
         )
 
     def _call_transformer(self, kwargs: dict[str, Any]) -> torch.Tensor:
