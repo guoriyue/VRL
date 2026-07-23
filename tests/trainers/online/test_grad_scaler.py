@@ -17,12 +17,12 @@ import torch.nn as nn
 from tests.trainers.online._collector_control import CollectorControlFake
 from tests.trainers.online._helpers import (
     _algorithm_inputs,
+    _diffusion_rollout_batch,
     _stamp_model_precision,
     _trajectory_signals,
 )
 from vrl.algorithms.types import TrainStepMetrics
 from vrl.config.precision import RolePrecision
-from vrl.rollouts.batch import RolloutBatch
 from vrl.rollouts.evaluators.base import Evaluator
 from vrl.trainers.core.types import EMAConfig, OptimConfig
 from vrl.trainers.online import OnlineTrainer
@@ -268,12 +268,10 @@ class _Collector(CollectorControlFake):
 
     async def collect_unscored(self, prompts, **kwargs):
         group_size = int(kwargs["group_size"])
-        return RolloutBatch(
-            observations=torch.zeros(group_size, 2, 1),
-            actions=torch.zeros(group_size, 2, 1),
+        return _diffusion_rollout_batch(
             rewards=torch.arange(group_size, dtype=torch.float32),
             group_ids=torch.zeros(group_size, dtype=torch.long),
-            context={},
+            num_steps=2,
         )
 
 

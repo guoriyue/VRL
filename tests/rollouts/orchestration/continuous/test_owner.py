@@ -20,8 +20,6 @@ from vrl.rollouts.orchestration.continuous.types import ContinuousRolloutSetting
 def _batch(prompts: list[str], group_size: int) -> RolloutBatch:
     batch_size = len(prompts) * group_size
     return RolloutBatch(
-        observations=torch.zeros(batch_size, 1, 1),
-        actions=torch.zeros(batch_size, 1, 1),
         rewards=torch.arange(batch_size, dtype=torch.float32),
         group_ids=torch.arange(len(prompts)).repeat_interleave(group_size),
     )

@@ -17,6 +17,7 @@ from vrl.rollouts.evaluators.token.continuous_token_logprob import (
 from vrl.rollouts.evaluators.token.token_logprob import TokenLogProbEvaluator
 from vrl.rollouts.evaluators.types import SignalRequest
 from vrl.trajectory import (
+    TrajectoryResolver,
     build_ar_continuous_trajectory,
     build_ar_discrete_trajectory,
 )
@@ -69,8 +70,6 @@ def _discrete_batch(context: dict | None = None) -> RolloutBatch:
         context={"model_family": "janus_pro", **(context or {})},
     )
     return RolloutBatch(
-        observations=torch.ones(2, 1, 3, dtype=torch.long),
-        actions=token_ids,
         rewards=torch.zeros(2),
         group_ids=torch.tensor([0, 0]),
         trajectory=trajectory,
@@ -93,8 +92,6 @@ def _continuous_batch() -> RolloutBatch:
         context={"model_family": "nextstep_1"},
     )
     return RolloutBatch(
-        observations=torch.ones(2, 1, 3, dtype=torch.long),
-        actions=tokens,
         rewards=torch.zeros(2),
         group_ids=torch.tensor([0, 0]),
         trajectory=trajectory,
@@ -119,9 +116,10 @@ class _DiscreteReplayModel:
 
     def replay_forward(self, batch: RolloutBatch, timestep_idx: int = 0, **_) -> ReplayResult:
         del timestep_idx
-        logits = torch.zeros(batch.actions.shape[0], batch.actions.shape[1], 8)
+        actions = TrajectoryResolver.from_batch(batch).role_value("image_tokens", "action")
+        logits = torch.zeros(actions.shape[0], actions.shape[1], 8)
         boost = 1.0 if self._disabled else 4.0
-        logits.scatter_(-1, batch.actions.unsqueeze(-1), boost)
+        logits.scatter_(-1, actions.unsqueeze(-1), boost)
         return ReplayResult(
             segments={
                 "image_tokens": ReplaySegmentResult(
@@ -154,11 +152,12 @@ class _ContinuousReplayModel:
     def replay_forward(self, batch: RolloutBatch, timestep_idx: int = 0, **_) -> ReplayResult:
         del timestep_idx
         value = 0.5 if self._disabled else 2.0
+        actions = TrajectoryResolver.from_batch(batch).role_value("image_tokens", "action")
         return ReplayResult(
             segments={
                 "image_tokens": ReplaySegmentResult(
                     segment="image_tokens",
-                    values={"log_probs": torch.full(batch.actions.shape[:2], value)},
+                    values={"log_probs": torch.full(actions.shape[:2], value)},
                 ),
             },
         )
@@ -177,13 +176,14 @@ def test_token_logprob_evaluator_applies_rollout_temperature() -> None:
         batch,
     )
 
+    actions = TrajectoryResolver.from_batch(batch).role_value("image_tokens", "action")
     logits = torch.zeros(2, 2, 8)
-    logits.scatter_(-1, batch.actions.unsqueeze(-1), 4.0)
+    logits.scatter_(-1, actions.unsqueeze(-1), 4.0)
     expected = (
         torch.nn.functional.log_softmax(logits / 0.5, dim=-1)
         .gather(
             -1,
-            batch.actions.unsqueeze(-1),
+            actions.unsqueeze(-1),
         )
         .squeeze(-1)
     )

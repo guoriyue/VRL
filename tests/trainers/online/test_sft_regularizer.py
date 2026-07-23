@@ -8,20 +8,20 @@ import torch.nn as nn
 from diffusers import FlowMatchEulerDiscreteScheduler
 
 from tests.trainers.online._collector_control import CollectorControlFake
-from tests.trainers.online._helpers import _stamp_model_precision
+from tests.trainers.online._helpers import (
+    _diffusion_rollout_batch,
+    _stamp_model_precision,
+)
 from vrl.algorithms.grpo.continuous import GRPO, GRPOConfig
-from vrl.generation.types import GenerationRequest, GenerationSampleRow
 from vrl.rollouts.batch import RolloutBatch
 from vrl.rollouts.evaluators.base import Evaluator
 from vrl.trainers.core.types import EMAConfig, OptimConfig
 from vrl.trainers.online import OnlineTrainer
 from vrl.trainers.online.config import OnlineBatchPlan, TrainerConfig
 from vrl.trainers.online.trainer import _ReplayMetrics
-from vrl.trajectory import build_diffusion_trajectory
 
 _B, _T = 2, 4
 _LATENT = (3, 2, 2)
-_PROMPTS = ["a red fox", "a blue car"]
 _TARGET_VIDEO = "targets/training.mp4"
 
 
@@ -52,52 +52,18 @@ class _Policy(nn.Module):
         return {"noise_pred": self.weight * latents}
 
 
-def _sample_rows() -> list[GenerationSampleRow]:
-    return [
-        GenerationSampleRow(
-            prompt_index=i,
-            sample_index=0,
-            prompt=prompt,
-            group_id=f"r:group:{i}",
-            sample_id=f"r:sample:{i}:0",
-            trajectory_id=f"r:trajectory:{i}:0",
-            seed=None,
-            metadata={},
-        )
-        for i, prompt in enumerate(_PROMPTS)
-    ]
-
-
 def _batch(scheduler) -> RolloutBatch:
     observations = torch.randn(_B, _T, *_LATENT)
     timesteps = scheduler.timesteps[:_T].unsqueeze(0).expand(_B, _T).clone()
-    request = GenerationRequest(
-        request_id="r",
-        family="cosmos-predict2",
-        task="v2w",
-        inputs=list(_PROMPTS),
-        samples_per_prompt=1,
-    )
-    trajectory = build_diffusion_trajectory(
-        request=request,
-        sample_rows=_sample_rows(),
-        observations=observations,
-        actions=torch.randn(_B, _T, *_LATENT),
-        old_log_prob=torch.zeros(_B, _T),
-        timesteps=timesteps,
-        kl=torch.zeros(_B, _T),
-        replay_tensors={},
-        context={},
-    )
-    return RolloutBatch(
-        observations=observations,
-        actions=torch.randn(_B, _T, *_LATENT),
+    return _diffusion_rollout_batch(
         rewards=torch.zeros(_B),
         group_ids=torch.arange(_B),
+        observations=observations,
+        actions=torch.randn(_B, _T, *_LATENT),
+        timesteps=timesteps,
         context={
             "reward_metadata": {"target_video": _TARGET_VIDEO},
         },
-        trajectory=trajectory,
     )
 
 

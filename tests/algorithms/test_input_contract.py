@@ -86,8 +86,6 @@ def _nft_batch(*, latents_clean: torch.Tensor | None) -> RolloutBatch:
         context={"num_frames": 1, "height": 4, "width": 4},
     )
     return RolloutBatch(
-        observations=None,
-        actions=None,
         rewards=torch.zeros(_BATCH),
         group_ids=torch.zeros(_BATCH, dtype=torch.long),
         context={"num_frames": 1, "height": 4, "width": 4},

@@ -32,6 +32,7 @@ from vrl.rollouts.collector.rewards import (
 from vrl.rollouts.orchestration.prompt_collection import collect_prompt_batches
 from vrl.trajectory import (
     RewardView,
+    TrajectoryResolver,
     TrajectoryStoragePolicy,
     build_ar_discrete_trajectory,
     build_chunk_autoregressive_denoise_trajectory,
@@ -957,8 +958,9 @@ def test_chunk_denoise_kl_reward_sums_chunk_and_transition_axes() -> None:
         RolloutBatchBuildContext(metadata={}, kl_reward_coef=0.25),
     ).build(torch.tensor([10.0, 20.0]))
 
-    assert packed.observations.shape[:3] == policy_shape
-    assert packed.actions.shape[:3] == policy_shape
+    resolver = TrajectoryResolver.from_batch(packed)
+    assert resolver.role_value("denoise", "observation").shape[:3] == policy_shape
+    assert resolver.role_value("denoise", "action").shape[:3] == policy_shape
     assert packed.rewards.tolist() == pytest.approx([8.5, 17.0])
     assert packed.trajectory is not None
     assert packed.trajectory.primary_segment == "denoise"
@@ -985,8 +987,9 @@ def test_nonlatent_gaussian_keeps_autoregressive_packing() -> None:
         RolloutBatchBuildContext(metadata={}),
     ).build(torch.tensor([1.0]))
 
-    assert packed.observations.shape == (1, 1, 3)
-    assert packed.actions.shape == (1, 2)
+    resolver = TrajectoryResolver.from_batch(packed)
+    assert resolver.tensor_value("image_tokens", "prompt_input_ids").shape == (1, 3)
+    assert resolver.role_value("image_tokens", "action").shape == (1, 2)
     assert packed.trajectory is not None
     assert packed.trajectory.primary_segment == "image_tokens"
 

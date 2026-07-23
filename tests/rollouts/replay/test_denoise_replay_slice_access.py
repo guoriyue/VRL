@@ -88,8 +88,6 @@ def _batch_with_sentinel_timestep_tensors() -> tuple[RolloutBatch, list[_NoFullM
     segment.tensors["timesteps"].value = timesteps
     return (
         RolloutBatch(
-            observations=observations,
-            actions=actions,
             rewards=torch.ones(2),
             group_ids=torch.arange(2),
             trajectory=trajectory,

@@ -8,6 +8,7 @@ from tests.trainers.online._collector_control import CollectorControlFake
 from tests.trainers.online._helpers import (
     DEFAULT_PRECISION,
     _algorithm_inputs,
+    _diffusion_rollout_batch,
     _stamp_model_precision,
     _trajectory_signals,
 )
@@ -29,7 +30,6 @@ class TestAdvantageAndMetrics:
         import torch.nn as nn
 
         from vrl.algorithms.types import PolicyUpdateStats, TrainStepMetrics
-        from vrl.rollouts.batch import RolloutBatch
         from vrl.trainers.core.types import DebugConfig, EMAConfig, OptimConfig
         from vrl.trainers.online import OnlineTrainer
         from vrl.trainers.online.config import OnlineBatchPlan, TrainerConfig
@@ -93,17 +93,15 @@ class TestAdvantageAndMetrics:
                 for _ in range(group_size):
                     rewards.append(self._reward_values[self._cursor])
                     self._cursor += 1
-                return RolloutBatch(
-                    observations=torch.zeros(group_size, 2, 1),
-                    actions=torch.zeros(group_size, 2, 1),
+                return _diffusion_rollout_batch(
                     rewards=torch.tensor(rewards, dtype=torch.float32),
                     group_ids=torch.zeros(group_size, dtype=torch.long),
+                    num_steps=2,
                     extras={
                         "reward_components": {
                             "observer": torch.tensor(rewards, dtype=torch.float32) + 10.0,
                         },
                     },
-                    context={},
                 )
 
         class _Evaluator(Evaluator):
@@ -225,14 +223,12 @@ class TestAdvantageAndMetrics:
 
         from vrl.algorithms.logprob_mismatch import LogprobMismatchStats
         from vrl.algorithms.types import PolicyUpdateStats, TrainStepMetrics
-        from vrl.rollouts.batch import RolloutBatch
         from vrl.trainers.online.trainer import _ReplayMetrics, _training_sample_chunks
 
-        batch = RolloutBatch(
-            observations=torch.zeros(10, 1, 1),
-            actions=torch.zeros(10, 1, 1),
+        batch = _diffusion_rollout_batch(
             rewards=torch.zeros(10),
             group_ids=torch.zeros(10, dtype=torch.long),
+            num_steps=1,
         )
         chunks = _training_sample_chunks(batch, torch.ones(10), samples_per_chunk=8)
         assert [chunk.loss_weight for chunk in chunks] == pytest.approx([0.8, 0.2])
@@ -353,8 +349,6 @@ class TestAdvantageAndMetrics:
                     context={"model_family": "janus_pro"},
                 )
                 return RolloutBatch(
-                    observations=torch.zeros(batch_size, 1, 1),
-                    actions=torch.zeros(batch_size, 1, 1),
                     rewards=torch.ones(batch_size, dtype=torch.float32),
                     group_ids=torch.zeros(batch_size, dtype=torch.long),
                     context={},

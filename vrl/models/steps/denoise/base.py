@@ -33,7 +33,6 @@ from vrl.models.utils import (
     disable_adapter_on,
     load_weights_into,
 )
-from vrl.trajectory.device import move_value_to_device
 
 
 @dataclass
@@ -257,13 +256,14 @@ class DiffusionModelBase(nn.Module, ABC):
             device = self.device
         except Exception:
             device = None
-        replay_tensors = TrajectoryResolver.from_batch(batch).replay_tensor_dict(
+        resolver = TrajectoryResolver.from_batch(batch)
+        replay_tensors = resolver.replay_tensor_dict(
             "denoise",
             axis="denoise",
             axis_index=timestep_idx,
             device=device,
         )
-        latents = move_value_to_device(batch.observations[:, timestep_idx], device)
+        latents = replay_tensors[resolver.role_tensor("denoise", "observation").name]
         return replay_tensors, dict(batch.context), latents
 
     def _require_transformer(self) -> Any:

@@ -23,6 +23,7 @@ from torch import nn
 
 from tests.trainers.online._collector_control import CollectorControlFake
 from tests.trainers.online._helpers import (
+    _diffusion_rollout_batch,
     _stamp_model_precision,
     _trajectory_signals,
 )
@@ -60,12 +61,10 @@ def _free_port() -> int:
 
 
 def _rollout_batch(sample_count: int) -> RolloutBatch:
-    return RolloutBatch(
-        observations=torch.zeros(sample_count, 1, 1),
-        actions=torch.zeros(sample_count, 1, 1),
+    return _diffusion_rollout_batch(
         rewards=torch.arange(sample_count, dtype=torch.float32),
         group_ids=torch.zeros(sample_count, dtype=torch.long),
-        context={},
+        num_steps=1,
     )
 
 

@@ -32,8 +32,6 @@ def _batch(prompts: list[str], group_size: int) -> RolloutBatch:
         dtype=torch.long,
     )
     return RolloutBatch(
-        observations=torch.zeros(batch_size, 1, 1),
-        actions=torch.zeros(batch_size, 1, 1),
         rewards=torch.arange(batch_size, dtype=torch.float32),
         group_ids=group_ids,
         # Test-fake provenance used only to verify finite lookahead ordering.

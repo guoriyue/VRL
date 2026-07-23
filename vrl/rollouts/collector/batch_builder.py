@@ -103,7 +103,6 @@ class TrajectoryRolloutBatchBuilder:
         rewards_raw: torch.Tensor,
     ) -> RolloutBatch:
         observations = role_tensor(segment, "observation").value
-        actions = role_tensor(segment, "action").value
         kl_tensor = named_tensor(segment, "kl").value
         device = observations.device
 
@@ -121,8 +120,6 @@ class TrajectoryRolloutBatchBuilder:
             rollout_context["runtime_debug"] = runtime_debug
 
         return RolloutBatch(
-            observations=observations,
-            actions=actions,
             rewards=rewards_adjusted,
             group_ids=self._group_ids(device=device),
             extras={},
@@ -135,13 +132,10 @@ class TrajectoryRolloutBatchBuilder:
         segment: TrajectorySegment,
         rewards_raw: torch.Tensor,
     ) -> RolloutBatch:
-        actions = role_tensor(segment, "action").value
         prompt_ids = named_tensor(segment, "prompt_input_ids").value
         device = self.context.device or prompt_ids.device
 
         return RolloutBatch(
-            observations=prompt_ids.unsqueeze(1),
-            actions=actions,
             rewards=rewards_raw.to(device),
             group_ids=self._group_ids(device=device),
             extras={},
@@ -156,19 +150,9 @@ class TrajectoryRolloutBatchBuilder:
         primary = self._primary_trainable_segment()
 
         token_ids = role_tensor(primary, "action").value
-        prompt_ids = self._optional_named_tensor(primary, "prompt_input_ids")
-        if prompt_ids is None:
-            prompt_ids = torch.zeros(
-                token_ids.shape[0],
-                1,
-                dtype=torch.long,
-                device=token_ids.device,
-            )
-        device = self.context.device or prompt_ids.device
+        device = self.context.device or token_ids.device
 
         return RolloutBatch(
-            observations=prompt_ids.unsqueeze(1),
-            actions=token_ids,
             rewards=rewards_raw.to(device),
             group_ids=self._group_ids(device=device),
             extras={},
@@ -230,14 +214,6 @@ class TrajectoryRolloutBatchBuilder:
                 "TrajectoryBatch.primary_segment must reference a trainable segment",
             )
         return segment
-
-    def _optional_named_tensor(
-        self,
-        segment: TrajectorySegment,
-        name: str,
-    ) -> Any | None:
-        tensor = segment.tensors.get(name)
-        return None if tensor is None else tensor.value
 
     def _group_ids(self, *, device: Any) -> torch.Tensor:
         return torch.tensor(

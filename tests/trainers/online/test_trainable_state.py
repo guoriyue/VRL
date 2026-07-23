@@ -5,6 +5,7 @@ from __future__ import annotations
 from tests.trainers.online._collector_control import CollectorControlFake
 from tests.trainers.online._helpers import (
     _algorithm_inputs,
+    _diffusion_rollout_batch,
     _stamp_model_precision,
     _trajectory_signals,
 )
@@ -22,7 +23,6 @@ class TestTrainableState:
         import torch.nn as nn
 
         from vrl.algorithms.types import TrainStepMetrics
-        from vrl.rollouts.batch import RolloutBatch
         from vrl.trainers.core.types import DebugConfig, EMAConfig, OptimConfig
         from vrl.trainers.online import OnlineTrainer
         from vrl.trainers.online.config import OnlineBatchPlan, TrainerConfig
@@ -71,12 +71,10 @@ class TestTrainableState:
             async def collect_unscored(self, prompts, **kwargs):
                 collect_seen_sync_counts.append(len(syncer.calls))
                 group_size = int(kwargs["group_size"])
-                return RolloutBatch(
-                    observations=torch.zeros(group_size, 2, 1),
-                    actions=torch.zeros(group_size, 2, 1),
+                return _diffusion_rollout_batch(
                     rewards=torch.arange(group_size, dtype=torch.float32),
                     group_ids=torch.zeros(group_size, dtype=torch.long),
-                    context={},
+                    num_steps=2,
                 )
 
         class _Evaluator(Evaluator):

@@ -48,10 +48,9 @@ class ContinuousRolloutSettings:
 def estimate_batch_bytes(batch: RolloutBatch) -> int:
     """Rough host-memory footprint of a queued ``RolloutBatch``.
 
-    The trajectory owns replay tensors. Legacy flat observation/action aliases
-    are counted only when no trajectory exists, and shared tensor objects are
-    deduplicated so queue backpressure does not charge the same storage twice.
-    Arbitrary nested extras stay outside this cheap heuristic.
+    The trajectory owns replay tensors. Shared tensor objects are deduplicated
+    so queue backpressure does not charge the same storage twice. Arbitrary
+    nested extras stay outside this cheap heuristic.
     """
 
     payload: dict[str, Any] = {
@@ -63,9 +62,6 @@ def estimate_batch_bytes(batch: RolloutBatch) -> int:
     }
     if batch.trajectory is not None:
         payload["trajectory"] = batch.trajectory
-    else:
-        payload["observations"] = batch.observations
-        payload["actions"] = batch.actions
     return trajectory_tensor_bytes(payload)
 
 

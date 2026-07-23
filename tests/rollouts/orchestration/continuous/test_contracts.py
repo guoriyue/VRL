@@ -35,8 +35,6 @@ from vrl.rollouts.orchestration.types import RolloutScheduleMode
 
 def _batch(prompt: str, samples: int = 2) -> RolloutBatch:
     return RolloutBatch(
-        observations=torch.zeros(samples, 1),
-        actions=torch.zeros(samples, 1),
         rewards=torch.arange(samples, dtype=torch.float32),
         group_ids=torch.zeros(samples, dtype=torch.long),
     )

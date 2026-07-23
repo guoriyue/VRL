@@ -27,8 +27,6 @@ def _item(
     nbytes: int = 0,
 ) -> ContinuousRolloutItem:
     batch = RolloutBatch(
-        observations=torch.zeros(samples, 1),
-        actions=torch.zeros(samples, 1),
         rewards=torch.zeros(samples),
         group_ids=torch.zeros(samples, dtype=torch.long),
     )
@@ -82,8 +80,6 @@ def test_batch_byte_estimate_counts_only_trainer_transport_tensors() -> None:
     expected = sum(
         tensor.element_size() * tensor.nelement()
         for tensor in (
-            batch.observations,
-            batch.actions,
             batch.rewards,
             batch.group_ids,
             batch.extras["component"],
@@ -129,8 +125,6 @@ def test_batch_byte_estimate_counts_trajectory_without_flat_aliases_twice() -> N
     group_ids = torch.zeros(1, dtype=torch.long)
     component = torch.zeros(3, dtype=torch.float64)
     batch = RolloutBatch(
-        observations=prompt_input_ids.unsqueeze(1),
-        actions=token_ids,
         rewards=rewards,
         group_ids=group_ids,
         extras={"component": component},

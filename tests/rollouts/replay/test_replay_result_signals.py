@@ -55,8 +55,6 @@ def _discrete_batch() -> tuple[RolloutBatch, torch.Tensor, torch.Tensor]:
         context={"model_family": "janus_pro"},
     )
     batch = RolloutBatch(
-        observations=torch.ones(2, 1, 3, dtype=torch.long),
-        actions=token_ids,
         rewards=torch.zeros(2),
         group_ids=torch.tensor([0, 0]),
         trajectory=trajectory,

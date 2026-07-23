@@ -20,8 +20,6 @@ def select_batch(batch: RolloutBatch, selector: torch.Tensor) -> RolloutBatch:
     for key, value in batch.extras.items():
         new_extras[key] = _select_tensor_tree(value, selector, batch_size)
     return RolloutBatch(
-        observations=batch.observations[selector.to(batch.observations.device)],
-        actions=batch.actions[selector.to(batch.actions.device)],
         rewards=batch.rewards[selector.to(batch.rewards.device)],
         group_ids=batch.group_ids[selector.to(batch.group_ids.device)],
         extras=new_extras,
@@ -103,8 +101,6 @@ def move_training_batch_to_device(
     """
 
     return RolloutBatch(
-        observations=batch.observations if defer_replay_tensors else batch.observations.to(device),
-        actions=batch.actions if defer_replay_tensors else batch.actions.to(device),
         rewards=batch.rewards.to(device),
         group_ids=batch.group_ids.to(device),
         extras=batch.extras if defer_replay_tensors else _move_tensor_tree(batch.extras, device),

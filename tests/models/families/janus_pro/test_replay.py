@@ -18,7 +18,7 @@ from vrl.models.interfaces import ReplayResult
 from vrl.rollouts.batch import RolloutBatch
 from vrl.rollouts.collector import build_rollout_collector
 from vrl.rollouts.collector.config import RolloutCollectorConfig
-from vrl.trajectory import build_ar_discrete_trajectory
+from vrl.trajectory import TrajectoryResolver, build_ar_discrete_trajectory
 
 HIDDEN = 32
 TEXT_VOCAB = 64
@@ -108,8 +108,6 @@ def _discrete_batch() -> RolloutBatch:
         context={"model_family": "janus_pro"},
     )
     return RolloutBatch(
-        observations=torch.ones(2, 1, 3, dtype=torch.long),
-        actions=token_ids,
         rewards=torch.zeros(2),
         group_ids=torch.tensor([0, 0]),
         trajectory=trajectory,
@@ -154,7 +152,8 @@ def test_janus_model_replay_forward_returns_typed_replay_result() -> None:
     assert segment.segment == "image_tokens"
     assert set(segment.values) == {"logits", "image_token_ids"}
     assert segment.values["logits"].shape == (2, 2, JANUS_IMAGE_VOCAB_SIZE)
-    assert torch.equal(segment.values["image_token_ids"], batch.actions)
+    actions = TrajectoryResolver.from_batch(batch).role_value("image_tokens", "action")
+    assert torch.equal(segment.values["image_token_ids"], actions)
 
 
 def test_janus_disable_adapter_without_lora_is_noop() -> None:

@@ -106,8 +106,6 @@ def _trajectory_batch(context: dict | None = None) -> RolloutBatch:
         context=context or {},
     )
     return RolloutBatch(
-        observations=torch.ones(2, 1, 3, dtype=torch.long),
-        actions=final_ids,
         rewards=torch.zeros(2),
         group_ids=torch.tensor([0, 0]),
         extras={},

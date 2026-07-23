@@ -301,8 +301,6 @@ def test_replay_forward_returns_typed_replay_result() -> None:
         context={"scheduler": "stub"},
     )
     batch = RolloutBatch(
-        observations=observations,
-        actions=actions,
         rewards=torch.zeros(2),
         group_ids=torch.tensor([0, 1]),
         trajectory=trajectory,

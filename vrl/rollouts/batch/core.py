@@ -14,8 +14,6 @@ class RolloutBatch:
     tensors and trajectory facts consumed by replay or training.
     """
 
-    observations: Any  # x_t -- current state [B, T, ...]
-    actions: Any  # x_{t-1} -- next state (denoised) [B, T, ...]
     rewards: Any  # [B] scalar rewards per sample
     group_ids: Any  # [B] prompt group assignment (for per-prompt normalization)
     extras: dict[str, Any] = field(default_factory=dict)

@@ -876,8 +876,6 @@ def _synthetic_diffusion_replay_batch(
     )
     rewards = torch.arange(batch_size, device=device, dtype=torch.float32)
     return RolloutBatch(
-        observations=observations.detach(),
-        actions=actions,
         rewards=rewards,
         group_ids=torch.tensor(
             [row.prompt_index for row in sample_rows],

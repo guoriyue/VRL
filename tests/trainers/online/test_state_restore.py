@@ -7,6 +7,7 @@ import pytest
 from tests.trainers.online._collector_control import CollectorControlFake
 from tests.trainers.online._helpers import (
     _algorithm_inputs,
+    _diffusion_rollout_batch,
     _stamp_model_precision,
     _trajectory_signals,
 )
@@ -250,15 +251,11 @@ class _ResumeCollector(CollectorControlFake):
     async def collect_unscored(self, prompts, **kwargs):
         import torch
 
-        from vrl.rollouts.batch import RolloutBatch
-
         group_size = int(kwargs["group_size"])
-        return RolloutBatch(
-            observations=torch.zeros(group_size, 2, 1),
-            actions=torch.zeros(group_size, 2, 1),
+        return _diffusion_rollout_batch(
             rewards=torch.arange(group_size, dtype=torch.float32),
             group_ids=torch.zeros(group_size, dtype=torch.long),
-            context={},
+            num_steps=2,
         )
 
 

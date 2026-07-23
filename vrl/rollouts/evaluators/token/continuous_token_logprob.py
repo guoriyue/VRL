@@ -41,6 +41,7 @@ class ContinuousTokenLogProbEvaluator(Evaluator):
         ref_model: ReplayModel | None = None,
         signal_request: SignalRequest | None = None,
     ) -> TrajectorySignalBatch:
+        del timestep_idx
         model = require_replay_model(model, owner="ContinuousTokenLogProbEvaluator.model")
         if ref_model is not None:
             ref_model = require_replay_model(
@@ -64,7 +65,6 @@ class ContinuousTokenLogProbEvaluator(Evaluator):
             log_prob=new_lp,
             ref_log_prob=ref_lp,
             distribution="gaussian",
-            timestep_idx=timestep_idx,
             mask_key=self.mask_key,
         )
 

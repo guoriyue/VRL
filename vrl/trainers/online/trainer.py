@@ -1192,7 +1192,7 @@ class OnlineTrainer(Trainer):
 
     def _train_replay_indices(
         self,
-        num_timesteps: int,
+        batch: RolloutBatch,
         timestep_fraction: float,
         selection: str = "strided",
     ) -> list[int]:
@@ -1212,6 +1212,34 @@ class OnlineTrainer(Trainer):
             raise ValueError(
                 "evaluator.replay_granularity must be 'step' or 'trajectory', "
                 f"got {granularity!r}",
+            )
+
+        from vrl.trajectory import TrajectoryResolver
+
+        resolver = TrajectoryResolver.from_batch(batch)
+        primary_segment = resolver.primary_trainable_segment_name()
+        action = resolver.role_tensor(primary_segment, "action")
+        action_axes = tuple(axis for axis in action.axes if axis != "sample")
+        if len(action_axes) != 1:
+            raise ValueError(
+                "step replay requires exactly one non-sample axis on the primary "
+                f"action tensor; {primary_segment}.{action.name} declares "
+                f"{action.axes!r}",
+            )
+        action_axis_name = action_axes[0]
+        action_axis = resolver.trajectory.axes[action_axis_name]
+        num_timesteps = action_axis.length
+        if num_timesteps is None:
+            action_shape = getattr(action.value, "shape", None)
+            if action_shape is None:
+                raise ValueError(
+                    f"step replay action axis {action_axis_name!r} has no declared "
+                    "length and its tensor has no shape",
+                )
+            num_timesteps = int(action_shape[action.axes.index(action_axis_name)])
+        if num_timesteps <= 0:
+            raise ValueError(
+                f"step replay action axis {action_axis_name!r} must be non-empty",
             )
         return self._train_timestep_indices(
             num_timesteps,
@@ -1265,9 +1293,8 @@ class OnlineTrainer(Trainer):
         defer = uses_evaluator and bool(
             getattr(self.evaluator, "supports_deferred_replay_tensor_move", False),
         )
-        num_timesteps = batch.batches[0].observations.shape[1]
         train_indices = self._train_replay_indices(
-            num_timesteps,
+            batch.batches[0],
             cfg.timestep_fraction,
             cfg.timestep_selection,
         )
@@ -1454,10 +1481,9 @@ class OnlineTrainer(Trainer):
 
         # Replay schedule — step evaluators use the configured denoise subset;
         # trajectory evaluators perform one causal pass over all policy axes.
-        # Shapes are consistent across batches, so inspect the first batch.
-        num_timesteps = filtered_batches[0].observations.shape[1]
+        # Trajectory schemas are consistent across batches, so inspect the first batch.
         train_indices = self._train_replay_indices(
-            num_timesteps,
+            filtered_batches[0],
             cfg.timestep_fraction,
             cfg.timestep_selection,
         )
@@ -1981,7 +2007,9 @@ class OnlineTrainer(Trainer):
                 "no scheduler",
             )
 
-        observations = chunk_batch.observations
+        resolver = TrajectoryResolver.from_batch(chunk_batch)
+        primary_segment = resolver.primary_trainable_segment_name()
+        observations = resolver.role_value(primary_segment, "observation")
         x0 = (
             self._sft_latents[target_key]
             .unsqueeze(0)
@@ -2002,8 +2030,8 @@ class OnlineTrainer(Trainer):
                 "at the training sampling geometry",
             )
 
-        timesteps = TrajectoryResolver.from_batch(chunk_batch).tensor_value(
-            "denoise",
+        timesteps = resolver.tensor_value(
+            primary_segment,
             "timesteps",
         )
         num_steps = timesteps.shape[1] if timesteps.ndim > 1 else timesteps.shape[0]

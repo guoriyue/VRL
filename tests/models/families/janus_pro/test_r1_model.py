@@ -16,7 +16,7 @@ from vrl.models.families.janus_pro.model import (
 from vrl.models.families.janus_pro.runtime import JanusProR1ChunkExecutor
 from vrl.models.interfaces import ReplayRequest, ReplayResult
 from vrl.rollouts.batch import RolloutBatch
-from vrl.trajectory import build_ar_multisegment_trajectory
+from vrl.trajectory import TrajectoryResolver, build_ar_multisegment_trajectory
 
 HIDDEN = 16
 TEXT_VOCAB = 128
@@ -177,8 +177,6 @@ def _r1_rollout_batch() -> RolloutBatch:
         context={},
     )
     return RolloutBatch(
-        observations=torch.ones(2, 1, 3, dtype=torch.long),
-        actions=final_ids,
         rewards=torch.zeros(2),
         group_ids=torch.tensor([0, 0]),
         trajectory=trajectory,
@@ -293,9 +291,10 @@ def test_r1_model_replay_forward_returns_requested_replay_segments() -> None:
     assert set(result.segments) == set(JANUS_R1_SEGMENTS[1:])
     assert result.segments["selfcheck_text"].values["logits"].shape == (2, 2, TEXT_VOCAB)
     assert result.segments["final_image"].values["logits"].shape == (2, 3, IMAGE_VOCAB)
+    actions = TrajectoryResolver.from_batch(batch).role_value("final_image", "action")
     assert torch.equal(
         result.segments["final_image"].values["token_ids"],
-        batch.actions,
+        actions,
     )
 
 

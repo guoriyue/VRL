@@ -159,8 +159,6 @@ def _batch(*, ref_noise_pred: torch.Tensor | None) -> RolloutBatch:
         context={"guidance_scale": 1.0, "cfg": False, "model_family": "sd3_5"},
     )
     return RolloutBatch(
-        observations=observations,
-        actions=actions,
         rewards=torch.ones(2),
         group_ids=torch.arange(2),
         trajectory=trajectory,

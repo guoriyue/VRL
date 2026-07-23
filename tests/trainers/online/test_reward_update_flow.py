@@ -5,6 +5,7 @@ from __future__ import annotations
 from tests.trainers.online._collector_control import CollectorControlFake
 from tests.trainers.online._helpers import (
     _algorithm_inputs,
+    _diffusion_rollout_batch,
     _stamp_model_precision,
     _trajectory_signals,
 )
@@ -22,7 +23,6 @@ class TestRewardUpdateFlow:
         import torch
 
         from vrl.algorithms.types import TrainStepMetrics
-        from vrl.rollouts.batch import RolloutBatch
         from vrl.trainers.core.types import DebugConfig, EMAConfig, OptimConfig
         from vrl.trainers.data import PromptExample
         from vrl.trainers.online import OnlineTrainer
@@ -68,12 +68,10 @@ class TestRewardUpdateFlow:
                 captured_inputs.extend(inputs)
                 captured_kwargs.append(dict(kwargs))
                 group_size = int(kwargs["group_size"])
-                return RolloutBatch(
-                    observations=torch.zeros(group_size, 2, 1),
-                    actions=torch.zeros(group_size, 2, 1),
+                return _diffusion_rollout_batch(
                     rewards=torch.ones(group_size, dtype=torch.float32),
                     group_ids=torch.zeros(group_size, dtype=torch.long),
-                    context={},
+                    num_steps=2,
                 )
 
         class _Evaluator(Evaluator):
@@ -134,7 +132,6 @@ class TestRewardUpdateFlow:
         import torch.nn as nn
 
         from vrl.algorithms.types import TrainStepMetrics
-        from vrl.rollouts.batch import RolloutBatch
         from vrl.trainers.core.types import DebugConfig, EMAConfig, OptimConfig
         from vrl.trainers.online import OnlineTrainer
         from vrl.trainers.online.config import TrainerConfig
@@ -185,12 +182,10 @@ class TestRewardUpdateFlow:
                     [float(i % group_size) for i in range(batch_size)],
                     dtype=torch.float32,
                 )
-                return RolloutBatch(
-                    observations=torch.zeros(batch_size, 2, 1),
-                    actions=torch.zeros(batch_size, 2, 1),
+                return _diffusion_rollout_batch(
                     rewards=rewards,
                     group_ids=group_ids,
-                    context={},
+                    num_steps=2,
                 )
 
         class _Evaluator(Evaluator):
@@ -244,7 +239,6 @@ class TestRewardUpdateFlow:
         import torch.nn as nn
 
         from vrl.algorithms.types import TrainStepMetrics
-        from vrl.rollouts.batch import RolloutBatch
         from vrl.scripts.common.online import _run_streaming_optimizer_update
         from vrl.trainers.core.types import DebugConfig, EMAConfig, OptimConfig
         from vrl.trainers.online import OnlineTrainer
@@ -289,15 +283,13 @@ class TestRewardUpdateFlow:
                     [prompt_idx for prompt_idx in range(len(prompts)) for _ in range(group_size)],
                     dtype=torch.long,
                 )
-                return RolloutBatch(
-                    observations=torch.zeros(batch_size, 1, 1),
-                    actions=torch.zeros(batch_size, 1, 1),
+                return _diffusion_rollout_batch(
                     rewards=torch.tensor(
                         [float(i % group_size) for i in range(batch_size)],
                         dtype=torch.float32,
                     ),
                     group_ids=group_ids,
-                    context={},
+                    num_steps=1,
                 )
 
         class _Evaluator(Evaluator):
@@ -569,7 +561,6 @@ class TestRewardUpdateFlow:
         import torch.nn as nn
 
         from vrl.algorithms.types import TrainStepMetrics
-        from vrl.rollouts.batch import RolloutBatch
         from vrl.scripts.common.online import _run_streaming_optimizer_update
         from vrl.trainers.core.types import DebugConfig, EMAConfig, OptimConfig
         from vrl.trainers.online import OnlineTrainer
@@ -608,15 +599,13 @@ class TestRewardUpdateFlow:
                     [prompt_idx for prompt_idx in range(len(prompts)) for _ in range(group_size)],
                     dtype=torch.long,
                 )
-                return RolloutBatch(
-                    observations=torch.zeros(batch_size, 3, 1),
-                    actions=torch.zeros(batch_size, 3, 1),
+                return _diffusion_rollout_batch(
                     rewards=torch.tensor(
                         [float(i % group_size) for i in range(batch_size)],
                         dtype=torch.float32,
                     ),
                     group_ids=group_ids,
-                    context={},
+                    num_steps=3,
                 )
 
         class _Evaluator(Evaluator):
@@ -683,7 +672,6 @@ class TestRewardUpdateFlow:
         import torch.nn as nn
 
         from vrl.algorithms.types import TrainStepMetrics
-        from vrl.rollouts.batch import RolloutBatch
         from vrl.scripts.common.online import _run_streaming_optimizer_update
         from vrl.trainers.core.types import DebugConfig, EMAConfig, OptimConfig
         from vrl.trainers.online import OnlineTrainer
@@ -720,12 +708,10 @@ class TestRewardUpdateFlow:
                     [i for i in range(len(prompts)) for _ in range(group_size)],
                     dtype=torch.long,
                 )
-                return RolloutBatch(
-                    observations=torch.zeros(batch_size, 2, 1),
-                    actions=torch.zeros(batch_size, 2, 1),
+                return _diffusion_rollout_batch(
                     rewards=torch.arange(batch_size, dtype=torch.float32),
                     group_ids=group_ids,
-                    context={},
+                    num_steps=2,
                 )
 
         class _Evaluator(Evaluator):
@@ -793,7 +779,6 @@ def test_replay_samples_per_chunk_splits_backward_and_preserves_gradient(monkeyp
     import torch.nn as nn
 
     from vrl.algorithms.types import TrainStepMetrics
-    from vrl.rollouts.batch import RolloutBatch
     from vrl.scripts.common.online import _run_streaming_optimizer_update
     from vrl.trainers.core.types import DebugConfig, EMAConfig, OptimConfig
     from vrl.trainers.online import OnlineTrainer
@@ -839,12 +824,10 @@ def test_replay_samples_per_chunk_splits_backward_and_preserves_gradient(monkeyp
             prompts = [getattr(item, "prompt", item) for item in prompts]
             group_size = int(kwargs["group_size"])
             batch_size = len(prompts) * group_size
-            return RolloutBatch(
-                observations=torch.zeros(batch_size, 1, 1),
-                actions=torch.zeros(batch_size, 1, 1),
+            return _diffusion_rollout_batch(
                 rewards=torch.arange(batch_size, dtype=torch.float32),
                 group_ids=torch.zeros(batch_size, dtype=torch.long),
-                context={},
+                num_steps=1,
             )
 
     class _Evaluator(Evaluator):
@@ -1152,8 +1135,6 @@ def test_select_move_and_remap_preserve_rollout_trajectory_fields() -> None:
         context={"model_family": "janus_pro"},
     )
     batch = RolloutBatch(
-        observations=torch.ones(4, 1, 3, dtype=torch.long),
-        actions=token_ids,
         rewards=torch.arange(4, dtype=torch.float32),
         group_ids=torch.tensor([0, 0, 1, 1]),
         trajectory=trajectory,

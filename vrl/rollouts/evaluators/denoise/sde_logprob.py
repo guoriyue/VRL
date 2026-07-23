@@ -69,21 +69,25 @@ class DiffusionSDELogProbEvaluator(Evaluator):
 
         from vrl.trajectory import TrajectoryResolver
 
-        timesteps = TrajectoryResolver.from_batch(batch).tensor_value(
-            "denoise",
-            "timesteps",
-        )
-        t = timesteps[:, timestep_idx] if timesteps.ndim > 1 else timesteps
-
-        observations = batch.observations[:, timestep_idx]  # x_t
-        actions = batch.actions[:, timestep_idx]  # x_{t-1}
+        resolver = TrajectoryResolver.from_batch(batch)
 
         fwd = model.replay_forward(batch, timestep_idx).require_segment("denoise")
         noise_pred = fwd.require_value("noise_pred")
         device = getattr(noise_pred, "device", None)
-        t = move_value_to_device(t, device)
-        observations = move_value_to_device(observations, device)
-        actions = move_value_to_device(actions, device)
+        replay = resolver.replay_tensor_dict(
+            "denoise",
+            axis="denoise",
+            axis_index=timestep_idx,
+        )
+        t = move_value_to_device(replay["timesteps"], device)
+        observations = move_value_to_device(
+            replay[resolver.role_tensor("denoise", "observation").name],
+            device,
+        )
+        actions = move_value_to_device(
+            replay[resolver.role_tensor("denoise", "action").name],
+            device,
+        )
 
         # SDE step with log-prob
         result = flow_matching_math.sde_step_with_logprob(

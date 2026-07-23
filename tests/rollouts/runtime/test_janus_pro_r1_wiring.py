@@ -14,7 +14,7 @@ from vrl.rollouts.collector.config import (
     RolloutCollectorConfig,
     build_rollout_config_from_cfg,
 )
-from vrl.trajectory import build_ar_multisegment_trajectory
+from vrl.trajectory import TrajectoryResolver, build_ar_multisegment_trajectory
 
 
 def _sample_rows() -> list[GenerationSampleRow]:
@@ -151,5 +151,6 @@ def test_r1_trajectory_batch_keeps_segments_separate() -> None:
     assert trajectory.reward_views["image"].tensor_refs == ()
     assert trajectory.reward_views["image"].metadata == {"output_ref": "GenerationOutput.output"}
     assert "log_probs" not in packed.extras
-    assert packed.actions.shape == (batch_size, 5)
+    actions = TrajectoryResolver.from_batch(packed).role_value("final_image", "action")
+    assert actions.shape == (batch_size, 5)
     assert packed.context["mode"] == "r1"

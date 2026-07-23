@@ -46,8 +46,6 @@ def _item(
     version: int | None,
 ) -> ContinuousRolloutItem:
     batch = RolloutBatch(
-        observations=torch.zeros(2, 1),
-        actions=torch.zeros(2, 1),
         rewards=torch.zeros(2),
         group_ids=torch.zeros(2, dtype=torch.long),
     )

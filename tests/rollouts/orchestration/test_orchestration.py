@@ -25,8 +25,6 @@ def _batch(prompts: list[str], group_size: int):
         dtype=torch.long,
     )
     return RolloutBatch(
-        observations=torch.zeros(batch_size, 1, 1),
-        actions=torch.zeros(batch_size, 1, 1),
         rewards=torch.arange(batch_size, dtype=torch.float32),
         group_ids=group_ids,
     )
