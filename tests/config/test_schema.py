@@ -12,6 +12,7 @@ from vrl.config.schema import (
     AlgorithmConfig,
     DataConfig,
     RewardConfig,
+    SamplingConfig,
     parse_config,
 )
 from vrl.families.names import _FAMILY_BY_ALIAS
@@ -65,6 +66,23 @@ def _kling_video_reward_kwargs(**overrides) -> dict:
     }
     base.update(overrides)
     return base
+
+
+@pytest.mark.parametrize("value", [None, 1, 8])
+def test_sampling_scheduler_batch_size_accepts_null_or_positive_integer(
+    value: int | None,
+) -> None:
+    sampling = SamplingConfig.model_validate({"ar_scheduler_batch_size": value})
+
+    assert sampling.ar_scheduler_batch_size == value
+
+
+@pytest.mark.parametrize("value", [True, False, 0, -1, 1.0, 1.5, "2"])
+def test_sampling_scheduler_batch_size_rejects_coercible_or_non_positive_values(
+    value: object,
+) -> None:
+    with pytest.raises(ValueError, match="must be a positive integer or null"):
+        SamplingConfig.model_validate({"ar_scheduler_batch_size": value})
 
 
 # ── Algorithm kind discriminator ──────────────────────────────────────────────

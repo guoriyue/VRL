@@ -76,6 +76,25 @@ class LlamaGenChunkExecutor(ARDiscreteChunkExecutorBase):
 
     # -- protocol ------------------------------------------------------
 
+    def resolve_scheduler_batch_size(
+        self,
+        request: GenerationRequest,
+        *,
+        row_count: int,
+    ) -> int | None:
+        """Require every native static-KV step to cover the full chunk."""
+
+        batch_size = super().resolve_scheduler_batch_size(
+            request,
+            row_count=row_count,
+        )
+        if batch_size is not None and batch_size < row_count:
+            raise ValueError(
+                "llamagen requires request.sampling.ar_scheduler_batch_size "
+                f"to be null or >= chunk sample count ({row_count}); got {batch_size}",
+            )
+        return batch_size
+
     def _ar_runner(self, request: GenerationRequest) -> LlamaGenARModelRunner:
         """Build the LlamaGen runner without a shared attention backend.
 

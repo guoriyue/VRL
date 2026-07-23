@@ -9,4 +9,3 @@ sampling:
   temperature: 1.0
   top_k: 1000
   max_text_length: 120
-  ar_scheduler_batch_size: null

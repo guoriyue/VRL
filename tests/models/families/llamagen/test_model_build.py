@@ -100,6 +100,64 @@ def test_executor_rejects_shared_attention_backend_selection() -> None:
         LlamaGenChunkExecutor(model=object())._ar_runner(request)
 
 
+@pytest.mark.parametrize(
+    ("batch_size", "expected"),
+    [(None, None), (2, 2), (3, 3)],
+)
+def test_executor_allows_scheduler_bounds_covering_full_static_kv_chunk(
+    batch_size: int | None,
+    expected: int | None,
+) -> None:
+    request = GenerationRequest(
+        request_id="req",
+        family="llamagen",
+        task="ar_t2i",
+        inputs=["draw text"],
+        samples_per_prompt=2,
+        sampling={"ar_scheduler_batch_size": batch_size},
+    )
+
+    resolved = LlamaGenChunkExecutor(model=object()).resolve_scheduler_batch_size(
+        request,
+        row_count=2,
+    )
+
+    assert resolved == expected
+
+
+def test_executor_rejects_partial_scheduler_before_static_kv_preparation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    executor = LlamaGenChunkExecutor(model=object())
+    prepare_calls = 0
+
+    def prepare_chunk_inputs(*_args, **_kwargs):
+        nonlocal prepare_calls
+        prepare_calls += 1
+        raise AssertionError("preparation must not run")
+
+    monkeypatch.setattr(executor, "prepare_chunk_inputs", prepare_chunk_inputs)
+    request = GenerationRequest(
+        request_id="req",
+        family="llamagen",
+        task="ar_t2i",
+        inputs=["draw text"],
+        samples_per_prompt=2,
+        sampling={"ar_scheduler_batch_size": 1},
+    )
+    chunk = SampleChunk(
+        prompt_index=0,
+        prompt="draw text",
+        sample_start=0,
+        sample_count=2,
+    )
+
+    with pytest.raises(ValueError, match="null or >= chunk sample count"):
+        executor.forward_chunk_plan(request, chunk)
+
+    assert prepare_calls == 0
+
+
 def test_chunk_context_keeps_temperature_and_sampling_provenance_only(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

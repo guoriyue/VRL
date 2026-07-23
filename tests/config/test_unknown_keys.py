@@ -255,6 +255,11 @@ def test_removed_sampling_cfg_knob_is_unknown() -> None:
     assert find_unknown_keys(cfg) == ["sampling.cfg"]
 
 
+def test_removed_use_ar_scheduler_knob_is_unknown() -> None:
+    cfg = OmegaConf.create({"sampling": {"use_ar_scheduler": True}})
+    assert find_unknown_keys(cfg) == ["sampling.use_ar_scheduler"]
+
+
 def test_removed_model_dtype_is_unknown() -> None:
     cfg = OmegaConf.create({"model": {"family": "sd3_5", "dtype": "bf16"}})
     assert find_unknown_keys(cfg) == ["model.dtype"]

@@ -346,8 +346,8 @@ class SamplingConfig(ConfigBase):
     # (read from the request dict; default "vllm_paged"). Declared here so the
     # allowed set is the type and the key is registered (no false unknown-key warning).
     attention_backend: Literal["vllm_paged", "torch_native"] = "vllm_paged"
-    # Key registry: parsed by family layout/model-build resolvers.
-    ar_scheduler_batch_size: Any = None
+    # Request-local token-step row bound. null = all rows in the current chunk.
+    ar_scheduler_batch_size: int | None = None
     # Frozen GLM-Image DiT decode knobs (rollout postprocess, never trained);
     # reader: glm_image prepare_chunk_inputs.
     decode_guidance_scale: Any = None
@@ -378,6 +378,17 @@ class SamplingConfig(ConfigBase):
     top_k: Any = None
     top_p: Any = None
     width: Any = None
+
+    @field_validator("ar_scheduler_batch_size", mode="before")
+    @classmethod
+    def _validate_ar_scheduler_batch_size(cls, value: Any) -> Any:
+        if value is None:
+            return None
+        if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+            raise ValueError(
+                "sampling.ar_scheduler_batch_size must be a positive integer or null",
+            )
+        return value
 
 
 # Kept as a public import facade while the accurate section name is used by

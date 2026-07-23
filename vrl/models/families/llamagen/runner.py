@@ -154,7 +154,7 @@ class LlamaGenARModelRunner(ARDiscreteTokenRunner):
                 "LlamaGen requires full-batch AR steps in row order "
                 f"(cache rows are positional); got row_indices={batch.row_indices} "
                 f"for batch_size={batch_size}. Schedule with "
-                "scheduler_batch_size == chunk sample count."
+                "scheduler_batch_size unset or >= chunk sample count."
             )
 
     def _sample_ar_step(

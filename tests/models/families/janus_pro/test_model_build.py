@@ -81,8 +81,7 @@ def test_ar_runtime_rejects_duplicate_model_dtype() -> None:
         get_model_family_entry("janus_pro").resolve_model_build(cfg, device="cpu")
 
 
-def test_janus_executor_parse_sampling_params_reads_scheduler_batch_size() -> None:
-    """Checks Janus executor parse sampling params reads scheduler batch size."""
+def test_janus_executor_layout_resolves_scheduler_batch_size() -> None:
     request = GenerationRequest(
         request_id="req",
         family="janus_pro",
@@ -97,9 +96,9 @@ def test_janus_executor_parse_sampling_params_reads_scheduler_batch_size() -> No
         },
     )
 
-    params = JanusProChunkExecutor(model=object()).layout.parse_sampling_params(request)
+    layout = JanusProChunkExecutor(model=object()).layout
 
-    assert params.ar_scheduler_batch_size == 8
+    assert layout.resolve_scheduler_batch_size(request) == 8
 
 
 def test_janus_chunk_context_keeps_temperature_and_sampling_provenance_only(

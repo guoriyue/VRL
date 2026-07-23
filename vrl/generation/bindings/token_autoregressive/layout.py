@@ -32,8 +32,6 @@ class ARSamplingParams:
     image_size: int
     max_text_length: int
     seed: int | None
-    use_ar_scheduler: bool
-    ar_scheduler_batch_size: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -65,11 +63,19 @@ class ARRequestLayout:
                 self.default_max_text_length,
             ),
             seed=None if sampling.get("seed") is None else int(sampling.get("seed")),
-            use_ar_scheduler=bool(sampling.get("use_ar_scheduler", False)),
-            ar_scheduler_batch_size=None
-            if sampling.get("ar_scheduler_batch_size") is None
-            else int(sampling.get("ar_scheduler_batch_size")),
         )
+
+    def resolve_scheduler_batch_size(self, request: GenerationRequest) -> int | None:
+        """Resolve the request-local token-step row bound without coercion."""
+
+        value = request.sampling.get("ar_scheduler_batch_size")
+        if value is None:
+            return None
+        if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+            raise ValueError(
+                "request.sampling.ar_scheduler_batch_size must be a positive integer or null",
+            )
+        return value
 
     def validate_chunk(self, request: GenerationRequest, chunk: SampleChunk) -> None:
         """Validate one prompt/sample AR chunk against its request."""

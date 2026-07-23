@@ -22,8 +22,7 @@ from vrl.models.families.nextstep_1.runtime import (
 )
 
 
-def test_nextstep_ar_sampling_params_carry_scheduler_batch_size() -> None:
-    """Checks NextStep AR sampling params carry scheduler batch size."""
+def test_nextstep_layout_resolves_scheduler_batch_size_separately_from_sampling() -> None:
     request = GenerationRequest(
         request_id="req",
         family="nextstep_1",
@@ -34,14 +33,14 @@ def test_nextstep_ar_sampling_params_carry_scheduler_batch_size() -> None:
             "image_token_num": 8,
             "image_size": 256,
             "max_text_length": 16,
-            "use_ar_scheduler": True,
             "ar_scheduler_batch_size": 3,
         },
     )
 
-    params = ARRequestLayout().parse_sampling_params(request)
+    layout = ARRequestLayout()
+    params = layout.parse_sampling_params(request)
 
-    assert params.ar_scheduler_batch_size == 3
+    assert layout.resolve_scheduler_batch_size(request) == 3
     assert params.image_token_num == 8
 
 
@@ -229,6 +228,7 @@ def test_chunk_context_keeps_only_flow_replay_parameters(
             "image_token_num": 4,
             "image_size": 32,
             "max_text_length": 8,
+            "ar_scheduler_batch_size": 3,
         },
     )
 
@@ -248,4 +248,5 @@ def test_chunk_context_keeps_only_flow_replay_parameters(
         "noise_level": 0.8,
     }
     assert loop_kwargs["init_kwargs"]["image_token_num"] == 4
+    assert loop_kwargs["scheduler_batch_size"] == 3
     assert decoded_sizes == [32]

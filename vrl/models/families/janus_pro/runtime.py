@@ -252,6 +252,10 @@ class JanusProR1ChunkExecutor(JanusProChunkExecutor):
 
         self.require_native_ar_engine(request)
         self.layout.validate_chunk(request, chunk)
+        scheduler_batch_size = self.resolve_scheduler_batch_size(
+            request,
+            row_count=chunk.sample_count,
+        )
         sampling = request.sampling
         params: ARSamplingParams = self.layout.parse_sampling_params(request)
 
@@ -285,7 +289,7 @@ class JanusProR1ChunkExecutor(JanusProChunkExecutor):
                 refine_mode=_resolve_refine_mode(sampling, self.model),
                 image_sampler=self._r1_image_sampler(
                     request=request,
-                    params=params,
+                    scheduler_batch_size=scheduler_batch_size,
                 ),
             )
 
@@ -313,11 +317,9 @@ class JanusProR1ChunkExecutor(JanusProChunkExecutor):
         self,
         *,
         request: GenerationRequest,
-        params: ARSamplingParams,
+        scheduler_batch_size: int | None,
     ) -> Any:
         """Build an R1 image sampler backed by the shared AR decode loop driver."""
-
-        scheduler_batch_size = params.ar_scheduler_batch_size if params.use_ar_scheduler else None
 
         def sample(
             cond_embeds: torch.Tensor,

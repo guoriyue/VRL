@@ -125,6 +125,10 @@ class NextStep1ChunkExecutor(ARChunkExecutorBase):
 
         self.require_native_ar_engine(request)
         self.layout.validate_chunk(request, chunk)
+        scheduler_batch_size = self.resolve_scheduler_batch_size(
+            request,
+            row_count=chunk.sample_count,
+        )
         sampling = request.sampling
         params: ARSamplingParams = self.layout.parse_sampling_params(request)
 
@@ -169,7 +173,7 @@ class NextStep1ChunkExecutor(ARChunkExecutorBase):
 
         tokens, saved_noise, old_logprobs = TokenAutoregressiveLoop(
             runner=self._ar_runner(request),
-            scheduler_batch_size=chunk.sample_count,
+            scheduler_batch_size=scheduler_batch_size,
             init_args=(cond_embeds, uncond_embeds, prompt_mask, uncond_mask),
             init_kwargs=sample_kwargs,
         ).run()

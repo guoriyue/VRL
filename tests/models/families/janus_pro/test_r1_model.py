@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
+import pytest
 import torch
 import torch.nn as nn
 
@@ -366,9 +367,19 @@ class _ExecutorModel:
         }
 
 
-def test_r1_executor_forward_emits_canonical_family_and_segment_schema() -> None:
+def test_r1_executor_forward_emits_canonical_family_and_segment_schema(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """Checks R1 executor forward emits canonical family and segment schema."""
     executor = JanusProR1ChunkExecutor(_ExecutorModel())
+    scheduler_batch_sizes: list[int | None] = []
+    monkeypatch.setattr(
+        executor,
+        "_r1_image_sampler",
+        lambda *, request, scheduler_batch_size: (
+            scheduler_batch_sizes.append(scheduler_batch_size) or object()
+        ),
+    )
     request = GenerationRequest(
         request_id="r1",
         family="janus_pro_r1",
@@ -381,6 +392,7 @@ def test_r1_executor_forward_emits_canonical_family_and_segment_schema() -> None
             "max_text_length": 8,
             "max_reflect_len": 3,
             "final_image_policy": "always_generate",
+            "ar_scheduler_batch_size": 1,
         },
     )
     specs = build_sample_rows(request)
@@ -390,6 +402,7 @@ def test_r1_executor_forward_emits_canonical_family_and_segment_schema() -> None
     assert out.family == "janus_pro_r1"
     assert out.task == "ar_t2i_r1"
     assert out.output.shape == (2, 3, 2, 2)
+    assert scheduler_batch_sizes == [1]
     assert "segments" not in out.extra
     assert "selfcheck_text" not in out.extra
     assert out.trajectory is not None
