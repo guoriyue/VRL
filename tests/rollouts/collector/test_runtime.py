@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import fields
 from typing import Any
 
 import pytest
@@ -157,7 +158,7 @@ class _RewardScorer:
         self.calls.append(
             {
                 "outputs": request.outputs,
-                "prompts": request.prompts,
+                "prompts": [row.prompt for row in request.sample_rows],
                 "metadata": request.metadata,
                 "device": request.device,
             },
@@ -592,14 +593,42 @@ def _reward_sample_rows(
     ]
 
 
-def test_reward_scoring_input_rejects_prompt_output_mismatch() -> None:
-    """Checks reward scoring input rejects prompt output mismatch."""
-    with pytest.raises(ValueError, match="prompt/output batch mismatch"):
+def test_reward_scoring_input_rejects_sample_row_output_mismatch() -> None:
+    with pytest.raises(ValueError, match="sample-row/output batch mismatch"):
         RewardScoringInput(
             outputs=torch.ones(2, 3),
-            prompts=["p0"],
             source_request_id="request-0",
-            sample_rows=_reward_sample_rows("request-0", ["p0", "p1"]),
+            sample_rows=_reward_sample_rows("request-0", ["p0"]),
+            metadata={},
+            device="cpu",
+        )
+
+
+def test_reward_scoring_input_derives_batch_size_and_prompt_rows() -> None:
+    request = RewardScoringInput(
+        outputs=torch.ones(2, 3),
+        source_request_id="request-0",
+        sample_rows=_reward_sample_rows("request-0", ["p0", "p1"]),
+        metadata={},
+        device="cpu",
+    )
+
+    assert request.batch_size == 2
+    assert [row.prompt for row in request.sample_rows] == ["p0", "p1"]
+    assert {field.name for field in fields(request)}.isdisjoint(
+        {"prompts", "expected_count", "batch_size"},
+    )
+
+
+def test_reward_scoring_input_rejects_mismatched_row_request_id() -> None:
+    rows = _reward_sample_rows("request-0", ["p0"])
+    rows[0].metadata["request_id"] = "different-request"
+
+    with pytest.raises(ValueError, match="source request/sample-row mismatch"):
+        RewardScoringInput(
+            outputs=torch.ones(1, 3),
+            source_request_id="request-0",
+            sample_rows=rows,
             metadata={},
             device="cpu",
         )
@@ -622,7 +651,6 @@ def test_reward_scorer_score_many_uses_one_call_and_splits_per_group() -> None:
     requests = [
         RewardScoringInput(
             outputs=torch.ones(2, 3),
-            prompts=["g0-a", "g0-b"],
             source_request_id="request-0",
             sample_rows=_reward_sample_rows("request-0", ["g0-a", "g0-b"]),
             metadata={"target_text": "group-0"},
@@ -630,7 +658,6 @@ def test_reward_scorer_score_many_uses_one_call_and_splits_per_group() -> None:
         ),
         RewardScoringInput(
             outputs=torch.ones(3, 3),
-            prompts=["g1-a", "g1-b", "g1-c"],
             source_request_id="request-1",
             sample_rows=_reward_sample_rows(
                 "request-1",

@@ -227,10 +227,7 @@ class RolloutCollector:
         phase_t = time.perf_counter() if profile else None
         require_reward_release = self._requires_reward_memory_release()
         self._reward_phase_started = require_reward_release
-        reward_inputs = [
-            builder.reward_scoring_input(rollout.collector_request.metadata)
-            for builder, rollout in zip(builders, unscored, strict=True)
-        ]
+        reward_inputs = [builder.reward_scoring_input() for builder in builders]
         with record_function("collector.reward_score"):
             score_result = await self.reward_scorer.score_many(
                 reward_inputs,

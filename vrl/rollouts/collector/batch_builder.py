@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -51,19 +50,14 @@ class TrajectoryRolloutBatchBuilder:
         )
         self.output.trajectory = self.trajectory
 
-    def reward_scoring_input(
-        self,
-        metadata: Mapping[str, Any],
-    ) -> RewardScoringInput:
+    def reward_scoring_input(self) -> RewardScoringInput:
         reward_outputs = self.reward_outputs()
         return RewardScoringInput(
             outputs=reward_outputs,
-            prompts=[row.prompt for row in self.output.sample_rows],
             source_request_id=self.output.request_id,
             sample_rows=tuple(self.output.sample_rows),
-            metadata=dict(metadata),
+            metadata=dict(self.context.metadata),
             device=self._infer_device(reward_outputs),
-            expected_count=len(self.output.sample_rows),
         )
 
     def reward_outputs(self) -> Any:
