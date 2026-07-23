@@ -27,10 +27,9 @@ from vrl.trainers.activation_checkpointing import enable_transformer_gradient_ch
 from vrl.trainers.checkpointing import (
     LORA_WEIGHTS_NAME,
     capture_rng_state,
-    load_training_checkpoint_from_config,
+    load_training_checkpoint_for_resume,
     prepare_metrics_csv,
     prepare_model_config_for_training_resume,
-    resolve_training_resume_strict,
     restore_rng_state,
     restore_training_checkpoint,
     save_resolved_config,
@@ -185,12 +184,12 @@ def train_wan_2_1_dpo(cfg: DictConfig) -> None:
         train_batch_size=train_batch_size,
         gradient_accumulation_steps=grad_accum,
     )
-    resume_strict = resolve_training_resume_strict(cfg)
-    resume_checkpoint = load_training_checkpoint_from_config(cfg)
+    resume_config = built.resume
+    resume_checkpoint = load_training_checkpoint_for_resume(resume_config)
     prepare_model_config_for_training_resume(
         cfg,
         resume_checkpoint,
-        strict=resume_strict,
+        strict=resume_config.strict,
     )
 
     resources = resolve_distributed_resources(cfg)
@@ -275,7 +274,7 @@ def train_wan_2_1_dpo(cfg: DictConfig) -> None:
             trainer=trainer,
             bundle=bundle,
             family="wan_2_1",
-            strict=resume_strict,
+            strict=resume_config.strict,
         )
         logger.info(
             "Resuming from %s, start_step=%d",

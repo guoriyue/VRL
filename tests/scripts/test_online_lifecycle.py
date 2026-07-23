@@ -203,7 +203,6 @@ def _state() -> dict[str, Any]:
 def _trainer_config(tmp_path: Any) -> SimpleNamespace:
     return SimpleNamespace(
         profile=False,
-        resume_strict=True,
         output_dir=str(tmp_path),
         total_epochs=1,
         seed=0,
@@ -329,9 +328,10 @@ def _install_common_fakes(
                 weights={"kling_video_reward": 1.0},
                 kwargs={},
             ),
+            resume=SimpleNamespace(checkpoint_path=None, strict=True),
         ),
     )
-    monkeypatch.setattr(online, "load_training_checkpoint_from_config", lambda cfg: None)
+    monkeypatch.setattr(online, "load_training_checkpoint_for_resume", lambda resume: None)
     monkeypatch.setattr(
         online,
         "prepare_model_config_for_training_resume",

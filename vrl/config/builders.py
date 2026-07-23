@@ -22,6 +22,7 @@ from vrl.config.validation import (
 
 if TYPE_CHECKING:
     from vrl.algorithms.logprob_mismatch import PrecisionCorrectionConfig
+    from vrl.trainers.checkpointing import TrainingResumeConfig
     from vrl.trainers.core.types import PrecisionDriftGuardConfig, TrainerConfig
 
 
@@ -42,6 +43,7 @@ class BuiltConfigs:
     precision: PrecisionPolicy
     trainer: TrainerConfig | None
     reward: RewardRuntimeConfig | None
+    resume: TrainingResumeConfig
 
 
 def build_precision_split_safety_configs() -> tuple[
@@ -279,6 +281,8 @@ def build_reward_config(cfg: DictConfig | RewardConfig) -> RewardRuntimeConfig:
 def build_configs(cfg: DictConfig) -> BuiltConfigs:
     """Bundle typed configs for downstream training scripts."""
 
+    from vrl.trainers.checkpointing import resolve_training_resume_config
+
     validated = validate_training_config(cfg)
     root = validated.root
     precision = validated.precision
@@ -297,6 +301,7 @@ def build_configs(cfg: DictConfig) -> BuiltConfigs:
         precision=precision,
         trainer=trainer,
         reward=reward,
+        resume=resolve_training_resume_config(root),
     )
 
 

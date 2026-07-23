@@ -315,7 +315,8 @@ def test_sana_fullparam_long_is_fresh_and_pins_reward_revisions() -> None:
     built = build_configs(cfg)
     trainer = built.trainer
 
-    assert trainer.resume_from == ""
+    assert built.resume.checkpoint_path is None
+    assert built.resume.strict is True
     assert trainer.total_epochs == 300
     assert trainer.save_freq == 5
     assert trainer.output_dir == "outputs/sana_aesthetic_fullparam_long"

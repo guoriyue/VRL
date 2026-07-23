@@ -43,7 +43,7 @@ from vrl.trainers.activation_checkpointing import (
 from vrl.trainers.checkpointing import (
     LORA_WEIGHTS_NAME,
     capture_rng_state,
-    load_training_checkpoint_from_config,
+    load_training_checkpoint_for_resume,
     prepare_metrics_csv,
     prepare_model_config_for_training_resume,
     restore_rng_state,
@@ -820,11 +820,12 @@ async def run_online_recipe(
     if trainer_config.profile:
         os.environ["VRL_PROFILE"] = "1"
 
-    resume_checkpoint = load_training_checkpoint_from_config(cfg)
+    resume_config = built.resume
+    resume_checkpoint = load_training_checkpoint_for_resume(resume_config)
     prepare_model_config_for_training_resume(
         cfg,
         resume_checkpoint,
-        strict=trainer_config.resume_strict,
+        strict=resume_config.strict,
     )
 
     resources = resolve_distributed_resources(cfg)
@@ -1003,7 +1004,7 @@ async def run_online_recipe(
                 bundle=bundle,
                 family=family_entry.family,
                 expected_model_identity=model_identity,
-                strict=trainer_config.resume_strict,
+                strict=resume_config.strict,
             )
             logger.info(
                 "Resuming from %s, start_epoch=%d",

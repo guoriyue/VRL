@@ -803,9 +803,11 @@ def test_cli_overrides_reach_typed_trainer_config() -> None:
             "rollout.samples_per_chunk=2",
         ],
     )
-    trainer = build_configs(cfg).trainer
+    built = build_configs(cfg)
+    trainer = built.trainer
 
-    assert trainer.resume_from == "/tmp/checkpoint-10"
+    assert built.resume.checkpoint_path == "/tmp/checkpoint-10"
+    assert built.resume.strict is True
     assert trainer.torch_profiler.enabled is True
     assert trainer.torch_profiler.activities == ("cpu",)
     assert trainer.drop_zero_advantage is False

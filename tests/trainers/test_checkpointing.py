@@ -13,6 +13,7 @@ from vrl.trainers.checkpointing import (
     infer_next_epoch,
     load_trainable_state,
     load_training_checkpoint,
+    resolve_training_resume_config,
     resolve_training_resume_strict,
     restore_training_checkpoint,
     save_training_checkpoint,
@@ -38,6 +39,24 @@ def test_resume_strict_rejects_string_truthiness() -> None:
 
     with pytest.raises(TypeError, match="must be a boolean"):
         resolve_training_resume_strict(cfg)
+
+
+@pytest.mark.parametrize(
+    ("resume_from", "expected_path"),
+    [("", None), (" /tmp/checkpoint-7 ", "/tmp/checkpoint-7")],
+)
+def test_resume_config_resolves_fresh_and_checkpoint_paths(
+    resume_from: str,
+    expected_path: str | None,
+) -> None:
+    cfg = OmegaConf.create(
+        {"trainer": {"resume_from": resume_from, "resume_strict": False}},
+    )
+
+    resolved = resolve_training_resume_config(cfg)
+
+    assert resolved.checkpoint_path == expected_path
+    assert resolved.strict is False
 
 
 def test_training_checkpoint_round_trips_trainer_and_trainable_modules(tmp_path) -> None:

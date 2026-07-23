@@ -84,6 +84,8 @@ def test_offline_dpo_uses_the_same_build_result_without_online_state() -> None:
     assert type(built.algorithm).__name__ == "DiffusionDPOConfig"
     assert built.trainer is None
     assert built.reward is None
+    assert built.resume.checkpoint_path is None
+    assert built.resume.strict is True
 
 
 def test_online_build_rejects_missing_or_all_zero_reward() -> None:

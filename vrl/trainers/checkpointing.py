@@ -103,6 +103,14 @@ class TrainingCheckpoint:
         return self.next_epoch
 
 
+@dataclass(frozen=True, slots=True)
+class TrainingResumeConfig:
+    """Resolved checkpoint input shared by online and offline trainers."""
+
+    checkpoint_path: str | None = None
+    strict: bool = DEFAULT_CHECKPOINT_STRICT
+
+
 def save_training_checkpoint(
     checkpoint_dir: str | Path,
     *,
@@ -345,26 +353,42 @@ def load_training_checkpoint(path: str | Path) -> TrainingCheckpoint:
     )
 
 
-def load_training_checkpoint_from_config(cfg: Any) -> TrainingCheckpoint | None:
-    """Return configured resume checkpoint, or ``None`` for a fresh run."""
+def resolve_training_resume_config(cfg: Any) -> TrainingResumeConfig:
+    """Resolve the public checkpoint inputs once at the config-build boundary."""
 
     resume_from = str(cfg_path(cfg, "trainer.resume_from", "") or "").strip()
-    if not resume_from:
+    value = cfg_path(cfg, "trainer.resume_strict", None)
+    strict = DEFAULT_CHECKPOINT_STRICT if value is None else value
+    if not isinstance(strict, bool):
+        raise TypeError(
+            f"trainer.resume_strict must be a boolean, got {type(strict).__name__}: {strict!r}",
+        )
+    return TrainingResumeConfig(
+        checkpoint_path=resume_from or None,
+        strict=strict,
+    )
+
+
+def load_training_checkpoint_for_resume(
+    resume: TrainingResumeConfig,
+) -> TrainingCheckpoint | None:
+    """Load the checkpoint selected by one resolved resume policy."""
+
+    if resume.checkpoint_path is None:
         return None
-    return load_training_checkpoint(resume_from)
+    return load_training_checkpoint(resume.checkpoint_path)
+
+
+def load_training_checkpoint_from_config(cfg: Any) -> TrainingCheckpoint | None:
+    """Public convenience facade for callers without a shared build result."""
+
+    return load_training_checkpoint_for_resume(resolve_training_resume_config(cfg))
 
 
 def resolve_training_resume_strict(cfg: Any) -> bool:
-    """Resolve the shared checkpoint-restore strictness policy."""
+    """Compatibility facade for the shared checkpoint-restore policy."""
 
-    value = cfg_path(cfg, "trainer.resume_strict", None)
-    if value is None:
-        return DEFAULT_CHECKPOINT_STRICT
-    if not isinstance(value, bool):
-        raise TypeError(
-            f"trainer.resume_strict must be a boolean, got {type(value).__name__}: {value!r}",
-        )
-    return value
+    return resolve_training_resume_config(cfg).strict
 
 
 def prepare_model_config_for_training_resume(
@@ -844,6 +868,7 @@ __all__ = [
     "LORA_WEIGHTS_NAME",
     "TRAINING_CHECKPOINT_NAME",
     "TrainingCheckpoint",
+    "TrainingResumeConfig",
     "capture_rng_state",
     "export_trainable_state",
     "find_latest_complete_checkpoint",
@@ -851,10 +876,12 @@ __all__ = [
     "is_complete_checkpoint",
     "load_trainable_state",
     "load_training_checkpoint",
+    "load_training_checkpoint_for_resume",
     "load_training_checkpoint_from_config",
     "prepare_metrics_csv",
     "prepare_model_config_for_training_resume",
     "read_checkpoint_meta",
+    "resolve_training_resume_config",
     "resolve_training_resume_strict",
     "restore_rng_state",
     "restore_training_checkpoint",
