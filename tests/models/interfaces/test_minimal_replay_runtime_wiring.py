@@ -440,7 +440,7 @@ def test_cosmos_predict25_replay_builder_keeps_diffusion_nft_surface(
 ) -> None:
     """Checks Cosmos predict25 replay builder keeps diffusion NFT surface."""
     from vrl.families.registry import get_model_family_entry
-    from vrl.models.families.cosmos import predict2_5
+    from vrl.models.families.cosmos.predict2_5 import model as predict25_model
     from vrl.models.steps.denoise import build as _shared_build
 
     # predict2_5 is a registry-descriptor family: the generic replay builder
@@ -456,7 +456,7 @@ def test_cosmos_predict25_replay_builder_keeps_diffusion_nft_surface(
         lambda *_args, **_kwargs: _TinyScheduler(),
     )
     monkeypatch.setattr(
-        predict2_5.model.CosmosPredict25ReplayModel,
+        predict25_model.CosmosPredict25ReplayModel,
         "apply_lora",
         lambda self, _build: self.transformer.requires_grad_(True),
     )
