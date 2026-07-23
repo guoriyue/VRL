@@ -23,7 +23,8 @@ from vrl.config.validation import (
 if TYPE_CHECKING:
     from vrl.algorithms.logprob_mismatch import PrecisionCorrectionConfig
     from vrl.trainers.checkpointing import TrainingResumeConfig
-    from vrl.trainers.core.types import PrecisionDriftGuardConfig, TrainerConfig
+    from vrl.trainers.core.types import PrecisionDriftGuardConfig
+    from vrl.trainers.online.config import TrainerConfig
 
 
 @dataclass(frozen=True, slots=True)
@@ -171,7 +172,7 @@ def build_trainer_config(
     collected and reported together with full YAML paths.
     """
 
-    from vrl.trainers.core.types import TrainerConfig
+    from vrl.trainers.online.config import TrainerConfig
 
     trainer_block = getattr(cfg, "trainer", None)
     if trainer_block is not None and "eval" in trainer_block:

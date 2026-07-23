@@ -349,7 +349,8 @@ def test_cosmos_predict25_kling_reward_uses_paper_rl_batch() -> None:
     assert cfg.rollout.prompts_per_batch % cfg.rollout.n_samples_per_prompt == 0
     # gradient_accumulation_steps is a DERIVED TrainerConfig value — this stays: it
     # tests the prompts_per_batch / microbatch_size derivation, not a literal.
-    from vrl.trainers.core.types import OptimConfig, TrainerConfig
+    from vrl.trainers.core.types import OptimConfig
+    from vrl.trainers.online.config import TrainerConfig
 
     derived = TrainerConfig(
         optim=OptimConfig(lr=1e-4),

@@ -42,8 +42,9 @@ class TestDiagnostics:
 
         from vrl.algorithms.types import TrainStepMetrics
         from vrl.rollouts.batch import RolloutBatch
-        from vrl.trainers.core.types import DebugConfig, EMAConfig, OptimConfig, TrainerConfig
+        from vrl.trainers.core.types import DebugConfig, EMAConfig, OptimConfig
         from vrl.trainers.online import OnlineTrainer
+        from vrl.trainers.online.config import TrainerConfig
 
         class _Algorithm:
             class _Config:
@@ -200,8 +201,9 @@ class TestDiagnostics:
         """
         import torch.nn as nn
 
-        from vrl.trainers.core.types import DebugConfig, EMAConfig, OptimConfig, TrainerConfig
+        from vrl.trainers.core.types import DebugConfig, EMAConfig, OptimConfig
         from vrl.trainers.online import OnlineTrainer
+        from vrl.trainers.online.config import TrainerConfig
         from vrl.trainers.online.trainer import _ReplayMetrics
 
         class _Algorithm:

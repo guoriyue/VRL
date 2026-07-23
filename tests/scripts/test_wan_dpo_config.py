@@ -60,8 +60,8 @@ def test_offline_dpo_uses_typed_optimizer_defaults_when_keys_are_absent() -> Non
 def test_offline_dpo_max_grad_norm_default_belongs_to_offline_trainer(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from vrl.trainers.core.types import TrainerConfig
     from vrl.trainers.offline import OfflineDPOTrainerConfig
+    from vrl.trainers.online.config import TrainerConfig
 
     monkeypatch.setattr(
         TrainerConfig.__dataclass_fields__["max_norm"],

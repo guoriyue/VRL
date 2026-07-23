@@ -23,8 +23,9 @@ from tests.trainers.online._helpers import (
 from vrl.algorithms.types import TrainStepMetrics
 from vrl.rollouts.batch import RolloutBatch
 from vrl.rollouts.evaluators.base import Evaluator
-from vrl.trainers.core.types import EMAConfig, OptimConfig, TrainerConfig
+from vrl.trainers.core.types import EMAConfig, OptimConfig
 from vrl.trainers.online import OnlineTrainer
+from vrl.trainers.online.config import TrainerConfig
 from vrl.trainers.online.trainer import TrainingBatch
 from vrl.utils.stats import RolloutStats
 

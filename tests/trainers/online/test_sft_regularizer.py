@@ -13,8 +13,9 @@ from vrl.algorithms.grpo.continuous import GRPO, GRPOConfig
 from vrl.generation.types import GenerationRequest, GenerationSampleRow
 from vrl.rollouts.batch import RolloutBatch
 from vrl.rollouts.evaluators.base import Evaluator
-from vrl.trainers.core.types import EMAConfig, OptimConfig, TrainerConfig
+from vrl.trainers.core.types import EMAConfig, OptimConfig
 from vrl.trainers.online import OnlineTrainer
+from vrl.trainers.online.config import TrainerConfig
 from vrl.trainers.online.trainer import _ReplayMetrics
 from vrl.trajectory import build_diffusion_trajectory
 

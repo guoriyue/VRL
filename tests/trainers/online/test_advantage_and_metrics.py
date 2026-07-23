@@ -30,8 +30,9 @@ class TestAdvantageAndMetrics:
 
         from vrl.algorithms.types import PolicyUpdateStats, TrainStepMetrics
         from vrl.rollouts.batch import RolloutBatch
-        from vrl.trainers.core.types import DebugConfig, EMAConfig, OptimConfig, TrainerConfig
+        from vrl.trainers.core.types import DebugConfig, EMAConfig, OptimConfig
         from vrl.trainers.online import OnlineTrainer
+        from vrl.trainers.online.config import TrainerConfig
 
         class _Algorithm:
             class _Config:
@@ -287,8 +288,9 @@ class TestAdvantageAndMetrics:
         from vrl.algorithms.types import TrainStepMetrics
         from vrl.generation import GenerationRequest, GenerationSampleRow
         from vrl.rollouts.batch import RolloutBatch
-        from vrl.trainers.core.types import DebugConfig, EMAConfig, OptimConfig, TrainerConfig
+        from vrl.trainers.core.types import DebugConfig, EMAConfig, OptimConfig
         from vrl.trainers.online import OnlineTrainer
+        from vrl.trainers.online.config import TrainerConfig
         from vrl.trajectory import build_ar_discrete_trajectory, build_training_view
 
         class _Algorithm:

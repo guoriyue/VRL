@@ -37,7 +37,8 @@ from vrl.rollouts.batch.ops import (
 )
 from vrl.rollouts.orchestration import build_rollout_schedule
 from vrl.trainers.core.base import Trainer
-from vrl.trainers.core.types import TrainerConfig, TrainState
+from vrl.trainers.core.types import TrainState
+from vrl.trainers.online.config import TrainerConfig
 from vrl.trainers.online.ema import EMAModuleWrapper
 from vrl.trainers.online.precision_guard import (
     enforce_precision_drift,

@@ -29,8 +29,9 @@ from tests.trainers.online._helpers import (
 from vrl.algorithms.logprob_mismatch import LogprobMismatchStats
 from vrl.algorithms.types import InitialReplayStats, PolicyUpdateStats, TrainStepMetrics
 from vrl.rollouts.batch import RolloutBatch
-from vrl.trainers.core.types import DebugConfig, EMAConfig, OptimConfig, TrainerConfig
+from vrl.trainers.core.types import DebugConfig, EMAConfig, OptimConfig
 from vrl.trainers.online import trainer as trainer_module
+from vrl.trainers.online.config import TrainerConfig
 from vrl.trainers.online.trainer import (
     OnlineTrainer,
     PhaseTimer,

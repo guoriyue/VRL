@@ -28,9 +28,9 @@ from vrl.trainers.core.types import (
     EMAConfig,
     OptimConfig,
     RolloutOrchestrationConfig,
-    TrainerConfig,
 )
 from vrl.trainers.online import OnlineTrainer
+from vrl.trainers.online.config import TrainerConfig
 
 
 class _Collector(CollectorControlFake):

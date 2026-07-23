@@ -24,8 +24,9 @@ from vrl.algorithms.types import TrainStepMetrics
 from vrl.config.precision import RolePrecision
 from vrl.rollouts.batch import RolloutBatch
 from vrl.rollouts.evaluators.base import Evaluator
-from vrl.trainers.core.types import EMAConfig, OptimConfig, TrainerConfig
+from vrl.trainers.core.types import EMAConfig, OptimConfig
 from vrl.trainers.online import OnlineTrainer
+from vrl.trainers.online.config import TrainerConfig
 from vrl.trainers.online.trainer import _create_grad_scaler
 from vrl.trainers.optimizer import FP32MasterWeightOptimizer
 from vrl.trainers.strategy import SingleProcessStrategy

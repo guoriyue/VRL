@@ -7,10 +7,9 @@ from vrl.trainers.core.types import (
     EMAConfig,
     OptimConfig,
     RolloutOrchestrationConfig,
-    TorchProfilerConfig,
-    TrainerConfig,
     TrainState,
 )
+from vrl.utils.profiling import TorchProfilerConfig
 
 __all__ = [
     "ContinuousRolloutConfig",
@@ -21,5 +20,4 @@ __all__ = [
     "TorchProfilerConfig",
     "TrainState",
     "Trainer",
-    "TrainerConfig",
 ]

@@ -64,8 +64,8 @@ def _trainer_config(**overrides):
         DebugConfig,
         EMAConfig,
         OptimConfig,
-        TrainerConfig,
     )
+    from vrl.trainers.online.config import TrainerConfig
 
     base = dict(
         prompts_per_batch=1,

@@ -90,7 +90,7 @@ def resolve_gradient_checkpointing_mode(cfg: DictConfig) -> str:
     absent key means "use the TrainerConfig default" — derived, not copied.
     """
 
-    from vrl.trainers.core.types import TrainerConfig
+    from vrl.trainers.online.config import TrainerConfig
 
     enabled = OmegaConf.select(cfg, "actor.gradient_checkpointing")
     if enabled is None:

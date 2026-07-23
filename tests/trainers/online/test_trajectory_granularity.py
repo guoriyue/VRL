@@ -22,9 +22,9 @@ from vrl.trainers.core.types import (
     EMAConfig,
     OptimConfig,
     PrecisionDriftGuardConfig,
-    TrainerConfig,
 )
 from vrl.trainers.online import OnlineTrainer
+from vrl.trainers.online.config import TrainerConfig
 
 
 class _Algorithm:

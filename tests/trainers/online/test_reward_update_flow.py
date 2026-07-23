@@ -22,9 +22,10 @@ class TestRewardUpdateFlow:
 
         from vrl.algorithms.types import TrainStepMetrics
         from vrl.rollouts.batch import RolloutBatch
-        from vrl.trainers.core.types import DebugConfig, EMAConfig, OptimConfig, TrainerConfig
+        from vrl.trainers.core.types import DebugConfig, EMAConfig, OptimConfig
         from vrl.trainers.data import PromptExample
         from vrl.trainers.online import OnlineTrainer
+        from vrl.trainers.online.config import TrainerConfig
 
         captured_kwargs: list[dict] = []
         captured_inputs: list = []
@@ -138,8 +139,9 @@ class TestRewardUpdateFlow:
 
         from vrl.algorithms.types import TrainStepMetrics
         from vrl.rollouts.batch import RolloutBatch
-        from vrl.trainers.core.types import DebugConfig, EMAConfig, OptimConfig, TrainerConfig
+        from vrl.trainers.core.types import DebugConfig, EMAConfig, OptimConfig
         from vrl.trainers.online import OnlineTrainer
+        from vrl.trainers.online.config import TrainerConfig
 
         collect_calls: list[list[str]] = []
         evaluate_batch_sizes: list[int] = []
@@ -249,8 +251,9 @@ class TestRewardUpdateFlow:
         from vrl.algorithms.types import TrainStepMetrics
         from vrl.rollouts.batch import RolloutBatch
         from vrl.scripts.common.online import _run_streaming_optimizer_update
-        from vrl.trainers.core.types import DebugConfig, EMAConfig, OptimConfig, TrainerConfig
+        from vrl.trainers.core.types import DebugConfig, EMAConfig, OptimConfig
         from vrl.trainers.online import OnlineTrainer
+        from vrl.trainers.online.config import TrainerConfig
 
         collect_calls: list[list[str]] = []
         after_step_calls: list[int] = []
@@ -570,8 +573,9 @@ class TestRewardUpdateFlow:
         from vrl.algorithms.types import TrainStepMetrics
         from vrl.rollouts.batch import RolloutBatch
         from vrl.scripts.common.online import _run_streaming_optimizer_update
-        from vrl.trainers.core.types import DebugConfig, EMAConfig, OptimConfig, TrainerConfig
+        from vrl.trainers.core.types import DebugConfig, EMAConfig, OptimConfig
         from vrl.trainers.online import OnlineTrainer
+        from vrl.trainers.online.config import TrainerConfig
 
         recorded_grads: list[float] = []
 
@@ -686,8 +690,9 @@ class TestRewardUpdateFlow:
         from vrl.algorithms.types import TrainStepMetrics
         from vrl.rollouts.batch import RolloutBatch
         from vrl.scripts.common.online import _run_streaming_optimizer_update
-        from vrl.trainers.core.types import DebugConfig, EMAConfig, OptimConfig, TrainerConfig
+        from vrl.trainers.core.types import DebugConfig, EMAConfig, OptimConfig
         from vrl.trainers.online import OnlineTrainer
+        from vrl.trainers.online.config import TrainerConfig
 
         class _Algorithm:
             class _Config:
@@ -798,9 +803,10 @@ def test_replay_samples_per_chunk_splits_backward_and_preserves_gradient(monkeyp
     from vrl.algorithms.types import TrainStepMetrics
     from vrl.rollouts.batch import RolloutBatch
     from vrl.scripts.common.online import _run_streaming_optimizer_update
-    from vrl.trainers.core.types import DebugConfig, EMAConfig, OptimConfig, TrainerConfig
+    from vrl.trainers.core.types import DebugConfig, EMAConfig, OptimConfig
     from vrl.trainers.online import OnlineTrainer
     from vrl.trainers.online import trainer as trainer_module
+    from vrl.trainers.online.config import TrainerConfig
 
     device_move_sizes: list[int] = []
     original_move_training_batch_to_device = trainer_module.move_training_batch_to_device
@@ -957,7 +963,8 @@ def test_gradient_accumulation_steps_validation() -> None:
     """gradient_accumulation_steps must evenly divide prompts_per_batch when > 0."""
     import pytest
 
-    from vrl.trainers.core.types import OptimConfig, TrainerConfig
+    from vrl.trainers.core.types import OptimConfig
+    from vrl.trainers.online.config import TrainerConfig
 
     def _cfg(rbs: int, gas: int, ppo: int = 1) -> TrainerConfig:
         return TrainerConfig(
@@ -990,7 +997,8 @@ def test_microbatch_size_reconciles_with_gradient_accumulation_steps() -> None:
     """microbatch_size (size) and gradient_accumulation_steps (count) derive each other."""
     import pytest
 
-    from vrl.trainers.core.types import OptimConfig, TrainerConfig
+    from vrl.trainers.core.types import OptimConfig
+    from vrl.trainers.online.config import TrainerConfig
 
     def _cfg(**kw: object) -> TrainerConfig:
         base = dict(
@@ -1036,7 +1044,8 @@ def test_replay_samples_per_chunk_is_an_independent_fixed_integer() -> None:
     """Replay defaults to one and never inherits generation's chunk declaration."""
     import pytest
 
-    from vrl.trainers.core.types import OptimConfig, TrainerConfig
+    from vrl.trainers.core.types import OptimConfig
+    from vrl.trainers.online.config import TrainerConfig
 
     def _cfg(**kw: object) -> TrainerConfig:
         base = dict(
@@ -1074,8 +1083,9 @@ def test_fixed_replay_chunk_remains_available_to_distributed_strategies() -> Non
 
     import torch.nn as nn
 
-    from vrl.trainers.core.types import OptimConfig, TrainerConfig
+    from vrl.trainers.core.types import OptimConfig
     from vrl.trainers.online import OnlineTrainer
+    from vrl.trainers.online.config import TrainerConfig
 
     class _Algorithm:
         class _Config:
@@ -1116,7 +1126,8 @@ def test_rollout_memory_plan_logs_streaming_and_legacy_warning(caplog) -> None:
     import logging
 
     from vrl.scripts.common.online import _log_rollout_memory_plan
-    from vrl.trainers.core.types import OptimConfig, TrainerConfig
+    from vrl.trainers.core.types import OptimConfig
+    from vrl.trainers.online.config import TrainerConfig
 
     def _cfg(rbs: int, gas: int) -> TrainerConfig:
         return TrainerConfig(
@@ -1161,7 +1172,8 @@ def test_global_std_streaming_divergence_warning(caplog) -> None:
     from omegaconf import OmegaConf
 
     from vrl.scripts.common.online import _warn_global_std_streaming_divergence
-    from vrl.trainers.core.types import OptimConfig, TrainerConfig
+    from vrl.trainers.core.types import OptimConfig
+    from vrl.trainers.online.config import TrainerConfig
 
     def _tc(rbs: int, gas: int) -> TrainerConfig:
         return TrainerConfig(
@@ -1235,7 +1247,8 @@ def test_host_memory_budget_fraction_bounds() -> None:
     """host_memory_budget_fraction in [0.0,1.0); >0 requires streaming (no footgun)."""
     import pytest
 
-    from vrl.trainers.core.types import OptimConfig, TrainerConfig
+    from vrl.trainers.core.types import OptimConfig
+    from vrl.trainers.online.config import TrainerConfig
 
     def _cfg(fraction: float, *, microbatch_size: int = 0) -> TrainerConfig:
         return TrainerConfig(
