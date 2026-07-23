@@ -66,8 +66,6 @@ class LlamaGenChunkExecutor(ARDiscreteChunkExecutorBase):
     """
 
     family: str = "llamagen"
-    _runner_cls = LlamaGenARModelRunner
-    _runner_attention_family = "llamagen"
     task: str = "ar_t2i"
     default_image_token_num: int | None = 256
     default_image_size: int | None = 256

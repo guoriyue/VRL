@@ -77,8 +77,6 @@ class GlmImageChunkExecutor(ARDiscreteChunkExecutorBase):
     """
 
     family: str = "glm_image"
-    _runner_cls = GlmImageTokenRunner
-    _runner_attention_family = "glm_image"
     task: str = "ar_t2i"
 
     def __init__(self, model: Any) -> None:

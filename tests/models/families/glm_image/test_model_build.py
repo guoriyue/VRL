@@ -78,13 +78,11 @@ def test_resolve_model_build_carries_sampling_and_lora_overrides() -> None:
     assert "guidance_scale" not in config
 
 
-def test_executor_declares_identity_and_runner() -> None:
+def test_executor_declares_family_identity() -> None:
     executor = GlmImageChunkExecutor(model=object())
 
     assert executor.family == "glm_image"
     assert executor.task == "ar_t2i"
-    assert executor._runner_cls is GlmImageTokenRunner
-    assert executor._runner_attention_family == "glm_image"
 
 
 def test_executor_rejects_explicit_attention_backend() -> None:
