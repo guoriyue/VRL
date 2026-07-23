@@ -141,11 +141,10 @@ TeaCache 在仓库 10–35 step schedule 上已经判定为结构性边际收益
 - **Reversed the earlier "AR is the biggest win" assumption.** Read the AR rollout
   (当前实现位于 `vrl/generation/composition/token_autoregressive/token_loop.py`): it is NOT naive per-request decode — it is
   already a **token-batched lockstep decode with paged KV**:
-  - `TokenScheduler` + `ARDecodeLoop`: `_max_batch_size` defaults to ALL samples
-    (`scheduler_batch_size or len(sequences)`) → a chunk's whole sample set decodes
-    together at full GPU width.
-  - `build_step_batch` enforces "all sequences share one token position" = strict
-    lockstep; `ActiveSequence.finished` is **position-only, no EOS early-stop** →
+  - `TokenAutoregressiveLoop.run()` directly iterates position first, then bounded
+    row chunks (`scheduler_batch_size or init.row_count`) → a chunk's whole sample
+    set decodes together at full GPU width by default.
+  - `TokenStepBatch.position` is scalar and the loop has no EOS/finished state →
     the workload is **fixed-length** (image grids = fixed token count).
   - Paged KV via `ARCacheRows`; the vLLM paged *kernel* is already imported
     (`vrl/nn/kernels/attention/vllm_paged.py`).
@@ -161,7 +160,7 @@ TeaCache 在仓库 10–35 step schedule 上已经判定为结构性边际收益
 - ❌ **RETIRED / NON-GOAL**：可选 AR GPU throughput confirmation 不影响架构裁决，也没有
   独立行为风险要关闭；不以“再测一个数字”重新打开本 sprint。当前 CPU contract 由
   `tests/generation/composition/token_autoregressive/test_token_loop.py` 与
-  `tests/generation/composition/token_autoregressive/test_token_scheduler.py` 固定。
+  `tests/generation/bindings/token_autoregressive/test_scheduler_batching.py` 固定。
 
 ---
 

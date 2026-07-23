@@ -1,23 +1,20 @@
 # SPRINT：Trajectory and rollout single source
 
-状态：**planned（2026-07-22）**。
+状态：**done（2026-07-22）**。
 
-父 program：[Argument and state ownership](../SPRINT_argument_and_state_ownership_program.md)
+父 program：[Argument and state ownership](SPRINT_argument_and_state_ownership_program.md)
 
 前置：
 
-- [Contract truthfulness and no-op inputs](../done/SPRINT_contract_truthfulness_and_noop_inputs.md)
+- [Contract truthfulness and no-op inputs](SPRINT_contract_truthfulness_and_noop_inputs.md)
   的 scalar group-remap修复；
-- [Runtime payload smallest truth](../done/SPRINT_runtime_payload_smallest_truth.md) 已完成；不应同时改同一
+- [Runtime payload smallest truth](SPRINT_runtime_payload_smallest_truth.md) 已完成；不应同时改同一
   batch constructor。
 
 ## 0. 结论先行
 
-`RolloutBatch` 是 trainer-ready batch；`TrajectoryBatch` 是 generation/replay record。两者都必要，
-但当前同时保存 group IDs、observations/actions、training view和结构 metrics，导致 select、move、
-stack、continuous consume都要双写。
-
-目标 source of truth：
+`RolloutBatch` 是 trainer-ready batch；`TrajectoryBatch` 是 generation/replay record。两者作为真实
+协议边界都保留，但镜像字段已经删除。落地后的 source of truth 是：
 
 ```text
 GenerationSampleRow.group_id/sample_id/trajectory_id
@@ -26,15 +23,18 @@ GenerationSampleRow.group_id/sample_id/trajectory_id
 RolloutBatch.group_ids
     = trainer-remapped numeric advantage grouping
 
-TrajectoryBatch.segments/axes/sample_rows
+TrajectoryBatch.segments/axes/sample_rows/primary_segment
     = replay trajectory facts
 
-TrajectoryBatch.primary_segment
-    = producer-declared training semantics when it cannot be inferred
+TrajectorySignalBatch.primary_segment
+    = evaluator对已启用 segment过滤后的、经验证的算法输入投影
 ```
 
-numeric trainer grouping不再放进 trajectory；replay observations/actions不再平铺在 RolloutBatch。
-迁移必须按 reader逐个完成，不能先删字段再用 fallback掩盖。
+`RolloutBatch` 已不再保存 `dones/videos/prompts/observations/actions/training_view`；
+`TrajectoryBatch` 已不再保存 numeric trainer group IDs。结构 sample count与 axis lengths由
+`sample_rows/axes`派生。`TrajectorySignalBatch`不是第二个 trajectory owner，而是 evaluator →
+algorithm 的真实协议；multisegment evaluator在 enabled filtering后保留 typed primary，若原 primary
+被禁用则确定性回退到首个 enabled segment。
 
 ## 1. T0 — Pin ownership contract
 
@@ -114,14 +114,16 @@ generation record事实，也不能从 string ID在所有 batch组合场景唯�
 
 ### 修复
 
-- 增加 `TrajectoryBatch.primary_segment: str | None`；
+- `TrajectoryBatch.primary_segment: str | None` 成为 producer-owned source of truth；
 - producer在需要时显式写；
 - validator要求显式值存在于 segments且 trainable；
 - single-segment可在 builder中派生；
 - 删除 `LossUnit`、`TrainingView`、`build_training_view`；
 - 删除 `RolloutBatch.training_view`；
 - 删除 context `"primary_segment"` 镜像；
-- `TrajectorySignalBuilder` 读 typed trajectory field。
+- `TrajectorySignalBuilder` 读 typed trajectory field；
+- evaluator只把 enabled segments投影到 `TrajectorySignalBatch`，并验证/派生该投影的
+  `primary_segment`，不把 enabled-order或 primary镜像塞回 context。
 
 不要新增一个只包 primary name的 context/dataclass。
 
@@ -135,7 +137,7 @@ generation record事实，也不能从 string ID在所有 batch组合场景唯�
 
 ## 5. T4 — Migrate flat observations/actions
 
-`RolloutBatch.observations/actions` 目前仍有真实 reader，不能机械删除。按 consumer迁移：
+`RolloutBatch.observations/actions` 在迁移前仍有真实 reader，因此没有机械删除，而是按 consumer迁移：
 
 1. SDE log-prob evaluator；
 2. token log-prob evaluator；
@@ -222,7 +224,27 @@ telemetry/provenance-only。select/stack ops不再同步 count/axis map。
 保留的 provenance key必须在 writer处注释用途，并有序列化/展示 consumer；不能只因“也许以后用”
 保留。删除前对 literal key、`.get()`、dict merge、test fixture、artifact serialization逐项搜索。
 
-## 8. What changes / what stays
+## 8. 实施结果与审计判定
+
+| Suspect | 判定 | 落地结果 |
+|---|---|---|
+| reward后继续搬运的 `dones/videos/prompts` | **REMOVE** | `RolloutBatch`只保留 trainer/replay真正消费的数据 |
+| numeric trajectory group IDs | **REMOVE** | trainer grouping只由 `RolloutBatch.group_ids`拥有；stable string identity仍在 sample rows |
+| flat `observations/actions` | **REMOVE** | evaluator与trainer通过 typed trajectory roles/replay inputs读取 |
+| `TrainingView/LossUnit` | **REMOVE** | validator直接验证 axes、roles、replay inputs与 trainable segment |
+| primary segment | **KEEP/DERIVE** | `TrajectoryBatch`拥有生产语义；signal batch只保存 enabled-filter后的算法协议投影 |
+| structural metrics与 iteration sample count | **DERIVE** | 从 `sample_rows`、`axes`与 rollout batches计算 |
+| signal context里的 segment order/primary | **REMOVE** | MultiSegment按 signals mapping顺序执行；typed primary保留 |
+| `TrajectorySignalBuilder.distribution` | **REMOVE ARG** | distribution从 segment声明读取，不接受可矛盾的 caller副本 |
+
+CPU closure gate：
+
+```text
+71 passed
+```
+
+覆盖 empty/non-empty、single/multisegment、primary保留与过滤回退、非法 primary/role/axis，以及
+select/stack/replay/trainer路径；未启动 Ray 或 GPU。
 
 ### 改变
 
@@ -270,12 +292,12 @@ telemetry/provenance-only。select/stack ops不再同步 count/axis map。
 
 ## 12. Definition of Done
 
-- [ ] numeric group IDs只有 RolloutBatch一个 owner。
-- [ ] primary segment只有 TrajectoryBatch一个 owner。
-- [ ] replay tensor无 RolloutBatch flat mirror。
-- [ ] TrainingView/LossUnit删除且 invariants仍被 validator覆盖。
-- [ ] structural metrics全部派生。
-- [ ] context每个剩余 key是 behavior或显式 provenance。
+- [x] numeric group IDs只有 RolloutBatch一个 owner。
+- [x] primary training语义只有 TrajectoryBatch一个 owner；signal primary是 evaluator协议投影。
+- [x] replay tensor无 RolloutBatch flat mirror。
+- [x] TrainingView/LossUnit删除且 invariants仍被 validator覆盖。
+- [x] structural metrics全部派生。
+- [x] context每个剩余 key是 behavior或显式 provenance。
 
 ## 13. References
 

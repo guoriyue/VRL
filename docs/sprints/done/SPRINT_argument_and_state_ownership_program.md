@@ -1,11 +1,11 @@
 # SPRINT：Argument and state ownership program
 
-状态：**active（2026-07-22 开始；Sprint 1–4 done，Sprint 5–7 planned）**。
+状态：**done（2026-07-22；Sprint 1–7 全部完成）**。
 
 ## 0. 结论先行
 
 仓库的主要层次是必要的，不应把 OmegaConf、public schema、resolver/builder、runtime
-dataclass、wire payload 和 async ownership state 压成一层。当前问题不是“类太多”，而是：
+dataclass、wire payload 和 async ownership state 压成一层。审计起点的问题不是“类太多”，而是：
 
 1. 同一个决定在两个层里各存一份；
 2. public 参数进入了调用链，却没有真正影响行为；
@@ -28,9 +28,9 @@ dataclass、wire payload 和 async ownership state 压成一层。当前问题�
 | Config argument ownership | **done** | public parse、runtime owner、defaults 与 request projection 已收口 |
 | Online metrics IO contract | **done** | CSV column/order/format/value mapping 已归一 |
 | Runtime payload smallest truth | **done** | dead/test-only state 已删除，派生摘要与 capability 已改为单一真值 |
-| Trajectory and rollout single source | **planned** | 下一阶段 |
-| Token loop state thinning | **planned** | 等 trajectory token reader 稳定后执行 |
-| Family model config ownership | **planned** | 等 shared config contract 稳定后执行 |
+| Trajectory and rollout single source | **done** | trainer batch、trajectory record 与 evaluator signal 的真值边界已收口 |
+| Token loop state thinning | **done** | future-only scheduler state 已删除，保留直接 position-major bounded row loop |
+| Family model config ownership | **done** | family vocabulary 由 registry lazy schema path 选择，shared-only family 显式复用 shared schema |
 
 ## 1. 哪些层应该存在
 
@@ -133,22 +133,22 @@ dataclass 的放置规则：
 
 ## 3. 实施 Sprint 与依赖
 
-1. [Contract truthfulness and no-op inputs](done/SPRINT_contract_truthfulness_and_noop_inputs.md)
+1. [Contract truthfulness and no-op inputs](SPRINT_contract_truthfulness_and_noop_inputs.md)
    先修 silent no-op、错误 derivation 和 stale group IDs。
-2. [Config argument ownership and resolution](done/SPRINT_config_argument_ownership_and_resolution.md)
+2. [Config argument ownership and resolution](SPRINT_config_argument_ownership_and_resolution.md)
    建立一次解析和明确 owner；依赖 Sprint 1 的 public key 决策。
-3. [Online metrics IO contract](done/SPRINT_online_metrics_io_contract.md)
+3. [Online metrics IO contract](SPRINT_online_metrics_io_contract.md)
    先建立稳定 row protocol，供 supervisor与 continuous telemetry共同使用。
-4. [Runtime payload smallest truth](done/SPRINT_runtime_payload_smallest_truth.md)
+4. [Runtime payload smallest truth](SPRINT_runtime_payload_smallest_truth.md)
    机械删除 dead/derived payload；可与 Sprint 2 的后半段并行，但不能抢先改变 config shape。
-5. [Trajectory and rollout single source](planned/SPRINT_trajectory_rollout_single_source.md)
+5. [Trajectory and rollout single source](SPRINT_trajectory_rollout_single_source.md)
    先迁 consumer，再删 flat mirrors；依赖 scalar remap 修复。
-6. [Token loop state thinning](planned/SPRINT_token_loop_state_thinning.md)
+6. [Token loop state thinning](SPRINT_token_loop_state_thinning.md)
    删除当前单请求 runtime 中为未来 cross-request 功能预存的状态。
-7. [Family model config ownership](planned/SPRINT_family_model_config_ownership.md)
+7. [Family model config ownership](SPRINT_family_model_config_ownership.md)
    承接 `SPRINT_config_as_signatures.md` deferred P3/P4；在 shared config resolution 稳定后迁移。
 
-现有 [Continuous stage contracts and baseline](planned/SPRINT_continuous_stage_contracts_and_baseline.md)
+现有 [Continuous stage contracts and baseline](../planned/SPRINT_continuous_stage_contracts_and_baseline.md)
 仍是独立 program 的首个 Sprint。它新增 metrics 前，应先复用 Sprint 3 的 typed metrics row，避免
 继续同步手写 header/dict/format list；不需要把 continuous ownership state并入本 program。
 
@@ -239,15 +239,27 @@ vendored source tree 的 CausVid/Magi runtime digest 两个用例。其余同目
 registry、resource、config、metrics、trainer、collector、algorithm 与 reward tests 均执行通过。
 该 gate 未启动 Ray cluster，未运行 GPU。
 
+Sprint 5–7 的 closure gate（2026-07-22）：
+
+```text
+trajectory ownership: 71 passed
+token loop state:      55 passed
+family config:        324 passed
+combined:             450 passed, 3 warnings
+```
+
+这些集合有重叠，因此单项数字只用于定位覆盖面；`combined` 是一次独立收集结果。测试覆盖成功与
+失败两条路径，且没有启动 Ray cluster 或 GPU。
+
 ## 8. Definition of Done
 
-- [ ] 每个 public key 只有一个语义 owner，unsupported value fail fast。
-- [ ] 每个 resolved/runtime field 有非日志 production consumer，或显式 provenance 注释。
-- [ ] 每个派生字段改为 property/局部变量，构造 API 无法传入矛盾状态。
-- [ ] trainer、generation、collector、trajectory不再保存彼此的镜像。
-- [ ] family-specific schema 与 runtime owner相邻，registry 仍保持 lazy。
-- [ ] protocol、async ownership、transition table和跨 family 一致形状未被破坏。
-- [ ] 所有 child Sprint 的 CPU gates 通过。
+- [x] 每个 public key 只有一个语义 owner，unsupported value fail fast。
+- [x] 每个 resolved/runtime field 有非日志 production consumer，或显式 provenance 注释。
+- [x] 每个派生字段改为 property/局部变量，构造 API 无法传入矛盾状态。
+- [x] trainer、generation、collector、trajectory不再保存彼此的镜像。
+- [x] family-specific schema 与 runtime owner相邻，registry 仍保持 lazy。
+- [x] protocol、async ownership、transition table和跨 family 一致形状未被破坏。
+- [x] 所有 child Sprint 的 CPU gates 通过。
 
 ## 9. References
 

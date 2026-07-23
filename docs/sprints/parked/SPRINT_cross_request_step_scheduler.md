@@ -9,6 +9,16 @@
 > old contract layer describe a rejected historical route, not dormant code that
 > can be switched on. A future cross-request scheduler must earn its own typed
 > state and cache-ownership contracts from a profiling gate.
+>
+> **Current-state correction (2026-07-22).** The request-local
+> `TokenScheduler`, `ActiveSequence`, `ARSequenceKey`, and `TokenBatch` were
+> deleted after their heterogeneous inputs were shown to have no production
+> producer. Current token generation uses a direct position-major bounded row
+> loop in `vrl/generation/composition/token_autoregressive/token_loop.py` and
+> keeps only `TokenAutoregressiveEnvelope.row_lanes` for real row/cache
+> ownership. Future work must start from a real multi-request producer and
+> design new typed admission/cache ownership; it must not resurrect the deleted
+> request-local objects.
 
 状态：**parked / direction-decided（2026-06-16）**。这是对"blocking stage + inference
 for all models from scratch"这个框架级问题的方向裁决。结论：**终局形态是一个 family-neutral
@@ -49,15 +59,18 @@ for all models from scratch"这个框架级问题的方向裁决。结论：**�
   the real win still required Angle C's resumable denoise-loop work. Keeping that
   test-only detour would constrain a future scheduler without providing runtime
   behavior.
-- **Angle C** 打的就是 per-request 边界本身，且**已 90% 存在**：
+- **Angle C** 打的就是 per-request 边界本身。当前只具备可复用的 model-step与 row/cache原语，
+  **跨请求 scheduler state并不存在**：
 
   | 已有原语 | 路径 | 作用 |
   |---|---|---|
-  | `TokenScheduler` 按 position 分组弹 batch | `vrl/generation/ar/decode_loop.py:105` | **这就是 continuous batching，只是今天只喂单请求** |
+  | `TokenAutoregressiveLoop` position-major bounded row loop | `vrl/generation/composition/token_autoregressive/token_loop.py` | 证明 request内 step/batch语义；不是跨请求 admission |
   | `ARCacheRows.gather/scatter` 行索引批状态 | `vrl/nn/layers/attention/cache_rows.py` | 跨请求合并状态可原样复用 |
-  | `ARSequenceKey`（family/task/tokenizer/dtype/max_new_tokens） | `decode_loop.py:20` | 现成的跨请求分组 key |
-  | `batch_group_key` / `batch_signature()` / `capability_key` | `planner.py:65` / `capabilities.py:179` / `types.py:133` | **算好存好、零消费者的孤儿 key**——调度器是它们的第一个读者 |
-  | runner 契约 `init_ar/step_ar/finalize_ar`、diffusion `encode/prepare/forward_step/decode` | `janus_pro/runner.py`、`models/diffusion/base.py` | family 插件接缝，不动 |
+  | `TokenLoopInit` / `TokenStepBatch` / `TokenStepOutput` | `vrl/generation/steps/token/protocol.py` | model-facing单步协议，可被未来 scheduler调用 |
+  | runner契约 `init_token/step_token/finalize_token`、diffusion typed stages | family runner、diffusion executor | family插件接缝，不动 |
+
+  当前明确**没有**可复用的 `ARSequenceKey`、跨请求 pool、admission queue、shared block allocator或
+  cancellation owner。它们只有在真实 producer出现后才能按实际 consumer设计。
 
 ---
 
@@ -78,7 +91,7 @@ for all models from scratch"这个框架级问题的方向裁决。结论：**�
 
 ## 3. 阶段阶梯（每阶段独立可逆、藏在 flag 后、永不碰 trainer/RL 层）
 
-- **Phase 1（唯一近期项，详见 §4）**：AR 两请求合并探针。
+- **Phase 1（解 park后的第一项，详见 §4）**：AR 两请求合并探针。
 - **Phase 2**：AR 调度器后挂**共享 block pool + free-list**——今天 `free()` 是 `pass`
   （`vrl/nn/layers/attention/paged.py:202`，单请求够用、共享池致命）。vLLM/SGLang 的复杂度都花在这，
   独立 gated 阶段。
@@ -93,11 +106,12 @@ for all models from scratch"这个框架级问题的方向裁决。结论：**�
 合并只在并发请求共享 resolution + step_idx 时才赢,若 RL recipe 单分辨率,diffusion 收益退化成已有的
 请求内 batching。**AR 的赢稳,diffusion 的赢看 workload。所以以 AR 切入。**
 
-## 4. AR-first 探针（唯一现在可做，一次性 spike）
+## 4. AR-first 探针（解 park后的第一项，一次性 spike）
 
-把 `TokenScheduler` 的 pool/group/pop/push-back（`decode_loop.py:105-157`）抽到
-`vrl/generation/scheduler/step_scheduler.py`,喂**两个并发 janus_pro 请求**,用现成 `ARSequenceKey`
-当 key,`ARCacheRows` 原样复用;藏在 `ARChunkExecutorBase._ar_runner` 一个 config flag 后,family 不动。
+先让一个真实多请求 producer把**两个并发 janus_pro请求**送入独立 spike admission queue，再基于
+实际共同 forward条件定义新的 typed request key、row owner与 shared cache allocator。
+`TokenStepBatch`/family hooks和 `ARCacheRows`可复用；不能从当前单请求 loop抽取一个不存在的 pool，
+也不能复活旧 `ARSequenceKey`。spike保持在 production import graph外，family不动。
 
 **通过 = 两条都满足**:
 - (a) finalized tokens 与单请求路径**逐位相同**（先断言这条,RL 轨迹不能变,去风险）;
@@ -121,13 +135,13 @@ for all models from scratch"这个框架级问题的方向裁决。结论：**�
 - 不 big-bang——每阶段藏 flag、可逆、不碰 trainer。
 
 ## 关键文件引用
-- `vrl/generation/execution/planner.py:100`（per-request EnginePlan）、`vrl/generation/ray/executor.py:43`
-- `vrl/generation/ar/decode_loop.py:105,20`、`vrl/nn/layers/attention/cache_rows.py`、`paged.py:202`
-- `vrl/generation/capabilities.py:179`、`vrl/generation/execution/types.py:133`、`planner.py:65`
-- `vrl/generation/diffusion/executor.py:633,437-454,723-746`、`vrl/generation/diffusion/backbone.py:152`
-- `vrl/generation/execution/worker.py:115-129`
-- `vrl/rollouts/orchestration/continuous/schedule.py:110-120`、`vrl/generation/ray/runtime.py:95-175`
-- `vrl/scripts/common/online.py:74-80`、`vrl/trainers/weight_sync.py:56-62`
+- `vrl/generation/execution/planner.py`（per-request EnginePlan）、`vrl/generation/ray/executor.py`
+- `vrl/generation/composition/token_autoregressive/token_loop.py`
+- `vrl/generation/steps/token/protocol.py`
+- `vrl/nn/layers/attention/cache_rows.py`、`vrl/nn/layers/attention/paged.py`
+- `vrl/generation/execution/worker.py`
+- `vrl/rollouts/orchestration/continuous/schedule.py`、`vrl/generation/ray/runtime.py`
+- `vrl/scripts/common/online.py`、`vrl/trainers/weight_sync.py`
 - 相关 parked：`SPRINT_generation_scheduler.md`（chunk 派发层,不同层）、`SPRINT_physical_stage_runtime.md`
   （Angle B 物理管线）、`SPRINT_diffusion_native_transformer_executor.md`（Angle A）
 - 方向研究：`docs/sprints/reading/SPRINT_framework_lessons_vrl.md`、`reading/{vllm,sglang,slime}.md`

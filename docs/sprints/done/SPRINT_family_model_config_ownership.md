@@ -1,28 +1,27 @@
 # SPRINT：Family model config ownership
 
-状态：**planned（2026-07-22）**。
+状态：**done（2026-07-22）**。
 
-父 program：[Argument and state ownership](../SPRINT_argument_and_state_ownership_program.md)
+父 program：[Argument and state ownership](SPRINT_argument_and_state_ownership_program.md)
 
 承接：`docs/sprints/done/SPRINT_config_as_signatures.md` deferred P3/P4。
 
-前置：[Config argument ownership and resolution](../done/SPRINT_config_argument_ownership_and_resolution.md)
+前置：[Config argument ownership and resolution](SPRINT_config_argument_ownership_and_resolution.md)
 的 typed parse/build contract。
 
 ## 0. 结论先行
 
-当前 `vrl/config/schema.py` 同时知道：
+`vrl/config/schema.py` 已不再维护 `_model_config_classes_by_family`或手写 variant tuple。当前
+25 个 registry entries通过 `model_section_cls` lazy dotted path选择 11 个实际 public schema；
+family-specific vocabulary放在对应 family package，没有额外 public vocabulary的 13 个 family
+显式使用：
 
-```text
-SD3 / Wan / Cosmos Predict2 / Predict2.5 / Anima
-Janus / NextStep / LlamaGen / Echo / Flux / CausVid / Magi
+```python
+SHARED_MODEL_SECTION_CLS = "vrl.config.model_schema:ModelSection"
 ```
 
-并维护 `_model_config_classes_by_family`。registry已经是 canonical family selection source，这张
-全局 mapping是第二个 family table；family runtime又在 `model.py/runtime.py` 从
-`ModelBuild.model_config` 读取同一组 key。
-
-目标不是删除 public schema层，也不是把 Pydantic与runtime dataclass合并。目标是：
+这避免为“目录形状一致”制造空 `config.py`和空 subclass。目标不是删除 public schema层，也不是把
+Pydantic与runtime dataclass合并；落地边界是：
 
 - shared model keys留在 config层；
 - family-specific public schema与family代码同址；
@@ -49,7 +48,7 @@ config module与Root schema都需要它，同时避免 `schema.py ↔ family con
 
 ### Family public section
 
-每个 registered family提供：
+需要 family-specific public vocabulary或独立 runtime config的 family提供：
 
 ```text
 vrl/models/families/<family>/config.py
@@ -57,22 +56,17 @@ vrl/models/families/<family>/config.py
     <Family>Config            # existing runtime dataclass, when one exists
 ```
 
-Cosmos子 family沿用现有 nested package。共享同一 contract的变体（Wan t2v/i2v、Janus/R1）可以让
+Cosmos子 family沿用现有 nested package。共享同一 contract的变体（Wan t2v/i2v、Janus/R1）让
 多个 registry entry指向同一 dotted class。
 
-family即使没有额外 public key，也保留轻量 `config.py` 形状。该薄文件提供：
-
-- lazy import boundary；
-- cross-family一致性；
-- heavy `model.py` 之外的 config-only import；
-- grepable family owner。
-
-这符合薄文件 keep-list，不应为了少几行把 class塞回 central schema。
+没有额外 public vocabulary的 family直接让 registry entry指向 shared `ModelSection`。空 subclass
+没有新 validator、owner或协议，不为目录形状一致而创建。真实 family config薄文件仍提供 lazy
+import、config-only import与 grepable owner边界，应 **KEEP**。
 
 ### Runtime config
 
-现有 `JanusProConfig`、`NextStep1Config`、`LlamaGenConfig`、`Emu3Config`、`GlmImageConfig` 等仍是
-plain dataclass，表达 model wrapper constructor需要的已解析值。它们可以移动到 family
+`JanusProConfig`、`NextStep1Config`、`LlamaGenConfig`、`Emu3Config`、`GlmImageConfig` 等仍是
+plain dataclass，表达 model wrapper constructor需要的已解析值；它们已移动到 family
 `config.py`，public package re-export保持。
 
 Pydantic `<Family>ModelSection` 与 dataclass `<Family>Config` **不合并**：
@@ -148,20 +142,20 @@ protocol boundary，应 **KEEP**。
 - Janus Pro / R1；
 - NextStep；
 - LlamaGen；
-- Emu3；
-- GLM-Image。
+- Emu3 / GLM-Image只迁 runtime config，public section复用 shared `ModelSection`。
 
 同时把 runtime config dataclass移出 heavy `model.py`，更新 registry dotted `config_cls` 和 public
 re-export。runtime/model/runner只 import轻量 config module。
 
 ### Denoise families
 
-- SD3.5 / Flux；
+- Flux；
 - Wan t2v/i2v；
 - Cosmos Predict2 / Predict2.5 / Anima；
 - Echo；
 - CausVid；
-- Magi。
+- Magi；
+- SD3.5与其他没有额外 public vocabulary的 family复用 shared `ModelSection`。
 
 只移动 family-specific fields/validators。共享 `path/revision/lora/memory/torch_compile/use_lora/executor`
 继续继承 `ModelSection`，不能在每个 family复制。
@@ -253,7 +247,30 @@ adapter，不应为了少几行内联两处。
 
 本 Sprint不迁 Kling reward prompt table；它属于 reward model，不属于 family model config。
 
-## 9. What changes / what stays
+## 9. 实施结果与审计判定
+
+| Suspect | 判定 | 落地结果 |
+|---|---|---|
+| central family class table/variant tuple | **REMOVE/DERIVE** | selector从 registry entries与 dotted schema path派生 |
+| `ModelFamilyEntry.model_section_cls` | **KEEP** | config-only lazy protocol boundary；空 path fail fast |
+| family-specific public schema | **MOVE** | 与 family owner同址，shared keys继续继承 `ModelSection` |
+| shared-only family空 schema/class/file | **REMOVE** | 13 个 family显式使用 `SHARED_MODEL_SECTION_CLS` |
+| raw config旁路 | **FIX** | public payload先经 selected typed schema验证，再投影到 build wire mapping |
+| `ModelBuild.model_config` | **KEEP** | driver/worker间异质、可序列化、family-neutral的真实 wire boundary |
+| selector facade | **KEEP** | 连接 Root schema、registry lazy import与 error re-anchoring |
+
+当前 registry有 25 个 entries、11 个唯一 model-section dotted paths。shared-only families为：
+`sd3_5`、`qwen_image`、`sana`、`lumina2`、`hunyuan_video`、`mochi`、`hunyuan_image`、
+`pixart_sigma`、`cogvideox`、`cosmos-predict2`、`cosmos3`、`emu3`、`glm_image`。
+
+CPU closure gate：
+
+```text
+324 passed
+```
+
+覆盖每个 family的 valid/invalid key、alias、conditional fields、lazy dotted import、bundled config与
+heavy-import false path；未启动 Ray 或 GPU。
 
 ### 改变
 
@@ -269,7 +286,7 @@ adapter，不应为了少几行内联两处。
 - `ModelBuild` plain wire mapping；
 - family runtime builder与normalizer；
 - public imports/re-exports；
-- cross-family config.py一致形状，即使某个文件很薄。
+- 有真实 family vocabulary/runtime owner的 config.py一致形状。
 
 ## 10. Non-goals
 
@@ -278,7 +295,8 @@ adapter，不应为了少几行内联两处。
 - 不删除 ModelBuild或registry。
 - 不统一本来不同的 family defaults。
 - 不移动 sampling section中真正跨 family的 generation参数。
-- 不以 LOC为目标删除薄 family config files。
+- 不以 LOC为目标删除承担 lazy import、public schema或runtime owner的薄 family config files。
+- 不为 shared-only family创建没有新语义的空 config class/file。
 
 ## 11. Acceptance gates
 
@@ -295,13 +313,13 @@ adapter，不应为了少几行内联两处。
 
 ## 12. Definition of Done
 
-- [ ] central schema无 family class/table。
-- [ ] 每个 registry family有 lazy `model_section_cls`。
-- [ ] 每个 family public/runtime config定义在 family package。
-- [ ] shared keys只定义一次。
-- [ ] unknown/sibling key在模型加载前失败。
-- [ ] ModelBuild仍是纯数据、可序列化、family-neutral。
-- [ ] config-only import不触发 heavy dependency。
+- [x] central schema无 family class/table。
+- [x] 每个 registry family有 lazy `model_section_cls`。
+- [x] family-specific public/runtime config定义在 family package；shared-only family显式复用 shared schema。
+- [x] shared keys只定义一次。
+- [x] unknown/sibling key在模型加载前失败。
+- [x] ModelBuild仍是纯数据、可序列化、family-neutral。
+- [x] config-only import不触发 heavy dependency。
 
 ## 13. References
 
