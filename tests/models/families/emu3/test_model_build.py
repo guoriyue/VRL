@@ -12,8 +12,20 @@ from vrl.config.precision import RolePrecision
 from vrl.families.registry import get_model_family_entry
 from vrl.generation import GenerationRequest
 from vrl.generation.execution.chunks import SampleChunk
+from vrl.models.families.emu3.config import Emu3Config
+from vrl.models.families.emu3.model import Emu3Config as ModelEmu3Config
 from vrl.models.families.emu3.runner import Emu3TokenRunner
 from vrl.models.families.emu3.runtime import Emu3ChunkExecutor, emu3_config_from_build
+
+
+@pytest.mark.parametrize("use_lora", [True, False])
+def test_runtime_config_defaults_and_model_compatibility_export(use_lora: bool) -> None:
+    config = Emu3Config(use_lora=use_lora)
+    entry = get_model_family_entry("emu3")
+
+    assert config.model_path == entry.family_build.default_model_path
+    assert config.use_lora is use_lora
+    assert ModelEmu3Config is Emu3Config
 
 
 def test_resolve_model_build_defaults_to_gen_hf_checkpoint() -> None:

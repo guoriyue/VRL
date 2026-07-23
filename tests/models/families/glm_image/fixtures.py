@@ -23,8 +23,8 @@ from types import SimpleNamespace
 
 import torch
 
+from vrl.models.families.glm_image.config import GlmImageConfig
 from vrl.models.families.glm_image.model import (
-    GlmImageConfig,
     GlmImageModel,
     GlmImageReplayCore,
     GlmImageReplayModel,

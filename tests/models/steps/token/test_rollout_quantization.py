@@ -53,7 +53,8 @@ def _tiny_emu3_model():
     from transformers.models.emu3.modeling_emu3 import Emu3ForConditionalGeneration
 
     from tests.models.families.emu3.fixtures import _stub_processor, tiny_hf_emu3_config
-    from vrl.models.families.emu3.model import Emu3Config, Emu3Model
+    from vrl.models.families.emu3.config import Emu3Config
+    from vrl.models.families.emu3.model import Emu3Model
 
     hf_config = tiny_hf_emu3_config()
     hf_config.text_config.hidden_size = 1024

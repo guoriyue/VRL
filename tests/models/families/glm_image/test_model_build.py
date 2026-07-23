@@ -11,11 +11,25 @@ from omegaconf import OmegaConf
 from vrl.families.registry import get_model_family_entry
 from vrl.generation.execution.chunks import SampleChunk
 from vrl.generation.types import GenerationRequest
+from vrl.models.families.glm_image.config import GlmImageConfig
+from vrl.models.families.glm_image.model import GlmImageConfig as ModelGlmImageConfig
 from vrl.models.families.glm_image.runner import GlmImageTokenRunner
 from vrl.models.families.glm_image.runtime import (
     GlmImageChunkExecutor,
     glm_image_config_from_build,
 )
+
+
+@pytest.mark.parametrize("decode_offload_ar", [True, False])
+def test_runtime_config_defaults_and_model_compatibility_export(
+    decode_offload_ar: bool,
+) -> None:
+    config = GlmImageConfig(decode_offload_ar=decode_offload_ar)
+    entry = get_model_family_entry("glm_image")
+
+    assert config.model_path == entry.family_build.default_model_path
+    assert config.decode_offload_ar is decode_offload_ar
+    assert ModelGlmImageConfig is GlmImageConfig
 
 
 def test_resolve_model_build_defaults_to_glm_image_checkpoint() -> None:

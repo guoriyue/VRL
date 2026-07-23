@@ -794,7 +794,7 @@ _register_model_family(
         build=TokenFamilyBuild(
             model_cls="vrl.models.families.emu3.model:Emu3Model",
             replay_cls="vrl.models.families.emu3.model:Emu3ReplayModel",
-            config_cls="vrl.models.families.emu3.model:Emu3Config",
+            config_cls="vrl.models.families.emu3.config:Emu3Config",
             config_builder="vrl.models.families.emu3.runtime:emu3_config_from_build",
             default_model_path="BAAI/Emu3-Gen-hf",
         ),
@@ -810,7 +810,7 @@ _register_model_family(
         build=TokenFamilyBuild(
             model_cls="vrl.models.families.glm_image.model:GlmImageModel",
             replay_cls="vrl.models.families.glm_image.model:GlmImageReplayModel",
-            config_cls="vrl.models.families.glm_image.model:GlmImageConfig",
+            config_cls="vrl.models.families.glm_image.config:GlmImageConfig",
             config_builder="vrl.models.families.glm_image.runtime:glm_image_config_from_build",
             default_model_path="zai-org/GLM-Image",
         ),

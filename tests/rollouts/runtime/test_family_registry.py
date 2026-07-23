@@ -19,6 +19,7 @@ from vrl.families.names import (
 )
 from vrl.families.registry import (
     FAMILY_REGISTRY,
+    SHARED_MODEL_SECTION_CLS,
     DenoiseFamilyBuild,
     TokenFamilyBuild,
     get_model_family_entry,
@@ -167,6 +168,19 @@ def test_migrated_model_sections_are_owned_by_their_family_packages() -> None:
     } == expected_paths
 
 
+def test_migrated_token_runtime_configs_are_owned_by_their_family_packages() -> None:
+    expected_paths = {
+        "emu3": "vrl.models.families.emu3.config:Emu3Config",
+        "glm_image": "vrl.models.families.glm_image.config:GlmImageConfig",
+    }
+
+    for family, expected_path in expected_paths.items():
+        entry = get_model_family_entry(family)
+        assert isinstance(entry.family_build, TokenFamilyBuild)
+        assert entry.family_build.config_cls == expected_path
+        assert entry.model_section_cls == SHARED_MODEL_SECTION_CLS
+
+
 def test_migrated_family_packages_keep_their_public_facades() -> None:
     expected_exports = {
         "vrl.models.families.causvid": {
@@ -184,7 +198,26 @@ def test_migrated_family_packages_keep_their_public_facades() -> None:
             "EchoReplayModel",
             "EchoSamplingState",
         },
+        "vrl.models.families.emu3": {
+            "Emu3ChunkExecutor",
+            "Emu3Config",
+            "Emu3Model",
+            "Emu3ReplayModel",
+            "emu3_allowed_token_mask",
+            "emu3_forced_token_schedule",
+            "emu3_grid_token_num",
+        },
         "vrl.models.families.flux": {"FluxModelSection"},
+        "vrl.models.families.glm_image": {
+            "GlmImageChunkExecutor",
+            "GlmImageConfig",
+            "GlmImageModel",
+            "GlmImageReplayModel",
+            "glm_image_decode_position_schedule",
+            "glm_image_grid_dims",
+            "glm_image_prefill_position_ids",
+            "glm_image_token_num",
+        },
         "vrl.models.families.magi_1": {
             "Magi1Model",
             "Magi1ModelSection",
@@ -227,6 +260,46 @@ def test_model_section_imports_do_not_load_model_runtimes() -> None:
                 "assert EchoModelSection.__module__.endswith('.echo.config'); "
                 "assert FluxModelSection.__module__.endswith('.flux.config'); "
                 "assert Magi1ModelSection.__module__.endswith('.magi_1.config'); "
+                "assert 'torch' not in sys.modules; "
+                "assert 'diffusers' not in sys.modules; "
+                "assert 'transformers' not in sys.modules; "
+                "assert 'peft' not in sys.modules; "
+                "assert 'safetensors' not in sys.modules; "
+                "assert 'huggingface_hub' not in sys.modules; "
+                "assert not any("
+                "name.startswith('vrl.models.families.') and "
+                "any(part in {'model', 'runtime', 'runner', 'adapter'} "
+                "for part in name.split('.')) "
+                "for name in sys.modules)"
+            ),
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0, result.stderr
+
+
+def test_token_runtime_config_imports_do_not_load_model_runtimes() -> None:
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            (
+                "import sys; "
+                "from vrl.families.registry import get_model_family_entry; "
+                "from vrl.utils.config import import_from_path; "
+                "emu_entry = get_model_family_entry('emu3'); "
+                "glm_entry = get_model_family_entry('glm_image'); "
+                "emu_cls = import_from_path(emu_entry.family_build.config_cls); "
+                "glm_cls = import_from_path(glm_entry.family_build.config_cls); "
+                "from vrl.models.families.emu3 import Emu3Config; "
+                "from vrl.models.families.glm_image import GlmImageConfig; "
+                "assert emu_cls is Emu3Config; "
+                "assert glm_cls is GlmImageConfig; "
+                "assert Emu3Config.__module__.endswith('.emu3.config'); "
+                "assert GlmImageConfig.__module__.endswith('.glm_image.config'); "
                 "assert 'torch' not in sys.modules; "
                 "assert 'diffusers' not in sys.modules; "
                 "assert 'transformers' not in sys.modules; "
