@@ -9,13 +9,16 @@ from typing import Any
 import pytest
 import torch
 
+from vrl.generation import GenerationRequest, GenerationSampleRow
 from vrl.rollouts.batch import RolloutBatch
+from vrl.rollouts.evaluators.trajectory import TrajectorySignalBuilder
 from vrl.rollouts.orchestration.prompt_collection import (
     PromptCollectionCleanupError,
     collect_prompt_batches,
 )
 from vrl.rollouts.orchestration.types import RewardCollectionMode
 from vrl.trainers.data import PromptExample
+from vrl.trajectory import build_ar_discrete_trajectory
 
 
 def _batch(prompts: list[str], group_size: int) -> RolloutBatch:
@@ -32,6 +35,48 @@ def _batch(prompts: list[str], group_size: int) -> RolloutBatch:
         group_ids=group_ids,
         prompts=[prompt for prompt in prompts for _ in range(group_size)],
     )
+
+
+def _batch_with_trajectory(prompts: list[str], group_size: int) -> RolloutBatch:
+    """Build independent batch/trajectory group tensors for remap regressions."""
+
+    batch = _batch(prompts, group_size)
+    sample_rows = [
+        GenerationSampleRow(
+            prompt_index=prompt_index,
+            sample_index=sample_index,
+            prompt=prompt,
+            prompt_id=f"prompt-{prompt_index}",
+            group_id=f"group-{prompt_index}",
+            sample_id=f"sample-{prompt_index}-{sample_index}",
+            trajectory_id=f"trajectory-{prompt_index}-{sample_index}",
+            seed=None,
+        )
+        for prompt_index, prompt in enumerate(prompts)
+        for sample_index in range(group_size)
+    ]
+    request = GenerationRequest(
+        request_id="remap-request",
+        family="fake",
+        task="ar_t2i",
+        inputs=prompts,
+        samples_per_prompt=group_size,
+    )
+    batch_size = len(sample_rows)
+    batch.trajectory = build_ar_discrete_trajectory(
+        request=request,
+        sample_rows=sample_rows,
+        token_ids=torch.zeros(batch_size, 1, dtype=torch.long),
+        token_log_probs=torch.zeros(batch_size, 1),
+        token_mask=torch.ones(batch_size, 1),
+        prompt_input_ids=torch.zeros(batch_size, 1, dtype=torch.long),
+        prompt_attention_mask=torch.ones(batch_size, 1, dtype=torch.long),
+        uncond_input_ids=torch.zeros(batch_size, 1, dtype=torch.long),
+        uncond_attention_mask=torch.ones(batch_size, 1, dtype=torch.long),
+        context={},
+    )
+    assert batch.group_ids.data_ptr() != batch.trajectory.group_ids.data_ptr()
+    return batch
 
 
 class _DeferredCollector:
@@ -58,6 +103,15 @@ class _DeferredCollector:
         names = [",".join(dict.fromkeys(pending.prompts)) for pending in pendings]
         self.events.append(f"score_rollouts:[{';'.join(names)}]")
         return list(pendings)
+
+
+class _TrajectoryDeferredCollector(_DeferredCollector):
+    """Deferred collector whose trainer and trajectory grouping never alias."""
+
+    async def collect_unscored(self, inputs: list[Any], **kwargs: Any) -> RolloutBatch:
+        prompts = [getattr(item, "prompt", item) for item in inputs]
+        self.events.append(f"generate:{','.join(prompts)}")
+        return _batch_with_trajectory(prompts, int(kwargs["group_size"]))
 
 
 @pytest.mark.asyncio
@@ -110,6 +164,45 @@ async def test_mixed_prompts_preserve_group_id_remap() -> None:
     ]
     assert [batch.group_ids.unique().tolist() for batch in batches] == [[0], [1], [2]]
     assert [batch.prompts for batch in batches] == [["s0"], ["e1"], ["s2"]]
+
+
+@pytest.mark.asyncio
+async def test_prompt_example_scalar_remap_updates_batch_and_trajectory_group_ids() -> None:
+    """Checks scalar remaps update the evaluator's non-alias trajectory tensor."""
+
+    batches = await collect_prompt_batches(
+        collector=_TrajectoryDeferredCollector(),
+        prompts=[PromptExample(prompt="p0"), PromptExample(prompt="p1")],
+        group_size=2,
+        runtime_debug=False,
+        policy_version=None,
+    )
+
+    for expected_group, batch in enumerate(batches):
+        expected = torch.full((2,), expected_group, dtype=torch.long)
+        assert torch.equal(batch.group_ids, expected)
+        assert batch.trajectory is not None
+        assert torch.equal(batch.trajectory.group_ids, expected)
+        assert torch.equal(TrajectorySignalBuilder(batch).group_ids, expected)
+
+
+@pytest.mark.asyncio
+async def test_plain_string_list_remap_updates_batch_and_trajectory_group_ids() -> None:
+    """Checks list remaps retain the same batch/trajectory synchronization."""
+
+    batches = await collect_prompt_batches(
+        collector=_TrajectoryDeferredCollector(),
+        prompts=["p0", "p1"],
+        group_size=1,
+        runtime_debug=False,
+        policy_version=None,
+    )
+
+    assert [batch.group_ids.item() for batch in batches] == [0, 1]
+    assert [
+        TrajectorySignalBuilder(batch).group_ids.item()
+        for batch in batches
+    ] == [0, 1]
 
 
 @dataclass

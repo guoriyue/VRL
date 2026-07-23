@@ -245,10 +245,8 @@ async def collect_prompt_batches(
 
     all_batches: list[RolloutBatch] = []
     for batch, (_, remap) in zip(batches, unscored_groups, strict=True):
-        if isinstance(remap, list):
-            remap_group_ids_(batch, remap)
-        else:
-            batch.group_ids[:] = remap
+        global_prompt_indices = remap if isinstance(remap, list) else [remap]
+        remap_group_ids_(batch, global_prompt_indices)
         all_batches.extend(split_batch_by_group(batch))
     if stats is not None:
         collection_wall_s = time.perf_counter() - collection_started
