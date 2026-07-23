@@ -247,11 +247,10 @@ class LoggingStatsSink:
 class JsonlStatsSink:
     """Append one JSON object per step to a JSONL file.
 
-    The log line that :class:`LoggingStatsSink` emits is the only place phase
-    timings surface today, which makes ``collect.*`` unreadable to any
-    programmatic consumer (``metrics.csv`` carries no phase columns). A
-    benchmark comparing collection arms needs those numbers per step as data,
-    not as text to re-parse out of a log.
+    ``metrics.csv`` exposes a stable subset of continuous-health diagnostics,
+    but not arbitrary ``collect.*`` phases. A benchmark comparing collection
+    arms needs the complete phase mapping per step as data, not as text to
+    re-parse out of a log.
     """
 
     def __init__(self, path: str | Path) -> None:

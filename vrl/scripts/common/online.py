@@ -54,6 +54,11 @@ from vrl.trainers.checkpointing import (
 )
 from vrl.trainers.data import PromptBatchSampler, load_prompt_examples_from_config
 from vrl.trainers.distributed import DistributedTrainingContext, resolve_training_context
+from vrl.trainers.metrics_io import (
+    build_online_metric_row,
+    format_online_metric_row,
+    online_metric_columns,
+)
 from vrl.trainers.online import OnlineTrainer
 from vrl.trainers.online.config import OnlineBatchPlan
 from vrl.trainers.strategy import build_strategy
@@ -574,161 +579,16 @@ class OnlineRecipeRun:
     model_identity: dict[str, Any] | None = None
 
     def prepare_metrics_csv(self) -> None:
-        component_cols = ",".join(f"r_{name}" for name in self.component_names)
-        header = (
-            "epoch,loss,policy_loss,sft_loss,kl_penalty,weighted_kl_loss,"
-            "reward_mean,reward_std,"
-            "clip_fraction,active_clip_fraction,pre_update_clip_fraction,"
-            "pre_update_active_clip_fraction,pre_update_logprob_abs_diff_max,"
-            "tis_clip_fraction,rs_seq_masked_fraction,approx_kl,"
-            "logprob_abs_diff_mean,logprob_abs_diff_max,"
-            "ratio_abs_dev_mean,ratio_abs_dev_max,mismatch_kl,mismatch_k3_kl,"
-            "advantage_mean,grad_norm,adv_saturation,"
-            "adv_zero_rate,group_size,trained_prompt_num,"
-            # Continuous-rollout async diagnostics (0 in strict_on_policy mode). These
-            # answer "is the run actually async?": observed staleness of consumed
-            # samples, prefetched ready-queue depth, weight-sync barrier pause, and
-            # producer starvation. Sourced from TrainStepMetrics.phase_times.
-            "continuous_stale_versions,continuous_ready_groups,"
-            "continuous_ready_groups_at_demand,continuous_queue_wait_s,"
-            "continuous_item_age_s,continuous_lookahead_requested,"
-            "continuous_weight_sync_pause_s,continuous_producer_max_gap_s,"
-            "continuous_producer_submitted,"
-            "continuous_producer_completed,continuous_producer_errors,"
-            # 0 = draining weight-sync barrier (waited for in-flight generation),
-            # 1 = non-draining (versioned trainable-state slots let it skip the wait).
-            "continuous_weight_sync_barrier_mode"
-        )
-        if component_cols:
-            header = f"{header},{component_cols}"
         prepare_metrics_csv(
             self.csv_path,
-            header + "\n",
+            online_metric_columns(self.component_names),
             resume_at=("epoch", self.resume_epoch) if self.resume_epoch is not None else None,
         )
 
     def write_metric_row(self, epoch: int, metrics: Any) -> None:
-        component_names = self.component_names
-        current = getattr(metrics, "reward_components", {}) or {}
-        component_means = {
-            name: float(current[name]) if name in current else float("nan")
-            for name in component_names
-        }
-        # Continuous async diagnostics live in TrainStepMetrics.phase_times (attached
-        # per iteration by ContinuousRolloutSchedule); empty in strict_on_policy mode.
-        phases = getattr(metrics, "phase_times", None) or {}
-        row = {
-            "epoch": epoch,
-            "loss": metrics.loss,
-            "policy_loss": metrics.policy_loss,
-            "sft_loss": metrics.sft_loss,
-            "kl_penalty": metrics.kl_penalty,
-            "weighted_kl_loss": metrics.weighted_kl_loss,
-            "reward_mean": metrics.reward_mean,
-            "reward_std": metrics.reward_std,
-            # Keep the stable flat CSV schema at this IO boundary; internally the
-            # ownership is explicit (overall update vs pass-zero parity snapshot).
-            "clip_fraction": metrics.update.clip_fraction,
-            "active_clip_fraction": metrics.update.active_clip_fraction,
-            "pre_update_clip_fraction": metrics.initial_replay.clip_fraction,
-            "pre_update_active_clip_fraction": metrics.initial_replay.active_clip_fraction,
-            "pre_update_logprob_abs_diff_max": metrics.initial_replay.logprob_abs_diff_max,
-            "tis_clip_fraction": metrics.update.tis_clip_fraction,
-            "rs_seq_masked_fraction": metrics.update.rs_seq_masked_fraction,
-            "approx_kl": metrics.update.approx_kl,
-            "logprob_abs_diff_mean": metrics.logprob_mismatch.logprob_abs_diff_mean,
-            "logprob_abs_diff_max": metrics.logprob_mismatch.logprob_abs_diff_max,
-            "ratio_abs_dev_mean": metrics.logprob_mismatch.ratio_abs_dev_mean,
-            "ratio_abs_dev_max": metrics.logprob_mismatch.ratio_abs_dev_max,
-            "mismatch_kl": metrics.logprob_mismatch.mismatch_kl,
-            "mismatch_k3_kl": metrics.logprob_mismatch.mismatch_k3_kl,
-            "advantage_mean": metrics.advantage_mean,
-            "grad_norm": metrics.grad_norm,
-            "adv_saturation": metrics.adv_saturation,
-            "adv_zero_rate": metrics.adv_zero_rate,
-            "group_size": metrics.group_size,
-            "trained_prompt_num": metrics.trained_prompt_num,
-            "continuous_stale_versions": phases.get("continuous.stale_policy_versions", 0.0),
-            "continuous_ready_groups": phases.get("continuous.queue_ready_groups", 0.0),
-            "continuous_ready_groups_at_demand": phases.get(
-                "continuous.ready_groups_at_demand",
-                0.0,
-            ),
-            "continuous_queue_wait_s": phases.get("continuous.queue_wait_s", 0.0),
-            "continuous_item_age_s": phases.get("continuous.item_age_s", 0.0),
-            "continuous_lookahead_requested": phases.get(
-                "continuous.lookahead_requested",
-                0.0,
-            ),
-            "continuous_weight_sync_pause_s": phases.get("continuous.weight_sync_pause_s", 0.0),
-            "continuous_producer_max_gap_s": phases.get("continuous.producer_max_tick_gap_s", 0.0),
-            "continuous_producer_submitted": phases.get(
-                "continuous.producer_submitted",
-                0.0,
-            ),
-            "continuous_producer_completed": phases.get(
-                "continuous.producer_completed",
-                0.0,
-            ),
-            "continuous_producer_errors": phases.get(
-                "continuous.producer_errors",
-                0.0,
-            ),
-            "continuous_weight_sync_barrier_mode": phases.get(
-                "continuous.weight_sync_barrier_mode",
-                0.0,
-            ),
-            **{f"r_{name}": component_means[name] for name in component_names},
-        }
+        row = build_online_metric_row(epoch, metrics, self.component_names)
         with self.csv_path.open("a", encoding="utf-8") as handle:
-            handle.write(
-                ",".join(
-                    [
-                        str(row["epoch"]),
-                        f"{row['loss']:.6f}",
-                        f"{row['policy_loss']:.6f}",
-                        f"{row['sft_loss']:.6f}",
-                        f"{row['kl_penalty']:.6f}",
-                        f"{row['weighted_kl_loss']:.6f}",
-                        f"{row['reward_mean']:.4f}",
-                        f"{row['reward_std']:.4f}",
-                        f"{row['clip_fraction']:.4f}",
-                        f"{row['active_clip_fraction']:.4f}",
-                        f"{row['pre_update_clip_fraction']:.4f}",
-                        f"{row['pre_update_active_clip_fraction']:.4f}",
-                        f"{row['pre_update_logprob_abs_diff_max']:.6f}",
-                        f"{row['tis_clip_fraction']:.4f}",
-                        f"{row['rs_seq_masked_fraction']:.4f}",
-                        f"{row['approx_kl']:.6f}",
-                        f"{row['logprob_abs_diff_mean']:.6f}",
-                        f"{row['logprob_abs_diff_max']:.6f}",
-                        f"{row['ratio_abs_dev_mean']:.6f}",
-                        f"{row['ratio_abs_dev_max']:.6f}",
-                        f"{row['mismatch_kl']:.6f}",
-                        f"{row['mismatch_k3_kl']:.6f}",
-                        f"{row['advantage_mean']:.6f}",
-                        f"{row['grad_norm']:.6f}",
-                        f"{row['adv_saturation']:.4f}",
-                        f"{row['adv_zero_rate']:.4f}",
-                        f"{row['group_size']:.2f}",
-                        str(row["trained_prompt_num"]),
-                        f"{row['continuous_stale_versions']:.1f}",
-                        f"{row['continuous_ready_groups']:.1f}",
-                        f"{row['continuous_ready_groups_at_demand']:.1f}",
-                        f"{row['continuous_queue_wait_s']:.4f}",
-                        f"{row['continuous_item_age_s']:.4f}",
-                        f"{row['continuous_lookahead_requested']:.1f}",
-                        f"{row['continuous_weight_sync_pause_s']:.4f}",
-                        f"{row['continuous_producer_max_gap_s']:.4f}",
-                        f"{row['continuous_producer_submitted']:.1f}",
-                        f"{row['continuous_producer_completed']:.1f}",
-                        f"{row['continuous_producer_errors']:.1f}",
-                        f"{row['continuous_weight_sync_barrier_mode']:.1f}",
-                        *(f"{row[f'r_{name}']:.4f}" for name in component_names),
-                    ],
-                )
-                + "\n",
-            )
+            handle.write(format_online_metric_row(row))
 
     def save_checkpoint(self, path: Path, *, epoch: int) -> None:
         # Called on EVERY rank: save_training_checkpoint runs the trainable-state

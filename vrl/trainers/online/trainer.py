@@ -743,8 +743,8 @@ class OnlineTrainer(Trainer):
         self.model = self._strategy.prepare_model(self.model)
         # Sinks for the per-step phase timings (recording decoupled from
         # emitting). The log line stays the human-facing view; the jsonl file is
-        # the machine-readable one, because collect.* phases appear in no other
-        # structured output (metrics.csv has no phase columns).
+        # the complete machine-readable view. metrics.csv exposes only the
+        # stable continuous-health subset, not arbitrary collect.* phases.
         self._stats_sink: StatsSink = MultiStatsSink(
             LoggingStatsSink(logger),
             JsonlStatsSink(f"{self.config.output_dir}/rollout_stats.jsonl"),

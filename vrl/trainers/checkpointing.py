@@ -9,6 +9,7 @@ import os
 import re
 import shutil
 import tempfile
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -619,7 +620,7 @@ def save_resolved_config(cfg: Any, output_dir: str | Path, *, resumed: bool) -> 
 
 def prepare_metrics_csv(
     csv_path: str | Path,
-    header: str,
+    columns: Sequence[str],
     *,
     resume_at: tuple[str, int] | None,
 ) -> None:
@@ -631,7 +632,19 @@ def prepare_metrics_csv(
     """
 
     path = Path(csv_path)
-    normalized_header = header.rstrip("\r\n") + "\n"
+    if isinstance(columns, (str, bytes)):
+        raise ValueError("metrics columns must be a sequence of column names")
+    column_names = tuple(columns)
+    if (
+        not column_names
+        or any(
+            not isinstance(name, str) or not name or any(char in name for char in ",\r\n")
+            for name in column_names
+        )
+        or len(column_names) != len(set(column_names))
+    ):
+        raise ValueError("metrics columns must be unique non-empty CSV-safe strings")
+    normalized_header = ",".join(column_names) + "\n"
     if resume_at is None:
         path.write_text(normalized_header)
         return
@@ -655,19 +668,18 @@ def prepare_metrics_csv(
             "start a fresh output_dir.",
         )
 
-    columns = next(csv.reader([existing_header]))
-    if position_column not in columns:
+    if position_column not in column_names:
         raise ValueError(f"metrics CSV is missing resume column {position_column!r}: {path}")
-    position_index = columns.index(position_column)
+    position_index = column_names.index(position_column)
     retained_lines: list[str] = []
     previous_position = -1
     truncated_rows = 0
     for line_number, line in enumerate(lines[1:], start=2):
         values = next(csv.reader([line]))
-        if len(values) != len(columns):
+        if len(values) != len(column_names):
             raise ValueError(
                 f"metrics CSV row {line_number} has {len(values)} columns; "
-                f"expected {len(columns)}: {path}",
+                f"expected {len(column_names)}: {path}",
             )
         raw_position = values[position_index]
         try:

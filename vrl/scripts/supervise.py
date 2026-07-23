@@ -39,6 +39,8 @@ from dataclasses import dataclass, field, fields
 from pathlib import Path
 from typing import Any
 
+from vrl.trainers.metrics_io import online_metric_columns
+
 logger = logging.getLogger(__name__)
 
 RUN_VERDICT_NAME = "run_verdict.json"
@@ -107,6 +109,15 @@ class HealthGateConfig:
     min_grad_norm: float = 1e-8
 
     def __post_init__(self) -> None:
+        required_columns = set(_REQUIRED_HEALTH_METRICS)
+        if self.continuous:
+            required_columns.update(_CONTINUOUS_HEALTH_METRICS)
+        missing_columns = sorted(required_columns - set(online_metric_columns()))
+        if missing_columns:
+            raise AssertionError(
+                "health metrics are absent from the online CSV protocol: "
+                + ", ".join(missing_columns),
+            )
         if self.poll_seconds <= 0:
             raise ValueError("poll_seconds must be > 0")
         if self.failure_limit < 1:

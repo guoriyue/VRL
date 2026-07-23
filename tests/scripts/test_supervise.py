@@ -14,6 +14,7 @@ from pathlib import Path
 import pytest
 from omegaconf import OmegaConf
 
+from vrl.algorithms.types import InitialReplayStats, TrainStepMetrics
 from vrl.scripts.supervise import (
     HEALTH_VERDICT_NAME,
     HealthGateConfig,
@@ -21,6 +22,11 @@ from vrl.scripts.supervise import (
     RunSupervisor,
     _build_health_gate_config,
     build_parser,
+)
+from vrl.trainers.metrics_io import (
+    build_online_metric_row,
+    format_online_metric_row,
+    online_metric_columns,
 )
 
 _METRICS_HEADER = "epoch,loss,reward_mean,reward_std,grad_norm,pre_update_logprob_abs_diff_max\n"
@@ -434,6 +440,44 @@ def test_health_runtime_rejects_schedule_threshold_mismatch(
 ) -> None:
     with pytest.raises(ValueError):
         HealthGateConfig(**kwargs)
+
+
+def test_health_required_columns_must_exist_in_online_metric_protocol(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import vrl.scripts.supervise as supervise
+
+    monkeypatch.setattr(
+        supervise,
+        "_REQUIRED_HEALTH_METRICS",
+        ("removed_metric",),
+    )
+
+    with pytest.raises(AssertionError, match="removed_metric"):
+        HealthGateConfig()
+
+
+def test_health_gate_reads_a_complete_online_metric_row(tmp_path) -> None:
+    out = tmp_path / "run"
+    out.mkdir()
+    row = build_online_metric_row(
+        0,
+        TrainStepMetrics(
+            loss=1.0,
+            reward_mean=2.0,
+            reward_std=0.2,
+            grad_norm=0.1,
+            initial_replay=InitialReplayStats(logprob_abs_diff_max=0.001),
+        ),
+    )
+    (out / "metrics.csv").write_text(
+        ",".join(online_metric_columns()) + "\n" + format_online_metric_row(row),
+    )
+
+    gate = MetricsHealthGate(HealthGateConfig(failure_limit=1), out)
+
+    assert gate.judge_new_rows() is False
+    assert not (out / HEALTH_VERDICT_NAME).exists()
 
 
 def test_metrics_health_gate_cli_thresholds_are_configurable() -> None:
