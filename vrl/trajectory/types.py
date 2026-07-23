@@ -115,20 +115,10 @@ class TrajectorySegment:
 
 @dataclass(slots=True)
 class TrajectoryMetrics:
-    """Serializable statistics about the trajectory record itself."""
+    """Serializable non-structural annotations about a trajectory record."""
 
-    num_samples: int | None = None
-    axis_lengths: dict[str, int] = field(default_factory=dict)
+    # Telemetry/provenance-only; structural facts are derived from TrajectoryBatch.
     values: dict[str, Any] = field(default_factory=dict)
-
-    def __post_init__(self) -> None:
-        if self.num_samples is not None and self.num_samples < 0:
-            raise ValueError("TrajectoryMetrics.num_samples must be >= 0 when set")
-        for name, length in self.axis_lengths.items():
-            if not name:
-                raise ValueError("TrajectoryMetrics.axis_lengths keys must be non-empty")
-            if int(length) < 0:
-                raise ValueError("TrajectoryMetrics.axis_lengths values must be >= 0")
 
 
 @dataclass(slots=True)
@@ -153,6 +143,18 @@ class TrajectoryBatch:
             raise ValueError("TrajectoryBatch.family must be non-empty")
         if not self.task:
             raise ValueError("TrajectoryBatch.task must be non-empty")
+
+    @property
+    def num_samples(self) -> int:
+        """Return the sample count from the canonical sample rows."""
+
+        return len(self.sample_rows)
+
+    @property
+    def axis_lengths(self) -> dict[str, int]:
+        """Return known axis lengths from the canonical axis declarations."""
+
+        return {name: axis.length for name, axis in self.axes.items() if axis.length is not None}
 
 
 __all__ = [

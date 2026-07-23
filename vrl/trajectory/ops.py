@@ -43,7 +43,6 @@ def select_trajectory_batch(data: Any, selector: Any) -> Any:
             else tensor.value
         ),
         axes_sample_length=count,
-        metrics_sample_count=count,
         metrics_values=_select_value(data.metrics.values, selector, len(data.sample_rows)),
         context=_select_value(data.context, selector, len(data.sample_rows)),
     )
@@ -87,7 +86,6 @@ def stack_trajectory_batches(batches: list[TrajectoryBatch | None]) -> Trajector
             else tensor.value
         ),
         axes_sample_length=sample_count,
-        metrics_sample_count=sample_count,
         metrics_values=dict(first.metrics.values),
         context=dict(first.context),
     )
@@ -109,7 +107,6 @@ def move_trajectory_batch(data: Any, device: Any) -> Any:
         sample_rows=list(data.sample_rows),
         tensor_value_fn=lambda tensor: move_value_to_device(tensor.value, device),
         axes_sample_length=data.axes["sample"].length,
-        metrics_sample_count=data.metrics.num_samples,
         metrics_values=move_value_to_device(data.metrics.values, device),
         context=move_value_to_device(data.context, device),
     )
@@ -124,7 +121,6 @@ def _rebuild_trajectory(
     sample_rows: list[GenerationSampleRow],
     tensor_value_fn: Any,
     axes_sample_length: int | None,
-    metrics_sample_count: int | None,
     metrics_values: dict[str, Any],
     context: dict[str, Any],
 ) -> TrajectoryBatch:
@@ -154,9 +150,6 @@ def _rebuild_trajectory(
         )
         for name, segment in data.segments.items()
     }
-    axis_lengths = dict(data.metrics.axis_lengths)
-    if axes_sample_length is not None and "sample" in axis_lengths:
-        axis_lengths["sample"] = axes_sample_length
 
     out = TrajectoryBatch(
         request_id=request_id,
@@ -167,11 +160,7 @@ def _rebuild_trajectory(
         segments=segments,
         primary_segment=data.primary_segment,
         reward_views=dict(data.reward_views),
-        metrics=TrajectoryMetrics(
-            num_samples=metrics_sample_count,
-            axis_lengths=axis_lengths,
-            values=metrics_values,
-        ),
+        metrics=TrajectoryMetrics(values=metrics_values),
         context=context,
     )
     return TrajectoryValidator(out).validate_batch()

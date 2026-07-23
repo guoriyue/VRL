@@ -11,7 +11,6 @@ from vrl.trajectory.types import (
     ReplayInput,
     TrajectoryAxis,
     TrajectoryBatch,
-    TrajectoryMetrics,
     TrajectorySegment,
     TrajectoryTensor,
 )
@@ -138,11 +137,6 @@ class _TrajectoryBatchBuilder:
                     metadata={"output_ref": "GenerationOutput.output"},
                 )
             },
-            metrics=TrajectoryMetrics(
-                num_samples=batch_size,
-                axis_lengths={"sample": batch_size, "denoise": timestep_count},
-                values={"num_steps": timestep_count},
-            ),
             context=self._serializable_context(context),
         )
         return TrajectoryValidator(trajectory).validate_batch()
@@ -310,18 +304,6 @@ class _TrajectoryBatchBuilder:
                     metadata={"output_ref": "GenerationOutput.output"},
                 )
             },
-            metrics=TrajectoryMetrics(
-                num_samples=batch_size,
-                axis_lengths={
-                    "sample": batch_size,
-                    "temporal_chunk": chunk_count,
-                    "denoise_transition": transition_count,
-                },
-                values={
-                    "num_temporal_chunks": chunk_count,
-                    "num_denoise_transitions": transition_count,
-                },
-            ),
             context={
                 **self._serializable_context(context),
                 "trajectory_mode": "trainable_chunk_denoise",
@@ -392,14 +374,6 @@ class _TrajectoryBatchBuilder:
                     value_range="unit",
                 )
             },
-            metrics=TrajectoryMetrics(
-                num_samples=batch_size,
-                axis_lengths={
-                    "sample": batch_size,
-                    "temporal_chunk": temporal_chunk_count,
-                },
-                values={"num_temporal_chunks": temporal_chunk_count},
-            ),
             context={
                 **self._serializable_context(context),
                 "trajectory_mode": "generation_only",
@@ -505,11 +479,6 @@ class _TrajectoryBatchBuilder:
                     metadata={"output_ref": "GenerationOutput.output"},
                 )
             },
-            metrics=TrajectoryMetrics(
-                num_samples=batch_size,
-                axis_lengths={"sample": batch_size, "token": token_count},
-                values={"num_tokens": token_count},
-            ),
             context=self._serializable_context(context),
         )
         return TrajectoryValidator(trajectory).validate_batch()
@@ -621,11 +590,6 @@ class _TrajectoryBatchBuilder:
                     metadata={"output_ref": "GenerationOutput.output"},
                 )
             },
-            metrics=TrajectoryMetrics(
-                num_samples=batch_size,
-                axis_lengths={"sample": batch_size, "token": token_count},
-                values={"num_tokens": token_count},
-            ),
             context=self._serializable_context(context),
         )
         return TrajectoryValidator(trajectory).validate_batch()
@@ -726,9 +690,6 @@ class _TrajectoryBatchBuilder:
                 },
             )
 
-        axis_lengths = {
-            name: axis.length for name, axis in axes.items() if axis.length is not None
-        }
         trajectory = TrajectoryBatch(
             request_id=self.request.request_id,
             family=self.request.family,
@@ -744,11 +705,6 @@ class _TrajectoryBatchBuilder:
                     metadata={"output_ref": "GenerationOutput.output"},
                 )
             },
-            metrics=TrajectoryMetrics(
-                num_samples=batch_size,
-                axis_lengths=axis_lengths,
-                values={"num_segments": len(segments)},
-            ),
             context=self._serializable_context(context),
         )
         return TrajectoryValidator(trajectory).validate_batch()

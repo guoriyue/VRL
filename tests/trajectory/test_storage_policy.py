@@ -45,7 +45,7 @@ def test_dtype_policy_only_casts_floating_tensors() -> None:
         torch.tensor([[0.125, -0.25], [0.5, -0.75]]),
         atol=1e-3,
     )
-    assert result.metrics.axis_lengths == {"sample": 2, "token": 2}
+    assert result.axis_lengths == {"sample": 2, "token": 2}
 
 
 def test_cpu_storage_policy_moves_tensor_leaves_to_cpu() -> None:

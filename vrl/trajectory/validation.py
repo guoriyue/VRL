@@ -75,22 +75,6 @@ class TrajectoryValidator:
                 "sample axis length does not match sample_rows: "
                 f"{sample_axis.length} != {len(batch.sample_rows)}",
             )
-        if batch.metrics.num_samples is not None and batch.metrics.num_samples != len(
-            batch.sample_rows,
-        ):
-            self._fail(
-                "TrajectoryMetrics.num_samples does not match sample_rows: "
-                f"{batch.metrics.num_samples} != {len(batch.sample_rows)}",
-            )
-        for axis_name, length in batch.metrics.axis_lengths.items():
-            axis = batch.axes.get(axis_name)
-            if axis is None:
-                self._fail(f"TrajectoryMetrics.axis_lengths references unknown axis {axis_name!r}")
-            if axis.length is not None and int(length) != axis.length:
-                self._fail(
-                    f"TrajectoryMetrics.axis_lengths[{axis_name!r}]={length} "
-                    f"does not match TrajectoryAxis.length={axis.length}",
-                )
         forbidden_metrics = FORBIDDEN_TRAJECTORY_METRICS.intersection(batch.metrics.values)
         if forbidden_metrics:
             self._fail(
