@@ -7,10 +7,11 @@ tests use real Ray on whatever GPUs/CPUs the host exposes.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 import pytest
 from omegaconf import OmegaConf
 
-from vrl.generation.ray.config import RolloutWorkerConfig
 from vrl.ray.placement import GlobalRayPlacementOwner
 from vrl.ray.resources import (
     build_bundle_layout,
@@ -163,23 +164,19 @@ def test_bundle_plan_dedicated_reward_appends_fresh_bundle() -> None:
 # logic is verified deterministically without multi-GPU hardware.
 
 
-def _worker(*, cpus_per_worker: float = 1.0) -> RolloutWorkerConfig:
-    return RolloutWorkerConfig(
-        cpus_per_worker=cpus_per_worker,
-        max_inflight_chunks_per_worker=1,
-        health_check_interval_s=30.0,
-        health_check_timeout_s=30.0,
-        health_check_first_wait_s=0.0,
-        pipelined=False,
-        chunk_placement_strategy="round_robin",
-        sync_trainable_state=True,
-    )
+@dataclass(frozen=True, slots=True)
+class _WorkerCPUConfig:
+    cpus_per_worker: float
+
+
+def _worker(*, cpus_per_worker: float = 1.0) -> _WorkerCPUConfig:
+    return _WorkerCPUConfig(cpus_per_worker=cpus_per_worker)
 
 
 def _owner(
     resources: dict,
     *,
-    worker: RolloutWorkerConfig | None = None,
+    worker: _WorkerCPUConfig | None = None,
 ) -> GlobalRayPlacementOwner:
     return GlobalRayPlacementOwner(_resolve(resources), worker or _worker())
 
@@ -293,7 +290,7 @@ def test_bundle_requirements_size_shared_bundle_to_max_role_cpu() -> None:
     assert requirements[trainer_bundle] == {"CPU": 0.001, "GPU": 1.0}
 
 
-def test_placement_owner_keeps_exact_resolved_worker_snapshot() -> None:
+def test_placement_owner_consumes_exact_rollout_cpu_capability() -> None:
     worker = _worker(cpus_per_worker=2.5)
     owner = _owner(
         {
