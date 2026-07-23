@@ -6,19 +6,20 @@ for fresh adapters) is family-agnostic, so it lives here once. Families only
 override the small hooks that actually differ.
 
 The DiffusionNFT previous-policy adapter primitives (``build_lora_config`` /
-``copy_adapter_weights`` / ``freeze_adapter_params``) also live here: they are
-pure PEFT operations with no family specifics, shared by both cosmos/predict2.5
-(its custom ``apply_lora``) and flux (its ``attach_previous_policy_adapter`` /
-``sync_previous_policy_adapter`` methods). Keeping one copy here is the same
-de-duplication rationale as the attach logic above — a second copy would rot the
-moment the PEFT param-naming convention shifts under one family but not the other.
+``copy_adapter_weights`` / ``freeze_checkpoint_owned_adapter_params``) also
+live here: they are pure PEFT operations with no family specifics, shared by
+both cosmos/predict2.5 (its custom ``apply_lora``) and flux (its
+``attach_previous_policy_adapter`` / ``sync_previous_policy_adapter`` methods).
+Keeping one copy here is the same de-duplication rationale as the attach logic
+above — a second copy would rot the moment the PEFT param-naming convention
+shifts under one family but not the other.
 """
 
 from __future__ import annotations
 
 from typing import Any
 
-from vrl.models.interfaces.runtime import ModelBuild
+from vrl.models.interfaces.runtime import ModelBuild, register_checkpoint_owned_state
 
 
 class LoraModelMixin:
@@ -159,8 +160,8 @@ def copy_adapter_weights(
         )
 
 
-def freeze_adapter_params(module: Any, adapter: str) -> None:
-    """Set ``requires_grad=False`` on every parameter of the named PEFT adapter.
+def freeze_checkpoint_owned_adapter_params(module: Any, adapter: str) -> None:
+    """Freeze a mutable PEFT adapter and register it for exact checkpoint resume.
 
     Used for NFT's ``previous`` adapter: it is only forward-evaluated under
     no_grad and refreshed by weight copy (``sync_previous_policy_adapter``),
@@ -172,20 +173,23 @@ def freeze_adapter_params(module: Any, adapter: str) -> None:
     """
 
     marker = f".{adapter}."
-    frozen = 0
-    for name, param in module.named_parameters():
-        if marker in name:
-            param.requires_grad_(False)
-            frozen += 1
-    if frozen == 0:
+    matched = [
+        (name, parameter)
+        for name, parameter in module.named_parameters(remove_duplicate=False)
+        if marker in name
+    ]
+    if not matched:
         raise RuntimeError(
             f"no parameters found for adapter {adapter!r} to freeze",
         )
+    register_checkpoint_owned_state(module, (name for name, _ in matched))
+    for _, parameter in matched:
+        parameter.requires_grad_(False)
 
 
 __all__ = [
     "LoraModelMixin",
     "build_lora_config",
     "copy_adapter_weights",
-    "freeze_adapter_params",
+    "freeze_checkpoint_owned_adapter_params",
 ]

@@ -55,7 +55,7 @@ from vrl.models.steps.denoise.common.lora import (
     LoraModelMixin,
     build_lora_config,
     copy_adapter_weights,
-    freeze_adapter_params,
+    freeze_checkpoint_owned_adapter_params,
 )
 
 
@@ -79,7 +79,8 @@ class FluxModel(LoraModelMixin, DiffusersPipelineModelBase, DiffusionBackboneRun
     (``attach_previous_policy_adapter`` / ``sync_previous_policy_adapter``) so the
     NFT runtime path can drive a frozen ``previous`` LoRA mirror; plain GRPO runs
     never attach it. The PEFT primitives they build on
-    (``build_lora_config`` / ``copy_adapter_weights`` / ``freeze_adapter_params``)
+    (``build_lora_config`` / ``copy_adapter_weights`` /
+    ``freeze_checkpoint_owned_adapter_params``)
     stay shared with cosmos/predict2.5 in ``common/lora.py``.
 
     Implements the backbone-runner protocol itself. FLUX.1-dev is
@@ -205,7 +206,7 @@ class FluxModel(LoraModelMixin, DiffusersPipelineModelBase, DiffusionBackboneRun
         if "previous" not in getattr(transformer, "peft_config", {}):
             transformer.add_adapter("previous", build_lora_config(lora_config))
         copy_adapter_weights(transformer, src="default", dst="previous")
-        freeze_adapter_params(transformer, "previous")
+        freeze_checkpoint_owned_adapter_params(transformer, "previous")
         transformer.set_adapter("default")
 
     def sync_previous_policy_adapter(self, *, decay: float = 0.0) -> None:

@@ -47,7 +47,8 @@ distributed:
     ddp:
       # Correct because both the frozen base AND NFT's forward-only "previous"
       # adapter are requires_grad=False (the latter is frozen in Cosmos apply_lora
-      # via _freeze_adapter_params), so the only params the reducer tracks are the
+      # by the shared checkpoint-owned adapter primitive), so the only params
+      # the reducer tracks are the
       # trainable "default" adapter — which always gets a grad. (Before that freeze
       # this had to be true, or the first backward died on the "previous" params
       # getting no gradient under their no_grad replay.)

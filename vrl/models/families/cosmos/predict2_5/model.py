@@ -34,7 +34,7 @@ from vrl.models.steps.denoise.common.lora import (
     copy_adapter_weights as _copy_adapter_weights,
 )
 from vrl.models.steps.denoise.common.lora import (
-    freeze_adapter_params as _freeze_adapter_params,
+    freeze_checkpoint_owned_adapter_params as _freeze_checkpoint_owned_adapter_params,
 )
 from vrl.models.steps.denoise.common.tensors import require_tensor
 
@@ -276,7 +276,7 @@ class CosmosPredict25Model(CosmosReplayForward, DiffusersPipelineModelBase):
                 )
             transformer.add_adapter("previous", _build_lora_config(lora_config))
         _copy_adapter_weights(transformer, src="default", dst="previous")
-        _freeze_adapter_params(transformer, "previous")
+        _freeze_checkpoint_owned_adapter_params(transformer, "previous")
         transformer.set_adapter("default")
         self._set_transformer(transformer)
 
