@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import gc
+import json
 import weakref
 from types import SimpleNamespace
 
@@ -9,9 +10,10 @@ import pytest
 import torch
 from omegaconf import OmegaConf
 
-from vrl.config.precision import RolePrecision, resolve_precision_policy
-from vrl.config.schema import parse_config
+from vrl.config.precision import RolePrecision
 from vrl.scripts.eval import cosmos_predict25_kling_eval as eval_script
+
+MODEL_IDENTITY = {"schema": "vrl.model-identity/v1", "sources": {}, "build": {}}
 
 
 def _minimal_eval_config(*, family: str = "cosmos-predict2.5"):
@@ -164,9 +166,22 @@ def test_explicit_dtype_path_runs_after_structural_validation(
         "load_config",
         lambda *_args, **_kwargs: _minimal_eval_config(),
     )
+    entry = SimpleNamespace(
+        family="cosmos-predict2.5",
+        resolve_model_build=lambda _root, _device, **kwargs: SimpleNamespace(
+            family="cosmos-predict2.5",
+            parameter_dtype=kwargs["parameter_dtype_override"],
+        ),
+    )
+    monkeypatch.setattr(eval_script, "get_model_family_entry", lambda _family: entry)
+    monkeypatch.setattr(
+        eval_script,
+        "resolve_checkpoint_model_identity",
+        lambda _build: MODEL_IDENTITY,
+    )
 
-    def fake_generate_all(*_args, **kwargs):
-        captured["dtype"] = kwargs["dtype"]
+    def fake_generate_all(build, *_args, **_kwargs):
+        captured["dtype"] = build.parameter_dtype
         return []
 
     monkeypatch.setattr(eval_script, "_generate_all", fake_generate_all)
@@ -223,6 +238,61 @@ def test_explicit_dtype_rejects_malformed_model_family_before_generation(
         )
 
 
+def test_checkpoint_identity_rejects_before_model_generation(monkeypatch, tmp_path) -> None:
+    checkpoint = tmp_path / "checkpoint-final"
+    checkpoint.mkdir()
+    (checkpoint / "checkpoint_meta.json").write_text(
+        json.dumps(
+            {
+                "schema_version": 2,
+                "family": "cosmos-predict2.5",
+                "model_identity": {"schema": "wrong/v1"},
+            },
+        ),
+    )
+    monkeypatch.setattr(
+        eval_script,
+        "load_config",
+        lambda *_args, **_kwargs: _minimal_eval_config(),
+    )
+    build = SimpleNamespace(family="cosmos-predict2.5")
+    entry = SimpleNamespace(
+        family="cosmos-predict2.5",
+        resolve_model_build=lambda *_args, **_kwargs: build,
+    )
+    monkeypatch.setattr(eval_script, "get_model_family_entry", lambda _family: entry)
+    monkeypatch.setattr(
+        eval_script,
+        "resolve_checkpoint_model_identity",
+        lambda _build: MODEL_IDENTITY,
+    )
+    monkeypatch.setattr(
+        eval_script,
+        "_generate_all",
+        lambda *_args, **_kwargs: pytest.fail("generation started before identity preflight"),
+    )
+    output_dir = tmp_path / "output"
+
+    with pytest.raises(ValueError, match="metadata model identity mismatch"):
+        eval_script.main(
+            [
+                "--checkpoint",
+                str(checkpoint),
+                "--prompt",
+                "a world-model test",
+                "--device",
+                "cpu",
+                "--dtype",
+                "fp32",
+                "--generate-only",
+                "--output-dir",
+                str(output_dir),
+            ],
+        )
+
+    assert not output_dir.exists()
+
+
 def test_generate_all_releases_model_before_rebuilding(monkeypatch, tmp_path) -> None:
     """Checks non-reused checkpoint eval does not keep old models alive."""
 
@@ -241,6 +311,7 @@ def test_generate_all_releases_model_before_rebuilding(monkeypatch, tmp_path) ->
             self.model.precision = self.precision
 
     model_refs: list[weakref.ReferenceType[FakeModel]] = []
+    bundle_ids: list[int] = []
 
     def fake_build_runtime_bundle(_build):
         gc.collect()
@@ -248,24 +319,58 @@ def test_generate_all_releases_model_before_rebuilding(monkeypatch, tmp_path) ->
             assert model_refs[-1]() is None
         bundle = FakeBundle()
         model_refs.append(weakref.ref(bundle.model))
+        bundle_ids.append(id(bundle))
         return bundle
 
     monkeypatch.setattr(eval_script, "_release_cuda", gc.collect)
     entry = SimpleNamespace(
-        resolve_model_build=lambda cfg, device, **kwargs: object(),
+        family="cosmos-predict2.5",
         build_rollout=fake_build_runtime_bundle,
     )
     monkeypatch.setattr(eval_script, "get_model_family_entry", lambda _family: entry)
+    checkpoints = {}
+
+    def fake_load_checkpoint(path):
+        checkpoint = object()
+        checkpoints[path] = checkpoint
+        return checkpoint
+
     monkeypatch.setattr(
-        eval_script, "_load_checkpoint_into_bundle", lambda bundle, checkpoint: None
+        eval_script,
+        "load_training_checkpoint",
+        fake_load_checkpoint,
+    )
+    restored = []
+
+    def fake_restore(
+        checkpoint,
+        *,
+        bundle,
+        family,
+        expected_model_identity,
+        strict,
+    ):
+        restored.append(
+            (
+                checkpoint,
+                id(bundle),
+                family,
+                expected_model_identity,
+                strict,
+            ),
+        )
+
+    monkeypatch.setattr(eval_script, "restore_model_checkpoint", fake_restore)
+    monkeypatch.setattr(
+        eval_script,
+        "resolve_checkpoint_model_identity",
+        lambda _build: MODEL_IDENTITY,
     )
     monkeypatch.setattr(eval_script, "_generate_checkpoint_videos", lambda *args, **kwargs: [])
 
-    root = parse_config(_minimal_eval_config())
-    precision = resolve_precision_policy(root)
+    build = SimpleNamespace(family="cosmos-predict2.5")
     videos = eval_script._generate_all(
-        root,
-        precision,
+        build,
         [
             eval_script.CheckpointTarget("base", tmp_path / "base"),
             eval_script.CheckpointTarget("trained", tmp_path / "trained"),
@@ -275,11 +380,76 @@ def test_generate_all_releases_model_before_rebuilding(monkeypatch, tmp_path) ->
         base_seed=0,
         output_dir=tmp_path,
         sampling={},
-        device=torch.device("cpu"),
-        dtype=torch.float32,
         keep_model_between_checkpoints=False,
+        expected_model_identity=MODEL_IDENTITY,
     )
 
     assert videos == []
+    assert list(checkpoints) == [tmp_path / "base", tmp_path / "trained"]
+    assert [
+        (
+            checkpoint,
+            family,
+            expected_model_identity,
+            strict,
+        )
+        for checkpoint, _bundle_id, family, expected_model_identity, strict in restored
+    ] == [
+        (checkpoints[tmp_path / "base"], "cosmos-predict2.5", MODEL_IDENTITY, True),
+        (checkpoints[tmp_path / "trained"], "cosmos-predict2.5", MODEL_IDENTITY, True),
+    ]
+    assert [bundle_id for _checkpoint, bundle_id, *_rest in restored] == bundle_ids
     gc.collect()
     assert [ref() for ref in model_refs] == [None, None]
+
+
+def test_generate_all_rejects_model_source_drift_before_checkpoint_load(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    build = SimpleNamespace(family="cosmos-predict2.5")
+    built = False
+    checkpoint_loaded = False
+
+    def build_rollout(actual_build):
+        nonlocal built
+        assert actual_build is build
+        built = True
+        return object()
+
+    entry = SimpleNamespace(
+        family="cosmos-predict2.5",
+        build_rollout=build_rollout,
+    )
+    monkeypatch.setattr(eval_script, "get_model_family_entry", lambda _family: entry)
+    monkeypatch.setattr(
+        eval_script,
+        "resolve_checkpoint_model_identity",
+        lambda _build: {"schema": "changed"},
+    )
+
+    def fail_if_checkpoint_loaded(_path):
+        nonlocal checkpoint_loaded
+        checkpoint_loaded = True
+        raise AssertionError("checkpoint load must not run after model source drift")
+
+    monkeypatch.setattr(eval_script, "load_training_checkpoint", fail_if_checkpoint_loaded)
+
+    with pytest.raises(
+        RuntimeError,
+        match="Cosmos model source changed during runtime construction",
+    ):
+        eval_script._generate_all(
+            build,
+            [eval_script.CheckpointTarget("trained", tmp_path / "checkpoint")],
+            ["prompt"],
+            samples_per_prompt=1,
+            base_seed=0,
+            output_dir=tmp_path,
+            sampling={},
+            keep_model_between_checkpoints=True,
+            expected_model_identity=MODEL_IDENTITY,
+        )
+
+    assert built is True
+    assert checkpoint_loaded is False

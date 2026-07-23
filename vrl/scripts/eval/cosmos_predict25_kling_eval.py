@@ -21,10 +21,16 @@ from vrl.config.schema import RootConfig, parse_config
 from vrl.families.registry import get_model_family_entry
 from vrl.generation.types import VideoGenerationRequest
 from vrl.math.denoise.flow_matching import sde_step_with_logprob
+from vrl.models.checkpoint_identity import resolve_checkpoint_model_identity
 from vrl.models.dtypes import resolve_torch_dtype
 from vrl.rewards.inference import RewardInferenceArtifact, RewardInferenceRequest
 from vrl.rewards.models.kling_video_reward import KlingVideoRewardModel
-from vrl.trainers.checkpointing import load_trainable_state, load_training_checkpoint
+from vrl.trainers.checkpointing import (
+    load_training_checkpoint,
+    read_checkpoint_meta,
+    restore_model_checkpoint,
+    validate_checkpoint_meta_compatibility,
+)
 from vrl.trainers.data import load_prompt_manifest
 from vrl.utils.media import write_mp4
 
@@ -148,6 +154,24 @@ def main(argv: list[str] | None = None) -> None:
         device=device,
     )
     sampling = _resolve_sampling(args, cfg)
+    if root.model is None:
+        raise ValueError("Cosmos checkpoint evaluation requires model configuration")
+    entry = get_model_family_entry(str(root.model.family))
+    build = entry.resolve_model_build(
+        root,
+        device,
+        precision=precision,
+        parameter_dtype_override=dtype,
+    )
+    model_identity = resolve_checkpoint_model_identity(build)
+    for target in checkpoint_targets:
+        checkpoint_dir = target.path.parent if target.path.is_file() else target.path
+        validate_checkpoint_meta_compatibility(
+            read_checkpoint_meta(checkpoint_dir),
+            family=entry.family,
+            expected_model_identity=model_identity,
+            strict=True,
+        )
     output_dir = Path(args.output_dir).expanduser().resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -169,17 +193,15 @@ def main(argv: list[str] | None = None) -> None:
     )
 
     generated = _generate_all(
-        root,
-        precision,
+        build,
         checkpoint_targets,
         prompts,
         samples_per_prompt=int(args.samples_per_prompt),
         base_seed=int(args.seed),
         output_dir=output_dir,
         sampling=sampling,
-        device=device,
-        dtype=dtype,
         keep_model_between_checkpoints=keep_model_between_checkpoints,
+        expected_model_identity=model_identity,
     )
     _write_generation_metadata(generated, output_dir)
 
@@ -302,8 +324,7 @@ def _keep_model_between_checkpoints(args: argparse.Namespace) -> bool:
 
 
 def _generate_all(
-    root: RootConfig,
-    precision: PrecisionPolicy,
+    build: Any,
     checkpoint_targets: list[CheckpointTarget],
     prompts: list[str],
     *,
@@ -311,15 +332,12 @@ def _generate_all(
     base_seed: int,
     output_dir: Path,
     sampling: dict[str, Any],
-    device: Any,
-    dtype: Any,
     keep_model_between_checkpoints: bool,
+    expected_model_identity: dict[str, Any],
 ) -> list[GeneratedVideo]:
     generated: list[GeneratedVideo] = []
     bundle: Any | None = None
-    if root.model is None:
-        raise ValueError("Cosmos checkpoint evaluation requires model configuration")
-    entry = get_model_family_entry(str(root.model.family))
+    entry = get_model_family_entry(str(build.family))
     try:
         for target in checkpoint_targets:
             if bundle is None or not keep_model_between_checkpoints:
@@ -328,14 +346,20 @@ def _generate_all(
                     "Building Cosmos Predict2.5 generation bundle for %s",
                     target.label,
                 )
-                build = entry.resolve_model_build(
-                    root,
-                    device,
-                    precision=precision,
-                    parameter_dtype_override=dtype,
-                )
                 bundle = entry.build_rollout(build)
-            _load_checkpoint_into_bundle(bundle, target)
+                if resolve_checkpoint_model_identity(build) != expected_model_identity:
+                    raise RuntimeError(
+                        "Cosmos model source changed during runtime construction",
+                    )
+            logger.info("Loading checkpoint-owned state from %s", target.path)
+            training_checkpoint = load_training_checkpoint(target.path)
+            restore_model_checkpoint(
+                training_checkpoint,
+                bundle=bundle,
+                family=entry.family,
+                expected_model_identity=expected_model_identity,
+                strict=True,
+            )
             model = bundle.model.eval()
             try:
                 generated.extend(
@@ -359,12 +383,6 @@ def _generate_all(
         del bundle
         _release_cuda()
     return generated
-
-
-def _load_checkpoint_into_bundle(bundle: Any, target: CheckpointTarget) -> None:
-    logger.info("Loading trainable state from %s", target.path)
-    training_checkpoint = load_training_checkpoint(target.path)
-    load_trainable_state(bundle, training_checkpoint.trainable_state, strict=True)
 
 
 def _generate_checkpoint_videos(

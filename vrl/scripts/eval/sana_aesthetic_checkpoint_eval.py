@@ -32,6 +32,7 @@ from omegaconf import DictConfig, OmegaConf
 from vrl.config.loading import load_config
 from vrl.config.precision import PrecisionPolicy, resolve_precision_policy
 from vrl.config.schema import RootConfig, parse_config
+from vrl.models.checkpoint_identity import resolve_checkpoint_model_identity
 from vrl.scripts.eval.sana_inference import (
     OFFICIAL_SAMPLING_PROTOCOL,
     SCHEDULER_PROTOCOL,
@@ -41,9 +42,10 @@ from vrl.scripts.eval.sana_inference import (
 from vrl.trainers.checkpointing import (
     TRAINING_CHECKPOINT_NAME,
     is_complete_checkpoint,
-    load_trainable_state,
     load_training_checkpoint,
     read_checkpoint_meta,
+    restore_model_checkpoint,
+    validate_checkpoint_meta_compatibility,
 )
 from vrl.trainers.data import load_prompt_manifest
 
@@ -149,6 +151,28 @@ def main(argv: list[str] | None = None) -> None:
     targets = _discover_checkpoint_targets(run_dir, cfg)
     device = _resolve_device(args.device)
     sampling = _resolve_sampling()
+    identity_root = parse_config(cfg)
+    if identity_root.model is None:
+        raise ValueError("SANA checkpoint evaluation requires model configuration")
+    identity_precision = resolve_precision_policy(identity_root)
+    from vrl.families.registry import get_model_family_entry
+
+    identity_entry = get_model_family_entry(str(identity_root.model.family))
+    identity_build = identity_entry.resolve_model_build(
+        identity_root,
+        device,
+        precision=identity_precision,
+        for_rollout=True,
+    )
+    model_identity = resolve_checkpoint_model_identity(identity_build)
+    for target in targets:
+        if target.path is not None:
+            validate_checkpoint_meta_compatibility(
+                read_checkpoint_meta(target.path),
+                family="sana",
+                expected_model_identity=model_identity,
+                strict=True,
+            )
     build_root = _materialize_model_snapshot(cfg)
     build_precision = resolve_precision_policy(build_root)
     reward_models = _materialize_reward_model_snapshots(
@@ -165,6 +189,7 @@ def main(argv: list[str] | None = None) -> None:
         output_dir=eval_dir,
         sampling=sampling,
         device=device,
+        expected_model_identity=model_identity,
     )
     sample_scores = _score_images(generated, reward_models)
     sample_path = run_dir / SAMPLES_RELATIVE_PATH
@@ -916,6 +941,7 @@ def _generate_images(
     output_dir: Path,
     sampling: dict[str, Any],
     device: Any,
+    expected_model_identity: dict[str, Any],
 ) -> list[GeneratedImage]:
     from vrl.families.registry import get_model_family_entry
     from vrl.utils.media import write_png
@@ -929,7 +955,17 @@ def _generate_images(
         precision=precision,
         for_rollout=True,
     )
+    # Checkpoint compatibility stays bound to the configured Hub repo+commit.
+    # The downloaded tree has a different, content-based identity, so retain it
+    # separately only to prove the local snapshot did not change while loading.
+    materialized_model_identity = resolve_checkpoint_model_identity(build)
     bundle = entry.build_rollout(build)
+    loaded_materialized_identity = resolve_checkpoint_model_identity(build)
+    if loaded_materialized_identity != materialized_model_identity:
+        raise RuntimeError(
+            "materialized SANA model source changed during runtime construction: "
+            f"before={materialized_model_identity!r}, after={loaded_materialized_identity!r}",
+        )
     model = bundle.model.eval()
     generated: list[GeneratedImage] = []
     checkpoint_read = False
@@ -946,8 +982,6 @@ def _generate_images(
                 if target.path is None:
                     raise ValueError(f"checkpoint target has no path: {target.label}")
                 checkpoint = load_training_checkpoint(target.path)
-                if str(checkpoint.payload.get("family", "")) != "sana":
-                    raise ValueError(f"checkpoint family is not sana: {target.path}")
                 if checkpoint.meta.get("uses_lora") is not False:
                     raise ValueError(
                         f"full-parameter checkpoint must declare uses_lora=false: {target.path}",
@@ -961,9 +995,14 @@ def _generate_images(
                         f"checkpoint progress changed during evaluation: {target.path} "
                         f"next_epoch={checkpoint.next_epoch}, expected={source_epoch}",
                     )
-                trainable_state = checkpoint.trainable_state
-                load_trainable_state(bundle, trainable_state, strict=True)
-                del checkpoint, trainable_state
+                restore_model_checkpoint(
+                    checkpoint,
+                    bundle=bundle,
+                    family="sana",
+                    expected_model_identity=expected_model_identity,
+                    strict=True,
+                )
+                del checkpoint
                 checkpoint_read = True
             for prompt_index, prompt in enumerate(prompts):
                 group_seed = _group_seed(prompt_index)
