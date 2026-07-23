@@ -1,8 +1,8 @@
 # SPRINT：Contract truthfulness and no-op inputs
 
-状态：**planned（2026-07-22）**。
+状态：**done（2026-07-22）**。
 
-父 program：[Argument and state ownership](SPRINT_argument_and_state_ownership_program.md)
+父 program：[Argument and state ownership](../planned/SPRINT_argument_and_state_ownership_program.md)
 
 前置：无。这是 program 的正确性 Sprint。
 
@@ -262,16 +262,64 @@ production: Annotated[dict[str, Any] | None, OPEN] = None
 - `git diff --check`；
 - CPU-only，无 Ray cluster/GPU。
 
-## 11. Definition of Done
+## 11. 实施结果与审计判定
 
-- [ ] `"off"` 不再开启 DPO checkpointing。
-- [ ] scalar/list remap都不会留下 stale evaluator grouping。
-- [ ] NFT 无隐式 timestep，负 index被拒绝。
-- [ ] image size、negative prompt、replay request无 silent no-op。
-- [ ] public data/production config只保留有行为的 key。
-- [ ] SDE request strategy与 loop resolved state各有单一 owner。
+| Suspect | 最小生产证据 | 判定 | 已落地结果 |
+|---|---|---|---|
+| DPO `bool(gradient_checkpointing)` | `"off"` 经 Python truthiness 进入 enable 分支 | **FIX** | DPO 复用 shared activation-checkpoint policy；bool/string/selective均有正反测试 |
+| DPO 从 online `TrainerConfig` 借默认 | 构造目标实际是 `OfflineDPOTrainerConfig`；resume strict属于 checkpoint restore | **DERIVE** | max norm从目标 dataclass派生；strictness由 checkpoint protocol resolver拥有 |
+| scalar prompt group remap | scalar只写 batch，evaluator优先读 trajectory | **FIX** | scalar/list统一经过 `remap_group_ids_()`，非 alias tensor回归通过 |
+| `AlgorithmInput.metadata` | 三个 closed NFT reader隐藏在任意字典，index缺省为0 | **FIX** | model、rollout batch、timestep index成为显式 optional字段；NFT逐项 require并做上下界校验 |
+| MultiSegment 内层重复字段 | inner TokenGRPO只消费 signals/advantages | **REMOVE** | 删除 rewards/group/model/batch/timestep等冗余 assignment，数值与最小输入测试通过 |
+| Janus/NextStep `image_size` | Janus从 token数另算且用 `assert`；NextStep直接 `del` | **FIX** | token grid、patch size、VAE输出与请求尺寸均显式校验；`python -O` 仍失败 |
+| Flux/HunyuanVideo/Echo negative prompt | family无 unconditional branch但曾静默丢弃输入 | **FIX** | empty值保留统一协议；非空值在 family边界 fail fast；Echo custom executor真实转发 |
+| replay request/timestep | 多个 family保留统一签名却忽略不支持值 | **FIX/KEEP** | 保留一个 `ReplayModel` 协议；ordinary denoise、single-token AR、grouped/multisegment各自拒绝无效值 |
+| 四个 public data key | preset有 writer，生产无 behavior reader；`media_type`只检查存在 | **REMOVE** | schema与全部 preset writer删除；unknown-key gate拒绝 legacy输入 |
+| OPEN production dict / `report_path` | 只有 `enabled` 有 validator/preflight reader，8个 path无 reader | **FIX/REMOVE** | production改为 closed typed section；删除 path writer；保留三类 production validator边界 |
+| optional SDE params与 window归属 | parser总构造 SDE；loop只消费已选择 window | **DERIVE/REMOVE** | SDE non-optional；window policy留在 request/layout；loop只接 resolved window；不可达分支删除 |
 
-## 12. References
+### ALL_CAPS 与薄边界
+
+- **KEEP** `DEFAULT_CHECKPOINT_STRICT`：它是 checkpoint restore protocol默认，不是业务词表。
+- **KEEP** closed production section：两个薄 dataclass承担 public schema/unknown-key边界。
+- **KEEP** `require_replay_segments()`、`require_zero_replay_timestep()`：它们统一跨 family
+  protocol backstop，避免每个实现复制且漂移。
+- **KEEP** family-uniform `encode_prompt()` / `replay_forward()` 形状：一致性、可 grep性和 evaluator
+  协议价值高于减少参数行数。
+- 本 Sprint没有新增或保留混在 workflow中的大型 ALL_CAPS vocabulary/table。
+
+### 提交
+
+- `a0684864` — prompt/trajectory group remap同步。
+- `c8dac327` — SDE request owner与不可达分支清理。
+- `e6dd23e3` — DPO共享 checkpoint policy。
+- `1aef2ea8` — public no-op config删除与 closed production schema。
+- `73be6992` / `94033362` — NFT显式输入与 MultiSegment最小内层输入。
+- `6a650983` — image geometry、negative prompt与 replay fail-fast。
+- `3b6fa021` — DPO gradient clipping开/关回归。
+
+### CPU-only acceptance
+
+组合后的 correctness suite：
+
+```text
+766 passed, 2 deselected, 16 warnings
+```
+
+两个 deselect只依赖当前工作区缺失的
+`third_party/CausVid/causvid` vendored source tree；同目录其余 CausVid contract均执行通过。
+所有 touched Python文件通过 Ruff与 format check，diff whitespace check通过。未启动 Ray、未使用 GPU。
+
+## 12. Definition of Done
+
+- [x] `"off"` 不再开启 DPO checkpointing。
+- [x] scalar/list remap都不会留下 stale evaluator grouping。
+- [x] NFT 无隐式 timestep，负 index被拒绝。
+- [x] image size、negative prompt、replay request无 silent no-op。
+- [x] public data/production config只保留有行为的 key。
+- [x] SDE request strategy与 loop resolved state各有单一 owner。
+
+## 13. References
 
 - `vrl/scripts/families/wan_2_1/train_dpo.py`
 - `vrl/trainers/offline/dpo.py`

@@ -6,7 +6,7 @@
 
 前置：
 
-- [Contract truthfulness and no-op inputs](SPRINT_contract_truthfulness_and_noop_inputs.md)
+- [Contract truthfulness and no-op inputs](../done/SPRINT_contract_truthfulness_and_noop_inputs.md)
   的 scalar group-remap修复；
 - [Runtime payload smallest truth](SPRINT_runtime_payload_smallest_truth.md) 可并行，但不应同时改同一
   batch constructor。

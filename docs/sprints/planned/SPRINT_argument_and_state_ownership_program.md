@@ -121,7 +121,7 @@ dataclass 的放置规则：
 
 ## 3. 实施 Sprint 与依赖
 
-1. [Contract truthfulness and no-op inputs](SPRINT_contract_truthfulness_and_noop_inputs.md)
+1. [Contract truthfulness and no-op inputs](../done/SPRINT_contract_truthfulness_and_noop_inputs.md)
    先修 silent no-op、错误 derivation 和 stale group IDs。
 2. [Config argument ownership and resolution](SPRINT_config_argument_ownership_and_resolution.md)
    建立一次解析和明确 owner；依赖 Sprint 1 的 public key 决策。

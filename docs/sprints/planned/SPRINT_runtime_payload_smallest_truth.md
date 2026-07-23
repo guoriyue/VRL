@@ -6,7 +6,7 @@
 
 前置：
 
-- [Contract truthfulness and no-op inputs](SPRINT_contract_truthfulness_and_noop_inputs.md)
+- [Contract truthfulness and no-op inputs](../done/SPRINT_contract_truthfulness_and_noop_inputs.md)
 - Config typed build result可并行落地；本 Sprint不改变 public config shape。
 
 ## 0. 结论先行
