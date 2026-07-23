@@ -37,6 +37,7 @@ import torch
 
 from vrl.generation.types import VideoGenerationRequest
 from vrl.models.interfaces.runtime import ModelBuild
+from vrl.models.peft_adapter import load_trainable_lora_adapter
 from vrl.models.steps.denoise import (
     DiffusersPipelineModelBase,
     DiffusionModelBase,
@@ -210,7 +211,7 @@ class WanT2VDiffusersModel(
     def apply_lora(self, build: ModelBuild) -> None:
         """Attach LoRA to the configured Wan trainable transformer(s)."""
 
-        from peft import LoraConfig, PeftModel, get_peft_model
+        from peft import LoraConfig, get_peft_model
 
         lora_path = build.lora_path
         names = self._trainable_transformer_names
@@ -221,8 +222,8 @@ class WanT2VDiffusersModel(
             )
 
         lora_config = build.lora
-        if not lora_path and lora_config is None:
-            raise ValueError("LoRA runtime build requires lora_config when lora_path is empty")
+        if lora_config is None:
+            raise ValueError("LoRA runtime build requires model.lora configuration")
 
         for name in names:
             transformer = self._wan_transformers()[name]
@@ -230,17 +231,20 @@ class WanT2VDiffusersModel(
             if not build.defer_trainable_device_move:
                 transformer.to(self.device)
             if lora_path:
-                wrapped = PeftModel.from_pretrained(
+                wrapped = load_trainable_lora_adapter(
                     transformer,
                     lora_path,
-                    is_trainable=True,
+                    expected_rank=lora_config["rank"],
+                    expected_alpha=lora_config["alpha"],
+                    expected_dropout=lora_config.get("dropout", 0.0),
+                    expected_target_modules=lora_config["target_modules"],
                 )
                 wrapped.set_adapter("default")
             else:
-                assert lora_config is not None
                 cfg = LoraConfig(
                     r=lora_config["rank"],
                     lora_alpha=lora_config["alpha"],
+                    lora_dropout=lora_config.get("dropout", 0.0),
                     init_lora_weights=lora_config.get(
                         "init_lora_weights",
                         self._lora_default_init_weights,

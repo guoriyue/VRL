@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from vrl.models.peft_adapter import load_trainable_lora_adapter
+
 
 def install_token_lora_adapter(
     base: Any,
@@ -14,16 +16,20 @@ def install_token_lora_adapter(
     """Install a fresh or warm-started trainable PEFT adapter on ``base``."""
 
     try:
-        from peft import LoraConfig, PeftModel, get_peft_model
+        from peft import LoraConfig, get_peft_model
     except ImportError as error:  # pragma: no cover
         raise ImportError("PEFT is required for use_lora=True. pip install peft>=0.12") from error
 
     if config.lora_path:
         try:
-            wrapped = PeftModel.from_pretrained(
+            wrapped = load_trainable_lora_adapter(
                 base,
                 config.lora_path,
-                is_trainable=True,
+                expected_rank=config.lora_rank,
+                expected_alpha=config.lora_alpha,
+                expected_dropout=config.lora_dropout,
+                expected_target_modules=config.lora_target_modules,
+                expected_task_type=task_type,
             )
         except Exception as error:
             raise RuntimeError(

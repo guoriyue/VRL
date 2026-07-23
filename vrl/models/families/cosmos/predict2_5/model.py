@@ -12,6 +12,7 @@ import torch
 from vrl.generation.types import VideoGenerationRequest
 from vrl.models.families.cosmos import CosmosReplayForward
 from vrl.models.interfaces.runtime import ModelBuild
+from vrl.models.peft_adapter import load_trainable_lora_adapter
 from vrl.models.steps.denoise import (
     DiffusersPipelineModelBase,
     DiffusersReplayModelBase,
@@ -242,23 +243,26 @@ class CosmosPredict25Model(CosmosReplayForward, DiffusersPipelineModelBase):
         # Deliberately NOT LoraModelMixin: this family also manages a second
         # "previous" adapter for NFT previous-policy replay (different shape, not
         # a copy of the shared attach logic).
-        from peft import PeftModel, get_peft_model
+        from peft import get_peft_model
 
         base = self.transformer
         base.requires_grad_(False)
         if not build.defer_trainable_device_move:
             base.to(self.device)
         lora_config = build.lora
+        if lora_config is None:
+            raise ValueError("Cosmos Predict2.5 requires model.lora configuration")
         if build.lora_path:
-            transformer = PeftModel.from_pretrained(
+            transformer = load_trainable_lora_adapter(
                 base,
                 build.lora_path,
-                is_trainable=True,
+                expected_rank=lora_config["rank"],
+                expected_alpha=lora_config["alpha"],
+                expected_dropout=lora_config.get("dropout", 0.0),
+                expected_target_modules=lora_config["target_modules"],
                 adapter_name="default",
             )
         else:
-            if lora_config is None:
-                raise ValueError("Cosmos Predict2.5 requires lora_config when no lora_path is set")
             transformer = get_peft_model(
                 base,
                 _build_lora_config(lora_config),
@@ -270,10 +274,6 @@ class CosmosPredict25Model(CosmosReplayForward, DiffusersPipelineModelBase):
         # one-time setup step; the per-step refresh (sync_previous_policy_adapter)
         # re-runs only the copy, which is why these stay separate primitives.
         if "previous" not in getattr(transformer, "peft_config", {}):
-            if lora_config is None:
-                raise ValueError(
-                    "Cosmos Predict2.5 requires lora_config to build the `previous` adapter"
-                )
             transformer.add_adapter("previous", _build_lora_config(lora_config))
         _copy_adapter_weights(transformer, src="default", dst="previous")
         _freeze_checkpoint_owned_adapter_params(transformer, "previous")

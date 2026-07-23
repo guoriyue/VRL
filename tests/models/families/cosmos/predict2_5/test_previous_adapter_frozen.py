@@ -72,3 +72,20 @@ def test_raises_if_adapter_absent() -> None:
 
     assert all(parameter.requires_grad for _, parameter in m.named_parameters())
     assert checkpoint_owned_state_names(m) == {name for name, _ in m.named_parameters()}
+
+
+def test_registration_failure_rolls_back_requires_grad(monkeypatch) -> None:
+    m = _PeftLikeModule()
+
+    def reject_registration(*_args, **_kwargs) -> None:
+        raise RuntimeError("registration failed")
+
+    monkeypatch.setattr(
+        "vrl.models.steps.denoise.common.lora.register_checkpoint_owned_state",
+        reject_registration,
+    )
+
+    with pytest.raises(RuntimeError, match="registration failed"):
+        freeze_checkpoint_owned_adapter_params(m, "previous")
+
+    assert all(parameter.requires_grad for _, parameter in m.named_parameters())

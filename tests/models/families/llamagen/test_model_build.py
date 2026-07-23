@@ -187,7 +187,11 @@ def test_lora_checkpoint_roundtrip_loads_trainable_adapter_weights(tmp_path) -> 
     fresh.save_pretrained(adapter_path)
 
     cfg = _cfg()
-    cfg.model.lora = {"path": str(adapter_path)}
+    cfg.model.lora = {
+        "path": str(adapter_path),
+        "rank": 2,
+        "alpha": 4,
+    }
     root = parse_config(cfg)
     precision = resolve_precision_policy(root)
     build = get_model_family_entry("llamagen").resolve_model_build(
@@ -229,6 +233,42 @@ def test_lora_checkpoint_error_names_the_bad_path(tmp_path) -> None:
         )
 
     assert str(missing_path) in str(error.value)
+
+
+def test_lora_checkpoint_rejects_saved_topology_that_differs_from_config(
+    tmp_path,
+) -> None:
+    pytest.importorskip("peft")
+
+    fresh = LlamaGenModel._apply_lora(
+        SimpleNamespace(
+            config=LlamaGenConfig(
+                lora_rank=2,
+                lora_alpha=4,
+                lora_init=False,
+            ),
+        ),
+        _TinyGpt(),
+    )
+    adapter_path = tmp_path / "adapter"
+    fresh.save_pretrained(adapter_path)
+    base = _TinyGpt()
+
+    with pytest.raises(
+        RuntimeError,
+        match="failed to load trainable token LoRA adapter",
+    ) as error:
+        LlamaGenModel._apply_lora(
+            SimpleNamespace(
+                config=LlamaGenConfig(lora_path=str(adapter_path)),
+            ),
+            base,
+        )
+
+    assert isinstance(error.value.__cause__, ValueError)
+    assert "LoRA adapter topology mismatch" in str(error.value.__cause__)
+    assert type(base.wqkv) is torch.nn.Linear
+    assert type(base.wo) is torch.nn.Linear
 
 
 def test_executor_layout_defaults_match_xl_stage1_256() -> None:
