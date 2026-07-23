@@ -15,14 +15,16 @@ from __future__ import annotations
 import gc
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
-from typing import Any, Protocol
+from typing import TYPE_CHECKING, Any, Protocol
 
 import torch
 from torch import nn
 
 from vrl.trainers.distributed import DistributedTrainingContext
-from vrl.utils.config import cfg_path
 from vrl.utils.cuda_memory import empty_cuda_cache
+
+if TYPE_CHECKING:
+    from vrl.config.schema import RootConfig
 
 
 @dataclass(frozen=True, slots=True)
@@ -526,13 +528,13 @@ class FSDPStrategy(_TrainingStateParking, Strategy):
         self,
         context: DistributedTrainingContext,
         *,
-        mesh_dims: list[str] | None = None,
-        precision_policy: str = "actor",
-        reshard_after_forward: bool = True,
-        cpu_offload: bool = False,
+        mesh_dims: list[str],
+        precision_policy: str,
+        reshard_after_forward: bool,
+        cpu_offload: bool,
     ) -> None:
         self.context = context
-        self._mesh_dims = mesh_dims or ["dp_shard"]
+        self._mesh_dims = list(mesh_dims)
         self._precision_policy = precision_policy
         self._reshard_after_forward = reshard_after_forward
         self._cpu_offload = cpu_offload
@@ -805,7 +807,7 @@ class DDPStrategy(Strategy):
         self,
         context: DistributedTrainingContext,
         *,
-        find_unused_parameters: bool = False,
+        find_unused_parameters: bool,
     ) -> None:
         self.context = context
         self._find_unused_parameters = find_unused_parameters
@@ -963,7 +965,7 @@ class DDPStrategy(Strategy):
         shutdown_training_process_group()
 
 
-def build_strategy(cfg: Any, context: DistributedTrainingContext) -> Strategy:
+def build_strategy(config: RootConfig, context: DistributedTrainingContext) -> Strategy:
     """Construct the training strategy named by the resolved context.
 
     The single dispatch point from config/context to a concrete strategy.
@@ -972,41 +974,50 @@ def build_strategy(cfg: Any, context: DistributedTrainingContext) -> Strategy:
     yet built) before constructing ``FSDPStrategy``.
     """
 
-    if context.strategy == "single_process":
+    from vrl.config.schema import RootConfig, TrainingSection
+
+    if not isinstance(config, RootConfig):
+        raise TypeError(f"build_strategy config must be RootConfig, got {type(config).__name__}")
+
+    training = (
+        config.distributed.training
+        if config.distributed is not None and config.distributed.training is not None
+        else TrainingSection()
+    )
+    configured_strategy = training.strategy
+    if configured_strategy != context.strategy:
+        raise ValueError(
+            "distributed training strategy mismatch: "
+            f"config={configured_strategy!r}, context={context.strategy!r}",
+        )
+
+    if configured_strategy == "single_process":
         return SingleProcessStrategy(context)
-    if context.strategy == "fsdp":
-        _assert_fsdp_config_supported(cfg)
+    if configured_strategy == "fsdp":
+        _assert_fsdp_config_supported(config)
+        if training.fsdp is None:
+            raise AssertionError("typed fsdp config was not resolved")
+        fsdp = training.fsdp
         return FSDPStrategy(
             context,
-            mesh_dims=list(
-                cfg_path(cfg, "distributed.training.fsdp.mesh", ["dp_shard"]) or ["dp_shard"]
-            ),
-            precision_policy=str(
-                cfg_path(cfg, "distributed.training.fsdp.precision_policy", "actor")
-            ),
-            reshard_after_forward=bool(
-                cfg_path(cfg, "distributed.training.fsdp.reshard_after_forward", True),
-            ),
-            cpu_offload=bool(
-                cfg_path(cfg, "distributed.training.fsdp.cpu_offload", False),
-            ),
+            mesh_dims=fsdp.mesh,
+            precision_policy=fsdp.precision_policy,
+            reshard_after_forward=fsdp.reshard_after_forward,
+            cpu_offload=fsdp.cpu_offload,
         )
-    if context.strategy == "ddp":
+    if configured_strategy == "ddp":
+        if training.ddp is None:
+            raise AssertionError("typed ddp config was not resolved")
         return DDPStrategy(
             context,
-            find_unused_parameters=bool(
-                cfg_path(cfg, "distributed.training.ddp.find_unused_parameters", False),
-            ),
+            find_unused_parameters=training.ddp.find_unused_parameters,
         )
-    # resolve_training_context / the schema Literal reject other values upstream;
-    # this guards direct callers.
-    raise ValueError(
-        f"unknown distributed.training.strategy={context.strategy!r}; "
-        "expected 'single_process', 'fsdp', or 'ddp'",
+    raise AssertionError(
+        f"typed config admitted unknown training strategy {configured_strategy!r}"
     )
 
 
-def _assert_fsdp_config_supported(cfg: Any) -> None:
+def _assert_fsdp_config_supported(config: RootConfig) -> None:
     """Fail-fast on fsdp + a feature whose DTensor handling is not implemented yet.
 
     Two of the original ``SPRINT_multi_gpu_training.md`` §10 gates are now
@@ -1017,7 +1028,8 @@ def _assert_fsdp_config_supported(cfg: Any) -> None:
     torch.compile remains gated.
     """
 
-    if bool(cfg_path(cfg, "model.torch_compile.enable", False)):
+    torch_compile = config.model.torch_compile if config.model is not None else None
+    if isinstance(torch_compile, Mapping) and bool(torch_compile.get("enable")):
         raise NotImplementedError(
             "distributed.training.strategy=fsdp with model.torch_compile.enable=true "
             "is not supported: torch.compile (inductor graph capture) is unsound with "

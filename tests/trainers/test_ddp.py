@@ -19,6 +19,7 @@ import pytest
 import torch
 from torch import nn
 
+from vrl.config.schema import DDPConfig, RootConfig
 from vrl.trainers.distributed import DistributedTrainingContext
 from vrl.trainers.strategy import (
     DDPStrategy,
@@ -38,6 +39,17 @@ def _cpu_ddp_context() -> DistributedTrainingContext:
         world_size=1,
         is_primary=True,
         device=torch.device("cpu"),
+    )
+
+
+def _ddp_strategy(
+    context: DistributedTrainingContext,
+    **overrides: bool,
+) -> DDPStrategy:
+    config = DDPConfig.model_validate(overrides)
+    return DDPStrategy(
+        context,
+        find_unused_parameters=config.find_unused_parameters,
     )
 
 
@@ -140,18 +152,37 @@ def _ddp_wrap(module: nn.Module) -> nn.Module:
 # ── build_strategy dispatch + model-handle guard (no process group) ──────────
 
 
-def test_build_strategy_returns_ddp_strategy() -> None:
+@pytest.mark.parametrize("find_unused_parameters", [False, True])
+def test_build_strategy_reads_ddp_public_default_and_override(
+    find_unused_parameters: bool,
+) -> None:
+    ddp = {} if not find_unused_parameters else {"find_unused_parameters": True}
     strategy = build_strategy(
-        {"distributed": {"training": {"ddp": {"find_unused_parameters": True}}}},
+        RootConfig.model_validate(
+            {
+                "distributed": {
+                    "training": {
+                        "strategy": "ddp",
+                        "ddp": ddp,
+                    },
+                },
+            },
+        ),
         _cpu_ddp_context(),
     )
+
     assert isinstance(strategy, DDPStrategy)
-    assert strategy._find_unused_parameters is True
+    assert strategy._find_unused_parameters is find_unused_parameters
+
+
+def test_ddp_strategy_constructor_requires_resolved_config() -> None:
+    with pytest.raises(TypeError, match="find_unused_parameters"):
+        DDPStrategy(_cpu_ddp_context())  # type: ignore[call-arg]
 
 
 def test_ddp_rejects_shared_gpu_training_state_parking_preflight() -> None:
     with pytest.raises(NotImplementedError, match="Use disjoint rollout GPUs"):
-        DDPStrategy(_cpu_ddp_context()).validate_training_state_parking()
+        _ddp_strategy(_cpu_ddp_context()).validate_training_state_parking()
 
 
 def test_ddp_shutdown_releases_training_process_group(monkeypatch) -> None:
@@ -161,14 +192,14 @@ def test_ddp_shutdown_releases_training_process_group(monkeypatch) -> None:
         lambda: calls.append(True),
     )
 
-    DDPStrategy(_cpu_ddp_context()).shutdown()
+    _ddp_strategy(_cpu_ddp_context()).shutdown()
 
     assert calls == [True]
 
 
 def test_ddp_prepare_model_rejects_model_without_transformer_handle() -> None:
     with pytest.raises(NotImplementedError, match="trainable roots"):
-        DDPStrategy(_cpu_ddp_context()).prepare_model(_ARLikePolicy())
+        _ddp_strategy(_cpu_ddp_context()).prepare_model(_ARLikePolicy())
 
 
 def test_ddp_prepare_model_wraps_multi_transformer_model(cpu_process_group) -> None:
@@ -176,7 +207,7 @@ def test_ddp_prepare_model_wraps_multi_transformer_model(cpu_process_group) -> N
     from torch.nn.parallel import DistributedDataParallel
 
     policy = _DualStagePolicy(_ToyTransformer())
-    out = DDPStrategy(_cpu_ddp_context()).prepare_model(policy)
+    out = _ddp_strategy(_cpu_ddp_context()).prepare_model(policy)
 
     assert out is policy
     assert policy.set_calls == 1
@@ -192,7 +223,7 @@ def test_ddp_prepare_model_wraps_transformer(cpu_process_group) -> None:
     from torch.nn.parallel import DistributedDataParallel
 
     policy = _FakePolicy(_ToyTransformer())
-    out = DDPStrategy(_cpu_ddp_context()).prepare_model(policy)
+    out = _ddp_strategy(_cpu_ddp_context()).prepare_model(policy)
 
     assert out is policy
     assert policy.set_calls == 1
@@ -211,7 +242,7 @@ def test_ddp_rollout_export_matches_single_process_key_space(cpu_process_group) 
     replicated.load_state_dict(snapshot)
     wrapped = _ddp_wrap(replicated)
 
-    got = DDPStrategy(_cpu_ddp_context()).export_rollout_state(_Bundle(wrapped))
+    got = _ddp_strategy(_cpu_ddp_context()).export_rollout_state(_Bundle(wrapped))
     expected = SingleProcessStrategy().export_rollout_state(_Bundle(ref))
 
     assert got.keys() == expected.keys()
@@ -227,7 +258,7 @@ def test_ddp_rollout_export_filters_frozen_params(cpu_process_group) -> None:
     net = _ToyTransformer()
     net.head.requires_grad_(False)
     wrapped = _ddp_wrap(net)
-    strategy = DDPStrategy(_cpu_ddp_context())
+    strategy = _ddp_strategy(_cpu_ddp_context())
 
     rollout = strategy.export_rollout_state(_Bundle(wrapped))
     assert rollout
@@ -238,7 +269,7 @@ def test_ddp_rollout_export_filters_frozen_params(cpu_process_group) -> None:
 
 
 def test_ddp_export_then_load_trainable_state_round_trip(cpu_process_group) -> None:
-    strategy = DDPStrategy(_cpu_ddp_context())
+    strategy = _ddp_strategy(_cpu_ddp_context())
     src = _ddp_wrap(_ToyTransformer())
     with torch.no_grad():
         for p in src.parameters():

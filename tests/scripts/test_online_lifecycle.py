@@ -9,6 +9,7 @@ import torch
 from omegaconf import OmegaConf
 
 from vrl.config.precision import RolePrecision
+from vrl.config.schema import RootConfig
 from vrl.families.semantics import PolicySemantics
 from vrl.models.interfaces import ReplayResult
 from vrl.scripts.common import online
@@ -321,7 +322,14 @@ def _install_common_fakes(
         online,
         "build_configs",
         lambda cfg: SimpleNamespace(
-            root=cfg,
+            root=RootConfig.model_validate(
+                {
+                    "distributed": {
+                        "rollout": {"cpus_per_worker": cfg.distributed.rollout.cpus_per_worker},
+                        "training": {"strategy": "single_process"},
+                    },
+                },
+            ),
             trainer=trainer_config,
             precision=precision,
             reward=SimpleNamespace(

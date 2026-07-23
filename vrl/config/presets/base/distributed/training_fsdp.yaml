@@ -10,8 +10,3 @@ distributed:
     strategy: fsdp
     num_nodes: 1
     gpus_per_node: 2
-    fsdp:
-      mesh: ["dp_shard"]          # 1D ZeRO-3; 2D HSDP is the multi-node follow-on
-      precision_policy: actor     # bf16 params/compute, fp32 grad reduction
-      reshard_after_forward: true # ZeRO-3 (re-gather params each forward)
-      cpu_offload: false          # true streams shards from host for oversized experts

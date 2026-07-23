@@ -31,6 +31,7 @@ from tests.models.steps.denoise.fixtures import (
     stamp_model_precision,
 )
 from vrl.config.precision import RolePrecision
+from vrl.config.schema import FSDPConfig
 from vrl.models.families.wan_2_1.model import (
     WanI2VReplayModel,
     WanI2VSamplingState,
@@ -38,6 +39,20 @@ from vrl.models.families.wan_2_1.model import (
 from vrl.models.interfaces.runtime import ModelBuild
 from vrl.trainers.distributed import DistributedTrainingContext
 from vrl.trainers.strategy import FSDPStrategy
+
+
+def _fsdp_strategy(
+    context: DistributedTrainingContext,
+    **overrides: object,
+) -> FSDPStrategy:
+    config = FSDPConfig.model_validate(overrides)
+    return FSDPStrategy(
+        context,
+        mesh_dims=config.mesh,
+        precision_policy=config.precision_policy,
+        reshard_after_forward=config.reshard_after_forward,
+        cpu_offload=config.cpu_offload,
+    )
 
 
 def _free_port() -> int:
@@ -213,7 +228,7 @@ def _run_rank(
             is_primary=rank == 0,
             device=torch.device("cpu"),
         )
-        strategy = FSDPStrategy(context, precision_policy="none")
+        strategy = _fsdp_strategy(context, precision_policy="none")
         policy = strategy.prepare_model(_build_policy())
         optimizer = torch.optim.AdamW(
             [parameter for parameter in policy.parameters() if parameter.requires_grad],
@@ -336,7 +351,7 @@ def _run_dual_rank(
             is_primary=rank == 0,
             device=torch.device("cpu"),
         )
-        strategy = FSDPStrategy(context, precision_policy="none")
+        strategy = _fsdp_strategy(context, precision_policy="none")
         policy = strategy.prepare_model(_build_dual_policy())
         optimizer = torch.optim.AdamW(
             [parameter for parameter in policy.parameters() if parameter.requires_grad],
@@ -469,7 +484,7 @@ def _run_cuda_rank(rank: int, world_size: int, port: int, queue: mp.Queue) -> No
             is_primary=rank == 0,
             device=device,
         )
-        strategy = FSDPStrategy(context, precision_policy="none")
+        strategy = _fsdp_strategy(context, precision_policy="none")
         policy = strategy.prepare_model(_build_policy())
 
         from torch.distributed.tensor import DTensor
@@ -520,7 +535,7 @@ def _run_dual_cuda_offload_rank(
             is_primary=rank == 0,
             device=device,
         )
-        strategy = FSDPStrategy(
+        strategy = _fsdp_strategy(
             context,
             precision_policy="none",
             cpu_offload=True,

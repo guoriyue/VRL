@@ -707,6 +707,28 @@ class TrainingSection(ConfigBase):
     fsdp: FSDPConfig | None = None
     ddp: DDPConfig | None = None
 
+    @model_validator(mode="after")
+    def _resolve_strategy_defaults(self) -> TrainingSection:
+        """Resolve defaults here so runtime constructors cannot redeclare them.
+
+        The unselected block stays absent: it has no runtime consumer and should
+        not become duplicated resolved state merely because another strategy was
+        chosen.
+        """
+        if self.fsdp is not None and self.strategy != "fsdp":
+            raise ValueError(
+                "distributed.training.fsdp requires distributed.training.strategy=fsdp",
+            )
+        if self.ddp is not None and self.strategy != "ddp":
+            raise ValueError(
+                "distributed.training.ddp requires distributed.training.strategy=ddp",
+            )
+        if self.strategy == "fsdp" and self.fsdp is None:
+            self.fsdp = FSDPConfig()
+        elif self.strategy == "ddp" and self.ddp is None:
+            self.ddp = DDPConfig()
+        return self
+
 
 class RolloutWorkerSection(ConfigBase):
     """distributed.rollout: per-worker runtime knobs.
