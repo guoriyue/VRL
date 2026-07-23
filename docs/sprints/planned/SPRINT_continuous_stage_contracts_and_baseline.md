@@ -4,7 +4,9 @@
 
 父 program：[Continuous three-stage pipeline](SPRINT_continuous_three_stage_pipeline_program.md)
 
-前置：无。这是 program 的首个实施 sprint。
+前置：[Online metrics IO contract](SPRINT_online_metrics_io_contract.md)。这是 program 的首个
+continuous 实施 sprint，但新增 telemetry columns 前先建立单一 CSV row schema，避免继续同步
+header、row dict 与 format order 三份定义。
 
 ## 0. 结论先行
 
@@ -83,6 +85,7 @@ runtime request 或错误分支消费。
 
 ### T1 — Stage interval telemetry
 
+- 通过 `OnlineMetricRow` 的单一 field/mapping扩展稳定 CSV，不手改 header/format list。
 - 记录 generation admission wait、service、receipt。
 - 记录 reward admission wait、service、receipt。
 - 记录 ready queue residence 和 trainer demand wait。
