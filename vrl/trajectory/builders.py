@@ -709,7 +709,6 @@ class _TrajectoryBatchBuilder:
                     ),
                 },
                 reward_view="image" if name == primary_segment else None,
-                advantage_scope="segment",
                 replay_inputs={
                     "logprob": ReplayInput(
                         name="logprob",

@@ -71,6 +71,7 @@ def test_multisegment_primary_is_typed_and_not_mirrored_in_context() -> None:
 
     assert trajectory.primary_segment == "final_image"
     assert trajectory.context == {"temperature": 1.0}
+    assert not hasattr(trajectory.segments["initial_image"], "advantage_scope")
 
 
 @pytest.mark.parametrize(
@@ -134,7 +135,13 @@ def test_stack_rejects_different_primary_segments() -> None:
 
 @pytest.mark.parametrize(
     "symbol",
-    ["LossUnit", "TrainingView", "build_training_view", "replay_input_ref"],
+    [
+        "AdvantageScope",
+        "LossUnit",
+        "TrainingView",
+        "build_training_view",
+        "replay_input_ref",
+    ],
 )
 def test_derived_training_view_symbols_are_not_public(symbol: str) -> None:
     assert not hasattr(trajectory_api, symbol)

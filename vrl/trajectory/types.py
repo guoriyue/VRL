@@ -44,7 +44,6 @@ DistributionKind = Literal[
     "deterministic",
     "custom",
 ]
-AdvantageScope = Literal["sample", "segment", "axis"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -104,7 +103,6 @@ class TrajectorySegment:
     distribution: DistributionKind
     tensors: dict[str, TrajectoryTensor]
     reward_view: str | None = None
-    advantage_scope: AdvantageScope = "sample"
     replay_inputs: dict[str, ReplayInput] = field(default_factory=dict)
     metadata: dict[str, Any] = field(default_factory=dict)
 
@@ -158,7 +156,6 @@ class TrajectoryBatch:
 
 
 __all__ = [
-    "AdvantageScope",
     "AxisKind",
     "DistributionKind",
     "ReplayInput",

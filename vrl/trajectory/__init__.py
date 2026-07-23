@@ -19,7 +19,6 @@ from vrl.trajectory.storage import (
     trajectory_tensor_bytes,
 )
 from vrl.trajectory.types import (
-    AdvantageScope,
     AxisKind,
     DistributionKind,
     ReplayInput,
@@ -43,7 +42,6 @@ from vrl.trajectory.views import (
 )
 
 __all__ = [
-    "AdvantageScope",
     "AxisKind",
     "DistributionKind",
     "ReplayInput",

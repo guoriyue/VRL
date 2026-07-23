@@ -149,7 +149,6 @@ def _rebuild_trajectory(
                 for tensor_name, tensor in segment.tensors.items()
             },
             reward_view=segment.reward_view,
-            advantage_scope=segment.advantage_scope,
             replay_inputs=dict(segment.replay_inputs),
             metadata=dict(segment.metadata),
         )
