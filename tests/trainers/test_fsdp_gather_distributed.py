@@ -84,11 +84,9 @@ def _run_rank(rank: int, world_size: int, port: int, q: mp.Queue) -> None:
         trainable = {n for n, p in model.named_parameters() if p.requires_grad}
         ctx = DistributedTrainingContext(
             strategy="fsdp",
-            distributed=True,
             rank=rank,
             local_rank=0,
             world_size=world_size,
-            is_primary=(rank == 0),
             device=torch.device("cpu"),
         )
         apply_fsdp(
@@ -186,11 +184,9 @@ def _run_optim_ema_rank(rank: int, world_size: int, port: int, q: mp.Queue) -> N
         global_shapes = {n: tuple(p.shape) for n, p in model.named_parameters()}
         ctx = DistributedTrainingContext(
             strategy="fsdp",
-            distributed=True,
             rank=rank,
             local_rank=0,
             world_size=world_size,
-            is_primary=(rank == 0),
             device=torch.device("cpu"),
         )
         apply_fsdp(

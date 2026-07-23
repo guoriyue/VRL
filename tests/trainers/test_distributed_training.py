@@ -7,6 +7,7 @@ import torch
 from omegaconf import OmegaConf
 
 from vrl.trainers.distributed import (
+    DistributedTrainingContext,
     resolve_training_context,
 )
 
@@ -40,7 +41,8 @@ def test_single_process_is_default_when_training_absent() -> None:
 # ── fsdp env parsing ──────────────────────────────────────────────────────────
 
 
-def test_fsdp_parses_torchrun_env() -> None:
+def test_fsdp_parses_torchrun_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: False)
     ctx = resolve_training_context(
         _cfg({"strategy": "fsdp", "num_nodes": 1, "gpus_per_node": 2}),
         device=torch.device("cpu"),
@@ -50,6 +52,24 @@ def test_fsdp_parses_torchrun_env() -> None:
     assert (ctx.rank, ctx.local_rank, ctx.world_size) == (1, 1, 2)
     assert ctx.is_primary is False
     assert ctx.device == torch.device("cuda:1")
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [("distributed", False), ("is_primary", False)],
+)
+def test_context_rejects_stored_derived_flags(field: str, value: bool) -> None:
+    kwargs = {
+        "strategy": "ddp",
+        "rank": 1,
+        "local_rank": 0,
+        "world_size": 2,
+        "device": torch.device("cpu"),
+        field: value,
+    }
+
+    with pytest.raises(TypeError, match=field):
+        DistributedTrainingContext(**kwargs)
 
 
 def test_fsdp_rank0_is_primary() -> None:
@@ -63,9 +83,7 @@ def test_fsdp_rank0_is_primary() -> None:
 
 def test_fsdp_missing_env_fails_fast_listing_keys() -> None:
     with pytest.raises(ValueError, match=r"RANK.*LOCAL_RANK.*WORLD_SIZE"):
-        resolve_training_context(
-            _cfg({"strategy": "fsdp"}), device=torch.device("cpu"), env={}
-        )
+        resolve_training_context(_cfg({"strategy": "fsdp"}), device=torch.device("cpu"), env={})
 
 
 def test_fsdp_world_size_must_match_topology() -> None:

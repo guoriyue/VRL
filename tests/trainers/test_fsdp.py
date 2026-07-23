@@ -44,11 +44,9 @@ from vrl.trainers.strategy import (
 def _cpu_fsdp_context() -> DistributedTrainingContext:
     return DistributedTrainingContext(
         strategy="fsdp",
-        distributed=True,
         rank=0,
         local_rank=0,
         world_size=1,
-        is_primary=True,
         device=torch.device("cpu"),
     )
 
@@ -590,11 +588,9 @@ def test_fsdp_prepare_model_rejects_model_without_transformer_handle() -> None:
 def test_build_strategy_single_process_returns_single_process() -> None:
     ctx = DistributedTrainingContext(
         strategy="single_process",
-        distributed=False,
         rank=0,
         local_rank=0,
         world_size=1,
-        is_primary=True,
         device=torch.device("cpu"),
     )
     assert isinstance(build_strategy(RootConfig(), ctx), SingleProcessStrategy)

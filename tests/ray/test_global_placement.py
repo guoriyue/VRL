@@ -42,7 +42,6 @@ def test_bundle_plan_dedicated_trainer_rollout_reward_distinct_bundles() -> None
     plan = build_bundle_layout(resolved)
 
     assert plan.bundle_gpu_ids == (0, 1, 2)
-    assert plan.trainer_bundle_indices == (0,)
     assert plan.rollout_bundle_indices == (1,)
     assert plan.reward_bundle_indices == (2,)
     assert set(plan.rollout_bundle_indices).isdisjoint(plan.reward_bundle_indices)
@@ -62,7 +61,6 @@ def test_bundle_plan_multi_rollout_worker_one_bundle_per_gpu() -> None:
     plan = build_bundle_layout(resolved)
 
     assert plan.bundle_gpu_ids == (0, 1, 2, 3)
-    assert plan.trainer_bundle_indices == (0,)
     assert plan.rollout_bundle_indices == (1, 2, 3)
     assert plan.reward_bundle_indices == ()
     assert plan.total_bundles == 4
@@ -104,7 +102,6 @@ def test_bundle_plan_colocated_debug_single_bundle_no_trainer_reservation() -> N
     )
     plan = build_bundle_layout(resolved)
 
-    assert plan.trainer_bundle_indices == ()
     assert plan.rollout_bundle_indices == (0,)
     assert plan.bundle_gpu_ids == (0,)
     assert plan.total_bundles == 1
@@ -122,7 +119,6 @@ def test_bundle_plan_cross_node_skips_trainer_reservation() -> None:
     )
     plan = build_bundle_layout(resolved)
 
-    assert plan.trainer_bundle_indices == ()
     # Rollout ordinals are budget tokens (1, 2) under cross_node.
     assert plan.rollout_bundle_indices == (0, 1)
     assert plan.bundle_gpu_ids == (1, 2)
@@ -140,7 +136,6 @@ def test_bundle_plan_cpu_only_rollout_uses_cpu_bundles() -> None:
     plan = build_bundle_layout(resolved)
 
     assert plan.bundle_gpu_ids == (None, None)
-    assert plan.trainer_bundle_indices == ()
     assert plan.rollout_bundle_indices == (0, 1)
     assert plan.total_bundles == 2
 
@@ -294,7 +289,7 @@ def test_bundle_requirements_size_shared_bundle_to_max_role_cpu() -> None:
     assert requirements[shared_bundle]["CPU"] == 2.0
     assert requirements[shared_bundle]["GPU"] == 1.0
     # Trainer-reserved bundle holds the GPU with only a token CPU.
-    trainer_bundle = owner.layout.trainer_bundle_indices[0]
+    trainer_bundle = owner.layout.bundle_gpu_ids.index(owner.resources.trainer_devices[0])
     assert requirements[trainer_bundle] == {"CPU": 0.001, "GPU": 1.0}
 
 

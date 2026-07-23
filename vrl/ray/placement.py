@@ -390,14 +390,14 @@ class GlobalRayPlacementOwner:
     def _bundle_requirements(self) -> list[dict[str, float]]:
         requirements: list[dict[str, float]] = []
         for bundle_index, gpu_id in enumerate(self.layout.bundle_gpu_ids):
-            cpu = self._bundle_cpu(bundle_index, gpu_id)
+            cpu = self._bundle_cpu(bundle_index)
             bundle: dict[str, float] = {"CPU": cpu}
             if gpu_id is not None:
                 bundle["GPU"] = 1.0
             requirements.append(bundle)
         return requirements
 
-    def _bundle_cpu(self, bundle_index: int, gpu_id: int | None) -> float:
+    def _bundle_cpu(self, bundle_index: int) -> float:
         """CPU a bundle reserves = max over the roles that may run in it.
 
         A trainer-reserved GPU bundle (no role) only needs a token CPU so the

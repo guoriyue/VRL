@@ -1041,11 +1041,9 @@ def _assert_fsdp_config_supported(config: RootConfig) -> None:
 def _single_process_context() -> DistributedTrainingContext:
     return DistributedTrainingContext(
         strategy="single_process",
-        distributed=False,
         rank=0,
         local_rank=0,
         world_size=1,
-        is_primary=True,
         device=torch.device("cpu"),
     )
 

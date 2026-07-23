@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import FrozenInstanceError, dataclass, replace
+from dataclasses import FrozenInstanceError, dataclass
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import patch
@@ -765,14 +765,12 @@ def test_ray_backend_rejects_unapproved_driver_cuda_overlap() -> None:
     """The runtime backstop reports the concrete conflicting devices and policy."""
     config = _ray_config(
         _resource_cfg(
-            trainer_devices=[0],
+            trainer_devices=[1],
             rollout_devices=[0],
-            allow_overlap=True,
         ),
     )
-    # Resource resolution rejects this topology first in ordinary config flows.
-    # Replace only the derived approval bit to exercise the launch-boundary backstop.
-    config.resources = replace(config.resources, colocated=False)
+    # The resolved trainer owns GPU 1, but the actual driver model reports GPU
+    # 0. The launch boundary must reject that real topology mismatch.
 
     with pytest.raises(
         ValueError,
@@ -796,12 +794,10 @@ def test_ray_backend_detects_cuda_trainable_module_when_policy_has_no_device() -
 
     config = _ray_config(
         _resource_cfg(
-            trainer_devices=[0],
+            trainer_devices=[1],
             rollout_devices=[0],
-            allow_overlap=True,
         ),
     )
-    config.resources = replace(config.resources, colocated=False)
 
     with pytest.raises(
         ValueError,

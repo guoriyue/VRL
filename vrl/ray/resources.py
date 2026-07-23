@@ -126,19 +126,34 @@ class ResolvedDistributedResources:
     # from the topology. Consumers use this flag to require trainer parking and
     # reward release without conflating execution with Ray reservations.
     reward_uses_trainer_device: bool
-    rollout_num_gpus: int
     rollout_num_workers: int
     rollout_gpus_per_worker: float
     reward_num_workers: int
     reward_gpus_per_worker: float
     reward_cpus_per_worker: float
-    requires_trainer_reservation: bool
-    colocated: bool
     cross_node: bool
     # Named view over release decisions: lease mode per role plus the per-boundary
     # handoff. The launcher/collector/reward read this instead of re-deriving from
     # device sets.
     lifecycle: RayLifecyclePlan
+
+    @property
+    def rollout_num_gpus(self) -> int:
+        return len(self.rollout_devices)
+
+    @property
+    def colocated(self) -> bool:
+        return bool(set(self.trainer_devices) & set(self.rollout_devices))
+
+    @property
+    def requires_trainer_reservation(self) -> bool:
+        return (
+            bool(self.trainer_devices)
+            and self.rollout_gpus_per_worker > 0
+            and not self.colocated
+            and self.rollout_num_workers > 0
+            and not self.cross_node
+        )
 
 
 _MISSING = object()
@@ -333,13 +348,6 @@ def resolve_distributed_resources(cfg: Any) -> ResolvedDistributedResources:
     reward_release_after_score = reward_shared_with_rollout or reward_shared_with_trainer
     rollout_on_demand = rollout_release_before_train or rollout_release_before_reward_model
 
-    requires_trainer_reservation = (
-        bool(trainer_devices)
-        and rollout_gpus_per_worker > 0
-        and not colocated
-        and rollout_num_workers > 0
-        and not config.cross_node
-    )
     # A role is on_demand when any handoff makes it yield, while the handoff plan
     # keeps the specific phase boundary explicit.
     lifecycle = RayLifecyclePlan(
@@ -362,14 +370,11 @@ def resolve_distributed_resources(cfg: Any) -> ResolvedDistributedResources:
         rollout_devices=rollout_devices,
         reward_devices=reward_devices,
         reward_uses_trainer_device=reward_uses_trainer_device,
-        rollout_num_gpus=rollout_num_gpus,
         rollout_num_workers=rollout_num_workers,
         rollout_gpus_per_worker=rollout_gpus_per_worker,
         reward_num_workers=reward_num_workers,
         reward_gpus_per_worker=reward_gpus_per_worker,
         reward_cpus_per_worker=config.reward_cpus_per_worker,
-        requires_trainer_reservation=requires_trainer_reservation,
-        colocated=colocated,
         cross_node=config.cross_node,
         lifecycle=lifecycle,
     )
@@ -1081,7 +1086,6 @@ class BundleLayout:
     """
 
     bundle_gpu_ids: tuple[int | None, ...]
-    trainer_bundle_indices: tuple[int, ...]
     rollout_bundle_indices: tuple[int, ...]
     reward_bundle_indices: tuple[int, ...]
 
@@ -1122,11 +1126,9 @@ def build_bundle_layout(resolved: ResolvedDistributedResources) -> BundleLayout:
     # Trainer reserved bundles first so the driver GPU is protected before any
     # actor role can claim a bundle (single-node dedicated-trainer plans only;
     # colocated and cross-node set requires_trainer_reservation=False).
-    trainer = (
-        tuple(_gpu_bundle(gpu_id) for gpu_id in resolved.trainer_devices)
-        if resolved.requires_trainer_reservation
-        else ()
-    )
+    if resolved.requires_trainer_reservation:
+        for gpu_id in resolved.trainer_devices:
+            _gpu_bundle(gpu_id)
 
     if resolved.rollout_gpus_per_worker > 0:
         rollout = tuple(_gpu_bundle(gpu_id) for gpu_id in resolved.rollout_devices)
@@ -1142,7 +1144,6 @@ def build_bundle_layout(resolved: ResolvedDistributedResources) -> BundleLayout:
 
     return BundleLayout(
         bundle_gpu_ids=tuple(bundle_gpu_ids),
-        trainer_bundle_indices=trainer,
         rollout_bundle_indices=rollout,
         reward_bundle_indices=reward,
     )

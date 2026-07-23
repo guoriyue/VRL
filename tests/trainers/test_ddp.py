@@ -33,11 +33,9 @@ from vrl.trainers.strategy import (
 def _cpu_ddp_context() -> DistributedTrainingContext:
     return DistributedTrainingContext(
         strategy="ddp",
-        distributed=True,
         rank=0,
         local_rank=0,
         world_size=1,
-        is_primary=True,
         device=torch.device("cpu"),
     )
 

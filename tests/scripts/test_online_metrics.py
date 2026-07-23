@@ -23,11 +23,9 @@ from vrl.trainers.distributed import DistributedTrainingContext
 def _context(*, distributed: bool, primary: bool) -> DistributedTrainingContext:
     return DistributedTrainingContext(
         strategy="ddp" if distributed else "single_process",
-        distributed=distributed,
         rank=0 if primary else 1,
         local_rank=0,
         world_size=2 if distributed else 1,
-        is_primary=primary,
         device=torch.device("cpu"),
     )
 

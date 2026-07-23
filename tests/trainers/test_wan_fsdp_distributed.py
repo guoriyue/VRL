@@ -221,11 +221,9 @@ def _run_rank(
     try:
         context = DistributedTrainingContext(
             strategy="fsdp",
-            distributed=True,
             rank=rank,
             local_rank=0,
             world_size=world_size,
-            is_primary=rank == 0,
             device=torch.device("cpu"),
         )
         strategy = _fsdp_strategy(context, precision_policy="none")
@@ -344,11 +342,9 @@ def _run_dual_rank(
     try:
         context = DistributedTrainingContext(
             strategy="fsdp",
-            distributed=True,
             rank=rank,
             local_rank=0,
             world_size=world_size,
-            is_primary=rank == 0,
             device=torch.device("cpu"),
         )
         strategy = _fsdp_strategy(context, precision_policy="none")
@@ -477,11 +473,9 @@ def _run_cuda_rank(rank: int, world_size: int, port: int, queue: mp.Queue) -> No
         device = torch.device("cuda", rank)
         context = DistributedTrainingContext(
             strategy="fsdp",
-            distributed=True,
             rank=rank,
             local_rank=rank,
             world_size=world_size,
-            is_primary=rank == 0,
             device=device,
         )
         strategy = _fsdp_strategy(context, precision_policy="none")
@@ -528,11 +522,9 @@ def _run_dual_cuda_offload_rank(
         device = torch.device("cuda", rank)
         context = DistributedTrainingContext(
             strategy="fsdp",
-            distributed=True,
             rank=rank,
             local_rank=rank,
             world_size=world_size,
-            is_primary=rank == 0,
             device=device,
         )
         strategy = _fsdp_strategy(

@@ -465,11 +465,9 @@ def test_require_supported_online_strategy_allows_fsdp() -> None:
 
     ctx = DistributedTrainingContext(
         strategy="fsdp",
-        distributed=True,
         rank=0,
         local_rank=0,
         world_size=2,
-        is_primary=True,
         device=torch.device("cpu"),
     )
     online._require_supported_online_strategy(ctx)  # no raise
@@ -480,11 +478,9 @@ def test_require_supported_online_strategy_allows_single_process() -> None:
 
     ctx = DistributedTrainingContext(
         strategy="single_process",
-        distributed=False,
         rank=0,
         local_rank=0,
         world_size=1,
-        is_primary=True,
         device=torch.device("cpu"),
     )
     online._require_supported_online_strategy(ctx)  # no raise
@@ -497,11 +493,9 @@ def test_require_supported_online_strategy_allows_ddp() -> None:
 
     ctx = DistributedTrainingContext(
         strategy="ddp",
-        distributed=True,
         rank=1,
         local_rank=0,
         world_size=2,
-        is_primary=False,
         device=torch.device("cuda:0"),
     )
     online._require_supported_online_strategy(ctx)  # no raise
@@ -535,11 +529,9 @@ async def test_distributed_disjoint_rollout_fails_before_model_or_ray_launch(
     )
     context = DistributedTrainingContext(
         strategy="fsdp",
-        distributed=True,
         rank=0,
         local_rank=0,
         world_size=2,
-        is_primary=True,
         device=torch.device("cuda:0"),
     )
     monkeypatch.setattr(online, "resolve_distributed_resources", lambda _cfg: resources)
