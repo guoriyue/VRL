@@ -202,8 +202,8 @@ else:
 
 
 def test_janus_checkpoint_type_check_is_a_runtime_error(monkeypatch) -> None:
+    from vrl.models.families.janus_pro.config import JanusProConfig
     from vrl.models.families.janus_pro.model import (
-        JanusProConfig,
         _load_janus_from_pretrained,
     )
 

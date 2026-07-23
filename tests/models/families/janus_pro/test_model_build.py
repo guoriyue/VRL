@@ -12,9 +12,107 @@ from vrl.config.loading import load_config
 from vrl.families.registry import get_model_family_entry
 from vrl.generation import GenerationRequest
 from vrl.generation.execution.chunks import SampleChunk
+from vrl.models.families.janus_pro.config import (
+    JANUS_IMAGE_TOKEN_NUM,
+    JanusProConfig,
+    JanusProModelSection,
+)
+from vrl.models.families.janus_pro.model import (
+    JANUS_IMAGE_TOKEN_NUM as ModelImageTokenNum,
+)
+from vrl.models.families.janus_pro.model import (
+    JanusProConfig as ModelJanusProConfig,
+)
+from vrl.models.families.janus_pro.model import (
+    JanusProModel,
+    image_token_logits_from_hidden,
+)
 from vrl.models.families.janus_pro.runtime import (
     JanusProChunkExecutor,
+    JanusProR1ChunkExecutor,
+    JanusProR1ChunkGatherer,
+    janus_config_from_build,
 )
+
+
+def _build_cfg(*, family: str, trust_remote_code: bool):
+    return OmegaConf.create(
+        {
+            "model": {
+                "family": family,
+                "use_lora": True,
+                "trust_remote_code": trust_remote_code,
+            },
+            "precision": {
+                "float32_precision": "tf32",
+                "training": {"dtype": "fp32"},
+                "rollout": {"dtype": "fp32"},
+            },
+            "sampling": {
+                "guidance_scale": 5.0,
+                "temperature": 1.0,
+                "image_token_num": JANUS_IMAGE_TOKEN_NUM,
+            },
+        },
+    )
+
+
+def test_runtime_config_defaults_and_model_compatibility_export() -> None:
+    config = JanusProConfig()
+    base_entry = get_model_family_entry("janus_pro")
+    r1_entry = get_model_family_entry("janus_pro_r1")
+
+    assert (
+        config.model_path
+        == base_entry.family_build.default_model_path
+        == r1_entry.family_build.default_model_path
+    )
+    assert config.image_token_num == JANUS_IMAGE_TOKEN_NUM
+    assert config.lora_target_modules == (
+        "q_proj",
+        "k_proj",
+        "v_proj",
+        "o_proj",
+    )
+    assert config.lora_init == "gaussian"
+    assert ModelImageTokenNum == JANUS_IMAGE_TOKEN_NUM
+    assert ModelJanusProConfig is JanusProConfig
+
+
+@pytest.mark.parametrize("family", ["janus_pro", "janus_pro_r1"])
+@pytest.mark.parametrize("trust_remote_code", [True, False])
+def test_config_projection_preserves_trust_remote_code_boolean(
+    family: str,
+    trust_remote_code: bool,
+) -> None:
+    entry = get_model_family_entry(family)
+    build = entry.resolve_model_build(
+        _build_cfg(family=family, trust_remote_code=trust_remote_code),
+        device="cpu",
+    )
+
+    projected = janus_config_from_build(build)
+
+    assert projected["trust_remote_code"] is trust_remote_code
+    assert projected["lora_target_modules"] == ("q_proj", "v_proj")
+    assert projected["lora_init"] == "gaussian"
+
+
+def test_package_facade_preserves_transition_table_and_public_symbols() -> None:
+    import vrl.models.families.janus_pro as family
+
+    assert family.JANUS_R1_SEGMENTS == (
+        "initial_image",
+        "selfcheck_text",
+        "final_image",
+    )
+    assert family.JanusProChunkExecutor is JanusProChunkExecutor
+    assert family.JanusProConfig is JanusProConfig
+    assert family.JanusProModel is JanusProModel
+    assert family.JanusProModelSection is JanusProModelSection
+    assert family.JanusProR1ChunkExecutor is JanusProR1ChunkExecutor
+    assert family.JanusProR1ChunkGatherer is JanusProR1ChunkGatherer
+    assert family.image_token_logits_from_hidden is image_token_logits_from_hidden
 
 
 def test_janus_r1_replay_build_keeps_the_explicit_runtime_family() -> None:

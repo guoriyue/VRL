@@ -24,6 +24,7 @@ from vrl.models.families.cosmos.predict2_5.config import (
 )
 from vrl.models.families.echo.config import EchoModelSection
 from vrl.models.families.flux.config import FluxModelSection
+from vrl.models.families.janus_pro.config import JanusProModelSection
 from vrl.models.families.llamagen.config import LlamaGenModelSection
 from vrl.models.families.magi_1.config import Magi1ModelSection
 from vrl.models.families.nextstep_1.config import NextStep1ModelSection
@@ -337,6 +338,55 @@ def test_wan_model_keys_are_scoped_to_wan_family() -> None:
         "model.offload_mode",
         "model.trainable_transformers",
     ]
+
+
+@pytest.mark.parametrize(
+    "family",
+    ["janus_pro", "janus", "janus_pro_r1", "janus_r1"],
+)
+@pytest.mark.parametrize("trust_remote_code", [False, True])
+def test_janus_keys_and_aliases_select_shared_family_section(
+    family: str,
+    trust_remote_code: bool,
+) -> None:
+    from vrl.config.unknown_keys import find_unknown_keys
+
+    cfg_data: dict[str, object] = {
+        "model": {
+            "family": family,
+            "trust_remote_code": trust_remote_code,
+            "vq_latent_channels": 8,
+        },
+    }
+    if family in {"janus_pro_r1", "janus_r1"}:
+        cfg_data.update(
+            {
+                "algorithm": {"kind": "token_grpo_multisegment"},
+                "rollout": {"final_image_policy": "always_generate"},
+            },
+        )
+    cfg = OmegaConf.create(cfg_data)
+
+    assert find_unknown_keys(cfg) == []
+    parsed = parse_config(cfg)
+    assert isinstance(parsed.model, JanusProModelSection)
+    assert parsed.model.trust_remote_code is trust_remote_code
+    assert parsed.model.vq_latent_channels == 8
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [("trust_remote_code", False), ("vq_latent_channels", 8)],
+)
+def test_janus_keys_are_unknown_for_shared_token_sibling(
+    field: str,
+    value: object,
+) -> None:
+    from vrl.config.unknown_keys import find_unknown_keys
+
+    cfg = OmegaConf.create({"model": {"family": "emu3", field: value}})
+
+    assert find_unknown_keys(cfg) == [f"model.{field}"]
 
 
 @pytest.mark.parametrize("family", ["nextstep_1", "nextstep"])

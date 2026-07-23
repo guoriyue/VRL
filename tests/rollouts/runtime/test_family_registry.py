@@ -160,6 +160,8 @@ def test_migrated_model_sections_are_owned_by_their_family_packages() -> None:
         ),
         "echo": "vrl.models.families.echo.config:EchoModelSection",
         "flux": "vrl.models.families.flux.config:FluxModelSection",
+        "janus_pro": "vrl.models.families.janus_pro.config:JanusProModelSection",
+        "janus_pro_r1": "vrl.models.families.janus_pro.config:JanusProModelSection",
         "llamagen": "vrl.models.families.llamagen.config:LlamaGenModelSection",
         "magi_1": "vrl.models.families.magi_1.config:Magi1ModelSection",
         "nextstep_1": "vrl.models.families.nextstep_1.config:NextStep1ModelSection",
@@ -191,6 +193,12 @@ def test_migrated_token_runtime_configs_are_owned_by_their_family_packages() -> 
     assert (
         nextstep.family_build.config_cls == "vrl.models.families.nextstep_1.config:NextStep1Config"
     )
+
+    janus = get_model_family_entry("janus_pro")
+    janus_r1 = get_model_family_entry("janus_pro_r1")
+    assert isinstance(janus.family_build, TokenFamilyBuild)
+    assert janus.family_build is janus_r1.family_build
+    assert janus.family_build.config_cls == "vrl.models.families.janus_pro.config:JanusProConfig"
 
 
 def test_migrated_family_packages_keep_their_public_facades() -> None:
@@ -229,6 +237,16 @@ def test_migrated_family_packages_keep_their_public_facades() -> None:
             "glm_image_grid_dims",
             "glm_image_prefill_position_ids",
             "glm_image_token_num",
+        },
+        "vrl.models.families.janus_pro": {
+            "JANUS_R1_SEGMENTS",
+            "JanusProChunkExecutor",
+            "JanusProConfig",
+            "JanusProModel",
+            "JanusProModelSection",
+            "JanusProR1ChunkExecutor",
+            "JanusProR1ChunkGatherer",
+            "image_token_logits_from_hidden",
         },
         "vrl.models.families.llamagen": {
             "LLAMAGEN_CAPTION_TOKEN_NUM",
@@ -279,6 +297,7 @@ def test_model_section_imports_do_not_load_model_runtimes() -> None:
                 "import CosmosPredict25ModelSection; "
                 "from vrl.models.families.echo import EchoModelSection; "
                 "from vrl.models.families.flux import FluxModelSection; "
+                "from vrl.models.families.janus_pro import JanusProModelSection; "
                 "from vrl.models.families.llamagen import LlamaGenModelSection; "
                 "from vrl.models.families.magi_1 import Magi1ModelSection; "
                 "from vrl.models.families.nextstep_1 import NextStep1ModelSection; "
@@ -290,6 +309,7 @@ def test_model_section_imports_do_not_load_model_runtimes() -> None:
                 "assert CosmosAnimaModelSection.__module__.endswith('.anima.config'); "
                 "assert EchoModelSection.__module__.endswith('.echo.config'); "
                 "assert FluxModelSection.__module__.endswith('.flux.config'); "
+                "assert JanusProModelSection.__module__.endswith('.janus_pro.config'); "
                 "assert LlamaGenModelSection.__module__.endswith('.llamagen.config'); "
                 "assert Magi1ModelSection.__module__.endswith('.magi_1.config'); "
                 "assert NextStep1ModelSection.__module__.endswith("
@@ -326,26 +346,34 @@ def test_token_runtime_config_imports_do_not_load_model_runtimes() -> None:
                 "from vrl.utils.config import import_from_path; "
                 "emu_entry = get_model_family_entry('emu3'); "
                 "glm_entry = get_model_family_entry('glm_image'); "
+                "janus_entry = get_model_family_entry('janus_pro'); "
                 "llamagen_entry = get_model_family_entry('llamagen'); "
                 "nextstep_entry = get_model_family_entry('nextstep_1'); "
                 "emu_cls = import_from_path(emu_entry.family_build.config_cls); "
                 "glm_cls = import_from_path(glm_entry.family_build.config_cls); "
+                "janus_cls = import_from_path(janus_entry.family_build.config_cls); "
                 "llamagen_cls = import_from_path("
                 "llamagen_entry.family_build.config_cls); "
                 "nextstep_cls = import_from_path("
                 "nextstep_entry.family_build.config_cls); "
                 "from vrl.models.families.emu3 import Emu3Config; "
                 "from vrl.models.families.glm_image import GlmImageConfig; "
+                "from vrl.models.families.janus_pro "
+                "import JANUS_R1_SEGMENTS, JanusProConfig; "
                 "from vrl.models.families.llamagen import LlamaGenConfig; "
                 "from vrl.models.families.nextstep_1 import NextStep1Config; "
                 "assert emu_cls is Emu3Config; "
                 "assert glm_cls is GlmImageConfig; "
+                "assert janus_cls is JanusProConfig; "
                 "assert llamagen_cls is LlamaGenConfig; "
                 "assert nextstep_cls is NextStep1Config; "
                 "assert Emu3Config.__module__.endswith('.emu3.config'); "
                 "assert GlmImageConfig.__module__.endswith('.glm_image.config'); "
+                "assert JanusProConfig.__module__.endswith('.janus_pro.config'); "
                 "assert LlamaGenConfig.__module__.endswith('.llamagen.config'); "
                 "assert NextStep1Config.__module__.endswith('.nextstep_1.config'); "
+                "assert JANUS_R1_SEGMENTS == "
+                "('initial_image', 'selfcheck_text', 'final_image'); "
                 "assert 'torch' not in sys.modules; "
                 "assert 'diffusers' not in sys.modules; "
                 "assert 'transformers' not in sys.modules; "

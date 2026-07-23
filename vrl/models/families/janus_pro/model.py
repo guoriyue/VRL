@@ -37,7 +37,6 @@ DeepSeek's reference implementation:
 from __future__ import annotations
 
 from collections.abc import Callable
-from dataclasses import dataclass
 from typing import Any
 
 import torch
@@ -47,6 +46,10 @@ import torch.nn.functional as F
 from vrl.math.token.logprob import require_positive_temperature
 from vrl.models.dtypes import resolve_torch_dtype
 from vrl.models.families.janus_pro import JANUS_R1_SEGMENTS
+from vrl.models.families.janus_pro.config import (
+    JANUS_IMAGE_TOKEN_NUM,
+    JanusProConfig,
+)
 from vrl.models.interfaces import (
     ReplayRequest,
     ReplayResult,
@@ -60,8 +63,7 @@ from vrl.utils.logging import init_logger
 
 logger = init_logger(__name__)
 
-# Janus-Pro-1B image-tokenizer constants (from deepseek-ai/Janus config)
-JANUS_IMAGE_TOKEN_NUM = 576  # 24 x 24 latent grid per image
+# Janus-Pro-1B image-tokenizer model constants (from deepseek-ai/Janus config)
 JANUS_IMAGE_VOCAB_SIZE = 16_384  # gen_vision_model codebook size
 JANUS_IMAGE_PATCH_SIZE = 16  # decoder upsample factor → 384 px
 # Derived: sqrt(576 tokens) = 24-wide latent grid x 16 px/patch = 384 px.
@@ -74,47 +76,6 @@ JANUS_IMAGE_PIXEL_SIZE = int(JANUS_IMAGE_TOKEN_NUM**0.5) * JANUS_IMAGE_PATCH_SIZ
 # newline and silently break the R1 loop.
 JANUS_R1_SELFCHECK_PROMPT = "<end_of_image>\nLet me think Does this image match the prompt..."
 JANUS_R1_REGEN_PROMPT = "<｜end▁of▁sentence｜>\nNext, I will draw a new image<begin_of_image>"  # noqa: RUF001
-
-
-@dataclass(slots=True)
-class JanusProConfig:
-    """Hyper-parameters for the Janus-Pro wrapper.
-
-    The defaults target Janus-Pro-1B (single-H100 RL feasible).
-    """
-
-    model_path: str = "deepseek-ai/Janus-Pro-1B"
-    revision: str | None = None
-    dtype: str = "bfloat16"  # "bfloat16" | "float16" | "float32"
-
-    # LoRA
-    use_lora: bool = True
-    lora_rank: int = 32
-    lora_alpha: int = 64
-    lora_dropout: float = 0.0
-    # Janus' language-model uses LLaMA-style projection names.
-    lora_target_modules: tuple[str, ...] = (
-        "q_proj",
-        "k_proj",
-        "v_proj",
-        "o_proj",
-    )
-    lora_init: str = "gaussian"  # PEFT ``init_lora_weights``
-
-    # Generation defaults — used by the AR runtime runner.
-    guidance_scale: float = 5.0
-    temperature: float = 1.0
-    image_token_num: int = JANUS_IMAGE_TOKEN_NUM
-    r1_refine_mode: str = "selfcheck"  # "selfcheck" | "always" | "never"
-
-    # Misc
-    trust_remote_code: bool = True
-    device: str = "cuda"
-
-    # VQ decoder shape — None ⇒ auto-detect from ``vq_model.config``.
-    # Janus-Pro-1B uses 8 latent channels; Janus-Pro-7B may differ.
-    # Override only if auto-detect fails.
-    vq_latent_channels: int | None = None
 
 
 # ---------------------------------------------------------------------------

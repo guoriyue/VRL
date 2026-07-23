@@ -55,14 +55,6 @@ class ModelSection(ConfigBase):
     ] = None
 
 
-class JanusProModelSection(ModelSection):
-    """Janus-Pro optional model-wrapper keys."""
-
-    trust_remote_code: Any = None
-    vq_latent_channels: Any = None
-
-
 __all__ = [
-    "JanusProModelSection",
     "ModelSection",
 ]

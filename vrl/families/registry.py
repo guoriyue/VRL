@@ -738,7 +738,7 @@ _register_model_family(
 _JANUS_PRO_BUILD = TokenFamilyBuild(
     model_cls="vrl.models.families.janus_pro.model:JanusProModel",
     replay_cls="vrl.models.families.janus_pro.model:JanusProReplayModel",
-    config_cls="vrl.models.families.janus_pro.model:JanusProConfig",
+    config_cls="vrl.models.families.janus_pro.config:JanusProConfig",
     config_builder="vrl.models.families.janus_pro.runtime:janus_config_from_build",
     default_model_path="deepseek-ai/Janus-Pro-1B",
 )
@@ -747,7 +747,7 @@ _register_model_family(
     _token_autoregressive_entry(
         family="janus_pro",
         action_distribution="categorical",
-        model_section_cls="vrl.config.model_schema:JanusProModelSection",
+        model_section_cls="vrl.models.families.janus_pro.config:JanusProModelSection",
         executor_cls="vrl.models.families.janus_pro.runtime:JanusProChunkExecutor",
         build=_JANUS_PRO_BUILD,
     ),
@@ -757,7 +757,7 @@ _register_model_family(
     _token_autoregressive_entry(
         family="janus_pro_r1",
         action_distribution="categorical",
-        model_section_cls="vrl.config.model_schema:JanusProModelSection",
+        model_section_cls="vrl.models.families.janus_pro.config:JanusProModelSection",
         task="ar_t2i_r1",
         executor_cls="vrl.models.families.janus_pro.runtime:JanusProR1ChunkExecutor",
         gatherer_cls="vrl.models.families.janus_pro.runtime:JanusProR1ChunkGatherer",
