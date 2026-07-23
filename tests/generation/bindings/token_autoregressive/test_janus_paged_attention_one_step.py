@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from types import SimpleNamespace
 from typing import Any
 
+import pytest
 import torch
 import torch.nn as nn
 
@@ -144,6 +145,36 @@ def test_janus_runner_can_drive_one_paged_attention_image_step() -> None:
         second_logits_hidden[:, 0, 0],
         torch.tensor([12.0, 12.0, 12.0, 12.0]),
     )
+
+
+def test_janus_none_image_token_count_uses_model_default() -> None:
+    model = _model()
+    backend = _RecordingPagedBackend()
+
+    init = JanusProARModelRunner(model, attention_backend=backend).init_token(
+        *_prompt_tensors(),
+        image_token_num=None,
+    )
+
+    assert init.step_count == model.config.image_token_num
+    assert init.state.total_token_num == model.config.image_token_num
+    assert [request.metadata["image_token_num"] for request in backend.prefill_requests] == [
+        model.config.image_token_num,
+        model.config.image_token_num,
+    ]
+
+
+def test_janus_zero_image_token_count_fails_before_prefill() -> None:
+    backend = _RecordingPagedBackend()
+    runner = JanusProARModelRunner(_model(), attention_backend=backend)
+
+    with pytest.raises(ValueError, match="image_token_num must be >= 1"):
+        runner.init_token(
+            *_prompt_tensors(),
+            image_token_num=0,
+        )
+
+    assert backend.prefill_requests == []
 
 
 def test_janus_runtime_uses_vllm_paged_attention_by_default(monkeypatch) -> None:

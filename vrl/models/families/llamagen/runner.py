@@ -75,7 +75,11 @@ class LlamaGenARModelRunner(ARDiscreteTokenRunner):
         )
         top_k = top_k if top_k is not None else config.top_k
         top_p = top_p if top_p is not None else config.top_p
-        image_token_num = image_token_num or config.image_token_num
+        if image_token_num is None:
+            image_token_num = config.image_token_num
+        image_token_num = int(image_token_num)
+        if image_token_num < 1:
+            raise ValueError("image_token_num must be >= 1")
 
         batch_size, caption_len = cond_attention_mask.shape
         device = self.model.device
@@ -124,7 +128,6 @@ class LlamaGenARModelRunner(ARDiscreteTokenRunner):
                 temperature=temp,
                 top_k=int(top_k),
                 top_p=float(top_p),
-                total_token_num=int(image_token_num),
                 caption_len=int(caption_len),
             ),
             row_count=batch_size,

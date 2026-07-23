@@ -106,7 +106,12 @@ class ARDiscreteTokenState:
 
     token_ids: torch.Tensor
     logprobs: torch.Tensor
-    total_token_num: int
+
+    @property
+    def total_token_num(self) -> int:
+        """Return the generated sequence length owned by ``token_ids``."""
+
+        return int(self.token_ids.shape[1])
 
 
 class ARDiscreteTokenRunner:

@@ -39,7 +39,6 @@ def _state(*, temperature: float = 0.9, top_p: float = 0.75) -> GlmImageARState:
         logprobs=torch.empty(1, 4),
         temperature=temperature,
         top_p=top_p,
-        total_token_num=4,
         base_position_schedule=torch.zeros(3, 5, dtype=torch.long),
         prompt_valid_lens=torch.tensor([3]),
     )

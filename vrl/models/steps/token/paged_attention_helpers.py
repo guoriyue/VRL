@@ -88,14 +88,14 @@ def scatter_paged_states(
 class PagedCFGARState(ARDiscreteTokenState):
     """Shared mutable state for a cond/uncond paged-CFG AR token loop.
 
-    ``kw_only`` so family subclasses (Emu3's structural-mask schedule) can add
-    required fields after these defaulted ones.
+    ``kw_only`` keeps construction explicit and lets family subclasses add
+    required fields without positional ordering constraints.
     """
 
     guidance_scale: float
     temperature: float
-    paged_cond_states: list[Any] | None = None
-    paged_uncond_states: list[Any] | None = None
+    paged_cond_states: list[Any]
+    paged_uncond_states: list[Any]
 
 
 class PagedCFGTokenRunner(ARDiscreteTokenRunner):
@@ -186,7 +186,6 @@ class PagedCFGTokenRunner(ARDiscreteTokenRunner):
                     dtype=torch.float32,
                     device=device,
                 ),
-                total_token_num=total_token_num,
                 guidance_scale=float(guidance_scale),
                 temperature=temperature,
                 paged_cond_states=list(cond_prefill.sequence_states),
@@ -252,13 +251,6 @@ class PagedCFGTokenRunner(ARDiscreteTokenRunner):
         batch: TokenStepBatch,
     ) -> dict[str, Any]:
         assert isinstance(state, PagedCFGARState)
-        return self._sample_ar_step_kv(state, batch)
-
-    def _sample_ar_step_kv(
-        self,
-        state: PagedCFGARState,
-        batch: TokenStepBatch,
-    ) -> dict[str, Any]:
         row_indices = batch.row_indices
         position = batch.position
         rows = torch.tensor(row_indices, dtype=torch.long, device=state.token_ids.device)

@@ -36,10 +36,15 @@ class NextStep1ARState:
     guidance_scale: float
     num_steps: int
     noise_level: float
-    image_token_num: int
+    paged_cond_states: list[Any]
     generator: torch.Generator | None = None
-    paged_cond_states: list[Any] | None = None
     paged_uncond_states: list[Any] | None = None
+
+    @property
+    def image_token_num(self) -> int:
+        """Return the generated sequence length owned by ``tokens``."""
+
+        return int(self.tokens.shape[1])
 
 
 class NextStep1ARModelRunner:
@@ -115,9 +120,8 @@ class NextStep1ARModelRunner:
                 guidance_scale=float(guidance_scale),
                 num_steps=int(num_steps),
                 noise_level=float(noise_level),
-                image_token_num=int(image_token_num),
-                generator=generator,
                 paged_cond_states=paged_cond_states,
+                generator=generator,
                 paged_uncond_states=paged_uncond_states,
             ),
             row_count=batch_size,

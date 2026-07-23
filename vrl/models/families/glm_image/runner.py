@@ -124,7 +124,6 @@ class GlmImageTokenRunner(ARDiscreteTokenRunner):
                 ),
                 temperature=temp,
                 top_p=float(nucleus),
-                total_token_num=int(total_token_num),
                 base_position_schedule=base_schedule,
                 prompt_valid_lens=prompt_valid_lens,
                 kv_rows=kv_rows,

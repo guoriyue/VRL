@@ -57,7 +57,8 @@ def _state(*, guidance_scale: float, temperature: float) -> JanusProARState:
         logprobs=torch.empty(1, 1),
         guidance_scale=guidance_scale,
         temperature=temperature,
-        total_token_num=1,
+        paged_cond_states=[object()],
+        paged_uncond_states=[object()],
     )
 
 

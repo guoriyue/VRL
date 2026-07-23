@@ -82,6 +82,26 @@ def test_top_k_one_is_deterministic_greedy() -> None:
     assert torch.equal(first, second)
 
 
+def test_none_image_token_count_uses_model_default() -> None:
+    model = build_tiny_llamagen_model()
+    runner = LlamaGenARModelRunner(model)
+    cond, uncond, mask = _conditioning(model)
+
+    init = runner.init_token(cond, uncond, mask, mask, image_token_num=None)
+
+    assert init.step_count == model.config.image_token_num
+    assert init.state.total_token_num == model.config.image_token_num
+
+
+def test_zero_image_token_count_is_rejected() -> None:
+    model = build_tiny_llamagen_model()
+    runner = LlamaGenARModelRunner(model)
+    cond, uncond, mask = _conditioning(model)
+
+    with pytest.raises(ValueError, match="image_token_num must be >= 1"):
+        runner.init_token(cond, uncond, mask, mask, image_token_num=0)
+
+
 def test_step_requires_full_batch_row_coverage() -> None:
     """Partial-row steps must fail loudly: the static cache advances in-place."""
     model = build_tiny_llamagen_model()

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, fields
 from types import SimpleNamespace
 from typing import Any
 
@@ -13,7 +13,10 @@ from vrl.generation.composition.token_autoregressive.token_loop import (
     TokenAutoregressiveLoop,
 )
 from vrl.models.families.nextstep_1.model import NextStep1Model
-from vrl.models.families.nextstep_1.runner import NextStep1ARModelRunner
+from vrl.models.families.nextstep_1.runner import (
+    NextStep1ARModelRunner,
+    NextStep1ARState,
+)
 
 _BATCH_SIZE = 2
 _HIDDEN_SIZE = 2
@@ -115,6 +118,54 @@ class _ReplayHarness:
             "branch": kv["branch"],
             "last_hidden": hidden,
         }, hidden
+
+
+def test_state_derives_image_token_count_from_tokens() -> None:
+    token_count = 3
+    state = NextStep1ARState(
+        tokens=torch.zeros(_BATCH_SIZE, token_count, _HIDDEN_SIZE),
+        saved_noise=torch.zeros(_BATCH_SIZE, token_count, _HIDDEN_SIZE),
+        logprobs=torch.zeros(_BATCH_SIZE, token_count),
+        guidance_scale=1.0,
+        num_steps=2,
+        noise_level=0.5,
+        paged_cond_states=[object() for _ in range(_BATCH_SIZE)],
+    )
+
+    assert state.image_token_num == token_count
+    assert "image_token_num" not in {field.name for field in fields(state)}
+
+
+def test_state_requires_cond_paged_state() -> None:
+    with pytest.raises(TypeError, match="paged_cond_states"):
+        NextStep1ARState(
+            tokens=torch.zeros(1, 1, _HIDDEN_SIZE),
+            saved_noise=torch.zeros(1, 1, _HIDDEN_SIZE),
+            logprobs=torch.zeros(1, 1),
+            guidance_scale=1.0,
+            num_steps=2,
+            noise_level=0.5,
+        )
+
+
+def test_init_preserves_real_no_cfg_branch() -> None:
+    token_count = 2
+    model = _RolloutModel(token_count)
+    backend = _RecordingAttentionBackend()
+    prompt_embeds = torch.tensor([[[0.1, 0.2], [0.3, 0.4]]])
+    prompt_mask = torch.ones(1, 2, dtype=torch.long)
+
+    init = NextStep1ARModelRunner(model, attention_backend=backend).init_token(
+        prompt_embeds,
+        None,
+        prompt_mask,
+        None,
+        image_token_num=token_count,
+    )
+
+    assert len(init.state.paged_cond_states) == 1
+    assert init.state.paged_uncond_states is None
+    assert set(init.row_lanes) == {"c_cond", "cond_attn"}
 
 
 @pytest.mark.parametrize(
