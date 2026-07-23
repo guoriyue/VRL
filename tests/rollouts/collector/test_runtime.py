@@ -897,7 +897,7 @@ def test_collector_forwards_reference_metadata_to_request() -> None:
 
     builder = GenerationRequestBuilder(
         entry=get_model_family_entry("cosmos-predict2"),
-        config=RolloutCollectorConfig(values={"num_steps": 1}),
+        config=RolloutCollectorConfig(request_sampling={"num_steps": 1}),
     )
 
     collector_request = builder.build(
@@ -917,7 +917,7 @@ def test_collector_forwards_target_metadata_to_request() -> None:
 
     builder = GenerationRequestBuilder(
         entry=get_model_family_entry("cosmos-predict2"),
-        config=RolloutCollectorConfig(values={"num_steps": 1}),
+        config=RolloutCollectorConfig(request_sampling={"num_steps": 1}),
     )
 
     targets = {"target_image": "/tmp/target.png", "target_video": "/tmp/target.mp4"}

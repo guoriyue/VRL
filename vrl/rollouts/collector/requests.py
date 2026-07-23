@@ -56,7 +56,7 @@ class GenerationRequestBuilder:
     ) -> CollectorRequest:
         sampling = {
             str(field_name): list(value) if isinstance(value, tuple) else value
-            for field_name, value in self.config.request_sampling().items()
+            for field_name, value in self.config.generation_sampling().items()
         }
         if seed is not None:
             sampling["seed"] = seed

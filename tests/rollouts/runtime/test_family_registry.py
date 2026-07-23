@@ -27,7 +27,8 @@ from vrl.rollouts.collector.config import (
     RolloutCollectorConfig,
     build_rollout_config_from_cfg,
 )
-from vrl.utils.config import import_from_path
+from vrl.trajectory import TrajectoryStoragePolicy
+from vrl.utils.config import cfg_get, import_from_path
 
 
 def test_family_entry_rejects_a_policy_step_build_mismatch() -> None:
@@ -179,26 +180,29 @@ def test_rollout_config_is_projected_from_yaml() -> None:
 
     rollout = build_rollout_config_from_cfg(cfg)
 
-    assert rollout.values["width"] == 1280
-    assert rollout.values["num_steps"] == 35
-    assert rollout.values["samples_per_chunk"] == 8
-    assert rollout.values["sde_window_range"] == [0, 10]
-    assert rollout.values["return_kl"] is True
-    assert rollout.values["trajectory_storage"] == {
+    assert rollout.request_sampling["width"] == 1280
+    assert rollout.request_sampling["num_steps"] == 35
+    assert rollout.request_sampling["samples_per_chunk"] == 8
+    assert rollout.request_sampling["sde_window_range"] == [0, 10]
+    assert rollout.request_sampling["return_kl"] is True
+    assert rollout.kl_reward_coef == pytest.approx(0.25)
+    assert rollout.trajectory_storage == TrajectoryStoragePolicy(
+        device="cpu",
+        dtype="float16",
+    )
+    assert rollout.generation_sampling()["trajectory_storage"] == {
         "device": "cpu",
         "dtype": "float16",
     }
 
 
-def test_request_sampling_excludes_driver_only_rollout_values() -> None:
+def test_request_sampling_projects_only_generation_owned_rollout_values() -> None:
     cfg = OmegaConf.create(
         {
             "sampling": {"width": 1280, "num_frames": 93, "fps": 16},
             "rollout": {
                 "n_samples_per_prompt": 4,
                 "prompts_per_batch": 1,
-                "microbatch_size": 1,
-                "host_memory_budget_fraction": 0.8,
                 "samples_per_chunk": 8,
                 "sde": {"type": "flow_grpo", "window_range": [0, 10]},
             },
@@ -206,21 +210,33 @@ def test_request_sampling_excludes_driver_only_rollout_values() -> None:
         },
     )
 
-    sampling = build_rollout_config_from_cfg(cfg).request_sampling()
+    rollout = build_rollout_config_from_cfg(cfg)
+    sampling = rollout.generation_sampling()
 
     assert sampling["width"] == 1280
     assert sampling["samples_per_chunk"] == 8
     assert sampling["sde_type"] == "flow_grpo"
     assert sampling["sde_window_range"] == [0, 10]
     assert sampling["return_kl"] is False
-    for driver_key in (
-        "host_memory_budget_fraction",
-        "kl_reward_coef",
-        "microbatch_size",
-        "n_samples_per_prompt",
-        "prompts_per_batch",
-    ):
+    for driver_key in ("kl_reward_coef", "n_samples_per_prompt", "prompts_per_batch"):
         assert driver_key not in sampling
+    assert "trajectory_storage" not in sampling
+    assert rollout.trajectory_storage == TrajectoryStoragePolicy()
+
+
+def test_collector_config_get_adapts_local_and_request_state() -> None:
+    rollout = RolloutCollectorConfig(
+        request_sampling={"num_steps": 4},
+        kl_reward_coef=0.5,
+        trajectory_storage=TrajectoryStoragePolicy(device="cpu"),
+    )
+
+    assert cfg_get(rollout, "num_steps") == 4
+    assert cfg_get(rollout, "kl_reward_coef") == pytest.approx(0.5)
+    assert cfg_get(rollout, "trajectory_storage") == TrajectoryStoragePolicy(
+        device="cpu",
+    )
+    assert cfg_get(rollout, "missing", "fallback") == "fallback"
 
 
 def test_all_registry_entries_build_collectors_from_the_same_entry() -> None:
@@ -229,7 +245,7 @@ def test_all_registry_entries_build_collectors_from_the_same_entry() -> None:
             entry,
             reward_fn=None,
             config=RolloutCollectorConfig(
-                values={"n_samples_per_prompt": 1, "samples_per_chunk": 1},
+                request_sampling={"samples_per_chunk": 1},
             ),
         )
         assert collector.request_builder.entry is entry

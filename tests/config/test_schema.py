@@ -139,6 +139,54 @@ def test_algorithm_dispatch_covers_schema_kind_vocabulary() -> None:
     assert all(algorithm_config_class(kind) for kind in kinds)
 
 
+def test_positive_kl_reward_coef_is_accepted_for_diffusion_rollouts() -> None:
+    cfg = _minimal_grpo_cfg()
+    cfg.algorithm.kl_reward_coef = 0.25
+
+    assert parse_config(cfg).algorithm.kl_reward_coef == 0.25
+
+
+@pytest.mark.parametrize(
+    "kind",
+    ["token_grpo", "token_grpo_multisegment", "diffusion_dpo"],
+)
+def test_positive_kl_reward_coef_rejects_trajectories_without_step_kl(
+    kind: str,
+) -> None:
+    cfg = OmegaConf.create(
+        {"algorithm": {"kind": kind, "kl_reward_coef": 0.25}},
+    )
+
+    with pytest.raises(
+        ValueError,
+        match=r"algorithm\.kl_reward_coef > 0 requires a diffusion rollout trajectory",
+    ):
+        parse_config(cfg)
+
+
+def test_zero_kl_reward_coef_remains_valid_for_token_rollouts() -> None:
+    cfg = OmegaConf.create(
+        {"algorithm": {"kind": "token_grpo", "kl_reward_coef": 0.0}},
+    )
+
+    assert parse_config(cfg).algorithm.kl_reward_coef == 0.0
+
+
+@pytest.mark.parametrize(
+    "value",
+    [-0.1, True, "0.25", float("inf"), float("-inf"), float("nan")],
+)
+def test_kl_reward_coef_rejects_invalid_public_values(value: object) -> None:
+    cfg = _minimal_grpo_cfg()
+    cfg.algorithm.kl_reward_coef = value
+
+    with pytest.raises(
+        ValueError,
+        match=r"algorithm\.kl_reward_coef must be a finite number >= 0",
+    ):
+        parse_config(cfg)
+
+
 # ── rollout / sampling string-setting Literals ────────────────────────────────
 
 

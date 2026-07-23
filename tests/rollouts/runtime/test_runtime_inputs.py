@@ -284,7 +284,7 @@ def test_generation_chunk_auto_reaches_ray_runtime_without_executor_coercion() -
     )
 
     assert "samples_per_chunk" not in inputs.launch_contract.executor_kwargs
-    assert build_rollout_config_from_cfg(cfg).request_sampling()["samples_per_chunk"] == "auto"
+    assert build_rollout_config_from_cfg(cfg).request_sampling["samples_per_chunk"] == "auto"
 
 
 @pytest.mark.parametrize(

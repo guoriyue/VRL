@@ -75,8 +75,7 @@ def test_r1_train_segments_derive_from_algorithm_config() -> None:
 def test_r1_collector_uses_r1_task_request_and_trajectory_batch() -> None:
     """Checks R1 collector uses R1 task request and trajectory batch."""
     rollout_config = RolloutCollectorConfig(
-        values={
-            "n_samples_per_prompt": 2,
+        request_sampling={
             "guidance_scale": 5.0,
             "temperature": 0.9,
             "image_token_num": 576,

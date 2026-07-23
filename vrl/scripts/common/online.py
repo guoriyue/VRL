@@ -970,7 +970,7 @@ async def run_online_recipe(
         if resources.cross_node:
             cross_node_preflight(ray, resources)
         placement_owner.create()
-        collector_config = build_rollout_config_from_cfg(cfg)
+        collector_config = build_rollout_config_from_cfg(built.root)
         reward_fn = build_reward(
             built=built,
             resources=resources,

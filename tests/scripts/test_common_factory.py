@@ -58,7 +58,7 @@ def test_diffusion_grpo_evaluator_uses_resolved_rollout_sde_config() -> None:
 
     assert pair.evaluator.noise_level == 0.37
     assert pair.evaluator.sde_type == "cps"
-    assert collector_config.values["denoise_mode"] == "native"
+    assert collector_config.request_sampling["denoise_mode"] == "native"
 
 
 @pytest.mark.parametrize(
@@ -253,8 +253,7 @@ def test_sana_family_defaults_to_native_fp16() -> None:
     assert built.trainer.train_precision == built.trainer.rollout_precision
     assert built.root.rollout is not None
     assert (
-        built.trainer.batch_plan.replay_samples_per_chunk
-        == built.root.rollout.samples_per_chunk
+        built.trainer.batch_plan.replay_samples_per_chunk == built.root.rollout.samples_per_chunk
     )
     assert build.parameter_dtype is torch.float16
     assert build.precision == expected

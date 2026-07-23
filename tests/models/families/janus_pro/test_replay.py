@@ -125,8 +125,7 @@ def test_janus_collector_has_no_forward_step() -> None:
         get_model_family_entry("janus_pro"),
         reward_fn=None,
         config=RolloutCollectorConfig(
-            values={
-                "n_samples_per_prompt": 1,
+            request_sampling={
                 "guidance_scale": 5.0,
                 "temperature": 1.0,
                 "image_token_num": 4,

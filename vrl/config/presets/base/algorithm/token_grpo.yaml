@@ -8,6 +8,3 @@ algorithm:
   adv_clip_max: 5.0
   global_std: false
   kl_estimator: k3              # k1 = signed log-ratio; k2 = 0.5 * log-ratio^2; k3 = exponential unbiased form
-
-  # Reward shaping is collector behavior, independent of the token loss-side KL.
-  kl_reward_coef: 0.0

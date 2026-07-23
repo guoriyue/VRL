@@ -27,7 +27,7 @@ from pydantic import (
 )
 
 from vrl.algorithms.logprob_mismatch import PrecisionCorrectionConfig
-from vrl.config.algorithm import algorithm_config_class
+from vrl.config.algorithm import algorithm_config_class, resolve_kl_reward_coef
 from vrl.config.data import DataLoaderName, resolve_data_loader
 from vrl.config.precision import PrecisionConfig
 from vrl.config.reward_inference import parse_reward_inference_config
@@ -119,15 +119,22 @@ class AlgorithmConfig(ConfigBase):
     # Every other key is derived from, and validated against, the runtime
     # dataclass selected by ``kind``.
     sft_weight: Any = None
-    # Collector-owned reward coefficient, accepted for every online algorithm.
-    # Reader: vrl/rollouts/collector/config.py.
-    kl_reward_coef: Any = None
+    # Collector-owned diffusion reward-shaping coefficient. Token trajectories
+    # do not carry the per-step KL tensor needed to consume a positive value.
+    kl_reward_coef: float | None = None
+
+    @field_validator("kl_reward_coef", mode="before")
+    @classmethod
+    def _validate_kl_reward_coef(cls, value: object | None) -> float | None:
+        if value is None:
+            return None
+        return resolve_kl_reward_coef(value)
 
 
 @functools.cache
 def _algorithm_config_block(cls: type[Any]) -> ConfigBlock:
-    # kind selects the dataclass; kl_reward_coef is consumed by the collector
-    # for every online algorithm and therefore sits outside those dataclasses.
+    # kind selects the dataclass; kl_reward_coef is collector-owned and its
+    # trajectory compatibility is validated at the root boundary below.
     known = {field.name for field in dataclass_fields(cls)} | {"kind", "kl_reward_coef"}
     return ConfigBlock(known)
 
@@ -270,32 +277,59 @@ class SdeConfig(ConfigBase):
 
 class RolloutConfig(ConfigBase):
     # readers: vrl/math/denoise/flow_matching.py window + RootConfig check
-    sde: SdeConfig | None = None
-    noise_level: float | None = None
+    sde: SdeConfig | None = Field(
+        default=None,
+        json_schema_extra={"runtime_owner": "generation_request"},
+    )
+    noise_level: float | None = Field(
+        default=None,
+        json_schema_extra={"runtime_owner": "generation_request"},
+    )
     # janus_pro R1 only; the sole source for final_image_policy. Validated for
     # legality in RootConfig._cross_field_validate (which requires it for that kind).
-    final_image_policy: Literal["always_generate", "use_selfcheck"] | None = None
+    final_image_policy: Literal["always_generate", "use_selfcheck"] | None = Field(
+        default=None,
+        json_schema_extra={"runtime_owner": "generation_request"},
+    )
     n_samples_per_prompt: int | None = None
     prompts_per_batch: int | None = None
     # reader: vrl/generation/bindings/full_sequence_denoise/layout.py
     # _parse_denoise_mode (request boundary).
     # Allowed set is the type; the layout guard stays for over-the-wire request dicts.
-    denoise_mode: Literal["native", "sde"] | None = None
+    denoise_mode: Literal["native", "sde"] | None = Field(
+        default=None,
+        json_schema_extra={"runtime_owner": "generation_request"},
+    )
     # reader: vrl/generation/bindings/full_sequence_denoise/layout.py — opt-in to storing
     # each denoise step's rollout proposal mean for trust-region replay.
-    return_prev_sample_mean: Any = None
+    return_prev_sample_mean: Any = Field(
+        default=None,
+        json_schema_extra={"runtime_owner": "generation_request"},
+    )
     # reader: vrl/generation/bindings/full_sequence_denoise/layout.py — opt-in to caching
     # the frozen reference (LoRA-disabled) noise_pred at collect, so KL replay never
     # reruns the ref forward. Lossless: replay applies the same sde_step_with_logprob.
-    cache_ref_noise_pred: Any = None
-    same_latent: Any = None
+    cache_ref_noise_pred: Any = Field(
+        default=None,
+        json_schema_extra={"runtime_owner": "generation_request"},
+    )
+    same_latent: Any = Field(
+        default=None,
+        json_schema_extra={"runtime_owner": "generation_request"},
+    )
     # reader: generation planner (chunk_placement.py) + diffusion layout. int =
     # fixed chunk size; "auto" = the Ray runtime's startup chunk-size probe
     # resolves it before the first request (SPRINT_chunk_size_probe; Ray-only,
     # the planner rejects "auto" on other runtimes); null = samples_per_prompt.
-    samples_per_chunk: int | Literal["auto"] | None = None
+    samples_per_chunk: int | Literal["auto"] | None = Field(
+        default=None,
+        json_schema_extra={"runtime_owner": "generation_request"},
+    )
     torch_profiler: Annotated[Any, ConfigBlock(TorchProfilerConfig)] = None
-    trajectory_storage: Annotated[Any, ConfigBlock(TrajectoryStoragePolicy)] = None
+    trajectory_storage: Annotated[Any, ConfigBlock(TrajectoryStoragePolicy)] = Field(
+        default=None,
+        json_schema_extra={"runtime_owner": "generation_request"},
+    )
 
     @field_validator("samples_per_chunk", mode="before")
     @classmethod
@@ -309,6 +343,16 @@ class RolloutConfig(ConfigBase):
                 "rollout.samples_per_chunk must be a positive integer, 'auto', or null",
             )
         return value
+
+
+def generation_request_rollout_fields() -> frozenset[str]:
+    """Derive rollout keys allowed to cross the generation request boundary."""
+
+    return frozenset(
+        name
+        for name, model_field in RolloutConfig.model_fields.items()
+        if (model_field.json_schema_extra or {}).get("runtime_owner") == "generation_request"
+    )
 
 
 class SamplingConfig(ConfigBase):
@@ -905,6 +949,17 @@ class RootConfig(ConfigBase):
             return self
 
         kind = algo.kind
+        kl_reward_coef = resolve_kl_reward_coef(algo.kl_reward_coef)
+        if kl_reward_coef > 0.0 and kind in {
+            "token_grpo",
+            "token_grpo_multisegment",
+            "diffusion_dpo",
+        }:
+            raise ValueError(
+                "algorithm.kl_reward_coef > 0 requires a diffusion rollout "
+                "trajectory with collected per-step KL; "
+                f"algorithm.kind={kind!r} does not provide one",
+            )
         rollout = self.rollout
         model_family = normalize_model_family(
             (self.model.family or "") if self.model else "",
@@ -1056,5 +1111,6 @@ __all__ = [
     "RolloutConfig",
     "RootConfig",
     "SamplingConfig",
+    "generation_request_rollout_fields",
     "parse_config",
 ]
