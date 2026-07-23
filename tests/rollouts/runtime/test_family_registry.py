@@ -145,6 +145,23 @@ def test_family_registry_entries_own_importable_model_sections() -> None:
         assert issubclass(section_cls, ModelSection)
 
 
+def test_migrated_model_sections_are_owned_by_their_family_packages() -> None:
+    expected_paths = {
+        "wan_2_1": "vrl.models.families.wan_2_1.config:WanModelSection",
+        "wan_2_1_i2v": "vrl.models.families.wan_2_1.config:WanModelSection",
+        "cosmos-predict2.5": (
+            "vrl.models.families.cosmos.predict2_5.config:CosmosPredict25ModelSection"
+        ),
+        "cosmos-predict2-anima": (
+            "vrl.models.families.cosmos.anima.config:CosmosAnimaModelSection"
+        ),
+    }
+
+    assert {
+        family: get_model_family_entry(family).model_section_cls for family in expected_paths
+    } == expected_paths
+
+
 def test_model_section_imports_do_not_load_model_runtimes() -> None:
     result = subprocess.run(
         [
@@ -156,10 +173,25 @@ def test_model_section_imports_do_not_load_model_runtimes() -> None:
                 "from vrl.utils.config import import_from_path; "
                 "[import_from_path(entry.model_section_cls) "
                 "for entry in FAMILY_REGISTRY.values()]; "
+                "from vrl.models.families.cosmos.anima "
+                "import CosmosAnimaModelSection; "
+                "from vrl.models.families.cosmos.predict2_5 "
+                "import CosmosPredict25ModelSection; "
+                "from vrl.models.families.wan_2_1 import WanModelSection; "
+                "assert WanModelSection.__module__.endswith('.wan_2_1.config'); "
+                "assert CosmosPredict25ModelSection.__module__.endswith("
+                "'.predict2_5.config'); "
+                "assert CosmosAnimaModelSection.__module__.endswith('.anima.config'); "
                 "assert 'torch' not in sys.modules; "
                 "assert 'diffusers' not in sys.modules; "
                 "assert 'transformers' not in sys.modules; "
-                "assert not any(name.startswith('vrl.models.families.') "
+                "assert 'peft' not in sys.modules; "
+                "assert 'safetensors' not in sys.modules; "
+                "assert 'huggingface_hub' not in sys.modules; "
+                "assert not any("
+                "name.startswith('vrl.models.families.') and "
+                "any(part in {'model', 'runtime', 'adapter'} "
+                "for part in name.split('.')) "
                 "for name in sys.modules)"
             ),
         ],

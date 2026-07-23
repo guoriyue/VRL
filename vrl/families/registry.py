@@ -623,7 +623,7 @@ _register_model_family(
     _full_sequence_denoise_entry(
         family="wan_2_1",
         task="t2v",
-        model_section_cls="vrl.config.model_schema:WanModelSection",
+        model_section_cls="vrl.models.families.wan_2_1.config:WanModelSection",
         # The two wan entries carry their own per-variant recipes, so the
         # t2v/i2v resolution is decided here, once, by family selection. The
         # dual-stage transformer_2 late-load lives in the replay model's
@@ -642,7 +642,7 @@ _register_model_family(
     _full_sequence_denoise_entry(
         family="wan_2_1_i2v",
         task="i2v",
-        model_section_cls="vrl.config.model_schema:WanModelSection",
+        model_section_cls="vrl.models.families.wan_2_1.config:WanModelSection",
         executor_cls="vrl.models.families.wan_2_1.runtime:Wan_2_1I2VChunkExecutor",
         build=DenoiseFamilyBuild(
             model_cls="vrl.models.families.wan_2_1.model:WanI2VDiffusersModel",
@@ -671,7 +671,9 @@ _register_model_family(
     _full_sequence_denoise_entry(
         family="cosmos-predict2.5",
         task="t2w",
-        model_section_cls="vrl.config.model_schema:CosmosPredict25ModelSection",
+        model_section_cls=(
+            "vrl.models.families.cosmos.predict2_5.config:CosmosPredict25ModelSection"
+        ),
         executor_cls=(
             "vrl.models.families.cosmos.predict2_5.runtime:CosmosPredict25ChunkExecutor"
         ),
@@ -708,7 +710,7 @@ _register_model_family(
     _full_sequence_denoise_entry(
         family="cosmos-predict2-anima",
         task="t2i",
-        model_section_cls="vrl.config.model_schema:CosmosAnimaModelSection",
+        model_section_cls="vrl.models.families.cosmos.anima.config:CosmosAnimaModelSection",
         build=DenoiseFamilyBuild(
             model_cls="vrl.models.families.cosmos.anima.model:AnimaModel",
             replay_runtime_builder=(

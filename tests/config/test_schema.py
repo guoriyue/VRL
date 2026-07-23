@@ -7,7 +7,7 @@ import typing
 import pytest
 from omegaconf import OmegaConf
 
-from vrl.config.model_schema import ModelSection, WanModelSection
+from vrl.config.model_schema import ModelSection
 from vrl.config.schema import (
     AlgorithmConfig,
     DataConfig,
@@ -16,6 +16,11 @@ from vrl.config.schema import (
 )
 from vrl.families.names import _FAMILY_BY_ALIAS
 from vrl.families.registry import FAMILY_REGISTRY, SHARED_MODEL_SECTION_CLS
+from vrl.models.families.cosmos.anima.config import CosmosAnimaModelSection
+from vrl.models.families.cosmos.predict2_5.config import (
+    CosmosPredict25ModelSection,
+)
+from vrl.models.families.wan_2_1.config import WanModelSection
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -353,12 +358,16 @@ def test_unknown_wan_offload_mode_raises() -> None:
         parse_config(cfg)
 
 
-def test_root_retains_selected_family_model_section_and_serializes_its_fields() -> None:
+@pytest.mark.parametrize("expert_lifecycle_profiling", [False, True])
+def test_root_retains_selected_family_model_section_and_serializes_its_fields(
+    expert_lifecycle_profiling: bool,
+) -> None:
     cfg = OmegaConf.create(
         {
             "model": {
                 "family": "wan_2_1_i2v",
                 "path": "Wan-AI/Wan2.2-I2V-A14B-Diffusers",
+                "expert_lifecycle_profiling": expert_lifecycle_profiling,
                 "offload_mode": "sequential",
             },
         },
@@ -367,8 +376,89 @@ def test_root_retains_selected_family_model_section_and_serializes_its_fields() 
     parsed = parse_config(cfg)
 
     assert isinstance(parsed.model, WanModelSection)
+    assert parsed.model.expert_lifecycle_profiling is expert_lifecycle_profiling
     assert parsed.model.offload_mode == "sequential"
+    assert parsed.model_dump()["model"]["expert_lifecycle_profiling"] is expert_lifecycle_profiling
     assert parsed.model_dump()["model"]["offload_mode"] == "sequential"
+
+
+@pytest.mark.parametrize("family", ["cosmos-predict2.5", "cosmos_predict2_5"])
+@pytest.mark.parametrize("skip_text_encoder", [False, True])
+def test_cosmos_predict25_keys_and_alias_select_family_section(
+    family: str,
+    skip_text_encoder: bool,
+) -> None:
+    from vrl.config.unknown_keys import find_unknown_keys
+
+    cfg = OmegaConf.create(
+        {
+            "model": {
+                "family": family,
+                "skip_text_encoder": skip_text_encoder,
+            },
+        },
+    )
+
+    assert find_unknown_keys(cfg) == []
+    parsed = parse_config(cfg)
+    assert isinstance(parsed.model, CosmosPredict25ModelSection)
+    assert parsed.model.skip_text_encoder is skip_text_encoder
+    assert parsed.model_dump()["model"]["skip_text_encoder"] is skip_text_encoder
+
+
+def test_cosmos_predict25_key_is_unknown_for_shared_predict2() -> None:
+    from vrl.config.unknown_keys import find_unknown_keys
+
+    cfg = OmegaConf.create(
+        {
+            "model": {
+                "family": "cosmos-predict2",
+                "skip_text_encoder": True,
+            },
+        },
+    )
+
+    assert find_unknown_keys(cfg) == ["model.skip_text_encoder"]
+
+
+@pytest.mark.parametrize(
+    "family",
+    ["cosmos-predict2-anima", "anima", "cosmos_anima"],
+)
+def test_cosmos_anima_keys_and_aliases_select_family_section(family: str) -> None:
+    from vrl.config.unknown_keys import find_unknown_keys
+
+    cfg = OmegaConf.create(
+        {
+            "model": {
+                "family": family,
+                "qwen_tokenizer_path": "Qwen/Qwen2.5-0.5B",
+                "scheduler_shift": 3.0,
+                "transformer_file": "split_files/diffusion_models/anima.safetensors",
+            },
+        },
+    )
+
+    assert find_unknown_keys(cfg) == []
+    parsed = parse_config(cfg)
+    assert isinstance(parsed.model, CosmosAnimaModelSection)
+    assert parsed.model.scheduler_shift == 3.0
+    assert parsed.model.transformer_file == "split_files/diffusion_models/anima.safetensors"
+
+
+def test_cosmos_anima_key_is_unknown_for_shared_predict2() -> None:
+    from vrl.config.unknown_keys import find_unknown_keys
+
+    cfg = OmegaConf.create(
+        {
+            "model": {
+                "family": "cosmos-predict2",
+                "scheduler_shift": 3.0,
+            },
+        },
+    )
+
+    assert find_unknown_keys(cfg) == ["model.scheduler_shift"]
 
 
 def test_model_family_aliases_select_their_canonical_section_classes() -> None:

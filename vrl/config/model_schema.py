@@ -7,7 +7,7 @@ without importing torch, diffusers, or upstream model packages.
 
 from __future__ import annotations
 
-from typing import Annotated, Any, Literal
+from typing import Annotated, Any
 
 from vrl.config.base import ConfigBase
 from vrl.config.unknown_keys import ConfigBlock
@@ -53,37 +53,6 @@ class ModelSection(ConfigBase):
             )
         ),
     ] = None
-
-
-class WanModelSection(ModelSection):
-    """Wan-specific public model keys."""
-
-    boundary_ratio: Any = None
-    expert_lifecycle_profiling: bool = False
-    offload_mode: Literal["none", "model", "sequential"] = "none"
-    trainable_transformers: Any = None
-
-
-class CosmosPredict25ModelSection(ModelSection):
-    """Cosmos Predict2.5 public model keys."""
-
-    skip_text_encoder: Any = None
-
-
-class CosmosAnimaModelSection(ModelSection):
-    """Cosmos Anima single-file artifact paths and scheduler key."""
-
-    qwen_tokenizer_path: Any = None
-    qwen_tokenizer_revision: Any = None
-    scheduler_shift: Any = None
-    t5_tokenizer_path: Any = None
-    t5_tokenizer_revision: Any = None
-    text_encoder_file: Any = None
-    text_encoder_path: Any = None
-    transformer_file: Any = None
-    transformer_path: Any = None
-    vae_file: Any = None
-    vae_path: Any = None
 
 
 class JanusProModelSection(ModelSection):
@@ -152,8 +121,6 @@ class Magi1ModelSection(ModelSection):
 
 __all__ = [
     "CausVidModelSection",
-    "CosmosAnimaModelSection",
-    "CosmosPredict25ModelSection",
     "EchoModelSection",
     "FluxModelSection",
     "JanusProModelSection",
@@ -161,5 +128,4 @@ __all__ = [
     "Magi1ModelSection",
     "ModelSection",
     "NextStep1ModelSection",
-    "WanModelSection",
 ]
