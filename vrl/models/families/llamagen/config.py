@@ -51,7 +51,7 @@ class LlamaGenConfig:
     lora_alpha: int = 64
     lora_dropout: float = 0.0
     lora_target_modules: tuple[str, ...] = ("wqkv", "wo")
-    lora_init: str = "gaussian"
+    lora_init: str | bool = "gaussian"
 
     # Generation defaults — used by the AR runtime runner. Upstream demo uses
     # cfg_scale=7.5, top_k=1000; top_k defaults to 0 (off) here so the rollout

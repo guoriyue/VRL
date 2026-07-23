@@ -24,7 +24,7 @@ class Emu3Config:
         "v_proj",
         "o_proj",
     )
-    lora_init: str = "gaussian"  # PEFT ``init_lora_weights``
+    lora_init: str | bool = "gaussian"  # PEFT ``init_lora_weights``
 
     # Generation defaults — used by the AR runtime runner.
     guidance_scale: float = 3.0

@@ -29,7 +29,8 @@ def token_model_config_base(build: ModelBuild) -> dict[str, Any]:
 
     The family config dataclass owns LoRA defaults. This projection only
     carries fields explicitly provided by ``model.lora`` so partial overrides
-    cannot shadow or duplicate those defaults.
+    cannot shadow or duplicate those defaults. The two public initialization
+    spellings normalize to one field and conflict instead of silently winning.
     """
 
     config: dict[str, Any] = {
@@ -49,8 +50,17 @@ def token_model_config_base(build: ModelBuild) -> dict[str, Any]:
             config["lora_target_modules"] = tuple(lora["target_modules"])
         if "dropout" in lora:
             config["lora_dropout"] = float(lora["dropout"])
-        if "init" in lora:
-            config["lora_init"] = str(lora["init"])
+        has_init = "init" in lora
+        has_init_lora_weights = "init_lora_weights" in lora
+        if has_init and has_init_lora_weights:
+            raise ValueError(
+                "model.lora.init and model.lora.init_lora_weights are mutually "
+                "exclusive; configure only one",
+            )
+        if has_init:
+            config["lora_init"] = lora["init"]
+        elif has_init_lora_weights:
+            config["lora_init"] = lora["init_lora_weights"]
     return config
 
 

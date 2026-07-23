@@ -47,7 +47,7 @@ class NextStep1Config:
         "v_proj",
         "o_proj",
     )
-    lora_init: str = "gaussian"
+    lora_init: str | bool = "gaussian"
 
     # Flow-head sampling — used by the AR runtime runner.
     num_steps: int = 20  # K Euler steps inside the flow ODE

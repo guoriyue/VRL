@@ -121,6 +121,28 @@ def test_config_from_build_uses_fused_projection_lora_targets() -> None:
     assert config["model_path"] == "peizesun/llamagen_t2i"
 
 
+def test_false_lora_initialization_reaches_peft_as_bool() -> None:
+    pytest.importorskip("peft")
+
+    class TinyGpt(torch.nn.Module):
+        def __init__(self) -> None:
+            super().__init__()
+            self.wqkv = torch.nn.Linear(2, 2, bias=False)
+            self.wo = torch.nn.Linear(2, 2, bias=False)
+
+    cfg = _cfg()
+    cfg.model.lora = {"init_lora_weights": False}
+    build = get_model_family_entry("llamagen").resolve_model_build(cfg, device="cpu")
+    config = LlamaGenConfig(**llamagen_config_from_build(build))
+
+    wrapped = LlamaGenModel._apply_lora(
+        SimpleNamespace(config=config),
+        TinyGpt(),
+    )
+
+    assert wrapped.peft_config["default"].init_lora_weights is False
+
+
 def test_executor_layout_defaults_match_xl_stage1_256() -> None:
     """256 tokens (16x16), 256 px, fixed 120-token caption prefix."""
     request = GenerationRequest(

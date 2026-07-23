@@ -116,6 +116,46 @@ def test_explicit_lora_fields_override_family_config_defaults(
     assert resolved.lora_init == "olora"
 
 
+@pytest.mark.parametrize("family", [family for family, _ in _FAMILY_TARGETS])
+@pytest.mark.parametrize(
+    ("lora", "expected"),
+    (
+        ({"init_lora_weights": False}, False),
+        ({"init": False}, False),
+        ({"init_lora_weights": "olora"}, "olora"),
+        ({"init": "olora"}, "olora"),
+    ),
+)
+def test_lora_init_aliases_preserve_bool_and_string_values(
+    family: str,
+    lora: dict[str, Any],
+    expected: str | bool,
+) -> None:
+    projected, resolved = _project_and_resolve(
+        family,
+        use_lora=True,
+        lora=lora,
+    )
+
+    assert projected["lora_init"] == expected
+    assert type(projected["lora_init"]) is type(expected)
+    assert resolved.lora_init == expected
+    assert type(resolved.lora_init) is type(expected)
+
+
+@pytest.mark.parametrize("family", [family for family, _ in _FAMILY_TARGETS])
+def test_lora_init_aliases_are_mutually_exclusive(family: str) -> None:
+    with pytest.raises(
+        ValueError,
+        match=r"model\.lora\.init and model\.lora\.init_lora_weights are mutually exclusive",
+    ):
+        _project_and_resolve(
+            family,
+            use_lora=True,
+            lora={"init": "gaussian", "init_lora_weights": False},
+        )
+
+
 @pytest.mark.parametrize(("family", "expected_targets"), _FAMILY_TARGETS)
 def test_disabled_lora_ignores_nested_overrides(
     family: str,
@@ -130,6 +170,7 @@ def test_disabled_lora_ignores_nested_overrides(
             "target_modules": ["wrong_target"],
             "dropout": 0.5,
             "init": "olora",
+            "init_lora_weights": False,
         },
     )
 

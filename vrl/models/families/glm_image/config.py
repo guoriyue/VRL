@@ -24,7 +24,7 @@ class GlmImageConfig:
         "v_proj",
         "o_proj",
     )
-    lora_init: str = "gaussian"  # PEFT ``init_lora_weights``
+    lora_init: str | bool = "gaussian"  # PEFT ``init_lora_weights``
 
     # AR sampling defaults — the checkpoint's generation_config.json values
     # (do_sample=True, temperature=0.9, top_p=0.75). There is NO AR-side CFG.
