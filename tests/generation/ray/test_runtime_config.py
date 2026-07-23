@@ -659,7 +659,8 @@ def test_launch_from_cfg_projects_model_compile_and_precision() -> None:
         "outer_autocast": True,
     }
     assert model_build["rollout"]["prompt_encoder_dtype"] == "float16"
-    assert model_build["model_config"]["revision"] == "driver-config"
+    assert model_build["revision"] == "driver-config"
+    assert "revision" not in model_build["model_config"]
     assert model_build["model_config"]["torch_compile"] == {
         "enable": True,
         "mode": "default",
@@ -673,8 +674,10 @@ def test_launch_from_cfg_preserves_disabled_model_compile_config() -> None:
         get_model_family_entry("sd3_5"),
     )
 
-    model_config = launch_inputs.launch_contract.model_build["model_config"]
-    assert model_config["revision"] == "driver-config"
+    model_build = launch_inputs.launch_contract.model_build
+    assert model_build["revision"] == "driver-config"
+    model_config = model_build["model_config"]
+    assert "revision" not in model_config
     assert model_config["torch_compile"] == {
         "enable": False,
         "mode": "default",

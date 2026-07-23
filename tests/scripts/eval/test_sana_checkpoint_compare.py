@@ -166,7 +166,8 @@ def test_run_generates_base_before_strict_restore_and_current(
     )
     build = SimpleNamespace(
         model_name_or_path="test/sana",
-        model_config={"revision": None},
+        revision=None,
+        model_config={},
         parameter_dtype=torch.float16,
     )
     schedulers: list[DPMSolverMultistepScheduler] = []

@@ -15,10 +15,9 @@ def _build(revision: str | None) -> SimpleNamespace:
         "text_encoder_file": "weights/text_encoder.safetensors",
         "vae_file": "weights/vae.safetensors",
     }
-    if revision is not None:
-        model_config["revision"] = revision
     return SimpleNamespace(
         model_name_or_path="org/anima",
+        revision=revision,
         model_config=model_config,
         parameter_dtype=torch.float32,
         device=torch.device("cpu"),

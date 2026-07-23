@@ -77,7 +77,7 @@ class ModelSection(_ClosedModelSection):
     memory: ModelMemorySection | None = None
     path: Any = None
     # Immutable Hub snapshot used by full-pipeline rollout and component replay.
-    revision: Any = None
+    revision: str | None = None
     torch_compile: TorchCompileSection | None = None
     use_lora: Any = None
     # Shared DiffusionChunkExecutor constructor values. The selected family

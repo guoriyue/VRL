@@ -86,6 +86,7 @@ def _build(
 ) -> ModelBuild:
     return ModelBuild(
         model_name_or_path="",
+        revision=None,
         device="cpu",
         parameter_dtype=torch.bfloat16,
         family="magi_1",
@@ -564,7 +565,7 @@ def test_model_revision_is_forwarded_to_weight_snapshot(
         "vae_pretrained_path",
     ):
         build.model_config.pop(key)
-    build.model_config["revision"] = "immutable-weight-sha"
+    build.revision = "immutable-weight-sha"
 
     resolved = Magi1SubprocessConfig.from_build(build)
 
@@ -600,7 +601,7 @@ def test_bad_source_preflight_prevents_weight_download(
         "vae_pretrained_path",
     ):
         build.model_config.pop(key)
-    build.model_config["revision"] = "immutable-weight-sha"
+    build.revision = "immutable-weight-sha"
     monkeypatch.setattr(
         magi_model,
         "_source_head_revision",

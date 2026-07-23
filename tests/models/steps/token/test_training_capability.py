@@ -66,6 +66,7 @@ def _model_build(
     assert isinstance(recipe, TokenFamilyBuild)
     return ModelBuild(
         model_name_or_path=recipe.default_model_path,
+        revision=None,
         device="cpu",
         parameter_dtype="fp32",
         family=family,

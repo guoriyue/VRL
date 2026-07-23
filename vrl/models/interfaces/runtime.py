@@ -93,7 +93,7 @@ class ModelBuild:
     dataset / logging cadence are explicitly out of scope.
 
     ``model_config`` carries the model-owned remainder of ``cfg.model`` after
-    registry identity, checkpoint path, and executor settings are separated;
+    registry identity, checkpoint path/revision, and executor settings are separated;
     ``sampling_config`` carries ``cfg.sampling``. The read properties expose
     common curated views so
     consumers read ``build.memory`` / ``build.lora`` / ``build.num_steps`` directly
@@ -105,6 +105,8 @@ class ModelBuild:
     """
 
     model_name_or_path: str
+    # Immutable snapshot selector shared by every upstream model loader.
+    revision: str | None
     device: Any
     # Resolved base transformer parameter dtype selected by the public role.
     parameter_dtype: Any

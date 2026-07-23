@@ -130,8 +130,7 @@ def generate_prompt_images(
 
 
 def _model_revision(build: Any) -> str | None:
-    model_config = build.model_config or {}
-    revision = model_config.get("revision")
+    revision = build.revision
     if revision is None:
         return None
     text = str(revision).strip()

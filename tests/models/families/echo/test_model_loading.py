@@ -41,10 +41,9 @@ def _patch_echo_dependencies(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def _build(gemma_path: str, revision: str | None) -> SimpleNamespace:
     model_config = {"gemma_path": gemma_path, "use_lora": False}
-    if revision is not None:
-        model_config["revision"] = revision
     return SimpleNamespace(
         model_name_or_path="jdopensource/JoyAI-Echo",
+        revision=revision,
         model_config=model_config,
         sampling_config={"height": 64, "width": 64},
         parameter_dtype=torch.float32,

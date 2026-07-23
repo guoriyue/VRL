@@ -95,6 +95,7 @@ def _direct_rollout_build(
 ) -> ModelBuild:
     return ModelBuild(
         model_name_or_path="fake/model",
+        revision=None,
         device="cpu",
         parameter_dtype="float32",
         family=family,
@@ -183,6 +184,7 @@ def test_wan_runtime_bundle_applies_model_build_memory_policy(
     bundle = get_model_family_entry(family).build_rollout(
         ModelBuild(
             model_name_or_path="fake/model",
+            revision=None,
             device="cpu",
             parameter_dtype="float32",
             family=family,
@@ -280,6 +282,7 @@ def test_full_generation_runtime_bundles_apply_model_build_memory_policy(
     bundle = get_model_family_entry(build_family).build_rollout(
         ModelBuild(
             model_name_or_path="fake/model",
+            revision=None,
             device="cpu",
             parameter_dtype="float16" if build_family == "sana" else "float32",
             family=build_family,

@@ -34,6 +34,7 @@ def _model_build(
         model_config["lora"] = lora
     return ModelBuild(
         model_name_or_path=recipe.default_model_path,
+        revision=None,
         device="cpu",
         parameter_dtype="fp32",
         family=family,

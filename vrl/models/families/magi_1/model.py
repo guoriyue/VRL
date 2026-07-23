@@ -749,7 +749,7 @@ def _resolve_weight_components(
         return explicit_checkpoint, explicit_t5, explicit_vae
 
     repo_id = str(build.model_name_or_path or "").strip()
-    revision = str(model_config.get("revision") or "").strip()
+    revision = str(build.revision or "").strip()
     if not repo_id or repo_id == "None":
         raise ValueError(
             "MAGI-1 missing model.path: set an official Hugging Face repository "

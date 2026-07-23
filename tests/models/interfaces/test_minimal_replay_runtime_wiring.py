@@ -41,6 +41,7 @@ def test_model_build_rejects_subbyte_parameter_storage(dtype: str) -> None:
     with pytest.raises(ValueError, match="neither is parameter storage"):
         ModelBuild(
             model_name_or_path="fake/repo",
+            revision=None,
             device="cpu",
             parameter_dtype=dtype,
             family="sd3_5",
@@ -84,6 +85,7 @@ def test_model_build_reconstructs_nested_rollout_payload() -> None:
 
     build = ModelBuild(
         model_name_or_path="fake/repo",
+        revision=None,
         device="cpu",
         parameter_dtype="fp16",
         family="sd3_5",
@@ -255,6 +257,7 @@ def _build(**overrides: Any) -> ModelBuild:
 
     values: dict[str, Any] = {
         "model_name_or_path": "fake/repo",
+        "revision": None,
         "device": "cpu",
         "parameter_dtype": torch.float32,
         "family": "sd3_5",

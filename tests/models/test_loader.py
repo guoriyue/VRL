@@ -12,11 +12,12 @@ from vrl.models.steps.denoise.base import diffusers_pipeline_dtypes
 def test_full_pipeline_propagates_revision_like_component_loader() -> None:
     build = ModelBuild(
         model_name_or_path="org/model",
+        revision="immutable-revision",
         device="cpu",
         parameter_dtype=torch.float16,
         family="sd3_5",
         precision=RolePrecision("fp16", "tf32"),
-        model_config={"revision": "immutable-revision"},
+        model_config={},
     )
 
     _, kwargs = diffusers_pipeline_dtypes(build, torch.float16)
@@ -27,6 +28,7 @@ def test_full_pipeline_propagates_revision_like_component_loader() -> None:
 def test_full_pipeline_omits_absent_revision() -> None:
     build = ModelBuild(
         model_name_or_path="org/model",
+        revision=None,
         device="cpu",
         parameter_dtype=torch.float16,
         family="sd3_5",

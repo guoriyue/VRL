@@ -69,6 +69,7 @@ def _build_policy(seed: int = 0) -> WanI2VReplayModel:
     )
     build = ModelBuild(
         model_name_or_path="tiny-wan-i2v",
+        revision=None,
         device=torch.device("cpu"),
         parameter_dtype=torch.float32,
         family="wan_2_1_i2v",
@@ -99,6 +100,7 @@ def _build_dual_policy(seed: int = 0) -> WanI2VReplayModel:
     )
     build = ModelBuild(
         model_name_or_path="tiny-wan2.2-i2v",
+        revision=None,
         device=torch.device("cpu"),
         parameter_dtype=torch.float32,
         family="wan_2_1_i2v",

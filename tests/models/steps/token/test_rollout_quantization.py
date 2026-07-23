@@ -131,6 +131,7 @@ def test_ar_worker_guard_requires_the_requested_format(
 
     build = ModelBuild(
         model_name_or_path="fake/repo",
+        revision=None,
         device="cpu",
         parameter_dtype="bf16",
         family="emu3",
@@ -158,6 +159,7 @@ def test_ar_worker_guard_rejects_a_different_quantization_format() -> None:
     model.language_model = nn.Sequential(Fp8Linear(nn.Linear(64, 64, bias=False)))
     build = ModelBuild(
         model_name_or_path="fake/repo",
+        revision=None,
         device="cpu",
         parameter_dtype="bf16",
         family="emu3",
@@ -198,6 +200,7 @@ def test_ar_builder_rejects_unsupported_nvfp4_before_quantization_mutation(
     model = _ArPolicy()
     build = ModelBuild(
         model_name_or_path="fake/repo",
+        revision=None,
         device="cpu",
         parameter_dtype="bf16",
         family="emu3",
@@ -241,6 +244,7 @@ def test_ar_builder_applies_rollout_quantization_and_replay_does_not(
     ) -> ModelBuild:
         return ModelBuild(
             model_name_or_path="fake/repo",
+            revision=None,
             device="cpu",
             parameter_dtype="float32",
             family="emu3",

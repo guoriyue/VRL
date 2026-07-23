@@ -912,8 +912,7 @@ def _resolve_checkpoint(build: ModelBuild) -> Path:
     reference = str(build.model_name_or_path)
     relative_file = str(model_config.get("checkpoint_file", CAUSVID_CHECKPOINT_FILE))
     local = _resolve_configured_path(reference)
-    revision_value = model_config.get("revision")
-    revision = str(revision_value) if revision_value else None
+    revision = build.revision
     if local.is_file():
         checkpoint = local
     elif local.is_dir():

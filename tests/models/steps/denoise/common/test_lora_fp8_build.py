@@ -207,6 +207,7 @@ def test_shared_builder_drops_master_before_quantized_lora_gpu_move(monkeypatch)
     )
     build = ModelBuild(
         model_name_or_path="fake",
+        revision=None,
         device="cpu",
         parameter_dtype=torch.float16,
         family="sd3_5",
@@ -253,6 +254,7 @@ def test_shared_builder_preserves_resolved_role_precision() -> None:
 
     build = ModelBuild(
         model_name_or_path="fake",
+        revision=None,
         device="cpu",
         parameter_dtype=torch.float16,
         family="sd3_5",
@@ -290,6 +292,7 @@ def test_nvfp4_hardware_guard_runs_before_quantization_mutation(
     model = _Policy()
     build = ModelBuild(
         model_name_or_path="fake",
+        revision=None,
         device="cpu",
         parameter_dtype=torch.bfloat16,
         family="sd3_5",
@@ -350,6 +353,7 @@ def test_full_finetune_dtype_move_preserves_quantized_cache(
 
     build = ModelBuild(
         model_name_or_path="fake",
+        revision=None,
         device="cpu",
         parameter_dtype=torch.bfloat16,
         family="sd3_5",

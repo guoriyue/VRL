@@ -9,7 +9,8 @@ from typing import Any
 def model_revision_kwargs(build: Any) -> dict[str, str]:
     """Return the immutable model snapshot argument for every upstream loader."""
 
-    return model_config_revision_kwargs(build, "revision")
+    revision = getattr(build, "revision", None)
+    return {"revision": str(revision)} if revision else {}
 
 
 def model_config_revision_kwargs(build: Any, field: str) -> dict[str, str]:

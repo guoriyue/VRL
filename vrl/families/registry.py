@@ -267,6 +267,7 @@ class ModelFamilyEntry:
             exclude_unset=True,
         )
         model_path = model_config.pop("path", None)
+        model_revision = model_config.pop("revision", None)
         model_config.pop("family", None)
         model_config.pop("executor", None)
         if isinstance(self.family_build, TokenFamilyBuild) and model_path is None:
@@ -301,6 +302,7 @@ class ModelFamilyEntry:
             )
         build = ModelBuild(
             model_name_or_path=str(model_path),
+            revision=None if model_revision is None else str(model_revision),
             device=device,
             parameter_dtype=parameter_dtype,
             family=self.family,

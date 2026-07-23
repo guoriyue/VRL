@@ -40,7 +40,7 @@ def token_model_config_base(build: ModelBuild) -> dict[str, Any]:
 
     config: dict[str, Any] = {
         "model_path": build.model_name_or_path,
-        "revision": (build.model_config or {}).get("revision") or None,
+        "revision": build.revision,
         "dtype": dtype_to_wire_name(build.parameter_dtype),
         "device": str(build.device),
         "use_lora": build.use_lora,
