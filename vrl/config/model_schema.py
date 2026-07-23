@@ -70,19 +70,8 @@ class NextStep1ModelSection(ModelSection):
     vae_revision: Any = None
 
 
-class LlamaGenModelSection(ModelSection):
-    """LlamaGen checkpoint-file and frozen-T5 keys."""
-
-    gpt_ckpt: Any = None
-    gpt_model: Any = None
-    t5_path: Any = None
-    t5_revision: Any = None
-    vq_ckpt: Any = None
-
-
 __all__ = [
     "JanusProModelSection",
-    "LlamaGenModelSection",
     "ModelSection",
     "NextStep1ModelSection",
 ]

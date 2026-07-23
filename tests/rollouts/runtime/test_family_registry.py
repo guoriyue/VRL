@@ -160,6 +160,7 @@ def test_migrated_model_sections_are_owned_by_their_family_packages() -> None:
         ),
         "echo": "vrl.models.families.echo.config:EchoModelSection",
         "flux": "vrl.models.families.flux.config:FluxModelSection",
+        "llamagen": "vrl.models.families.llamagen.config:LlamaGenModelSection",
         "magi_1": "vrl.models.families.magi_1.config:Magi1ModelSection",
     }
 
@@ -179,6 +180,10 @@ def test_migrated_token_runtime_configs_are_owned_by_their_family_packages() -> 
         assert isinstance(entry.family_build, TokenFamilyBuild)
         assert entry.family_build.config_cls == expected_path
         assert entry.model_section_cls == SHARED_MODEL_SECTION_CLS
+
+    llamagen = get_model_family_entry("llamagen")
+    assert isinstance(llamagen.family_build, TokenFamilyBuild)
+    assert llamagen.family_build.config_cls == "vrl.models.families.llamagen.config:LlamaGenConfig"
 
 
 def test_migrated_family_packages_keep_their_public_facades() -> None:
@@ -218,6 +223,16 @@ def test_migrated_family_packages_keep_their_public_facades() -> None:
             "glm_image_prefill_position_ids",
             "glm_image_token_num",
         },
+        "vrl.models.families.llamagen": {
+            "LLAMAGEN_CAPTION_TOKEN_NUM",
+            "LLAMAGEN_IMAGE_TOKEN_NUM",
+            "LLAMAGEN_IMAGE_VOCAB_SIZE",
+            "LlamaGenChunkExecutor",
+            "LlamaGenConfig",
+            "LlamaGenModel",
+            "LlamaGenModelSection",
+            "LlamaGenReplayModel",
+        },
         "vrl.models.families.magi_1": {
             "Magi1Model",
             "Magi1ModelSection",
@@ -250,6 +265,7 @@ def test_model_section_imports_do_not_load_model_runtimes() -> None:
                 "import CosmosPredict25ModelSection; "
                 "from vrl.models.families.echo import EchoModelSection; "
                 "from vrl.models.families.flux import FluxModelSection; "
+                "from vrl.models.families.llamagen import LlamaGenModelSection; "
                 "from vrl.models.families.magi_1 import Magi1ModelSection; "
                 "from vrl.models.families.wan_2_1 import WanModelSection; "
                 "assert CausVidModelSection.__module__.endswith('.causvid.config'); "
@@ -259,6 +275,7 @@ def test_model_section_imports_do_not_load_model_runtimes() -> None:
                 "assert CosmosAnimaModelSection.__module__.endswith('.anima.config'); "
                 "assert EchoModelSection.__module__.endswith('.echo.config'); "
                 "assert FluxModelSection.__module__.endswith('.flux.config'); "
+                "assert LlamaGenModelSection.__module__.endswith('.llamagen.config'); "
                 "assert Magi1ModelSection.__module__.endswith('.magi_1.config'); "
                 "assert 'torch' not in sys.modules; "
                 "assert 'diffusers' not in sys.modules; "
@@ -292,14 +309,20 @@ def test_token_runtime_config_imports_do_not_load_model_runtimes() -> None:
                 "from vrl.utils.config import import_from_path; "
                 "emu_entry = get_model_family_entry('emu3'); "
                 "glm_entry = get_model_family_entry('glm_image'); "
+                "llamagen_entry = get_model_family_entry('llamagen'); "
                 "emu_cls = import_from_path(emu_entry.family_build.config_cls); "
                 "glm_cls = import_from_path(glm_entry.family_build.config_cls); "
+                "llamagen_cls = import_from_path("
+                "llamagen_entry.family_build.config_cls); "
                 "from vrl.models.families.emu3 import Emu3Config; "
                 "from vrl.models.families.glm_image import GlmImageConfig; "
+                "from vrl.models.families.llamagen import LlamaGenConfig; "
                 "assert emu_cls is Emu3Config; "
                 "assert glm_cls is GlmImageConfig; "
+                "assert llamagen_cls is LlamaGenConfig; "
                 "assert Emu3Config.__module__.endswith('.emu3.config'); "
                 "assert GlmImageConfig.__module__.endswith('.glm_image.config'); "
+                "assert LlamaGenConfig.__module__.endswith('.llamagen.config'); "
                 "assert 'torch' not in sys.modules; "
                 "assert 'diffusers' not in sys.modules; "
                 "assert 'transformers' not in sys.modules; "

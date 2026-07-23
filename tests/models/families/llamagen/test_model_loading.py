@@ -6,7 +6,8 @@ import torch
 def test_llamagen_t5_loader_uses_its_independent_revision(monkeypatch) -> None:
     from transformers import AutoTokenizer, T5EncoderModel
 
-    from vrl.models.families.llamagen.model import LlamaGenConfig, _load_t5_encoder
+    from vrl.models.families.llamagen.config import LlamaGenConfig
+    from vrl.models.families.llamagen.model import _load_t5_encoder
 
     calls: list[tuple[str, str, dict]] = []
     encoder = torch.nn.Linear(1, 1)

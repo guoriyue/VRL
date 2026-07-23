@@ -11,6 +11,25 @@ from omegaconf import OmegaConf
 from vrl.families.registry import get_model_family_entry
 from vrl.generation import GenerationRequest
 from vrl.generation.execution.chunks import SampleChunk
+from vrl.models.families.llamagen.config import (
+    LLAMAGEN_CAPTION_DIM,
+    LLAMAGEN_CAPTION_TOKEN_NUM,
+    LLAMAGEN_DOWNSAMPLE_SIZE,
+    LLAMAGEN_GPT_CKPT,
+    LLAMAGEN_HF_REPO,
+    LLAMAGEN_IMAGE_TOKEN_NUM,
+    LLAMAGEN_T5_PATH,
+    LLAMAGEN_VQ_CKPT,
+    LlamaGenConfig,
+)
+from vrl.models.families.llamagen.model import (
+    LLAMAGEN_IMAGE_VOCAB_SIZE,
+    LlamaGenModel,
+    LlamaGenReplayModel,
+)
+from vrl.models.families.llamagen.model import (
+    LlamaGenConfig as ModelLlamaGenConfig,
+)
 from vrl.models.families.llamagen.runtime import (
     LlamaGenChunkExecutor,
     llamagen_config_from_build,
@@ -38,6 +57,36 @@ def _cfg():
             },
         }
     )
+
+
+@pytest.mark.parametrize("use_lora", [True, False])
+def test_runtime_config_defaults_and_model_compatibility_export(use_lora: bool) -> None:
+    config = LlamaGenConfig(use_lora=use_lora)
+    entry = get_model_family_entry("llamagen")
+
+    assert config.model_path == LLAMAGEN_HF_REPO == entry.family_build.default_model_path
+    assert config.gpt_ckpt == LLAMAGEN_GPT_CKPT
+    assert config.vq_ckpt == LLAMAGEN_VQ_CKPT
+    assert config.t5_path == LLAMAGEN_T5_PATH
+    assert config.image_token_num == LLAMAGEN_IMAGE_TOKEN_NUM
+    assert config.cls_token_num == LLAMAGEN_CAPTION_TOKEN_NUM
+    assert config.caption_dim == LLAMAGEN_CAPTION_DIM
+    assert config.downsample_size == LLAMAGEN_DOWNSAMPLE_SIZE
+    assert config.lora_target_modules == ("wqkv", "wo")
+    assert config.use_lora is use_lora
+    assert ModelLlamaGenConfig is LlamaGenConfig
+
+
+def test_package_facade_preserves_existing_public_symbols() -> None:
+    import vrl.models.families.llamagen as family
+
+    assert family.LLAMAGEN_CAPTION_TOKEN_NUM == LLAMAGEN_CAPTION_TOKEN_NUM
+    assert family.LLAMAGEN_IMAGE_TOKEN_NUM == LLAMAGEN_IMAGE_TOKEN_NUM
+    assert family.LLAMAGEN_IMAGE_VOCAB_SIZE == LLAMAGEN_IMAGE_VOCAB_SIZE
+    assert family.LlamaGenChunkExecutor is LlamaGenChunkExecutor
+    assert family.LlamaGenConfig is LlamaGenConfig
+    assert family.LlamaGenModel is LlamaGenModel
+    assert family.LlamaGenReplayModel is LlamaGenReplayModel
 
 
 def test_resolve_model_build_defaults() -> None:

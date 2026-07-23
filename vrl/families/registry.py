@@ -821,12 +821,12 @@ _register_model_family(
     _token_autoregressive_entry(
         family="llamagen",
         action_distribution="categorical",
-        model_section_cls="vrl.config.model_schema:LlamaGenModelSection",
+        model_section_cls="vrl.models.families.llamagen.config:LlamaGenModelSection",
         executor_cls="vrl.models.families.llamagen.runtime:LlamaGenChunkExecutor",
         build=TokenFamilyBuild(
             model_cls="vrl.models.families.llamagen.model:LlamaGenModel",
             replay_cls="vrl.models.families.llamagen.model:LlamaGenReplayModel",
-            config_cls="vrl.models.families.llamagen.model:LlamaGenConfig",
+            config_cls="vrl.models.families.llamagen.config:LlamaGenConfig",
             config_builder="vrl.models.families.llamagen.runtime:llamagen_config_from_build",
             default_model_path="peizesun/llamagen_t2i",
         ),

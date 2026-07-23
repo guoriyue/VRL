@@ -16,7 +16,8 @@ from types import SimpleNamespace
 import torch
 import torch.nn as nn
 
-from vrl.models.families.llamagen.model import LlamaGenConfig, LlamaGenModel
+from vrl.models.families.llamagen.config import LlamaGenConfig
+from vrl.models.families.llamagen.model import LlamaGenModel
 from vrl.models.families.llamagen.vendor.gpt import ModelArgs, Transformer
 
 # Tiny t2i geometry: 4x4 token grid, 4-token caption prefix, 8-dim head.

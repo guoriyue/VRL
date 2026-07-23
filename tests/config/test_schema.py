@@ -24,6 +24,7 @@ from vrl.models.families.cosmos.predict2_5.config import (
 )
 from vrl.models.families.echo.config import EchoModelSection
 from vrl.models.families.flux.config import FluxModelSection
+from vrl.models.families.llamagen.config import LlamaGenModelSection
 from vrl.models.families.magi_1.config import Magi1ModelSection
 from vrl.models.families.wan_2_1.config import WanModelSection
 
@@ -481,6 +482,39 @@ def test_cosmos_anima_key_is_unknown_for_shared_predict2() -> None:
     )
 
     assert find_unknown_keys(cfg) == ["model.scheduler_shift"]
+
+
+@pytest.mark.parametrize("family", ["llamagen", "llamagen_t2i"])
+def test_llamagen_keys_and_alias_select_family_section(family: str) -> None:
+    from vrl.config.unknown_keys import find_unknown_keys
+
+    payload = {
+        "gpt_ckpt": "custom-gpt.pt",
+        "gpt_model": "GPT-XL",
+        "t5_path": "org/t5",
+        "t5_revision": "immutable",
+        "vq_ckpt": "custom-vq.pt",
+    }
+    cfg = OmegaConf.create({"model": {"family": family, **payload}})
+
+    assert find_unknown_keys(cfg) == []
+    parsed = parse_config(cfg)
+    assert isinstance(parsed.model, LlamaGenModelSection)
+    assert parsed.model is not None
+    parsed_payload = parsed.model.model_dump()
+    assert {key: parsed_payload[key] for key in payload} == payload
+
+
+@pytest.mark.parametrize(
+    "field",
+    ["gpt_ckpt", "gpt_model", "t5_path", "t5_revision", "vq_ckpt"],
+)
+def test_llamagen_keys_are_unknown_for_shared_token_sibling(field: str) -> None:
+    from vrl.config.unknown_keys import find_unknown_keys
+
+    cfg = OmegaConf.create({"model": {"family": "emu3", field: "unexpected"}})
+
+    assert find_unknown_keys(cfg) == [f"model.{field}"]
 
 
 @pytest.mark.parametrize(
