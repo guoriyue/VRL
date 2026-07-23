@@ -64,7 +64,6 @@ def _rollout_batch(sample_count: int) -> RolloutBatch:
         observations=torch.zeros(sample_count, 1, 1),
         actions=torch.zeros(sample_count, 1, 1),
         rewards=torch.arange(sample_count, dtype=torch.float32),
-        dones=torch.ones(sample_count, dtype=torch.bool),
         group_ids=torch.zeros(sample_count, dtype=torch.long),
         context={},
     )

@@ -119,7 +119,6 @@ def _batch() -> RolloutBatch:
         observations=torch.zeros(*shape, 1),
         actions=torch.ones(*shape, 1),
         rewards=torch.ones(2),
-        dones=torch.zeros(2),
         group_ids=torch.arange(2),
         trajectory=trajectory,
     )

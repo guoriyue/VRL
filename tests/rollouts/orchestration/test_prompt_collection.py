@@ -31,9 +31,7 @@ def _batch(prompts: list[str], group_size: int) -> RolloutBatch:
         observations=torch.zeros(batch_size, 1, 1),
         actions=torch.zeros(batch_size, 1, 1),
         rewards=torch.arange(batch_size, dtype=torch.float32),
-        dones=torch.ones(batch_size, dtype=torch.bool),
         group_ids=group_ids,
-        prompts=[prompt for prompt in prompts for _ in range(group_size)],
     )
 
 
@@ -89,6 +87,7 @@ class _DeferredCollector:
         supports_overlap: bool = False,
     ) -> None:
         self.events: list[str] = []
+        self._prompt_names: dict[int, tuple[str, ...]] = {}
         self.requires_runtime_offload_before_reward = rollout_reward_handoff
         self.requires_driver_model_offload_for_reward = trainer_reward_handoff
         self.supports_reward_generation_overlap = supports_overlap
@@ -96,10 +95,12 @@ class _DeferredCollector:
     async def collect_unscored(self, inputs: list[Any], **kwargs: Any) -> Any:
         prompts = [getattr(item, "prompt", item) for item in inputs]
         self.events.append(f"generate:{','.join(prompts)}")
-        return _batch(prompts, int(kwargs["group_size"]))
+        batch = _batch(prompts, int(kwargs["group_size"]))
+        self._prompt_names[id(batch)] = tuple(prompts)
+        return batch
 
     async def score_rollouts(self, pendings: list[Any]) -> list[RolloutBatch]:
-        names = [",".join(dict.fromkeys(pending.prompts)) for pending in pendings]
+        names = [",".join(dict.fromkeys(self._prompt_names[id(pending)])) for pending in pendings]
         self.events.append(f"score_rollouts:[{';'.join(names)}]")
         return list(pendings)
 
@@ -110,7 +111,9 @@ class _TrajectoryDeferredCollector(_DeferredCollector):
     async def collect_unscored(self, inputs: list[Any], **kwargs: Any) -> RolloutBatch:
         prompts = [getattr(item, "prompt", item) for item in inputs]
         self.events.append(f"generate:{','.join(prompts)}")
-        return _batch_with_trajectory(prompts, int(kwargs["group_size"]))
+        batch = _batch_with_trajectory(prompts, int(kwargs["group_size"]))
+        self._prompt_names[id(batch)] = tuple(prompts)
+        return batch
 
 
 @pytest.mark.asyncio
@@ -137,7 +140,7 @@ async def test_prompt_examples_generate_all_groups_before_one_scoring_call() -> 
     assert len(batches) == 3
     for prompt_idx, batch in enumerate(batches):
         assert batch.group_ids.unique().tolist() == [prompt_idx]
-        assert batch.prompts == [f"p{prompt_idx}"] * 2
+        assert not hasattr(batch, "prompts")
 
 
 @pytest.mark.asyncio
@@ -162,7 +165,6 @@ async def test_mixed_prompts_preserve_group_id_remap() -> None:
         "score_rollouts:[s0;e1;s2]",
     ]
     assert [batch.group_ids.unique().tolist() for batch in batches] == [[0], [1], [2]]
-    assert [batch.prompts for batch in batches] == [["s0"], ["e1"], ["s2"]]
 
 
 @pytest.mark.asyncio
@@ -198,10 +200,7 @@ async def test_plain_string_list_remap_updates_batch_and_trajectory_group_ids() 
     )
 
     assert [batch.group_ids.item() for batch in batches] == [0, 1]
-    assert [
-        TrajectorySignalBuilder(batch).group_ids.item()
-        for batch in batches
-    ] == [0, 1]
+    assert [TrajectorySignalBuilder(batch).group_ids.item() for batch in batches] == [0, 1]
 
 
 @dataclass
@@ -294,10 +293,12 @@ class _StreamingCollector(_DeferredCollector):
                 raise RuntimeError("generation failed")
         await asyncio.sleep(0)
         self.events.append(f"generate_done:{name}")
-        return _batch(prompts, int(kwargs["group_size"]))
+        batch = _batch(prompts, int(kwargs["group_size"]))
+        self._prompt_names[id(batch)] = tuple(prompts)
+        return batch
 
     async def score_rollouts(self, pendings: list[Any]) -> list[RolloutBatch]:
-        names = [",".join(dict.fromkeys(pending.prompts)) for pending in pendings]
+        names = [",".join(dict.fromkeys(self._prompt_names[id(pending)])) for pending in pendings]
         name = ";".join(names)
         self.active_scores += 1
         self.max_active_scores = max(self.max_active_scores, self.active_scores)
@@ -361,7 +362,6 @@ async def test_capable_collector_overlaps_reward_with_next_generation() -> None:
     )
     assert collector.max_active_scores == 1
     assert collector.active_scores == 0
-    assert [batch.prompts for batch in batches] == [["p0"], ["p1"]]
     assert [batch.group_ids.item() for batch in batches] == [0, 1]
 
 

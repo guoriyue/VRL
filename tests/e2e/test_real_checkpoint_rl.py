@@ -879,12 +879,9 @@ def _synthetic_diffusion_replay_batch(
         observations=observations.detach(),
         actions=actions,
         rewards=rewards,
-        dones=torch.ones(batch_size, device=device, dtype=torch.bool),
         group_ids=trajectory.group_ids,
         extras={},
         context=dict(trajectory.context),
-        videos=None,
-        prompts=[row.prompt for row in sample_rows],
         trajectory=trajectory,
         training_view=build_training_view(trajectory, primary_segment="denoise"),
     )

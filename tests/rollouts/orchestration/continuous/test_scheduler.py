@@ -49,9 +49,7 @@ def _item(
         observations=torch.zeros(2, 1),
         actions=torch.zeros(2, 1),
         rewards=torch.zeros(2),
-        dones=torch.ones(2, dtype=torch.bool),
         group_ids=torch.zeros(2, dtype=torch.long),
-        prompts=[f"p{group_key}"] * 2,
     )
     return ContinuousRolloutItem(
         group_key=group_key,

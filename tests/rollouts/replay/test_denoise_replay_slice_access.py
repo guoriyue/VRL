@@ -91,7 +91,6 @@ def _batch_with_sentinel_timestep_tensors() -> tuple[RolloutBatch, list[_NoFullM
             observations=observations,
             actions=actions,
             rewards=torch.ones(2),
-            dones=torch.zeros(2),
             group_ids=torch.arange(2),
             trajectory=trajectory,
         ),

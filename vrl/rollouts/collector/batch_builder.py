@@ -125,12 +125,9 @@ class TrajectoryRolloutBatchBuilder:
             observations=observations,
             actions=actions,
             rewards=rewards_adjusted,
-            dones=torch.ones(observations.shape[0], dtype=torch.bool, device=device),
             group_ids=self._group_ids(device=device),
             extras={},
             context=rollout_context,
-            videos=self.output.output,
-            prompts=[row.prompt for row in self.output.sample_rows],
             trajectory=self.trajectory,
             training_view=build_training_view(
                 self.trajectory,
@@ -146,22 +143,14 @@ class TrajectoryRolloutBatchBuilder:
         actions = role_tensor(segment, "action").value
         prompt_ids = named_tensor(segment, "prompt_input_ids").value
         device = self.context.device or prompt_ids.device
-        images = self.output.output
 
         return RolloutBatch(
             observations=prompt_ids.unsqueeze(1),
             actions=actions,
             rewards=rewards_raw.to(device),
-            dones=torch.ones(
-                len(self.output.sample_rows),
-                dtype=torch.bool,
-                device=device,
-            ),
             group_ids=self._group_ids(device=device),
             extras={},
             context=dict(self.trajectory.context),
-            videos=images.unsqueeze(2),
-            prompts=[row.prompt for row in self.output.sample_rows],
             trajectory=self.trajectory,
             training_view=build_training_view(
                 self.trajectory,
@@ -190,9 +179,6 @@ class TrajectoryRolloutBatchBuilder:
                 device=token_ids.device,
             )
         device = self.context.device or prompt_ids.device
-        final_image = self._decoded_tensor("final_image")
-        if final_image is None:
-            final_image = self.output.output
 
         rollout_context = dict(self.trajectory.context)
         rollout_context.pop("primary_segment", None)
@@ -201,11 +187,6 @@ class TrajectoryRolloutBatchBuilder:
             observations=prompt_ids.unsqueeze(1),
             actions=token_ids,
             rewards=rewards_raw.to(device),
-            dones=torch.ones(
-                len(self.output.sample_rows),
-                dtype=torch.bool,
-                device=device,
-            ),
             group_ids=self._group_ids(device=device),
             extras={},
             context={
@@ -216,8 +197,6 @@ class TrajectoryRolloutBatchBuilder:
                     if segment.distribution == "categorical"
                 ),
             },
-            videos=final_image.unsqueeze(2),
-            prompts=[row.prompt for row in self.output.sample_rows],
             trajectory=self.trajectory,
             training_view=build_training_view(
                 self.trajectory,
@@ -308,13 +287,6 @@ class TrajectoryRolloutBatchBuilder:
         return len(trainable) > 1 and all(
             segment.distribution == "categorical" for segment in trainable
         )
-
-    def _decoded_tensor(self, name: str) -> Any | None:
-        decoded = self.trajectory.segments.get("decoded")
-        if decoded is None:
-            return None
-        tensor = decoded.tensors.get(name)
-        return None if tensor is None else tensor.value
 
     def _infer_device(self, value: Any) -> Any:
         if self.context.device is not None:

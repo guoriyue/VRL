@@ -162,7 +162,6 @@ def _batch(*, ref_noise_pred: torch.Tensor | None) -> RolloutBatch:
         observations=observations,
         actions=actions,
         rewards=torch.ones(2),
-        dones=torch.zeros(2),
         group_ids=torch.arange(2),
         trajectory=trajectory,
     )

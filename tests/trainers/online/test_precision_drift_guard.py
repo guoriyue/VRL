@@ -335,9 +335,7 @@ def test_online_trainer_precision_guard_fails_before_optimizer_when_ratio_drifts
                 observations=torch.zeros(group_size, 2, 1),
                 actions=torch.zeros(group_size, 2, 1),
                 rewards=torch.arange(group_size, dtype=torch.float32),
-                dones=torch.ones(group_size, dtype=torch.bool),
                 group_ids=torch.zeros(group_size, dtype=torch.long),
-                prompts=list(prompts) * group_size,
                 context={},
             )
 

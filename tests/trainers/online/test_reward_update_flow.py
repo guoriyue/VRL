@@ -68,14 +68,11 @@ class TestRewardUpdateFlow:
                 captured_inputs.extend(inputs)
                 captured_kwargs.append(dict(kwargs))
                 group_size = int(kwargs["group_size"])
-                prompts = [item.prompt for item in inputs]
                 return RolloutBatch(
                     observations=torch.zeros(group_size, 2, 1),
                     actions=torch.zeros(group_size, 2, 1),
                     rewards=torch.ones(group_size, dtype=torch.float32),
-                    dones=torch.ones(group_size, dtype=torch.bool),
                     group_ids=torch.zeros(group_size, dtype=torch.long),
-                    prompts=prompts * group_size,
                     context={},
                 )
 
@@ -192,9 +189,7 @@ class TestRewardUpdateFlow:
                     observations=torch.zeros(batch_size, 2, 1),
                     actions=torch.zeros(batch_size, 2, 1),
                     rewards=rewards,
-                    dones=torch.ones(batch_size, dtype=torch.bool),
                     group_ids=group_ids,
-                    prompts=[p for p in prompts for _ in range(group_size)],
                     context={},
                 )
 
@@ -301,9 +296,7 @@ class TestRewardUpdateFlow:
                         [float(i % group_size) for i in range(batch_size)],
                         dtype=torch.float32,
                     ),
-                    dones=torch.ones(batch_size, dtype=torch.bool),
                     group_ids=group_ids,
-                    prompts=[p for p in prompts for _ in range(group_size)],
                     context={},
                 )
 
@@ -622,9 +615,7 @@ class TestRewardUpdateFlow:
                         [float(i % group_size) for i in range(batch_size)],
                         dtype=torch.float32,
                     ),
-                    dones=torch.ones(batch_size, dtype=torch.bool),
                     group_ids=group_ids,
-                    prompts=[p for p in prompts for _ in range(group_size)],
                     context={},
                 )
 
@@ -733,9 +724,7 @@ class TestRewardUpdateFlow:
                     observations=torch.zeros(batch_size, 2, 1),
                     actions=torch.zeros(batch_size, 2, 1),
                     rewards=torch.arange(batch_size, dtype=torch.float32),
-                    dones=torch.ones(batch_size, dtype=torch.bool),
                     group_ids=group_ids,
-                    prompts=[p for p in prompts for _ in range(group_size)],
                     context={},
                 )
 
@@ -854,9 +843,7 @@ def test_replay_samples_per_chunk_splits_backward_and_preserves_gradient(monkeyp
                 observations=torch.zeros(batch_size, 1, 1),
                 actions=torch.zeros(batch_size, 1, 1),
                 rewards=torch.arange(batch_size, dtype=torch.float32),
-                dones=torch.ones(batch_size, dtype=torch.bool),
                 group_ids=torch.zeros(batch_size, dtype=torch.long),
-                prompts=[p for p in prompts for _ in range(group_size)],
                 context={},
             )
 
@@ -1168,7 +1155,6 @@ def test_select_move_and_remap_preserve_rollout_trajectory_fields() -> None:
         observations=torch.ones(4, 1, 3, dtype=torch.long),
         actions=token_ids,
         rewards=torch.arange(4, dtype=torch.float32),
-        dones=torch.ones(4, dtype=torch.bool),
         group_ids=torch.tensor([0, 0, 1, 1]),
         trajectory=trajectory,
         training_view=build_training_view(trajectory),

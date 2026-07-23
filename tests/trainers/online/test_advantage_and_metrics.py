@@ -97,14 +97,12 @@ class TestAdvantageAndMetrics:
                     observations=torch.zeros(group_size, 2, 1),
                     actions=torch.zeros(group_size, 2, 1),
                     rewards=torch.tensor(rewards, dtype=torch.float32),
-                    dones=torch.ones(group_size, dtype=torch.bool),
                     group_ids=torch.zeros(group_size, dtype=torch.long),
                     extras={
                         "reward_components": {
                             "observer": torch.tensor(rewards, dtype=torch.float32) + 10.0,
                         },
                     },
-                    prompts=list(prompts) * group_size,
                     context={},
                 )
 
@@ -234,7 +232,6 @@ class TestAdvantageAndMetrics:
             observations=torch.zeros(10, 1, 1),
             actions=torch.zeros(10, 1, 1),
             rewards=torch.zeros(10),
-            dones=torch.ones(10, dtype=torch.bool),
             group_ids=torch.zeros(10, dtype=torch.long),
         )
         chunks = _training_sample_chunks(batch, torch.ones(10), samples_per_chunk=8)
@@ -359,9 +356,7 @@ class TestAdvantageAndMetrics:
                     observations=torch.zeros(batch_size, 1, 1),
                     actions=torch.zeros(batch_size, 1, 1),
                     rewards=torch.ones(batch_size, dtype=torch.float32),
-                    dones=torch.ones(batch_size, dtype=torch.bool),
                     group_ids=torch.zeros(batch_size, dtype=torch.long),
-                    prompts=prompts * group_size,
                     context={},
                     trajectory=trajectory,
                     training_view=build_training_view(trajectory),

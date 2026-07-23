@@ -57,9 +57,7 @@ def estimate_batch_bytes(batch: RolloutBatch) -> int:
         batch.observations,
         batch.actions,
         batch.rewards,
-        batch.dones,
         batch.group_ids,
-        batch.videos,
     ]
     for value in candidates:
         if isinstance(value, torch.Tensor):

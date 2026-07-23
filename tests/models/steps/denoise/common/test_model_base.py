@@ -304,7 +304,6 @@ def test_replay_forward_returns_typed_replay_result() -> None:
         observations=observations,
         actions=actions,
         rewards=torch.zeros(2),
-        dones=torch.ones(2, dtype=torch.bool),
         group_ids=torch.tensor([0, 1]),
         trajectory=trajectory,
         training_view=build_training_view(trajectory),

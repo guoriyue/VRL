@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 
 class TestRolloutBatch:
     """Groups tests for RolloutBatch construction defaults."""
@@ -16,7 +18,25 @@ class TestRolloutBatch:
             observations=torch.randn(1, 2, 4),
             actions=torch.randn(1, 2, 4),
             rewards=torch.tensor([1.0]),
-            dones=torch.tensor([True]),
             group_ids=torch.tensor([0]),
         )
         assert b.context == {}
+
+    @pytest.mark.parametrize("field_name", ["dones", "videos", "prompts"])
+    def test_post_reward_transport_fields_are_not_constructor_inputs(
+        self,
+        field_name: str,
+    ) -> None:
+        import torch
+
+        from vrl.rollouts.batch import RolloutBatch
+
+        values = {
+            "observations": torch.randn(1, 2, 4),
+            "actions": torch.randn(1, 2, 4),
+            "rewards": torch.tensor([1.0]),
+            "group_ids": torch.tensor([0]),
+            field_name: object(),
+        }
+        with pytest.raises(TypeError, match=field_name):
+            RolloutBatch(**values)

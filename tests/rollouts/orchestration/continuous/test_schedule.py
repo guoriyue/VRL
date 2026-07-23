@@ -35,9 +35,9 @@ def _batch(prompts: list[str], group_size: int) -> RolloutBatch:
         observations=torch.zeros(batch_size, 1, 1),
         actions=torch.zeros(batch_size, 1, 1),
         rewards=torch.arange(batch_size, dtype=torch.float32),
-        dones=torch.ones(batch_size, dtype=torch.bool),
         group_ids=group_ids,
-        prompts=[prompt for prompt in prompts for _ in range(group_size)],
+        # Test-fake provenance used only to verify finite lookahead ordering.
+        context={"fixture_prompts": tuple(prompts)},
     )
 
 
@@ -733,7 +733,8 @@ async def test_three_gas2_updates_consume_exact_finite_lookahead_sequence() -> N
                 sync_stats.append(await schedule.after_train_step())
 
         assert [
-            [batch.prompts[0] for batch in iteration.batches] for iteration in iterations
+            [batch.context["fixture_prompts"][0] for batch in iteration.batches]
+            for iteration in iterations
         ] == prompts
         assert [iteration.policy_version for iteration in iterations] == [1, 1, 1, 2, 2, 3]
         assert [iteration.metadata["consume_policy_version"] for iteration in iterations] == [

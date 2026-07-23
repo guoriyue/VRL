@@ -43,10 +43,8 @@ class _Collector(CollectorControlFake):
             observations=torch.zeros(group_size, 2, 1),
             actions=torch.zeros(group_size, 2, 1),
             rewards=torch.arange(group_size, dtype=torch.float32),
-            dones=torch.ones(group_size, dtype=torch.bool),
             group_ids=torch.zeros(group_size, dtype=torch.long),
             context={},
-            prompts=list(prompts) * group_size,
         )
 
 

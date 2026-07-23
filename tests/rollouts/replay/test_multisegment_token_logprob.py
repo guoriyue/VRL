@@ -114,7 +114,6 @@ def _trajectory_batch(context: dict | None = None) -> RolloutBatch:
         observations=torch.ones(2, 1, 3, dtype=torch.long),
         actions=final_ids,
         rewards=torch.zeros(2),
-        dones=torch.ones(2, dtype=torch.bool),
         group_ids=torch.tensor([0, 0]),
         extras={},
         trajectory=trajectory,

@@ -93,9 +93,7 @@ def _batch(scheduler) -> RolloutBatch:
         observations=observations,
         actions=torch.randn(_B, _T, *_LATENT),
         rewards=torch.zeros(_B),
-        dones=torch.ones(_B, dtype=torch.bool),
         group_ids=torch.arange(_B),
-        prompts=list(_PROMPTS),
         context={
             "reward_metadata": {"target_video": _TARGET_VIDEO},
         },

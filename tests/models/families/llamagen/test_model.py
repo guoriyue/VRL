@@ -66,7 +66,6 @@ def _rollout_batch(model) -> RolloutBatch:
         observations=torch.ones(2, 1, 3, dtype=torch.long),
         actions=token_ids,
         rewards=torch.zeros(2),
-        dones=torch.ones(2, dtype=torch.bool),
         group_ids=torch.tensor([0, 0]),
         trajectory=trajectory,
         training_view=build_training_view(trajectory),

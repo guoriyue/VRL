@@ -181,7 +181,6 @@ def _r1_rollout_batch() -> RolloutBatch:
         observations=torch.ones(2, 1, 3, dtype=torch.long),
         actions=final_ids,
         rewards=torch.zeros(2),
-        dones=torch.ones(2, dtype=torch.bool),
         group_ids=torch.tensor([0, 0]),
         trajectory=trajectory,
         training_view=build_training_view(trajectory, primary_segment="final_image"),

@@ -38,9 +38,7 @@ def _batch(prompt: str, samples: int = 2) -> RolloutBatch:
         observations=torch.zeros(samples, 1),
         actions=torch.zeros(samples, 1),
         rewards=torch.arange(samples, dtype=torch.float32),
-        dones=torch.ones(samples, dtype=torch.bool),
         group_ids=torch.zeros(samples, dtype=torch.long),
-        prompts=[prompt] * samples,
     )
 
 

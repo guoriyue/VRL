@@ -28,9 +28,7 @@ def _batch(prompts: list[str], group_size: int):
         observations=torch.zeros(batch_size, 1, 1),
         actions=torch.zeros(batch_size, 1, 1),
         rewards=torch.arange(batch_size, dtype=torch.float32),
-        dones=torch.ones(batch_size, dtype=torch.bool),
         group_ids=group_ids,
-        prompts=[prompt for prompt in prompts for _ in range(group_size)],
     )
 
 

@@ -60,9 +60,7 @@ class _Collector(CollectorControlFake):
             observations=torch.zeros(batch_size, 4, 3, 1),
             actions=torch.zeros(batch_size, 4, 3, 1),
             rewards=torch.arange(batch_size, dtype=torch.float32),
-            dones=torch.ones(batch_size, dtype=torch.bool),
             group_ids=torch.zeros(batch_size, dtype=torch.long),
-            prompts=[prompt for prompt in prompts for _ in range(group_size)],
             context={},
         )
 

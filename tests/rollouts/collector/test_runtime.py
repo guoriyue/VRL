@@ -279,11 +279,16 @@ def test_collector_routes_request_through_runtime_reward_and_trajectory_batch() 
     assert request.sampling == {"seed": 5}
     assert request.policy_version == 7
     assert reward_scorer.calls[0]["metadata"] == {"collector": "metadata"}
+    assert reward_scorer.calls[0]["prompts"] == ["p0", "p0", "p1", "p1"]
+    assert reward_scorer.calls[0]["outputs"].shape == (4, 3, 2, 2)
     assert runtime.events == ["generate"]
     assert batch.rewards.tolist() == [0.0, 1.0, 2.0, 3.0]
     assert batch.context == {"collector": "test"}
     assert batch.trajectory is not None
     assert batch.training_view is not None
+    assert not hasattr(batch, "dones")
+    assert not hasattr(batch, "videos")
+    assert not hasattr(batch, "prompts")
 
 
 @pytest.mark.asyncio
@@ -302,7 +307,6 @@ async def test_profiled_collector_builds_cpu_batch_without_trainer_cuda_sync(
     batch = await collect_scored(collector, ["p0"], group_size=1)
 
     assert batch.rewards.device.type == "cpu"
-    assert batch.dones.device.type == "cpu"
     assert batch.group_ids.device.type == "cpu"
 
 

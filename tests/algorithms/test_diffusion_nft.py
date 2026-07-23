@@ -214,7 +214,6 @@ def _build_batch(
         observations=None,
         actions=None,
         rewards=torch.zeros(_BATCH),
-        dones=torch.zeros(_BATCH),
         group_ids=torch.zeros(_BATCH, dtype=torch.long),
         context={"num_frames": 1, "height": 4, "width": 4},
         trajectory=trajectory,

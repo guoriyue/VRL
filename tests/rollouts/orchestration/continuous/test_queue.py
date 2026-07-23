@@ -11,7 +11,10 @@ import torch
 
 from vrl.rollouts.batch import RolloutBatch
 from vrl.rollouts.orchestration.continuous.queue import ContinuousRolloutQueue
-from vrl.rollouts.orchestration.continuous.types import ContinuousRolloutItem
+from vrl.rollouts.orchestration.continuous.types import (
+    ContinuousRolloutItem,
+    estimate_batch_bytes,
+)
 
 
 def _item(
@@ -25,9 +28,7 @@ def _item(
         observations=torch.zeros(samples, 1),
         actions=torch.zeros(samples, 1),
         rewards=torch.zeros(samples),
-        dones=torch.ones(samples, dtype=torch.bool),
         group_ids=torch.zeros(samples, dtype=torch.long),
-        prompts=[f"p{group_key}"] * samples,
     )
     return ContinuousRolloutItem(
         group_key=group_key,
@@ -70,6 +71,24 @@ def test_byte_cap_backpressure() -> None:
     evicted = queue.put(_item(group_key=1, version=1, nbytes=6))
     assert queue.ready_bytes() <= 10
     assert [item.group_key for item in evicted] == [0]
+
+
+def test_batch_byte_estimate_counts_only_trainer_transport_tensors() -> None:
+    batch = _item(group_key=0, version=1).batch
+    batch.extras["component"] = torch.zeros(3, dtype=torch.float64)
+
+    expected = sum(
+        tensor.element_size() * tensor.nelement()
+        for tensor in (
+            batch.observations,
+            batch.actions,
+            batch.rewards,
+            batch.group_ids,
+            batch.extras["component"],
+        )
+    )
+
+    assert estimate_batch_bytes(batch) == expected
 
 
 def test_stats_shape() -> None:
