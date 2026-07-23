@@ -13,6 +13,19 @@ from vrl.config.precision import RolePrecision
 from vrl.scripts.eval import cosmos_predict25_kling_eval as eval_script
 
 
+def _minimal_eval_config(*, family: str = "cosmos-predict2.5"):
+    return OmegaConf.create(
+        {
+            "model": {"family": family, "path": "org/model"},
+            "precision": {
+                "float32_precision": "ieee",
+                "training": {"dtype": "bf16"},
+            },
+            "trainer": {},
+        },
+    )
+
+
 def test_parse_checkpoint_accepts_label_and_path(tmp_path) -> None:
     """Checks checkpoint CLI values can carry stable labels."""
     checkpoint = tmp_path / "checkpoint-final"
@@ -135,6 +148,78 @@ def test_eval_sampling_preserves_explicit_zero_guidance() -> None:
     sampling = eval_script._resolve_sampling(args, cfg)
 
     assert sampling["guidance_scale"] == 0.0
+
+
+def test_explicit_dtype_path_runs_after_structural_validation(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    checkpoint = tmp_path / "checkpoint-final"
+    checkpoint.mkdir()
+    captured: dict[str, object] = {}
+
+    monkeypatch.setattr(
+        eval_script,
+        "load_config",
+        lambda *_args, **_kwargs: _minimal_eval_config(),
+    )
+
+    def fake_generate_all(*_args, **kwargs):
+        captured["dtype"] = kwargs["dtype"]
+        return []
+
+    monkeypatch.setattr(eval_script, "_generate_all", fake_generate_all)
+
+    eval_script.main(
+        [
+            "--checkpoint",
+            str(checkpoint),
+            "--prompt",
+            "a world-model test",
+            "--device",
+            "cpu",
+            "--dtype",
+            "fp32",
+            "--generate-only",
+            "--output-dir",
+            str(tmp_path / "output"),
+        ],
+    )
+
+    assert captured["dtype"] is torch.float32
+
+
+def test_explicit_dtype_rejects_malformed_model_family_before_generation(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    checkpoint = tmp_path / "checkpoint-final"
+    checkpoint.mkdir()
+    monkeypatch.setattr(
+        eval_script,
+        "load_config",
+        lambda *_args, **_kwargs: _minimal_eval_config(family="not-a-family"),
+    )
+    monkeypatch.setattr(
+        eval_script,
+        "_generate_all",
+        lambda *_args, **_kwargs: pytest.fail("generation started before config validation"),
+    )
+
+    with pytest.raises(ValueError, match="unsupported model family"):
+        eval_script.main(
+            [
+                "--checkpoint",
+                str(checkpoint),
+                "--prompt",
+                "a world-model test",
+                "--dtype",
+                "fp32",
+                "--generate-only",
+                "--output-dir",
+                str(tmp_path / "output"),
+            ],
+        )
 
 
 def test_generate_all_releases_model_before_rebuilding(monkeypatch, tmp_path) -> None:

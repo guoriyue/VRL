@@ -132,6 +132,23 @@ def test_parser_uses_official_sana_defaults() -> None:
     assert args.guidance_scale == 4.5
 
 
+def test_run_rejects_structurally_invalid_family_before_checkpoint_lookup(
+    tmp_path,
+) -> None:
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    cfg = _config()
+    cfg.model.family = "not-a-family"
+    OmegaConf.save(cfg, run_dir / "resolved_config.yaml")
+
+    with pytest.raises(ValueError, match="unsupported model family"):
+        checkpoint_compare.run_comparison(
+            checkpoint_compare.build_parser().parse_args(
+                ["--run-dir", str(run_dir)],
+            ),
+        )
+
+
 def test_run_generates_base_before_strict_restore_and_current(
     monkeypatch,
     tmp_path,

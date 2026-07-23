@@ -356,6 +356,24 @@ def test_fullparam_long_config_is_the_exact_registered_protocol() -> None:
     assert normalized.trainer.save_freq == 5
 
 
+def test_exact_protocol_normalization_runs_typed_structural_validation(
+    monkeypatch,
+) -> None:
+    canonical = load_config(checkpoint_eval.CANONICAL_CONFIG_NAME)
+    validated: list[dict] = []
+
+    def record_parse(cfg):
+        resolved = OmegaConf.to_container(cfg, resolve=True)
+        assert isinstance(resolved, dict)
+        validated.append(resolved)
+
+    monkeypatch.setattr(checkpoint_eval, "parse_config", record_parse)
+
+    normalized = checkpoint_eval._normalize_run_config(canonical)
+
+    assert validated == [OmegaConf.to_container(normalized, resolve=True)]
+
+
 def _historical_fullparam_config() -> DictConfig:
     raw = OmegaConf.to_container(
         load_config(checkpoint_eval.CANONICAL_CONFIG_NAME),

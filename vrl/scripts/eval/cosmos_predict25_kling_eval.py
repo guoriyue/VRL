@@ -15,8 +15,9 @@ from typing import Any
 import torch
 from omegaconf import DictConfig, OmegaConf
 
-from vrl.config.builders import build_configs
 from vrl.config.loading import load_config
+from vrl.config.precision import resolve_precision_policy
+from vrl.config.schema import RootConfig, parse_config
 from vrl.families.registry import get_model_family_entry
 from vrl.generation.types import VideoGenerationRequest
 from vrl.math.denoise.flow_matching import sde_step_with_logprob
@@ -25,7 +26,6 @@ from vrl.rewards.inference import RewardInferenceArtifact, RewardInferenceReques
 from vrl.rewards.models.kling_video_reward import KlingVideoRewardModel
 from vrl.trainers.checkpointing import load_trainable_state, load_training_checkpoint
 from vrl.trainers.data import load_prompt_manifest
-from vrl.trainers.precision import torch_dtype_for_trainer_precision
 from vrl.utils.media import write_mp4
 
 logger = logging.getLogger(__name__)
@@ -131,6 +131,7 @@ def main(argv: list[str] | None = None) -> None:
     keep_model_between_checkpoints = _keep_model_between_checkpoints(args)
 
     cfg = load_config(args.config, overrides=args.overrides)
+    validated_cfg = parse_config(cfg)
     prompts = _load_prompts(args, cfg)
     if args.limit:
         prompts = prompts[: args.limit]
@@ -139,7 +140,7 @@ def main(argv: list[str] | None = None) -> None:
     checkpoint_targets = _parse_checkpoint_targets(args.checkpoint)
 
     device = _resolve_device(args.device)
-    dtype = _resolve_dtype(args.dtype, cfg, device=device)
+    dtype = _resolve_dtype(args.dtype, validated_cfg, device=device)
     sampling = _resolve_sampling(args, cfg)
     output_dir = Path(args.output_dir).expanduser().resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -243,13 +244,17 @@ def _resolve_device(device_arg: str) -> torch.device:
     return torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
 
-def _resolve_dtype(dtype_arg: str, cfg: DictConfig, *, device: torch.device) -> torch.dtype:
+def _resolve_dtype(
+    dtype_arg: str,
+    cfg: RootConfig,
+    *,
+    device: torch.device,
+) -> torch.dtype:
     if dtype_arg != "auto":
         return resolve_torch_dtype(dtype_arg)
-    trainer_config = build_configs(cfg).trainer
-    if trainer_config is None:
+    if cfg.trainer is None:
         raise ValueError("Cosmos checkpoint evaluation requires an online trainer config")
-    dtype = torch_dtype_for_trainer_precision(trainer_config, torch)
+    dtype = resolve_torch_dtype(resolve_precision_policy(cfg).training.dtype)
     if getattr(device, "type", str(device)) == "cpu":
         return torch.float32
     return dtype

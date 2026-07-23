@@ -12,13 +12,13 @@ from typing import Any
 from omegaconf import DictConfig, OmegaConf
 from PIL import Image
 
-from vrl.config.builders import build_configs
 from vrl.config.loading import load_config
+from vrl.config.precision import resolve_precision_policy
+from vrl.config.schema import RootConfig, parse_config
 from vrl.families.registry import get_model_family_entry
 from vrl.generation.types import VideoGenerationRequest
 from vrl.models.dtypes import resolve_torch_dtype
 from vrl.trainers.data import load_prompt_manifest
-from vrl.trainers.precision import torch_dtype_for_trainer_precision
 from vrl.utils.media import to_pil_image
 
 logger = logging.getLogger(__name__)
@@ -132,6 +132,7 @@ def main(argv: list[str] | None = None) -> None:
         raise ValueError("--limit must be >= 0")
 
     cfg = load_config(args.config, overrides=args.overrides)
+    validated_cfg = parse_config(cfg)
     prompts = _load_prompts(args, cfg)
     if args.limit:
         prompts = prompts[: args.limit]
@@ -168,7 +169,7 @@ def main(argv: list[str] | None = None) -> None:
     import torch
 
     device = _resolve_device(args.device, torch)
-    dtype = _resolve_dtype(args.dtype, cfg, device=device, torch=torch)
+    dtype = _resolve_dtype(args.dtype, validated_cfg, device=device, torch=torch)
     logger.info("Building Anima runtime on device=%s dtype=%s", device, dtype)
     entry = get_model_family_entry(str(cfg.model.family))
     bundle = entry.build_rollout(
@@ -283,14 +284,13 @@ def _resolve_device(device_arg: str, torch: Any) -> Any:
     return torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
 
-def _resolve_dtype(dtype_arg: str, cfg: DictConfig, *, device: Any, torch: Any) -> Any:
+def _resolve_dtype(dtype_arg: str, cfg: RootConfig, *, device: Any, torch: Any) -> Any:
     if dtype_arg != "auto":
         return resolve_torch_dtype(dtype_arg)
 
-    trainer_config = build_configs(cfg).trainer
-    if trainer_config is None:
+    if cfg.trainer is None:
         raise ValueError("Anima generation requires an online trainer config")
-    dtype = torch_dtype_for_trainer_precision(trainer_config, torch)
+    dtype = resolve_torch_dtype(resolve_precision_policy(cfg).training.dtype)
     if getattr(device, "type", str(device)) == "cpu":
         return torch.float32
     return dtype

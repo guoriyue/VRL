@@ -12,6 +12,19 @@ from vrl.config.precision import RolePrecision
 from vrl.scripts.families.cosmos.anima import generate
 
 
+def _minimal_generate_config():
+    return OmegaConf.create(
+        {
+            "model": {
+                "family": "cosmos-predict2-anima",
+                "path": "org/model",
+                "use_lora": False,
+                "lora": {"path": ""},
+            },
+        },
+    )
+
+
 def test_generate_disables_empty_training_lora_for_inference() -> None:
     """Checks generate disables empty training LoRA for inference."""
     cfg = OmegaConf.create({"model": {"use_lora": True, "lora": {"path": ""}}})
@@ -82,6 +95,60 @@ def test_generate_sampling_preserves_explicit_zero_guidance() -> None:
     sampling = generate._resolve_sampling(args, cfg)
 
     assert sampling["guidance_scale"] == 0.0
+
+
+def test_explicit_dtype_dry_run_still_runs_structural_validation(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    cfg = _minimal_generate_config()
+    real_parse_config = generate.parse_config
+    validated: list[object] = []
+
+    def tracked_parse_config(value):
+        validated.append(value)
+        return real_parse_config(value)
+
+    monkeypatch.setattr(generate, "load_config", lambda *_args, **_kwargs: cfg)
+    monkeypatch.setattr(generate, "parse_config", tracked_parse_config)
+
+    generate.main(
+        [
+            "--prompt",
+            "adult anime portrait",
+            "--dtype",
+            "fp32",
+            "--dry-run",
+            "--output-dir",
+            str(tmp_path / "output"),
+        ],
+    )
+
+    assert validated == [cfg]
+
+
+def test_explicit_dtype_rejects_malformed_model_section(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    monkeypatch.setattr(
+        generate,
+        "load_config",
+        lambda *_args, **_kwargs: OmegaConf.create({"model": ["not", "a", "mapping"]}),
+    )
+
+    with pytest.raises(ValueError, match="model must be a mapping"):
+        generate.main(
+            [
+                "--prompt",
+                "adult anime portrait",
+                "--dtype",
+                "fp32",
+                "--dry-run",
+                "--output-dir",
+                str(tmp_path / "output"),
+            ],
+        )
 
 
 def test_generate_records_the_batch_seed_for_every_sample(monkeypatch, tmp_path) -> None:

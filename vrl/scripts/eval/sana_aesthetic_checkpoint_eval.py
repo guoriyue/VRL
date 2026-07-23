@@ -30,6 +30,7 @@ from typing import Any
 from omegaconf import DictConfig, OmegaConf
 
 from vrl.config.loading import load_config
+from vrl.config.schema import parse_config
 from vrl.scripts.eval.sana_inference import (
     OFFICIAL_SAMPLING_PROTOCOL,
     SCHEDULER_PROTOCOL,
@@ -501,6 +502,7 @@ def _normalize_run_config(cfg: DictConfig) -> DictConfig:
     normalized = OmegaConf.create(normalized_actual)
     OmegaConf.resolve(normalized)
     assert isinstance(normalized, DictConfig)
+    parse_config(normalized)
     return normalized
 
 

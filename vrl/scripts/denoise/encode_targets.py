@@ -127,14 +127,15 @@ def _resolve_target_videos(
     return targets
 
 
-def main() -> None:
-    args = _build_arg_parser().parse_args()
+def main(argv: list[str] | None = None) -> None:
+    args = _build_arg_parser().parse_args(argv)
     logging.basicConfig(level=logging.INFO)
 
     import torch
     from omegaconf import OmegaConf
 
     from vrl.config.loading import load_config
+    from vrl.config.schema import parse_config
     from vrl.families.registry import (
         get_model_family_entry,
     )
@@ -142,6 +143,7 @@ def main() -> None:
     from vrl.trainers.data.sft_latents import save_sft_latents
 
     cfg = load_config(f"experiment/{args.experiment}")
+    parse_config(cfg)
     entry = get_model_family_entry(str(cfg.model.family))
     family = entry.family
 
