@@ -448,8 +448,10 @@ class DiffusionModelBase(nn.Module, ABC):
 
         Every diffusers-backed family carries its VAE on ``pipeline.vae``;
         Anima (single-file checkpoint, no pipeline) carries ``self.vae``.
-        Replay models raise on ``pipeline`` and own no VAE — they expose no
-        targets, and the policy fails loud if config still asks for one.
+        Custom backends whose VAE does not implement this memory protocol keep
+        it behind a family-specific attribute and expose no target. Replay
+        models likewise own no VAE. In either case, the policy fails loud if
+        config still asks for one.
         """
 
         try:

@@ -14,13 +14,14 @@ from typing import Any
 from vrl.config.precision import QuantizationPolicy, RolePrecision
 from vrl.models.interfaces.replay import RuntimeModel
 
-# Single source of truth for valid ``model.memory`` subsection names, shared by
-# the config schema's unknown-key lint, registry capability validation, and the
-# generation memory policy's typo check. Today only ``vae_decode`` (sliced/tiled
-# VAE decode, applied on the rollout/generation side). The trainer needs no
-# section here: each family builds a minimal ReplayModel that never loads the
-# generation-only modules, so there is nothing to offload. Adding a section
-# means editing this tuple once; every namespace consumer derives from it.
+# Single source of truth for public ``model.memory`` subsection names, shared by
+# the config schema's unknown-key lint and registry capability validation. The
+# runtime policy deliberately validates against each model's concrete targets,
+# not this global namespace. Today only ``vae_decode`` (sliced/tiled VAE decode,
+# applied on the rollout/generation side). The trainer needs no section here:
+# each family builds a minimal ReplayModel that never loads the generation-only
+# modules, so there is nothing to offload. Adding a public section means editing
+# this tuple once; every namespace consumer derives from it.
 MODEL_MEMORY_SECTIONS: tuple[str, ...] = ("vae_decode",)
 
 # Single source of truth for the model_config compile block that the

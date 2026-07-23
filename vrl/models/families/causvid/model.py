@@ -428,10 +428,6 @@ class _CausVidPolicyModel(LoraModelMixin, DiffusionModelBase):
             raise RuntimeError(f"{type(self).__name__} cannot decode latents")
         return self._backend.decode_latents(latents)
 
-    def generation_memory_targets(self) -> dict[str, Any]:
-        vae = getattr(self._backend, "vae", None)
-        return {} if vae is None else {"vae_decode": vae}
-
     def move_frozen_components(self, device: Any) -> None:
         mover = getattr(self._backend, "move_frozen_components", None)
         if callable(mover):

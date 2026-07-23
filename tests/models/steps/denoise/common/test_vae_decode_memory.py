@@ -7,6 +7,7 @@ import pytest
 import torch
 
 from vrl.config.precision import RolePrecision
+from vrl.models.interfaces.runtime import ModelBuild, RolloutBuildOptions
 from vrl.models.steps.denoise.common.vae_decode_memory import (
     VaeDecodeMemory,
     apply_generation_memory_policy,
@@ -68,6 +69,41 @@ class _FakeModel:
         return {} if self._vae is None else {"vae_decode": self._vae}
 
 
+class _TargetlessRuntimeModel:
+    """In-process runtime fake that deliberately exposes no memory target."""
+
+    def __init__(self) -> None:
+        self.trainable_modules: dict[str, Any] = {}
+        self.scheduler = object()
+        self.raw_handle = object()
+
+    @classmethod
+    def from_build(cls, _build: ModelBuild) -> _TargetlessRuntimeModel:
+        return cls()
+
+    def generation_memory_targets(self) -> dict[str, Any]:
+        return {}
+
+    def apply_full_finetune(self, *_args: Any) -> None:
+        return None
+
+
+def _direct_rollout_build(
+    family: str,
+    *,
+    memory: dict[str, Any] | None,
+) -> ModelBuild:
+    return ModelBuild(
+        model_name_or_path="fake/model",
+        device="cpu",
+        parameter_dtype="float32",
+        family=family,
+        precision=RolePrecision("fp32", "tf32"),
+        rollout=RolloutBuildOptions(prompt_encoder_dtype="float16"),
+        model_config={} if memory is None else {"memory": memory},
+    )
+
+
 def test_apply_generation_memory_policy_from_config() -> None:
     """Policy resolves the model's vae_decode target and applies knobs."""
     vae = _FakeVAE()
@@ -94,14 +130,28 @@ def test_apply_generation_memory_policy_has_no_python_defaults() -> None:
     assert vae.calls == []
 
 
+def test_apply_generation_memory_policy_raises_on_missing_target_method() -> None:
+    with pytest.raises(TypeError, match="does not support requested enable_tiling"):
+        apply_generation_memory_policy(
+            _FakeModel(object()),
+            memory_config={"vae_decode": {"tiling": True}},
+            owner="test VAE",
+        )
+
+
+@pytest.mark.parametrize(
+    ("family", "model_class_name"),
+    [
+        ("wan_2_1", "WanT2VDiffusersModel"),
+        ("wan_2_1_i2v", "WanI2VDiffusersModel"),
+    ],
+)
 def test_wan_runtime_bundle_applies_model_build_memory_policy(
     monkeypatch: pytest.MonkeyPatch,
+    family: str,
+    model_class_name: str,
 ) -> None:
     """Checks the Wan runtime applies its model-build memory policy."""
-    from vrl.models.interfaces.runtime import (
-        ModelBuild,
-        RolloutBuildOptions,
-    )
 
     class _FakeModel:
         def __init__(self) -> None:
@@ -128,14 +178,14 @@ def test_wan_runtime_bundle_applies_model_build_memory_policy(
     from vrl.families.registry import get_model_family_entry
     from vrl.models.families.wan_2_1 import model as _wan_model
 
-    monkeypatch.setattr(_wan_model, "WanT2VDiffusersModel", _FakeModel)
+    monkeypatch.setattr(_wan_model, model_class_name, _FakeModel)
 
-    bundle = get_model_family_entry("wan_2_1").build_rollout(
+    bundle = get_model_family_entry(family).build_rollout(
         ModelBuild(
             model_name_or_path="fake/model",
             device="cpu",
             parameter_dtype="float32",
-            family="wan_2_1",
+            family=family,
             precision=RolePrecision("fp32", "tf32"),
             rollout=RolloutBuildOptions(
                 prompt_encoder_dtype="float16",
@@ -179,6 +229,11 @@ def test_wan_runtime_bundle_applies_model_build_memory_policy(
             "SanaModel",
             "sana",
         ),
+        (
+            "vrl.models.families.cosmos.cosmos3.model",
+            "Cosmos3Model",
+            "cosmos3",
+        ),
     ],
 )
 def test_full_generation_runtime_bundles_apply_model_build_memory_policy(
@@ -188,11 +243,6 @@ def test_full_generation_runtime_bundles_apply_model_build_memory_policy(
     build_family: str,
 ) -> None:
     """Checks full-generation runtime bundles apply VAE memory policy."""
-    from vrl.models.interfaces.runtime import (
-        ModelBuild,
-        RolloutBuildOptions,
-    )
-
     loaded_builds: list[ModelBuild] = []
 
     class _FakeModel:
@@ -258,27 +308,118 @@ def test_full_generation_runtime_bundles_apply_model_build_memory_policy(
         assert loaded_builds[-1].parameter_dtype is torch.float16
 
 
-def test_declared_section_without_target_is_skipped_not_applied() -> None:
-    """A declared section the model exposes no target for applies nothing.
+@pytest.mark.parametrize(
+    "vae_decode_config",
+    [{}, {"tiling": False}, {"tiling": True}],
+)
+def test_configured_section_without_target_fails(
+    vae_decode_config: dict[str, bool],
+) -> None:
+    with pytest.raises(
+        ValueError,
+        match=r"unsupported model\.memory section\(s\) vae_decode.*<none>",
+    ):
+        apply_generation_memory_policy(
+            _FakeModel(vae=None),
+            memory_config={"vae_decode": vae_decode_config},
+            owner="test VAE",
+        )
 
-    Namespace validity is owned once by MODEL_MEMORY_SECTIONS (shared with the
-    schema lint); only a genuinely unknown section name (typo) fails. A real
-    generation model always exposes its VAE target, so this target-less path is
-    defensive — it must not call a mechanism on a target the model does not own.
-    """
+
+@pytest.mark.parametrize("memory_config", [None, {}])
+def test_targetless_model_passes_when_nothing_configured(
+    memory_config: dict[str, Any] | None,
+) -> None:
     apply_generation_memory_policy(
         _FakeModel(vae=None),
-        memory_config={"vae_decode": {"tiling": True}},
+        memory_config=memory_config,
         owner="test VAE",
     )
 
 
-def test_targetless_model_passes_when_nothing_configured() -> None:
-    apply_generation_memory_policy(
-        _FakeModel(vae=None),
+def test_causvid_and_echo_do_not_advertise_incompatible_vae_targets() -> None:
+    from vrl.models.families.causvid.model import _CausVidPolicyModel
+    from vrl.models.families.echo.model import EchoModel
+    from vrl.models.steps.denoise.base import DiffusionModelBase
+
+    for model_cls in (_CausVidPolicyModel, EchoModel):
+        assert model_cls.generation_memory_targets is DiffusionModelBase.generation_memory_targets
+        model = model_cls.__new__(model_cls)
+        torch.nn.Module.__init__(model)
+        object.__setattr__(model, "_backend", type("_Backend", (), {"vae": object()})())
+        object.__setattr__(model, "_video_vae", object())
+
+        assert model.generation_memory_targets() == {}
+
+
+@pytest.mark.parametrize(
+    ("family", "model_module_name", "model_class_name"),
+    [
+        ("causvid", "vrl.models.families.causvid.model", "CausVidModel"),
+        ("echo", "vrl.models.families.echo.model", "EchoModel"),
+    ],
+)
+def test_targetless_in_process_runtime_rejects_direct_model_build_memory(
+    monkeypatch: pytest.MonkeyPatch,
+    family: str,
+    model_module_name: str,
+    model_class_name: str,
+) -> None:
+    """The runtime policy protects callers that bypass typed config validation."""
+
+    from vrl.families.registry import get_model_family_entry
+
+    model_module = importlib.import_module(model_module_name)
+    monkeypatch.setattr(model_module, model_class_name, _TargetlessRuntimeModel)
+    entry = get_model_family_entry(family)
+
+    bundle = entry.build_rollout(_direct_rollout_build(family, memory=None))
+    assert isinstance(bundle.model, _TargetlessRuntimeModel)
+
+    for vae_decode_config in ({}, {"tiling": False}, {"tiling": True}):
+        with pytest.raises(
+            ValueError,
+            match=r"unsupported model\.memory section\(s\) vae_decode.*<none>",
+        ):
+            entry.build_rollout(
+                _direct_rollout_build(
+                    family,
+                    memory={"vae_decode": vae_decode_config},
+                ),
+            )
+
+
+@pytest.mark.parametrize(
+    "family",
+    [
+        "magi_1",
+        "janus_pro",
+        "janus_pro_r1",
+        "nextstep_1",
+        "emu3",
+        "glm_image",
+        "llamagen",
+    ],
+)
+def test_non_vae_runtime_families_keep_memory_at_the_registered_boundary(
+    family: str,
+) -> None:
+    from vrl.families.registry import get_model_family_entry
+
+    entry = get_model_family_entry(family)
+    entry.validate_model_runtime_sections(
+        executor_config=None,
         memory_config=None,
-        owner="test VAE",
     )
+    entry.validate_model_runtime_sections(
+        executor_config={},
+        memory_config={},
+    )
+    with pytest.raises(ValueError, match=r"does not support model\.memory"):
+        entry.validate_model_runtime_sections(
+            executor_config=None,
+            memory_config={"vae_decode": {}},
+        )
 
 
 def test_family_loaders_do_not_apply_memory_policy() -> None:
@@ -320,6 +461,10 @@ def test_runtime_builders_apply_generation_memory_policy() -> None:
     shared = Path("vrl/models/steps/denoise/build.py").read_text()
     assert "apply_generation_memory_policy" in shared, (
         "shared denoise builder must apply the generation memory policy"
+    )
+    token = Path("vrl/models/steps/token/build.py").read_text()
+    assert "apply_generation_memory_policy" not in token, (
+        "token-family builders own no diffusers VAE memory targets"
     )
 
     import re
