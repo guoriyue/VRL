@@ -1115,9 +1115,68 @@ def test_peer_ema_swap_failure_rolls_back_before_second_export(tmp_path) -> None
         False,
         True,
         True,
+        True,
     ]
     assert module.weight.item() == pytest.approx(3.0)
     assert not (tmp_path / "checkpoint-peer-swap-failure").exists()
+
+
+def test_peer_ema_swap_failure_propagates_local_rollback_failure(tmp_path) -> None:
+    class _ExportModule(nn.Linear):
+        def save_pretrained(self, *_args, **_kwargs):
+            raise AssertionError("failed rollback must not reach artifact IO")
+
+    class _AgreementStrategy:
+        def __init__(self) -> None:
+            self.context = SimpleNamespace(is_primary=True, world_size=2)
+            self.agreements = []
+
+        def export_checkpoint_state(self, bundle):
+            return export_checkpoint_state(bundle)
+
+        def all_ranks_succeeded(self, succeeded):
+            self.agreements.append(succeeded)
+            if len(self.agreements) == 9:
+                return False
+            return succeeded
+
+    class _EMA:
+        has_updates = True
+
+        def copy_ema_to(self, parameters, *, store_temp=True):
+            assert store_temp is True
+            with torch.no_grad():
+                for parameter in parameters:
+                    parameter.fill_(7.0)
+
+        def copy_temp_to(self, parameters):
+            del parameters
+            raise RuntimeError("rank-local EMA rollback failed")
+
+    module = _ExportModule(1, 1, bias=False)
+    strategy = _AgreementStrategy()
+
+    with pytest.raises(
+        RuntimeError,
+        match="rollback could not restore raw training weights",
+    ) as error:
+        save_training_checkpoint(
+            tmp_path / "checkpoint-failed-ema-rollback",
+            trainer=_Trainer(),
+            bundle=_Bundle(module),
+            family="unit",
+            model_identity=UNIT_IDENTITY,
+            progress={"next_epoch": 1},
+            rng_state={},
+            adapter_exports={LORA_WEIGHTS_NAME: AdapterExport(module)},
+            export_ema=_EMA(),
+            strategy=strategy,
+        )
+
+    assert isinstance(error.value.__cause__, RuntimeError)
+    assert str(error.value.__cause__) == "rank-local EMA rollback failed"
+    assert strategy.agreements[-2:] == [True, False]
+    assert not (tmp_path / "checkpoint-failed-ema-rollback").exists()
 
 
 def test_mixed_rank_ema_update_state_fails_before_swap_or_second_export(tmp_path) -> None:

@@ -521,8 +521,25 @@ def save_training_checkpoint(
                 swap_failure = error
             all_swapped = _checkpoint_stage_agreement(strategy, swap_failure is None)
             if not all_swapped:
+                rollback_failure: BaseException | None = None
                 if swapped:
-                    export_ema.copy_temp_to(trainable_parameters)
+                    try:
+                        export_ema.copy_temp_to(trainable_parameters)
+                    except BaseException as error:
+                        rollback_failure = error
+                all_rolled_back = _checkpoint_stage_agreement(
+                    strategy,
+                    rollback_failure is None,
+                )
+                if not all_rolled_back:
+                    if rollback_failure is not None:
+                        raise RuntimeError(
+                            "EMA swap failure rollback could not restore raw training weights",
+                        ) from rollback_failure
+                    raise RuntimeError(
+                        "EMA swap failure rollback was aborted because a peer rank "
+                        "could not restore raw training weights",
+                    )
                 if swap_failure is not None:
                     raise swap_failure
                 raise RuntimeError(

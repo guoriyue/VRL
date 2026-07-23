@@ -278,6 +278,7 @@ def _run_checkpoint_ema_export_rank(
     q: mp.Queue,
     fail_swap_rank: int | None = None,
     fail_artifact_write: bool = False,
+    fail_rollback_rank: int | None = None,
 ) -> None:
     """Exercise raw checkpoint + EMA artifact ordering on real FSDP shards."""
 
@@ -353,6 +354,13 @@ def _run_checkpoint_ema_export_rank(
                 raise RuntimeError("rank-local EMA swap failed")
 
             ema.copy_ema_to = _fail_swap
+        if rank == fail_rollback_rank:
+
+            def _fail_rollback(parameters):
+                del parameters
+                raise RuntimeError("rank-local EMA rollback failed")
+
+            ema.copy_temp_to = _fail_rollback
         if fail_artifact_write and rank == 0:
 
             def _fail_artifact(*_args, **_kwargs):
@@ -377,6 +385,15 @@ def _run_checkpoint_ema_export_rank(
         except BaseException as error:
             save_error = error
         dist.barrier()
+
+        if fail_rollback_rank is not None:
+            failed_together = isinstance(save_error, RuntimeError)
+            reported_rollback = save_error is not None and "restore raw training weights" in str(
+                save_error
+            )
+            wrote_nothing = rank != 0 or not Path(output_dir).exists()
+            q.put((rank, failed_together, reported_rollback, wrote_nothing))
+            return
 
         live = strategy.export_checkpoint_state(bundle)["transformer"]
         live_restored = all(
@@ -466,6 +483,37 @@ def test_peer_ema_swap_failure_aborts_before_second_fsdp_gather(tmp_path) -> Non
         assert live_restored, f"rank{rank}: peer swap failure left EMA weights live"
         assert failed_together, f"rank{rank}: peer swap failure did not propagate"
         assert wrote_nothing, f"rank{rank}: failed EMA export published a checkpoint"
+
+
+def test_peer_ema_swap_and_rollback_failures_propagate_to_every_fsdp_rank(
+    tmp_path,
+) -> None:
+    ctx = mp.get_context("spawn")
+    q: mp.Queue = ctx.Queue()
+    port = _free_port()
+    output_dir = str(tmp_path / "checkpoint-peer-rollback-failure")
+    procs = [
+        ctx.Process(
+            target=_run_checkpoint_ema_export_rank,
+            args=(rank, 2, port, output_dir, q, 0, False, 1),
+        )
+        for rank in range(2)
+    ]
+    for process in procs:
+        process.start()
+    results = {}
+    for _ in range(2):
+        rank, *flags = q.get(timeout=180)
+        results[rank] = flags
+    for process in procs:
+        process.join(timeout=20)
+        assert process.exitcode == 0
+
+    for rank in (0, 1):
+        failed_together, reported_rollback, wrote_nothing = results[rank]
+        assert failed_together, f"rank{rank}: EMA rollback failure did not propagate"
+        assert reported_rollback, f"rank{rank}: rollback failure was not explicit"
+        assert wrote_nothing, f"rank{rank}: failed EMA rollback published a checkpoint"
 
 
 def test_rank0_artifact_write_failure_propagates_to_every_fsdp_rank(tmp_path) -> None:
