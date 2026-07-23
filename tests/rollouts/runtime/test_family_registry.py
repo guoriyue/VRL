@@ -13,7 +13,9 @@ from typing import get_args
 import pytest
 from omegaconf import OmegaConf
 
+from vrl.config.loading import load_config
 from vrl.config.precision import resolve_precision_policy
+from vrl.config.sampling_schema import SamplingSection
 from vrl.config.schema import parse_config
 from vrl.families.names import (
     _FAMILY_BY_ALIAS,
@@ -33,6 +35,7 @@ from vrl.rollouts.collector.config import (
     RolloutCollectorConfig,
     build_rollout_config_from_cfg,
 )
+from vrl.rollouts.collector.requests import GenerationRequestBuilder
 from vrl.trajectory import TrajectoryStoragePolicy
 from vrl.utils.config import cfg_get, import_from_path
 
@@ -344,6 +347,7 @@ def test_family_registry_entries_have_complete_protocol_wiring() -> None:
         assert entry.family == family
         assert entry.task
         assert entry.model_section_cls
+        assert entry.sampling_section_cls
         assert callable(entry.new_gatherer().gather_chunks)
         assert entry.policy_semantics.generation_regime in {
             "full_sequence",
@@ -372,6 +376,30 @@ def test_family_registry_entries_own_importable_model_sections() -> None:
         section_cls = import_from_path(entry.model_section_cls)
         assert isinstance(section_cls, type)
         assert issubclass(section_cls, ModelSection)
+
+
+def test_family_registry_entries_own_importable_sampling_sections() -> None:
+    for entry in FAMILY_REGISTRY.values():
+        section_cls = import_from_path(entry.sampling_section_cls)
+        assert isinstance(section_cls, type)
+        assert issubclass(section_cls, SamplingSection)
+
+
+def test_sampling_sections_share_only_matching_request_vocabularies() -> None:
+    predict2 = import_from_path(
+        get_model_family_entry("cosmos-predict2").sampling_section_cls,
+    )
+    cosmos3 = import_from_path(get_model_family_entry("cosmos3").sampling_section_cls)
+    sana = import_from_path(get_model_family_entry("sana").sampling_section_cls)
+    hunyuan_image = import_from_path(
+        get_model_family_entry("hunyuan_image").sampling_section_cls,
+    )
+    janus = import_from_path(get_model_family_entry("janus_pro").sampling_section_cls)
+    glm = import_from_path(get_model_family_entry("glm_image").sampling_section_cls)
+
+    assert predict2 is cosmos3
+    assert sana is not hunyuan_image
+    assert janus is not glm
 
 
 def test_migrated_model_sections_are_owned_by_their_family_packages() -> None:
@@ -520,6 +548,8 @@ def test_model_section_imports_do_not_load_model_runtimes() -> None:
                 "from vrl.utils.config import import_from_path; "
                 "[import_from_path(entry.model_section_cls) "
                 "for entry in FAMILY_REGISTRY.values()]; "
+                "[import_from_path(entry.sampling_section_cls) "
+                "for entry in FAMILY_REGISTRY.values()]; "
                 "from vrl.models.families.causvid import CausVidModelSection; "
                 "from vrl.models.families.cosmos.anima "
                 "import CosmosAnimaModelSection; "
@@ -636,6 +666,13 @@ def test_family_entry_rejects_an_empty_model_section_path() -> None:
         replace(entry, model_section_cls="")
 
 
+def test_family_entry_rejects_an_empty_sampling_section_path() -> None:
+    entry = get_model_family_entry("sana")
+
+    with pytest.raises(ValueError, match="requires a sampling section class"):
+        replace(entry, sampling_section_cls="")
+
+
 def test_policy_replay_support_is_derived_from_family_recipes() -> None:
     causvid = get_model_family_entry("causvid")
     magi = get_model_family_entry("magi_1")
@@ -750,6 +787,71 @@ def test_rollout_config_is_projected_from_yaml() -> None:
         "device": "cpu",
         "dtype": "float16",
     }
+
+
+def test_typed_collector_projects_only_the_selected_sampling_schema() -> None:
+    root = parse_config(
+        OmegaConf.create(
+            {
+                "model": {"family": "janus_pro"},
+                "sampling": {
+                    "attention_backend": "torch_native",
+                    "image_token_num": 16,
+                },
+            },
+        ),
+    )
+
+    rollout = build_rollout_config_from_cfg(root)
+
+    assert rollout.request_sampling == {
+        "attention_backend": "torch_native",
+        "image_token_num": 16,
+    }
+
+
+def test_raw_collector_adapter_derives_fields_from_present_family() -> None:
+    cfg = OmegaConf.create(
+        {
+            "model": {"family": "glm_image"},
+            "sampling": {
+                "attention_backend": "torch_native",
+                "image_height": 256,
+            },
+        },
+    )
+
+    rollout = build_rollout_config_from_cfg(cfg)
+
+    assert rollout.request_sampling == {"image_height": 256}
+
+
+def test_cosmos_predict2_recipe_keeps_request_and_reward_fps_at_16() -> None:
+    cfg = load_config("experiment/cosmos_predict2/online_grpo_v2w_reference_480p")
+    root = parse_config(cfg)
+    collector_config = build_rollout_config_from_cfg(root)
+    collector_request = GenerationRequestBuilder(
+        entry=get_model_family_entry("cosmos-predict2"),
+        config=collector_config,
+    ).build(["robot arm moves"], 1)
+
+    assert collector_config.request_sampling["fps"] == 16
+    assert collector_request.request.sampling["fps"] == 16
+    assert collector_request.metadata["video_fps"] == 16
+
+
+def test_request_fps_override_updates_reward_metadata() -> None:
+    collector_request = GenerationRequestBuilder(
+        entry=get_model_family_entry("cosmos-predict2"),
+        config=RolloutCollectorConfig(request_sampling={"fps": 16}),
+    ).build(
+        ["robot arm moves"],
+        1,
+        request_overrides={"fps": 12},
+    )
+
+    assert collector_request.request.sampling["fps"] == 12
+    assert collector_request.metadata["video_fps"] == 12
 
 
 def test_request_sampling_projects_only_generation_owned_rollout_values() -> None:

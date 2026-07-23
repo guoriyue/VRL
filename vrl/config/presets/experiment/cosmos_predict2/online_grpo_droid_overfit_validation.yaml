@@ -74,7 +74,6 @@ model:
 
 sampling:
   num_frames: 93                      # native clip length for the 480P weights (33f is OOD -> artifacts)
-  fps: 16
   # 15, not 10 (2026-07-07 rank-probe finding): at 10 steps generation is so
   # fragile that a group's dino variance measures WHICH SDE DRAW BROKE LESS
   # (worst draw = blob monster, 0.33 vs 0.43) — GRPO then climbs noise-path

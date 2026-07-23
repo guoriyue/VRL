@@ -15,12 +15,19 @@ from vrl.config.model_schema import (
     TorchCompileSection,
     VaeDecodeMemorySection,
 )
+from vrl.config.sampling_schema import (
+    ARSamplingSection,
+    DenoiseImageSamplingSection,
+    EchoSamplingSection,
+    JanusProSamplingSection,
+    TextEncodedImageSamplingSection,
+    VideoSamplingSection,
+)
 from vrl.config.schema import (
     AlgorithmConfig,
     DataConfig,
     RewardConfig,
     RootConfig,
-    SamplingConfig,
     parse_config,
 )
 from vrl.families.names import _FAMILY_BY_ALIAS
@@ -120,7 +127,7 @@ def _kling_video_reward_kwargs(**overrides) -> dict:
 def test_sampling_scheduler_batch_size_accepts_null_or_positive_integer(
     value: int | None,
 ) -> None:
-    sampling = SamplingConfig.model_validate({"ar_scheduler_batch_size": value})
+    sampling = ARSamplingSection.model_validate({"ar_scheduler_batch_size": value})
 
     assert sampling.ar_scheduler_batch_size == value
 
@@ -130,7 +137,7 @@ def test_sampling_scheduler_batch_size_rejects_coercible_or_non_positive_values(
     value: object,
 ) -> None:
     with pytest.raises(ValueError, match="must be a positive integer or null"):
-        SamplingConfig.model_validate({"ar_scheduler_batch_size": value})
+        ARSamplingSection.model_validate({"ar_scheduler_batch_size": value})
 
 
 # ── Algorithm kind discriminator ──────────────────────────────────────────────
@@ -284,19 +291,124 @@ def test_unknown_denoise_mode_raises() -> None:
         parse_config(cfg)
 
 
-def test_attention_backend_defaults_to_vllm_paged() -> None:
-    """attention_backend is a registered, typed key (no false unknown-key warning)."""
-    cfg = _minimal_grpo_cfg()
+def test_shared_attention_backend_omission_stays_unset() -> None:
+    """The runtime fallback owns the default; typed config stores no duplicate."""
+    cfg = _minimal_grpo_cfg(model={"family": "janus_pro"})
     cfg.sampling = {}
-    assert parse_config(cfg).sampling.attention_backend == "vllm_paged"
+    sampling = parse_config(cfg).sampling
+
+    assert type(sampling) is JanusProSamplingSection
+    assert sampling.attention_backend is None
+    assert sampling.model_dump(exclude_unset=True) == {}
+
+
+def test_shared_attention_family_accepts_explicit_backend() -> None:
+    cfg = _minimal_grpo_cfg(model={"family": "janus_pro"})
+    cfg.sampling = {"attention_backend": "torch_native"}
+
+    assert parse_config(cfg).sampling.attention_backend == "torch_native"
 
 
 def test_unknown_attention_backend_raises() -> None:
     """An out-of-set attention_backend is rejected at parse with the dotted path."""
-    cfg = _minimal_grpo_cfg()
+    cfg = _minimal_grpo_cfg(model={"family": "janus_pro"})
     cfg.sampling = {"attention_backend": "bogus"}
     with pytest.raises(ValueError, match=r"unknown sampling\.attention_backend"):
         parse_config(cfg)
+
+
+@pytest.mark.parametrize("family", ["glm_image", "llamagen"])
+def test_native_cache_family_rejects_typed_attention_backend(family: str) -> None:
+    cfg = _minimal_grpo_cfg(model={"family": family})
+    cfg.sampling = {"attention_backend": "torch_native"}
+
+    with pytest.raises(ValueError, match=r"unknown sampling\.attention_backend"):
+        parse_config(cfg)
+
+
+def test_sampling_schema_is_selected_from_model_family() -> None:
+    cfg = _minimal_grpo_cfg(model={"family": "sana"})
+    cfg.sampling = {"max_sequence_length": 300}
+
+    sampling = parse_config(cfg).sampling
+
+    assert type(sampling) is TextEncodedImageSamplingSection
+    assert sampling.max_sequence_length == 300
+
+
+def test_sampling_section_requires_model_family_for_schema_selection() -> None:
+    cfg = _minimal_grpo_cfg(sampling={"num_steps": 10})
+
+    with pytest.raises(ValueError, match=r"sampling requires model\.family"):
+        parse_config(cfg)
+
+
+@pytest.mark.parametrize(
+    ("family", "expected_type"),
+    [
+        ("hunyuan_image", DenoiseImageSamplingSection),
+        ("cosmos-predict2", VideoSamplingSection),
+        ("cosmos3", VideoSamplingSection),
+        ("echo", EchoSamplingSection),
+    ],
+)
+def test_family_without_text_length_rejects_max_sequence_length(
+    family: str,
+    expected_type: type,
+) -> None:
+    cfg = _minimal_grpo_cfg(model={"family": family})
+    cfg.sampling = {"max_sequence_length": 512}
+
+    with pytest.raises(ValueError, match=r"unknown sampling\.max_sequence_length"):
+        parse_config(cfg)
+
+    parsed = parse_config(
+        _minimal_grpo_cfg(model={"family": family}, sampling={}),
+    )
+    assert type(parsed.sampling) is expected_type
+
+
+def test_echo_accepts_only_baked_guidance_value() -> None:
+    valid = _minimal_grpo_cfg(model={"family": "echo"})
+    valid.sampling = {"guidance_scale": 1.0}
+    assert parse_config(valid).sampling.guidance_scale == 1.0
+
+    invalid = _minimal_grpo_cfg(model={"family": "echo"})
+    invalid.sampling = {"guidance_scale": 4.5}
+    with pytest.raises(ValueError, match=r"unknown sampling\.guidance_scale=4\.5"):
+        parse_config(invalid)
+
+
+@pytest.mark.parametrize(
+    ("family", "field", "value"),
+    [
+        ("janus_pro", "max_reflect_len", 80),
+        ("nextstep_1", "temperature", 0.9),
+        ("emu3", "image_token_num", 256),
+        ("glm_image", "guidance_scale", 4.5),
+        ("magi_1", "guidance_scale", 4.5),
+    ],
+)
+def test_sampling_fields_are_rejected_outside_their_behavior_owner(
+    family: str,
+    field: str,
+    value: object,
+) -> None:
+    cfg = _minimal_grpo_cfg(model={"family": family}, sampling={field: value})
+
+    with pytest.raises(ValueError, match=rf"unknown sampling\.{field}"):
+        parse_config(cfg)
+
+
+def test_reflection_length_is_owned_only_by_janus_r1() -> None:
+    cfg = _minimal_grpo_cfg(
+        model={"family": "janus_pro_r1"},
+        sampling={"max_reflect_len": 80},
+    )
+    cfg.algorithm.kind = "token_grpo_multisegment"
+    cfg.rollout.final_image_policy = "always_generate"
+
+    assert parse_config(cfg).sampling.max_reflect_len == 80
 
 
 def test_unknown_final_image_policy_raises() -> None:

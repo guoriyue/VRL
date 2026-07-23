@@ -7,10 +7,12 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from vrl.config.algorithm import resolve_kl_reward_coef
+from vrl.config.sampling_schema import SamplingSection
 from vrl.config.schema import (
-    SamplingConfig,
     generation_request_rollout_fields,
+    sampling_section_class_for_family,
 )
+from vrl.families.registry import FAMILY_REGISTRY
 from vrl.trajectory import (
     TrajectoryStoragePolicy,
     trajectory_storage_policy_from_cfg,
@@ -70,7 +72,7 @@ def build_rollout_config_from_cfg(cfg: Any) -> RolloutCollectorConfig:
         request_sampling,
         cfg,
         "sampling",
-        allowed=frozenset(SamplingConfig.model_fields),
+        allowed=_sampling_fields_for_cfg(cfg),
     )
     _copy_value(
         request_sampling,
@@ -148,6 +150,27 @@ def _cfg_mapping(cfg: Any, path: str) -> dict[str, Any]:
     if isinstance(value, Mapping):
         return {str(key): inner for key, inner in value.items()}
     raise ValueError(f"{path} config must be a mapping")
+
+
+def _sampling_fields_for_cfg(cfg: Any) -> frozenset[str]:
+    """Select request keys from typed state while retaining the raw adapter."""
+
+    sampling = cfg_path(cfg, "sampling", _MISSING)
+    if isinstance(sampling, SamplingSection):
+        return frozenset(type(sampling).model_fields)
+
+    family = cfg_path(cfg, "model.family", None)
+    if family is not None and str(family).strip():
+        return frozenset(sampling_section_class_for_family(family).model_fields)
+
+    # Tests and public adapters may still project a raw sampling-only mapping.
+    # Derive that compatibility surface from registered schemas so it cannot
+    # drift into a second hand-maintained vocabulary.
+    return frozenset(
+        name
+        for entry in FAMILY_REGISTRY.values()
+        for name in sampling_section_class_for_family(entry.family).model_fields
+    )
 
 
 _MISSING = object()

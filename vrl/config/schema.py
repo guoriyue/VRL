@@ -22,6 +22,7 @@ from pydantic import (
     Field,
     SerializeAsAny,
     ValidationError,
+    ValidationInfo,
     field_validator,
     model_validator,
 )
@@ -32,6 +33,7 @@ from vrl.config.data import DataLoaderName, resolve_data_loader
 from vrl.config.model_schema import ModelSection
 from vrl.config.precision import PrecisionConfig
 from vrl.config.reward_inference import parse_reward_inference_config
+from vrl.config.sampling_schema import SamplingSection
 from vrl.config.unknown_keys import OPEN, ConfigBlock
 from vrl.families.names import normalize_model_family
 from vrl.families.registry import FAMILY_REGISTRY, get_model_family_entry
@@ -341,56 +343,6 @@ def generation_request_rollout_fields() -> frozenset[str]:
     )
 
 
-class SamplingConfig(ConfigBase):
-    # reader: vrl/nn/modules/ar_attention_backends.py attention_backend_name
-    # (read from the request dict; default "vllm_paged"). Declared here so the
-    # allowed set is the type and the key is registered (no false unknown-key warning).
-    attention_backend: Literal["vllm_paged", "torch_native"] = "vllm_paged"
-    # Request-local token-step row bound. null = all rows in the current chunk.
-    ar_scheduler_batch_size: int | None = None
-    # Frozen GLM-Image DiT decode knobs (rollout postprocess, never trained);
-    # reader: glm_image prepare_chunk_inputs.
-    decode_guidance_scale: Any = None
-    decode_num_inference_steps: Any = None
-    fps: Any = None
-    guidance_scale: Any = None
-    height: Any = None
-    # Emu3 latent-grid geometry (readers: emu3 prepare_chunk_inputs /
-    # encode_generation_prompts — the token count derives from these).
-    image_area: Any = None
-    # GLM-Image pixel target, multiples of 32 (reader: glm_image
-    # prepare_chunk_inputs; distinct from diffusion's height/width keys).
-    image_height: Any = None
-    image_width: Any = None
-    image_size: Any = None
-    image_token_num: Any = None
-    max_reflect_len: Any = None
-    max_sequence_length: Any = None
-    # AR prompt pad length (readers: every AR family's prepare_chunk_inputs;
-    # llamagen additionally requires it == cls_token_num).
-    max_text_length: Any = None
-    ratio: Any = None
-    num_frames: Any = None
-    num_steps: Any = None
-    temperature: Any = None
-    # AR nucleus/top-k filtering (top_k: llamagen only; top_p: llamagen and
-    # glm_image prepare_chunk_inputs; checkpoint defaults apply when unset).
-    top_k: Any = None
-    top_p: Any = None
-    width: Any = None
-
-    @field_validator("ar_scheduler_batch_size", mode="before")
-    @classmethod
-    def _validate_ar_scheduler_batch_size(cls, value: Any) -> Any:
-        if value is None:
-            return None
-        if isinstance(value, bool) or not isinstance(value, int) or value < 1:
-            raise ValueError(
-                "sampling.ar_scheduler_batch_size must be a positive integer or null",
-            )
-        return value
-
-
 # Kept as a public import facade while the accurate section name is used by
 # registry ownership and RootConfig.
 ModelConfig = ModelSection
@@ -474,6 +426,76 @@ def _parse_model_section(value: Any) -> ModelSection | None:
         memory_config=parsed.memory,
     )
     return parsed
+
+
+@functools.cache
+def _sampling_section_class_from_path(path: str) -> type[SamplingSection]:
+    section_cls = import_from_path(path)
+    if not isinstance(section_cls, type) or not issubclass(section_cls, SamplingSection):
+        raise TypeError(
+            f"sampling section path {path!r} must resolve to a SamplingSection subclass",
+        )
+    return section_cls
+
+
+def sampling_section_class_for_family(family: Any) -> type[SamplingSection]:
+    if family is None or not str(family).strip():
+        raise ValueError("sampling requires model.family")
+    entry = get_model_family_entry(str(family))
+    return _sampling_section_class_from_path(entry.sampling_section_cls)
+
+
+_sampling_section_variant_classes: tuple[type[SamplingSection], ...] = tuple(
+    dict.fromkeys(
+        _sampling_section_class_from_path(entry.sampling_section_cls)
+        for entry in FAMILY_REGISTRY.values()
+    )
+)
+
+
+def _sampling_section_known_fields() -> tuple[str, ...]:
+    """Derive the unknown-key inventory from every registered concrete schema."""
+
+    return tuple(
+        sorted(
+            {
+                name
+                for section_cls in _sampling_section_variant_classes
+                for name in section_cls.model_fields
+            },
+        ),
+    )
+
+
+def _parse_sampling_section(
+    value: Any,
+    *,
+    model: ModelSection | None,
+) -> SamplingSection | None:
+    if value is None:
+        return None
+    section_cls = sampling_section_class_for_family(
+        None if model is None else model.family,
+    )
+    if isinstance(value, SamplingSection):
+        if isinstance(value, section_cls):
+            return value
+        payload = value.model_dump(exclude_unset=True)
+    elif isinstance(value, Mapping):
+        payload = dict(value)
+    else:
+        raise ValueError("sampling must be a mapping")
+
+    try:
+        return section_cls.model_validate(payload)
+    except ValidationError as exc:
+        message = _extract_error_message(exc)
+        if message.startswith("unknown ") and not message.startswith("unknown sampling."):
+            message = f"unknown sampling.{message[len('unknown ') :]}"
+        elif message.startswith("config missing required field: "):
+            rest = message[len("config missing required field: ") :]
+            message = f"config missing required field: sampling.{rest}"
+        raise ValueError(message) from exc
 
 
 # ── Section key registries (values validated by their own layers) ────────────
@@ -841,7 +863,13 @@ class RootConfig(ConfigBase):
             variants=_model_section_variant_classes,
         ),
     ] = None
-    sampling: SamplingConfig | None = None
+    sampling: Annotated[
+        SerializeAsAny[SamplingSection] | None,
+        ConfigBlock(
+            _sampling_section_known_fields(),
+            variants=_sampling_section_variant_classes,
+        ),
+    ] = None
     # Per-component production gates; contract checks live in
     # vrl/config/validation.py validate_production_* (raw-cfg checks)
     production: ProductionSection | None = None
@@ -863,6 +891,19 @@ class RootConfig(ConfigBase):
     @classmethod
     def _select_model_section(cls, value: Any) -> ModelSection | None:
         return _parse_model_section(value)
+
+    @field_validator("sampling", mode="before")
+    @classmethod
+    def _select_sampling_section(
+        cls,
+        value: Any,
+        info: ValidationInfo,
+    ) -> SamplingSection | None:
+        model = info.data.get("model")
+        return _parse_sampling_section(
+            value,
+            model=model if isinstance(model, ModelSection) else None,
+        )
 
     @model_validator(mode="after")
     def _cross_field_validate(self) -> RootConfig:
@@ -1035,7 +1076,7 @@ __all__ = [
     "RewardConfig",
     "RolloutConfig",
     "RootConfig",
-    "SamplingConfig",
     "generation_request_rollout_fields",
     "parse_config",
+    "sampling_section_class_for_family",
 ]

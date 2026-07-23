@@ -26,6 +26,17 @@ GENERIC_FULL_SEQUENCE_DENOISE_EXECUTOR = (
     "vrl.generation.bindings.full_sequence_denoise.executor:DiffusionChunkExecutor"
 )
 SHARED_MODEL_SECTION_CLS = "vrl.config.model_schema:ModelSection"
+# Lazy public-sampling schema protocol values. Families share a path only when
+# they expose the same real request vocabulary; no per-family empty class is
+# needed merely to make registry entries look unique.
+DENOISE_IMAGE_SAMPLING_SECTION_CLS = "vrl.config.sampling_schema:DenoiseImageSamplingSection"
+TEXT_ENCODED_IMAGE_SAMPLING_SECTION_CLS = (
+    "vrl.config.sampling_schema:TextEncodedImageSamplingSection"
+)
+VIDEO_SAMPLING_SECTION_CLS = "vrl.config.sampling_schema:VideoSamplingSection"
+TEXT_ENCODED_VIDEO_SAMPLING_SECTION_CLS = (
+    "vrl.config.sampling_schema:TextEncodedVideoSamplingSection"
+)
 # This is a family capability selection, not the global schema namespace:
 # adding a future memory section must not silently grant it to every VAE family.
 _VAE_DECODE_MEMORY_SECTIONS = frozenset({"vae_decode"})
@@ -139,6 +150,9 @@ class ModelFamilyEntry:
     # Lazy public-YAML schema boundary. This is deliberately distinct from a
     # TokenFamilyBuild.config_cls, which constructs the resolved model wrapper.
     model_section_cls: str
+    # Lazy request-vocabulary boundary selected by model.family. This remains
+    # separate from mutable runtime sampling state and wire request protocols.
+    sampling_section_cls: str
     family_build: DenoiseFamilyBuild | TokenFamilyBuild
     runtime_capabilities: GenerationRuntimeCapabilities = field(
         default_factory=GenerationRuntimeCapabilities,
@@ -156,6 +170,8 @@ class ModelFamilyEntry:
             raise ValueError(f"model family {self.family!r} requires a gatherer binding")
         if not self.model_section_cls:
             raise ValueError(f"model family {self.family!r} requires a model section class")
+        if not self.sampling_section_cls:
+            raise ValueError(f"model family {self.family!r} requires a sampling section class")
         if self.request_metadata_namespace == "":
             raise ValueError("request_metadata_namespace must be non-empty when set")
 
@@ -405,6 +421,7 @@ def _full_sequence_denoise_entry(
     family: str,
     task: str,
     model_section_cls: str,
+    sampling_section_cls: str,
     executor_cls: str | None = None,
     build: DenoiseFamilyBuild,
     runtime_capabilities: GenerationRuntimeCapabilities | None = None,
@@ -447,6 +464,7 @@ def _full_sequence_denoise_entry(
         executor_cls=executor_cls,
         gatherer_cls="vrl.generation.bindings.full_sequence_denoise.gather:DiffusionChunkGatherer",
         model_section_cls=model_section_cls,
+        sampling_section_cls=sampling_section_cls,
         family_build=build,
         runtime_capabilities=runtime_capabilities,
     )
@@ -457,6 +475,7 @@ def _token_autoregressive_entry(
     family: str,
     action_distribution: Literal["categorical", "continuous"],
     model_section_cls: str,
+    sampling_section_cls: str,
     executor_cls: str,
     build: TokenFamilyBuild,
     task: str = "ar_t2i",
@@ -478,6 +497,7 @@ def _token_autoregressive_entry(
         executor_cls=executor_cls,
         gatherer_cls=gatherer_cls,
         model_section_cls=model_section_cls,
+        sampling_section_cls=sampling_section_cls,
         family_build=build,
         request_metadata_namespace=request_metadata_namespace,
     )
@@ -487,6 +507,7 @@ def _chunk_autoregressive_denoise_entry(
     *,
     family: str,
     model_section_cls: str,
+    sampling_section_cls: str,
     executor_cls: str,
     build: DenoiseFamilyBuild,
     task: str = "t2v",
@@ -509,6 +530,7 @@ def _chunk_autoregressive_denoise_entry(
             "ChunkAutoregressiveDenoiseGatherer"
         ),
         model_section_cls=model_section_cls,
+        sampling_section_cls=sampling_section_cls,
         family_build=build,
         runtime_capabilities=(
             runtime_capabilities
@@ -523,6 +545,7 @@ _register_model_family(
         family="sd3_5",
         task="t2i",
         model_section_cls=SHARED_MODEL_SECTION_CLS,
+        sampling_section_cls=TEXT_ENCODED_IMAGE_SAMPLING_SECTION_CLS,
         build=DenoiseFamilyBuild(
             model_cls="vrl.models.families.sd3_5.model:SD3_5Model",
             replay_cls="vrl.models.families.sd3_5.model:SD3_5ReplayModel",
@@ -535,6 +558,7 @@ _register_model_family(
     _chunk_autoregressive_denoise_entry(
         family="causvid",
         model_section_cls="vrl.models.families.causvid.config:CausVidModelSection",
+        sampling_section_cls=VIDEO_SAMPLING_SECTION_CLS,
         executor_cls="vrl.models.families.causvid.runtime:CausVidChunkExecutor",
         build=DenoiseFamilyBuild(
             model_cls="vrl.models.families.causvid.model:CausVidModel",
@@ -558,6 +582,7 @@ _register_model_family(
     _chunk_autoregressive_denoise_entry(
         family="magi_1",
         model_section_cls="vrl.models.families.magi_1.config:Magi1ModelSection",
+        sampling_section_cls="vrl.config.sampling_schema:MagiSamplingSection",
         executor_cls="vrl.models.families.magi_1.runtime:Magi1ChunkExecutor",
         build=DenoiseFamilyBuild(
             model_cls="vrl.models.families.magi_1.model:Magi1Model",
@@ -580,6 +605,7 @@ _register_model_family(
         family="flux",
         task="t2i",
         model_section_cls="vrl.models.families.flux.config:FluxModelSection",
+        sampling_section_cls=TEXT_ENCODED_IMAGE_SAMPLING_SECTION_CLS,
         build=DenoiseFamilyBuild(
             model_cls="vrl.models.families.flux.model:FluxModel",
             replay_cls="vrl.models.families.flux.model:FluxReplayModel",
@@ -593,6 +619,7 @@ _register_model_family(
         family="qwen_image",
         task="t2i",
         model_section_cls=SHARED_MODEL_SECTION_CLS,
+        sampling_section_cls=TEXT_ENCODED_IMAGE_SAMPLING_SECTION_CLS,
         # Descriptor-driven family: the generic functions in
         # vrl.models.steps.denoise.build read the recipe below, so qwen_image ships
         # no per-family builder/resolver functions.
@@ -609,6 +636,7 @@ _register_model_family(
         family="sana",
         task="t2i",
         model_section_cls=SHARED_MODEL_SECTION_CLS,
+        sampling_section_cls=TEXT_ENCODED_IMAGE_SAMPLING_SECTION_CLS,
         build=DenoiseFamilyBuild(
             model_cls="vrl.models.families.sana.model:SanaModel",
             replay_cls="vrl.models.families.sana.model:SanaReplayModel",
@@ -622,6 +650,7 @@ _register_model_family(
         family="lumina2",
         task="t2i",
         model_section_cls=SHARED_MODEL_SECTION_CLS,
+        sampling_section_cls=TEXT_ENCODED_IMAGE_SAMPLING_SECTION_CLS,
         build=DenoiseFamilyBuild(
             model_cls="vrl.models.families.lumina2.model:Lumina2Model",
             replay_cls="vrl.models.families.lumina2.model:Lumina2ReplayModel",
@@ -635,6 +664,7 @@ _register_model_family(
         family="hunyuan_video",
         task="t2v",
         model_section_cls=SHARED_MODEL_SECTION_CLS,
+        sampling_section_cls=TEXT_ENCODED_VIDEO_SAMPLING_SECTION_CLS,
         build=DenoiseFamilyBuild(
             model_cls="vrl.models.families.hunyuan_video.model:HunyuanVideoModel",
             replay_cls="vrl.models.families.hunyuan_video.model:HunyuanVideoReplayModel",
@@ -648,6 +678,7 @@ _register_model_family(
         family="mochi",
         task="t2v",
         model_section_cls=SHARED_MODEL_SECTION_CLS,
+        sampling_section_cls=TEXT_ENCODED_VIDEO_SAMPLING_SECTION_CLS,
         build=DenoiseFamilyBuild(
             model_cls="vrl.models.families.mochi.model:MochiModel",
             replay_cls="vrl.models.families.mochi.model:MochiReplayModel",
@@ -661,6 +692,7 @@ _register_model_family(
         family="hunyuan_image",
         task="t2i",
         model_section_cls=SHARED_MODEL_SECTION_CLS,
+        sampling_section_cls=DENOISE_IMAGE_SAMPLING_SECTION_CLS,
         build=DenoiseFamilyBuild(
             model_cls="vrl.models.families.hunyuan_image.model:HunyuanImageModel",
             replay_cls="vrl.models.families.hunyuan_image.model:HunyuanImageReplayModel",
@@ -674,6 +706,7 @@ _register_model_family(
         family="pixart_sigma",
         task="t2i",
         model_section_cls=SHARED_MODEL_SECTION_CLS,
+        sampling_section_cls=TEXT_ENCODED_IMAGE_SAMPLING_SECTION_CLS,
         build=DenoiseFamilyBuild(
             model_cls="vrl.models.families.pixart_sigma.model:PixArtSigmaModel",
             replay_cls="vrl.models.families.pixart_sigma.model:PixArtSigmaReplayModel",
@@ -691,6 +724,7 @@ _register_model_family(
         family="cogvideox",
         task="t2v",
         model_section_cls=SHARED_MODEL_SECTION_CLS,
+        sampling_section_cls=TEXT_ENCODED_VIDEO_SAMPLING_SECTION_CLS,
         build=DenoiseFamilyBuild(
             model_cls="vrl.models.families.cogvideox.model:CogVideoXModel",
             replay_cls="vrl.models.families.cogvideox.model:CogVideoXReplayModel",
@@ -707,6 +741,7 @@ _register_model_family(
         family="wan_2_1",
         task="t2v",
         model_section_cls="vrl.models.families.wan_2_1.config:WanModelSection",
+        sampling_section_cls=TEXT_ENCODED_VIDEO_SAMPLING_SECTION_CLS,
         # The two wan entries carry their own per-variant recipes, so the
         # t2v/i2v resolution is decided here, once, by family selection. The
         # dual-stage transformer_2 late-load lives in the replay model's
@@ -726,6 +761,7 @@ _register_model_family(
         family="wan_2_1_i2v",
         task="i2v",
         model_section_cls="vrl.models.families.wan_2_1.config:WanModelSection",
+        sampling_section_cls=TEXT_ENCODED_VIDEO_SAMPLING_SECTION_CLS,
         executor_cls="vrl.models.families.wan_2_1.runtime:Wan_2_1I2VChunkExecutor",
         supported_model_memory_sections=_VAE_DECODE_MEMORY_SECTIONS,
         build=DenoiseFamilyBuild(
@@ -742,6 +778,7 @@ _register_model_family(
         family="cosmos-predict2",
         task="v2w",
         model_section_cls=SHARED_MODEL_SECTION_CLS,
+        sampling_section_cls=VIDEO_SAMPLING_SECTION_CLS,
         executor_cls="vrl.models.families.cosmos.predict2.runtime:CosmosChunkExecutor",
         supported_model_memory_sections=_VAE_DECODE_MEMORY_SECTIONS,
         build=DenoiseFamilyBuild(
@@ -759,6 +796,7 @@ _register_model_family(
         model_section_cls=(
             "vrl.models.families.cosmos.predict2_5.config:CosmosPredict25ModelSection"
         ),
+        sampling_section_cls=TEXT_ENCODED_VIDEO_SAMPLING_SECTION_CLS,
         executor_cls=(
             "vrl.models.families.cosmos.predict2_5.runtime:CosmosPredict25ChunkExecutor"
         ),
@@ -782,6 +820,7 @@ _register_model_family(
         family="cosmos3",
         task="t2v",
         model_section_cls=SHARED_MODEL_SECTION_CLS,
+        sampling_section_cls=VIDEO_SAMPLING_SECTION_CLS,
         executor_cls="vrl.models.families.cosmos.cosmos3.runtime:Cosmos3ChunkExecutor",
         supported_model_memory_sections=_VAE_DECODE_MEMORY_SECTIONS,
         build=DenoiseFamilyBuild(
@@ -798,6 +837,7 @@ _register_model_family(
         family="cosmos-predict2-anima",
         task="t2i",
         model_section_cls="vrl.models.families.cosmos.anima.config:CosmosAnimaModelSection",
+        sampling_section_cls=TEXT_ENCODED_IMAGE_SAMPLING_SECTION_CLS,
         build=DenoiseFamilyBuild(
             model_cls="vrl.models.families.cosmos.anima.model:AnimaModel",
             replay_runtime_builder=(
@@ -812,6 +852,7 @@ _register_model_family(
         family="echo",
         task="t2v",
         model_section_cls="vrl.models.families.echo.config:EchoModelSection",
+        sampling_section_cls="vrl.config.sampling_schema:EchoSamplingSection",
         executor_cls="vrl.models.families.echo.runtime:EchoChunkExecutor",
         supported_model_memory_sections=frozenset(),
         build=DenoiseFamilyBuild(
@@ -837,6 +878,7 @@ _register_model_family(
         family="janus_pro",
         action_distribution="categorical",
         model_section_cls="vrl.models.families.janus_pro.config:JanusProModelSection",
+        sampling_section_cls="vrl.config.sampling_schema:JanusProSamplingSection",
         executor_cls="vrl.models.families.janus_pro.runtime:JanusProChunkExecutor",
         build=_JANUS_PRO_BUILD,
     ),
@@ -847,6 +889,7 @@ _register_model_family(
         family="janus_pro_r1",
         action_distribution="categorical",
         model_section_cls="vrl.models.families.janus_pro.config:JanusProModelSection",
+        sampling_section_cls="vrl.config.sampling_schema:JanusProR1SamplingSection",
         task="ar_t2i_r1",
         executor_cls="vrl.models.families.janus_pro.runtime:JanusProR1ChunkExecutor",
         gatherer_cls="vrl.models.families.janus_pro.runtime:JanusProR1ChunkGatherer",
@@ -860,6 +903,7 @@ _register_model_family(
         family="nextstep_1",
         action_distribution="continuous",
         model_section_cls="vrl.models.families.nextstep_1.config:NextStep1ModelSection",
+        sampling_section_cls="vrl.config.sampling_schema:NextStepSamplingSection",
         executor_cls="vrl.models.families.nextstep_1.runtime:NextStep1ChunkExecutor",
         gatherer_cls="vrl.models.families.nextstep_1.runtime:NextStep1ChunkGatherer",
         build=TokenFamilyBuild(
@@ -880,6 +924,7 @@ _register_model_family(
         family="emu3",
         action_distribution="categorical",
         model_section_cls=SHARED_MODEL_SECTION_CLS,
+        sampling_section_cls="vrl.config.sampling_schema:Emu3SamplingSection",
         executor_cls="vrl.models.families.emu3.runtime:Emu3ChunkExecutor",
         build=TokenFamilyBuild(
             model_cls="vrl.models.families.emu3.model:Emu3Model",
@@ -897,6 +942,7 @@ _register_model_family(
         family="glm_image",
         action_distribution="categorical",
         model_section_cls=SHARED_MODEL_SECTION_CLS,
+        sampling_section_cls="vrl.config.sampling_schema:GlmImageSamplingSection",
         executor_cls="vrl.models.families.glm_image.runtime:GlmImageChunkExecutor",
         build=TokenFamilyBuild(
             model_cls="vrl.models.families.glm_image.model:GlmImageModel",
@@ -914,6 +960,7 @@ _register_model_family(
         family="llamagen",
         action_distribution="categorical",
         model_section_cls="vrl.models.families.llamagen.config:LlamaGenModelSection",
+        sampling_section_cls="vrl.config.sampling_schema:LlamaGenSamplingSection",
         executor_cls="vrl.models.families.llamagen.runtime:LlamaGenChunkExecutor",
         build=TokenFamilyBuild(
             model_cls="vrl.models.families.llamagen.model:LlamaGenModel",

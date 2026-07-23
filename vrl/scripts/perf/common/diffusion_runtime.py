@@ -11,6 +11,7 @@ from vrl.generation.steps.denoise.teacache import TeaCacheState, teacache_signal
 from vrl.generation.types import VideoGenerationRequest
 from vrl.math.denoise.flow_matching import sde_step_with_logprob
 from vrl.models.interfaces import RuntimeBundle
+from vrl.utils.config import cfg_path
 
 _PROMPT = "a physical scene, high quality"
 
@@ -69,6 +70,18 @@ def prepare_sampling_state(model, cfg):
     """Encode the shared prompt and prepare the model's sampling state."""
 
     sampling = cfg.sampling
+    max_sequence_length = cfg_path(cfg, "sampling.max_sequence_length")
+    if max_sequence_length is None:
+        max_sequence_length = cfg_path(cfg, "model.executor.max_sequence_length")
+    if max_sequence_length is not None:
+        max_sequence_length = int(max_sequence_length)
+    encode_kwargs = {
+        "guidance_scale": float(sampling.guidance_scale),
+    }
+    request_extra = {}
+    if max_sequence_length is not None:
+        encode_kwargs["max_sequence_length"] = max_sequence_length
+        request_extra["max_sequence_length"] = max_sequence_length
     request = VideoGenerationRequest(
         prompt=_PROMPT,
         negative_prompt=None,
@@ -78,13 +91,12 @@ def prepare_sampling_state(model, cfg):
         num_steps=int(sampling.num_steps),
         guidance_scale=float(sampling.guidance_scale),
         seed=0,
-        extra={"max_sequence_length": int(sampling.max_sequence_length)},
+        extra=request_extra,
     )
     prompt = model.encode_prompt(
         [_PROMPT],
         None,
-        guidance_scale=float(sampling.guidance_scale),
-        max_sequence_length=int(sampling.max_sequence_length),
+        **encode_kwargs,
     )
     return model.prepare_sampling(request, prompt)
 

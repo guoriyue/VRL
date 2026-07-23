@@ -18,6 +18,9 @@ defaults:
 # probes but remain explicit experiment overrides. Gemma stays BF16, while
 # stochastic scheduler/log-probability math remains protected FP32.
 
+# The canonical full-parameter evaluation freezes the resolved config digest.
+# Keep this explicit protocol value even though the model preset has the same
+# encoder limit; removing it would change the identity of recorded long runs.
 sampling:
   max_sequence_length: 300
 

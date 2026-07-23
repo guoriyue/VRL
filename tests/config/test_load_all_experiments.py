@@ -117,6 +117,40 @@ def test_config_groups_are_not_flattened() -> None:
     assert list_bundled_configs("profiling") == ()
 
 
+def test_geometry_sampling_presets_do_not_own_text_encoder_lengths() -> None:
+    geometry_presets = [
+        name
+        for name in list_bundled_configs("sampling")
+        if Path(name).parts[1] in {"image", "video"}
+    ]
+
+    assert geometry_presets
+    for name in geometry_presets:
+        sampling = _load_bundled_raw(name).get("sampling", {})
+        assert "max_sequence_length" not in sampling, name
+
+
+def test_text_lengths_live_at_model_or_real_protocol_boundaries() -> None:
+    anima = load_config("experiment/anima_preview3/online_grpo_aesthetic")
+    sana = load_config("experiment/sana/online_grpo_aesthetic")
+    wan22 = load_config("experiment/wan_2_2/online_grpo_dual_expert_proof")
+    predict2 = load_config("experiment/cosmos_predict2/online_grpo_v2w_reference_480p")
+    hunyuan_image = load_config("experiment/hunyuan_image/online_grpo_pickscore_validation")
+
+    assert anima.model.executor.max_sequence_length == 128
+    assert sana.model.executor.max_sequence_length == 300
+    assert wan22.model.executor.max_sequence_length == 256
+    assert all(
+        "max_sequence_length" not in cfg.sampling
+        for cfg in (anima, wan22, predict2, hunyuan_image)
+    )
+    # The SANA long-run evaluator freezes the resolved config digest, so this
+    # matching value remains an explicit scientific protocol boundary.
+    assert sana.sampling.max_sequence_length == 300
+    assert "executor" not in predict2.model
+    assert "executor" not in hunyuan_image.model
+
+
 def test_raw_yaml_has_no_user_specific_absolute_paths() -> None:
     """Committed configs must not depend on one contributor's home directory."""
     user_home = re.compile(

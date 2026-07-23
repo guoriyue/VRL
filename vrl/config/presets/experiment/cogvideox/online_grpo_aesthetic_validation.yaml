@@ -10,9 +10,6 @@ defaults:
   - /reward/aesthetic
 
 
-sampling:
-  max_sequence_length: 226
-
 actor:
   optim:
     lr: 3.0e-4
