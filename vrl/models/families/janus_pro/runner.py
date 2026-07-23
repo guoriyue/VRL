@@ -23,7 +23,6 @@ class JanusProARModelRunner(PagedCFGTokenRunner):
     """Family model runner that lets the AR engine schedule Janus token steps."""
 
     family = "janus_pro"
-    lane_owner_prefix = "janus"
 
     @torch.no_grad()
     def init_token(

@@ -130,9 +130,7 @@ def test_step_requires_full_batch_row_coverage() -> None:
     )
     partial = TokenStepBatch(
         row_indices=[0],
-        positions=[0],
         position=0,
-        cache_lanes={},
         row_lanes={
             "cond_logits": init.row_lanes["cond_logits"][:1],
             "uncond_logits": init.row_lanes["uncond_logits"][:1],
@@ -150,9 +148,7 @@ def test_step_counters_report_native_cache() -> None:
     init = runner.init_token(cond, uncond, mask, mask, image_token_num=TINY_BLOCK_SIZE)
     step = TokenStepBatch(
         row_indices=list(range(BATCH)),
-        positions=[0] * BATCH,
         position=0,
-        cache_lanes={},
         row_lanes={
             "cond_logits": init.row_lanes["cond_logits"],
             "uncond_logits": init.row_lanes["uncond_logits"],

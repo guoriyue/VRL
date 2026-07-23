@@ -113,7 +113,6 @@ class PagedCFGTokenRunner(ARDiscreteTokenRunner):
     """
 
     family: str = ""
-    lane_owner_prefix: str = ""
 
     def __init__(
         self,
@@ -173,7 +172,6 @@ class PagedCFGTokenRunner(ARDiscreteTokenRunner):
             branch="uncond",
             image_token_num=total_token_num,
         )
-        owner = self.lane_owner_prefix or self.family
         return TokenLoopInit(
             state=state_cls(
                 token_ids=torch.empty(
@@ -195,19 +193,11 @@ class PagedCFGTokenRunner(ARDiscreteTokenRunner):
                 paged_uncond_states=list(uncond_prefill.sequence_states),
                 **(state_kwargs or {}),
             ),
-            cache_lanes={},
             row_lanes={
                 "cond_last_hidden": cond_prefill.last_hidden,
                 "uncond_last_hidden": uncond_prefill.last_hidden,
                 "cond_attn": cond_attention_mask,
                 "uncond_attn": uncond_attention_mask,
-            },
-            cache_lane_owners={},
-            row_lane_owners={
-                "cond_last_hidden": f"{owner}.cond_last_hidden",
-                "uncond_last_hidden": f"{owner}.uncond_last_hidden",
-                "cond_attn": f"{owner}.cond_attn",
-                "uncond_attn": f"{owner}.uncond_attn",
             },
         )
 
@@ -258,7 +248,7 @@ class PagedCFGTokenRunner(ARDiscreteTokenRunner):
         self,
         state: ARDiscreteTokenState,
         batch: TokenStepBatch,
-    ) -> tuple[dict[str, Any], dict[str, Any]]:
+    ) -> dict[str, Any]:
         assert isinstance(state, PagedCFGARState)
         return self._sample_ar_step_kv(state, batch)
 
@@ -266,7 +256,7 @@ class PagedCFGTokenRunner(ARDiscreteTokenRunner):
         self,
         state: PagedCFGARState,
         batch: TokenStepBatch,
-    ) -> tuple[dict[str, Any], dict[str, Any]]:
+    ) -> dict[str, Any]:
         row_indices = batch.row_indices
         position = batch.position
         rows = torch.tensor(row_indices, dtype=torch.long, device=state.token_ids.device)
@@ -277,16 +267,15 @@ class PagedCFGTokenRunner(ARDiscreteTokenRunner):
         state.token_ids[rows, position] = sampled
         state.logprobs[rows, position] = lp
 
-        cache_updates: dict[str, Any] = {}
         row_updates: dict[str, Any] = {}
         if position + 1 < state.total_token_num:
-            cache_updates, row_updates = self._advance_after_sample(
+            row_updates = self._advance_after_sample(
                 state,
                 batch=batch,
                 sampled=sampled,
             )
 
-        return cache_updates, row_updates
+        return row_updates
 
     def _advance_after_sample(
         self,
@@ -294,7 +283,7 @@ class PagedCFGTokenRunner(ARDiscreteTokenRunner):
         *,
         batch: TokenStepBatch,
         sampled: torch.Tensor,
-    ) -> tuple[dict[str, Any], dict[str, Any]]:
+    ) -> dict[str, Any]:
         batch_size = len(batch.row_indices)
         cond_states = select_paged_states(state.paged_cond_states, batch.row_indices)
         uncond_states = select_paged_states(
@@ -336,12 +325,9 @@ class PagedCFGTokenRunner(ARDiscreteTokenRunner):
         )
         hidden = normalize_paged_last_hidden(output.last_hidden)
 
-        return (
-            {},
-            {
-                "cond_last_hidden": hidden[:batch_size],
-                "uncond_last_hidden": hidden[batch_size:],
-                "cond_attn": cond_next_attn,
-                "uncond_attn": uncond_next_attn,
-            },
-        )
+        return {
+            "cond_last_hidden": hidden[:batch_size],
+            "uncond_last_hidden": hidden[batch_size:],
+            "cond_attn": cond_next_attn,
+            "uncond_attn": uncond_next_attn,
+        }

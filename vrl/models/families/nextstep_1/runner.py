@@ -93,13 +93,7 @@ class NextStep1ARModelRunner:
             image_token_num=int(image_token_num),
         )
         c_cond = cond_prefill.last_hidden
-        cache_lanes: dict[str, Any] = {}
         row_lanes = {"c_cond": c_cond, "cond_attn": prompt_mask}
-        cache_lane_owners: dict[str, str] = {}
-        row_lane_owners = {
-            "c_cond": "nextstep.c_cond",
-            "cond_attn": "nextstep.cond_attn",
-        }
         paged_cond_states = list(cond_prefill.sequence_states)
         paged_uncond_states = None
         if uncond_embeds is not None and uncond_mask is not None:
@@ -111,8 +105,6 @@ class NextStep1ARModelRunner:
             )
             row_lanes["c_uncond"] = uncond_prefill.last_hidden
             row_lanes["uncond_attn"] = uncond_mask
-            row_lane_owners["c_uncond"] = "nextstep.c_uncond"
-            row_lane_owners["uncond_attn"] = "nextstep.uncond_attn"
             paged_uncond_states = list(uncond_prefill.sequence_states)
 
         return TokenLoopInit(
@@ -128,10 +120,7 @@ class NextStep1ARModelRunner:
                 paged_cond_states=paged_cond_states,
                 paged_uncond_states=paged_uncond_states,
             ),
-            cache_lanes=cache_lanes,
             row_lanes=row_lanes,
-            cache_lane_owners=cache_lane_owners,
-            row_lane_owners=row_lane_owners,
         )
 
     @torch.no_grad()
@@ -139,18 +128,9 @@ class NextStep1ARModelRunner:
         self,
         state: NextStep1ARState,
         batch: TokenStepBatch,
-        *,
-        generator: torch.Generator | None = None,
     ) -> TokenStepOutput:
-        cache_updates, row_updates = self._sample_ar_step(
-            state,
-            batch,
-            generator=generator,
-        )
-        return TokenStepOutput(
-            updated_cache_lanes=cache_updates,
-            updated_row_lanes=row_updates,
-        )
+        row_updates = self._sample_ar_step(state, batch)
+        return TokenStepOutput(updated_row_lanes=row_updates)
 
     @torch.no_grad()
     def finalize_token(
@@ -163,20 +143,14 @@ class NextStep1ARModelRunner:
         self,
         state: NextStep1ARState,
         batch: TokenStepBatch,
-        generator: torch.Generator | None = None,
-    ) -> tuple[dict[str, Any], dict[str, Any]]:
+    ) -> dict[str, Any]:
         row_indices = batch.row_indices
-        if not row_indices:
-            raise ValueError("row_indices must be non-empty")
-        if any(row < 0 or row >= state.tokens.shape[0] for row in row_indices):
+        if any(row >= state.tokens.shape[0] for row in row_indices):
             raise ValueError(f"invalid NextStep row indices: {row_indices}")
-        if len(set(batch.positions)) != 1:
-            raise ValueError("NextStep rows in one AR step must share a position")
         position = batch.position
         if position >= state.image_token_num:
             raise ValueError("NextStep1ARState has already finished sampling")
 
-        step_generator = generator if generator is not None else state.generator
         batch_size = len(row_indices)
         token_dim = state.tokens.shape[-1]
         device = state.tokens.device
@@ -186,7 +160,7 @@ class NextStep1ARModelRunner:
             token_dim,
             device=device,
             dtype=self.model.dtype,
-            generator=step_generator,
+            generator=state.generator,
         )
         token, log_prob, replay_noise = flow_sample_with_logprob(
             self.model.image_head,
@@ -195,7 +169,7 @@ class NextStep1ARModelRunner:
             noise_level=state.noise_level,
             cfg_uncond=batch.row_lanes.get("c_uncond"),
             guidance_scale=state.guidance_scale,
-            generator=step_generator,
+            generator=state.generator,
             initial_noise=initial_noise,
         )
 
@@ -212,7 +186,7 @@ class NextStep1ARModelRunner:
                 batch=batch,
                 token=token,
             )
-        return {}, {}
+        return {}
 
     def _prefill_paged(
         self,
@@ -237,7 +211,7 @@ class NextStep1ARModelRunner:
         *,
         batch: TokenStepBatch,
         token: torch.Tensor,
-    ) -> tuple[dict[str, Any], dict[str, Any]]:
+    ) -> dict[str, Any]:
         batch_size = len(batch.row_indices)
         cond_states = select_paged_states(state.paged_cond_states, batch.row_indices)
         cond_embed = self.model._image_in_projector(token).unsqueeze(1)
@@ -290,7 +264,7 @@ class NextStep1ARModelRunner:
                 updated_states[batch_size:],
             )
             row_updates["c_uncond"] = hidden[batch_size:]
-        return {}, row_updates
+        return row_updates
 
 
 __all__ = [

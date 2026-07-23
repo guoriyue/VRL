@@ -131,10 +131,6 @@ class LlamaGenARModelRunner(ARDiscreteTokenRunner):
                 "cond_logits": last[:batch_size],
                 "uncond_logits": last[batch_size:],
             },
-            row_lane_owners={
-                "cond_logits": "llamagen.cond_logits",
-                "uncond_logits": "llamagen.uncond_logits",
-            },
         )
 
     # -- internals -----------------------------------------------------
@@ -160,7 +156,7 @@ class LlamaGenARModelRunner(ARDiscreteTokenRunner):
         self,
         state: ARDiscreteTokenState,
         batch: TokenStepBatch,
-    ) -> tuple[dict[str, Any], dict[str, Any]]:
+    ) -> dict[str, Any]:
         assert isinstance(state, LlamaGenARState)
         position = batch.position
         sampled, lp = self._sample_cfg_image_token(
@@ -172,8 +168,8 @@ class LlamaGenARModelRunner(ARDiscreteTokenRunner):
         state.logprobs[:, position] = lp
 
         if position + 1 >= state.total_token_num:
-            return {}, {}
-        return {}, self._advance_after_sample(state, position=position, sampled=sampled)
+            return {}
+        return self._advance_after_sample(state, position=position, sampled=sampled)
 
     def _sample_cfg_image_token(
         self,

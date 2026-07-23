@@ -177,7 +177,6 @@ class NextStep1ChunkExecutor(ARChunkExecutorBase):
             scheduler_batch_size=chunk.sample_count,
             init_args=(cond_embeds, uncond_embeds, prompt_mask, uncond_mask),
             init_kwargs=sample_kwargs,
-            step_kwargs=sample_kwargs,
         ).run()
         tokens, saved_noise, old_logprobs = decode_result.finalized
 

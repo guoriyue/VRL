@@ -36,12 +36,11 @@ def _sample_row(index: int) -> GenerationSampleRow:
 
 class _DeterministicARContractRunner:
     def __init__(self) -> None:
-        self.step_inputs: list[tuple[list[int], int, list[float], list[float]]] = []
+        self.step_inputs: list[tuple[list[int], int, list[float]]] = []
 
     def init_token(self) -> TokenLoopInit:
         return TokenLoopInit(
             state={},
-            cache_lanes={"kv": torch.tensor([[0.0], [1.0], [2.0]])},
             row_lanes={"hidden": torch.tensor([[10.0], [20.0], [30.0]])},
         )
 
@@ -51,27 +50,22 @@ class _DeterministicARContractRunner:
         batch: TokenStepBatch,
     ) -> TokenStepOutput:
         del state
-        kv = batch.cache_lanes["kv"]
         hidden = batch.row_lanes["hidden"]
         self.step_inputs.append(
             (
                 batch.row_indices,
                 batch.position,
-                [float(value) for value in kv.flatten()],
                 [float(value) for value in hidden.flatten()],
             )
         )
-        return TokenStepOutput(
-            updated_cache_lanes={"kv": kv + 10.0},
-            updated_row_lanes={"hidden": hidden + 1.0},
-        )
+        return TokenStepOutput(updated_row_lanes={"hidden": hidden + 1.0})
 
     def finalize_token(self, state: dict[str, Any]) -> dict[str, Any]:
         return state
 
 
-def test_ar_decode_loop_schedules_contract_cache_lanes() -> None:
-    """Checks AR decode loop schedules contract cache lanes."""
+def test_ar_decode_loop_schedules_contract_row_lanes() -> None:
+    """Checks AR decode loop schedules contract row lanes."""
     runner = _DeterministicARContractRunner()
 
     result = TokenAutoregressiveLoop(
@@ -86,10 +80,10 @@ def test_ar_decode_loop_schedules_contract_cache_lanes() -> None:
 
     assert result.finalized == {}
     assert runner.step_inputs == [
-        ([0, 1], 0, [0.0, 1.0], [10.0, 20.0]),
-        ([2], 0, [2.0], [30.0]),
-        ([0, 1], 1, [10.0, 11.0], [11.0, 21.0]),
-        ([2], 1, [12.0], [31.0]),
+        ([0, 1], 0, [10.0, 20.0]),
+        ([2], 0, [30.0]),
+        ([0, 1], 1, [11.0, 21.0]),
+        ([2], 1, [31.0]),
     ]
 
 

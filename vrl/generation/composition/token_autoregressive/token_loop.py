@@ -159,10 +159,9 @@ class TokenScheduler:
 
 @dataclass(slots=True)
 class TokenAutoregressiveEnvelope:
-    """Generation-owned KV/row-state envelope scheduled by the decode loop."""
+    """Generation-owned row-state envelope scheduled by the decode loop."""
 
     state: Any
-    cache_lanes: dict[str, ARCacheRows] = field(default_factory=dict)
     row_lanes: dict[str, ARCacheRows] = field(default_factory=dict)
 
     @classmethod
@@ -176,19 +175,11 @@ class TokenAutoregressiveEnvelope:
             raise ValueError("batch_size must be >= 1")
         return cls(
             state=init.state,
-            cache_lanes={
-                name: ARCacheRows.from_batched(
-                    value,
-                    batch_size,
-                    owner=init.cache_lane_owners.get(name, f"ar.cache_lanes.{name}"),
-                )
-                for name, value in init.cache_lanes.items()
-            },
             row_lanes={
                 name: ARCacheRows.from_batched(
                     value,
                     batch_size,
-                    owner=init.row_lane_owners.get(name, f"ar.row_lanes.{name}"),
+                    owner=f"ar.row_lanes.{name}",
                 )
                 for name, value in init.row_lanes.items()
             },
@@ -196,39 +187,21 @@ class TokenAutoregressiveEnvelope:
 
     def build_step_batch(self, sequences: Sequence[ActiveSequence]) -> TokenStepBatch:
         row_indices = _row_indices(sequences, size=self.row_count)
-        positions = [int(sequence.position) for sequence in sequences]
-        if len(set(positions)) != 1:
-            raise ValueError(
-                "scheduled token-autoregressive sequences must share one token position",
-            )
         return TokenStepBatch(
             row_indices=row_indices,
-            positions=positions,
-            position=positions[0],
-            cache_lanes={
-                name: lane.gather(row_indices) for name, lane in self.cache_lanes.items()
-            },
+            position=int(sequences[0].position),
             row_lanes={name: lane.gather(row_indices) for name, lane in self.row_lanes.items()},
         )
 
     def apply_step_output(self, batch: TokenStepBatch, output: TokenStepOutput) -> None:
-        for name, value in output.updated_cache_lanes.items():
-            self._require_cache_lane(name).scatter(batch.row_indices, value)
         for name, value in output.updated_row_lanes.items():
             self._require_row_lane(name).scatter(batch.row_indices, value)
 
     @property
     def row_count(self) -> int:
-        for lanes in (self.cache_lanes, self.row_lanes):
-            for lane in lanes.values():
-                return len(lane)
-        raise ValueError("TokenAutoregressiveEnvelope requires at least one row/cache lane")
-
-    def _require_cache_lane(self, name: str) -> ARCacheRows:
-        try:
-            return self.cache_lanes[name]
-        except KeyError as exc:
-            raise KeyError(f"unknown AR cache lane: {name!r}") from exc
+        for lane in self.row_lanes.values():
+            return len(lane)
+        raise ValueError("TokenAutoregressiveEnvelope requires at least one row lane")
 
     def _require_row_lane(self, name: str) -> ARCacheRows:
         try:
@@ -257,7 +230,6 @@ class TokenAutoregressiveLoop:
     scheduler_batch_size: int | None = None
     init_args: Sequence[Any] = ()
     init_kwargs: Mapping[str, Any] | None = None
-    step_kwargs: Mapping[str, Any] | None = None
 
     def run(self) -> TokenAutoregressiveResult:
         rows = list(self.sample_rows)
@@ -284,19 +256,12 @@ class TokenAutoregressiveLoop:
         scheduler = TokenScheduler(max_batch_size=self._max_batch_size(sequences))
         scheduler.add_many(sequences)
 
-        call_step_kwargs = dict(self.step_kwargs or {})
-
         while True:
             batch = scheduler.pop_batch()
             if batch is None:
                 break
             step_batch = envelope.build_step_batch(batch.sequences)
-            step_output = call_with_supported_kwargs(
-                self.runner.step_token,
-                state,
-                step_batch,
-                **call_step_kwargs,
-            )
+            step_output = self.runner.step_token(state, step_batch)
             if not isinstance(step_output, TokenStepOutput):
                 raise TypeError(
                     "token model runner step_token must return TokenStepOutput; "

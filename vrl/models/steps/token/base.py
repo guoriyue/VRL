@@ -126,16 +126,10 @@ class ARDiscreteTokenRunner:
         self,
         state: ARDiscreteTokenState,
         batch: TokenStepBatch,
-        *,
-        generator: torch.Generator | None = None,
     ) -> TokenStepOutput:
-        del generator
         self._validate_ar_step_batch(state, batch)
-        cache_updates, row_updates = self._sample_ar_step(state, batch)
-        return TokenStepOutput(
-            updated_cache_lanes=cache_updates,
-            updated_row_lanes=row_updates,
-        )
+        row_updates = self._sample_ar_step(state, batch)
+        return TokenStepOutput(updated_row_lanes=row_updates)
 
     @torch.no_grad()
     def finalize_token(
@@ -150,13 +144,9 @@ class ARDiscreteTokenRunner:
         batch: TokenStepBatch,
     ) -> None:
         row_indices = batch.row_indices
-        if not row_indices:
-            raise ValueError("row_indices must be non-empty")
-        if any(row < 0 or row >= state.token_ids.shape[0] for row in row_indices):
+        if any(row >= state.token_ids.shape[0] for row in row_indices):
             label = self.validation_family or self.family
             raise ValueError(f"invalid {label} row indices: {row_indices}")
-        if len(set(batch.positions)) != 1:
-            raise ValueError("ActiveSequence positions must match within one AR step")
         if batch.position >= state.total_token_num:
             raise ValueError(f"{type(state).__name__} has already finished sampling")
         self._validate_family_step(state, batch)
@@ -172,7 +162,7 @@ class ARDiscreteTokenRunner:
         self,
         state: ARDiscreteTokenState,
         batch: TokenStepBatch,
-    ) -> tuple[dict[str, Any], dict[str, Any]]:
+    ) -> dict[str, Any]:
         raise NotImplementedError
 
 
