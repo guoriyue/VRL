@@ -45,7 +45,6 @@ def test_engine_request_builder_reads_resolved_request_sampling() -> None:
         "window": [0, 2],
         "seed": 7,
     }
-    assert collector_request.request.return_artifacts == {"output", "trajectory"}
     assert collector_request.request.metadata == {}
     assert collector_request.request.inputs[0].task_type == "text_to_image"
     assert collector_request.request.inputs[0].metadata == {

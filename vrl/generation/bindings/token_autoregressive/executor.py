@@ -57,7 +57,6 @@ class ARChunkExecutorBase(
     def plan(
         self,
         request: GenerationRequest,
-        sample_rows: Sequence[GenerationSampleRow],
     ) -> Any:
         from vrl.generation.execution.planner import build_engine_plan
 
@@ -366,7 +365,6 @@ class ARDiscreteChunkGatherer:
             request_id=request.request_id,
             family=request.family,
             task=request.task,
-            prompts=list(request.prompts),
             sample_rows=list(sample_rows),
             output=cat["output"],
             trajectory=trajectory,

@@ -90,7 +90,6 @@ def _batch() -> RolloutBatch:
             prompt_index=index,
             sample_index=0,
             prompt=f"p{index}",
-            prompt_id=f"p{index}",
             group_id=f"g{index}",
             sample_id=f"s{index}",
             trajectory_id=f"t{index}",

@@ -480,7 +480,7 @@ def test_generation_executor_builds_trainable_chunk_trajectory() -> None:
     )
     rows = build_sample_rows(request)
 
-    output = executor.forward_plan(request, rows, executor.plan(request, rows))
+    output = executor.forward_plan(request, rows, executor.plan(request))
 
     assert output.output.shape == (
         1,

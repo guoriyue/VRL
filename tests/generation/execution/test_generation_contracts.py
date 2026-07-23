@@ -2,10 +2,14 @@
 
 from __future__ import annotations
 
+from dataclasses import fields
+
 import pytest
 
 from vrl.generation import (
+    GenerationOutput,
     GenerationRequest,
+    GenerationSampleRow,
     build_sample_rows,
 )
 
@@ -32,7 +36,6 @@ def _request(
         inputs=["a test prompt"],
         samples_per_prompt=2,
         sampling=sampling,
-        return_artifacts={"output", "trajectory"},
         metadata={"dataset": "unit"},
     )
 
@@ -66,6 +69,35 @@ def test_generation_request_validation() -> None:
             samples_per_prompt=1,
             policy_version=-1,
         )
+
+
+@pytest.mark.parametrize(
+    ("removed_name", "value"),
+    [
+        ("return_artifacts", {"output"}),
+        ("priority", 1),
+    ],
+)
+def test_generation_request_rejects_removed_noop_arguments(
+    removed_name: str,
+    value: object,
+) -> None:
+    """Checks removed request knobs cannot be silently accepted."""
+    with pytest.raises(TypeError, match=removed_name):
+        GenerationRequest(
+            request_id="req",
+            family="sd3_5",
+            task="t2i",
+            inputs=["x"],
+            samples_per_prompt=1,
+            **{removed_name: value},
+        )
+
+
+def test_generation_payloads_exclude_removed_duplicate_fields() -> None:
+    """Checks sample and output payloads retain one prompt source of truth."""
+    assert "prompt_id" not in {field.name for field in fields(GenerationSampleRow)}
+    assert "prompts" not in {field.name for field in fields(GenerationOutput)}
 
 
 def test_build_sample_rows_is_deterministic() -> None:

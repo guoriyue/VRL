@@ -26,7 +26,6 @@ def _sample_row(index: int) -> GenerationSampleRow:
         prompt_index=0,
         sample_index=index,
         prompt="p0",
-        prompt_id="prompt-0",
         group_id="group-0",
         sample_id=f"sample-{index}",
         trajectory_id=f"traj-{index}",

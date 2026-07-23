@@ -220,7 +220,6 @@ def _rows(*, batch_size: int) -> list[GenerationSampleRow]:
             prompt_index=0,
             sample_index=index,
             prompt="test prompt",
-            prompt_id="prompt-0",
             group_id="group-0",
             sample_id=f"sample-{index}",
             trajectory_id=f"trajectory-{index}",

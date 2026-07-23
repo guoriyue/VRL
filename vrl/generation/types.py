@@ -54,9 +54,7 @@ class GenerationRequest:
     inputs: list[GenerationInput]
     samples_per_prompt: int
     sampling: dict[str, Any] = field(default_factory=dict)
-    return_artifacts: set[str] = field(default_factory=set)
     metadata: dict[str, Any] = field(default_factory=dict)
-    priority: int = 0
     policy_version: int | None = None
 
     def __init__(
@@ -67,9 +65,7 @@ class GenerationRequest:
         inputs: list[GenerationInput | str],
         samples_per_prompt: int,
         sampling: dict[str, Any] | None = None,
-        return_artifacts: set[str] | None = None,
         metadata: dict[str, Any] | None = None,
-        priority: int = 0,
         policy_version: int | None = None,
     ) -> None:
         normalized_inputs: list[GenerationInput] = []
@@ -88,9 +84,7 @@ class GenerationRequest:
         self.inputs = normalized_inputs
         self.samples_per_prompt = samples_per_prompt
         self.sampling = dict(sampling or {})
-        self.return_artifacts = set(return_artifacts or ())
         self.metadata = dict(metadata or {})
-        self.priority = priority
         self.policy_version = policy_version
         self.__post_init__()
 
@@ -122,7 +116,6 @@ class GenerationSampleRow:
     prompt_index: int
     sample_index: int
     prompt: str
-    prompt_id: str
     group_id: str
     sample_id: str
     trajectory_id: str
@@ -141,7 +134,6 @@ class GenerationOutput:
     request_id: str
     family: str
     task: str
-    prompts: list[str]
     sample_rows: list[GenerationSampleRow]
     output: Any
     trajectory: TrajectoryBatch | None = None

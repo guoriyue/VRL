@@ -92,7 +92,6 @@ class GenerationRequestBuilder:
             # its layer; distinct from any external evaluation sampling policy.
             samples_per_prompt=group_size,
             sampling=sampling,
-            return_artifacts={"output", "trajectory"},
             metadata=request_metadata,
             policy_version=policy_version,
         )

@@ -202,7 +202,6 @@ class DiffusionChunkExecutorBase(
     def plan(
         self,
         request: GenerationRequest,
-        sample_rows: list[GenerationSampleRow],
     ) -> Any:
         params = self.parse_sampling_params(request)
         return build_engine_plan(

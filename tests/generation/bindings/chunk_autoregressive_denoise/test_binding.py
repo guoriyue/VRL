@@ -120,7 +120,7 @@ def test_generic_executor_delegates_temporal_generation_to_model() -> None:
         samples_per_chunk=1,
     )
 
-    plan = executor.plan(request, sample_rows)
+    plan = executor.plan(request)
     output = executor.forward_plan(request, sample_rows, plan)
 
     assert model.calls == [(0, 0, 1), (0, 1, 1)]

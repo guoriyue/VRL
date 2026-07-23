@@ -107,9 +107,7 @@ class ChunkAutoregressiveDenoiseExecutorBase(GenerationChunkExecutor):
     def plan(
         self,
         request: GenerationRequest,
-        sample_rows: Sequence[GenerationSampleRow],
     ) -> Any:
-        del sample_rows
         return build_engine_plan(
             request,
             max_samples_per_chunk=self.default_samples_per_chunk,

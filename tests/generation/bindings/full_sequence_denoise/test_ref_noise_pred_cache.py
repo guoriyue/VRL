@@ -140,7 +140,6 @@ def _batch(*, ref_noise_pred: torch.Tensor | None) -> RolloutBatch:
             prompt_index=index,
             sample_index=0,
             prompt=f"p{index}",
-            prompt_id=f"p{index}",
             group_id=f"g{index}",
             sample_id=f"s{index}",
             trajectory_id=f"t{index}",

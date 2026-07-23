@@ -58,7 +58,6 @@ def _sample_rows() -> list[GenerationSampleRow]:
             prompt_index=i,
             sample_index=0,
             prompt=prompt,
-            prompt_id=f"r:prompt:{i}",
             group_id=f"r:group:{i}",
             sample_id=f"r:sample:{i}:0",
             trajectory_id=f"r:trajectory:{i}:0",
@@ -78,7 +77,6 @@ def _batch(scheduler) -> RolloutBatch:
         task="v2w",
         inputs=list(_PROMPTS),
         samples_per_prompt=1,
-        return_artifacts={"output", "trajectory"},
     )
     trajectory = build_diffusion_trajectory(
         request=request,

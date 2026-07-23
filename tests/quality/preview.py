@@ -141,7 +141,7 @@ def generate_rollout_preview(
         request = build_preview_request(request_builder, example, seed=seed)
         request.request_id = f"{entry.family}-rollout-preview-{index}"
         rows = build_sample_rows(request)
-        plan = executor.plan(request, rows)
+        plan = executor.plan(request)
         with torch.inference_mode():
             output = executor.forward_plan(request, rows, plan)
 

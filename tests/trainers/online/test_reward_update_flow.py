@@ -1144,7 +1144,6 @@ def test_select_move_and_remap_preserve_rollout_trajectory_fields() -> None:
             prompt_index=index // 2,
             sample_index=index % 2,
             prompt=request.prompts[index // 2],
-            prompt_id=f"p{index // 2}",
             group_id=f"g{index // 2}",
             sample_id=f"s{index}",
             trajectory_id=f"t{index}",

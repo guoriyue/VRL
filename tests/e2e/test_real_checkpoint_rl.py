@@ -465,7 +465,7 @@ class _DirectExecutorGenerationRuntime:
         rows = build_sample_rows(request)
         with torch.no_grad():
             plan_fn = getattr(self.executor, "plan", None)
-            plan = plan_fn(request, rows) if callable(plan_fn) else build_engine_plan(request)
+            plan = plan_fn(request) if callable(plan_fn) else build_engine_plan(request)
             return self.executor.forward_plan(request, rows, plan)
 
     async def offload(self) -> None:
@@ -790,7 +790,6 @@ def _synthetic_diffusion_replay_batch(
             "num_steps": num_steps,
             "guidance_scale": float(cfg.sampling.guidance_scale),
         },
-        return_artifacts={"trajectory"},
         policy_version=None if policy_version is None else int(policy_version),
     )
     sample_rows = build_sample_rows(request)

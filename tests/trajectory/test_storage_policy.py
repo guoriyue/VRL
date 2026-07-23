@@ -84,7 +84,6 @@ def _trajectory():
             prompt_index=0,
             sample_index=index,
             prompt="p0",
-            prompt_id="p0",
             group_id="g0",
             sample_id=f"s{index}",
             trajectory_id=f"t{index}",

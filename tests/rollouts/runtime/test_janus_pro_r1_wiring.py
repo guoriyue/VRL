@@ -23,7 +23,6 @@ def _sample_rows() -> list[GenerationSampleRow]:
             prompt_index=0,
             sample_index=0,
             prompt="draw text",
-            prompt_id="p0",
             group_id="g0",
             sample_id="s0",
             trajectory_id="t0",
@@ -33,7 +32,6 @@ def _sample_rows() -> list[GenerationSampleRow]:
             prompt_index=0,
             sample_index=1,
             prompt="draw text",
-            prompt_id="p0",
             group_id="g0",
             sample_id="s1",
             trajectory_id="t1",
@@ -101,7 +99,6 @@ def test_r1_collector_uses_r1_task_request_and_trajectory_batch() -> None:
     assert plan.request.family == "janus_pro_r1"
     assert plan.request.task == entry.task
     assert plan.request.sampling["max_reflect_len"] == 32
-    assert "trajectory" in plan.request.return_artifacts
 
 
 def test_r1_trajectory_batch_keeps_segments_separate() -> None:
@@ -116,7 +113,6 @@ def test_r1_trajectory_batch_keeps_segments_separate() -> None:
         task="ar_t2i_r1",
         inputs=["draw text"],
         samples_per_prompt=2,
-        return_artifacts={"output", "trajectory"},
     )
     segments = {
         "initial_image": _segment(batch_size, 3, visual=True),
@@ -139,7 +135,6 @@ def test_r1_trajectory_batch_keeps_segments_separate() -> None:
         request_id=request.request_id,
         family=request.family,
         task=request.task,
-        prompts=list(request.prompts),
         sample_rows=_sample_rows(),
         output=final_images,
         trajectory=trajectory,

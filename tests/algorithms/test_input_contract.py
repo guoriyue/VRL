@@ -62,7 +62,6 @@ def _nft_batch(*, latents_clean: torch.Tensor | None) -> RolloutBatch:
             prompt_index=0,
             sample_index=0,
             prompt="a test prompt",
-            prompt_id="p0",
             group_id="g0",
             sample_id="s0",
             trajectory_id="t0",

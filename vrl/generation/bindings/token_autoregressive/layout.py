@@ -161,7 +161,6 @@ class ARRequestLayout:
                 prompt_index=chunk.prompt_index,
                 sample_index=sample_index,
                 prompt=chunk.prompt,
-                prompt_id=f"{request.request_id}:prompt:{chunk.prompt_index}",
                 group_id=f"{request.request_id}:group:{chunk.prompt_index}",
                 sample_id=(f"{request.request_id}:sample:{chunk.prompt_index}:{sample_index}"),
                 trajectory_id=(

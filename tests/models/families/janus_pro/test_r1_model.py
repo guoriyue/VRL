@@ -112,7 +112,6 @@ def _sample_rows() -> list[GenerationSampleRow]:
             prompt_index=0,
             sample_index=index,
             prompt="draw text",
-            prompt_id="p0",
             group_id="g0",
             sample_id=f"s{index}",
             trajectory_id=f"t{index}",
@@ -153,7 +152,6 @@ def _r1_rollout_batch() -> RolloutBatch:
         task="ar_t2i_r1",
         inputs=["draw text"],
         samples_per_prompt=2,
-        return_artifacts={"output", "trajectory"},
     )
     trajectory = build_ar_multisegment_trajectory(
         request=request,
@@ -382,11 +380,10 @@ def test_r1_executor_forward_emits_canonical_family_and_segment_schema() -> None
             "max_reflect_len": 3,
             "final_image_policy": "always_generate",
         },
-        return_artifacts={"output", "r1_segments"},
     )
     specs = build_sample_rows(request)
 
-    out = executor.forward_plan(request, specs, executor.plan(request, specs))
+    out = executor.forward_plan(request, specs, executor.plan(request))
 
     assert out.family == "janus_pro_r1"
     assert out.task == "ar_t2i_r1"

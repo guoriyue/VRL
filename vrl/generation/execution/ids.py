@@ -40,7 +40,6 @@ def build_sample_rows(request: GenerationRequest) -> list[GenerationSampleRow]:
                     prompt_index=prompt_index,
                     sample_index=sample_index,
                     prompt=prompt,
-                    prompt_id=prompt_id,
                     group_id=group_id,
                     sample_id=sample_id,
                     trajectory_id=sample_id,

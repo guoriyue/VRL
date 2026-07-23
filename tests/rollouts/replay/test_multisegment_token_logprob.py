@@ -32,7 +32,6 @@ def _sample_rows() -> list[GenerationSampleRow]:
             prompt_index=0,
             sample_index=0,
             prompt="draw a chart",
-            prompt_id="p0",
             group_id="g0",
             sample_id="s0",
             trajectory_id="t0",
@@ -42,7 +41,6 @@ def _sample_rows() -> list[GenerationSampleRow]:
             prompt_index=0,
             sample_index=1,
             prompt="draw a chart",
-            prompt_id="p0",
             group_id="g0",
             sample_id="s1",
             trajectory_id="t1",
@@ -82,7 +80,6 @@ def _trajectory_batch(context: dict | None = None) -> RolloutBatch:
         task="ar_t2i_r1",
         inputs=["draw a chart"],
         samples_per_prompt=2,
-        return_artifacts={"output", "trajectory"},
     )
     trajectory = build_ar_multisegment_trajectory(
         request=request,

@@ -39,7 +39,6 @@ def _run_tiny_decode_loop(model, batch_size: int = 2, *, top_p: float = 1.0):
             prompt_index=0,
             sample_index=index,
             prompt="test prompt",
-            prompt_id="prompt-0",
             group_id="group-0",
             sample_id=f"sample-{index}",
             trajectory_id=f"trajectory-{index}",
