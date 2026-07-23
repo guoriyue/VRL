@@ -25,6 +25,7 @@ from vrl.scripts.common.factory import (
     build_reward,
     validate_reward_memory_parking,
 )
+from vrl.scripts.common.online import OnlineRunConfig
 
 
 def _built_reward(
@@ -291,6 +292,7 @@ def test_sana_fullparam_pilot_disables_tf32_and_gates_backend_drift() -> None:
     cfg = load_config("experiment/sana/online_grpo_aesthetic_fullparam")
     built = build_configs(cfg)
     trainer = built.trainer
+    run = OnlineRunConfig.from_root(built.root)
 
     assert cfg.model.use_lora is False
     assert cfg.precision.float32_precision == "ieee"
@@ -305,8 +307,8 @@ def test_sana_fullparam_pilot_disables_tf32_and_gates_backend_drift() -> None:
     assert built.root.rollout is not None
     assert built.root.rollout.samples_per_chunk == 1
     assert trainer.batch_plan.replay_samples_per_chunk == 1
-    assert trainer.total_epochs == 5
-    assert trainer.save_freq == 1
+    assert run.total_epochs == 5
+    assert run.save_freq == 1
     assert trainer.debug.first_step is True
     assert trainer.debug.max_abs_logprob_diff == pytest.approx(1.0e-6)
     assert trainer.precision_drift_guard.mode == "fail"
@@ -320,11 +322,12 @@ def test_sana_fullparam_long_is_fresh_and_pins_reward_revisions() -> None:
     cfg.distributed.resources.visible_devices = [0]
     built = build_configs(cfg)
     trainer = built.trainer
+    run = OnlineRunConfig.from_root(built.root)
 
     assert built.resume.checkpoint_path is None
     assert built.resume.strict is True
-    assert trainer.total_epochs == 300
-    assert trainer.save_freq == 5
+    assert run.total_epochs == 300
+    assert run.save_freq == 5
     assert trainer.output_dir == "outputs/sana_aesthetic_fullparam_long"
     assert cfg.model.use_lora is False
     assert cfg.reward.kwargs.aesthetic.model_revision == (

@@ -32,6 +32,12 @@ def test_core_package_does_not_claim_online_trainer_config() -> None:
     assert not hasattr(core, "TrainerConfig")
 
 
+def test_trainer_config_does_not_mirror_controller_lifecycle() -> None:
+    trainer_fields = {trainer_field.name for trainer_field in fields(TrainerConfig)}
+
+    assert trainer_fields.isdisjoint({"total_epochs", "save_freq", "seed"})
+
+
 def test_online_batch_plan_fields_declare_public_owners() -> None:
     assert {
         batch_field.name: batch_field.metadata.get("yaml")
@@ -67,7 +73,6 @@ def _trainer_config(batch_plan: OnlineBatchPlan, *, ppo_epochs: int = 1) -> Trai
         optim=OptimConfig(lr=1e-4),
         batch_plan=batch_plan,
         timestep_fraction=0.5,
-        total_epochs=1,
         output_dir="x",
         drop_zero_advantage=False,
         ppo_epochs=ppo_epochs,

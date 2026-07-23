@@ -102,7 +102,6 @@ def test_trajectory_evaluator_runs_once_for_chunk_transition_axes(streaming: boo
         config=TrainerConfig(
             batch_plan=batch_plan,
             timestep_fraction=0.25,
-            total_epochs=1,
             drop_zero_advantage=False,
             output_dir="outputs/",
             optim=OptimConfig(lr=0.0),

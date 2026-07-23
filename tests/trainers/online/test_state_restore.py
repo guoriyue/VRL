@@ -324,7 +324,6 @@ def _make_resume_trainer(
         config=TrainerConfig(
             batch_plan=OnlineBatchPlan(prompts_per_batch=1, n_samples_per_prompt=2),
             timestep_fraction=1.0,
-            total_epochs=1,
             drop_zero_advantage=False,
             output_dir="outputs/",
             optim=OptimConfig(lr=0.01),

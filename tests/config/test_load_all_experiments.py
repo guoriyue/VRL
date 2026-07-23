@@ -84,7 +84,6 @@ def test_build_trainer_config_reports_all_missing_required_keys() -> None:
         "actor.optim.lr",
         "actor.drop_zero_advantage",
         "actor.timestep_fraction",
-        "trainer.total_epochs",
         "trainer.output_dir",
         "rollout.prompts_per_batch",
         "rollout.n_samples_per_prompt",

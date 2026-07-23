@@ -2,8 +2,8 @@
 #
 # Only experiment decisions live here: required keys are declared ??? and the
 # repo-wide total_epochs value. Infra-knob defaults (save_freq, seed,
-# profile, resume_*, debug, precision_drift_guard) live on the dataclasses in
-# vrl/trainers/core/types.py — base YAML must not restate them.
+# profile, resume_*, debug, precision_drift_guard) live on their runtime owner
+# dataclasses — base YAML must not restate them.
 #
 # Profiling is off in the baseline. To profile a run, compose the
 # /profile/torch_profiler preset — all torch_profiler tuning keys live

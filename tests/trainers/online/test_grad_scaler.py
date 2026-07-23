@@ -312,7 +312,6 @@ def _build_trainer(tmp_path):
         config=TrainerConfig(
             batch_plan=OnlineBatchPlan(prompts_per_batch=1, n_samples_per_prompt=2),
             timestep_fraction=1.0,
-            total_epochs=1,
             drop_zero_advantage=False,
             optim=OptimConfig(lr=0.01),
             ema=EMAConfig(enable=True, update_interval=1),

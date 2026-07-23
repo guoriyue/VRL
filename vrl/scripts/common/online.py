@@ -14,6 +14,7 @@ import torch
 from omegaconf import DictConfig, OmegaConf
 
 from vrl.config.builders import build_configs
+from vrl.config.schema import RootConfig
 from vrl.config.validation import require
 from vrl.families.registry import (
     get_model_family_entry,
@@ -64,6 +65,41 @@ from vrl.utils.stats import RolloutStats
 logger = logging.getLogger(__name__)
 
 _RAY_ADDRESS_ENV = "RAY_ADDRESS"
+
+
+def _run_integer(value: object, *, path: str, minimum: int | None = None) -> int:
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ValueError(f"{path} must be an integer (got {value!r})")
+    if minimum is not None and value < minimum:
+        raise ValueError(f"{path} must be >= {minimum} (got {value})")
+    return value
+
+
+@dataclass(frozen=True, slots=True)
+class OnlineRunConfig:
+    """Controller-owned epoch, checkpoint cadence, and prompt RNG policy."""
+
+    total_epochs: int
+    save_freq: int = 50
+    seed: int = 0
+
+    def __post_init__(self) -> None:
+        _run_integer(self.total_epochs, path="trainer.total_epochs", minimum=0)
+        _run_integer(self.save_freq, path="trainer.save_freq", minimum=0)
+        _run_integer(self.seed, path="trainer.seed")
+
+    @classmethod
+    def from_root(cls, root: RootConfig) -> OnlineRunConfig:
+        trainer = root.trainer
+        total_epochs = None if trainer is None else trainer.total_epochs
+        if total_epochs is None:
+            raise ValueError("config missing required key: trainer.total_epochs")
+        values: dict[str, Any] = {"total_epochs": total_epochs}
+        if trainer.save_freq is not None:
+            values["save_freq"] = trainer.save_freq
+        if trainer.seed is not None:
+            values["seed"] = trainer.seed
+        return cls(**values)
 
 
 @dataclass(slots=True)
@@ -808,6 +844,7 @@ async def run_online_recipe(
 
     _preflight_production_video_reward(cfg)
     built = build_configs(cfg)
+    run_config = OnlineRunConfig.from_root(built.root)
     family_entry = get_model_family_entry(str(require(cfg, "model.family")))
     trainer_config = built.trainer
     if trainer_config is None:
@@ -1031,12 +1068,12 @@ async def run_online_recipe(
 
         component_names = tuple(reward_config.weights)
 
-        rng = torch.Generator().manual_seed(trainer_config.seed)
+        rng = torch.Generator().manual_seed(run_config.seed)
         start_epoch = resume_checkpoint.next_epoch if resume_checkpoint is not None else 0
-        if start_epoch > trainer_config.total_epochs:
+        if start_epoch > run_config.total_epochs:
             raise ValueError(
                 "resume checkpoint starts after configured total_epochs: "
-                f"start_epoch={start_epoch}, total_epochs={trainer_config.total_epochs}",
+                f"start_epoch={start_epoch}, total_epochs={run_config.total_epochs}",
             )
         if resume_checkpoint is not None:
             restore_rng_state(resume_checkpoint.rng_state, prompt_generator=rng)
@@ -1063,7 +1100,7 @@ async def run_online_recipe(
         logger.info(
             "Starting %s online recipe: epochs=%d examples=%d n=%d",
             family_entry.family,
-            trainer_config.total_epochs,
+            run_config.total_epochs,
             len(examples),
             batch_plan.n_samples_per_prompt,
         )
@@ -1077,11 +1114,11 @@ async def run_online_recipe(
             rank=training_context.rank,
             strategy=str(require(cfg, "data.sampler.type")),
         )
-        for epoch in range(start_epoch, trainer_config.total_epochs):
+        for epoch in range(start_epoch, run_config.total_epochs):
             indices = prompt_sampler.sample(epoch=epoch)
             example_batch = [examples[i] for i in indices]
             next_example_batch: list[Any] | None = None
-            if epoch + 1 < trainer_config.total_epochs:
+            if epoch + 1 < run_config.total_epochs:
                 next_indices = prompt_sampler.preview(epoch=epoch + 1)
                 next_example_batch = [examples[i] for i in next_indices]
             # This wall range deliberately encloses collect, replay/backward,
@@ -1110,13 +1147,13 @@ async def run_online_recipe(
             # export inside is a collective under FSDP2 (all ranks all-gather), and
             # save_checkpoint writes files on the primary only. Gating the call to
             # rank0 deadlocks FSDP (rank0 waits at the gather for peers that skipped).
-            if trainer_config.save_freq > 0 and (epoch + 1) % trainer_config.save_freq == 0:
+            if run_config.save_freq > 0 and (epoch + 1) % run_config.save_freq == 0:
                 run.save_checkpoint(output_dir / f"checkpoint-{epoch + 1}", epoch=epoch + 1)
 
         # Final checkpoint on EVERY rank too (collective gather inside; rank0 writes).
         run.save_checkpoint(
             output_dir / "checkpoint-final",
-            epoch=trainer_config.total_epochs,
+            epoch=run_config.total_epochs,
         )
         if is_primary:
             logger.info("Training complete. Final checkpoint: %s", output_dir / "checkpoint-final")

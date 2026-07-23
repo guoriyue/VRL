@@ -206,13 +206,10 @@ def _trainer_config(tmp_path: Any) -> SimpleNamespace:
     return SimpleNamespace(
         profile=False,
         output_dir=str(tmp_path),
-        total_epochs=1,
-        seed=0,
         batch_plan=OnlineBatchPlan(
             prompts_per_batch=1,
             n_samples_per_prompt=1,
         ),
-        save_freq=0,
         rollout_orchestration=SimpleNamespace(schedule_mode="strict_on_policy"),
     )
 
@@ -293,7 +290,6 @@ def _install_common_fakes(
     state: dict[str, Any],
 ) -> _FakeReward:
     trainer_config = _trainer_config(tmp_path)
-    trainer_config.total_epochs = int(state.get("total_epochs", trainer_config.total_epochs))
     reward = _FakeReward(state)
     collector = _FakeCollector(state, reward)
     resources = SimpleNamespace(
@@ -329,6 +325,11 @@ def _install_common_fakes(
                     "distributed": {
                         "rollout": {"cpus_per_worker": cfg.distributed.rollout.cpus_per_worker},
                         "training": {"strategy": "single_process"},
+                    },
+                    "trainer": {
+                        "total_epochs": int(state.get("total_epochs", 1)),
+                        "save_freq": 0,
+                        "seed": 0,
                     },
                 },
             ),

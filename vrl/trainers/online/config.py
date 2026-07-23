@@ -124,7 +124,6 @@ class TrainerConfig:
     # Fraction of denoise timesteps that receive loss (gradient estimator
     # coverage) — an experiment decision, not a tuning knob.
     timestep_fraction: float = field(metadata={"yaml": "actor"})
-    total_epochs: int = field(metadata={"yaml": "trainer"})
     output_dir: str = field(metadata={"yaml": "trainer"})
     # Whether zero-advantage samples enter the loss (they still carry KL
     # weight); changes the trained sample set.
@@ -180,9 +179,6 @@ class TrainerConfig:
     rollout_precision: str = field(default="", metadata={"yaml": "bridged"})
 
     # --- lifecycle ---
-    save_freq: int = field(default=50, metadata={"yaml": "trainer"})
-    seed: int = field(default=0, metadata={"yaml": "trainer"})
-
     # --- profiling ---
     profile: bool = field(default=False, metadata={"yaml": "trainer"})
 
