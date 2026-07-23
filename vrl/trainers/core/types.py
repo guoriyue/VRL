@@ -166,5 +166,3 @@ class TrainState:
 
     step: int = 0
     global_step: int = 0
-    total_reward: float = 0.0
-    total_loss: float = 0.0

@@ -1376,8 +1376,6 @@ class OnlineTrainer(Trainer):
             phase_times=phase_times,
             initial_replay=initial_replay,
         )
-        self.state.total_reward += metrics.reward_mean
-        self.state.total_loss += metrics.loss
         return metrics
 
     async def train_on_rollout_batch(self, batch: TrainingBatch) -> TrainStepMetrics:
@@ -1802,9 +1800,6 @@ class OnlineTrainer(Trainer):
             phase_times=phase_times,
             initial_replay=initial_replay,
         )
-        self.state.total_reward += metrics.reward_mean
-        self.state.total_loss += metrics.loss
-
         if first_step_debug_record is not None:
             first_step_debug_record["driver_trainable_after_step"] = trainable_state_digest(
                 self.model
@@ -2036,8 +2031,6 @@ class OnlineTrainer(Trainer):
         d: dict[str, Any] = {
             "step": self.state.step,
             "global_step": self.state.global_step,
-            "total_reward": self.state.total_reward,
-            "total_loss": self.state.total_loss,
         }
         if self._optimizer is not None:
             d["optimizer"] = self._strategy.export_optimizer_state(
@@ -2058,8 +2051,6 @@ class OnlineTrainer(Trainer):
 
         self.state.step = int(state.get("step", 0))
         self.state.global_step = int(state.get("global_step", 0))
-        self.state.total_reward = float(state.get("total_reward", 0.0))
-        self.state.total_loss = float(state.get("total_loss", 0.0))
 
         nonzero_checkpoint = max(self.state.step, self.state.global_step) > 0
         if (
