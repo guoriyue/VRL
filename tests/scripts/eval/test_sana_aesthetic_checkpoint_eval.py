@@ -6,7 +6,7 @@ from types import SimpleNamespace
 
 import pytest
 import torch
-from omegaconf import OmegaConf
+from omegaconf import DictConfig, OmegaConf
 from PIL import Image
 
 from vrl.config.loading import load_config
@@ -354,6 +354,104 @@ def test_fullparam_long_config_is_the_exact_registered_protocol() -> None:
     assert normalized.actor.ppo_epochs == 1
     assert normalized.trainer.total_epochs == 300
     assert normalized.trainer.save_freq == 5
+
+
+def _historical_fullparam_config() -> DictConfig:
+    raw = OmegaConf.to_container(
+        load_config(checkpoint_eval.CANONICAL_CONFIG_NAME),
+        resolve=True,
+    )
+    assert isinstance(raw, dict)
+
+    raw["algorithm"]["kl_reward_coef"] = 0.0
+    raw["data"]["preprocessing"]["target_text"] = "none"
+    raw["distributed"]["rollout"].update(
+        {
+            "chunk_placement_strategy": "round_robin",
+            "health_check_first_wait_s": 0.0,
+            "health_check_interval_s": 30.0,
+            "health_check_timeout_s": 30.0,
+            "max_inflight_chunks_per_worker": 1,
+            "pipelined": False,
+            "sync_trainable_state": True,
+        },
+    )
+    raw["rollout"]["trajectory_storage"] = {
+        "device": "preserve",
+        "dtype": "preserve",
+    }
+    raw["reward"]["kwargs"]["aesthetic"].pop("device")
+    raw["precision"].pop("float32_precision")
+    raw["precision"]["training"].pop("outer_autocast")
+    raw["precision"]["rollout"].pop("outer_autocast")
+    raw["trainer"]["entrypoint"] = "vrl.scripts.diffusion.train:train_diffusion_grpo"
+    return OmegaConf.create(raw)
+
+
+def test_historical_fullparam_shape_normalizes_to_the_live_protocol() -> None:
+    normalized = checkpoint_eval._normalize_run_config(
+        _historical_fullparam_config(),
+    )
+    canonical = load_config(checkpoint_eval.CANONICAL_CONFIG_NAME)
+
+    assert OmegaConf.to_container(normalized, resolve=True) == OmegaConf.to_container(
+        canonical,
+        resolve=True,
+    )
+
+
+@pytest.mark.parametrize(
+    ("path", "value"),
+    [
+        ("algorithm.kl_reward_coef", 0.1),
+        ("data.preprocessing.target_text", "caption"),
+        ("distributed.rollout.chunk_placement_strategy", "dynamic"),
+        ("distributed.rollout.max_inflight_chunks_per_worker", 2),
+        ("distributed.rollout.sync_trainable_state", False),
+        ("rollout.trajectory_storage.device", "cpu"),
+        ("rollout.trajectory_storage.unexpected", True),
+        ("reward.kwargs.aesthetic.device", "cpu"),
+        ("precision.float32_precision", "tf32"),
+        ("precision.training.dtype", "bf16"),
+        ("precision.training.outer_autocast", True),
+        ("precision.rollout.outer_autocast", True),
+        ("trainer.entrypoint", "custom.module:train"),
+    ],
+)
+def test_historical_shape_normalization_rejects_behavioral_drift(
+    path: str,
+    value: object,
+) -> None:
+    changed = _historical_fullparam_config()
+    OmegaConf.update(changed, path, value, merge=False)
+
+    with pytest.raises(
+        ValueError,
+        match="does not match the registered SANA full-parameter protocol",
+    ):
+        checkpoint_eval._normalize_run_config(changed)
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "precision.float32_precision",
+        "precision.training.outer_autocast",
+        "precision.rollout.outer_autocast",
+    ],
+)
+def test_live_entrypoint_requires_explicit_precision_protocol(path: str) -> None:
+    changed = load_config(checkpoint_eval.CANONICAL_CONFIG_NAME)
+    section_path, field_name = path.rsplit(".", maxsplit=1)
+    section = OmegaConf.select(changed, section_path)
+    assert isinstance(section, DictConfig)
+    del section[field_name]
+
+    with pytest.raises(
+        ValueError,
+        match="does not match the registered SANA full-parameter protocol",
+    ):
+        checkpoint_eval._normalize_run_config(changed)
 
 
 @pytest.mark.parametrize(

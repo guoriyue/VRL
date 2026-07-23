@@ -23,7 +23,7 @@ import math
 import os
 import re
 import statistics
-from dataclasses import dataclass
+from dataclasses import dataclass, fields
 from pathlib import Path
 from typing import Any
 
@@ -60,7 +60,7 @@ EVAL_SAMPLES_PER_PROMPT = 2
 # This is the fixed scientific comparison interval, not a training IO knob.
 EVAL_CHECKPOINT_INTERVAL = 25
 CANONICAL_CONFIG_NAME = "experiment/sana/online_grpo_aesthetic_fullparam_long"
-CANONICAL_PROTOCOL_SHA256 = "b898129d24642ceb97c2aea2608e81406e06d413cde69c73460e9917bce1dbdd"
+CANONICAL_PROTOCOL_SHA256 = "970c2e28937842b3f6fe0b1b4359292fe8e95dba3a5be52b5f3bdf059830b189"
 # Frozen protocol-asset identities. These hashes name two concrete datasets;
 # they are not a duplicated prompt taxonomy or a user-facing config table.
 TRAIN_MANIFEST_SHA256 = "86580c8136a4b6d9fc6bbcc6d8e8e172b15fca6b5c6c956cc770255d8011de56"
@@ -334,6 +334,150 @@ def load_report_metrics(run_dir: str | Path) -> list[dict[str, float]]:
     return rows
 
 
+def _normalize_legacy_run_shape(
+    actual: dict[str, Any],
+    canonical: dict[str, Any],
+) -> dict[str, Any]:
+    """Map known equivalent historical shapes; leave every other drift visible."""
+
+    from vrl.config.algorithm import resolve_kl_reward_coef
+    from vrl.config.schema import RolloutWorkerSection
+    from vrl.trajectory import (
+        TrajectoryStoragePolicy,
+        trajectory_storage_policy_from_cfg,
+    )
+
+    missing = object()
+    trainer = actual.get("trainer")
+    canonical_trainer = canonical.get("trainer")
+    # Only this retired entrypoint relied on registry-injected precision. The
+    # live entrypoint must carry the complete precision protocol in its YAML.
+    uses_legacy_entrypoint = (
+        isinstance(trainer, dict)
+        and isinstance(canonical_trainer, dict)
+        and trainer.get("entrypoint") == "vrl.scripts.diffusion.train:train_diffusion_grpo"
+        and canonical_trainer.get("entrypoint") == "vrl.scripts.train:train_online"
+    )
+
+    algorithm = actual.get("algorithm")
+    canonical_algorithm = canonical.get("algorithm")
+    if isinstance(algorithm, dict) and isinstance(canonical_algorithm, dict):
+        legacy_kl = algorithm.get("kl_reward_coef", missing)
+        if "kl_reward_coef" not in canonical_algorithm and legacy_kl is not missing:
+            try:
+                resolved_kl = resolve_kl_reward_coef(legacy_kl)
+            except ValueError:
+                pass
+            else:
+                if resolved_kl == resolve_kl_reward_coef(None):
+                    algorithm.pop("kl_reward_coef")
+
+    data = actual.get("data")
+    canonical_data = canonical.get("data")
+    if isinstance(data, dict) and isinstance(canonical_data, dict):
+        preprocessing = data.get("preprocessing")
+        canonical_preprocessing = canonical_data.get("preprocessing")
+        if (
+            isinstance(preprocessing, dict)
+            and isinstance(canonical_preprocessing, dict)
+            and "target_text" not in canonical_preprocessing
+            and preprocessing.get("target_text", missing) == "none"
+        ):
+            preprocessing.pop("target_text")
+
+    distributed = actual.get("distributed")
+    canonical_distributed = canonical.get("distributed")
+    if isinstance(distributed, dict) and isinstance(canonical_distributed, dict):
+        worker = distributed.get("rollout")
+        canonical_worker = canonical_distributed.get("rollout")
+        if isinstance(worker, dict) and isinstance(canonical_worker, dict):
+            worker_defaults = RolloutWorkerSection().model_dump()
+            for name, default in worker_defaults.items():
+                if name not in canonical_worker and worker.get(name, missing) == default:
+                    worker.pop(name)
+
+    rollout = actual.get("rollout")
+    canonical_rollout = canonical.get("rollout")
+    if (
+        isinstance(rollout, dict)
+        and isinstance(canonical_rollout, dict)
+        and "trajectory_storage" not in canonical_rollout
+    ):
+        legacy_storage = rollout.get("trajectory_storage", missing)
+        storage_fields = {item.name for item in fields(TrajectoryStoragePolicy)}
+        if isinstance(legacy_storage, dict) and set(legacy_storage) == storage_fields:
+            try:
+                legacy_policy = trajectory_storage_policy_from_cfg(legacy_storage)
+            except ValueError:
+                pass
+            else:
+                if legacy_policy == trajectory_storage_policy_from_cfg(None):
+                    rollout.pop("trajectory_storage")
+
+    reward = actual.get("reward")
+    canonical_reward = canonical.get("reward")
+    if isinstance(reward, dict) and isinstance(canonical_reward, dict):
+        reward_kwargs = reward.get("kwargs")
+        canonical_kwargs = canonical_reward.get("kwargs")
+        if isinstance(reward_kwargs, dict) and isinstance(canonical_kwargs, dict):
+            aesthetic = reward_kwargs.get("aesthetic")
+            canonical_aesthetic = canonical_kwargs.get("aesthetic")
+            if (
+                isinstance(aesthetic, dict)
+                and isinstance(canonical_aesthetic, dict)
+                and "device" not in aesthetic
+                and canonical_aesthetic.get("device", missing) is None
+            ):
+                aesthetic["device"] = None
+
+    precision = actual.get("precision")
+    canonical_precision = canonical.get("precision")
+    model = actual.get("model")
+    canonical_model = canonical.get("model")
+    if (
+        isinstance(precision, dict)
+        and isinstance(canonical_precision, dict)
+        and isinstance(model, dict)
+        and isinstance(canonical_model, dict)
+        and uses_legacy_entrypoint
+        and model.get("family") == canonical_model.get("family") == "sana"
+    ):
+        training = precision.get("training")
+        canonical_training = canonical_precision.get("training")
+        rollout_precision = precision.get("rollout")
+        canonical_rollout_precision = canonical_precision.get("rollout")
+        if (
+            isinstance(training, dict)
+            and isinstance(canonical_training, dict)
+            and isinstance(rollout_precision, dict)
+            and isinstance(canonical_rollout_precision, dict)
+            and training.get("dtype") == canonical_training.get("dtype") == "fp16"
+            and rollout_precision.get("dtype")
+            == canonical_rollout_precision.get("dtype")
+            == "fp16"
+        ):
+            if (
+                "float32_precision" not in precision
+                and canonical_precision.get("float32_precision") == "ieee"
+            ):
+                precision["float32_precision"] = "ieee"
+            if (
+                "outer_autocast" not in training
+                and canonical_training.get("outer_autocast") is False
+            ):
+                training["outer_autocast"] = False
+            if (
+                "outer_autocast" not in rollout_precision
+                and canonical_rollout_precision.get("outer_autocast") is False
+            ):
+                rollout_precision["outer_autocast"] = False
+
+    if uses_legacy_entrypoint:
+        trainer["entrypoint"] = "vrl.scripts.train:train_online"
+
+    return actual
+
+
 def _normalize_run_config(cfg: DictConfig) -> DictConfig:
     """Require the exact pre-registered full-parameter long-run config."""
 
@@ -347,13 +491,14 @@ def _normalize_run_config(cfg: DictConfig) -> DictConfig:
             "bundled SANA aesthetic preset changed without a protocol schema update: "
             f"{canonical_digest} != {CANONICAL_PROTOCOL_SHA256}",
         )
-    if actual != expected:
-        mismatch = _first_config_difference(actual, expected)
+    normalized_actual = _normalize_legacy_run_shape(actual, expected)
+    if normalized_actual != expected:
+        mismatch = _first_config_difference(normalized_actual, expected)
         raise ValueError(
             "resolved config does not match the registered SANA full-parameter protocol"
             + (f": {mismatch}" if mismatch else ""),
         )
-    normalized = OmegaConf.create(actual)
+    normalized = OmegaConf.create(normalized_actual)
     OmegaConf.resolve(normalized)
     assert isinstance(normalized, DictConfig)
     return normalized
