@@ -12,7 +12,8 @@ import torch
 from vrl.generation.composition.token_autoregressive.token_loop import (
     TokenAutoregressiveLoop,
 )
-from vrl.models.families.nextstep_1.model import NextStep1Model
+from vrl.models.families.nextstep_1.config import NextStep1Config
+from vrl.models.families.nextstep_1.model import NextStep1Model, NextStep1ReplayModel
 from vrl.models.families.nextstep_1.runner import (
     NextStep1ARModelRunner,
     NextStep1ARState,
@@ -67,6 +68,13 @@ class _FlowHead:
         cond: torch.Tensor,
     ) -> torch.Tensor:
         return 0.15 * x + 0.1 * cond + 0.05 * timestep.unsqueeze(-1)
+
+
+class _CheckpointLanguageModel(torch.nn.Module):
+    def __init__(self) -> None:
+        super().__init__()
+        self.image_head = _FlowHead()
+        self.image_in_projector = torch.nn.Identity()
 
 
 class _RolloutModel:
@@ -166,6 +174,32 @@ def test_init_preserves_real_no_cfg_branch() -> None:
     assert len(init.state.paged_cond_states) == 1
     assert init.state.paged_uncond_states is None
     assert set(init.row_lanes) == {"c_cond", "cond_attn"}
+
+
+def test_checkpoint_token_dim_overwrite_drives_runner_allocations() -> None:
+    config = NextStep1Config(
+        use_lora=False,
+        device="cpu",
+        dtype="float32",
+        image_token_num=3,
+        token_dim=999,
+    )
+    model = NextStep1ReplayModel(
+        config,
+        language_model=_CheckpointLanguageModel(),
+    )
+    backend = _RecordingAttentionBackend()
+
+    init = NextStep1ARModelRunner(model, attention_backend=backend).init_token(
+        torch.tensor([[[0.1, 0.2], [0.3, 0.4]]]),
+        None,
+        torch.ones(1, 2, dtype=torch.long),
+        None,
+    )
+
+    assert config.token_dim == _HIDDEN_SIZE
+    assert init.state.tokens.shape == (1, 3, _HIDDEN_SIZE)
+    assert init.state.saved_noise.shape == (1, 3, _HIDDEN_SIZE)
 
 
 @pytest.mark.parametrize(

@@ -162,6 +162,7 @@ def test_migrated_model_sections_are_owned_by_their_family_packages() -> None:
         "flux": "vrl.models.families.flux.config:FluxModelSection",
         "llamagen": "vrl.models.families.llamagen.config:LlamaGenModelSection",
         "magi_1": "vrl.models.families.magi_1.config:Magi1ModelSection",
+        "nextstep_1": "vrl.models.families.nextstep_1.config:NextStep1ModelSection",
     }
 
     assert {
@@ -184,6 +185,12 @@ def test_migrated_token_runtime_configs_are_owned_by_their_family_packages() -> 
     llamagen = get_model_family_entry("llamagen")
     assert isinstance(llamagen.family_build, TokenFamilyBuild)
     assert llamagen.family_build.config_cls == "vrl.models.families.llamagen.config:LlamaGenConfig"
+
+    nextstep = get_model_family_entry("nextstep_1")
+    assert isinstance(nextstep.family_build, TokenFamilyBuild)
+    assert (
+        nextstep.family_build.config_cls == "vrl.models.families.nextstep_1.config:NextStep1Config"
+    )
 
 
 def test_migrated_family_packages_keep_their_public_facades() -> None:
@@ -239,6 +246,13 @@ def test_migrated_family_packages_keep_their_public_facades() -> None:
             "Magi1SubprocessConfig",
             "Magi1SubprocessModel",
         },
+        "vrl.models.families.nextstep_1": {
+            "NextStep1ChunkExecutor",
+            "NextStep1ChunkGatherer",
+            "NextStep1Config",
+            "NextStep1Model",
+            "NextStep1ModelSection",
+        },
     }
 
     for module_name, expected in expected_exports.items():
@@ -267,6 +281,7 @@ def test_model_section_imports_do_not_load_model_runtimes() -> None:
                 "from vrl.models.families.flux import FluxModelSection; "
                 "from vrl.models.families.llamagen import LlamaGenModelSection; "
                 "from vrl.models.families.magi_1 import Magi1ModelSection; "
+                "from vrl.models.families.nextstep_1 import NextStep1ModelSection; "
                 "from vrl.models.families.wan_2_1 import WanModelSection; "
                 "assert CausVidModelSection.__module__.endswith('.causvid.config'); "
                 "assert WanModelSection.__module__.endswith('.wan_2_1.config'); "
@@ -277,6 +292,8 @@ def test_model_section_imports_do_not_load_model_runtimes() -> None:
                 "assert FluxModelSection.__module__.endswith('.flux.config'); "
                 "assert LlamaGenModelSection.__module__.endswith('.llamagen.config'); "
                 "assert Magi1ModelSection.__module__.endswith('.magi_1.config'); "
+                "assert NextStep1ModelSection.__module__.endswith("
+                "'.nextstep_1.config'); "
                 "assert 'torch' not in sys.modules; "
                 "assert 'diffusers' not in sys.modules; "
                 "assert 'transformers' not in sys.modules; "
@@ -310,19 +327,25 @@ def test_token_runtime_config_imports_do_not_load_model_runtimes() -> None:
                 "emu_entry = get_model_family_entry('emu3'); "
                 "glm_entry = get_model_family_entry('glm_image'); "
                 "llamagen_entry = get_model_family_entry('llamagen'); "
+                "nextstep_entry = get_model_family_entry('nextstep_1'); "
                 "emu_cls = import_from_path(emu_entry.family_build.config_cls); "
                 "glm_cls = import_from_path(glm_entry.family_build.config_cls); "
                 "llamagen_cls = import_from_path("
                 "llamagen_entry.family_build.config_cls); "
+                "nextstep_cls = import_from_path("
+                "nextstep_entry.family_build.config_cls); "
                 "from vrl.models.families.emu3 import Emu3Config; "
                 "from vrl.models.families.glm_image import GlmImageConfig; "
                 "from vrl.models.families.llamagen import LlamaGenConfig; "
+                "from vrl.models.families.nextstep_1 import NextStep1Config; "
                 "assert emu_cls is Emu3Config; "
                 "assert glm_cls is GlmImageConfig; "
                 "assert llamagen_cls is LlamaGenConfig; "
+                "assert nextstep_cls is NextStep1Config; "
                 "assert Emu3Config.__module__.endswith('.emu3.config'); "
                 "assert GlmImageConfig.__module__.endswith('.glm_image.config'); "
                 "assert LlamaGenConfig.__module__.endswith('.llamagen.config'); "
+                "assert NextStep1Config.__module__.endswith('.nextstep_1.config'); "
                 "assert 'torch' not in sys.modules; "
                 "assert 'diffusers' not in sys.modules; "
                 "assert 'transformers' not in sys.modules; "

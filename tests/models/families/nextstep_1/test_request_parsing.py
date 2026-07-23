@@ -15,11 +15,117 @@ from vrl.generation.bindings.token_autoregressive import ARRequestLayout
 from vrl.generation.execution.chunks import SampleChunk
 from vrl.generation.execution.ids import build_sample_rows
 from vrl.models.families.nextstep_1 import runtime as nextstep_runtime
+from vrl.models.families.nextstep_1.config import (
+    NEXTSTEP_DEFAULT_TOKEN_DIM,
+    NEXTSTEP_DEFAULT_TOKEN_NUM,
+    NextStep1Config,
+    NextStep1ModelSection,
+)
+from vrl.models.families.nextstep_1.model import (
+    NEXTSTEP_DEFAULT_TOKEN_DIM as ModelDefaultTokenDim,
+)
+from vrl.models.families.nextstep_1.model import (
+    NEXTSTEP_DEFAULT_TOKEN_NUM as ModelDefaultTokenNum,
+)
+from vrl.models.families.nextstep_1.model import (
+    NextStep1Config as ModelNextStep1Config,
+)
+from vrl.models.families.nextstep_1.model import NextStep1Model
 from vrl.models.families.nextstep_1.runtime import (
     NextStep1ARChunkResult,
     NextStep1ChunkExecutor,
     NextStep1ChunkGatherer,
+    nextstep_config_from_build,
 )
+
+
+def _build_cfg(*, use_lora: bool, freeze_vae: bool):
+    return OmegaConf.create(
+        {
+            "model": {
+                "family": "nextstep_1",
+                "use_lora": use_lora,
+                "freeze_vae": freeze_vae,
+            },
+            "precision": {
+                "float32_precision": "tf32",
+                "training": {"dtype": "fp32"},
+                "rollout": {"dtype": "fp32"},
+            },
+            "sampling": {
+                "guidance_scale": 4.5,
+                "num_steps": 20,
+                "image_token_num": 1024,
+            },
+        },
+    )
+
+
+def test_runtime_config_defaults_and_model_compatibility_export() -> None:
+    config = NextStep1Config()
+    entry = get_model_family_entry("nextstep_1")
+
+    assert config.model_path == entry.family_build.default_model_path
+    assert config.image_token_num == NEXTSTEP_DEFAULT_TOKEN_NUM
+    assert config.token_dim == NEXTSTEP_DEFAULT_TOKEN_DIM
+    assert config.noise_level == 1.0
+    assert config.lora_target_modules == (
+        "q_proj",
+        "k_proj",
+        "v_proj",
+        "o_proj",
+    )
+    assert ModelDefaultTokenNum == NEXTSTEP_DEFAULT_TOKEN_NUM
+    assert ModelDefaultTokenDim == NEXTSTEP_DEFAULT_TOKEN_DIM
+    assert ModelNextStep1Config is NextStep1Config
+
+
+@pytest.mark.parametrize("use_lora", [True, False])
+@pytest.mark.parametrize("freeze_vae", [True, False])
+def test_config_projection_preserves_boolean_states(
+    use_lora: bool,
+    freeze_vae: bool,
+) -> None:
+    entry = get_model_family_entry("nextstep_1")
+    build = entry.resolve_model_build(
+        _build_cfg(use_lora=use_lora, freeze_vae=freeze_vae),
+        device="cpu",
+    )
+
+    projected = nextstep_config_from_build(build)
+
+    assert projected["use_lora"] is use_lora
+    assert projected["freeze_vae"] is freeze_vae
+    if use_lora:
+        assert projected["lora_target_modules"] == ("q_proj", "v_proj")
+    else:
+        assert "lora_target_modules" not in projected
+
+
+def test_config_projection_ignores_sampling_fields_without_schema_producers() -> None:
+    entry = get_model_family_entry("nextstep_1")
+    build = entry.resolve_model_build(
+        _build_cfg(use_lora=False, freeze_vae=True),
+        device="cpu",
+    )
+    assert build.sampling_config is not None
+    build.sampling_config.update({"noise_level": 0.25, "token_dim": 7})
+
+    projected = nextstep_config_from_build(build)
+
+    assert "noise_level" not in projected
+    assert "token_dim" not in projected
+    assert projected["image_token_num"] == 1024
+
+
+def test_package_facade_preserves_existing_public_symbols() -> None:
+    import vrl.models.families.nextstep_1 as family
+
+    assert family.NextStep1ChunkExecutor is NextStep1ChunkExecutor
+    assert family.NextStep1ChunkGatherer is NextStep1ChunkGatherer
+    assert family.NextStep1Config is NextStep1Config
+    assert family.NextStep1Model is NextStep1Model
+    assert family.NextStep1ModelSection is NextStep1ModelSection
 
 
 def test_nextstep_layout_resolves_scheduler_batch_size_separately_from_sampling() -> None:

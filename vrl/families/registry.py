@@ -770,13 +770,13 @@ _register_model_family(
     _token_autoregressive_entry(
         family="nextstep_1",
         action_distribution="continuous",
-        model_section_cls="vrl.config.model_schema:NextStep1ModelSection",
+        model_section_cls="vrl.models.families.nextstep_1.config:NextStep1ModelSection",
         executor_cls="vrl.models.families.nextstep_1.runtime:NextStep1ChunkExecutor",
         gatherer_cls="vrl.models.families.nextstep_1.runtime:NextStep1ChunkGatherer",
         build=TokenFamilyBuild(
             model_cls="vrl.models.families.nextstep_1.model:NextStep1Model",
             replay_cls="vrl.models.families.nextstep_1.model:NextStep1ReplayModel",
-            config_cls="vrl.models.families.nextstep_1.model:NextStep1Config",
+            config_cls="vrl.models.families.nextstep_1.config:NextStep1Config",
             config_builder=("vrl.models.families.nextstep_1.runtime:nextstep_config_from_build"),
             default_model_path="stepfun-ai/NextStep-1.1",
             gradient_checkpointing_at_load=True,

@@ -7,8 +7,10 @@ from typing import Any
 
 import pytest
 import torch
+from omegaconf import OmegaConf
 
 from tests.rollouts.collector._helpers import collect_scored
+from vrl.families.registry import get_model_family_entry
 from vrl.generation import (
     GenerationInput,
     GenerationOutput,
@@ -22,8 +24,9 @@ from vrl.rollouts.collector.batch_builder import (
     RolloutBatchBuildContext,
     TrajectoryRolloutBatchBuilder,
 )
+from vrl.rollouts.collector.config import build_rollout_config_from_cfg
 from vrl.rollouts.collector.core import RolloutCollector
-from vrl.rollouts.collector.requests import CollectorRequest
+from vrl.rollouts.collector.requests import CollectorRequest, GenerationRequestBuilder
 from vrl.rollouts.collector.rewards import (
     RewardScoreBatch,
     RewardScorer,
@@ -299,6 +302,18 @@ def test_collector_routes_request_through_runtime_reward_and_trajectory_batch() 
     assert not hasattr(batch, "dones")
     assert not hasattr(batch, "videos")
     assert not hasattr(batch, "prompts")
+
+
+def test_nextstep_noise_level_reaches_generation_request_from_rollout_owner() -> None:
+    cfg = OmegaConf.create({"rollout": {"noise_level": 0.37}})
+    builder = GenerationRequestBuilder(
+        entry=get_model_family_entry("nextstep_1"),
+        config=build_rollout_config_from_cfg(cfg),
+    )
+
+    request = builder.build(["draw text"], group_size=1).request
+
+    assert request.sampling["noise_level"] == pytest.approx(0.37)
 
 
 @pytest.mark.asyncio

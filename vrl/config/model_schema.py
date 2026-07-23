@@ -62,16 +62,7 @@ class JanusProModelSection(ModelSection):
     vq_latent_channels: Any = None
 
 
-class NextStep1ModelSection(ModelSection):
-    """NextStep-1 tokenizer and frozen-module keys."""
-
-    freeze_vae: Any = None
-    vae_path: Any = None
-    vae_revision: Any = None
-
-
 __all__ = [
     "JanusProModelSection",
     "ModelSection",
-    "NextStep1ModelSection",
 ]

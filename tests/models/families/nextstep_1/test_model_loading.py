@@ -8,7 +8,8 @@ import torch
 
 
 def test_nextstep_rollout_resolves_the_pinned_snapshot(monkeypatch) -> None:
-    from vrl.models.families.nextstep_1.model import NextStep1Config, NextStep1Model
+    from vrl.models.families.nextstep_1.config import NextStep1Config
+    from vrl.models.families.nextstep_1.model import NextStep1Model
     from vrl.models.steps.token import loader
 
     calls: list[tuple[str, str | None]] = []
@@ -47,7 +48,8 @@ def test_nextstep_rollout_resolves_the_pinned_snapshot(monkeypatch) -> None:
 
 
 def test_nextstep_rollout_preserves_an_unversioned_local_path(monkeypatch, tmp_path) -> None:
-    from vrl.models.families.nextstep_1.model import NextStep1Config, NextStep1Model
+    from vrl.models.families.nextstep_1.config import NextStep1Config
+    from vrl.models.families.nextstep_1.model import NextStep1Model
     from vrl.models.steps.token import loader
 
     pipeline_kwargs: dict = {}

@@ -44,9 +44,7 @@ def nextstep_config_from_build(build: ModelBuild) -> dict[str, Any]:
     for key in (
         "guidance_scale",
         "num_steps",
-        "noise_level",
         "image_token_num",
-        "token_dim",
     ):
         if key in sampling_config:
             config[key] = sampling_config[key]

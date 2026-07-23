@@ -26,6 +26,7 @@ from vrl.models.families.echo.config import EchoModelSection
 from vrl.models.families.flux.config import FluxModelSection
 from vrl.models.families.llamagen.config import LlamaGenModelSection
 from vrl.models.families.magi_1.config import Magi1ModelSection
+from vrl.models.families.nextstep_1.config import NextStep1ModelSection
 from vrl.models.families.wan_2_1.config import WanModelSection
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -338,32 +339,36 @@ def test_wan_model_keys_are_scoped_to_wan_family() -> None:
     ]
 
 
-def test_nextstep_freeze_vae_is_scoped_to_nextstep_family() -> None:
-    """freeze_vae is a NextStep model key, not a global model knob."""
+@pytest.mark.parametrize("family", ["nextstep_1", "nextstep"])
+@pytest.mark.parametrize("freeze_vae", [False, True])
+def test_nextstep_keys_and_alias_select_family_section(
+    family: str,
+    freeze_vae: bool,
+) -> None:
     from vrl.config.unknown_keys import find_unknown_keys
 
-    nextstep_cfg = OmegaConf.create(
-        {
-            "model": {
-                "family": "nextstep_1",
-                "path": "stepfun-ai/NextStep-1.1",
-                "vae_path": "stepfun-ai/NextStep-1-f8ch16-Tokenizer",
-                "freeze_vae": True,
-            },
-        },
-    )
-    assert find_unknown_keys(nextstep_cfg) == []
+    payload = {
+        "freeze_vae": freeze_vae,
+        "vae_path": "stepfun-ai/NextStep-1-f8ch16-Tokenizer",
+        "vae_revision": "immutable",
+    }
+    cfg = OmegaConf.create({"model": {"family": family, **payload}})
 
-    sd3_cfg = OmegaConf.create(
-        {
-            "model": {
-                "family": "sd3_5",
-                "path": "stabilityai/stable-diffusion-3.5-medium",
-                "freeze_vae": True,
-            },
-        },
-    )
-    assert find_unknown_keys(sd3_cfg) == ["model.freeze_vae"]
+    assert find_unknown_keys(cfg) == []
+    parsed = parse_config(cfg)
+    assert isinstance(parsed.model, NextStep1ModelSection)
+    assert parsed.model.freeze_vae is freeze_vae
+    assert parsed.model.vae_path == payload["vae_path"]
+    assert parsed.model.vae_revision == payload["vae_revision"]
+
+
+@pytest.mark.parametrize("field", ["freeze_vae", "vae_path", "vae_revision"])
+def test_nextstep_keys_are_unknown_for_shared_token_sibling(field: str) -> None:
+    from vrl.config.unknown_keys import find_unknown_keys
+
+    cfg = OmegaConf.create({"model": {"family": "emu3", field: "unexpected"}})
+
+    assert find_unknown_keys(cfg) == [f"model.{field}"]
 
 
 def test_unknown_wan_offload_mode_raises() -> None:
