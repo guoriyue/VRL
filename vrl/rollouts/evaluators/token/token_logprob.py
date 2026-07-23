@@ -36,6 +36,8 @@ class TokenLogProbEvaluator(Evaluator):
     that need a distinct frozen reference must pass ``ref_model``.
     """
 
+    replay_granularity = "trajectory"
+
     def __init__(self, mask_key: str = "token_mask") -> None:
         self.mask_key = mask_key
 

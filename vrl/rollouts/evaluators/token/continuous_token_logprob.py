@@ -28,6 +28,8 @@ class ContinuousTokenLogProbEvaluator(Evaluator):
     use the model's required ``disable_adapter()`` context.
     """
 
+    replay_granularity = "trajectory"
+
     def __init__(self, mask_key: str = "token_mask") -> None:
         self.mask_key = mask_key
 

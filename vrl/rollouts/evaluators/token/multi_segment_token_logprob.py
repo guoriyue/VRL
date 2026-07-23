@@ -24,6 +24,8 @@ from vrl.trajectory import role_tensor
 class MultiSegmentTokenLogProbEvaluator(Evaluator):
     """Replay each enabled R1 segment without concatenating image/text tokens."""
 
+    replay_granularity = "trajectory"
+
     def __init__(
         self,
         *,
