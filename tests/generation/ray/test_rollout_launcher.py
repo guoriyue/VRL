@@ -54,6 +54,7 @@ def _worker_setup_hook(repo_root: str) -> Any:
         sys.path.insert(0, repo_root)
 
         import vrl.families.registry as registry
+        import vrl.models.checkpoint_identity as checkpoint_identity
         from vrl.models.interfaces import RuntimeBundle
 
         class TinyRuntimeModel:
@@ -109,6 +110,7 @@ def _worker_setup_hook(repo_root: str) -> Any:
             executor_cls="vrl.families.registry:_RayLauncherTestExecutor",
         )
         registry.ModelFamilyEntry.build_rollout = build_tiny_rollout
+        checkpoint_identity.resolve_checkpoint_model_identity = lambda _build: {"schema": "test"}
 
     return install
 
@@ -131,6 +133,7 @@ def _launch_inputs() -> RayGenerationLaunchInputs:
             family="janus_pro",
             model_build={
                 "model_name_or_path": "unit-test",
+                "revision": None,
                 "device": "cpu",
                 "parameter_dtype": "float32",
                 "precision": {
@@ -140,6 +143,7 @@ def _launch_inputs() -> RayGenerationLaunchInputs:
                     "outer_autocast": False,
                 },
             },
+            expected_model_identity={"schema": "test"},
             policy_version=7,
         ),
         gatherer=_Gatherer(),

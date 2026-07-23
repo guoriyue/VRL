@@ -110,6 +110,7 @@ def _core(
     contract = GenerationRuntimeLaunchContract(
         family=family,
         model_build={},
+        expected_model_identity={"schema": "test"},
         policy_version=1,
         sleep_offload=sleep_offload,
     )

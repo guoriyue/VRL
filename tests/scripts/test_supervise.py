@@ -183,6 +183,7 @@ def test_restart_resumes_from_latest_complete_checkpoint(tmp_path) -> None:
         family="unit",
         progress={"next_epoch": 4, "global_step": 4},
         rng_state={},
+        model_identity={"schema": "test"},
     )
 
     attempts_file = tmp_path / "attempts"

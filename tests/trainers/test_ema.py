@@ -82,3 +82,26 @@ def test_copy_ema_to_then_copy_temp_to_restores_exactly() -> None:
     ema.copy_temp_to([param])
     assert torch.equal(param.detach(), original)
     assert ema.temp_stored_parameters is None
+
+
+def test_failed_ema_swap_restores_every_parameter_before_raising() -> None:
+    first = _single_param(1.0)
+    second = _single_param(2.0)
+    ema = EMAModuleWrapper([first, second])
+    ema.ema_parameters[0].fill_(7.0)
+    ema.ema_parameters[1] = torch.ones(2)
+
+    with pytest.raises(RuntimeError):
+        ema.copy_ema_to([first, second], store_temp=True)
+
+    assert first.item() == pytest.approx(1.0)
+    assert second.item() == pytest.approx(2.0)
+    assert ema.temp_stored_parameters is None
+
+
+def test_copy_temp_to_rejects_missing_snapshot() -> None:
+    param = _single_param(1.0)
+    ema = EMAModuleWrapper([param])
+
+    with pytest.raises(RuntimeError, match="snapshot is not available"):
+        ema.copy_temp_to([param])

@@ -395,6 +395,18 @@ def test_cosmos_predict25_kling_reward_uses_paper_rl_batch() -> None:
     assert batch_plan.microbatch_size == cfg.actor.microbatch_size
 
 
+def test_fsdp_ema_presets_distinguish_capability_from_memory_policy() -> None:
+    cosmos = load_config(
+        "experiment/cosmos_predict2_5/online_nft_kling_video_reward_fsdp_2x1",
+    )
+    sd3_full_parameter = load_config(
+        "experiment/sd3_5/online_grpo_ocr_fsdp_2x1_fullparam",
+    )
+
+    assert cosmos.actor.ema.enable is True
+    assert sd3_full_parameter.actor.ema.enable is False
+
+
 def test_experiments_do_not_use_legacy_precision_fields() -> None:
     """Checks live YAML uses top-level precision only."""
     offenders = []

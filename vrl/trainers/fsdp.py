@@ -26,6 +26,7 @@ from typing import Any
 import torch
 from torch import nn
 
+from vrl.models.interfaces.runtime import checkpoint_owned_state_names
 from vrl.trainers.distributed import DistributedTrainingContext
 
 
@@ -256,14 +257,14 @@ def gather_full_state_dict(module: nn.Module) -> dict[str, Any]:
     }
 
 
-def gather_trainable_state_dict(module: nn.Module) -> dict[str, Any]:
-    """Gather only trainable parameters as full CPU tensors on every rank.
+def gather_rollout_state_dict(module: nn.Module) -> dict[str, Any]:
+    """Gather requires-grad parameters for rollout sync on every rank.
 
     Asking DCP for a full state before filtering materializes the frozen base on
     every rank, which defeats LoRA's memory scaling. Keep the state sharded while
     selecting the ``requires_grad`` parameter keys, then all-gather only those
-    DTensor leaves. Buffers are deliberately excluded: this is the mutable
-    trainable-state contract, not a standalone model checkpoint.
+    DTensor leaves. Frozen checkpoint-owned state is deliberately excluded:
+    rollout workers receive only the live policy parameters they execute.
     """
 
     from torch.distributed.checkpoint.state_dict import (
@@ -304,20 +305,69 @@ def gather_trainable_state_dict(module: nn.Module) -> dict[str, Any]:
     return gathered
 
 
-def load_trainable_state_dict(
+def gather_trainable_state_dict(module: nn.Module) -> dict[str, Any]:
+    """Compatibility facade; use ``gather_rollout_state_dict`` for weight sync."""
+
+    return gather_rollout_state_dict(module)
+
+
+def gather_checkpoint_state_dict(module: nn.Module) -> dict[str, Any]:
+    """Gather exactly trainable plus registered checkpoint-owned state.
+
+    DCP exposes the sharded state mapping without materializing full tensors.
+    Selection happens before ``DTensor.full_tensor()``, so frozen base weights
+    never enter an all-gather while exceptional frozen mutable state (for
+    example DiffusionNFT's ``previous`` adapter) is still checkpointed.
+    """
+
+    from torch.distributed.checkpoint.state_dict import (
+        StateDictOptions,
+        get_model_state_dict,
+    )
+    from torch.distributed.tensor import DTensor
+
+    owned_names = checkpoint_owned_state_names(module)
+    if not owned_names:
+        raise ValueError(f"{type(module).__name__} has no checkpoint-owned state")
+    trainable_names = frozenset(
+        str(name) for name, parameter in module.named_parameters() if parameter.requires_grad
+    )
+    has_registered_frozen_state = owned_names != trainable_names
+    sharded_state = get_model_state_dict(
+        module,
+        options=StateDictOptions(
+            full_state_dict=False,
+            cpu_offload=False,
+            # The ordinary LoRA path lets DCP omit the frozen base entirely.
+            # Opt out only when the model registered a frozen mutable exception.
+            ignore_frozen_params=not has_registered_frozen_state,
+        ),
+    )
+    missing = sorted(owned_names - set(sharded_state))
+    if missing:
+        preview = ", ".join(missing[:5])
+        suffix = " ..." if len(missing) > 5 else ""
+        raise ValueError(f"sharded state is missing checkpoint-owned state: {preview}{suffix}")
+
+    gathered: dict[str, Any] = {}
+    # All ranks must enter selected DTensor collectives in the same order.
+    for name in sorted(owned_names):
+        value = sharded_state[name]
+        if isinstance(value, DTensor):
+            value = value.full_tensor()
+        if not isinstance(value, torch.Tensor):
+            raise TypeError(f"checkpoint-owned state {name!r} must be a tensor")
+        gathered[name] = value.detach().cpu().clone()
+    return gathered
+
+
+def load_checkpoint_state_dict(
     module: nn.Module,
     state: Mapping[str, Any],
     *,
     strict: bool = True,
 ) -> None:
-    """Load full trainable tensors into their local DTensor shards.
-
-    New checkpoints contain exactly the trainable parameters. Known frozen
-    parameters and buffers are also accepted for compatibility with legacy full
-    checkpoints. In strict mode, every current trainable parameter must exist and
-    unknown keys are rejected; frozen keys need not exist because the immutable
-    base model is reconstructed before resume.
-    """
+    """Load exact checkpoint-owned full tensors into local DTensor shards."""
 
     from torch.distributed.checkpoint.state_dict import (
         StateDictOptions,
@@ -326,30 +376,33 @@ def load_trainable_state_dict(
     )
 
     if not isinstance(state, Mapping):
-        raise TypeError("trainable state must be a mapping")
+        raise TypeError("checkpoint state must be a mapping")
 
     local_state = get_model_state_dict(
         module,
         options=StateDictOptions(full_state_dict=False, cpu_offload=False),
     )
-    known_names = set(local_state)
-    trainable_names = {
-        str(name) for name, parameter in module.named_parameters() if parameter.requires_grad
-    }
-    missing = sorted(trainable_names - set(state))
-    unexpected = sorted(set(state) - known_names)
+    owned_names = checkpoint_owned_state_names(module)
+    missing_local = sorted(owned_names - set(local_state))
+    if missing_local:
+        raise ValueError(
+            f"FSDP local state is missing checkpoint-owned state before load: {missing_local}",
+        )
+    missing = sorted(owned_names - set(state))
+    unexpected = sorted(set(state) - owned_names)
     if strict and (missing or unexpected):
         raise ValueError(
-            "checkpoint trainable parameter keys mismatch: "
-            f"missing={missing}, unexpected={unexpected}",
+            f"checkpoint owned-state keys mismatch: missing={missing}, unexpected={unexpected}",
         )
 
-    compatible = {name: value for name, value in state.items() if name in known_names}
+    compatible = {
+        name: value for name, value in state.items() if name in owned_names and name in local_state
+    }
     if not compatible:
         return
     # DCP performs the layout-aware full-tensor -> DTensor scatter. Its own
-    # strict=False is intentional: strictness above applies to mutable trainable
-    # state, while absent frozen base keys are valid in the new checkpoint format.
+    # strict=False is intentional: strictness above applies to exact owned state,
+    # while absent immutable base keys are valid in schema v2.
     set_model_state_dict(
         module,
         compatible,
@@ -359,6 +412,17 @@ def load_trainable_state_dict(
             strict=False,
         ),
     )
+
+
+def load_trainable_state_dict(
+    module: nn.Module,
+    state: Mapping[str, Any],
+    *,
+    strict: bool = True,
+) -> None:
+    """Compatibility facade; use ``load_checkpoint_state_dict`` for resume."""
+
+    load_checkpoint_state_dict(module, state, strict=strict)
 
 
 def load_full_state_dict(

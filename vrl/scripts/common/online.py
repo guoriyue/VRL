@@ -21,6 +21,7 @@ from vrl.families.registry import (
 )
 from vrl.generation.ray.config import RayGenerationConfig
 from vrl.generation.ray.launcher import RayGenerationLauncher
+from vrl.models.checkpoint_identity import resolve_checkpoint_model_identity
 from vrl.models.interfaces import require_runtime_model
 from vrl.ray.dependencies import require_ray
 from vrl.ray.placement import GlobalRayPlacementOwner, cross_node_preflight
@@ -43,6 +44,7 @@ from vrl.trainers.activation_checkpointing import (
 )
 from vrl.trainers.checkpointing import (
     LORA_WEIGHTS_NAME,
+    AdapterExport,
     capture_rng_state,
     load_training_checkpoint_for_resume,
     prepare_metrics_csv,
@@ -50,6 +52,7 @@ from vrl.trainers.checkpointing import (
     restore_training_checkpoint,
     save_resolved_config,
     save_training_checkpoint,
+    validate_checkpoint_compatibility,
 )
 from vrl.trainers.data import PromptBatchSampler, load_prompt_examples_from_config
 from vrl.trainers.distributed import DistributedTrainingContext, resolve_training_context
@@ -385,7 +388,10 @@ def _load_sft_latents_from_config(cfg: DictConfig, family: str) -> dict[str, Any
     )
 
 
-def _export_transformer_lora(bundle: Any, cfg: DictConfig) -> dict[str, Any] | None:
+def _export_transformer_lora(
+    bundle: Any,
+    cfg: DictConfig,
+) -> dict[str, AdapterExport] | None:
     """Export diffusion transformer LoRA weights when configured."""
 
     if not bool(OmegaConf.select(cfg, "model.use_lora", default=False)):
@@ -396,39 +402,27 @@ def _export_transformer_lora(bundle: Any, cfg: DictConfig) -> dict[str, Any] | N
         if hasattr(module, "save_pretrained")
     }
     if len(exportable) == 1:
-        return {LORA_WEIGHTS_NAME: next(iter(exportable.values()))}
+        return {LORA_WEIGHTS_NAME: AdapterExport(next(iter(exportable.values())))}
     if len(exportable) > 1:
         # checkpoint.pt remains the resume source of truth. Namespaced adapter
         # artifacts make each expert independently inspectable/publishable while
         # preserving the legacy lora_weights/ path for ordinary one-root models.
-        return {f"{LORA_WEIGHTS_NAME}/{name}": module for name, module in exportable.items()}
+        return {
+            f"{LORA_WEIGHTS_NAME}/{name}": AdapterExport(module)
+            for name, module in exportable.items()
+        }
     return None
 
 
-def _export_language_model_lora(bundle: Any, cfg: DictConfig) -> dict[str, Any] | None:
+def _export_language_model_lora(
+    bundle: Any,
+    cfg: DictConfig,
+) -> dict[str, AdapterExport] | None:
     """Export AR language-model LoRA weights when configured."""
 
     if bool(OmegaConf.select(cfg, "model.use_lora", default=False)):
-        return {LORA_WEIGHTS_NAME: bundle.model.language_model}
+        return {LORA_WEIGHTS_NAME: AdapterExport(bundle.model.language_model)}
     return None
-
-
-def _dual_expert_checkpoint_identity(bundle: Any, cfg: DictConfig) -> dict[str, Any] | None:
-    """Immutable resume identity for a timestep-routed two-expert policy."""
-
-    boundary_ratio = getattr(bundle.model, "boundary_ratio", None)
-    if boundary_ratio is None:
-        return None
-    modules = getattr(bundle, "trainable_modules", {})
-    # The high/low-noise expert mapping (transformer / transformer_2) is fixed
-    # by the Wan family contract, so recording it here would add a constant with
-    # zero discriminating power to the identity equality check.
-    return {
-        "model_path": str(OmegaConf.select(cfg, "model.path", default="") or ""),
-        "revision": str(OmegaConf.select(cfg, "model.revision", default="") or ""),
-        "boundary_ratio": float(boundary_ratio),
-        "trainable_transformers": sorted(str(name) for name in modules),
-    }
 
 
 def _check_host_memory_budget(
@@ -571,11 +565,11 @@ class OnlineRecipeRun:
     strategy: Any
     family: str
     component_names: tuple[str, ...]
-    export_modules: dict[str, Any] | None
+    adapter_exports: dict[str, AdapterExport] | None
     csv_path: Path
     rng: Any
     resume_epoch: int | None
-    model_identity: dict[str, Any] | None = None
+    model_identity: dict[str, Any]
 
     def prepare_metrics_csv(self) -> None:
         prepare_metrics_csv(
@@ -590,13 +584,11 @@ class OnlineRecipeRun:
             handle.write(format_online_metric_row(row))
 
     def save_checkpoint(self, path: Path, *, epoch: int) -> None:
-        # Called on EVERY rank: save_training_checkpoint runs the trainable-state
+        # Called on EVERY rank: save_training_checkpoint runs the checkpoint-state
         # gather (a collective under FSDP2) on all ranks and writes files on the
-        # primary only. The save_pretrained HF-adapter artifact (export_modules)
-        # works under fsdp too: save_training_checkpoint detects DTensor-sharded
-        # export modules and feeds them the gathered full state it already
-        # collected for checkpoint.pt, so the adapter artifact is clean.
-        context = self.strategy.context
+        # primary only. Adapter artifacts use a separately gathered full state
+        # under EMA and never read live DTensor shards during rank0 IO. The save
+        # boundary also propagates publication success/failure to every rank.
         save_training_checkpoint(
             path,
             trainer=self.trainer,
@@ -608,21 +600,11 @@ class OnlineRecipeRun:
                 "global_step": self.trainer.state.global_step,
             },
             rng_state=capture_rng_state(prompt_generator=self.rng),
-            export_modules=self.export_modules,
+            adapter_exports=self.adapter_exports,
             export_ema=getattr(self.trainer, "_ema", None),
             model_identity=self.model_identity,
             strategy=self.strategy,
-            is_primary=context.is_primary,
         )
-        # Barrier so non-primary ranks wait for rank0 to FINISH writing before any
-        # rank moves on. The gather above is collective (all ranks), but the file
-        # write is rank0-only and can take tens of seconds for a full-param payload;
-        # without this, after the FINAL checkpoint a non-primary rank returns, hits
-        # shutdown and exits, and torchrun tears down rank0 mid-write -> a truncated,
-        # unloadable checkpoint. In-loop saves happened to survive only because the
-        # next epoch's collective implicitly synced the ranks; the final save has no
-        # such follow-on, so make the wait explicit for every save.
-        self.strategy.barrier()
 
 
 def _prepare_metrics_csv_rank_consistent(
@@ -762,8 +744,6 @@ async def run_online_recipe(
         resources,
         trainer_device=device,
     )
-    examples = load_prompt_examples_from_config(cfg.data)
-    _resolve_reference_artifacts(examples, cfg)
     if family_entry.task in {"i2v", "v2w"}:
         conditioning = OmegaConf.select(
             cfg,
@@ -774,6 +754,24 @@ async def run_online_recipe(
             raise ValueError(
                 f"{family_entry.family} requires data.preprocessing.conditioning=reference_image",
             )
+
+    replay_build = family_entry.resolve_model_build(
+        built.root,
+        device,
+        precision=built.precision,
+        for_rollout=False,
+    )
+    model_identity = resolve_checkpoint_model_identity(replay_build)
+    validate_checkpoint_compatibility(
+        resume_checkpoint,
+        family=family_entry.family,
+        expected_model_identity=model_identity,
+        strict=resume_config.strict,
+    )
+
+    examples = load_prompt_examples_from_config(cfg.data)
+    _resolve_reference_artifacts(examples, cfg)
+    if family_entry.task in {"i2v", "v2w"}:
         from vrl.trainers.data.artifacts import require_reference_images
 
         require_reference_images(
@@ -788,13 +786,13 @@ async def run_online_recipe(
             ),
         )
     log_host_memory("before_trainer_bundle_build", log=logger)
-    replay_build = family_entry.resolve_model_build(
-        built.root,
-        device,
-        precision=built.precision,
-        for_rollout=False,
-    )
     bundle = family_entry.build_replay(replay_build)
+    loaded_model_identity = resolve_checkpoint_model_identity(replay_build)
+    if loaded_model_identity != model_identity:
+        raise RuntimeError(
+            "model checkpoint source changed during replay bundle construction; "
+            f"before={model_identity!r}, after={loaded_model_identity!r}",
+        )
     log_host_memory("after_trainer_bundle_build", log=logger)
     if family_entry.policy_semantics.step_kind == "denoise":
         enable_transformer_gradient_checkpointing(bundle, built.root)
@@ -802,7 +800,6 @@ async def run_online_recipe(
         bundle.model,
         owner=f"{family_entry.family}.bundle.model",
     )
-    model_identity = _dual_expert_checkpoint_identity(bundle, cfg)
     # Scheduler feeds the flow-matching evaluator when the family bundle has one.
     scheduler = getattr(bundle, "scheduler", None)
 
@@ -858,6 +855,7 @@ async def run_online_recipe(
                 config=generation_config,
                 entry=family_entry,
                 driver_bundle=bundle,
+                expected_model_identity=model_identity,
                 placement=placement_owner.rollout_placement,
             ),
         )
@@ -935,7 +933,7 @@ async def run_online_recipe(
         if resume_checkpoint is not None:
             restore_rng_state(resume_checkpoint.rng_state, prompt_generator=rng)
 
-        export_modules = (
+        adapter_exports = (
             _export_transformer_lora(bundle, cfg)
             if family_entry.policy_semantics.step_kind == "denoise"
             else _export_language_model_lora(bundle, cfg)
@@ -946,7 +944,7 @@ async def run_online_recipe(
             strategy=strategy,
             family=family_entry.family,
             component_names=component_names,
-            export_modules=export_modules,
+            adapter_exports=adapter_exports,
             csv_path=output_dir / "metrics.csv",
             rng=rng,
             resume_epoch=(resume_checkpoint.next_epoch if resume_checkpoint is not None else None),

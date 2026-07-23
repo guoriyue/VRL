@@ -131,6 +131,7 @@ class _FakeLauncher:
     def launch_from_cfg(self, *args: Any, **kwargs: Any) -> _FakeRuntime:
         del args
         self._state["launcher_worker"] = kwargs["config"].worker
+        self._state["launcher_model_identity"] = kwargs["expected_model_identity"]
         self._state["launches"] += 1
         if self._state.get("launch_raises"):
             raise RuntimeError("launch boom")
@@ -193,8 +194,14 @@ def _state() -> dict[str, Any]:
         "owner_shutdowns": 0,
         "launches": 0,
         "launcher_worker": None,
+        "launcher_model_identity": None,
         "placement_worker": None,
         "model_builds": 0,
+        "bundle_builds": 0,
+        "resolved_build": None,
+        "bundle_build": None,
+        "identity_builds": [],
+        "compatibility_calls": [],
         "trainer_steps": 0,
         "trainer_prompt_batches": [],
         "checkpoint_paths": [],
@@ -249,10 +256,13 @@ class _FakeFamilyEntry:
     ) -> Any:
         del root, device, precision, kwargs
         self._state["model_builds"] += 1
-        return SimpleNamespace(family=self.family)
+        build = SimpleNamespace(family=self.family)
+        self._state["resolved_build"] = build
+        return build
 
     def build_replay(self, build: Any) -> Any:
-        del build
+        self._state["bundle_builds"] += 1
+        self._state["bundle_build"] = build
         precision = RolePrecision(
             dtype="fp32",
             float32_precision="ieee",
@@ -355,6 +365,25 @@ def _install_common_fakes(
         ),
     )
     monkeypatch.setattr(online, "load_training_checkpoint_for_resume", lambda resume: None)
+    model_identity = {"schema": "test"}
+
+    def _resolve_model_identity(build: Any) -> dict[str, str]:
+        state["identity_builds"].append(build)
+        return model_identity
+
+    def _validate_checkpoint(
+        checkpoint: Any,
+        *,
+        family: str,
+        expected_model_identity: dict[str, Any],
+        strict: bool,
+    ) -> None:
+        state["compatibility_calls"].append(
+            (checkpoint, family, expected_model_identity, strict),
+        )
+
+    monkeypatch.setattr(online, "resolve_checkpoint_model_identity", _resolve_model_identity)
+    monkeypatch.setattr(online, "validate_checkpoint_compatibility", _validate_checkpoint)
     monkeypatch.setattr(online, "resolve_distributed_resources", lambda cfg, **kwargs: resources)
     monkeypatch.setattr(online, "format_distributed_resource_plan", lambda resources: "resources")
     monkeypatch.setattr(online, "trainer_torch_device", lambda resources: "cpu")
@@ -413,6 +442,133 @@ def _install_common_fakes(
     return reward
 
 
+@pytest.mark.asyncio
+async def test_checkpoint_identity_preflight_runs_before_prompt_or_model_build(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    state = _state()
+    _install_common_fakes(monkeypatch, tmp_path, state)
+    checkpoint = object()
+    monkeypatch.setattr(
+        online,
+        "load_training_checkpoint_for_resume",
+        lambda _resume: checkpoint,
+    )
+
+    class _ReachedPromptBoundary(RuntimeError):
+        pass
+
+    def _stop_at_prompt(_cfg: Any) -> list[Any]:
+        assert state["compatibility_calls"] == [
+            (checkpoint, "sd3_5", {"schema": "test"}, True),
+        ]
+        raise _ReachedPromptBoundary
+
+    monkeypatch.setattr(online, "load_prompt_examples_from_config", _stop_at_prompt)
+
+    with pytest.raises(_ReachedPromptBoundary):
+        await online.run_online_recipe(_cfg())
+
+    assert state["identity_builds"] == [state["resolved_build"]]
+    assert state["bundle_builds"] == 0
+    assert state["owner_creates"] == 0
+    assert state["launches"] == 0
+
+
+@pytest.mark.asyncio
+async def test_checkpoint_identity_mismatch_stops_before_prompt_model_or_ray(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    state = _state()
+    _install_common_fakes(monkeypatch, tmp_path, state)
+    checkpoint = object()
+    monkeypatch.setattr(
+        online,
+        "load_training_checkpoint_for_resume",
+        lambda _resume: checkpoint,
+    )
+
+    def _reject_checkpoint(
+        actual_checkpoint: Any,
+        *,
+        family: str,
+        expected_model_identity: dict[str, Any],
+        strict: bool,
+    ) -> None:
+        assert actual_checkpoint is checkpoint
+        assert family == "sd3_5"
+        assert expected_model_identity == {"schema": "test"}
+        assert strict is True
+        raise ValueError("checkpoint model identity mismatch")
+
+    monkeypatch.setattr(online, "validate_checkpoint_compatibility", _reject_checkpoint)
+    monkeypatch.setattr(
+        online,
+        "load_prompt_examples_from_config",
+        lambda _cfg: (_ for _ in ()).throw(
+            AssertionError("prompt loading must not run after identity mismatch"),
+        ),
+    )
+
+    with pytest.raises(ValueError, match="checkpoint model identity mismatch"):
+        await online.run_online_recipe(_cfg())
+
+    assert state["identity_builds"] == [state["resolved_build"]]
+    assert state["bundle_builds"] == 0
+    assert state["owner_creates"] == 0
+    assert state["launches"] == 0
+
+
+@pytest.mark.asyncio
+async def test_checkpoint_source_change_stops_after_model_before_ray_or_reward(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    state = _state()
+    _install_common_fakes(monkeypatch, tmp_path, state)
+    identities = iter(({"source": "before"}, {"source": "after"}))
+
+    def _resolve_changed_identity(build: Any) -> dict[str, str]:
+        state["identity_builds"].append(build)
+        return next(identities)
+
+    monkeypatch.setattr(
+        online,
+        "resolve_checkpoint_model_identity",
+        _resolve_changed_identity,
+    )
+    monkeypatch.setattr(
+        online,
+        "require_ray",
+        lambda: (_ for _ in ()).throw(
+            AssertionError("Ray must not start after checkpoint source changes"),
+        ),
+    )
+    monkeypatch.setattr(
+        online,
+        "build_reward",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("reward must not build after checkpoint source changes"),
+        ),
+    )
+
+    with pytest.raises(
+        RuntimeError,
+        match="model checkpoint source changed during replay bundle construction",
+    ):
+        await online.run_online_recipe(_cfg())
+
+    assert state["identity_builds"] == [
+        state["resolved_build"],
+        state["resolved_build"],
+    ]
+    assert state["bundle_builds"] == 1
+    assert state["owner_creates"] == 0
+    assert state["launches"] == 0
+
+
 @pytest.mark.slow_test
 @pytest.mark.asyncio
 async def test_run_online_recipe_shutdowns_owner_after_success(monkeypatch, tmp_path) -> None:
@@ -428,12 +584,21 @@ async def test_run_online_recipe_shutdowns_owner_after_success(monkeypatch, tmp_
     assert state["owner_creates"] == 1
     assert state["trainer_steps"] == 1
     assert state["checkpoint_paths"] == ["checkpoint-final"]
+    assert state["identity_builds"] == [
+        state["resolved_build"],
+        state["resolved_build"],
+    ]
+    assert state["bundle_build"] is state["resolved_build"]
+    assert state["compatibility_calls"] == [
+        (None, "sd3_5", {"schema": "test"}, True),
+    ]
     assert state["collector_shutdowns"] == 1
     assert state["runtime_shutdowns"] == 1
     assert state["schedule_shutdowns"] == 1
     assert state["reward_shutdowns"] == 1
     assert state["owner_shutdowns"] == 1
     assert state["launcher_worker"] is state["placement_worker"]
+    assert state["launcher_model_identity"] == {"schema": "test"}
     assert state["launcher_worker"].cpus_per_worker == 0.5
     assert state["shutdown_order"] == [
         "schedule",

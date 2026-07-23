@@ -13,11 +13,13 @@ class GenerationRuntimeLaunchContract:
     """Worker-side executor construction contract for generation runtimes.
 
     The canonical family identifies worker wiring. Only per-run primitive model,
-    executor, profiler, and lifecycle values cross the Ray boundary.
+    expected model identity, executor, profiler, and lifecycle values cross the
+    Ray boundary.
     """
 
     family: str
     model_build: dict[str, Any]
+    expected_model_identity: dict[str, Any]
     executor_kwargs: dict[str, Any] = field(default_factory=dict)
     policy_version: int | None = None
     torch_profiler: dict[str, Any] = field(default_factory=dict)
@@ -35,6 +37,19 @@ class GenerationRuntimeLaunchContract:
             self,
             "model_build",
             self._normalize_config_mapping(self.model_build, "model_build"),
+        )
+        expected_model_identity = self._normalize_config_mapping(
+            self.expected_model_identity,
+            "expected_model_identity",
+        )
+        if not expected_model_identity:
+            raise ValueError(
+                "GenerationRuntimeLaunchContract.expected_model_identity must be non-empty",
+            )
+        object.__setattr__(
+            self,
+            "expected_model_identity",
+            expected_model_identity,
         )
         object.__setattr__(
             self,

@@ -45,6 +45,15 @@ def test_checkpoint_ownership_rejects_unknown_names_without_mutation() -> None:
     assert checkpoint_owned_state_names(module) == {"trainable"}
 
 
+def test_checkpoint_ownership_rejects_redundant_trainable_registration() -> None:
+    module = _PolicyState()
+
+    with pytest.raises(ValueError, match="already checkpoint-owned"):
+        register_checkpoint_owned_state(module, ["trainable"])
+
+    assert checkpoint_owned_state_names(module) == {"trainable"}
+
+
 @pytest.mark.parametrize("names", ["trainable", [], [""]])
 def test_checkpoint_ownership_rejects_invalid_name_collections(names) -> None:
     module = _PolicyState()

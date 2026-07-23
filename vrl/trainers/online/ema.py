@@ -95,8 +95,15 @@ class EMAModuleWrapper:
             for p in self.ema_parameters
         ]
 
-    def copy_ema_to(self, parameters: Iterable[torch.nn.Parameter], store_temp: bool = True) -> None:
-        """Replace model parameters with EMA values; optionally save originals."""
+    def copy_ema_to(
+        self, parameters: Iterable[torch.nn.Parameter], store_temp: bool = True
+    ) -> None:
+        """Replace model parameters with EMA values; optionally save originals.
+
+        A failed swap restores every parameter before propagating the error. The
+        checkpoint path can therefore coordinate a rank-local failure before any
+        peer enters its next collective without leaving this rank half-swapped.
+        """
         parameters = list(parameters)
         if store_temp:
             # copy=True is required: plain .cpu() is a no-op when params already
@@ -105,16 +112,25 @@ class EMAModuleWrapper:
             # restore EMA values instead of the pre-swap weights. copy=True keeps
             # the CPU-offload intent while guaranteeing an independent buffer.
             # (DTensor params stage as CPU-local DTensors — same code path.)
-            self.temp_stored_parameters = [
-                p.detach().to("cpu", copy=True) for p in parameters
-            ]
+            self.temp_stored_parameters = [p.detach().to("cpu", copy=True) for p in parameters]
 
-        for ema_param, param in zip(self.ema_parameters, parameters, strict=True):
-            param.data.copy_(ema_param.to(param.device).data)
+        try:
+            for ema_param, param in zip(self.ema_parameters, parameters, strict=True):
+                param.data.copy_(ema_param.to(param.device).data)
+        except BaseException:
+            if store_temp and self.temp_stored_parameters is not None:
+                try:
+                    self.copy_temp_to(parameters)
+                except BaseException as restore_error:
+                    raise RuntimeError(
+                        "EMA swap failed and original parameters could not be restored",
+                    ) from restore_error
+            raise
 
     def copy_temp_to(self, parameters: Iterable[torch.nn.Parameter]) -> None:
         """Restore original parameters from temporary storage."""
-        assert self.temp_stored_parameters is not None
+        if self.temp_stored_parameters is None:
+            raise RuntimeError("EMA original-parameter snapshot is not available")
         for temp_param, param in zip(self.temp_stored_parameters, parameters, strict=True):
             param.data.copy_(temp_param.data)
         self.temp_stored_parameters = None

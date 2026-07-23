@@ -20,6 +20,7 @@ import torch
 from torch import nn
 
 from vrl.config.schema import DDPConfig, RootConfig
+from vrl.models.interfaces.runtime import register_checkpoint_owned_state
 from vrl.trainers.distributed import DistributedTrainingContext
 from vrl.trainers.strategy import (
     DDPStrategy,
@@ -251,10 +252,13 @@ def test_ddp_rollout_export_matches_single_process_key_space(cpu_process_group) 
 
 
 def test_ddp_rollout_export_filters_frozen_params(cpu_process_group) -> None:
-    """export_rollout_state drops frozen params (the LoRA shape); the checkpoint
-    export keeps them."""
+    """Rollout excludes frozen state while checkpoint includes registered state."""
     net = _ToyTransformer()
     net.head.requires_grad_(False)
+    register_checkpoint_owned_state(
+        net,
+        [name for name, _ in net.named_parameters() if name.startswith("head.")],
+    )
     wrapped = _ddp_wrap(net)
     strategy = _ddp_strategy(_cpu_ddp_context())
 
@@ -262,21 +266,125 @@ def test_ddp_rollout_export_filters_frozen_params(cpu_process_group) -> None:
     assert rollout
     assert not any("head" in key for key in rollout)
 
-    checkpoint = strategy.export_trainable_state(_Bundle(wrapped))["transformer"]
+    checkpoint = strategy.export_checkpoint_state(_Bundle(wrapped))["transformer"]
     assert any("head" in key for key in checkpoint)
 
 
-def test_ddp_export_then_load_trainable_state_round_trip(cpu_process_group) -> None:
+def test_ddp_checkpoint_state_excludes_unregistered_frozen_params(cpu_process_group) -> None:
+    net = _ToyTransformer()
+    net.head.requires_grad_(False)
+    strategy = _ddp_strategy(_cpu_ddp_context())
+
+    checkpoint = strategy.export_checkpoint_state(_Bundle(_ddp_wrap(net)))["transformer"]
+
+    assert not any("head" in key for key in checkpoint)
+
+
+def test_ddp_export_then_load_checkpoint_state_round_trip(cpu_process_group) -> None:
     strategy = _ddp_strategy(_cpu_ddp_context())
     src = _ddp_wrap(_ToyTransformer())
     with torch.no_grad():
         for p in src.parameters():
             p.fill_(3.0)
 
-    snapshot = strategy.export_trainable_state(_Bundle(src))
+    snapshot = strategy.export_checkpoint_state(_Bundle(src))
     assert set(snapshot) == {"transformer"}
+    first_name, first_value = next(iter(snapshot["transformer"].items()))
+    live = dict(src.module.state_dict())[first_name]
+    assert first_value.data_ptr() != live.data_ptr()
 
     dst = _ddp_wrap(_ToyTransformer())
-    strategy.load_trainable_state(_Bundle(dst), snapshot)
+    strategy.load_checkpoint_state(_Bundle(dst), snapshot)
     for value in dst.module.state_dict().values():
         assert torch.allclose(value, torch.full_like(value, 3.0))
+
+
+def test_ddp_restore_protocol_loads_schema_v1_full_frozen_state(
+    cpu_process_group,
+    tmp_path,
+) -> None:
+    from vrl.trainers.checkpointing import TrainingCheckpoint, restore_model_checkpoint
+
+    source_module = _ToyTransformer()
+    source_module.head.requires_grad_(False)
+    with torch.no_grad():
+        for parameter in source_module.parameters():
+            parameter.fill_(7.0)
+    source = _ddp_wrap(source_module)
+
+    restored_module = _ToyTransformer()
+    restored_module.head.requires_grad_(False)
+    with torch.no_grad():
+        for parameter in restored_module.parameters():
+            parameter.fill_(3.0)
+    restored = _ddp_wrap(restored_module)
+    checkpoint = TrainingCheckpoint(
+        checkpoint_dir=tmp_path,
+        checkpoint_path=tmp_path / "checkpoint.pt",
+        payload={
+            "schema_version": 1,
+            "family": "toy",
+            "trainer": {},
+            "model": {"trainable_modules": {"transformer": dict(source.module.state_dict())}},
+            "progress": {},
+            "rng": {},
+        },
+        meta={},
+    )
+
+    restore_model_checkpoint(
+        checkpoint,
+        bundle=_Bundle(restored),
+        family="toy",
+        strict=True,
+        strategy=_ddp_strategy(_cpu_ddp_context()),
+    )
+
+    assert all(
+        torch.allclose(value, torch.full_like(value, 7.0))
+        for value in restored.module.state_dict().values()
+    )
+
+
+def test_ddp_adapter_export_uses_gathered_checkpoint_state(
+    cpu_process_group,
+    tmp_path,
+) -> None:
+    from types import SimpleNamespace
+
+    from peft import LoraConfig, get_peft_model
+    from safetensors.torch import load_file
+
+    from vrl.trainers.checkpointing import (
+        LORA_WEIGHTS_NAME,
+        AdapterExport,
+        save_training_checkpoint,
+    )
+
+    module = get_peft_model(
+        _ToyTransformer(),
+        LoraConfig(r=2, lora_alpha=4, target_modules=["lin"]),
+    )
+    with torch.no_grad():
+        for parameter in module.parameters():
+            if parameter.requires_grad:
+                parameter.fill_(5.0)
+    wrapped = _ddp_wrap(module)
+
+    save_training_checkpoint(
+        tmp_path,
+        trainer=SimpleNamespace(state_dict=lambda: {"step": 0, "global_step": 0}),
+        bundle=_Bundle(wrapped),
+        family="toy",
+        model_identity={"schema": "toy/v1"},
+        progress={"next_epoch": 1},
+        rng_state={},
+        adapter_exports={LORA_WEIGHTS_NAME: AdapterExport(module)},
+        strategy=_ddp_strategy(_cpu_ddp_context()),
+    )
+
+    artifact = load_file(
+        str(tmp_path / LORA_WEIGHTS_NAME / "adapter_model.safetensors"),
+    )
+    assert artifact
+    assert all(torch.equal(value, torch.full_like(value, 5.0)) for value in artifact.values())

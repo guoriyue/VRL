@@ -13,6 +13,7 @@ import pytest
 import torch
 from torch import nn
 
+from vrl.models.interfaces.runtime import register_checkpoint_owned_state
 from vrl.trainers.online.ema import EMAModuleWrapper
 from vrl.trainers.optimizer import FP32MasterWeightOptimizer
 from vrl.trainers.strategy import SingleProcessStrategy, TrainingMemoryState
@@ -435,20 +436,48 @@ def _assert_tensor_values_equal(value, expected) -> None:
         assert torch.equal(got, want)
 
 
-def test_export_and_load_trainable_state_round_trip() -> None:
+def test_export_and_load_checkpoint_state_round_trip() -> None:
     strat = SingleProcessStrategy()
     src = _Bundle()
     with torch.no_grad():
         src.trainable_modules["adapter"].weight.fill_(3.0)
-    snapshot = strat.export_trainable_state(src)
+    snapshot = strat.export_checkpoint_state(src)
     assert set(snapshot) == {"adapter"}
 
     dst = _Bundle()
-    strat.load_trainable_state(dst, snapshot)
+    strat.load_checkpoint_state(dst, snapshot)
     assert torch.equal(
         dst.trainable_modules["adapter"].weight,
         src.trainable_modules["adapter"].weight,
     )
+
+
+def test_checkpoint_and_rollout_state_have_distinct_ownership() -> None:
+    module = nn.Linear(2, 1, bias=False)
+    module.register_buffer("previous", torch.ones(1))
+    module.register_buffer("cache", torch.zeros(1))
+    register_checkpoint_owned_state(module, ["previous"])
+    bundle = SimpleNamespace(trainable_modules={"adapter": module})
+    strategy = SingleProcessStrategy()
+
+    checkpoint = strategy.export_checkpoint_state(bundle)["adapter"]
+    rollout = strategy.export_rollout_state(bundle)
+
+    assert set(checkpoint) == {"weight", "previous"}
+    assert set(rollout) == {"adapter.weight"}
+    assert "adapter.previous" not in rollout
+    assert "cache" not in checkpoint
+
+
+def test_legacy_strategy_state_names_are_explicit_checkpoint_facades() -> None:
+    strategy = SingleProcessStrategy()
+    bundle = _Bundle()
+
+    canonical = strategy.export_checkpoint_state(bundle)
+    legacy = strategy.export_trainable_state(bundle)
+
+    assert canonical.keys() == legacy.keys()
+    assert torch.equal(canonical["adapter"]["weight"], legacy["adapter"]["weight"])
 
 
 def test_barrier_is_noop() -> None:

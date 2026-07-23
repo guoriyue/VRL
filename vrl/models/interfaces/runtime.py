@@ -61,6 +61,17 @@ def register_checkpoint_owned_state(module: Any, names: Iterable[str]) -> None:
     unknown = sorted(registered - _module_state_names(module))
     if unknown:
         raise ValueError(f"checkpoint-owned state names do not exist in module: {unknown}")
+    trainable = {
+        name
+        for name, parameter in module.named_parameters(remove_duplicate=False)
+        if parameter.requires_grad
+    }
+    redundant = sorted(registered & trainable)
+    if redundant:
+        raise ValueError(
+            "trainable parameters are already checkpoint-owned and must not be "
+            f"registered explicitly: {redundant}",
+        )
     current = getattr(module, _CHECKPOINT_OWNED_STATE_NAMES_ATTR, frozenset())
     if not isinstance(current, frozenset):
         raise TypeError("module checkpoint-owned state registry must be a frozenset")

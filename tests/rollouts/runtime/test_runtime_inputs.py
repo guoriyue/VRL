@@ -25,6 +25,7 @@ from vrl.generation.protocols import GenerationChunkExecutor
 from vrl.generation.ray import RayGenerationLauncher, RayGenerationLaunchInputs
 from vrl.generation.ray.config import RayGenerationConfig
 from vrl.generation.ray.launcher import build_executor_kwargs
+from vrl.models.checkpoint_identity import resolve_checkpoint_model_identity
 from vrl.models.families.janus_pro.runtime import JanusProR1ChunkGatherer
 from vrl.models.families.nextstep_1.runtime import NextStep1ChunkGatherer
 from vrl.ray.placement import RolePlacement
@@ -35,7 +36,7 @@ from vrl.rollouts.collector.config import build_rollout_config_from_cfg
 def _capture_launch_inputs(
     cfg: Any,
     entry: ModelFamilyEntry,
-) -> RayGenerationLaunchInputs:
+) -> tuple[RayGenerationLaunchInputs, dict[str, Any]]:
     """Intercept the public launch boundary without starting Ray actors."""
 
     captured: list[RayGenerationLaunchInputs] = []
@@ -45,6 +46,13 @@ def _capture_launch_inputs(
         root,
         resources=resolve_distributed_resources(cfg),
     )
+    runtime_device = "cuda" if config.resources.rollout_gpus_per_worker > 0 else "cpu"
+    identity_build = entry.resolve_model_build(
+        root,
+        runtime_device,
+        precision=precision,
+    )
+    expected_model_identity = resolve_checkpoint_model_identity(identity_build)
 
     def capture_launch(
         _launcher: RayGenerationLauncher,
@@ -68,6 +76,7 @@ def _capture_launch_inputs(
                 model=SimpleNamespace(device="cpu"),
                 trainable_modules={},
             ),
+            expected_model_identity=expected_model_identity,
             placement=RolePlacement(
                 placement_group=object(),
                 bundle_indices=(),
@@ -76,7 +85,7 @@ def _capture_launch_inputs(
         )
 
     assert captured == [result]
-    return captured[0]
+    return captured[0], expected_model_identity
 
 
 @pytest.mark.parametrize(
@@ -158,11 +167,12 @@ def test_rollout_runtime_inputs_are_serializable_and_registry_backed(
     )
     entry = get_model_family_entry(family)
 
-    inputs = _capture_launch_inputs(cfg, entry)
+    inputs, expected_model_identity = _capture_launch_inputs(cfg, entry)
 
     assert isinstance(inputs, RayGenerationLaunchInputs)
     assert pickle.loads(pickle.dumps(inputs.launch_contract)) == inputs.launch_contract
     assert inputs.launch_contract.family == family
+    assert inputs.launch_contract.expected_model_identity == expected_model_identity
     # Family identity lives once in the outer contract; worker-side executor
     # wiring comes from the registry, while this nested payload is per-run data.
     assert "family" not in inputs.launch_contract.model_build
@@ -188,7 +198,7 @@ def test_diffusion_launch_contract_uses_resolved_config_parameter_dtype() -> Non
         ],
     )
 
-    inputs = _capture_launch_inputs(
+    inputs, _ = _capture_launch_inputs(
         cfg,
         get_model_family_entry("sd3_5"),
     )
@@ -219,7 +229,7 @@ def test_sana_launch_contract_carries_parameter_and_rollout_precision() -> None:
         ],
     )
 
-    inputs = _capture_launch_inputs(
+    inputs, _ = _capture_launch_inputs(
         cfg,
         get_model_family_entry("sana"),
     )
@@ -255,7 +265,7 @@ def test_sana_fp8_rollout_keeps_native_policy_and_bf16_prompt_encoder() -> None:
     )
     cfg.precision.rollout.quantization = {"format": "fp8"}
 
-    inputs = _capture_launch_inputs(
+    inputs, _ = _capture_launch_inputs(
         cfg,
         get_model_family_entry("sana"),
     )
@@ -290,7 +300,7 @@ def test_generation_chunk_auto_reaches_ray_runtime_without_executor_coercion() -
         ],
     )
 
-    inputs = _capture_launch_inputs(
+    inputs, _ = _capture_launch_inputs(
         cfg,
         get_model_family_entry("sd3_5"),
     )
@@ -335,7 +345,7 @@ def test_model_torch_compile_applies_to_all_diffusion_rollout_families(
     )
     entry = get_model_family_entry(family)
 
-    inputs = _capture_launch_inputs(
+    inputs, _ = _capture_launch_inputs(
         cfg,
         entry,
     )
@@ -363,7 +373,7 @@ def test_executor_kwargs_use_configured_chunk_size() -> None:
         ],
     )
 
-    inputs = _capture_launch_inputs(
+    inputs, _ = _capture_launch_inputs(
         cfg,
         get_model_family_entry("sd3_5"),
     )

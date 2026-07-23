@@ -1,7 +1,7 @@
 """Training strategy seam: the boundary between the trainer and how it runs.
 
 The trainer drives the GRPO loop; *how* a step executes on the hardware —
-backward, grad clipping, and trainable-state export/load — goes through a
+backward, grad clipping, and checkpoint-state export/load — goes through a
 ``Strategy`` so the trainer never hard-codes single-process vs FSDP2.
 
 This readiness sprint ships only ``SingleProcessStrategy`` (current behavior
@@ -94,12 +94,36 @@ class Strategy(Protocol):
         """Clip gradients in place and return the pre-clip total norm."""
         ...
 
-    def export_trainable_state(self, bundle: Any) -> dict[str, dict[str, Any]]:
-        """Checkpoint-facing trainable state (nested by module name, CPU tensors)."""
+    def export_checkpoint_state(self, bundle: Any) -> dict[str, dict[str, Any]]:
+        """Checkpoint-owned state (nested by module name, detached CPU tensors)."""
         ...
 
     def export_rollout_state(self, bundle: Any) -> dict[str, Any]:
         """Rollout-facing flat trainable state (unwrapped, policy-facing keys)."""
+        ...
+
+    def load_checkpoint_state(
+        self,
+        bundle: Any,
+        state: dict[str, Any],
+        *,
+        strict: bool = True,
+    ) -> None:
+        """Load checkpoint-owned state back into the bundle."""
+        ...
+
+    def load_full_checkpoint_state(
+        self,
+        bundle: Any,
+        state: dict[str, Any],
+        *,
+        strict: bool = True,
+    ) -> None:
+        """Load a schema-v1 full-state root through the strategy boundary."""
+        ...
+
+    def export_trainable_state(self, bundle: Any) -> dict[str, dict[str, Any]]:
+        """Compatibility facade for the former checkpoint API name."""
         ...
 
     def load_trainable_state(
@@ -109,7 +133,7 @@ class Strategy(Protocol):
         *,
         strict: bool = True,
     ) -> None:
-        """Load a checkpoint-facing trainable state back into the bundle."""
+        """Compatibility facade for the former checkpoint API name."""
         ...
 
     def export_optimizer_state(
@@ -143,6 +167,10 @@ class Strategy(Protocol):
 
     def barrier(self) -> None:
         """Synchronize all training ranks (no-op for single process)."""
+        ...
+
+    def all_ranks_succeeded(self, succeeded: bool) -> bool:
+        """Agree whether rank-local work succeeded before a collective stage."""
         ...
 
     def shutdown(self, *, restore_parked: bool = True) -> None:
@@ -319,15 +347,42 @@ class SingleProcessStrategy(_TrainingStateParking, Strategy):
     ) -> float:
         return float(nn.utils.clip_grad_norm_(parameters, max_norm))
 
-    def export_trainable_state(self, bundle: Any) -> dict[str, dict[str, Any]]:
-        from vrl.trainers.checkpointing import export_trainable_state
+    def export_checkpoint_state(self, bundle: Any) -> dict[str, dict[str, Any]]:
+        from vrl.trainers.checkpointing import export_checkpoint_state
 
-        return export_trainable_state(bundle)
+        return export_checkpoint_state(bundle)
 
     def export_rollout_state(self, bundle: Any) -> dict[str, Any]:
         from vrl.trainers.weight_sync import build_trainable_state_sync_getter, to_cpu_snapshot
 
         return to_cpu_snapshot(build_trainable_state_sync_getter(bundle)())
+
+    def load_checkpoint_state(
+        self,
+        bundle: Any,
+        state: dict[str, Any],
+        *,
+        strict: bool = True,
+    ) -> None:
+        from vrl.trainers.checkpointing import load_checkpoint_state
+
+        load_checkpoint_state(bundle, state, strict=strict)
+
+    def load_full_checkpoint_state(
+        self,
+        bundle: Any,
+        state: dict[str, Any],
+        *,
+        strict: bool = True,
+    ) -> None:
+        from vrl.trainers.checkpointing import load_full_checkpoint_state
+
+        load_full_checkpoint_state(bundle, state, strict=strict)
+
+    def export_trainable_state(self, bundle: Any) -> dict[str, dict[str, Any]]:
+        """Compatibility facade; checkpoint callers use ``export_checkpoint_state``."""
+
+        return self.export_checkpoint_state(bundle)
 
     def load_trainable_state(
         self,
@@ -336,9 +391,9 @@ class SingleProcessStrategy(_TrainingStateParking, Strategy):
         *,
         strict: bool = True,
     ) -> None:
-        from vrl.trainers.checkpointing import load_trainable_state
+        """Compatibility facade; checkpoint callers use ``load_checkpoint_state``."""
 
-        load_trainable_state(bundle, state, strict=strict)
+        self.load_checkpoint_state(bundle, state, strict=strict)
 
     def export_optimizer_state(
         self,
@@ -359,6 +414,9 @@ class SingleProcessStrategy(_TrainingStateParking, Strategy):
 
     def barrier(self) -> None:
         return None
+
+    def all_ranks_succeeded(self, succeeded: bool) -> bool:
+        return succeeded
 
     def shutdown(self, *, restore_parked: bool = True) -> None:
         if self._parked_training_state is not None and restore_parked:
@@ -650,28 +708,83 @@ class FSDPStrategy(_TrainingStateParking, Strategy):
             gradient.mul_(clip_coefficient)
         return total_norm
 
-    def export_trainable_state(self, bundle: Any) -> dict[str, dict[str, Any]]:
-        from vrl.trainers.fsdp import gather_trainable_state_dict
+    def export_checkpoint_state(self, bundle: Any) -> dict[str, dict[str, Any]]:
+        from vrl.trainers.fsdp import gather_checkpoint_state_dict
         from vrl.trainers.weight_sync import require_trainable_modules, unwrap_compile_and_ddp
 
         modules = require_trainable_modules(bundle)
         return {
-            name: gather_trainable_state_dict(unwrap_compile_and_ddp(module))
+            name: gather_checkpoint_state_dict(unwrap_compile_and_ddp(module))
             for name, module in modules.items()
         }
 
     def export_rollout_state(self, bundle: Any) -> dict[str, Any]:
-        from vrl.trainers.fsdp import gather_trainable_state_dict
+        from vrl.trainers.fsdp import gather_rollout_state_dict
         from vrl.trainers.weight_sync import require_trainable_modules, unwrap_compile_and_ddp
 
         modules = require_trainable_modules(bundle)
         state: dict[str, Any] = {}
         for module_name, module in modules.items():
-            gathered = gather_trainable_state_dict(unwrap_compile_and_ddp(module))
+            gathered = gather_rollout_state_dict(unwrap_compile_and_ddp(module))
             state.update({f"{module_name}.{name}": value for name, value in gathered.items()})
         if not state:
             raise ValueError("trainable module state is empty")
         return state
+
+    def load_checkpoint_state(
+        self,
+        bundle: Any,
+        state: dict[str, Any],
+        *,
+        strict: bool = True,
+    ) -> None:
+        from vrl.trainers.fsdp import load_checkpoint_state_dict
+        from vrl.trainers.weight_sync import require_trainable_modules, unwrap_compile_and_ddp
+
+        modules = require_trainable_modules(bundle)
+        missing = sorted(set(modules) - set(state))
+        extra = sorted(set(state) - set(modules))
+        if strict and (missing or extra):
+            raise ValueError(
+                f"checkpoint module roots mismatch: missing={missing}, unexpected={extra}",
+            )
+        for name, module in modules.items():
+            if name in state:
+                load_checkpoint_state_dict(
+                    unwrap_compile_and_ddp(module),
+                    state[name],
+                    strict=strict,
+                )
+
+    def load_full_checkpoint_state(
+        self,
+        bundle: Any,
+        state: dict[str, Any],
+        *,
+        strict: bool = True,
+    ) -> None:
+        from vrl.trainers.fsdp import load_full_state_dict
+        from vrl.trainers.weight_sync import require_trainable_modules, unwrap_compile_and_ddp
+
+        modules = require_trainable_modules(bundle)
+        missing = sorted(set(modules) - set(state))
+        extra = sorted(set(state) - set(modules))
+        if strict and (missing or extra):
+            raise ValueError(
+                f"checkpoint module roots mismatch: missing={missing}, unexpected={extra}",
+            )
+        for name, module in modules.items():
+            if name in state:
+                load_full_state_dict(
+                    unwrap_compile_and_ddp(module),
+                    state[name],
+                    strict=strict,
+                )
+
+    def export_trainable_state(self, bundle: Any) -> dict[str, dict[str, Any]]:
+        """Compatibility facade; checkpoint callers use ``export_checkpoint_state``."""
+
+        return self.export_checkpoint_state(bundle)
 
     def load_trainable_state(
         self,
@@ -680,23 +793,9 @@ class FSDPStrategy(_TrainingStateParking, Strategy):
         *,
         strict: bool = True,
     ) -> None:
-        from vrl.trainers.fsdp import load_trainable_state_dict
-        from vrl.trainers.weight_sync import require_trainable_modules, unwrap_compile_and_ddp
+        """Compatibility facade; checkpoint callers use ``load_checkpoint_state``."""
 
-        modules = require_trainable_modules(bundle)
-        missing = sorted(set(modules) - set(state))
-        extra = sorted(set(state) - set(modules))
-        if strict and (missing or extra):
-            raise ValueError(
-                f"checkpoint trainable module keys mismatch: missing={missing}, extra={extra}",
-            )
-        for name, module in modules.items():
-            if name in state:
-                load_trainable_state_dict(
-                    unwrap_compile_and_ddp(module),
-                    state[name],
-                    strict=strict,
-                )
+        self.load_checkpoint_state(bundle, state, strict=strict)
 
     def export_optimizer_state(
         self,
@@ -742,7 +841,7 @@ class FSDPStrategy(_TrainingStateParking, Strategy):
             self._park_training_state_locally(state)
         except BaseException as error:
             failure = error
-        if not self._all_ranks_succeeded(failure is None):
+        if not self.all_ranks_succeeded(failure is None):
             if failure is None:
                 # A peer failed while this rank parked cleanly. Undo locally so
                 # the whole world is resident again, and say why.
@@ -758,19 +857,10 @@ class FSDPStrategy(_TrainingStateParking, Strategy):
     def restore_training_state(self, state: TrainingMemoryState) -> None:
         _TrainingStateParking.restore_training_state(self, state)
 
-    def _all_ranks_succeeded(self, ok: bool) -> bool:
+    def all_ranks_succeeded(self, succeeded: bool) -> bool:
         """Reduce a per-rank success flag to one answer shared by every rank."""
 
-        import torch.distributed as dist
-
-        if not dist.is_initialized():
-            return ok
-        flag = torch.tensor(
-            [1 if ok else 0],
-            device=self.context.device if self.context.device.type == "cuda" else None,
-        )
-        dist.all_reduce(flag, op=dist.ReduceOp.MIN)
-        return bool(flag.item())
+        return _distributed_all_ranks_succeeded(self.context, succeeded)
 
     def barrier(self) -> None:
         import torch.distributed as dist
@@ -867,18 +957,15 @@ class DDPStrategy(Strategy):
         # module, so select_trainable_state() then reports every lora_A/lora_B param
         # "missing" and the first weight sync raises. The ws=1 CPU test never hit that
         # path (gather is a no-op at ws=1); the real 2x1 NCCL run did. Callers perform
-        # their own CPU conversion: checkpoint export uses ``to_cpu`` and rollout
-        # export uses the stronger non-aliasing ``to_cpu_snapshot`` contract.
+        # Rollout export performs its own non-aliasing CPU snapshot after selecting
+        # the requires-grad policy keys.
         full = {key: value.detach() for key, value in inner.state_dict().items()}
         return inner, full
 
-    def export_trainable_state(self, bundle: Any) -> dict[str, dict[str, Any]]:
-        from vrl.trainers.weight_sync import require_trainable_modules, to_cpu
+    def export_checkpoint_state(self, bundle: Any) -> dict[str, dict[str, Any]]:
+        from vrl.trainers.checkpointing import export_checkpoint_state
 
-        modules = require_trainable_modules(bundle)
-        return {
-            name: to_cpu(self._unwrapped_full_state(module)[1]) for name, module in modules.items()
-        }
+        return export_checkpoint_state(bundle)
 
     def export_rollout_state(self, bundle: Any) -> dict[str, Any]:
         from vrl.trainers.weight_sync import (
@@ -896,6 +983,33 @@ class DDPStrategy(Strategy):
             raise ValueError("trainable module state is empty")
         return to_cpu_snapshot(state)
 
+    def load_checkpoint_state(
+        self,
+        bundle: Any,
+        state: dict[str, Any],
+        *,
+        strict: bool = True,
+    ) -> None:
+        from vrl.trainers.checkpointing import load_checkpoint_state
+
+        load_checkpoint_state(bundle, state, strict=strict)
+
+    def load_full_checkpoint_state(
+        self,
+        bundle: Any,
+        state: dict[str, Any],
+        *,
+        strict: bool = True,
+    ) -> None:
+        from vrl.trainers.checkpointing import load_full_checkpoint_state
+
+        load_full_checkpoint_state(bundle, state, strict=strict)
+
+    def export_trainable_state(self, bundle: Any) -> dict[str, dict[str, Any]]:
+        """Compatibility facade; checkpoint callers use ``export_checkpoint_state``."""
+
+        return self.export_checkpoint_state(bundle)
+
     def load_trainable_state(
         self,
         bundle: Any,
@@ -903,23 +1017,9 @@ class DDPStrategy(Strategy):
         *,
         strict: bool = True,
     ) -> None:
-        from vrl.trainers.fsdp import load_full_state_dict
-        from vrl.trainers.weight_sync import require_trainable_modules, unwrap_compile_and_ddp
+        """Compatibility facade; checkpoint callers use ``load_checkpoint_state``."""
 
-        modules = require_trainable_modules(bundle)
-        missing = sorted(set(modules) - set(state))
-        extra = sorted(set(state) - set(modules))
-        if strict and (missing or extra):
-            raise ValueError(
-                f"checkpoint trainable module keys mismatch: missing={missing}, extra={extra}",
-            )
-        for name, module in modules.items():
-            if name in state:
-                load_full_state_dict(
-                    unwrap_compile_and_ddp(module),
-                    state[name],
-                    strict=strict,
-                )
+        self.load_checkpoint_state(bundle, state, strict=strict)
 
     def export_optimizer_state(
         self,
@@ -958,6 +1058,11 @@ class DDPStrategy(Strategy):
 
         if dist.is_initialized():
             dist.barrier()
+
+    def all_ranks_succeeded(self, succeeded: bool) -> bool:
+        """Reduce checkpoint-stage success across replicated trainer ranks."""
+
+        return _distributed_all_ranks_succeeded(self.context, succeeded)
 
     def shutdown(self, *, restore_parked: bool = True) -> None:
         del restore_parked
@@ -1046,6 +1151,24 @@ def _single_process_context() -> DistributedTrainingContext:
         world_size=1,
         device=torch.device("cpu"),
     )
+
+
+def _distributed_all_ranks_succeeded(
+    context: DistributedTrainingContext,
+    succeeded: bool,
+) -> bool:
+    """Reduce one rank-local outcome through the strategy process group."""
+
+    import torch.distributed as dist
+
+    if not dist.is_initialized():
+        return succeeded
+    flag = torch.tensor(
+        [1 if succeeded else 0],
+        device=context.device if context.device.type == "cuda" else None,
+    )
+    dist.all_reduce(flag, op=dist.ReduceOp.MIN)
+    return bool(flag.item())
 
 
 __all__ = [

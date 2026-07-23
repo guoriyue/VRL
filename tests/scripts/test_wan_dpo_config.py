@@ -194,6 +194,8 @@ def test_offline_dpo_rejects_non_t2v_wan_family_before_runtime_side_effects(
 ) -> None:
     cfg = load_config("experiment/wan_2_1/offline_dpo_pickapic")
     cfg.model.family = family
+    if family == "sd3_5":
+        del cfg.sampling.num_frames
     calls: list[str] = []
 
     import vrl.families.registry as registry
@@ -284,9 +286,15 @@ def test_offline_dpo_uses_shared_gradient_checkpointing_policy(
             return bundle
 
     import vrl.families.registry as registry
+    import vrl.models.checkpoint_identity as checkpoint_identity
     import vrl.ray.resources as ray_resources
 
     monkeypatch.setattr(registry, "get_model_family_entry", lambda _family: _Entry())
+    monkeypatch.setattr(
+        checkpoint_identity,
+        "resolve_checkpoint_model_identity",
+        lambda _build: {"schema": "test"},
+    )
     monkeypatch.setattr(ray_resources, "resolve_distributed_resources", lambda _cfg: object())
     monkeypatch.setattr(ray_resources, "format_distributed_resource_plan", lambda _plan: "")
     monkeypatch.setattr(ray_resources, "trainer_torch_device", lambda _plan: "cpu")

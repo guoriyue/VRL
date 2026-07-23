@@ -150,6 +150,7 @@ def train_wan_2_1_dpo(cfg: DictConfig) -> None:
     from vrl.algorithms.dpo import DiffusionDPOConfig
     from vrl.config.validation import optional_none, require
     from vrl.families.registry import get_model_family_entry
+    from vrl.models.checkpoint_identity import resolve_checkpoint_model_identity
     from vrl.models.dtypes import resolve_torch_dtype
     from vrl.ray.resources import (
         format_distributed_resource_plan,
@@ -159,6 +160,7 @@ def train_wan_2_1_dpo(cfg: DictConfig) -> None:
     from vrl.trainers.activation_checkpointing import enable_transformer_gradient_checkpointing
     from vrl.trainers.checkpointing import (
         LORA_WEIGHTS_NAME,
+        AdapterExport,
         capture_rng_state,
         load_training_checkpoint_for_resume,
         prepare_metrics_csv,
@@ -166,6 +168,7 @@ def train_wan_2_1_dpo(cfg: DictConfig) -> None:
         restore_training_checkpoint,
         save_resolved_config,
         save_training_checkpoint,
+        validate_checkpoint_compatibility,
     )
     from vrl.trainers.data import collate_preference, load_pickapic
     from vrl.trainers.offline import (
@@ -210,7 +213,20 @@ def train_wan_2_1_dpo(cfg: DictConfig) -> None:
         for_rollout=True,
         precision_role="training",
     )
+    model_identity = resolve_checkpoint_model_identity(build)
+    validate_checkpoint_compatibility(
+        resume_checkpoint,
+        family=family,
+        expected_model_identity=model_identity,
+        strict=resume_config.strict,
+    )
     bundle = family_entry.build_rollout(build)
+    loaded_model_identity = resolve_checkpoint_model_identity(build)
+    if loaded_model_identity != model_identity:
+        raise RuntimeError(
+            "model checkpoint source changed during Wan DPO bundle construction; "
+            f"before={model_identity!r}, after={loaded_model_identity!r}",
+        )
     wan_model = bundle.model
     pipeline = bundle.raw_handle
     transformer = wan_model.transformer
@@ -276,6 +292,7 @@ def train_wan_2_1_dpo(cfg: DictConfig) -> None:
             trainer=trainer,
             bundle=bundle,
             family="wan_2_1",
+            expected_model_identity=model_identity,
             strict=resume_config.strict,
         )
         logger.info(
@@ -321,8 +338,8 @@ def train_wan_2_1_dpo(cfg: DictConfig) -> None:
 
     # LoRA-only checkpoints export the adapter weights; full fine-tunes export
     # nothing extra. The decision is fixed for the run, so resolve it once.
-    export_modules = (
-        {LORA_WEIGHTS_NAME: transformer}
+    adapter_exports = (
+        {LORA_WEIGHTS_NAME: AdapterExport(transformer)}
         if bool(require(cfg, "model.use_lora")) and hasattr(transformer, "save_pretrained")
         else None
     )
@@ -373,7 +390,8 @@ def train_wan_2_1_dpo(cfg: DictConfig) -> None:
                     "global_step": trainer.global_step,
                 },
                 rng_state=capture_rng_state(),
-                export_modules=export_modules,
+                adapter_exports=adapter_exports,
+                model_identity=model_identity,
             )
             logger.info("Saved checkpoint -> %s", ckpt)
 
@@ -391,7 +409,8 @@ def train_wan_2_1_dpo(cfg: DictConfig) -> None:
             "global_step": trainer.global_step,
         },
         rng_state=capture_rng_state(),
-        export_modules=export_modules,
+        adapter_exports=adapter_exports,
+        model_identity=model_identity,
     )
     logger.info("Final checkpoint -> %s", final_path)
     logger.info("DPO training complete.")

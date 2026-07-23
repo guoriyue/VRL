@@ -84,6 +84,7 @@ def _build_tiny_rollout(_entry: Any, build: ModelBuild) -> RuntimeBundle:
 
 def _install_tiny_family(monkeypatch: pytest.MonkeyPatch) -> None:
     import vrl.families.registry as registry
+    import vrl.models.checkpoint_identity as checkpoint_identity
 
     entry = registry.FAMILY_REGISTRY["janus_pro"]
     monkeypatch.setitem(
@@ -99,6 +100,11 @@ def _install_tiny_family(monkeypatch: pytest.MonkeyPatch) -> None:
         "build_rollout",
         _build_tiny_rollout,
     )
+    monkeypatch.setattr(
+        checkpoint_identity,
+        "resolve_checkpoint_model_identity",
+        lambda _build: {"schema": "test"},
+    )
 
 
 def _launch_contract() -> GenerationRuntimeLaunchContract:
@@ -106,6 +112,7 @@ def _launch_contract() -> GenerationRuntimeLaunchContract:
         family="janus_pro",
         model_build={
             "model_name_or_path": "unit-test",
+            "revision": None,
             "device": "cpu",
             "parameter_dtype": "float16",
             "precision": {
@@ -119,6 +126,7 @@ def _launch_contract() -> GenerationRuntimeLaunchContract:
                 "base_weight_sync": False,
             },
         },
+        expected_model_identity={"schema": "test"},
         policy_version=1,
     )
 

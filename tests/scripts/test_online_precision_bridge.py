@@ -229,10 +229,11 @@ def test_online_metrics_csv_includes_logprob_mismatch_metrics(tmp_path):
         strategy=SimpleNamespace(),
         family="sd3_5",
         component_names=(),
-        export_modules=None,
+        adapter_exports=None,
         csv_path=csv_path,
         rng=None,
         resume_epoch=None,
+        model_identity={"schema": "test"},
     )
     run.prepare_metrics_csv()
     run.write_metric_row(

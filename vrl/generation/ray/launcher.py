@@ -207,6 +207,7 @@ class RayGenerationLauncher:
         config: RayGenerationConfig,
         entry: Any,
         driver_bundle: Any,
+        expected_model_identity: dict[str, Any],
         placement: RolePlacement,
     ) -> GenerationRuntime:
         """Build launch inputs from config and launch one resolved Ray runtime."""
@@ -238,6 +239,15 @@ class RayGenerationLauncher:
                 f"{entry.family} does not support torch compile but "
                 "model.torch_compile.enable is set",
             )
+        from vrl.models.checkpoint_identity import resolve_checkpoint_model_identity
+
+        rollout_model_identity = resolve_checkpoint_model_identity(build)
+        if rollout_model_identity != expected_model_identity:
+            raise ValueError(
+                "rollout model identity does not match the driver replay model "
+                "identity before Ray worker launch: "
+                f"replay={expected_model_identity!r}, rollout={rollout_model_identity!r}",
+            )
         schedule_mode = str(
             cfg_path(
                 root,
@@ -249,6 +259,7 @@ class RayGenerationLauncher:
             launch_contract=GenerationRuntimeLaunchContract(
                 family=entry.family,
                 model_build=_model_build_payload(build),
+                expected_model_identity=expected_model_identity,
                 executor_kwargs=build_executor_kwargs(entry, root),
                 policy_version=0,
                 torch_profiler=_runtime_profiler(root),

@@ -39,10 +39,14 @@ class _Bundle:
     trainable_modules: dict[str, Any]
 
 
+_TEST_MODEL_IDENTITY = {"schema": "test"}
+
+
 def test_launch_contract_rejects_unknown_fields_at_typed_boundary() -> None:
     payload = {
         "family": "unit",
         "model_build": {},
+        "expected_model_identity": _TEST_MODEL_IDENTITY,
         "executor": object(),
     }
 
@@ -63,11 +67,13 @@ def test_launch_contract_accepts_primitive_config_leaves() -> None:
                 "optional": None,
             },
         },
+        expected_model_identity=_TEST_MODEL_IDENTITY,
     )
 
     model_config = contract.model_build["model_config"]
     assert model_config["enabled"] is True
     assert model_config["optional"] is None
+    assert contract.expected_model_identity == _TEST_MODEL_IDENTITY
 
 
 def test_launch_contract_rejects_callable_config_leaf() -> None:
@@ -75,6 +81,7 @@ def test_launch_contract_rejects_callable_config_leaf() -> None:
         GenerationRuntimeLaunchContract(
             family="unit",
             model_build={},
+            expected_model_identity=_TEST_MODEL_IDENTITY,
             executor_kwargs={"factory": lambda: None},
         )
 
@@ -84,6 +91,16 @@ def test_launch_contract_rejects_empty_registry_identity() -> None:
         GenerationRuntimeLaunchContract(
             family="",
             model_build={},
+            expected_model_identity=_TEST_MODEL_IDENTITY,
+        )
+
+
+def test_launch_contract_rejects_empty_model_identity() -> None:
+    with pytest.raises(ValueError, match=r"expected_model_identity must be non-empty"):
+        GenerationRuntimeLaunchContract(
+            family="unit",
+            model_build={},
+            expected_model_identity={},
         )
 
 
@@ -221,13 +238,20 @@ def _capture_launch_inputs(
         captured.append(launch_inputs)
         return launch_inputs
 
-    with patch.object(RayGenerationLauncher, "launch", new=capture_launch):
+    with (
+        patch.object(RayGenerationLauncher, "launch", new=capture_launch),
+        patch(
+            "vrl.models.checkpoint_identity.resolve_checkpoint_model_identity",
+            return_value=_TEST_MODEL_IDENTITY,
+        ) as resolve_identity,
+    ):
         result = RayGenerationLauncher(init_ray=False).launch_from_cfg(
             root,
             precision=precision,
             config=config,
             entry=entry,
             driver_bundle=_Bundle(model=_CpuPolicy(), trainable_modules={}),
+            expected_model_identity=_TEST_MODEL_IDENTITY,
             placement=RolePlacement(
                 placement_group=object(),
                 bundle_indices=(),
@@ -236,6 +260,7 @@ def _capture_launch_inputs(
         )
 
     assert captured == [result]
+    resolve_identity.assert_called_once()
     return captured[0]
 
 
@@ -369,6 +394,7 @@ def test_launcher_capability_failure_kills_candidate_actor_group(
         launch_contract=GenerationRuntimeLaunchContract(
             family=entry.family,
             model_build={},
+            expected_model_identity=_TEST_MODEL_IDENTITY,
         ),
         gatherer=entry.new_gatherer(),
     )
@@ -513,6 +539,7 @@ def test_placement_and_launcher_consume_the_same_worker_snapshot(monkeypatch) ->
             launch_contract=GenerationRuntimeLaunchContract(
                 family=entry.family,
                 model_build={},
+                expected_model_identity=_TEST_MODEL_IDENTITY,
             ),
             gatherer=entry.new_gatherer(),
         ),
@@ -607,6 +634,7 @@ def test_pipelined_rejects_multiple_placement_bundles_before_ray_start(
         launch_contract=GenerationRuntimeLaunchContract(
             family=entry.family,
             model_build={},
+            expected_model_identity=_TEST_MODEL_IDENTITY,
         ),
         gatherer=entry.new_gatherer(),
     )
@@ -649,6 +677,7 @@ def test_launch_from_cfg_projects_model_compile_and_precision() -> None:
 
     model_build = launch_inputs.launch_contract.model_build
     assert launch_inputs.launch_contract.family == "sd3_5"
+    assert launch_inputs.launch_contract.expected_model_identity == _TEST_MODEL_IDENTITY
     assert "family" not in model_build
     assert model_build["device"] == "cpu"
     assert model_build["parameter_dtype"] == "float32"
@@ -665,6 +694,46 @@ def test_launch_from_cfg_projects_model_compile_and_precision() -> None:
         "enable": True,
         "mode": "default",
     }
+
+
+def test_launch_from_cfg_rejects_rollout_identity_mismatch_before_ray_launch() -> None:
+    cfg = _launch_cfg()
+    root = parse_config(cfg)
+    precision = resolve_precision_policy(root)
+    launched = False
+
+    def fail_if_launched(*args: Any, **kwargs: Any) -> None:
+        del args, kwargs
+        nonlocal launched
+        launched = True
+        raise AssertionError("Ray launch must not run after driver identity mismatch")
+
+    with (
+        patch.object(RayGenerationLauncher, "launch", new=fail_if_launched),
+        patch(
+            "vrl.models.checkpoint_identity.resolve_checkpoint_model_identity",
+            return_value={"schema": "different"},
+        ),
+        pytest.raises(
+            ValueError,
+            match="rollout model identity does not match the driver replay model identity",
+        ),
+    ):
+        RayGenerationLauncher(init_ray=False).launch_from_cfg(
+            root,
+            precision=precision,
+            config=_ray_config(cfg),
+            entry=get_model_family_entry("sd3_5"),
+            driver_bundle=_Bundle(model=_CpuPolicy(), trainable_modules={}),
+            expected_model_identity=_TEST_MODEL_IDENTITY,
+            placement=RolePlacement(
+                placement_group=object(),
+                bundle_indices=(),
+                expected_gpu_ids=(),
+            ),
+        )
+
+    assert launched is False
 
 
 def test_launch_from_cfg_preserves_disabled_model_compile_config() -> None:
@@ -760,6 +829,7 @@ def test_launch_from_cfg_rejects_model_compile_for_ar_family() -> None:
             config=_ray_config(cfg),
             entry=get_model_family_entry("janus_pro"),
             driver_bundle=_Bundle(model=_CpuPolicy(), trainable_modules={}),
+            expected_model_identity=_TEST_MODEL_IDENTITY,
             placement=RolePlacement(
                 placement_group=object(),
                 bundle_indices=(),

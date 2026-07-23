@@ -160,6 +160,7 @@ def _launch_contract(*, policy_version: int = 0) -> GenerationRuntimeLaunchContr
     return GenerationRuntimeLaunchContract(
         family="sd3_5",
         model_build={},
+        expected_model_identity={"schema": "test"},
         policy_version=policy_version,
     )
 

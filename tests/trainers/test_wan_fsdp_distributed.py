@@ -235,9 +235,9 @@ def _run_rank(
             lr=1e-2,
         )
 
-        before = strategy.export_trainable_state(_bundle(policy))
+        before = strategy.export_checkpoint_state(_bundle(policy))
         grad_norm = _train_once(policy, strategy, optimizer)
-        after = strategy.export_trainable_state(_bundle(policy))
+        after = strategy.export_checkpoint_state(_bundle(policy))
         optimizer_state = strategy.export_optimizer_state(policy, optimizer)
 
         adapter_state = after["transformer"]
@@ -249,7 +249,7 @@ def _run_rank(
 
         if rank == 0:
             torch.save(
-                {"trainable": after, "optimizer": optimizer_state},
+                {"checkpoint": after, "optimizer": optimizer_state},
                 checkpoint_path,
             )
         dist.barrier()
@@ -260,9 +260,9 @@ def _run_rank(
             [parameter for parameter in resumed.parameters() if parameter.requires_grad],
             lr=1e-2,
         )
-        strategy.load_trainable_state(_bundle(resumed), checkpoint["trainable"], strict=True)
+        strategy.load_checkpoint_state(_bundle(resumed), checkpoint["checkpoint"], strict=True)
         strategy.load_optimizer_state(resumed, resumed_optimizer, checkpoint["optimizer"])
-        restored = strategy.export_trainable_state(_bundle(resumed))
+        restored = strategy.export_checkpoint_state(_bundle(resumed))
         resume_matches = all(
             torch.equal(value, restored["transformer"][key])
             for key, value in after["transformer"].items()
@@ -270,7 +270,7 @@ def _run_rank(
 
         resumed_before = restored
         resumed_grad_norm = _train_once(resumed, strategy, resumed_optimizer)
-        resumed_after = strategy.export_trainable_state(_bundle(resumed))
+        resumed_after = strategy.export_checkpoint_state(_bundle(resumed))
         continued = any(
             not torch.equal(value, resumed_after["transformer"][key])
             for key, value in resumed_before["transformer"].items()
@@ -356,7 +356,7 @@ def _run_dual_rank(
             lr=1e-2,
         )
 
-        before = strategy.export_trainable_state(_bundle(policy))
+        before = strategy.export_checkpoint_state(_bundle(policy))
         high_grad = _train_once(
             policy,
             strategy,
@@ -364,7 +364,7 @@ def _run_dual_rank(
             timestep=750.0,
             boundary_ratio=0.5,
         )
-        after_high = strategy.export_trainable_state(_bundle(policy))
+        after_high = strategy.export_checkpoint_state(_bundle(policy))
         high_only = _module_changed(before, after_high, "transformer") and not _module_changed(
             before,
             after_high,
@@ -378,7 +378,7 @@ def _run_dual_rank(
             timestep=250.0,
             boundary_ratio=0.5,
         )
-        after_low = strategy.export_trainable_state(_bundle(policy))
+        after_low = strategy.export_checkpoint_state(_bundle(policy))
         low_only = _module_changed(
             after_high,
             after_low,
@@ -392,7 +392,7 @@ def _run_dual_rank(
 
         if rank == 0:
             torch.save(
-                {"trainable": after_low, "optimizer": optimizer_state},
+                {"checkpoint": after_low, "optimizer": optimizer_state},
                 checkpoint_path,
             )
         dist.barrier()
@@ -403,9 +403,9 @@ def _run_dual_rank(
             [parameter for parameter in resumed.parameters() if parameter.requires_grad],
             lr=1e-2,
         )
-        strategy.load_trainable_state(_bundle(resumed), checkpoint["trainable"], strict=True)
+        strategy.load_checkpoint_state(_bundle(resumed), checkpoint["checkpoint"], strict=True)
         strategy.load_optimizer_state(resumed, resumed_optimizer, checkpoint["optimizer"])
-        restored = strategy.export_trainable_state(_bundle(resumed))
+        restored = strategy.export_checkpoint_state(_bundle(resumed))
         restored_optimizer = strategy.export_optimizer_state(resumed, resumed_optimizer)
         queue.put(
             (
@@ -495,9 +495,9 @@ def _run_cuda_rank(rank: int, world_size: int, port: int, queue: mp.Queue) -> No
             [parameter for parameter in policy.parameters() if parameter.requires_grad],
             lr=1e-2,
         )
-        before = strategy.export_trainable_state(_bundle(policy))
+        before = strategy.export_checkpoint_state(_bundle(policy))
         grad_norm = _train_once(policy, strategy, optimizer, device=device)
-        after = strategy.export_trainable_state(_bundle(policy))
+        after = strategy.export_checkpoint_state(_bundle(policy))
         changed = any(
             not torch.equal(value, after["transformer"][key])
             for key, value in before["transformer"].items()
