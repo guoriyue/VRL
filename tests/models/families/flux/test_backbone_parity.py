@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
+import pytest
 import torch
 
 from tests.models.steps.denoise.fixtures import (
@@ -75,6 +76,34 @@ def test_flux_forward_step_runs_single_distilled_branch() -> None:
     assert calls[0]["guidance"] is not None
     torch.testing.assert_close(calls[0]["guidance"], torch.full((2,), 3.5))
     assert out["noise_pred"].shape == (2, _SEQ, TINY_FLUX_IN_CHANNELS)
+
+
+@pytest.mark.parametrize("negative_prompt", [None, "", []])
+def test_flux_encode_prompt_accepts_only_empty_negative_conditioning(
+    negative_prompt: str | list[str] | None,
+) -> None:
+    transformer = build_tiny_flux_transformer(guidance_embeds=True)
+    model = _model(transformer)
+    model.pipeline.encode_prompt = lambda **_kwargs: (
+        torch.zeros(1, _TEXT_LEN, TINY_FLUX_JOINT_DIM),
+        torch.zeros(1, TINY_FLUX_POOLED_DIM),
+        torch.zeros(_TEXT_LEN, 3),
+    )
+
+    encoded = model.encode_prompt("a cat", negative_prompt=negative_prompt)
+
+    assert set(encoded) == {"prompt_embeds", "pooled_prompt_embeds", "text_ids"}
+
+
+@pytest.mark.parametrize("negative_prompt", ["low quality", ["low quality"]])
+def test_flux_encode_prompt_rejects_non_empty_negative_conditioning(
+    negative_prompt: str | list[str],
+) -> None:
+    transformer = build_tiny_flux_transformer(guidance_embeds=True)
+    model = _model(transformer)
+
+    with pytest.raises(ValueError, match="does not support negative prompts"):
+        model.encode_prompt("a cat", negative_prompt=negative_prompt)
 
 
 def test_flux_forward_step_omits_guidance_when_not_distilled() -> None:

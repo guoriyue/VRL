@@ -34,7 +34,13 @@ import torch
 import torch.nn as nn
 
 from vrl.models.dtypes import resolve_torch_dtype
-from vrl.models.interfaces import ReplayRequest, ReplayResult, ReplaySegmentResult
+from vrl.models.interfaces import (
+    ReplayRequest,
+    ReplayResult,
+    ReplaySegmentResult,
+    require_replay_segments,
+    require_zero_replay_timestep,
+)
 from vrl.models.steps.token.base import ARModelBase, ARReplayRolloutStubs
 from vrl.utils.logging import init_logger
 
@@ -388,9 +394,14 @@ class LlamaGenModel(ARModelBase):
         Reads T5 prompt ids/mask and sampled image tokens from
         ``batch.trajectory``, re-encodes the caption with the frozen T5 (so
         the conditioning is identical to rollout), and recomputes logits under
-        the current model. AR has no denoising step: ``timestep_idx`` ignored.
+        the current model. AR has no denoising step, so only index zero is valid.
         """
-        del request, timestep_idx
+        require_zero_replay_timestep(timestep_idx, owner=type(self).__name__)
+        require_replay_segments(
+            request,
+            ("image_tokens",),
+            owner=type(self).__name__,
+        )
         from vrl.trajectory import TrajectoryResolver
 
         resolver = TrajectoryResolver.from_batch(batch)

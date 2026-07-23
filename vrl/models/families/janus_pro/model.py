@@ -47,7 +47,13 @@ import torch.nn.functional as F
 from vrl.math.token.logprob import require_positive_temperature
 from vrl.models.dtypes import resolve_torch_dtype
 from vrl.models.families.janus_pro import JANUS_R1_SEGMENTS
-from vrl.models.interfaces import ReplayRequest, ReplayResult, ReplaySegmentResult
+from vrl.models.interfaces import (
+    ReplayRequest,
+    ReplayResult,
+    ReplaySegmentResult,
+    require_replay_segments,
+    require_zero_replay_timestep,
+)
 from vrl.models.steps.token.base import ARModelBase, ARReplayRolloutStubs
 from vrl.trajectory import role_tensor
 from vrl.utils.logging import init_logger
@@ -405,7 +411,7 @@ class JanusProModel(ARModelBase):
         tokens from ``batch.trajectory`` and recompute logits under the current
         model.
 
-        AR has no notion of "denoising step", so ``timestep_idx`` is ignored.
+        AR has no notion of a denoising step, so only index zero is valid.
 
         See ``vrl/models/interfaces/replay.py::ReplayModel`` for the shared
         trainer replay protocol.
@@ -413,7 +419,16 @@ class JanusProModel(ARModelBase):
         Returns:
           ``ReplayResult`` with one or more segment payloads.
         """
-        if request is not None and request.segment_names:
+        require_zero_replay_timestep(timestep_idx, owner=type(self).__name__)
+        requested_segments = None if request is None else request.segment_names
+        if requested_segments == ("image_tokens",):
+            requested_segments = None
+        if requested_segments is not None:
+            require_replay_segments(
+                request,
+                JANUS_R1_SEGMENTS,
+                owner=type(self).__name__,
+            )
             segments = {
                 name: ReplaySegmentResult(
                     segment=name,
@@ -421,7 +436,7 @@ class JanusProModel(ARModelBase):
                         self._r1_segment_payload_from_trajectory(batch, name),
                     ),
                 )
-                for name in request.segment_names
+                for name in requested_segments
             }
             return ReplayResult(segments=segments)
 
@@ -983,9 +998,29 @@ class JanusProModel(ARModelBase):
 
         Returns shape ``[B, 3, image_size, image_size]``.
         """
+        if not isinstance(image_token_ids, torch.Tensor):
+            raise TypeError(
+                "Janus image_token_ids must be a torch.Tensor; "
+                f"got {type(image_token_ids).__name__}",
+            )
+        if image_token_ids.ndim != 2:
+            raise ValueError(
+                "Janus image_token_ids must have shape [batch, tokens]; "
+                f"got {tuple(image_token_ids.shape)}",
+            )
+        if not isinstance(image_size, int) or isinstance(image_size, bool):
+            raise TypeError(f"Janus image_size must be an int; got {type(image_size).__name__}")
         B, L = image_token_ids.shape
         side = int(L**0.5)
-        assert side * side == L, f"expected square grid, got L_img={L}"
+        if side * side != L:
+            raise ValueError(f"expected square image-token grid, got L_img={L}")
+        expected_image_size = side * JANUS_IMAGE_PATCH_SIZE
+        if image_size != expected_image_size:
+            raise ValueError(
+                "Janus image_size does not match the image-token grid: "
+                f"requested {image_size}, expected {expected_image_size} "
+                f"from {side}x{side} tokens",
+            )
         # Janus' decode_code feeds shape[1] to the quantizer as the codebook-entry
         # dim, and it differs across Janus-Pro variants — resolve it from the LIVE
         # quantizer. Do NOT "align to upstream" by hardcoding `8` (upstream
@@ -1153,9 +1188,10 @@ def _load_janus_from_pretrained(config: JanusProConfig) -> tuple[Any, Any]:
         torch_dtype=dtype,
         revision=config.revision,
     )
-    assert isinstance(mmgpt, MultiModalityCausalLM), (
-        f"Loaded model {type(mmgpt).__name__} is not MultiModalityCausalLM"
-    )
+    if not isinstance(mmgpt, MultiModalityCausalLM):
+        raise TypeError(
+            f"Loaded model {type(mmgpt).__name__} is not MultiModalityCausalLM",
+        )
     mmgpt = mmgpt.to(device=config.device, dtype=dtype).eval()
     return mmgpt, processor
 

@@ -119,8 +119,11 @@ class EchoChunkExecutor(DiffusionChunkExecutorBase):
         params: DiffusionSamplingParams,
         chunk: SampleChunk,
     ) -> dict[str, Any]:
-        del generation_request, video_request, params
-        return self.model.encode_prompt(chunk.prompt)
+        del generation_request, params
+        return self.model.encode_prompt(
+            chunk.prompt,
+            video_request.negative_prompt or None,
+        )
 
 
 __all__ = [

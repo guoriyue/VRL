@@ -3,6 +3,7 @@ from __future__ import annotations
 import sys
 from types import SimpleNamespace
 
+import pytest
 import torch
 
 
@@ -75,3 +76,54 @@ def test_nextstep_rollout_preserves_an_unversioned_local_path(monkeypatch, tmp_p
         (str(tmp_path), None),
         ("stepfun-ai/NextStep-1-f8ch16-Tokenizer", None),
     ]
+
+
+def _decode_only_model(*, decoded_size: int):
+    from vrl.models.families.nextstep_1.model import NextStep1Model
+
+    model = object.__new__(NextStep1Model)
+    torch.nn.Module.__init__(model)
+
+    class UpstreamModel:
+        @staticmethod
+        def unpatchify(tokens, *, h, w):
+            return torch.zeros(tokens.shape[0], 4, h, w)
+
+    class VAE:
+        dtype = torch.float32
+
+        @staticmethod
+        def decode(latent):
+            return SimpleNamespace(
+                sample=torch.zeros(latent.shape[0], 3, decoded_size, decoded_size),
+            )
+
+    object.__setattr__(
+        model,
+        "_pipeline",
+        SimpleNamespace(
+            model=UpstreamModel(),
+            scaling_factor=1.0,
+            shift_factor=0.0,
+        ),
+    )
+    model.vae = VAE()
+    return model
+
+
+def test_nextstep_decode_enforces_requested_geometry() -> None:
+    model = _decode_only_model(decoded_size=32)
+    tokens = torch.zeros(2, 4, 8)
+
+    decoded = model.decode_image_tokens(tokens, image_size=32)
+
+    assert decoded.shape == (2, 3, 32, 32)
+    with pytest.raises(ValueError, match="requested 64x64, decoded 32x32"):
+        model.decode_image_tokens(tokens, image_size=64)
+
+
+def test_nextstep_decode_rejects_non_square_token_grid() -> None:
+    model = _decode_only_model(decoded_size=32)
+
+    with pytest.raises(ValueError, match="square grid"):
+        model.decode_image_tokens(torch.zeros(1, 3, 8), image_size=32)

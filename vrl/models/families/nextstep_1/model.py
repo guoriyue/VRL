@@ -37,7 +37,13 @@ from vrl.math.token.flow_matching import (
     flow_logprob_at,
 )
 from vrl.models.dtypes import resolve_torch_dtype
-from vrl.models.interfaces import ReplayRequest, ReplayResult, ReplaySegmentResult
+from vrl.models.interfaces import (
+    ReplayRequest,
+    ReplayResult,
+    ReplaySegmentResult,
+    require_replay_segments,
+    require_zero_replay_timestep,
+)
 from vrl.models.steps.token.base import ARModelBase, ARReplayRolloutStubs
 from vrl.utils.logging import init_logger
 
@@ -282,12 +288,17 @@ class NextStep1Model(ARModelBase):
         continuous tokens we go straight to log-probs since there is no
         codebook to softmax over.
 
-        AR has no notion of "denoising step", so ``timestep_idx`` is ignored.
+        AR has no notion of a denoising step, so only index zero is valid.
 
         Returns:
           ``ReplayResult`` with ``log_probs`` and ``tokens`` for ``image_tokens``.
         """
-        del request, timestep_idx
+        require_zero_replay_timestep(timestep_idx, owner=type(self).__name__)
+        require_replay_segments(
+            request,
+            ("image_tokens",),
+            owner=type(self).__name__,
+        )
         from vrl.trajectory import TrajectoryResolver
 
         resolver = TrajectoryResolver.from_batch(batch)
@@ -334,7 +345,6 @@ class NextStep1Model(ARModelBase):
         image_size: int | None = None,
     ) -> torch.Tensor:
         """Continuous tokens → pixels in ``[-1, 1]`` via the f8ch16 VAE."""
-        del image_size
         side = int(tokens.shape[1] ** 0.5)
         if side * side != tokens.shape[1]:
             raise ValueError(
@@ -344,6 +354,18 @@ class NextStep1Model(ARModelBase):
         latent = (latent / self._pipeline.scaling_factor) + self._pipeline.shift_factor
         decoded = self.vae.decode(latent.to(self.vae.dtype))
         pixels = decoded.sample if hasattr(decoded, "sample") else decoded[0]
+        if image_size is not None:
+            if not isinstance(image_size, int) or isinstance(image_size, bool):
+                raise TypeError(
+                    f"NextStep image_size must be an int; got {type(image_size).__name__}",
+                )
+            actual_size = tuple(int(value) for value in pixels.shape[-2:])
+            if actual_size != (image_size, image_size):
+                raise ValueError(
+                    "NextStep image_size does not match the VAE output: "
+                    f"requested {image_size}x{image_size}, "
+                    f"decoded {actual_size[0]}x{actual_size[1]}",
+                )
         return pixels.to(torch.float32)
 
     # ------------------------------------------------------------------

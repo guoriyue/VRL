@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
+import pytest
 import torch
 
 from tests.models.steps.denoise.fixtures import (
@@ -74,6 +75,38 @@ def test_hunyuan_video_forward_step_single_branch_with_scaled_guidance() -> None
     torch.testing.assert_close(out["noise_pred"], out["noise_pred_cond"])
     assert torch.all(out["noise_pred_uncond"] == 0)
     assert out["noise_pred"].shape == TINY_HUNYUAN_VIDEO_LATENT_SHAPE
+
+
+@pytest.mark.parametrize("negative_prompt", [None, "", []])
+def test_hunyuan_video_encode_prompt_accepts_only_empty_negative_conditioning(
+    negative_prompt: str | list[str] | None,
+) -> None:
+    transformer = build_tiny_hunyuan_video_transformer()
+    model = _model(transformer)
+    model.pipeline.encode_prompt = lambda **_kwargs: (
+        torch.zeros(1, _TEXT_LEN, TINY_HUNYUAN_VIDEO_TEXT_DIM),
+        torch.zeros(1, TINY_HUNYUAN_VIDEO_POOLED_DIM),
+        torch.ones(1, _TEXT_LEN, dtype=torch.long),
+    )
+
+    encoded = model.encode_prompt("a cat", negative_prompt=negative_prompt)
+
+    assert set(encoded) == {
+        "prompt_embeds",
+        "pooled_prompt_embeds",
+        "prompt_attention_mask",
+    }
+
+
+@pytest.mark.parametrize("negative_prompt", ["low quality", ["low quality"]])
+def test_hunyuan_video_encode_prompt_rejects_non_empty_negative_conditioning(
+    negative_prompt: str | list[str],
+) -> None:
+    transformer = build_tiny_hunyuan_video_transformer()
+    model = _model(transformer)
+
+    with pytest.raises(ValueError, match="does not support negative prompts"):
+        model.encode_prompt("a cat", negative_prompt=negative_prompt)
 
 
 def test_hunyuan_video_replay_roundtrip_restores_equivalent_state() -> None:

@@ -279,11 +279,11 @@ class FluxModel(LoraModelMixin, DiffusersPipelineModelBase, DiffusionBackboneRun
         """Encode prompt via FLUX's CLIP (pooled) + T5 (sequence) encoders.
 
         FLUX.1-dev is guidance-distilled, so there is no unconditional branch and
-        ``negative_prompt`` is ignored. Returns the T5 sequence embeds, the CLIP
-        pooled vector, and the batch-shared ``text_ids`` position grid (float32 —
-        rotary positions are computed in float).
+        negative prompts are unsupported. Returns the T5 sequence embeds, the
+        CLIP pooled vector, and the batch-shared ``text_ids`` position grid
+        (float32 — rotary positions are computed in float).
         """
-        del negative_prompt
+        self._reject_unsupported_negative_prompt(negative_prompt)
         max_seq = kwargs.get("max_sequence_length", 512)
         # The frozen encoders live on CPU (see from_build); run encode there, then
         # move the embeds onto the model/transformer device for the denoise forward.

@@ -9,6 +9,9 @@ encode/prepare/export/restore plumbing the shared diffusion executor drives.
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+
+import pytest
 import torch
 import torch.nn as nn
 from diffusers import FlowMatchEulerDiscreteScheduler
@@ -21,6 +24,7 @@ from vrl.models.families.echo.model import (
     EchoSamplingState,
     _sigma_from_timestep,
 )
+from vrl.models.families.echo.runtime import EchoChunkExecutor
 
 
 class _FakeEcho(nn.Module):
@@ -130,6 +134,40 @@ def test_encode_prompt_keeps_video_context_drops_audio() -> None:
     enc = model.encode_prompt("a dog")
     assert set(enc) == {"video_context", "attention_mask"}
     assert enc["video_context"].shape == (1, 3, 16)
+
+
+@pytest.mark.parametrize("negative_prompt", [None, "", []])
+def test_echo_encode_prompt_accepts_only_empty_negative_conditioning(
+    negative_prompt: str | list[str] | None,
+) -> None:
+    model, _ = _build_model()
+
+    encoded = model.encode_prompt("a dog", negative_prompt=negative_prompt)
+
+    assert set(encoded) == {"video_context", "attention_mask"}
+
+
+@pytest.mark.parametrize("negative_prompt", ["low quality", ["low quality"]])
+def test_echo_encode_prompt_rejects_non_empty_negative_conditioning(
+    negative_prompt: str | list[str],
+) -> None:
+    model, _ = _build_model()
+
+    with pytest.raises(ValueError, match="does not support negative prompts"):
+        model.encode_prompt("a dog", negative_prompt=negative_prompt)
+
+
+def test_echo_executor_forwards_negative_prompt_to_model_contract() -> None:
+    model, _ = _build_model()
+    executor = EchoChunkExecutor(model)
+
+    with pytest.raises(ValueError, match="does not support negative prompts"):
+        executor.encode_prompt_for_chunk(
+            generation_request=object(),
+            video_request=SimpleNamespace(negative_prompt="low quality"),
+            params=object(),
+            chunk=SimpleNamespace(prompt="a dog"),
+        )
 
 
 def test_prepare_sampling_builds_noise_latents_and_schedule() -> None:

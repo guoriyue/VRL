@@ -19,7 +19,12 @@ import torch
 import torch.nn as nn
 
 from vrl.generation.types import VideoGenerationRequest
-from vrl.models.interfaces import ReplayRequest, ReplayResult, ReplaySegmentResult
+from vrl.models.interfaces import (
+    ReplayRequest,
+    ReplayResult,
+    ReplaySegmentResult,
+    require_replay_segments,
+)
 from vrl.models.interfaces.runtime import ModelBuild
 from vrl.models.precision import model_autocast
 from vrl.models.utils import (
@@ -119,6 +124,15 @@ class DiffusionModelBase(nn.Module, ABC):
 
         return self.forward_step(state, step_idx)
 
+    def _reject_unsupported_negative_prompt(
+        self,
+        negative_prompt: str | list[str] | None,
+    ) -> None:
+        """Fail when a single-branch family receives ignored conditioning."""
+
+        if negative_prompt not in (None, "", []):
+            raise ValueError(f"{type(self).__name__} does not support negative prompts")
+
     @abstractmethod
     def decode_latents(self, latents: Any) -> Any:
         """Decode latents to a frame tensor."""
@@ -159,7 +173,11 @@ class DiffusionModelBase(nn.Module, ABC):
         request: ReplayRequest | None = None,
     ) -> ReplayResult:
         """Rebuild diffusion sampling state and run one replay forward."""
-        del request
+        require_replay_segments(
+            request,
+            ("denoise",),
+            owner=type(self).__name__,
+        )
         replay_tensors, batch_context, latents = self._replay_inputs_for_step(
             batch,
             timestep_idx,

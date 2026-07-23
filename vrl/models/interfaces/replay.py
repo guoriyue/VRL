@@ -137,6 +137,34 @@ class RuntimeModel(ReplayModel, Protocol):
         ...
 
 
+def require_replay_segments(
+    request: ReplayRequest | None,
+    supported_segments: tuple[str, ...],
+    *,
+    owner: str,
+) -> None:
+    """Reject an explicit segment selection the replay implementation cannot honor."""
+
+    if request is None or request.segment_names is None:
+        return
+    requested = request.segment_names
+    unsupported = tuple(name for name in requested if name not in supported_segments)
+    if requested and not unsupported:
+        return
+    raise ValueError(
+        f"{owner} replay supports segments {supported_segments!r}; got {requested!r}",
+    )
+
+
+def require_zero_replay_timestep(timestep_idx: int, *, owner: str) -> None:
+    """Reject denoise-step selection for a replay path with no timestep axis."""
+
+    if timestep_idx != 0:
+        raise ValueError(
+            f"{owner} replay has no timestep axis; timestep_idx must be 0, got {timestep_idx}",
+        )
+
+
 # Derived from the Protocol definitions (same pattern as the contract tests),
 # so a method add/rename auto-widens the runtime checks and error messages.
 _REPLAY_MODEL_METHODS = tuple(sorted(ReplayModel.__protocol_attrs__))
@@ -178,5 +206,7 @@ __all__ = [
     "ReplaySegmentResult",
     "RuntimeModel",
     "require_replay_model",
+    "require_replay_segments",
     "require_runtime_model",
+    "require_zero_replay_timestep",
 ]

@@ -32,7 +32,13 @@ from vrl.models.families.causvid.runner import (
     CausVidGeometry,
     CausVidSchedule,
 )
-from vrl.models.interfaces import ReplayRequest, ReplayResult, ReplaySegmentResult
+from vrl.models.interfaces import (
+    ReplayRequest,
+    ReplayResult,
+    ReplaySegmentResult,
+    require_replay_segments,
+    require_zero_replay_timestep,
+)
 from vrl.models.interfaces.runtime import ModelBuild
 from vrl.models.precision import model_autocast
 from vrl.models.source_integrity import runtime_source_tree_sha256
@@ -444,9 +450,12 @@ class _CausVidPolicyModel(LoraModelMixin, DiffusionModelBase):
     ) -> ReplayResult:
         """Replay all ``[chunk, transition]`` actions in one grouped call."""
 
-        del timestep_idx
-        if request is not None and request.segment_names not in (None, ("denoise",)):
-            raise ValueError("CausVid replay only supports the 'denoise' segment")
+        require_zero_replay_timestep(timestep_idx, owner=type(self).__name__)
+        require_replay_segments(
+            request,
+            ("denoise",),
+            owner=type(self).__name__,
+        )
         from vrl.trajectory import TrajectoryResolver
 
         replay = TrajectoryResolver.from_batch(batch).replay_tensor_dict(

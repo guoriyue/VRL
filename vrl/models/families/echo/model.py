@@ -300,11 +300,11 @@ class EchoModel(LoraModelMixin, DiffusionModelBase):
         """Encode the prompt to Gemma video context (video-only: audio dropped).
 
         Returns batch-1 tensors; the executor repeats them to the chunk's sample
-        count. ``negative_prompt`` is unused — Echo's DMD checkpoint bakes in
-        guidance, so the RL policy runs without classifier-free guidance.
+        count. Negative prompts are unsupported because Echo's DMD checkpoint
+        bakes in guidance and has no classifier-free branch.
         """
 
-        del negative_prompt
+        self._reject_unsupported_negative_prompt(negative_prompt)
         text = prompt if isinstance(prompt, list) else [prompt]
         cond = self._text_encoder(text)
         return {

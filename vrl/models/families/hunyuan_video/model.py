@@ -133,10 +133,10 @@ class HunyuanVideoModel(LoraModelMixin, DiffusersPipelineModelBase, DiffusionBac
         """Encode prompt via LLaMA (sequence + mask) and CLIP-L (pooled).
 
         HunyuanVideo is guidance-distilled: there is no unconditional branch,
-        so ``negative_prompt`` is ignored (the guidance scalar carries the
+        so negative prompts are unsupported (the guidance scalar carries the
         strength).
         """
-        del negative_prompt
+        self._reject_unsupported_negative_prompt(negative_prompt)
         max_seq = kwargs.get("max_sequence_length", 256)
         pipe = self.pipeline
         enc_device = self._encoder_device()

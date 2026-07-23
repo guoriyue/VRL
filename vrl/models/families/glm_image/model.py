@@ -60,7 +60,13 @@ import torch
 import torch.nn as nn
 
 from vrl.models.dtypes import resolve_torch_dtype
-from vrl.models.interfaces import ReplayRequest, ReplayResult, ReplaySegmentResult
+from vrl.models.interfaces import (
+    ReplayRequest,
+    ReplayResult,
+    ReplaySegmentResult,
+    require_replay_segments,
+    require_zero_replay_timestep,
+)
 from vrl.models.steps.token.base import ARModelBase, ARReplayRolloutStubs
 from vrl.utils.logging import init_logger
 
@@ -584,9 +590,14 @@ class GlmImageModel(ARModelBase):
         the evaluator's plain ``log_softmax`` reproduces the rollout's
         restricted conditional distribution.
 
-        AR has no notion of "denoising step", so ``timestep_idx`` is ignored.
+        AR has no notion of a denoising step, so only index zero is valid.
         """
-        del timestep_idx, request
+        require_zero_replay_timestep(timestep_idx, owner=type(self).__name__)
+        require_replay_segments(
+            request,
+            ("image_tokens",),
+            owner=type(self).__name__,
+        )
         from vrl.trajectory import TrajectoryResolver
 
         resolver = TrajectoryResolver.from_batch(batch)
