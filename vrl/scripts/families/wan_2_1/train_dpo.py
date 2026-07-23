@@ -17,7 +17,6 @@ from typing import TYPE_CHECKING
 
 from omegaconf import DictConfig, OmegaConf
 
-from vrl.config.precision import resolve_precision_policy
 from vrl.models.dtypes import resolve_torch_dtype
 from vrl.ray.resources import (
     format_distributed_resource_plan,
@@ -156,8 +155,8 @@ def train_wan_2_1_dpo(cfg: DictConfig) -> None:
     from torch.utils.data import DataLoader
 
     from vrl.algorithms.dpo import DiffusionDPOConfig
-    from vrl.config.builders import build_algorithm_config
-    from vrl.config.validation import optional_none, require, validate_training_config
+    from vrl.config.builders import build_configs
+    from vrl.config.validation import optional_none, require
     from vrl.families.registry import get_model_family_entry
     from vrl.trainers.data import collate_preference, load_pickapic
     from vrl.trainers.offline import (
@@ -165,21 +164,19 @@ def train_wan_2_1_dpo(cfg: DictConfig) -> None:
         wan_forward,
     )
 
-    # DPO doesn't go through `build_configs()`, so validate explicitly here
-    # to keep the YAML-as-source-of-truth contract (SPRINT patch 3 Phase 6).
-    validate_training_config(cfg)
+    built = build_configs(cfg)
 
     trainer_cfg_yaml = cfg.trainer
     sampling = cfg.sampling
     data_cfg = cfg.data
 
-    dpo_config = build_algorithm_config(cfg)
+    dpo_config = built.algorithm
     if not isinstance(dpo_config, DiffusionDPOConfig):
         raise TypeError(
             f"Wan-DPO expects algorithm.kind=diffusion_dpo, got {type(dpo_config).__name__}",
         )
 
-    precision = resolve_precision_policy(cfg)
+    precision = built.precision
     train_batch_size = int(require(cfg, "actor.train_batch_size"))
     grad_accum = int(require(cfg, "actor.gradient_accumulation_steps"))
     trainer_cfg = _build_offline_dpo_trainer_config(

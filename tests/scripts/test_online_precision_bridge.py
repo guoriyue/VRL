@@ -29,7 +29,7 @@ _RECIPES = [name for name in _experiment_names() if not Path(name).name.startswi
 def test_bridge_uses_aligned_public_precision(experiment):
     """Checks bridge derives trainer precision from public precision."""
     cfg = load_config(f"experiment/{experiment}")
-    trainer_config = build_configs(cfg)["trainer"]
+    trainer_config = build_configs(cfg).trainer
     policy = resolve_precision_policy(cfg)
     assert trainer_config.train_precision == policy.training.label
     assert trainer_config.rollout_precision == policy.rollout.label
@@ -43,10 +43,10 @@ def test_precision_block_drives_trainer():
     """Checks precision block drives trainer."""
     cfg = load_config("experiment/sd3_5/online_grpo_ocr")
     cfg = _with_precision("sd3_5/online_grpo_ocr", _plain_policy("fp32"))
-    assert torch_dtype_for_trainer_precision(build_configs(cfg)["trainer"], torch) is torch.float32
+    assert torch_dtype_for_trainer_precision(build_configs(cfg).trainer, torch) is torch.float32
 
     cfg = _with_precision("sd3_5/online_grpo_ocr", _plain_policy("bf16"))
-    trainer_config = build_configs(cfg)["trainer"]
+    trainer_config = build_configs(cfg).trainer
     assert trainer_config.train_precision == "bf16"
     assert torch_dtype_for_trainer_precision(trainer_config, torch) is torch.bfloat16
 
@@ -57,11 +57,11 @@ def test_fp16_precision_block_drives_trainer_and_rollout():
     cfg = OmegaConf.merge(cfg, OmegaConf.create({"precision": _plain_policy("fp16")}))
 
     built = build_configs(cfg)
-    trainer_config = built["trainer"]
+    trainer_config = built.trainer
 
     assert trainer_config.train_precision == "fp16"
     assert trainer_config.rollout_precision == "fp16"
-    assert built["precision"].diffusion_math == "fp32"
+    assert built.precision.diffusion_math == "fp32"
     assert torch_dtype_for_trainer_precision(trainer_config, torch) is torch.float16
 
 
@@ -79,7 +79,7 @@ def test_rollout_precision_split_auto_derives_correction_policy(
         _rollout_quantization_policy(format_name),
     )
 
-    trainer_config = build_configs(cfg)["trainer"]
+    trainer_config = build_configs(cfg).trainer
 
     assert trainer_config.train_precision == "bf16"
     assert trainer_config.rollout_precision == expected_label
@@ -105,7 +105,7 @@ def test_no_split_means_no_auto_correction_policy() -> None:
         _plain_policy("bf16"),
     )
 
-    trainer_config = build_configs(cfg)["trainer"]
+    trainer_config = build_configs(cfg).trainer
 
     # No split -> the correction/guard fields keep their dataclass defaults; the
     # split-only policy (TIS truncate / drift_guard mode="fail") is NOT installed.
@@ -118,7 +118,7 @@ def test_outer_autocast_split_is_preserved_in_trainer_role_labels() -> None:
     block["rollout"]["outer_autocast"] = False
     cfg = _with_precision("sd3_5/online_grpo_ocr", block)
 
-    trainer_config = build_configs(cfg)["trainer"]
+    trainer_config = build_configs(cfg).trainer
 
     assert trainer_config.train_precision == "bf16"
     assert trainer_config.rollout_precision == "bf16+no-autocast"
@@ -144,7 +144,7 @@ def test_explicit_precision_correction_is_respected_on_rollout_split():
         ),
     )
 
-    trainer_config = build_configs(cfg)["trainer"]
+    trainer_config = build_configs(cfg).trainer
 
     assert trainer_config.precision_correction.tis_mode == "off"
     assert trainer_config.precision_correction.rs_mode == "off"
@@ -186,7 +186,7 @@ def test_math_axis_resolves_to_dtype(math, expected):
     block["diffusion_math"] = {"dtype": math}
     cfg = _with_precision("sd3_5/online_grpo_ocr", block)
     assert resolve_torch_dtype(resolve_precision_policy(cfg).diffusion_math) is expected
-    assert build_configs(cfg)["precision"].diffusion_math == math
+    assert build_configs(cfg).precision.diffusion_math == math
 
 
 def test_precision_drift_guard_config_is_bridged_from_yaml():
@@ -206,7 +206,7 @@ def test_precision_drift_guard_config_is_bridged_from_yaml():
         ),
     )
 
-    trainer_config = build_configs(cfg)["trainer"]
+    trainer_config = build_configs(cfg).trainer
 
     assert trainer_config.precision_drift_guard.mode == "fail"
     assert trainer_config.precision_drift_guard.max_abs_log_ratio == pytest.approx(0.02)

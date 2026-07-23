@@ -435,7 +435,7 @@ def test_new_diffusion_algorithm_case_overrides_build_without_gpu(
     assert has_reference_kl is (case.case_id == "sd3_5_dance_grpo")
 
     built = build_configs(load_config(case.config, overrides=list(case.overrides)))
-    assert hasattr(built["algorithm"], "kl_coef") is has_reference_kl
+    assert hasattr(built.algorithm, "kl_coef") is has_reference_kl
 
 
 class _IndexReward:
@@ -574,7 +574,7 @@ def test_real_checkpoint_online_rl_updates_trainable_weights(
     try:
         device = torch.device("cuda")
         built = build_configs(cfg)
-        trainer_config = built["trainer"]
+        trainer_config = built.trainer
         dtype = torch_dtype_for_trainer_precision(trainer_config, torch)
         bundle = _build_runtime_bundle(case, entry, cfg, device, dtype)
         collector_config = build_rollout_config_from_cfg(cfg)

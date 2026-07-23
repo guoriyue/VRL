@@ -32,7 +32,7 @@ def test_dance_grpo_recipe_resolves_with_random_timestep_selection() -> None:
     assert cfg.algorithm.kind == "dance_grpo"
     assert isinstance(build_algorithm_config(cfg), GRPOConfig)
     # The defining knob: random per-update timestep subset reaches TrainerConfig.
-    assert build_configs(cfg)["trainer"].timestep_selection == "random"
+    assert build_configs(cfg).trainer.timestep_selection == "random"
 
 
 def test_flow_dppo_recipe_resolves_and_enables_proposal_mean_storage() -> None:

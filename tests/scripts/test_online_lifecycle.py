@@ -315,11 +315,15 @@ def _install_common_fakes(
     monkeypatch.setattr(
         online,
         "build_configs",
-        lambda cfg: {
-            "trainer": trainer_config,
-            "precision": precision,
-            "reward": ({"kling_video_reward": 1.0}, {}),
-        },
+        lambda cfg: SimpleNamespace(
+            root=SimpleNamespace(),
+            trainer=trainer_config,
+            precision=precision,
+            reward=SimpleNamespace(
+                weights={"kling_video_reward": 1.0},
+                kwargs={},
+            ),
+        ),
     )
     monkeypatch.setattr(online, "load_training_checkpoint_from_config", lambda cfg: None)
     monkeypatch.setattr(

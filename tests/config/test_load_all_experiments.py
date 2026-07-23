@@ -284,7 +284,7 @@ def test_all_online_experiments_pass_static_launch_preflight() -> None:
             built = build_configs(cfg)
             resources = resolve_distributed_resources(cfg)
             validate_rollout_schedule_topology(
-                built["trainer"].rollout_orchestration,
+                built.trainer.rollout_orchestration,
                 resources,
             )
             validate_reward_memory_parking(
@@ -410,7 +410,7 @@ def test_sd35_continuous_4gpu_acceptance_resolves_disjoint_resident_topology() -
     built = build_configs(cfg)
     resources = resolve_distributed_resources(cfg)
     validate_rollout_schedule_topology(
-        built["trainer"].rollout_orchestration,
+        built.trainer.rollout_orchestration,
         resources,
     )
     validate_reward_memory_parking(resources=resources, built=built)
@@ -428,7 +428,7 @@ def test_sd35_continuous_4gpu_acceptance_resolves_disjoint_resident_topology() -
             resources.lifecycle.handoff.release_reward_after_score,
         ),
     )
-    assert built["trainer"].rollout_orchestration.schedule_mode == "continuous"
+    assert built.trainer.rollout_orchestration.schedule_mode == "continuous"
     assert cfg.actor.drop_zero_advantage is False
     assert cfg.rollout.n_samples_per_prompt == 6
     assert cfg.rollout.samples_per_chunk == 2
@@ -445,12 +445,12 @@ def test_wan_robotics_continuous_resolves_balanced_four_l4_topology() -> None:
     built = build_configs(cfg)
     resources = resolve_distributed_resources(cfg)
     validate_rollout_schedule_topology(
-        built["trainer"].rollout_orchestration,
+        built.trainer.rollout_orchestration,
         resources,
     )
     validate_reward_memory_parking(resources=resources, built=built)
 
-    orchestration = built["trainer"].rollout_orchestration
+    orchestration = built.trainer.rollout_orchestration
     assert resources.trainer_devices == (0,)
     assert resources.rollout_devices == (1, 2)
     assert resources.reward_devices == ()
@@ -464,8 +464,8 @@ def test_wan_robotics_continuous_resolves_balanced_four_l4_topology() -> None:
     assert cfg.actor.timestep_fraction == 0.25
     assert cfg.actor.replay_samples_per_chunk == 1
     assert cfg.rollout.microbatch_size == cfg.rollout.prompts_per_batch == 4
-    assert built["trainer"].timestep_selection == "strided"
-    assert built["trainer"].gradient_accumulation_steps == 1
+    assert built.trainer.timestep_selection == "strided"
+    assert built.trainer.gradient_accumulation_steps == 1
 
 
 def test_algorithm_config_dispatches_representative_kinds() -> None:
@@ -803,7 +803,7 @@ def test_cli_overrides_reach_typed_trainer_config() -> None:
             "rollout.samples_per_chunk=2",
         ],
     )
-    trainer = build_configs(cfg)["trainer"]
+    trainer = build_configs(cfg).trainer
 
     assert trainer.resume_from == "/tmp/checkpoint-10"
     assert trainer.torch_profiler.enabled is True
@@ -818,7 +818,7 @@ def test_generation_chunk_auto_does_not_change_fixed_replay_default() -> None:
         "experiment/sd3_5/online_grpo_ocr",
         overrides=["rollout.samples_per_chunk=auto"],
     )
-    trainer = build_configs(cfg)["trainer"]
+    trainer = build_configs(cfg).trainer
 
     assert trainer.samples_per_chunk == "auto"
     assert trainer.replay_samples_per_chunk == 1

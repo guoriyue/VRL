@@ -9,6 +9,7 @@ must not enter the Pydantic schema.
 from __future__ import annotations
 
 import json
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -16,8 +17,10 @@ from omegaconf import DictConfig, ListConfig, OmegaConf
 from omegaconf.errors import MissingMandatoryValue
 from pydantic import ValidationError
 
+from vrl.config.precision import PrecisionPolicy, resolve_precision_policy
 from vrl.config.schema import (
     RewardConfig,
+    RootConfig,
     _extract_error_message,
     parse_config,
 )
@@ -75,7 +78,15 @@ def path_exists(cfg: DictConfig, path: str) -> bool:
     return True
 
 
-def validate_reward_config(cfg: DictConfig) -> None:
+@dataclass(frozen=True, slots=True)
+class ValidatedTrainingInput:
+    """Typed public config and decisions proven valid for one build."""
+
+    root: RootConfig
+    precision: PrecisionPolicy
+
+
+def validate_reward_config(cfg: DictConfig) -> RewardConfig:
     """Validate reward component shape and model-backed reward kwargs."""
     if "reward" not in cfg:
         raise ValueError("config missing required field: reward")
@@ -84,7 +95,7 @@ def validate_reward_config(cfg: DictConfig) -> None:
     warn_unknown_keys(cfg.reward, section="reward")
     reward_raw = OmegaConf.to_container(cfg.reward, resolve=True, throw_on_missing=True) or {}
     try:
-        RewardConfig.model_validate(reward_raw)
+        return RewardConfig.model_validate(reward_raw)
     except ValidationError as exc:
         raise ValueError(_extract_error_message(exc)) from exc
 
@@ -323,15 +334,13 @@ def _validate_image_to_video_source_report(
         raise ValueError("data.source_report eval_rows does not match data.eval_manifest")
 
 
-def validate_training_config(cfg: DictConfig) -> None:
-    """Validate unresolved mandatory values and cross-field contracts."""
+def validate_training_config(cfg: DictConfig) -> ValidatedTrainingInput:
+    """Validate config once and return the typed input consumed by builders."""
     from vrl.config.unknown_keys import warn_unknown_keys
 
     warn_unknown_keys(cfg)
-    parse_config(cfg)
-    from vrl.config.precision import resolve_precision_policy
-
-    resolve_precision_policy(cfg)
+    root = parse_config(cfg)
+    precision = resolve_precision_policy(root)
     # compile x grad-checkpointing is refused at trainer startup; check it here
     # too so the collision fails at config load (where the all-experiments test
     # sees it) — a model-layer torch_compile.enable=true default can silently
@@ -341,9 +350,11 @@ def validate_training_config(cfg: DictConfig) -> None:
     require_compile_checkpointing_compatible(cfg)
     if bool(OmegaConf.select(cfg, "production.kling_video_reward.enabled", default=False)):
         validate_production_kling_video_reward_config(cfg)
+    return ValidatedTrainingInput(root=root, precision=precision)
 
 
 __all__ = [
+    "ValidatedTrainingInput",
     "optional_none",
     "path_exists",
     "require",

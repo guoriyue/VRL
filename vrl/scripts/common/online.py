@@ -807,7 +807,12 @@ async def run_online_recipe(
     _preflight_production_video_reward(cfg)
     built = build_configs(cfg)
     family_entry = get_model_family_entry(str(require(cfg, "model.family")))
-    trainer_config = built["trainer"]
+    trainer_config = built.trainer
+    if trainer_config is None:
+        raise ValueError("online recipe cannot use an offline-only trainer config")
+    reward_config = built.reward
+    if reward_config is None:
+        raise ValueError("online recipe requires a reward section")
     _log_rollout_memory_plan(trainer_config)
     _warn_global_std_streaming_divergence(cfg, trainer_config)
     gradient_accumulation_steps = int(getattr(trainer_config, "gradient_accumulation_steps", 0))
@@ -835,7 +840,7 @@ async def run_online_recipe(
     # Construct the strategy before any model or Ray actor. Shared-GPU on-demand
     # execution needs complete trainer-state parking; distributed strategies must
     # reject that topology here instead of failing after expensive launch work.
-    strategy = build_strategy(cfg, training_context)
+    strategy = build_strategy(built.root, training_context)
     if (
         resources.lifecycle.handoff.release_rollout_before_train
         or resources.lifecycle.handoff.release_trainer_before_reward
@@ -1014,7 +1019,7 @@ async def run_online_recipe(
         if is_primary:
             save_resolved_config(cfg, output_dir, resumed=resume_checkpoint is not None)
 
-        component_names = tuple(built["reward"][0].keys())
+        component_names = tuple(reward_config.weights)
 
         rng = torch.Generator().manual_seed(trainer_config.seed)
         start_epoch = resume_checkpoint.next_epoch if resume_checkpoint is not None else 0

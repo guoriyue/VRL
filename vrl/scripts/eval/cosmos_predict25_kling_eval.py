@@ -246,7 +246,9 @@ def _resolve_device(device_arg: str) -> torch.device:
 def _resolve_dtype(dtype_arg: str, cfg: DictConfig, *, device: torch.device) -> torch.dtype:
     if dtype_arg != "auto":
         return resolve_torch_dtype(dtype_arg)
-    trainer_config = build_configs(cfg)["trainer"]
+    trainer_config = build_configs(cfg).trainer
+    if trainer_config is None:
+        raise ValueError("Cosmos checkpoint evaluation requires an online trainer config")
     dtype = torch_dtype_for_trainer_precision(trainer_config, torch)
     if getattr(device, "type", str(device)) == "cpu":
         return torch.float32

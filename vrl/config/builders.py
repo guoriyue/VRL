@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import math
-from dataclasses import MISSING, fields, is_dataclass
+from dataclasses import MISSING, dataclass, fields, is_dataclass
 from typing import TYPE_CHECKING, Any, get_type_hints
 
 from omegaconf import DictConfig, OmegaConf
@@ -13,16 +13,35 @@ from vrl.config.precision import (
     PrecisionPolicy,
     resolve_precision_policy,
 )
+from vrl.config.schema import RewardConfig, RootConfig
 from vrl.config.validation import (
     path_exists,
     require,
-    validate_reward_config,
     validate_training_config,
 )
 
 if TYPE_CHECKING:
     from vrl.algorithms.logprob_mismatch import PrecisionCorrectionConfig
-    from vrl.trainers.core.types import PrecisionDriftGuardConfig
+    from vrl.trainers.core.types import PrecisionDriftGuardConfig, TrainerConfig
+
+
+@dataclass(frozen=True, slots=True)
+class RewardRuntimeConfig:
+    """Resolved reward weights and per-component runtime kwargs."""
+
+    weights: dict[str, float]
+    kwargs: dict[str, dict[str, Any]]
+
+
+@dataclass(frozen=True, slots=True)
+class BuiltConfigs:
+    """Named outputs derived from one validated public config."""
+
+    root: RootConfig
+    algorithm: Any
+    precision: PrecisionPolicy
+    trainer: TrainerConfig | None
+    reward: RewardRuntimeConfig | None
 
 
 def build_precision_split_safety_configs() -> tuple[
@@ -240,52 +259,50 @@ def build_algorithm_config(cfg: DictConfig):
     return cls(**_dataclass_payload(cls, cfg.algorithm))
 
 
-def build_reward_config(cfg: DictConfig) -> tuple[dict[str, float], dict[str, dict]]:
-    """Slice ``cfg.reward`` into ``(weights, kwargs)``.
+def build_reward_config(cfg: DictConfig | RewardConfig) -> RewardRuntimeConfig:
+    """Resolve one public reward section into its runtime config.
 
     Zero-weight components remain present so they can be scored and logged as
     observation-only safeguards without changing the optimization reward.
     """
 
-    validate_reward_config(cfg)
-    reward = cfg.reward
+    from vrl.config.validation import validate_reward_config
 
-    components = (
-        OmegaConf.to_container(
-            reward.components,
-            resolve=True,
-            throw_on_missing=True,
-        )
-        or {}
-    )
-    weights = {name: float(weight) for name, weight in components.items()}
-
-    raw_kwargs = reward.get("kwargs", None)
-    kwargs: dict[str, dict] = (
-        OmegaConf.to_container(raw_kwargs, resolve=True, throw_on_missing=True) or {}
-        if raw_kwargs
-        else {}
-    )
-
-    return weights, kwargs
+    reward = cfg if isinstance(cfg, RewardConfig) else validate_reward_config(cfg)
+    weights = {name: float(weight) for name, weight in reward.components.items()}
+    kwargs = {
+        name: dict(component_kwargs or {}) for name, component_kwargs in reward.kwargs.items()
+    }
+    return RewardRuntimeConfig(weights=weights, kwargs=kwargs)
 
 
-def build_configs(cfg: DictConfig) -> dict[str, Any]:
+def build_configs(cfg: DictConfig) -> BuiltConfigs:
     """Bundle typed configs for downstream training scripts."""
 
-    validate_training_config(cfg)
-    precision = resolve_precision_policy(cfg)
-    out: dict[str, Any] = {
-        "trainer": build_trainer_config(cfg, precision=precision),
-        "algorithm": build_algorithm_config(cfg),
-        "precision": precision,
-    }
-    if "reward" in cfg:
-        out["reward"] = build_reward_config(cfg)
-    return out
+    validated = validate_training_config(cfg)
+    root = validated.root
+    precision = validated.precision
+    algorithm = build_algorithm_config(cfg)
+    is_offline_dpo = root.algorithm is not None and root.algorithm.kind == "diffusion_dpo"
+    trainer = None if is_offline_dpo else build_trainer_config(cfg, precision=precision)
+    reward = build_reward_config(root.reward) if root.reward is not None else None
+    if not is_offline_dpo:
+        if reward is None:
+            raise ValueError("online recipe requires a reward section")
+        if not any(weight > 0 for weight in reward.weights.values()):
+            raise ValueError("At least one reward component must have weight > 0.")
+    return BuiltConfigs(
+        root=root,
+        algorithm=algorithm,
+        precision=precision,
+        trainer=trainer,
+        reward=reward,
+    )
 
 
 __all__ = [
+    "BuiltConfigs",
+    "RewardRuntimeConfig",
     "build_algorithm_config",
     "build_configs",
     "build_reward_config",

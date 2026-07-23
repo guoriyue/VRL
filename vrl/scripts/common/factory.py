@@ -7,6 +7,7 @@ from typing import Any
 
 from omegaconf import DictConfig, OmegaConf
 
+from vrl.config.builders import BuiltConfigs
 from vrl.families.registry import ModelFamilyEntry
 from vrl.models.dtypes import resolve_torch_dtype
 from vrl.ray.resources import reward_torch_device
@@ -39,7 +40,7 @@ class AlgorithmEvaluatorPair:
 
 def build_reward(
     *,
-    built: dict[str, Any],
+    built: BuiltConfigs,
     resources: Any | None,
     device: str = "cuda",
 ) -> Any:
@@ -51,14 +52,14 @@ def build_reward(
     local parking policy. YAML selects transport, not lifecycle behavior.
     """
 
-    if "reward" not in built:
+    reward = built.reward
+    if reward is None:
         raise ValueError(
             "online recipe requires a reward section; diffusion_dpo is offline-only",
         )
-    reward_weights, reward_kwargs = built["reward"]
-    if not any(weight > 0 for weight in reward_weights.values()):
+    if not any(weight > 0 for weight in reward.weights.values()):
         raise ValueError("At least one reward component must have weight > 0.")
-    _validate_topology_derived_reward_kwargs(dict(reward_kwargs))
+    _validate_topology_derived_reward_kwargs(dict(reward.kwargs))
     from vrl.rewards.functions.registry import MultiReward
 
     memory_parking_required: bool | None = None
@@ -80,9 +81,9 @@ def build_reward(
         )
 
     return MultiReward.from_dict(
-        reward_weights,
+        reward.weights,
         device=str(device),
-        reward_kwargs=reward_kwargs,
+        reward_kwargs=reward.kwargs,
         memory_parking_required=memory_parking_required,
     )
 
@@ -90,14 +91,14 @@ def build_reward(
 def validate_reward_memory_parking(
     *,
     resources: Any,
-    built: dict[str, Any],
+    built: BuiltConfigs,
     device: str | None = None,
 ) -> None:
     """Validate shared reward parking without constructing a reward model."""
 
-    if "reward" in built:
-        reward_kwargs = built["reward"][1]
-        names = tuple(str(name) for name in built["reward"][0])
+    if built.reward is not None:
+        reward_kwargs = built.reward.kwargs
+        names = tuple(str(name) for name in built.reward.weights)
     else:
         reward_kwargs = {}
         names = ()
@@ -122,7 +123,7 @@ def build_algorithm_and_evaluator_from_cfg(
     cfg: DictConfig,
     *,
     family_entry: ModelFamilyEntry,
-    built: dict[str, Any],
+    built: BuiltConfigs,
     collector_config: Any,
     scheduler: Any | None = None,
 ) -> AlgorithmEvaluatorPair:
@@ -133,10 +134,10 @@ def build_algorithm_and_evaluator_from_cfg(
             f"{family_entry.family} is generation-only: its runtime exposes no "
             "trainable actions, transition likelihoods, or policy replay evaluator",
         )
-    algorithm_config = built["algorithm"]
+    algorithm_config = built.algorithm
     kind = str(OmegaConf.select(cfg, "algorithm.kind", default=""))
     diffusion_logprob_kinds = {"grpo", "dance_grpo", "flow_dppo", "grpo_guard"}
-    precision = built["precision"]
+    precision = built.precision
     if precision.diffusion_math != "fp32" and kind not in diffusion_logprob_kinds:
         raise ValueError(
             "precision.diffusion_math.dtype overrides are supported only by "

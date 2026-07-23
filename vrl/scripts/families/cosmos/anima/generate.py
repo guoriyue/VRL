@@ -287,7 +287,9 @@ def _resolve_dtype(dtype_arg: str, cfg: DictConfig, *, device: Any, torch: Any) 
     if dtype_arg != "auto":
         return resolve_torch_dtype(dtype_arg)
 
-    trainer_config = build_configs(cfg)["trainer"]
+    trainer_config = build_configs(cfg).trainer
+    if trainer_config is None:
+        raise ValueError("Anima generation requires an online trainer config")
     dtype = torch_dtype_for_trainer_precision(trainer_config, torch)
     if getattr(device, "type", str(device)) == "cpu":
         return torch.float32
