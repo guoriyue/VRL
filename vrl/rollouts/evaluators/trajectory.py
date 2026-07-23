@@ -5,8 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
-import torch
-
+from vrl.rollouts.batch import RolloutBatch
 from vrl.rollouts.evaluators.types import SegmentSignal, TrajectorySignalBatch
 from vrl.trajectory import TrajectoryBatch, role_tensor
 from vrl.trajectory.device import move_value_to_device
@@ -16,18 +15,23 @@ from vrl.trajectory.device import move_value_to_device
 class TrajectorySignalBuilder:
     """Resolve trajectory facts and package evaluator outputs into signals."""
 
-    batch: Any
-    trajectory: TrajectoryBatch | None = field(init=False)
+    batch: RolloutBatch
+    trajectory: TrajectoryBatch = field(init=False)
 
     def __post_init__(self) -> None:
-        self.trajectory = getattr(self.batch, "trajectory", None)
+        trajectory = self.batch.trajectory
+        if not isinstance(trajectory, TrajectoryBatch):
+            raise RuntimeError(
+                "trajectory-native evaluator signals require batch.trajectory "
+                "to be a TrajectoryBatch",
+            )
+        self.trajectory = trajectory
 
     def single_segment(
         self,
         *,
-        segment_name: str | None,
+        segment_name: str,
         log_prob: Any,
-        distribution: str,
         timestep_idx: int | None = None,
         old_log_prob: Any | None = None,
         mask: Any | None = None,
@@ -44,7 +48,6 @@ class TrajectorySignalBuilder:
         segment = self.segment_signal(
             segment_name=segment_name,
             log_prob=log_prob,
-            distribution=distribution,
             timestep_idx=timestep_idx,
             old_log_prob=old_log_prob,
             mask=mask,
@@ -66,9 +69,8 @@ class TrajectorySignalBuilder:
     def segment_signal(
         self,
         *,
-        segment_name: str | None,
+        segment_name: str,
         log_prob: Any,
-        distribution: str,
         timestep_idx: int | None = None,
         old_log_prob: Any | None = None,
         mask: Any | None = None,
@@ -82,8 +84,9 @@ class TrajectorySignalBuilder:
     ) -> SegmentSignal:
         """Build one signal segment from first-class trajectory facts."""
 
-        name = self._primary_segment_name(segment_name)
-        segment = self.trajectory.segments.get(name) if self.trajectory is not None else None
+        segment = self.trajectory.segments.get(segment_name)
+        if segment is None:
+            raise RuntimeError(f"unknown trajectory segment {segment_name!r}")
 
         resolved_old = old_log_prob
         if resolved_old is None:
@@ -113,11 +116,11 @@ class TrajectorySignalBuilder:
             log_prob=log_prob,
             old_log_prob=resolved_old,
             mask=resolved_mask,
-            segment=name,
+            segment=segment_name,
         )
         return SegmentSignal(
-            name=name,
-            distribution=segment.distribution if segment is not None else distribution,
+            name=segment_name,
+            distribution=segment.distribution,
             log_prob=log_prob,
             old_log_prob=resolved_old,
             mask=resolved_mask,
@@ -131,34 +134,19 @@ class TrajectorySignalBuilder:
 
     @property
     def group_ids(self) -> Any:
-        return getattr(self.batch, "group_ids", None)
+        return self.batch.group_ids
 
     @property
     def context(self) -> dict[str, Any]:
-        if self.trajectory is not None:
-            return dict(self.trajectory.context)
-        batch_context = getattr(self.batch, "context", None)
-        return dict(batch_context) if isinstance(batch_context, dict) else {}
-
-    def _primary_segment_name(self, fallback: str | None) -> str:
-        if fallback:
-            return fallback
-        if self.trajectory is not None and self.trajectory.primary_segment is not None:
-            return self.trajectory.primary_segment
-        return "default"
+        return dict(self.trajectory.context)
 
     def _old_log_prob_from_trajectory(
         self,
-        segment: Any | None,
+        segment: Any,
         *,
         log_prob: Any,
         timestep_idx: int | None,
     ) -> Any:
-        if segment is None:
-            raise RuntimeError(
-                "trajectory-native evaluator signals require batch.trajectory with "
-                "an old_log_prob tensor",
-            )
         value = role_tensor(segment, "old_log_prob").value
         return self._select_loss_value_if_needed(
             value,
@@ -168,14 +156,12 @@ class TrajectorySignalBuilder:
 
     def _mask_from_trajectory(
         self,
-        segment: Any | None,
+        segment: Any,
         *,
         log_prob: Any,
         timestep_idx: int | None,
         mask_key: str,
     ) -> Any:
-        if segment is None:
-            return torch.ones_like(log_prob)
         tensor = segment.tensors.get(mask_key)
         value = (
             tensor.value
@@ -187,9 +173,7 @@ class TrajectorySignalBuilder:
             log_prob,
             timestep_idx=timestep_idx,
         )
-        if self._same_shape(value, log_prob):
-            return value
-        return torch.ones_like(log_prob)
+        return value
 
     @classmethod
     def _select_loss_value_if_needed(

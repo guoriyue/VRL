@@ -192,8 +192,12 @@ class LlamaGenChunkExecutor(ARDiscreteChunkExecutorBase):
                 "prefix length is baked into the GPT's rope table."
             )
 
-        guidance_scale = float(sampling.get("guidance_scale", 7.5))
-        temperature = float(sampling.get("temperature", 1.0))
+        guidance_scale = float(
+            sampling.get("guidance_scale", self.model.config.guidance_scale),
+        )
+        temperature = float(
+            sampling.get("temperature", self.model.config.temperature),
+        )
         top_k = int(sampling.get("top_k", self.model.config.top_k))
         top_p = float(sampling.get("top_p", self.model.config.top_p))
 

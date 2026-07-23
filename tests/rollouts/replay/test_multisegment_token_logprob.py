@@ -198,6 +198,7 @@ def test_evaluator_applies_rollout_temperature_to_all_segments() -> None:
         .squeeze(-1)
     )
     assert torch.allclose(signals.segments["selfcheck_text"].log_prob, expected, atol=1e-6)
+    assert signals.context == {"temperature": 0.5}
 
 
 def test_evaluator_reads_r1_segments_from_canonical_trajectory_fields() -> None:
@@ -215,3 +216,5 @@ def test_evaluator_reads_r1_segments_from_canonical_trajectory_fields() -> None:
     assert signals.primary.log_prob.shape == (2, 3)
     assert signals.segments["selfcheck_text"].log_prob.shape == (2, 2)
     assert signals.segments["final_image"].old_log_prob.shape == (2, 3)
+    assert "primary_segment" not in signals.context
+    assert "segment_order" not in signals.context

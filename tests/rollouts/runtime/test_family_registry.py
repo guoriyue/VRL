@@ -92,8 +92,8 @@ def test_model_build_projects_typed_sections_without_losing_falsy_presence() -> 
     )
 
     assert build.model_name_or_path == "unit-checkpoint"
+    assert build.revision is None
     assert build.model_config == {
-        "revision": None,
         "use_lora": False,
         "lora": {
             "path": None,

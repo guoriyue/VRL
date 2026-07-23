@@ -104,7 +104,6 @@ class MultiSegmentTokenLogProbEvaluator(Evaluator):
                     device=new_lp.device,
                 ),
                 ref_log_prob=ref_lp,
-                distribution="categorical",
                 mask_key=self.mask_key,
             )
 
@@ -112,11 +111,7 @@ class MultiSegmentTokenLogProbEvaluator(Evaluator):
         return TrajectorySignalBatch(
             segments=segment_signals,
             group_ids=signal_builder.group_ids,
-            context={
-                **signal_builder.context,
-                "segment_order": tuple(enabled_names),
-                "primary_segment": primary_name,
-            },
+            context=signal_builder.context,
             primary_segment=primary_name,
         )
 

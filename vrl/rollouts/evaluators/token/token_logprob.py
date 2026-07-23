@@ -97,7 +97,6 @@ class TokenLogProbEvaluator(Evaluator):
             log_prob=new_lp,
             old_log_prob=None,
             ref_log_prob=ref_lp,
-            distribution="categorical",
             mask_key=self.mask_key,
         )
 

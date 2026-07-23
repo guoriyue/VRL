@@ -117,12 +117,26 @@ def test_executor_declares_identity_and_runner() -> None:
     assert executor._runner_attention_family == "emu3"
 
 
-def test_chunk_context_keeps_behavior_and_sampling_provenance_only(
+@pytest.mark.parametrize(
+    ("sampling_overrides", "expected_guidance", "expected_temperature"),
+    [
+        ({"temperature": 0.8}, 6.25, 0.8),
+        ({"guidance_scale": 4.0}, 4.0, 0.45),
+    ],
+)
+def test_chunk_sampling_uses_request_overrides_then_model_defaults(
     monkeypatch: pytest.MonkeyPatch,
+    sampling_overrides: dict[str, float],
+    expected_guidance: float,
+    expected_temperature: float,
 ) -> None:
     ids = torch.tensor([[1, 2]], dtype=torch.long)
     mask = torch.ones_like(ids)
     model = SimpleNamespace(
+        config=SimpleNamespace(
+            guidance_scale=6.25,
+            temperature=0.45,
+        ),
         processor=SimpleNamespace(
             tokenizer=SimpleNamespace(pad_token_id=0),
         ),
@@ -151,11 +165,10 @@ def test_chunk_context_keeps_behavior_and_sampling_provenance_only(
         inputs=["draw text"],
         samples_per_prompt=1,
         sampling={
-            "guidance_scale": 4.0,
-            "temperature": 0.8,
             "image_area": 24,
             "ratio": "3:2",
             "max_text_length": 8,
+            **sampling_overrides,
         },
     )
 
@@ -170,8 +183,8 @@ def test_chunk_context_keeps_behavior_and_sampling_provenance_only(
     )
 
     assert prepared.context == {
-        "temperature": 0.8,
+        "temperature": expected_temperature,
         "image_height": 2,
         "image_width": 3,
-        "guidance_scale": 4.0,
+        "guidance_scale": expected_guidance,
     }

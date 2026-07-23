@@ -118,8 +118,12 @@ class JanusProChunkExecutor(ARDiscreteChunkExecutorBase):
         sampling = request.sampling
         params: ARSamplingParams = self.layout.parse_sampling_params(request)
 
-        guidance_scale = float(sampling.get("guidance_scale", 5.0))
-        temperature = float(sampling.get("temperature", 1.0))
+        guidance_scale = float(
+            sampling.get("guidance_scale", self.model.config.guidance_scale),
+        )
+        temperature = float(
+            sampling.get("temperature", self.model.config.temperature),
+        )
 
         repeated_prompts = [chunk.prompt] * chunk.sample_count
         prompt_ids, prompt_mask = self._tokenize_prompts(
@@ -268,8 +272,12 @@ class JanusProR1ChunkExecutor(JanusProChunkExecutor):
                 self.model.generate_with_refine,
                 prompt_ids,
                 prompt_mask,
-                guidance_scale=float(sampling.get("guidance_scale", 5.0)),
-                temperature=float(sampling.get("temperature", 1.0)),
+                guidance_scale=float(
+                    sampling.get("guidance_scale", self.model.config.guidance_scale),
+                ),
+                temperature=float(
+                    sampling.get("temperature", self.model.config.temperature),
+                ),
                 image_token_num=params.image_token_num,
                 max_reflect_len=int(sampling.get("max_reflect_len", 80)),
                 task_stages=_parse_task_stages(sampling.get("task_stages")),

@@ -130,6 +130,54 @@ def test_inner_token_grpo_input_contains_only_loss_inputs(monkeypatch) -> None:
     assert inner_inputs.timestep_index is None
 
 
+def test_signal_mapping_order_cannot_be_overridden_by_context(monkeypatch) -> None:
+    final = _segment_signal(
+        "final_image",
+        torch.zeros(1, 2),
+        torch.zeros(1, 2),
+    )
+    initial = _segment_signal(
+        "initial_image",
+        torch.zeros(1, 2),
+        torch.zeros(1, 2),
+    )
+    inputs = _inputs(
+        {
+            "final_image": final,
+            "initial_image": initial,
+        },
+        torch.ones(1),
+    )
+    inputs.signals.context["segment_order"] = [
+        "initial_image",
+        "final_image",
+    ]
+    segment_order: list[str | None] = []
+    original_compute_loss = TokenGRPO.compute_loss
+
+    def capture_input(self, inner_inputs):
+        segment_order.append(inner_inputs.signals.primary_segment)
+        return original_compute_loss(self, inner_inputs)
+
+    monkeypatch.setattr(TokenGRPO, "compute_loss", capture_input)
+
+    MultiSegmentTokenGRPO(
+        MultiSegmentTokenGRPOConfig(
+            kl_coef=0.0,
+            train_segments={
+                "initial_image": True,
+                "final_image": True,
+            },
+            segment_weights={
+                "initial_image": 1.0,
+                "final_image": 1.0,
+            },
+        ),
+    ).compute_loss(inputs)
+
+    assert segment_order == ["final_image", "initial_image"]
+
+
 def test_default_selfcheck_weight_zero_does_not_affect_loss() -> None:
     """Checks default selfcheck weight zero does not affect loss."""
     adv = torch.ones(1)

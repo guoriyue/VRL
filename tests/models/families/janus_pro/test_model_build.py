@@ -222,12 +222,26 @@ def test_janus_executor_layout_resolves_scheduler_batch_size() -> None:
     assert layout.resolve_scheduler_batch_size(request) == 8
 
 
-def test_janus_chunk_context_keeps_temperature_and_sampling_provenance_only(
+@pytest.mark.parametrize(
+    ("sampling_overrides", "expected_guidance", "expected_temperature"),
+    [
+        ({"temperature": 0.7}, 6.25, 0.7),
+        ({"guidance_scale": 4.0}, 4.0, 0.45),
+    ],
+)
+def test_janus_chunk_sampling_uses_request_overrides_then_model_defaults(
     monkeypatch: pytest.MonkeyPatch,
+    sampling_overrides: dict[str, float],
+    expected_guidance: float,
+    expected_temperature: float,
 ) -> None:
-    """Replay keeps temperature without carrying the derivable token count."""
+    """Replay keeps behavior sampling without duplicating model defaults."""
     executor = JanusProChunkExecutor(
         model=SimpleNamespace(
+            config=SimpleNamespace(
+                guidance_scale=6.25,
+                temperature=0.45,
+            ),
             processor=SimpleNamespace(
                 tokenizer=SimpleNamespace(pad_token_id=0),
             ),
@@ -260,10 +274,10 @@ def test_janus_chunk_context_keeps_temperature_and_sampling_provenance_only(
         inputs=["draw text"],
         samples_per_prompt=1,
         sampling={
-            "temperature": 0.7,
             "image_token_num": 4,
             "image_size": 384,
             "max_text_length": 16,
+            **sampling_overrides,
         },
     )
 
@@ -278,7 +292,7 @@ def test_janus_chunk_context_keeps_temperature_and_sampling_provenance_only(
     )
 
     assert prepared.context == {
-        "temperature": 0.7,
-        "guidance_scale": 5.0,
+        "temperature": expected_temperature,
+        "guidance_scale": expected_guidance,
     }
     assert tokenized_prompts == [["draw text"], [""]]

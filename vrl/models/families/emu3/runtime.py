@@ -83,8 +83,12 @@ class Emu3ChunkExecutor(ARDiscreteChunkExecutorBase):
 
         sampling = request.sampling
 
-        guidance_scale = float(sampling.get("guidance_scale", 3.0))
-        temperature = float(sampling.get("temperature", 1.0))
+        guidance_scale = float(
+            sampling.get("guidance_scale", self.model.config.guidance_scale),
+        )
+        temperature = float(
+            sampling.get("temperature", self.model.config.temperature),
+        )
         if "max_text_length" not in sampling:
             raise ValueError("request.sampling.max_text_length is required")
         max_text_length = int(sampling["max_text_length"])

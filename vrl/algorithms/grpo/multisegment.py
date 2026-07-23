@@ -60,13 +60,18 @@ class MultiSegmentTokenGRPO(TokenGRPO):
         total_weight = 0.0
         train_segments = dict(self.config.train_segments or {})
         weights = dict(self.config.segment_weights or {})
-        raw_order = signals.context.get("segment_order")
-        if isinstance(raw_order, (list, tuple)) and raw_order:
-            segment_names = [str(name) for name in raw_order]
-        elif weights:
-            segment_names = list(weights)
-        else:
-            segment_names = list(signals.segments)
+        missing_weighted = [
+            name
+            for name, weight in weights.items()
+            if bool(train_segments.get(name, True))
+            and float(weight) > 0
+            and name not in signals.segments
+        ]
+        if missing_weighted:
+            raise RuntimeError(
+                "missing multi-segment GRPO segment: " + ", ".join(missing_weighted),
+            )
+        segment_names = list(signals.segments)
 
         for name in segment_names:
             if not bool(train_segments.get(name, True)):

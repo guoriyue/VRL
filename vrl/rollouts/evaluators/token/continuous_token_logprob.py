@@ -64,7 +64,6 @@ class ContinuousTokenLogProbEvaluator(Evaluator):
             segment_name="image_tokens",
             log_prob=new_lp,
             ref_log_prob=ref_lp,
-            distribution="gaussian",
             mask_key=self.mask_key,
         )
 

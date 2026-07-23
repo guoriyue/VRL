@@ -77,12 +77,18 @@ def _executor_model(
     image_token_num: int = LLAMAGEN_IMAGE_TOKEN_NUM,
     cls_token_num: int = LLAMAGEN_CAPTION_TOKEN_NUM,
     downsample_size: int = LLAMAGEN_DOWNSAMPLE_SIZE,
+    guidance_scale: float = 7.5,
+    temperature: float = 1.0,
 ) -> SimpleNamespace:
     return SimpleNamespace(
         config=SimpleNamespace(
             image_token_num=image_token_num,
             cls_token_num=cls_token_num,
             downsample_size=downsample_size,
+            guidance_scale=guidance_scale,
+            temperature=temperature,
+            top_k=0,
+            top_p=1.0,
         ),
     )
 
@@ -487,8 +493,18 @@ def test_executor_rejects_partial_scheduler_before_static_kv_preparation(
     assert prepare_calls == 0
 
 
-def test_chunk_context_keeps_temperature_and_sampling_provenance_only(
+@pytest.mark.parametrize(
+    ("sampling_overrides", "expected_guidance", "expected_temperature"),
+    [
+        ({"temperature": 0.7}, 8.25, 0.7),
+        ({"guidance_scale": 6.0}, 6.0, 0.45),
+    ],
+)
+def test_chunk_sampling_uses_request_overrides_then_model_defaults(
     monkeypatch: pytest.MonkeyPatch,
+    sampling_overrides: dict[str, float],
+    expected_guidance: float,
+    expected_temperature: float,
 ) -> None:
     ids = torch.tensor([[1, 2]], dtype=torch.long)
     mask = torch.ones_like(ids)
@@ -499,6 +515,8 @@ def test_chunk_context_keeps_temperature_and_sampling_provenance_only(
             cls_token_num=120,
             top_k=0,
             top_p=1.0,
+            guidance_scale=8.25,
+            temperature=0.45,
         ),
         encode_caption=lambda token_ids, token_mask: (
             token_ids.unsqueeze(-1).float(),
@@ -519,13 +537,12 @@ def test_chunk_context_keeps_temperature_and_sampling_provenance_only(
         inputs=["draw text"],
         samples_per_prompt=1,
         sampling={
-            "guidance_scale": 6.0,
-            "temperature": 0.7,
             "top_k": 32,
             "top_p": 0.9,
             "image_token_num": 4,
             "image_size": 32,
             "max_text_length": 120,
+            **sampling_overrides,
         },
     )
 
@@ -540,8 +557,8 @@ def test_chunk_context_keeps_temperature_and_sampling_provenance_only(
     )
 
     assert prepared.context == {
-        "temperature": 0.7,
-        "guidance_scale": 6.0,
+        "temperature": expected_temperature,
+        "guidance_scale": expected_guidance,
         "top_k": 32,
         "top_p": 0.9,
     }

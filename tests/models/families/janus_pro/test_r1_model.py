@@ -10,6 +10,7 @@ import torch.nn as nn
 
 from tests.models.steps.token.fixtures import StubVQ, build_stub_janus_model
 from vrl.generation import GenerationRequest, GenerationSampleRow, build_sample_rows
+from vrl.generation.execution.chunks import SampleChunk
 from vrl.models.families.janus_pro import JANUS_R1_SEGMENTS
 from vrl.models.families.janus_pro.model import (
     JanusProModel,
@@ -308,8 +309,15 @@ def test_r1_model_replay_forward_returns_requested_replay_segments() -> None:
 class _ExecutorModel:
     processor = _Processor()
     device = torch.device("cpu")
-    config = SimpleNamespace(r1_refine_mode="selfcheck")
     language_model = _LM()
+
+    def __init__(self) -> None:
+        self.config = SimpleNamespace(
+            guidance_scale=6.25,
+            temperature=0.45,
+            r1_refine_mode="selfcheck",
+        )
+        self.sampling_calls: list[tuple[float, float]] = []
 
     def generate_with_refine(
         self,
@@ -326,6 +334,7 @@ class _ExecutorModel:
         image_size: int,
         refine_mode: str,
     ) -> dict[str, object]:
+        self.sampling_calls.append((guidance_scale, temperature))
         del (
             guidance_scale,
             temperature,
@@ -365,6 +374,60 @@ class _ExecutorModel:
             "segments": segments,
             "context": {"source": "fake"},
         }
+
+
+@pytest.mark.parametrize(
+    ("sampling_overrides", "expected"),
+    [
+        ({}, (6.25, 0.45)),
+        (
+            {
+                "guidance_scale": 4.0,
+                "temperature": 0.8,
+            },
+            (4.0, 0.8),
+        ),
+    ],
+)
+def test_r1_executor_uses_request_overrides_then_model_defaults(
+    monkeypatch: pytest.MonkeyPatch,
+    sampling_overrides: dict[str, float],
+    expected: tuple[float, float],
+) -> None:
+    model = _ExecutorModel()
+    executor = JanusProR1ChunkExecutor(model)
+    monkeypatch.setattr(
+        executor,
+        "_r1_image_sampler",
+        lambda *, request, scheduler_batch_size: object(),
+    )
+    request = GenerationRequest(
+        request_id="r1",
+        family="janus_pro_r1",
+        task="ar_t2i_r1",
+        inputs=["draw text"],
+        samples_per_prompt=1,
+        sampling={
+            "image_token_num": 4,
+            "image_size": 32,
+            "max_text_length": 8,
+            "max_reflect_len": 3,
+            "final_image_policy": "always_generate",
+            **sampling_overrides,
+        },
+    )
+
+    executor.forward_chunk_plan(
+        request,
+        SampleChunk(
+            prompt_index=0,
+            prompt="draw text",
+            sample_start=0,
+            sample_count=1,
+        ),
+    )
+
+    assert model.sampling_calls == [expected]
 
 
 def test_r1_executor_forward_emits_canonical_family_and_segment_schema(
