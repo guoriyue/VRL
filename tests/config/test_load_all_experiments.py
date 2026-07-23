@@ -232,7 +232,13 @@ def test_all_experiments_load_and_validate() -> None:
         assert "output_dir" in cfg.trainer, f"{name} missing trainer.output_dir"
         assert "kind" in cfg.algorithm, f"{name} missing algorithm.kind"
         assert "adv_estimator" not in cfg.algorithm, f"{name} still uses adv_estimator"
-        validate_training_config(cfg)
+        validated = validate_training_config(cfg)
+        raw_model = OmegaConf.to_container(cfg.model, resolve=True)
+        typed_model = validated.root.model
+        assert isinstance(raw_model, dict)
+        assert typed_model is not None
+        typed_payload = typed_model.model_dump()
+        assert {key: typed_payload[key] for key in raw_model} == raw_model
 
 
 def test_all_online_experiments_pass_static_launch_preflight() -> None:

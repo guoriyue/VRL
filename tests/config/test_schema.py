@@ -7,12 +7,15 @@ import typing
 import pytest
 from omegaconf import OmegaConf
 
+from vrl.config.model_schema import ModelSection, WanModelSection
 from vrl.config.schema import (
     AlgorithmConfig,
     DataConfig,
     RewardConfig,
     parse_config,
 )
+from vrl.families.names import _FAMILY_BY_ALIAS
+from vrl.families.registry import FAMILY_REGISTRY, SHARED_MODEL_SECTION_CLS
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -347,6 +350,68 @@ def test_unknown_wan_offload_mode_raises() -> None:
         },
     )
     with pytest.raises(ValueError, match=r"unknown model\.offload_mode"):
+        parse_config(cfg)
+
+
+def test_root_retains_selected_family_model_section_and_serializes_its_fields() -> None:
+    cfg = OmegaConf.create(
+        {
+            "model": {
+                "family": "wan_2_1_i2v",
+                "path": "Wan-AI/Wan2.2-I2V-A14B-Diffusers",
+                "offload_mode": "sequential",
+            },
+        },
+    )
+
+    parsed = parse_config(cfg)
+
+    assert isinstance(parsed.model, WanModelSection)
+    assert parsed.model.offload_mode == "sequential"
+    assert parsed.model_dump()["model"]["offload_mode"] == "sequential"
+
+
+def test_model_family_aliases_select_their_canonical_section_classes() -> None:
+    for alias, family in _FAMILY_BY_ALIAS.items():
+        canonical = parse_config(
+            OmegaConf.create({"model": {"family": family}}),
+        )
+        parsed_alias = parse_config(
+            OmegaConf.create({"model": {"family": alias}}),
+        )
+
+        assert type(parsed_alias.model) is type(canonical.model)
+        assert parsed_alias.model.family == alias
+
+
+def test_shared_only_families_use_the_shared_model_section() -> None:
+    shared_families = [
+        entry.family
+        for entry in FAMILY_REGISTRY.values()
+        if entry.model_section_cls == SHARED_MODEL_SECTION_CLS
+    ]
+    assert shared_families
+
+    for family in shared_families:
+        parsed = parse_config(
+            OmegaConf.create({"model": {"family": family, "path": f"org/{family}"}}),
+        )
+
+        assert type(parsed.model) is ModelSection
+        assert parsed.model.path == f"org/{family}"
+
+
+def test_unknown_model_family_fails_at_typed_parse() -> None:
+    cfg = OmegaConf.create({"model": {"family": "not_a_family", "path": "org/model"}})
+
+    with pytest.raises(ValueError, match=r"unsupported model family: 'not_a_family'"):
+        parse_config(cfg)
+
+
+def test_present_model_section_requires_a_family() -> None:
+    cfg = OmegaConf.create({"model": {"path": "org/model"}})
+
+    with pytest.raises(ValueError, match=r"config missing required field: model\.family"):
         parse_config(cfg)
 
 

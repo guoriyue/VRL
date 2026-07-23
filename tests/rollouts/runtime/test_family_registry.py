@@ -114,6 +114,7 @@ def test_family_registry_entries_have_complete_protocol_wiring() -> None:
     for family, entry in FAMILY_REGISTRY.items():
         assert entry.family == family
         assert entry.task
+        assert entry.model_section_cls
         assert callable(entry.new_gatherer().gather_chunks)
         assert entry.policy_semantics.generation_regime in {
             "full_sequence",
@@ -133,6 +134,48 @@ def test_family_registry_entries_have_complete_protocol_wiring() -> None:
             assert entry.executor_cls.startswith(
                 ("vrl.models.families.", "vrl.generation.bindings.token_autoregressive."),
             )
+
+
+def test_family_registry_entries_own_importable_model_sections() -> None:
+    from vrl.config.model_schema import ModelSection
+
+    for entry in FAMILY_REGISTRY.values():
+        section_cls = import_from_path(entry.model_section_cls)
+        assert isinstance(section_cls, type)
+        assert issubclass(section_cls, ModelSection)
+
+
+def test_model_section_imports_do_not_load_model_runtimes() -> None:
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            (
+                "import sys; "
+                "from vrl.families.registry import FAMILY_REGISTRY; "
+                "from vrl.utils.config import import_from_path; "
+                "[import_from_path(entry.model_section_cls) "
+                "for entry in FAMILY_REGISTRY.values()]; "
+                "assert 'torch' not in sys.modules; "
+                "assert 'diffusers' not in sys.modules; "
+                "assert 'transformers' not in sys.modules; "
+                "assert not any(name.startswith('vrl.models.families.') "
+                "for name in sys.modules)"
+            ),
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0, result.stderr
+
+
+def test_family_entry_rejects_an_empty_model_section_path() -> None:
+    entry = get_model_family_entry("sana")
+
+    with pytest.raises(ValueError, match="requires a model section class"):
+        replace(entry, model_section_cls="")
 
 
 def test_policy_replay_support_is_derived_from_family_recipes() -> None:

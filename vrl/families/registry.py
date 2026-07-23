@@ -20,6 +20,7 @@ from vrl.families.semantics import PolicySemantics, TrajectoryLayout
 GENERIC_FULL_SEQUENCE_DENOISE_EXECUTOR = (
     "vrl.generation.bindings.full_sequence_denoise.executor:DiffusionChunkExecutor"
 )
+SHARED_MODEL_SECTION_CLS = "vrl.config.model_schema:ModelSection"
 
 
 @dataclass(frozen=True, slots=True)
@@ -113,6 +114,9 @@ class ModelFamilyEntry:
     policy_semantics: PolicySemantics
     executor_cls: str
     gatherer_cls: str
+    # Lazy public-YAML schema boundary. This is deliberately distinct from a
+    # TokenFamilyBuild.config_cls, which constructs the resolved model wrapper.
+    model_section_cls: str
     family_build: DenoiseFamilyBuild | TokenFamilyBuild
     runtime_capabilities: GenerationRuntimeCapabilities = field(
         default_factory=GenerationRuntimeCapabilities,
@@ -128,6 +132,8 @@ class ModelFamilyEntry:
             )
         if not self.gatherer_cls:
             raise ValueError(f"model family {self.family!r} requires a gatherer binding")
+        if not self.model_section_cls:
+            raise ValueError(f"model family {self.family!r} requires a model section class")
         if self.request_metadata_namespace == "":
             raise ValueError("request_metadata_namespace must be non-empty when set")
 
@@ -328,6 +334,7 @@ def _full_sequence_denoise_entry(
     *,
     family: str,
     task: str,
+    model_section_cls: str,
     executor_cls: str | None = None,
     build: DenoiseFamilyBuild,
     runtime_capabilities: GenerationRuntimeCapabilities | None = None,
@@ -356,6 +363,7 @@ def _full_sequence_denoise_entry(
         ),
         executor_cls=executor_cls,
         gatherer_cls="vrl.generation.bindings.full_sequence_denoise.gather:DiffusionChunkGatherer",
+        model_section_cls=model_section_cls,
         family_build=build,
         runtime_capabilities=runtime_capabilities,
     )
@@ -365,6 +373,7 @@ def _token_autoregressive_entry(
     *,
     family: str,
     action_distribution: Literal["categorical", "continuous"],
+    model_section_cls: str,
     executor_cls: str,
     build: TokenFamilyBuild,
     task: str = "ar_t2i",
@@ -385,6 +394,7 @@ def _token_autoregressive_entry(
         ),
         executor_cls=executor_cls,
         gatherer_cls=gatherer_cls,
+        model_section_cls=model_section_cls,
         family_build=build,
         request_metadata_namespace=request_metadata_namespace,
     )
@@ -393,6 +403,7 @@ def _token_autoregressive_entry(
 def _chunk_autoregressive_denoise_entry(
     *,
     family: str,
+    model_section_cls: str,
     executor_cls: str,
     build: DenoiseFamilyBuild,
     task: str = "t2v",
@@ -414,6 +425,7 @@ def _chunk_autoregressive_denoise_entry(
             "vrl.generation.bindings.chunk_autoregressive_denoise.gather:"
             "ChunkAutoregressiveDenoiseGatherer"
         ),
+        model_section_cls=model_section_cls,
         family_build=build,
         runtime_capabilities=(
             runtime_capabilities
@@ -427,6 +439,7 @@ _register_model_family(
     _full_sequence_denoise_entry(
         family="sd3_5",
         task="t2i",
+        model_section_cls=SHARED_MODEL_SECTION_CLS,
         build=DenoiseFamilyBuild(
             model_cls="vrl.models.families.sd3_5.model:SD3_5Model",
             replay_cls="vrl.models.families.sd3_5.model:SD3_5ReplayModel",
@@ -438,6 +451,7 @@ _register_model_family(
 _register_model_family(
     _chunk_autoregressive_denoise_entry(
         family="causvid",
+        model_section_cls="vrl.config.model_schema:CausVidModelSection",
         executor_cls="vrl.models.families.causvid.runtime:CausVidChunkExecutor",
         build=DenoiseFamilyBuild(
             model_cls="vrl.models.families.causvid.model:CausVidModel",
@@ -460,6 +474,7 @@ _register_model_family(
 _register_model_family(
     _chunk_autoregressive_denoise_entry(
         family="magi_1",
+        model_section_cls="vrl.config.model_schema:Magi1ModelSection",
         executor_cls="vrl.models.families.magi_1.runtime:Magi1ChunkExecutor",
         build=DenoiseFamilyBuild(
             model_cls="vrl.models.families.magi_1.model:Magi1Model",
@@ -481,6 +496,7 @@ _register_model_family(
     _full_sequence_denoise_entry(
         family="flux",
         task="t2i",
+        model_section_cls="vrl.config.model_schema:FluxModelSection",
         build=DenoiseFamilyBuild(
             model_cls="vrl.models.families.flux.model:FluxModel",
             replay_cls="vrl.models.families.flux.model:FluxReplayModel",
@@ -493,6 +509,7 @@ _register_model_family(
     _full_sequence_denoise_entry(
         family="qwen_image",
         task="t2i",
+        model_section_cls=SHARED_MODEL_SECTION_CLS,
         # Descriptor-driven family: the generic functions in
         # vrl.models.steps.denoise.build read the recipe below, so qwen_image ships
         # no per-family builder/resolver functions.
@@ -508,6 +525,7 @@ _register_model_family(
     _full_sequence_denoise_entry(
         family="sana",
         task="t2i",
+        model_section_cls=SHARED_MODEL_SECTION_CLS,
         build=DenoiseFamilyBuild(
             model_cls="vrl.models.families.sana.model:SanaModel",
             replay_cls="vrl.models.families.sana.model:SanaReplayModel",
@@ -520,6 +538,7 @@ _register_model_family(
     _full_sequence_denoise_entry(
         family="lumina2",
         task="t2i",
+        model_section_cls=SHARED_MODEL_SECTION_CLS,
         build=DenoiseFamilyBuild(
             model_cls="vrl.models.families.lumina2.model:Lumina2Model",
             replay_cls="vrl.models.families.lumina2.model:Lumina2ReplayModel",
@@ -532,6 +551,7 @@ _register_model_family(
     _full_sequence_denoise_entry(
         family="hunyuan_video",
         task="t2v",
+        model_section_cls=SHARED_MODEL_SECTION_CLS,
         build=DenoiseFamilyBuild(
             model_cls="vrl.models.families.hunyuan_video.model:HunyuanVideoModel",
             replay_cls="vrl.models.families.hunyuan_video.model:HunyuanVideoReplayModel",
@@ -544,6 +564,7 @@ _register_model_family(
     _full_sequence_denoise_entry(
         family="mochi",
         task="t2v",
+        model_section_cls=SHARED_MODEL_SECTION_CLS,
         build=DenoiseFamilyBuild(
             model_cls="vrl.models.families.mochi.model:MochiModel",
             replay_cls="vrl.models.families.mochi.model:MochiReplayModel",
@@ -556,6 +577,7 @@ _register_model_family(
     _full_sequence_denoise_entry(
         family="hunyuan_image",
         task="t2i",
+        model_section_cls=SHARED_MODEL_SECTION_CLS,
         build=DenoiseFamilyBuild(
             model_cls="vrl.models.families.hunyuan_image.model:HunyuanImageModel",
             replay_cls="vrl.models.families.hunyuan_image.model:HunyuanImageReplayModel",
@@ -568,6 +590,7 @@ _register_model_family(
     _full_sequence_denoise_entry(
         family="pixart_sigma",
         task="t2i",
+        model_section_cls=SHARED_MODEL_SECTION_CLS,
         build=DenoiseFamilyBuild(
             model_cls="vrl.models.families.pixart_sigma.model:PixArtSigmaModel",
             replay_cls="vrl.models.families.pixart_sigma.model:PixArtSigmaReplayModel",
@@ -584,6 +607,7 @@ _register_model_family(
     _full_sequence_denoise_entry(
         family="cogvideox",
         task="t2v",
+        model_section_cls=SHARED_MODEL_SECTION_CLS,
         build=DenoiseFamilyBuild(
             model_cls="vrl.models.families.cogvideox.model:CogVideoXModel",
             replay_cls="vrl.models.families.cogvideox.model:CogVideoXReplayModel",
@@ -599,6 +623,7 @@ _register_model_family(
     _full_sequence_denoise_entry(
         family="wan_2_1",
         task="t2v",
+        model_section_cls="vrl.config.model_schema:WanModelSection",
         # The two wan entries carry their own per-variant recipes, so the
         # t2v/i2v resolution is decided here, once, by family selection. The
         # dual-stage transformer_2 late-load lives in the replay model's
@@ -617,6 +642,7 @@ _register_model_family(
     _full_sequence_denoise_entry(
         family="wan_2_1_i2v",
         task="i2v",
+        model_section_cls="vrl.config.model_schema:WanModelSection",
         executor_cls="vrl.models.families.wan_2_1.runtime:Wan_2_1I2VChunkExecutor",
         build=DenoiseFamilyBuild(
             model_cls="vrl.models.families.wan_2_1.model:WanI2VDiffusersModel",
@@ -631,6 +657,7 @@ _register_model_family(
     _full_sequence_denoise_entry(
         family="cosmos-predict2",
         task="v2w",
+        model_section_cls=SHARED_MODEL_SECTION_CLS,
         executor_cls="vrl.models.families.cosmos.predict2.runtime:CosmosChunkExecutor",
         build=DenoiseFamilyBuild(
             model_cls="vrl.models.families.cosmos.predict2.model:CosmosPredict2Model",
@@ -644,6 +671,7 @@ _register_model_family(
     _full_sequence_denoise_entry(
         family="cosmos-predict2.5",
         task="t2w",
+        model_section_cls="vrl.config.model_schema:CosmosPredict25ModelSection",
         executor_cls=(
             "vrl.models.families.cosmos.predict2_5.runtime:CosmosPredict25ChunkExecutor"
         ),
@@ -665,6 +693,7 @@ _register_model_family(
     _full_sequence_denoise_entry(
         family="cosmos3",
         task="t2v",
+        model_section_cls=SHARED_MODEL_SECTION_CLS,
         executor_cls="vrl.models.families.cosmos.cosmos3.runtime:Cosmos3ChunkExecutor",
         build=DenoiseFamilyBuild(
             model_cls="vrl.models.families.cosmos.cosmos3.model:Cosmos3Model",
@@ -679,6 +708,7 @@ _register_model_family(
     _full_sequence_denoise_entry(
         family="cosmos-predict2-anima",
         task="t2i",
+        model_section_cls="vrl.config.model_schema:CosmosAnimaModelSection",
         build=DenoiseFamilyBuild(
             model_cls="vrl.models.families.cosmos.anima.model:AnimaModel",
             replay_runtime_builder=(
@@ -692,6 +722,7 @@ _register_model_family(
     _full_sequence_denoise_entry(
         family="echo",
         task="t2v",
+        model_section_cls="vrl.config.model_schema:EchoModelSection",
         executor_cls="vrl.models.families.echo.runtime:EchoChunkExecutor",
         build=DenoiseFamilyBuild(
             model_cls="vrl.models.families.echo.model:EchoModel",
@@ -714,6 +745,7 @@ _register_model_family(
     _token_autoregressive_entry(
         family="janus_pro",
         action_distribution="categorical",
+        model_section_cls="vrl.config.model_schema:JanusProModelSection",
         executor_cls="vrl.models.families.janus_pro.runtime:JanusProChunkExecutor",
         build=_JANUS_PRO_BUILD,
     ),
@@ -723,6 +755,7 @@ _register_model_family(
     _token_autoregressive_entry(
         family="janus_pro_r1",
         action_distribution="categorical",
+        model_section_cls="vrl.config.model_schema:JanusProModelSection",
         task="ar_t2i_r1",
         executor_cls="vrl.models.families.janus_pro.runtime:JanusProR1ChunkExecutor",
         gatherer_cls="vrl.models.families.janus_pro.runtime:JanusProR1ChunkGatherer",
@@ -735,6 +768,7 @@ _register_model_family(
     _token_autoregressive_entry(
         family="nextstep_1",
         action_distribution="continuous",
+        model_section_cls="vrl.config.model_schema:NextStep1ModelSection",
         executor_cls="vrl.models.families.nextstep_1.runtime:NextStep1ChunkExecutor",
         gatherer_cls="vrl.models.families.nextstep_1.runtime:NextStep1ChunkGatherer",
         build=TokenFamilyBuild(
@@ -753,6 +787,7 @@ _register_model_family(
     _token_autoregressive_entry(
         family="emu3",
         action_distribution="categorical",
+        model_section_cls=SHARED_MODEL_SECTION_CLS,
         executor_cls="vrl.models.families.emu3.runtime:Emu3ChunkExecutor",
         build=TokenFamilyBuild(
             model_cls="vrl.models.families.emu3.model:Emu3Model",
@@ -768,6 +803,7 @@ _register_model_family(
     _token_autoregressive_entry(
         family="glm_image",
         action_distribution="categorical",
+        model_section_cls=SHARED_MODEL_SECTION_CLS,
         executor_cls="vrl.models.families.glm_image.runtime:GlmImageChunkExecutor",
         build=TokenFamilyBuild(
             model_cls="vrl.models.families.glm_image.model:GlmImageModel",
@@ -783,6 +819,7 @@ _register_model_family(
     _token_autoregressive_entry(
         family="llamagen",
         action_distribution="categorical",
+        model_section_cls="vrl.config.model_schema:LlamaGenModelSection",
         executor_cls="vrl.models.families.llamagen.runtime:LlamaGenChunkExecutor",
         build=TokenFamilyBuild(
             model_cls="vrl.models.families.llamagen.model:LlamaGenModel",

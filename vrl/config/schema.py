@@ -18,22 +18,24 @@ from typing import Annotated, Any, ClassVar, Literal, get_args, get_type_hints
 from omegaconf import DictConfig, OmegaConf
 from omegaconf.errors import MissingMandatoryValue
 from pydantic import (
-    BaseModel,
     ConfigDict,
     Field,
+    SerializeAsAny,
     ValidationError,
     field_validator,
     model_validator,
 )
 
 from vrl.config.algorithm import algorithm_config_class, resolve_kl_reward_coef
+from vrl.config.base import ConfigBase
 from vrl.config.data import DataLoaderName, resolve_data_loader
+from vrl.config.model_schema import ModelSection
 from vrl.config.precision import PrecisionConfig
 from vrl.config.reward_inference import parse_reward_inference_config
 from vrl.config.unknown_keys import OPEN, ConfigBlock
 from vrl.families.names import normalize_model_family
+from vrl.families.registry import FAMILY_REGISTRY, get_model_family_entry
 from vrl.generation.execution.types import ChunkPlacementStrategy
-from vrl.models.interfaces.runtime import MODEL_MEMORY_SECTIONS
 from vrl.ray.resources import (
     RewardResourceConfig,
     RoleResourceConfig,
@@ -42,17 +44,8 @@ from vrl.ray.resources import (
 from vrl.trainers.data.prompt_sampler import PromptSamplingStrategy
 from vrl.trainers.online.config import OnlineBatchPlan, TrainerConfig
 from vrl.trajectory.storage import TrajectoryStoragePolicy
+from vrl.utils.config import import_from_path
 from vrl.utils.profiling import TorchProfilerConfig
-
-
-class ConfigBase(BaseModel):
-    """Shared typed-boundary base. Field declarations double as the known-key
-    registry consumed by vrl.config.unknown_keys (the single whole-tree
-    unknown-key reporter); unknown keys are tolerated here and reported there.
-    """
-
-    model_config = ConfigDict(extra="ignore")
-
 
 # ── Reward section ────────────────────────────────────────────────────────────
 
@@ -387,232 +380,72 @@ class SamplingConfig(ConfigBase):
     width: Any = None
 
 
-class ModelConfig(ConfigBase):
-    """Shared model keys; family-owned keys are validated by model.family."""
-
-    model_config = ConfigDict(extra="allow")
-
-    family: str | None = None
-    # readers: models/interfaces/runtime.py + family runtime.py lora blocks
-    lora: Annotated[
-        Any,
-        ConfigBlock(
-            (
-                "rank",
-                "alpha",
-                "path",
-                "target_modules",
-                "init_lora_weights",
-                "dropout",
-                "init",
-            )
-        ),
-    ] = None
-    # model.memory sections (today only vae_decode, which self-validates strictly)
-    memory: Annotated[Any, ConfigBlock(MODEL_MEMORY_SECTIONS)] = None
-    path: Any = None
-    # Immutable Hub snapshot used by full-pipeline rollout and component replay.
-    revision: Any = None
-    torch_compile: Annotated[Any, ConfigBlock(("enable", "mode"))] = None
-    use_lora: Any = None
-    # model.executor: pure-data chunk-executor config for families using the
-    # shared DiffusionChunkExecutor. Read wholesale into executor_kwargs; the
-    # executor picks the keys it needs (unknown keys fail loud at construction).
-    executor: Annotated[
-        Any,
-        ConfigBlock(
-            (
-                "num_frames",
-                "max_sequence_length",
-                "fps",
-                "chunk_passthrough_keys",
-            )
-        ),
-    ] = None
-
-
-class SD3ModelConfig(ModelConfig):
-    """SD3.5 uses only the shared model keys."""
-
-    model_config = ConfigDict(extra="ignore")
-
-
-class WanModelConfig(ModelConfig):
-    """Wan-specific model keys consumed by wan_2_1 runtime/model loaders."""
-
-    model_config = ConfigDict(extra="ignore")
-
-    boundary_ratio: Any = None
-    expert_lifecycle_profiling: bool = False
-    offload_mode: Literal["none", "model", "sequential"] = "none"
-    trainable_transformers: Any = None
-
-
-class CosmosPredict2ModelConfig(ModelConfig):
-    """Cosmos Predict2 Video2World model keys."""
-
-    model_config = ConfigDict(extra="ignore")
-
-
-class CosmosPredict25ModelConfig(ModelConfig):
-    """Cosmos Predict2.5 model keys."""
-
-    model_config = ConfigDict(extra="ignore")
-
-    skip_text_encoder: Any = None
-
-
-class CosmosAnimaModelConfig(ModelConfig):
-    """Cosmos Anima single-file artifact paths and scheduler key."""
-
-    model_config = ConfigDict(extra="ignore")
-
-    qwen_tokenizer_path: Any = None
-    qwen_tokenizer_revision: Any = None
-    scheduler_shift: Any = None
-    t5_tokenizer_path: Any = None
-    t5_tokenizer_revision: Any = None
-    text_encoder_file: Any = None
-    text_encoder_path: Any = None
-    transformer_file: Any = None
-    transformer_path: Any = None
-    vae_file: Any = None
-    vae_path: Any = None
-
-
-class JanusProModelConfig(ModelConfig):
-    """Janus-Pro optional model wrapper keys."""
-
-    model_config = ConfigDict(extra="ignore")
-
-    trust_remote_code: Any = None
-    vq_latent_channels: Any = None
-
-
-class NextStep1ModelConfig(ModelConfig):
-    """NextStep-1 tokenizer and frozen-module keys."""
-
-    model_config = ConfigDict(extra="ignore")
-
-    freeze_vae: Any = None
-    vae_path: Any = None
-    vae_revision: Any = None
-
-
-class LlamaGenModelConfig(ModelConfig):
-    """LlamaGen checkpoint-file and frozen-T5 keys (vendored, non-HF layout)."""
-
-    model_config = ConfigDict(extra="ignore")
-
-    gpt_ckpt: Any = None
-    gpt_model: Any = None
-    t5_path: Any = None
-    t5_revision: Any = None
-    vq_ckpt: Any = None
-
-
-class EchoModelConfig(ModelConfig):
-    """JoyAI-Echo model keys consumed by the echo runtime/model loaders.
-
-    ``path`` is the merged Echo safetensors checkpoint; ``gemma_path`` is the
-    separate Gemma-3-12B text-encoder directory (both downloaded into the run's
-    checkpoints dir — weights are not vendored).
-    """
-
-    model_config = ConfigDict(extra="ignore")
-
-    gemma_path: Any = None
-    gemma_revision: Any = None
-
-
-class FluxModelConfig(ModelConfig):
-    """FLUX model keys consumed by the flux model loader."""
-
-    model_config = ConfigDict(extra="ignore")
-
-    # DiffusionNFT's frozen ``previous`` adapter switch (FluxModel.apply_lora
-    # attaches it; LoRA-only, validated in FluxModel).
-    nft_previous_adapter: Any = None
-
-
-class CausVidModelConfig(ModelConfig):
-    """CausVid's pinned upstream source, Wan base, and released checkpoint."""
-
-    model_config = ConfigDict(extra="ignore")
-
-    accept_noncommercial_license: bool = False
-    base_model_path: Any = None
-    base_model_revision: Any = None
-    causvid_source_path: Any = None
-    causvid_source_revision: Any = None
-    checkpoint_file: Any = None
-    checkpoint_sha256: Any = None
-
-
-class Magi1ModelConfig(ModelConfig):
-    """MAGI-1's isolated upstream runtime and checkpoint component paths."""
-
-    model_config = ConfigDict(extra="ignore")
-
-    checkpoint_path: Any = None
-    config_path: Any = None
-    python_executable: Any = None
-    source_path: Any = None
-    source_revision: Any = None
-    t5_pretrained_path: Any = None
-    timeout_seconds: Any = None
-    vae_pretrained_path: Any = None
-
-
-# Keyed by CANONICAL rollout-family name only. Aliases ("wan", "cosmos",
-# "janus_r1", ...) are owned by vrl/families/names.py — lookups
-# normalize through it, so a new declared alias works here for free.
-_model_config_classes_by_family: dict[str, type[ModelConfig]] = {
-    "sd3_5": SD3ModelConfig,
-    "flux": FluxModelConfig,
-    "wan_2_1": WanModelConfig,
-    "wan_2_1_i2v": WanModelConfig,
-    "cosmos-predict2": CosmosPredict2ModelConfig,
-    "cosmos-predict2.5": CosmosPredict25ModelConfig,
-    "cosmos-predict2-anima": CosmosAnimaModelConfig,
-    "janus_pro": JanusProModelConfig,
-    "janus_pro_r1": JanusProModelConfig,
-    "nextstep_1": NextStep1ModelConfig,
-    "llamagen": LlamaGenModelConfig,
-    "echo": EchoModelConfig,
-    "causvid": CausVidModelConfig,
-    "magi_1": Magi1ModelConfig,
-}
-
-_model_config_variant_classes: tuple[type[ModelConfig], ...] = tuple(
-    dict.fromkeys(_model_config_classes_by_family.values())
-)
-
-
-def _model_config_class_for_family(family: Any) -> type[ModelConfig]:
-    canonical = normalize_model_family(str(family or ""))
-    return _model_config_classes_by_family.get(canonical, ModelConfig)
+# Kept as a public import facade while the accurate section name is used by
+# registry ownership and RootConfig.
+ModelConfig = ModelSection
 
 
 @functools.cache
-def _model_config_block(cls: type[ModelConfig]) -> ConfigBlock:
+def _model_section_class_from_path(path: str) -> type[ModelSection]:
+    section_cls = import_from_path(path)
+    if not isinstance(section_cls, type) or not issubclass(section_cls, ModelSection):
+        raise TypeError(
+            f"model section path {path!r} must resolve to a ModelSection subclass",
+        )
+    return section_cls
+
+
+def _model_section_class_for_family(family: Any) -> type[ModelSection]:
+    if family is None or not str(family).strip():
+        raise ValueError("config missing required field: model.family")
+    entry = get_model_family_entry(str(family))
+    return _model_section_class_from_path(entry.model_section_cls)
+
+
+_model_section_variant_classes: tuple[type[ModelSection], ...] = tuple(
+    dict.fromkeys(
+        _model_section_class_from_path(entry.model_section_cls)
+        for entry in FAMILY_REGISTRY.values()
+    )
+)
+
+
+@functools.cache
+def _model_section_block(cls: type[ModelSection]) -> ConfigBlock:
     return ConfigBlock(cls)
 
 
-def _model_config_block_for_unknown_keys(mapping: Mapping[str, Any]) -> ConfigBlock:
-    return _model_config_block(_model_config_class_for_family(mapping.get("family")))
-
-
-def _validate_model_config_for_family(model: ModelConfig | None) -> None:
-    if model is None:
-        return
-    payload = model.model_dump()
-    cls = _model_config_class_for_family(payload.get("family"))
+def _model_section_block_for_unknown_keys(mapping: Mapping[str, Any]) -> ConfigBlock:
     try:
-        cls.model_validate(payload)
+        section_cls = _model_section_class_for_family(mapping.get("family"))
+    except ValueError:
+        # Unknown-key reporting precedes structural validation. Keep the walker
+        # useful while RootConfig emits the authoritative missing/unknown-family
+        # error instead of silently selecting a permissive fallback.
+        section_cls = ModelSection
+    return _model_section_block(section_cls)
+
+
+def _parse_model_section(value: Any) -> ModelSection | None:
+    if value is None:
+        return None
+    if isinstance(value, ModelSection):
+        family = value.family
+        section_cls = _model_section_class_for_family(family)
+        if isinstance(value, section_cls):
+            return value
+        payload = value.model_dump()
+    elif isinstance(value, Mapping):
+        payload = dict(value)
+        section_cls = _model_section_class_for_family(payload.get("family"))
+    else:
+        raise ValueError("model must be a mapping")
+
+    try:
+        return section_cls.model_validate(payload)
     except ValidationError as exc:
-        # Re-anchor the error under the model. section (the family class
-        # validates a bare payload, so its paths lack the prefix).
+        # The selected class validates the bare model payload. Re-anchor its
+        # error so callers still receive the public YAML path.
         message = _extract_error_message(exc)
         if message.startswith("unknown ") and not message.startswith("unknown model."):
             message = f"unknown model.{message[len('unknown ') :]}"
@@ -980,11 +813,11 @@ class RootConfig(ConfigBase):
     reward: RewardConfig | None = None
     rollout: RolloutConfig | None = None
     model: Annotated[
-        ModelConfig | None,
+        SerializeAsAny[ModelSection] | None,
         ConfigBlock(
-            ModelConfig,
-            select=_model_config_block_for_unknown_keys,
-            variants=_model_config_variant_classes,
+            ModelSection,
+            select=_model_section_block_for_unknown_keys,
+            variants=_model_section_variant_classes,
         ),
     ] = None
     sampling: SamplingConfig | None = None
@@ -1005,10 +838,13 @@ class RootConfig(ConfigBase):
     # key from PrecisionConfig rather than duplicating a hand-maintained tuple.
     precision: Annotated[Any, ConfigBlock(PrecisionConfig)] = None
 
+    @field_validator("model", mode="before")
+    @classmethod
+    def _select_model_section(cls, value: Any) -> ModelSection | None:
+        return _parse_model_section(value)
+
     @model_validator(mode="after")
     def _cross_field_validate(self) -> RootConfig:
-        _validate_model_config_for_family(self.model)
-
         algo = self.algorithm
         if algo is None:
             return self
@@ -1172,6 +1008,7 @@ __all__ = [
     "AlgorithmConfig",
     "DataConfig",
     "ModelConfig",
+    "ModelSection",
     "RewardConfig",
     "RolloutConfig",
     "RootConfig",
