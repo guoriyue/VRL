@@ -10,6 +10,7 @@ from __future__ import annotations
 import pytest
 from omegaconf import OmegaConf
 
+from vrl.generation.ray.config import RolloutWorkerConfig
 from vrl.ray.placement import GlobalRayPlacementOwner
 from vrl.ray.resources import (
     build_bundle_layout,
@@ -167,8 +168,25 @@ def test_bundle_plan_dedicated_reward_appends_fresh_bundle() -> None:
 # logic is verified deterministically without multi-GPU hardware.
 
 
-def _owner(resources: dict) -> GlobalRayPlacementOwner:
-    return GlobalRayPlacementOwner(_resolve(resources))
+def _worker(*, cpus_per_worker: float = 1.0) -> RolloutWorkerConfig:
+    return RolloutWorkerConfig(
+        cpus_per_worker=cpus_per_worker,
+        max_inflight_chunks_per_worker=1,
+        health_check_interval_s=30.0,
+        health_check_timeout_s=30.0,
+        health_check_first_wait_s=0.0,
+        pipelined=False,
+        chunk_placement_strategy="round_robin",
+        sync_trainable_state=True,
+    )
+
+
+def _owner(
+    resources: dict,
+    *,
+    worker: RolloutWorkerConfig | None = None,
+) -> GlobalRayPlacementOwner:
+    return GlobalRayPlacementOwner(_resolve(resources), worker or _worker())
 
 
 def test_assign_roles_matches_requested_ordinals_under_permuted_probe() -> None:
@@ -268,8 +286,8 @@ def test_bundle_requirements_size_shared_bundle_to_max_role_cpu() -> None:
                 "share_with_rollout": True,
             },
         },
+        worker=_worker(cpus_per_worker=2.0),
     )
-    owner.rollout_cpus_per_worker = 2.0
     # reward_cpus_per_worker default is 0.5; shared bundle must take 2.0.
     requirements = owner._bundle_requirements()
     shared_bundle = owner.layout.rollout_bundle_indices[0]
@@ -278,6 +296,21 @@ def test_bundle_requirements_size_shared_bundle_to_max_role_cpu() -> None:
     # Trainer-reserved bundle holds the GPU with only a token CPU.
     trainer_bundle = owner.layout.trainer_bundle_indices[0]
     assert requirements[trainer_bundle] == {"CPU": 0.001, "GPU": 1.0}
+
+
+def test_placement_owner_keeps_exact_resolved_worker_snapshot() -> None:
+    worker = _worker(cpus_per_worker=2.5)
+    owner = _owner(
+        {
+            "visible_devices": [],
+            "trainer": {"num_gpus": 0},
+            "rollout": {"num_gpus": 0, "gpus_per_worker": 0, "num_workers": 1},
+        },
+        worker=worker,
+    )
+
+    assert owner.rollout_worker is worker
+    assert owner._bundle_requirements() == [{"CPU": 2.5}]
 
 
 def test_shutdown_retries_same_placement_group_after_remove_failure(monkeypatch) -> None:
@@ -554,7 +587,7 @@ def test_owner_reserves_trainer_gpu_and_binds_roles_on_simulated_gpus() -> None:
                 "reward": {"devices": [2], "gpus_per_worker": 1, "num_workers": 1},
             },
         ),
-        rollout_cpus_per_worker=1.0,
+        _worker(),
     )
     try:
         owner.create()
@@ -593,7 +626,7 @@ def test_owner_shares_one_bundle_for_rollout_and_reward_on_simulated_gpus() -> N
                 },
             },
         ),
-        rollout_cpus_per_worker=1.0,
+        _worker(),
     )
     try:
         owner.create()

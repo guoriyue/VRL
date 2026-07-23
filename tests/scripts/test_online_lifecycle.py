@@ -127,7 +127,8 @@ class _FakeLauncher:
         self._state = state
 
     def launch_from_cfg(self, *args: Any, **kwargs: Any) -> _FakeRuntime:
-        del args, kwargs
+        del args
+        self._state["launcher_worker"] = kwargs["config"].worker
         self._state["launches"] += 1
         if self._state.get("launch_raises"):
             raise RuntimeError("launch boom")
@@ -136,8 +137,9 @@ class _FakeLauncher:
 
 class _FakePlacementOwner:
     def __init__(self, state: dict[str, Any], *args: Any, **kwargs: Any) -> None:
-        del args, kwargs
+        self.rollout_worker = args[1] if len(args) > 1 else kwargs["rollout_worker"]
         self._state = state
+        self._state["placement_worker"] = self.rollout_worker
         self.rollout_placement = object()
 
     def create(self) -> None:
@@ -188,6 +190,8 @@ def _state() -> dict[str, Any]:
         "owner_creates": 0,
         "owner_shutdowns": 0,
         "launches": 0,
+        "launcher_worker": None,
+        "placement_worker": None,
         "model_builds": 0,
         "trainer_steps": 0,
         "trainer_prompt_batches": [],
@@ -292,6 +296,8 @@ def _install_common_fakes(
     collector = _FakeCollector(state, reward)
     resources = SimpleNamespace(
         cross_node=False,
+        rollout_num_workers=1,
+        rollout_gpus_per_worker=0,
         lifecycle=SimpleNamespace(
             handoff=SimpleNamespace(
                 release_rollout_before_train=False,
@@ -316,7 +322,7 @@ def _install_common_fakes(
         online,
         "build_configs",
         lambda cfg: SimpleNamespace(
-            root=SimpleNamespace(),
+            root=cfg,
             trainer=trainer_config,
             precision=precision,
             reward=SimpleNamespace(
@@ -409,6 +415,8 @@ async def test_run_online_recipe_shutdowns_owner_after_success(monkeypatch, tmp_
     assert state["schedule_shutdowns"] == 1
     assert state["reward_shutdowns"] == 1
     assert state["owner_shutdowns"] == 1
+    assert state["launcher_worker"] is state["placement_worker"]
+    assert state["launcher_worker"].cpus_per_worker == 0.5
     assert state["shutdown_order"] == [
         "schedule",
         "collector",
@@ -502,6 +510,8 @@ async def test_distributed_disjoint_rollout_fails_before_model_or_ray_launch(
     resources = SimpleNamespace(
         cross_node=False,
         colocated=False,
+        rollout_num_workers=1,
+        rollout_gpus_per_worker=0,
         rollout_num_gpus=2,
         lifecycle=SimpleNamespace(
             handoff=SimpleNamespace(
@@ -554,6 +564,8 @@ async def test_shared_gpu_parking_capability_fails_before_model_or_ray_launch(
     _install_common_fakes(monkeypatch, tmp_path, state)
     resources = SimpleNamespace(
         cross_node=False,
+        rollout_num_workers=1,
+        rollout_gpus_per_worker=0,
         lifecycle=SimpleNamespace(
             handoff=SimpleNamespace(
                 release_rollout_before_train=release_rollout_before_train,

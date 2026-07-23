@@ -14,56 +14,78 @@ from vrl.models.interfaces.runtime import bundle_loads_full_generation_modules
 from vrl.ray.resources import (
     ResolvedDistributedResources,
 )
-from vrl.utils.config import cfg_get
+from vrl.utils.config import cfg_get, to_builtin_deep
 from vrl.utils.logging import init_logger
 
 logger = init_logger(__name__)
 
 
-@dataclass(slots=True)
-class RayGenerationConfig:
-    """Ray generation execution config plus resolved worker resources."""
+@dataclass(frozen=True, slots=True)
+class RolloutWorkerConfig:
+    """Frozen runtime projection of the public rollout-worker section."""
 
-    resources: ResolvedDistributedResources
-    cpus_per_worker: float = 1.0
-    max_inflight_chunks_per_worker: int = 1
-    health_check_interval_s: float = 30.0
-    health_check_timeout_s: float = 30.0
-    health_check_first_wait_s: float = 0.0
+    cpus_per_worker: float
+    max_inflight_chunks_per_worker: int
+    health_check_interval_s: float
+    health_check_timeout_s: float
+    health_check_first_wait_s: float
     # Opt-in single-worker pipelined rollout. Multi-worker execution is rejected
     # because per-worker request partitioning is not implemented.
-    pipelined: bool = False
+    pipelined: bool
     # Chunk->worker binding: "round_robin" binds at plan time (baseline);
     # "dynamic" binds at dispatch time (pull + LPT). Equivalent for 1 worker.
     # Allowed-set rejection is at the typed schema boundary (RolloutWorkerSection);
     # the runtime ChunkPlacementPolicy guard is the wire-boundary backstop.
-    chunk_placement_strategy: ChunkPlacementStrategy = "round_robin"
+    chunk_placement_strategy: ChunkPlacementStrategy
     # Plain on/off. True keeps rollout workers resynced to the trained policy (the
     # syncer flattens whatever is trainable — lora or full-param); False disables it.
     # Defaults ON: online runs train the policy the rollout workers must resync, so
     # an omitted value previously meant silent stale-policy training. The syncer is
     # only built on the online launch path, so this never affects eval.
-    sync_trainable_state: bool = True
+    sync_trainable_state: bool
 
     def __post_init__(self) -> None:
-        self.health_check_interval_s = float(self.health_check_interval_s)
-        self.health_check_timeout_s = float(self.health_check_timeout_s)
-        self.health_check_first_wait_s = float(self.health_check_first_wait_s)
-        if self.resources.rollout_num_workers < 1:
-            raise ValueError("distributed.resources.rollout.num_workers must be >= 1")
-        if self.resources.rollout_gpus_per_worker < 0:
-            raise ValueError("distributed.resources.rollout.gpus_per_worker must be >= 0")
-        if self.cpus_per_worker <= 0:
-            raise ValueError("cpus_per_worker must be > 0")
+        if not math.isfinite(self.cpus_per_worker) or self.cpus_per_worker <= 0:
+            raise ValueError("cpus_per_worker must be finite and > 0")
         if self.max_inflight_chunks_per_worker < 1:
             raise ValueError("max_inflight_chunks_per_worker must be >= 1")
+        if not math.isfinite(self.health_check_interval_s):
+            raise ValueError("health_check_interval_s must be finite")
         if self.health_check_interval_s > 0 and (
             not math.isfinite(self.health_check_timeout_s) or self.health_check_timeout_s <= 0
         ):
             raise ValueError("health_check_timeout_s must be finite and > 0 when enabled")
-        if self.health_check_first_wait_s < 0:
-            raise ValueError("health_check_first_wait_s must be >= 0")
-        if self.pipelined and self.resources.rollout_num_workers != 1:
+        if not math.isfinite(self.health_check_first_wait_s) or self.health_check_first_wait_s < 0:
+            raise ValueError("health_check_first_wait_s must be finite and >= 0")
+
+    @classmethod
+    def from_public_section(cls, section: Any) -> RolloutWorkerConfig:
+        """Freeze a validated public section without introducing fallback values."""
+
+        from vrl.config.schema import RolloutWorkerSection
+
+        if not isinstance(section, RolloutWorkerSection):
+            section = RolloutWorkerSection.model_validate(to_builtin_deep(section or {}))
+        return cls(**section.model_dump())
+
+
+@dataclass(slots=True)
+class RayGenerationConfig:
+    """Ray launcher protocol composed from resources and one worker snapshot."""
+
+    resources: ResolvedDistributedResources
+    worker: RolloutWorkerConfig
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.worker, RolloutWorkerConfig):
+            raise TypeError(
+                f"worker must be a RolloutWorkerConfig, got {type(self.worker).__name__}",
+            )
+        if self.resources.rollout_num_workers < 1:
+            raise ValueError("distributed.resources.rollout.num_workers must be >= 1")
+        if self.resources.rollout_gpus_per_worker < 0:
+            raise ValueError("distributed.resources.rollout.gpus_per_worker must be >= 0")
+        if self.worker.pipelined and self.resources.rollout_num_workers != 1:
             raise ValueError(
                 "distributed.rollout.pipelined=true requires exactly one rollout "
                 f"worker; resolved {self.resources.rollout_num_workers}. "
@@ -84,34 +106,7 @@ class RayGenerationConfig:
 
         return cls(
             resources=resources,
-            cpus_per_worker=float(
-                cfg_get(rollout, "cpus_per_worker", 1.0),
-            ),
-            max_inflight_chunks_per_worker=int(
-                cfg_get(
-                    rollout,
-                    "max_inflight_chunks_per_worker",
-                    1,
-                ),
-            ),
-            health_check_interval_s=float(
-                cfg_get(rollout, "health_check_interval_s", 30.0),
-            ),
-            health_check_timeout_s=float(
-                cfg_get(rollout, "health_check_timeout_s", 30.0),
-            ),
-            health_check_first_wait_s=float(
-                cfg_get(rollout, "health_check_first_wait_s", 0.0),
-            ),
-            pipelined=bool(
-                cfg_get(rollout, "pipelined", False),
-            ),
-            sync_trainable_state=bool(
-                cfg_get(rollout, "sync_trainable_state", True),
-            ),
-            chunk_placement_strategy=str(
-                cfg_get(rollout, "chunk_placement_strategy", "round_robin"),
-            ),
+            worker=RolloutWorkerConfig.from_public_section(rollout),
         )
 
     def validate_driver_state(
@@ -292,5 +287,6 @@ def _cuda_device_index(device: Any) -> int | None:
 
 __all__ = [
     "RayGenerationConfig",
+    "RolloutWorkerConfig",
     "validate_colocated_replay_memory",
 ]

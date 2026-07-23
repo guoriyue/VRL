@@ -18,6 +18,7 @@ from vrl.config.validation import require
 from vrl.families.registry import (
     get_model_family_entry,
 )
+from vrl.generation.ray.config import RayGenerationConfig
 from vrl.generation.ray.launcher import RayGenerationLauncher
 from vrl.models.interfaces import require_runtime_model
 from vrl.ray.dependencies import require_ray
@@ -827,6 +828,10 @@ async def run_online_recipe(
     )
 
     resources = resolve_distributed_resources(cfg)
+    generation_config = RayGenerationConfig.from_cfg(
+        built.root,
+        resources=resources,
+    )
     validate_rollout_schedule_topology(trainer_config.rollout_orchestration, resources)
     validate_reward_memory_parking(resources=resources, built=built)
     logger.info(format_distributed_resource_plan(resources))
@@ -908,9 +913,7 @@ async def run_online_recipe(
     # device selected above.
     placement_owner = GlobalRayPlacementOwner(
         resources,
-        rollout_cpus_per_worker=float(
-            OmegaConf.select(cfg, "distributed.rollout.cpus_per_worker", default=1.0),
-        ),
+        generation_config.worker,
     )
     ray = require_ray()
     ray_session: _RayClusterSession | None = None
@@ -951,7 +954,7 @@ async def run_online_recipe(
         collector.set_runtime(
             generation_launcher.launch_from_cfg(
                 cfg,
-                resources=resources,
+                config=generation_config,
                 entry=family_entry,
                 driver_bundle=bundle,
                 placement=placement_owner.rollout_placement,

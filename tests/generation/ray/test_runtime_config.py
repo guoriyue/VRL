@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, replace
+from dataclasses import FrozenInstanceError, dataclass, replace
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import patch
@@ -11,6 +11,7 @@ import pytest
 import torch
 from omegaconf import OmegaConf
 
+from vrl.config.loading import bundled_config_resource
 from vrl.families.registry import ModelFamilyEntry, get_model_family_entry
 from vrl.generation.execution.types import DistributedWorkerHandle
 from vrl.generation.launch_contract import GenerationRuntimeLaunchContract
@@ -18,7 +19,7 @@ from vrl.generation.ray.config import RayGenerationConfig
 from vrl.generation.ray.launch_inputs import RayGenerationLaunchInputs
 from vrl.generation.ray.launcher import RayGenerationLauncher
 from vrl.generation.ray.utils import all_workers_support_versioned_slots
-from vrl.ray.placement import RolePlacement
+from vrl.ray.placement import GlobalRayPlacementOwner, RolePlacement
 from vrl.ray.resources import resolve_distributed_resources
 
 
@@ -202,22 +203,24 @@ def _capture_launch_inputs(
     """Intercept the public launch boundary without starting Ray actors."""
 
     captured: list[RayGenerationLaunchInputs] = []
+    config = _ray_config(cfg)
 
     def capture_launch(
         _launcher: RayGenerationLauncher,
-        _config: RayGenerationConfig,
+        resolved_config: RayGenerationConfig,
         launch_inputs: RayGenerationLaunchInputs,
         *,
         placement: RolePlacement,
     ) -> RayGenerationLaunchInputs:
         assert isinstance(placement, RolePlacement)
+        assert resolved_config is config
         captured.append(launch_inputs)
         return launch_inputs
 
     with patch.object(RayGenerationLauncher, "launch", new=capture_launch):
         result = RayGenerationLauncher(init_ray=False).launch_from_cfg(
             cfg,
-            resources=resolve_distributed_resources(cfg),
+            config=config,
             entry=entry,
             driver_bundle=_Bundle(model=_CpuPolicy(), trainable_modules={}),
             placement=RolePlacement(
@@ -382,31 +385,157 @@ def test_launcher_capability_failure_kills_candidate_actor_group(
 
 def test_chunk_placement_strategy_switches_from_cfg() -> None:
     """Checks distributed.rollout.chunk_placement_strategy flips the policy."""
-    assert _ray_config(_cfg()).chunk_placement_strategy == "round_robin"
+    assert _ray_config(_cfg()).worker.chunk_placement_strategy == "round_robin"
 
     cfg = _cfg()
     cfg.distributed.rollout.chunk_placement_strategy = "dynamic"
     dynamic = _ray_config(cfg)
-    assert dynamic.chunk_placement_strategy == "dynamic"
+    assert dynamic.worker.chunk_placement_strategy == "dynamic"
     # Invalid values are now rejected at the typed schema boundary
     # (RolloutWorkerSection Literal) at parse time, not in RayGenerationConfig —
     # see tests/config/test_schema.py::test_unknown_chunk_placement_strategy_raises.
 
 
+def test_worker_defaults_and_explicit_override_project_from_public_schema() -> None:
+    default = _ray_config(_cfg()).worker
+    assert default.cpus_per_worker == 1.0
+    assert default.max_inflight_chunks_per_worker == 1
+    assert default.pipelined is False
+    assert default.sync_trainable_state is True
+
+    cfg = _cfg()
+    cfg.distributed.rollout.cpus_per_worker = 2.5
+    cfg.distributed.rollout.max_inflight_chunks_per_worker = 3
+    cfg.distributed.rollout.sync_trainable_state = False
+    override = _ray_config(cfg).worker
+
+    assert override.cpus_per_worker == 2.5
+    assert override.max_inflight_chunks_per_worker == 3
+    assert override.sync_trainable_state is False
+
+
+@pytest.mark.parametrize(
+    "preset_name",
+    [
+        "base/distributed/ray_rollout",
+        "base/distributed/ray_rollout_colocated_single_gpu",
+        "base/distributed/ray_rollout_cross_node",
+    ],
+)
+def test_base_rollout_presets_pin_only_the_cpu_override(preset_name: str) -> None:
+    with bundled_config_resource(preset_name).open("r", encoding="utf-8") as stream:
+        cfg = OmegaConf.load(stream)
+
+    assert dict(cfg.distributed.rollout) == {"cpus_per_worker": 4.0}
+    config = RayGenerationConfig.from_cfg(
+        cfg,
+        resources=SimpleNamespace(
+            rollout_num_workers=1,
+            rollout_gpus_per_worker=1.0,
+        ),
+    )
+    assert config.worker.cpus_per_worker == 4.0
+    assert config.worker.max_inflight_chunks_per_worker == 1
+    assert config.worker.chunk_placement_strategy == "round_robin"
+    assert config.worker.sync_trainable_state is True
+
+
+def test_ray_generation_config_requires_an_explicit_worker_snapshot() -> None:
+    cfg = _cfg()
+    resources = resolve_distributed_resources(cfg)
+
+    with pytest.raises(TypeError, match="worker"):
+        RayGenerationConfig(resources=resources)  # type: ignore[call-arg]
+
+
+def test_rollout_worker_snapshot_is_frozen() -> None:
+    worker = _ray_config(_cfg()).worker
+
+    with pytest.raises(FrozenInstanceError):
+        worker.cpus_per_worker = 2.0  # type: ignore[misc]
+
+
+def test_placement_and_launcher_consume_the_same_worker_snapshot(monkeypatch) -> None:
+    import vrl.generation.ray.launcher as launcher_module
+
+    cfg = _launch_cfg()
+    cfg.distributed.rollout = {
+        "cpus_per_worker": 2.5,
+        "health_check_interval_s": 0.0,
+        "sync_trainable_state": False,
+    }
+    config = _ray_config(cfg)
+    owner = GlobalRayPlacementOwner(config.resources, config.worker)
+    assert owner.rollout_worker is config.worker
+    assert owner._bundle_requirements() == [{"CPU": 2.5}]
+
+    launch_kwargs: dict[str, Any] = {}
+
+    class _ActorGroup:
+        def __init__(self) -> None:
+            self.handles = [
+                SimpleNamespace(
+                    worker_id="rollout-0",
+                    node_ip="node",
+                    gpu_ids=(),
+                    actor=object(),
+                ),
+            ]
+
+        @staticmethod
+        def shutdown() -> None:
+            return None
+
+    def capture_actor_launch(**kwargs: Any) -> _ActorGroup:
+        launch_kwargs.update(kwargs)
+        return _ActorGroup()
+
+    monkeypatch.setattr(launcher_module, "require_ray", lambda: object())
+    monkeypatch.setattr(
+        launcher_module.RayActorGroup,
+        "launch",
+        staticmethod(capture_actor_launch),
+    )
+    monkeypatch.setattr(
+        launcher_module,
+        "all_workers_support_versioned_slots",
+        lambda *_args, **_kwargs: False,
+    )
+    entry = get_model_family_entry("sd3_5")
+    runtime = RayGenerationLauncher(init_ray=False).launch(
+        config,
+        RayGenerationLaunchInputs(
+            launch_contract=GenerationRuntimeLaunchContract(
+                family=entry.family,
+                model_build={},
+            ),
+            gatherer=entry.new_gatherer(),
+        ),
+        placement=RolePlacement(
+            placement_group=object(),
+            bundle_indices=(0,),
+            expected_gpu_ids=(),
+        ),
+    )
+
+    assert launch_kwargs["num_cpus"] == owner.rollout_worker.cpus_per_worker == 2.5
+    assert runtime.executor.max_inflight_chunks_per_worker == 1
+
+
 def test_health_check_settings_default_and_project_overrides() -> None:
     default = _ray_config(_cfg())
-    assert default.health_check_interval_s == 30.0
-    assert default.health_check_timeout_s == 30.0
-    assert default.health_check_first_wait_s == 0.0
+    assert default.worker.health_check_interval_s == 30.0
+    assert default.worker.health_check_timeout_s == 30.0
+    assert default.worker.health_check_first_wait_s == 0.0
 
     cfg = _cfg()
     cfg.distributed.rollout.health_check_interval_s = 5.0
     cfg.distributed.rollout.health_check_timeout_s = 37.5
     cfg.distributed.rollout.health_check_first_wait_s = 12.0
     override = _ray_config(cfg)
-    assert override.health_check_interval_s == 5.0
-    assert override.health_check_timeout_s == 37.5
-    assert override.health_check_first_wait_s == 12.0
+    assert override.worker.health_check_interval_s == 5.0
+    assert override.worker.health_check_timeout_s == 37.5
+    assert override.worker.health_check_first_wait_s == 12.0
 
 
 @pytest.mark.parametrize(
@@ -427,18 +556,18 @@ def test_ray_generation_config_rejects_negative_health_check_first_wait() -> Non
     cfg = _cfg()
     cfg.distributed.rollout.health_check_first_wait_s = -1.0
 
-    with pytest.raises(ValueError, match="health_check_first_wait_s must be >= 0"):
+    with pytest.raises(ValueError, match="health_check_first_wait_s must be finite and >= 0"):
         _ray_config(cfg)
 
 
 def test_pipelined_switches_from_cfg() -> None:
     """Checks distributed.rollout.pipelined flips the per-request pipelined path."""
-    assert _ray_config(_cfg()).pipelined is False
+    assert _ray_config(_cfg()).worker.pipelined is False
 
     cfg = _cfg()
     cfg.distributed.rollout.pipelined = True
 
-    assert _ray_config(cfg).pipelined is True
+    assert _ray_config(cfg).worker.pipelined is True
 
 
 def test_pipelined_rejects_multiple_resolved_workers() -> None:
@@ -494,11 +623,11 @@ def test_sync_trainable_state_defaults_on_for_from_cfg() -> None:
     """Online runs train the policy the rollout workers must resync, so an omitted
     sync_trainable_state defaults ON (True), not silently False (which would train
     the rollout on stale policy weights). Explicit values are kept."""
-    assert _ray_config(_cfg()).sync_trainable_state is True
+    assert _ray_config(_cfg()).worker.sync_trainable_state is True
 
     cfg = _cfg()
     cfg.distributed.rollout.sync_trainable_state = False
-    assert _ray_config(cfg).sync_trainable_state is False
+    assert _ray_config(cfg).worker.sync_trainable_state is False
 
 
 def test_launch_from_cfg_projects_model_compile_and_precision() -> None:
@@ -617,7 +746,7 @@ def test_launch_from_cfg_rejects_model_compile_for_ar_family() -> None:
     with pytest.raises(ValueError, match="does not support torch compile"):
         RayGenerationLauncher(init_ray=False).launch_from_cfg(
             cfg,
-            resources=resolve_distributed_resources(cfg),
+            config=_ray_config(cfg),
             entry=get_model_family_entry("janus_pro"),
             driver_bundle=_Bundle(model=_CpuPolicy(), trainable_modules={}),
             placement=RolePlacement(

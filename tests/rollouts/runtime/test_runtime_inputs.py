@@ -30,22 +30,27 @@ def _capture_launch_inputs(
     """Intercept the public launch boundary without starting Ray actors."""
 
     captured: list[RayGenerationLaunchInputs] = []
+    config = RayGenerationConfig.from_cfg(
+        cfg,
+        resources=resolve_distributed_resources(cfg),
+    )
 
     def capture_launch(
         _launcher: RayGenerationLauncher,
-        _config: RayGenerationConfig,
+        resolved_config: RayGenerationConfig,
         launch_inputs: RayGenerationLaunchInputs,
         *,
         placement: RolePlacement,
     ) -> RayGenerationLaunchInputs:
         assert isinstance(placement, RolePlacement)
+        assert resolved_config is config
         captured.append(launch_inputs)
         return launch_inputs
 
     with patch.object(RayGenerationLauncher, "launch", new=capture_launch):
         result = RayGenerationLauncher(init_ray=False).launch_from_cfg(
             cfg,
-            resources=resolve_distributed_resources(cfg),
+            config=config,
             entry=entry,
             driver_bundle=SimpleNamespace(
                 model=SimpleNamespace(device="cpu"),

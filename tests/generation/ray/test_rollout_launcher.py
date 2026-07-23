@@ -15,7 +15,7 @@ except ModuleNotFoundError:  # Ray workers import this module for tiny builders.
 
 from vrl.generation.launch_contract import GenerationRuntimeLaunchContract
 from vrl.generation.protocols import ChunkResult
-from vrl.generation.ray.config import RayGenerationConfig
+from vrl.generation.ray.config import RayGenerationConfig, RolloutWorkerConfig
 from vrl.generation.ray.launch_inputs import RayGenerationLaunchInputs
 from vrl.generation.ray.runtime import RayGenerationRuntime
 from vrl.generation.types import GenerationOutput, GenerationRequest, GenerationSampleRow
@@ -147,21 +147,35 @@ def _launch_inputs() -> RayGenerationLaunchInputs:
     )
 
 
+def _worker_config(**overrides: Any) -> RolloutWorkerConfig:
+    values = {
+        "cpus_per_worker": 0.5,
+        "max_inflight_chunks_per_worker": 1,
+        "health_check_interval_s": 30.0,
+        "health_check_timeout_s": 30.0,
+        "health_check_first_wait_s": 0.0,
+        "pipelined": False,
+        "chunk_placement_strategy": "round_robin",
+        "sync_trainable_state": False,
+    }
+    values.update(overrides)
+    return RolloutWorkerConfig(**values)
+
+
 def test_ray_generation_launcher_builds_worker_runtime_with_embedded_ray() -> None:
     """Launcher builds real workers into the owner's placement group."""
     ray = pytest.importorskip("ray")
     import vrl.generation.ray.launcher as launcher_mod
 
     _init_ray(ray)
-    owner = _cpu_rollout_owner(ray)
+    worker = _worker_config(chunk_placement_strategy="dynamic")
+    owner = _cpu_rollout_owner(ray, worker=worker)
     runtime: RayGenerationRuntime | None = None
     try:
         runtime = launcher_mod.RayGenerationLauncher(init_ray=False).launch(
             RayGenerationConfig(
                 resources=owner.resources,
-                cpus_per_worker=0.5,
-                sync_trainable_state=False,
-                chunk_placement_strategy="dynamic",
+                worker=worker,
             ),
             _launch_inputs(),
             placement=owner.rollout_placement,
@@ -189,7 +203,11 @@ def test_ray_generation_launcher_builds_worker_runtime_with_embedded_ray() -> No
         ray.shutdown()
 
 
-def _cpu_rollout_owner(ray: Any) -> Any:
+def _cpu_rollout_owner(
+    ray: Any,
+    *,
+    worker: RolloutWorkerConfig | None = None,
+) -> Any:
     """Build a GlobalRayPlacementOwner with a single CPU rollout bundle."""
     from omegaconf import OmegaConf
 
@@ -211,7 +229,7 @@ def _cpu_rollout_owner(ray: Any) -> Any:
             },
         ),
     )
-    owner = GlobalRayPlacementOwner(resolved, rollout_cpus_per_worker=0.5)
+    owner = GlobalRayPlacementOwner(resolved, worker or _worker_config())
     owner.create()
     return owner
 
@@ -228,8 +246,7 @@ def test_owner_placement_runtime_does_not_own_placement_group() -> None:
         runtime = launcher_mod.RayGenerationLauncher(init_ray=False).launch(
             RayGenerationConfig(
                 resources=owner.resources,
-                cpus_per_worker=0.5,
-                sync_trainable_state=False,
+                worker=owner.rollout_worker,
             ),
             _launch_inputs(),
             placement=owner.rollout_placement,
@@ -263,8 +280,7 @@ def test_launcher_uses_resolved_colocation_protocol_signal() -> None:
         runtime = launcher_mod.RayGenerationLauncher(init_ray=False).launch(
             RayGenerationConfig(
                 resources=owner.resources,
-                cpus_per_worker=0.5,
-                sync_trainable_state=False,
+                worker=owner.rollout_worker,
             ),
             _launch_inputs(),
             placement=owner.rollout_placement,
@@ -297,8 +313,7 @@ def test_phase_handoff_keeps_actor_and_owner_placement() -> None:
     runtime = RayGenerationRuntime.with_on_demand_activation(
         RayGenerationConfig(
             resources=on_demand_resources,
-            cpus_per_worker=0.5,
-            sync_trainable_state=False,
+            worker=owner.rollout_worker,
         ),
         _launch_inputs(),
         placement=owner.rollout_placement,

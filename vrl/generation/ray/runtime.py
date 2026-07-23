@@ -164,7 +164,7 @@ class RayGenerationRuntime(GenerationRuntime):
 
         state = self._on_demand
         if state is not None:
-            return bool(state.config.sync_trainable_state)
+            return bool(state.config.worker.sync_trainable_state)
         return self.weight_sync is not None
 
     def start_health_monitoring(self) -> None:
@@ -296,7 +296,7 @@ class RayGenerationRuntime(GenerationRuntime):
         self.lifecycle.require_running("update_weights")
         state = self._on_demand
         if state is not None:
-            if not state.config.sync_trainable_state:
+            if not state.config.worker.sync_trainable_state:
                 raise RuntimeError(
                     "RayGenerationRuntime has no generation weight sync",
                 )

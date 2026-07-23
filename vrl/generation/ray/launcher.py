@@ -70,11 +70,12 @@ class RayGenerationLauncher:
                 f"got {type(launch_inputs).__name__}",
             )
         rollout_config = config
+        worker = rollout_config.worker
         contract = launch_inputs.launch_contract
         chunk_gatherer = require_chunk_gatherer(launch_inputs.gatherer)
 
         bundle_indices = list(placement.bundle_indices)
-        if rollout_config.pipelined and len(bundle_indices) != 1:
+        if worker.pipelined and len(bundle_indices) != 1:
             raise ValueError(
                 "pipelined Ray generation requires exactly one rollout placement "
                 f"bundle; received {len(bundle_indices)}. Per-worker request "
@@ -94,7 +95,7 @@ class RayGenerationLauncher:
                 worker_cls=RayGenerationWorker,
                 worker_configs=worker_configs,
                 worker_ids=worker_ids,
-                num_cpus=rollout_config.cpus_per_worker,
+                num_cpus=worker.cpus_per_worker,
                 num_gpus=rollout_config.resources.rollout_gpus_per_worker,
                 placement_group=placement_group,
                 bundle_indices=bundle_indices,
@@ -127,25 +128,23 @@ class RayGenerationLauncher:
             executor = RayGenerationExecutor(
                 DistributedExecutionPlanner(
                     policy=ChunkPlacementPolicy(
-                        strategy=rollout_config.chunk_placement_strategy,
+                        strategy=worker.chunk_placement_strategy,
                     ),
                 ),
                 workers,
                 chunk_gatherer,
-                max_inflight_chunks_per_worker=(rollout_config.max_inflight_chunks_per_worker),
-                pipelined=rollout_config.pipelined,
+                max_inflight_chunks_per_worker=worker.max_inflight_chunks_per_worker,
+                pipelined=worker.pipelined,
             )
-            weight_sync = (
-                RayGenerationWeightSync(workers) if rollout_config.sync_trainable_state else None
-            )
+            weight_sync = RayGenerationWeightSync(workers) if worker.sync_trainable_state else None
             runtime = RayGenerationRuntime(
                 executor,
                 weight_sync=weight_sync,
                 owned_workers=workers,
                 colocated=rollout_config.resources.colocated,
-                health_check_interval_s=rollout_config.health_check_interval_s,
-                health_check_timeout_s=rollout_config.health_check_timeout_s,
-                health_check_first_wait_s=rollout_config.health_check_first_wait_s,
+                health_check_interval_s=worker.health_check_interval_s,
+                health_check_timeout_s=worker.health_check_timeout_s,
+                health_check_first_wait_s=worker.health_check_first_wait_s,
             )
             if contract.policy_version is not None:
                 runtime.current_policy_version = contract.policy_version
@@ -200,17 +199,14 @@ class RayGenerationLauncher:
         self,
         cfg: Any,
         *,
-        resources: Any,
+        config: RayGenerationConfig,
         entry: Any,
         driver_bundle: Any,
         placement: RolePlacement,
     ) -> GenerationRuntime:
-        """Build the Ray generation runtime from training config and launch inputs."""
+        """Build launch inputs from config and launch one resolved Ray runtime."""
 
-        config = RayGenerationConfig.from_cfg(
-            cfg,
-            resources=resources,
-        ).validate_driver_state(
+        config.validate_driver_state(
             driver_bundle=driver_bundle,
         )
         runtime_device = "cuda" if config.resources.rollout_gpus_per_worker > 0 else "cpu"
@@ -224,7 +220,7 @@ class RayGenerationLauncher:
                 # Full-finetune sync replaces base parameters; LoRA sync only
                 # sends adapters. Resolve that lifecycle fact once here so the
                 # quantizer does not have to reinterpret model configuration.
-                base_weight_sync=(config.sync_trainable_state and not build.use_lora),
+                base_weight_sync=(config.worker.sync_trainable_state and not build.use_lora),
             )
         if bool(cfg_path(cfg, "model.torch_compile.enable", False)) and not (
             entry.runtime_capabilities.supports_torch_compile
@@ -252,7 +248,7 @@ class RayGenerationLauncher:
                 # payloads fail closed to the draining path until a byte-budget
                 # gate proves their retained slots fit in host RAM.
                 versioned_weight_sync=(
-                    config.sync_trainable_state
+                    config.worker.sync_trainable_state
                     and schedule_mode == "continuous"
                     and build.use_lora
                 ),

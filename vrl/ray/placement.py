@@ -25,7 +25,7 @@ from __future__ import annotations
 import logging
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from vrl.ray.dependencies import (
     current_gpu_ids,
@@ -39,6 +39,9 @@ from vrl.ray.resources import (
     ResolvedDistributedResources,
     build_bundle_layout,
 )
+
+if TYPE_CHECKING:
+    from vrl.generation.ray.config import RolloutWorkerConfig
 
 logger = logging.getLogger(__name__)
 
@@ -214,7 +217,7 @@ class GlobalRayPlacementOwner:
     """Owns the single run-level Ray placement group and role->bundle mapping."""
 
     resources: ResolvedDistributedResources
-    rollout_cpus_per_worker: float = 1.0
+    rollout_worker: RolloutWorkerConfig
     placement_strategy: str | None = None
     ready_timeout_s: float = 600.0
     layout: BundleLayout = field(init=False)
@@ -404,7 +407,7 @@ class GlobalRayPlacementOwner:
 
         cpus: list[float] = []
         if bundle_index in self.layout.rollout_bundle_indices:
-            cpus.append(float(self.rollout_cpus_per_worker))
+            cpus.append(float(self.rollout_worker.cpus_per_worker))
         if bundle_index in self.layout.reward_bundle_indices:
             cpus.append(float(self.resources.reward_cpus_per_worker))
         if not cpus:
