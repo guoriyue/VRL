@@ -182,7 +182,7 @@ def _r1_rollout_batch() -> RolloutBatch:
         rewards=torch.zeros(2),
         group_ids=torch.tensor([0, 0]),
         trajectory=trajectory,
-        training_view=build_training_view(trajectory, primary_segment="final_image"),
+        training_view=build_training_view(trajectory),
     )
 
 

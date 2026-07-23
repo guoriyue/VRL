@@ -112,7 +112,7 @@ def _trajectory_batch(context: dict | None = None) -> RolloutBatch:
         group_ids=torch.tensor([0, 0]),
         extras={},
         trajectory=trajectory,
-        training_view=build_training_view(trajectory, primary_segment="final_image"),
+        training_view=build_training_view(trajectory),
     )
 
 

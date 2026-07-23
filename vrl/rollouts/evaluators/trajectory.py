@@ -145,12 +145,8 @@ class TrajectorySignalBuilder:
     def _primary_segment_name(self, fallback: str | None) -> str:
         if fallback:
             return fallback
-        if self.training_view is not None and self.training_view.primary_segment is not None:
-            return self.training_view.primary_segment
-        if self.trajectory is not None:
-            for name, segment in self.trajectory.segments.items():
-                if segment.trainable:
-                    return name
+        if self.trajectory is not None and self.trajectory.primary_segment is not None:
+            return self.trajectory.primary_segment
         return "default"
 
     def _old_log_prob_from_trajectory(

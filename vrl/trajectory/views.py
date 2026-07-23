@@ -78,8 +78,6 @@ class TrainingView:
 
 def build_training_view(
     trajectory: TrajectoryBatch,
-    *,
-    primary_segment: str | None = None,
 ) -> TrainingView:
     """Build a default policy-gradient TrainingView for trainable segments."""
 
@@ -106,15 +104,14 @@ def build_training_view(
                 mask_ref=tensor_ref(segment.name, mask.name),
                 advantage_scope=segment.advantage_scope,
                 replay_input_refs=tuple(
-                    replay_input_ref(segment.name, name)
-                    for name in segment.replay_inputs
+                    replay_input_ref(segment.name, name) for name in segment.replay_inputs
                 ),
             )
         )
 
     view = TrainingView(
         loss_units=tuple(loss_units),
-        primary_segment=primary_segment or (loss_units[0].segment if loss_units else None),
+        primary_segment=trajectory.primary_segment,
     )
     return TrajectoryValidator(trajectory).validate_training_view(view)
 
@@ -123,8 +120,7 @@ def role_tensor(segment: TrajectorySegment, role: str) -> TrajectoryTensor:
     matches = [tensor for tensor in segment.tensors.values() if tensor.role == role]
     if len(matches) != 1:
         raise RuntimeError(
-            f"segment {segment.name!r} requires exactly one role {role!r}, "
-            f"found {len(matches)}",
+            f"segment {segment.name!r} requires exactly one role {role!r}, found {len(matches)}",
         )
     return matches[0]
 

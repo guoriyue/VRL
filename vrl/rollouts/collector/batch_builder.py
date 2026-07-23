@@ -85,8 +85,8 @@ class TrajectoryRolloutBatchBuilder:
                 "no trainable policy segment or replay facts were recorded",
             )
         if self._is_multisegment_categorical(trainable):
-            return self._pack_ar_multisegment(trainable, rewards_raw)
-        segment = self._primary_trainable_segment(preferred=self._primary_segment_name())
+            return self._pack_ar_multisegment(rewards_raw)
+        segment = self._primary_trainable_segment()
         if segment.distribution == "flow_matching" or (
             segment.distribution == "gaussian" and segment.modality == "latent"
         ):
@@ -129,10 +129,7 @@ class TrajectoryRolloutBatchBuilder:
             extras={},
             context=rollout_context,
             trajectory=self.trajectory,
-            training_view=build_training_view(
-                self.trajectory,
-                primary_segment=segment.name,
-            ),
+            training_view=build_training_view(self.trajectory),
         )
 
     def _pack_ar_tokens(
@@ -152,22 +149,14 @@ class TrajectoryRolloutBatchBuilder:
             extras={},
             context=dict(self.trajectory.context),
             trajectory=self.trajectory,
-            training_view=build_training_view(
-                self.trajectory,
-                primary_segment=segment.name,
-            ),
+            training_view=build_training_view(self.trajectory),
         )
 
     def _pack_ar_multisegment(
         self,
-        trainable: list[TrajectorySegment],
         rewards_raw: torch.Tensor,
     ) -> RolloutBatch:
-        primary_name = self._primary_segment_name() or "final_image"
-        primary = self.trajectory.segments.get(primary_name)
-        if primary is None or not primary.trainable:
-            primary = trainable[-1]
-            primary_name = primary.name
+        primary = self._primary_trainable_segment()
 
         token_ids = role_tensor(primary, "action").value
         prompt_ids = self._optional_named_tensor(primary, "prompt_input_ids")
@@ -180,28 +169,15 @@ class TrajectoryRolloutBatchBuilder:
             )
         device = self.context.device or prompt_ids.device
 
-        rollout_context = dict(self.trajectory.context)
-        rollout_context.pop("primary_segment", None)
-        rollout_context.pop("segment_names", None)
         return RolloutBatch(
             observations=prompt_ids.unsqueeze(1),
             actions=token_ids,
             rewards=rewards_raw.to(device),
             group_ids=self._group_ids(device=device),
             extras={},
-            context={
-                **rollout_context,
-                "r1_segment_names": tuple(
-                    name
-                    for name, segment in self.trajectory.segments.items()
-                    if segment.distribution == "categorical"
-                ),
-            },
+            context=dict(self.trajectory.context),
             trajectory=self.trajectory,
-            training_view=build_training_view(
-                self.trajectory,
-                primary_segment=primary_name,
-            ),
+            training_view=build_training_view(self.trajectory),
         )
 
     def _reward_output(self, view: RewardView) -> Any:
@@ -248,17 +224,16 @@ class TrajectoryRolloutBatchBuilder:
 
     def _primary_trainable_segment(
         self,
-        *,
-        preferred: str | None = None,
     ) -> TrajectorySegment:
-        if preferred is not None:
-            segment = self.trajectory.segments.get(preferred)
-            if segment is not None and segment.trainable:
-                return segment
-        for segment in self.trajectory.segments.values():
-            if segment.trainable:
-                return segment
-        raise RuntimeError("TrajectoryBatch has no trainable segment")
+        primary_name = self.trajectory.primary_segment
+        if primary_name is None:
+            raise RuntimeError("TrajectoryBatch has no primary trainable segment")
+        segment = self.trajectory.segments.get(primary_name)
+        if segment is None or not segment.trainable:
+            raise RuntimeError(
+                "TrajectoryBatch.primary_segment must reference a trainable segment",
+            )
+        return segment
 
     def _optional_named_tensor(
         self,
@@ -274,10 +249,6 @@ class TrajectoryRolloutBatchBuilder:
             dtype=torch.long,
             device=device,
         )
-
-    def _primary_segment_name(self) -> str | None:
-        value = self.trajectory.context.get("primary_segment")
-        return value if isinstance(value, str) else None
 
     def _is_multisegment_categorical(
         self,

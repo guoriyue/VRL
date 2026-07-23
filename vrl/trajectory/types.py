@@ -143,6 +143,7 @@ class TrajectoryBatch:
     sample_rows: list[GenerationSampleRow]
     axes: dict[str, TrajectoryAxis]
     segments: dict[str, TrajectorySegment]
+    primary_segment: str | None = None
     reward_views: dict[str, RewardView] = field(default_factory=dict)
     metrics: TrajectoryMetrics = field(default_factory=TrajectoryMetrics)
     context: dict[str, Any] = field(default_factory=dict)

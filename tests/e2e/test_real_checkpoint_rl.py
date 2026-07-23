@@ -887,7 +887,7 @@ def _synthetic_diffusion_replay_batch(
         extras={},
         context=dict(trajectory.context),
         trajectory=trajectory,
-        training_view=build_training_view(trajectory, primary_segment="denoise"),
+        training_view=build_training_view(trajectory),
     )
 
 

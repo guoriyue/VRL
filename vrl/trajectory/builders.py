@@ -130,6 +130,7 @@ class _TrajectoryBatchBuilder:
                     },
                 )
             },
+            primary_segment="denoise",
             reward_views={
                 reward_modality: RewardView(
                     name=reward_modality,
@@ -301,6 +302,7 @@ class _TrajectoryBatchBuilder:
                     },
                 )
             },
+            primary_segment="denoise",
             reward_views={
                 reward_modality: RewardView(
                     name=reward_modality,
@@ -382,6 +384,7 @@ class _TrajectoryBatchBuilder:
                     metadata={"temporal_chunk_axis": "temporal_chunk"},
                 )
             },
+            primary_segment=None,
             reward_views={
                 reward_modality: RewardView(
                     name=reward_modality,
@@ -494,6 +497,7 @@ class _TrajectoryBatchBuilder:
                     },
                 )
             },
+            primary_segment="image_tokens",
             reward_views={
                 "image": RewardView(
                     name="image",
@@ -609,6 +613,7 @@ class _TrajectoryBatchBuilder:
                 "token": TrajectoryAxis("token", "continuous_token", token_count),
             },
             segments=segments,
+            primary_segment="image_tokens",
             reward_views={
                 "image": RewardView(
                     name="image",
@@ -732,6 +737,7 @@ class _TrajectoryBatchBuilder:
             sample_rows=list(self.sample_rows),
             axes=axes,
             segments=trajectory_segments,
+            primary_segment=primary_segment,
             reward_views={
                 "image": RewardView(
                     name="image",
@@ -744,11 +750,7 @@ class _TrajectoryBatchBuilder:
                 axis_lengths=axis_lengths,
                 values={"num_segments": len(segments)},
             ),
-            context={
-                **self._serializable_context(context),
-                "primary_segment": primary_segment,
-                "segment_names": tuple(segments),
-            },
+            context=self._serializable_context(context),
         )
         return TrajectoryValidator(trajectory).validate_batch()
 

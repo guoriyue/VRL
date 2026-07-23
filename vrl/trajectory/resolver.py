@@ -49,13 +49,10 @@ class TrajectoryResolver:
     def primary_trainable_segment_name(self, fallback: str | None = None) -> str:
         """Resolve the primary trainable segment for replay."""
 
-        if self.training_view is not None and self.training_view.primary_segment:
-            return self.training_view.primary_segment
+        if self.trajectory.primary_segment is not None:
+            return self.trajectory.primary_segment
         if fallback is not None:
             return fallback
-        for name, segment in self.trajectory.segments.items():
-            if segment.trainable:
-                return name
         _fail("TrajectoryBatch has no trainable segment")
 
     def tensor(self, segment_name: str, tensor_name: str) -> TrajectoryTensor:
@@ -153,8 +150,7 @@ def _slice_axis(value: Any, ref: str, axis_dim: int, axis_index: int) -> Any:
         axis_length = shape[axis_dim]
         if axis_index >= axis_length:
             _fail(
-                f"tensor {ref!r} axis index {axis_index} is out of range "
-                f"for length {axis_length}",
+                f"tensor {ref!r} axis index {axis_index} is out of range for length {axis_length}",
             )
     select = getattr(value, "select", None)
     if callable(select):
@@ -174,10 +170,7 @@ def _slice_sequence_axis(value: Any, axis_dim: int, axis_index: int, ref: str) -
     try:
         if axis_dim == 0:
             return value[axis_index]
-        return [
-            _slice_sequence_axis(item, axis_dim - 1, axis_index, ref)
-            for item in value
-        ]
+        return [_slice_sequence_axis(item, axis_dim - 1, axis_index, ref) for item in value]
     except Exception as exc:  # pragma: no cover - defensive for non-indexable values.
         _fail(f"failed to slice tensor {ref!r}: {exc}")
 

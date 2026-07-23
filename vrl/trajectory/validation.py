@@ -102,6 +102,28 @@ class TrajectoryValidator:
         for segment_key, segment in batch.segments.items():
             self._validate_segment(segment_key, segment)
 
+        trainable_segments = {
+            name for name, segment in batch.segments.items() if segment.trainable
+        }
+        if trainable_segments:
+            if batch.primary_segment is None:
+                self._fail(
+                    "TrajectoryBatch.primary_segment is required when trainable segments exist",
+                )
+            if batch.primary_segment not in batch.segments:
+                self._fail(
+                    f"TrajectoryBatch.primary_segment={batch.primary_segment!r} is unknown",
+                )
+            if batch.primary_segment not in trainable_segments:
+                self._fail(
+                    f"TrajectoryBatch.primary_segment={batch.primary_segment!r} "
+                    "must reference a trainable segment",
+                )
+        elif batch.primary_segment is not None:
+            self._fail(
+                "TrajectoryBatch.primary_segment must be None when no trainable segments exist",
+            )
+
         for view_key, view in batch.reward_views.items():
             if not isinstance(view, RewardView):
                 self._fail(f"reward_views[{view_key!r}] must be a RewardView")

@@ -166,6 +166,7 @@ def _rebuild_trajectory(
         sample_rows=sample_rows,
         axes=axes,
         segments=segments,
+        primary_segment=data.primary_segment,
         reward_views=dict(data.reward_views),
         metrics=TrajectoryMetrics(
             num_samples=metrics_sample_count,

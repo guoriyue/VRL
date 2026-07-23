@@ -212,13 +212,9 @@ class MultiSegmentTokenLogProbEvaluator(Evaluator):
 
     @staticmethod
     def _primary_segment_name(batch: RolloutBatch, enabled_names: list[str]) -> str:
-        training_view = getattr(batch, "training_view", None)
-        primary = getattr(training_view, "primary_segment", None)
-        if isinstance(primary, str) and primary in enabled_names:
-            return primary
         trajectory = getattr(batch, "trajectory", None)
         if trajectory is not None:
-            primary = trajectory.context.get("primary_segment")
+            primary = trajectory.primary_segment
             if isinstance(primary, str) and primary in enabled_names:
                 return primary
         return enabled_names[0]

@@ -96,6 +96,7 @@ def test_generation_only_result_has_no_fabricated_policy_facts() -> None:
     assert "denoise_transition" not in trajectory.axes
     segment = trajectory.segments["generated_chunks"]
     assert segment.trainable is False
+    assert trajectory.primary_segment is None
     assert set(segment.tensors) == {"output"}
     assert segment.tensors["output"].role == "replay_input"
     assert trajectory.context["trajectory_mode"] == "generation_only"
