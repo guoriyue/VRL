@@ -42,7 +42,7 @@ def _build_emu3_bundle(
     return entry.build_replay(build) if replay else entry.build_rollout(build)
 
 
-def _tiny_emu3_model():
+def _tiny_emu3_model(*, use_lora: bool = False):
     """Tiny real Emu3 with a trunk WIDE enough to pass the fp8 size gate.
 
     The swap only quantizes linears with in/out features >= 1024 (small GEMMs
@@ -69,7 +69,7 @@ def _tiny_emu3_model():
         model_path="tiny-emu3",
         dtype="float32",
         device="cpu",
-        use_lora=False,
+        use_lora=use_lora,
     )
     return Emu3Model(config, emu3=hf_model, processor=_stub_processor())
 
@@ -237,6 +237,7 @@ def test_ar_builder_applies_rollout_quantization_and_replay_does_not(
         quantization_format: str | None,
         *,
         for_rollout: bool = True,
+        use_lora: bool = False,
     ) -> ModelBuild:
         return ModelBuild(
             model_name_or_path="fake/repo",
@@ -251,7 +252,7 @@ def test_ar_builder_applies_rollout_quantization_and_replay_does_not(
                 else QuantizationPolicy(format=quantization_format),
                 outer_autocast=False,
             ),
-            model_config={"path": "fake/repo", "use_lora": False},
+            model_config={"path": "fake/repo", "use_lora": use_lora},
             rollout=(
                 RolloutBuildOptions(
                     prompt_encoder_dtype="float16",
@@ -277,10 +278,10 @@ def test_ar_builder_applies_rollout_quantization_and_replay_does_not(
     ):
         assert_rollout_quantization_applied(_tiny_emu3_model(), _build(format_name))
 
-    replay_model = _tiny_emu3_model()
+    replay_model = _tiny_emu3_model(use_lora=True)
     _build_emu3_bundle(
         monkeypatch,
-        _build(None, for_rollout=False),
+        _build(None, for_rollout=False, use_lora=True),
         replay_model,
         replay=True,
     )

@@ -592,37 +592,43 @@ def test_anima_artifact_resolution_fails_loud_when_hub_fetch_fails(
 
 
 @pytest.mark.parametrize(
-    ("family", "model_module_path", "model_attr"),
+    ("family", "model_module_path", "model_attr", "use_lora"),
     [
         (
             "janus_pro",
             "vrl.models.families.janus_pro.model",
             "JanusProReplayModel",
+            True,
         ),
         (
             "janus_pro_r1",
             "vrl.models.families.janus_pro.model",
             "JanusProReplayModel",
+            True,
         ),
         (
             "nextstep_1",
             "vrl.models.families.nextstep_1.model",
             "NextStep1ReplayModel",
+            False,
         ),
         (
             "emu3",
             "vrl.models.families.emu3.model",
             "Emu3ReplayModel",
+            True,
         ),
         (
             "glm_image",
             "vrl.models.families.glm_image.model",
             "GlmImageReplayModel",
+            True,
         ),
         (
             "llamagen",
             "vrl.models.families.llamagen.model",
             "LlamaGenReplayModel",
+            True,
         ),
     ],
 )
@@ -631,6 +637,7 @@ def test_ar_replay_builders_return_minimal_bundles(
     family: str,
     model_module_path: str,
     model_attr: str,
+    use_lora: bool,
 ) -> None:
     """Checks AR replay builders return minimal bundles."""
     from vrl.families.registry import get_model_family_entry
@@ -639,7 +646,7 @@ def test_ar_replay_builders_return_minimal_bundles(
     monkeypatch.setattr(model_module, model_attr, _TinyRuntimeModel)
 
     bundle = get_model_family_entry(family).build_replay(
-        _build(family=family),
+        _build(family=family, use_lora=use_lora),
     )
 
     assert bundle_loads_full_generation_modules(bundle) is False

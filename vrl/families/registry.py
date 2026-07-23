@@ -116,6 +116,9 @@ class TokenFamilyBuild:
     config_cls: str
     config_builder: str
     default_model_path: str
+    # Positive, mandatory capability: new token families must explicitly state
+    # whether replay with use_lora=false leaves a trainable policy.
+    supports_full_parameter_training: bool
     # NextStep's upstream loader accepts checkpointing only during construction;
     # ordinary token families do not project the trainer knob into ModelBuild.
     gradient_checkpointing_at_load: bool = False
@@ -810,6 +813,7 @@ _JANUS_PRO_BUILD = TokenFamilyBuild(
     config_cls="vrl.models.families.janus_pro.config:JanusProConfig",
     config_builder="vrl.models.families.janus_pro.runtime:janus_config_from_build",
     default_model_path="deepseek-ai/Janus-Pro-1B",
+    supports_full_parameter_training=False,
 )
 
 _register_model_family(
@@ -848,6 +852,7 @@ _register_model_family(
             config_cls="vrl.models.families.nextstep_1.config:NextStep1Config",
             config_builder=("vrl.models.families.nextstep_1.runtime:nextstep_config_from_build"),
             default_model_path="stepfun-ai/NextStep-1.1",
+            supports_full_parameter_training=True,
             gradient_checkpointing_at_load=True,
         ),
         request_metadata_namespace="rollout_metadata",
@@ -866,6 +871,7 @@ _register_model_family(
             config_cls="vrl.models.families.emu3.config:Emu3Config",
             config_builder="vrl.models.families.emu3.runtime:emu3_config_from_build",
             default_model_path="BAAI/Emu3-Gen-hf",
+            supports_full_parameter_training=False,
         ),
     ),
 )
@@ -882,6 +888,7 @@ _register_model_family(
             config_cls="vrl.models.families.glm_image.config:GlmImageConfig",
             config_builder="vrl.models.families.glm_image.runtime:glm_image_config_from_build",
             default_model_path="zai-org/GLM-Image",
+            supports_full_parameter_training=False,
         ),
     ),
 )
@@ -898,6 +905,7 @@ _register_model_family(
             config_cls="vrl.models.families.llamagen.config:LlamaGenConfig",
             config_builder="vrl.models.families.llamagen.runtime:llamagen_config_from_build",
             default_model_path="peizesun/llamagen_t2i",
+            supports_full_parameter_training=False,
         ),
     ),
 )

@@ -79,26 +79,33 @@ def build_token_family_bundle(
     replay: bool,
     entry: Any,
 ) -> RuntimeBundle:
-    from vrl.utils.config import import_from_path
-
     if build.family != entry.family:
         raise ValueError(
             f"token build family {build.family!r} does not match entry {entry.family!r}",
         )
-    _validate_token_lora_path(build)
     from vrl.families.registry import TokenFamilyBuild
 
     recipe = entry.family_build
     if not isinstance(recipe, TokenFamilyBuild):
         raise ValueError(f"model family {entry.family!r} has no token build descriptor")
-    config = import_from_path(recipe.config_builder)(build)
-    config_cls = import_from_path(recipe.config_cls)
-    model_cls = import_from_path(recipe.replay_cls if replay else recipe.model_cls)
-    model = model_cls(config_cls(**config))
     if replay:
         build.require_replay()
     else:
         build.require_rollout()
+    _validate_token_lora_path(build)
+    if replay and not build.use_lora and not recipe.supports_full_parameter_training:
+        raise RuntimeError(
+            f"model family {entry.family!r} does not support full-parameter "
+            "training; set model.use_lora=true.",
+        )
+
+    from vrl.utils.config import import_from_path
+
+    config = import_from_path(recipe.config_builder)(build)
+    config_cls = import_from_path(recipe.config_cls)
+    model_cls = import_from_path(recipe.replay_cls if replay else recipe.model_cls)
+    model = model_cls(config_cls(**config))
+    if not replay:
         from vrl.models.loader import apply_rollout_quantization
 
         apply_rollout_quantization(model, build)

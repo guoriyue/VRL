@@ -7,7 +7,7 @@ import pytest
 
 from vrl.config.precision import RolePrecision
 from vrl.families.registry import TokenFamilyBuild, get_model_family_entry
-from vrl.models.interfaces.runtime import ModelBuild
+from vrl.models.interfaces.runtime import ModelBuild, RolloutBuildOptions
 from vrl.utils.config import import_from_path
 
 _FAMILY_TARGETS = (
@@ -24,6 +24,7 @@ def _model_build(
     *,
     use_lora: bool,
     lora: dict[str, Any] | None = None,
+    for_rollout: bool = False,
 ) -> ModelBuild:
     entry = get_model_family_entry(family)
     recipe = entry.family_build
@@ -39,6 +40,7 @@ def _model_build(
         precision=RolePrecision(dtype="fp32", float32_precision="tf32"),
         model_config=model_config,
         sampling_config={},
+        rollout=(RolloutBuildOptions(prompt_encoder_dtype="fp32") if for_rollout else None),
     )
 
 
@@ -113,6 +115,7 @@ def test_disabled_lora_rejects_warm_start_path_before_family_import(
         family,
         use_lora=False,
         lora={"path": "/adapter/checkpoint"},
+        for_rollout=True,
     )
     imported_paths: list[str] = []
     monkeypatch.setattr(
