@@ -14,7 +14,6 @@ if TYPE_CHECKING:
 from vrl.algorithms.grpo.token import TokenGRPO, TokenGRPOConfig
 from vrl.algorithms.trajectory import AlgorithmInput
 from vrl.algorithms.types import PolicyUpdateStats, TrainStepMetrics
-from vrl.rollouts.evaluators.types import TrajectorySignalBatch
 
 
 @dataclass(slots=True)
@@ -49,6 +48,9 @@ class MultiSegmentTokenGRPO(TokenGRPO):
         self,
         inputs: AlgorithmInput,
     ) -> tuple[Any, TrainStepMetrics]:
+        # Lazy: keep vrl.algorithms torch-free at import time so config parsing
+        # (algorithm.kind dispatch) never pulls the rollout evaluator stack.
+        from vrl.rollouts.evaluators.types import TrajectorySignalBatch
 
         # signals presence + required_signal_keys are enforced upstream by
         # AlgorithmAdapter.validate_inputs (inherited from GRPO).

@@ -14,7 +14,7 @@ from vrl.generation.execution.types import (
     WorkerMemoryParkingSnapshot,
 )
 from vrl.generation.launch_contract import GenerationRuntimeLaunchContract
-from vrl.generation.protocols import GenerationChunkExecutor
+from vrl.generation.protocols import DiffusionStagedChunkExecutor, GenerationChunkExecutor
 from vrl.generation.types import GenerationOutput
 from vrl.models.interfaces import require_runtime_model
 from vrl.utils.config import import_from_path
@@ -346,18 +346,11 @@ class GenerationWorkerCore:
         self.load_policy()
         executor = self.executor
         model = getattr(executor, "model", None)
-        for method in (
-            "build_prompt_stage_input",
-            "run_prompt_encode_stage",
-            "run_prepare_stage",
-            "run_denoise_stage",
-            "run_decode_stage",
-        ):
-            if not callable(getattr(executor, method, None)):
-                raise TypeError(
-                    f"{type(executor).__name__} does not expose the diffusion "
-                    "chunk stages; samples_per_chunk: auto is diffusion-only",
-                )
+        if not isinstance(executor, DiffusionStagedChunkExecutor):
+            raise TypeError(
+                f"{type(executor).__name__} does not expose the diffusion "
+                "chunk stages; samples_per_chunk: auto is diffusion-only",
+            )
 
         _, total_bytes = torch.cuda.mem_get_info()
         budget_bytes = int(total_bytes)

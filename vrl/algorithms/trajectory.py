@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, fields
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from vrl.algorithms.types import TrainStepMetrics
-from vrl.rollouts.evaluators.types import TrajectorySignalBatch
+
+if TYPE_CHECKING:
+    from vrl.rollouts.evaluators.types import TrajectorySignalBatch
 
 
 @dataclass(slots=True)
@@ -22,6 +24,10 @@ class AlgorithmInput:
     timestep_index: int | None = None
 
     def __post_init__(self) -> None:
+        # Lazy: keep vrl.algorithms torch-free at import time so config parsing
+        # (algorithm.kind dispatch) never pulls the rollout evaluator stack.
+        from vrl.rollouts.evaluators.types import TrajectorySignalBatch
+
         if self.signals is not None and not isinstance(self.signals, TrajectorySignalBatch):
             raise TypeError(
                 "AlgorithmInput.signals must be a TrajectorySignalBatch",
