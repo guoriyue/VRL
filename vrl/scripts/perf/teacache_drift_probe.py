@@ -42,11 +42,32 @@ from vrl.config.schema import parse_config
 from vrl.generation.steps.denoise.teacache import TeaCacheConfig, TeaCacheState
 from vrl.math.denoise.flow_matching import sde_step_with_logprob
 from vrl.scripts.perf.common.diffusion_runtime import (
-    build_model,
+    build_runtime,
     prepare_sampling_state,
 )
 
 _SDE_TYPE = "cps"
+
+
+def _build_model(root, device, dtype, *, precision):
+    """Build the rollout model, refusing a config/CLI dtype mismatch.
+
+    This one-shot probe owns its historical BF16 context locally, so it verifies
+    the requested dtype matches the resolved rollout precision instead of
+    silently diverging from the resolved rollout role.
+    """
+
+    from vrl.models.dtypes import dtype_to_precision_token
+
+    runtime = build_runtime(root, device, precision=precision)
+    token = dtype_to_precision_token(dtype)
+    if runtime.precision.dtype != token:
+        raise ValueError(
+            "TeaCache probe dtype does not match resolved rollout precision: "
+            f"requested {token!r}, resolved dtype={runtime.precision.dtype!r}, "
+            f"outer_autocast={runtime.precision.outer_autocast!r}",
+        )
+    return runtime.model
 
 
 def _measure(model, cfg, device, dtype, threshold):
@@ -201,7 +222,7 @@ def main(argv=None):
     precision = resolve_precision_policy(root)
     device = torch.device(args.device)
     dtype = torch.bfloat16
-    model = build_model(root, device, dtype, precision=precision)
+    model = _build_model(root, device, dtype, precision=precision)
 
     if args.diagnose:
         _diagnose(model, cfg, device, dtype)

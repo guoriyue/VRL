@@ -353,10 +353,7 @@ def _iter_lerobot_v21(
         return
 
     base = firsts[0][1]
-    firsts_by_episode = {
-        episode: {"global_index": idx, "task_index": task_index}
-        for (episode, idx, task_index) in firsts
-    }
+    firsts_by_episode = {episode: idx for (episode, idx, _) in firsts}
     targets = {idx - base: (episode, task_index) for (episode, idx, task_index) in firsts}
     rel = video_tmpl.format(video_key=video_key, chunk_index=0, file_index=0)
     url = f"https://huggingface.co/datasets/{repo_id}/resolve/main/{rel}"
@@ -374,7 +371,7 @@ def _iter_lerobot_v21(
                         "source_split": "main",
                         "source_video": rel,
                         "source_frame_index": 0,
-                        "source_global_index": firsts_by_episode[episode]["global_index"],
+                        "source_global_index": firsts_by_episode[episode],
                         "source_task_index": task_index,
                         "source_camera": video_key,
                         "decode_method": "pyav_http_first_frame",

@@ -142,7 +142,7 @@ def main() -> None:
         else:
             # Shared prefix: ONE trajectory for steps 0..k-1, then broadcast and branch.
             lat_k = _run_prefix(
-                sched, tf, _init_latents(1, args.seed + 1), k, args, _embeds, _vel, dtype, device
+                sched, _init_latents(1, args.seed + 1), k, args, _embeds, _vel, dtype, device
             )
             branch = lat_k.repeat(G, *([1] * (lat_k.ndim - 1)))
             if k >= T:
@@ -164,7 +164,7 @@ def main() -> None:
 
 
 @torch.no_grad()
-def _run_prefix(sched, tf, lat, k, args, _embeds, _vel, dtype, device):
+def _run_prefix(sched, lat, k, args, _embeds, _vel, dtype, device):
     """SDE steps [0, k) on a single [1, ...] latent (the shared prefix realization)."""
     gen = torch.Generator(device=device).manual_seed(args.seed + 101)
     emb, pl = _embeds(1)

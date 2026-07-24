@@ -200,7 +200,6 @@ def main() -> None:
     ctx = torch.inference_mode()
     ctx.__enter__()
     first_step: dict[str, Any] = {}
-    logprobs = []
     for step_idx in range(args.steps):
         out = model.forward_step(state, step_idx)
         timestep = state.timesteps[step_idx]
@@ -222,7 +221,6 @@ def main() -> None:
                 "log_prob": sde.log_prob.detach().clone(),
                 "timestep": timestep.detach().clone(),
             }
-        logprobs.append(sde.log_prob.detach())
         state.latents = sde.prev_sample
         print(
             f"[probe] step {step_idx + 1}/{args.steps} "

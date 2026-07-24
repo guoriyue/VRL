@@ -114,11 +114,6 @@ def build_parser() -> argparse.ArgumentParser:
         help="Generate mp4s and metadata without loading Kling VideoReward.",
     )
     parser.add_argument(
-        "--keep-model-between-checkpoints",
-        action="store_true",
-        help="Deprecated: model reuse is now the default.",
-    )
-    parser.add_argument(
         "--rebuild-model-between-checkpoints",
         action="store_true",
         help="Rebuild the full generation model before every checkpoint.",
@@ -134,7 +129,7 @@ def main(argv: list[str] | None = None) -> None:
         raise ValueError("--samples-per-prompt must be >= 1")
     if args.limit < 0:
         raise ValueError("--limit must be >= 0")
-    keep_model_between_checkpoints = _keep_model_between_checkpoints(args)
+    keep_model_between_checkpoints = not args.rebuild_model_between_checkpoints
 
     cfg = load_config(args.config, overrides=args.overrides)
     root = parse_config(cfg)
@@ -312,15 +307,6 @@ def _resolve_sampling(args: argparse.Namespace, cfg: DictConfig) -> dict[str, An
         "noise_level": float(OmegaConf.select(cfg, "rollout.noise_level", default=1.0)),
         "sde_type": str(OmegaConf.select(cfg, "rollout.sde.type", default="flow_grpo")),
     }
-
-
-def _keep_model_between_checkpoints(args: argparse.Namespace) -> bool:
-    if args.keep_model_between_checkpoints and args.rebuild_model_between_checkpoints:
-        raise ValueError(
-            "--keep-model-between-checkpoints and --rebuild-model-between-checkpoints "
-            "are mutually exclusive",
-        )
-    return not bool(args.rebuild_model_between_checkpoints)
 
 
 def _generate_all(

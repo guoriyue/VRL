@@ -215,20 +215,6 @@ anatomy:
     - serious
     - open_mouth
     - closed_mouth
-  # Hard-negative anatomy failure labels.
-  failure_labels:
-    - bad_hands
-    - missing_hand
-    - missing_feet
-    - extra_fingers
-    - missing_fingers
-    - melted_fingers
-    - extra_limbs
-    - disconnected_arm
-    - impossible_leg_bend
-    - implausible_action_pose
-    - cropped_full_body
-    - wrong_person_count
 
 safety:
   # Danbooru ratings to sample for the safety set (tunable knob).

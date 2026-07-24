@@ -12,6 +12,7 @@ from PIL import Image
 from vrl.config.precision import RolePrecision
 from vrl.models.steps.denoise import build as diffusion_build
 from vrl.scripts.eval import sana_checkpoint_compare as checkpoint_compare
+from vrl.scripts.eval import sana_inference
 
 SANA_PRECISION = RolePrecision(
     dtype="fp16",
@@ -201,7 +202,7 @@ def test_run_generates_base_before_strict_restore_and_current(
         assert actual_build is build
         scheduler = DPMSolverMultistepScheduler()
         schedulers.append(scheduler)
-        checkpoint_compare._validate_scheduler(scheduler)
+        sana_inference.validate_scheduler(scheduler)
         return scheduler
 
     monkeypatch.setattr(checkpoint_compare, "load_training_checkpoint", fake_load_checkpoint)
@@ -550,7 +551,7 @@ def test_scheduler_protocol_rejects_wrong_config(key, wrong_value) -> None:
     scheduler = DPMSolverMultistepScheduler(**{key: wrong_value})
 
     with pytest.raises(ValueError, match="official DPM-Solver"):
-        checkpoint_compare._validate_scheduler(scheduler)
+        sana_inference.validate_scheduler(scheduler)
 
 
 def test_scheduler_protocol_rejects_wrong_class() -> None:
@@ -558,11 +559,11 @@ def test_scheduler_protocol_rejects_wrong_class() -> None:
         config = DPMSolverMultistepScheduler().config
 
     with pytest.raises(ValueError, match="official DPM-Solver"):
-        checkpoint_compare._validate_scheduler(FlowMatchEulerDiscreteScheduler())
+        sana_inference.validate_scheduler(FlowMatchEulerDiscreteScheduler())
 
 
 def test_scheduler_protocol_accepts_official_identity() -> None:
     assert (
-        checkpoint_compare._validate_scheduler(DPMSolverMultistepScheduler())
+        sana_inference.validate_scheduler(DPMSolverMultistepScheduler())
         == checkpoint_compare.SCHEDULER_PROTOCOL
     )

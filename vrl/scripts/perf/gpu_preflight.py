@@ -200,9 +200,9 @@ def run_gpu_preflight(*, force: bool = False) -> GpuPreflight:
     return _REPORT_CACHE
 
 
-def log_gpu_preflight(report: GpuPreflight | None = None) -> GpuPreflight:
+def log_gpu_preflight() -> GpuPreflight:
     """Log the perf preflight report and return it."""
-    r = report or run_gpu_preflight()
+    r = run_gpu_preflight()
     if not r.available:
         logger.info("GPU preflight: no CUDA device (CPU run)")
         return r

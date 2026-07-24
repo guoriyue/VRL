@@ -137,7 +137,6 @@ def rtmw_metrics(model: Any, img_bgr: Any) -> dict[str, Any]:
             2,
         )
         return {
-            "n_persons": 0,
             "body_coverage": 0.0,
             "hand_coverage": 0.0,
             "mean_conf": 0.0,
@@ -159,7 +158,6 @@ def rtmw_metrics(model: Any, img_bgr: Any) -> dict[str, Any]:
     annotated = draw_skeleton(img_bgr.copy(), keypoints, scores, kpt_thr=CONF_THRESHOLD)
 
     return {
-        "n_persons": len(keypoints),
         "body_coverage": round(body_cov, 3),
         "hand_coverage": round(hand_cov, 3),
         "mean_conf": round(mean_conf, 3),
@@ -223,7 +221,7 @@ def hamer_probe_image(
     device: str,
     cache_dir: str | Path | None = None,
 ) -> dict[str, Any]:
-    """Run HaMeR on one image and return hand metrics plus an overlay."""
+    """Run HaMeR on one image and return the mean finger-length CV metric."""
 
     import cv2
     import numpy as np
@@ -240,45 +238,20 @@ def hamer_probe_image(
     )
 
     hand_results = []
-    annotated = img_bgr.copy()
 
     with torch.no_grad():
         for batch in dataloader:
             batch = recursive_to(batch, device)
             out = model(batch)
             joints_3d = out["pred_3d_joints"].cpu().numpy()
-            pred_keypoints_2d = out["pred_keypoints_2d"].cpu().numpy()
-            right_flag = batch.get("right", torch.zeros(len(joints_3d))).cpu().numpy()
 
-            for i, j3d in enumerate(joints_3d):
-                j2d_px = ((pred_keypoints_2d[i] + 1) / 2 * np.array([w, h])).astype(int)
-                handedness = "R" if right_flag[i] > 0.5 else "L"
-                color = (0, 255, 0) if handedness == "R" else (255, 0, 0)
-
-                for x, y in j2d_px:
-                    if 0 <= int(x) < w and 0 <= int(y) < h:
-                        cv2.circle(annotated, (int(x), int(y)), 3, color, -1)
-
-                hand_results.append(
-                    {
-                        "handedness": handedness,
-                        "finger_cv": round(finger_cv(j3d), 4),
-                        "j2d_px": j2d_px,
-                    },
-                )
+            for j3d in joints_3d:
+                hand_results.append(round(finger_cv(j3d), 4))
 
     if not hand_results:
-        return no_hands_result(img_bgr)
+        return {"mean_finger_cv": None}
 
-    mean_cv = float(np.mean([hand["finger_cv"] for hand in hand_results]))
-    n_hands = len(hand_results)
-    return {
-        "n_hands": n_hands,
-        "mean_finger_cv": round(mean_cv, 4),
-        "hands": hand_results,
-        "verdict": hamer_verdict(mean_cv, n_hands),
-        "annotated": annotated,
-    }
+    return {"mean_finger_cv": round(float(np.mean(hand_results)), 4)}
 
 
 def _hamer_dataloader(
@@ -344,35 +317,3 @@ def finger_cv(joints_3d: Any) -> float:
     if arr.mean() < 1e-6:
         return 0.0
     return float(arr.std() / (arr.mean() + 1e-6))
-
-
-def no_hands_result(img_bgr: Any) -> dict[str, Any]:
-    import cv2
-
-    annotated = img_bgr.copy()
-    cv2.putText(
-        annotated,
-        "NO HANDS DETECTED",
-        (20, 40),
-        cv2.FONT_HERSHEY_SIMPLEX,
-        1.0,
-        (0, 0, 255),
-        2,
-    )
-    return {
-        "n_hands": 0,
-        "mean_finger_cv": None,
-        "hands": [],
-        "verdict": "NOT_DETECTED",
-        "annotated": annotated,
-    }
-
-
-def hamer_verdict(mean_cv: float, n_hands: int) -> str:
-    if n_hands == 0:
-        return "NOT_DETECTED"
-    if mean_cv < 0.20:
-        return "GOOD (proportions consistent)"
-    if mean_cv < 0.40:
-        return "BORDERLINE (some inconsistency)"
-    return "POOR (high CV -> deformed or anime-style mismatch)"

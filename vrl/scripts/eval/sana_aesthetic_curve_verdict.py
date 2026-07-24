@@ -85,17 +85,23 @@ def _slope(rows: list[dict[str, float]], key: str) -> float:
     )
 
 
+# Pre-registered PASS/FAIL protocol thresholds for the SANA trustworthy curve.
+# These are an immutable contract (see SPRINT_sana_aesthetic_trustworthy_curve.md),
+# not tunable knobs -- the numerical decision must stay mechanical, so they live as
+# module-level protocol constants rather than caller-overridable kwargs.
+EXPECTED_UPDATES = 300
+MIN_POST_EVAL_POINTS = 12
+ENDPOINT_POINTS = 3
+MIN_AESTHETIC_GAIN = 0.10
+MIN_GAIN_Z = 2.0
+MAX_PICKSCORE_RELATIVE_DROP = 0.02
+MAX_PRE_UPDATE_LOGPROB_ABS_DIFF = 1.0e-6
+
+
 def evaluate(
     eval_rows: list[dict[str, float]],
     train_rows: list[dict[str, float]],
     *,
-    expected_updates: int = 300,
-    min_post_eval_points: int = 12,
-    endpoint_points: int = 3,
-    min_aesthetic_gain: float = 0.10,
-    min_gain_z: float = 2.0,
-    max_pickscore_relative_drop: float = 0.02,
-    max_pre_update_logprob_abs_diff: float = 1.0e-6,
     qualitative_audit: str = "pending",
 ) -> dict[str, Any]:
     failures: list[str] = []
@@ -103,13 +109,13 @@ def evaluate(
     post_rows = [row for row in eval_rows if int(row["epoch"]) >= 0]
     if len(baseline_rows) != 1:
         failures.append("fixed eval must contain exactly one epoch=-1 baseline")
-    if len(post_rows) < min_post_eval_points:
+    if len(post_rows) < MIN_POST_EVAL_POINTS:
         failures.append(
-            f"fixed eval needs at least {min_post_eval_points} post-training points",
+            f"fixed eval needs at least {MIN_POST_EVAL_POINTS} post-training points",
         )
-    if len(train_rows) != expected_updates:
+    if len(train_rows) != EXPECTED_UPDATES:
         failures.append(
-            f"run depth changed or incomplete: {len(train_rows)} != {expected_updates} updates",
+            f"run depth changed or incomplete: {len(train_rows)} != {EXPECTED_UPDATES} updates",
         )
 
     required_eval = {
@@ -148,24 +154,24 @@ def evaluate(
     }
     if (
         baseline_rows
-        and len(post_rows) >= endpoint_points
+        and len(post_rows) >= ENDPOINT_POINTS
         and not (required_eval - set(eval_rows[0]))
     ):
         baseline = baseline_rows[0]
-        endpoint = post_rows[-endpoint_points:]
+        endpoint = post_rows[-ENDPOINT_POINTS:]
         aesthetic_end = _mean(endpoint, "r_aesthetic")
         aesthetic_gain = aesthetic_end - baseline["r_aesthetic"]
         endpoint_stderr = (
             math.sqrt(
                 sum(row["eval_reward_stderr"] ** 2 for row in endpoint),
             )
-            / endpoint_points
+            / ENDPOINT_POINTS
         )
         combined_stderr = math.hypot(baseline["eval_reward_stderr"], endpoint_stderr)
         gain_z = aesthetic_gain / combined_stderr if combined_stderr > 0 else math.inf
         aesthetic_slope = _slope(post_rows, "r_aesthetic")
         pickscore_end = _mean(endpoint, "r_pickscore")
-        pickscore_floor = baseline["r_pickscore"] * (1.0 - max_pickscore_relative_drop)
+        pickscore_floor = baseline["r_pickscore"] * (1.0 - MAX_PICKSCORE_RELATIVE_DROP)
         diagnostics.update(
             {
                 "baseline_aesthetic": baseline["r_aesthetic"],
@@ -178,12 +184,12 @@ def evaluate(
                 "pickscore_floor": pickscore_floor,
             }
         )
-        if aesthetic_gain < min_aesthetic_gain:
+        if aesthetic_gain < MIN_AESTHETIC_GAIN:
             failures.append(
-                f"aesthetic gain {aesthetic_gain:.6f} < {min_aesthetic_gain:.6f}",
+                f"aesthetic gain {aesthetic_gain:.6f} < {MIN_AESTHETIC_GAIN:.6f}",
             )
-        if gain_z <= min_gain_z:
-            failures.append(f"aesthetic gain z={gain_z:.6f} <= {min_gain_z:.6f}")
+        if gain_z <= MIN_GAIN_Z:
+            failures.append(f"aesthetic gain z={gain_z:.6f} <= {MIN_GAIN_Z:.6f}")
         if aesthetic_slope <= 0:
             failures.append(f"fixed-eval aesthetic slope {aesthetic_slope:.6f} is not positive")
         if pickscore_end < pickscore_floor:
@@ -213,10 +219,10 @@ def evaluate(
         )
         if late_std <= 1e-4 or late_std < 0.25 * early_std:
             failures.append("late reward diversity collapsed")
-        if max_parity_error > max_pre_update_logprob_abs_diff:
+        if max_parity_error > MAX_PRE_UPDATE_LOGPROB_ABS_DIFF:
             failures.append(
                 "pre-update logprob parity error "
-                f"{max_parity_error:.6f} > {max_pre_update_logprob_abs_diff:.6f}",
+                f"{max_parity_error:.6f} > {MAX_PRE_UPDATE_LOGPROB_ABS_DIFF:.6f}",
             )
         if max_pre_update_clip != 0 or max_pre_update_active_clip != 0:
             failures.append("pre-update policy ratio or active clip is non-zero")
@@ -242,13 +248,13 @@ def evaluate(
         "failures": failures,
         "diagnostics": diagnostics,
         "criteria": {
-            "expected_updates": expected_updates,
-            "min_post_eval_points": min_post_eval_points,
-            "endpoint_points": endpoint_points,
-            "min_aesthetic_gain": min_aesthetic_gain,
-            "min_gain_z": min_gain_z,
-            "max_pickscore_relative_drop": max_pickscore_relative_drop,
-            "max_pre_update_logprob_abs_diff": max_pre_update_logprob_abs_diff,
+            "expected_updates": EXPECTED_UPDATES,
+            "min_post_eval_points": MIN_POST_EVAL_POINTS,
+            "endpoint_points": ENDPOINT_POINTS,
+            "min_aesthetic_gain": MIN_AESTHETIC_GAIN,
+            "min_gain_z": MIN_GAIN_Z,
+            "max_pickscore_relative_drop": MAX_PICKSCORE_RELATIVE_DROP,
+            "max_pre_update_logprob_abs_diff": MAX_PRE_UPDATE_LOGPROB_ABS_DIFF,
             "expected_active_clip_fraction": 0.0,
         },
     }

@@ -36,7 +36,7 @@ from pathlib import Path
 from typing import Any
 
 
-def _new_report(args: argparse.Namespace) -> dict[str, Any]:
+def _new_report() -> dict[str, Any]:
     return {
         "probe": "world_model_steppability",
         # The three Phase-0 questions, answered as we learn them.
@@ -254,7 +254,7 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--prefix-frames", type=int, default=2)
     args = parser.parse_args(argv)
 
-    report = _new_report(args)
+    report = _new_report()
     _record_torch(report)
     # Each check is isolated so one blocker never hides the others.
     for check in (

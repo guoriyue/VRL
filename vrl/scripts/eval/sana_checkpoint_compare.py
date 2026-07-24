@@ -37,7 +37,6 @@ from vrl.scripts.eval.sana_inference import (
     SCHEDULER_PROTOCOL,
     generate_prompt_images,
     load_official_scheduler,
-    validate_scheduler,
 )
 from vrl.trainers.checkpointing import (
     load_training_checkpoint,
@@ -52,7 +51,6 @@ logger = logging.getLogger(__name__)
 # Compatibility facade for the public comparison tool's focused protocol tests.
 _generate_prompt_group = generate_prompt_images
 _load_official_scheduler = load_official_scheduler
-_validate_scheduler = validate_scheduler
 
 # Persisted report identity is a protocol boundary.
 REPORT_SCHEMA = "vrl.sana_checkpoint_compare/v1"

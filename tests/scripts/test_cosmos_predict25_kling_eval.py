@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import argparse
 import gc
 import json
 import weakref
@@ -112,23 +111,9 @@ def test_score_summary_groups_by_checkpoint() -> None:
 
 def test_checkpoint_eval_reuses_model_by_default() -> None:
     """Checks single-GPU checkpoint eval avoids repeated full pipeline loads."""
-    args = argparse.Namespace(
-        keep_model_between_checkpoints=False,
-        rebuild_model_between_checkpoints=False,
-    )
+    args = eval_script.build_parser().parse_args(["--checkpoint", "unused"])
 
-    assert eval_script._keep_model_between_checkpoints(args) is True
-
-
-def test_checkpoint_eval_rejects_conflicting_lifecycle_flags() -> None:
-    """Checks checkpoint eval lifecycle flags cannot disagree."""
-    args = argparse.Namespace(
-        keep_model_between_checkpoints=True,
-        rebuild_model_between_checkpoints=True,
-    )
-
-    with pytest.raises(ValueError, match="mutually exclusive"):
-        eval_script._keep_model_between_checkpoints(args)
+    assert args.rebuild_model_between_checkpoints is False
 
 
 def test_eval_sampling_inherits_guidance_when_cli_omits_it() -> None:

@@ -27,7 +27,7 @@ Per image:
   - RTMW keypoint overlay (body + hands, color-coded confidence)
   - Numeric scores: body_coverage, hand_coverage, mean_conf, bone_ratio_err
   - Hand detected: yes/no, how many
-  - If HaMeR enabled: finger_cv per hand, verdict
+  - If HaMeR enabled: mean finger_cv
 
 Summary table:
   - Mean/min/max of each metric across all images

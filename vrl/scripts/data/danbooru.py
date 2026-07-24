@@ -48,8 +48,6 @@ ANATOMY_EVAL_LIMIT = 1_000
 ANATOMY_MIN_SCORE = 5.0
 ANATOMY_PREFERRED_MIN_SCORE = 20.0
 ANATOMY_PROMPT_STYLE = "mixed"
-ANATOMY_BUCKET_BALANCE = "quota"
-ANATOMY_CANDIDATE_POOL_FACTOR = 2
 ANATOMY_SEED = 0
 
 SAFETY_TRAIN_OUTPUT = SAFETY_DIR / "train.jsonl"
@@ -102,7 +100,6 @@ SCENE_TAGS = tuple(_ANATOMY["scene_tags"])
 ACTION_BUCKET_TAGS = set(_ANATOMY["action_bucket_tags"])
 DEFAULT_BUCKET_WEIGHTS = dict(_ANATOMY["default_bucket_weights"])
 PROMPT_ANCHOR_TAGS = tuple(_ANATOMY["prompt_anchor_tags"])
-FAILURE_LABELS = set(_ANATOMY["failure_labels"])
 
 # Danbooru metadata writes the rating as a single letter (g/s/q/e). Map every
 # accepted spelling -> canonical name. _SAFETY_RATING_SPELLINGS is the source of
@@ -164,8 +161,6 @@ def build_anatomy_prompts(
     preferred_min_score: float | None = ANATOMY_PREFERRED_MIN_SCORE,
     seed: int = ANATOMY_SEED,
     prompt_style: str = ANATOMY_PROMPT_STYLE,
-    bucket_balance: str = ANATOMY_BUCKET_BALANCE,
-    candidate_pool_factor: int = ANATOMY_CANDIDATE_POOL_FACTOR,
     max_metadata_rows: int | None = None,
     allow_partial: bool = False,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
@@ -177,22 +172,14 @@ def build_anatomy_prompts(
         hf_cache_dir=hf_cache_dir,
     )
     target_count = train_limit + eval_limit
-    bucket_weights = DEFAULT_BUCKET_WEIGHTS if bucket_balance == "quota" else None
-    if bucket_balance not in {"quota", "natural"}:
-        raise ValueError("bucket_balance must be 'quota' or 'natural'")
-    candidate_limit = (
-        None if bucket_weights else max(target_count, target_count * candidate_pool_factor)
-    )
     rows = build_prompt_rows(
         metadata_path,
         min_score=min_score,
-        preferred_min_score=preferred_min_score if bucket_weights else None,
+        preferred_min_score=preferred_min_score,
         limit=target_count,
         seed=seed,
-        candidate_limit=candidate_limit,
         max_metadata_rows=max_metadata_rows,
         prompt_style=prompt_style,
-        bucket_weights=bucket_weights,
     )
     train_rows, eval_rows = split_prompt_rows(
         rows,
@@ -671,10 +658,9 @@ def build_prompt_rows(
     preferred_min_score: float | None = None,
     limit: int | None = None,
     seed: int = 0,
-    candidate_limit: int | None = None,
     max_metadata_rows: int | None = None,
     prompt_style: str = "mixed",
-    bucket_weights: Mapping[str, float] | None = DEFAULT_BUCKET_WEIGHTS,
+    bucket_weights: Mapping[str, float] = DEFAULT_BUCKET_WEIGHTS,
 ) -> list[dict[str, Any]]:
     rows: list[PromptRow] = []
     seen_prompts: set[str] = set()
@@ -697,8 +683,6 @@ def build_prompt_rows(
             continue
         seen_prompts.add(prompt_row.prompt)
         rows.append(prompt_row)
-        if candidate_limit is not None and len(rows) >= candidate_limit:
-            break
 
     rng = random.Random(seed)
     buckets: dict[str, list[PromptRow]] = defaultdict(list)
@@ -707,15 +691,12 @@ def build_prompt_rows(
     for bucket_rows in buckets.values():
         rng.shuffle(bucket_rows)
 
-    if bucket_weights:
-        balanced = _select_quota_rows(
-            buckets,
-            limit=limit,
-            bucket_weights=bucket_weights,
-            preferred_min_score=preferred_min_score,
-        )
-    else:
-        balanced = _interleave_bucket_rows(buckets, limit=limit)
+    balanced = _select_quota_rows(
+        buckets,
+        limit=limit,
+        bucket_weights=bucket_weights,
+        preferred_min_score=preferred_min_score,
+    )
 
     return [{"prompt": row.prompt, "metadata": row.metadata} for row in balanced]
 
@@ -1314,10 +1295,6 @@ def _interleave_manifest_rows(
 _http_download = http_download
 
 
-def _current_http_download() -> Callable[[str, Path], None]:
-    return globals().get("_http_download", http_download)
-
-
 def manifest_setup_hints() -> tuple[tuple[str, tuple[str, ...]], ...]:
     return (("datasets/danbooru/anatomy/", (ANIME_PROMPTS_COMMAND,)),)
 
@@ -1387,7 +1364,7 @@ def _cmd_anime_positives(args: argparse.Namespace) -> None:
         limit=POSITIVE_IMAGE_LIMIT,
         fetch_images=args.fetch_images,
         overwrite=args.overwrite,
-        fetch=_current_http_download(),
+        fetch=_http_download,
     )
     emit(report)
 
@@ -1407,7 +1384,7 @@ def _cmd_anime_fetch_images(args: argparse.Namespace) -> None:
     downloaded, skipped, failed = download_danbooru_images(
         args.metadata,
         targets,
-        fetch=_current_http_download(),
+        fetch=_http_download,
         overwrite=args.overwrite,
     )
     emit(
@@ -1424,7 +1401,6 @@ def _cmd_anime_fetch_images(args: argparse.Namespace) -> None:
 
 __all__ = [
     "DEFAULT_BUCKET_WEIGHTS",
-    "FAILURE_LABELS",
     "SAFETY_TARGET_RATINGS",
     "PromptRow",
     "anatomy_constraints",

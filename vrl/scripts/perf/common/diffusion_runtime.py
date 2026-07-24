@@ -39,33 +39,6 @@ def build_runtime(
     return entry.build_rollout(build)
 
 
-def build_model(
-    root: RootConfig,
-    device,
-    dtype,
-    *,
-    precision: PrecisionPolicy,
-):
-    """Compatibility facade for the recorded TeaCache drift probe.
-
-    That one-shot probe owns its historical BF16 context locally. Refuse a
-    config/CLI mismatch instead of silently letting it diverge from the
-    resolved rollout role.
-    """
-
-    from vrl.models.dtypes import dtype_to_precision_token
-
-    runtime = build_runtime(root, device, precision=precision)
-    token = dtype_to_precision_token(dtype)
-    if runtime.precision.dtype != token:
-        raise ValueError(
-            "TeaCache probe dtype does not match resolved rollout precision: "
-            f"requested {token!r}, resolved dtype={runtime.precision.dtype!r}, "
-            f"outer_autocast={runtime.precision.outer_autocast!r}",
-        )
-    return runtime.model
-
-
 def prepare_sampling_state(model, cfg):
     """Encode the shared prompt and prepare the model's sampling state."""
 
@@ -163,9 +136,11 @@ def _e2e_once(runtime: RuntimeBundle, cfg):
         return model.decode_latents(state.latents)
 
 
-def run_e2e(runtime: RuntimeBundle, cfg, device, iters=3, warmup=2):
+def run_e2e(runtime: RuntimeBundle, cfg, device):
     """Time full end-to-end image latency (encode+denoise+decode)."""
 
+    iters = 3
+    warmup = 2
     sampling = cfg.sampling
     for _ in range(warmup):
         _e2e_once(runtime, cfg)
