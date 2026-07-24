@@ -6,8 +6,11 @@ Status: **parked**. Its trigger remains completion of the F0-F3 generic
 primitives, trainable-state installer, and fake-adapter contract in the
 [FlashDreams execution provider](../planned/SPRINT_flashdreams_execution_provider.md);
 it does not wait for Self-Forcing to close provider production conformance. The
-additional bounded-failure gate is already complete under the
-[Ray operation-deadline sprint](../done/SPRINT_rollout_worker_liveness.md).
+completed [worker process-health sprint](../done/SPRINT_rollout_worker_liveness.md)
+covers actor-process reachability only. Its dedicated health concurrency group
+can respond while a default-group business call is busy or hung, so the
+configured blocking-call deadline remains an unfinished, independent F3
+integration gate.
 
 ## 0. 结论先行
 

@@ -3,9 +3,11 @@
 日期：2026-07-13
 
 Status: **planned**. This is the native-engine program's next implementation
-sprint. F0-F2 may proceed in the isolated fork. The bounded-failure gate for F3
-runtime integration is complete under the
-[Ray operation-deadline sprint](../done/SPRINT_rollout_worker_liveness.md).
+sprint. F0-F2 may proceed in the isolated fork. The completed
+[worker process-health sprint](../done/SPRINT_rollout_worker_liveness.md) covers
+actor-process reachability only; its health concurrency group does not prove
+default-group business-call progress. The configured blocking-call deadline for
+F3 runtime integration remains an unfinished, independent gate.
 
 ## 0. 结论先行
 
@@ -170,7 +172,7 @@ CPU 门：对 raw destination payload 的 missing/unexpected/duplicate key、sha
 partial install 全部 fail closed；失败不发布新 schema/digest/version。GPU 门：eager、
 compiled、captured 三条路径在 fixed input 上都必须看到新权重。
 
-### F3 — wm-infra step adapter（operation-deadline gate 后）
+### F3 — wm-infra step adapter (after the configured blocking-call deadline gate)
 
 新增一个薄的 `FlashDreamsStepAdapter`，先用 fork 内 test model/wm-infra fake model 验证：
 

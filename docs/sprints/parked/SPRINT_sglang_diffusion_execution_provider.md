@@ -2,9 +2,13 @@
 
 日期：2026-07-13
 
-状态：**parked**。触发事件：FlashDreams/Self-Forcing 已证明 native
-`GenerationChunkExecutor + trajectory` 能承载第一个外部 provider，且 bounded Ray
-operation-deadline gate 完成。按 program 顺序它是第二个外部实现。
+Status: **parked**. Its trigger requires FlashDreams/Self-Forcing to prove that
+native `GenerationChunkExecutor + trajectory` can carry the first external
+provider, and the independent configured blocking-call deadline gate must pass.
+That deadline gate remains unfinished. The completed
+[worker process-health sprint](../done/SPRINT_rollout_worker_liveness.md) proves
+actor-process reachability only, not progress in default-group provider calls.
+Under the program ordering, this remains the second external implementation.
 
 ## 0. 结论先行
 

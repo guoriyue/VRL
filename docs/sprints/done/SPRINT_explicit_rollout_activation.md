@@ -1,8 +1,11 @@
 # SPRINT: Explicit rollout activation and schedule-owned draining
 
 Status: **DONE (2026-07-18)**. The contract and its regression coverage are
-implemented; bounded remote waits and supervisor handoff were subsequently
-completed by the [Ray operation-deadline sprint](SPRINT_rollout_worker_liveness.md).
+implemented. Process-reachability monitoring and supervisor handoff after an
+unreachable probe were subsequently completed by the
+[worker process-health sprint](SPRINT_rollout_worker_liveness.md). That monitor
+does not bound business RPCs; the configured blocking-call deadline remains an
+unfinished independent gate.
 
 ## Decision
 
@@ -48,15 +51,18 @@ removed. The canonical contract uses `offload()` and
 
 ## State
 
-The terminal lifecycle has only:
+The terminal admission state has only:
 
 ```text
-RUNNING -> SHUTTING_DOWN -> TERMINATED
+OPEN -> CLOSING -> CLOSED
 ```
 
 There is no runtime-level `QUIESCING`, `OperationTicket`, active-operation map, or
-waiter map. `activation_task`, `offload_task`, and `shutdown_task` are retained
-because they each provide real single-flight ownership for one concrete operation.
+waiter map. Activate and offload share one ordered transition task, while shutdown
+uses one shared cleanup task. Worker policy install shares the same transition lock,
+so it cannot overlap sleep/wake. On-demand launch attaches a
+`RayGenerationWorkerFleet`, not a second runtime; the fleet reports monitor failures
+to the facade's one terminal state and never owns public close completion.
 
 On-demand policy state distinguishes:
 

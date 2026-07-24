@@ -85,9 +85,9 @@ transformer / kernel / provider scheduling   mostly upstream or parked
 |---|---|---|
 | RL trajectory | `generation/steps/denoise/loop.py` 产出 observations/actions/log-probs；binding 与 `trajectory/builders.py` 构造 trainer-facing trajectory，validator 检查 role 与 axis | 这是 trainer-facing source of truth，不是 inference-only artifact wrapper |
 | Policy freshness | worker 按 request version 激活 slot；slot 被逐出时 `RayGenerationExecutor` 丢弃整条 request | mixed-policy partial result fail closed |
-| GPU/runtime lifecycle | `GenerationRuntime` 暴露 activate/generate/offload/shutdown；Ray runtime 对 activate/offload/shutdown 做 single-flight 与资源清理 | shared-GPU handoff 与 terminal ownership 是 engine 行为 |
-| Bounded rollout worker liveness | a background probe watches owned workers out of band | an unreachable worker kills the fleet, closes admission, and hands checkpoint resume to the supervisor |
-| Full-sequence denoise + token-autoregressive | denoise step 自有 SDE loop；token-autoregressive composition 自有 position-major bounded row loop与cache row routing；两者汇入同一 `GenerationOutput`/trajectory | 一个顶层 engine 可以保留两种不同数学执行形态 |
+| GPU/runtime lifecycle | `GenerationRuntime` 暴露 activate/generate/offload/shutdown；Ray runtime 串行 activate/offload/policy install，worker fleet 独占 actor/monitor/cleanup | shared-GPU handoff 与 terminal ownership 是 engine 行为 |
+| Rollout worker process reachability | a background probe watches a dedicated health concurrency group out of band | an unreachable process kills the fleet and hands checkpoint resume to the supervisor; a successful probe does not prove default-group business RPC progress |
+| Full-sequence denoise + token-autoregressive | denoise step 自有 SDE loop；token-autoregressive composition 自有 token scheduler/cache row routing；两者汇入同一 `GenerationOutput`/trajectory | 一个顶层 engine 可以保留两种不同数学执行形态 |
 | RL group integrity | sample chunk OOM 时有序二分，gather 再检查完整覆盖 | OOM 不会静默少样本、重复样本或重排 GRPO group |
 
 #### 尚未成立的能力与代价
@@ -96,7 +96,7 @@ transformer / kernel / provider scheduling   mostly upstream or parked
 |---|---|---|
 | Provider selection | `ModelFamilyEntry` 当前只有一个 `executor_cls`，launch contract 没有 provider identity/schema/provenance | 本 program N2 + [multi-engine conformance](parked/SPRINT_multi_engine_rollout_conformance.md) |
 | Full model ownership | diffusion backbone 最终调用 Diffusers transformer；pipeline/scheduler/text encoder/VAE 仍大量来自 upstream | [native transformer executor](parked/SPRINT_diffusion_native_transformer_executor.md)，继续 profile-gated |
-| Cross-request batching | full-sequence denoise binding跑完整 denoise loop；token loop只在单 request内按 position和row chunk执行，不存在跨请求 admission/key/cache pool，不同 request不共享 forward | [cross-request step scheduler](parked/SPRINT_cross_request_step_scheduler.md)，继续 workload-gated |
+| Cross-request batching | full-sequence denoise binding 跑完整 denoise loop；`TokenScheduler` 每个 `TokenAutoregressiveLoop` 单独创建；不同 request 不共享 forward | [cross-request step scheduler](parked/SPRINT_cross_request_step_scheduler.md)，继续 workload-gated |
 | Video trajectory capacity | denoise 前预分配完整 observations/actions，并可选再分配 previous means/reference predictions | [paged trajectory store](parked/SPRINT_paged_trajectory_store.md)，只在目标 video profile 证明容量/搬运瓶颈后解 park |
 
 因此本 program 的架构结论不是“native 一定比外部 engine 快”，而是替换成本不对称：
@@ -122,9 +122,12 @@ production profile 证明 native request scheduling 而非 model compute 是主�
 
 ### Sprint 0 — Native engine contract + oracle（当前）
 
-The reliability gate is complete under
+The process-reachability part of reliability is complete under
 [Rollout worker liveness](done/SPRINT_rollout_worker_liveness.md).
-This program keeps that liveness/lifecycle owner and does not duplicate it.
+This program keeps that health/lifecycle owner and does not duplicate it. The
+health concurrency group can answer while the actor's default group is busy or
+hung, so the monitor is not a business-operation progress signal. The configured
+blocking-call deadline below remains an unfinished, independent Sprint 0 gate.
 
 1. 把 request/output、policy version、weight install、failure cleanup、trajectory/replay
    这些 engine-owned 语义钉成 provider-independent contract tests。
@@ -204,10 +207,12 @@ training recipe；provider-specific smoke 不依赖第二个 provider 已完成�
 
 These tests describe the wm-infra engine rather than a model-library API.
 External provider adapters must pass the same suite instead of copying private
-expectations. Blocking-call deadlines, partial-result rejection, and terminal
-supervisor handoff are enforced by the
-[completed operation-deadline sprint](done/SPRINT_rollout_worker_liveness.md);
-external providers must preserve that boundary.
+expectations. The completed
+[worker process-health sprint](done/SPRINT_rollout_worker_liveness.md) covers only
+actor-process reachability and supervisor handoff after an unreachable probe.
+Blocking-call deadlines and operation-boundary partial-result rejection remain
+unfinished Sprint 0 requirements; external providers cannot be promoted until
+that independent gate passes.
 
 ### N1 — 保留两种 provider 粒度
 

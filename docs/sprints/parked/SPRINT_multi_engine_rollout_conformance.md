@@ -2,12 +2,17 @@
 
 日期：2026-07-13
 
-状态：**parked**。按 program 的严格顺序，触发事件是 SGLang Qwen-Image S4 pilot 完成；
-不能在只有第一个 FlashDreams binding 时提前解 park。每个 provider 仍必须通过共同的
-Ray operation-deadline gate。C0 native oracle fixtures 已并入 active native-engine
-program，不等待本 sprint 单独建 framework。本文不允许先造一个只有 fake/native
-implementation 的 provider framework，也不要求 step-level 与 full-chunk provider 共享
-一个虚假内部 API。
+Status: **parked**. Under the program's strict ordering, the trigger is completion
+of the SGLang Qwen-Image S4 pilot; this sprint cannot unpark with only the first
+FlashDreams binding. Every provider must also pass the shared configured
+blocking-call deadline gate, which remains unfinished. The completed
+[worker process-health sprint](../done/SPRINT_rollout_worker_liveness.md) covers
+actor-process reachability only: its health concurrency group can respond while
+the default group is busy or hung, so it cannot replace a business-call deadline.
+C0 native oracle fixtures already live in the active native-engine program and
+do not wait for this sprint to create a separate framework. This sprint must not
+prebuild a fake/native-only provider framework or force step-level and full-chunk
+providers behind a false shared internal API.
 
 ## 0. 结论先行
 
