@@ -26,6 +26,8 @@ import torch
 from omegaconf import DictConfig, OmegaConf
 
 from vrl.config.loading import load_config
+from vrl.config.precision import resolve_precision_policy
+from vrl.config.schema import parse_config
 from vrl.families.registry import get_model_family_entry
 from vrl.rewards.inference import (
     RewardInferenceArtifact,
@@ -206,7 +208,11 @@ def generate_shard(args: argparse.Namespace) -> dict[str, Any]:
         entry = get_model_family_entry(str(cfg.model.family))
         if entry.family != "wan_2_1":
             raise ValueError(f"Wan robotics evaluation requires wan_2_1; got {entry.family!r}")
-        build = entry.resolve_model_build(cfg, device, for_rollout=True)
+        # resolve_model_build rejects raw DictConfig input: project the run's
+        # resolved config through the typed schema and precision policy first.
+        root = parse_config(cfg)
+        precision = resolve_precision_policy(root)
+        build = entry.resolve_model_build(root, device, precision=precision, for_rollout=True)
         bundle = entry.build_rollout(build)
         if target.path is not None:
             checkpoint = load_training_checkpoint(target.path)

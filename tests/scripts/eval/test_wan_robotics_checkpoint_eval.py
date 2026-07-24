@@ -247,7 +247,12 @@ def test_base_generation_never_reads_a_training_checkpoint(
     config_path = run_dir / "resolved_config.yaml"
     config_path.write_text("model: {}\n", encoding="utf-8")
     output_dir = tmp_path / "eval"
-    cfg = OmegaConf.create({"model": {"family": "wan"}})
+    cfg = OmegaConf.create(
+        {
+            "model": {"family": "wan"},
+            "precision": {"float32_precision": "ieee", "training": {"dtype": "fp32"}},
+        },
+    )
     target = checkpoint_eval.CheckpointTarget(
         label="base",
         epoch=0,
