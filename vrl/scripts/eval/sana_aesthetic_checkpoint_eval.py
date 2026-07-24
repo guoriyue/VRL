@@ -74,7 +74,7 @@ _LIVE_ENTRYPOINT = "vrl.scripts.train:train_online"
 # Semantic digest of the resolved canonical preset; recomputed against the merged
 # config schema (see _normalize_run_config, which fails closed if the bundled
 # preset drifts without updating this pin).
-CANONICAL_PROTOCOL_SHA256 = "970c2e28937842b3f6fe0b1b4359292fe8e95dba3a5be52b5f3bdf059830b189"
+CANONICAL_PROTOCOL_SHA256 = "ec1baab564b3dc97b6f4a3287474965c9811dc3ed6bfdf9b8b8e41028ab32da6"
 # Frozen protocol-asset identities. These hashes name two concrete datasets;
 # they are not a duplicated prompt taxonomy or a user-facing config table.
 TRAIN_MANIFEST_SHA256 = "86580c8136a4b6d9fc6bbcc6d8e8e172b15fca6b5c6c956cc770255d8011de56"
