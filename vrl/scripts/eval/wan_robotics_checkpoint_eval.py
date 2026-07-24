@@ -33,6 +33,8 @@ from vrl.rewards.inference import (
     sha256_file,
 )
 from vrl.rewards.models.robotics_video_reward import RoboticsVideoRewardModel
+from vrl.scripts.eval._device import resolve_eval_device
+from vrl.scripts.eval._sampling import resolve_eval_sampling
 from vrl.scripts.eval.denoise_video_generation import generate_one_video
 from vrl.trainers.checkpointing import (
     TRAINING_CHECKPOINT_NAME,
@@ -196,7 +198,7 @@ def generate_shard(args: argparse.Namespace) -> dict[str, Any]:
     staging_dir = generation_root / f".{target.label}.tmp-{os.getpid()}"
     staging_dir.mkdir(parents=True, exist_ok=False)
 
-    device = _resolve_device(str(args.device))
+    device = resolve_eval_device(str(args.device))
     generated: list[GeneratedVideo] = []
     bundle: Any | None = None
     model: Any | None = None
@@ -331,7 +333,7 @@ def score_shards(args: argparse.Namespace) -> dict[str, Any]:
         reward_name="robotics_video_reward",
         score_key="robotics_blend",
     )
-    device = _resolve_device(str(args.device))
+    device = resolve_eval_device(str(args.device))
     worker_config = _reward_worker_config(cfg, device=device)
     logger.info("Loading robotics reward to score %d fixed artifacts", len(artifacts))
     model = RoboticsVideoRewardModel(worker_config)
@@ -513,7 +515,7 @@ def _build_protocol(
             "samples_per_prompt": samples_per_prompt,
             "formula": "base_seed + sample_index * seed_stride + eval_row_index",
         },
-        "sampling": _resolve_sampling(cfg),
+        "sampling": resolve_eval_sampling(cfg),
     }
 
 
@@ -586,21 +588,6 @@ def _normalized_prompt(value: str) -> str:
 
 def _seed_for(*, base_seed: int, row_index: int, sample_index: int, seed_stride: int) -> int:
     return int(base_seed) + int(sample_index) * int(seed_stride) + int(row_index)
-
-
-def _resolve_sampling(cfg: DictConfig) -> dict[str, Any]:
-    return {
-        "width": int(cfg.sampling.width),
-        "height": int(cfg.sampling.height),
-        "num_frames": int(cfg.sampling.num_frames),
-        "num_steps": int(cfg.sampling.num_steps),
-        "fps": int(cfg.sampling.fps),
-        "max_sequence_length": int(cfg.sampling.max_sequence_length),
-        "guidance_scale": float(cfg.sampling.guidance_scale),
-        "denoise_mode": str(cfg.rollout.denoise_mode),
-        "noise_level": float(cfg.rollout.noise_level),
-        "sde_type": str(cfg.rollout.sde.type),
-    }
 
 
 def _load_and_validate_shards(
@@ -825,15 +812,6 @@ def _bootstrap_mean_interval(
     lower_index = int(0.025 * (len(means) - 1))
     upper_index = int(0.975 * (len(means) - 1))
     return means[lower_index], means[upper_index]
-
-
-def _resolve_device(value: str) -> torch.device:
-    if value == "auto":
-        return torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-    device = torch.device(value)
-    if device.type == "cuda" and not torch.cuda.is_available():
-        raise RuntimeError(f"CUDA device requested but unavailable: {device}")
-    return device
 
 
 def _json_sha256(value: Any) -> str:

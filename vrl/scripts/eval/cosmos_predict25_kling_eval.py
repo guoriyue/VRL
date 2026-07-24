@@ -25,6 +25,8 @@ from vrl.models.checkpoint_identity import resolve_checkpoint_model_identity
 from vrl.models.dtypes import resolve_torch_dtype
 from vrl.rewards.inference import RewardInferenceArtifact, RewardInferenceRequest
 from vrl.rewards.models.kling_video_reward import KlingVideoRewardModel
+from vrl.scripts.eval._device import resolve_eval_device
+from vrl.scripts.eval._sampling import resolve_eval_sampling
 from vrl.trainers.checkpointing import (
     load_training_checkpoint,
     read_checkpoint_meta,
@@ -141,7 +143,7 @@ def main(argv: list[str] | None = None) -> None:
         raise ValueError("provide --prompt, --manifest, or --eval-manifest")
     checkpoint_targets = _parse_checkpoint_targets(args.checkpoint)
 
-    device = _resolve_device(args.device)
+    device = resolve_eval_device(args.device)
     dtype = _resolve_dtype(
         args.dtype,
         root,
@@ -257,17 +259,6 @@ def _normalize_checkpoint_label(value: str) -> str:
     return re.sub(r"[^A-Za-z0-9_.-]+", "_", str(value).strip()).strip("._-")
 
 
-def _resolve_device(device_arg: str) -> torch.device:
-    if device_arg != "auto":
-        device = torch.device(device_arg)
-        if getattr(device, "type", str(device)) == "cuda" and not torch.cuda.is_available():
-            raise RuntimeError(
-                f"CUDA device was requested ({device_arg}), but CUDA is unavailable"
-            )
-        return device
-    return torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-
-
 def _resolve_dtype(
     dtype_arg: str,
     root: RootConfig,
@@ -286,27 +277,20 @@ def _resolve_dtype(
 
 
 def _resolve_sampling(args: argparse.Namespace, cfg: DictConfig) -> dict[str, Any]:
-    return {
-        "width": int(args.width or OmegaConf.select(cfg, "sampling.width", default=512)),
-        "height": int(args.height or OmegaConf.select(cfg, "sampling.height", default=512)),
-        "num_frames": int(
-            args.num_frames or OmegaConf.select(cfg, "sampling.num_frames", default=93),
-        ),
-        "num_steps": int(args.steps or OmegaConf.select(cfg, "sampling.num_steps", default=20)),
-        "fps": int(args.fps or OmegaConf.select(cfg, "sampling.fps", default=16)),
-        "max_sequence_length": int(
-            args.max_sequence_length
-            or OmegaConf.select(cfg, "sampling.max_sequence_length", default=512),
-        ),
-        "guidance_scale": float(
-            OmegaConf.select(cfg, "sampling.guidance_scale", default=1.0)
-            if args.guidance_scale is None
-            else args.guidance_scale,
-        ),
-        "denoise_mode": str(OmegaConf.select(cfg, "rollout.denoise_mode", default="sde")),
-        "noise_level": float(OmegaConf.select(cfg, "rollout.noise_level", default=1.0)),
-        "sde_type": str(OmegaConf.select(cfg, "rollout.sde.type", default="flow_grpo")),
-    }
+    # Adapt this script's CLI flags to the shared sampling projection. The arg names
+    # (notably --steps -> num_steps) are cosmos-specific; wan has no such overrides.
+    return resolve_eval_sampling(
+        cfg,
+        overrides={
+            "width": args.width,
+            "height": args.height,
+            "num_frames": args.num_frames,
+            "num_steps": args.steps,
+            "fps": args.fps,
+            "max_sequence_length": args.max_sequence_length,
+            "guidance_scale": args.guidance_scale,
+        },
+    )
 
 
 def _generate_all(

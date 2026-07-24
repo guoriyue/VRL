@@ -44,6 +44,7 @@ from omegaconf import OmegaConf
 
 from vrl.config.loading import load_config
 from vrl.rewards.inference import RewardInferenceArtifact, RewardInferenceRequest
+from vrl.scripts.eval._device import resolve_eval_device
 from vrl.trainers.data.prompts import load_prompt_manifest
 
 logger = logging.getLogger(__name__)
@@ -140,7 +141,7 @@ def main(argv: list[str] | None = None) -> None:
     ]
 
     if not args.no_kling:
-        device = _resolve_device(args.device)
+        device = resolve_eval_device(args.device)
         kling_scores = _score_kling(videos, prompts, args.kling_config, device=device)
         for row, video in zip(rows, videos, strict=True):
             for key in _KLING_SCORE_KEYS:
@@ -394,15 +395,6 @@ def _load_merge_json(merge_arg: str) -> tuple[str, dict[str, dict[str, float]]]:
                 str(metric): float(value) for metric, value in metrics.items()
             }
     return prefix.strip(), merged
-
-
-def _resolve_device(device_arg: str) -> torch.device:
-    if device_arg != "auto":
-        device = torch.device(device_arg)
-        if getattr(device, "type", str(device)) == "cuda" and not torch.cuda.is_available():
-            raise RuntimeError(f"CUDA requested ({device_arg}) but CUDA is unavailable")
-        return device
-    return torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
 
 def _write_csv(rows: list[dict[str, Any]], output: Path) -> None:

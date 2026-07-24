@@ -35,6 +35,7 @@ from vrl.config.loading import load_config
 from vrl.config.precision import PrecisionPolicy, resolve_precision_policy
 from vrl.config.schema import RootConfig, parse_config
 from vrl.models.checkpoint_identity import resolve_checkpoint_model_identity
+from vrl.scripts.eval._device import resolve_eval_device
 from vrl.scripts.eval.sana_inference import (
     OFFICIAL_SAMPLING_PROTOCOL,
     SCHEDULER_PROTOCOL,
@@ -159,7 +160,7 @@ def main(argv: list[str] | None = None) -> None:
     training_log = _validate_training_log_provenance(run_dir, cfg)
 
     targets = _discover_checkpoint_targets(run_dir, cfg)
-    device = _resolve_device(args.device)
+    device = resolve_eval_device(args.device)
     sampling = _resolve_sampling()
     identity_root = parse_config(cfg)
     if identity_root.model is None:
@@ -764,17 +765,6 @@ def _validate_training_log_provenance(run_dir: Path, cfg: DictConfig) -> dict[st
         "sha256": _sha256(path),
         "configured_model_revisions": configured,
     }
-
-
-def _resolve_device(value: str) -> Any:
-    import torch
-
-    if value != "auto":
-        device = torch.device(value)
-        if device.type == "cuda" and not torch.cuda.is_available():
-            raise RuntimeError(f"CUDA device was requested ({value}), but CUDA is unavailable")
-        return device
-    return torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
 
 def _resolve_sampling() -> dict[str, Any]:

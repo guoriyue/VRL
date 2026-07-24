@@ -33,6 +33,7 @@ from vrl.models.checkpoint_identity import resolve_checkpoint_model_identity
 from vrl.models.dtypes import dtype_to_wire_name
 from vrl.models.loader import model_revision_kwargs
 from vrl.models.precision import float32_precision_state, model_precision
+from vrl.scripts.eval._device import resolve_eval_device
 from vrl.scripts.eval.sana_inference import (
     SCHEDULER_PROTOCOL,
     generate_prompt_images,
@@ -137,7 +138,7 @@ def run_comparison(args: argparse.Namespace) -> dict[str, str]:
             f"refusing to overwrite an existing comparison directory: {output_dir}",
         )
 
-    device = _resolve_device(args.device)
+    device = resolve_eval_device(args.device)
     from vrl.models.steps.denoise.build import (
         build_family_runtime_bundle,
         resolve_family_model_build,
@@ -389,15 +390,6 @@ def _artifact_record(path: Path, output_dir: Path) -> dict[str, Any]:
         "sha256": _sha256(path),
         "bytes": path.stat().st_size,
     }
-
-
-def _resolve_device(value: str) -> torch.device:
-    if value == "auto":
-        return torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-    device = torch.device(value)
-    if device.type == "cuda" and not torch.cuda.is_available():
-        raise RuntimeError(f"CUDA device requested but CUDA is unavailable: {device}")
-    return device
 
 
 def _sha256(path: Path) -> str:
