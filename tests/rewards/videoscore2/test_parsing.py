@@ -7,16 +7,58 @@ scores — are covered deterministically.
 
 from __future__ import annotations
 
+import re
 from typing import ClassVar
 
 import torch
 
 from vrl.rewards.models.videoscore2 import (
+    _DIMENSION_MARKERS,
+    _SYSTEM_PROMPT,
+    _USER_TEMPLATE,
     _merge_soft_with_hard,
     _normalize_scores,
     _parse_integer_scores,
     _soft_scores_from_generation,
 )
+
+_FORMAT_HEADER = "Please output in this format:\n"
+
+
+def test_parser_reads_the_exact_format_the_prompt_asks_for() -> None:
+    """The prompt's own format line is the only spec the judge ever sees.
+
+    Every other test here feeds the parser a hand-written sample, so the prompt,
+    the regex, and those samples are three copies of one contract that never
+    check each other. Filling the prompt's ``<...>`` slots and parsing the result
+    makes the prompt the source of truth: reword an axis and this fails until the
+    regex follows.
+    """
+
+    declared = _USER_TEMPLATE.format(prompt="a cat").split(_FORMAT_HEADER, 1)[1]
+    digits = iter("345")
+    filled = re.sub(r"<[^>]+>", lambda _: next(digits), declared)
+
+    assert _parse_integer_scores(filled) == (3, 4, 5)
+
+
+def test_system_and_user_prompts_declare_one_output_format() -> None:
+    """Both prompts spell the format out; they must spell the same one."""
+
+    declared = _USER_TEMPLATE.format(prompt="a cat").split(_FORMAT_HEADER, 1)[1]
+
+    assert declared in _SYSTEM_PROMPT
+
+
+def test_soft_score_markers_appear_in_the_prompt() -> None:
+    """Soft scoring locates each digit by these phrases in the generated text.
+
+    The model only emits them because the prompt does; a marker absent from the
+    prompt would silently misanchor the expected-value path.
+    """
+
+    for key, marker in _DIMENSION_MARKERS:
+        assert marker in _SYSTEM_PROMPT, key
 
 
 def test_parse_integer_scores_reads_three_axes() -> None:
@@ -33,10 +75,7 @@ def test_parse_integer_scores_rejects_unparseable() -> None:
 
 
 def test_parse_integer_scores_rejects_out_of_range() -> None:
-    text = (
-        "visual quality: 7; text-to-video alignment: 3, "
-        "physical/common-sense consistency: 5"
-    )
+    text = "visual quality: 7; text-to-video alignment: 3, physical/common-sense consistency: 5"
     assert _parse_integer_scores(text) is None
 
 
@@ -60,8 +99,14 @@ class _FakeTokenizer:
     """
 
     _vocab: ClassVar[dict[str, int]] = {
-        "1": 1, "2": 2, "3": 3, "4": 4, "5": 5,
-        "quality": 10, "alignment": 20, "consistency": 30,
+        "1": 1,
+        "2": 2,
+        "3": 3,
+        "4": 4,
+        "5": 5,
+        "quality": 10,
+        "alignment": 20,
+        "consistency": 30,
     }
 
     def encode(self, text: str, add_special_tokens: bool = False) -> list[int]:
