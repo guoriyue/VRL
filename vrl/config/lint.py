@@ -21,7 +21,7 @@ from vrl.config.unknown_keys import OPEN, ConfigBlock, _root_block
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
-def config_reads_in_code(root: Path | None = None) -> set[str]:
+def config_reads_in_code() -> set[str]:
     """Extract the dotted config paths read via the config-access helpers.
 
     Bare (dot-free) keys are ignored: they are relative reads inside an
@@ -29,7 +29,7 @@ def config_reads_in_code(root: Path | None = None) -> set[str]:
     """
 
     dotted: set[str] = set()
-    for f in (root or REPO_ROOT / "vrl").rglob("*.py"):
+    for f in (REPO_ROOT / "vrl").rglob("*.py"):
         tree = ast.parse(f.read_text())
         for node in ast.walk(tree):
             if not isinstance(node, ast.Call) or len(node.args) < 2:
