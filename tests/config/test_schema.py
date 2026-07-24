@@ -27,6 +27,7 @@ from vrl.config.schema import (
     AlgorithmConfig,
     DataConfig,
     RewardConfig,
+    RolloutWorkerSection,
     RootConfig,
     parse_config,
 )
@@ -1201,6 +1202,39 @@ def test_rollout_health_check_defaults_and_accepts_override() -> None:
     assert rollout.health_check_interval_s == 12.5
     assert rollout.health_check_timeout_s == 7.5
     assert rollout.health_check_first_wait_s == 2.5
+
+
+def test_rollout_worker_section_mirrors_worker_runtime_config() -> None:
+    """RolloutWorkerSection (pydantic lint boundary) and RolloutWorkerConfig (the
+    frozen runtime projection composed into RayGenerationConfig) must stay
+    field-for-field identical. ``from_public_section`` builds the dataclass via
+    ``cls(**section.model_dump())``, so a field on one but not the other silently
+    breaks at runtime (TypeError / unfilled required field) instead of at parse.
+
+    The two types are deliberately NOT merged (the pydantic schema is a lint-only
+    boundary; the dataclass is the real runtime consumer), so this parity test is
+    the guard against drift — health_check_first_wait_s, still a live triplicated
+    field (schema default, dataclass field, runtime __init__ default), included.
+    """
+    import dataclasses
+
+    from vrl.generation.ray.config import RayGenerationConfig, RolloutWorkerConfig
+
+    section_fields = set(RolloutWorkerSection.model_fields)
+    config_fields = {f.name for f in dataclasses.fields(RolloutWorkerConfig)}
+    assert section_fields == config_fields
+    assert "health_check_first_wait_s" in section_fields
+
+    # RayGenerationConfig composes the worker projection (its only non-resource
+    # field): "RayGenerationConfig minus resources" is exactly RolloutWorkerConfig.
+    assert {f.name for f in dataclasses.fields(RayGenerationConfig)} == {"resources", "worker"}
+
+    # Per-field default parity: the section's declared defaults must survive the
+    # projection unchanged (from_public_section adds no fallbacks or overrides), so
+    # the section stays the single home of the default literals.
+    projected = RolloutWorkerConfig.from_public_section(RolloutWorkerSection())
+    for name in section_fields:
+        assert getattr(projected, name) == RolloutWorkerSection.model_fields[name].default
 
 
 @pytest.mark.parametrize("interval_s", [0.0, -1.0])

@@ -120,6 +120,39 @@ def test_trajectory_layer_stays_family_neutral() -> None:
     assert not violations, _format_violations(violations)
 
 
+def test_families_registry_stays_import_light() -> None:
+    """vrl/families is a neutral registry that must stay importable during config
+    parse without paying torch: every MODULE-LEVEL import must be stdlib, a sibling
+    ``vrl.families.*`` module, or the torch-free ``vrl.config`` schema layer
+    (``registry.py`` reads ``MODEL_MEMORY_SECTIONS`` from it as the capability
+    source of truth). Edges into vrl.models / vrl.trainers / vrl.generation /
+    vrl.utils are deliberately function-level lazy and must stay that way.
+
+    Walk ``tree.body`` only — NOT ``ast.walk`` — so the intentional function-level
+    lazy imports (e.g. registry.py's gradient-checkpointing resolver) are not swept
+    in and false-failed. This turns the lazy-import convention into a mechanical gate.
+    """
+    violations: list[tuple[Path, str]] = []
+    for path in _python_files(VRL_ROOT / "families"):
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        for node in tree.body:  # module-level statements only
+            if isinstance(node, ast.Import):
+                modules = [alias.name for alias in node.names]
+            elif isinstance(node, ast.ImportFrom) and node.level == 0 and node.module:
+                modules = [node.module]
+            else:
+                continue
+            for module in modules:
+                if not module.startswith("vrl."):
+                    continue  # stdlib / third-party import-light deps are unrestricted
+                if module == "vrl.families" or module.startswith("vrl.families."):
+                    continue
+                if module == "vrl.config" or module.startswith("vrl.config."):
+                    continue  # torch-free config-schema layer (capability SoT)
+                violations.append((path.relative_to(ROOT), module))
+    assert not violations, _format_violations(violations)
+
+
 def test_removed_boundary_packages_stay_removed() -> None:
     """Checks removed boundary packages stay removed."""
     assert not (VRL_ROOT / "distributed").exists()

@@ -9,6 +9,7 @@ from typing import Any
 
 import torch
 
+from vrl.models.utils import unwrap_compile_and_ddp
 from vrl.trajectory.device import map_tensor_tree
 
 TrainableStateGetter = Callable[[], dict[str, Any]]
@@ -145,30 +146,6 @@ def select_trainable_state(module: Any, name: str, module_state: Any) -> dict[st
         for key, value in module_state.items()
         if str(key) in trainable_names
     }
-
-
-def unwrap_compile_and_ddp(module: Any) -> Any:
-    """Peel torch.compile (``_orig_mod``) and DDP / FSDP1 (``.module``) wrappers.
-
-    Sync payload keys live in the policy's uncompiled, unwrapped namespace; the
-    receiver unwraps its own compile wrapper the same way (models/utils.py
-    load_weights_into), so neither wrapper prefix may leak into the rollout
-    payload. PEFT is deliberately NOT peeled — LoRA keys (``base_model.model.*``)
-    are part of the policy-facing namespace. Loop because wrapper nesting/order
-    varies (e.g. compile(DDP(m)) vs DDP(compile(m))).
-
-    FSDP2 export reuses this (vrl/trainers/strategy.py) so a sharded gather lands
-    in the same namespace as single-process sync: ``get_model_state_dict`` strips
-    ``_orig_mod.`` while ``named_parameters()`` keeps it, so selecting trainable
-    keys on a still-compiled module would mismatch.
-    """
-
-    while True:
-        unwrapped = getattr(module, "_orig_mod", module)
-        unwrapped = getattr(unwrapped, "module", unwrapped)
-        if unwrapped is module:
-            return module
-        module = unwrapped
 
 
 def _resolve_next_policy_version(

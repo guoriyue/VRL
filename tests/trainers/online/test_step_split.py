@@ -23,11 +23,11 @@ from tests.trainers.online._helpers import (
 )
 from vrl.algorithms.types import TrainStepMetrics
 from vrl.rollouts.evaluators.base import Evaluator
+from vrl.rollouts.stats import RolloutStats
 from vrl.trainers.core.types import EMAConfig, OptimConfig
 from vrl.trainers.online import OnlineTrainer
 from vrl.trainers.online.config import OnlineBatchPlan, TrainerConfig
 from vrl.trainers.online.trainer import TrainingBatch
-from vrl.utils.stats import RolloutStats
 
 
 class _Algorithm:

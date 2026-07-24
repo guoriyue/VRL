@@ -18,10 +18,10 @@ from typing import Any
 import torch
 
 from vrl.models.interfaces.runtime import checkpoint_owned_state_names
+from vrl.models.utils import unwrap_compile_and_ddp
 from vrl.trainers.weight_sync import (
     require_trainable_modules,
     to_cpu_snapshot,
-    unwrap_compile_and_ddp,
 )
 from vrl.utils.config import cfg_get, cfg_path
 

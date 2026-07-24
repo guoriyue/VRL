@@ -33,6 +33,7 @@ from vrl.rollouts.collector.rewards import (
     RewardScoringInput,
 )
 from vrl.rollouts.orchestration.prompt_collection import collect_prompt_batches
+from vrl.rollouts.stats import RolloutStats
 from vrl.trajectory import (
     RewardView,
     TrajectoryResolver,
@@ -40,7 +41,6 @@ from vrl.trajectory import (
     build_ar_discrete_trajectory,
     build_chunk_autoregressive_denoise_trajectory,
 )
-from vrl.utils.stats import RolloutStats
 
 
 class _RequestBuilder:

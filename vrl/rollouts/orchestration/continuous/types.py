@@ -9,8 +9,8 @@ from typing import Any
 import torch
 
 from vrl.rollouts.batch import RolloutBatch
+from vrl.rollouts.stats import RolloutStats
 from vrl.trajectory import trajectory_tensor_bytes
-from vrl.utils.stats import RolloutStats
 
 
 @dataclass(frozen=True, slots=True)

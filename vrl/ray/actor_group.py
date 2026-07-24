@@ -8,7 +8,7 @@ from typing import Any
 
 from vrl.ray.dependencies import require_ray
 from vrl.ray.placement import actor_scheduling_strategy
-from vrl.ray.resource_cleanup import kill_actors
+from vrl.ray.resource_cleanup import kill_actors, kill_and_retain
 
 
 @dataclass(frozen=True, slots=True)
@@ -108,14 +108,8 @@ class RayActorGroup:
         """Best-effort actor shutdown."""
 
         ray = require_ray()
-        actors = [handle.actor for handle in self.handles if handle.actor is not None]
-        failures = kill_actors(ray, actors)
-        failed_actor_ids = {id(actor) for actor, _ in failures}
-        self.handles[:] = [
-            handle
-            for handle in self.handles
-            if handle.actor is not None and id(handle.actor) in failed_actor_ids
-        ]
+        surviving, failures = kill_and_retain(ray, self.handles, lambda handle: handle.actor)
+        self.handles[:] = surviving
         if failures:
             raise RuntimeError(
                 f"Ray actor-group cleanup incomplete: {len(failures)} actor kill(s) failed",

@@ -36,6 +36,13 @@ from vrl.rollouts.batch.ops import (
     select_batch,
 )
 from vrl.rollouts.orchestration import build_rollout_schedule
+from vrl.rollouts.stats import (
+    JsonlStatsSink,
+    LoggingStatsSink,
+    MultiStatsSink,
+    RolloutStats,
+    StatsSink,
+)
 from vrl.trainers.core.base import Trainer
 from vrl.trainers.core.types import TrainState
 from vrl.trainers.online.config import TrainerConfig
@@ -52,13 +59,6 @@ from vrl.utils.model_diagnostics import (
     tensor_stats,
     trainable_state_digest,
     write_jsonl,
-)
-from vrl.utils.stats import (
-    JsonlStatsSink,
-    LoggingStatsSink,
-    MultiStatsSink,
-    RolloutStats,
-    StatsSink,
 )
 
 logger = logging.getLogger(__name__)

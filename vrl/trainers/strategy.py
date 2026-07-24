@@ -718,8 +718,9 @@ class FSDPStrategy(_TrainingStateParking, Strategy):
         return total_norm
 
     def export_checkpoint_state(self, bundle: Any) -> dict[str, dict[str, Any]]:
+        from vrl.models.utils import unwrap_compile_and_ddp
         from vrl.trainers.fsdp import gather_checkpoint_state_dict
-        from vrl.trainers.weight_sync import require_trainable_modules, unwrap_compile_and_ddp
+        from vrl.trainers.weight_sync import require_trainable_modules
 
         modules = require_trainable_modules(bundle)
         return {
@@ -733,8 +734,9 @@ class FSDPStrategy(_TrainingStateParking, Strategy):
     ) -> dict[str, dict[str, Any]]:
         """Gather checkpoint weights but retain full CPU tensors only on rank0."""
 
+        from vrl.models.utils import unwrap_compile_and_ddp
         from vrl.trainers.fsdp import gather_trainable_state_dict
-        from vrl.trainers.weight_sync import require_trainable_modules, unwrap_compile_and_ddp
+        from vrl.trainers.weight_sync import require_trainable_modules
 
         modules = require_trainable_modules(bundle)
         gathered = {
@@ -747,8 +749,9 @@ class FSDPStrategy(_TrainingStateParking, Strategy):
         return gathered if self.context.is_primary else {}
 
     def export_rollout_state(self, bundle: Any) -> dict[str, Any]:
+        from vrl.models.utils import unwrap_compile_and_ddp
         from vrl.trainers.fsdp import gather_rollout_state_dict
-        from vrl.trainers.weight_sync import require_trainable_modules, unwrap_compile_and_ddp
+        from vrl.trainers.weight_sync import require_trainable_modules
 
         modules = require_trainable_modules(bundle)
         state: dict[str, Any] = {}
@@ -766,8 +769,9 @@ class FSDPStrategy(_TrainingStateParking, Strategy):
         *,
         strict: bool = True,
     ) -> None:
+        from vrl.models.utils import unwrap_compile_and_ddp
         from vrl.trainers.fsdp import load_checkpoint_state_dict
-        from vrl.trainers.weight_sync import require_trainable_modules, unwrap_compile_and_ddp
+        from vrl.trainers.weight_sync import require_trainable_modules
 
         modules = require_trainable_modules(bundle)
         missing = sorted(set(modules) - set(state))
@@ -791,8 +795,9 @@ class FSDPStrategy(_TrainingStateParking, Strategy):
         *,
         strict: bool = True,
     ) -> None:
+        from vrl.models.utils import unwrap_compile_and_ddp
         from vrl.trainers.fsdp import load_full_state_dict
-        from vrl.trainers.weight_sync import require_trainable_modules, unwrap_compile_and_ddp
+        from vrl.trainers.weight_sync import require_trainable_modules
 
         modules = require_trainable_modules(bundle)
         missing = sorted(set(modules) - set(state))
@@ -985,7 +990,7 @@ class DDPStrategy(Strategy):
         return float(nn.utils.clip_grad_norm_(parameters, max_norm))
 
     def _unwrapped_full_state(self, module: Any) -> tuple[Any, dict[str, Any]]:
-        from vrl.trainers.weight_sync import unwrap_compile_and_ddp
+        from vrl.models.utils import unwrap_compile_and_ddp
 
         inner = unwrap_compile_and_ddp(module)
         # DDP replicates the full module on every rank (no sharding), so the plain

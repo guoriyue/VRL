@@ -7,6 +7,12 @@ from pathlib import Path
 
 DATA_ROOT_ENV = "VRL_DATA_ROOT"
 
+# Media file extensions used only to classify a path as image-vs-video (reward
+# frame decode, manifest readability probe). This is plain extension taxonomy —
+# it is NOT part of the artifact/manifest contract, so it lives in the torch-free
+# artifacts leaf rather than duplicated inside either consumer.
+IMAGE_SUFFIXES = frozenset({".bmp", ".gif", ".jpeg", ".jpg", ".png", ".ppm", ".webp"})
+
 
 class ArtifactManifestError(ValueError):
     """Raised when an artifact path violates storage policy."""
@@ -59,6 +65,7 @@ def coerce_data_root(value: str | Path | None) -> Path:
 
 __all__ = [
     "DATA_ROOT_ENV",
+    "IMAGE_SUFFIXES",
     "ArtifactManifestError",
     "coerce_data_root",
     "default_data_root",

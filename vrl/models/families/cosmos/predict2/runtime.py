@@ -11,8 +11,8 @@ from typing import Any
 from vrl.generation.bindings.full_sequence_denoise import (
     DiffusionChunkExecutorBase,
     DiffusionSamplingParams,
+    ReferenceConditionedChunks,
 )
-from vrl.generation.bindings.full_sequence_denoise.executor import ReferenceConditionedChunks
 from vrl.generation.execution.chunks import SampleChunk
 from vrl.generation.types import GenerationRequest, VideoGenerationRequest
 from vrl.utils.logging import init_logger

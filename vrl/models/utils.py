@@ -13,6 +13,32 @@ from collections.abc import Iterator, Mapping
 from typing import Any
 
 
+def unwrap_compile_and_ddp(module: Any) -> Any:
+    """Peel torch.compile (``_orig_mod``) and DDP / FSDP1 (``.module``) wrappers.
+
+    Sync payload keys live in the policy's uncompiled, unwrapped namespace. Both
+    ends peel through here: the sync sender
+    (``trainers.weight_sync.flatten_trainable_module_state``) and the receiver
+    (:func:`load_weights_into` / :func:`validate_weights_for` below), so neither
+    wrapper prefix may leak into the rollout payload. PEFT is deliberately NOT
+    peeled — LoRA keys (``base_model.model.*``) are part of the policy-facing
+    namespace. Loop because wrapper nesting/order varies (e.g. compile(DDP(m)) vs
+    DDP(compile(m))).
+
+    FSDP2 export reuses this (vrl/trainers/strategy.py) so a sharded gather lands
+    in the same namespace as single-process sync: ``get_model_state_dict`` strips
+    ``_orig_mod.`` while ``named_parameters()`` keeps it, so selecting trainable
+    keys on a still-compiled module would mismatch.
+    """
+
+    while True:
+        unwrapped = getattr(module, "_orig_mod", module)
+        unwrapped = getattr(unwrapped, "module", unwrapped)
+        if unwrapped is module:
+            return module
+        module = unwrapped
+
+
 def load_weights_into(
     module: Any,
     state_dict: Mapping[str, Any],
@@ -35,7 +61,7 @@ def load_weights_into(
         prefix=prefix,
         label=label,
     )
-    module = getattr(module, "_orig_mod", module)
+    module = unwrap_compile_and_ddp(module)
     return module.load_state_dict(stripped, strict=False)
 
 
@@ -61,7 +87,7 @@ def validate_weights_for(
         )
     stripped = {key[len(dot) :]: value for key, value in state.items()}
 
-    module = getattr(module, "_orig_mod", module)
+    module = unwrap_compile_and_ddp(module)
 
     named_parameters = getattr(module, "named_parameters", None)
     if not callable(named_parameters):
@@ -171,8 +197,6 @@ def disable_adapter_on(module: Any) -> contextlib.AbstractContextManager[None]:
     returns a null context.
     """
 
-    from vrl.trainers.weight_sync import unwrap_compile_and_ddp
-
     host = unwrap_compile_and_ddp(module)
 
     disable = getattr(host, "disable_adapter", None)
@@ -244,8 +268,6 @@ def activate_adapter_on(module: Any, name: str) -> contextlib.AbstractContextMan
     *named* adapter requires one, so a module without ``set_adapter`` raises
     rather than silently forwarding the wrong weights.
     """
-
-    from vrl.trainers.weight_sync import unwrap_compile_and_ddp
 
     host = unwrap_compile_and_ddp(module)
     set_adapter = getattr(host, "set_adapter", None)

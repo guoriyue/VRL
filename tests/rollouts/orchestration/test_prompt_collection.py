@@ -233,7 +233,7 @@ class _PhasedCollector:
 @pytest.mark.asyncio
 async def test_phase_times_accumulate_per_call() -> None:
     """Checks the out-param sums generation per group and score/build once."""
-    from vrl.utils.stats import RolloutStats
+    from vrl.rollouts.stats import RolloutStats
 
     stats = RolloutStats()
 
@@ -367,7 +367,7 @@ async def test_capable_collector_overlaps_reward_with_next_generation() -> None:
 
 @pytest.mark.asyncio
 async def test_overlap_stats_support_batched_serial_vs_streaming_wall_ab() -> None:
-    from vrl.utils.stats import RolloutStats
+    from vrl.rollouts.stats import RolloutStats
 
     prompts = [PromptExample(prompt="p0"), PromptExample(prompt="p1")]
     serial_stats = RolloutStats()
@@ -647,7 +647,7 @@ async def test_three_acceptance_arms_isolate_overlap_from_per_group_call_tax() -
     win cannot be attributed to overlap without first pricing the per-group
     call granularity that C also introduces.
     """
-    from vrl.utils.stats import RolloutStats
+    from vrl.rollouts.stats import RolloutStats
 
     prompts = [PromptExample(prompt="p0"), PromptExample(prompt="p1")]
     arms = {

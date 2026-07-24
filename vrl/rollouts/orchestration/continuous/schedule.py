@@ -16,7 +16,7 @@ from vrl.rollouts.orchestration.continuous.owner import (
 from vrl.rollouts.orchestration.continuous.types import ContinuousRolloutSettings
 from vrl.rollouts.orchestration.rollout_runtime import RolloutRuntimeCoordinator
 from vrl.rollouts.orchestration.types import RolloutIteration, RolloutScheduleMode
-from vrl.utils.stats import RolloutStats
+from vrl.rollouts.stats import RolloutStats
 
 
 class ContinuousRolloutSchedule:

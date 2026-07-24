@@ -203,6 +203,13 @@ class RolloutCollector:
             # in-process reward model takes over the physical GPU.
             await self.runtime.offload()
 
+        # self.config is frozen for this batch: resolve the KL coef and the storage
+        # policy once instead of re-parsing the same string keys (and rebuilding the
+        # same policy object) for every rollout in the loop below.
+        kl_reward_coef = float(cfg_get(self.config, "kl_reward_coef", 0.0))
+        trajectory_storage_policy = trajectory_storage_policy_from_cfg(
+            cfg_get(self.config, "trajectory_storage", None),
+        )
         builders = []
         for rollout in unscored:
             context = RolloutBatchBuildContext(
@@ -211,10 +218,8 @@ class RolloutCollector:
                 # moves the completed batch to its device later; creating reward
                 # tensors here on the trainer GPU would race backward.
                 device="cpu",
-                kl_reward_coef=float(cfg_get(self.config, "kl_reward_coef", 0.0)),
-                trajectory_storage_policy=trajectory_storage_policy_from_cfg(
-                    cfg_get(self.config, "trajectory_storage", None),
-                ),
+                kl_reward_coef=kl_reward_coef,
+                trajectory_storage_policy=trajectory_storage_policy,
                 trajectory_layout=self._trajectory_layout,
             )
             builders.append(TrajectoryRolloutBatchBuilder(rollout.output, context))

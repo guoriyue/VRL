@@ -35,7 +35,7 @@ from vrl.rollouts.orchestration.continuous.types import (
 )
 from vrl.rollouts.orchestration.prompt_collection import collect_prompt_batches
 from vrl.rollouts.orchestration.rollout_runtime import RolloutRuntimeCoordinator
-from vrl.utils.stats import RolloutStats
+from vrl.rollouts.stats import RolloutStats
 
 _CPU = torch.device("cpu")
 _OBSERVABILITY_LOG_INTERVAL_S = 30.0

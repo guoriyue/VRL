@@ -15,7 +15,7 @@ from vrl.families.names import (
     normalize_model_family,
     validate_model_family_aliases,
 )
-from vrl.families.semantics import PolicySemantics, TrajectoryLayout
+from vrl.families.semantics import PolicySemantics, Task, TrajectoryLayout
 
 if TYPE_CHECKING:
     from vrl.config.precision import PrecisionPolicy
@@ -154,7 +154,7 @@ class ModelFamilyEntry:
     """Declarative runtime binding for one canonical model family."""
 
     family: str
-    task: str
+    task: Task
     policy_semantics: PolicySemantics
     executor_cls: str
     gatherer_cls: str

@@ -32,7 +32,7 @@ from vrl.rollouts.orchestration.types import (
     RolloutScheduleMode,
     RolloutScheduleState,
 )
-from vrl.utils.stats import RolloutStats
+from vrl.rollouts.stats import RolloutStats
 
 logger = logging.getLogger(__name__)
 

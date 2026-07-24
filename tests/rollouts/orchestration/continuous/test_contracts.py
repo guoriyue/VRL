@@ -688,7 +688,7 @@ def _item(
     version: int | None,
     phase_times: dict[str, float] | None = None,
 ) -> ContinuousRolloutItem:
-    from vrl.utils.stats import RolloutStats
+    from vrl.rollouts.stats import RolloutStats
 
     return ContinuousRolloutItem(
         group_key=group_key,

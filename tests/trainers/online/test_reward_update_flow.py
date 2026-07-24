@@ -326,7 +326,7 @@ class TestRewardUpdateFlow:
         )
 
         async def _sync_phases():
-            from vrl.utils.stats import RolloutStats
+            from vrl.rollouts.stats import RolloutStats
 
             stats = RolloutStats()
             stats.add_phase("continuous.weight_sync_pause_s", 0.25)
@@ -357,8 +357,8 @@ class TestRewardUpdateFlow:
         import gc
         import weakref
 
+        from vrl.rollouts.stats import RolloutStats
         from vrl.scripts.common.online import _run_streaming_optimizer_update
-        from vrl.utils.stats import RolloutStats
 
         class _Batch:
             __slots__ = (
@@ -430,8 +430,8 @@ class TestRewardUpdateFlow:
         """Microbatch stats retain durations and peak continuous state separately."""
         import asyncio
 
+        from vrl.rollouts.stats import RolloutStats
         from vrl.scripts.common.online import _run_streaming_optimizer_update
-        from vrl.utils.stats import RolloutStats
 
         class _Batch:
             def __init__(self) -> None:
@@ -497,8 +497,8 @@ class TestRewardUpdateFlow:
         """Each collect announces the prompt batch that runs during its backward."""
         import asyncio
 
+        from vrl.rollouts.stats import RolloutStats
         from vrl.scripts.common.online import _run_streaming_optimizer_update
-        from vrl.utils.stats import RolloutStats
 
         class _Batch:
             def __init__(self) -> None:

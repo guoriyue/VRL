@@ -7,16 +7,9 @@ from collections.abc import Mapping
 from typing import Any, NamedTuple
 
 from vrl.families.registry import ModelFamilyEntry
+from vrl.families.semantics import task_type_for
 from vrl.generation import GenerationInput, GenerationRequest
 from vrl.rollouts.collector.config import RolloutCollectorConfig
-
-_DEFAULT_TASK_TYPE_BY_FAMILY_TASK = {
-    "t2i": "text_to_image",
-    "t2v": "text_to_video",
-    "t2w": "text_to_video",
-    "i2v": "image_to_video",
-    "v2w": "video2world",
-}
 
 
 class CollectorRequest(NamedTuple):
@@ -64,7 +57,7 @@ class GenerationRequestBuilder:
             group_metadata.setdefault("video_fps", sampling["fps"])
 
         resolved_inputs = [self._resolve_input(item, group_metadata) for item in inputs]
-        default_task_type = _DEFAULT_TASK_TYPE_BY_FAMILY_TASK.get(self.entry.task)
+        default_task_type = task_type_for(self.entry.task)
         if default_task_type is not None and resolved_inputs:
             first = resolved_inputs[0]
             group_metadata["task_type"] = first.task_type
@@ -117,7 +110,7 @@ class GenerationRequestBuilder:
             input_metadata = {namespace: input_metadata}
         return GenerationInput(
             prompt=item.prompt,
-            task_type=item.task_type or _DEFAULT_TASK_TYPE_BY_FAMILY_TASK.get(self.entry.task),
+            task_type=item.task_type or task_type_for(self.entry.task),
             reference_image=item.reference_image,
             reference_video=item.reference_video,
             metadata=input_metadata,

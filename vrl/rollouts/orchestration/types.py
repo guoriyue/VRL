@@ -7,7 +7,7 @@ from enum import Enum
 from typing import Any
 
 from vrl.rollouts.batch import RolloutBatch
-from vrl.utils.stats import RolloutStats
+from vrl.rollouts.stats import RolloutStats
 
 
 class RolloutScheduleMode(str, Enum):

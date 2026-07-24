@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import logging
 
-from vrl.utils.stats import LoggingStatsSink, RolloutStats
+from vrl.rollouts.stats import LoggingStatsSink, RolloutStats
 
 
 def test_add_phase_sums_on_repeat() -> None:
@@ -127,7 +127,7 @@ def test_logging_sink_noop_on_empty(caplog) -> None:
 
 def test_jsonl_stats_sink_writes_one_row_per_step(tmp_path) -> None:
     """Checks collect.* phases reach a machine-readable file, not just the log."""
-    from vrl.utils.stats import JsonlStatsSink
+    from vrl.rollouts.stats import JsonlStatsSink
 
     path = tmp_path / "nested" / "rollout_stats.jsonl"
     sink = JsonlStatsSink(path)
@@ -151,7 +151,7 @@ def test_jsonl_stats_sink_writes_one_row_per_step(tmp_path) -> None:
 
 def test_jsonl_stats_sink_skips_empty_stats(tmp_path) -> None:
     """Checks an empty record does not create a file or a blank row."""
-    from vrl.utils.stats import JsonlStatsSink
+    from vrl.rollouts.stats import JsonlStatsSink
 
     path = tmp_path / "rollout_stats.jsonl"
     JsonlStatsSink(path).record(0, RolloutStats())
@@ -161,7 +161,7 @@ def test_jsonl_stats_sink_skips_empty_stats(tmp_path) -> None:
 
 def test_multi_stats_sink_fans_out_in_order() -> None:
     """Checks one record reaches every sink, so the log line survives the jsonl."""
-    from vrl.utils.stats import MultiStatsSink
+    from vrl.rollouts.stats import MultiStatsSink
 
     seen: list[tuple[str, int]] = []
 

@@ -17,7 +17,7 @@ from vrl.rollouts.orchestration.types import (
     annotate_batch_context,
     build_rollout_iteration,
 )
-from vrl.utils.stats import RolloutStats
+from vrl.rollouts.stats import RolloutStats
 
 
 class RolloutPhaseCleanupError(RuntimeError):

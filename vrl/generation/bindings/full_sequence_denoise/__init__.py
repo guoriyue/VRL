@@ -8,6 +8,7 @@ from vrl.generation.bindings.full_sequence_denoise.executor import (
     DiffusionPreparedStageOutput,
     DiffusionPromptStageInput,
     DiffusionPromptStageOutput,
+    ReferenceConditionedChunks,
 )
 from vrl.generation.bindings.full_sequence_denoise.gather import DiffusionChunkGatherer
 from vrl.generation.bindings.full_sequence_denoise.layout import (
@@ -28,4 +29,5 @@ __all__ = [
     "DiffusionPromptStageOutput",
     "DiffusionRequestLayout",
     "DiffusionSamplingParams",
+    "ReferenceConditionedChunks",
 ]

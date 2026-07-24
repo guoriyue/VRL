@@ -35,6 +35,7 @@ from vrl.ray.resources import (
 from vrl.rollouts.collector import build_rollout_collector
 from vrl.rollouts.collector.config import RolloutCollectorConfig
 from vrl.rollouts.orchestration import validate_rollout_schedule_topology
+from vrl.rollouts.stats import RolloutStats
 from vrl.scripts.common.factory import (
     build_algorithm_and_evaluator_from_cfg,
     build_reward,
@@ -68,7 +69,6 @@ from vrl.trainers.strategy import build_strategy
 from vrl.trainers.weight_sync import build_runtime_weight_syncer
 from vrl.utils.memory import capture_host_memory, format_host_memory, log_host_memory
 from vrl.utils.profiling import profile_range
-from vrl.utils.stats import RolloutStats
 
 logger = logging.getLogger(__name__)
 

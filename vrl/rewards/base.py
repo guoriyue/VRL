@@ -613,9 +613,6 @@ class DiskArtifactRewardFunction(CumemRewardFunction):
     artifact_transport: ClassVar[ArtifactTransport] = "disk"
 
 
-_IMAGE_SUFFIXES = frozenset({".bmp", ".gif", ".jpeg", ".jpg", ".png", ".ppm", ".webp"})
-
-
 def decode_artifact_frames(artifact: Any, num_frames: int | None = None) -> Any:
     """Decode a reward artifact's generated media to a ``[T,H,W,3]`` float frame stack.
 
@@ -633,6 +630,7 @@ def decode_artifact_frames(artifact: Any, num_frames: int | None = None) -> Any:
 
     import torch
 
+    from vrl.utils.artifacts import IMAGE_SUFFIXES
     from vrl.utils.media import (
         frames_thwc_to_float,
         image_to_uint8_hwc,
@@ -644,7 +642,7 @@ def decode_artifact_frames(artifact: Any, num_frames: int | None = None) -> Any:
 
     path = str(getattr(artifact, "path", "") or "")
     if path and not path.endswith(".pt"):
-        if Path(path).suffix.lower() in _IMAGE_SUFFIXES:
+        if Path(path).suffix.lower() in IMAGE_SUFFIXES:
             return read_image_as_frames(path)
         return read_video_frames(path, num_frames)
     media = artifact.as_media()

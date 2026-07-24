@@ -22,7 +22,7 @@ from vrl.generation.ray.weight_sync import GenerationWeightSync
 from vrl.generation.types import GenerationOutput, GenerationRequest
 from vrl.ray.dependencies import require_ray
 from vrl.ray.placement import RolePlacement
-from vrl.ray.resource_cleanup import kill_actors
+from vrl.ray.resource_cleanup import kill_and_retain
 
 logger = logging.getLogger(__name__)
 
@@ -530,16 +530,12 @@ class RayGenerationRuntime(GenerationRuntime):
         if release_refs:
             with contextlib.suppress(Exception):
                 await asyncio.to_thread(ray.get, release_refs, timeout=60)
-        worker_actors = [
-            worker.actor for worker in self._owned_workers if worker.actor is not None
-        ]
-        worker_failures = kill_actors(ray, worker_actors)
-        failed_worker_actor_ids = {id(actor) for actor, _ in worker_failures}
-        self._owned_workers[:] = [
-            worker
-            for worker in self._owned_workers
-            if worker.actor is not None and id(worker.actor) in failed_worker_actor_ids
-        ]
+        surviving, worker_failures = kill_and_retain(
+            ray,
+            self._owned_workers,
+            lambda worker: worker.actor,
+        )
+        self._owned_workers[:] = surviving
 
         failures = [error for _, error in worker_failures]
         if failures:

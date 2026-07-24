@@ -10,7 +10,7 @@ from vrl.generation import GenerationInput
 from vrl.rollouts.batch import RolloutBatch
 from vrl.rollouts.batch.ops import remap_group_ids_, split_batch_by_group
 from vrl.rollouts.orchestration.types import RewardCollectionMode
-from vrl.utils.stats import RolloutStats
+from vrl.rollouts.stats import RolloutStats
 
 
 class PromptCollectionCleanupError(RuntimeError):

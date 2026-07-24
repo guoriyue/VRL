@@ -6,6 +6,7 @@ from typing import Any
 
 import torch
 
+from vrl.families.semantics import task_modality
 from vrl.generation.types import GenerationRequest, GenerationSampleRow
 from vrl.trajectory.types import (
     ReplayInput,
@@ -793,10 +794,9 @@ class _TrajectoryBatchBuilder:
         return self._DROP
 
     def _reward_modality_for_task(self) -> str:
-        # i2v is image-conditioned but still emits video frames, so it scores as video.
-        if self.request.task in {"t2v", "i2v", "v2w", "t2w"}:
-            return "video"
-        return "image"
+        # Video-task set is owned by vrl.families.semantics (single source), so a
+        # new video token can't silently fall through to the "image" default here.
+        return task_modality(self.request.task)
 
     @staticmethod
     def _segment_trainable(value: Any, name: str, payload: dict[str, Any]) -> bool:
