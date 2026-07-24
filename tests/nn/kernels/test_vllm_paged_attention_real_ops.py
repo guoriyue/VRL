@@ -18,9 +18,7 @@ from vrl.nn.layers.attention.paged import (
 def test_vllm_paged_attention_writes_real_cuda_kv_cache() -> None:
     """Checks vLLM paged attention writes real cuda KV cache."""
     try:
-        kernels = VllmPagedAttentionKernels(
-            ARAttentionConfig(family="janus_pro", model_key="probe")
-        )
+        kernels = VllmPagedAttentionKernels(ARAttentionConfig(family="janus_pro"))
     except ARAttentionUnavailable as exc:
         pytest.skip(f"vLLM paged-attention internals are unavailable: {exc}")
 

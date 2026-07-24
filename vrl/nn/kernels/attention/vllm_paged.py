@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import importlib
-from collections.abc import Callable, Mapping
+from collections.abc import Callable
 from typing import Any
 
 import torch
@@ -229,17 +229,6 @@ class VllmPagedAttentionKernels:
             output=output,
         )
         return result.reshape(result.shape[0], -1)
-
-    def debug_info(self) -> Mapping[str, Any]:
-        vllm = self.modules.get("vllm")
-        return {
-            "family": self.config.family,
-            "model_key": self.config.model_key,
-            "attention_kernels": "vllm_paged_attention_kernels",
-            "cache_layout_version": self.config.cache_layout_version,
-            "vllm_version": getattr(vllm, "__version__", None),
-            "required_modules": self._REQUIRED_MODULES,
-        }
 
 
 __all__ = ["VllmPagedAttentionKernels"]

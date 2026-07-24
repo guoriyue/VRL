@@ -42,14 +42,12 @@ TEXT_VOCAB = 32
 
 @dataclass(frozen=True, slots=True)
 class _PagedState:
-    branch: str
-    row: int
     tokens: int
 
 
 class _RecordingPagedBackend(ARAttentionBackend):
     def __init__(self) -> None:
-        super().__init__(ARAttentionConfig(family="janus_pro", model_key="test-janus"))
+        super().__init__(ARAttentionConfig(family="janus_pro"))
         self.prefill_requests: list[ARAttentionPrefillInput] = []
         self.step_requests: list[ARAttentionStepInput] = []
 
@@ -63,11 +61,9 @@ class _RecordingPagedBackend(ARAttentionBackend):
         hidden[:, 0] = 10.0 if request.branch == "cond" else 11.0
         states = tuple(
             _PagedState(
-                branch=request.branch,
-                row=row,
                 tokens=request.attention_mask.shape[1],
             )
-            for row in range(batch)
+            for _ in range(batch)
         )
         return ARAttentionPrefillOutput(
             last_hidden=hidden,
@@ -81,8 +77,6 @@ class _RecordingPagedBackend(ARAttentionBackend):
         hidden[:, 0] = 12.0
         states = tuple(
             _PagedState(
-                branch=state.branch,
-                row=state.row,
                 tokens=state.tokens + 1,
             )
             for state in request.sequence_states
@@ -132,8 +126,6 @@ def test_janus_runner_can_drive_one_paged_attention_image_step() -> None:
     assert len(backend.step_requests) == 1
     step = backend.step_requests[0]
     assert step.input_embeds.shape == (4, 1, HIDDEN)
-    assert step.branch_names == ("cond", "cond", "uncond", "uncond")
-    assert step.position == 0
 
     first_logits_hidden = model.mmgpt.gen_head.inputs[0]
     assert torch.equal(

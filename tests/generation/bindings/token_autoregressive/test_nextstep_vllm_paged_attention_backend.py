@@ -64,8 +64,6 @@ def test_nextstep_vllm_paged_attention_matches_hf_qwen_one_step() -> None:
                 input_embeds=step_embeds,
                 attention_mask=step_mask,
                 sequence_states=paged_prefill.sequence_states,
-                branch_names=("cond",),
-                position=0,
             )
         )
 

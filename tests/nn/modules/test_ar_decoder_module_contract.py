@@ -76,6 +76,6 @@ def test_vllm_decoder_pack_prefill_rejects_non_contiguous_prompt_mask() -> None:
 def _backend() -> VllmDecoderPagedAttentionBackend:
     return VllmDecoderPagedAttentionBackend(
         trunk=object(),
-        config=ARAttentionConfig(family="test", model_key="test"),
+        config=ARAttentionConfig(family="test"),
         kernels=object(),  # type: ignore[arg-type]
     )

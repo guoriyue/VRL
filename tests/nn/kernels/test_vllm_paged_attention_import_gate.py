@@ -25,7 +25,7 @@ def test_vllm_paged_attention_kernels_report_abi_failure() -> None:
 
     with pytest.raises(ARAttentionUnavailable, match="block_table"):
         VllmPagedAttentionKernels(
-            ARAttentionConfig(family="janus_pro", model_key="janus"),
+            ARAttentionConfig(family="janus_pro"),
             import_module=import_module,
         )
 
@@ -46,12 +46,11 @@ def test_vllm_paged_attention_kernels_call_real_internal_api_boundary() -> None:
         return SimpleNamespace(__name__=name, __version__="test")
 
     kernels = VllmPagedAttentionKernels(
-        ARAttentionConfig(family="janus_pro", model_key="janus"),
+        ARAttentionConfig(family="janus_pro"),
         import_module=import_module,
     )
 
     assert "vllm.v1.attention.backends.flash_attn" in kernels.modules
-    assert kernels.debug_info()["attention_kernels"] == "vllm_paged_attention_kernels"
     assert kernels.get_kv_cache_shape(
         num_blocks=3,
         num_kv_heads=2,

@@ -26,8 +26,6 @@ class VllmDecoderPagedSequenceState:
     """Per-sequence physical vLLM KV page ownership for decoder-only AR."""
 
     sequence_id: str
-    branch: str
-    row: int
     length: int
     next_position_id: int
     block_ids: tuple[int, ...]
@@ -118,15 +116,6 @@ class VllmDecoderPagedAttentionBackend(ARAttentionBackend):
             sequence_states=states,
         )
 
-    def debug_info(self) -> dict[str, Any]:
-        return {
-            **dict(super().debug_info()),
-            "attention_backend": self.backend_label,
-            "allocated_blocks": self._next_block_id,
-            "kv_cache_num_blocks": self._kv_cache_num_blocks,
-            "vllm": self.kernels.debug_info(),
-        }
-
     def _pack_prefill(
         self,
         request: ARAttentionPrefillInput,
@@ -153,7 +142,7 @@ class VllmDecoderPagedAttentionBackend(ARAttentionBackend):
         last_offsets: list[int] = []
         states: list[VllmDecoderPagedSequenceState] = []
         max_new_tokens = self._max_new_tokens_from_metadata(request.metadata)
-        sequence_ids = request.sequence_ids or tuple(
+        sequence_ids = tuple(
             f"{request.branch}:{row}:{self._next_sequence_id + row}"
             for row in range(embeds.shape[0])
         )
@@ -171,9 +160,7 @@ class VllmDecoderPagedAttentionBackend(ARAttentionBackend):
             last_offsets.append(query_starts[-1] - 1)
             states.append(
                 VllmDecoderPagedSequenceState(
-                    sequence_id=str(sequence_ids[row]),
-                    branch=request.branch,
-                    row=row,
+                    sequence_id=sequence_ids[row],
                     length=length,
                     next_position_id=end,
                     block_ids=self._allocate_blocks(length + max_new_tokens),
@@ -226,13 +213,11 @@ class VllmDecoderPagedAttentionBackend(ARAttentionBackend):
         next_states = tuple(
             VllmDecoderPagedSequenceState(
                 sequence_id=state.sequence_id,
-                branch=branch,
-                row=state.row,
                 length=state.length + 1,
                 next_position_id=state.next_position_id + 1,
                 block_ids=state.block_ids,
             )
-            for state, branch in zip(states, request.branch_names, strict=True)
+            for state in states
         )
         cache_positions = torch.tensor(
             [state.length for state in states],

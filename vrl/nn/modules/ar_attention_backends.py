@@ -78,7 +78,6 @@ def build_vllm_attention_backend(
     """Build the shared vLLM paged-attention backend for an AR family model."""
 
     config = _ar_config(
-        model,
         family=family,
         block_size=block_size,
         backend_label=f"{family}_vllm_paged_attention",
@@ -99,7 +98,6 @@ def build_torch_native_backend(
     """Build the shared HF-cache fallback backend for an AR family model."""
 
     config = _ar_config(
-        model,
         family=family,
         backend_label=f"{family}_torch_native_attention",
     )
@@ -115,7 +113,6 @@ def build_torch_native_backend(
 
 
 def _ar_config(
-    model: Any,
     *,
     family: str,
     backend_label: str,
@@ -126,7 +123,6 @@ def _ar_config(
     extras["backend_label"] = backend_label
     return ARAttentionConfig(
         family=family,
-        model_key=str(getattr(getattr(model, "config", None), "model_path", family)),
         block_size=block_size,
         extra=extras,
     )

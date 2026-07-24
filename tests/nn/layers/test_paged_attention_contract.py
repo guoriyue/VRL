@@ -17,9 +17,9 @@ from vrl.nn.layers.attention.paged import (
 def test_paged_attention_config_requires_identity() -> None:
     """Checks paged attention config requires identity."""
     with pytest.raises(ValueError, match="family"):
-        ARAttentionConfig(family="", model_key="janus")
+        ARAttentionConfig(family="")
     with pytest.raises(ValueError, match="block_size"):
-        ARAttentionConfig(family="janus_pro", model_key="janus", block_size=0)
+        ARAttentionConfig(family="janus_pro", block_size=0)
 
 
 def test_paged_attention_prefill_validates_batch_shape() -> None:
@@ -39,8 +39,6 @@ def test_paged_attention_step_validates_state_shape() -> None:
             input_embeds=torch.zeros(2, 1, 4),
             attention_mask=torch.ones(2, 4),
             sequence_states=("row-0",),
-            branch_names=("cond", "cond"),
-            position=0,
         )
 
 

@@ -31,7 +31,6 @@ from vrl.nn.modules.torch_attention import TorchNativeDecoderAttentionBackend
 def _config() -> ARAttentionConfig:
     return ARAttentionConfig(
         family="stub",
-        model_key="stub",
         extra={"backend_label": "stub_torch_native"},
     )
 
@@ -74,8 +73,6 @@ def test_skeleton_selects_and_reconcats_rows_in_order() -> None:
             input_embeds=torch.randn(2, 1, 4),
             attention_mask=torch.ones(2, 1),
             sequence_states=(pre.sequence_states[2], pre.sequence_states[0]),
-            branch_names=("cond", "uncond"),
-            position=0,
         )
     )
     assert torch.equal(seen["kv"], torch.tensor([[2.0], [0.0]]))
@@ -137,8 +134,6 @@ def test_dict_kv_batched_step_equals_per_row_steps() -> None:
             input_embeds=step_embed,
             attention_mask=torch.ones(2, 1),
             sequence_states=tuple(pre.sequence_states),
-            branch_names=("cond", "uncond"),
-            position=0,
         )
     )
 
@@ -148,8 +143,6 @@ def test_dict_kv_batched_step_equals_per_row_steps() -> None:
                 input_embeds=step_embed[row : row + 1],
                 attention_mask=torch.ones(1, 1),
                 sequence_states=(pre.sequence_states[row],),
-                branch_names=("cond",),
-                position=0,
             )
         )
         for row in range(2)
@@ -224,7 +217,6 @@ def test_shared_torch_native_builder_uses_hf_cache_forward() -> None:
     )
 
     assert backend.config.family == "hooked_family"
-    assert backend.config.model_key == "stub-model"
     assert pre.last_hidden.shape == (2, 4)
     assert model.trunk.calls[0]["output_hidden_states"] is True
 
@@ -233,8 +225,6 @@ def test_shared_torch_native_builder_uses_hf_cache_forward() -> None:
             input_embeds=torch.randn(2, 1, 4),
             attention_mask=torch.ones(2, 4),
             sequence_states=tuple(pre.sequence_states),
-            branch_names=("cond", "uncond"),
-            position=0,
         )
     )
 

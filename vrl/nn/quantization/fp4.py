@@ -148,10 +148,8 @@ class Fp4Linear(QuantizedLinear):
     quantization_scheme = "nvfp4"
     cache_buffer_names = ("weight_fp4", "weight_scale", "weight_tensor_scale")
 
-    def __init__(self, linear: nn.Linear, *, recipe: str = "nvfp4") -> None:
+    def __init__(self, linear: nn.Linear) -> None:
         super().__init__()
-        if recipe != "nvfp4":
-            raise ValueError(f"nvfp4 recipe must be 'nvfp4'; got {recipe!r}")
         if linear.in_features % NVFP4_K_ALIGNMENT:
             raise ValueError(
                 f"Fp4Linear needs in_features % {NVFP4_K_ALIGNMENT} == 0 for "
@@ -164,7 +162,7 @@ class Fp4Linear(QuantizedLinear):
             )
         self.in_features = linear.in_features
         self.out_features = linear.out_features
-        self.recipe = recipe
+        self.recipe = "nvfp4"
         self.weight = nn.Parameter(
             linear.weight.data.clone(),
             requires_grad=linear.weight.requires_grad,

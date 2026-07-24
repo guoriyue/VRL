@@ -190,11 +190,6 @@ def test_unaligned_out_features_rejected() -> None:
         Fp4Linear(nn.Linear(64, 33))
 
 
-def test_invalid_recipe_rejected() -> None:
-    with pytest.raises(ValueError, match="nvfp4"):
-        Fp4Linear(nn.Linear(64, 32), recipe="rowwise")
-
-
 # --- targeting (CPU) ---------------------------------------------------------
 
 

@@ -241,7 +241,7 @@ class PagedCFGTokenRunner(ARDiscreteTokenRunner):
                 inputs_embeds=inputs_embeds,
                 attention_mask=attention_mask,
                 branch=branch,
-                metadata={"family": self.family, "image_token_num": image_token_num},
+                metadata={"image_token_num": image_token_num},
             )
         )
 
@@ -294,10 +294,6 @@ class PagedCFGTokenRunner(ARDiscreteTokenRunner):
                 input_embeds=inputs_embeds,
                 attention_mask=torch.cat([cond_next_attn, uncond_next_attn], dim=0),
                 sequence_states=tuple(cond_states + uncond_states),
-                branch_names=tuple(["cond"] * batch_size + ["uncond"] * batch_size),
-                position=batch.position,
-                row_indices=tuple(batch.row_indices + batch.row_indices),
-                metadata={"family": self.family},
             )
         )
 

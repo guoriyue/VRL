@@ -207,7 +207,7 @@ class NextStep1ARModelRunner:
                 inputs_embeds=inputs_embeds,
                 attention_mask=attention_mask,
                 branch=branch,
-                metadata={"family": "nextstep_1", "image_token_num": image_token_num},
+                metadata={"image_token_num": image_token_num},
             )
         )
 
@@ -223,7 +223,6 @@ class NextStep1ARModelRunner:
         cond_embed = self.model._image_in_projector(token).unsqueeze(1)
         input_embeds = [cond_embed]
         sequence_states = list(cond_states)
-        branch_names = ["cond"] * batch_size
         cond_next_attn = append_attention_token(batch.row_lanes["cond_attn"])
         row_updates: dict[str, Any] = {"cond_attn": cond_next_attn}
         uncond_next_attn: torch.Tensor | None = None
@@ -237,7 +236,6 @@ class NextStep1ARModelRunner:
             uncond_embed = self.model._image_in_projector(token).unsqueeze(1)
             input_embeds.append(uncond_embed)
             sequence_states.extend(uncond_states)
-            branch_names.extend(["uncond"] * batch_size)
             uncond_next_attn = append_attention_token(batch.row_lanes["uncond_attn"])
             row_updates["uncond_attn"] = uncond_next_attn
 
@@ -249,10 +247,6 @@ class NextStep1ARModelRunner:
                     dim=0,
                 ),
                 sequence_states=tuple(sequence_states),
-                branch_names=tuple(branch_names),
-                position=batch.position,
-                row_indices=tuple(batch.row_indices * (2 if has_uncond else 1)),
-                metadata={"family": "nextstep_1"},
             )
         )
         updated_states = list(output.sequence_states)
