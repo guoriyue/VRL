@@ -40,13 +40,7 @@ def _build_prepared_model_in_pool(
     """
 
     with pool.building():
-        model = factory(worker_config)
-        prepare = getattr(model, "prepare_for_inference", None)
-        if callable(prepare):
-            # Lazy torch rewards must materialize their CUDA weights here, not
-            # on the default allocator during first score.
-            prepare()
-        return model
+        return _build_prepared_model(factory, worker_config)
 
 
 def _build_prepared_model(factory: Any, worker_config: Mapping[str, Any]) -> Any:

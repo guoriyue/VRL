@@ -39,7 +39,6 @@ class VideoRewardArtifactStore:
         *,
         media_type: MediaType = "video",
         artifact_format: ArtifactFormat = "tensor",
-        manifest_name: str = "manifest.jsonl",
     ) -> None:
         if media_type not in MEDIA_TYPES:
             raise ValueError(
@@ -54,7 +53,7 @@ class VideoRewardArtifactStore:
         self.root = Path(root)
         self.media_type = media_type
         self.artifact_format = artifact_format
-        self.manifest_path = self.root / manifest_name
+        self.manifest_path = self.root / "manifest.jsonl"
         self._owned_paths: set[Path] = set()
         self.root.mkdir(parents=True, exist_ok=True)
 

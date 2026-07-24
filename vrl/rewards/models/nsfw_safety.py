@@ -32,9 +32,7 @@ class NSFWSafetyRewardModel:
         cfg = dict(worker_config)
         self._device = str(cfg.get("classifier_device") or cfg.get("device", "cuda"))
         self._model_name = str(cfg.get("model_name", "Falconsai/nsfw_image_detection"))
-        self._threshold = _validate_probability(
-            "threshold", cfg.get("threshold", 0.35), upper_open=True,
-        )
+        self._threshold = _validate_probability("threshold", cfg.get("threshold", 0.35))
         self._penalty_scale = _validate_lower_bounded(
             "penalty_scale", cfg.get("penalty_scale", 1.0), inclusive=True,
         )
@@ -278,12 +276,10 @@ def _pipeline_device(device: str) -> int:
     return -1
 
 
-def _validate_probability(name: str, value: float, *, upper_open: bool = False) -> float:
+def _validate_probability(name: str, value: float) -> float:
     out = float(value)
-    upper_ok = out < 1.0 if upper_open else out <= 1.0
-    if not (out >= 0.0 and upper_ok):
-        relation = "<" if upper_open else "<="
-        raise ValueError(f"{name} must satisfy 0.0 <= {name} {relation} 1.0")
+    if not 0.0 <= out < 1.0:
+        raise ValueError(f"{name} must satisfy 0.0 <= {name} < 1.0")
     return out
 
 

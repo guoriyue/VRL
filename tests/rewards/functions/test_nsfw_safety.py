@@ -7,6 +7,7 @@ import torch
 from PIL import Image
 
 from vrl.rewards.functions.nsfw_safety import NSFWSafetyReward
+from vrl.rewards.models.nsfw_safety import NSFWSafetyRewardModel
 from vrl.rewards.types import RewardRollout
 
 
@@ -61,9 +62,9 @@ async def test_nsfw_safety_reward_uses_max_probability_for_image_batches() -> No
 
 def test_nsfw_classifier_result_parsing_prefers_nsfw_labels() -> None:
     """Checks NSFW classifier result parsing prefers NSFW labels."""
-    reward = NSFWSafetyReward(model_name="test", threshold=0.35)
+    model = NSFWSafetyRewardModel({"model_name": "test", "threshold": 0.35})
 
-    probability = reward._model._probability_from_classifier_result(
+    probability = model._probability_from_classifier_result(
         [
             {"label": "normal", "score": 0.80},
             {"label": "unsafe", "score": 0.20},

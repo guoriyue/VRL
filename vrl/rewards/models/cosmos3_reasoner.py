@@ -35,6 +35,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Mapping
+from pathlib import Path
 from typing import Any
 
 import torch
@@ -42,12 +43,10 @@ import torch
 from vrl.models.dtypes import resolve_torch_dtype
 from vrl.rewards.inference import RewardInferenceArtifact, RewardInferenceRequest
 from vrl.rewards.models.base import RewardModel, require_prompt_and_video_path
-from vrl.rewards.models.hub import resolve_model_root
 from vrl.utils.logging import init_logger, kv
 
 logger = init_logger(__name__)
 
-_DEFAULT_REWARD_MODEL = "nvidia/Cosmos3-Nano"
 _DEFAULT_FPS = 2.0
 _DEFAULT_MAX_NEW_TOKENS = 1024
 
@@ -134,14 +133,16 @@ class Cosmos3ReasonerRewardModel(RewardModel):
                 "(the raw unified nvidia/Cosmos3-Nano checkpoint is flat-key and will not load).",
             )
 
-        # For the ``remapped`` layout ``model_path`` is the offline-produced
-        # reasoner-only Qwen3-VL dir; ``reward_model_name`` snapshot_download is
-        # the fallback only when a repo already hosts a Qwen3-VL-loadable reasoner.
-        self.model_root = resolve_model_root(
-            self.worker_config,
-            default_model=_DEFAULT_REWARD_MODEL,
-            family="Cosmos3 reasoner",
-        )
+        # The ``remapped`` layout's ``model_path`` (validated non-empty above) is
+        # the offline-produced reasoner-only Qwen3-VL dir. Resolve it directly with
+        # an existence check; there is no snapshot_download fallback (the raw
+        # unified repo does not load — see the guard above).
+        model_path = str(self.worker_config.get("model_path", "")).strip()
+        self.model_root = Path(model_path).expanduser().resolve()
+        if not self.model_root.exists():
+            raise FileNotFoundError(
+                f"Cosmos3 reasoner model_path missing: {self.model_root}",
+            )
         logger.info(
             "loading Cosmos3 reasoner judge %s",
             kv(

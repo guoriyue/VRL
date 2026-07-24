@@ -21,7 +21,6 @@ class NSFWSafetyReward(RewardFunction):
     ) -> None:
         # Build eagerly so config validation (threshold/penalty_scale/...) fires now.
         model = NSFWSafetyRewardModel({"device": device, **kwargs})
-        self._model = model
         super().__init__(
             reward_name="nsfw_safety",
             score_key="nsfw_safety",

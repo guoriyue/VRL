@@ -28,10 +28,10 @@ def test_parse_hf_repo_revision_accepts_explicit_revision() -> None:
 def test_parse_hf_repo_revision_defaults_empty_revision() -> None:
     """Checks repo@ uses the default revision instead of an empty string."""
 
-    ref = parse_hf_repo_revision("org/model@", default_revision="stable")
+    ref = parse_hf_repo_revision("org/model@")
 
     assert ref.repo_id == "org/model"
-    assert ref.revision == "stable"
+    assert ref.revision == "main"
 
 
 def test_parse_hf_repo_revision_rejects_missing_repo_id() -> None:

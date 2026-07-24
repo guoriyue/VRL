@@ -146,7 +146,6 @@ class KlingVideoRewardModel(RewardModel):
         model, _checkpoint_step = load_kling_video_reward_checkpoint(
             model,
             self.model_root,
-            -1,
         )
         logger.info(
             "moving Kling VideoReward model to device %s",
@@ -193,8 +192,6 @@ class KlingVideoRewardModel(RewardModel):
         self,
         video_paths: list[str],
         prompts: list[str],
-        fps: float | None = None,
-        num_frames: int | None = None,
         max_pixels: int | None = None,
         min_pixels: int | None = None,
     ) -> Mapping[str, Any]:
@@ -205,8 +202,8 @@ class KlingVideoRewardModel(RewardModel):
                 "Kling VideoReward repo-owned inference currently supports only "
                 f"uniform video sampling, got {self.data_config.sample_type!r}",
             )
-        fps = self.data_config.fps if fps is None else fps
-        num_frames = self.data_config.num_frames if num_frames is None else num_frames
+        fps = self.data_config.fps
+        num_frames = self.data_config.num_frames
         max_pixels = self.data_config.max_frame_pixels if max_pixels is None else max_pixels
         chat_data = [
             [
@@ -259,15 +256,11 @@ class KlingVideoRewardModel(RewardModel):
         self,
         video_paths: list[str],
         prompts: list[str],
-        fps: float | None = None,
-        num_frames: int | None = None,
         max_pixels: int | None = None,
         min_pixels: int | None = None,
         use_norm: bool = True,
     ) -> list[dict[str, float]]:
-        if fps is not None and num_frames is not None:
-            raise ValueError("fps and num_frames cannot be set at the same time")
-        batch = self._prepare_batch(video_paths, prompts, fps, num_frames, max_pixels, min_pixels)
+        batch = self._prepare_batch(video_paths, prompts, max_pixels, min_pixels)
         with torch.no_grad():
             logits = self.model(return_dict=True, **batch)["logits"]
         rewards = [
@@ -417,12 +410,8 @@ def preflight_kling_video_reward_backend() -> None:
 def load_kling_video_reward_checkpoint(
     model: Any,
     checkpoint_dir: Path,
-    checkpoint_step: int | None,
 ) -> tuple[Any, str]:
-    checkpoint_path, resolved_step = _resolve_checkpoint_path(
-        checkpoint_dir,
-        checkpoint_step,
-    )
+    checkpoint_path, resolved_step = _resolve_checkpoint_path(checkpoint_dir)
     full_ckpt = checkpoint_path / "model.pth"
     if full_ckpt.exists():
         state = torch.load(full_ckpt, map_location="cpu")
@@ -452,10 +441,7 @@ def load_kling_video_reward_checkpoint(
     return model, resolved_step
 
 
-def _resolve_checkpoint_path(
-    checkpoint_dir: Path,
-    checkpoint_step: int | None,
-) -> tuple[Path, str]:
+def _resolve_checkpoint_path(checkpoint_dir: Path) -> tuple[Path, str]:
     checkpoint_paths = list(checkpoint_dir.glob("checkpoint-*"))
     checkpoint_paths.sort(
         key=lambda path: int(path.name.split("-")[-1]),
@@ -463,11 +449,7 @@ def _resolve_checkpoint_path(
     )
     if not checkpoint_paths:
         raise FileNotFoundError(f"No Kling VideoReward checkpoints found in {checkpoint_dir}")
-    if checkpoint_step is None or int(checkpoint_step) == -1:
-        checkpoint_path = checkpoint_paths[0]
-    else:
-        requested = checkpoint_dir / f"checkpoint-{int(checkpoint_step)}"
-        checkpoint_path = requested if requested in checkpoint_paths else checkpoint_paths[0]
+    checkpoint_path = checkpoint_paths[0]
     return checkpoint_path, checkpoint_path.name.split("checkpoint-")[-1]
 
 

@@ -110,13 +110,8 @@ def test_kling_video_reward_builds_repo_owned_model(
         )
         return _FakeModel(), object()
 
-    def _fake_load_checkpoint(model, checkpoint_dir, checkpoint_step):
-        captured.update(
-            {
-                "checkpoint_dir": checkpoint_dir,
-                "checkpoint_step": checkpoint_step,
-            },
-        )
+    def _fake_load_checkpoint(model, checkpoint_dir):
+        captured["checkpoint_dir"] = checkpoint_dir
         return model, "final"
 
     root = _video_reward_root(tmp_path)
@@ -138,7 +133,6 @@ def test_kling_video_reward_builds_repo_owned_model(
         "disable_flash_attn2": True,
         "local_files_only": True,
         "checkpoint_dir": root,
-        "checkpoint_step": -1,
         "model_eval": True,
         "model_device": "cpu",
     }
@@ -168,7 +162,7 @@ def test_kling_video_reward_parses_frame_pixel_bounds(
     monkeypatch.setattr(
         kling_reward,
         "load_kling_video_reward_checkpoint",
-        lambda model, checkpoint_dir, checkpoint_step: (model, "final"),
+        lambda model, checkpoint_dir: (model, "final"),
     )
 
     root = _video_reward_root(tmp_path)

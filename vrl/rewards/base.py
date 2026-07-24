@@ -270,7 +270,6 @@ class RewardFunction:
         score_key: str,
         model_factory: str,
         worker_config: Mapping[str, Any],
-        media_type: MediaType = "image",
     ) -> None:
         """Initialize a RewardFunction backed by a RewardModel factory."""
 
@@ -285,7 +284,7 @@ class RewardFunction:
             ),
             artifact_builder=lambda rollouts: RewardFunction.build_inmemory_artifacts(
                 rollouts,
-                media_type=media_type,
+                media_type="image",
             ),
         )
 

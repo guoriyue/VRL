@@ -44,7 +44,6 @@ class OCRRewardModel:
 
     def __init__(self, worker_config: Mapping[str, Any]) -> None:
         cfg = dict(worker_config)
-        self._device = str(cfg.get("device", "cuda"))
         self._engine: Any = cfg.get("engine")
         debug_dir = cfg.get("debug_dir")
         self._debug_dir = Path(debug_dir) if debug_dir else None
