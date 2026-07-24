@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import importlib
 import subprocess
 import sys
 from dataclasses import replace
@@ -31,10 +30,7 @@ from vrl.families.registry import (
 )
 from vrl.families.semantics import GenerationRegime, PolicySemantics
 from vrl.rollouts.collector import build_rollout_collector
-from vrl.rollouts.collector.config import (
-    RolloutCollectorConfig,
-    build_rollout_config_from_cfg,
-)
+from vrl.rollouts.collector.config import RolloutCollectorConfig
 from vrl.rollouts.collector.requests import GenerationRequestBuilder
 from vrl.trajectory import TrajectoryStoragePolicy
 from vrl.utils.config import cfg_get, import_from_path
@@ -456,84 +452,6 @@ def test_migrated_token_runtime_configs_are_owned_by_their_family_packages() -> 
     assert janus.family_build.config_cls == "vrl.models.families.janus_pro.config:JanusProConfig"
 
 
-def test_migrated_family_packages_keep_their_public_facades() -> None:
-    expected_exports = {
-        "vrl.models.families.causvid": {
-            "CausVidCausalRunner",
-            "CausVidGeometry",
-            "CausVidModel",
-            "CausVidModelSection",
-            "CausVidReplayModel",
-            "CausVidRunResult",
-            "CausVidSchedule",
-        },
-        "vrl.models.families.echo": {
-            "EchoModel",
-            "EchoModelSection",
-            "EchoReplayModel",
-            "EchoSamplingState",
-        },
-        "vrl.models.families.emu3": {
-            "Emu3ChunkExecutor",
-            "Emu3Config",
-            "Emu3Model",
-            "Emu3ReplayModel",
-            "emu3_allowed_token_mask",
-            "emu3_forced_token_schedule",
-            "emu3_grid_token_num",
-        },
-        "vrl.models.families.flux": {"FluxModelSection"},
-        "vrl.models.families.glm_image": {
-            "GlmImageChunkExecutor",
-            "GlmImageConfig",
-            "GlmImageModel",
-            "GlmImageReplayModel",
-            "glm_image_decode_position_schedule",
-            "glm_image_grid_dims",
-            "glm_image_prefill_position_ids",
-            "glm_image_token_num",
-        },
-        "vrl.models.families.janus_pro": {
-            "JANUS_R1_SEGMENTS",
-            "JanusProChunkExecutor",
-            "JanusProConfig",
-            "JanusProModel",
-            "JanusProModelSection",
-            "JanusProR1ChunkExecutor",
-            "JanusProR1ChunkGatherer",
-            "image_token_logits_from_hidden",
-        },
-        "vrl.models.families.llamagen": {
-            "LLAMAGEN_CAPTION_TOKEN_NUM",
-            "LLAMAGEN_IMAGE_TOKEN_NUM",
-            "LLAMAGEN_IMAGE_VOCAB_SIZE",
-            "LlamaGenChunkExecutor",
-            "LlamaGenConfig",
-            "LlamaGenModel",
-            "LlamaGenModelSection",
-            "LlamaGenReplayModel",
-        },
-        "vrl.models.families.magi_1": {
-            "Magi1Model",
-            "Magi1ModelSection",
-            "Magi1SubprocessConfig",
-            "Magi1SubprocessModel",
-        },
-        "vrl.models.families.nextstep_1": {
-            "NextStep1ChunkExecutor",
-            "NextStep1ChunkGatherer",
-            "NextStep1Config",
-            "NextStep1Model",
-            "NextStep1ModelSection",
-        },
-    }
-
-    for module_name, expected in expected_exports.items():
-        module = importlib.import_module(module_name)
-        assert expected == set(module.__all__)
-        assert expected <= set(dir(module))
-
-
 def test_model_section_imports_do_not_load_model_runtimes() -> None:
     result = subprocess.run(
         [
@@ -546,34 +464,16 @@ def test_model_section_imports_do_not_load_model_runtimes() -> None:
                 "TorchCompileSection, VaeDecodeMemorySection; "
                 "from vrl.families.registry import FAMILY_REGISTRY; "
                 "from vrl.utils.config import import_from_path; "
-                "[import_from_path(entry.model_section_cls) "
+                "sections = [import_from_path(entry.model_section_cls) "
                 "for entry in FAMILY_REGISTRY.values()]; "
                 "[import_from_path(entry.sampling_section_cls) "
                 "for entry in FAMILY_REGISTRY.values()]; "
-                "from vrl.models.families.causvid import CausVidModelSection; "
-                "from vrl.models.families.cosmos.anima "
-                "import CosmosAnimaModelSection; "
-                "from vrl.models.families.cosmos.predict2_5 "
-                "import CosmosPredict25ModelSection; "
-                "from vrl.models.families.echo import EchoModelSection; "
-                "from vrl.models.families.flux import FluxModelSection; "
-                "from vrl.models.families.janus_pro import JanusProModelSection; "
-                "from vrl.models.families.llamagen import LlamaGenModelSection; "
-                "from vrl.models.families.magi_1 import Magi1ModelSection; "
-                "from vrl.models.families.nextstep_1 import NextStep1ModelSection; "
-                "from vrl.models.families.wan_2_1 import WanModelSection; "
-                "assert CausVidModelSection.__module__.endswith('.causvid.config'); "
-                "assert WanModelSection.__module__.endswith('.wan_2_1.config'); "
-                "assert CosmosPredict25ModelSection.__module__.endswith("
-                "'.predict2_5.config'); "
-                "assert CosmosAnimaModelSection.__module__.endswith('.anima.config'); "
-                "assert EchoModelSection.__module__.endswith('.echo.config'); "
-                "assert FluxModelSection.__module__.endswith('.flux.config'); "
-                "assert JanusProModelSection.__module__.endswith('.janus_pro.config'); "
-                "assert LlamaGenModelSection.__module__.endswith('.llamagen.config'); "
-                "assert Magi1ModelSection.__module__.endswith('.magi_1.config'); "
-                "assert NextStep1ModelSection.__module__.endswith("
-                "'.nextstep_1.config'); "
+                # Registry-derived, not a second hand-written family list: a new
+                # family is covered the moment it registers a section path.
+                "assert all(section.__module__ == 'vrl.config.model_schema' "
+                "or section.__module__.startswith('vrl.models.families.') "
+                "and section.__module__.endswith('.config') "
+                "for section in sections); "
                 "assert all(section.__module__ == 'vrl.config.model_schema' "
                 "for section in (LoraSection, ModelExecutorSection, "
                 "ModelMemorySection, TorchCompileSection, "
@@ -620,12 +520,12 @@ def test_token_runtime_config_imports_do_not_load_model_runtimes() -> None:
                 "llamagen_entry.family_build.config_cls); "
                 "nextstep_cls = import_from_path("
                 "nextstep_entry.family_build.config_cls); "
-                "from vrl.models.families.emu3 import Emu3Config; "
-                "from vrl.models.families.glm_image import GlmImageConfig; "
-                "from vrl.models.families.janus_pro "
-                "import JANUS_R1_SEGMENTS, JanusProConfig; "
-                "from vrl.models.families.llamagen import LlamaGenConfig; "
-                "from vrl.models.families.nextstep_1 import NextStep1Config; "
+                "from vrl.models.families.emu3.config import Emu3Config; "
+                "from vrl.models.families.glm_image.config import GlmImageConfig; "
+                "from vrl.models.families.janus_pro import JANUS_R1_SEGMENTS; "
+                "from vrl.models.families.janus_pro.config import JanusProConfig; "
+                "from vrl.models.families.llamagen.config import LlamaGenConfig; "
+                "from vrl.models.families.nextstep_1.config import NextStep1Config; "
                 "assert emu_cls is Emu3Config; "
                 "assert glm_cls is GlmImageConfig; "
                 "assert janus_cls is JanusProConfig; "
@@ -771,7 +671,7 @@ def test_rollout_config_is_projected_from_yaml() -> None:
         },
     )
 
-    rollout = build_rollout_config_from_cfg(cfg)
+    rollout = RolloutCollectorConfig.from_cfg(cfg)
 
     assert rollout.request_sampling["width"] == 1280
     assert rollout.request_sampling["num_steps"] == 35
@@ -802,7 +702,7 @@ def test_typed_collector_projects_only_the_selected_sampling_schema() -> None:
         ),
     )
 
-    rollout = build_rollout_config_from_cfg(root)
+    rollout = RolloutCollectorConfig.from_cfg(root)
 
     assert rollout.request_sampling == {
         "attention_backend": "torch_native",
@@ -821,7 +721,7 @@ def test_raw_collector_adapter_derives_fields_from_present_family() -> None:
         },
     )
 
-    rollout = build_rollout_config_from_cfg(cfg)
+    rollout = RolloutCollectorConfig.from_cfg(cfg)
 
     assert rollout.request_sampling == {"image_height": 256}
 
@@ -829,7 +729,7 @@ def test_raw_collector_adapter_derives_fields_from_present_family() -> None:
 def test_cosmos_predict2_recipe_keeps_request_and_reward_fps_at_16() -> None:
     cfg = load_config("experiment/cosmos_predict2/online_grpo_v2w_reference_480p")
     root = parse_config(cfg)
-    collector_config = build_rollout_config_from_cfg(root)
+    collector_config = RolloutCollectorConfig.from_cfg(root)
     collector_request = GenerationRequestBuilder(
         entry=get_model_family_entry("cosmos-predict2"),
         config=collector_config,
@@ -868,7 +768,7 @@ def test_request_sampling_projects_only_generation_owned_rollout_values() -> Non
         },
     )
 
-    rollout = build_rollout_config_from_cfg(cfg)
+    rollout = RolloutCollectorConfig.from_cfg(cfg)
     sampling = rollout.generation_sampling()
 
     assert sampling["width"] == 1280

@@ -9,20 +9,10 @@ import fix. Upstream: https://github.com/FoundationVision/LlamaGen (MIT,
 Copyright (c) 2024 FoundationVision).
 """
 
-from vrl.models.families.llamagen.vendor.gpt import (
-    GPT_models,
-    ModelArgs,
-    Transformer,
-)
-from vrl.models.families.llamagen.vendor.vq_model import (
-    VQ_models,
-    VQModel,
-)
+from __future__ import annotations
 
-__all__ = [
-    "GPT_models",
-    "ModelArgs",
-    "Transformer",
-    "VQModel",
-    "VQ_models",
-]
+# Deliberately exports nothing. The family registry dispatches by dotted
+# submodule path (vrl/families/registry.py), so a package-root re-export is a
+# second surface nothing imports; keeping this module empty is also what stops
+# config discovery from pulling the torch-backed model runtime.
+__all__: list[str] = []

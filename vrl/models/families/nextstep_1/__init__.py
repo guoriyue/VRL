@@ -15,62 +15,8 @@ log-probabilities (continuous tokens, no codebook).
 
 from __future__ import annotations
 
-from importlib import import_module
-from typing import TYPE_CHECKING, Any
-
-if TYPE_CHECKING:
-    from vrl.models.families.nextstep_1.config import (
-        NextStep1Config as NextStep1Config,
-    )
-    from vrl.models.families.nextstep_1.config import (
-        NextStep1ModelSection as NextStep1ModelSection,
-    )
-    from vrl.models.families.nextstep_1.model import (
-        NextStep1Model as NextStep1Model,
-    )
-    from vrl.models.families.nextstep_1.runtime import (
-        NextStep1ChunkExecutor as NextStep1ChunkExecutor,
-    )
-    from vrl.models.families.nextstep_1.runtime import (
-        NextStep1ChunkGatherer as NextStep1ChunkGatherer,
-    )
-
-
-# Public lazy-import boundary: config discovery must not import the model runtime.
-_PUBLIC_EXPORTS = {
-    "NextStep1ChunkExecutor": (
-        "vrl.models.families.nextstep_1.runtime",
-        "NextStep1ChunkExecutor",
-    ),
-    "NextStep1ChunkGatherer": (
-        "vrl.models.families.nextstep_1.runtime",
-        "NextStep1ChunkGatherer",
-    ),
-    "NextStep1Config": (
-        "vrl.models.families.nextstep_1.config",
-        "NextStep1Config",
-    ),
-    "NextStep1Model": ("vrl.models.families.nextstep_1.model", "NextStep1Model"),
-    "NextStep1ModelSection": (
-        "vrl.models.families.nextstep_1.config",
-        "NextStep1ModelSection",
-    ),
-}
-
-__all__ = list(_PUBLIC_EXPORTS)
-
-
-def __getattr__(name: str) -> Any:
-    """Load a public NextStep-1 symbol only when requested."""
-
-    try:
-        module_name, symbol_name = _PUBLIC_EXPORTS[name]
-    except KeyError as exc:
-        raise AttributeError(f"module {__name__!r} has no attribute {name!r}") from exc
-    value = getattr(import_module(module_name), symbol_name)
-    globals()[name] = value
-    return value
-
-
-def __dir__() -> list[str]:
-    return sorted({*globals(), *__all__})
+# Deliberately exports nothing. The family registry dispatches by dotted
+# submodule path (vrl/families/registry.py), so a package-root re-export is a
+# second surface nothing imports; keeping this module empty is also what stops
+# config discovery from pulling the torch-backed model runtime.
+__all__: list[str] = []

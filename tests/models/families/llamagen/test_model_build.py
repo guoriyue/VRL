@@ -27,18 +27,16 @@ from vrl.models.families.llamagen.config import (
     llamagen_image_size,
 )
 from vrl.models.families.llamagen.model import (
-    LLAMAGEN_IMAGE_VOCAB_SIZE,
-    LlamaGenModel,
-    LlamaGenReplayModel,
+    LlamaGenConfig as ModelLlamaGenConfig,
 )
 from vrl.models.families.llamagen.model import (
-    LlamaGenConfig as ModelLlamaGenConfig,
+    LlamaGenModel,
 )
 from vrl.models.families.llamagen.runtime import (
     LlamaGenChunkExecutor,
     llamagen_config_from_build,
 )
-from vrl.rollouts.collector.config import build_rollout_config_from_cfg
+from vrl.rollouts.collector.config import RolloutCollectorConfig
 from vrl.rollouts.collector.requests import GenerationRequestBuilder
 
 
@@ -109,18 +107,6 @@ def test_runtime_config_defaults_and_model_compatibility_export(use_lora: bool) 
     assert config.lora_target_modules == ("wqkv", "wo")
     assert config.use_lora is use_lora
     assert ModelLlamaGenConfig is LlamaGenConfig
-
-
-def test_package_facade_preserves_existing_public_symbols() -> None:
-    import vrl.models.families.llamagen as family
-
-    assert family.LLAMAGEN_CAPTION_TOKEN_NUM == LLAMAGEN_CAPTION_TOKEN_NUM
-    assert family.LLAMAGEN_IMAGE_TOKEN_NUM == LLAMAGEN_IMAGE_TOKEN_NUM
-    assert family.LLAMAGEN_IMAGE_VOCAB_SIZE == LLAMAGEN_IMAGE_VOCAB_SIZE
-    assert family.LlamaGenChunkExecutor is LlamaGenChunkExecutor
-    assert family.LlamaGenConfig is LlamaGenConfig
-    assert family.LlamaGenModel is LlamaGenModel
-    assert family.LlamaGenReplayModel is LlamaGenReplayModel
 
 
 def test_resolve_model_build_defaults() -> None:
@@ -242,7 +228,7 @@ def test_llamagen_collector_request_derives_omitted_topology_from_model() -> Non
     root = parse_config(
         load_config("experiment/llamagen/online_grpo_pickscore_validation"),
     )
-    collector_config = build_rollout_config_from_cfg(root)
+    collector_config = RolloutCollectorConfig.from_cfg(root)
     request = (
         GenerationRequestBuilder(
             entry=get_model_family_entry("llamagen"),

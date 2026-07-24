@@ -17,7 +17,6 @@ from vrl.generation.execution.chunks import SampleChunk
 from vrl.models.families.janus_pro.config import (
     JANUS_IMAGE_TOKEN_NUM,
     JanusProConfig,
-    JanusProModelSection,
 )
 from vrl.models.families.janus_pro.model import (
     JANUS_IMAGE_TOKEN_NUM as ModelImageTokenNum,
@@ -25,14 +24,8 @@ from vrl.models.families.janus_pro.model import (
 from vrl.models.families.janus_pro.model import (
     JanusProConfig as ModelJanusProConfig,
 )
-from vrl.models.families.janus_pro.model import (
-    JanusProModel,
-    image_token_logits_from_hidden,
-)
 from vrl.models.families.janus_pro.runtime import (
     JanusProChunkExecutor,
-    JanusProR1ChunkExecutor,
-    JanusProR1ChunkGatherer,
     janus_config_from_build,
 )
 
@@ -112,21 +105,16 @@ def test_config_projection_preserves_trust_remote_code_boolean(
     assert resolved.lora_init == "gaussian"
 
 
-def test_package_facade_preserves_transition_table_and_public_symbols() -> None:
-    import vrl.models.families.janus_pro as family
+def test_r1_transition_table_is_the_packages_own_constant() -> None:
+    """model.py and runtime.py both import this from the package during init.
 
-    assert family.JANUS_R1_SEGMENTS == (
-        "initial_image",
-        "selfcheck_text",
-        "final_image",
-    )
-    assert family.JanusProChunkExecutor is JanusProChunkExecutor
-    assert family.JanusProConfig is JanusProConfig
-    assert family.JanusProModel is JanusProModel
-    assert family.JanusProModelSection is JanusProModelSection
-    assert family.JanusProR1ChunkExecutor is JanusProR1ChunkExecutor
-    assert family.JanusProR1ChunkGatherer is JanusProR1ChunkGatherer
-    assert family.image_token_logits_from_hidden is image_token_logits_from_hidden
+    It stays on the package (not config.py) because both modules read it while
+    the package is still initializing; the segment order is the R1 protocol.
+    """
+
+    from vrl.models.families.janus_pro import JANUS_R1_SEGMENTS
+
+    assert JANUS_R1_SEGMENTS == ("initial_image", "selfcheck_text", "final_image")
 
 
 def test_janus_r1_replay_build_keeps_the_explicit_runtime_family() -> None:

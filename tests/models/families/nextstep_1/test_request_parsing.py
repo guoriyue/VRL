@@ -21,7 +21,6 @@ from vrl.models.families.nextstep_1.config import (
     NEXTSTEP_DEFAULT_TOKEN_DIM,
     NEXTSTEP_DEFAULT_TOKEN_NUM,
     NextStep1Config,
-    NextStep1ModelSection,
 )
 from vrl.models.families.nextstep_1.model import (
     NEXTSTEP_DEFAULT_TOKEN_DIM as ModelDefaultTokenDim,
@@ -32,7 +31,6 @@ from vrl.models.families.nextstep_1.model import (
 from vrl.models.families.nextstep_1.model import (
     NextStep1Config as ModelNextStep1Config,
 )
-from vrl.models.families.nextstep_1.model import NextStep1Model
 from vrl.models.families.nextstep_1.runtime import (
     NextStep1ARChunkResult,
     NextStep1ChunkExecutor,
@@ -131,16 +129,6 @@ def test_config_projection_ignores_sampling_fields_without_schema_producers() ->
     assert "noise_level" not in projected
     assert "token_dim" not in projected
     assert projected["image_token_num"] == 1024
-
-
-def test_package_facade_preserves_existing_public_symbols() -> None:
-    import vrl.models.families.nextstep_1 as family
-
-    assert family.NextStep1ChunkExecutor is NextStep1ChunkExecutor
-    assert family.NextStep1ChunkGatherer is NextStep1ChunkGatherer
-    assert family.NextStep1Config is NextStep1Config
-    assert family.NextStep1Model is NextStep1Model
-    assert family.NextStep1ModelSection is NextStep1ModelSection
 
 
 def test_nextstep_layout_resolves_scheduler_batch_size_separately_from_sampling() -> None:

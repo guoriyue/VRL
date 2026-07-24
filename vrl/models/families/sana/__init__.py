@@ -1,13 +1,9 @@
 """SANA t2i family (linear-attention DiT + DC-AE)."""
 
-from vrl.models.families.sana.model import (
-    SanaModel,
-    SanaReplayModel,
-    SanaSamplingState,
-)
+from __future__ import annotations
 
-__all__ = [
-    "SanaModel",
-    "SanaReplayModel",
-    "SanaSamplingState",
-]
+# Deliberately exports nothing. The family registry dispatches by dotted
+# submodule path (vrl/families/registry.py), so a package-root re-export is a
+# second surface nothing imports; keeping this module empty is also what stops
+# config discovery from pulling the torch-backed model runtime.
+__all__: list[str] = []
