@@ -4,6 +4,8 @@
 原审计来源：dead-code-audit workflow（五种死代码形态 + 对抗验证 + 删除类二次字符串引用检查）。复核 grep 纪律：排除 `.venv/ third_party/ outputs/ datasets/ docs/runs/ __pycache__/ egg-info`；同名符号按 finding 的 file+context 消歧；test-only 引用在生产读者已消失时仍记为 DONE。
 关联：[[SPRINT_deadcode_00_overview]]；`scripts/eval/sana_aesthetic_curve_verdict.py` 的阈值 hoist 与 [[SPRINT_sana_aesthetic_trustworthy_curve]] 的预注册协议对齐（见 §1.7）；`scripts/perf/gpu_preflight.py` 属 [[SPRINT_cosmos_video_mfu_kernels]] 的保留交付物（见 §1.14）。
 
+> **执行状态（2026-07-24）**：§1 全部 14 条已落地 `ae3a3e96`。§3 的 `_video_to_cthw` 未做（已活化）。
+
 ## 0. 一句话
 
 本簇是 `vrl/scripts/` 下**长期资产内部**的符号级死代码清理（数据生成器、eval 入口、perf 共享 helper 都是长期资产；`*_probe` 一次性脚本整体不在范围内，但其内部死符号在范围内）。主形态是 **dead-arg / dead-field**（没有生产者的参数、零读者的结果字典键与派生字段），另有若干 form-3 单调用者内联与 form-1/4 test-only facade。最锋利的一条是 `anime_probe_common.py` 的 `hamer_verdict` 及一整组结果字典键（`"verdict"`/`"n_hands"`/`"n_persons"`/`"annotated"` overlay）——报告入口 `probe_anime_anatomy_report.py` 的 docstring 声称展示 `verdict` 与 per-hand `finger_cv`，实际只读 `mean_finger_cv`，是文档腐烂的直接证据。误删风险主要落在 `danbooru.py`：`bucket_balance`/`candidate_pool_factor` 删除会连带触发 `bucket_weights` 局部量、`preferred_min_score` 三元式与 `build_prompt_rows` 签名的 `| None` 收窄——必须整段一起改，漏改会留下同型 form-2 死语义残留或让类型宣称接受一个运行时会崩溃的 `None`。

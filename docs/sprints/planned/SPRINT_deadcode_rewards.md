@@ -4,6 +4,8 @@
 来源：dead-code-audit workflow（五种死代码形态 + 对抗验证 + 删除类二次字符串引用检查），本次对当前 checked-out 树逐条 re-grep 复核。
 关联：[[SPRINT_deadcode_00_overview]]、[[SPRINT_reward_identity_and_score_keys]]（§1.8 的 `default_revision` 是该 sprint 删掉最后一个非默认 producer 后残留的死参数）、[[SPRINT_reward_service]]（原 §1.13 facade 现已由 origin 收敛，见 §2）、[[SPRINT_cosmos3_full_support]]（parked；§1.1 的 reasoner judge 已 shipped、不计划放开 `model_path` 守卫）。格式范本：[[SPRINT_trajectory_views_types_dead_fields_cleanup]]。
 
+> **执行状态（2026-07-24）**：全部仍有效项已落地 `b7714bdc`（含 cosmos3 死回退改写为 fail-closed）。
+
 ## 0. 一句话
 
 本簇清理 `vrl/rewards/` 下的死代码。三个包 `__init__.py` 的零消费者 lazy `__getattr__` re-export **已由 origin 的 `94761143`（"refactor(families): drop package export"）删除**——本次复核确认三个 `__init__.py` 现均只剩 docstring + 空 `__all__`，无需再做（见 §2）。剩余 10 条仍有效：最锋利的一条是 `cosmos3_reasoner.py` 的 `_DEFAULT_REWARD_MODEL` + `resolve_model_root` snapshot-download 回退——`__init__` 里的 `model_path` 守卫会先 raise、`resolve_model_root` 又在 `model_path` 非空时提前 return，两头夹击使这段「下载原始 unified repo」的回退永远不可达（form 2，live caller / dead semantics）；其余是 5 个所有调用点都走默认值的死参数、2 个只有测试在读的死字段、1 处 form-4 重复的 lazy-prepare 序列。误删风险主要在同名兄弟符号（`videoscore2`/`kling` 等各自的 `_DEFAULT_REWARD_MODEL`、`_init_disk_artifact_reward` 的 `media_type`、`_validate_lower_bounded` 的 `inclusive`）对各自家族是活的，一律不动。

@@ -4,6 +4,8 @@
 来源：dead-code-audit workflow（五种死代码形态 + 对抗验证 + 删除类二次字符串引用检查），审计树 `88ed756e`；本文件为对齐 `7c748532` 后的复核版。
 关联：[[SPRINT_deadcode_00_overview]]；死字段/no-op 旋钮判定规则承接 [[SPRINT_trajectory_views_types_dead_fields_cleanup]]。
 
+> **执行状态（2026-07-24）**：仍有效项已落地 `7c0ee4c1`（`config_reads_in_code` root 死参数）。已由 origin 落地项见 §2。
+
 ## 0. 一句话
 
 本簇是**用户可设但无效**的 no-op knob 清理：用户在 YAML/CLI 设了一个期望产生效果的旋钮，它却静默无任何行为。原簇 5 条中 4 条的 `data.preprocessing.*` / `DataConfig.source` config 侧无效键已被 origin 在 `1aef2ea8` 一次性删除（schema 白名单条目 + 全部 setter YAML + 新增负向 unknown-key 测试均已落地，见 §2），**仅剩 1 条** form-1 死参数 `config_reads_in_code(root=...)` 待做——它落在 `vrl/config/lint.py`，该文件自审计以来 `git log 88ed756e..HEAD` 为空、完全未被触及，死参数原样存在。

@@ -4,6 +4,8 @@
 来源：dead-code-audit workflow（五种死代码形态 + 对抗验证 + 删除类二次字符串引用检查），原稿写于 `88ed756e`。
 关联：[[SPRINT_deadcode_00_overview]]；与 [[SPRINT_native_generation_engine_program]]（in-flight，动了 `generation/ray/`）在 §1.2 / §1.7 / §1.8 三条上重叠——这三条**必须排在该 sprint 之后**；[[SPRINT_trajectory_views_types_dead_fields_cleanup]]（死字段规则的先例：能 raise 的校验/控制流分支消费者一律保留）。
 
+> **执行状态（2026-07-24）**：§1 全部 10 条已落地 `7056ea69`；删 `same_latent` 的连带协议哈希更新见 `801a5b77`。
+
 ## 0. 一句话
 
 这是 generation 栈「compute-once/read-everywhere」结构体和函数参数上的死字段/死参数清理：主形态是 **dead-field 规则**（生产零 reader、或 reader 只剩测试、或 form-2 活 reader 但分支无 producer），并夹带若干 dead-arg（调用方全走默认值）和一个 dead-config-knob（`same_latent` 承诺的「组内共享噪声」语义根本没实现）。最锋利的一条是 `DiffusionPreparedStageOutput.chunk_encoded`（§1.1）——它被跨 stage 边界搬运进 `run_denoise_steps(encoded=...)`，而该函数体第一句就是 `del encoded`，是教科书式的 form-2「carried-then-deleted」死字段。误删风险集中在同名字段碰撞（`.error`/`task_type` 在别的类型上都是活的）与 slots=True dataclass（删字段必须同步清掉所有 `kwarg=` 构造点，否则 `TypeError`），必须逐 receiver 消歧后再动手。注：原稿里的 token_autoregressive 一组（`sample_ids`/`request_ids`/`__len__`/`remaining_tokens`）与 `return_artifacts`/`priority` 已被 origin 删除，见 §2。

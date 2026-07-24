@@ -4,6 +4,8 @@
 来源：dead-code-audit workflow（五种死代码形态 + 对抗验证 + 删除类二次字符串引用检查）；本版叠加 2026-07-24 对 main @ `7c748532` 的逐条复核（grep 排除 `.venv/ third_party/ outputs/ datasets/ docs/runs/ __pycache__/ egg-info`）。
 关联：[[SPRINT_deadcode_00_overview]]、[[SPRINT_trajectory_views_types_dead_fields_cleanup]]（死字段规则同源）、[[SPRINT_generation_regime_decision_layering]]（`PolicySemantics` 为分发 source of truth，约束 §1.2 的落地方向）、[[SPRINT_sampling_config_knob_unification]]（`final_image_policy`/`guidance_scale_2` 的收敛记录，约束 §1.13/§1.23）、[[SPRINT_dead_code_wrapper_sweep]]（`count_trainable_params` 的历史合并意图，约束 §1.32）、[[SPRINT_native_generation_engine_program]]（**in-flight**，§1.27 与其未提交改动同文件，须排在其后）。
 
+> **执行状态（2026-07-24）**：§1 全部 22 条已落地 `6e0cfd8e`（含 `trajectory_layout` 接为事实源）。§3 的 3 条 CHANGED 未做（origin 已处理）。
+
 ## 0. 一句话
 
 本簇原是 model families 层的死代码清理（死字段/死参数/死配置旋钮 form 1/2 + form-4 重复实现）。经对齐 main @ `7c748532` 复核：最锋利的一条——五个 token 家族 `_*_LORA_DEFAULTS` 双维护（form-4-data）——已由 origin 独立落地（现从家族 Config 派生 fallback，见 §2）；另有 6 条死字段/死描述符/死转发项也已删除（§2）。3 条 `decode_image_tokens(image_size=)` 校验支 + `runs_in_isolated_subprocess` 的现场已变（§3）。**剩余 22 条待删项集中在死参数/死分支/死配置旋钮与 form-4 重复**，误删风险仍集中在：只删同结构里的死字段而非删整个结构（`PolicySemantics`/`GenerationRuntimeCapabilities`/`ReplaySegmentResult`——同结构其余字段活），以及 `guidance_scale_2`/`trajectory_layout` 优选接线/成 source of truth 而非纯删。

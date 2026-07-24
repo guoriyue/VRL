@@ -2,6 +2,8 @@
 
 状态：**RECONCILED（2026-07-24）**，对齐 main @ `7c748532`（= `origin/main` tip，自审计基线 `88ed756e` 起落地约 63 个 cleanup/refactor commit）。本次复核结论：**10 条全部仍需做（STILL_VALID）**，其中 **3 条零变动**（`free`、`debug_info` 三兄弟、`Fp4Linear.recipe`）、**7 条 RELOCATED**（字段定义未变，仅 caller/test 行号因 token 重构下移）；**0 条已由 origin 落地**、**0 条情况已变**。风险分布不变：**8 low + 2 medium**（medium：`ARAttentionStepInput.position`、`VllmDecoderPagedSequenceState.branch`）。全部来自 `vrl/nn/` paged-attention 路径及其两个 caller（`paged_attention_helpers.py` / `nextstep_1/runner.py`）与 `vrl/nn/quantization/fp4.py`。
 
+> **执行状态（2026-07-24）**：全部 10 条已落地 `c5046266`（分页注意力死字段级联 + `_ar_config` model 参数收敛）。
+
 **复核要点（一句话）**：审计跑在旧树 `88ed756e`，但本簇触及的 4 个生产文件（`vrl/nn/layers/attention/paged.py`、`vrl/nn/modules/ar_decoder.py`、`vrl/nn/kernels/attention/vllm_paged.py`、`vrl/nn/quantization/fp4.py`）**自基线起字节未变**（`git log 88ed756e..HEAD` 对这几个文件为空），所有死判在同一行号仍成立；唯一的漂移是两个 caller 文件（`paged_attention_helpers.py`、`nextstep_1/runner.py`）与 `test_janus_paged_attention_one_step.py` 的 token 重构使删除动作里的构造 kwarg / 断言行号整体下移——本文档已逐条更新为 `7c748532` 上的当前行号。
 
 来源：dead-code-audit workflow（五种死代码形态 + 对抗验证 + 删除类二次字符串引用检查）.

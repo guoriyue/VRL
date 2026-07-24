@@ -5,6 +5,8 @@
 - **6 条已由 origin 落地**（复核确认，无需再做）— 见 §2；
 - **2 条情况已变**（需重新评估，原动作已不能原样执行）— 见 §3。
 
+> **执行状态（2026-07-24）**：§1 全部 7 条已落地 `cd6beea5`（逐 receiver 消歧）。§3 的 2 条 CHANGED 未做（origin 已加回归测试）。
+
 来源：dead-code-audit workflow（五种死代码形态 + 对抗验证 + 删除类二次字符串引用检查），原始逐条证据/动作文本保留在 `scratchpad/cluster_trajectory_math.json`。
 关联：[[SPRINT_deadcode_00_overview]]、[[SPRINT_trajectory_views_types_dead_fields_cleanup]]（本簇沿用其「逐 receiver 消歧」纪律，并复用其 §1.3/§1.4 关于 `_reject_runtime_state` 是合法 consumer 的裁定）、[[SPRINT_grab_bag_file_audit]]（`_flow_terminal_mean` / `_apply_value_policy` / `_primary_segment_name` 的历史抽取记录）。
 
