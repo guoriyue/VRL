@@ -33,7 +33,6 @@ class VideoGenerationRequest:
 
     prompt: str = ""
     negative_prompt: str = ""
-    task_type: str = "text_to_video"
     width: int = 1024
     height: int = 640
     frame_count: int = 16
@@ -138,7 +137,6 @@ class GenerationOutput:
     output: Any
     trajectory: TrajectoryBatch | None = None
     extra: dict[str, Any] = field(default_factory=dict)
-    error: str | None = None
 
 
 __all__ = [

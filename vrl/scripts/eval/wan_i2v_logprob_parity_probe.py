@@ -112,7 +112,6 @@ def main() -> None:
     image = Image.open(args.image).convert("RGB")
     request = VideoGenerationRequest(
         prompt=args.prompt,
-        task_type="image_to_video",
         width=args.width,
         height=args.height,
         frame_count=args.frames,

@@ -49,7 +49,6 @@ def _config(*, cache_ref_noise_pred: bool) -> DenoiseLoopConfig:
         sde=DenoiseSDEParams(
             noise_level=1.0,
             sde_type="flow_grpo",
-            same_latent=False,
             return_kl=False,
             cache_ref_noise_pred=cache_ref_noise_pred,
         ),

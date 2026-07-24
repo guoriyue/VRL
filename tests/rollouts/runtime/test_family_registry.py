@@ -659,7 +659,6 @@ def test_rollout_config_is_projected_from_yaml() -> None:
             "rollout": {
                 "samples_per_chunk": 8,
                 "noise_level": 1.0,
-                "same_latent": False,
                 "sde": {
                     "type": "flow_grpo",
                     "window_size": 0,

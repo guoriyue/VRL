@@ -123,13 +123,8 @@ def build_prompt_chunks(
 def run_sample_chunks_with_oom_retry(
     chunks: Sequence[SampleChunk],
     run_one: Callable[[SampleChunk], T],
-    *,
-    min_sample_count: int = 1,
 ) -> list[T]:
     """Run chunks, splitting CUDA-OOM chunks until the floor is reached."""
-
-    if min_sample_count < 1:
-        raise ValueError("min_sample_count must be >= 1")
 
     results: list[T] = []
     pending = list(chunks)
@@ -138,10 +133,9 @@ def run_sample_chunks_with_oom_retry(
         try:
             results.append(run_one(chunk))
         except RuntimeError as exc:
-            if (
-                not is_cuda_out_of_memory(exc)
-                or chunk.sample_count <= min_sample_count
-            ):
+            # A single-sample chunk cannot be split further; re-raise the
+            # original OOM instead of letting split() mask it with ValueError.
+            if not is_cuda_out_of_memory(exc) or chunk.sample_count <= 1:
                 raise
             empty_cuda_cache()
             left, right = chunk.split()

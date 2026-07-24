@@ -118,7 +118,6 @@ class DiffusionRequestLayout:
         sde = DenoiseSDEParams(
             noise_level=float(sampling.get("noise_level", 1.0)),
             sde_type=self._parse_sde_type(sampling.get("sde_type", self.sde_type)),
-            same_latent=bool(sampling.get("same_latent", False)),
             return_kl=bool(sampling.get("return_kl", False)),
             return_prev_sample_mean=bool(
                 sampling.get("return_prev_sample_mean", False),

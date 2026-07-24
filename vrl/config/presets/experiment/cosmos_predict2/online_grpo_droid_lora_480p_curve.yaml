@@ -19,7 +19,7 @@
 #   eval series never materializes cannot be called "moved" or "not moved"):
 #   freq 2, 16 fixed prompts x 4 samples = n=64 per point, fixed seed.
 # - real-curve semantics vs the overfit recipe: full 936-row train manifest,
-#   held-out eval manifest, same_latent off (normal exploration), EMA back on,
+#   held-out eval manifest, seedless rollouts (normal exploration), EMA back on,
 #   motion guard back to 0.2 (static is not net-positive at on-policy dino
 #   ~0.42, unlike the overfit set's floor; keep an eye on r_motion_dynamics
 #   anyway — if it trends toward 0 the collapse hack is back, raise the weight).

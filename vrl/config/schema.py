@@ -301,10 +301,6 @@ class RolloutConfig(ConfigBase):
         default=None,
         json_schema_extra={"runtime_owner": "generation_request"},
     )
-    same_latent: Any = Field(
-        default=None,
-        json_schema_extra={"runtime_owner": "generation_request"},
-    )
     # reader: generation planner (chunk_placement.py) + diffusion layout. int =
     # fixed chunk size; "auto" = the Ray runtime's startup chunk-size probe
     # resolves it before the first request (SPRINT_chunk_size_probe; Ray-only,

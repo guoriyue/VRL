@@ -176,13 +176,6 @@ class RolloutCollector:
         phase_t = time.perf_counter() if profile else None
 
         output = await self.runtime.generate(collector_request.request)
-        if output.error:
-            raise RuntimeError(
-                f"{collector_request.request.family}/{collector_request.request.task} "
-                "generation failed "
-                f"(request_id={collector_request.request.request_id}): {output.error}",
-            )
-
         unscored = UnscoredRollout(
             output=output,
             collector_request=collector_request,

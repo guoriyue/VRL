@@ -65,9 +65,6 @@ class RayGenerationWorker:
     def update_weights(self, state_ref: Any, policy_version: int) -> int:
         return self.core.update_weights(state_ref, policy_version)
 
-    def current_policy_version(self) -> int | None:
-        return self.core.current_policy_version()
-
     def supports_versioned_trainable_state(self) -> bool:
         return self.core.supports_versioned_trainable_state()
 

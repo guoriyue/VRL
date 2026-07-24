@@ -46,7 +46,6 @@ _SUPPORTED_SIGNALS = ("latent",)
 class TeaCacheConfig:
     """Parsed ``sampling.teacache`` block for the diffusion rollout."""
 
-    enabled: bool
     threshold: float
     warmup_steps: int
     signal: str
@@ -74,7 +73,6 @@ class TeaCacheConfig:
             return None
         if value is True:
             return TeaCacheConfig(
-                enabled=True,
                 threshold=_DEFAULT_THRESHOLD,
                 warmup_steps=_DEFAULT_WARMUP_STEPS,
                 signal="latent",
@@ -86,7 +84,6 @@ class TeaCacheConfig:
         if not bool(value.get("enabled", True)):
             return None
         return TeaCacheConfig(
-            enabled=True,
             threshold=float(value.get("threshold", _DEFAULT_THRESHOLD)),
             warmup_steps=int(value.get("warmup_steps", _DEFAULT_WARMUP_STEPS)),
             signal=str(value.get("signal", "latent")),

@@ -203,7 +203,6 @@ def test_ray_generation_launcher_builds_worker_runtime_with_embedded_ray() -> No
         workers = runtime.executor.workers
         assert [worker.worker_id for worker in workers] == ["rollout-0"]
         assert workers[0].actor is not None
-        assert ray.get(workers[0].actor.current_policy_version.remote()) == 7
         metadata = ray.get(workers[0].actor.worker_metadata.remote())
         assert metadata["worker_id"] == "rollout-0"
         assert metadata["policy_version"] == 7

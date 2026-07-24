@@ -157,15 +157,13 @@ def run_denoise_loop(
     if config.seed is not None:
         generator = torch.Generator(device=device)
         generator.manual_seed(config.seed + config.sample_start)
-    elif config.sde.same_latent:
-        raise ValueError("same_latent=True requires an explicit sampling.seed")
     else:
         generator = None
 
     buffers = preallocate_denoise_buffers(state=state, config=config)
     teacache = (
         TeaCacheState(config.teacache, len(state.timesteps))
-        if config.teacache is not None and config.teacache.enabled
+        if config.teacache is not None
         else None
     )
 

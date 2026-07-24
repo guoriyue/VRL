@@ -7,8 +7,9 @@
 # kept (the probe script that did this has since been removed in favor of human review;
 # the battery builder survives in unified_reward_robotics_discrimination_probe.py).
 # Each row carries a fixed
-# request_overrides.seed so rollouts/eval are paired across epochs (and
-# same_latent has the explicit seed it requires).
+# request_overrides.seed so rollouts/eval are paired across epochs (a fixed seed
+# with samples_per_chunk=1 is also what makes group members share the initial
+# latent).
 data:
   loader: prompt_manifest
   manifest: data/external/video_world/manifests/droid_overfit_validation.jsonl

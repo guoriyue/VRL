@@ -84,7 +84,6 @@ def _request(num_steps: int = 4) -> VideoGenerationRequest:
     return VideoGenerationRequest(
         prompt="a cat",
         negative_prompt="",
-        task_type="text_to_video",
         width=256,
         height=256,
         frame_count=25,

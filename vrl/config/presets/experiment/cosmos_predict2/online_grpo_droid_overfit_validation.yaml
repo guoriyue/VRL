@@ -19,12 +19,12 @@
 #   can-it-climb validation. Fallback if rewards turn out all-mush: raise
 #   num_steps to 15 and KEEP the window at [0, 10] (flow_grpo's low-step-train /
 #   clean-tail trick) at ~1.5x gen cost.
-# - same_latent + per-row fixed seed: group members share the initial latent,
-#   so intra-group reward differences come only from SDE exploration noise ->
-#   cleaner advantages at group_size 8. The seed rides in each manifest row's
-#   request_overrides.seed (the sanctioned per-prompt seed path: PromptExample
-#   -> prompt_collection kwargs -> sampling["seed"]); a top-level sampling.seed
-#   key does not exist. Same row seed every epoch -> paired rollouts/eval.
+# - seedless rollouts + per-index eval seed: a fixed sampling.seed with
+#   samples_per_chunk=1 would make group members share the initial latent (the
+#   seed IS the same-latent mechanism), collapsing intra-group diversity to SDE
+#   exploration noise alone. Running seedless instead gives genuine init-latent
+#   (content) diversity at group_size 8; fixed eval stays paired via its own
+#   per-index derived seeds, so the verdict protocol is unchanged.
 # - EMA off: its lag would mask the first ~10-20 updates of movement, which is
 #   exactly the signal this run exists to detect.
 # - motion_dynamics at weight 1.0 (not 0.2): battery measurements showed a
@@ -108,13 +108,11 @@ rollout:
   samples_per_chunk: 1                # generation only: full-param 480p_93f OOMs at 4
                                       # (25.3GiB worker + 4.2GiB driver-resident); P1's 1.4x
                                       # larger-chunk evidence measured this phase only
-  # false + NO per-row manifest seeds (2026-07-07): a fixed seed makes every
-  # chunk share the initial latent (the seed IS the same-latent mechanism; the
-  # flag only guards the seedless case), so the group's only diversity was SDE
-  # noise paths — run10 showed GRPO then optimizes path luck. Seedless rollouts
-  # give genuine init-latent (content) diversity; fixed eval stays paired via
-  # its own per-index derived seeds, so the verdict protocol is unchanged.
-  same_latent: false
+  # Seedless rollouts (2026-07-07): NO per-row manifest seeds. A fixed seed would
+  # make every chunk share the initial latent (the seed IS the same-latent
+  # mechanism), so the group's only diversity was SDE noise paths — run10 showed
+  # GRPO then optimizes path luck. Seedless gives genuine init-latent (content)
+  # diversity; fixed eval stays paired via its own per-index derived seeds.
   trajectory_storage:
     device: cpu                       # 93f trajectories on the GPU wire OOM the driver at collect
                                       # handoff (worker still holds ~23.5GiB gen memory while the

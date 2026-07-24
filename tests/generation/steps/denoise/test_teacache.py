@@ -21,7 +21,7 @@ def test_from_sampling_off_variants_return_none():
 def test_from_sampling_true_uses_defaults():
     cfg = TeaCacheConfig.from_sampling(True)
     assert cfg is not None
-    assert cfg.enabled and cfg.signal == "latent"
+    assert cfg.signal == "latent"
     assert cfg.threshold > 0 and cfg.warmup_steps >= 0
 
 
@@ -33,13 +33,13 @@ def test_from_sampling_mapping_overrides():
 
 def test_config_rejects_bad_values():
     with pytest.raises(ValueError):
-        TeaCacheConfig(enabled=True, threshold=0.1, warmup_steps=0, signal="bogus")
+        TeaCacheConfig(threshold=0.1, warmup_steps=0, signal="bogus")
     with pytest.raises(ValueError):
-        TeaCacheConfig(enabled=True, threshold=0.0, warmup_steps=0, signal="latent")
+        TeaCacheConfig(threshold=0.0, warmup_steps=0, signal="latent")
 
 
 def test_warmup_and_last_step_always_run():
-    cfg = TeaCacheConfig(enabled=True, threshold=999.0, warmup_steps=2, signal="latent")
+    cfg = TeaCacheConfig(threshold=999.0, warmup_steps=2, signal="latent")
     state = TeaCacheState(cfg, num_steps=4)
     sig = torch.ones(1, 4)
     # warmup steps 0,1 forced to run even though change is zero (caller caches)
@@ -55,7 +55,7 @@ def test_warmup_and_last_step_always_run():
 
 
 def test_low_change_skips_high_change_runs():
-    cfg = TeaCacheConfig(enabled=True, threshold=0.5, warmup_steps=1, signal="latent")
+    cfg = TeaCacheConfig(threshold=0.5, warmup_steps=1, signal="latent")
     state = TeaCacheState(cfg, num_steps=6)
     base = torch.ones(1, 8)
     state.should_run(base, 0)  # warmup run -> caches
@@ -69,14 +69,14 @@ def test_low_change_skips_high_change_runs():
 
 
 def test_no_cache_yet_forces_run():
-    cfg = TeaCacheConfig(enabled=True, threshold=0.0001, warmup_steps=0, signal="latent")
+    cfg = TeaCacheConfig(threshold=0.0001, warmup_steps=0, signal="latent")
     state = TeaCacheState(cfg, num_steps=4)
     # warmup=0 but cache is empty on the first step -> must run
     assert state.should_run(torch.ones(1, 4), 0) is True
 
 
 def test_skip_ratio_and_counters():
-    cfg = TeaCacheConfig(enabled=True, threshold=999.0, warmup_steps=1, signal="latent")
+    cfg = TeaCacheConfig(threshold=999.0, warmup_steps=1, signal="latent")
     state = TeaCacheState(cfg, num_steps=5)
     sig = torch.ones(1, 4)
     state.should_run(sig, 0)  # run (warmup)

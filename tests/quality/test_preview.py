@@ -62,7 +62,6 @@ def test_preview_request_uses_real_prompt_overrides_and_one_sample(
 def test_preview_image_preserves_uint8_and_identity(tmp_path: Path) -> None:
     image = torch.arange(3 * 4 * 5, dtype=torch.uint8).reshape(1, 3, 4, 5)
     output = SimpleNamespace(
-        error=None,
         output=image,
         sample_rows=[SimpleNamespace(prompt="prompt", seed=7)],
     )
@@ -79,12 +78,7 @@ def test_preview_image_preserves_uint8_and_identity(tmp_path: Path) -> None:
     ("output", "match"),
     [
         (
-            SimpleNamespace(error="oom", output=[], sample_rows=[]),
-            "returned an error",
-        ),
-        (
             SimpleNamespace(
-                error=None,
                 output=torch.zeros((1, 3, 2, 2), dtype=torch.uint8),
                 sample_rows=[SimpleNamespace(prompt="different", seed=7)],
             ),

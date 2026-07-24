@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import logging
 import math
 import os
 from collections.abc import Iterable, Mapping
@@ -129,8 +128,6 @@ def validate_colocated_replay_memory(
     *,
     bundle: Any,
     rollout_config: RayGenerationConfig,
-    strict: bool | None = None,
-    log: logging.Logger | None = None,
 ) -> None:
     """Warn or fail when trainer and Ray worker both own full generation state.
 
@@ -154,16 +151,15 @@ def validate_colocated_replay_memory(
         "generation model plus a rollout worker generation model. Implement a "
         "family-specific minimal replay loader before enabling strict guard."
     )
-    if strict is None:
-        strict = os.environ.get("VRL_STRICT_REPLAY_MEMORY_GUARD", "").strip().lower() in {
-            "1",
-            "true",
-            "yes",
-            "on",
-        }
+    strict = os.environ.get("VRL_STRICT_REPLAY_MEMORY_GUARD", "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
     if strict:
         raise ValueError(message)
-    (log or logger).warning(message)
+    logger.warning(message)
 
 
 def _validate_driver_cuda_ownership(

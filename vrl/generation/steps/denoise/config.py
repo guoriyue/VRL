@@ -13,7 +13,6 @@ class DenoiseSDEParams:
 
     noise_level: float
     sde_type: str
-    same_latent: bool
     return_kl: bool
     return_prev_sample_mean: bool = False
     cache_ref_noise_pred: bool = False

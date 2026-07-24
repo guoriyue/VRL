@@ -22,7 +22,6 @@ def test_native_denoise_mode_uses_scheduler_step() -> None:
 
     result = executor.run_denoise_steps(
         state=state,
-        encoded={},
         config=DenoiseLoopConfig(
             prompt_index=0,
             sample_start=0,
@@ -31,7 +30,6 @@ def test_native_denoise_mode_uses_scheduler_step() -> None:
             sde=DenoiseSDEParams(
                 noise_level=0.7,
                 sde_type="flow_grpo",
-                same_latent=False,
                 return_kl=False,
             ),
             sde_window=None,

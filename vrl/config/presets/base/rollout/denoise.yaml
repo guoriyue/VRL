@@ -14,4 +14,7 @@ rollout:
     window_size: 0
     window_range: [0, 10]
 
-  same_latent: false            # share noise across group (debug only)
+  # Group-shared initial latent has no dedicated flag: a fixed sampling.seed with
+  # samples_per_chunk=1 makes group members share the initial latent (each chunk
+  # re-seeds the prepare_sampling generator with the same seed). The seed IS the
+  # same-latent mechanism.

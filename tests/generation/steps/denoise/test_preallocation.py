@@ -54,7 +54,6 @@ def test_run_denoise_steps_writes_preallocated_buffers(return_kl: bool) -> None:
 
     result = executor.run_denoise_steps(
         state=_state(batch=2, steps=2, latent_shape=(3,)),
-        encoded={},
         config=config,
     )
 
@@ -81,7 +80,6 @@ def test_decode_denoise_result_does_not_serialize_model_precision() -> None:
 
     result = executor.run_denoise_steps(
         state=_state(batch=2, steps=1),
-        encoded={"prompt_embeds": torch.zeros(2, 1, dtype=torch.float16)},
         config=_config(sample_count=2),
     )
 
@@ -125,7 +123,6 @@ def test_executor_adds_no_autocast_scope(monkeypatch: pytest.MonkeyPatch) -> Non
 
     executor.run_denoise_steps(
         state=_state(batch=2, steps=1),
-        encoded={},
         config=_config(sample_count=2),
     )
 
@@ -139,7 +136,6 @@ def test_decode_denoise_result_uses_only_model_exported_context() -> None:
     state = _state(batch=2, steps=1)
     denoise = executor.run_denoise_steps(
         state=state,
-        encoded={"prompt_embeds": torch.zeros(2, 1, dtype=torch.float16)},
         config=_config(sample_count=2),
     )
 
@@ -192,7 +188,6 @@ def _config(*, sample_count: int = 2, return_kl: bool = False) -> DenoiseLoopCon
         sde=DenoiseSDEParams(
             noise_level=1.0,
             sde_type="flow_grpo",
-            same_latent=False,
             return_kl=return_kl,
         ),
         sde_window=(0, 0),
@@ -324,7 +319,6 @@ def test_decode_denoise_result_packs_video_as_uint8() -> None:
     executor = _UnitVideoExecutor()
     denoise = executor.run_denoise_steps(
         state=_state(batch=2, steps=1),
-        encoded={},
         config=_config(sample_count=2),
     )
 
@@ -355,7 +349,6 @@ def test_apply_wire_storage_policy_downcasts_before_wire() -> None:
     executor = _Executor()
     denoise = executor.run_denoise_steps(
         state=_state(batch=2, steps=1),
-        encoded={},
         config=_config(sample_count=2),
     )
     chunk = executor.decode_denoise_result(
@@ -382,7 +375,6 @@ def test_apply_wire_storage_policy_downcasts_before_wire() -> None:
         config=_config(sample_count=2),
         denoise_result=executor.run_denoise_steps(
             state=_state(batch=2, steps=1),
-            encoded={},
             config=_config(sample_count=2),
         ),
     )

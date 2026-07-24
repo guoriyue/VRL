@@ -24,6 +24,10 @@ from vrl.utils.profiling import TorchProfilerConfig
 
 logger = init_logger(__name__)
 
+# The chunk-size probe truncates each trial to a fixed handful of denoise steps:
+# it only needs the peak-memory shape (affine in samples), not a full sampling.
+_PROBE_EXECUTE_STEPS = 2
+
 
 class GenerationWorkerCore:
     """Own one generation executor and execute plan-aware chunks."""
@@ -300,7 +304,6 @@ class GenerationWorkerCore:
         request: Any,
         *,
         max_samples: int,
-        execute_steps: int = 2,
         margin: float = 0.05,
         knee_threshold: float = 0.05,
     ) -> dict[str, Any]:
@@ -391,7 +394,7 @@ class GenerationWorkerCore:
                 )
                 prepared.config = dataclass_replace(
                     prepared.config,
-                    execute_steps=execute_steps,
+                    execute_steps=_PROBE_EXECUTE_STEPS,
                 )
                 denoised = executor.run_denoise_stage(
                     prepared,

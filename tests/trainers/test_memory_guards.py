@@ -64,8 +64,11 @@ def test_cuda_oom_detection_prefers_the_typed_exception() -> None:
     assert is_cuda_out_of_memory(torch.cuda.OutOfMemoryError("allocation failed"))
 
 
-def test_colocated_full_generation_bundle_can_fail_strict_guard() -> None:
+def test_colocated_full_generation_bundle_can_fail_strict_guard(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """Checks colocated full generation bundle can fail strict guard."""
+    monkeypatch.setenv("VRL_STRICT_REPLAY_MEMORY_GUARD", "1")
     bundle = SimpleNamespace(
         metadata={
             "loads_full_generation_modules": True,
@@ -77,17 +80,18 @@ def test_colocated_full_generation_bundle_can_fail_strict_guard() -> None:
         validate_colocated_replay_memory(
             bundle=bundle,
             rollout_config=config,
-            strict=True,
         )
 
 
-def test_non_colocated_full_generation_bundle_passes_memory_guard() -> None:
+def test_non_colocated_full_generation_bundle_passes_memory_guard(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """Checks non colocated full generation bundle passes memory guard."""
+    monkeypatch.setenv("VRL_STRICT_REPLAY_MEMORY_GUARD", "1")
     bundle = SimpleNamespace(metadata={"loads_full_generation_modules": True})
     config = _ray_config(colocated=False)
 
     validate_colocated_replay_memory(
         bundle=bundle,
         rollout_config=config,
-        strict=True,
     )

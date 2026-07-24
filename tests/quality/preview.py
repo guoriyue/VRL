@@ -45,8 +45,6 @@ def write_preview_image(output: Any, path: Path, *, expected_prompt: str, seed: 
 
     from vrl.utils.media import write_png
 
-    if output.error is not None:
-        raise RuntimeError(f"production executor returned an error: {output.error}")
     if len(output.sample_rows) != 1:
         raise RuntimeError(
             f"production executor returned {len(output.sample_rows)} sample rows; expected 1",

@@ -69,7 +69,6 @@ class DiffusionPromptStageOutput:
 class DiffusionPreparedStageOutput:
     """Prepared latent state and denoise config for the denoise stage."""
 
-    chunk_encoded: dict[str, Any]
     config: DenoiseLoopConfig
     state: Any
 
@@ -429,7 +428,6 @@ class DiffusionChunkExecutorBase(
         )
         stage_durations["prepare_latent"] = time.perf_counter() - started
         return DiffusionPreparedStageOutput(
-            chunk_encoded=chunk_encoded,
             config=config,
             state=state,
         )
@@ -445,7 +443,6 @@ class DiffusionChunkExecutorBase(
         started = time.perf_counter()
         denoise_result = self.run_denoise_steps(
             state=payload.state,
-            encoded=payload.chunk_encoded,
             config=payload.config,
         )
         stage_durations["denoise"] = time.perf_counter() - started
@@ -497,12 +494,10 @@ class DiffusionChunkExecutorBase(
         self,
         *,
         state: Any,
-        encoded: dict[str, Any],
         config: DenoiseLoopConfig,
     ) -> DenoiseLoopResult:
         """Adapt the full-sequence denoise binding to the step-owned loop."""
 
-        del encoded
         return run_denoise_loop(
             model=self.model,
             state=state,
