@@ -633,8 +633,6 @@ class DiffusionChunkExecutorBase(
         """Build per-sample encoded tensors for one sample chunk."""
 
         del generation_request, video_request, params
-        if not self.chunk_passthrough_keys:
-            return self.layout.repeat_encoded_batch(encoded, chunk.sample_count)
         passthrough = set(self.chunk_passthrough_keys)
         return {
             key: (

@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, Any, cast
 
 import torch
 
-from vrl.generation.execution.chunks import validate_chunk_range
+from vrl.generation.execution.chunks import ordered_covering_chunks
 from vrl.generation.protocols import ChunkResult
 from vrl.generation.types import (
     GenerationOutput,
@@ -87,23 +87,14 @@ def _ordered_chunks(
     sample_rows: Sequence[GenerationSampleRow],
     chunks: Sequence[ChunkAutoregressiveDenoiseResult],
 ) -> list[ChunkAutoregressiveDenoiseResult]:
-    if not chunks:
-        raise ValueError("chunks must be non-empty")
-    ordered = sorted(
+    ordered = ordered_covering_chunks(
+        request,
+        sample_rows,
         chunks,
-        key=lambda chunk: (int(chunk.prompt_index), int(chunk.sample_start)),
+        row_fields=("output",),
     )
-    expected = [(row.prompt_index, row.sample_index) for row in sample_rows]
-    actual: list[tuple[int, int]] = []
     first = ordered[0]
     for chunk in ordered:
-        validate_chunk_range(
-            request,
-            prompt_index=chunk.prompt_index,
-            sample_start=chunk.sample_start,
-            sample_count=chunk.sample_count,
-        )
-        _require_rows("output", chunk.output, chunk.sample_count)
         if chunk.temporal_chunk_count != first.temporal_chunk_count:
             raise ValueError("all results must have the same temporal_chunk_count")
         if chunk.has_trainable_trajectory != first.has_trainable_trajectory:
@@ -114,17 +105,6 @@ def _ordered_chunks(
                     "all trainable results must have the same denoise_transition_count",
                 )
             _validate_trainable_chunk(chunk)
-        actual.extend(
-            (chunk.prompt_index, sample_index)
-            for sample_index in range(
-                chunk.sample_start,
-                chunk.sample_start + chunk.sample_count,
-            )
-        )
-    if actual != expected:
-        raise ValueError(
-            "chunk-autoregressive results do not cover sample_rows in prompt-major order",
-        )
     return ordered
 
 
@@ -146,18 +126,6 @@ def _validate_trainable_chunk(chunk: ChunkAutoregressiveDenoiseResult) -> None:
         chunk.finalized_chunk_latents,
         (chunk.sample_count, chunk.temporal_chunk_count),
     )
-
-
-def _require_rows(name: str, value: Any, count: int) -> None:
-    shape = getattr(value, "shape", None)
-    if shape is not None and len(shape) > 0:
-        actual = int(shape[0])
-    elif isinstance(value, (list, tuple)):
-        actual = len(value)
-    else:
-        raise ValueError(f"chunk {name} must have a leading batch dimension")
-    if actual != count:
-        raise ValueError(f"chunk {name} has {actual} rows, expected {count}")
 
 
 def _require_shape_prefix(name: str, value: Any, expected: tuple[int, ...]) -> None:

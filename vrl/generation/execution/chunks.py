@@ -4,14 +4,15 @@ from __future__ import annotations
 
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, TypeVar
+from typing import TYPE_CHECKING, Any, TypeVar
 
 from vrl.utils.cuda_memory import empty_cuda_cache, is_cuda_out_of_memory
 
 if TYPE_CHECKING:
-    from vrl.generation.types import GenerationRequest
+    from vrl.generation.types import GenerationRequest, GenerationSampleRow
 
 T = TypeVar("T")
+TChunk = TypeVar("TChunk")
 
 
 def validate_chunk_range(
@@ -35,6 +36,72 @@ def validate_chunk_range(
             "chunk sample range exceeds request.samples_per_prompt: "
             f"{sample_start}:{sample_end} > {request.samples_per_prompt}",
         )
+
+
+def _require_rows(name: str, value: Any, count: int) -> None:
+    """Require a chunk payload to have ``count`` leading batch rows.
+
+    Accepts a tensor-like ``.shape`` or a plain list/tuple length so a gatherer
+    can validate both concatenated tensors and python-sequence payloads. For
+    tensors (the diffusion/AR case) this is identical to a strict ``shape[0]``
+    check; the list/tuple branch is the chunk-AR superset.
+    """
+
+    shape = getattr(value, "shape", None)
+    if shape is not None and len(shape) > 0:
+        actual = int(shape[0])
+    elif isinstance(value, (list, tuple)):
+        actual = len(value)
+    else:
+        raise ValueError(f"chunk {name} must have a leading batch dimension")
+    if actual != count:
+        raise ValueError(f"chunk {name} has {actual} rows, expected {count}")
+
+
+def ordered_covering_chunks(
+    request: GenerationRequest,
+    sample_rows: Sequence[GenerationSampleRow],
+    chunks: Sequence[TChunk],
+    *,
+    row_fields: Sequence[str] = (),
+) -> list[TChunk]:
+    """Sort prompt-major chunks and check they exactly cover ``sample_rows``.
+
+    The sort + coverage skeleton every chunk gatherer shares: prompt-major sort,
+    per-chunk range validation, optional row-count checks on ``row_fields``, and
+    an exact prompt-major coverage match against the request's sample rows.
+    Families layer their own homogeneity checks over the returned ordered list.
+    """
+
+    if not chunks:
+        raise ValueError("chunks must be non-empty")
+    ordered = sorted(
+        chunks,
+        key=lambda chunk: (int(chunk.prompt_index), int(chunk.sample_start)),
+    )
+    expected = [(row.prompt_index, row.sample_index) for row in sample_rows]
+    actual: list[tuple[int, int]] = []
+    for chunk in ordered:
+        prompt_index = int(chunk.prompt_index)
+        sample_start = int(chunk.sample_start)
+        sample_count = int(chunk.sample_count)
+        validate_chunk_range(
+            request,
+            prompt_index=prompt_index,
+            sample_start=sample_start,
+            sample_count=sample_count,
+        )
+        for field_name in row_fields:
+            _require_rows(field_name, getattr(chunk, field_name), sample_count)
+        actual.extend(
+            (prompt_index, sample_index)
+            for sample_index in range(sample_start, sample_start + sample_count)
+        )
+    if actual != expected:
+        raise ValueError(
+            "chunks do not cover sample_rows in prompt-major order",
+        )
+    return ordered
 
 
 @dataclass(frozen=True, slots=True)
@@ -147,6 +214,7 @@ def run_sample_chunks_with_oom_retry(
 __all__ = [
     "SampleChunk",
     "build_prompt_chunks",
+    "ordered_covering_chunks",
     "run_sample_chunks_with_oom_retry",
     "validate_chunk_range",
 ]

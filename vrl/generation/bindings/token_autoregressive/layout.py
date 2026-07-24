@@ -8,7 +8,7 @@ from typing import Any, Protocol, TypeVar
 
 import torch
 
-from vrl.generation.execution.chunks import SampleChunk, validate_chunk_range
+from vrl.generation.execution.chunks import SampleChunk, ordered_covering_chunks
 from vrl.generation.types import GenerationRequest, GenerationSampleRow
 
 
@@ -32,6 +32,41 @@ class ARSamplingParams:
     image_size: int
     max_text_length: int
     seed: int | None
+
+
+def right_pad(
+    ids: torch.Tensor,
+    mask: torch.Tensor,
+    *,
+    target_length: int,
+    pad_id: int,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Right-pad a ``[B, L]`` ids/mask pair up to ``target_length``.
+
+    Pads only when the input is shorter (``>= target_length`` is a no-op), so an
+    over-length input from a misbehaving stub tokenizer passes through unchanged
+    instead of triggering a negative-width ``torch.full``.
+    """
+
+    current_length = ids.shape[1]
+    if current_length >= target_length:
+        return ids, mask
+    extra_len = target_length - current_length
+    pad_ids = torch.full(
+        (ids.shape[0], extra_len),
+        pad_id,
+        dtype=ids.dtype,
+        device=ids.device,
+    )
+    pad_mask = torch.zeros(
+        (mask.shape[0], extra_len),
+        dtype=mask.dtype,
+        device=mask.device,
+    )
+    return (
+        torch.cat([ids, pad_ids], dim=1),
+        torch.cat([mask, pad_mask], dim=1),
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -105,50 +140,12 @@ class ARRequestLayout:
     ) -> list[TChunk]:
         """Sort AR chunks and ensure they exactly cover prompt-major samples."""
 
-        if not chunks:
-            raise ValueError("chunks must be non-empty")
-
-        ordered = sorted(
+        return ordered_covering_chunks(
+            request,
+            sample_rows,
             chunks,
-            key=lambda chunk: (
-                int(chunk.prompt_index),
-                int(chunk.sample_start),
-            ),
+            row_fields=row_fields,
         )
-        expected = [(row.prompt_index, row.sample_index) for row in sample_rows]
-        actual: list[tuple[int, int]] = []
-        for chunk in ordered:
-            prompt_index = int(chunk.prompt_index)
-            sample_start = int(chunk.sample_start)
-            sample_count = int(chunk.sample_count)
-            validate_chunk_range(
-                request,
-                prompt_index=prompt_index,
-                sample_start=sample_start,
-                sample_count=sample_count,
-            )
-            for field_name in row_fields:
-                self._require_rows(field_name, getattr(chunk, field_name), sample_count)
-            actual.extend(
-                (prompt_index, sample_index)
-                for sample_index in range(sample_start, sample_start + sample_count)
-            )
-        if actual != expected:
-            raise ValueError(
-                "AR chunks do not cover sample_rows in prompt-major sample order",
-            )
-        return ordered
-
-    def _require_rows(self, name: str, value: Any, count: int) -> None:
-        """Require a chunk tensor-like payload to have ``count`` batch rows."""
-
-        shape = getattr(value, "shape", None)
-        if shape is None or len(shape) < 1:
-            raise ValueError(f"chunk {name} must have a leading batch dimension")
-        if int(shape[0]) != count:
-            raise ValueError(
-                f"chunk {name} has {shape[0]} rows, expected {count}",
-            )
 
     def chunk_seed_offset(self, request: GenerationRequest, chunk: SampleChunk) -> int:
         """Return the prompt-major sample offset for deterministic chunk seeding."""
@@ -183,33 +180,8 @@ class ARRequestLayout:
         """Right-pad two ``[B, L]`` token/mask pairs to a common length."""
 
         target_length = max(a_ids.shape[1], b_ids.shape[1])
-
-        def _pad(
-            ids: torch.Tensor,
-            mask: torch.Tensor,
-        ) -> tuple[torch.Tensor, torch.Tensor]:
-            current_length = ids.shape[1]
-            if current_length == target_length:
-                return ids, mask
-            extra_len = target_length - current_length
-            pad_ids = torch.full(
-                (ids.shape[0], extra_len),
-                pad_id,
-                dtype=ids.dtype,
-                device=ids.device,
-            )
-            pad_mask = torch.zeros(
-                (mask.shape[0], extra_len),
-                dtype=mask.dtype,
-                device=mask.device,
-            )
-            return (
-                torch.cat([ids, pad_ids], dim=1),
-                torch.cat([mask, pad_mask], dim=1),
-            )
-
-        a_ids, a_mask = _pad(a_ids, a_mask)
-        b_ids, b_mask = _pad(b_ids, b_mask)
+        a_ids, a_mask = right_pad(a_ids, a_mask, target_length=target_length, pad_id=pad_id)
+        b_ids, b_mask = right_pad(b_ids, b_mask, target_length=target_length, pad_id=pad_id)
         return a_ids, a_mask, b_ids, b_mask
 
     def peak_memory_mb(self) -> float | None:
@@ -236,4 +208,4 @@ class ARRequestLayout:
         return int(default)
 
 
-__all__ = ["ARChunkResult", "ARRequestLayout", "ARSamplingParams"]
+__all__ = ["ARChunkResult", "ARRequestLayout", "ARSamplingParams", "right_pad"]

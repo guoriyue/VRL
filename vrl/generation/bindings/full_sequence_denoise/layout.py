@@ -9,7 +9,7 @@ from typing import Any, TypeVar
 
 import torch
 
-from vrl.generation.execution.chunks import validate_chunk_range
+from vrl.generation.execution.chunks import ordered_covering_chunks
 from vrl.generation.steps.denoise.config import DenoiseSDEParams
 from vrl.generation.steps.denoise.teacache import TeaCacheConfig
 from vrl.generation.types import GenerationRequest, GenerationSampleRow
@@ -135,11 +135,6 @@ class DiffusionRequestLayout:
             teacache=TeaCacheConfig.from_sampling(sampling.get("teacache")),
         )
 
-    def repeat_encoded_batch(self, encoded: dict[str, Any], count: int) -> dict[str, Any]:
-        """Repeat singleton-batch encoded tensors for a chunk sample count."""
-
-        return {key: self.repeat_batch(value, count) for key, value in encoded.items()}
-
     def repeat_batch(self, value: Any, count: int) -> Any:
         """Repeat a singleton tensor batch or accept an already-sized batch."""
 
@@ -173,41 +168,12 @@ class DiffusionRequestLayout:
         exactly ``sample_count`` leading rows.
         """
 
-        if not chunks:
-            raise ValueError("chunks must be non-empty")
-        ordered = sorted(
+        return ordered_covering_chunks(
+            request,
+            sample_rows,
             chunks,
-            key=lambda chunk: (int(chunk.prompt_index), int(chunk.sample_start)),
+            row_fields=("observations", "actions", "log_probs", "timesteps", "kl", "video"),
         )
-        expected = [(row.prompt_index, row.sample_index) for row in sample_rows]
-        actual: list[tuple[int, int]] = []
-        for chunk in ordered:
-            prompt_index = int(chunk.prompt_index)
-            sample_start = int(chunk.sample_start)
-            sample_count = int(chunk.sample_count)
-            validate_chunk_range(
-                request,
-                prompt_index=prompt_index,
-                sample_start=sample_start,
-                sample_count=sample_count,
-            )
-            for field in ("observations", "actions", "log_probs", "timesteps", "kl", "video"):
-                shape = getattr(getattr(chunk, field), "shape", None)
-                if shape is None or len(shape) < 1:
-                    raise ValueError(f"chunk {field} must have a leading batch dimension")
-                if int(shape[0]) != sample_count:
-                    raise ValueError(
-                        f"chunk {field} has {shape[0]} rows, expected {sample_count}",
-                    )
-            actual.extend(
-                (prompt_index, sample_index)
-                for sample_index in range(sample_start, sample_start + sample_count)
-            )
-        if actual != expected:
-            raise ValueError(
-                "Diffusion chunks do not cover sample_rows in prompt-major order",
-            )
-        return ordered
 
     def select_sde_window(
         self,

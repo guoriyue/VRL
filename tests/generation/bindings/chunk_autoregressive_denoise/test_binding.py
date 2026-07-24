@@ -8,7 +8,7 @@ import pytest
 import torch
 
 from vrl.generation.bindings.chunk_autoregressive_denoise import (
-    ChunkAutoregressiveDenoiseExecutor,
+    ChunkAutoregressiveDenoiseExecutorBase,
     ChunkAutoregressiveDenoiseGatherer,
     ChunkAutoregressiveDenoiseResult,
 )
@@ -111,16 +111,22 @@ def test_generation_only_result_has_no_fabricated_policy_facts() -> None:
         builder.build(torch.ones(2))
 
 
+class _GenericChunkExecutor(ChunkAutoregressiveDenoiseExecutorBase):
+    """Minimal Base subclass exercising plan/forward_plan delegation."""
+
+    family = "causvid"
+    task = "t2v"
+    default_samples_per_chunk = 1
+
+    def __init__(self, model: Any) -> None:
+        self.model = model
+
+
 def test_generic_executor_delegates_temporal_generation_to_model() -> None:
     request = _request()
     sample_rows = build_sample_rows(request)
     model = _FakeChunkModel()
-    executor = ChunkAutoregressiveDenoiseExecutor(
-        model,
-        family=request.family,
-        task=request.task,
-        samples_per_chunk=1,
-    )
+    executor = _GenericChunkExecutor(model)
 
     plan = executor.plan(request)
     output = executor.forward_plan(request, sample_rows, plan)

@@ -172,25 +172,7 @@ class ChunkAutoregressiveDenoiseExecutorBase(GenerationChunkExecutor):
         )
 
 
-class ChunkAutoregressiveDenoiseExecutor(ChunkAutoregressiveDenoiseExecutorBase):
-    """Configurable executor for models implementing the shared model method."""
-
-    def __init__(
-        self,
-        model: Any,
-        *,
-        family: str,
-        task: str,
-        samples_per_chunk: int = 1,
-    ) -> None:
-        self.model = model
-        self.family = family
-        self.task = task
-        self.default_samples_per_chunk = max(1, int(samples_per_chunk))
-
-
 __all__ = [
-    "ChunkAutoregressiveDenoiseExecutor",
     "ChunkAutoregressiveDenoiseExecutorBase",
     "ChunkAutoregressiveDenoiseResult",
 ]

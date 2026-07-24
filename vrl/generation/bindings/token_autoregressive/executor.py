@@ -8,7 +8,7 @@ from typing import Any
 
 import torch
 
-from vrl.generation.bindings.token_autoregressive.layout import ARRequestLayout
+from vrl.generation.bindings.token_autoregressive.layout import ARRequestLayout, right_pad
 from vrl.generation.execution.chunks import SampleChunk
 from vrl.generation.protocols import GenerationChunkExecutor
 from vrl.generation.types import (
@@ -141,19 +141,8 @@ class ARChunkExecutorBase(
         if the tokenizer ignored ``padding="max_length"`` (stubs / tokenizers
         without a pad_token).
         """
-        import torch
 
-        if ids.shape[1] < max_text_length:
-            extra_len = max_text_length - ids.shape[1]
-            ids = torch.cat(
-                [ids, torch.full((ids.shape[0], extra_len), pad_id, dtype=ids.dtype)],
-                dim=1,
-            )
-            mask = torch.cat(
-                [mask, torch.zeros((mask.shape[0], extra_len), dtype=mask.dtype)],
-                dim=1,
-            )
-        return ids, mask
+        return right_pad(ids, mask, target_length=max_text_length, pad_id=pad_id)
 
     def require_native_ar_engine(self, request: GenerationRequest) -> str:
         """Reject unsupported full-engine AR selectors before native parity runs."""
