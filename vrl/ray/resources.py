@@ -275,10 +275,12 @@ def resolve_distributed_resources(
             "distributed.resources.rollout.gpu_pool=trainer to time-share a trainer GPU.",
         )
 
-    rollout_num_workers = _resolve_rollout_num_workers(
-        rollout_config=config.rollout,
-        rollout_num_gpus=rollout_num_gpus,
+    rollout_num_workers = _resolve_role_num_workers(
+        role="rollout",
+        num_workers=config.rollout.num_workers,
+        num_gpus=rollout_num_gpus,
         gpus_per_worker=rollout_gpus_per_worker,
+        allow_zero_workers=True,
     )
 
     colocated = bool(set(trainer_devices) & set(rollout_devices))
@@ -800,45 +802,6 @@ def _slice_pool_with_overlap_fallback(
     return tuple(combined[:requested])
 
 
-def _resolve_rollout_num_workers(
-    *,
-    rollout_config: RolloutResourceConfig,
-    rollout_num_gpus: int,
-    gpus_per_worker: float,
-) -> int:
-    requested = _parse_num_workers(
-        rollout_config.num_workers,
-        allow_zero=gpus_per_worker == 0 and rollout_num_gpus == 0,
-    )
-    if gpus_per_worker == 0:
-        workers = 1 if requested == "auto" else int(requested)
-        if workers < 0:
-            raise ValueError("distributed.resources.rollout.num_workers must be >= 0")
-        return workers
-
-    if requested == "auto":
-        workers_float = rollout_num_gpus / gpus_per_worker
-        if int(workers_float) != workers_float:
-            raise ValueError(
-                "distributed.resources.rollout.num_gpus must be divisible by "
-                "distributed.resources.rollout.gpus_per_worker",
-            )
-        workers = int(workers_float)
-    else:
-        workers = int(requested)
-        expected_gpus = int(workers * gpus_per_worker)
-        if expected_gpus != rollout_num_gpus:
-            raise ValueError(
-                "distributed.resources.rollout.num_workers * gpus_per_worker must "
-                f"equal rollout GPU count: {workers} * {gpus_per_worker:g} "
-                f"!= {rollout_num_gpus}",
-            )
-
-    if workers < 1:
-        raise ValueError("distributed.resources.rollout.num_workers must be >= 1")
-    return workers
-
-
 def _resolve_reward_devices(
     *,
     visible_devices: tuple[int, ...],
@@ -1036,12 +999,26 @@ def _resolve_role_num_workers(
     num_workers: int | str,
     num_gpus: int,
     gpus_per_worker: float,
+    allow_zero_workers: bool = False,
 ) -> int:
-    requested = _parse_num_workers(num_workers, role=role)
+    # ``allow_zero_workers`` distinguishes the rollout path (a CPU-only rollout
+    # may scale to zero workers) from the reward path (at least one worker once
+    # configured). It only relaxes the CPU-branch minimum and the parser's
+    # zero-worker gate; the GPU-branch ``num_gpus == 0`` shortcut is unreachable
+    # for rollout because ``resolve_distributed_resources`` raises earlier when
+    # rollout requests GPUs but none resolve.
+    minimum = 0 if allow_zero_workers else 1
+    requested = _parse_num_workers(
+        num_workers,
+        role=role,
+        allow_zero=allow_zero_workers and gpus_per_worker == 0 and num_gpus == 0,
+    )
     if gpus_per_worker == 0:
         workers = 1 if requested == "auto" else int(requested)
-        if workers < 1:
-            raise ValueError(f"distributed.resources.{role}.num_workers must be >= 1")
+        if workers < minimum:
+            raise ValueError(
+                f"distributed.resources.{role}.num_workers must be >= {minimum}",
+            )
         return workers
 
     if num_gpus == 0 and requested == "auto":
