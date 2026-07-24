@@ -204,7 +204,7 @@ def _collector(
     lifecycle: RayLifecyclePlan | None = None,
 ) -> RolloutCollector:
     return RolloutCollector(
-        config=object(),
+        config=RolloutCollectorConfig(),
         request_builder=_RequestBuilder(),
         reward_scorer=reward_scorer or _RewardScorer(),
         runtime=runtime,
@@ -813,7 +813,7 @@ def test_collect_prompt_batches_folds_reward_timing_into_stats() -> None:
 
     reward_fn = _TimedReward()
     collector = RolloutCollector(
-        config=object(),
+        config=RolloutCollectorConfig(),
         request_builder=_RequestBuilder(),
         reward_scorer=RewardScorer(reward_fn),
         runtime=_Runtime(),

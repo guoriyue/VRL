@@ -27,8 +27,6 @@ from vrl.rollouts.collector.requests import (
     GenerationRequestBuilder,
 )
 from vrl.rollouts.collector.rewards import RewardScorer
-from vrl.trajectory import trajectory_storage_policy_from_cfg
-from vrl.utils.config import cfg_get
 from vrl.utils.profiling import record_function
 
 
@@ -203,13 +201,11 @@ class RolloutCollector:
             # in-process reward model takes over the physical GPU.
             await self.runtime.offload()
 
-        # self.config is frozen for this batch: resolve the KL coef and the storage
-        # policy once instead of re-parsing the same string keys (and rebuilding the
-        # same policy object) for every rollout in the loop below.
-        kl_reward_coef = float(cfg_get(self.config, "kl_reward_coef", 0.0))
-        trajectory_storage_policy = trajectory_storage_policy_from_cfg(
-            cfg_get(self.config, "trajectory_storage", None),
-        )
+        # self.config already holds these as resolved, typed fields (frozen for the
+        # batch). Read them directly — feeding the typed trajectory_storage policy
+        # back through trajectory_storage_policy_from_cfg raised TypeError.
+        kl_reward_coef = self.config.kl_reward_coef
+        trajectory_storage_policy = self.config.trajectory_storage
         builders = []
         for rollout in unscored:
             context = RolloutBatchBuildContext(
