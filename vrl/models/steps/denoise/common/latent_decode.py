@@ -8,7 +8,7 @@ from typing import Literal
 
 import torch
 
-LatentOutputLayout = Literal["image_bchw", "video_btchw", "video_bcthw"]
+LatentOutputLayout = Literal["image_bchw", "video_btchw"]
 
 
 @dataclass(slots=True)

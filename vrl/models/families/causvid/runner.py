@@ -140,7 +140,6 @@ class CausVidCausalBackend(Protocol):
         timestep: int,
         cache: Any,
         chunk_index: int,
-        finalize_cache: bool,
         geometry: CausVidGeometry,
     ) -> torch.Tensor:
         """Predict one chunk while reading/writing the request-local cache."""
@@ -217,12 +216,10 @@ class CausVidCausalRunner:
         *,
         geometry: CausVidGeometry = OFFICIAL_CAUSVID_GEOMETRY,
         schedule: CausVidSchedule = OFFICIAL_CAUSVID_SCHEDULE,
-        math_dtype: torch.dtype = torch.float32,
     ) -> None:
         self.backend = backend
         self.geometry = geometry
         self.schedule = schedule
-        self.math_dtype = math_dtype
 
     def run(
         self,
@@ -266,7 +263,6 @@ class CausVidCausalRunner:
                         timestep=self.schedule.prediction_timesteps[transition_index],
                         cache=cache,
                         chunk_index=chunk_index,
-                        finalize_cache=False,
                         geometry=self.geometry,
                     )
                     transition_noise = self._transition_noise(
@@ -277,7 +273,7 @@ class CausVidCausalRunner:
                         pred_x0,
                         next_sigma,
                         noise=transition_noise,
-                        math_dtype=self.math_dtype,
+                        math_dtype=torch.float32,
                     )
                     noisy_chunk = transition.next_sample
                     actions.append(noisy_chunk)
@@ -289,7 +285,6 @@ class CausVidCausalRunner:
                     timestep=self.schedule.prediction_timesteps[-1],
                     cache=cache,
                     chunk_index=chunk_index,
-                    finalize_cache=False,
                     geometry=self.geometry,
                 )
                 # The fourth call is not an RL action. Its output is discarded;
@@ -301,7 +296,6 @@ class CausVidCausalRunner:
                     timestep=self.schedule.cache_timestep,
                     cache=cache,
                     chunk_index=chunk_index,
-                    finalize_cache=True,
                     geometry=self.geometry,
                 )
 
@@ -328,7 +322,7 @@ class CausVidCausalRunner:
             torch.tensor(
                 self.schedule.transition_sigmas,
                 device=initial_noise.device,
-                dtype=self.math_dtype,
+                dtype=torch.float32,
             )
             .view(1, 1, -1)
             .expand(batch_size, self.geometry.temporal_chunk_count, -1)

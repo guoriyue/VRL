@@ -69,7 +69,6 @@ class _RecordingBackend:
         timestep: int,
         cache: Any,
         chunk_index: int,
-        finalize_cache: bool,
         geometry: CausVidGeometry,
     ) -> torch.Tensor:
         assert prompt_embeds.shape[0] == BATCH_SIZE
@@ -80,7 +79,7 @@ class _RecordingBackend:
             _CachedCall(
                 chunk_index=chunk_index,
                 timestep=timestep,
-                finalize_cache=finalize_cache,
+                finalize_cache=timestep == OFFICIAL_CAUSVID_SCHEDULE.cache_timestep,
                 cache=cache,
                 input=noisy_chunk.detach().clone(),
                 output=prediction.detach().clone(),

@@ -54,10 +54,14 @@ class RolloutCollector:
         reward_scorer: RewardScorer,
         runtime: GenerationRuntime | None = None,
         lifecycle: RayLifecyclePlan | None = None,
+        trajectory_layout: str | None = None,
     ) -> None:
         self.config = config
         self.request_builder = request_builder
         self.reward_scorer = reward_scorer
+        # Resolved family PolicySemantics.trajectory_layout (source of truth for
+        # multisegment routing), threaded into every RolloutBatchBuildContext.
+        self._trajectory_layout = trajectory_layout
         self._runtime: GenerationRuntime | None = None
         if runtime is not None:
             self.set_runtime(runtime)
@@ -211,6 +215,7 @@ class RolloutCollector:
                 trajectory_storage_policy=trajectory_storage_policy_from_cfg(
                     cfg_get(self.config, "trajectory_storage", None),
                 ),
+                trajectory_layout=self._trajectory_layout,
             )
             builders.append(TrajectoryRolloutBatchBuilder(rollout.output, context))
 
@@ -338,6 +343,7 @@ def build_rollout_collector(
         reward_scorer=RewardScorer(reward_fn),
         runtime=runtime,
         lifecycle=lifecycle,
+        trajectory_layout=entry.policy_semantics.trajectory_layout,
     )
 
 

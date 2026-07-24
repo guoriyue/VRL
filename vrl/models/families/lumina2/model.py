@@ -8,8 +8,8 @@ The generation helper flow mirrors every diffusion family:
 Lumina2 specifics vs SD3 (the reference family):
 - Single Gemma-2 text encoder returning sequence embeds + attention mask (no
   pooled). The encoder prepends a system prompt ("... <Prompt Start> ...");
-  passing ``system_prompt=None`` keeps the pipeline's default template, so RL
-  and diffusers-parity runs agree without extra plumbing.
+  VRL always passes ``system_prompt=None``, keeping the pipeline's default
+  template, so RL and diffusers-parity runs agree without extra plumbing.
 - The transformer runs on REVERSED normalized time: Lumina uses t=0 as noise
   and t=1 as the image, so ``forward_step`` feeds
   ``1 - t / num_train_timesteps`` (the scheduler itself still steps on raw t).
@@ -23,8 +23,7 @@ Lumina2 specifics vs SD3 (the reference family):
   (``cfg_normalization``) reproduced in ``finalize_noise_pred``.
 - ``cfg_trunc_ratio`` (late-step CFG truncation) is NOT supported: a
   step-index-dependent CFG rule cannot be recomputed on the replay path
-  (the eval forward sees one packed step, not the original index), so
-  ``prepare_sampling`` fails loud on non-default values.
+  (the eval forward sees one packed step, not the original index).
 """
 
 from __future__ import annotations
@@ -163,8 +162,8 @@ class Lumina2Model(LoraModelMixin, DiffusersPipelineModelBase, DiffusionBackbone
     ) -> dict[str, Any]:
         """Encode prompt via Gemma-2 (sequence embeds + attention mask, no pooled).
 
-        ``system_prompt`` defaults to None, which lets the pipeline apply its
-        own default template ("<system> <Prompt Start> <prompt>").
+        VRL always passes ``system_prompt=None``, which lets the pipeline apply
+        its own default template ("<system> <Prompt Start> <prompt>").
         """
         max_seq = kwargs.get("max_sequence_length", 256)
         guidance_scale = kwargs.get("guidance_scale", 4.0)
@@ -182,7 +181,8 @@ class Lumina2Model(LoraModelMixin, DiffusersPipelineModelBase, DiffusionBackbone
             negative_prompt=neg,
             num_images_per_prompt=1,
             device=self.device,
-            system_prompt=kwargs.get("system_prompt"),
+            # VRL always uses the pipeline's default system-prompt template.
+            system_prompt=None,
             max_sequence_length=max_seq,
         )
 
@@ -211,13 +211,6 @@ class Lumina2Model(LoraModelMixin, DiffusersPipelineModelBase, DiffusionBackbone
         **kwargs: Any,
     ) -> Lumina2SamplingState:
         """Build the per-request SamplingState for a denoise loop."""
-        cfg_trunc_ratio = float(kwargs.get("cfg_trunc_ratio", 1.0))
-        if cfg_trunc_ratio != 1.0:
-            raise ValueError(
-                "Lumina2 cfg_trunc_ratio is not supported in RL rollouts: a "
-                "step-dependent CFG rule cannot be recomputed on the replay "
-                "path. Leave it at 1.0 (CFG on every step).",
-            )
         pipe = self.pipeline
         device = self.device
 

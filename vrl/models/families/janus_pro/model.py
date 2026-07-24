@@ -470,7 +470,6 @@ class JanusProModel(ARModelBase):
         temperature: float,
         image_token_num: int,
         max_reflect_len: int,
-        task_stages: tuple[str, ...] = JANUS_R1_SEGMENTS,
         uncond_input_ids: torch.Tensor | None = None,
         uncond_attention_mask: torch.Tensor | None = None,
         image_size: int = JANUS_IMAGE_PIXEL_SIZE,
@@ -486,17 +485,11 @@ class JanusProModel(ARModelBase):
         of truth.
         """
 
-        stages = tuple(task_stages)
-        unknown = sorted(set(stages) - set(JANUS_R1_SEGMENTS))
-        if unknown:
-            raise ValueError(f"unknown Janus-Pro-R1 task stages: {unknown}")
-        if "initial_image" not in stages:
-            raise ValueError("generate_with_refine requires initial_image stage")
         if max_reflect_len < 1:
             raise ValueError("max_reflect_len must be >= 1")
         temperature = require_positive_temperature(temperature)
 
-        mode = (refine_mode or self.config.r1_refine_mode).lower()
+        mode = (refine_mode or "selfcheck").lower()
         if mode not in {"selfcheck", "always", "never"}:
             raise ValueError("refine_mode must be one of: 'selfcheck', 'always', 'never'")
 
@@ -563,33 +556,16 @@ class JanusProModel(ARModelBase):
             dim=1,
         )
 
-        if "selfcheck_text" in stages:
-            text_ids, text_logps, text_mask, selfcheck = self._sample_selfcheck_text(
-                selfcheck_prompt_embeds,
-                selfcheck_prompt_mask,
-                max_new_tokens=max_reflect_len,
-                temperature=float(temperature),
-                yes_token_id=yes_token_id,
-                no_token_id=no_token_id,
-                eos_token_id=eos_token_id,
-                pad_token_id=pad_token_id,
-            )
-        else:
-            batch_size = prompt_input_ids.shape[0]
-            text_ids = torch.full(
-                (batch_size, max_reflect_len),
-                pad_token_id,
-                dtype=torch.long,
-                device=self.device,
-            )
-            text_logps = torch.zeros(
-                batch_size,
-                max_reflect_len,
-                dtype=torch.float32,
-                device=self.device,
-            )
-            text_mask = torch.zeros_like(text_logps)
-            selfcheck = torch.zeros(batch_size, dtype=torch.bool, device=self.device)
+        text_ids, text_logps, text_mask, selfcheck = self._sample_selfcheck_text(
+            selfcheck_prompt_embeds,
+            selfcheck_prompt_mask,
+            max_new_tokens=max_reflect_len,
+            temperature=float(temperature),
+            yes_token_id=yes_token_id,
+            no_token_id=no_token_id,
+            eos_token_id=eos_token_id,
+            pad_token_id=pad_token_id,
+        )
 
         regen_prefix_ids = self._repeat_text_ids(
             JANUS_R1_REGEN_PROMPT,
@@ -644,7 +620,7 @@ class JanusProModel(ARModelBase):
             dim=1,
         )
 
-        if "final_image" in stages and mode != "never":
+        if mode != "never":
             refined_ids, refined_logps = sample_image(
                 final_cond_embeds,
                 final_uncond_embeds,
@@ -663,7 +639,7 @@ class JanusProModel(ARModelBase):
             refined_logps = initial_logps
             refined_image = initial_image
 
-        if "final_image" not in stages or mode == "never":
+        if mode == "never":
             use_refined = torch.zeros_like(selfcheck, dtype=torch.bool)
         elif mode == "always":
             use_refined = torch.ones_like(selfcheck, dtype=torch.bool)
@@ -748,7 +724,6 @@ class JanusProModel(ARModelBase):
                 # policy choices in its first-step ``rollout_context`` record.
                 "guidance_scale": float(guidance_scale),
                 "refine_mode": mode,
-                "task_stages": stages,
             },
         }
 

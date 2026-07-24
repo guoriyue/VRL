@@ -20,7 +20,6 @@ def test_install_and_get_round_trip() -> None:
     assert slots.has(1) and slots.has(2)
     assert not slots.has(3)
     assert slots.get(1)["transformer.weight"] == "v1"
-    assert slots.versions() == [1, 2]
 
 
 def test_eviction_keeps_most_recent_versions() -> None:
@@ -29,7 +28,6 @@ def test_eviction_keeps_most_recent_versions() -> None:
         slots.install(version, _state(f"v{version}"))
 
     # Oldest (v1) evicted; the two most recent retained.
-    assert slots.versions() == [2, 3]
     assert not slots.has(1)
     assert slots.has(2) and slots.has(3)
 
@@ -48,7 +46,7 @@ def test_none_payload_aliases_newest_slot() -> None:
 def test_none_payload_with_no_prior_slot_is_noop() -> None:
     slots = TrainableStateSlots()
     slots.install(1, None)
-    assert slots.versions() == []
+    assert not slots.has(1)
 
 
 def test_max_retained_must_be_positive() -> None:

@@ -17,10 +17,10 @@ SANA specifics vs SD3 (the reference family):
   (``batched_cfg``, like SD3 — unlike Qwen-Image's separate branches).
 - The transformer multiplies the timestep by ``config.timestep_scale``
   (1.0 on current checkpoints; respected for parity with SanaPipeline).
-- ``complex_human_instruction`` (SANA's CHI prompt template) is exposed as a
-  sampling kwarg and defaults to OFF: RL datasets control their prompts.
+- ``complex_human_instruction`` (SANA's CHI prompt template) is always
+  disabled: VRL fixes it to None so RL datasets control their prompts.
   diffusers' ``SanaPipeline.__call__`` defaults it ON, so GPU parity runs must
-  pass the same CHI value on both sides.
+  pass the same (disabled) CHI value on both sides.
 """
 
 from __future__ import annotations
@@ -215,7 +215,10 @@ class SanaModel(LoraModelMixin, DiffusersPipelineModelBase, DiffusionBackboneRun
             num_images_per_prompt=1,
             device=self.device,
             max_sequence_length=max_seq,
-            complex_human_instruction=kwargs.get("complex_human_instruction"),
+            # VRL intentionally disables SANA's CHI template so RL datasets own
+            # their prompts. Pin to None so an upstream default flip cannot
+            # silently re-enable it.
+            complex_human_instruction=None,
         )
 
         td = self.transformer.dtype

@@ -143,9 +143,6 @@ class EchoModel(LoraModelMixin, DiffusionModelBase):
         self.transformer = transformer
         self._echo.model = transformer
 
-    def _lora_transformer(self) -> Any:
-        return self.transformer
-
     def _lora_dtype(self, build: ModelBuild) -> Any:
         del build
         return self._dtype

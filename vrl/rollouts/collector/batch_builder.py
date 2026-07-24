@@ -31,6 +31,10 @@ class RolloutBatchBuildContext:
     trajectory_storage_policy: TrajectoryStoragePolicy = field(
         default_factory=TrajectoryStoragePolicy,
     )
+    # Resolved family PolicySemantics.trajectory_layout, threaded from the
+    # collector's ModelFamilyEntry. "multisegment_token" selects the per-segment
+    # AR pack path; None falls back to the generic all-categorical heuristic.
+    trajectory_layout: str | None = None
 
 
 class TrajectoryRolloutBatchBuilder:
@@ -226,7 +230,7 @@ class TrajectoryRolloutBatchBuilder:
         self,
         trainable: list[TrajectorySegment],
     ) -> bool:
-        if self.trajectory.family == "janus_pro_r1" or self.trajectory.task == "ar_t2i_r1":
+        if self.context.trajectory_layout == "multisegment_token":
             return True
         return len(trainable) > 1 and all(
             segment.distribution == "categorical" for segment in trainable

@@ -104,7 +104,6 @@ def _model() -> JanusProModel:
         processor=_Processor(),
         device="cpu",
         image_token_num=4,
-        r1_refine_mode="selfcheck",
     )
 
 
@@ -273,7 +272,6 @@ def test_generate_with_refine_returns_three_segments_and_selects_final_image() -
         "temperature": 0.9,
         "guidance_scale": 5.0,
         "refine_mode": "selfcheck",
-        "task_stages": JANUS_R1_SEGMENTS,
     }
     assert set(out["segments"]) == set(JANUS_R1_SEGMENTS)
     assert out["segments"]["initial_image"]["token_ids"].shape == (2, 4)
@@ -321,7 +319,6 @@ class _ExecutorModel:
         self.config = SimpleNamespace(
             guidance_scale=6.25,
             temperature=0.45,
-            r1_refine_mode="selfcheck",
         )
         self.sampling_calls: list[tuple[float, float]] = []
 
@@ -334,7 +331,6 @@ class _ExecutorModel:
         temperature: float,
         image_token_num: int,
         max_reflect_len: int,
-        task_stages: tuple[str, ...],
         uncond_input_ids: torch.Tensor,
         uncond_attention_mask: torch.Tensor,
         image_size: int,
@@ -345,7 +341,6 @@ class _ExecutorModel:
             guidance_scale,
             temperature,
             max_reflect_len,
-            task_stages,
             uncond_input_ids,
             uncond_attention_mask,
             image_size,

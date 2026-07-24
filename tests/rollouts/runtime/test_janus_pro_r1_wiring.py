@@ -133,7 +133,11 @@ def test_r1_trajectory_batch_keeps_segments_separate() -> None:
 
     packed = TrajectoryRolloutBatchBuilder(
         output,
-        RolloutBatchBuildContext(metadata={}, device="cpu"),
+        RolloutBatchBuildContext(
+            metadata={},
+            device="cpu",
+            trajectory_layout="multisegment_token",
+        ),
     ).build(torch.tensor([1.0, 2.0]))
 
     assert "r1_segments" not in packed.extras

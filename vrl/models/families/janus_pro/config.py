@@ -57,7 +57,6 @@ class JanusProConfig:
     guidance_scale: float = 5.0
     temperature: float = 1.0
     image_token_num: int = JANUS_IMAGE_TOKEN_NUM
-    r1_refine_mode: str = "selfcheck"  # "selfcheck" | "always" | "never"
 
     # Misc
     trust_remote_code: bool = True

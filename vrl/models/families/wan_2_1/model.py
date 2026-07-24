@@ -645,7 +645,7 @@ class WanT2VDiffusersModel(
         negative_prompt_embeds = encoded.get("negative_prompt_embeds")
 
         guidance_scale = request.guidance_scale
-        guidance_scale_2 = _resolve_guidance_scale_2(request, guidance_scale, self._boundary_ratio)
+        guidance_scale_2 = _resolve_guidance_scale_2(guidance_scale, self._boundary_ratio)
         do_cfg = _uses_cfg(guidance_scale, guidance_scale_2)
 
         pipe.scheduler.set_timesteps(request.num_steps, device=device)
@@ -833,7 +833,6 @@ class WanT2VReplayModel(ReplayRolloutStubs, WanT2VDiffusersModel):
         transformer_2: Any = None,
         boundary_ratio: float | None = None,
         trainable_transformers: Any = None,
-        expert_lifecycle_profiling: bool = False,
     ) -> None:
         DiffusionModelBase.__init__(self)
         self.transformer = transformer
@@ -845,7 +844,7 @@ class WanT2VReplayModel(ReplayRolloutStubs, WanT2VDiffusersModel):
             trainable_transformers,
             dual_stage=boundary_ratio is not None,
         )
-        self._expert_lifecycle_profiling = bool(expert_lifecycle_profiling)
+        self._expert_lifecycle_profiling = False
         self._last_expert_name = None
         for module in self._wan_transformers().values():
             module.requires_grad_(False)
@@ -1051,7 +1050,7 @@ class WanI2VDiffusersModel(WanT2VDiffusersModel):
             raise ValueError("Wan I2V sampling requires a reference_image")
 
         guidance_scale = request.guidance_scale
-        guidance_scale_2 = _resolve_guidance_scale_2(request, guidance_scale, self._boundary_ratio)
+        guidance_scale_2 = _resolve_guidance_scale_2(guidance_scale, self._boundary_ratio)
         do_cfg = _uses_cfg(guidance_scale, guidance_scale_2)
 
         pipe.scheduler.set_timesteps(request.num_steps, device=device)
@@ -1355,16 +1354,15 @@ def _enable_wan_pipeline_offload(
 
 
 def _resolve_guidance_scale_2(
-    request: VideoGenerationRequest,
     guidance_scale: float,
     boundary_ratio: float | None,
 ) -> float | None:
+    # Wan2.2 dual-expert stages share a single guidance scale: the second
+    # (low-noise) expert mirrors the first. No config/request producer sets a
+    # per-expert override, so the second stage always mirrors ``guidance_scale``.
     if boundary_ratio is None:
         return None
-    raw = request.extra.get("guidance_scale_2") if request.extra else None
-    if raw is None:
-        return guidance_scale
-    return float(raw)
+    return guidance_scale
 
 
 def _uses_cfg(guidance_scale: float, guidance_scale_2: float | None) -> bool:

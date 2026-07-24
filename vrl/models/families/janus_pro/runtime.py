@@ -280,11 +280,10 @@ class JanusProR1ChunkExecutor(JanusProChunkExecutor):
                 ),
                 image_token_num=params.image_token_num,
                 max_reflect_len=int(sampling.get("max_reflect_len", 80)),
-                task_stages=_parse_task_stages(sampling.get("task_stages")),
                 uncond_input_ids=uncond_ids,
                 uncond_attention_mask=uncond_mask,
                 image_size=params.image_size,
-                refine_mode=_resolve_refine_mode(sampling, self.model),
+                refine_mode=_resolve_refine_mode(sampling),
                 image_sampler=self._r1_image_sampler(
                     request=request,
                     scheduler_batch_size=scheduler_batch_size,
@@ -397,25 +396,15 @@ class JanusProR1ChunkGatherer:
         )
 
 
-def _parse_task_stages(value: Any) -> tuple[str, ...]:
-    if value is None:
-        return JANUS_R1_SEGMENTS
-    if isinstance(value, str):
-        return tuple(part.strip() for part in value.split(",") if part.strip())
-    return tuple(str(part) for part in value)
-
-
-def _resolve_refine_mode(sampling: dict[str, Any], model: Any) -> str:
+def _resolve_refine_mode(sampling: dict[str, Any]) -> str:
     policy = sampling.get("final_image_policy")
     if policy == "always_generate":
         return "always"
     if policy == "use_selfcheck":
         return "selfcheck"
-    return str(
-        sampling.get(
-            "refine_mode",
-            getattr(getattr(model, "config", None), "r1_refine_mode", "selfcheck"),
-        )
+    raise ValueError(
+        "janus_pro_r1 requires rollout.final_image_policy to be "
+        f"'always_generate' or 'use_selfcheck', got {policy!r}",
     )
 
 

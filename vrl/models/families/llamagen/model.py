@@ -150,18 +150,6 @@ class LlamaGenModel(ARModelBase):
             return inner.model
         return m
 
-    def _lm_trunk(self) -> nn.Module:
-        """Seam hook: the AR language-model trunk.
-
-        DOCUMENTED DEVIATION from the janus/nextstep contract: the vendored
-        Transformer is NOT an HF-protocol module (no ``inputs_embeds`` /
-        ``past_key_values`` forward), so the shared attention backends in
-        ``vrl.nn.modules.ar_attention_backends`` cannot drive it.
-        ``LlamaGenChunkExecutor`` overrides ``_ar_runner`` and the family
-        runner drives the vendored static KV cache directly.
-        """
-        return self._gpt_trunk()
-
     @property
     def language_model(self) -> nn.Module:
         """The (possibly PEFT-wrapped) GPT — ``ARModelBase.disable_adapter`` target."""

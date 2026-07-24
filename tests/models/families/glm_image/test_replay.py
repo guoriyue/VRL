@@ -13,7 +13,6 @@ from tests.models.families.glm_image.fixtures import (
 from vrl.generation import GenerationRequest, GenerationSampleRow
 from vrl.models.families.glm_image.model import glm_image_token_num
 from vrl.models.interfaces import ReplayResult
-from vrl.models.utils import count_trainable_params
 from vrl.rollouts.batch import RolloutBatch
 from vrl.trajectory import TrajectoryResolver, build_ar_discrete_trajectory
 
@@ -182,7 +181,7 @@ def test_replay_model_replays_without_vision_tower_or_decode_stack() -> None:
 def test_lora_wrap_keeps_replay_and_adapter_surfaces_working() -> None:
     model = build_tiny_glm_image_model(use_lora=True)
 
-    assert count_trainable_params(model) > 0
+    assert sum(p.numel() for p in model.parameters() if p.requires_grad) > 0
 
     batch = _discrete_batch()
     logits = model.replay_forward(batch).segments["image_tokens"].values["logits"]

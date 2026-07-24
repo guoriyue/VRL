@@ -116,15 +116,11 @@ class SD3_5Model(LoraModelMixin, DiffusersPipelineModelBase, DiffusionBackboneRu
         device: Any = None,
     ) -> None:
         super().__init__(pipeline=pipeline, device=device)
-        self.uses_vrl_attention_processor = install_sd3_joint_attention_processor(
-            self.transformer,
-        )
+        install_sd3_joint_attention_processor(self.transformer)
 
     def _set_transformer(self, transformer: Any) -> None:
         super()._set_transformer(transformer)
-        self.uses_vrl_attention_processor = install_sd3_joint_attention_processor(
-            transformer,
-        )
+        install_sd3_joint_attention_processor(transformer)
 
     # -- backend ownership (called by runtime, not by collectors) -------
 
@@ -417,15 +413,11 @@ class SD3_5ReplayModel(DiffusersReplayModelBase, SD3_5Model):
             scheduler=scheduler,
             device=device,
         )
-        self.uses_vrl_attention_processor = install_sd3_joint_attention_processor(
-            transformer,
-        )
+        install_sd3_joint_attention_processor(transformer)
 
     def _set_transformer(self, transformer: Any) -> None:
         self.transformer = transformer
-        self.uses_vrl_attention_processor = install_sd3_joint_attention_processor(
-            transformer,
-        )
+        install_sd3_joint_attention_processor(transformer)
 
 
 __all__ = ["SD3SamplingState", "SD3_5Model", "SD3_5ReplayModel"]

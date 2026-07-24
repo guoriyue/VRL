@@ -230,7 +230,7 @@ def build_stub_janus_model(
     """Wrap :func:`build_stub_janus_mmgpt` into a real ``JanusProModel``.
 
     Replaces each test's local ``_model()`` / ``_build_stub_model()`` helper. Extra
-    ``config_kwargs`` (e.g. ``image_token_num``, ``r1_refine_mode``, ``device``) flow
+    ``config_kwargs`` (e.g. ``image_token_num``, ``device``) flow
     straight into ``JanusProConfig``; ``use_lora`` defaults off so the stub trunk is
     not PEFT-wrapped.
     """

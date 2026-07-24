@@ -50,9 +50,6 @@ from vrl.models.interfaces import (
 )
 from vrl.models.steps.token.base import ARModelBase, ARReplayRolloutStubs
 from vrl.models.steps.token.lora import install_token_lora_adapter
-from vrl.utils.logging import init_logger
-
-logger = init_logger(__name__)
 
 # ---------------------------------------------------------------------------
 # Wrapper

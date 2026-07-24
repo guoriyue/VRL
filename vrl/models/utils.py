@@ -144,21 +144,12 @@ class TrainableStateSlots:
     def get(self, version: int) -> Mapping[str, Any]:
         return self._slots[int(version)]
 
-    def versions(self) -> list[int]:
-        return sorted(self._slots)
-
     def _evict(self) -> None:
         # Keep the most recent ``max_retained`` versions. A request older than the
         # window loses its slot and is reported as a stale-slot result rather than
         # silently mixing weights.
         while len(self._slots) > self.max_retained:
             del self._slots[min(self._slots)]
-
-
-def count_trainable_params(module: Any) -> int:
-    """Total number of trainable (``requires_grad``) parameters in ``module``."""
-
-    return sum(p.numel() for p in module.parameters() if p.requires_grad)
 
 
 def disable_adapter_on(module: Any) -> contextlib.AbstractContextManager[None]:

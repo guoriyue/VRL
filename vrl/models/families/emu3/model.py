@@ -659,10 +659,6 @@ class Emu3ReplayModel(ARReplayRolloutStubs, Emu3Model):
     def vq_model(self) -> nn.Module:
         raise RuntimeError("Emu3ReplayModel does not own a VQ decoder")
 
-    @property
-    def text_config(self) -> Any:
-        return self.emu3.config.text_config
-
 
 # ---------------------------------------------------------------------------
 # Loaders — lazy imports so this module imports without model downloads.

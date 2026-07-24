@@ -49,10 +49,9 @@ class ReplaySegmentResult:
         """Per-token log-probs for this segment.
 
         Families either store them directly (``log_probs``) or store logits
-        under a modality-named key (``logits`` / ``image_logits`` /
-        ``text_logits``). That field-name knowledge lives here with the payload
-        contract, so consumers (evaluators) do not switch on payload keys and a
-        new modality only touches this method.
+        under the ``logits`` key. That field-name knowledge lives here with the
+        payload contract, so consumers (evaluators) do not switch on payload
+        keys and a new modality only touches this method.
 
         ``temperature`` is the rollout sampling temperature (recorded in the
         rollout context). It only applies on the logits path: rollout scoring
@@ -64,13 +63,7 @@ class ReplaySegmentResult:
         if direct is not None:
             return direct.float()
 
-        logits = self.values.get("logits")
-        if logits is None:
-            logits = self.values.get("image_logits")
-        if logits is None:
-            logits = self.values.get("text_logits")
-        if logits is None:
-            logits = self.require_value("logits")  # raises with available keys
+        logits = self.require_value("logits")  # raises with available keys
 
         if token_ids is None:
             token_ids = self.require_value("token_ids")

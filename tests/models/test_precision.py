@@ -78,12 +78,15 @@ def test_apply_float32_precision_uses_legacy_bool_fallback(
         ("bf16", False, False),
     ],
 )
-def test_forward_autocast_applies_only_supported_cpu_modes(
+def test_model_autocast_applies_only_supported_cpu_modes(
     dtype: str,
     enabled: bool,
     expected_enabled: bool,
 ) -> None:
-    with precision.forward_autocast(dtype, torch.device("cpu"), enabled=enabled):
+    model = SimpleNamespace(
+        precision=RolePrecision(dtype, "ieee", outer_autocast=enabled),
+    )
+    with precision.model_autocast(model, torch.device("cpu")):
         assert torch.is_autocast_enabled("cpu") is expected_enabled
 
 

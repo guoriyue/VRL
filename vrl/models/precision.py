@@ -24,17 +24,17 @@ def model_precision(model: Any) -> RolePrecision:
     return precision
 
 
-def forward_autocast(
-    dtype: str,
+def model_autocast(
+    model: Any,
     device: torch.device | str,
-    *,
-    enabled: bool = True,
 ) -> AbstractContextManager[Any]:
-    """Return the outer transformer-autocast context for one role dtype."""
+    """Apply a model's resolved role dtype and outer-autocast policy."""
 
     import torch
 
-    if not enabled or dtype == "fp32":
+    precision = model_precision(model)
+    dtype = precision.dtype
+    if not precision.outer_autocast or dtype == "fp32":
         return contextlib.nullcontext()
     if dtype not in ("fp16", "bf16"):
         raise ValueError(f"unsupported autocast dtype: {dtype!r}")
@@ -43,20 +43,6 @@ def forward_autocast(
         return contextlib.nullcontext()
     torch_dtype = torch.float16 if dtype == "fp16" else torch.bfloat16
     return torch.amp.autocast(device_type=device_type, dtype=torch_dtype)
-
-
-def model_autocast(
-    model: Any,
-    device: torch.device | str,
-) -> AbstractContextManager[Any]:
-    """Apply a model's resolved role dtype and outer-autocast policy."""
-
-    precision = model_precision(model)
-    return forward_autocast(
-        precision.dtype,
-        device,
-        enabled=precision.outer_autocast,
-    )
 
 
 def apply_float32_precision(mode: Float32Precision) -> None:
@@ -103,7 +89,6 @@ def float32_precision_state() -> dict[str, str]:
 __all__ = [
     "apply_float32_precision",
     "float32_precision_state",
-    "forward_autocast",
     "model_autocast",
     "model_precision",
 ]

@@ -72,10 +72,6 @@ def _forward_step_with_autocast(fn: Any) -> Any:
 class DiffusionModelBase(nn.Module, ABC):
     """Shared model base for diffusion families on the RL path."""
 
-    async def load(self) -> None:
-        """Load heavy modules. Default no-op for adapters constructed eagerly."""
-        return None
-
     def __init_subclass__(cls, **kwargs: Any) -> None:
         """Run every concrete ``forward_step`` under its role precision.
 
@@ -84,7 +80,7 @@ class DiffusionModelBase(nn.Module, ABC):
         replay (``replay_forward`` and
         ``replay_forward_with_latents`` both funnel through ``self.forward``),
         and direct script calls all receive the same boundary without wrapping
-        each call site in ``forward_autocast`` by hand.
+        each call site in ``model_autocast`` by hand.
         """
 
         super().__init_subclass__(**kwargs)

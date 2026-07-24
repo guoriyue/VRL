@@ -21,7 +21,6 @@ class AnimaLLMAdapter(nn.Module):
                     source_dim=1024,
                     model_dim=1024,
                     num_heads=16,
-                    use_self_attn=True,
                 )
                 for _ in range(6)
             ],
@@ -57,13 +56,10 @@ class TransformerBlock(nn.Module):
         source_dim: int,
         model_dim: int,
         num_heads: int,
-        use_self_attn: bool,
     ) -> None:
         super().__init__()
-        self.use_self_attn = use_self_attn
-        if self.use_self_attn:
-            self.norm_self_attn = nn.RMSNorm(model_dim, eps=1e-6)
-            self.self_attn = Attention(model_dim, model_dim, num_heads, model_dim // num_heads)
+        self.norm_self_attn = nn.RMSNorm(model_dim, eps=1e-6)
+        self.self_attn = Attention(model_dim, model_dim, num_heads, model_dim // num_heads)
         self.norm_cross_attn = nn.RMSNorm(model_dim, eps=1e-6)
         self.cross_attn = Attention(model_dim, source_dim, num_heads, model_dim // num_heads)
         self.norm_mlp = nn.RMSNorm(model_dim, eps=1e-6)
@@ -81,16 +77,15 @@ class TransformerBlock(nn.Module):
         position_embeddings: tuple[torch.Tensor, torch.Tensor],
         position_embeddings_context: tuple[torch.Tensor, torch.Tensor],
     ) -> torch.Tensor:
-        if self.use_self_attn:
-            normed = self.norm_self_attn(x)
-            # Self-attention keys are x itself, so they take the target-side
-            # rotary table; the qwen-side table only applies to cross-attn keys
-            # (the two tokenizers can disagree on sequence length).
-            x = x + self.self_attn(
-                normed,
-                position_embeddings=position_embeddings,
-                position_embeddings_context=position_embeddings,
-            )
+        normed = self.norm_self_attn(x)
+        # Self-attention keys are x itself, so they take the target-side
+        # rotary table; the qwen-side table only applies to cross-attn keys
+        # (the two tokenizers can disagree on sequence length).
+        x = x + self.self_attn(
+            normed,
+            position_embeddings=position_embeddings,
+            position_embeddings_context=position_embeddings,
+        )
         normed = self.norm_cross_attn(x)
         x = x + self.cross_attn(
             normed,

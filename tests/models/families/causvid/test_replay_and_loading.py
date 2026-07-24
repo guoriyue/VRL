@@ -127,7 +127,6 @@ class _ReplayParityBackend:
         timestep: int,
         cache: dict[str, Any],
         chunk_index: int,
-        finalize_cache: bool,
         geometry: CausVidGeometry,
     ) -> torch.Tensor:
         del prompt_embeds, chunk_index, geometry
@@ -138,7 +137,7 @@ class _ReplayParityBackend:
         prediction = (
             noisy_chunk * self.transformer.weight + prefix_term + float(timestep) / 10_000.0
         )
-        if finalize_cache:
+        if timestep == OFFICIAL_CAUSVID_SCHEDULE.cache_timestep:
             cache["finalized"].append(noisy_chunk.detach().clone())
         return prediction
 

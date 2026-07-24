@@ -184,10 +184,8 @@ class _OfficialCausVidBackend:
         timestep: int,
         cache: CausVidCache,
         chunk_index: int,
-        finalize_cache: bool,
         geometry: CausVidGeometry,
     ) -> torch.Tensor:
-        del finalize_cache
         batch_size, chunk_frames = int(noisy_chunk.shape[0]), int(noisy_chunk.shape[1])
         timestep_tensor = torch.full(
             (batch_size, chunk_frames),
