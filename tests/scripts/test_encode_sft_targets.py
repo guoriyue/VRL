@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import pytest
 import torch
+from omegaconf import OmegaConf
 
+from vrl.scripts.denoise import encode_targets
 from vrl.scripts.denoise.encode_targets import (
     _resolve_target_videos,
     _video_at_sampling_geometry,
@@ -72,3 +74,34 @@ def test_video_geometry_resizes_without_changing_frame_count(monkeypatch) -> Non
     video = _video_at_sampling_geometry("target.mp4", height=4, width=6, num_frames=3)
 
     assert video.shape == (1, 3, 3, 4, 6)
+
+
+def test_entrypoint_rejects_malformed_model_before_registry_model_build(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    import vrl.families.registry as family_registry
+    from vrl.config import loading as config_loading
+
+    monkeypatch.setattr(
+        config_loading,
+        "load_config",
+        lambda *_args, **_kwargs: OmegaConf.create(
+            {"model": ["not", "a", "mapping"]},
+        ),
+    )
+    monkeypatch.setattr(
+        family_registry,
+        "get_model_family_entry",
+        lambda _family: pytest.fail("registry model build started before config validation"),
+    )
+
+    with pytest.raises(ValueError, match="model must be a mapping"):
+        encode_targets.main(
+            [
+                "--experiment",
+                "invalid",
+                "--out",
+                str(tmp_path / "latents.pt"),
+            ],
+        )

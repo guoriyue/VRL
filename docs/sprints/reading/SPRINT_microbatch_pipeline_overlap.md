@@ -68,10 +68,11 @@ microbatch async 会把两个问题混在一起：
 
 这些仍然属于 sync mini/microbatch 主线，继续由已完成 sprint 维护：
 
-- `rollout.rollout_batch_size` 是 optimizer target prompt conditions。
-- `rollout.microbatch_size` 是每次同步 collect/backward/release 的 prompt 条件数。
-- `actor.gradient_accumulation_steps` 是派生/兼容视图，不是另一个手填 batch target。
-- `rollout.sample_batch_size` 控制同 prompt 内 sample chunk，生成和 replay/backward 共用。
+- `rollout.prompts_per_batch` 是 optimizer target prompt conditions。
+- `actor.microbatch_size` 是每次同步 collect/backward/release 的 prompt 条件数。
+- `actor.gradient_accumulation_steps` 是同一 geometry 的 count 输入，不是另一个 batch target。
+- `rollout.samples_per_chunk` 控制生成侧 sample chunk；
+  `actor.replay_samples_per_chunk` 独立控制 replay/backward sample chunk。
 - 每个 prompt group 必须完整包含 `n_samples_per_prompt` 个样本，不能拆散 GRPO/NFT group。
 - `finish_optimizer_update()` 只在完整 target batch 后调用一次。
 - reward / advantage / phase metrics 聚合后仍然一行代表一个 optimizer update，不是一行一个 microbatch。

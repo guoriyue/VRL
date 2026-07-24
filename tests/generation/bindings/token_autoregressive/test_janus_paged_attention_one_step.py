@@ -7,12 +7,13 @@ from dataclasses import dataclass
 from types import SimpleNamespace
 from typing import Any
 
+import pytest
 import torch
 import torch.nn as nn
 
 from tests.models.steps.token.fixtures import RecordingHead, build_stub_janus_model
 from vrl.generation.composition.token_autoregressive.token_loop import TokenAutoregressiveLoop
-from vrl.generation.types import GenerationRequest, GenerationSampleRow
+from vrl.generation.types import GenerationRequest
 from vrl.models.families.janus_pro.model import (
     JANUS_IMAGE_VOCAB_SIZE,
     JanusProModel,
@@ -120,12 +121,7 @@ def test_janus_runner_can_drive_one_paged_attention_image_step() -> None:
     backend = _RecordingPagedBackend()
 
     TokenAutoregressiveLoop(
-        request=_request(),
-        sample_rows=_rows(batch_size=2),
         runner=JanusProARModelRunner(model, attention_backend=backend),
-        max_new_tokens=2,
-        tokenizer_key="janus_pro",
-        dtype="float32",
         scheduler_batch_size=2,
         init_args=_prompt_tensors(),
         init_kwargs={"image_token_num": 2},
@@ -149,6 +145,36 @@ def test_janus_runner_can_drive_one_paged_attention_image_step() -> None:
         second_logits_hidden[:, 0, 0],
         torch.tensor([12.0, 12.0, 12.0, 12.0]),
     )
+
+
+def test_janus_none_image_token_count_uses_model_default() -> None:
+    model = _model()
+    backend = _RecordingPagedBackend()
+
+    init = JanusProARModelRunner(model, attention_backend=backend).init_token(
+        *_prompt_tensors(),
+        image_token_num=None,
+    )
+
+    assert init.step_count == model.config.image_token_num
+    assert init.state.total_token_num == model.config.image_token_num
+    assert [request.metadata["image_token_num"] for request in backend.prefill_requests] == [
+        model.config.image_token_num,
+        model.config.image_token_num,
+    ]
+
+
+def test_janus_zero_image_token_count_fails_before_prefill() -> None:
+    backend = _RecordingPagedBackend()
+    runner = JanusProARModelRunner(_model(), attention_backend=backend)
+
+    with pytest.raises(ValueError, match="image_token_num must be >= 1"):
+        runner.init_token(
+            *_prompt_tensors(),
+            image_token_num=0,
+        )
+
+    assert backend.prefill_requests == []
 
 
 def test_janus_runtime_uses_vllm_paged_attention_by_default(monkeypatch) -> None:
@@ -212,20 +238,3 @@ def _request() -> GenerationRequest:
         inputs=["test prompt"],
         samples_per_prompt=2,
     )
-
-
-def _rows(*, batch_size: int) -> list[GenerationSampleRow]:
-    return [
-        GenerationSampleRow(
-            prompt_index=0,
-            sample_index=index,
-            prompt="test prompt",
-            prompt_id="prompt-0",
-            group_id="group-0",
-            sample_id=f"sample-{index}",
-            trajectory_id=f"trajectory-{index}",
-            seed=None,
-            metadata={},
-        )
-        for index in range(batch_size)
-    ]

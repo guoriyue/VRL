@@ -57,7 +57,6 @@ class DiffusionChunkGatherer:
             raise ValueError("DiffusionChunkResult.context must be non-empty")
 
         rows = list(sample_rows)
-        prompts = list(request.prompts)
         trajectory = build_diffusion_trajectory(
             request=request,
             sample_rows=rows,
@@ -74,7 +73,6 @@ class DiffusionChunkGatherer:
             request_id=request.request_id,
             family=request.family,
             task=request.task,
-            prompts=prompts,
             sample_rows=rows,
             output=video,
             trajectory=trajectory,

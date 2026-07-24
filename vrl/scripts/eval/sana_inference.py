@@ -13,6 +13,7 @@ from typing import Any
 
 import torch
 
+from vrl.models.loader import model_revision_kwargs
 from vrl.utils.media import to_pil_image
 
 # These mappings are persisted protocol identities, not tunable defaults.
@@ -42,10 +43,10 @@ def load_official_scheduler(build: Any) -> Any:
 
     from diffusers import DPMSolverMultistepScheduler
 
-    kwargs: dict[str, Any] = {"subfolder": "scheduler"}
-    revision = _model_revision(build)
-    if revision is not None:
-        kwargs["revision"] = revision
+    kwargs: dict[str, Any] = {
+        "subfolder": "scheduler",
+        **model_revision_kwargs(build),
+    }
     if Path(str(build.model_name_or_path)).expanduser().is_dir():
         kwargs["local_files_only"] = True
     scheduler = DPMSolverMultistepScheduler.from_pretrained(
@@ -127,15 +128,6 @@ def generate_prompt_images(
             f"{len(images) if isinstance(images, (list, tuple)) else 'n/a'}",
         )
     return [to_pil_image(image) for image in images]
-
-
-def _model_revision(build: Any) -> str | None:
-    model_config = build.model_config or {}
-    revision = model_config.get("revision")
-    if revision is None:
-        return None
-    text = str(revision).strip()
-    return text or None
 
 
 def _config_value(config: Any, key: str) -> Any:

@@ -12,7 +12,5 @@ data:
   task_type: text_to_video
   preprocessing:
     format: text
-    target_text: none
-    media_type: video
   sampler:
     type: random_without_replacement

@@ -13,4 +13,3 @@ algorithm:
   adv_clip_max: 5.0
   global_std: false
   flow_kl_use_dt: false
-  kl_reward_coef: 0.0

@@ -1,14 +1,13 @@
-"""RL algorithms: advantage estimation and policy gradient losses."""
+"""RL algorithms: advantage estimation and policy gradient losses.
 
-from vrl.algorithms.base import Algorithm
-from vrl.algorithms.trajectory import AlgorithmAdapter, AlgorithmInput
-from vrl.algorithms.types import InitialReplayStats, PolicyUpdateStats, TrainStepMetrics
+Deliberately exports nothing. Re-exporting the algorithm ABC and adapters here
+made every ``vrl.algorithms.*`` submodule import load the torch-backed objective
+implementations — including the two pure dataclasses config parsing needs
+(``logprob_mismatch.PrecisionCorrectionConfig``, ``types.TrainStepMetrics``).
+Nothing imported the package root, so the cost bought no ergonomics. Import from
+the owning module instead.
+"""
 
-__all__ = [
-    "Algorithm",
-    "AlgorithmAdapter",
-    "AlgorithmInput",
-    "InitialReplayStats",
-    "PolicyUpdateStats",
-    "TrainStepMetrics",
-]
+from __future__ import annotations
+
+__all__: list[str] = []

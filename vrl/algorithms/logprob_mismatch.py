@@ -21,8 +21,14 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
 
-import torch
+# Torch is a call-time dependency, not an import-time one: the two dataclasses
+# below are the trainer's public precision contract (``TrainerConfig`` carries
+# PrecisionCorrectionConfig, ``TrainStepMetrics`` carries LogprobMismatchStats),
+# so config parsing must be able to reach them without loading torch.
+if TYPE_CHECKING:
+    import torch
 
 
 @dataclass(frozen=True, slots=True)
@@ -95,6 +101,8 @@ def compute_logprob_mismatch_stats(
     ``old_log_prob`` is the rollout behavior logprob (rollout dtype). Reductions run
     in fp32 so a bf16 input does not itself add noise to the measurement.
     """
+
+    import torch
 
     fresh = fresh_log_prob.detach().to(torch.float32)
     old = old_log_prob.detach().to(torch.float32)
@@ -271,6 +279,8 @@ def apply_rejection_sample_mask(
     token axis. ``mask`` (token validity) restricts the reduction to real tokens
     when given.
     """
+
+    import torch
 
     mode = config.rs_mode
     if mode == "off":

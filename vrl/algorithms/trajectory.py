@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field, fields
+from dataclasses import dataclass, fields
 from typing import Any
 
 from vrl.algorithms.types import TrainStepMetrics
@@ -17,7 +17,9 @@ class AlgorithmInput:
     rewards: Any | None = None
     group_ids: Any | None = None
     advantages: Any | None = None
-    metadata: dict[str, Any] = field(default_factory=dict)
+    model: Any | None = None
+    rollout_batch: Any | None = None
+    timestep_index: int | None = None
 
     def __post_init__(self) -> None:
         if self.signals is not None and not isinstance(self.signals, TrajectorySignalBatch):
@@ -63,11 +65,11 @@ class AlgorithmAdapter:
                 )
 
         if required_data_keys:
-            batch = inputs.metadata.get("rollout_batch")
+            batch = inputs.rollout_batch
             if batch is None:
                 raise RuntimeError(
                     f"{algo} requires replay tensors {list(required_data_keys)} but "
-                    "AlgorithmInput.metadata['rollout_batch'] is missing.",
+                    "AlgorithmInput.rollout_batch is missing.",
                 )
             import torch
 
@@ -116,7 +118,9 @@ class AlgorithmAdapter:
                 rewards=inputs.rewards,
                 group_ids=inputs.group_ids,
                 advantages=self.compute_advantages(algorithm, inputs),
-                metadata=inputs.metadata,
+                model=inputs.model,
+                rollout_batch=inputs.rollout_batch,
+                timestep_index=inputs.timestep_index,
             )
         return compute_loss(inputs)
 

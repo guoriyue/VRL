@@ -21,3 +21,8 @@ rollout:
   prompts_per_batch: 1
   sde:
     type: cps
+
+sampling:
+  # Predict2's model and executor both use 16 FPS. Keep reward artifact
+  # metadata on the same clock even when a geometry preset omits fps.
+  fps: 16

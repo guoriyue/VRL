@@ -33,15 +33,22 @@ decode_image_tokens, Emu3ImageVocabularyMapping) and the
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 from typing import Any
 
 import torch
 import torch.nn as nn
 
 from vrl.models.dtypes import resolve_torch_dtype
-from vrl.models.interfaces import ReplayRequest, ReplayResult, ReplaySegmentResult
+from vrl.models.families.emu3.config import Emu3Config
+from vrl.models.interfaces import (
+    ReplayRequest,
+    ReplayResult,
+    ReplaySegmentResult,
+    require_replay_segments,
+    require_zero_replay_timestep,
+)
 from vrl.models.steps.token.base import ARModelBase, ARReplayRolloutStubs
+from vrl.models.steps.token.lora import install_token_lora_adapter
 from vrl.utils.logging import init_logger
 
 logger = init_logger(__name__)
@@ -57,39 +64,6 @@ EMU3_TAIL_TOKEN_NUM = 3
 # Structural columns appended after the image tokens in the generation vocab:
 # EOL, EOF, EOI, EOS (in that order).
 EMU3_STRUCTURAL_TOKEN_NUM = 4
-
-
-@dataclass(slots=True)
-class Emu3Config:
-    """Hyper-parameters for the Emu3 wrapper (defaults target Emu3-Gen ~9B)."""
-
-    model_path: str = "BAAI/Emu3-Gen-hf"
-    revision: str | None = None
-    dtype: str = "bfloat16"  # "bfloat16" | "float16" | "float32"
-
-    # LoRA — Emu3's text model uses LLaMA-style projection names.
-    use_lora: bool = True
-    lora_rank: int = 32
-    lora_alpha: int = 64
-    lora_dropout: float = 0.0
-    lora_target_modules: tuple[str, ...] = (
-        "q_proj",
-        "k_proj",
-        "v_proj",
-        "o_proj",
-    )
-    lora_init: str = "gaussian"  # PEFT ``init_lora_weights``
-
-    # Generation defaults — used by the AR runtime runner.
-    guidance_scale: float = 3.0
-    temperature: float = 1.0
-    # Target pixel area for the generated image; the processor derives the
-    # latent grid (height, width) from it: 262144 = 512x512 -> a 64x64 grid.
-    image_area: int = 262_144
-    ratio: str = "1:1"
-
-    # Misc
-    device: str = "cuda"
 
 
 # ---------------------------------------------------------------------------
@@ -293,25 +267,12 @@ class Emu3Model(ARModelBase):
 
     def _apply_lora(self) -> None:
         """Attach a PEFT LoRA adapter to the text-model trunk."""
-        try:
-            from peft import LoraConfig, get_peft_model
-        except ImportError as e:  # pragma: no cover
-            raise ImportError("PEFT is required for use_lora=True. pip install peft>=0.12") from e
-
-        lora_cfg = LoraConfig(
-            r=self.config.lora_rank,
-            lora_alpha=self.config.lora_alpha,
-            lora_dropout=self.config.lora_dropout,
-            init_lora_weights=self.config.lora_init,
-            target_modules=list(self.config.lora_target_modules),
-            bias="none",
-        )
         # Wrap ONLY the text model — lm_head / VQ stay frozen. Note the
         # top-level ``emu3.text_model`` is a read-only property; the real
         # submodule lives at ``emu3.model.text_model``.
-        self.emu3.model.text_model = get_peft_model(
+        self.emu3.model.text_model = install_token_lora_adapter(
             self.emu3.model.text_model,
-            lora_cfg,
+            self.config,
         )
         logger.info(
             "Applied LoRA (rank=%d, alpha=%d) to the Emu3 text model.",
@@ -522,9 +483,14 @@ class Emu3Model(ARModelBase):
         evaluator's plain ``log_softmax`` reproduces the rollout's masked
         conditional distribution — the old/new log-prob parity invariant.
 
-        AR has no notion of "denoising step", so ``timestep_idx`` is ignored.
+        AR has no notion of a denoising step, so only index zero is valid.
         """
-        del timestep_idx, request
+        require_zero_replay_timestep(timestep_idx, owner=type(self).__name__)
+        require_replay_segments(
+            request,
+            ("image_tokens",),
+            owner=type(self).__name__,
+        )
         from vrl.trajectory import TrajectoryResolver
 
         resolver = TrajectoryResolver.from_batch(batch)

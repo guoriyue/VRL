@@ -50,7 +50,6 @@ class RolloutIteration:
     mode: RolloutScheduleMode
     batches: list[RolloutBatch]
     prompt_count: int
-    sample_count: int
     stats: RolloutStats = field(default_factory=RolloutStats)
     metadata: dict[str, Any] = field(default_factory=dict)
 
@@ -59,8 +58,12 @@ class RolloutIteration:
             raise ValueError("RolloutIteration.rollout_id must be >= 0")
         if self.prompt_count < 0:
             raise ValueError("RolloutIteration.prompt_count must be >= 0")
-        if self.sample_count < 0:
-            raise ValueError("RolloutIteration.sample_count must be >= 0")
+
+    @property
+    def sample_count(self) -> int:
+        """Derive the current sample total from the owned rollout batches."""
+
+        return sum(int(batch.rewards.shape[0]) for batch in self.batches)
 
 
 def build_rollout_iteration(
@@ -79,31 +82,29 @@ def build_rollout_iteration(
     ``annotate_batch_context`` explicitly.
     """
 
-    sample_count = sum(int(batch.rewards.shape[0]) for batch in batches)
-    metadata: dict[str, Any] = {
-        "rollout_id": int(rollout_id),
-        "rollout_policy_version": (None if policy_version is None else int(policy_version)),
-        "schedule_mode": mode.value,
-        "prompt_count": int(prompt_count),
-        "sample_count": int(sample_count),
-    }
     return RolloutIteration(
         rollout_id=int(rollout_id),
         policy_version=None if policy_version is None else int(policy_version),
         mode=mode,
         batches=batches,
         prompt_count=int(prompt_count),
-        sample_count=sample_count,
         stats=stats if stats is not None else RolloutStats(),
-        metadata=metadata,
     )
 
 
 def annotate_batch_context(iteration: RolloutIteration) -> RolloutIteration:
     """Copy the iteration's schedule metadata onto each batch's ``context``."""
 
+    schedule_context = {
+        **iteration.metadata,
+        "rollout_id": iteration.rollout_id,
+        "rollout_policy_version": iteration.policy_version,
+        "schedule_mode": iteration.mode.value,
+        "prompt_count": iteration.prompt_count,
+        "sample_count": iteration.sample_count,
+    }
     for batch in iteration.batches:
-        batch.context = {**dict(batch.context), **iteration.metadata}
+        batch.context = {**dict(batch.context), **schedule_context}
     return iteration
 
 

@@ -19,7 +19,12 @@ import torch
 import torch.nn as nn
 
 from vrl.generation.types import VideoGenerationRequest
-from vrl.models.interfaces import ReplayRequest, ReplayResult, ReplaySegmentResult
+from vrl.models.interfaces import (
+    ReplayRequest,
+    ReplayResult,
+    ReplaySegmentResult,
+    require_replay_segments,
+)
 from vrl.models.interfaces.runtime import ModelBuild
 from vrl.models.precision import model_autocast
 from vrl.models.utils import (
@@ -28,7 +33,6 @@ from vrl.models.utils import (
     disable_adapter_on,
     load_weights_into,
 )
-from vrl.trajectory.device import move_value_to_device
 
 
 @dataclass
@@ -39,13 +43,17 @@ class DiffusionSamplingStateBase:
     ``timesteps`` and ``scheduler`` — nothing else. Every other field a
     family declares in its subclass is private to its own ``forward_step``
     / replay path and MUST NOT be introspected by the engine.
-    ``guidance_scale`` is engine-invisible but present in all 17 families,
-    so it is lifted here purely for dedup.
     """
 
     latents: torch.Tensor
     timesteps: torch.Tensor
     scheduler: Any
+
+
+@dataclass
+class GuidedDiffusionSamplingStateBase(DiffusionSamplingStateBase):
+    """Private state shared by families whose forward/replay path reads guidance."""
+
     guidance_scale: float
 
 
@@ -119,6 +127,15 @@ class DiffusionModelBase(nn.Module, ABC):
 
         return self.forward_step(state, step_idx)
 
+    def _reject_unsupported_negative_prompt(
+        self,
+        negative_prompt: str | list[str] | None,
+    ) -> None:
+        """Fail when a single-branch family receives ignored conditioning."""
+
+        if negative_prompt not in (None, "", []):
+            raise ValueError(f"{type(self).__name__} does not support negative prompts")
+
     @abstractmethod
     def decode_latents(self, latents: Any) -> Any:
         """Decode latents to a frame tensor."""
@@ -159,7 +176,11 @@ class DiffusionModelBase(nn.Module, ABC):
         request: ReplayRequest | None = None,
     ) -> ReplayResult:
         """Rebuild diffusion sampling state and run one replay forward."""
-        del request
+        require_replay_segments(
+            request,
+            ("denoise",),
+            owner=type(self).__name__,
+        )
         replay_tensors, batch_context, latents = self._replay_inputs_for_step(
             batch,
             timestep_idx,
@@ -239,13 +260,14 @@ class DiffusionModelBase(nn.Module, ABC):
             device = self.device
         except Exception:
             device = None
-        replay_tensors = TrajectoryResolver.from_batch(batch).replay_tensor_dict(
+        resolver = TrajectoryResolver.from_batch(batch)
+        replay_tensors = resolver.replay_tensor_dict(
             "denoise",
             axis="denoise",
             axis_index=timestep_idx,
             device=device,
         )
-        latents = move_value_to_device(batch.observations[:, timestep_idx], device)
+        latents = replay_tensors[resolver.role_tensor("denoise", "observation").name]
         return replay_tensors, dict(batch.context), latents
 
     def _require_transformer(self) -> Any:
@@ -430,8 +452,10 @@ class DiffusionModelBase(nn.Module, ABC):
 
         Every diffusers-backed family carries its VAE on ``pipeline.vae``;
         Anima (single-file checkpoint, no pipeline) carries ``self.vae``.
-        Replay models raise on ``pipeline`` and own no VAE — they expose no
-        targets, and the policy fails loud if config still asks for one.
+        Custom backends whose VAE does not implement this memory protocol keep
+        it behind a family-specific attribute and expose no target. Replay
+        models likewise own no VAE. In either case, the policy fails loud if
+        config still asks for one.
         """
 
         try:
@@ -653,5 +677,7 @@ __all__ = [
     "DiffusersPipelineModelBase",
     "DiffusersReplayModelBase",
     "DiffusionModelBase",
+    "DiffusionSamplingStateBase",
+    "GuidedDiffusionSamplingStateBase",
     "diffusers_pipeline_dtypes",
 ]

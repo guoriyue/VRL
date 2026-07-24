@@ -92,23 +92,7 @@ def _validate_magi_1_precision(build: ModelBuild) -> None:
         )
 
 
-def build_magi_1_replay_runtime_bundle(build: ModelBuild) -> RuntimeBundle:
-    """Reject trainer construction before any upstream import or weight load."""
-
-    if build.family != "magi_1":
-        raise ValueError(
-            f"MAGI-1 replay builder received family {build.family!r}",
-        )
-    build.require_replay()
-    raise RuntimeError(
-        "MAGI-1 replay/training is unavailable: the official 4.5B runtime "
-        "exposes final-video inference only and no replayable transition "
-        "likelihood or autograd model",
-    )
-
-
 __all__ = [
     "Magi1ChunkExecutor",
-    "build_magi_1_replay_runtime_bundle",
     "build_magi_1_runtime_bundle",
 ]

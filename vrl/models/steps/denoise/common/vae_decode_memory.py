@@ -12,7 +12,6 @@ from collections.abc import Mapping
 from dataclasses import dataclass, fields, replace
 from typing import Any
 
-from vrl.models.interfaces.runtime import MODEL_MEMORY_SECTIONS
 from vrl.utils.config import plain_mapping
 
 
@@ -80,17 +79,12 @@ def apply_generation_memory_policy(
 
     targets = model.generation_memory_targets()
     configured = dict(memory_config or {})
-    # A configured section that is neither a generation target nor a declared
-    # model.memory section is a typo — fail loud. A declared section the model
-    # exposes no target for (e.g. vae_decode on a model that owns no VAE) is
-    # tolerated and skipped, not rejected; the valid-section list lives once in
-    # MODEL_MEMORY_SECTIONS, shared with the schema's unknown-key lint.
-    typos = sorted(set(configured) - set(targets) - set(MODEL_MEMORY_SECTIONS))
-    if typos:
+    unsupported = sorted(set(configured) - set(targets))
+    if unsupported:
         exposed = ", ".join(sorted(targets)) or "<none>"
         raise ValueError(
-            f"{owner} configures unknown model.memory section(s) "
-            f"{', '.join(typos)}; model exposes generation memory "
+            f"{owner} configures unsupported model.memory section(s) "
+            f"{', '.join(unsupported)}; model exposes generation memory "
             f"target(s): {exposed}",
         )
 

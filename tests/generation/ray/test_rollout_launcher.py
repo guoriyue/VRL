@@ -15,7 +15,7 @@ except ModuleNotFoundError:  # Ray workers import this module for tiny builders.
 
 from vrl.generation.launch_contract import GenerationRuntimeLaunchContract
 from vrl.generation.protocols import ChunkResult
-from vrl.generation.ray.config import RayGenerationConfig
+from vrl.generation.ray.config import RayGenerationConfig, RolloutWorkerConfig
 from vrl.generation.ray.launch_inputs import RayGenerationLaunchInputs
 from vrl.generation.ray.runtime import RayGenerationRuntime
 from vrl.generation.types import GenerationOutput, GenerationRequest, GenerationSampleRow
@@ -35,7 +35,6 @@ class _Gatherer:
             request_id=request.request_id,
             family=request.family,
             task=request.task,
-            prompts=list(request.prompts),
             sample_rows=list(sample_rows),
             output=list(chunks),
         )
@@ -55,6 +54,7 @@ def _worker_setup_hook(repo_root: str) -> Any:
         sys.path.insert(0, repo_root)
 
         import vrl.families.registry as registry
+        import vrl.models.checkpoint_identity as checkpoint_identity
         from vrl.models.interfaces import RuntimeBundle
 
         class TinyRuntimeModel:
@@ -110,6 +110,7 @@ def _worker_setup_hook(repo_root: str) -> Any:
             executor_cls="vrl.families.registry:_RayLauncherTestExecutor",
         )
         registry.ModelFamilyEntry.build_rollout = build_tiny_rollout
+        checkpoint_identity.resolve_checkpoint_model_identity = lambda _build: {"schema": "test"}
 
     return install
 
@@ -140,6 +141,7 @@ def _launch_inputs() -> RayGenerationLaunchInputs:
             family="janus_pro",
             model_build={
                 "model_name_or_path": "unit-test",
+                "revision": None,
                 "device": "cpu",
                 "parameter_dtype": "float32",
                 "precision": {
@@ -149,10 +151,26 @@ def _launch_inputs() -> RayGenerationLaunchInputs:
                     "outer_autocast": False,
                 },
             },
+            expected_model_identity={"schema": "test"},
             policy_version=7,
         ),
         gatherer=_Gatherer(),
     )
+
+
+def _worker_config(**overrides: Any) -> RolloutWorkerConfig:
+    values = {
+        "cpus_per_worker": 0.5,
+        "max_inflight_chunks_per_worker": 1,
+        "health_check_interval_s": 30.0,
+        "health_check_timeout_s": 30.0,
+        "health_check_first_wait_s": 0.0,
+        "pipelined": False,
+        "chunk_placement_strategy": "round_robin",
+        "sync_trainable_state": False,
+    }
+    values.update(overrides)
+    return RolloutWorkerConfig(**values)
 
 
 def test_ray_generation_launcher_builds_worker_runtime_with_embedded_ray() -> None:
@@ -161,15 +179,14 @@ def test_ray_generation_launcher_builds_worker_runtime_with_embedded_ray() -> No
     import vrl.generation.ray.launcher as launcher_mod
 
     _init_ray(ray)
-    owner = _cpu_rollout_owner(ray)
+    worker = _worker_config(chunk_placement_strategy="dynamic")
+    owner = _cpu_rollout_owner(ray, worker=worker)
     runtime: RayGenerationRuntime | None = None
     try:
         runtime = launcher_mod.RayGenerationLauncher(init_ray=False).launch(
             RayGenerationConfig(
                 resources=owner.resources,
-                cpus_per_worker=0.5,
-                sync_trainable_state=False,
-                chunk_placement_strategy="dynamic",
+                worker=worker,
             ),
             _launch_inputs(),
             placement=owner.rollout_placement,
@@ -197,7 +214,11 @@ def test_ray_generation_launcher_builds_worker_runtime_with_embedded_ray() -> No
         ray.shutdown()
 
 
-def _cpu_rollout_owner(ray: Any) -> Any:
+def _cpu_rollout_owner(
+    ray: Any,
+    *,
+    worker: RolloutWorkerConfig | None = None,
+) -> Any:
     """Build a GlobalRayPlacementOwner with a single CPU rollout bundle."""
     from omegaconf import OmegaConf
 
@@ -219,7 +240,7 @@ def _cpu_rollout_owner(ray: Any) -> Any:
             },
         ),
     )
-    owner = GlobalRayPlacementOwner(resolved, rollout_cpus_per_worker=0.5)
+    owner = GlobalRayPlacementOwner(resolved, worker or _worker_config())
     owner.create()
     return owner
 
@@ -236,8 +257,7 @@ def test_owner_placement_runtime_does_not_own_placement_group() -> None:
         runtime = launcher_mod.RayGenerationLauncher(init_ray=False).launch(
             RayGenerationConfig(
                 resources=owner.resources,
-                cpus_per_worker=0.5,
-                sync_trainable_state=False,
+                worker=owner.rollout_worker,
             ),
             _launch_inputs(),
             placement=owner.rollout_placement,
@@ -271,8 +291,7 @@ def test_launcher_uses_resolved_colocation_protocol_signal() -> None:
         runtime = launcher_mod.RayGenerationLauncher(init_ray=False).launch(
             RayGenerationConfig(
                 resources=owner.resources,
-                cpus_per_worker=0.5,
-                sync_trainable_state=False,
+                worker=owner.rollout_worker,
             ),
             _launch_inputs(),
             placement=owner.rollout_placement,
@@ -305,8 +324,7 @@ def test_phase_handoff_keeps_actor_and_owner_placement() -> None:
     runtime = RayGenerationRuntime.with_on_demand_activation(
         RayGenerationConfig(
             resources=on_demand_resources,
-            cpus_per_worker=0.5,
-            sync_trainable_state=False,
+            worker=owner.rollout_worker,
         ),
         _launch_inputs(),
         placement=owner.rollout_placement,

@@ -28,9 +28,17 @@ class DiffusionBaseParams:
     num_frames: int
     fps: int | None
     samples_per_chunk: int
-    max_sequence_length: int
+    max_sequence_length: int | None
     seed: int | None
     negative_prompt: str | None
+
+    def text_encode_kwargs(self) -> dict[str, Any]:
+        """Build shared prompt-encoder knobs without inventing a text length."""
+
+        kwargs: dict[str, Any] = {"guidance_scale": self.guidance_scale}
+        if self.max_sequence_length is not None:
+            kwargs["max_sequence_length"] = self.max_sequence_length
+        return kwargs
 
 
 @dataclass(frozen=True, slots=True)
@@ -38,7 +46,9 @@ class DiffusionSamplingParams:
     """Parsed diffusion sampling fields for one generation request."""
 
     base: DiffusionBaseParams
-    sde: DenoiseSDEParams | None
+    sde: DenoiseSDEParams
+    sde_window_size: int
+    sde_window_range: tuple[int, int]
     denoise_mode: str
     teacache: TeaCacheConfig | None = None
 
@@ -57,7 +67,7 @@ class DiffusionRequestLayout:
     default_samples_per_chunk: int
     default_num_frames: int
     default_fps: int | None
-    default_max_sequence_length: int
+    default_max_sequence_length: int | None
     sde_type: str
 
     def parse_sampling_params(self, request: GenerationRequest) -> DiffusionSamplingParams:
@@ -66,6 +76,10 @@ class DiffusionRequestLayout:
         sampling = request.sampling
         num_steps = int(sampling["num_steps"])
         fps_value = sampling.get("fps", self.default_fps)
+        max_sequence_length = sampling.get(
+            "max_sequence_length",
+            self.default_max_sequence_length,
+        )
         seed = sampling.get("seed")
         base = DiffusionBaseParams(
             num_steps=num_steps,
@@ -88,11 +102,8 @@ class DiffusionRequestLayout:
                     )
                 ),
             ),
-            max_sequence_length=int(
-                sampling.get(
-                    "max_sequence_length",
-                    self.default_max_sequence_length,
-                )
+            max_sequence_length=(
+                None if max_sequence_length is None else int(max_sequence_length)
             ),
             seed=None if seed is None else int(seed),
             negative_prompt=sampling.get("negative_prompt"),
@@ -107,8 +118,6 @@ class DiffusionRequestLayout:
         sde = DenoiseSDEParams(
             noise_level=float(sampling.get("noise_level", 1.0)),
             sde_type=self._parse_sde_type(sampling.get("sde_type", self.sde_type)),
-            sde_window_size=sde_window_size,
-            sde_window_range=sde_window_range,
             same_latent=bool(sampling.get("same_latent", False)),
             return_kl=bool(sampling.get("return_kl", False)),
             return_prev_sample_mean=bool(
@@ -121,6 +130,8 @@ class DiffusionRequestLayout:
         return DiffusionSamplingParams(
             base=base,
             sde=sde,
+            sde_window_size=sde_window_size,
+            sde_window_range=sde_window_range,
             denoise_mode=denoise_mode,
             teacache=TeaCacheConfig.from_sampling(sampling.get("teacache")),
         )
@@ -201,14 +212,14 @@ class DiffusionRequestLayout:
 
     def select_sde_window(
         self,
-        sde_window_size: int,
-        sde_window_range: tuple[int, int],
+        params: DiffusionSamplingParams,
     ) -> tuple[int, int] | None:
         """Pick the stochastic denoise-step window for a request."""
 
+        sde_window_size = params.sde_window_size
         if sde_window_size <= 0:
             return None
-        lo, hi = sde_window_range
+        lo, hi = params.sde_window_range
         start = random.randint(lo, hi - sde_window_size)
         return (start, start + sde_window_size)
 

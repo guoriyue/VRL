@@ -60,11 +60,14 @@ model:
   torch_compile:
     enable: false
 
+actor:
+  # Each rank streams its one local prompt group as one replay slice.
+  microbatch_size: 1
+
 rollout:
   # Each rank draws its own disjoint prompt slice, so per-rank batch stays small
   # while the effective global batch is prompts_per_batch * world_size.
   prompts_per_batch: 1
-  microbatch_size: 1
   # One chunk per rank: the rank owns a single colocated rollout worker, so
   # splitting further only adds boundaries without adding parallelism.
   samples_per_chunk: 2

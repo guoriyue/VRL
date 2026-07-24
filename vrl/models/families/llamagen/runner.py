@@ -75,7 +75,11 @@ class LlamaGenARModelRunner(ARDiscreteTokenRunner):
         )
         top_k = top_k if top_k is not None else config.top_k
         top_p = top_p if top_p is not None else config.top_p
-        image_token_num = image_token_num or config.image_token_num
+        if image_token_num is None:
+            image_token_num = config.image_token_num
+        image_token_num = int(image_token_num)
+        if image_token_num < 1:
+            raise ValueError("image_token_num must be >= 1")
 
         batch_size, caption_len = cond_attention_mask.shape
         device = self.model.device
@@ -124,16 +128,13 @@ class LlamaGenARModelRunner(ARDiscreteTokenRunner):
                 temperature=temp,
                 top_k=int(top_k),
                 top_p=float(top_p),
-                total_token_num=int(image_token_num),
                 caption_len=int(caption_len),
             ),
+            row_count=batch_size,
+            step_count=int(image_token_num),
             row_lanes={
                 "cond_logits": last[:batch_size],
                 "uncond_logits": last[batch_size:],
-            },
-            row_lane_owners={
-                "cond_logits": "llamagen.cond_logits",
-                "uncond_logits": "llamagen.uncond_logits",
             },
         )
 
@@ -153,14 +154,14 @@ class LlamaGenARModelRunner(ARDiscreteTokenRunner):
                 "LlamaGen requires full-batch AR steps in row order "
                 f"(cache rows are positional); got row_indices={batch.row_indices} "
                 f"for batch_size={batch_size}. Schedule with "
-                "scheduler_batch_size == chunk sample count."
+                "scheduler_batch_size unset or >= chunk sample count."
             )
 
     def _sample_ar_step(
         self,
         state: ARDiscreteTokenState,
         batch: TokenStepBatch,
-    ) -> tuple[dict[str, Any], dict[str, Any]]:
+    ) -> dict[str, Any]:
         assert isinstance(state, LlamaGenARState)
         position = batch.position
         sampled, lp = self._sample_cfg_image_token(
@@ -172,8 +173,8 @@ class LlamaGenARModelRunner(ARDiscreteTokenRunner):
         state.logprobs[:, position] = lp
 
         if position + 1 >= state.total_token_num:
-            return {}, {}
-        return {}, self._advance_after_sample(state, position=position, sampled=sampled)
+            return {}
+        return self._advance_after_sample(state, position=position, sampled=sampled)
 
     def _sample_cfg_image_token(
         self,

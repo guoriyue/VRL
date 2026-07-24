@@ -9,13 +9,16 @@ from typing import Any
 import pytest
 import torch
 
+from vrl.generation import GenerationRequest, GenerationSampleRow
 from vrl.rollouts.batch import RolloutBatch
+from vrl.rollouts.evaluators.trajectory import TrajectorySignalBuilder
 from vrl.rollouts.orchestration.prompt_collection import (
     PromptCollectionCleanupError,
     collect_prompt_batches,
 )
 from vrl.rollouts.orchestration.types import RewardCollectionMode
 from vrl.trainers.data import PromptExample
+from vrl.trajectory import build_ar_discrete_trajectory
 
 
 def _batch(prompts: list[str], group_size: int) -> RolloutBatch:
@@ -25,13 +28,49 @@ def _batch(prompts: list[str], group_size: int) -> RolloutBatch:
         dtype=torch.long,
     )
     return RolloutBatch(
-        observations=torch.zeros(batch_size, 1, 1),
-        actions=torch.zeros(batch_size, 1, 1),
         rewards=torch.arange(batch_size, dtype=torch.float32),
-        dones=torch.ones(batch_size, dtype=torch.bool),
         group_ids=group_ids,
-        prompts=[prompt for prompt in prompts for _ in range(group_size)],
     )
+
+
+def _batch_with_trajectory(prompts: list[str], group_size: int) -> RolloutBatch:
+    """Build a trajectory-backed trainer batch for remap regressions."""
+
+    batch = _batch(prompts, group_size)
+    sample_rows = [
+        GenerationSampleRow(
+            prompt_index=prompt_index,
+            sample_index=sample_index,
+            prompt=prompt,
+            group_id=f"group-{prompt_index}",
+            sample_id=f"sample-{prompt_index}-{sample_index}",
+            trajectory_id=f"trajectory-{prompt_index}-{sample_index}",
+            seed=None,
+        )
+        for prompt_index, prompt in enumerate(prompts)
+        for sample_index in range(group_size)
+    ]
+    request = GenerationRequest(
+        request_id="remap-request",
+        family="fake",
+        task="ar_t2i",
+        inputs=prompts,
+        samples_per_prompt=group_size,
+    )
+    batch_size = len(sample_rows)
+    batch.trajectory = build_ar_discrete_trajectory(
+        request=request,
+        sample_rows=sample_rows,
+        token_ids=torch.zeros(batch_size, 1, dtype=torch.long),
+        token_log_probs=torch.zeros(batch_size, 1),
+        token_mask=torch.ones(batch_size, 1),
+        prompt_input_ids=torch.zeros(batch_size, 1, dtype=torch.long),
+        prompt_attention_mask=torch.ones(batch_size, 1, dtype=torch.long),
+        uncond_input_ids=torch.zeros(batch_size, 1, dtype=torch.long),
+        uncond_attention_mask=torch.ones(batch_size, 1, dtype=torch.long),
+        context={},
+    )
+    return batch
 
 
 class _DeferredCollector:
@@ -45,6 +84,7 @@ class _DeferredCollector:
         supports_overlap: bool = False,
     ) -> None:
         self.events: list[str] = []
+        self._prompt_names: dict[int, tuple[str, ...]] = {}
         self.requires_runtime_offload_before_reward = rollout_reward_handoff
         self.requires_driver_model_offload_for_reward = trainer_reward_handoff
         self.supports_reward_generation_overlap = supports_overlap
@@ -52,12 +92,25 @@ class _DeferredCollector:
     async def collect_unscored(self, inputs: list[Any], **kwargs: Any) -> Any:
         prompts = [getattr(item, "prompt", item) for item in inputs]
         self.events.append(f"generate:{','.join(prompts)}")
-        return _batch(prompts, int(kwargs["group_size"]))
+        batch = _batch(prompts, int(kwargs["group_size"]))
+        self._prompt_names[id(batch)] = tuple(prompts)
+        return batch
 
     async def score_rollouts(self, pendings: list[Any]) -> list[RolloutBatch]:
-        names = [",".join(dict.fromkeys(pending.prompts)) for pending in pendings]
+        names = [",".join(dict.fromkeys(self._prompt_names[id(pending)])) for pending in pendings]
         self.events.append(f"score_rollouts:[{';'.join(names)}]")
         return list(pendings)
+
+
+class _TrajectoryDeferredCollector(_DeferredCollector):
+    """Deferred collector whose trainer and trajectory grouping never alias."""
+
+    async def collect_unscored(self, inputs: list[Any], **kwargs: Any) -> RolloutBatch:
+        prompts = [getattr(item, "prompt", item) for item in inputs]
+        self.events.append(f"generate:{','.join(prompts)}")
+        batch = _batch_with_trajectory(prompts, int(kwargs["group_size"]))
+        self._prompt_names[id(batch)] = tuple(prompts)
+        return batch
 
 
 @pytest.mark.asyncio
@@ -84,7 +137,7 @@ async def test_prompt_examples_generate_all_groups_before_one_scoring_call() -> 
     assert len(batches) == 3
     for prompt_idx, batch in enumerate(batches):
         assert batch.group_ids.unique().tolist() == [prompt_idx]
-        assert batch.prompts == [f"p{prompt_idx}"] * 2
+        assert not hasattr(batch, "prompts")
 
 
 @pytest.mark.asyncio
@@ -109,7 +162,45 @@ async def test_mixed_prompts_preserve_group_id_remap() -> None:
         "score_rollouts:[s0;e1;s2]",
     ]
     assert [batch.group_ids.unique().tolist() for batch in batches] == [[0], [1], [2]]
-    assert [batch.prompts for batch in batches] == [["s0"], ["e1"], ["s2"]]
+
+
+@pytest.mark.asyncio
+async def test_prompt_example_scalar_remap_updates_trainer_group_ids() -> None:
+    """Checks remaps update trainer grouping without rewriting stable identity."""
+
+    batches = await collect_prompt_batches(
+        collector=_TrajectoryDeferredCollector(),
+        prompts=[PromptExample(prompt="p0"), PromptExample(prompt="p1")],
+        group_size=2,
+        runtime_debug=False,
+        policy_version=None,
+    )
+
+    for expected_group, batch in enumerate(batches):
+        expected = torch.full((2,), expected_group, dtype=torch.long)
+        assert torch.equal(batch.group_ids, expected)
+        assert batch.trajectory is not None
+        assert torch.equal(TrajectorySignalBuilder(batch).group_ids, expected)
+        assert [row.group_id for row in batch.trajectory.sample_rows] == [
+            "group-0",
+            "group-0",
+        ]
+
+
+@pytest.mark.asyncio
+async def test_plain_string_list_remap_updates_signal_group_ids() -> None:
+    """Checks evaluator signals consume the remapped trainer-owned groups."""
+
+    batches = await collect_prompt_batches(
+        collector=_TrajectoryDeferredCollector(),
+        prompts=["p0", "p1"],
+        group_size=1,
+        runtime_debug=False,
+        policy_version=None,
+    )
+
+    assert [batch.group_ids.item() for batch in batches] == [0, 1]
+    assert [TrajectorySignalBuilder(batch).group_ids.item() for batch in batches] == [0, 1]
 
 
 @dataclass
@@ -202,10 +293,12 @@ class _StreamingCollector(_DeferredCollector):
                 raise RuntimeError("generation failed")
         await asyncio.sleep(0)
         self.events.append(f"generate_done:{name}")
-        return _batch(prompts, int(kwargs["group_size"]))
+        batch = _batch(prompts, int(kwargs["group_size"]))
+        self._prompt_names[id(batch)] = tuple(prompts)
+        return batch
 
     async def score_rollouts(self, pendings: list[Any]) -> list[RolloutBatch]:
-        names = [",".join(dict.fromkeys(pending.prompts)) for pending in pendings]
+        names = [",".join(dict.fromkeys(self._prompt_names[id(pending)])) for pending in pendings]
         name = ";".join(names)
         self.active_scores += 1
         self.max_active_scores = max(self.max_active_scores, self.active_scores)
@@ -269,7 +362,6 @@ async def test_capable_collector_overlaps_reward_with_next_generation() -> None:
     )
     assert collector.max_active_scores == 1
     assert collector.active_scores == 0
-    assert [batch.prompts for batch in batches] == [["p0"], ["p1"]]
     assert [batch.group_ids.item() for batch in batches] == [0, 1]
 
 

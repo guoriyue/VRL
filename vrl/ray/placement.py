@@ -26,7 +26,7 @@ import logging
 import math
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Protocol
 
 from vrl.ray.dependencies import (
     current_gpu_ids,
@@ -42,6 +42,13 @@ from vrl.ray.resources import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+class _RolloutCPUConfig(Protocol):
+    """Read-only resource view shared with the generation worker snapshot."""
+
+    @property
+    def cpus_per_worker(self) -> float: ...
 
 
 def _create_raw_placement_group(
@@ -215,7 +222,7 @@ class GlobalRayPlacementOwner:
     """Owns the single run-level Ray placement group and role->bundle mapping."""
 
     resources: ResolvedDistributedResources
-    rollout_cpus_per_worker: float = 1.0
+    rollout_worker: _RolloutCPUConfig
     placement_strategy: str | None = None
     ready_timeout_s: float = 600.0
     layout: BundleLayout = field(init=False)
@@ -404,14 +411,14 @@ class GlobalRayPlacementOwner:
     def _bundle_requirements(self) -> list[dict[str, float]]:
         requirements: list[dict[str, float]] = []
         for bundle_index, gpu_id in enumerate(self.layout.bundle_gpu_ids):
-            cpu = self._bundle_cpu(bundle_index, gpu_id)
+            cpu = self._bundle_cpu(bundle_index)
             bundle: dict[str, float] = {"CPU": cpu}
             if gpu_id is not None:
                 bundle["GPU"] = 1.0
             requirements.append(bundle)
         return requirements
 
-    def _bundle_cpu(self, bundle_index: int, gpu_id: int | None) -> float:
+    def _bundle_cpu(self, bundle_index: int) -> float:
         """CPU a bundle reserves = max over the roles that may run in it.
 
         A trainer-reserved GPU bundle (no role) only needs a token CPU so the
@@ -421,7 +428,7 @@ class GlobalRayPlacementOwner:
 
         cpus: list[float] = []
         if bundle_index in self.layout.rollout_bundle_indices:
-            cpus.append(float(self.rollout_cpus_per_worker))
+            cpus.append(float(self.rollout_worker.cpus_per_worker))
         if bundle_index in self.layout.reward_bundle_indices:
             cpus.append(float(self.resources.reward_cpus_per_worker))
         if not cpus:

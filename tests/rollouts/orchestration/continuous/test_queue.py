@@ -9,9 +9,14 @@ from __future__ import annotations
 
 import torch
 
+from vrl.generation import GenerationRequest, GenerationSampleRow
 from vrl.rollouts.batch import RolloutBatch
 from vrl.rollouts.orchestration.continuous.queue import ContinuousRolloutQueue
-from vrl.rollouts.orchestration.continuous.types import ContinuousRolloutItem
+from vrl.rollouts.orchestration.continuous.types import (
+    ContinuousRolloutItem,
+    estimate_batch_bytes,
+)
+from vrl.trajectory import build_ar_discrete_trajectory, trajectory_tensor_bytes
 
 
 def _item(
@@ -22,12 +27,8 @@ def _item(
     nbytes: int = 0,
 ) -> ContinuousRolloutItem:
     batch = RolloutBatch(
-        observations=torch.zeros(samples, 1),
-        actions=torch.zeros(samples, 1),
         rewards=torch.zeros(samples),
-        dones=torch.ones(samples, dtype=torch.bool),
         group_ids=torch.zeros(samples, dtype=torch.long),
-        prompts=[f"p{group_key}"] * samples,
     )
     return ContinuousRolloutItem(
         group_key=group_key,
@@ -70,6 +71,71 @@ def test_byte_cap_backpressure() -> None:
     evicted = queue.put(_item(group_key=1, version=1, nbytes=6))
     assert queue.ready_bytes() <= 10
     assert [item.group_key for item in evicted] == [0]
+
+
+def test_batch_byte_estimate_counts_only_trainer_transport_tensors() -> None:
+    batch = _item(group_key=0, version=1).batch
+    batch.extras["component"] = torch.zeros(3, dtype=torch.float64)
+
+    expected = sum(
+        tensor.element_size() * tensor.nelement()
+        for tensor in (
+            batch.rewards,
+            batch.group_ids,
+            batch.extras["component"],
+        )
+    )
+
+    assert estimate_batch_bytes(batch) == expected
+
+
+def test_batch_byte_estimate_counts_trajectory_without_flat_aliases_twice() -> None:
+    token_ids = torch.tensor([[1, 2]], dtype=torch.long)
+    prompt_input_ids = torch.tensor([[3, 4, 5]], dtype=torch.long)
+    request = GenerationRequest(
+        request_id="req",
+        family="janus_pro",
+        task="ar_t2i",
+        inputs=["p"],
+        samples_per_prompt=1,
+    )
+    trajectory = build_ar_discrete_trajectory(
+        request=request,
+        sample_rows=[
+            GenerationSampleRow(
+                prompt_index=0,
+                sample_index=0,
+                prompt="p",
+                group_id="g0",
+                sample_id="s0",
+                trajectory_id="t0",
+                seed=None,
+            )
+        ],
+        token_ids=token_ids,
+        token_log_probs=torch.zeros(1, 2),
+        token_mask=torch.ones(1, 2),
+        prompt_input_ids=prompt_input_ids,
+        prompt_attention_mask=torch.ones(1, 3, dtype=torch.long),
+        uncond_input_ids=torch.zeros(1, 3, dtype=torch.long),
+        uncond_attention_mask=torch.ones(1, 3, dtype=torch.long),
+        context={},
+    )
+    rewards = torch.zeros(1)
+    group_ids = torch.zeros(1, dtype=torch.long)
+    component = torch.zeros(3, dtype=torch.float64)
+    batch = RolloutBatch(
+        rewards=rewards,
+        group_ids=group_ids,
+        extras={"component": component},
+        trajectory=trajectory,
+    )
+
+    expected = trajectory_tensor_bytes(trajectory) + sum(
+        tensor.numel() * tensor.element_size() for tensor in (rewards, group_ids, component)
+    )
+
+    assert estimate_batch_bytes(batch) == expected
 
 
 def test_stats_shape() -> None:

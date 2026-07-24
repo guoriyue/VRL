@@ -1,9 +1,9 @@
 # FSDP2 2×1 cross-node run (Cosmos Predict2.5 + Kling DiffusionNFT)
 
-> **Capability-gated:** this historical 2x1 runbook is not currently runnable.
-> Shared-GPU phase leasing now requires collective-safe DTensor, optimizer,
-> EMA/scaler, and live-gradient parking. `FSDPStrategy` rejects this topology
-> before model/Ray launch; current FSDP runs need disjoint rollout GPUs.
+> **Hardware acceptance runbook:** collective-safe DTensor/optimizer/EMA
+> parking, resume, and checkpoint export are implemented and covered by CPU
+> Gloo tests. A real two-server run remains the acceptance boundary for this
+> exact topology.
 
 Symmetric colocated **FSDP2** variant of the DDP 2×1 example. The intended topology has
 two servers, one GPU each, and one torchrun rank per server, with one node-local Ray
@@ -57,11 +57,11 @@ Override per run via env vars (see the script header), e.g. `OUT=...`,
 
 ## Differences from the DDP launcher
 
-- **No `trainer.resume_from`**: FSDP2 optimizer-state export/load is not implemented
-  yet (`build_strategy` fail-fasts on resume), so this launcher does not auto-resume.
+- **Resume is supported**: pass `trainer.resume_from=<checkpoint>` through
+  `EXTRA_OVERRIDES` when resuming an interrupted run.
 - **No `find_unused_parameters`**: a DDP reducer knob; FSDP has no reducer.
-- **EMA off, torch.compile off**: both fail-fast under FSDP2 in this first version
-  (set in `online_nft_kling_video_reward_fsdp_2x1.yaml`).
+- **EMA on, torch.compile off**: the recipe inherits EMA from the base NFT
+  config; compile remains unsupported with FSDP2 reshard-after-forward.
 
 ## Note on cost
 

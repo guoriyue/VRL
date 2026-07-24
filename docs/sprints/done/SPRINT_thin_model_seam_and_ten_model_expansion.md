@@ -670,7 +670,10 @@ GPU，让某一跳能跑生成 parity；(b) 转为**有人值守**逐个接（�
 - **R1 不进任何模板**：其控制流反转（委托 `model.generate_with_refine` + `image_sampler` 回调），
   只继承基类新 `forward_plan`，chunk 路径保持自有。
 - **`use_ar_scheduler` 的跨 prompt 批调度语义随家族 `forward_plan` 一起删除**：它只存在于无生产调用方
-  的路径上（生产 chunk 路径本就是 per-chunk 调度），属于死语义；TokenScheduler 本体与其单测不动。
+  的路径上（生产 chunk 路径本就是 per-chunk 调度），属于死语义；这是当时保留 request-local
+  scheduler 的历史判定。后续逐 body/producer审计确认 scheduler只剩一个 caller且异质 key没有
+  producer，已在 [Token loop state thinning](SPRINT_token_loop_state_thinning.md) 合回直接
+  position-major bounded row loop；本段不再代表当前 API。
 
 ### 风险与验证
 

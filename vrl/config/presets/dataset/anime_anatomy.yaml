@@ -5,6 +5,5 @@ data:
   eval_manifest: datasets/danbooru/anatomy/eval_prompts.jsonl
   preprocessing:
     format: jsonl
-    metadata_schema: danbooru_anatomy
   sampler:
     type: random_without_replacement

@@ -1,13 +1,9 @@
 """Lumina-Image-2.0 t2i family (Next-DiT + Gemma-2)."""
 
-from vrl.models.families.lumina2.model import (
-    Lumina2Model,
-    Lumina2ReplayModel,
-    Lumina2SamplingState,
-)
+from __future__ import annotations
 
-__all__ = [
-    "Lumina2Model",
-    "Lumina2ReplayModel",
-    "Lumina2SamplingState",
-]
+# Deliberately exports nothing. The family registry dispatches by dotted
+# submodule path (vrl/families/registry.py), so a package-root re-export is a
+# second surface nothing imports; keeping this module empty is also what stops
+# config discovery from pulling the torch-backed model runtime.
+__all__: list[str] = []

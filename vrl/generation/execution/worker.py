@@ -651,7 +651,6 @@ class GenerationWorkerCore:
         launch_contract = self.launch_contract
         from vrl.models.interfaces.runtime import ModelBuild
 
-        executor_cls = import_from_path(self.family_entry.executor_cls)
         build_payload = dict(launch_contract.model_build)
         build_payload["family"] = self.family_entry.family
         device = build_payload.get("device")
@@ -662,7 +661,25 @@ class GenerationWorkerCore:
         # ModelBuild and RolloutBuildOptions normalize parameter and nested rollout
         # dtypes while reconstructing the primitive Ray payload.
         build = ModelBuild(**build_payload)
+        from vrl.models.checkpoint_identity import resolve_checkpoint_model_identity
+
+        worker_model_identity = resolve_checkpoint_model_identity(build)
+        if worker_model_identity != launch_contract.expected_model_identity:
+            raise ValueError(
+                f"rollout worker {self.worker_id} model identity mismatch before "
+                "model construction: "
+                f"driver={launch_contract.expected_model_identity!r}, "
+                f"worker={worker_model_identity!r}",
+            )
         bundle = self.family_entry.build_rollout(build)
+        loaded_model_identity = resolve_checkpoint_model_identity(build)
+        if loaded_model_identity != launch_contract.expected_model_identity:
+            raise RuntimeError(
+                f"rollout worker {self.worker_id} model checkpoint source changed "
+                "during bundle construction: "
+                f"before={launch_contract.expected_model_identity!r}, "
+                f"after={loaded_model_identity!r}",
+            )
         model = require_runtime_model(bundle.model, owner="RuntimeBundle.model")
         # Family- and scheme-agnostic backstop: if rollout quantization asks for a
         # quantized rollout (FP8/NVFP4/...) but this family's builder forgot to swap,
@@ -673,6 +690,7 @@ class GenerationWorkerCore:
         executor_kwargs = dict(launch_contract.executor_kwargs)
         from vrl.families.registry import GENERIC_FULL_SEQUENCE_DENOISE_EXECUTOR
 
+        executor_cls = import_from_path(self.family_entry.executor_cls)
         if self.family_entry.executor_cls == GENERIC_FULL_SEQUENCE_DENOISE_EXECUTOR:
             executor_kwargs.update(
                 family=self.family_entry.family,

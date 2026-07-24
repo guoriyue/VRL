@@ -10,22 +10,8 @@ for why the GPT cannot be mapped onto ``LlamaForCausalLM``.
 
 from __future__ import annotations
 
-from vrl.models.families.llamagen.model import (
-    LLAMAGEN_CAPTION_TOKEN_NUM,
-    LLAMAGEN_IMAGE_TOKEN_NUM,
-    LLAMAGEN_IMAGE_VOCAB_SIZE,
-    LlamaGenConfig,
-    LlamaGenModel,
-    LlamaGenReplayModel,
-)
-from vrl.models.families.llamagen.runtime import LlamaGenChunkExecutor
-
-__all__ = [
-    "LLAMAGEN_CAPTION_TOKEN_NUM",
-    "LLAMAGEN_IMAGE_TOKEN_NUM",
-    "LLAMAGEN_IMAGE_VOCAB_SIZE",
-    "LlamaGenChunkExecutor",
-    "LlamaGenConfig",
-    "LlamaGenModel",
-    "LlamaGenReplayModel",
-]
+# Deliberately exports nothing. The family registry dispatches by dotted
+# submodule path (vrl/families/registry.py), so a package-root re-export is a
+# second surface nothing imports; keeping this module empty is also what stops
+# config discovery from pulling the torch-backed model runtime.
+__all__: list[str] = []

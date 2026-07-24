@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+from dataclasses import fields
 from typing import Any
 
 import pytest
 import torch
+from omegaconf import OmegaConf
 
 from tests.rollouts.collector._helpers import collect_scored
+from vrl.families.registry import get_model_family_entry
 from vrl.generation import (
     GenerationInput,
     GenerationOutput,
@@ -21,8 +24,9 @@ from vrl.rollouts.collector.batch_builder import (
     RolloutBatchBuildContext,
     TrajectoryRolloutBatchBuilder,
 )
+from vrl.rollouts.collector.config import RolloutCollectorConfig
 from vrl.rollouts.collector.core import RolloutCollector
-from vrl.rollouts.collector.requests import CollectorRequest
+from vrl.rollouts.collector.requests import CollectorRequest, GenerationRequestBuilder
 from vrl.rollouts.collector.rewards import (
     RewardScoreBatch,
     RewardScorer,
@@ -31,6 +35,8 @@ from vrl.rollouts.collector.rewards import (
 from vrl.rollouts.orchestration.prompt_collection import collect_prompt_batches
 from vrl.trajectory import (
     RewardView,
+    TrajectoryResolver,
+    TrajectoryStoragePolicy,
     build_ar_discrete_trajectory,
     build_chunk_autoregressive_denoise_trajectory,
 )
@@ -56,7 +62,6 @@ class _RequestBuilder:
             inputs=list(inputs),
             samples_per_prompt=group_size,
             sampling={"seed": seed},
-            return_artifacts={"output"},
             metadata={"source": "collector-test"},
             policy_version=policy_version,
         )
@@ -106,7 +111,6 @@ class _Runtime:
             request_id=request.request_id,
             family=request.family,
             task=request.task,
-            prompts=list(request.prompts),
             sample_rows=sample_rows,
             output=output,
             trajectory=trajectory,
@@ -159,7 +163,7 @@ class _RewardScorer:
         self.calls.append(
             {
                 "outputs": request.outputs,
-                "prompts": request.prompts,
+                "prompts": [row.prompt for row in request.sample_rows],
                 "metadata": request.metadata,
                 "device": request.device,
             },
@@ -280,11 +284,36 @@ def test_collector_routes_request_through_runtime_reward_and_trajectory_batch() 
     assert request.sampling == {"seed": 5}
     assert request.policy_version == 7
     assert reward_scorer.calls[0]["metadata"] == {"collector": "metadata"}
+    assert reward_scorer.calls[0]["prompts"] == ["p0", "p0", "p1", "p1"]
+    assert reward_scorer.calls[0]["outputs"].shape == (4, 3, 2, 2)
     assert runtime.events == ["generate"]
     assert batch.rewards.tolist() == [0.0, 1.0, 2.0, 3.0]
     assert batch.context == {"collector": "test"}
     assert batch.trajectory is not None
-    assert batch.training_view is not None
+    assert batch.group_ids.tolist() == [0, 0, 1, 1]
+    assert not hasattr(batch.trajectory, "group_ids")
+    assert [row.group_id for row in batch.trajectory.sample_rows] == [
+        "g0",
+        "g0",
+        "g1",
+        "g1",
+    ]
+    assert not hasattr(batch, "training_view")
+    assert not hasattr(batch, "dones")
+    assert not hasattr(batch, "videos")
+    assert not hasattr(batch, "prompts")
+
+
+def test_nextstep_noise_level_reaches_generation_request_from_rollout_owner() -> None:
+    cfg = OmegaConf.create({"rollout": {"noise_level": 0.37}})
+    builder = GenerationRequestBuilder(
+        entry=get_model_family_entry("nextstep_1"),
+        config=RolloutCollectorConfig.from_cfg(cfg),
+    )
+
+    request = builder.build(["draw text"], group_size=1).request
+
+    assert request.sampling["noise_level"] == pytest.approx(0.37)
 
 
 @pytest.mark.asyncio
@@ -303,7 +332,6 @@ async def test_profiled_collector_builds_cpu_batch_without_trainer_cuda_sync(
     batch = await collect_scored(collector, ["p0"], group_size=1)
 
     assert batch.rewards.device.type == "cpu"
-    assert batch.dones.device.type == "cpu"
     assert batch.group_ids.device.type == "cpu"
 
 
@@ -584,7 +612,6 @@ def _reward_sample_rows(
             prompt_index=index,
             sample_index=0,
             prompt=prompt,
-            prompt_id=f"{request_id}:prompt:{index}",
             group_id=f"{request_id}:group:{index}",
             sample_id=f"{request_id}:sample:{index}",
             trajectory_id=f"{request_id}:trajectory:{index}",
@@ -595,14 +622,42 @@ def _reward_sample_rows(
     ]
 
 
-def test_reward_scoring_input_rejects_prompt_output_mismatch() -> None:
-    """Checks reward scoring input rejects prompt output mismatch."""
-    with pytest.raises(ValueError, match="prompt/output batch mismatch"):
+def test_reward_scoring_input_rejects_sample_row_output_mismatch() -> None:
+    with pytest.raises(ValueError, match="sample-row/output batch mismatch"):
         RewardScoringInput(
             outputs=torch.ones(2, 3),
-            prompts=["p0"],
             source_request_id="request-0",
-            sample_rows=_reward_sample_rows("request-0", ["p0", "p1"]),
+            sample_rows=_reward_sample_rows("request-0", ["p0"]),
+            metadata={},
+            device="cpu",
+        )
+
+
+def test_reward_scoring_input_derives_batch_size_and_prompt_rows() -> None:
+    request = RewardScoringInput(
+        outputs=torch.ones(2, 3),
+        source_request_id="request-0",
+        sample_rows=_reward_sample_rows("request-0", ["p0", "p1"]),
+        metadata={},
+        device="cpu",
+    )
+
+    assert request.batch_size == 2
+    assert [row.prompt for row in request.sample_rows] == ["p0", "p1"]
+    assert {field.name for field in fields(request)}.isdisjoint(
+        {"prompts", "expected_count", "batch_size"},
+    )
+
+
+def test_reward_scoring_input_rejects_mismatched_row_request_id() -> None:
+    rows = _reward_sample_rows("request-0", ["p0"])
+    rows[0].metadata["request_id"] = "different-request"
+
+    with pytest.raises(ValueError, match="source request/sample-row mismatch"):
+        RewardScoringInput(
+            outputs=torch.ones(1, 3),
+            source_request_id="request-0",
+            sample_rows=rows,
             metadata={},
             device="cpu",
         )
@@ -625,7 +680,6 @@ def test_reward_scorer_score_many_uses_one_call_and_splits_per_group() -> None:
     requests = [
         RewardScoringInput(
             outputs=torch.ones(2, 3),
-            prompts=["g0-a", "g0-b"],
             source_request_id="request-0",
             sample_rows=_reward_sample_rows("request-0", ["g0-a", "g0-b"]),
             metadata={"target_text": "group-0"},
@@ -633,7 +687,6 @@ def test_reward_scorer_score_many_uses_one_call_and_splits_per_group() -> None:
         ),
         RewardScoringInput(
             outputs=torch.ones(3, 3),
-            prompts=["g1-a", "g1-b", "g1-c"],
             source_request_id="request-1",
             sample_rows=_reward_sample_rows(
                 "request-1",
@@ -809,6 +862,72 @@ def test_reward_view_selection_fails_fast_when_ambiguous() -> None:
         ).reward_outputs()
 
 
+def test_reward_output_is_independent_of_trajectory_storage_dtype() -> None:
+    """Trainer replay compression must not change the artifact being scored."""
+    import asyncio
+
+    request = GenerationRequest(
+        request_id="unit-request",
+        family="unit",
+        task="collect",
+        inputs=["p0"],
+        samples_per_prompt=1,
+    )
+    output = asyncio.run(_Runtime().generate(request))
+    canonical = torch.tensor(
+        [[[[0.1234567, -0.2345678], [0.3456789, -0.4567891]]]],
+        dtype=torch.float32,
+    )
+    output.output = canonical
+
+    builder = TrajectoryRolloutBatchBuilder(
+        output,
+        RolloutBatchBuildContext(
+            metadata={},
+            trajectory_storage_policy=TrajectoryStoragePolicy(dtype="float16"),
+        ),
+    )
+    replay_log_probs = builder.trajectory.segments["image_tokens"].tensors["old_log_prob"].value
+
+    assert replay_log_probs.dtype == torch.float16
+    assert output.output is canonical
+    assert torch.equal(
+        builder.reward_outputs(),
+        ((canonical + 1.0) * 0.5).clamp(0.0, 1.0),
+    )
+
+
+@pytest.mark.parametrize(
+    "metadata",
+    [{}, {"output_ref": "TrajectoryBatch.output"}],
+)
+def test_reward_output_rejects_missing_or_unsupported_output_ref(
+    metadata: dict[str, str],
+) -> None:
+    import asyncio
+
+    request = GenerationRequest(
+        request_id="unit-request",
+        family="unit",
+        task="collect",
+        inputs=["p0"],
+        samples_per_prompt=1,
+    )
+    output = asyncio.run(_Runtime().generate(request))
+    assert output.trajectory is not None
+    output.trajectory.reward_views["image"] = RewardView(
+        name="image",
+        value_range="tanh",
+        metadata=metadata,
+    )
+
+    with pytest.raises(RuntimeError, match="no supported output_ref"):
+        TrajectoryRolloutBatchBuilder(
+            output,
+            RolloutBatchBuildContext(metadata={}),
+        ).reward_outputs()
+
+
 def test_chunk_denoise_kl_reward_sums_chunk_and_transition_axes() -> None:
     """Latent Gaussian trajectories use denoise packing and per-sample KL."""
 
@@ -844,7 +963,6 @@ def test_chunk_denoise_kl_reward_sums_chunk_and_transition_axes() -> None:
         request_id=request.request_id,
         family=request.family,
         task=request.task,
-        prompts=list(request.prompts),
         sample_rows=sample_rows,
         output=torch.zeros(batch_size, 3, 2, 2),
         trajectory=trajectory,
@@ -855,11 +973,12 @@ def test_chunk_denoise_kl_reward_sums_chunk_and_transition_axes() -> None:
         RolloutBatchBuildContext(metadata={}, kl_reward_coef=0.25),
     ).build(torch.tensor([10.0, 20.0]))
 
-    assert packed.observations.shape[:3] == policy_shape
-    assert packed.actions.shape[:3] == policy_shape
+    resolver = TrajectoryResolver.from_batch(packed)
+    assert resolver.role_value("denoise", "observation").shape[:3] == policy_shape
+    assert resolver.role_value("denoise", "action").shape[:3] == policy_shape
     assert packed.rewards.tolist() == pytest.approx([8.5, 17.0])
-    assert packed.training_view is not None
-    assert packed.training_view.primary_segment == "denoise"
+    assert packed.trajectory is not None
+    assert packed.trajectory.primary_segment == "denoise"
 
 
 def test_nonlatent_gaussian_keeps_autoregressive_packing() -> None:
@@ -883,10 +1002,11 @@ def test_nonlatent_gaussian_keeps_autoregressive_packing() -> None:
         RolloutBatchBuildContext(metadata={}),
     ).build(torch.tensor([1.0]))
 
-    assert packed.observations.shape == (1, 1, 3)
-    assert packed.actions.shape == (1, 2)
-    assert packed.training_view is not None
-    assert packed.training_view.primary_segment == "image_tokens"
+    resolver = TrajectoryResolver.from_batch(packed)
+    assert resolver.tensor_value("image_tokens", "prompt_input_ids").shape == (1, 3)
+    assert resolver.role_value("image_tokens", "action").shape == (1, 2)
+    assert packed.trajectory is not None
+    assert packed.trajectory.primary_segment == "image_tokens"
 
 
 def test_collector_forwards_reference_metadata_to_request() -> None:
@@ -897,7 +1017,7 @@ def test_collector_forwards_reference_metadata_to_request() -> None:
 
     builder = GenerationRequestBuilder(
         entry=get_model_family_entry("cosmos-predict2"),
-        config=RolloutCollectorConfig(values={"num_steps": 1}),
+        config=RolloutCollectorConfig(request_sampling={"num_steps": 1}),
     )
 
     collector_request = builder.build(
@@ -917,7 +1037,7 @@ def test_collector_forwards_target_metadata_to_request() -> None:
 
     builder = GenerationRequestBuilder(
         entry=get_model_family_entry("cosmos-predict2"),
-        config=RolloutCollectorConfig(values={"num_steps": 1}),
+        config=RolloutCollectorConfig(request_sampling={"num_steps": 1}),
     )
 
     targets = {"target_image": "/tmp/target.png", "target_video": "/tmp/target.mp4"}
@@ -949,7 +1069,6 @@ def _sample_rows(request: GenerationRequest) -> list[GenerationSampleRow]:
                     prompt_index=prompt_index,
                     sample_index=sample_index,
                     prompt=prompt,
-                    prompt_id=f"p{prompt_index}",
                     group_id=f"g{prompt_index}",
                     sample_id=sample_id,
                     trajectory_id=f"t_{sample_id}",

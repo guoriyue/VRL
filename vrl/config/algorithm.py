@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from typing import Any
 
 
@@ -39,4 +40,17 @@ def algorithm_config_class(kind: str) -> type[Any]:
     raise ValueError(f"unsupported algorithm kind: {kind!r}")
 
 
-__all__ = ["algorithm_config_class"]
+def resolve_kl_reward_coef(value: object | None) -> float:
+    """Resolve the collector reward-shaping coefficient at its public boundary."""
+
+    if value is None:
+        return 0.0
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ValueError("algorithm.kl_reward_coef must be a finite number >= 0")
+    coefficient = float(value)
+    if not math.isfinite(coefficient) or coefficient < 0.0:
+        raise ValueError("algorithm.kl_reward_coef must be a finite number >= 0")
+    return coefficient
+
+
+__all__ = ["algorithm_config_class", "resolve_kl_reward_coef"]

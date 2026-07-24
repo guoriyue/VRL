@@ -27,8 +27,6 @@ class CosmosChunkExecutor(ReferenceConditionedChunks, DiffusionChunkExecutorBase
     task: str = "v2w"
     default_num_frames: int = 93
     default_fps: int | None = 16
-    default_max_sequence_length: int = 512
-    include_max_sequence_length_extra: bool = False
 
     def __init__(
         self,

@@ -20,13 +20,18 @@ import pytest
 import torch
 from torch import nn
 
+from vrl.config.loading import load_config
+from vrl.config.schema import FSDPConfig, RootConfig, parse_config
+from vrl.models.interfaces.runtime import register_checkpoint_owned_state
 from vrl.trainers.distributed import DistributedTrainingContext
 from vrl.trainers.fsdp import (
     apply_fsdp,
     build_fsdp_mesh,
+    gather_checkpoint_state_dict,
     gather_full_state_dict,
     init_training_process_group,
     iter_blocks,
+    load_checkpoint_state_dict,
     load_full_state_dict,
     mixed_precision_policy,
     normalize_fsdp_parameter_dtype,
@@ -44,12 +49,39 @@ from vrl.trainers.strategy import (
 def _cpu_fsdp_context() -> DistributedTrainingContext:
     return DistributedTrainingContext(
         strategy="fsdp",
-        distributed=True,
         rank=0,
         world_size=1,
-        is_primary=True,
         device=torch.device("cpu"),
     )
+
+
+def _fsdp_strategy(
+    context: DistributedTrainingContext,
+    **overrides: Any,
+) -> FSDPStrategy:
+    config = FSDPConfig.model_validate(overrides)
+    return FSDPStrategy(
+        context,
+        mesh_dims=config.mesh,
+        precision_policy=config.precision_policy,
+        reshard_after_forward=config.reshard_after_forward,
+        cpu_offload=config.cpu_offload,
+    )
+
+
+def _strategy_config(
+    strategy: str,
+    *,
+    strategy_config: dict[str, Any] | None = None,
+    model: dict[str, Any] | None = None,
+) -> RootConfig:
+    training: dict[str, Any] = {"strategy": strategy}
+    if strategy_config is not None:
+        training[strategy] = strategy_config
+    payload: dict[str, Any] = {"distributed": {"training": training}}
+    if model is not None:
+        payload["model"] = {"family": "sana", **model}
+    return RootConfig.model_validate(payload)
 
 
 class _Block(nn.Module):
@@ -320,7 +352,7 @@ def test_fsdp_clip_grad_norm_returns_global_norm_and_actually_clips(cpu_process_
     net(torch.randn(3, 4)).mul(5.0).sum().backward()  # large grads so clipping bites
 
     pre = _full_grad_norm(net)
-    returned = FSDPStrategy(_cpu_fsdp_context(), precision_policy="none").clip_grad_norm(
+    returned = _fsdp_strategy(_cpu_fsdp_context(), precision_policy="none").clip_grad_norm(
         net.parameters(),
         max_norm=0.1,
     )
@@ -344,7 +376,7 @@ def test_fsdp_rollout_export_matches_single_process_key_space(cpu_process_group)
     sharded.load_state_dict(snapshot)
     _shard(sharded)
 
-    got = FSDPStrategy(_cpu_fsdp_context(), precision_policy="none").export_rollout_state(
+    got = _fsdp_strategy(_cpu_fsdp_context(), precision_policy="none").export_rollout_state(
         _Bundle(sharded),
     )
     expected = SingleProcessStrategy().export_rollout_state(_Bundle(ref))
@@ -370,7 +402,7 @@ def test_fsdp_rollout_export_unwraps_torch_compile_to_clean_keys(cpu_process_gro
     compiled = torch.compile(inner)  # OptimizedModule with _orig_mod, like production
     _shard(compiled)
 
-    got = FSDPStrategy(_cpu_fsdp_context(), precision_policy="none").export_rollout_state(
+    got = _fsdp_strategy(_cpu_fsdp_context(), precision_policy="none").export_rollout_state(
         _Bundle(compiled),
     )
     expected = SingleProcessStrategy().export_rollout_state(_Bundle(torch.compile(ref)))
@@ -382,20 +414,114 @@ def test_fsdp_rollout_export_unwraps_torch_compile_to_clean_keys(cpu_process_gro
 
 
 def test_fsdp_rollout_export_filters_frozen_params(cpu_process_group) -> None:
-    """Rollout and checkpoint export gather only mutable LoRA-style parameters."""
+    """Rollout and checkpoint export omit unregistered frozen base state."""
     net = _ToyTransformer()
     net.head.requires_grad_(False)  # freeze the non-block head
     net.register_buffer("frozen_cache", torch.ones(4))
     _shard(net)
-    strategy = FSDPStrategy(_cpu_fsdp_context(), precision_policy="none")
+    strategy = _fsdp_strategy(_cpu_fsdp_context(), precision_policy="none")
     expected = {name for name, parameter in net.named_parameters() if parameter.requires_grad}
 
     rollout = strategy.export_rollout_state(_Bundle(net))
     assert set(rollout) == {f"transformer.{name}" for name in expected}
 
-    checkpoint = strategy.export_trainable_state(_Bundle(net))["transformer"]
+    checkpoint = strategy.export_checkpoint_state(_Bundle(net))["transformer"]
     assert set(checkpoint) == expected
     assert not any("head" in key or "frozen_cache" in key for key in checkpoint)
+
+
+@pytest.mark.parametrize("register_frozen", [False, True])
+def test_fsdp_checkpoint_gather_asks_dcp_to_skip_frozen_base_when_possible(
+    monkeypatch,
+    register_frozen,
+) -> None:
+    module = nn.Linear(2, 1)
+    module.bias.requires_grad_(False)
+    if register_frozen:
+        register_checkpoint_owned_state(module, ["bias"])
+    observed: list[bool] = []
+
+    def fake_get_model_state_dict(actual, *, options):
+        assert actual is module
+        observed.append(options.ignore_frozen_params)
+        return {
+            name: parameter
+            for name, parameter in module.named_parameters()
+            if not options.ignore_frozen_params or parameter.requires_grad
+        }
+
+    monkeypatch.setattr(
+        "torch.distributed.checkpoint.state_dict.get_model_state_dict",
+        fake_get_model_state_dict,
+    )
+
+    state = gather_checkpoint_state_dict(module)
+
+    assert observed == [not register_frozen]
+    assert set(state) == ({"weight", "bias"} if register_frozen else {"weight"})
+
+
+def test_fsdp_checkpoint_load_rejects_owned_key_missing_from_local_dcp_state(
+    monkeypatch,
+) -> None:
+    module = nn.Linear(2, 1, bias=False)
+    set_called = False
+
+    def fake_get_model_state_dict(actual, *, options):
+        assert actual is module
+        assert options.full_state_dict is False
+        return {}
+
+    def fake_set_model_state_dict(*_args, **_kwargs):
+        nonlocal set_called
+        set_called = True
+
+    monkeypatch.setattr(
+        "torch.distributed.checkpoint.state_dict.get_model_state_dict",
+        fake_get_model_state_dict,
+    )
+    monkeypatch.setattr(
+        "torch.distributed.checkpoint.state_dict.set_model_state_dict",
+        fake_set_model_state_dict,
+    )
+
+    with pytest.raises(ValueError, match="local state is missing checkpoint-owned"):
+        load_checkpoint_state_dict(
+            module,
+            {"weight": torch.ones_like(module.weight)},
+            strict=True,
+        )
+
+    assert set_called is False
+
+
+def test_fsdp_checkpoint_includes_registered_frozen_state_but_rollout_does_not(
+    cpu_process_group,
+) -> None:
+    net = _ToyTransformer()
+    net.head.requires_grad_(False)
+    registered = [name for name, _ in net.named_parameters() if name.startswith("head.")]
+    register_checkpoint_owned_state(net, registered)
+    _shard(net)
+    strategy = _fsdp_strategy(_cpu_fsdp_context(), precision_policy="none")
+
+    checkpoint = strategy.export_checkpoint_state(_Bundle(net))["transformer"]
+    rollout = strategy.export_rollout_state(_Bundle(net))
+
+    assert set(registered) <= set(checkpoint)
+    assert not any("head" in name for name in rollout)
+
+    restored = _ToyTransformer()
+    restored.head.requires_grad_(False)
+    register_checkpoint_owned_state(restored, registered)
+    _shard(restored)
+    strategy.load_checkpoint_state(
+        _Bundle(restored),
+        {"transformer": checkpoint},
+        strict=True,
+    )
+    restored_state = gather_full_state_dict(restored)
+    assert all(torch.equal(restored_state[name], checkpoint[name]) for name in registered)
 
 
 def test_fsdp_prepare_model_wraps_multi_transformer_model(cpu_process_group) -> None:
@@ -403,7 +529,7 @@ def test_fsdp_prepare_model_wraps_multi_transformer_model(cpu_process_group) -> 
     from torch.distributed.tensor import DTensor
 
     policy = _DualStagePolicy(_ToyTransformer())
-    out = FSDPStrategy(_cpu_fsdp_context(), precision_policy="none").prepare_model(policy)
+    out = _fsdp_strategy(_cpu_fsdp_context(), precision_policy="none").prepare_model(policy)
 
     assert out is policy
     assert policy.set_calls == 1
@@ -412,8 +538,8 @@ def test_fsdp_prepare_model_wraps_multi_transformer_model(cpu_process_group) -> 
     assert any(isinstance(parameter, DTensor) for parameter in policy.transformer_2.parameters())
 
 
-def test_fsdp_export_then_load_trainable_state_round_trip(cpu_process_group) -> None:
-    strategy = FSDPStrategy(_cpu_fsdp_context(), precision_policy="none")
+def test_fsdp_export_then_load_checkpoint_state_round_trip(cpu_process_group) -> None:
+    strategy = _fsdp_strategy(_cpu_fsdp_context(), precision_policy="none")
     src_module = _ToyTransformer()
     src_module.head.requires_grad_(False)
     with torch.no_grad():
@@ -421,7 +547,7 @@ def test_fsdp_export_then_load_trainable_state_round_trip(cpu_process_group) -> 
             parameter.fill_(3.0 if parameter.requires_grad else 5.0)
     src = _shard(src_module)
 
-    snapshot = strategy.export_trainable_state(_Bundle(src))
+    snapshot = strategy.export_checkpoint_state(_Bundle(src))
     assert set(snapshot) == {"transformer"}
     assert not any("head" in key for key in snapshot["transformer"])
 
@@ -431,15 +557,15 @@ def test_fsdp_export_then_load_trainable_state_round_trip(cpu_process_group) -> 
         dst_module.head.weight.fill_(11.0)
         dst_module.head.bias.fill_(11.0)
     dst = _shard(dst_module)
-    strategy.load_trainable_state(_Bundle(dst), snapshot)
+    strategy.load_checkpoint_state(_Bundle(dst), snapshot)
     restored = gather_full_state_dict(dst)
     for name, value in restored.items():
         expected = 11.0 if name.startswith("head.") else 3.0
         assert torch.allclose(value, torch.full_like(value, expected))
 
 
-def test_fsdp_load_trainable_state_accepts_legacy_full_checkpoint(cpu_process_group) -> None:
-    strategy = FSDPStrategy(_cpu_fsdp_context(), precision_policy="none")
+def test_fsdp_checkpoint_loader_rejects_unselected_legacy_full_state(cpu_process_group) -> None:
+    strategy = _fsdp_strategy(_cpu_fsdp_context(), precision_policy="none")
     src_module = _ToyTransformer()
     src_module.head.requires_grad_(False)
     with torch.no_grad():
@@ -451,35 +577,138 @@ def test_fsdp_load_trainable_state_accepts_legacy_full_checkpoint(cpu_process_gr
     dst_module = _ToyTransformer()
     dst_module.head.requires_grad_(False)
     dst = _shard(dst_module)
-    strategy.load_trainable_state(_Bundle(dst), legacy, strict=True)
+    with pytest.raises(ValueError, match="unexpected="):
+        strategy.load_checkpoint_state(_Bundle(dst), legacy, strict=True)
 
-    for value in gather_full_state_dict(dst).values():
+
+def test_fsdp_restore_protocol_normalizes_schema_v1_full_state(
+    cpu_process_group, tmp_path
+) -> None:
+    from vrl.trainers.checkpointing import TrainingCheckpoint, restore_training_checkpoint
+
+    strategy = _fsdp_strategy(_cpu_fsdp_context(), precision_policy="none")
+    src_module = _ToyTransformer()
+    src_module.head.requires_grad_(False)
+    with torch.no_grad():
+        for parameter in src_module.parameters():
+            parameter.fill_(7.0)
+    src = _shard(src_module)
+    legacy_full = gather_full_state_dict(src)
+
+    dst_module = _ToyTransformer()
+    dst_module.head.requires_grad_(False)
+    with torch.no_grad():
+        for parameter in dst_module.parameters():
+            parameter.fill_(3.0)
+    dst = _shard(dst_module)
+    trainer = SimpleNamespace(
+        _strategy=strategy,
+        load_state_dict=lambda state, *, strict: None,
+        state_dict=lambda: {},
+    )
+    checkpoint = TrainingCheckpoint(
+        checkpoint_dir=tmp_path,
+        checkpoint_path=tmp_path / "checkpoint.pt",
+        payload={
+            "schema_version": 1,
+            "family": "toy",
+            "trainer": {},
+            "model": {"trainable_modules": {"transformer": legacy_full}},
+            "progress": {},
+            "rng": {},
+        },
+        meta={},
+    )
+
+    restore_training_checkpoint(
+        checkpoint,
+        trainer=trainer,
+        bundle=_Bundle(dst),
+        family="toy",
+        strict=True,
+    )
+
+    restored = gather_full_state_dict(dst)
+    for _name, value in restored.items():
         assert torch.allclose(value, torch.full_like(value, 7.0))
 
 
-def test_fsdp_load_trainable_state_strictly_validates_mutable_keys(cpu_process_group) -> None:
-    strategy = FSDPStrategy(_cpu_fsdp_context(), precision_policy="none")
+def test_fsdp_restore_preflights_global_shape_before_mutation(
+    cpu_process_group,
+    tmp_path,
+) -> None:
+    from torch.distributed.tensor import DTensor
+
+    from vrl.trainers.checkpointing import TrainingCheckpoint, restore_model_checkpoint
+
+    strategy = _fsdp_strategy(_cpu_fsdp_context(), precision_policy="none")
+    destination_module = _ToyTransformer()
+    destination_module.head.requires_grad_(False)
+    destination = _shard(destination_module)
+    assert any(isinstance(value, DTensor) for value in destination.state_dict().values())
+    before = gather_full_state_dict(destination)
+
+    owned_state = strategy.export_checkpoint_state(_Bundle(destination))["transformer"]
+    owned_state = {name: torch.full_like(value, 7.0) for name, value in owned_state.items()}
+    bad_name = sorted(owned_state)[-1]
+    owned_state[bad_name] = owned_state[bad_name].new_zeros(
+        owned_state[bad_name].numel() + 1,
+    )
+    identity = {"schema": "toy/v1"}
+    checkpoint = TrainingCheckpoint(
+        checkpoint_dir=tmp_path,
+        checkpoint_path=tmp_path / "checkpoint.pt",
+        payload={
+            "schema_version": 2,
+            "family": "toy",
+            "trainer": {},
+            "model": {
+                "identity": identity,
+                "owned_state": {"transformer": owned_state},
+            },
+            "progress": {},
+            "rng": {},
+        },
+        meta={},
+    )
+
+    with pytest.raises(ValueError, match="shape mismatch"):
+        restore_model_checkpoint(
+            checkpoint,
+            bundle=_Bundle(destination),
+            family="toy",
+            expected_model_identity=identity,
+            strict=True,
+            strategy=strategy,
+        )
+
+    restored = gather_full_state_dict(destination)
+    assert all(torch.equal(value, before[name]) for name, value in restored.items())
+
+
+def test_fsdp_load_checkpoint_state_strictly_validates_owned_keys(cpu_process_group) -> None:
+    strategy = _fsdp_strategy(_cpu_fsdp_context(), precision_policy="none")
     net = _ToyTransformer()
     net.head.requires_grad_(False)
     sharded = _shard(net)
-    snapshot = strategy.export_trainable_state(_Bundle(sharded))
+    snapshot = strategy.export_checkpoint_state(_Bundle(sharded))
     state = snapshot["transformer"]
 
     missing = {"transformer": dict(state)}
     missing["transformer"].pop(next(iter(state)))
     with pytest.raises(ValueError, match="missing="):
-        strategy.load_trainable_state(_Bundle(sharded), missing, strict=True)
+        strategy.load_checkpoint_state(_Bundle(sharded), missing, strict=True)
 
     unexpected = {"transformer": {**state, "unknown.weight": torch.ones(1)}}
     with pytest.raises(ValueError, match="unexpected="):
-        strategy.load_trainable_state(_Bundle(sharded), unexpected, strict=True)
+        strategy.load_checkpoint_state(_Bundle(sharded), unexpected, strict=True)
 
 
 def test_fsdp_prepare_model_wraps_diffusion_handle(cpu_process_group) -> None:
     from torch.distributed.tensor import DTensor
 
     policy = _FakePolicy(_ToyTransformer())
-    out = FSDPStrategy(_cpu_fsdp_context(), precision_policy="none").prepare_model(policy)
+    out = _fsdp_strategy(_cpu_fsdp_context(), precision_policy="none").prepare_model(policy)
 
     assert out is policy
     assert policy.set_calls == 1
@@ -492,7 +721,13 @@ def test_fsdp_actor_prepare_normalizes_mixed_sources_before_first_forward(
     policy = _FakePolicy(_ToyTransformer().to(dtype=torch.bfloat16))
     policy.transformer.head.to(dtype=torch.float32)
 
-    FSDPStrategy(_cpu_fsdp_context(), precision_policy="actor").prepare_model(policy)
+    FSDPStrategy(
+        _cpu_fsdp_context(),
+        mesh_dims=["dp_shard"],
+        precision_policy="actor",
+        reshard_after_forward=True,
+        cpu_offload=False,
+    ).prepare_model(policy)
     output = policy.transformer(torch.randn(2, 4, dtype=torch.bfloat16))
 
     assert output.dtype is torch.bfloat16
@@ -506,6 +741,8 @@ def test_wan_fsdp_replay_build_defers_full_gpu_move_until_sharding(
     from omegaconf import OmegaConf
     from torch.distributed.tensor import DTensor
 
+    from vrl.config.precision import resolve_precision_policy
+    from vrl.config.schema import parse_config
     from vrl.families.registry import get_model_family_entry
     from vrl.models.steps.denoise import build as denoise_build
 
@@ -529,10 +766,19 @@ def test_wan_fsdp_replay_build_defers_full_gpu_move_until_sharding(
         "load_diffusers_scheduler",
         lambda _build, _class_name: object(),
     )
+    monkeypatch.setattr(
+        "diffusers.DiffusionPipeline.load_config",
+        lambda *_args, **_kwargs: {
+            "boundary_ratio": None,
+            "expand_timesteps": False,
+        },
+    )
     cfg = OmegaConf.create(
         {
             "model": {
+                "family": "wan_2_1_i2v",
                 "path": "fake/Wan2.1-I2V",
+                "revision": "a" * 40,
                 "use_lora": True,
                 "lora": {
                     "rank": 2,
@@ -548,17 +794,23 @@ def test_wan_fsdp_replay_build_defers_full_gpu_move_until_sharding(
             "distributed": {"training": {"strategy": "fsdp"}},
         },
     )
+    root = parse_config(cfg)
+    precision = resolve_precision_policy(root)
     entry = get_model_family_entry("wan_2_1_i2v")
     build = entry.resolve_model_build(
-        cfg,
+        root,
         torch.device("cpu"),
+        precision=precision,
         for_rollout=False,
     )
 
     assert build.defer_trainable_device_move is True
     assert (
         entry.resolve_model_build(
-            cfg, torch.device("cpu"), for_rollout=True
+            root,
+            torch.device("cpu"),
+            precision=precision,
+            for_rollout=True,
         ).defer_trainable_device_move
         is False
     )
@@ -570,7 +822,7 @@ def test_wan_fsdp_replay_build_defers_full_gpu_move_until_sharding(
     assert trainable_names
     assert all("lora_" in name for name in trainable_names)
 
-    FSDPStrategy(_cpu_fsdp_context(), precision_policy="none").prepare_model(
+    _fsdp_strategy(_cpu_fsdp_context(), precision_policy="none").prepare_model(
         bundle.model,
     )
 
@@ -601,7 +853,7 @@ def test_fsdp_prepare_model_initializes_process_group(cpu_process_group, monkeyp
     monkeypatch.setattr(fsdp_mod, "init_training_process_group", _spy)
 
     policy = _FakePolicy(_ToyTransformer())
-    FSDPStrategy(_cpu_fsdp_context(), precision_policy="none").prepare_model(policy)
+    _fsdp_strategy(_cpu_fsdp_context(), precision_policy="none").prepare_model(policy)
 
     assert calls == [("fsdp", "gloo")]
 
@@ -613,10 +865,8 @@ def test_process_group_binds_resolved_device_after_per_rank_mask(monkeypatch) ->
 
     context = DistributedTrainingContext(
         strategy="fsdp",
-        distributed=True,
         rank=3,
         world_size=4,
-        is_primary=False,
         device=torch.device("cuda:0"),
     )
     bound_devices: list[torch.device] = []
@@ -639,39 +889,101 @@ def test_fsdp_prepare_model_rejects_model_without_transformer_handle() -> None:
         pass
 
     with pytest.raises(NotImplementedError, match="trainable roots"):
-        FSDPStrategy(_cpu_fsdp_context(), precision_policy="none").prepare_model(_ARLikePolicy())
+        _fsdp_strategy(_cpu_fsdp_context(), precision_policy="none").prepare_model(_ARLikePolicy())
 
 
 def test_build_strategy_single_process_returns_single_process() -> None:
     ctx = DistributedTrainingContext(
         strategy="single_process",
-        distributed=False,
         rank=0,
         world_size=1,
-        is_primary=True,
         device=torch.device("cpu"),
     )
-    assert isinstance(build_strategy({}, ctx), SingleProcessStrategy)
+    assert isinstance(build_strategy(RootConfig(), ctx), SingleProcessStrategy)
 
 
-def test_build_strategy_fsdp_reads_knobs() -> None:
-    cfg = {
-        "distributed": {
-            "training": {
-                "fsdp": {
-                    "mesh": ["dp_shard"],
-                    "precision_policy": "none",
-                    "reshard_after_forward": False,
-                    "cpu_offload": True,
+@pytest.mark.parametrize(
+    ("strategy_config", "precision_policy", "reshard_after_forward", "cpu_offload"),
+    [
+        (None, "actor", True, False),
+        (
+            {
+                "mesh": ["dp_shard"],
+                "precision_policy": "none",
+                "reshard_after_forward": False,
+                "cpu_offload": True,
+            },
+            "none",
+            False,
+            True,
+        ),
+    ],
+)
+def test_build_strategy_fsdp_reads_public_defaults_and_overrides(
+    strategy_config: dict[str, Any] | None,
+    precision_policy: str,
+    reshard_after_forward: bool,
+    cpu_offload: bool,
+) -> None:
+    strategy = build_strategy(
+        _strategy_config("fsdp", strategy_config=strategy_config),
+        _cpu_fsdp_context(),
+    )
+
+    assert isinstance(strategy, FSDPStrategy)
+    assert strategy._mesh_dims == ["dp_shard"]
+    assert strategy._precision_policy == precision_policy
+    assert strategy._reshard_after_forward is reshard_after_forward
+    assert strategy._cpu_offload is cpu_offload
+
+
+def test_base_fsdp_preset_omits_schema_defaults_but_resolves_them() -> None:
+    cfg = load_config("base/distributed/training_fsdp")
+
+    assert "fsdp" not in cfg.distributed.training
+    training = parse_config(cfg).distributed.training
+
+    assert training is not None
+    assert training.fsdp == FSDPConfig()
+
+
+def test_fsdp_strategy_constructor_requires_resolved_config() -> None:
+    with pytest.raises(TypeError, match="mesh_dims"):
+        FSDPStrategy(_cpu_fsdp_context())  # type: ignore[call-arg]
+
+
+def test_build_strategy_rejects_config_context_mismatch() -> None:
+    with pytest.raises(ValueError, match="strategy mismatch"):
+        build_strategy(RootConfig(), _cpu_fsdp_context())
+
+
+def test_build_strategy_rejects_raw_unvalidated_config() -> None:
+    with pytest.raises(TypeError, match="must be RootConfig"):
+        build_strategy({}, _cpu_fsdp_context())  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize(
+    ("strategy", "unused_block"),
+    [
+        ("single_process", {"fsdp": {}}),
+        ("fsdp", {"ddp": {}}),
+    ],
+)
+def test_training_config_rejects_unselected_strategy_blocks(
+    strategy: str,
+    unused_block: dict[str, Any],
+) -> None:
+    with pytest.raises(ValueError, match=r"requires distributed\.training\.strategy"):
+        RootConfig.model_validate(
+            {
+                "distributed": {
+                    "training": {
+                        "strategy": strategy,
+                        **unused_block,
+                    },
                 },
             },
-        },
-    }
-    strategy = build_strategy(cfg, _cpu_fsdp_context())
-    assert isinstance(strategy, FSDPStrategy)
-    assert strategy._precision_policy == "none"
-    assert strategy._reshard_after_forward is False
-    assert strategy._cpu_offload is True
+        )
 
 
 def test_fsdp_accepts_shared_gpu_training_state_parking_preflight() -> None:
@@ -682,7 +994,7 @@ def test_fsdp_accepts_shared_gpu_training_state_parking_preflight() -> None:
     rejected colocation, so no configuration satisfied both.
     """
 
-    assert FSDPStrategy(_cpu_fsdp_context()).validate_training_state_parking() is None
+    assert _fsdp_strategy(_cpu_fsdp_context()).validate_training_state_parking() is None
 
 
 def test_fsdp_parking_rolls_every_rank_back_when_one_peer_fails() -> None:
@@ -698,9 +1010,9 @@ def test_fsdp_parking_rolls_every_rank_back_when_one_peer_fails() -> None:
 
     from vrl.trainers.strategy import TrainingMemoryState
 
-    strategy = FSDPStrategy(_cpu_fsdp_context())
+    strategy = _fsdp_strategy(_cpu_fsdp_context())
     # This rank parks cleanly; the agreement reports that a peer did not.
-    strategy._all_ranks_succeeded = lambda ok: False
+    strategy.all_ranks_succeeded = lambda succeeded: False
 
     model = nn.Linear(4, 4)
     state = TrainingMemoryState(
@@ -726,7 +1038,7 @@ def test_fsdp_shutdown_releases_training_process_group(monkeypatch) -> None:
         lambda: calls.append(True),
     )
 
-    FSDPStrategy(_cpu_fsdp_context()).shutdown()
+    _fsdp_strategy(_cpu_fsdp_context()).shutdown()
 
     assert calls == [True]
 
@@ -736,12 +1048,25 @@ def test_build_strategy_fsdp_allows_ema_and_resume() -> None:
     # local-shard views (EMAModuleWrapper) and optimizer resume goes through
     # the strategy's full-state export/load.
     assert isinstance(
-        build_strategy({"actor": {"ema": {"enable": True}}}, _cpu_fsdp_context()),
+        build_strategy(
+            RootConfig.model_validate(
+                {
+                    "actor": {"ema": {"enable": True}},
+                    "distributed": {"training": {"strategy": "fsdp"}},
+                },
+            ),
+            _cpu_fsdp_context(),
+        ),
         FSDPStrategy,
     )
     assert isinstance(
         build_strategy(
-            {"trainer": {"resume_from": "/ckpt/checkpoint-10"}},
+            RootConfig.model_validate(
+                {
+                    "trainer": {"resume_from": "/ckpt/checkpoint-10"},
+                    "distributed": {"training": {"strategy": "fsdp"}},
+                },
+            ),
             _cpu_fsdp_context(),
         ),
         FSDPStrategy,
@@ -752,16 +1077,22 @@ def test_build_strategy_fsdp_rejects_train_compile() -> None:
     # torch.compile (inductor) is unsound with FSDP2 reshard-after-forward all-gathers;
     # the build_strategy §10 gate must reject it.
     with pytest.raises(NotImplementedError, match="torch_compile"):
-        build_strategy({"model": {"torch_compile": {"enable": True}}}, _cpu_fsdp_context())
+        build_strategy(
+            _strategy_config(
+                "fsdp",
+                model={"torch_compile": {"enable": True}},
+            ),
+            _cpu_fsdp_context(),
+        )
 
 
 # ── gathered HF-adapter export (save_pretrained under FSDP2) ─────────────────
 
 
-def test_fsdp_export_modules_writes_gathered_hf_adapter(cpu_process_group, tmp_path) -> None:
+def test_fsdp_adapter_export_writes_gathered_hf_adapter(cpu_process_group, tmp_path) -> None:
     """save_pretrained under FSDP2 serializes the gathered adapter, not shards.
 
-    The online recipe passes export_modules under fsdp too;
+    The online recipe passes adapter_exports under fsdp too;
     save_training_checkpoint must detect the DTensor-sharded module and feed
     save_pretrained the full state it already gathered for checkpoint.pt.
     """
@@ -772,6 +1103,7 @@ def test_fsdp_export_modules_writes_gathered_hf_adapter(cpu_process_group, tmp_p
 
     from vrl.trainers.checkpointing import (
         LORA_WEIGHTS_NAME,
+        AdapterExport,
         load_training_checkpoint,
         save_training_checkpoint,
     )
@@ -784,7 +1116,7 @@ def test_fsdp_export_modules_writes_gathered_hf_adapter(cpu_process_group, tmp_p
     sharded = _shard(peft_model)
     assert any(isinstance(p, DTensor) for p in sharded.parameters())
     bundle = _Bundle(sharded)
-    strategy = FSDPStrategy(_cpu_fsdp_context())
+    strategy = _fsdp_strategy(_cpu_fsdp_context())
 
     trainer = SimpleNamespace(state_dict=lambda: {"step": 0, "global_step": 0})
     meta = save_training_checkpoint(
@@ -792,10 +1124,10 @@ def test_fsdp_export_modules_writes_gathered_hf_adapter(cpu_process_group, tmp_p
         trainer=trainer,
         bundle=bundle,
         family="toy",
+        model_identity={"schema": "toy/v1"},
         progress={"completed_epoch": 0, "next_epoch": 1},
-        export_modules={LORA_WEIGHTS_NAME: sharded},
+        adapter_exports={LORA_WEIGHTS_NAME: AdapterExport(sharded)},
         strategy=strategy,
-        is_primary=True,
     )
     assert meta["uses_lora"] is True
 
@@ -806,8 +1138,8 @@ def test_fsdp_export_modules_writes_gathered_hf_adapter(cpu_process_group, tmp_p
 
     # Every exported tensor equals the gathered full state (PEFT strips the
     # ".default" adapter infix on save, so map keys back before comparing).
-    gathered = strategy.export_trainable_state(bundle)["transformer"]
-    checkpoint_state = load_training_checkpoint(tmp_path).trainable_state["transformer"]
+    gathered = strategy.export_checkpoint_state(bundle)["transformer"]
+    checkpoint_state = load_training_checkpoint(tmp_path).checkpoint_state["transformer"]
     assert checkpoint_state.keys() == gathered.keys()
     assert all("lora_" in key for key in checkpoint_state)
     for key, tensor in adapter.items():
@@ -820,13 +1152,14 @@ def test_fsdp_export_modules_writes_gathered_hf_adapter(cpu_process_group, tmp_p
         torch.testing.assert_close(tensor, gathered[gathered_key])
 
 
-def test_export_modules_rejects_sharded_module_outside_bundle(cpu_process_group, tmp_path) -> None:
+def test_adapter_export_rejects_module_outside_bundle(cpu_process_group, tmp_path) -> None:
     """A DTensor-sharded export module with no gathered state must fail loud."""
 
     from peft import LoraConfig, get_peft_model
 
     from vrl.trainers.checkpointing import (
         LORA_WEIGHTS_NAME,
+        AdapterExport,
         save_training_checkpoint,
     )
 
@@ -840,16 +1173,16 @@ def test_export_modules_rejects_sharded_module_outside_bundle(cpu_process_group,
     bundle = _Bundle(_shard(_ToyTransformer()))
     trainer = SimpleNamespace(state_dict=lambda: {"step": 0, "global_step": 0})
 
-    with pytest.raises(ValueError, match="DTensor-sharded"):
+    with pytest.raises(ValueError, match="exactly one bundle checkpoint root"):
         save_training_checkpoint(
             tmp_path,
             trainer=trainer,
             bundle=bundle,
             family="toy",
+            model_identity={"schema": "toy/v1"},
             progress={"completed_epoch": 0, "next_epoch": 1},
-            export_modules={LORA_WEIGHTS_NAME: stray},
-            strategy=FSDPStrategy(_cpu_fsdp_context()),
-            is_primary=True,
+            adapter_exports={LORA_WEIGHTS_NAME: AdapterExport(stray)},
+            strategy=_fsdp_strategy(_cpu_fsdp_context()),
         )
 
 
@@ -872,7 +1205,7 @@ def test_fsdp_optimizer_state_export_is_full_plain_cpu(cpu_process_group) -> Non
     optimizer = torch.optim.AdamW(net.parameters(), lr=1e-2)
     _one_sgd_like_step(net, optimizer)
 
-    strategy = FSDPStrategy(_cpu_fsdp_context(), precision_policy="none")
+    strategy = _fsdp_strategy(_cpu_fsdp_context(), precision_policy="none")
     state = strategy.export_optimizer_state(net, optimizer)
 
     moments = state["state"]
@@ -896,7 +1229,7 @@ def test_fsdp_optimizer_state_round_trip(cpu_process_group) -> None:
     optimizer = torch.optim.AdamW(net.parameters(), lr=1e-2)
     _one_sgd_like_step(net, optimizer)
 
-    strategy = FSDPStrategy(_cpu_fsdp_context(), precision_policy="none")
+    strategy = _fsdp_strategy(_cpu_fsdp_context(), precision_policy="none")
     exported = strategy.export_optimizer_state(net, optimizer)
 
     # Resume precondition: the fresh optimizer exists but no training step ran

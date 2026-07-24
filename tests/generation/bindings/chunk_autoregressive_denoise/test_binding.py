@@ -53,6 +53,7 @@ def test_trainable_trajectory_declares_temporal_chunk_and_transition_axes() -> N
         "denoise_transition",
     )
     assert torch.count_nonzero(segment.tensors["kl"].value) == 0
+    assert trajectory.context == {"model_family": "causvid"}
 
 
 def test_gatherer_orders_transport_chunks_and_concatenates_sample_rows() -> None:
@@ -96,9 +97,10 @@ def test_generation_only_result_has_no_fabricated_policy_facts() -> None:
     assert "denoise_transition" not in trajectory.axes
     segment = trajectory.segments["generated_chunks"]
     assert segment.trainable is False
+    assert trajectory.primary_segment is None
     assert set(segment.tensors) == {"output"}
     assert segment.tensors["output"].role == "replay_input"
-    assert trajectory.context["trajectory_mode"] == "generation_only"
+    assert trajectory.context == {"model_family": "causvid"}
 
     builder = TrajectoryRolloutBatchBuilder(
         output,
@@ -120,7 +122,7 @@ def test_generic_executor_delegates_temporal_generation_to_model() -> None:
         samples_per_chunk=1,
     )
 
-    plan = executor.plan(request, sample_rows)
+    plan = executor.plan(request)
     output = executor.forward_plan(request, sample_rows, plan)
 
     assert model.calls == [(0, 0, 1), (0, 1, 1)]

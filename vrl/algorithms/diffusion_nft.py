@@ -136,19 +136,18 @@ class DiffusionNFT(Algorithm):
         self,
         inputs: AlgorithmInput,
     ) -> tuple[Any, TrainStepMetrics]:
-        model = inputs.metadata.get("model")
-        batch = inputs.metadata.get("rollout_batch")
-        timestep_index = int(inputs.metadata.get("timestep_index", 0))
-        if model is None:
-            raise RuntimeError("DiffusionNFT AlgorithmInput.metadata['model'] is required")
-        if batch is None:
-            raise RuntimeError("DiffusionNFT AlgorithmInput.metadata['rollout_batch'] is required")
+        if inputs.model is None:
+            raise RuntimeError("DiffusionNFT AlgorithmInput.model is required")
+        if inputs.rollout_batch is None:
+            raise RuntimeError("DiffusionNFT AlgorithmInput.rollout_batch is required")
+        if inputs.timestep_index is None:
+            raise RuntimeError("DiffusionNFT AlgorithmInput.timestep_index is required")
         if inputs.advantages is None:
             raise RuntimeError("AlgorithmInput.advantages is required for DiffusionNFT")
         return self.compute_batch_timestep_loss(
-            model,
-            batch,
-            timestep_index,
+            inputs.model,
+            inputs.rollout_batch,
+            inputs.timestep_index,
             inputs.advantages,
         )
 
@@ -176,15 +175,18 @@ class DiffusionNFT(Algorithm):
         x0 = replay_tensors["latents_clean"]
         prompt_embeds = replay_tensors["prompt_embeds"]
         timesteps = replay_tensors["timesteps"]
-        if timesteps.ndim == 1:
-            t_raw = timesteps
-        else:
-            if timestep_index >= timesteps.shape[1]:
-                raise RuntimeError(
-                    "DiffusionNFT timestep_index out of range: "
-                    f"timestep_index={timestep_index}, timesteps.shape={tuple(timesteps.shape)}",
-                )
-            t_raw = timesteps[:, timestep_index]
+        if not isinstance(timestep_index, int) or isinstance(timestep_index, bool):
+            raise TypeError(
+                f"DiffusionNFT timestep_index must be an int; got {type(timestep_index).__name__}",
+            )
+        timestep_width = 1 if timesteps.ndim == 1 else int(timesteps.shape[1])
+        if not 0 <= timestep_index < timestep_width:
+            raise RuntimeError(
+                "DiffusionNFT timestep_index out of range: "
+                f"timestep_index={timestep_index}, width={timestep_width}, "
+                f"timesteps.shape={tuple(timesteps.shape)}",
+            )
+        t_raw = timesteps if timesteps.ndim == 1 else timesteps[:, timestep_index]
 
         if x0.shape[0] != prompt_embeds.shape[0]:
             raise RuntimeError(

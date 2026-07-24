@@ -37,41 +37,23 @@ import torch
 
 from vrl.algorithms.logprob_mismatch import compute_logprob_mismatch_stats
 from vrl.config.loading import load_config
+from vrl.config.precision import resolve_precision_policy
+from vrl.config.schema import parse_config
 from vrl.generation.steps.denoise.teacache import TeaCacheConfig, TeaCacheState
-from vrl.generation.types import VideoGenerationRequest
 from vrl.math.denoise.flow_matching import sde_step_with_logprob
-from vrl.scripts.perf.common.diffusion_runtime import build_model
+from vrl.scripts.perf.common.diffusion_runtime import (
+    build_model,
+    prepare_sampling_state,
+)
 
 _SDE_TYPE = "cps"
-
-
-def _fresh_state(model, cfg):
-    s = cfg.sampling
-    enc = model.encode_prompt(
-        ["a physical scene, high quality"],
-        None,
-        guidance_scale=float(s.guidance_scale),
-        max_sequence_length=int(s.max_sequence_length),
-    )
-    req = VideoGenerationRequest(
-        prompt="a physical scene, high quality",
-        negative_prompt=None,
-        width=int(s.width),
-        height=int(s.height),
-        frame_count=int(s.num_frames),
-        num_steps=int(s.num_steps),
-        guidance_scale=float(s.guidance_scale),
-        seed=0,
-        extra={"max_sequence_length": int(s.max_sequence_length)},
-    )
-    return model.prepare_sampling(req, enc)
 
 
 def _measure(model, cfg, device, dtype, threshold):
     """Return (rollout_logp, replay_logp, skip_ratio) for one threshold (None=off)."""
 
     num_steps = int(cfg.sampling.num_steps)
-    state = _fresh_state(model, cfg)
+    state = prepare_sampling_state(model, cfg)
     teacache = (
         TeaCacheState(TeaCacheConfig.from_sampling({"threshold": threshold}), num_steps)
         if threshold is not None
@@ -155,7 +137,7 @@ def _diagnose(model, cfg, device, dtype):
     """
 
     num_steps = int(cfg.sampling.num_steps)
-    state = _fresh_state(model, cfg)
+    state = prepare_sampling_state(model, cfg)
     gen = torch.Generator(device=device).manual_seed(0)
     preds: list[torch.Tensor] = []
     lat_rel: list[float] = []
@@ -215,9 +197,11 @@ def main(argv=None):
     args = p.parse_args(argv)
 
     cfg = load_config(args.config)
+    root = parse_config(cfg)
+    precision = resolve_precision_policy(root)
     device = torch.device(args.device)
     dtype = torch.bfloat16
-    model = build_model(cfg, device, dtype)
+    model = build_model(root, device, dtype, precision=precision)
 
     if args.diagnose:
         _diagnose(model, cfg, device, dtype)

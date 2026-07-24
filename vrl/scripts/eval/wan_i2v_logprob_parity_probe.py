@@ -72,6 +72,8 @@ def main() -> None:
     from omegaconf import OmegaConf
     from PIL import Image
 
+    from vrl.config.precision import resolve_precision_policy
+    from vrl.config.schema import parse_config
     from vrl.families.registry import get_model_family_entry
     from vrl.generation.types import VideoGenerationRequest
 
@@ -81,23 +83,27 @@ def main() -> None:
     print(f"[load] {args.model_path} (offload={args.offload})", flush=True)
     t0 = time.time()
     entry = get_model_family_entry("wan_2_1_i2v")
-    build = entry.resolve_model_build(
-        OmegaConf.create(
-            {
-                "model": {
-                    "family": "wan_2_1_i2v",
-                    "path": args.model_path,
-                    "use_lora": False,
-                    "offload_mode": args.offload,
-                },
-                "sampling": {"num_steps": args.steps},
-                "precision": {
-                    "float32_precision": "tf32",
-                    "training": {"dtype": "bf16"},
-                },
+    cfg = OmegaConf.create(
+        {
+            "model": {
+                "family": "wan_2_1_i2v",
+                "path": args.model_path,
+                "use_lora": False,
+                "offload_mode": args.offload,
             },
-        ),
+            "sampling": {"num_steps": args.steps},
+            "precision": {
+                "float32_precision": "tf32",
+                "training": {"dtype": "bf16"},
+            },
+        },
+    )
+    root = parse_config(cfg)
+    precision = resolve_precision_policy(root)
+    build = entry.resolve_model_build(
+        root,
         torch.device("cuda"),
+        precision=precision,
     )
     bundle = entry.build_rollout(build)
     model = bundle.model

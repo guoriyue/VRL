@@ -23,7 +23,6 @@ class JanusProARModelRunner(PagedCFGTokenRunner):
     """Family model runner that lets the AR engine schedule Janus token steps."""
 
     family = "janus_pro"
-    lane_owner_prefix = "janus"
 
     @torch.no_grad()
     def init_token(
@@ -39,14 +38,18 @@ class JanusProARModelRunner(PagedCFGTokenRunner):
     ) -> TokenLoopInit:
         cfg = guidance_scale if guidance_scale is not None else self.model.config.guidance_scale
         temp = temperature if temperature is not None else self.model.config.temperature
-        image_token_num = image_token_num or self.model.config.image_token_num
+        if image_token_num is None:
+            image_token_num = self.model.config.image_token_num
+        image_token_num = int(image_token_num)
+        if image_token_num < 1:
+            raise ValueError("image_token_num must be >= 1")
         return self._init_paged_cfg(
             state_cls=JanusProARState,
             cond_inputs_embeds=cond_inputs_embeds,
             uncond_inputs_embeds=uncond_inputs_embeds,
             cond_attention_mask=cond_attention_mask,
             uncond_attention_mask=uncond_attention_mask,
-            total_token_num=int(image_token_num),
+            total_token_num=image_token_num,
             guidance_scale=float(cfg),
             temperature=float(temp),
         )

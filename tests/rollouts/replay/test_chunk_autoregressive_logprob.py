@@ -90,7 +90,6 @@ def _batch() -> RolloutBatch:
             prompt_index=index,
             sample_index=0,
             prompt=f"p{index}",
-            prompt_id=f"p{index}",
             group_id=f"g{index}",
             sample_id=f"s{index}",
             trajectory_id=f"t{index}",
@@ -117,10 +116,7 @@ def _batch() -> RolloutBatch:
         context={},
     )
     return RolloutBatch(
-        observations=torch.zeros(*shape, 1),
-        actions=torch.ones(*shape, 1),
         rewards=torch.ones(2),
-        dones=torch.zeros(2),
         group_ids=torch.arange(2),
         trajectory=trajectory,
     )

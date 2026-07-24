@@ -3,9 +3,13 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-import torch
+# Torch is a call-time dependency, not an import-time one: this module's config
+# dataclass is what ``algorithm.kind`` dispatch loads during config parsing,
+# and every annotation is a string under PEP 563.
+if TYPE_CHECKING:
+    import torch
 
 from vrl.algorithms.grpo.token import TokenGRPO, TokenGRPOConfig
 from vrl.algorithms.trajectory import AlgorithmInput
@@ -45,6 +49,7 @@ class MultiSegmentTokenGRPO(TokenGRPO):
         self,
         inputs: AlgorithmInput,
     ) -> tuple[Any, TrainStepMetrics]:
+
         # signals presence + required_signal_keys are enforced upstream by
         # AlgorithmAdapter.validate_inputs (inherited from GRPO).
         if inputs.advantages is None:
@@ -60,13 +65,18 @@ class MultiSegmentTokenGRPO(TokenGRPO):
         total_weight = 0.0
         train_segments = dict(self.config.train_segments or {})
         weights = dict(self.config.segment_weights or {})
-        raw_order = signals.context.get("segment_order")
-        if isinstance(raw_order, (list, tuple)) and raw_order:
-            segment_names = [str(name) for name in raw_order]
-        elif weights:
-            segment_names = list(weights)
-        else:
-            segment_names = list(signals.segments)
+        missing_weighted = [
+            name
+            for name, weight in weights.items()
+            if bool(train_segments.get(name, True))
+            and float(weight) > 0
+            and name not in signals.segments
+        ]
+        if missing_weighted:
+            raise RuntimeError(
+                "missing multi-segment GRPO segment: " + ", ".join(missing_weighted),
+            )
+        segment_names = list(signals.segments)
 
         for name in segment_names:
             if not bool(train_segments.get(name, True)):
@@ -90,13 +100,9 @@ class MultiSegmentTokenGRPO(TokenGRPO):
                     signals=TrajectorySignalBatch(
                         segments={name: segment_signal},
                         group_ids=signals.group_ids,
-                        context=signals.context,
                         primary_segment=name,
                     ),
-                    rewards=inputs.rewards,
-                    group_ids=inputs.group_ids,
                     advantages=segment_advantages,
-                    metadata=inputs.metadata,
                 ),
             )
             weighted = loss * weight

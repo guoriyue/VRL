@@ -22,11 +22,9 @@
 # slower than DDP for this fits-on-one-card LoRA model; the value is correctness +
 # readiness, not throughput.
 #
-# STATUS: capability-gated, not currently runnable. Shared-GPU phase leasing now
-# requires collective-safe parking for DTensor parameters, optimizer/EMA/scaler
-# state, and live gradients. FSDPStrategy rejects this topology before model or Ray
-# launch until that implementation exists. Keep this as the canonical future 2x1
-# acceptance shape; current runnable FSDP jobs need disjoint rollout GPUs.
+# STATUS: canonical cross-node 2x1 acceptance shape. DTensor-aware parking,
+# optimizer resume, and EMA checkpoint/export are implemented and covered by CPU
+# Gloo tests; a real two-server launch remains the hardware acceptance boundary.
 #
 # Launch (run on BOTH servers; same --master_addr = server A's reachable IP):
 #   # server A (rank 0, the output node):
@@ -41,9 +39,7 @@
 # own GPU. NCCL needs the two servers to reach each other on --master_port and the
 # NCCL ports (set NCCL_SOCKET_IFNAME / GLOO_SOCKET_IFNAME if multi-homed).
 #
-# Unsupported with fsdp in this first version (all fail-fast at build_strategy):
-#   - actor.ema.enable=true        (DTensor-aware EMA not implemented)
-#   - trainer.resume_from=...      (FSDP2 optimizer state export/load not implemented)
+# FSDP-specific constraint (fails fast at build_strategy):
 #   - model.torch_compile.enable=true (unsound with reshard-after-forward all-gathers)
 defaults:
   - /experiment/cosmos_predict2_5/online_nft_kling_video_reward
@@ -85,15 +81,6 @@ distributed:
       # same card as rollout/trainer. Explicit `rollout` is fail-loud (see the DDP
       # variant's note).
       gpu_pool: rollout
-
-actor:
-  # FSDP2 + EMA is fail-fast in this first version (DTensor-aware EMA gather/update
-  # not implemented — build_strategy raises). The base recipe enables EMA, so turn
-  # it off here. EMA is an actor-side averaging knob, not the learning signal, so
-  # dropping it does not change what FSDP validates (sharded forward/backward +
-  # gathered weight sync). Re-enable once DTensor EMA lands (SPRINT §8/§10).
-  ema:
-    enable: false
 
 model:
   # torch.compile (inductor graph capture) is unsound with FSDP2 fully_shard's

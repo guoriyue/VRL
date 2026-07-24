@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, replace
+from dataclasses import FrozenInstanceError, dataclass
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import patch
@@ -11,6 +11,9 @@ import pytest
 import torch
 from omegaconf import OmegaConf
 
+from vrl.config.loading import bundled_config_resource
+from vrl.config.precision import resolve_precision_policy
+from vrl.config.schema import parse_config
 from vrl.families.registry import ModelFamilyEntry, get_model_family_entry
 from vrl.generation.execution.types import DistributedWorkerHandle
 from vrl.generation.launch_contract import GenerationRuntimeLaunchContract
@@ -18,7 +21,7 @@ from vrl.generation.ray.config import RayGenerationConfig
 from vrl.generation.ray.launch_inputs import RayGenerationLaunchInputs
 from vrl.generation.ray.launcher import RayGenerationLauncher
 from vrl.generation.ray.utils import all_workers_support_versioned_slots
-from vrl.ray.placement import RolePlacement
+from vrl.ray.placement import GlobalRayPlacementOwner, RolePlacement
 from vrl.ray.resources import resolve_distributed_resources
 
 
@@ -36,10 +39,14 @@ class _Bundle:
     trainable_modules: dict[str, Any]
 
 
+_TEST_MODEL_IDENTITY = {"schema": "test"}
+
+
 def test_launch_contract_rejects_unknown_fields_at_typed_boundary() -> None:
     payload = {
         "family": "unit",
         "model_build": {},
+        "expected_model_identity": _TEST_MODEL_IDENTITY,
         "executor": object(),
     }
 
@@ -60,11 +67,13 @@ def test_launch_contract_accepts_primitive_config_leaves() -> None:
                 "optional": None,
             },
         },
+        expected_model_identity=_TEST_MODEL_IDENTITY,
     )
 
     model_config = contract.model_build["model_config"]
     assert model_config["enabled"] is True
     assert model_config["optional"] is None
+    assert contract.expected_model_identity == _TEST_MODEL_IDENTITY
 
 
 def test_launch_contract_rejects_callable_config_leaf() -> None:
@@ -72,6 +81,7 @@ def test_launch_contract_rejects_callable_config_leaf() -> None:
         GenerationRuntimeLaunchContract(
             family="unit",
             model_build={},
+            expected_model_identity=_TEST_MODEL_IDENTITY,
             executor_kwargs={"factory": lambda: None},
         )
 
@@ -81,6 +91,16 @@ def test_launch_contract_rejects_empty_registry_identity() -> None:
         GenerationRuntimeLaunchContract(
             family="",
             model_build={},
+            expected_model_identity=_TEST_MODEL_IDENTITY,
+        )
+
+
+def test_launch_contract_rejects_empty_model_identity() -> None:
+    with pytest.raises(ValueError, match=r"expected_model_identity must be non-empty"):
+        GenerationRuntimeLaunchContract(
+            family="unit",
+            model_build={},
+            expected_model_identity={},
         )
 
 
@@ -153,7 +173,7 @@ def _launch_cfg(
     model_config = {
         "family": "sd3_5",
         "path": "unit-test",
-        "marker": "driver-config",
+        "revision": "driver-config",
         "use_lora": False,
         "torch_compile": model_torch_compile
         or {
@@ -202,24 +222,36 @@ def _capture_launch_inputs(
     """Intercept the public launch boundary without starting Ray actors."""
 
     captured: list[RayGenerationLaunchInputs] = []
+    config = _ray_config(cfg)
+    root = parse_config(cfg)
+    precision = resolve_precision_policy(root)
 
     def capture_launch(
         _launcher: RayGenerationLauncher,
-        _config: RayGenerationConfig,
+        resolved_config: RayGenerationConfig,
         launch_inputs: RayGenerationLaunchInputs,
         *,
         placement: RolePlacement,
     ) -> RayGenerationLaunchInputs:
         assert isinstance(placement, RolePlacement)
+        assert resolved_config is config
         captured.append(launch_inputs)
         return launch_inputs
 
-    with patch.object(RayGenerationLauncher, "launch", new=capture_launch):
+    with (
+        patch.object(RayGenerationLauncher, "launch", new=capture_launch),
+        patch(
+            "vrl.models.checkpoint_identity.resolve_checkpoint_model_identity",
+            return_value=_TEST_MODEL_IDENTITY,
+        ) as resolve_identity,
+    ):
         result = RayGenerationLauncher(init_ray=False).launch_from_cfg(
-            cfg,
-            resources=resolve_distributed_resources(cfg),
+            root,
+            precision=precision,
+            config=config,
             entry=entry,
             driver_bundle=_Bundle(model=_CpuPolicy(), trainable_modules={}),
+            expected_model_identity=_TEST_MODEL_IDENTITY,
             placement=RolePlacement(
                 placement_group=object(),
                 bundle_indices=(),
@@ -228,6 +260,7 @@ def _capture_launch_inputs(
         )
 
     assert captured == [result]
+    resolve_identity.assert_called_once()
     return captured[0]
 
 
@@ -361,6 +394,7 @@ def test_launcher_capability_failure_kills_candidate_actor_group(
         launch_contract=GenerationRuntimeLaunchContract(
             family=entry.family,
             model_build={},
+            expected_model_identity=_TEST_MODEL_IDENTITY,
         ),
         gatherer=entry.new_gatherer(),
     )
@@ -382,31 +416,158 @@ def test_launcher_capability_failure_kills_candidate_actor_group(
 
 def test_chunk_placement_strategy_switches_from_cfg() -> None:
     """Checks distributed.rollout.chunk_placement_strategy flips the policy."""
-    assert _ray_config(_cfg()).chunk_placement_strategy == "round_robin"
+    assert _ray_config(_cfg()).worker.chunk_placement_strategy == "round_robin"
 
     cfg = _cfg()
     cfg.distributed.rollout.chunk_placement_strategy = "dynamic"
     dynamic = _ray_config(cfg)
-    assert dynamic.chunk_placement_strategy == "dynamic"
+    assert dynamic.worker.chunk_placement_strategy == "dynamic"
     # Invalid values are now rejected at the typed schema boundary
     # (RolloutWorkerSection Literal) at parse time, not in RayGenerationConfig —
     # see tests/config/test_schema.py::test_unknown_chunk_placement_strategy_raises.
 
 
+def test_worker_defaults_and_explicit_override_project_from_public_schema() -> None:
+    default = _ray_config(_cfg()).worker
+    assert default.cpus_per_worker == 1.0
+    assert default.max_inflight_chunks_per_worker == 1
+    assert default.pipelined is False
+    assert default.sync_trainable_state is True
+
+    cfg = _cfg()
+    cfg.distributed.rollout.cpus_per_worker = 2.5
+    cfg.distributed.rollout.max_inflight_chunks_per_worker = 3
+    cfg.distributed.rollout.sync_trainable_state = False
+    override = _ray_config(cfg).worker
+
+    assert override.cpus_per_worker == 2.5
+    assert override.max_inflight_chunks_per_worker == 3
+    assert override.sync_trainable_state is False
+
+
+@pytest.mark.parametrize(
+    "preset_name",
+    [
+        "base/distributed/ray_rollout",
+        "base/distributed/ray_rollout_colocated_single_gpu",
+        "base/distributed/ray_rollout_cross_node",
+    ],
+)
+def test_base_rollout_presets_pin_only_the_cpu_override(preset_name: str) -> None:
+    with bundled_config_resource(preset_name).open("r", encoding="utf-8") as stream:
+        cfg = OmegaConf.load(stream)
+
+    assert dict(cfg.distributed.rollout) == {"cpus_per_worker": 4.0}
+    config = RayGenerationConfig.from_cfg(
+        cfg,
+        resources=SimpleNamespace(
+            rollout_num_workers=1,
+            rollout_gpus_per_worker=1.0,
+        ),
+    )
+    assert config.worker.cpus_per_worker == 4.0
+    assert config.worker.max_inflight_chunks_per_worker == 1
+    assert config.worker.chunk_placement_strategy == "round_robin"
+    assert config.worker.sync_trainable_state is True
+
+
+def test_ray_generation_config_requires_an_explicit_worker_snapshot() -> None:
+    cfg = _cfg()
+    resources = resolve_distributed_resources(cfg)
+
+    with pytest.raises(TypeError, match="worker"):
+        RayGenerationConfig(resources=resources)  # type: ignore[call-arg]
+
+
+def test_rollout_worker_snapshot_is_frozen() -> None:
+    worker = _ray_config(_cfg()).worker
+
+    with pytest.raises(FrozenInstanceError):
+        worker.cpus_per_worker = 2.0  # type: ignore[misc]
+
+
+def test_placement_and_launcher_consume_the_same_worker_snapshot(monkeypatch) -> None:
+    import vrl.generation.ray.launcher as launcher_module
+
+    cfg = _launch_cfg()
+    cfg.distributed.rollout = {
+        "cpus_per_worker": 2.5,
+        "health_check_interval_s": 0.0,
+        "sync_trainable_state": False,
+    }
+    config = _ray_config(cfg)
+    owner = GlobalRayPlacementOwner(config.resources, config.worker)
+    assert owner.rollout_worker is config.worker
+    assert owner._bundle_requirements() == [{"CPU": 2.5}]
+
+    launch_kwargs: dict[str, Any] = {}
+
+    class _ActorGroup:
+        def __init__(self) -> None:
+            self.handles = [
+                SimpleNamespace(
+                    worker_id="rollout-0",
+                    node_ip="node",
+                    gpu_ids=(),
+                    actor=object(),
+                ),
+            ]
+
+        @staticmethod
+        def shutdown() -> None:
+            return None
+
+    def capture_actor_launch(**kwargs: Any) -> _ActorGroup:
+        launch_kwargs.update(kwargs)
+        return _ActorGroup()
+
+    monkeypatch.setattr(launcher_module, "require_ray", lambda: object())
+    monkeypatch.setattr(
+        launcher_module.RayActorGroup,
+        "launch",
+        staticmethod(capture_actor_launch),
+    )
+    monkeypatch.setattr(
+        launcher_module,
+        "all_workers_support_versioned_slots",
+        lambda *_args, **_kwargs: False,
+    )
+    entry = get_model_family_entry("sd3_5")
+    runtime = RayGenerationLauncher(init_ray=False).launch(
+        config,
+        RayGenerationLaunchInputs(
+            launch_contract=GenerationRuntimeLaunchContract(
+                family=entry.family,
+                model_build={},
+                expected_model_identity=_TEST_MODEL_IDENTITY,
+            ),
+            gatherer=entry.new_gatherer(),
+        ),
+        placement=RolePlacement(
+            placement_group=object(),
+            bundle_indices=(0,),
+            expected_gpu_ids=(),
+        ),
+    )
+
+    assert launch_kwargs["num_cpus"] == owner.rollout_worker.cpus_per_worker == 2.5
+    assert runtime.executor.max_inflight_chunks_per_worker == 1
+
+
 def test_health_check_settings_default_and_project_overrides() -> None:
     default = _ray_config(_cfg())
-    assert default.health_check_interval_s == 30.0
-    assert default.health_check_timeout_s == 30.0
-    assert default.health_check_first_wait_s == 0.0
+    assert default.worker.health_check_interval_s == 30.0
+    assert default.worker.health_check_timeout_s == 30.0
+    assert default.worker.health_check_first_wait_s == 0.0
 
     cfg = _cfg()
     cfg.distributed.rollout.health_check_interval_s = 5.0
     cfg.distributed.rollout.health_check_timeout_s = 37.5
     cfg.distributed.rollout.health_check_first_wait_s = 12.0
     override = _ray_config(cfg)
-    assert override.health_check_interval_s == 5.0
-    assert override.health_check_timeout_s == 37.5
-    assert override.health_check_first_wait_s == 12.0
+    assert override.worker.health_check_interval_s == 5.0
+    assert override.worker.health_check_timeout_s == 37.5
+    assert override.worker.health_check_first_wait_s == 12.0
 
 
 @pytest.mark.parametrize(
@@ -427,18 +588,18 @@ def test_ray_generation_config_rejects_negative_health_check_first_wait() -> Non
     cfg = _cfg()
     cfg.distributed.rollout.health_check_first_wait_s = -1.0
 
-    with pytest.raises(ValueError, match="health_check_first_wait_s must be >= 0"):
+    with pytest.raises(ValueError, match="health_check_first_wait_s must be finite and >= 0"):
         _ray_config(cfg)
 
 
 def test_pipelined_switches_from_cfg() -> None:
     """Checks distributed.rollout.pipelined flips the per-request pipelined path."""
-    assert _ray_config(_cfg()).pipelined is False
+    assert _ray_config(_cfg()).worker.pipelined is False
 
     cfg = _cfg()
     cfg.distributed.rollout.pipelined = True
 
-    assert _ray_config(cfg).pipelined is True
+    assert _ray_config(cfg).worker.pipelined is True
 
 
 def test_pipelined_rejects_multiple_resolved_workers() -> None:
@@ -473,6 +634,7 @@ def test_pipelined_rejects_multiple_placement_bundles_before_ray_start(
         launch_contract=GenerationRuntimeLaunchContract(
             family=entry.family,
             model_build={},
+            expected_model_identity=_TEST_MODEL_IDENTITY,
         ),
         gatherer=entry.new_gatherer(),
     )
@@ -494,11 +656,11 @@ def test_sync_trainable_state_defaults_on_for_from_cfg() -> None:
     """Online runs train the policy the rollout workers must resync, so an omitted
     sync_trainable_state defaults ON (True), not silently False (which would train
     the rollout on stale policy weights). Explicit values are kept."""
-    assert _ray_config(_cfg()).sync_trainable_state is True
+    assert _ray_config(_cfg()).worker.sync_trainable_state is True
 
     cfg = _cfg()
     cfg.distributed.rollout.sync_trainable_state = False
-    assert _ray_config(cfg).sync_trainable_state is False
+    assert _ray_config(cfg).worker.sync_trainable_state is False
 
 
 def test_launch_from_cfg_projects_model_compile_and_precision() -> None:
@@ -515,6 +677,7 @@ def test_launch_from_cfg_projects_model_compile_and_precision() -> None:
 
     model_build = launch_inputs.launch_contract.model_build
     assert launch_inputs.launch_contract.family == "sd3_5"
+    assert launch_inputs.launch_contract.expected_model_identity == _TEST_MODEL_IDENTITY
     assert "family" not in model_build
     assert model_build["device"] == "cpu"
     assert model_build["parameter_dtype"] == "float32"
@@ -525,17 +688,25 @@ def test_launch_from_cfg_projects_model_compile_and_precision() -> None:
         "outer_autocast": True,
     }
     assert model_build["rollout"]["prompt_encoder_dtype"] == "float16"
-    assert "pipeline_offload_mode" not in model_build["rollout"]
-    assert model_build["model_config"]["marker"] == "driver-config"
+    assert model_build["revision"] == "driver-config"
+    assert "revision" not in model_build["model_config"]
     assert model_build["model_config"]["torch_compile"] == {
         "enable": True,
         "mode": "default",
     }
 
 
-def test_launch_from_cfg_projects_wan_offload_to_rollout_contract() -> None:
+def test_launch_from_cfg_projects_wan_offload_to_rollout_contract(monkeypatch) -> None:
+    from diffusers import DiffusionPipeline
+
+    monkeypatch.setattr(
+        DiffusionPipeline,
+        "load_config",
+        staticmethod(lambda *a, **k: {"boundary_ratio": None}),
+    )
     cfg = _launch_cfg()
     cfg.model.family = "wan_2_1_i2v"
+    cfg.model.revision = "a" * 40
     cfg.model.offload_mode = "sequential"
 
     launch_inputs = _capture_launch_inputs(
@@ -548,6 +719,46 @@ def test_launch_from_cfg_projects_wan_offload_to_rollout_contract() -> None:
     assert "offload_mode" not in model_build["model_config"]
 
 
+def test_launch_from_cfg_rejects_rollout_identity_mismatch_before_ray_launch() -> None:
+    cfg = _launch_cfg()
+    root = parse_config(cfg)
+    precision = resolve_precision_policy(root)
+    launched = False
+
+    def fail_if_launched(*args: Any, **kwargs: Any) -> None:
+        del args, kwargs
+        nonlocal launched
+        launched = True
+        raise AssertionError("Ray launch must not run after driver identity mismatch")
+
+    with (
+        patch.object(RayGenerationLauncher, "launch", new=fail_if_launched),
+        patch(
+            "vrl.models.checkpoint_identity.resolve_checkpoint_model_identity",
+            return_value={"schema": "different"},
+        ),
+        pytest.raises(
+            ValueError,
+            match="rollout model identity does not match the driver replay model identity",
+        ),
+    ):
+        RayGenerationLauncher(init_ray=False).launch_from_cfg(
+            root,
+            precision=precision,
+            config=_ray_config(cfg),
+            entry=get_model_family_entry("sd3_5"),
+            driver_bundle=_Bundle(model=_CpuPolicy(), trainable_modules={}),
+            expected_model_identity=_TEST_MODEL_IDENTITY,
+            placement=RolePlacement(
+                placement_group=object(),
+                bundle_indices=(),
+                expected_gpu_ids=(),
+            ),
+        )
+
+    assert launched is False
+
+
 def test_launch_from_cfg_preserves_disabled_model_compile_config() -> None:
     """Checks disabled model.torch_compile is preserved as ordinary model config."""
     launch_inputs = _capture_launch_inputs(
@@ -555,8 +766,10 @@ def test_launch_from_cfg_preserves_disabled_model_compile_config() -> None:
         get_model_family_entry("sd3_5"),
     )
 
-    model_config = launch_inputs.launch_contract.model_build["model_config"]
-    assert model_config["marker"] == "driver-config"
+    model_build = launch_inputs.launch_contract.model_build
+    assert model_build["revision"] == "driver-config"
+    model_config = model_build["model_config"]
+    assert "revision" not in model_config
     assert model_config["torch_compile"] == {
         "enable": False,
         "mode": "default",
@@ -629,13 +842,17 @@ def test_launch_from_cfg_rejects_model_compile_for_ar_family() -> None:
         },
     )
     cfg.model.family = "janus_pro"
+    root = parse_config(cfg)
+    precision = resolve_precision_policy(root)
 
     with pytest.raises(ValueError, match="does not support torch compile"):
         RayGenerationLauncher(init_ray=False).launch_from_cfg(
-            cfg,
-            resources=resolve_distributed_resources(cfg),
+            root,
+            precision=precision,
+            config=_ray_config(cfg),
             entry=get_model_family_entry("janus_pro"),
             driver_bundle=_Bundle(model=_CpuPolicy(), trainable_modules={}),
+            expected_model_identity=_TEST_MODEL_IDENTITY,
             placement=RolePlacement(
                 placement_group=object(),
                 bundle_indices=(),
@@ -652,14 +869,12 @@ def test_ray_backend_rejects_unapproved_driver_cuda_overlap() -> None:
     """The runtime backstop reports the concrete conflicting devices and policy."""
     config = _ray_config(
         _resource_cfg(
-            trainer_devices=[0],
+            trainer_devices=[1],
             rollout_devices=[0],
-            allow_overlap=True,
         ),
     )
-    # Resource resolution rejects this topology first in ordinary config flows.
-    # Replace only the derived approval bit to exercise the launch-boundary backstop.
-    config.resources = replace(config.resources, colocated=False)
+    # The resolved trainer owns GPU 1, but the actual driver model reports GPU
+    # 0. The launch boundary must reject that real topology mismatch.
 
     with pytest.raises(
         ValueError,
@@ -683,12 +898,10 @@ def test_ray_backend_detects_cuda_trainable_module_when_policy_has_no_device() -
 
     config = _ray_config(
         _resource_cfg(
-            trainer_devices=[0],
+            trainer_devices=[1],
             rollout_devices=[0],
-            allow_overlap=True,
         ),
     )
-    config.resources = replace(config.resources, colocated=False)
 
     with pytest.raises(
         ValueError,

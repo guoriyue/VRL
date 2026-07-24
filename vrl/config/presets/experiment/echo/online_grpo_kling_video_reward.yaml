@@ -10,13 +10,16 @@ defaults:
 
 # Echo-safe shape: H/W divisible by 32, frames = 1 + 8*k. 256x256, 25 frames.
 # guidance_scale=1.0 because the DMD checkpoint bakes guidance in (no CFG branch).
+model:
+  video_height: 256
+  video_width: 256
+
 sampling:
-  width: 256
-  height: 256
+  width: ${model.video_width}
+  height: ${model.video_height}
   num_frames: 25
   num_steps: 16
   guidance_scale: 1.0
-  max_sequence_length: 512
   fps: 24
 
 actor:

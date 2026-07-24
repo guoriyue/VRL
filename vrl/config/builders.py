@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import math
-from dataclasses import MISSING, fields, is_dataclass
+from dataclasses import MISSING, dataclass, fields, is_dataclass
 from typing import TYPE_CHECKING, Any, get_type_hints
 
 from omegaconf import DictConfig, OmegaConf
@@ -13,16 +13,40 @@ from vrl.config.precision import (
     PrecisionPolicy,
     resolve_precision_policy,
 )
+from vrl.config.schema import RewardConfig, RootConfig
 from vrl.config.validation import (
     path_exists,
     require,
-    validate_reward_config,
     validate_training_config,
 )
 
 if TYPE_CHECKING:
+    from vrl.algorithms.dpo import DiffusionDPOConfig
     from vrl.algorithms.logprob_mismatch import PrecisionCorrectionConfig
+    from vrl.trainers.checkpointing import TrainingResumeConfig
     from vrl.trainers.core.types import PrecisionDriftGuardConfig
+    from vrl.trainers.offline import OfflineDPOTrainerConfig
+    from vrl.trainers.online.config import OnlineBatchPlan, TrainerConfig
+
+
+@dataclass(frozen=True, slots=True)
+class RewardRuntimeConfig:
+    """Resolved reward weights and per-component runtime kwargs."""
+
+    weights: dict[str, float]
+    kwargs: dict[str, dict[str, Any]]
+
+
+@dataclass(frozen=True, slots=True)
+class BuiltConfigs:
+    """Named outputs derived from one validated public config."""
+
+    root: RootConfig
+    algorithm: Any
+    precision: PrecisionPolicy
+    trainer: TrainerConfig | None
+    reward: RewardRuntimeConfig | None
+    resume: TrainingResumeConfig
 
 
 def build_precision_split_safety_configs() -> tuple[
@@ -114,7 +138,12 @@ def _dataclass_payload(cls: type[Any], node: DictConfig) -> dict[str, Any]:
     return {key: value for key, value in raw.items() if key in allowed}
 
 
-def _validate_yaml_home(field_name: str, home: str) -> None:
+def _validate_yaml_home(
+    field_name: str,
+    home: str,
+    *,
+    owner: str = "TrainerConfig",
+) -> None:
     """Reject metadata addresses whose top-level section is not a known one.
 
     Guards the silent failure mode of a typo'd address on an OPTIONAL field
@@ -130,9 +159,65 @@ def _validate_yaml_home(field_name: str, home: str) -> None:
     if top not in RootConfig.model_fields:
         expected = ", ".join(sorted(RootConfig.model_fields))
         raise AssertionError(
-            f"TrainerConfig.{field_name} declares unknown yaml home {home!r}; "
+            f"{owner}.{field_name} declares unknown yaml home {home!r}; "
             f"the top-level section must be one of: {expected}",
         )
+
+
+def _optional_non_negative_int(cfg: DictConfig, path: str) -> int | None:
+    if not path_exists(cfg, path):
+        return None
+    value = require(cfg, path)
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        raise ValueError(f"{path} must be a non-negative integer (got {value!r})")
+    return value
+
+
+def build_online_batch_plan(cfg: DictConfig) -> OnlineBatchPlan:
+    """Resolve public size/count inputs into one canonical optimizer batch plan."""
+
+    from vrl.trainers.online.config import OnlineBatchPlan
+
+    base = OnlineBatchPlan(
+        prompts_per_batch=require(cfg, "rollout.prompts_per_batch"),
+        n_samples_per_prompt=require(cfg, "rollout.n_samples_per_prompt"),
+    )
+    prompts = base.prompts_per_batch
+    accumulation_steps = _optional_non_negative_int(
+        cfg,
+        "actor.gradient_accumulation_steps",
+    )
+    microbatch_size = _optional_non_negative_int(cfg, "actor.microbatch_size")
+
+    active_accumulation = int(accumulation_steps or 0)
+    active_microbatch = int(microbatch_size or 0)
+    if active_accumulation > 0 and active_microbatch > 0:
+        if active_accumulation * active_microbatch != prompts:
+            raise ValueError(
+                "actor.microbatch_size * actor.gradient_accumulation_steps "
+                f"must equal rollout.prompts_per_batch "
+                f"({active_microbatch} * {active_accumulation} != {prompts}); "
+                "set only one of them.",
+            )
+    elif active_microbatch > 0:
+        if prompts % active_microbatch != 0:
+            raise ValueError(
+                "actor.microbatch_size must evenly divide "
+                f"rollout.prompts_per_batch ({prompts} % {active_microbatch} != 0)",
+            )
+        active_accumulation = prompts // active_microbatch
+
+    payload: dict[str, Any] = {
+        "prompts_per_batch": prompts,
+        "n_samples_per_prompt": base.n_samples_per_prompt,
+    }
+    if active_accumulation > 0:
+        payload["gradient_accumulation_steps"] = active_accumulation
+    for field_name in ("replay_samples_per_chunk", "host_memory_budget_fraction"):
+        path = f"actor.{field_name}"
+        if path_exists(cfg, path):
+            payload[field_name] = require(cfg, path)
+    return OnlineBatchPlan(**payload)
 
 
 def build_trainer_config(
@@ -150,7 +235,7 @@ def build_trainer_config(
     collected and reported together with full YAML paths.
     """
 
-    from vrl.trainers.core.types import TrainerConfig
+    from vrl.trainers.online.config import OnlineBatchPlan, TrainerConfig
 
     trainer_block = getattr(cfg, "trainer", None)
     if trainer_block is not None and "eval" in trainer_block:
@@ -176,6 +261,25 @@ def build_trainer_config(
     hints = get_type_hints(TrainerConfig)
     payload: dict[str, Any] = {}
     missing: list[str] = []
+
+    # ``batch_plan`` is bridged because its public inputs span rollout and actor.
+    # Derive its required public paths from the plan fields so missing-key
+    # reporting cannot drift when the typed plan changes.
+    for plan_field in fields(OnlineBatchPlan):
+        home = plan_field.metadata.get("yaml")
+        if home is None:
+            raise AssertionError(
+                f"OnlineBatchPlan.{plan_field.name} does not declare its YAML home "
+                "(field metadata {'yaml': ...})",
+            )
+        _validate_yaml_home(plan_field.name, home, owner="OnlineBatchPlan")
+        path = f"{home}.{plan_field.name}"
+        if (
+            plan_field.default is MISSING
+            and plan_field.default_factory is MISSING
+            and not path_exists(cfg, path)
+        ):
+            missing.append(path)
 
     for f in fields(TrainerConfig):
         if not f.init:
@@ -213,6 +317,7 @@ def build_trainer_config(
     # Resolve the public policy once; trainer fields are its runtime projection.
     precision = precision or resolve_precision_policy(cfg)
     payload.update(
+        batch_plan=build_online_batch_plan(cfg),
         train_precision=precision.training.label,
         rollout_precision=precision.rollout.label,
     )
@@ -230,6 +335,68 @@ def build_trainer_config(
     return TrainerConfig(**payload)
 
 
+def build_offline_dpo_trainer_config(
+    cfg: DictConfig,
+    dpo_config: DiffusionDPOConfig,
+    *,
+    train_batch_size: int,
+    gradient_accumulation_steps: int,
+) -> OfflineDPOTrainerConfig:
+    """Slice merged YAML into ``OfflineDPOTrainerConfig``.
+
+    The offline twin of ``build_trainer_config``: same public ``actor.*``
+    optimizer section, projected into the offline trainer instead. It lives here
+    rather than on the config dataclass because ``vrl.trainers.offline`` holds no
+    YAML knowledge, and rather than in the recipe script because a public config
+    projection is not a script-private detail.
+    """
+
+    from vrl.trainers.core.types import OptimConfig
+    from vrl.trainers.offline import OfflineDPOTrainerConfig
+
+    raw_optim = OmegaConf.to_container(
+        cfg.actor.optim,
+        resolve=True,
+        throw_on_missing=True,
+    )
+    if not isinstance(raw_optim, dict):
+        raise ValueError("actor.optim must be a mapping")
+    optim = OptimConfig(**raw_optim)
+    if optim.optim_8bit:
+        raise ValueError(
+            "actor.optim.optim_8bit=true is not supported by OfflineDPOTrainer; "
+            "use AdamW/Adafactor without 8-bit optimizer state",
+        )
+    use_adafactor = bool(require(cfg, "actor.use_adafactor"))
+    if use_adafactor:
+        adam_only_keys = sorted({"adam_beta1", "adam_beta2", "eps"} & raw_optim.keys())
+        if adam_only_keys:
+            paths = ", ".join(f"actor.optim.{key}" for key in adam_only_keys)
+            raise ValueError(
+                f"actor.use_adafactor=true does not consume AdamW-only key(s): {paths}",
+            )
+
+    scale_lr = bool(require(cfg, "actor.scale_lr"))
+    effective_batch_size = train_batch_size * gradient_accumulation_steps
+    lr = float(optim.lr) * effective_batch_size if scale_lr else float(optim.lr)
+    max_grad_norm = OmegaConf.select(cfg, "actor.max_norm")
+    if max_grad_norm is None:
+        max_grad_norm = OfflineDPOTrainerConfig().max_grad_norm
+    return OfflineDPOTrainerConfig(
+        beta=float(dpo_config.beta),
+        sft_weight=float(dpo_config.sft_weight),
+        lr=lr,
+        adam_beta1=float(optim.adam_beta1),
+        adam_beta2=float(optim.adam_beta2),
+        adam_weight_decay=float(optim.weight_decay),
+        adam_epsilon=float(optim.eps),
+        max_grad_norm=float(max_grad_norm),
+        gradient_accumulation_steps=gradient_accumulation_steps,
+        prediction_type=str(require(cfg, "actor.prediction_type")),
+        use_adafactor=use_adafactor,
+    )
+
+
 def build_algorithm_config(cfg: DictConfig):
     """Dispatch on ``algorithm.kind`` and return the typed algorithm config."""
 
@@ -240,54 +407,63 @@ def build_algorithm_config(cfg: DictConfig):
     return cls(**_dataclass_payload(cls, cfg.algorithm))
 
 
-def build_reward_config(cfg: DictConfig) -> tuple[dict[str, float], dict[str, dict]]:
-    """Slice ``cfg.reward`` into ``(weights, kwargs)``.
+def build_reward_config(cfg: DictConfig | RewardConfig) -> RewardRuntimeConfig:
+    """Resolve one public reward section into its runtime config.
 
     Zero-weight components remain present so they can be scored and logged as
     observation-only safeguards without changing the optimization reward.
     """
 
-    validate_reward_config(cfg)
-    reward = cfg.reward
+    from vrl.config.validation import validate_reward_config
 
-    components = (
-        OmegaConf.to_container(
-            reward.components,
-            resolve=True,
-            throw_on_missing=True,
-        )
-        or {}
-    )
-    weights = {name: float(weight) for name, weight in components.items()}
-
-    raw_kwargs = reward.get("kwargs", None)
-    kwargs: dict[str, dict] = (
-        OmegaConf.to_container(raw_kwargs, resolve=True, throw_on_missing=True) or {}
-        if raw_kwargs
-        else {}
-    )
-
-    return weights, kwargs
+    reward = cfg if isinstance(cfg, RewardConfig) else validate_reward_config(cfg)
+    weights = {name: float(weight) for name, weight in reward.components.items()}
+    kwargs = {
+        name: dict(component_kwargs or {}) for name, component_kwargs in reward.kwargs.items()
+    }
+    return RewardRuntimeConfig(weights=weights, kwargs=kwargs)
 
 
-def build_configs(cfg: DictConfig) -> dict[str, Any]:
+def build_configs(cfg: DictConfig) -> BuiltConfigs:
     """Bundle typed configs for downstream training scripts."""
 
-    validate_training_config(cfg)
-    precision = resolve_precision_policy(cfg)
-    out: dict[str, Any] = {
-        "trainer": build_trainer_config(cfg, precision=precision),
-        "algorithm": build_algorithm_config(cfg),
-        "precision": precision,
-    }
-    if "reward" in cfg:
-        out["reward"] = build_reward_config(cfg)
-    return out
+    from vrl.trainers.checkpointing import (
+        prepare_model_config_for_training_resume,
+        resolve_training_resume_config,
+    )
+
+    resume = resolve_training_resume_config(cfg)
+    # A full checkpoint, not model.lora.path, owns trainable state on resume.
+    # Normalize the raw source before typed parsing so persisted config and all
+    # runtime consumers receive one truthful model tree.
+    prepare_model_config_for_training_resume(cfg, resume)
+    root, precision = validate_training_config(cfg)
+    algorithm = build_algorithm_config(cfg)
+    is_offline_dpo = root.algorithm is not None and root.algorithm.kind == "diffusion_dpo"
+    trainer = None if is_offline_dpo else build_trainer_config(cfg, precision=precision)
+    reward = build_reward_config(root.reward) if root.reward is not None else None
+    if not is_offline_dpo:
+        if reward is None:
+            raise ValueError("online recipe requires a reward section")
+        if not any(weight > 0 for weight in reward.weights.values()):
+            raise ValueError("At least one reward component must have weight > 0.")
+    return BuiltConfigs(
+        root=root,
+        algorithm=algorithm,
+        precision=precision,
+        trainer=trainer,
+        reward=reward,
+        resume=resume,
+    )
 
 
 __all__ = [
+    "BuiltConfigs",
+    "RewardRuntimeConfig",
     "build_algorithm_config",
     "build_configs",
+    "build_offline_dpo_trainer_config",
+    "build_online_batch_plan",
     "build_reward_config",
     "build_trainer_config",
 ]

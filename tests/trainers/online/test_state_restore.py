@@ -7,6 +7,7 @@ import pytest
 from tests.trainers.online._collector_control import CollectorControlFake
 from tests.trainers.online._helpers import (
     _algorithm_inputs,
+    _diffusion_rollout_batch,
     _stamp_model_precision,
     _trajectory_signals,
 )
@@ -15,6 +16,25 @@ from vrl.config.precision import RolePrecision
 
 class TestOnlineTrainerResumeState:
     """Groups tests for online trainer resume state."""
+
+    def test_state_dict_omits_dead_totals_and_accepts_legacy_keys(self) -> None:
+        source = _make_resume_trainer()
+        source.state.step = 3
+        source.state.global_step = 5
+
+        state = source.state_dict()
+
+        assert "total_reward" not in state
+        assert "total_loss" not in state
+        assert not hasattr(source.state, "total_reward")
+        assert not hasattr(source.state, "total_loss")
+
+        state.update({"total_reward": 99.0, "total_loss": 101.0})
+        restored = _make_resume_trainer()
+        restored.load_state_dict(state, strict=True)
+
+        assert restored.state.step == 3
+        assert restored.state.global_step == 5
 
     def test_load_state_dict_initializes_and_restores_optimizer_state(self) -> None:
         """Checks load state dict initializes and restores optimizer state."""
@@ -231,17 +251,11 @@ class _ResumeCollector(CollectorControlFake):
     async def collect_unscored(self, prompts, **kwargs):
         import torch
 
-        from vrl.rollouts.batch import RolloutBatch
-
         group_size = int(kwargs["group_size"])
-        return RolloutBatch(
-            observations=torch.zeros(group_size, 2, 1),
-            actions=torch.zeros(group_size, 2, 1),
+        return _diffusion_rollout_batch(
             rewards=torch.arange(group_size, dtype=torch.float32),
-            dones=torch.ones(group_size, dtype=torch.bool),
             group_ids=torch.zeros(group_size, dtype=torch.long),
-            context={},
-            prompts=list(prompts) * group_size,
+            num_steps=2,
         )
 
 
@@ -290,8 +304,9 @@ def _make_resume_trainer(
     import torch
     import torch.nn as nn
 
-    from vrl.trainers.core.types import DebugConfig, EMAConfig, OptimConfig, TrainerConfig
+    from vrl.trainers.core.types import DebugConfig, EMAConfig, OptimConfig
     from vrl.trainers.online import OnlineTrainer
+    from vrl.trainers.online.config import OnlineBatchPlan, TrainerConfig
 
     model = nn.Linear(1, 1, bias=False)
     with torch.no_grad():
@@ -321,15 +336,13 @@ def _make_resume_trainer(
         ),
         strategy=strategy,
         config=TrainerConfig(
-            prompts_per_batch=1,
+            batch_plan=OnlineBatchPlan(prompts_per_batch=1, n_samples_per_prompt=2),
             timestep_fraction=1.0,
-            total_epochs=1,
             drop_zero_advantage=False,
             output_dir="outputs/",
             optim=OptimConfig(lr=0.01),
             ema=EMAConfig(enable=ema),
             debug=DebugConfig(),
-            n_samples_per_prompt=2,
             train_precision=train_precision,
         ),
         device=device,

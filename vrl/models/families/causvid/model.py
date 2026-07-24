@@ -25,6 +25,11 @@ from vrl.generation.bindings.chunk_autoregressive_denoise import (
     ChunkAutoregressiveDenoiseResult,
 )
 from vrl.math.denoise.renoise import renoise_step_with_logprob
+from vrl.models.checkpoint_identity import validate_checkpoint_source_member
+from vrl.models.families.causvid.config import (
+    CAUSVID_CHECKPOINT_FILE,
+    CAUSVID_SOURCE_REVISION,
+)
 from vrl.models.families.causvid.runner import (
     OFFICIAL_CAUSVID_GEOMETRY,
     OFFICIAL_CAUSVID_SCHEDULE,
@@ -32,7 +37,13 @@ from vrl.models.families.causvid.runner import (
     CausVidGeometry,
     CausVidSchedule,
 )
-from vrl.models.interfaces import ReplayRequest, ReplayResult, ReplaySegmentResult
+from vrl.models.interfaces import (
+    ReplayRequest,
+    ReplayResult,
+    ReplaySegmentResult,
+    require_replay_segments,
+    require_zero_replay_timestep,
+)
 from vrl.models.interfaces.runtime import ModelBuild
 from vrl.models.precision import model_autocast
 from vrl.models.source_integrity import runtime_source_tree_sha256
@@ -40,10 +51,8 @@ from vrl.models.steps.denoise.base import DiffusionModelBase
 from vrl.models.steps.denoise.common.lora import LoraModelMixin
 
 # Immutable upstream/checkpoint identifiers are genuine external boundaries.
-CAUSVID_SOURCE_REVISION = "adb6a5ecd07666b4d0290042915c8406e6d5ce22"
 CAUSVID_CHECKPOINT_REPOSITORY = "tianweiy/CausVid"
 CAUSVID_CHECKPOINT_REVISION = "b545eb2728fc9d1515023a270b847f7b24b3aa89"
-CAUSVID_CHECKPOINT_FILE = "autoregressive_checkpoint/model.pt"
 CAUSVID_CHECKPOINT_SHA256 = "8b75a848a525a6ab0b8cefa7f2a3997aefb581eb5824ad60bafb5337e81e521c"
 CAUSVID_BASE_REPOSITORY = "Wan-AI/Wan2.1-T2V-1.3B"
 CAUSVID_RUNTIME_SOURCE_SHA256 = "fe5e028a84beb2799adea1952ab428be0a1f82b90ee4c552874c81c67c2820b1"
@@ -55,12 +64,8 @@ _CAUSVID_RUNTIME_SOURCE_EXCLUDES = ("causvid/evaluation",)
 class CausVidResolvedArtifacts:
     """Pinned local paths used to construct one CausVid runtime."""
 
-    source_root: Path
-    source_revision: str
     base_model_dir: Path
-    base_model_revision: str | None
     checkpoint_file: Path
-    checkpoint_revision: str | None
 
 
 @dataclass(slots=True)
@@ -426,10 +431,6 @@ class _CausVidPolicyModel(LoraModelMixin, DiffusionModelBase):
             raise RuntimeError(f"{type(self).__name__} cannot decode latents")
         return self._backend.decode_latents(latents)
 
-    def generation_memory_targets(self) -> dict[str, Any]:
-        vae = getattr(self._backend, "vae", None)
-        return {} if vae is None else {"vae_decode": vae}
-
     def move_frozen_components(self, device: Any) -> None:
         mover = getattr(self._backend, "move_frozen_components", None)
         if callable(mover):
@@ -444,9 +445,12 @@ class _CausVidPolicyModel(LoraModelMixin, DiffusionModelBase):
     ) -> ReplayResult:
         """Replay all ``[chunk, transition]`` actions in one grouped call."""
 
-        del timestep_idx
-        if request is not None and request.segment_names not in (None, ("denoise",)):
-            raise ValueError("CausVid replay only supports the 'denoise' segment")
+        require_zero_replay_timestep(timestep_idx, owner=type(self).__name__)
+        require_replay_segments(
+            request,
+            ("denoise",),
+            owner=type(self).__name__,
+        )
         from vrl.trajectory import TrajectoryResolver
 
         replay = TrajectoryResolver.from_batch(batch).replay_tensor_dict(
@@ -667,17 +671,7 @@ class CausVidModel(_CausVidPolicyModel):
             from vrl.utils.media import to_uint8
 
             video = to_uint8(video)
-        context = {
-            "model_family": "causvid",
-            "temporal_organization": "chunk_autoregressive_denoise",
-            "prediction_timesteps": self._schedule.prediction_timesteps,
-            "transition_sigmas": self._schedule.transition_sigmas,
-            "cache_finalization_timestep": self._schedule.cache_timestep,
-            "latent_shape": self.geometry.latent_shape,
-            "frames_per_chunk": self.geometry.frames_per_chunk,
-            "replay_temporary_cost": "O(C^2) full-prefix block-causal recomputation",
-        }
-        mapping = run.trajectory_mapping(context=context)
+        mapping = run.trajectory_mapping(context={})
         return ChunkAutoregressiveDenoiseResult(
             prompt_index=int(chunk.prompt_index),
             sample_start=int(chunk.sample_start),
@@ -852,24 +846,20 @@ def _load_official_backend(build: ModelBuild, *, generation: bool) -> _OfficialC
 def _resolve_artifacts(build: ModelBuild) -> CausVidResolvedArtifacts:
     model_config = build.model_config or {}
     _require_noncommercial_license(model_config)
-    source_root, source_revision = _resolve_source_root(model_config)
+    source_root = _resolve_source_root(model_config)
     # Fail on a missing/wrong editable install before either multi-gigabyte
     # checkpoint resolver is allowed to touch the Hub cache.
     _require_pinned_source_import(source_root)
     _require_causvid_flash_attention()
-    base_model_dir, base_revision = _resolve_base_model(model_config)
-    checkpoint, checkpoint_revision = _resolve_checkpoint(build)
+    base_model_dir = _resolve_base_model(model_config)
+    checkpoint = _resolve_checkpoint(build)
     return CausVidResolvedArtifacts(
-        source_root=source_root,
-        source_revision=source_revision,
         base_model_dir=base_model_dir,
-        base_model_revision=base_revision,
         checkpoint_file=checkpoint,
-        checkpoint_revision=checkpoint_revision,
     )
 
 
-def _resolve_source_root(model_config: Mapping[str, Any]) -> tuple[Path, str]:
+def _resolve_source_root(model_config: Mapping[str, Any]) -> Path:
     requested_revision = str(
         model_config.get("causvid_source_revision", CAUSVID_SOURCE_REVISION),
     )
@@ -901,39 +891,46 @@ def _resolve_source_root(model_config: Mapping[str, Any]) -> tuple[Path, str]:
             "CausVid source revision mismatch: "
             f"expected {requested_revision}, got {revision} at {source_root}",
         )
-    return source_root, revision
+    return source_root
 
 
-def _resolve_base_model(model_config: Mapping[str, Any]) -> tuple[Path, str | None]:
+def _resolve_base_model(model_config: Mapping[str, Any]) -> Path:
     reference = str(model_config.get("base_model_path", CAUSVID_BASE_REPOSITORY))
     local = _resolve_configured_path(reference)
     revision_value = model_config.get("base_model_revision")
     revision = str(revision_value) if revision_value else None
     if local.is_dir():
-        return local, revision
+        return local
     if revision is None:
         raise ValueError(
             "remote CausVid base_model_path requires immutable model.base_model_revision",
         )
     from huggingface_hub import snapshot_download
 
-    return Path(snapshot_download(repo_id=reference, revision=revision)), revision
+    return Path(snapshot_download(repo_id=reference, revision=revision))
 
 
-def _resolve_checkpoint(build: ModelBuild) -> tuple[Path, str | None]:
+def _resolve_checkpoint(build: ModelBuild) -> Path:
     model_config = build.model_config or {}
     reference = str(build.model_name_or_path)
     relative_file = str(model_config.get("checkpoint_file", CAUSVID_CHECKPOINT_FILE))
     local = _resolve_configured_path(reference)
-    revision_value = model_config.get("revision")
-    revision = str(revision_value) if revision_value else None
+    revision = build.revision
     if local.is_file():
         checkpoint = local
     elif local.is_dir():
+        relative_file = validate_checkpoint_source_member(
+            relative_file,
+            field_name="model.checkpoint_file",
+        )
         checkpoint = local / relative_file
         if not checkpoint.is_file():
             raise FileNotFoundError(f"CausVid checkpoint file not found: {checkpoint}")
     else:
+        relative_file = validate_checkpoint_source_member(
+            relative_file,
+            field_name="model.checkpoint_file",
+        )
         if revision is None and reference == CAUSVID_CHECKPOINT_REPOSITORY:
             revision = CAUSVID_CHECKPOINT_REVISION
         if revision is None:
@@ -964,7 +961,7 @@ def _resolve_checkpoint(build: ModelBuild) -> tuple[Path, str | None]:
                 f"CausVid checkpoint SHA256 mismatch for {checkpoint}: "
                 f"expected {expected_sha}, got {actual_sha}",
             )
-    return checkpoint, revision
+    return checkpoint
 
 
 def _load_generator_state_dict(checkpoint: Path) -> dict[str, Any]:

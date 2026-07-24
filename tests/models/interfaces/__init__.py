@@ -12,34 +12,40 @@ _CUSTOM_REPLAY_MODEL_CLASSES = {
     "cosmos-predict2-anima": "vrl.models.families.cosmos.anima.model:AnimaReplayModel",
     "cosmos3": "vrl.models.families.cosmos.cosmos3.model:Cosmos3ReplayModel",
     "echo": "vrl.models.families.echo.model:EchoReplayModel",
-    # MAGI-1 exposes the replay protocol only to fail closed with a clear
-    # generation-only error; it intentionally has no trainable replay model.
-    "magi_1": "vrl.models.families.magi_1.model:Magi1Model",
 }
 
 
-def registered_family_model_classes() -> dict[str, tuple[type, type]]:
-    """Resolve every registered family's runtime and replay model classes."""
+def registered_runtime_model_classes() -> dict[str, type]:
+    """Resolve every registered family's runtime model class."""
 
-    resolved: dict[str, tuple[type, type]] = {}
+    return {
+        family: import_from_path(entry.family_build.model_cls)
+        for family, entry in FAMILY_REGISTRY.items()
+    }
+
+
+def registered_replay_model_classes() -> dict[str, type]:
+    """Resolve replay model classes only for families with a replay recipe."""
+
+    resolved: dict[str, type] = {}
     for family, entry in FAMILY_REGISTRY.items():
+        if not entry.supports_policy_replay:
+            continue
         build = entry.family_build
         if isinstance(build, TokenFamilyBuild):
-            runtime_path = build.model_cls
             replay_path = build.replay_cls
         else:
             assert isinstance(build, DenoiseFamilyBuild)
-            runtime_path = build.model_cls
             replay_path = build.replay_cls or _CUSTOM_REPLAY_MODEL_CLASSES.get(family)
             if replay_path is None:
                 raise AssertionError(
                     f"custom replay family {family!r} lacks a contract-test model class",
                 )
-        resolved[family] = (
-            import_from_path(runtime_path),
-            import_from_path(replay_path),
-        )
+        resolved[family] = import_from_path(replay_path)
     return resolved
 
 
-__all__ = ["registered_family_model_classes"]
+__all__ = [
+    "registered_replay_model_classes",
+    "registered_runtime_model_classes",
+]

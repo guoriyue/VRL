@@ -13,45 +13,41 @@ import functools
 import math
 from collections.abc import Mapping
 from dataclasses import fields as dataclass_fields
-from typing import Annotated, Any, Literal, get_args
+from typing import Annotated, Any, ClassVar, Literal, get_args, get_type_hints
 
 from omegaconf import DictConfig, OmegaConf
 from omegaconf.errors import MissingMandatoryValue
-from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
+from pydantic import (
+    ConfigDict,
+    Field,
+    SerializeAsAny,
+    ValidationError,
+    ValidationInfo,
+    field_validator,
+    model_validator,
+)
 
-from vrl.algorithms.logprob_mismatch import PrecisionCorrectionConfig
-from vrl.config.algorithm import algorithm_config_class
+from vrl.config.algorithm import algorithm_config_class, resolve_kl_reward_coef
+from vrl.config.base import ConfigBase
+from vrl.config.data import DataLoaderName, resolve_data_loader
+from vrl.config.model_schema import ModelSection
 from vrl.config.precision import PrecisionConfig
 from vrl.config.reward_inference import parse_reward_inference_config
+from vrl.config.sampling_schema import SamplingSection
 from vrl.config.unknown_keys import OPEN, ConfigBlock
 from vrl.families.names import normalize_model_family
+from vrl.families.registry import FAMILY_REGISTRY, get_model_family_entry
 from vrl.generation.execution.types import ChunkPlacementStrategy
-from vrl.models.interfaces.runtime import MODEL_MEMORY_SECTIONS
 from vrl.ray.resources import (
     RewardResourceConfig,
     RoleResourceConfig,
     RolloutResourceConfig,
 )
-from vrl.trainers.core.types import (
-    DebugConfig,
-    EMAConfig,
-    OptimConfig,
-    PrecisionDriftGuardConfig,
-    RolloutOrchestrationConfig,
-)
 from vrl.trainers.data.prompt_sampler import PromptSamplingStrategy
+from vrl.trainers.online.config import OnlineBatchPlan, TrainerConfig
 from vrl.trajectory.storage import TrajectoryStoragePolicy
+from vrl.utils.config import import_from_path
 from vrl.utils.profiling import TorchProfilerConfig
-
-
-class ConfigBase(BaseModel):
-    """Shared typed-boundary base. Field declarations double as the known-key
-    registry consumed by vrl.config.unknown_keys (the single whole-tree
-    unknown-key reporter); unknown keys are tolerated here and reported there.
-    """
-
-    model_config = ConfigDict(extra="ignore")
-
 
 # ── Reward section ────────────────────────────────────────────────────────────
 
@@ -111,15 +107,22 @@ class AlgorithmConfig(ConfigBase):
     # Every other key is derived from, and validated against, the runtime
     # dataclass selected by ``kind``.
     sft_weight: Any = None
-    # Collector-owned reward coefficient, accepted for every online algorithm.
-    # Reader: vrl/rollouts/collector/config.py.
-    kl_reward_coef: Any = None
+    # Collector-owned diffusion reward-shaping coefficient. Token trajectories
+    # do not carry the per-step KL tensor needed to consume a positive value.
+    kl_reward_coef: float | None = None
+
+    @field_validator("kl_reward_coef", mode="before")
+    @classmethod
+    def _validate_kl_reward_coef(cls, value: object | None) -> float | None:
+        if value is None:
+            return None
+        return resolve_kl_reward_coef(value)
 
 
 @functools.cache
 def _algorithm_config_block(cls: type[Any]) -> ConfigBlock:
-    # kind selects the dataclass; kl_reward_coef is consumed by the collector
-    # for every online algorithm and therefore sits outside those dataclasses.
+    # kind selects the dataclass; kl_reward_coef is collector-owned and its
+    # trajectory compatibility is validated at the root boundary below.
     known = {field.name for field in dataclass_fields(cls)} | {"kind", "kl_reward_coef"}
     return ConfigBlock(known)
 
@@ -148,9 +151,7 @@ _algorithm_config_variant_blocks: tuple[ConfigBlock, ...] = tuple(
 
 
 class DataConfig(ConfigBase):
-    loader: Literal["pickapic_preference", "prompt_manifest", "prompt_image_manifest"] | None = (
-        None
-    )
+    loader: DataLoaderName | None = None
     manifest: str | None = None
     eval_manifest: str | None = None
     # readers: _validate_data + loader tooling
@@ -164,11 +165,8 @@ class DataConfig(ConfigBase):
                 "format",
                 "image_field",
                 "caption_field",
-                "media_type",
                 "conditioning",
                 "reference_image",
-                "metadata_schema",
-                "target_text",
             )
         ),
     ] = None
@@ -188,22 +186,14 @@ class DataConfig(ConfigBase):
     # Key registry: consumed by data/eval tooling, not validated here.
     allow_absolute_artifact_paths: Any = None
     artifact_data_root: Any = None
-    source: Any = None
     source_report: Any = None
 
     @model_validator(mode="after")
     def _validate_data(self) -> DataConfig:
-        # loader is optional for the prompt-* family: when omitted, derive it from
-        # preprocessing.format (image_caption_jsonl is the only image-caption
-        # schema; everything else is the plain prompt manifest). pickapic_preference
-        # cannot be derived and must be set explicitly. Keep this rule in sync with
-        # load_prompt_examples_from_config in vrl/trainers/data/prompts.py.
-        # Explicit values (enforced by the Literal type) are unchanged.
-        if self.loader is None:
-            fmt = (self.preprocessing or {}).get("format", "")
-            self.loader = (
-                "prompt_image_manifest" if fmt == "image_caption_jsonl" else "prompt_manifest"
-            )
+        self.loader = resolve_data_loader(
+            self.loader,
+            (self.preprocessing or {}).get("format"),
+        )
         if self.loader == "prompt_manifest":
             if not self.manifest:
                 raise ValueError("config missing required field: data.manifest")
@@ -218,7 +208,7 @@ class DataConfig(ConfigBase):
                 raise ValueError("config missing required field: data.eval_manifest")
             if self.preprocessing is None:
                 raise ValueError("config missing required field: data.preprocessing")
-            for field in ("format", "image_field", "caption_field", "media_type", "conditioning"):
+            for field in ("format", "image_field", "caption_field", "conditioning"):
                 if field not in self.preprocessing:
                     raise ValueError(f"config missing required field: data.preprocessing.{field}")
             self._validate_sampler_type()
@@ -275,364 +265,357 @@ class SdeConfig(ConfigBase):
 
 class RolloutConfig(ConfigBase):
     # readers: vrl/math/denoise/flow_matching.py window + RootConfig check
-    sde: SdeConfig | None = None
-    noise_level: float | None = None
+    sde: SdeConfig | None = Field(
+        default=None,
+        json_schema_extra={"runtime_owner": "generation_request"},
+    )
+    noise_level: float | None = Field(
+        default=None,
+        json_schema_extra={"runtime_owner": "generation_request"},
+    )
     # janus_pro R1 only; the sole source for final_image_policy. Validated for
     # legality in RootConfig._cross_field_validate (which requires it for that kind).
-    final_image_policy: Literal["always_generate", "use_selfcheck"] | None = None
+    final_image_policy: Literal["always_generate", "use_selfcheck"] | None = Field(
+        default=None,
+        json_schema_extra={"runtime_owner": "generation_request"},
+    )
     n_samples_per_prompt: int | None = None
     prompts_per_batch: int | None = None
-    # "Set the slice once" size knob: prompt groups per streamed microbatch.
-    # reader: TrainerConfig.__post_init__ derives actor.gradient_accumulation_steps
-    # from it (vrl/trainers/core/types.py).
-    microbatch_size: int | None = None
-    # Fail-fast host-RAM guard fraction for streaming accumulation (0.0 = off).
-    # reader: vrl/scripts/common/online.py:_run_streaming_optimizer_update.
-    host_memory_budget_fraction: float | None = None
     # reader: vrl/generation/bindings/full_sequence_denoise/layout.py
     # _parse_denoise_mode (request boundary).
     # Allowed set is the type; the layout guard stays for over-the-wire request dicts.
-    denoise_mode: Literal["native", "sde"] | None = None
+    denoise_mode: Literal["native", "sde"] | None = Field(
+        default=None,
+        json_schema_extra={"runtime_owner": "generation_request"},
+    )
     # reader: vrl/generation/bindings/full_sequence_denoise/layout.py — opt-in to storing
     # each denoise step's rollout proposal mean for trust-region replay.
-    return_prev_sample_mean: Any = None
+    return_prev_sample_mean: Any = Field(
+        default=None,
+        json_schema_extra={"runtime_owner": "generation_request"},
+    )
     # reader: vrl/generation/bindings/full_sequence_denoise/layout.py — opt-in to caching
     # the frozen reference (LoRA-disabled) noise_pred at collect, so KL replay never
     # reruns the ref forward. Lossless: replay applies the same sde_step_with_logprob.
-    cache_ref_noise_pred: Any = None
-    same_latent: Any = None
+    cache_ref_noise_pred: Any = Field(
+        default=None,
+        json_schema_extra={"runtime_owner": "generation_request"},
+    )
+    same_latent: Any = Field(
+        default=None,
+        json_schema_extra={"runtime_owner": "generation_request"},
+    )
     # reader: generation planner (chunk_placement.py) + diffusion layout. int =
     # fixed chunk size; "auto" = the Ray runtime's startup chunk-size probe
     # resolves it before the first request (SPRINT_chunk_size_probe; Ray-only,
     # the planner rejects "auto" on other runtimes); null = samples_per_prompt.
-    samples_per_chunk: Any = None
+    samples_per_chunk: int | Literal["auto"] | None = Field(
+        default=None,
+        json_schema_extra={"runtime_owner": "generation_request"},
+    )
     torch_profiler: Annotated[Any, ConfigBlock(TorchProfilerConfig)] = None
-    trajectory_storage: Annotated[Any, ConfigBlock(TrajectoryStoragePolicy)] = None
+    trajectory_storage: Annotated[Any, ConfigBlock(TrajectoryStoragePolicy)] = Field(
+        default=None,
+        json_schema_extra={"runtime_owner": "generation_request"},
+    )
 
+    @field_validator("samples_per_chunk", mode="before")
+    @classmethod
+    def _validate_samples_per_chunk(cls, value: Any) -> Any:
+        """Keep fixed generation chunks positive; the runtime owns ``auto``."""
 
-class SamplingConfig(ConfigBase):
-    # reader: vrl/nn/modules/ar_attention_backends.py attention_backend_name
-    # (read from the request dict; default "vllm_paged"). Declared here so the
-    # allowed set is the type and the key is registered (no false unknown-key warning).
-    attention_backend: Literal["vllm_paged", "torch_native"] = "vllm_paged"
-    # Key registry: parsed by family layout/model-build resolvers.
-    ar_scheduler_batch_size: Any = None
-    # Frozen GLM-Image DiT decode knobs (rollout postprocess, never trained);
-    # reader: glm_image prepare_chunk_inputs.
-    decode_guidance_scale: Any = None
-    decode_num_inference_steps: Any = None
-    fps: Any = None
-    guidance_scale: Any = None
-    height: Any = None
-    # Emu3 latent-grid geometry (readers: emu3 prepare_chunk_inputs /
-    # encode_generation_prompts — the token count derives from these).
-    image_area: Any = None
-    # GLM-Image pixel target, multiples of 32 (reader: glm_image
-    # prepare_chunk_inputs; distinct from diffusion's height/width keys).
-    image_height: Any = None
-    image_width: Any = None
-    image_size: Any = None
-    image_token_num: Any = None
-    max_reflect_len: Any = None
-    max_sequence_length: Any = None
-    # AR prompt pad length (readers: every AR family's prepare_chunk_inputs;
-    # llamagen additionally requires it == cls_token_num).
-    max_text_length: Any = None
-    ratio: Any = None
-    num_frames: Any = None
-    num_steps: Any = None
-    temperature: Any = None
-    # AR nucleus/top-k filtering (top_k: llamagen only; top_p: llamagen and
-    # glm_image prepare_chunk_inputs; checkpoint defaults apply when unset).
-    top_k: Any = None
-    top_p: Any = None
-    width: Any = None
-
-
-class ModelConfig(ConfigBase):
-    """Shared model keys; family-owned keys are validated by model.family."""
-
-    model_config = ConfigDict(extra="allow")
-
-    family: str | None = None
-    # readers: models/interfaces/runtime.py + family runtime.py lora blocks
-    lora: Annotated[
-        Any,
-        ConfigBlock(
-            (
-                "rank",
-                "alpha",
-                "path",
-                "target_modules",
-                "init_lora_weights",
-                "dropout",
-                "init",
+        if value is None or value == "auto":
+            return value
+        if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+            raise ValueError(
+                "rollout.samples_per_chunk must be a positive integer, 'auto', or null",
             )
-        ),
-    ] = None
-    # model.memory sections (today only vae_decode, which self-validates strictly)
-    memory: Annotated[Any, ConfigBlock(MODEL_MEMORY_SECTIONS)] = None
-    path: Any = None
-    # Immutable Hub snapshot used by full-pipeline rollout and component replay.
-    revision: Any = None
-    # Reader: vrl.models.loader.model_pretrained_kwargs. Long-run configs can
-    # fail closed on a missing cached artifact instead of consulting the Hub.
-    local_files_only: bool = False
-    torch_compile: Annotated[Any, ConfigBlock(("enable", "mode"))] = None
-    use_lora: Any = None
-    # model.executor: pure-data chunk-executor config for families using the
-    # shared DiffusionChunkExecutor. Read wholesale into executor_kwargs; the
-    # executor picks the keys it needs (unknown keys fail loud at construction).
-    executor: Annotated[
-        Any,
-        ConfigBlock(
-            (
-                "num_frames",
-                "max_sequence_length",
-                "fps",
-                "chunk_passthrough_keys",
-            )
-        ),
-    ] = None
+        return value
 
 
-class SD3ModelConfig(ModelConfig):
-    """SD3.5 uses only the shared model keys."""
+def generation_request_rollout_fields() -> frozenset[str]:
+    """Derive rollout keys allowed to cross the generation request boundary."""
 
-    model_config = ConfigDict(extra="ignore")
-
-
-class WanModelConfig(ModelConfig):
-    """Wan-specific model keys consumed by wan_2_1 runtime/model loaders."""
-
-    model_config = ConfigDict(extra="ignore")
-
-    boundary_ratio: Any = None
-    expert_lifecycle_profiling: bool = False
-    offload_mode: Literal["none", "model", "sequential"] = "none"
-    trainable_transformers: Any = None
+    return frozenset(
+        name
+        for name, model_field in RolloutConfig.model_fields.items()
+        if (model_field.json_schema_extra or {}).get("runtime_owner") == "generation_request"
+    )
 
 
-class CosmosPredict2ModelConfig(ModelConfig):
-    """Cosmos Predict2 Video2World model keys."""
-
-    model_config = ConfigDict(extra="ignore")
-
-
-class CosmosPredict25ModelConfig(ModelConfig):
-    """Cosmos Predict2.5 model keys."""
-
-    model_config = ConfigDict(extra="ignore")
-
-    skip_text_encoder: Any = None
-
-
-class CosmosAnimaModelConfig(ModelConfig):
-    """Cosmos Anima single-file artifact paths and scheduler key."""
-
-    model_config = ConfigDict(extra="ignore")
-
-    qwen_tokenizer_path: Any = None
-    qwen_tokenizer_revision: Any = None
-    scheduler_shift: Any = None
-    t5_tokenizer_path: Any = None
-    t5_tokenizer_revision: Any = None
-    text_encoder_file: Any = None
-    text_encoder_path: Any = None
-    transformer_file: Any = None
-    transformer_path: Any = None
-    vae_file: Any = None
-    vae_path: Any = None
-
-
-class JanusProModelConfig(ModelConfig):
-    """Janus-Pro optional model wrapper keys."""
-
-    model_config = ConfigDict(extra="ignore")
-
-    trust_remote_code: Any = None
-    vq_latent_channels: Any = None
-
-
-class NextStep1ModelConfig(ModelConfig):
-    """NextStep-1 tokenizer and frozen-module keys."""
-
-    model_config = ConfigDict(extra="ignore")
-
-    freeze_vae: Any = None
-    vae_path: Any = None
-    vae_revision: Any = None
-
-
-class LlamaGenModelConfig(ModelConfig):
-    """LlamaGen checkpoint-file and frozen-T5 keys (vendored, non-HF layout)."""
-
-    model_config = ConfigDict(extra="ignore")
-
-    gpt_ckpt: Any = None
-    gpt_model: Any = None
-    t5_path: Any = None
-    t5_revision: Any = None
-    vq_ckpt: Any = None
-
-
-class EchoModelConfig(ModelConfig):
-    """JoyAI-Echo model keys consumed by the echo runtime/model loaders.
-
-    ``path`` is the merged Echo safetensors checkpoint; ``gemma_path`` is the
-    separate Gemma-3-12B text-encoder directory (both downloaded into the run's
-    checkpoints dir — weights are not vendored).
-    """
-
-    model_config = ConfigDict(extra="ignore")
-
-    gemma_path: Any = None
-    gemma_revision: Any = None
-
-
-class FluxModelConfig(ModelConfig):
-    """FLUX model keys consumed by the flux model loader."""
-
-    model_config = ConfigDict(extra="ignore")
-
-    # DiffusionNFT's frozen ``previous`` adapter switch (FluxModel.apply_lora
-    # attaches it; LoRA-only, validated in FluxModel).
-    nft_previous_adapter: Any = None
-
-
-class CausVidModelConfig(ModelConfig):
-    """CausVid's pinned upstream source, Wan base, and released checkpoint."""
-
-    model_config = ConfigDict(extra="ignore")
-
-    accept_noncommercial_license: bool = False
-    base_model_path: Any = None
-    base_model_revision: Any = None
-    causvid_source_path: Any = None
-    causvid_source_revision: Any = None
-    checkpoint_file: Any = None
-    checkpoint_sha256: Any = None
-
-
-class Magi1ModelConfig(ModelConfig):
-    """MAGI-1's isolated upstream runtime and checkpoint component paths."""
-
-    model_config = ConfigDict(extra="ignore")
-
-    checkpoint_path: Any = None
-    config_path: Any = None
-    python_executable: Any = None
-    source_path: Any = None
-    source_revision: Any = None
-    t5_pretrained_path: Any = None
-    timeout_seconds: Any = None
-    vae_pretrained_path: Any = None
-
-
-# Keyed by CANONICAL rollout-family name only. Aliases ("wan", "cosmos",
-# "janus_r1", ...) are owned by vrl/families/names.py — lookups
-# normalize through it, so a new declared alias works here for free.
-_model_config_classes_by_family: dict[str, type[ModelConfig]] = {
-    "sd3_5": SD3ModelConfig,
-    "flux": FluxModelConfig,
-    "wan_2_1": WanModelConfig,
-    "wan_2_1_i2v": WanModelConfig,
-    "cosmos-predict2": CosmosPredict2ModelConfig,
-    "cosmos-predict2.5": CosmosPredict25ModelConfig,
-    "cosmos-predict2-anima": CosmosAnimaModelConfig,
-    "janus_pro": JanusProModelConfig,
-    "janus_pro_r1": JanusProModelConfig,
-    "nextstep_1": NextStep1ModelConfig,
-    "llamagen": LlamaGenModelConfig,
-    "echo": EchoModelConfig,
-    "causvid": CausVidModelConfig,
-    "magi_1": Magi1ModelConfig,
-}
-
-_model_config_variant_classes: tuple[type[ModelConfig], ...] = tuple(
-    dict.fromkeys(_model_config_classes_by_family.values())
-)
-
-
-def _model_config_class_for_family(family: Any) -> type[ModelConfig]:
-    canonical = normalize_model_family(str(family or ""))
-    return _model_config_classes_by_family.get(canonical, ModelConfig)
+# Kept as a public import facade while the accurate section name is used by
+# registry ownership and RootConfig.
+ModelConfig = ModelSection
 
 
 @functools.cache
-def _model_config_block(cls: type[ModelConfig]) -> ConfigBlock:
+def _model_section_class_from_path(path: str) -> type[ModelSection]:
+    section_cls = import_from_path(path)
+    if not isinstance(section_cls, type) or not issubclass(section_cls, ModelSection):
+        raise TypeError(
+            f"model section path {path!r} must resolve to a ModelSection subclass",
+        )
+    return section_cls
+
+
+def _model_section_class_for_family(family: Any) -> type[ModelSection]:
+    if family is None or not str(family).strip():
+        raise ValueError("config missing required field: model.family")
+    entry = get_model_family_entry(str(family))
+    return _model_section_class_from_path(entry.model_section_cls)
+
+
+_model_section_variant_classes: tuple[type[ModelSection], ...] = tuple(
+    dict.fromkeys(
+        _model_section_class_from_path(entry.model_section_cls)
+        for entry in FAMILY_REGISTRY.values()
+    )
+)
+
+
+@functools.cache
+def _model_section_block(cls: type[ModelSection]) -> ConfigBlock:
     return ConfigBlock(cls)
 
 
-def _model_config_block_for_unknown_keys(mapping: Mapping[str, Any]) -> ConfigBlock:
-    return _model_config_block(_model_config_class_for_family(mapping.get("family")))
-
-
-def _validate_model_config_for_family(model: ModelConfig | None) -> None:
-    if model is None:
-        return
-    payload = model.model_dump()
-    cls = _model_config_class_for_family(payload.get("family"))
+def _model_section_block_for_unknown_keys(mapping: Mapping[str, Any]) -> ConfigBlock:
     try:
-        cls.model_validate(payload)
+        section_cls = _model_section_class_for_family(mapping.get("family"))
+    except ValueError:
+        # Unknown-key reporting precedes structural validation. Keep the walker
+        # useful while RootConfig emits the authoritative missing/unknown-family
+        # error instead of silently selecting a permissive fallback.
+        section_cls = ModelSection
+    return _model_section_block(section_cls)
+
+
+def _parse_model_section(value: Any) -> ModelSection | None:
+    if value is None:
+        return None
+    if isinstance(value, ModelSection):
+        family = value.family
+        section_cls = _model_section_class_for_family(family)
+        if isinstance(value, section_cls):
+            parsed = value
+            payload = None
+        else:
+            payload = value.model_dump(exclude_unset=True)
+    elif isinstance(value, Mapping):
+        payload = dict(value)
+        section_cls = _model_section_class_for_family(payload.get("family"))
+    else:
+        raise ValueError("model must be a mapping")
+
+    if payload is not None:
+        try:
+            parsed = section_cls.model_validate(payload)
+        except ValidationError as exc:
+            # The selected class validates the bare model payload. Re-anchor its
+            # error so callers still receive the public YAML path.
+            message = _extract_error_message(exc)
+            if message.startswith("unknown ") and not message.startswith("unknown model."):
+                message = f"unknown model.{message[len('unknown ') :]}"
+            elif message.startswith("config missing required field: "):
+                rest = message[len("config missing required field: ") :]
+                message = f"config missing required field: model.{rest}"
+            raise ValueError(message) from exc
+
+    entry = get_model_family_entry(str(parsed.family))
+    entry.validate_model_runtime_sections(
+        executor_config=parsed.executor,
+        memory_config=parsed.memory,
+    )
+    return parsed
+
+
+@functools.cache
+def _sampling_section_class_from_path(path: str) -> type[SamplingSection]:
+    section_cls = import_from_path(path)
+    if not isinstance(section_cls, type) or not issubclass(section_cls, SamplingSection):
+        raise TypeError(
+            f"sampling section path {path!r} must resolve to a SamplingSection subclass",
+        )
+    return section_cls
+
+
+def sampling_section_class_for_family(family: Any) -> type[SamplingSection]:
+    if family is None or not str(family).strip():
+        raise ValueError("sampling requires model.family")
+    entry = get_model_family_entry(str(family))
+    return _sampling_section_class_from_path(entry.sampling_section_cls)
+
+
+_sampling_section_variant_classes: tuple[type[SamplingSection], ...] = tuple(
+    dict.fromkeys(
+        _sampling_section_class_from_path(entry.sampling_section_cls)
+        for entry in FAMILY_REGISTRY.values()
+    )
+)
+
+
+def _sampling_section_known_fields() -> tuple[str, ...]:
+    """Derive the unknown-key inventory from every registered concrete schema."""
+
+    return tuple(
+        sorted(
+            {
+                name
+                for section_cls in _sampling_section_variant_classes
+                for name in section_cls.model_fields
+            },
+        ),
+    )
+
+
+def _parse_sampling_section(
+    value: Any,
+    *,
+    model: ModelSection | None,
+) -> SamplingSection | None:
+    if value is None:
+        return None
+    section_cls = sampling_section_class_for_family(
+        None if model is None else model.family,
+    )
+    if isinstance(value, SamplingSection):
+        if isinstance(value, section_cls):
+            return value
+        payload = value.model_dump(exclude_unset=True)
+    elif isinstance(value, Mapping):
+        payload = dict(value)
+    else:
+        raise ValueError("sampling must be a mapping")
+
+    try:
+        return section_cls.model_validate(payload)
     except ValidationError as exc:
-        # Re-anchor the error under the model. section (the family class
-        # validates a bare payload, so its paths lack the prefix).
         message = _extract_error_message(exc)
-        if message.startswith("unknown ") and not message.startswith("unknown model."):
-            message = f"unknown model.{message[len('unknown ') :]}"
+        if message.startswith("unknown ") and not message.startswith("unknown sampling."):
+            message = f"unknown sampling.{message[len('unknown ') :]}"
         elif message.startswith("config missing required field: "):
             rest = message[len("config missing required field: ") :]
-            message = f"config missing required field: model.{rest}"
+            message = f"config missing required field: sampling.{rest}"
         raise ValueError(message) from exc
 
 
 # ── Section key registries (values validated by their own layers) ────────────
 
 
-class TrainerSection(ConfigBase):
-    """Key registry for trainer.*; values validated by vrl.config.builders."""
+@functools.cache
+def _online_runtime_section_shape(
+    section: Literal["actor", "trainer"],
+    owners: tuple[type[Any], ...] = (TrainerConfig, OnlineBatchPlan),
+) -> tuple[frozenset[str], dict[str, ConfigBlock]]:
+    """Derive one public section shape from online runtime YAML metadata."""
+
+    known: set[str] = set()
+    children: dict[str, ConfigBlock] = {}
+
+    for owner in owners:
+        hints = get_type_hints(owner)
+        for runtime_field in dataclass_fields(owner):
+            home = runtime_field.metadata.get("yaml")
+            if home is None:
+                raise AssertionError(
+                    f"{owner.__name__}.{runtime_field.name} does not declare "
+                    "field metadata {'yaml': ...}",
+                )
+            if home == "bridged":
+                continue
+            if not isinstance(home, str):
+                raise AssertionError(
+                    f"{owner.__name__}.{runtime_field.name} declares non-string "
+                    f"yaml home {home!r}",
+                )
+            top, _, nested_path = home.partition(".")
+            if top != section:
+                continue
+            if runtime_field.name in known:
+                raise AssertionError(
+                    f"{section}.{runtime_field.name} has multiple online runtime owners",
+                )
+            known.add(runtime_field.name)
+            if nested_path:
+                if nested_path != runtime_field.name:
+                    raise AssertionError(
+                        f"{owner.__name__}.{runtime_field.name} declares yaml home "
+                        f"{home!r}; nested runtime fields must use "
+                        f"{section}.{runtime_field.name}",
+                    )
+                children[runtime_field.name] = ConfigBlock(
+                    hints[runtime_field.name],
+                )
+
+    return frozenset(known), children
+
+
+class _OnlineRuntimeSection(ConfigBase):
+    """Retain derived runtime fields while dropping truly unknown extras."""
+
+    model_config = ConfigDict(extra="allow")
+    _yaml_section: ClassVar[Literal["actor", "trainer"]]
+
+    @model_validator(mode="before")
+    @classmethod
+    def _drop_unknown_extras(cls, value: Any) -> Any:
+        if not isinstance(value, Mapping):
+            return value
+        runtime_fields, _ = _online_runtime_section_shape(cls._yaml_section)
+        allowed = set(cls.model_fields) | runtime_fields
+        return {key: inner for key, inner in value.items() if str(key) in allowed}
+
+
+class TrainerSection(_OnlineRuntimeSection):
+    """Non-online trainer keys plus the offline-entrypoint transition boundary."""
+
+    _yaml_section = "trainer"
 
     entrypoint: Any = None
     total_epochs: Any = None
     save_freq: Any = None
-    output_dir: Any = None
     seed: Any = None
-    profile: Any = None
     resume_from: Any = None
     resume_strict: Any = None
-    debug: Annotated[Any, ConfigBlock(DebugConfig)] = None
-    precision_drift_guard: Annotated[Any, ConfigBlock(PrecisionDriftGuardConfig)] = None
-    precision_correction: Annotated[Any, ConfigBlock(PrecisionCorrectionConfig)] = None
-    # continuous sub-block nests automatically from the dataclass field type
-    rollout_orchestration: Annotated[Any, ConfigBlock(RolloutOrchestrationConfig)] = None
-    torch_profiler: Annotated[Any, ConfigBlock(TorchProfilerConfig)] = None
     # offline DPO entrypoint (vrl/scripts/families/wan_2_1/train_dpo.py)
     checkpointing_steps: Any = None
     log_interval: Any = None
     max_train_steps: Any = None
 
 
-class ActorSection(ConfigBase):
-    """Key registry for actor.*; values validated by vrl.config.builders."""
+class ActorSection(_OnlineRuntimeSection):
+    """Non-online actor keys plus the offline-entrypoint transition boundary."""
 
-    optim: Annotated[Any, ConfigBlock(OptimConfig)] = None
-    ema: Annotated[Any, ConfigBlock(EMAConfig)] = None
-    max_norm: Any = None
-    ppo_epochs: Any = None
-    gradient_accumulation_steps: Any = None
-    drop_zero_advantage: Any = None
+    _yaml_section = "actor"
+
+    # Public size input from which OnlineBatchPlan derives its canonical
+    # gradient-accumulation count; it is intentionally not stored on that plan.
+    microbatch_size: Any = None
     gradient_checkpointing: Any = None  # off | full | selective (or bool: true=full, false=off)
-    timestep_fraction: Any = None
-    timestep_selection: Any = None  # strided | random (DanceGRPO)
-    # Replay-side chunk capacity, independent from generation. Default 1 is the
-    # safe training floor; recipes may explicitly raise it after measurement.
-    replay_samples_per_chunk: Any = None
     # offline DPO entrypoint (vrl/scripts/families/wan_2_1/train_dpo.py)
     prediction_type: Any = None
     scale_lr: Any = None
     train_batch_size: Any = None
     use_adafactor: Any = None
+
+
+def _online_runtime_section_block(
+    section: Literal["actor", "trainer"],
+    public_section: type[ConfigBase],
+) -> ConfigBlock:
+    """Combine explicit boundary keys with runtime-owned online keys."""
+
+    explicit = ConfigBlock(public_section)
+    runtime_fields, runtime_children = _online_runtime_section_shape(section)
+    duplicates = explicit.known & runtime_fields
+    if duplicates:
+        names = ", ".join(sorted(duplicates))
+        raise AssertionError(
+            f"{public_section.__name__} duplicates online runtime field(s): {names}",
+        )
+    return ConfigBlock(
+        explicit.known | runtime_fields,
+        children={**explicit.children, **runtime_children},
+    )
 
 
 # Entrypoint-specific schema boundary. These are the only shared actor/trainer
@@ -721,6 +704,28 @@ class TrainingSection(ConfigBase):
     gpus_per_node: int = 1
     fsdp: FSDPConfig | None = None
     ddp: DDPConfig | None = None
+
+    @model_validator(mode="after")
+    def _resolve_strategy_defaults(self) -> TrainingSection:
+        """Resolve defaults here so runtime constructors cannot redeclare them.
+
+        The unselected block stays absent: it has no runtime consumer and should
+        not become duplicated resolved state merely because another strategy was
+        chosen.
+        """
+        if self.fsdp is not None and self.strategy != "fsdp":
+            raise ValueError(
+                "distributed.training.fsdp requires distributed.training.strategy=fsdp",
+            )
+        if self.ddp is not None and self.strategy != "ddp":
+            raise ValueError(
+                "distributed.training.ddp requires distributed.training.strategy=ddp",
+            )
+        if self.strategy == "fsdp" and self.fsdp is None:
+            self.fsdp = FSDPConfig()
+        elif self.strategy == "ddp" and self.ddp is None:
+            self.ddp = DDPConfig()
+        return self
 
 
 class RolloutWorkerSection(ConfigBase):
@@ -816,6 +821,20 @@ class DistributedSection(ConfigBase):
 # ── Root config ───────────────────────────────────────────────────────────────
 
 
+class KlingVideoRewardProductionConfig(ConfigBase):
+    """Production enablement for the Kling VideoReward contract gate."""
+
+    enabled: bool = False
+
+
+class ProductionSection(ConfigBase):
+    """Closed registry of production gates with runtime consumers."""
+
+    kling_video_reward: KlingVideoRewardProductionConfig = Field(
+        default_factory=KlingVideoRewardProductionConfig,
+    )
+
+
 class RootConfig(ConfigBase):
     """Top-level typed boundary for all training config sections.
 
@@ -837,34 +856,73 @@ class RootConfig(ConfigBase):
     reward: RewardConfig | None = None
     rollout: RolloutConfig | None = None
     model: Annotated[
-        ModelConfig | None,
+        SerializeAsAny[ModelSection] | None,
         ConfigBlock(
-            ModelConfig,
-            select=_model_config_block_for_unknown_keys,
-            variants=_model_config_variant_classes,
+            ModelSection,
+            select=_model_section_block_for_unknown_keys,
+            variants=_model_section_variant_classes,
         ),
     ] = None
-    sampling: SamplingConfig | None = None
-    # per-component production gates; contract checks live in
+    sampling: Annotated[
+        SerializeAsAny[SamplingSection] | None,
+        ConfigBlock(
+            _sampling_section_known_fields(),
+            variants=_sampling_section_variant_classes,
+        ),
+    ] = None
+    # Per-component production gates; contract checks live in
     # vrl/config/validation.py validate_production_* (raw-cfg checks)
-    production: Annotated[dict[str, Any] | None, OPEN] = None
-    trainer: TrainerSection | None = None
-    actor: ActorSection | None = None
+    production: ProductionSection | None = None
+    trainer: Annotated[
+        TrainerSection | None,
+        _online_runtime_section_block("trainer", TrainerSection),
+    ] = None
+    actor: Annotated[
+        ActorSection | None,
+        _online_runtime_section_block("actor", ActorSection),
+    ] = None
     distributed: DistributedSection | None = None
     # reader: vrl/config/precision.py. Keep Any here so the resolver owns precise
     # migration and availability errors; ConfigBlock derives every known nested
     # key from PrecisionConfig rather than duplicating a hand-maintained tuple.
     precision: Annotated[Any, ConfigBlock(PrecisionConfig)] = None
 
+    @field_validator("model", mode="before")
+    @classmethod
+    def _select_model_section(cls, value: Any) -> ModelSection | None:
+        return _parse_model_section(value)
+
+    @field_validator("sampling", mode="before")
+    @classmethod
+    def _select_sampling_section(
+        cls,
+        value: Any,
+        info: ValidationInfo,
+    ) -> SamplingSection | None:
+        model = info.data.get("model")
+        return _parse_sampling_section(
+            value,
+            model=model if isinstance(model, ModelSection) else None,
+        )
+
     @model_validator(mode="after")
     def _cross_field_validate(self) -> RootConfig:
-        _validate_model_config_for_family(self.model)
-
         algo = self.algorithm
         if algo is None:
             return self
 
         kind = algo.kind
+        kl_reward_coef = resolve_kl_reward_coef(algo.kl_reward_coef)
+        if kl_reward_coef > 0.0 and kind in {
+            "token_grpo",
+            "token_grpo_multisegment",
+            "diffusion_dpo",
+        }:
+            raise ValueError(
+                "algorithm.kl_reward_coef > 0 requires a diffusion rollout "
+                "trajectory with collected per-step KL; "
+                f"algorithm.kind={kind!r} does not provide one",
+            )
         rollout = self.rollout
         model_family = normalize_model_family(
             (self.model.family or "") if self.model else "",
@@ -976,6 +1034,8 @@ def _extract_error_message(exc: ValidationError) -> str:
     # Missing required field — remap to repo-standard message format
     if error_type == "missing":
         return f"config missing required field: {loc}"
+    if error_type == "extra_forbidden":
+        return f"unknown {loc}"
     # Literal enum mismatch — reformat to "unknown {loc}={input!r}; expected ..."
     if error_type == "literal_error":
         input_val = first.get("input", "")
@@ -1012,9 +1072,11 @@ __all__ = [
     "AlgorithmConfig",
     "DataConfig",
     "ModelConfig",
+    "ModelSection",
     "RewardConfig",
     "RolloutConfig",
     "RootConfig",
-    "SamplingConfig",
+    "generation_request_rollout_fields",
     "parse_config",
+    "sampling_section_class_for_family",
 ]

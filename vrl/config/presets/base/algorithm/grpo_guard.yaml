@@ -11,4 +11,3 @@ algorithm:
   eps: 1.0e-8
   adv_clip_max: 5.0
   global_std: false
-  kl_reward_coef: 0.0

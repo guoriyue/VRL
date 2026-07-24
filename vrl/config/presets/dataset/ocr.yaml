@@ -1,11 +1,10 @@
-# OCR prompt manifest. `preprocessing.target_text` documents the loader contract:
-# load_prompt_manifest extracts the target from quoted text in each prompt row.
+# OCR prompt manifest. load_prompt_manifest extracts the target from quoted
+# text in each prompt row.
 data:
   loader: prompt_manifest
   manifest: datasets/ocr/train.txt
   eval_manifest: datasets/ocr/test.txt
   preprocessing:
     format: text
-    target_text: quoted_substring
   sampler:
     type: random_without_replacement

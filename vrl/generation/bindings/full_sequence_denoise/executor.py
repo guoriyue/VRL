@@ -135,8 +135,7 @@ class ReferenceConditionedChunks:
         return self.model.encode_prompt(
             chunk.prompt,
             video_request.negative_prompt or None,
-            max_sequence_length=params.base.max_sequence_length,
-            guidance_scale=params.base.guidance_scale,
+            **params.base.text_encode_kwargs(),
             reference_image=reference_image,
         )
 
@@ -183,9 +182,8 @@ class DiffusionChunkExecutorBase(
     default_samples_per_chunk: int = 1
     default_num_frames: int = 1
     default_fps: int | None = None
-    default_max_sequence_length: int = 512
+    default_max_sequence_length: int | None = None
     sde_type: str = "flow_grpo"
-    include_max_sequence_length_extra: bool = True
 
     # -- protocol ------------------------------------------------------
 
@@ -202,7 +200,6 @@ class DiffusionChunkExecutorBase(
     def plan(
         self,
         request: GenerationRequest,
-        sample_rows: list[GenerationSampleRow],
     ) -> Any:
         params = self.parse_sampling_params(request)
         return build_engine_plan(
@@ -236,9 +233,9 @@ class DiffusionChunkExecutorBase(
         if base.seed is not None:
             req_kwargs["seed"] = base.seed
 
-        if self.include_max_sequence_length_extra:
+        if base.max_sequence_length is not None:
             req_kwargs["extra"] = {
-                "max_sequence_length": params.base.max_sequence_length,
+                "max_sequence_length": base.max_sequence_length,
             }
         return VideoGenerationRequest(**req_kwargs)
 
@@ -249,10 +246,6 @@ class DiffusionChunkExecutorBase(
     ) -> DenoiseLoopConfig:
         """Build the SDE denoise config for one sample chunk."""
 
-        if params.sde is None:
-            raise NotImplementedError(
-                f"{type(self).__name__} must override denoise for non-SDE diffusion",
-            )
         layout = self.layout
         return DenoiseLoopConfig(
             prompt_index=chunk.prompt_index,
@@ -260,10 +253,7 @@ class DiffusionChunkExecutorBase(
             sample_count=chunk.sample_count,
             seed=params.base.seed,
             sde=params.sde,
-            sde_window=layout.select_sde_window(
-                params.sde.sde_window_size,
-                params.sde.sde_window_range,
-            ),
+            sde_window=layout.select_sde_window(params),
             denoise_mode=params.denoise_mode,
             teacache=params.teacache,
         )
@@ -624,8 +614,7 @@ class DiffusionChunkExecutorBase(
         return self.model.encode_prompt(
             chunk.prompt,
             video_request.negative_prompt or None,
-            max_sequence_length=params.base.max_sequence_length,
-            guidance_scale=params.base.guidance_scale,
+            **params.base.text_encode_kwargs(),
             request=video_request,
         )
 
@@ -711,7 +700,7 @@ class DiffusionChunkExecutor(DiffusionChunkExecutorBase):
         family: str,
         task: str,
         num_frames: int = 1,
-        max_sequence_length: int = 512,
+        max_sequence_length: int | None = None,
         fps: int | None = None,
         chunk_passthrough_keys: tuple[str, ...] = (),
         samples_per_chunk: int = 8,
@@ -720,7 +709,9 @@ class DiffusionChunkExecutor(DiffusionChunkExecutorBase):
         self.family = family
         self.task = task
         self.default_num_frames = int(num_frames)
-        self.default_max_sequence_length = int(max_sequence_length)
+        self.default_max_sequence_length = (
+            None if max_sequence_length is None else int(max_sequence_length)
+        )
         self.default_fps = None if fps is None else int(fps)
         self.chunk_passthrough_keys = tuple(chunk_passthrough_keys)
         self.default_samples_per_chunk = max(1, int(samples_per_chunk))

@@ -15,9 +15,6 @@ defaults:
 # autocast; Gemma remains a separate BF16 prompt-encoding boundary. The family
 # rejects non-native BF16 and FP32 transformer roles before model loading.
 
-sampling:
-  max_sequence_length: 300
-
 actor:
   optim:
     lr: 3.0e-4

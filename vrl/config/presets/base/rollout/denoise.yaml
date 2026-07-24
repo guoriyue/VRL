@@ -15,7 +15,3 @@ rollout:
     window_range: [0, 10]
 
   same_latent: false            # share noise across group (debug only)
-
-  trajectory_storage:
-    device: preserve
-    dtype: preserve

@@ -9,6 +9,7 @@ from typing import Any
 
 from torch.utils.data import Dataset
 
+from vrl.config.data import resolve_data_loader
 from vrl.generation import GenerationInput
 from vrl.utils.config import cfg_get
 
@@ -117,17 +118,11 @@ def load_prompt_examples_from_config(data_cfg: Any) -> list[PromptExample]:
     """Resolve ``data.loader`` and load examples from ``data.manifest``."""
 
     raw_loader = cfg_get(data_cfg, "loader", None)
-    if raw_loader is None:
-        # loader is optional for the prompt-* family: image-caption manifests are
-        # the only ones whose preprocessing.format == "image_caption_jsonl", so the
-        # plain prompt manifest is the default. pickapic_preference never reaches
-        # this dispatch (it is loaded in scripts/data/bootstrap.py). Keep this rule
-        # in sync with DataConfig._validate_data in vrl/config/schema.py.
-        preprocessing = cfg_get(data_cfg, "preprocessing", {}) or {}
-        fmt = str(cfg_get(preprocessing, "format", ""))
-        loader = "prompt_image_manifest" if fmt == "image_caption_jsonl" else "prompt_manifest"
-    else:
-        loader = str(raw_loader)
+    preprocessing = cfg_get(data_cfg, "preprocessing", {}) or {}
+    loader = resolve_data_loader(
+        raw_loader,
+        cfg_get(preprocessing, "format", None),
+    )
     manifest = cfg_get(data_cfg, "manifest", None)
     if not manifest:
         raise ValueError("config missing required field: data.manifest")
@@ -136,7 +131,6 @@ def load_prompt_examples_from_config(data_cfg: Any) -> list[PromptExample]:
         return load_prompt_manifest(manifest)
 
     if loader == "prompt_image_manifest":
-        preprocessing = cfg_get(data_cfg, "preprocessing", {}) or {}
         image_field = str(cfg_get(preprocessing, "image_field", "image"))
         caption_field = str(cfg_get(preprocessing, "caption_field", "caption"))
         task_type = str(cfg_get(data_cfg, "task_type", "image_to_video"))

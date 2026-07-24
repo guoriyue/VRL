@@ -41,6 +41,7 @@ def test_model_build_rejects_subbyte_parameter_storage(dtype: str) -> None:
     with pytest.raises(ValueError, match="neither is parameter storage"):
         ModelBuild(
             model_name_or_path="fake/repo",
+            revision=None,
             device="cpu",
             parameter_dtype=dtype,
             family="sd3_5",
@@ -84,6 +85,7 @@ def test_model_build_reconstructs_nested_rollout_payload() -> None:
 
     build = ModelBuild(
         model_name_or_path="fake/repo",
+        revision=None,
         device="cpu",
         parameter_dtype="fp16",
         family="sd3_5",
@@ -116,11 +118,13 @@ def test_model_build_reconstructs_nested_rollout_payload() -> None:
 def test_model_build_resolver_projects_nvfp4_over_the_rollout_base_dtype() -> None:
     from omegaconf import OmegaConf
 
+    from vrl.config.precision import resolve_precision_policy
+    from vrl.config.schema import parse_config
     from vrl.families.registry import get_model_family_entry
 
     cfg = OmegaConf.create(
         {
-            "model": {"path": "fake/repo"},
+            "model": {"family": "sd3_5", "path": "fake/repo"},
             "precision": {
                 "float32_precision": "tf32",
                 "training": {"dtype": "bf16"},
@@ -132,10 +136,13 @@ def test_model_build_resolver_projects_nvfp4_over_the_rollout_base_dtype() -> No
             },
         },
     )
+    root = parse_config(cfg)
+    precision = resolve_precision_policy(root)
 
     build = get_model_family_entry("sd3_5").resolve_model_build(
-        cfg,
+        root,
         "cuda",
+        precision=precision,
         for_rollout=True,
     )
     rollout = build.require_rollout()
@@ -153,16 +160,31 @@ def test_model_build_resolver_projects_nvfp4_over_the_rollout_base_dtype() -> No
     assert build.precision.quantization.recipe is None
 
 
-def test_full_generation_build_with_training_role_excludes_rollout_quantization() -> None:
+def test_full_generation_build_with_training_role_excludes_rollout_quantization(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """Offline DPO may load generation modules without adopting rollout kernels."""
 
     from omegaconf import OmegaConf
 
+    from vrl.config.precision import resolve_precision_policy
+    from vrl.config.schema import parse_config
     from vrl.families.registry import get_model_family_entry
 
+    monkeypatch.setattr(
+        "diffusers.DiffusionPipeline.load_config",
+        lambda *_args, **_kwargs: {
+            "boundary_ratio": None,
+            "expand_timesteps": False,
+        },
+    )
     cfg = OmegaConf.create(
         {
-            "model": {"path": "fake/repo"},
+            "model": {
+                "family": "wan_2_1",
+                "path": "fake/repo",
+                "revision": "a" * 40,
+            },
             "precision": {
                 "float32_precision": "tf32",
                 "training": {"dtype": "bf16"},
@@ -173,10 +195,13 @@ def test_full_generation_build_with_training_role_excludes_rollout_quantization(
             },
         },
     )
+    root = parse_config(cfg)
+    precision = resolve_precision_policy(root)
 
     build = get_model_family_entry("wan_2_1").resolve_model_build(
-        cfg,
+        root,
         "cpu",
+        precision=precision,
         for_rollout=True,
         precision_role="training",
     )
@@ -245,6 +270,7 @@ def _build(**overrides: Any) -> ModelBuild:
 
     values: dict[str, Any] = {
         "model_name_or_path": "fake/repo",
+        "revision": None,
         "device": "cpu",
         "parameter_dtype": torch.float32,
         "family": "sd3_5",
@@ -253,6 +279,12 @@ def _build(**overrides: Any) -> ModelBuild:
         "sampling_config": dict(scheduler_config),
     }
     values.update(overrides)
+    if str(values["family"]).startswith("wan_2_1"):
+        model_config.setdefault("boundary_ratio", None)
+        model_config.setdefault(
+            "trainable_transformers",
+            ["transformer_2"] if model_config["boundary_ratio"] is not None else ["transformer"],
+        )
     return ModelBuild(**values)
 
 
@@ -440,7 +472,7 @@ def test_cosmos_predict25_replay_builder_keeps_diffusion_nft_surface(
 ) -> None:
     """Checks Cosmos predict25 replay builder keeps diffusion NFT surface."""
     from vrl.families.registry import get_model_family_entry
-    from vrl.models.families.cosmos import predict2_5
+    from vrl.models.families.cosmos.predict2_5 import model as predict25_model
     from vrl.models.steps.denoise import build as _shared_build
 
     # predict2_5 is a registry-descriptor family: the generic replay builder
@@ -456,7 +488,7 @@ def test_cosmos_predict25_replay_builder_keeps_diffusion_nft_surface(
         lambda *_args, **_kwargs: _TinyScheduler(),
     )
     monkeypatch.setattr(
-        predict2_5.model.CosmosPredict25ReplayModel,
+        predict25_model.CosmosPredict25ReplayModel,
         "apply_lora",
         lambda self, _build: self.transformer.requires_grad_(True),
     )
@@ -534,10 +566,19 @@ def test_anima_model_build_uses_explicit_local_paths() -> None:
             "model.use_lora=false",
         ],
     )
+    from vrl.config.precision import resolve_precision_policy
+    from vrl.config.schema import parse_config
 
+    root = parse_config(cfg)
+    precision = resolve_precision_policy(root)
     entry = get_model_family_entry("cosmos-predict2-anima")
-    full = entry.resolve_model_build(cfg, "cpu")
-    replay = entry.resolve_model_build(cfg, "cpu", for_rollout=False)
+    full = entry.resolve_model_build(root, "cpu", precision=precision)
+    replay = entry.resolve_model_build(
+        root,
+        "cpu",
+        precision=precision,
+        for_rollout=False,
+    )
 
     assert isinstance(full.rollout, RolloutBuildOptions)
     assert replay.rollout is None
@@ -563,9 +604,15 @@ def test_anima_artifact_resolution_fails_loud_when_hub_fetch_fails(
             "model.use_lora=false",
         ],
     )
+    from vrl.config.precision import resolve_precision_policy
+    from vrl.config.schema import parse_config
+
+    root = parse_config(cfg)
+    precision = resolve_precision_policy(root)
     build = get_model_family_entry("cosmos-predict2-anima").resolve_model_build(
-        cfg,
+        root,
         "cpu",
+        precision=precision,
         for_rollout=False,
     )
 
@@ -592,37 +639,43 @@ def test_anima_artifact_resolution_fails_loud_when_hub_fetch_fails(
 
 
 @pytest.mark.parametrize(
-    ("family", "model_module_path", "model_attr"),
+    ("family", "model_module_path", "model_attr", "use_lora"),
     [
         (
             "janus_pro",
             "vrl.models.families.janus_pro.model",
             "JanusProReplayModel",
+            True,
         ),
         (
             "janus_pro_r1",
             "vrl.models.families.janus_pro.model",
             "JanusProReplayModel",
+            True,
         ),
         (
             "nextstep_1",
             "vrl.models.families.nextstep_1.model",
             "NextStep1ReplayModel",
+            False,
         ),
         (
             "emu3",
             "vrl.models.families.emu3.model",
             "Emu3ReplayModel",
+            True,
         ),
         (
             "glm_image",
             "vrl.models.families.glm_image.model",
             "GlmImageReplayModel",
+            True,
         ),
         (
             "llamagen",
             "vrl.models.families.llamagen.model",
             "LlamaGenReplayModel",
+            True,
         ),
     ],
 )
@@ -631,6 +684,7 @@ def test_ar_replay_builders_return_minimal_bundles(
     family: str,
     model_module_path: str,
     model_attr: str,
+    use_lora: bool,
 ) -> None:
     """Checks AR replay builders return minimal bundles."""
     from vrl.families.registry import get_model_family_entry
@@ -639,7 +693,7 @@ def test_ar_replay_builders_return_minimal_bundles(
     monkeypatch.setattr(model_module, model_attr, _TinyRuntimeModel)
 
     bundle = get_model_family_entry(family).build_replay(
-        _build(family=family),
+        _build(family=family, use_lora=use_lora),
     )
 
     assert bundle_loads_full_generation_modules(bundle) is False

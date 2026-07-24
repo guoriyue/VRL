@@ -38,7 +38,7 @@ from vrl.models.interfaces.runtime import ModelBuild
 from vrl.models.steps.denoise import (
     DiffusersPipelineModelBase,
     DiffusersReplayModelBase,
-    DiffusionSamplingStateBase,
+    GuidedDiffusionSamplingStateBase,
     diffusers_pipeline_dtypes,
 )
 from vrl.models.steps.denoise.common import (
@@ -55,12 +55,12 @@ from vrl.models.steps.denoise.common.lora import (
     LoraModelMixin,
     build_lora_config,
     copy_adapter_weights,
-    freeze_adapter_params,
+    freeze_checkpoint_owned_adapter_params,
 )
 
 
 @dataclass
-class FluxSamplingState(DiffusionSamplingStateBase):
+class FluxSamplingState(GuidedDiffusionSamplingStateBase):
     """Private FLUX sampling state. Engine MUST NOT introspect."""
 
     prompt_embeds: torch.Tensor
@@ -79,7 +79,8 @@ class FluxModel(LoraModelMixin, DiffusersPipelineModelBase, DiffusionBackboneRun
     (``attach_previous_policy_adapter`` / ``sync_previous_policy_adapter``) so the
     NFT runtime path can drive a frozen ``previous`` LoRA mirror; plain GRPO runs
     never attach it. The PEFT primitives they build on
-    (``build_lora_config`` / ``copy_adapter_weights`` / ``freeze_adapter_params``)
+    (``build_lora_config`` / ``copy_adapter_weights`` /
+    ``freeze_checkpoint_owned_adapter_params``)
     stay shared with cosmos/predict2.5 in ``common/lora.py``.
 
     Implements the backbone-runner protocol itself. FLUX.1-dev is
@@ -205,7 +206,7 @@ class FluxModel(LoraModelMixin, DiffusersPipelineModelBase, DiffusionBackboneRun
         if "previous" not in getattr(transformer, "peft_config", {}):
             transformer.add_adapter("previous", build_lora_config(lora_config))
         copy_adapter_weights(transformer, src="default", dst="previous")
-        freeze_adapter_params(transformer, "previous")
+        freeze_checkpoint_owned_adapter_params(transformer, "previous")
         transformer.set_adapter("default")
 
     def sync_previous_policy_adapter(self, *, decay: float = 0.0) -> None:
@@ -279,11 +280,11 @@ class FluxModel(LoraModelMixin, DiffusersPipelineModelBase, DiffusionBackboneRun
         """Encode prompt via FLUX's CLIP (pooled) + T5 (sequence) encoders.
 
         FLUX.1-dev is guidance-distilled, so there is no unconditional branch and
-        ``negative_prompt`` is ignored. Returns the T5 sequence embeds, the CLIP
-        pooled vector, and the batch-shared ``text_ids`` position grid (float32 —
-        rotary positions are computed in float).
+        negative prompts are unsupported. Returns the T5 sequence embeds, the
+        CLIP pooled vector, and the batch-shared ``text_ids`` position grid
+        (float32 — rotary positions are computed in float).
         """
-        del negative_prompt
+        self._reject_unsupported_negative_prompt(negative_prompt)
         max_seq = kwargs.get("max_sequence_length", 512)
         # The frozen encoders live on CPU (see from_build); run encode there, then
         # move the embeds onto the model/transformer device for the denoise forward.

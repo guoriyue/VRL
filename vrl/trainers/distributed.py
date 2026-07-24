@@ -41,11 +41,17 @@ class DistributedTrainingContext:
     """
 
     strategy: str
-    distributed: bool
     rank: int
     world_size: int
-    is_primary: bool
     device: torch.device
+
+    @property
+    def distributed(self) -> bool:
+        return self.strategy != "single_process"
+
+    @property
+    def is_primary(self) -> bool:
+        return self.rank == 0
 
 
 def _require_env_int(env: Mapping[str, str], key: str) -> int:
@@ -89,10 +95,8 @@ def resolve_training_context(
     if strategy == "single_process":
         return DistributedTrainingContext(
             strategy=strategy,
-            distributed=False,
             rank=0,
             world_size=1,
-            is_primary=True,
             device=device,
         )
 
@@ -140,10 +144,8 @@ def resolve_training_context(
             )
         return DistributedTrainingContext(
             strategy=strategy,
-            distributed=True,
             rank=rank,
             world_size=world_size,
-            is_primary=(rank == 0),
             device=torch.device(f"cuda:{device_index}"),
         )
 

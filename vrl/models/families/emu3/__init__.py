@@ -8,22 +8,8 @@ text-to-image generation under the visual-rl GRPO pipeline. Unlike janus_pro
 
 from __future__ import annotations
 
-from vrl.models.families.emu3.model import (
-    Emu3Config,
-    Emu3Model,
-    Emu3ReplayModel,
-    emu3_allowed_token_mask,
-    emu3_forced_token_schedule,
-    emu3_grid_token_num,
-)
-from vrl.models.families.emu3.runtime import Emu3ChunkExecutor
-
-__all__ = [
-    "Emu3ChunkExecutor",
-    "Emu3Config",
-    "Emu3Model",
-    "Emu3ReplayModel",
-    "emu3_allowed_token_mask",
-    "emu3_forced_token_schedule",
-    "emu3_grid_token_num",
-]
+# Deliberately exports nothing. The family registry dispatches by dotted
+# submodule path (vrl/families/registry.py), so a package-root re-export is a
+# second surface nothing imports; keeping this module empty is also what stops
+# config discovery from pulling the torch-backed model runtime.
+__all__: list[str] = []

@@ -36,6 +36,8 @@ class TokenLogProbEvaluator(Evaluator):
     that need a distinct frozen reference must pass ``ref_model``.
     """
 
+    replay_granularity = "trajectory"
+
     def __init__(self, mask_key: str = "token_mask") -> None:
         self.mask_key = mask_key
 
@@ -47,11 +49,18 @@ class TokenLogProbEvaluator(Evaluator):
         ref_model: ReplayModel | None = None,
         signal_request: SignalRequest | None = None,
     ) -> TrajectorySignalBatch:
+        del timestep_idx
         model = require_replay_model(model, owner="TokenLogProbEvaluator.model")
         if ref_model is not None:
             ref_model = require_replay_model(ref_model, owner="TokenLogProbEvaluator.ref_model")
         request = signal_request or SignalRequest()
-        action_ids: torch.Tensor = batch.actions  # [B, L_img]
+
+        from vrl.trajectory import TrajectoryResolver
+
+        action_ids: torch.Tensor = TrajectoryResolver.from_batch(batch).role_value(
+            "image_tokens",
+            "action",
+        )
 
         builder = TrajectorySignalBuilder(batch)
         # Rollout scoring divides logits by the sampling temperature; replay
@@ -88,8 +97,6 @@ class TokenLogProbEvaluator(Evaluator):
             log_prob=new_lp,
             old_log_prob=None,
             ref_log_prob=ref_lp,
-            distribution="categorical",
-            timestep_idx=timestep_idx,
             mask_key=self.mask_key,
         )
 

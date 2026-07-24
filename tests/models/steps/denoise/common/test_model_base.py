@@ -25,7 +25,7 @@ from vrl.models.families.wan_2_1.model import WanT2VDiffusersModel
 from vrl.models.interfaces import ReplayResult
 from vrl.models.steps.denoise import DiffusionModelBase
 from vrl.rollouts.batch import RolloutBatch
-from vrl.trajectory import build_diffusion_trajectory, build_training_view
+from vrl.trajectory import build_diffusion_trajectory
 
 
 class _AdapterTransformer(nn.Linear):
@@ -285,7 +285,6 @@ def test_replay_forward_returns_typed_replay_result() -> None:
                 prompt_index=index,
                 sample_index=0,
                 prompt=prompt,
-                prompt_id=f"p{index}",
                 group_id=f"g{index}",
                 sample_id=f"s{index}",
                 trajectory_id=f"t{index}",
@@ -302,13 +301,9 @@ def test_replay_forward_returns_typed_replay_result() -> None:
         context={"scheduler": "stub"},
     )
     batch = RolloutBatch(
-        observations=observations,
-        actions=actions,
         rewards=torch.zeros(2),
-        dones=torch.ones(2, dtype=torch.bool),
         group_ids=torch.tensor([0, 1]),
         trajectory=trajectory,
-        training_view=build_training_view(trajectory),
         context=trajectory.context,
     )
 

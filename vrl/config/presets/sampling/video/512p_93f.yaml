@@ -4,4 +4,3 @@ sampling:
   height: 512
   num_frames: 93
   fps: 16
-  max_sequence_length: 512

@@ -19,32 +19,12 @@ def select_batch(batch: RolloutBatch, selector: torch.Tensor) -> RolloutBatch:
     batch_size = batch.rewards.shape[0]
     for key, value in batch.extras.items():
         new_extras[key] = _select_tensor_tree(value, selector, batch_size)
-    videos = (
-        batch.videos[selector.to(batch.videos.device)]
-        if batch.videos is not None
-        else None
-    )
-    if batch.prompts is not None:
-        selector_cpu = selector.cpu()
-        if selector_cpu.dtype == torch.bool:
-            positions = torch.where(selector_cpu)[0].tolist()
-        else:
-            positions = [int(i) for i in selector_cpu.reshape(-1).tolist()]
-        prompts = [batch.prompts[i] for i in positions]
-    else:
-        prompts = None
     return RolloutBatch(
-        observations=batch.observations[selector.to(batch.observations.device)],
-        actions=batch.actions[selector.to(batch.actions.device)],
         rewards=batch.rewards[selector.to(batch.rewards.device)],
-        dones=batch.dones[selector.to(batch.dones.device)],
         group_ids=batch.group_ids[selector.to(batch.group_ids.device)],
         extras=new_extras,
         context=batch.context,
-        videos=videos,
-        prompts=prompts,
         trajectory=select_trajectory_batch(batch.trajectory, selector),
-        training_view=batch.training_view,
     )
 
 
@@ -98,10 +78,6 @@ def remap_group_ids_(batch: RolloutBatch, global_prompt_indices: list[int]) -> N
     for local_idx, global_idx in enumerate(global_prompt_indices):
         remapped[batch.group_ids == local_idx] = global_idx
     batch.group_ids = remapped
-    if batch.trajectory is not None:
-        trajectory_group_ids = batch.trajectory.group_ids
-        device = getattr(trajectory_group_ids, "device", remapped.device)
-        batch.trajectory.group_ids = remapped.to(device)
 
 
 def _move_tensor_tree(value: Any, device: torch.device) -> Any:
@@ -125,19 +101,15 @@ def move_training_batch_to_device(
     """
 
     return RolloutBatch(
-        observations=batch.observations if defer_replay_tensors else batch.observations.to(device),
-        actions=batch.actions if defer_replay_tensors else batch.actions.to(device),
         rewards=batch.rewards.to(device),
-        dones=batch.dones.to(device),
         group_ids=batch.group_ids.to(device),
         extras=batch.extras if defer_replay_tensors else _move_tensor_tree(batch.extras, device),
-        context=batch.context if defer_replay_tensors else _move_tensor_tree(batch.context, device),
-        videos=batch.videos,
-        prompts=batch.prompts,
+        context=batch.context
+        if defer_replay_tensors
+        else _move_tensor_tree(batch.context, device),
         trajectory=batch.trajectory
         if defer_replay_tensors
         else move_trajectory_batch(batch.trajectory, device),
-        training_view=batch.training_view,
     )
 
 

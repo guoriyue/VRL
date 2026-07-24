@@ -15,33 +15,26 @@ from typing import Any
 import torch
 from omegaconf import DictConfig, OmegaConf
 
-from vrl.config.builders import build_configs
 from vrl.config.loading import load_config
+from vrl.config.precision import PrecisionPolicy, resolve_precision_policy
+from vrl.config.schema import RootConfig, parse_config
 from vrl.families.registry import get_model_family_entry
+from vrl.generation.types import VideoGenerationRequest
+from vrl.math.denoise.flow_matching import sde_step_with_logprob
+from vrl.models.checkpoint_identity import resolve_checkpoint_model_identity
 from vrl.models.dtypes import resolve_torch_dtype
 from vrl.rewards.inference import RewardInferenceArtifact, RewardInferenceRequest
 from vrl.rewards.models.kling_video_reward import KlingVideoRewardModel
-from vrl.scripts.eval.denoise_video_generation import (
-    generate_one_video as _generate_one_video,
+from vrl.trainers.checkpointing import (
+    load_training_checkpoint,
+    read_checkpoint_meta,
+    restore_model_checkpoint,
+    validate_checkpoint_meta_compatibility,
 )
-from vrl.scripts.eval.denoise_video_generation import (
-    seed_for as _seed_for,
-)
-from vrl.scripts.eval.denoise_video_generation import (
-    video_to_cthw,
-)
-from vrl.trainers.checkpointing import load_trainable_state, load_training_checkpoint
 from vrl.trainers.data import load_prompt_manifest
-from vrl.trainers.precision import torch_dtype_for_trainer_precision
 from vrl.utils.media import write_mp4
 
 logger = logging.getLogger(__name__)
-
-
-def _video_to_cthw(video: torch.Tensor) -> torch.Tensor:
-    """Compatibility facade for the public checkpoint-eval layout helper."""
-
-    return video_to_cthw(video)
 
 
 @dataclass(frozen=True, slots=True)
@@ -144,6 +137,8 @@ def main(argv: list[str] | None = None) -> None:
     keep_model_between_checkpoints = _keep_model_between_checkpoints(args)
 
     cfg = load_config(args.config, overrides=args.overrides)
+    root = parse_config(cfg)
+    precision = resolve_precision_policy(root)
     prompts = _load_prompts(args, cfg)
     if args.limit:
         prompts = prompts[: args.limit]
@@ -152,8 +147,31 @@ def main(argv: list[str] | None = None) -> None:
     checkpoint_targets = _parse_checkpoint_targets(args.checkpoint)
 
     device = _resolve_device(args.device)
-    dtype = _resolve_dtype(args.dtype, cfg, device=device)
+    dtype = _resolve_dtype(
+        args.dtype,
+        root,
+        precision=precision,
+        device=device,
+    )
     sampling = _resolve_sampling(args, cfg)
+    if root.model is None:
+        raise ValueError("Cosmos checkpoint evaluation requires model configuration")
+    entry = get_model_family_entry(str(root.model.family))
+    build = entry.resolve_model_build(
+        root,
+        device,
+        precision=precision,
+        parameter_dtype_override=dtype,
+    )
+    model_identity = resolve_checkpoint_model_identity(build)
+    for target in checkpoint_targets:
+        checkpoint_dir = target.path.parent if target.path.is_file() else target.path
+        validate_checkpoint_meta_compatibility(
+            read_checkpoint_meta(checkpoint_dir),
+            family=entry.family,
+            expected_model_identity=model_identity,
+            strict=True,
+        )
     output_dir = Path(args.output_dir).expanduser().resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -175,16 +193,15 @@ def main(argv: list[str] | None = None) -> None:
     )
 
     generated = _generate_all(
-        cfg,
+        build,
         checkpoint_targets,
         prompts,
         samples_per_prompt=int(args.samples_per_prompt),
         base_seed=int(args.seed),
         output_dir=output_dir,
         sampling=sampling,
-        device=device,
-        dtype=dtype,
         keep_model_between_checkpoints=keep_model_between_checkpoints,
+        expected_model_identity=model_identity,
     )
     _write_generation_metadata(generated, output_dir)
 
@@ -256,11 +273,18 @@ def _resolve_device(device_arg: str) -> torch.device:
     return torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
 
-def _resolve_dtype(dtype_arg: str, cfg: DictConfig, *, device: torch.device) -> torch.dtype:
+def _resolve_dtype(
+    dtype_arg: str,
+    root: RootConfig,
+    *,
+    precision: PrecisionPolicy,
+    device: torch.device,
+) -> torch.dtype:
     if dtype_arg != "auto":
         return resolve_torch_dtype(dtype_arg)
-    trainer_config = build_configs(cfg)["trainer"]
-    dtype = torch_dtype_for_trainer_precision(trainer_config, torch)
+    if root.trainer is None:
+        raise ValueError("Cosmos checkpoint evaluation requires an online trainer config")
+    dtype = resolve_torch_dtype(precision.training.dtype)
     if getattr(device, "type", str(device)) == "cpu":
         return torch.float32
     return dtype
@@ -300,7 +324,7 @@ def _keep_model_between_checkpoints(args: argparse.Namespace) -> bool:
 
 
 def _generate_all(
-    cfg: DictConfig,
+    build: Any,
     checkpoint_targets: list[CheckpointTarget],
     prompts: list[str],
     *,
@@ -308,13 +332,12 @@ def _generate_all(
     base_seed: int,
     output_dir: Path,
     sampling: dict[str, Any],
-    device: Any,
-    dtype: Any,
     keep_model_between_checkpoints: bool,
+    expected_model_identity: dict[str, Any],
 ) -> list[GeneratedVideo]:
     generated: list[GeneratedVideo] = []
     bundle: Any | None = None
-    entry = get_model_family_entry(str(cfg.model.family))
+    entry = get_model_family_entry(str(build.family))
     try:
         for target in checkpoint_targets:
             if bundle is None or not keep_model_between_checkpoints:
@@ -323,13 +346,20 @@ def _generate_all(
                     "Building Cosmos Predict2.5 generation bundle for %s",
                     target.label,
                 )
-                build = entry.resolve_model_build(
-                    cfg,
-                    device,
-                    parameter_dtype_override=dtype,
-                )
                 bundle = entry.build_rollout(build)
-            _load_checkpoint_into_bundle(bundle, target)
+                if resolve_checkpoint_model_identity(build) != expected_model_identity:
+                    raise RuntimeError(
+                        "Cosmos model source changed during runtime construction",
+                    )
+            logger.info("Loading checkpoint-owned state from %s", target.path)
+            training_checkpoint = load_training_checkpoint(target.path)
+            restore_model_checkpoint(
+                training_checkpoint,
+                bundle=bundle,
+                family=entry.family,
+                expected_model_identity=expected_model_identity,
+                strict=True,
+            )
             model = bundle.model.eval()
             try:
                 generated.extend(
@@ -353,12 +383,6 @@ def _generate_all(
         del bundle
         _release_cuda()
     return generated
-
-
-def _load_checkpoint_into_bundle(bundle: Any, target: CheckpointTarget) -> None:
-    logger.info("Loading trainable state from %s", target.path)
-    training_checkpoint = load_training_checkpoint(target.path)
-    load_trainable_state(bundle, training_checkpoint.trainable_state, strict=True)
 
 
 def _generate_checkpoint_videos(
@@ -408,6 +432,88 @@ def _generate_checkpoint_videos(
                 ),
             )
     return videos
+
+
+def _seed_for(
+    *,
+    base_seed: int,
+    prompt_index: int,
+    sample_index: int,
+    samples_per_prompt: int,
+) -> int:
+    # Keep seeds identical across checkpoints so reward changes reflect weights,
+    # not a different latent-noise draw.
+    return int(base_seed) + int(prompt_index) * int(samples_per_prompt) + int(sample_index)
+
+
+def _generate_one_video(
+    model: Any,
+    *,
+    prompt: str,
+    seed: int,
+    sampling: dict[str, Any],
+) -> torch.Tensor:
+    encoded = model.encode_prompt(
+        prompt,
+        None,
+        max_sequence_length=int(sampling["max_sequence_length"]),
+        guidance_scale=float(sampling["guidance_scale"]),
+    )
+    request = VideoGenerationRequest(
+        prompt=prompt,
+        width=int(sampling["width"]),
+        height=int(sampling["height"]),
+        frame_count=int(sampling["num_frames"]),
+        num_steps=int(sampling["num_steps"]),
+        guidance_scale=float(sampling["guidance_scale"]),
+        seed=int(seed),
+        fps=int(sampling["fps"]),
+        extra={"max_sequence_length": int(sampling["max_sequence_length"])},
+    )
+    state = model.prepare_sampling(request, encoded)
+    generator = torch.Generator(device=state.latents.device)
+    generator.manual_seed(int(seed))
+    with torch.no_grad():
+        for step_idx, timestep in enumerate(state.timesteps):
+            step_output = model.forward_step(state, step_idx)
+            if str(sampling["denoise_mode"]) == "native":
+                state.latents = state.scheduler.step(
+                    step_output["noise_pred"].float(),
+                    timestep,
+                    state.latents.float(),
+                    return_dict=False,
+                )[0]
+            else:
+                state.latents = sde_step_with_logprob(
+                    state.scheduler,
+                    step_output["noise_pred"].float(),
+                    timestep.unsqueeze(0),
+                    state.latents.float(),
+                    generator=generator,
+                    deterministic=False,
+                    return_dt=False,
+                    noise_level=float(sampling["noise_level"]),
+                    sde_type=str(sampling["sde_type"]),
+                    step_index=step_idx,
+                ).prev_sample
+        decoded = model.decode_latents(state.latents)
+    return _video_to_cthw(decoded.detach().cpu())
+
+
+def _video_to_cthw(video: torch.Tensor) -> torch.Tensor:
+    """Normalize decoded video to channel-first [C,T,H,W]."""
+
+    if video.ndim == 5:
+        if video.shape[0] != 1:
+            raise ValueError(f"expected one decoded video, got shape={tuple(video.shape)}")
+        video = video[0]
+    if video.ndim != 4:
+        raise ValueError(f"expected decoded video rank 4/5, got shape={tuple(video.shape)}")
+    if video.shape[0] in {1, 3, 4}:
+        return video[:3]
+    if video.shape[1] in {1, 3, 4}:
+        return video[:, :3].permute(1, 0, 2, 3).contiguous()
+    raise ValueError(f"cannot infer channel axis for decoded video shape={tuple(video.shape)}")
 
 
 def _score_generated_videos(

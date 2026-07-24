@@ -15,18 +15,8 @@ log-probabilities (continuous tokens, no codebook).
 
 from __future__ import annotations
 
-from vrl.models.families.nextstep_1.model import (
-    NextStep1Config,
-    NextStep1Model,
-)
-from vrl.models.families.nextstep_1.runtime import (
-    NextStep1ChunkExecutor,
-    NextStep1ChunkGatherer,
-)
-
-__all__ = [
-    "NextStep1ChunkExecutor",
-    "NextStep1ChunkGatherer",
-    "NextStep1Config",
-    "NextStep1Model",
-]
+# Deliberately exports nothing. The family registry dispatches by dotted
+# submodule path (vrl/families/registry.py), so a package-root re-export is a
+# second surface nothing imports; keeping this module empty is also what stops
+# config discovery from pulling the torch-backed model runtime.
+__all__: list[str] = []

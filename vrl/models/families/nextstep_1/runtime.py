@@ -25,28 +25,16 @@ from vrl.models.interfaces.runtime import ModelBuild
 from vrl.models.steps.token.build import token_model_config_base
 from vrl.trajectory import build_ar_continuous_trajectory
 
-# NextStep LoRA defaults mirror the upstream recipe; applied at read time so the
-# carried ``model.lora`` block only needs the values it overrides.
-_NEXTSTEP_LORA_DEFAULTS: dict[str, Any] = {
-    "rank": 32,
-    "alpha": 64,
-    "target_modules": ("q_proj", "v_proj"),
-    "dropout": 0.0,
-    "init": "gaussian",
-}
-
 
 def nextstep_config_from_build(build: ModelBuild) -> dict[str, Any]:
     model_config = build.model_config or {}
     sampling_config = build.sampling_config or {}
-    config = token_model_config_base(build, _NEXTSTEP_LORA_DEFAULTS)
+    config = token_model_config_base(build)
 
     for key in (
         "guidance_scale",
         "num_steps",
-        "noise_level",
         "image_token_num",
-        "token_dim",
     ):
         if key in sampling_config:
             config[key] = sampling_config[key]
@@ -125,6 +113,10 @@ class NextStep1ChunkExecutor(ARChunkExecutorBase):
 
         self.require_native_ar_engine(request)
         self.layout.validate_chunk(request, chunk)
+        scheduler_batch_size = self.resolve_scheduler_batch_size(
+            request,
+            row_count=chunk.sample_count,
+        )
         sampling = request.sampling
         params: ARSamplingParams = self.layout.parse_sampling_params(request)
 
@@ -167,19 +159,12 @@ class NextStep1ChunkExecutor(ARChunkExecutorBase):
         if generator is not None:
             sample_kwargs["generator"] = generator
 
-        decode_result = TokenAutoregressiveLoop(
-            request=request,
-            sample_rows=self.layout.chunk_sample_rows(request, chunk),
+        tokens, saved_noise, old_logprobs = TokenAutoregressiveLoop(
             runner=self._ar_runner(request),
-            max_new_tokens=params.image_token_num,
-            tokenizer_key="nextstep_1",
-            dtype=str(cond_embeds.dtype),
-            scheduler_batch_size=chunk.sample_count,
+            scheduler_batch_size=scheduler_batch_size,
             init_args=(cond_embeds, uncond_embeds, prompt_mask, uncond_mask),
             init_kwargs=sample_kwargs,
-            step_kwargs=sample_kwargs,
         ).run()
-        tokens, saved_noise, old_logprobs = decode_result.finalized
 
         images = self.model.decode_image_tokens(tokens, image_size=params.image_size)
         peak_mem_mb = self.layout.peak_memory_mb()
@@ -200,8 +185,6 @@ class NextStep1ChunkExecutor(ARChunkExecutorBase):
                 "guidance_scale": guidance_scale,
                 "num_steps": num_steps,
                 "noise_level": noise_level,
-                "image_token_num": params.image_token_num,
-                "image_size": params.image_size,
             },
             peak_memory_mb=peak_mem_mb,
         )
@@ -291,7 +274,6 @@ class NextStep1ChunkGatherer:
             prompt_attention_mask=cat["prompt_attention_mask"],
             uncond_input_ids=cat["uncond_input_ids"],
             uncond_attention_mask=cat["uncond_attention_mask"],
-            images_for_reward=cat["output"],
             context=trajectory_context,
         )
 
@@ -299,7 +281,6 @@ class NextStep1ChunkGatherer:
             request_id=request.request_id,
             family=request.family,
             task=request.task,
-            prompts=list(request.prompts),
             sample_rows=list(sample_rows),
             output=cat["output"],
             trajectory=trajectory,

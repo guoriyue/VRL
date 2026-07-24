@@ -24,6 +24,8 @@ from vrl.trajectory import role_tensor
 class MultiSegmentTokenLogProbEvaluator(Evaluator):
     """Replay each enabled R1 segment without concatenating image/text tokens."""
 
+    replay_granularity = "trajectory"
+
     def __init__(
         self,
         *,
@@ -102,7 +104,6 @@ class MultiSegmentTokenLogProbEvaluator(Evaluator):
                     device=new_lp.device,
                 ),
                 ref_log_prob=ref_lp,
-                distribution="categorical",
                 mask_key=self.mask_key,
             )
 
@@ -110,11 +111,7 @@ class MultiSegmentTokenLogProbEvaluator(Evaluator):
         return TrajectorySignalBatch(
             segments=segment_signals,
             group_ids=signal_builder.group_ids,
-            context={
-                **signal_builder.context,
-                "segment_order": tuple(enabled_names),
-                "primary_segment": primary_name,
-            },
+            context=signal_builder.context,
             primary_segment=primary_name,
         )
 
@@ -212,13 +209,9 @@ class MultiSegmentTokenLogProbEvaluator(Evaluator):
 
     @staticmethod
     def _primary_segment_name(batch: RolloutBatch, enabled_names: list[str]) -> str:
-        training_view = getattr(batch, "training_view", None)
-        primary = getattr(training_view, "primary_segment", None)
-        if isinstance(primary, str) and primary in enabled_names:
-            return primary
         trajectory = getattr(batch, "trajectory", None)
         if trajectory is not None:
-            primary = trajectory.context.get("primary_segment")
+            primary = trajectory.primary_segment
             if isinstance(primary, str) and primary in enabled_names:
                 return primary
         return enabled_names[0]

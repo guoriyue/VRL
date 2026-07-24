@@ -17,16 +17,15 @@ from vrl.scripts.common.online import (
     _export_transformer_lora,
     _prepare_metrics_csv_rank_consistent,
 )
+from vrl.trainers.checkpointing import AdapterExport
 from vrl.trainers.distributed import DistributedTrainingContext
 
 
 def _context(*, distributed: bool, primary: bool) -> DistributedTrainingContext:
     return DistributedTrainingContext(
         strategy="ddp" if distributed else "single_process",
-        distributed=distributed,
         rank=0 if primary else 1,
         world_size=2 if distributed else 1,
-        is_primary=primary,
         device=torch.device("cpu"),
     )
 
@@ -48,8 +47,48 @@ def test_dual_transformer_lora_export_is_namespaced() -> None:
     exported = _export_transformer_lora(bundle, cfg)
 
     assert exported == {
-        "lora_weights/transformer": high,
-        "lora_weights/transformer_2": low,
+        "lora_weights/transformer": AdapterExport(high),
+        "lora_weights/transformer_2": AdapterExport(low),
+    }
+
+
+def test_online_checkpoint_threads_required_model_identity(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+) -> None:
+    identity = {"schema": "test"}
+    calls: list[dict[str, object]] = []
+    run = OnlineRecipeRun(
+        bundle=object(),
+        trainer=SimpleNamespace(state=SimpleNamespace(global_step=7)),
+        strategy=SimpleNamespace(
+            context=SimpleNamespace(is_primary=True),
+        ),
+        family="unit",
+        component_names=(),
+        adapter_exports=None,
+        csv_path=tmp_path / "metrics.csv",
+        rng=object(),
+        resume_epoch=None,
+        model_identity=identity,
+    )
+    monkeypatch.setattr(
+        "vrl.scripts.common.online.capture_rng_state",
+        lambda *, prompt_generator: {"prompt_generator": prompt_generator},
+    )
+    monkeypatch.setattr(
+        "vrl.scripts.common.online.save_training_checkpoint",
+        lambda path, **kwargs: calls.append({"path": path, **kwargs}),
+    )
+
+    run.save_checkpoint(tmp_path / "checkpoint-3", epoch=3)
+
+    assert calls[0]["model_identity"] is identity
+    assert calls[0]["family"] == "unit"
+    assert calls[0]["progress"] == {
+        "completed_epoch": 3,
+        "next_epoch": 3,
+        "global_step": 7,
     }
 
 
@@ -107,10 +146,11 @@ def test_online_resume_rejects_changed_reward_component_schema(tmp_path) -> None
         strategy=None,
         family="unit",
         component_names=("aesthetic",),
-        export_modules=None,
+        adapter_exports=None,
         csv_path=path,
         rng=None,
         resume_epoch=None,
+        model_identity={"schema": "test"},
     ).prepare_metrics_csv()
 
     resumed = OnlineRecipeRun(
@@ -119,10 +159,11 @@ def test_online_resume_rejects_changed_reward_component_schema(tmp_path) -> None
         strategy=None,
         family="unit",
         component_names=("aesthetic", "pickscore"),
-        export_modules=None,
+        adapter_exports=None,
         csv_path=path,
         rng=None,
         resume_epoch=0,
+        model_identity={"schema": "test"},
     )
 
     with pytest.raises(ValueError, match="different metrics schema"):
@@ -137,10 +178,11 @@ def test_metrics_csv_writes_continuous_request_diagnostics(tmp_path) -> None:
         strategy=None,
         family="unit",
         component_names=(),
-        export_modules=None,
+        adapter_exports=None,
         csv_path=path,
         rng=None,
         resume_epoch=None,
+        model_identity={"schema": "test"},
     )
     run.prepare_metrics_csv()
     update = SimpleNamespace(

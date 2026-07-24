@@ -1,13 +1,9 @@
 """HunyuanVideo t2v family (13B guidance-distilled DiT + causal video VAE)."""
 
-from vrl.models.families.hunyuan_video.model import (
-    HunyuanVideoModel,
-    HunyuanVideoReplayModel,
-    HunyuanVideoSamplingState,
-)
+from __future__ import annotations
 
-__all__ = [
-    "HunyuanVideoModel",
-    "HunyuanVideoReplayModel",
-    "HunyuanVideoSamplingState",
-]
+# Deliberately exports nothing. The family registry dispatches by dotted
+# submodule path (vrl/families/registry.py), so a package-root re-export is a
+# second surface nothing imports; keeping this module empty is also what stops
+# config discovery from pulling the torch-backed model runtime.
+__all__: list[str] = []

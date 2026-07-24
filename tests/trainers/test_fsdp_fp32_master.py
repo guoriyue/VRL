@@ -86,13 +86,14 @@ def _strategy() -> FSDPStrategy:
     return FSDPStrategy(
         DistributedTrainingContext(
             strategy="fsdp",
-            distributed=True,
             rank=0,
             world_size=1,
-            is_primary=True,
             device=torch.device("cpu"),
         ),
+        mesh_dims=["dp_shard"],
         precision_policy="none",
+        reshard_after_forward=True,
+        cpu_offload=False,
     )
 
 
@@ -194,10 +195,8 @@ def _run_two_rank_master_round_trip(
     dist.init_process_group("gloo", rank=rank, world_size=world_size)
     context = DistributedTrainingContext(
         strategy="fsdp",
-        distributed=True,
         rank=rank,
         world_size=world_size,
-        is_primary=(rank == 0),
         device=torch.device("cpu"),
     )
 

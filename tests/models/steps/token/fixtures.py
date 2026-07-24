@@ -50,9 +50,9 @@ import torch
 import torch.nn as nn
 
 from tests.models.steps.denoise.fixtures import record_forward_calls
+from vrl.models.families.janus_pro.config import JanusProConfig
 from vrl.models.families.janus_pro.model import (
     JANUS_IMAGE_PATCH_SIZE,
-    JanusProConfig,
     JanusProModel,
 )
 

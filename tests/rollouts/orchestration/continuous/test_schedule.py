@@ -32,12 +32,10 @@ def _batch(prompts: list[str], group_size: int) -> RolloutBatch:
         dtype=torch.long,
     )
     return RolloutBatch(
-        observations=torch.zeros(batch_size, 1, 1),
-        actions=torch.zeros(batch_size, 1, 1),
         rewards=torch.arange(batch_size, dtype=torch.float32),
-        dones=torch.ones(batch_size, dtype=torch.bool),
         group_ids=group_ids,
-        prompts=[prompt for prompt in prompts for _ in range(group_size)],
+        # Test-fake provenance used only to verify finite lookahead ordering.
+        context={"fixture_prompts": tuple(prompts)},
     )
 
 
@@ -375,10 +373,20 @@ async def test_continuous_drains_full_homogeneous_iteration() -> None:
         assert iteration.policy_version == 1
         assert iteration.prompt_count == 2
         assert iteration.sample_count == 4
+        assert set(iteration.metadata) == {
+            "consume_policy_version",
+            "stale_policy_versions",
+            "continuous_item_age_s",
+            "continuous_ready_groups_at_demand",
+        }
         assert len(iteration.batches) == 2
         group_ids = sorted(int(b.group_ids[0]) for b in iteration.batches)
         assert group_ids == [0, 1]
         assert all(b.context["rollout_policy_version"] == 1 for b in iteration.batches)
+        assert all(b.context["schedule_mode"] == "continuous" for b in iteration.batches)
+        assert all(b.context["prompt_count"] == 2 for b in iteration.batches)
+        assert all(b.context["sample_count"] == 4 for b in iteration.batches)
+        assert all("continuous_item_age_s" in b.context for b in iteration.batches)
         assert "continuous.queue_wait_s" in iteration.stats.as_phase_dict()
     finally:
         await schedule.shutdown()
@@ -733,7 +741,8 @@ async def test_three_gas2_updates_consume_exact_finite_lookahead_sequence() -> N
                 sync_stats.append(await schedule.after_train_step())
 
         assert [
-            [batch.prompts[0] for batch in iteration.batches] for iteration in iterations
+            [batch.context["fixture_prompts"][0] for batch in iteration.batches]
+            for iteration in iterations
         ] == prompts
         assert [iteration.policy_version for iteration in iterations] == [1, 1, 1, 2, 2, 3]
         assert [iteration.metadata["consume_policy_version"] for iteration in iterations] == [

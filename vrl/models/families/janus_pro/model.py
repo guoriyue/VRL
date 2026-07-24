@@ -37,7 +37,6 @@ DeepSeek's reference implementation:
 from __future__ import annotations
 
 from collections.abc import Callable
-from dataclasses import dataclass
 from typing import Any
 
 import torch
@@ -47,15 +46,25 @@ import torch.nn.functional as F
 from vrl.math.token.logprob import require_positive_temperature
 from vrl.models.dtypes import resolve_torch_dtype
 from vrl.models.families.janus_pro import JANUS_R1_SEGMENTS
-from vrl.models.interfaces import ReplayRequest, ReplayResult, ReplaySegmentResult
+from vrl.models.families.janus_pro.config import (
+    JANUS_IMAGE_TOKEN_NUM,
+    JanusProConfig,
+)
+from vrl.models.interfaces import (
+    ReplayRequest,
+    ReplayResult,
+    ReplaySegmentResult,
+    require_replay_segments,
+    require_zero_replay_timestep,
+)
 from vrl.models.steps.token.base import ARModelBase, ARReplayRolloutStubs
+from vrl.models.steps.token.lora import install_token_lora_adapter
 from vrl.trajectory import role_tensor
 from vrl.utils.logging import init_logger
 
 logger = init_logger(__name__)
 
-# Janus-Pro-1B image-tokenizer constants (from deepseek-ai/Janus config)
-JANUS_IMAGE_TOKEN_NUM = 576  # 24 x 24 latent grid per image
+# Janus-Pro-1B image-tokenizer model constants (from deepseek-ai/Janus config)
 JANUS_IMAGE_VOCAB_SIZE = 16_384  # gen_vision_model codebook size
 JANUS_IMAGE_PATCH_SIZE = 16  # decoder upsample factor → 384 px
 # Derived: sqrt(576 tokens) = 24-wide latent grid x 16 px/patch = 384 px.
@@ -68,47 +77,6 @@ JANUS_IMAGE_PIXEL_SIZE = int(JANUS_IMAGE_TOKEN_NUM**0.5) * JANUS_IMAGE_PATCH_SIZ
 # newline and silently break the R1 loop.
 JANUS_R1_SELFCHECK_PROMPT = "<end_of_image>\nLet me think Does this image match the prompt..."
 JANUS_R1_REGEN_PROMPT = "<｜end▁of▁sentence｜>\nNext, I will draw a new image<begin_of_image>"  # noqa: RUF001
-
-
-@dataclass(slots=True)
-class JanusProConfig:
-    """Hyper-parameters for the Janus-Pro wrapper.
-
-    The defaults target Janus-Pro-1B (single-H100 RL feasible).
-    """
-
-    model_path: str = "deepseek-ai/Janus-Pro-1B"
-    revision: str | None = None
-    dtype: str = "bfloat16"  # "bfloat16" | "float16" | "float32"
-
-    # LoRA
-    use_lora: bool = True
-    lora_rank: int = 32
-    lora_alpha: int = 64
-    lora_dropout: float = 0.0
-    # Janus' language-model uses LLaMA-style projection names.
-    lora_target_modules: tuple[str, ...] = (
-        "q_proj",
-        "k_proj",
-        "v_proj",
-        "o_proj",
-    )
-    lora_init: str = "gaussian"  # PEFT ``init_lora_weights``
-
-    # Generation defaults — used by the AR runtime runner.
-    guidance_scale: float = 5.0
-    temperature: float = 1.0
-    image_token_num: int = JANUS_IMAGE_TOKEN_NUM
-    r1_refine_mode: str = "selfcheck"  # "selfcheck" | "always" | "never"
-
-    # Misc
-    trust_remote_code: bool = True
-    device: str = "cuda"
-
-    # VQ decoder shape — None ⇒ auto-detect from ``vq_model.config``.
-    # Janus-Pro-1B uses 8 latent channels; Janus-Pro-7B may differ.
-    # Override only if auto-detect fails.
-    vq_latent_channels: int | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -266,22 +234,11 @@ class JanusProModel(ARModelBase):
 
     def _apply_lora(self, mmgpt: Any) -> Any:
         """Attach a PEFT LoRA adapter to the language-model trunk."""
-        try:
-            from peft import LoraConfig, get_peft_model
-        except ImportError as e:  # pragma: no cover
-            raise ImportError("PEFT is required for use_lora=True. pip install peft>=0.12") from e
-
-        lora_cfg = LoraConfig(
-            r=self.config.lora_rank,
-            lora_alpha=self.config.lora_alpha,
-            lora_dropout=self.config.lora_dropout,
-            init_lora_weights=self.config.lora_init,
-            target_modules=list(self.config.lora_target_modules),
-            bias="none",
+        mmgpt.language_model = install_token_lora_adapter(
+            mmgpt.language_model,
+            self.config,
             task_type="CAUSAL_LM",
         )
-        # Wrap ONLY the language model — vq / vision / aligner stay frozen.
-        mmgpt.language_model = get_peft_model(mmgpt.language_model, lora_cfg)
         logger.info(
             "Applied LoRA (rank=%d, alpha=%d) to Janus language model.",
             self.config.lora_rank,
@@ -405,7 +362,7 @@ class JanusProModel(ARModelBase):
         tokens from ``batch.trajectory`` and recompute logits under the current
         model.
 
-        AR has no notion of "denoising step", so ``timestep_idx`` is ignored.
+        AR has no notion of a denoising step, so only index zero is valid.
 
         See ``vrl/models/interfaces/replay.py::ReplayModel`` for the shared
         trainer replay protocol.
@@ -413,7 +370,16 @@ class JanusProModel(ARModelBase):
         Returns:
           ``ReplayResult`` with one or more segment payloads.
         """
-        if request is not None and request.segment_names:
+        require_zero_replay_timestep(timestep_idx, owner=type(self).__name__)
+        requested_segments = None if request is None else request.segment_names
+        if requested_segments == ("image_tokens",):
+            requested_segments = None
+        if requested_segments is not None:
+            require_replay_segments(
+                request,
+                JANUS_R1_SEGMENTS,
+                owner=type(self).__name__,
+            )
             segments = {
                 name: ReplaySegmentResult(
                     segment=name,
@@ -421,7 +387,7 @@ class JanusProModel(ARModelBase):
                         self._r1_segment_payload_from_trajectory(batch, name),
                     ),
                 )
-                for name in request.segment_names
+                for name in requested_segments
             }
             return ReplayResult(segments=segments)
 
@@ -777,24 +743,12 @@ class JanusProModel(ARModelBase):
             "selfcheck": selfcheck,
             "segments": segments,
             "context": {
-                "guidance_scale": float(guidance_scale),
                 "temperature": float(temperature),
-                "image_token_num": int(image_token_num),
-                "image_size": int(image_size),
-                "max_reflect_len": int(max_reflect_len),
+                # Display/provenance-only: OnlineTrainer persists these R1
+                # policy choices in its first-step ``rollout_context`` record.
+                "guidance_scale": float(guidance_scale),
                 "refine_mode": mode,
                 "task_stages": stages,
-                "selfcheck_prompt": JANUS_R1_SELFCHECK_PROMPT,
-                "regeneration_prompt": JANUS_R1_REGEN_PROMPT,
-                "yes_token_id": int(yes_token_id),
-                "no_token_id": int(no_token_id),
-                "eos_token_id": int(eos_token_id),
-                "pad_token_id": int(pad_token_id),
-                "refine_mask": use_refined,
-                "prompt_input_ids": prompt_input_ids,
-                "prompt_attention_mask": prompt_attention_mask,
-                "uncond_input_ids": uncond_input_ids,
-                "uncond_attention_mask": uncond_attention_mask,
             },
         }
 
@@ -983,9 +937,29 @@ class JanusProModel(ARModelBase):
 
         Returns shape ``[B, 3, image_size, image_size]``.
         """
+        if not isinstance(image_token_ids, torch.Tensor):
+            raise TypeError(
+                "Janus image_token_ids must be a torch.Tensor; "
+                f"got {type(image_token_ids).__name__}",
+            )
+        if image_token_ids.ndim != 2:
+            raise ValueError(
+                "Janus image_token_ids must have shape [batch, tokens]; "
+                f"got {tuple(image_token_ids.shape)}",
+            )
+        if not isinstance(image_size, int) or isinstance(image_size, bool):
+            raise TypeError(f"Janus image_size must be an int; got {type(image_size).__name__}")
         B, L = image_token_ids.shape
         side = int(L**0.5)
-        assert side * side == L, f"expected square grid, got L_img={L}"
+        if side * side != L:
+            raise ValueError(f"expected square image-token grid, got L_img={L}")
+        expected_image_size = side * JANUS_IMAGE_PATCH_SIZE
+        if image_size != expected_image_size:
+            raise ValueError(
+                "Janus image_size does not match the image-token grid: "
+                f"requested {image_size}, expected {expected_image_size} "
+                f"from {side}x{side} tokens",
+            )
         # Janus' decode_code feeds shape[1] to the quantizer as the codebook-entry
         # dim, and it differs across Janus-Pro variants — resolve it from the LIVE
         # quantizer. Do NOT "align to upstream" by hardcoding `8` (upstream
@@ -1153,9 +1127,10 @@ def _load_janus_from_pretrained(config: JanusProConfig) -> tuple[Any, Any]:
         torch_dtype=dtype,
         revision=config.revision,
     )
-    assert isinstance(mmgpt, MultiModalityCausalLM), (
-        f"Loaded model {type(mmgpt).__name__} is not MultiModalityCausalLM"
-    )
+    if not isinstance(mmgpt, MultiModalityCausalLM):
+        raise TypeError(
+            f"Loaded model {type(mmgpt).__name__} is not MultiModalityCausalLM",
+        )
     mmgpt = mmgpt.to(device=config.device, dtype=dtype).eval()
     return mmgpt, processor
 

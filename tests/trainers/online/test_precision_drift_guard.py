@@ -10,7 +10,10 @@ import pytest
 import torch
 
 from tests.trainers.online._collector_control import CollectorControlFake
-from tests.trainers.online._helpers import _stamp_model_precision
+from tests.trainers.online._helpers import (
+    _diffusion_rollout_batch,
+    _stamp_model_precision,
+)
 from vrl.algorithms.logprob_mismatch import compute_logprob_mismatch_stats
 from vrl.trainers.core.types import PrecisionDriftGuardConfig
 from vrl.trainers.online.precision_guard import (
@@ -297,10 +300,10 @@ def test_online_trainer_precision_guard_fails_before_optimizer_when_ratio_drifts
 
     from tests.trainers.online._helpers import _trajectory_signals
     from vrl.algorithms.types import TrainStepMetrics
-    from vrl.rollouts.batch import RolloutBatch
     from vrl.rollouts.evaluators.base import Evaluator
-    from vrl.trainers.core.types import EMAConfig, OptimConfig, TrainerConfig
+    from vrl.trainers.core.types import EMAConfig, OptimConfig
     from vrl.trainers.online import OnlineTrainer
+    from vrl.trainers.online.config import OnlineBatchPlan, TrainerConfig
 
     class _Algorithm:
         class _Config:
@@ -330,14 +333,10 @@ def test_online_trainer_precision_guard_fails_before_optimizer_when_ratio_drifts
 
         async def collect_unscored(self, prompts, **kwargs):
             group_size = int(kwargs["group_size"])
-            return RolloutBatch(
-                observations=torch.zeros(group_size, 2, 1),
-                actions=torch.zeros(group_size, 2, 1),
+            return _diffusion_rollout_batch(
                 rewards=torch.arange(group_size, dtype=torch.float32),
-                dones=torch.ones(group_size, dtype=torch.bool),
                 group_ids=torch.zeros(group_size, dtype=torch.long),
-                prompts=list(prompts) * group_size,
-                context={},
+                num_steps=2,
             )
 
     class _Evaluator(Evaluator):
@@ -358,14 +357,12 @@ def test_online_trainer_precision_guard_fails_before_optimizer_when_ratio_drifts
         evaluator=_Evaluator(),
         model=model,
         config=TrainerConfig(
-            prompts_per_batch=1,
+            batch_plan=OnlineBatchPlan(prompts_per_batch=1, n_samples_per_prompt=2),
             timestep_fraction=1.0,
-            total_epochs=1,
             drop_zero_advantage=False,
             output_dir="outputs/",
             optim=OptimConfig(lr=0.01),
             ema=EMAConfig(),
-            n_samples_per_prompt=2,
             train_precision="no",
             rollout_precision="bf16",
         ),

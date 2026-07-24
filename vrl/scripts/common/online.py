@@ -15,11 +15,14 @@ import torch
 from omegaconf import DictConfig, OmegaConf
 
 from vrl.config.builders import build_configs
+from vrl.config.schema import RootConfig
 from vrl.config.validation import require
 from vrl.families.registry import (
     get_model_family_entry,
 )
+from vrl.generation.ray.config import RayGenerationConfig
 from vrl.generation.ray.launcher import RayGenerationLauncher
+from vrl.models.checkpoint_identity import resolve_checkpoint_model_identity
 from vrl.models.interfaces import require_runtime_model
 from vrl.ray.dependencies import require_ray
 from vrl.ray.placement import GlobalRayPlacementOwner, cross_node_preflight
@@ -30,7 +33,7 @@ from vrl.ray.resources import (
     trainer_torch_device,
 )
 from vrl.rollouts.collector import build_rollout_collector
-from vrl.rollouts.collector.config import build_rollout_config_from_cfg
+from vrl.rollouts.collector.config import RolloutCollectorConfig
 from vrl.rollouts.orchestration import validate_rollout_schedule_topology
 from vrl.scripts.common.factory import (
     build_algorithm_and_evaluator_from_cfg,
@@ -42,18 +45,25 @@ from vrl.trainers.activation_checkpointing import (
 )
 from vrl.trainers.checkpointing import (
     LORA_WEIGHTS_NAME,
+    AdapterExport,
     capture_rng_state,
-    load_training_checkpoint_from_config,
+    load_training_checkpoint_for_resume,
     prepare_metrics_csv,
-    prepare_model_config_for_training_resume,
     restore_rng_state,
     restore_training_checkpoint,
     save_resolved_config,
     save_training_checkpoint,
+    validate_checkpoint_compatibility,
 )
 from vrl.trainers.data import PromptBatchSampler, load_prompt_examples_from_config
 from vrl.trainers.distributed import DistributedTrainingContext, resolve_training_context
+from vrl.trainers.metrics_io import (
+    build_online_metric_row,
+    format_online_metric_row,
+    online_metric_columns,
+)
 from vrl.trainers.online import OnlineTrainer
+from vrl.trainers.online.config import OnlineBatchPlan
 from vrl.trainers.strategy import build_strategy
 from vrl.trainers.weight_sync import build_runtime_weight_syncer
 from vrl.utils.memory import capture_host_memory, format_host_memory, log_host_memory
@@ -63,6 +73,41 @@ from vrl.utils.stats import RolloutStats
 logger = logging.getLogger(__name__)
 
 _RAY_ADDRESS_ENV = "RAY_ADDRESS"
+
+
+def _run_integer(value: object, *, path: str, minimum: int | None = None) -> int:
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ValueError(f"{path} must be an integer (got {value!r})")
+    if minimum is not None and value < minimum:
+        raise ValueError(f"{path} must be >= {minimum} (got {value})")
+    return value
+
+
+@dataclass(frozen=True, slots=True)
+class OnlineRunConfig:
+    """Controller-owned epoch, checkpoint cadence, and prompt RNG policy."""
+
+    total_epochs: int
+    save_freq: int = 50
+    seed: int = 0
+
+    def __post_init__(self) -> None:
+        _run_integer(self.total_epochs, path="trainer.total_epochs", minimum=0)
+        _run_integer(self.save_freq, path="trainer.save_freq", minimum=0)
+        _run_integer(self.seed, path="trainer.seed")
+
+    @classmethod
+    def from_root(cls, root: RootConfig) -> OnlineRunConfig:
+        trainer = root.trainer
+        total_epochs = None if trainer is None else trainer.total_epochs
+        if total_epochs is None:
+            raise ValueError("config missing required key: trainer.total_epochs")
+        values: dict[str, Any] = {"total_epochs": total_epochs}
+        if trainer.save_freq is not None:
+            values["save_freq"] = trainer.save_freq
+        if trainer.seed is not None:
+            values["seed"] = trainer.seed
+        return cls(**values)
 
 
 @dataclass(slots=True)
@@ -221,14 +266,17 @@ def _require_supported_distributed_rollout_topology(
     )
 
 
-def _log_rollout_memory_plan(trainer_config: Any) -> None:
+def _log_rollout_memory_plan(
+    batch_plan: OnlineBatchPlan,
+    *,
+    generation_samples_per_chunk: int | str | None,
+) -> None:
     """Log how many rollout tensors one optimizer update can hold at once."""
 
-    prompts_per_batch = int(trainer_config.prompts_per_batch)
-    samples_per_prompt = int(trainer_config.n_samples_per_prompt)
+    prompts_per_batch = batch_plan.prompts_per_batch
+    samples_per_prompt = batch_plan.n_samples_per_prompt
     target_samples = prompts_per_batch * samples_per_prompt
-    generation_chunk = getattr(trainer_config, "samples_per_chunk", 0)
-    replay_chunk = getattr(trainer_config, "replay_samples_per_chunk", 0)
+    replay_chunk = batch_plan.replay_samples_per_chunk
 
     def describe_chunk(value: Any) -> str:
         if value == "auto":
@@ -236,13 +284,11 @@ def _log_rollout_memory_plan(trainer_config: Any) -> None:
         size = int(value or 0)
         return str(samples_per_prompt if size <= 0 else min(samples_per_prompt, size))
 
-    generation_chunk_text = describe_chunk(generation_chunk)
+    generation_chunk_text = describe_chunk(generation_samples_per_chunk)
     replay_chunk_text = describe_chunk(replay_chunk)
-    gas = int(getattr(trainer_config, "gradient_accumulation_steps", 0))
-    if gas > 0:
-        # Read the reconciled microbatch_size (TrainerConfig.__post_init__ sets it
-        # to prompts_per_batch // gas) rather than recomputing the same quotient.
-        microbatch_prompts = int(trainer_config.microbatch_size)
+    gas = batch_plan.gradient_accumulation_steps
+    if batch_plan.streaming:
+        microbatch_prompts = batch_plan.microbatch_size
         microbatch_samples = microbatch_prompts * samples_per_prompt
         logger.info(
             "Rollout memory plan: streaming accumulation enabled "
@@ -281,7 +327,11 @@ def _log_rollout_memory_plan(trainer_config: Any) -> None:
         )
 
 
-def _warn_global_std_streaming_divergence(cfg: Any, trainer_config: Any) -> None:
+def _warn_global_std_streaming_divergence(
+    batch_plan: OnlineBatchPlan,
+    *,
+    global_std: bool,
+) -> None:
     """Warn when global_std advantage normalization is silently per-microbatch.
 
     GRPO ``global_std=true`` normalizes advantages by the std across ALL prompt
@@ -292,14 +342,20 @@ def _warn_global_std_streaming_divergence(cfg: Any, trainer_config: Any) -> None
     global-std intent. ``microbatch_size=1`` is exempt: one group per microbatch
     makes per-group and "global" std identical. Surfaced, not blocked, because
     keeping global_std is an experiment-owner decision.
+
+    Same signature shape as ``_log_rollout_memory_plan``: the batch plan the
+    diagnostic reasons about, plus its one value from another owner as a keyword.
+    ``global_std`` belongs to the algorithm config, so the caller passes the
+    typed field rather than re-reading a YAML path whose default would silently
+    win if the key ever moved.
     """
-    gas = int(getattr(trainer_config, "gradient_accumulation_steps", 0))
-    if gas <= 0:
+    gas = batch_plan.gradient_accumulation_steps
+    if not batch_plan.streaming:
         return
-    if not bool(OmegaConf.select(cfg, "algorithm.global_std", default=False)):
+    if not global_std:
         return
-    rbs = int(trainer_config.prompts_per_batch)
-    groups_per_microbatch = rbs // gas
+    rbs = batch_plan.prompts_per_batch
+    groups_per_microbatch = batch_plan.microbatch_size
     if groups_per_microbatch <= 1:
         return
     logger.warning(
@@ -308,7 +364,7 @@ def _warn_global_std_streaming_divergence(cfg: Any, trainer_config: Any) -> None
         "global-std advantage normalization is computed per microbatch, not over "
         "the full %d-group batch, so the gradient differs from the full-batch "
         "global-std intent. Set algorithm.global_std=false (per-group std, which "
-        "is streaming-equivalent), rollout.microbatch_size=1 (one group per "
+        "is streaming-equivalent), actor.microbatch_size=1 (one group per "
         "microbatch), or drop streaming to keep the full-batch global std.",
         gas,
         groups_per_microbatch,
@@ -355,7 +411,10 @@ def _load_sft_latents_from_config(cfg: DictConfig, family: str) -> dict[str, Any
     )
 
 
-def _export_transformer_lora(bundle: Any, cfg: DictConfig) -> dict[str, Any] | None:
+def _export_transformer_lora(
+    bundle: Any,
+    cfg: DictConfig,
+) -> dict[str, AdapterExport] | None:
     """Export diffusion transformer LoRA weights when configured."""
 
     if not bool(OmegaConf.select(cfg, "model.use_lora", default=False)):
@@ -366,39 +425,27 @@ def _export_transformer_lora(bundle: Any, cfg: DictConfig) -> dict[str, Any] | N
         if hasattr(module, "save_pretrained")
     }
     if len(exportable) == 1:
-        return {LORA_WEIGHTS_NAME: next(iter(exportable.values()))}
+        return {LORA_WEIGHTS_NAME: AdapterExport(next(iter(exportable.values())))}
     if len(exportable) > 1:
         # checkpoint.pt remains the resume source of truth. Namespaced adapter
         # artifacts make each expert independently inspectable/publishable while
         # preserving the legacy lora_weights/ path for ordinary one-root models.
-        return {f"{LORA_WEIGHTS_NAME}/{name}": module for name, module in exportable.items()}
+        return {
+            f"{LORA_WEIGHTS_NAME}/{name}": AdapterExport(module)
+            for name, module in exportable.items()
+        }
     return None
 
 
-def _export_language_model_lora(bundle: Any, cfg: DictConfig) -> dict[str, Any] | None:
+def _export_language_model_lora(
+    bundle: Any,
+    cfg: DictConfig,
+) -> dict[str, AdapterExport] | None:
     """Export AR language-model LoRA weights when configured."""
 
     if bool(OmegaConf.select(cfg, "model.use_lora", default=False)):
-        return {LORA_WEIGHTS_NAME: bundle.model.language_model}
+        return {LORA_WEIGHTS_NAME: AdapterExport(bundle.model.language_model)}
     return None
-
-
-def _dual_expert_checkpoint_identity(bundle: Any, cfg: DictConfig) -> dict[str, Any] | None:
-    """Immutable resume identity for a timestep-routed two-expert policy."""
-
-    boundary_ratio = getattr(bundle.model, "boundary_ratio", None)
-    if boundary_ratio is None:
-        return None
-    modules = getattr(bundle, "trainable_modules", {})
-    # The high/low-noise expert mapping (transformer / transformer_2) is fixed
-    # by the Wan family contract, so recording it here would add a constant with
-    # zero discriminating power to the identity equality check.
-    return {
-        "model_path": str(OmegaConf.select(cfg, "model.path", default="") or ""),
-        "revision": str(OmegaConf.select(cfg, "model.revision", default="") or ""),
-        "boundary_ratio": float(boundary_ratio),
-        "trainable_transformers": sorted(str(name) for name in modules),
-    }
 
 
 def _check_host_memory_budget(
@@ -424,9 +471,9 @@ def _check_host_memory_budget(
     raise MemoryError(
         f"Host RAM is at used={used:.1%} after collecting one streamed microbatch "
         f"({microbatch_prompts} prompt group(s) x {n_samples_per_prompt} samples), "
-        f"above rollout.host_memory_budget_fraction={budget_fraction:.1%} "
+        f"above actor.host_memory_budget_fraction={budget_fraction:.1%} "
         f"({format_host_memory(snapshot)}). One microbatch already does not fit the "
-        "host-RAM budget; reduce rollout.microbatch_size to stream smaller "
+        "host-RAM budget; reduce actor.microbatch_size to stream smaller "
         "slices, or lower rollout.n_samples_per_prompt / sample resolution if it is "
         "already 1.",
     )
@@ -436,11 +483,8 @@ async def _run_streaming_optimizer_update(
     trainer: OnlineTrainer,
     example_batch: list[Any],
     *,
+    batch_plan: OnlineBatchPlan,
     next_example_batch: list[Any] | None = None,
-    gradient_accumulation_steps: int,
-    prompts_per_batch: int,
-    n_samples_per_prompt: int,
-    host_memory_budget_fraction: float = 0.0,
 ) -> Any:
     """One optimizer update streamed over ``gradient_accumulation_steps`` microbatches.
 
@@ -456,9 +500,11 @@ async def _run_streaming_optimizer_update(
     checked against the host-RAM budget and the run fails fast if it is already
     over budget (SPRINT_memory_budgeted_microbatch T2).
     """
-    micro = prompts_per_batch // gradient_accumulation_steps
+    if not batch_plan.streaming:
+        raise ValueError("_run_streaming_optimizer_update requires a streaming batch plan")
+    micro = batch_plan.microbatch_size
     microbatches = [example_batch[k : k + micro] for k in range(0, len(example_batch), micro)]
-    total_groups = int(prompts_per_batch)
+    total_groups = batch_plan.prompts_per_batch
 
     trainer.begin_optimizer_update()
 
@@ -466,7 +512,7 @@ async def _run_streaming_optimizer_update(
     reward_mean_w = reward_std_w = adv_mean_w = adv_zero_w = adv_sat_w = 0.0
     weight_total = 0
     trained_prompt_num = 0
-    group_size = float(n_samples_per_prompt)
+    group_size = float(batch_plan.n_samples_per_prompt)
     reward_component_values: dict[str, list[float]] = {}
     for mb_index, microbatch in enumerate(microbatches):
         if mb_index + 1 < len(microbatches):
@@ -482,16 +528,16 @@ async def _run_streaming_optimizer_update(
         try:
             # Host-RAM fail-fast on the first microbatch: one slice is the host
             # peak under streaming, so if it is already over budget, stop now.
-            if host_memory_budget_fraction > 0.0 and mb_index == 0:
+            if batch_plan.host_memory_budget_fraction > 0.0 and mb_index == 0:
                 _check_host_memory_budget(
-                    host_memory_budget_fraction,
+                    batch_plan.host_memory_budget_fraction,
                     microbatch_prompts=len(microbatch),
-                    n_samples_per_prompt=n_samples_per_prompt,
+                    n_samples_per_prompt=batch_plan.n_samples_per_prompt,
                 )
             await trainer.backward_on_training_batch(batch, total_groups=total_groups)
             # Sample-count-weighted aggregation of this microbatch's pre-filter stats
             # so the one metric row reflects ALL samples, not the last microbatch.
-            weight = max(1, len(microbatch) * n_samples_per_prompt)
+            weight = max(1, len(microbatch) * batch_plan.n_samples_per_prompt)
             reward_mean_w += batch.pre_filter_reward_mean * weight
             reward_std_w += batch.pre_filter_reward_std * weight
             adv_mean_w += batch.pre_filter_adv_mean * weight
@@ -542,177 +588,30 @@ class OnlineRecipeRun:
     strategy: Any
     family: str
     component_names: tuple[str, ...]
-    export_modules: dict[str, Any] | None
+    adapter_exports: dict[str, AdapterExport] | None
     csv_path: Path
     rng: Any
     resume_epoch: int | None
-    model_identity: dict[str, Any] | None = None
+    model_identity: dict[str, Any]
 
     def prepare_metrics_csv(self) -> None:
-        component_cols = ",".join(f"r_{name}" for name in self.component_names)
-        header = (
-            "epoch,loss,policy_loss,sft_loss,kl_penalty,weighted_kl_loss,"
-            "reward_mean,reward_std,"
-            "clip_fraction,active_clip_fraction,pre_update_clip_fraction,"
-            "pre_update_active_clip_fraction,pre_update_logprob_abs_diff_max,"
-            "tis_clip_fraction,rs_seq_masked_fraction,approx_kl,"
-            "logprob_abs_diff_mean,logprob_abs_diff_max,"
-            "ratio_abs_dev_mean,ratio_abs_dev_max,mismatch_kl,mismatch_k3_kl,"
-            "advantage_mean,grad_norm,adv_saturation,"
-            "adv_zero_rate,group_size,trained_prompt_num,"
-            # Continuous-rollout async diagnostics (0 in strict_on_policy mode). These
-            # answer "is the run actually async?": observed staleness of consumed
-            # samples, prefetched ready-queue depth, weight-sync barrier pause, and
-            # producer starvation. Sourced from TrainStepMetrics.phase_times.
-            "continuous_stale_versions,continuous_ready_groups,"
-            "continuous_ready_groups_at_demand,continuous_queue_wait_s,"
-            "continuous_item_age_s,continuous_lookahead_requested,"
-            "continuous_weight_sync_pause_s,continuous_producer_max_gap_s,"
-            "continuous_producer_submitted,"
-            "continuous_producer_completed,continuous_producer_errors,"
-            # 0 = draining weight-sync barrier (waited for in-flight generation),
-            # 1 = non-draining (versioned trainable-state slots let it skip the wait).
-            "continuous_weight_sync_barrier_mode"
-        )
-        if component_cols:
-            header = f"{header},{component_cols}"
         prepare_metrics_csv(
             self.csv_path,
-            header + "\n",
+            online_metric_columns(self.component_names),
             resume_at=("epoch", self.resume_epoch) if self.resume_epoch is not None else None,
         )
 
     def write_metric_row(self, epoch: int, metrics: Any) -> None:
-        component_names = self.component_names
-        current = getattr(metrics, "reward_components", {}) or {}
-        component_means = {
-            name: float(current[name]) if name in current else float("nan")
-            for name in component_names
-        }
-        # Continuous async diagnostics live in TrainStepMetrics.phase_times (attached
-        # per iteration by ContinuousRolloutSchedule); empty in strict_on_policy mode.
-        phases = getattr(metrics, "phase_times", None) or {}
-        row = {
-            "epoch": epoch,
-            "loss": metrics.loss,
-            "policy_loss": metrics.policy_loss,
-            "sft_loss": metrics.sft_loss,
-            "kl_penalty": metrics.kl_penalty,
-            "weighted_kl_loss": metrics.weighted_kl_loss,
-            "reward_mean": metrics.reward_mean,
-            "reward_std": metrics.reward_std,
-            # Keep the stable flat CSV schema at this IO boundary; internally the
-            # ownership is explicit (overall update vs pass-zero parity snapshot).
-            "clip_fraction": metrics.update.clip_fraction,
-            "active_clip_fraction": metrics.update.active_clip_fraction,
-            "pre_update_clip_fraction": metrics.initial_replay.clip_fraction,
-            "pre_update_active_clip_fraction": metrics.initial_replay.active_clip_fraction,
-            "pre_update_logprob_abs_diff_max": metrics.initial_replay.logprob_abs_diff_max,
-            "tis_clip_fraction": metrics.update.tis_clip_fraction,
-            "rs_seq_masked_fraction": metrics.update.rs_seq_masked_fraction,
-            "approx_kl": metrics.update.approx_kl,
-            "logprob_abs_diff_mean": metrics.logprob_mismatch.logprob_abs_diff_mean,
-            "logprob_abs_diff_max": metrics.logprob_mismatch.logprob_abs_diff_max,
-            "ratio_abs_dev_mean": metrics.logprob_mismatch.ratio_abs_dev_mean,
-            "ratio_abs_dev_max": metrics.logprob_mismatch.ratio_abs_dev_max,
-            "mismatch_kl": metrics.logprob_mismatch.mismatch_kl,
-            "mismatch_k3_kl": metrics.logprob_mismatch.mismatch_k3_kl,
-            "advantage_mean": metrics.advantage_mean,
-            "grad_norm": metrics.grad_norm,
-            "adv_saturation": metrics.adv_saturation,
-            "adv_zero_rate": metrics.adv_zero_rate,
-            "group_size": metrics.group_size,
-            "trained_prompt_num": metrics.trained_prompt_num,
-            "continuous_stale_versions": phases.get("continuous.stale_policy_versions", 0.0),
-            "continuous_ready_groups": phases.get("continuous.queue_ready_groups", 0.0),
-            "continuous_ready_groups_at_demand": phases.get(
-                "continuous.ready_groups_at_demand",
-                0.0,
-            ),
-            "continuous_queue_wait_s": phases.get("continuous.queue_wait_s", 0.0),
-            "continuous_item_age_s": phases.get("continuous.item_age_s", 0.0),
-            "continuous_lookahead_requested": phases.get(
-                "continuous.lookahead_requested",
-                0.0,
-            ),
-            "continuous_weight_sync_pause_s": phases.get("continuous.weight_sync_pause_s", 0.0),
-            "continuous_producer_max_gap_s": phases.get("continuous.producer_max_tick_gap_s", 0.0),
-            "continuous_producer_submitted": phases.get(
-                "continuous.producer_submitted",
-                0.0,
-            ),
-            "continuous_producer_completed": phases.get(
-                "continuous.producer_completed",
-                0.0,
-            ),
-            "continuous_producer_errors": phases.get(
-                "continuous.producer_errors",
-                0.0,
-            ),
-            "continuous_weight_sync_barrier_mode": phases.get(
-                "continuous.weight_sync_barrier_mode",
-                0.0,
-            ),
-            **{f"r_{name}": component_means[name] for name in component_names},
-        }
+        row = build_online_metric_row(epoch, metrics, self.component_names)
         with self.csv_path.open("a", encoding="utf-8") as handle:
-            handle.write(
-                ",".join(
-                    [
-                        str(row["epoch"]),
-                        f"{row['loss']:.6f}",
-                        f"{row['policy_loss']:.6f}",
-                        f"{row['sft_loss']:.6f}",
-                        f"{row['kl_penalty']:.6f}",
-                        f"{row['weighted_kl_loss']:.6f}",
-                        f"{row['reward_mean']:.4f}",
-                        f"{row['reward_std']:.4f}",
-                        f"{row['clip_fraction']:.4f}",
-                        f"{row['active_clip_fraction']:.4f}",
-                        f"{row['pre_update_clip_fraction']:.4f}",
-                        f"{row['pre_update_active_clip_fraction']:.4f}",
-                        f"{row['pre_update_logprob_abs_diff_max']:.6f}",
-                        f"{row['tis_clip_fraction']:.4f}",
-                        f"{row['rs_seq_masked_fraction']:.4f}",
-                        f"{row['approx_kl']:.6f}",
-                        f"{row['logprob_abs_diff_mean']:.6f}",
-                        f"{row['logprob_abs_diff_max']:.6f}",
-                        f"{row['ratio_abs_dev_mean']:.6f}",
-                        f"{row['ratio_abs_dev_max']:.6f}",
-                        f"{row['mismatch_kl']:.6f}",
-                        f"{row['mismatch_k3_kl']:.6f}",
-                        f"{row['advantage_mean']:.6f}",
-                        f"{row['grad_norm']:.6f}",
-                        f"{row['adv_saturation']:.4f}",
-                        f"{row['adv_zero_rate']:.4f}",
-                        f"{row['group_size']:.2f}",
-                        str(row["trained_prompt_num"]),
-                        f"{row['continuous_stale_versions']:.1f}",
-                        f"{row['continuous_ready_groups']:.1f}",
-                        f"{row['continuous_ready_groups_at_demand']:.1f}",
-                        f"{row['continuous_queue_wait_s']:.4f}",
-                        f"{row['continuous_item_age_s']:.4f}",
-                        f"{row['continuous_lookahead_requested']:.1f}",
-                        f"{row['continuous_weight_sync_pause_s']:.4f}",
-                        f"{row['continuous_producer_max_gap_s']:.4f}",
-                        f"{row['continuous_producer_submitted']:.1f}",
-                        f"{row['continuous_producer_completed']:.1f}",
-                        f"{row['continuous_producer_errors']:.1f}",
-                        f"{row['continuous_weight_sync_barrier_mode']:.1f}",
-                        *(f"{row[f'r_{name}']:.4f}" for name in component_names),
-                    ],
-                )
-                + "\n",
-            )
+            handle.write(format_online_metric_row(row))
 
     def save_checkpoint(self, path: Path, *, epoch: int) -> None:
-        # Called on EVERY rank: save_training_checkpoint runs the trainable-state
+        # Called on EVERY rank: save_training_checkpoint runs the checkpoint-state
         # gather (a collective under FSDP2) on all ranks and writes files on the
-        # primary only. The save_pretrained HF-adapter artifact (export_modules)
-        # works under fsdp too: save_training_checkpoint detects DTensor-sharded
-        # export modules and feeds them the gathered full state it already
-        # collected for checkpoint.pt, so the adapter artifact is clean.
-        context = self.strategy.context
+        # primary only. Adapter artifacts use a separately gathered full state
+        # under EMA and never read live DTensor shards during rank0 IO. The save
+        # boundary also propagates publication success/failure to every rank.
         save_training_checkpoint(
             path,
             trainer=self.trainer,
@@ -724,21 +623,11 @@ class OnlineRecipeRun:
                 "global_step": self.trainer.state.global_step,
             },
             rng_state=capture_rng_state(prompt_generator=self.rng),
-            export_modules=self.export_modules,
+            adapter_exports=self.adapter_exports,
             export_ema=getattr(self.trainer, "_ema", None),
             model_identity=self.model_identity,
             strategy=self.strategy,
-            is_primary=context.is_primary,
         )
-        # Barrier so non-primary ranks wait for rank0 to FINISH writing before any
-        # rank moves on. The gather above is collective (all ranks), but the file
-        # write is rank0-only and can take tens of seconds for a full-param payload;
-        # without this, after the FINAL checkpoint a non-primary rank returns, hits
-        # shutdown and exits, and torchrun tears down rank0 mid-write -> a truncated,
-        # unloadable checkpoint. In-loop saves happened to survive only because the
-        # next epoch's collective implicitly synced the ranks; the final save has no
-        # such follow-on, so make the wait explicit for every save.
-        self.strategy.barrier()
 
 
 def _prepare_metrics_csv_rank_consistent(
@@ -819,26 +708,41 @@ async def run_online_recipe(
 
     _preflight_production_video_reward(cfg)
     built = build_configs(cfg)
-    family_entry = get_model_family_entry(str(require(cfg, "model.family")))
-    trainer_config = built["trainer"]
-    _log_rollout_memory_plan(trainer_config)
-    _warn_global_std_streaming_divergence(cfg, trainer_config)
-    gradient_accumulation_steps = int(getattr(trainer_config, "gradient_accumulation_steps", 0))
+    run_config = OnlineRunConfig.from_root(built.root)
+    if built.root.model is None:
+        raise ValueError("online recipe requires model configuration")
+    family_entry = get_model_family_entry(str(built.root.model.family))
+    trainer_config = built.trainer
+    if trainer_config is None:
+        raise ValueError("online recipe cannot use an offline-only trainer config")
+    batch_plan = trainer_config.batch_plan
+    reward_config = built.reward
+    if reward_config is None:
+        raise ValueError("online recipe requires a reward section")
+    _log_rollout_memory_plan(
+        batch_plan,
+        generation_samples_per_chunk=(
+            built.root.rollout.samples_per_chunk if built.root.rollout is not None else None
+        ),
+    )
+    _warn_global_std_streaming_divergence(
+        batch_plan,
+        global_std=built.algorithm.global_std,
+    )
     if trainer_config.profile:
         os.environ["VRL_PROFILE"] = "1"
 
-    resume_checkpoint = load_training_checkpoint_from_config(cfg)
-    prepare_model_config_for_training_resume(
-        cfg,
-        resume_checkpoint,
-        strict=trainer_config.resume_strict,
-    )
-    resumed = resume_checkpoint is not None
-    resume_epoch = resume_checkpoint.next_epoch if resume_checkpoint is not None else None
-    resume_step = resume_checkpoint.next_step if resume_checkpoint is not None else None
-    resume_dir = resume_checkpoint.checkpoint_dir if resume_checkpoint is not None else None
-
+    # build_configs already normalized model.lora.path for resume and resolved the
+    # resume policy, so the recipe only loads the raw checkpoint here. The
+    # checkpoint-identity preflight below consumes it directly; the epoch/step/dir
+    # fields are derived after the preflight, next to the trainer that reads them.
+    resume_config = built.resume
+    resume_checkpoint = load_training_checkpoint_for_resume(resume_config)
     resources = resolve_distributed_resources(cfg)
+    generation_config = RayGenerationConfig.from_cfg(
+        built.root,
+        resources=resources,
+    )
     validate_rollout_schedule_topology(trainer_config.rollout_orchestration, resources)
     validate_reward_memory_parking(resources=resources, built=built)
     logger.info(format_distributed_resource_plan(resources))
@@ -852,7 +756,7 @@ async def run_online_recipe(
     # Construct the strategy before any model or Ray actor. Shared-GPU on-demand
     # execution needs complete trainer-state parking; distributed strategies must
     # reject that topology here instead of failing after expensive launch work.
-    strategy = build_strategy(cfg, training_context)
+    strategy = build_strategy(built.root, training_context)
     if (
         resources.lifecycle.handoff.release_rollout_before_train
         or resources.lifecycle.handoff.release_trainer_before_reward
@@ -870,8 +774,6 @@ async def run_online_recipe(
         resources,
         trainer_device=device,
     )
-    examples = load_prompt_examples_from_config(cfg.data)
-    _resolve_reference_artifacts(examples, cfg)
     if family_entry.task in {"i2v", "v2w"}:
         conditioning = OmegaConf.select(
             cfg,
@@ -882,6 +784,24 @@ async def run_online_recipe(
             raise ValueError(
                 f"{family_entry.family} requires data.preprocessing.conditioning=reference_image",
             )
+
+    replay_build = family_entry.resolve_model_build(
+        built.root,
+        device,
+        precision=built.precision,
+        for_rollout=False,
+    )
+    model_identity = resolve_checkpoint_model_identity(replay_build)
+    validate_checkpoint_compatibility(
+        resume_checkpoint,
+        family=family_entry.family,
+        expected_model_identity=model_identity,
+        strict=resume_config.strict,
+    )
+
+    examples = load_prompt_examples_from_config(cfg.data)
+    _resolve_reference_artifacts(examples, cfg)
+    if family_entry.task in {"i2v", "v2w"}:
         from vrl.trainers.data.artifacts import require_reference_images
 
         require_reference_images(
@@ -895,21 +815,29 @@ async def run_online_recipe(
                 default=None,
             ),
         )
+    # Derive the per-rank resume verdict the trainer/weight-syncer read below. Kept
+    # after the checkpoint-identity preflight so an incompatible checkpoint fails
+    # fast before we start reading its epoch/step/dir fields.
+    resumed = resume_checkpoint is not None
+    resume_epoch = resume_checkpoint.next_epoch if resume_checkpoint is not None else None
+    resume_step = resume_checkpoint.next_step if resume_checkpoint is not None else None
+    resume_dir = resume_checkpoint.checkpoint_dir if resume_checkpoint is not None else None
+
     log_host_memory("before_trainer_bundle_build", log=logger)
-    replay_build = family_entry.resolve_model_build(
-        cfg,
-        device,
-        for_rollout=False,
-    )
     bundle = family_entry.build_replay(replay_build)
+    loaded_model_identity = resolve_checkpoint_model_identity(replay_build)
+    if loaded_model_identity != model_identity:
+        raise RuntimeError(
+            "model checkpoint source changed during replay bundle construction; "
+            f"before={model_identity!r}, after={loaded_model_identity!r}",
+        )
     log_host_memory("after_trainer_bundle_build", log=logger)
     if family_entry.policy_semantics.step_kind == "denoise":
-        enable_transformer_gradient_checkpointing(bundle, cfg)
+        enable_transformer_gradient_checkpointing(bundle, built.root)
     model = require_runtime_model(
         bundle.model,
         owner=f"{family_entry.family}.bundle.model",
     )
-    model_identity = _dual_expert_checkpoint_identity(bundle, cfg)
     # Scheduler feeds the flow-matching evaluator when the family bundle has one.
     scheduler = getattr(bundle, "scheduler", None)
 
@@ -920,9 +848,7 @@ async def run_online_recipe(
     # device selected above.
     placement_owner = GlobalRayPlacementOwner(
         resources,
-        rollout_cpus_per_worker=float(
-            OmegaConf.select(cfg, "distributed.rollout.cpus_per_worker", default=1.0),
-        ),
+        generation_config.worker,
     )
     ray = require_ray()
     ray_session: _RayClusterSession | None = None
@@ -939,7 +865,7 @@ async def run_online_recipe(
         if resources.cross_node:
             cross_node_preflight(ray, resources)
         placement_owner.create()
-        collector_config = build_rollout_config_from_cfg(cfg)
+        collector_config = RolloutCollectorConfig.from_cfg(built.root)
         reward_fn = build_reward(
             built=built,
             resources=resources,
@@ -966,10 +892,12 @@ async def run_online_recipe(
         log_host_memory("before_rollout_backend_build", log=logger)
         collector.set_runtime(
             generation_launcher.launch_from_cfg(
-                cfg,
-                resources=resources,
+                built.root,
+                precision=built.precision,
+                config=generation_config,
                 entry=family_entry,
                 driver_bundle=bundle,
+                expected_model_identity=model_identity,
                 placement=placement_owner.rollout_placement,
             ),
         )
@@ -1014,7 +942,7 @@ async def run_online_recipe(
                 bundle=bundle,
                 family=family_entry.family,
                 expected_model_identity=model_identity,
-                strict=trainer_config.resume_strict,
+                strict=resume_config.strict,
             )
             logger.info(
                 "Resuming from %s, start_epoch=%d",
@@ -1033,14 +961,14 @@ async def run_online_recipe(
         if is_primary:
             save_resolved_config(cfg, output_dir, resumed=resumed)
 
-        component_names = tuple(built["reward"][0].keys())
+        component_names = tuple(reward_config.weights)
 
-        rng = torch.Generator().manual_seed(trainer_config.seed)
+        rng = torch.Generator().manual_seed(run_config.seed)
         start_epoch = resume_epoch if resume_epoch is not None else 0
-        if start_epoch > trainer_config.total_epochs:
+        if start_epoch > run_config.total_epochs:
             raise ValueError(
                 "resume checkpoint starts after configured total_epochs: "
-                f"start_epoch={start_epoch}, total_epochs={trainer_config.total_epochs}",
+                f"start_epoch={start_epoch}, total_epochs={run_config.total_epochs}",
             )
         if resume_checkpoint is not None:
             restore_rng_state(resume_checkpoint.rng_state, prompt_generator=rng)
@@ -1054,7 +982,7 @@ async def run_online_recipe(
             gc.collect()
             log_host_memory("after_resume_checkpoint_release", log=logger)
 
-        export_modules = (
+        adapter_exports = (
             _export_transformer_lora(bundle, cfg)
             if family_entry.policy_semantics.step_kind == "denoise"
             else _export_language_model_lora(bundle, cfg)
@@ -1065,7 +993,7 @@ async def run_online_recipe(
             strategy=strategy,
             family=family_entry.family,
             component_names=component_names,
-            export_modules=export_modules,
+            adapter_exports=adapter_exports,
             csv_path=output_dir / "metrics.csv",
             rng=rng,
             resume_epoch=resume_epoch,
@@ -1076,12 +1004,12 @@ async def run_online_recipe(
         logger.info(
             "Starting %s online recipe: epochs=%d examples=%d n=%d",
             family_entry.family,
-            trainer_config.total_epochs,
+            run_config.total_epochs,
             len(examples),
-            trainer_config.n_samples_per_prompt,
+            batch_plan.n_samples_per_prompt,
         )
 
-        rank_batch = int(trainer_config.prompts_per_batch)
+        rank_batch = batch_plan.prompts_per_batch
         prompt_sampler = PromptBatchSampler(
             generator=rng,
             num_examples=len(examples),
@@ -1090,31 +1018,26 @@ async def run_online_recipe(
             rank=training_context.rank,
             strategy=str(require(cfg, "data.sampler.type")),
         )
-        for epoch in range(start_epoch, trainer_config.total_epochs):
+        for epoch in range(start_epoch, run_config.total_epochs):
             indices = prompt_sampler.sample(epoch=epoch)
             example_batch = [examples[i] for i in indices]
             next_example_batch: list[Any] | None = None
-            if epoch + 1 < trainer_config.total_epochs:
+            if epoch + 1 < run_config.total_epochs:
                 next_indices = prompt_sampler.preview(epoch=epoch + 1)
                 next_example_batch = [examples[i] for i in next_indices]
             # This wall range deliberately encloses collect, replay/backward,
             # optimizer step, and the post-step rollout weight sync. It is the
             # denominator for update-level barrier attribution in nsys traces.
             with profile_range("trainer.optimizer_update"):
-                if gradient_accumulation_steps > 0:
+                if batch_plan.streaming:
                     # Streaming accumulation: split the optimizer-target batch into
                     # microbatches collected/trained/released one at a time so host
                     # RAM does not have to hold the whole batch at once.
                     metrics = await _run_streaming_optimizer_update(
                         trainer,
                         example_batch,
+                        batch_plan=batch_plan,
                         next_example_batch=next_example_batch,
-                        gradient_accumulation_steps=gradient_accumulation_steps,
-                        prompts_per_batch=int(trainer_config.prompts_per_batch),
-                        n_samples_per_prompt=int(trainer_config.n_samples_per_prompt),
-                        host_memory_budget_fraction=float(
-                            getattr(trainer_config, "host_memory_budget_fraction", 0.0),
-                        ),
                     )
                 else:
                     metrics = await trainer.step(
@@ -1128,13 +1051,13 @@ async def run_online_recipe(
             # export inside is a collective under FSDP2 (all ranks all-gather), and
             # save_checkpoint writes files on the primary only. Gating the call to
             # rank0 deadlocks FSDP (rank0 waits at the gather for peers that skipped).
-            if trainer_config.save_freq > 0 and (epoch + 1) % trainer_config.save_freq == 0:
+            if run_config.save_freq > 0 and (epoch + 1) % run_config.save_freq == 0:
                 run.save_checkpoint(output_dir / f"checkpoint-{epoch + 1}", epoch=epoch + 1)
 
         # Final checkpoint on EVERY rank too (collective gather inside; rank0 writes).
         run.save_checkpoint(
             output_dir / "checkpoint-final",
-            epoch=trainer_config.total_epochs,
+            epoch=run_config.total_epochs,
         )
         if is_primary:
             logger.info("Training complete. Final checkpoint: %s", output_dir / "checkpoint-final")

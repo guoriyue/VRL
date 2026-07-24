@@ -58,7 +58,6 @@ class Cosmos3ChunkExecutor(DiffusionChunkExecutorBase):
     task: str = "t2v"
     default_num_frames: int = 93
     default_fps: int | None = 24
-    default_max_sequence_length: int = 512
 
     def __init__(self, model: Any, *, samples_per_chunk: int = 1) -> None:
         del samples_per_chunk  # cosmos3 is strictly batch=1 (pipeline constraint)

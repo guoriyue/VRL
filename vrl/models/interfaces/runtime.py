@@ -7,21 +7,12 @@ directly; builders consume a ``ModelBuild`` and return a ``RuntimeBundle``.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from typing import Any, Literal, get_args
 
 from vrl.config.precision import QuantizationPolicy, RolePrecision
 from vrl.models.interfaces.replay import RuntimeModel
-
-# Single source of truth for valid ``model.memory`` subsection names, shared by
-# the config schema's unknown-key lint and the generation memory policy's typo
-# check. Today only ``vae_decode`` (sliced/tiled VAE decode, applied on the
-# rollout/generation side). The trainer needs no section here: each family
-# builds a minimal ReplayModel that never loads the generation-only modules, so
-# there is nothing to offload. Adding a section means editing this tuple once;
-# both consumers derive from it.
-MODEL_MEMORY_SECTIONS: tuple[str, ...] = ("vae_decode",)
 
 # Single source of truth for the model_config compile block that the
 # ``ModelBuild.torch_compile`` property below consumes.
@@ -35,6 +26,77 @@ PipelineOffloadMode = Literal["none", "model", "sequential"]
 # consumed by the colocated-RAM guard (``validate_colocated_replay_memory``)
 # to size host memory.
 LOADS_FULL_GENERATION_MODULES_KEY = "loads_full_generation_modules"
+# Internal module attribute carrying the non-derivable part of checkpoint
+# ownership. The complete set is derived from this plus trainable parameters.
+_CHECKPOINT_OWNED_STATE_NAMES_ATTR = "_vrl_checkpoint_owned_state_names"
+
+
+def _module_state_names(module: Any) -> frozenset[str]:
+    """Return every parameter/buffer FQN exposed by a PyTorch-like module."""
+
+    named_parameters = getattr(module, "named_parameters", None)
+    named_buffers = getattr(module, "named_buffers", None)
+    if not callable(named_parameters) or not callable(named_buffers):
+        raise TypeError("checkpoint-owned state requires a PyTorch-like module")
+    return frozenset(
+        [
+            *(name for name, _ in named_parameters(remove_duplicate=False)),
+            *(name for name, _ in named_buffers(remove_duplicate=False)),
+        ],
+    )
+
+
+def register_checkpoint_owned_state(module: Any, names: Iterable[str]) -> None:
+    """Register frozen mutable parameter/buffer names needed for exact resume.
+
+    Ordinary optimized parameters are derived from ``requires_grad`` and must
+    not be registered. This stores only the exceptional state whose mutability
+    cannot be inferred, such as DiffusionNFT's frozen ``previous`` adapter.
+    """
+
+    if isinstance(names, (str, bytes)):
+        raise TypeError("checkpoint-owned state names must be an iterable of strings")
+    registered = frozenset(names)
+    if not registered or any(not isinstance(name, str) or not name for name in registered):
+        raise ValueError("checkpoint-owned state names must be non-empty strings")
+    unknown = sorted(registered - _module_state_names(module))
+    if unknown:
+        raise ValueError(f"checkpoint-owned state names do not exist in module: {unknown}")
+    trainable = {
+        name
+        for name, parameter in module.named_parameters(remove_duplicate=False)
+        if parameter.requires_grad
+    }
+    redundant = sorted(registered & trainable)
+    if redundant:
+        raise ValueError(
+            "trainable parameters are already checkpoint-owned and must not be "
+            f"registered explicitly: {redundant}",
+        )
+    current = getattr(module, _CHECKPOINT_OWNED_STATE_NAMES_ATTR, frozenset())
+    if not isinstance(current, frozenset):
+        raise TypeError("module checkpoint-owned state registry must be a frozenset")
+    setattr(module, _CHECKPOINT_OWNED_STATE_NAMES_ATTR, current | registered)
+
+
+def checkpoint_owned_state_names(module: Any) -> frozenset[str]:
+    """Derive exact checkpoint state from trainable plus registered mutable names."""
+
+    named_parameters = getattr(module, "named_parameters", None)
+    if not callable(named_parameters):
+        raise TypeError("checkpoint-owned state requires a PyTorch-like module")
+    trainable = frozenset(
+        name
+        for name, parameter in named_parameters(remove_duplicate=False)
+        if parameter.requires_grad
+    )
+    registered = getattr(module, _CHECKPOINT_OWNED_STATE_NAMES_ATTR, frozenset())
+    if not isinstance(registered, frozenset):
+        raise TypeError("module checkpoint-owned state registry must be a frozenset")
+    unknown = sorted(registered - _module_state_names(module))
+    if unknown:
+        raise ValueError(f"registered checkpoint-owned state no longer exists: {unknown}")
+    return trainable | registered
 
 
 def full_generation_bundle_metadata() -> dict[str, Any]:
@@ -113,7 +175,7 @@ class ModelBuild:
     dataset / logging cadence are explicitly out of scope.
 
     ``model_config`` carries the model-owned remainder of ``cfg.model`` after
-    registry identity, checkpoint path, and executor settings are separated;
+    registry identity, checkpoint path/revision, and executor settings are separated;
     ``sampling_config`` carries ``cfg.sampling``. The read properties expose
     common curated views so
     consumers read ``build.memory`` / ``build.lora`` / ``build.num_steps`` directly
@@ -125,6 +187,8 @@ class ModelBuild:
     """
 
     model_name_or_path: str
+    # Immutable snapshot selector shared by every upstream model loader.
+    revision: str | None
     device: Any
     # Resolved base transformer parameter dtype selected by the public role.
     parameter_dtype: Any
@@ -233,9 +297,8 @@ class ModelBuild:
 
         ``None`` when ``use_lora`` is off. Casts and the ``init_lora_weights`` /
         ``dropout`` / ``init`` extras are carried from the raw ``model.lora``
-        block only when present, preserving per-family presence semantics. AR
-        families layer their own defaults via
-        ``vrl.models.steps.token.build.token_model_config_base``.
+        block only when present, preserving per-family presence semantics.
+        Token-family config dataclasses own their resolved LoRA defaults.
         """
         if not self.use_lora:
             return None
@@ -284,11 +347,11 @@ class RuntimeBundle:
     ``load_trainable_state``.
     Generation-only methods remain family/runtime implementation details.
 
-    ``trainable_modules`` is the training-checkpoint contract. Every module
+    ``trainable_modules`` is the training-checkpoint root contract. Every module
     registered here must expose PyTorch-compatible ``state_dict`` and
-    ``load_state_dict`` methods. Generic trainer checkpointing saves and
-    restores only these modules, so family builders must include every
-    trainable adapter/backbone needed for exact resume.
+    ``load_state_dict`` methods. Within each root, checkpointing derives exact
+    ownership from trainable parameters plus explicitly registered frozen
+    mutable state; family builders must include every root needed for resume.
 
     ``precision`` is the selected training or rollout role, including whether
     diffusion forwards apply its dtype through outer autocast. Assembly stamps

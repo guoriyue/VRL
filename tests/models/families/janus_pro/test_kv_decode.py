@@ -10,7 +10,6 @@ import torch.nn as nn
 
 from tests.models.steps.token.fixtures import RecordingHead, build_stub_janus_model
 from vrl.generation.composition.token_autoregressive.token_loop import TokenAutoregressiveLoop
-from vrl.generation.types import GenerationRequest, GenerationSampleRow
 from vrl.models.families.janus_pro.model import (
     JANUS_IMAGE_VOCAB_SIZE,
     JanusProModel,
@@ -87,37 +86,11 @@ def _prompt_tensors() -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.T
 
 def _run_ar_decode(model: JanusProModel) -> None:
     batch_size = 2
-    request = GenerationRequest(
-        request_id="test-janus-kv",
-        family="janus_pro",
-        task="ar_t2i",
-        inputs=["test prompt"],
-        samples_per_prompt=batch_size,
-    )
-    rows = [
-        GenerationSampleRow(
-            prompt_index=0,
-            sample_index=index,
-            prompt="test prompt",
-            prompt_id="prompt-0",
-            group_id="group-0",
-            sample_id=f"sample-{index}",
-            trajectory_id=f"trajectory-{index}",
-            seed=None,
-            metadata={},
-        )
-        for index in range(batch_size)
-    ]
     TokenAutoregressiveLoop(
-        request=request,
-        sample_rows=rows,
         runner=JanusProARModelRunner(
             model,
             attention_backend=build_torch_native_backend(model, family="janus_pro"),
         ),
-        max_new_tokens=2,
-        tokenizer_key="janus_pro",
-        dtype="float32",
         scheduler_batch_size=batch_size,
         init_args=_prompt_tensors(),
         init_kwargs={"image_token_num": 2},

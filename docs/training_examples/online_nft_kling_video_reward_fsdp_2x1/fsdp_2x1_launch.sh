@@ -12,10 +12,9 @@
 # parallelism), not a duplicated run.
 #
 # DIFFERENT from the DDP launcher:
-#   - NO trainer.resume_from: FSDP2 optimizer-state export/load is not implemented
-#     yet (build_strategy fail-fasts on resume_from), so this launcher does not
-#     auto-resume. Re-running starts fresh from the base checkpoint.
+#   - trainer.resume_from is supported through EXTRA_OVERRIDES when needed.
 #   - NO find_unused_parameters: that is a DDP reducer knob; FSDP has no reducer.
+#   - EMA stays enabled from the base NFT recipe.
 #   - model.torch_compile.enable=false is set in the config (required for FSDP2).
 #
 # Everything run-specific is an env var with a default; override per run, e.g.:

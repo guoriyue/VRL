@@ -87,7 +87,7 @@ transformer / kernel / provider scheduling   mostly upstream or parked
 | Policy freshness | worker 按 request version 激活 slot；slot 被逐出时 `RayGenerationExecutor` 丢弃整条 request | mixed-policy partial result fail closed |
 | GPU/runtime lifecycle | `GenerationRuntime` 暴露 activate/generate/offload/shutdown；Ray runtime 对 activate/offload/shutdown 做 single-flight 与资源清理 | shared-GPU handoff 与 terminal ownership 是 engine 行为 |
 | Bounded rollout worker liveness | a background probe watches owned workers out of band | an unreachable worker kills the fleet, closes admission, and hands checkpoint resume to the supervisor |
-| Full-sequence denoise + token-autoregressive | denoise step 自有 SDE loop；token-autoregressive composition 自有 token scheduler/cache row routing；两者汇入同一 `GenerationOutput`/trajectory | 一个顶层 engine 可以保留两种不同数学执行形态 |
+| Full-sequence denoise + token-autoregressive | denoise step 自有 SDE loop；token-autoregressive composition 自有 position-major bounded row loop与cache row routing；两者汇入同一 `GenerationOutput`/trajectory | 一个顶层 engine 可以保留两种不同数学执行形态 |
 | RL group integrity | sample chunk OOM 时有序二分，gather 再检查完整覆盖 | OOM 不会静默少样本、重复样本或重排 GRPO group |
 
 #### 尚未成立的能力与代价
@@ -96,7 +96,7 @@ transformer / kernel / provider scheduling   mostly upstream or parked
 |---|---|---|
 | Provider selection | `ModelFamilyEntry` 当前只有一个 `executor_cls`，launch contract 没有 provider identity/schema/provenance | 本 program N2 + [multi-engine conformance](parked/SPRINT_multi_engine_rollout_conformance.md) |
 | Full model ownership | diffusion backbone 最终调用 Diffusers transformer；pipeline/scheduler/text encoder/VAE 仍大量来自 upstream | [native transformer executor](parked/SPRINT_diffusion_native_transformer_executor.md)，继续 profile-gated |
-| Cross-request batching | full-sequence denoise binding 跑完整 denoise loop；`TokenScheduler` 每个 `TokenAutoregressiveLoop` 单独创建；不同 request 不共享 forward | [cross-request step scheduler](parked/SPRINT_cross_request_step_scheduler.md)，继续 workload-gated |
+| Cross-request batching | full-sequence denoise binding跑完整 denoise loop；token loop只在单 request内按 position和row chunk执行，不存在跨请求 admission/key/cache pool，不同 request不共享 forward | [cross-request step scheduler](parked/SPRINT_cross_request_step_scheduler.md)，继续 workload-gated |
 | Video trajectory capacity | denoise 前预分配完整 observations/actions，并可选再分配 previous means/reference predictions | [paged trajectory store](parked/SPRINT_paged_trajectory_store.md)，只在目标 video profile 证明容量/搬运瓶颈后解 park |
 
 因此本 program 的架构结论不是“native 一定比外部 engine 快”，而是替换成本不对称：

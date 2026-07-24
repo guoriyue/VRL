@@ -27,7 +27,6 @@ The flow head's velocity-call signature is handled in
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 from typing import Any
 
 import torch
@@ -37,64 +36,23 @@ from vrl.math.token.flow_matching import (
     flow_logprob_at,
 )
 from vrl.models.dtypes import resolve_torch_dtype
-from vrl.models.interfaces import ReplayRequest, ReplayResult, ReplaySegmentResult
+from vrl.models.families.nextstep_1.config import (
+    NEXTSTEP_DEFAULT_TOKEN_DIM,
+    NEXTSTEP_DEFAULT_TOKEN_NUM,
+    NextStep1Config,
+)
+from vrl.models.interfaces import (
+    ReplayRequest,
+    ReplayResult,
+    ReplaySegmentResult,
+    require_replay_segments,
+    require_zero_replay_timestep,
+)
 from vrl.models.steps.token.base import ARModelBase, ARReplayRolloutStubs
+from vrl.models.steps.token.lora import install_token_lora_adapter
 from vrl.utils.logging import init_logger
 
 logger = init_logger(__name__)
-
-
-# NextStep-1 image grid: 32x32 continuous patches at f8ch16 = 16-channel,
-# 8x downsample VAE (per the model card). Override via config if you load
-# a different checkpoint that uses a different grid.
-NEXTSTEP_DEFAULT_TOKEN_NUM = 1024  # 32 x 32 patches per 256^2 image
-NEXTSTEP_DEFAULT_TOKEN_DIM = 64  # latent_patch_size^2 * f8ch16 channels
-
-
-@dataclass(slots=True)
-class NextStep1Config:
-    """Hyper-parameters for the NextStep-1 wrapper.
-
-    Defaults target ``stepfun-ai/NextStep-1.1`` — the RL-post-trained
-    14B variant — paired with the f8ch16 VAE tokenizer.
-    """
-
-    model_path: str = "stepfun-ai/NextStep-1.1"
-    revision: str | None = None
-    vae_path: str = "stepfun-ai/NextStep-1-f8ch16-Tokenizer"
-    vae_revision: str | None = None
-    dtype: str = "bfloat16"
-    device: str = "cuda"
-
-    # LoRA — applied to the LLM trunk (the 14B AR transformer)
-    use_lora: bool = True
-    lora_rank: int = 32
-    lora_alpha: int = 64
-    lora_dropout: float = 0.0
-    # NextStep-1's LLM is Qwen-derived; same names as Qwen-2 attention
-    lora_target_modules: tuple[str, ...] = (
-        "q_proj",
-        "k_proj",
-        "v_proj",
-        "o_proj",
-    )
-    lora_init: str = "gaussian"
-
-    # Flow-head sampling — used by the AR runtime runner.
-    num_steps: int = 20  # K Euler steps inside the flow ODE
-    noise_level: float = 1.0  # final-step Gaussian std multiplier
-    guidance_scale: float = 4.5  # CFG strength on the velocity field
-
-    # AR loop
-    image_token_num: int = NEXTSTEP_DEFAULT_TOKEN_NUM
-    token_dim: int = NEXTSTEP_DEFAULT_TOKEN_DIM
-
-    # Frozen sub-modules
-    freeze_vae: bool = True
-
-    # Memory
-    gradient_checkpointing: bool = True
-
 
 # ---------------------------------------------------------------------------
 # Wrapper
@@ -177,19 +135,13 @@ class NextStep1Model(ARModelBase):
         )
 
     def _attach_lora(self) -> None:
-        from peft import LoraConfig, get_peft_model
-
-        lora_cfg = LoraConfig(
-            r=self.config.lora_rank,
-            lora_alpha=self.config.lora_alpha,
-            lora_dropout=self.config.lora_dropout,
-            target_modules=list(self.config.lora_target_modules),
-            init_lora_weights=self.config.lora_init,
-        )
         # The whole NextStepModel becomes the PEFT-wrapped module. Since
         # the pipeline holds the model by reference, the upstream
         # ``decoding()`` path automatically sees the LoRA'd weights.
-        self.language_model = get_peft_model(self.language_model, lora_cfg)
+        self.language_model = install_token_lora_adapter(
+            self.language_model,
+            self.config,
+        )
         self._pipeline.model = self.language_model
 
     # ------------------------------------------------------------------
@@ -253,11 +205,15 @@ class NextStep1Model(ARModelBase):
             )
             out[:, j] = lp.float()
 
-            proj = self._image_in_projector(tokens[:, j])
-            kv_cond, c_cond = self._step_llm(kv_cond, proj)
-            if kv_uncond is not None:
-                proj_u = self._image_in_projector(tokens[:, j])
-                kv_uncond, c_uncond = self._step_llm(kv_uncond, proj_u)
+            # The stepped hidden state is only an input to the next token's
+            # log-prob. The final token has no successor, so advancing its KV
+            # state would build an unused autograd graph.
+            if j + 1 < L_img:
+                proj = self._image_in_projector(tokens[:, j])
+                kv_cond, c_cond = self._step_llm(kv_cond, proj)
+                if kv_uncond is not None:
+                    proj_u = self._image_in_projector(tokens[:, j])
+                    kv_uncond, c_uncond = self._step_llm(kv_uncond, proj_u)
 
         return out
 
@@ -282,12 +238,17 @@ class NextStep1Model(ARModelBase):
         continuous tokens we go straight to log-probs since there is no
         codebook to softmax over.
 
-        AR has no notion of "denoising step", so ``timestep_idx`` is ignored.
+        AR has no notion of a denoising step, so only index zero is valid.
 
         Returns:
           ``ReplayResult`` with ``log_probs`` and ``tokens`` for ``image_tokens``.
         """
-        del request, timestep_idx
+        require_zero_replay_timestep(timestep_idx, owner=type(self).__name__)
+        require_replay_segments(
+            request,
+            ("image_tokens",),
+            owner=type(self).__name__,
+        )
         from vrl.trajectory import TrajectoryResolver
 
         resolver = TrajectoryResolver.from_batch(batch)
@@ -334,7 +295,6 @@ class NextStep1Model(ARModelBase):
         image_size: int | None = None,
     ) -> torch.Tensor:
         """Continuous tokens → pixels in ``[-1, 1]`` via the f8ch16 VAE."""
-        del image_size
         side = int(tokens.shape[1] ** 0.5)
         if side * side != tokens.shape[1]:
             raise ValueError(
@@ -344,6 +304,18 @@ class NextStep1Model(ARModelBase):
         latent = (latent / self._pipeline.scaling_factor) + self._pipeline.shift_factor
         decoded = self.vae.decode(latent.to(self.vae.dtype))
         pixels = decoded.sample if hasattr(decoded, "sample") else decoded[0]
+        if image_size is not None:
+            if not isinstance(image_size, int) or isinstance(image_size, bool):
+                raise TypeError(
+                    f"NextStep image_size must be an int; got {type(image_size).__name__}",
+                )
+            actual_size = tuple(int(value) for value in pixels.shape[-2:])
+            if actual_size != (image_size, image_size):
+                raise ValueError(
+                    "NextStep image_size does not match the VAE output: "
+                    f"requested {image_size}x{image_size}, "
+                    f"decoded {actual_size[0]}x{actual_size[1]}",
+                )
         return pixels.to(torch.float32)
 
     # ------------------------------------------------------------------
@@ -436,16 +408,10 @@ class NextStep1ReplayModel(ARReplayRolloutStubs, NextStep1Model):
             self._attach_lora()
 
     def _attach_lora(self) -> None:
-        from peft import LoraConfig, get_peft_model
-
-        lora_cfg = LoraConfig(
-            r=self.config.lora_rank,
-            lora_alpha=self.config.lora_alpha,
-            lora_dropout=self.config.lora_dropout,
-            target_modules=list(self.config.lora_target_modules),
-            init_lora_weights=self.config.lora_init,
+        self.language_model = install_token_lora_adapter(
+            self.language_model,
+            self.config,
         )
-        self.language_model = get_peft_model(self.language_model, lora_cfg)
 
 
 def _load_nextstep_replay_model(config: NextStep1Config) -> Any:

@@ -32,8 +32,6 @@ class ARSamplingParams:
     image_size: int
     max_text_length: int
     seed: int | None
-    use_ar_scheduler: bool
-    ar_scheduler_batch_size: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -65,11 +63,19 @@ class ARRequestLayout:
                 self.default_max_text_length,
             ),
             seed=None if sampling.get("seed") is None else int(sampling.get("seed")),
-            use_ar_scheduler=bool(sampling.get("use_ar_scheduler", False)),
-            ar_scheduler_batch_size=None
-            if sampling.get("ar_scheduler_batch_size") is None
-            else int(sampling.get("ar_scheduler_batch_size")),
         )
+
+    def resolve_scheduler_batch_size(self, request: GenerationRequest) -> int | None:
+        """Resolve the request-local token-step row bound without coercion."""
+
+        value = request.sampling.get("ar_scheduler_batch_size")
+        if value is None:
+            return None
+        if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+            raise ValueError(
+                "request.sampling.ar_scheduler_batch_size must be a positive integer or null",
+            )
+        return value
 
     def validate_chunk(self, request: GenerationRequest, chunk: SampleChunk) -> None:
         """Validate one prompt/sample AR chunk against its request."""
@@ -148,32 +154,6 @@ class ARRequestLayout:
         """Return the prompt-major sample offset for deterministic chunk seeding."""
 
         return chunk.prompt_index * int(request.samples_per_prompt) + chunk.sample_start
-
-    def chunk_sample_rows(
-        self,
-        request: GenerationRequest,
-        chunk: SampleChunk,
-    ) -> list[GenerationSampleRow]:
-        """Build prompt-major sample rows for an AR sample chunk."""
-
-        return [
-            GenerationSampleRow(
-                prompt_index=chunk.prompt_index,
-                sample_index=sample_index,
-                prompt=chunk.prompt,
-                prompt_id=f"{request.request_id}:prompt:{chunk.prompt_index}",
-                group_id=f"{request.request_id}:group:{chunk.prompt_index}",
-                sample_id=(f"{request.request_id}:sample:{chunk.prompt_index}:{sample_index}"),
-                trajectory_id=(
-                    f"{request.request_id}:trajectory:{chunk.prompt_index}:{sample_index}"
-                ),
-                seed=None
-                if request.sampling.get("seed") is None
-                else int(request.sampling.get("seed")),
-                metadata={},
-            )
-            for sample_index in range(chunk.sample_start, chunk.sample_end)
-        ]
 
     def cat_chunk_fields(
         self,

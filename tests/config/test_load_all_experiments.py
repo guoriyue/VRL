@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import json
 import re
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -89,7 +91,6 @@ def test_build_trainer_config_reports_all_missing_required_keys() -> None:
         "actor.optim.lr",
         "actor.drop_zero_advantage",
         "actor.timestep_fraction",
-        "trainer.total_epochs",
         "trainer.output_dir",
         "rollout.prompts_per_batch",
         "rollout.n_samples_per_prompt",
@@ -121,6 +122,40 @@ def test_config_groups_are_not_flattened() -> None:
     assert flattened == []
     assert task_configs == ()
     assert list_bundled_configs("profiling") == ()
+
+
+def test_geometry_sampling_presets_do_not_own_text_encoder_lengths() -> None:
+    geometry_presets = [
+        name
+        for name in list_bundled_configs("sampling")
+        if Path(name).parts[1] in {"image", "video"}
+    ]
+
+    assert geometry_presets
+    for name in geometry_presets:
+        sampling = _load_bundled_raw(name).get("sampling", {})
+        assert "max_sequence_length" not in sampling, name
+
+
+def test_text_lengths_live_at_model_or_real_protocol_boundaries() -> None:
+    anima = load_config("experiment/anima_preview3/online_grpo_aesthetic")
+    sana = load_config("experiment/sana/online_grpo_aesthetic")
+    wan22 = load_config("experiment/wan_2_2/online_grpo_dual_expert_proof")
+    predict2 = load_config("experiment/cosmos_predict2/online_grpo_v2w_reference_480p")
+    hunyuan_image = load_config("experiment/hunyuan_image/online_grpo_pickscore_validation")
+
+    assert anima.model.executor.max_sequence_length == 128
+    assert sana.model.executor.max_sequence_length == 300
+    assert wan22.model.executor.max_sequence_length == 256
+    assert all(
+        "max_sequence_length" not in cfg.sampling
+        for cfg in (anima, wan22, predict2, hunyuan_image)
+    )
+    # The SANA long-run evaluator freezes the resolved config digest, so this
+    # matching value remains an explicit scientific protocol boundary.
+    assert sana.sampling.max_sequence_length == 300
+    assert "executor" not in predict2.model
+    assert "executor" not in hunyuan_image.model
 
 
 def test_raw_yaml_has_no_user_specific_absolute_paths() -> None:
@@ -238,7 +273,13 @@ def test_all_experiments_load_and_validate() -> None:
         assert "output_dir" in cfg.trainer, f"{name} missing trainer.output_dir"
         assert "kind" in cfg.algorithm, f"{name} missing algorithm.kind"
         assert "adv_estimator" not in cfg.algorithm, f"{name} still uses adv_estimator"
-        validate_training_config(cfg)
+        root, _ = validate_training_config(cfg)
+        raw_model = OmegaConf.to_container(cfg.model, resolve=True)
+        typed_model = root.model
+        assert isinstance(raw_model, dict)
+        assert typed_model is not None
+        typed_payload = typed_model.model_dump(exclude_unset=True)
+        assert {key: typed_payload[key] for key in raw_model} == raw_model
 
 
 def test_all_online_experiments_pass_static_launch_preflight() -> None:
@@ -289,7 +330,7 @@ def test_all_online_experiments_pass_static_launch_preflight() -> None:
             built = build_configs(cfg)
             resources = resolve_distributed_resources(cfg)
             validate_rollout_schedule_topology(
-                built["trainer"].rollout_orchestration,
+                built.trainer.rollout_orchestration,
                 resources,
             )
             validate_reward_memory_parking(
@@ -352,24 +393,25 @@ def test_cosmos_predict25_kling_reward_uses_paper_rl_batch() -> None:
     # microbatch_size) is declarative YAML a tuner is free to change. Assert the real
     # coupling instead of pinning the paper's magic numbers.
     assert cfg.rollout.prompts_per_batch % cfg.rollout.n_samples_per_prompt == 0
-    # gradient_accumulation_steps is a DERIVED TrainerConfig value — this stays: it
-    # tests the prompts_per_batch / microbatch_size derivation, not a literal.
-    from vrl.trainers.core.types import OptimConfig, TrainerConfig
-
-    derived = TrainerConfig(
-        optim=OptimConfig(lr=1e-4),
-        n_samples_per_prompt=cfg.rollout.n_samples_per_prompt,
-        prompts_per_batch=cfg.rollout.prompts_per_batch,
-        microbatch_size=cfg.rollout.microbatch_size,
-        timestep_fraction=0.5,
-        total_epochs=1,
-        output_dir="x",
-        drop_zero_advantage=False,
-    )
+    # The runtime stores one canonical accumulation count and derives the size view.
+    batch_plan = build_configs(cfg).trainer.batch_plan
     assert (
-        derived.gradient_accumulation_steps
-        == cfg.rollout.prompts_per_batch // cfg.rollout.microbatch_size
+        batch_plan.gradient_accumulation_steps
+        == cfg.rollout.prompts_per_batch // cfg.actor.microbatch_size
     )
+    assert batch_plan.microbatch_size == cfg.actor.microbatch_size
+
+
+def test_fsdp_ema_presets_distinguish_capability_from_memory_policy() -> None:
+    cosmos = load_config(
+        "experiment/cosmos_predict2_5/online_nft_kling_video_reward_fsdp_2x1",
+    )
+    sd3_full_parameter = load_config(
+        "experiment/sd3_5/online_grpo_ocr_fsdp_2x1_fullparam",
+    )
+
+    assert cosmos.actor.ema.enable is True
+    assert sd3_full_parameter.actor.ema.enable is False
 
 
 def test_experiments_do_not_use_legacy_precision_fields() -> None:
@@ -415,7 +457,7 @@ def test_sd35_continuous_4gpu_acceptance_resolves_disjoint_resident_topology() -
     built = build_configs(cfg)
     resources = resolve_distributed_resources(cfg)
     validate_rollout_schedule_topology(
-        built["trainer"].rollout_orchestration,
+        built.trainer.rollout_orchestration,
         resources,
     )
     validate_reward_memory_parking(resources=resources, built=built)
@@ -433,7 +475,7 @@ def test_sd35_continuous_4gpu_acceptance_resolves_disjoint_resident_topology() -
             resources.lifecycle.handoff.release_reward_after_score,
         ),
     )
-    assert built["trainer"].rollout_orchestration.schedule_mode == "continuous"
+    assert built.trainer.rollout_orchestration.schedule_mode == "continuous"
     assert cfg.actor.drop_zero_advantage is False
     assert cfg.rollout.n_samples_per_prompt == 6
     assert cfg.rollout.samples_per_chunk == 2
@@ -453,7 +495,7 @@ def test_cosmos_predict2_overfit_fsdp_4x_l4_resolves_rank_local_topology(
     built = build_configs(cfg)
     resources = resolve_distributed_resources(cfg)
     validate_rollout_schedule_topology(
-        built["trainer"].rollout_orchestration,
+        built.trainer.rollout_orchestration,
         resources,
     )
     validate_reward_memory_parking(resources=resources, built=built)
@@ -500,7 +542,7 @@ def test_cosmos_predict2_full_curve_fsdp_4x_l4_preserves_training_semantics(
     built = build_configs(cfg)
     resources = resolve_distributed_resources(cfg)
     validate_rollout_schedule_topology(
-        built["trainer"].rollout_orchestration,
+        built.trainer.rollout_orchestration,
         resources,
     )
     validate_reward_memory_parking(resources=resources, built=built)
@@ -581,12 +623,12 @@ def test_wan_robotics_continuous_resolves_balanced_four_l4_topology() -> None:
     built = build_configs(cfg)
     resources = resolve_distributed_resources(cfg)
     validate_rollout_schedule_topology(
-        built["trainer"].rollout_orchestration,
+        built.trainer.rollout_orchestration,
         resources,
     )
     validate_reward_memory_parking(resources=resources, built=built)
 
-    orchestration = built["trainer"].rollout_orchestration
+    orchestration = built.trainer.rollout_orchestration
     assert resources.trainer_devices == (0,)
     assert resources.rollout_devices == (1, 2)
     assert resources.reward_devices == ()
@@ -599,9 +641,9 @@ def test_wan_robotics_continuous_resolves_balanced_four_l4_topology() -> None:
     assert cfg.actor.ppo_epochs == 1
     assert cfg.actor.timestep_fraction == 0.25
     assert cfg.actor.replay_samples_per_chunk == 1
-    assert cfg.rollout.microbatch_size == cfg.rollout.prompts_per_batch == 4
-    assert built["trainer"].timestep_selection == "strided"
-    assert built["trainer"].gradient_accumulation_steps == 1
+    assert cfg.actor.microbatch_size == cfg.rollout.prompts_per_batch == 4
+    assert built.trainer.timestep_selection == "strided"
+    assert built.trainer.batch_plan.gradient_accumulation_steps == 1
 
 
 def test_wan_droid_fullparam_fsdp_3x_l4_preserves_launch_contract(
@@ -617,7 +659,7 @@ def test_wan_droid_fullparam_fsdp_3x_l4_preserves_launch_contract(
     built = build_configs(cfg)
     resources = resolve_distributed_resources(cfg)
     validate_rollout_schedule_topology(
-        built["trainer"].rollout_orchestration,
+        built.trainer.rollout_orchestration,
         resources,
     )
     validate_reward_memory_parking(resources=resources, built=built)
@@ -641,7 +683,7 @@ def test_wan_droid_fullparam_fsdp_3x_l4_preserves_launch_contract(
     assert resources.reward_devices == ()
     assert resources.lifecycle.rollout.mode == "on_demand"
     assert resources.lifecycle.handoff.release_rollout_before_train is True
-    assert built["trainer"].rollout_orchestration.schedule_mode == "strict_on_policy"
+    assert built.trainer.rollout_orchestration.schedule_mode == "strict_on_policy"
 
     assert (cfg.sampling.width, cfg.sampling.height, cfg.sampling.num_frames) == (
         832,
@@ -686,7 +728,7 @@ def test_wan_droid_fullparam_fsdp_4x_l4_uses_symmetric_reward_handoffs(
     built = build_configs(cfg)
     resources = resolve_distributed_resources(cfg)
     validate_rollout_schedule_topology(
-        built["trainer"].rollout_orchestration,
+        built.trainer.rollout_orchestration,
         resources,
     )
     validate_reward_memory_parking(resources=resources, built=built)
@@ -718,9 +760,9 @@ def test_wan_droid_fullparam_fsdp_4x_l4_uses_symmetric_reward_handoffs(
         == 32
     )
     trainer = build_trainer_config(cfg)
-    assert trainer.microbatch_size == 1
-    assert trainer.gradient_accumulation_steps == 2
-    assert trainer.host_memory_budget_fraction == pytest.approx(0.98)
+    assert trainer.batch_plan.microbatch_size == 1
+    assert trainer.batch_plan.gradient_accumulation_steps == 2
+    assert trainer.batch_plan.host_memory_budget_fraction == pytest.approx(0.98)
     assert trainer.ppo_epochs == 1
     assert cfg.trainer.save_freq == 5
 
@@ -1022,7 +1064,7 @@ def test_wan_i2v_fsdp_2x_l4_resolves_bounded_shared_topology(monkeypatch) -> Non
     built = build_configs(cfg)
     resources = resolve_distributed_resources(cfg)
     validate_rollout_schedule_topology(
-        built["trainer"].rollout_orchestration,
+        built.trainer.rollout_orchestration,
         resources,
     )
     validate_reward_memory_parking(resources=resources, built=built)
@@ -1041,7 +1083,7 @@ def test_wan_i2v_fsdp_2x_l4_resolves_bounded_shared_topology(monkeypatch) -> Non
     assert cfg.reward.components == {"motion_dynamics": 1.0}
     assert cfg.reward.kwargs.motion_dynamics.worker_config.device == "cpu"
     assert cfg.rollout.n_samples_per_prompt == 2
-    assert cfg.rollout.samples_per_chunk == cfg.rollout.microbatch_size == 1
+    assert cfg.rollout.samples_per_chunk == cfg.actor.microbatch_size == 1
     assert (cfg.sampling.width, cfg.sampling.height, cfg.sampling.num_frames) == (128, 128, 9)
     assert cfg.sampling.num_steps == cfg.rollout.sde.window_range[1] == 4
     assert cfg.trainer.save_freq == cfg.trainer.total_epochs == 1
@@ -1094,13 +1136,16 @@ def test_cli_overrides_reach_typed_trainer_config() -> None:
             "rollout.samples_per_chunk=2",
         ],
     )
-    trainer = build_configs(cfg)["trainer"]
+    built = build_configs(cfg)
+    trainer = built.trainer
 
-    assert trainer.resume_from == "/tmp/checkpoint-10"
+    assert built.resume.checkpoint_path == "/tmp/checkpoint-10"
+    assert built.resume.strict is True
     assert trainer.torch_profiler.enabled is True
     assert trainer.torch_profiler.activities == ("cpu",)
     assert trainer.drop_zero_advantage is False
-    assert trainer.samples_per_chunk == 2
+    assert built.root.rollout is not None
+    assert built.root.rollout.samples_per_chunk == 2
 
 
 def test_generation_chunk_auto_does_not_change_fixed_replay_default() -> None:
@@ -1109,10 +1154,22 @@ def test_generation_chunk_auto_does_not_change_fixed_replay_default() -> None:
         "experiment/sd3_5/online_grpo_ocr",
         overrides=["rollout.samples_per_chunk=auto"],
     )
-    trainer = build_configs(cfg)["trainer"]
+    built = build_configs(cfg)
 
-    assert trainer.samples_per_chunk == "auto"
-    assert trainer.replay_samples_per_chunk == 1
+    assert built.root.rollout is not None
+    assert built.root.rollout.samples_per_chunk == "auto"
+    assert built.trainer.batch_plan.replay_samples_per_chunk == 1
+
+
+@pytest.mark.parametrize("value", ["0", "-1", "largest", "true"])
+def test_generation_chunk_rejects_non_positive_or_non_integer_values(value: str) -> None:
+    cfg = load_config(
+        "experiment/sd3_5/online_grpo_ocr",
+        overrides=[f"rollout.samples_per_chunk={value}"],
+    )
+
+    with pytest.raises(ValueError, match=r"rollout\.samples_per_chunk"):
+        build_configs(cfg)
 
 
 def test_invalid_algorithm_kind_fails_fast() -> None:
@@ -1227,3 +1284,23 @@ def test_reward_collection_mode_rejected_under_continuous_scheduling() -> None:
             schedule_mode="continuous",
             reward_collection_mode="per_group_streaming",
         )
+
+
+def test_config_parsing_stays_torch_free() -> None:
+    """Resolving any recipe must not load torch.
+
+    Three package facades defer their torch-backed submodules to keep this true
+    (vrl.trajectory, vrl.trainers.data, vrl.algorithms.grpo). Without this test
+    the next eager re-export in any of them silently puts torch back on the
+    config path, where nothing else would notice. Subprocess because the test
+    session has already imported torch.
+    """
+
+    probe = (
+        "import sys; "
+        "from vrl.config.loading import load_config; "
+        "from vrl.config.schema import parse_config; "
+        "parse_config(load_config('experiment/sana/online_grpo_aesthetic')); "
+        "raise SystemExit(1 if 'torch' in sys.modules else 0)"
+    )
+    assert subprocess.run([sys.executable, "-c", probe], check=False).returncode == 0

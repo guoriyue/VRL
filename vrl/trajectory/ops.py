@@ -37,12 +37,12 @@ def select_trajectory_batch(data: Any, selector: Any) -> Any:
         family=data.family,
         task=data.task,
         sample_rows=[data.sample_rows[i] for i in positions],
-        group_ids=_select_value(data.group_ids, selector, len(data.sample_rows)),
-        tensor_value_fn=lambda tensor: _select_value(tensor.value, selector, len(data.sample_rows))
-        if tensor.axes and tensor.axes[0] == "sample"
-        else tensor.value,
+        tensor_value_fn=lambda tensor: (
+            _select_value(tensor.value, selector, len(data.sample_rows))
+            if tensor.axes and tensor.axes[0] == "sample"
+            else tensor.value
+        ),
         axes_sample_length=count,
-        metrics_sample_count=count,
         metrics_values=_select_value(data.metrics.values, selector, len(data.sample_rows)),
         context=_select_value(data.context, selector, len(data.sample_rows)),
     )
@@ -73,19 +73,19 @@ def stack_trajectory_batches(batches: list[TrajectoryBatch | None]) -> Trajector
         family=first.family,
         task=first.task,
         sample_rows=sample_rows,
-        group_ids=_stack_values([batch.group_ids for batch in typed]),
-        tensor_value_fn=lambda tensor: _stack_values(
-            [
-                batch.segments[_segment_name_for_tensor(first, tensor)]
-                .tensors[tensor.name]
-                .value
-                for batch in typed
-            ]
-        )
-        if tensor.axes and tensor.axes[0] == "sample"
-        else tensor.value,
+        tensor_value_fn=lambda tensor: (
+            _stack_values(
+                [
+                    batch.segments[_segment_name_for_tensor(first, tensor)]
+                    .tensors[tensor.name]
+                    .value
+                    for batch in typed
+                ]
+            )
+            if tensor.axes and tensor.axes[0] == "sample"
+            else tensor.value
+        ),
         axes_sample_length=sample_count,
-        metrics_sample_count=sample_count,
         metrics_values=dict(first.metrics.values),
         context=dict(first.context),
     )
@@ -105,10 +105,8 @@ def move_trajectory_batch(data: Any, device: Any) -> Any:
         family=data.family,
         task=data.task,
         sample_rows=list(data.sample_rows),
-        group_ids=move_value_to_device(data.group_ids, device),
         tensor_value_fn=lambda tensor: move_value_to_device(tensor.value, device),
         axes_sample_length=data.axes["sample"].length,
-        metrics_sample_count=data.metrics.num_samples,
         metrics_values=move_value_to_device(data.metrics.values, device),
         context=move_value_to_device(data.context, device),
     )
@@ -121,10 +119,8 @@ def _rebuild_trajectory(
     family: str,
     task: str,
     sample_rows: list[GenerationSampleRow],
-    group_ids: Any,
     tensor_value_fn: Any,
     axes_sample_length: int | None,
-    metrics_sample_count: int | None,
     metrics_values: dict[str, Any],
     context: dict[str, Any],
 ) -> TrajectoryBatch:
@@ -149,30 +145,22 @@ def _rebuild_trajectory(
                 for tensor_name, tensor in segment.tensors.items()
             },
             reward_view=segment.reward_view,
-            advantage_scope=segment.advantage_scope,
             replay_inputs=dict(segment.replay_inputs),
             metadata=dict(segment.metadata),
         )
         for name, segment in data.segments.items()
     }
-    axis_lengths = dict(data.metrics.axis_lengths)
-    if axes_sample_length is not None and "sample" in axis_lengths:
-        axis_lengths["sample"] = axes_sample_length
 
     out = TrajectoryBatch(
         request_id=request_id,
         family=family,
         task=task,
         sample_rows=sample_rows,
-        group_ids=group_ids,
         axes=axes,
         segments=segments,
+        primary_segment=data.primary_segment,
         reward_views=dict(data.reward_views),
-        metrics=TrajectoryMetrics(
-            num_samples=metrics_sample_count,
-            axis_lengths=axis_lengths,
-            values=metrics_values,
-        ),
+        metrics=TrajectoryMetrics(values=metrics_values),
         context=context,
     )
     return TrajectoryValidator(out).validate_batch()
@@ -237,6 +225,8 @@ def _validate_stack_compatible(batches: list[TrajectoryBatch]) -> None:
     for batch in batches[1:]:
         if batch.family != first.family or batch.task != first.task:
             raise ValueError("cannot stack trajectories from different family/task")
+        if batch.primary_segment != first.primary_segment:
+            raise ValueError("cannot stack trajectories with different primary segments")
         if set(batch.axes) != set(first.axes):
             raise ValueError("cannot stack trajectories with different axes")
         for name, axis in first.axes.items():

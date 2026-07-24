@@ -10,7 +10,7 @@ import pytest
 import torch
 import torch.nn as nn
 
-from tests.models.interfaces import registered_family_model_classes
+from tests.models.interfaces import registered_runtime_model_classes
 from vrl.config.precision import RolePrecision
 from vrl.models.interfaces import (
     ReplayRequest,
@@ -137,7 +137,7 @@ def test_runtime_model_protocol_accepts_minimal_shape() -> None:
 
 @pytest.mark.parametrize(
     "family",
-    sorted(registered_family_model_classes()),
+    sorted(registered_runtime_model_classes()),
 )
 def test_registered_family_runtime_model_satisfies_contract(family: str) -> None:
     """Every registered family's runtime-model class satisfies RuntimeModel.
@@ -147,7 +147,7 @@ def test_registered_family_runtime_model_satisfies_contract(family: str) -> None
     class-level — ``callable(getattr(cls, m))`` like ``_missing_callables`` —
     because instantiating a real family model needs weights/GPU.
     """
-    runtime_cls, _replay_cls = registered_family_model_classes()[family]
+    runtime_cls = registered_runtime_model_classes()[family]
     missing = [m for m in _RUNTIME_MODEL_METHODS if not callable(getattr(runtime_cls, m, None))]
     assert not missing, f"{family}: {runtime_cls.__name__} missing RuntimeModel methods {missing}"
 

@@ -8,10 +8,13 @@ import pytest
 import torch
 from omegaconf import OmegaConf
 
+from vrl.algorithms.grpo.continuous import GRPOConfig
 from vrl.config.precision import RolePrecision
+from vrl.config.schema import RootConfig
 from vrl.families.semantics import PolicySemantics
 from vrl.models.interfaces import ReplayResult
 from vrl.scripts.common import online
+from vrl.trainers.online.config import OnlineBatchPlan
 
 ray = pytest.importorskip("ray")
 
@@ -127,7 +130,9 @@ class _FakeLauncher:
         self._state = state
 
     def launch_from_cfg(self, *args: Any, **kwargs: Any) -> _FakeRuntime:
-        del args, kwargs
+        del args
+        self._state["launcher_worker"] = kwargs["config"].worker
+        self._state["launcher_model_identity"] = kwargs["expected_model_identity"]
         self._state["launches"] += 1
         if self._state.get("launch_raises"):
             raise RuntimeError("launch boom")
@@ -136,8 +141,9 @@ class _FakeLauncher:
 
 class _FakePlacementOwner:
     def __init__(self, state: dict[str, Any], *args: Any, **kwargs: Any) -> None:
-        del args, kwargs
+        self.rollout_worker = args[1] if len(args) > 1 else kwargs["rollout_worker"]
         self._state = state
+        self._state["placement_worker"] = self.rollout_worker
         self.rollout_placement = object()
 
     def required_local_cluster_cpus(self) -> int:
@@ -193,7 +199,15 @@ def _state() -> dict[str, Any]:
         "owner_cpu_plans": 0,
         "owner_shutdowns": 0,
         "launches": 0,
+        "launcher_worker": None,
+        "launcher_model_identity": None,
+        "placement_worker": None,
         "model_builds": 0,
+        "bundle_builds": 0,
+        "resolved_build": None,
+        "bundle_build": None,
+        "identity_builds": [],
+        "compatibility_calls": [],
         "trainer_steps": 0,
         "trainer_prompt_batches": [],
         "checkpoint_paths": [],
@@ -204,14 +218,11 @@ def _state() -> dict[str, Any]:
 def _trainer_config(tmp_path: Any) -> SimpleNamespace:
     return SimpleNamespace(
         profile=False,
-        resume_strict=True,
         output_dir=str(tmp_path),
-        total_epochs=1,
-        seed=0,
-        prompts_per_batch=1,
-        n_samples_per_prompt=1,
-        gradient_accumulation_steps=0,
-        save_freq=0,
+        batch_plan=OnlineBatchPlan(
+            prompts_per_batch=1,
+            n_samples_per_prompt=1,
+        ),
         rollout_orchestration=SimpleNamespace(schedule_mode="strict_on_policy"),
     )
 
@@ -241,13 +252,23 @@ class _FakeFamilyEntry:
         self._state = state
         self.task = str(state.get("family_task", "t2i"))
 
-    def resolve_model_build(self, cfg: Any, device: Any, **kwargs: Any) -> Any:
-        del cfg, device, kwargs
+    def resolve_model_build(
+        self,
+        root: Any,
+        device: Any,
+        *,
+        precision: Any,
+        **kwargs: Any,
+    ) -> Any:
+        del root, device, precision, kwargs
         self._state["model_builds"] += 1
-        return SimpleNamespace(family=self.family)
+        build = SimpleNamespace(family=self.family)
+        self._state["resolved_build"] = build
+        return build
 
     def build_replay(self, build: Any) -> Any:
-        del build
+        self._state["bundle_builds"] += 1
+        self._state["bundle_build"] = build
         precision = RolePrecision(
             dtype="fp32",
             float32_precision="ieee",
@@ -292,11 +313,12 @@ def _install_common_fakes(
     state: dict[str, Any],
 ) -> _FakeReward:
     trainer_config = _trainer_config(tmp_path)
-    trainer_config.total_epochs = int(state.get("total_epochs", trainer_config.total_epochs))
     reward = _FakeReward(state)
     collector = _FakeCollector(state, reward)
     resources = SimpleNamespace(
         cross_node=False,
+        rollout_num_workers=1,
+        rollout_gpus_per_worker=0,
         lifecycle=SimpleNamespace(
             handoff=SimpleNamespace(
                 release_rollout_before_train=False,
@@ -320,18 +342,58 @@ def _install_common_fakes(
     monkeypatch.setattr(
         online,
         "build_configs",
-        lambda cfg: {
-            "trainer": trainer_config,
-            "precision": precision,
-            "reward": ({"kling_video_reward": 1.0}, {}),
-        },
+        lambda cfg: SimpleNamespace(
+            root=RootConfig.model_validate(
+                {
+                    "distributed": {
+                        "rollout": {"cpus_per_worker": cfg.distributed.rollout.cpus_per_worker},
+                        "training": {"strategy": "single_process"},
+                    },
+                    "trainer": {
+                        "total_epochs": int(state.get("total_epochs", 1)),
+                        "save_freq": 0,
+                        "seed": 0,
+                    },
+                    "model": {
+                        "family": "sd3_5",
+                        "path": "unit-checkpoint",
+                        "use_lora": False,
+                    },
+                },
+            ),
+            trainer=trainer_config,
+            precision=precision,
+            # Typed, matching the recipe's algorithm.kind=grpo: the run path
+            # reads built.algorithm.global_std, so a namespace stub here would
+            # only re-hide the field it is meant to exercise.
+            algorithm=GRPOConfig(kl_coef=0.0),
+            reward=SimpleNamespace(
+                weights={"kling_video_reward": 1.0},
+                kwargs={},
+            ),
+            resume=SimpleNamespace(checkpoint_path=None, strict=True),
+        ),
     )
-    monkeypatch.setattr(online, "load_training_checkpoint_from_config", lambda cfg: None)
-    monkeypatch.setattr(
-        online,
-        "prepare_model_config_for_training_resume",
-        lambda cfg, checkpoint, *, strict: None,
-    )
+    monkeypatch.setattr(online, "load_training_checkpoint_for_resume", lambda resume: None)
+    model_identity = {"schema": "test"}
+
+    def _resolve_model_identity(build: Any) -> dict[str, str]:
+        state["identity_builds"].append(build)
+        return model_identity
+
+    def _validate_checkpoint(
+        checkpoint: Any,
+        *,
+        family: str,
+        expected_model_identity: dict[str, Any],
+        strict: bool,
+    ) -> None:
+        state["compatibility_calls"].append(
+            (checkpoint, family, expected_model_identity, strict),
+        )
+
+    monkeypatch.setattr(online, "resolve_checkpoint_model_identity", _resolve_model_identity)
+    monkeypatch.setattr(online, "validate_checkpoint_compatibility", _validate_checkpoint)
     monkeypatch.setattr(online, "resolve_distributed_resources", lambda cfg, **kwargs: resources)
     monkeypatch.setattr(online, "format_distributed_resource_plan", lambda resources: "resources")
     monkeypatch.setattr(online, "trainer_torch_device", lambda resources: "cpu")
@@ -358,7 +420,11 @@ def _install_common_fakes(
         lambda *args, **kwargs: _FakePlacementOwner(state, *args, **kwargs),
     )
     monkeypatch.setattr(online, "validate_reward_memory_parking", lambda *args, **kwargs: None)
-    monkeypatch.setattr(online, "build_rollout_config_from_cfg", lambda cfg: object())
+    monkeypatch.setattr(
+        online.RolloutCollectorConfig,
+        "from_cfg",
+        staticmethod(lambda cfg: object()),
+    )
     monkeypatch.setattr(online, "build_reward", lambda *args, **kwargs: reward)
     monkeypatch.setattr(
         online,
@@ -390,6 +456,133 @@ def _install_common_fakes(
     return reward
 
 
+@pytest.mark.asyncio
+async def test_checkpoint_identity_preflight_runs_before_prompt_or_model_build(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    state = _state()
+    _install_common_fakes(monkeypatch, tmp_path, state)
+    checkpoint = object()
+    monkeypatch.setattr(
+        online,
+        "load_training_checkpoint_for_resume",
+        lambda _resume: checkpoint,
+    )
+
+    class _ReachedPromptBoundary(RuntimeError):
+        pass
+
+    def _stop_at_prompt(_cfg: Any) -> list[Any]:
+        assert state["compatibility_calls"] == [
+            (checkpoint, "sd3_5", {"schema": "test"}, True),
+        ]
+        raise _ReachedPromptBoundary
+
+    monkeypatch.setattr(online, "load_prompt_examples_from_config", _stop_at_prompt)
+
+    with pytest.raises(_ReachedPromptBoundary):
+        await online.run_online_recipe(_cfg())
+
+    assert state["identity_builds"] == [state["resolved_build"]]
+    assert state["bundle_builds"] == 0
+    assert state["owner_creates"] == 0
+    assert state["launches"] == 0
+
+
+@pytest.mark.asyncio
+async def test_checkpoint_identity_mismatch_stops_before_prompt_model_or_ray(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    state = _state()
+    _install_common_fakes(monkeypatch, tmp_path, state)
+    checkpoint = object()
+    monkeypatch.setattr(
+        online,
+        "load_training_checkpoint_for_resume",
+        lambda _resume: checkpoint,
+    )
+
+    def _reject_checkpoint(
+        actual_checkpoint: Any,
+        *,
+        family: str,
+        expected_model_identity: dict[str, Any],
+        strict: bool,
+    ) -> None:
+        assert actual_checkpoint is checkpoint
+        assert family == "sd3_5"
+        assert expected_model_identity == {"schema": "test"}
+        assert strict is True
+        raise ValueError("checkpoint model identity mismatch")
+
+    monkeypatch.setattr(online, "validate_checkpoint_compatibility", _reject_checkpoint)
+    monkeypatch.setattr(
+        online,
+        "load_prompt_examples_from_config",
+        lambda _cfg: (_ for _ in ()).throw(
+            AssertionError("prompt loading must not run after identity mismatch"),
+        ),
+    )
+
+    with pytest.raises(ValueError, match="checkpoint model identity mismatch"):
+        await online.run_online_recipe(_cfg())
+
+    assert state["identity_builds"] == [state["resolved_build"]]
+    assert state["bundle_builds"] == 0
+    assert state["owner_creates"] == 0
+    assert state["launches"] == 0
+
+
+@pytest.mark.asyncio
+async def test_checkpoint_source_change_stops_after_model_before_ray_or_reward(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    state = _state()
+    _install_common_fakes(monkeypatch, tmp_path, state)
+    identities = iter(({"source": "before"}, {"source": "after"}))
+
+    def _resolve_changed_identity(build: Any) -> dict[str, str]:
+        state["identity_builds"].append(build)
+        return next(identities)
+
+    monkeypatch.setattr(
+        online,
+        "resolve_checkpoint_model_identity",
+        _resolve_changed_identity,
+    )
+    monkeypatch.setattr(
+        online,
+        "require_ray",
+        lambda: (_ for _ in ()).throw(
+            AssertionError("Ray must not start after checkpoint source changes"),
+        ),
+    )
+    monkeypatch.setattr(
+        online,
+        "build_reward",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("reward must not build after checkpoint source changes"),
+        ),
+    )
+
+    with pytest.raises(
+        RuntimeError,
+        match="model checkpoint source changed during replay bundle construction",
+    ):
+        await online.run_online_recipe(_cfg())
+
+    assert state["identity_builds"] == [
+        state["resolved_build"],
+        state["resolved_build"],
+    ]
+    assert state["bundle_builds"] == 1
+    assert state["owner_creates"] == 0
+    assert state["launches"] == 0
+
+
 @pytest.mark.slow_test
 @pytest.mark.asyncio
 async def test_run_online_recipe_shutdowns_owner_after_success(monkeypatch, tmp_path) -> None:
@@ -406,11 +599,22 @@ async def test_run_online_recipe_shutdowns_owner_after_success(monkeypatch, tmp_
     assert state["owner_cpu_plans"] == 1
     assert state["trainer_steps"] == 1
     assert state["checkpoint_paths"] == ["checkpoint-final"]
+    assert state["identity_builds"] == [
+        state["resolved_build"],
+        state["resolved_build"],
+    ]
+    assert state["bundle_build"] is state["resolved_build"]
+    assert state["compatibility_calls"] == [
+        (None, "sd3_5", {"schema": "test"}, True),
+    ]
     assert state["collector_shutdowns"] == 1
     assert state["runtime_shutdowns"] == 1
     assert state["schedule_shutdowns"] == 1
     assert state["reward_shutdowns"] == 1
     assert state["owner_shutdowns"] == 1
+    assert state["launcher_worker"] is state["placement_worker"]
+    assert state["launcher_model_identity"] == {"schema": "test"}
+    assert state["launcher_worker"].cpus_per_worker == 0.5
     assert state["shutdown_order"] == [
         "schedule",
         "collector",
@@ -439,7 +643,7 @@ async def test_resume_releases_full_checkpoint_payload_before_training(
         rng_state={},
     )
     _install_common_fakes(monkeypatch, tmp_path, state)
-    monkeypatch.setattr(online, "load_training_checkpoint_from_config", lambda cfg: checkpoint)
+    monkeypatch.setattr(online, "load_training_checkpoint_for_resume", lambda resume: checkpoint)
     monkeypatch.setattr(online, "restore_training_checkpoint", lambda *args, **kwargs: None)
     monkeypatch.setattr(online, "restore_rng_state", lambda *args, **kwargs: None)
     collect_calls: list[bool] = []
@@ -479,10 +683,8 @@ def test_require_supported_online_strategy_allows_fsdp() -> None:
 
     ctx = DistributedTrainingContext(
         strategy="fsdp",
-        distributed=True,
         rank=0,
         world_size=2,
-        is_primary=True,
         device=torch.device("cpu"),
     )
     online._require_supported_online_strategy(ctx)  # no raise
@@ -493,10 +695,8 @@ def test_require_supported_online_strategy_allows_single_process() -> None:
 
     ctx = DistributedTrainingContext(
         strategy="single_process",
-        distributed=False,
         rank=0,
         world_size=1,
-        is_primary=True,
         device=torch.device("cpu"),
     )
     online._require_supported_online_strategy(ctx)  # no raise
@@ -509,10 +709,8 @@ def test_require_supported_online_strategy_allows_ddp() -> None:
 
     ctx = DistributedTrainingContext(
         strategy="ddp",
-        distributed=True,
         rank=1,
         world_size=2,
-        is_primary=False,
         device=torch.device("cuda:0"),
     )
     online._require_supported_online_strategy(ctx)  # no raise
@@ -532,6 +730,8 @@ async def test_distributed_disjoint_rollout_fails_before_model_or_ray_launch(
     resources = SimpleNamespace(
         cross_node=False,
         colocated=False,
+        rollout_num_workers=1,
+        rollout_gpus_per_worker=0,
         rollout_num_gpus=2,
         lifecycle=SimpleNamespace(
             handoff=SimpleNamespace(
@@ -544,10 +744,8 @@ async def test_distributed_disjoint_rollout_fails_before_model_or_ray_launch(
     )
     context = DistributedTrainingContext(
         strategy="fsdp",
-        distributed=True,
         rank=0,
         world_size=2,
-        is_primary=True,
         device=torch.device("cuda:0"),
     )
     monkeypatch.setattr(online, "resolve_distributed_resources", lambda _cfg: resources)
@@ -583,6 +781,8 @@ async def test_shared_gpu_parking_capability_fails_before_model_or_ray_launch(
     _install_common_fakes(monkeypatch, tmp_path, state)
     resources = SimpleNamespace(
         cross_node=False,
+        rollout_num_workers=1,
+        rollout_gpus_per_worker=0,
         lifecycle=SimpleNamespace(
             handoff=SimpleNamespace(
                 release_rollout_before_train=release_rollout_before_train,

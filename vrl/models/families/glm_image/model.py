@@ -53,15 +53,22 @@ Processor: ``transformers/models/glm_image/processing_glm_image.py``
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass
 from typing import Any
 
 import torch
 import torch.nn as nn
 
 from vrl.models.dtypes import resolve_torch_dtype
-from vrl.models.interfaces import ReplayRequest, ReplayResult, ReplaySegmentResult
+from vrl.models.families.glm_image.config import GlmImageConfig
+from vrl.models.interfaces import (
+    ReplayRequest,
+    ReplayResult,
+    ReplaySegmentResult,
+    require_replay_segments,
+    require_zero_replay_timestep,
+)
 from vrl.models.steps.token.base import ARModelBase, ARReplayRolloutStubs
+from vrl.models.steps.token.lora import install_token_lora_adapter
 from vrl.utils.logging import init_logger
 
 logger = init_logger(__name__)
@@ -74,50 +81,6 @@ GLM_IMAGE_LATENT_FACTOR = 32
 # Checkpoint subfolders inside the zai-org/GLM-Image repo (model_index.json).
 GLM_IMAGE_AR_SUBFOLDER = "vision_language_encoder"
 GLM_IMAGE_PROCESSOR_SUBFOLDER = "processor"
-
-
-@dataclass(slots=True)
-class GlmImageConfig:
-    """Hyper-parameters for the GLM-Image wrapper (defaults target the 9B AR)."""
-
-    model_path: str = "zai-org/GLM-Image"
-    revision: str | None = None
-    dtype: str = "bfloat16"  # "bfloat16" | "float16" | "float32"
-
-    # LoRA — GLM-Image's text trunk uses LLaMA-style projection names.
-    use_lora: bool = True
-    lora_rank: int = 32
-    lora_alpha: int = 64
-    lora_dropout: float = 0.0
-    lora_target_modules: tuple[str, ...] = (
-        "q_proj",
-        "k_proj",
-        "v_proj",
-        "o_proj",
-    )
-    lora_init: str = "gaussian"  # PEFT ``init_lora_weights``
-
-    # AR sampling defaults — the checkpoint's generation_config.json values
-    # (do_sample=True, temperature=0.9, top_p=0.75). There is NO AR-side CFG.
-    temperature: float = 0.9
-    top_p: float = 0.75
-    # Target image size in pixels; must be a multiple of 32. The processor
-    # derives the AR token grids (large + preview) from it.
-    image_height: int = 1024
-    image_width: int = 1024
-
-    # Frozen DiT decode segment knobs (rollout postprocess only, never
-    # trained). The pipeline default is 50 steps / 1.5 guidance; 20 steps is
-    # the probe-speed default, override via sampling config for quality runs.
-    decode_num_inference_steps: int = 20
-    decode_guidance_scale: float = 1.5
-    # Move the 9B AR model to CPU while the ~15GB DiT+VAE+ByT5 stack runs on
-    # GPU (18G + 15G does not fit a 32GB card). Set False on >=48GB cards to
-    # skip the transfers.
-    decode_offload_ar: bool = True
-
-    # Misc
-    device: str = "cuda"
 
 
 # ---------------------------------------------------------------------------
@@ -362,24 +325,11 @@ class GlmImageModel(ARModelBase):
 
     def _apply_lora(self) -> None:
         """Attach a PEFT LoRA adapter to the text-model trunk."""
-        try:
-            from peft import LoraConfig, get_peft_model
-        except ImportError as e:  # pragma: no cover
-            raise ImportError("PEFT is required for use_lora=True. pip install peft>=0.12") from e
-
-        lora_cfg = LoraConfig(
-            r=self.config.lora_rank,
-            lora_alpha=self.config.lora_alpha,
-            lora_dropout=self.config.lora_dropout,
-            init_lora_weights=self.config.lora_init,
-            target_modules=list(self.config.lora_target_modules),
-            bias="none",
-        )
         # Wrap ONLY the text trunk — lm_head / vision tower / VQ encoder stay
         # frozen. ``glm.model.language_model`` is the real submodule path.
-        self.glm.model.language_model = get_peft_model(
+        self.glm.model.language_model = install_token_lora_adapter(
             self.glm.model.language_model,
-            lora_cfg,
+            self.config,
         )
         logger.info(
             "Applied LoRA (rank=%d, alpha=%d) to the GLM-Image text trunk.",
@@ -584,9 +534,14 @@ class GlmImageModel(ARModelBase):
         the evaluator's plain ``log_softmax`` reproduces the rollout's
         restricted conditional distribution.
 
-        AR has no notion of "denoising step", so ``timestep_idx`` is ignored.
+        AR has no notion of a denoising step, so only index zero is valid.
         """
-        del timestep_idx, request
+        require_zero_replay_timestep(timestep_idx, owner=type(self).__name__)
+        require_replay_segments(
+            request,
+            ("image_tokens",),
+            owner=type(self).__name__,
+        )
         from vrl.trajectory import TrajectoryResolver
 
         resolver = TrajectoryResolver.from_batch(batch)

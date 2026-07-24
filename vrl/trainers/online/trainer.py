@@ -37,7 +37,8 @@ from vrl.rollouts.batch.ops import (
 )
 from vrl.rollouts.orchestration import build_rollout_schedule
 from vrl.trainers.core.base import Trainer
-from vrl.trainers.core.types import TrainerConfig, TrainState
+from vrl.trainers.core.types import TrainState
+from vrl.trainers.online.config import TrainerConfig
 from vrl.trainers.online.ema import EMAModuleWrapper
 from vrl.trainers.online.precision_guard import (
     enforce_precision_drift,
@@ -744,8 +745,8 @@ class OnlineTrainer(Trainer):
         self.model = self._strategy.prepare_model(self.model)
         # Sinks for the per-step phase timings (recording decoupled from
         # emitting). The log line stays the human-facing view; the jsonl file is
-        # the machine-readable one, because collect.* phases appear in no other
-        # structured output (metrics.csv has no phase columns).
+        # the complete machine-readable view. metrics.csv exposes only the
+        # stable continuous-health subset, not arbitrary collect.* phases.
         self._stats_sink: StatsSink = MultiStatsSink(
             LoggingStatsSink(logger),
             JsonlStatsSink(f"{self.config.output_dir}/rollout_stats.jsonl"),
@@ -811,7 +812,7 @@ class OnlineTrainer(Trainer):
                 "target on the single replay pass), so the clip/guard term is a no-op "
                 "and the run is equivalent to plain GRPO. Set actor.ppo_epochs>1 — which "
                 "needs the legacy full-batch path (actor.gradient_accumulation_steps=0 "
-                "and rollout.microbatch_size=0, since streaming releases each microbatch "
+                "and actor.microbatch_size=0, since streaming releases each microbatch "
                 "and cannot replay it across epochs) — or use schedule_mode='continuous' "
                 "with continuous.max_stale_policy_versions>0 for an off-policy ratio."
             )
@@ -894,11 +895,9 @@ class OnlineTrainer(Trainer):
                         rewards=chunk_batch.rewards,
                         group_ids=chunk_batch.group_ids,
                         advantages=chunk_advantages,
-                        metadata={
-                            "model": self.model,
-                            "rollout_batch": chunk_batch,
-                            "timestep_index": timestep_index,
-                        },
+                        model=self.model,
+                        rollout_batch=chunk_batch,
+                        timestep_index=timestep_index,
                     ),
                 )
 
@@ -1081,7 +1080,7 @@ class OnlineTrainer(Trainer):
         # 1. The rollout schedule owns collect/offload/release/sync timing.
         iteration = await self.rollout_schedule.next_iteration(
             prompts,
-            group_size=cfg.n_samples_per_prompt,
+            group_size=cfg.batch_plan.n_samples_per_prompt,
             runtime_debug=runtime_debug_collect,
             next_prompts=next_prompts,
         )
@@ -1195,7 +1194,7 @@ class OnlineTrainer(Trainer):
 
     def _train_replay_indices(
         self,
-        num_timesteps: int,
+        batch: RolloutBatch,
         timestep_fraction: float,
         selection: str = "strided",
     ) -> list[int]:
@@ -1215,6 +1214,34 @@ class OnlineTrainer(Trainer):
             raise ValueError(
                 "evaluator.replay_granularity must be 'step' or 'trajectory', "
                 f"got {granularity!r}",
+            )
+
+        from vrl.trajectory import TrajectoryResolver
+
+        resolver = TrajectoryResolver.from_batch(batch)
+        primary_segment = resolver.primary_trainable_segment_name()
+        action = resolver.role_tensor(primary_segment, "action")
+        action_axes = tuple(axis for axis in action.axes if axis != "sample")
+        if len(action_axes) != 1:
+            raise ValueError(
+                "step replay requires exactly one non-sample axis on the primary "
+                f"action tensor; {primary_segment}.{action.name} declares "
+                f"{action.axes!r}",
+            )
+        action_axis_name = action_axes[0]
+        action_axis = resolver.trajectory.axes[action_axis_name]
+        num_timesteps = action_axis.length
+        if num_timesteps is None:
+            action_shape = getattr(action.value, "shape", None)
+            if action_shape is None:
+                raise ValueError(
+                    f"step replay action axis {action_axis_name!r} has no declared "
+                    "length and its tensor has no shape",
+                )
+            num_timesteps = int(action_shape[action.axes.index(action_axis_name)])
+        if num_timesteps <= 0:
+            raise ValueError(
+                f"step replay action axis {action_axis_name!r} must be non-empty",
             )
         return self._train_timestep_indices(
             num_timesteps,
@@ -1268,14 +1295,13 @@ class OnlineTrainer(Trainer):
         defer = uses_evaluator and bool(
             getattr(self.evaluator, "supports_deferred_replay_tensor_move", False),
         )
-        num_timesteps = batch.batches[0].observations.shape[1]
         train_indices = self._train_replay_indices(
-            num_timesteps,
+            batch.batches[0],
             cfg.timestep_fraction,
             cfg.timestep_selection,
         )
         loss_scale = int(total_groups) * len(train_indices)
-        samples_per_chunk = int(cfg.replay_samples_per_chunk)
+        samples_per_chunk = cfg.batch_plan.replay_samples_per_chunk
         agg = self._update_agg_metrics
         for sample_chunk in _balanced_training_sample_chunks(
             batch.batches,
@@ -1379,8 +1405,6 @@ class OnlineTrainer(Trainer):
             phase_times=phase_times,
             initial_replay=initial_replay,
         )
-        self.state.total_reward += metrics.reward_mean
-        self.state.total_loss += metrics.loss
         return metrics
 
     async def train_on_rollout_batch(self, batch: TrainingBatch) -> TrainStepMetrics:
@@ -1459,20 +1483,14 @@ class OnlineTrainer(Trainer):
 
         # Replay schedule — step evaluators use the configured denoise subset;
         # trajectory evaluators perform one causal pass over all policy axes.
-        # Shapes are consistent across batches, so inspect the first batch.
-        num_timesteps = filtered_batches[0].observations.shape[1]
+        # Trajectory schemas are consistent across batches, so inspect the first batch.
         train_indices = self._train_replay_indices(
-            num_timesteps,
+            filtered_batches[0],
             cfg.timestep_fraction,
             cfg.timestep_selection,
         )
 
-        # Number of rollout micro-batches per optimizer update. ``0`` preserves
-        # legacy VRL behavior: one optimizer update after all collected batches.
-        grad_accum_batches = int(cfg.gradient_accumulation_steps)
-        if grad_accum_batches <= 0 or grad_accum_batches > len(filtered_batches):
-            grad_accum_batches = len(filtered_batches)
-        samples_per_chunk = int(cfg.replay_samples_per_chunk)
+        samples_per_chunk = cfg.batch_plan.replay_samples_per_chunk
 
         # Debug first step: compare old vs fresh log-probs on first timestep
         # (using first filtered batch so memory footprint is bounded).
@@ -1702,89 +1720,81 @@ class OnlineTrainer(Trainer):
 
         initial_replay = InitialReplayStats()
         for _ppo_epoch in range(cfg.ppo_epochs):
-            # Accumulate a configurable number of rollout micro-batches per
-            # optimizer update. Flow-GRPO sets this to num_batches_per_epoch//2,
-            # so an epoch can intentionally contain multiple optimizer updates.
-            for batch_start in range(0, len(filtered_batches), grad_accum_batches):
-                capture_initial_replay = _ppo_epoch == 0 and batch_start == 0
-                chunk_batches = filtered_batches[batch_start : batch_start + grad_accum_batches]
-                chunk_advs = filtered_advs[batch_start : batch_start + grad_accum_batches]
-                # Normalize across rollout microbatches and evaluator replay
-                # units. Step evaluators contribute selected denoise timesteps;
-                # trajectory evaluators contribute one ordered causal pass.
-                loss_scale = len(chunk_batches) * len(train_indices)
+            # ``train_on_rollout_batch`` receives one already-collected optimizer
+            # target batch. Streaming accumulation is owned by the recipe and
+            # calls begin/backward/finish instead; interpreting the same count
+            # again here would turn one target batch into several optimizer steps.
+            capture_initial_replay = _ppo_epoch == 0
+            loss_scale = len(filtered_batches) * len(train_indices)
 
-                for sample_chunk in _balanced_training_sample_chunks(
-                    chunk_batches,
-                    chunk_advs,
-                    samples_per_chunk,
+            for sample_chunk in _balanced_training_sample_chunks(
+                filtered_batches,
+                filtered_advs,
+                samples_per_chunk,
+                self.device,
+            ):
+                chunk_batch = move_training_batch_to_device(
+                    sample_chunk.batch,
                     self.device,
-                ):
-                    chunk_batch = move_training_batch_to_device(
-                        sample_chunk.batch,
-                        self.device,
-                        defer_replay_tensors=defer_replay_tensor_move,
-                    )
-                    chunk_adv = sample_chunk.advantages.to(self.device)
-                    self._backward_sft_regularizer(
-                        chunk_batch,
-                        loss_weight=sample_chunk.loss_weight,
-                        total_groups=len(chunk_batches),
-                        is_dummy=sample_chunk.is_dummy,
-                        agg=agg_metrics,
-                    )
-                    for j in train_indices:
-                        with timer.time("evaluate"):
-                            loss, metrics = self._compute_replay_loss(
-                                chunk_batch,
-                                chunk_adv,
-                                j,
-                                algorithm_adapter=algorithm_adapter,
-                            )
-                            # Average across rollout micro-batches inside this
-                            # optimizer update; step evaluators retain Flow-GRPO's
-                            # per-denoise-step surrogate structure.
-                            loss = loss * sample_chunk.loss_weight / loss_scale
-
-                        with timer.time("backward"):
-                            self._backward(loss)
-
-                        if not sample_chunk.is_dummy:
-                            agg_metrics.add(
-                                metrics,
-                                weight=sample_chunk.loss_weight,
-                                capture_initial_replay=capture_initial_replay,
-                            )
-
-                        # Continuous rollout production runs on the same asyncio
-                        # loop as training orchestration. Yield once per
-                        # timestep so producer admit/harvest can progress while
-                        # this synchronous CUDA-heavy loop is still computing.
-                        await asyncio.sleep(0)
-
-                with timer.time("optim_step"):
-                    if capture_initial_replay:
-                        local_initial, local_weight = agg_metrics.initial_replay_snapshot()
-                        initial_replay = self._validate_first_update_parity(
-                            local_initial,
-                            local_weight=local_weight,
+                    defer_replay_tensors=defer_replay_tensor_move,
+                )
+                chunk_adv = sample_chunk.advantages.to(self.device)
+                self._backward_sft_regularizer(
+                    chunk_batch,
+                    loss_weight=sample_chunk.loss_weight,
+                    total_groups=len(filtered_batches),
+                    is_dummy=sample_chunk.is_dummy,
+                    agg=agg_metrics,
+                )
+                for j in train_indices:
+                    with timer.time("evaluate"):
+                        loss, metrics = self._compute_replay_loss(
+                            chunk_batch,
+                            chunk_adv,
+                            j,
+                            algorithm_adapter=algorithm_adapter,
                         )
-                    _gn, _stepped = self._clip_and_step(optimizer)
-                    agg_metrics.grad_norms.append(_gn)
+                        # Average across the complete optimizer target batch;
+                        # step evaluators retain the per-denoise-step surrogate.
+                        loss = loss * sample_chunk.loss_weight / loss_scale
 
-                # A scaler-skipped step (inf/nan grads) left the weights
-                # unchanged — do not fold a non-update into EMA or the
-                # algorithm's post-step adapter sync.
-                if _stepped:
-                    after_optimizer_step = getattr(self.algorithm, "after_optimizer_step", None)
-                    if callable(after_optimizer_step):
-                        after_optimizer_step(self.model, self.state.global_step)
+                    with timer.time("backward"):
+                        self._backward(loss)
 
-                    if ema is not None:
-                        trainable = [p for p in self.model.parameters() if p.requires_grad]
-                        ema.step(trainable, self.state.global_step)
+                    if not sample_chunk.is_dummy:
+                        agg_metrics.add(
+                            metrics,
+                            weight=sample_chunk.loss_weight,
+                            capture_initial_replay=capture_initial_replay,
+                        )
 
-                self.state.global_step += 1
+                    # Continuous rollout production runs on the same asyncio
+                    # loop as training orchestration. Yield once per replay unit
+                    # so producer admit/harvest can progress.
+                    await asyncio.sleep(0)
+
+            with timer.time("optim_step"):
+                if capture_initial_replay:
+                    local_initial, local_weight = agg_metrics.initial_replay_snapshot()
+                    initial_replay = self._validate_first_update_parity(
+                        local_initial,
+                        local_weight=local_weight,
+                    )
+                _gn, _stepped = self._clip_and_step(optimizer)
+                agg_metrics.grad_norms.append(_gn)
+
+            # A scaler-skipped step (inf/nan grads) left the weights unchanged —
+            # do not fold a non-update into EMA or the algorithm adapter.
+            if _stepped:
+                after_optimizer_step = getattr(self.algorithm, "after_optimizer_step", None)
+                if callable(after_optimizer_step):
+                    after_optimizer_step(self.model, self.state.global_step)
+
+                if ema is not None:
+                    trainable = [p for p in self.model.parameters() if p.requires_grad]
+                    ema.step(trainable, self.state.global_step)
+
+            self.state.global_step += 1
 
         reward_mean = pre_filter_reward_mean
         reward_std = pre_filter_reward_std
@@ -1818,9 +1828,6 @@ class OnlineTrainer(Trainer):
             phase_times=phase_times,
             initial_replay=initial_replay,
         )
-        self.state.total_reward += metrics.reward_mean
-        self.state.total_loss += metrics.loss
-
         if first_step_debug_record is not None:
             first_step_debug_record["driver_trainable_after_step"] = trainable_state_digest(
                 self.model
@@ -2002,7 +2009,9 @@ class OnlineTrainer(Trainer):
                 "no scheduler",
             )
 
-        observations = chunk_batch.observations
+        resolver = TrajectoryResolver.from_batch(chunk_batch)
+        primary_segment = resolver.primary_trainable_segment_name()
+        observations = resolver.role_value(primary_segment, "observation")
         x0 = (
             self._sft_latents[target_key]
             .unsqueeze(0)
@@ -2023,8 +2032,8 @@ class OnlineTrainer(Trainer):
                 "at the training sampling geometry",
             )
 
-        timesteps = TrajectoryResolver.from_batch(chunk_batch).tensor_value(
-            "denoise",
+        timesteps = resolver.tensor_value(
+            primary_segment,
             "timesteps",
         )
         num_steps = timesteps.shape[1] if timesteps.ndim > 1 else timesteps.shape[0]
@@ -2060,8 +2069,6 @@ class OnlineTrainer(Trainer):
         d: dict[str, Any] = {
             "step": self.state.step,
             "global_step": self.state.global_step,
-            "total_reward": self.state.total_reward,
-            "total_loss": self.state.total_loss,
         }
         if self._optimizer is not None:
             checkpoint_exporter = getattr(
@@ -2098,8 +2105,6 @@ class OnlineTrainer(Trainer):
 
         self.state.step = int(state.get("step", 0))
         self.state.global_step = int(state.get("global_step", 0))
-        self.state.total_reward = float(state.get("total_reward", 0.0))
-        self.state.total_loss = float(state.get("total_loss", 0.0))
 
         nonzero_checkpoint = max(self.state.step, self.state.global_step) > 0
         if (

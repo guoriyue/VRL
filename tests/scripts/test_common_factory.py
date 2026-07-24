@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+from dataclasses import replace
+from types import SimpleNamespace
+
 import pytest
 import torch
 from omegaconf import OmegaConf
@@ -11,17 +14,28 @@ from vrl.algorithms.grpo.continuous import (
     GRPOConfig,
     GRPOGuard,
 )
-from vrl.config.builders import build_configs
+from vrl.config.builders import RewardRuntimeConfig, build_configs
 from vrl.config.loading import load_config
 from vrl.config.precision import RolePrecision
+from vrl.config.schema import parse_config
 from vrl.families.registry import get_model_family_entry
 from vrl.ray.resources import resolve_distributed_resources
-from vrl.rollouts.collector.config import build_rollout_config_from_cfg
+from vrl.rollouts.collector.config import RolloutCollectorConfig
 from vrl.scripts.common.factory import (
     build_algorithm_and_evaluator_from_cfg,
     build_reward,
     validate_reward_memory_parking,
 )
+from vrl.scripts.common.online import OnlineRunConfig
+
+
+def _built_reward(
+    weights: dict[str, float],
+    kwargs: dict[str, dict],
+) -> SimpleNamespace:
+    return SimpleNamespace(
+        reward=RewardRuntimeConfig(weights=weights, kwargs=kwargs),
+    )
 
 
 def test_diffusion_grpo_evaluator_uses_resolved_rollout_sde_config() -> None:
@@ -33,7 +47,7 @@ def test_diffusion_grpo_evaluator_uses_resolved_rollout_sde_config() -> None:
             "rollout.sde.type=cps",
         ],
     )
-    collector_config = build_rollout_config_from_cfg(cfg)
+    collector_config = RolloutCollectorConfig.from_cfg(cfg)
 
     pair = build_algorithm_and_evaluator_from_cfg(
         cfg,
@@ -45,7 +59,7 @@ def test_diffusion_grpo_evaluator_uses_resolved_rollout_sde_config() -> None:
 
     assert pair.evaluator.noise_level == 0.37
     assert pair.evaluator.sde_type == "cps"
-    assert collector_config.values["denoise_mode"] == "native"
+    assert collector_config.request_sampling["denoise_mode"] == "native"
 
 
 @pytest.mark.parametrize(
@@ -69,7 +83,7 @@ def test_diffusion_factory_accepts_each_kind_exact_config_type(
         cfg,
         family_entry=get_model_family_entry("sd3_5"),
         built=build_configs(cfg),
-        collector_config=build_rollout_config_from_cfg(cfg),
+        collector_config=RolloutCollectorConfig.from_cfg(cfg),
         scheduler=object(),
     )
 
@@ -83,7 +97,7 @@ def test_chunk_autoregressive_factory_builds_grouped_grpo_evaluator() -> None:
         cfg,
         family_entry=get_model_family_entry("causvid"),
         built=build_configs(cfg),
-        collector_config=build_rollout_config_from_cfg(cfg),
+        collector_config=RolloutCollectorConfig.from_cfg(cfg),
     )
 
     assert type(pair.algorithm) is GRPO
@@ -98,7 +112,7 @@ def test_generation_only_chunk_family_fails_before_algorithm_construction() -> N
             cfg,
             family_entry=get_model_family_entry("magi_1"),
             built=build_configs(cfg),
-            collector_config=build_rollout_config_from_cfg(cfg),
+            collector_config=RolloutCollectorConfig.from_cfg(cfg),
         )
 
 
@@ -124,7 +138,7 @@ def test_chunk_autoregressive_factory_rejects_undefined_algorithm_semantics(
             cfg,
             family_entry=get_model_family_entry("causvid"),
             built=build_configs(cfg),
-            collector_config=build_rollout_config_from_cfg(cfg),
+            collector_config=RolloutCollectorConfig.from_cfg(cfg),
         )
 
 
@@ -139,21 +153,21 @@ def test_chunk_autoregressive_factory_rejects_non_fp32_transition_math() -> None
             cfg,
             family_entry=get_model_family_entry("causvid"),
             built=build_configs(cfg),
-            collector_config=build_rollout_config_from_cfg(cfg),
+            collector_config=RolloutCollectorConfig.from_cfg(cfg),
         )
 
 
 def test_chunk_autoregressive_factory_rejects_full_sequence_sft_regularizer() -> None:
     cfg = load_config("experiment/sd3_5/online_grpo_ocr")
     built = build_configs(cfg)
-    built["algorithm"].sft_weight = 0.1
+    built.algorithm.sft_weight = 0.1
 
     with pytest.raises(ValueError, match=r"grouped causal-chunk replay.*sft_weight"):
         build_algorithm_and_evaluator_from_cfg(
             cfg,
             family_entry=get_model_family_entry("causvid"),
             built=built,
-            collector_config=build_rollout_config_from_cfg(cfg),
+            collector_config=RolloutCollectorConfig.from_cfg(cfg),
         )
 
 
@@ -175,25 +189,36 @@ def test_diffusion_factory_rejects_a_sibling_config_type(
         overrides=[f"/recipe/online={recipe}"],
     )
     built = build_configs(cfg)
-    built["algorithm"] = wrong_config
+    built = replace(built, algorithm=wrong_config)
 
     with pytest.raises(TypeError, match=expected_name):
         build_algorithm_and_evaluator_from_cfg(
             cfg,
             family_entry=get_model_family_entry("sd3_5"),
             built=built,
-            collector_config=build_rollout_config_from_cfg(cfg),
+            collector_config=RolloutCollectorConfig.from_cfg(cfg),
             scheduler=object(),
         )
 
 
-def test_wan_empty_lora_preserves_base_policy_initially() -> None:
+def test_wan_empty_lora_preserves_base_policy_initially(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """Checks Wan empty LoRA preserves base policy initially."""
+    monkeypatch.setattr(
+        "diffusers.DiffusionPipeline.load_config",
+        lambda *_args, **_kwargs: {
+            "boundary_ratio": None,
+            "expand_timesteps": False,
+        },
+    )
     cfg = load_config("experiment/wan_2_1/online_grpo_physics")
+    built = build_configs(cfg)
 
     build = get_model_family_entry("wan_2_1").resolve_model_build(
-        cfg,
+        built.root,
         torch.device("cpu"),
+        precision=built.precision,
     )
 
     assert build.use_lora is True
@@ -229,7 +254,11 @@ def test_sana_family_defaults_to_native_fp16() -> None:
     cfg = load_config("experiment/sana/online_grpo_aesthetic")
     built = build_configs(cfg)
     entry = get_model_family_entry("sana")
-    build = entry.resolve_model_build(cfg, torch.device("cpu"))
+    build = entry.resolve_model_build(
+        built.root,
+        torch.device("cpu"),
+        precision=built.precision,
+    )
 
     assert cfg.model.get("dtype") is None
     expected = RolePrecision(
@@ -237,12 +266,20 @@ def test_sana_family_defaults_to_native_fp16() -> None:
         float32_precision="ieee",
         outer_autocast=False,
     )
-    assert built["trainer"].train_precision == built["trainer"].rollout_precision
-    assert built["trainer"].replay_samples_per_chunk == built["trainer"].samples_per_chunk
+    assert built.trainer.train_precision == built.trainer.rollout_precision
+    assert built.root.rollout is not None
+    assert (
+        built.trainer.batch_plan.replay_samples_per_chunk == built.root.rollout.samples_per_chunk
+    )
     assert build.parameter_dtype is torch.float16
     assert build.precision == expected
     assert (
-        entry.resolve_model_build(cfg, torch.device("cpu"), for_rollout=False).precision
+        entry.resolve_model_build(
+            built.root,
+            torch.device("cpu"),
+            precision=built.precision,
+            for_rollout=False,
+        ).precision
         == expected
     )
     assert build.rollout is not None
@@ -255,10 +292,12 @@ def test_sana_role_precision_follows_yaml(role: str, dtype: str) -> None:
     """The selected YAML role owns SANA's transformer execution policy."""
     cfg = load_config("experiment/sana/online_grpo_aesthetic")
     cfg.precision[role].dtype = dtype
+    built = build_configs(cfg)
 
     build = get_model_family_entry("sana").resolve_model_build(
-        cfg,
+        built.root,
         torch.device("cpu"),
+        precision=built.precision,
         for_rollout=role == "rollout",
     )
 
@@ -273,7 +312,9 @@ def test_sana_role_precision_follows_yaml(role: str, dtype: str) -> None:
 def test_sana_fullparam_pilot_disables_tf32_and_gates_backend_drift() -> None:
     """The strict first update must not consume clipping on backend mismatch."""
     cfg = load_config("experiment/sana/online_grpo_aesthetic_fullparam")
-    trainer = build_configs(cfg)["trainer"]
+    built = build_configs(cfg)
+    trainer = built.trainer
+    run = OnlineRunConfig.from_root(built.root)
 
     assert cfg.model.use_lora is False
     assert cfg.precision.float32_precision == "ieee"
@@ -282,13 +323,14 @@ def test_sana_fullparam_pilot_disables_tf32_and_gates_backend_drift() -> None:
     assert trainer.optim.optim_8bit is True
     assert trainer.ema.enable is False
     assert trainer.ppo_epochs == 1
-    assert trainer.gradient_accumulation_steps == 1
-    assert trainer.prompts_per_batch == 1
-    assert trainer.n_samples_per_prompt == 8
-    assert trainer.samples_per_chunk == 1
-    assert trainer.replay_samples_per_chunk == 1
-    assert trainer.total_epochs == 5
-    assert trainer.save_freq == 1
+    assert trainer.batch_plan.gradient_accumulation_steps == 1
+    assert trainer.batch_plan.prompts_per_batch == 1
+    assert trainer.batch_plan.n_samples_per_prompt == 8
+    assert built.root.rollout is not None
+    assert built.root.rollout.samples_per_chunk == 1
+    assert trainer.batch_plan.replay_samples_per_chunk == 1
+    assert run.total_epochs == 5
+    assert run.save_freq == 1
     assert trainer.debug.first_step is True
     assert trainer.debug.max_abs_logprob_diff == pytest.approx(1.0e-6)
     assert trainer.precision_drift_guard.mode == "fail"
@@ -301,11 +343,13 @@ def test_sana_fullparam_long_is_fresh_and_pins_reward_revisions() -> None:
     cfg = load_config("experiment/sana/online_grpo_aesthetic_fullparam_long")
     cfg.distributed.resources.visible_devices = [0]
     built = build_configs(cfg)
-    trainer = built["trainer"]
+    trainer = built.trainer
+    run = OnlineRunConfig.from_root(built.root)
 
-    assert trainer.resume_from == ""
-    assert trainer.total_epochs == 300
-    assert trainer.save_freq == 5
+    assert built.resume.checkpoint_path is None
+    assert built.resume.strict is True
+    assert run.total_epochs == 300
+    assert run.save_freq == 5
     assert trainer.output_dir == "outputs/sana_aesthetic_fullparam_long"
     assert cfg.model.use_lora is False
     assert cfg.reward.kwargs.aesthetic.model_revision == (
@@ -341,10 +385,11 @@ def test_sana_experiments_pin_the_validated_symmetric_chunk_shape(
     experiment: str,
 ) -> None:
     """The measured 8/8 shape is a parity and memory contract, not a tuning default."""
-    trainer = build_configs(load_config(experiment))["trainer"]
+    built = build_configs(load_config(experiment))
 
-    assert trainer.samples_per_chunk == 8
-    assert trainer.replay_samples_per_chunk == 8
+    assert built.root.rollout is not None
+    assert built.root.rollout.samples_per_chunk == 8
+    assert built.trainer.batch_plan.replay_samples_per_chunk == 8
 
 
 @pytest.mark.parametrize("configured_dtype", ["fp16", "bf16"])
@@ -355,31 +400,27 @@ def test_sana_rejects_redundant_or_conflicting_model_dtype(
     cfg = load_config("experiment/sana/online_grpo_aesthetic")
     cfg.model.dtype = configured_dtype
 
-    with pytest.raises(ValueError, match=r"model\.dtype is not configurable.*sana"):
-        get_model_family_entry("sana").resolve_model_build(
-            cfg,
-            torch.device("cpu"),
-        )
+    with pytest.raises(ValueError, match=r"unknown model\.dtype"):
+        parse_config(cfg)
 
 
 def test_ordinary_diffusion_family_rejects_duplicate_model_dtype() -> None:
     cfg = load_config("experiment/sd3_5/online_grpo_ocr")
     cfg.model.dtype = "fp16"
 
-    with pytest.raises(ValueError, match=r"model\.dtype.*top-level precision"):
-        get_model_family_entry("sd3_5").resolve_model_build(
-            cfg,
-            torch.device("cpu"),
-        )
+    with pytest.raises(ValueError, match=r"unknown model\.dtype"):
+        parse_config(cfg)
 
 
 @pytest.mark.parametrize("dtype", ["bf16", "fp32"])
 def test_sana_direct_tool_override_changes_storage_only(dtype: str) -> None:
     cfg = load_config("experiment/sana/online_grpo_aesthetic")
+    built = build_configs(cfg)
 
     build = get_model_family_entry("sana").resolve_model_build(
-        cfg,
+        built.root,
         torch.device("cpu"),
+        precision=built.precision,
         parameter_dtype_override=dtype,
     )
 
@@ -406,7 +447,7 @@ def test_token_objective_rejects_unused_math_precision_override() -> None:
             cfg,
             built=built,
             family_entry=get_model_family_entry("emu3"),
-            collector_config=build_rollout_config_from_cfg(cfg),
+            collector_config=RolloutCollectorConfig.from_cfg(cfg),
         )
 
 
@@ -436,7 +477,7 @@ def test_reward_factory_passes_the_selected_local_device(monkeypatch) -> None:
     monkeypatch.setattr(MultiReward, "from_dict", classmethod(fake_from_dict))
 
     reward = build_reward(
-        built={"reward": ({"fake": 1.0}, {"fake": {"marker": True}})},
+        built=_built_reward({"fake": 1.0}, {"fake": {"marker": True}}),
         resources=None,
         device="cuda:2",
     )
@@ -500,20 +541,18 @@ def test_http_reward_accepts_torchrun_rank_local_device(monkeypatch) -> None:
     )
 
     build_reward(
-        built={
-            "reward": (
-                {"unified_reward_video": 1.0},
-                {
-                    "unified_reward_video": {
-                        "inference": {
-                            "kind": "http",
-                            "endpoint": "http://127.0.0.1:8300",
-                            "expected_model": "unified-reward-robotics",
-                        },
+        built=_built_reward(
+            {"unified_reward_video": 1.0},
+            {
+                "unified_reward_video": {
+                    "inference": {
+                        "kind": "http",
+                        "endpoint": "http://127.0.0.1:8300",
+                        "expected_model": "unified-reward-robotics",
                     },
                 },
-            ),
-        },
+            },
+        ),
         resources=resolve_distributed_resources(cfg),
         device="cuda:0",
     )
@@ -525,7 +564,7 @@ def test_reward_factory_rejects_an_all_zero_objective() -> None:
     """Checks observation-only components cannot replace the training objective."""
     with pytest.raises(ValueError, match="At least one reward component"):
         build_reward(
-            built={"reward": ({"pickscore": 0.0}, {})},
+            built=_built_reward({"pickscore": 0.0}, {}),
             resources=None,
             device="cpu",
         )
@@ -567,7 +606,7 @@ def test_shared_reward_capability_fails_before_component_construction(monkeypatc
 
     with pytest.raises(ValueError, match="geneval"):
         build_reward(
-            built={"reward": ({"geneval": 1.0}, {"geneval": {}})},
+            built=_built_reward({"geneval": 1.0}, {"geneval": {}}),
             resources=resolve_distributed_resources(cfg),
             device="cuda:0",
         )
@@ -602,7 +641,7 @@ def test_shared_reward_topology_automatically_enables_parking(monkeypatch) -> No
     cfg = _shared_reward_cfg("aesthetic")
 
     reward = build_reward(
-        built={"reward": ({"aesthetic": 1.0}, {"aesthetic": {}})},
+        built=_built_reward({"aesthetic": 1.0}, {"aesthetic": {}}),
         resources=resolve_distributed_resources(cfg),
         device="cuda:0",
     )
@@ -641,7 +680,7 @@ def test_shared_reward_accepts_rank_local_cuda_after_physical_placement(
     cfg.distributed.resources.rollout.devices = [2]
 
     reward = build_reward(
-        built={"reward": ({"aesthetic": 1.0}, {"aesthetic": {}})},
+        built=_built_reward({"aesthetic": 1.0}, {"aesthetic": {}}),
         resources=resolve_distributed_resources(cfg),
         device="cuda:0",
     )
@@ -657,12 +696,10 @@ def test_reward_preflight_rejects_yaml_lifecycle_override() -> None:
     """Resource topology is the only public reward lifecycle source."""
 
     cfg = _shared_reward_cfg("aesthetic")
-    built = {
-        "reward": (
-            {"aesthetic": 1.0},
-            {"aesthetic": {"sleep_offload": True}},
-        ),
-    }
+    built = _built_reward(
+        {"aesthetic": 1.0},
+        {"aesthetic": {"sleep_offload": True}},
+    )
     with pytest.raises(ValueError, match="sleep_offload is topology-derived"):
         validate_reward_memory_parking(
             resources=resolve_distributed_resources(cfg),
@@ -679,7 +716,7 @@ def test_factory_rejects_driver_device_outside_reward_resource_topology() -> Non
 
     with pytest.raises(ValueError, match="execution-device source of truth"):
         build_reward(
-            built={"reward": ({"aesthetic": 1.0}, {"aesthetic": {}})},
+            built=_built_reward({"aesthetic": 1.0}, {"aesthetic": {}}),
             resources=resolve_distributed_resources(cfg),
             device="cpu",
         )
@@ -704,7 +741,7 @@ def test_factory_rejects_driver_device_outside_reward_resource_topology() -> Non
     )
     with pytest.raises(ValueError, match="execution-device source of truth"):
         build_reward(
-            built={"reward": ({"ocr": 1.0}, {"ocr": {}})},
+            built=_built_reward({"ocr": 1.0}, {"ocr": {}}),
             resources=resolve_distributed_resources(cpu_cfg),
             device="cuda:0",
         )

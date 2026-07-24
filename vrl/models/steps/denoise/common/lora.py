@@ -1,24 +1,26 @@
 """Shared PEFT LoRA attach logic for diffusion family models.
 
 Five families carried near-identical copies of ``apply_lora``; the PEFT call
-convention (PeftModel.from_pretrained for resume vs LoraConfig+get_peft_model
-for fresh adapters) is family-agnostic, so it lives here once. Families only
-override the small hooks that actually differ.
+convention (validated saved adapter for warm start vs
+LoraConfig+get_peft_model for fresh adapters) is family-agnostic, so it lives
+here once. Families only override the small hooks that actually differ.
 
 The DiffusionNFT previous-policy adapter primitives (``build_lora_config`` /
-``copy_adapter_weights`` / ``freeze_adapter_params``) also live here: they are
-pure PEFT operations with no family specifics, shared by both cosmos/predict2.5
-(its custom ``apply_lora``) and flux (its ``attach_previous_policy_adapter`` /
-``sync_previous_policy_adapter`` methods). Keeping one copy here is the same
-de-duplication rationale as the attach logic above — a second copy would rot the
-moment the PEFT param-naming convention shifts under one family but not the other.
+``copy_adapter_weights`` / ``freeze_checkpoint_owned_adapter_params``) also
+live here: they are pure PEFT operations with no family specifics, shared by
+both cosmos/predict2.5 (its custom ``apply_lora``) and flux (its
+``attach_previous_policy_adapter`` / ``sync_previous_policy_adapter`` methods).
+Keeping one copy here is the same de-duplication rationale as the attach logic
+above — a second copy would rot the moment the PEFT param-naming convention
+shifts under one family but not the other.
 """
 
 from __future__ import annotations
 
 from typing import Any
 
-from vrl.models.interfaces.runtime import ModelBuild
+from vrl.models.interfaces.runtime import ModelBuild, register_checkpoint_owned_state
+from vrl.models.peft_adapter import load_trainable_lora_adapter
 
 
 class LoraModelMixin:
@@ -52,7 +54,7 @@ class LoraModelMixin:
 
     def apply_lora(self, build: ModelBuild) -> None:
         """Wrap the family transformer with PEFT LoRA per ``build.lora_*``."""
-        from peft import LoraConfig, PeftModel, get_peft_model
+        from peft import LoraConfig, get_peft_model
 
         transformer = self._lora_transformer()
         transformer.requires_grad_(False)
@@ -76,22 +78,28 @@ class LoraModelMixin:
             else:
                 transformer.to(self.device, dtype=dtype)
 
+        lora_config = build.lora
+        if lora_config is None:
+            raise ValueError("LoRA runtime build requires model.lora configuration")
+
         lora_path = build.lora_path
         if lora_path:
-            wrapped = PeftModel.from_pretrained(
+            wrapped = load_trainable_lora_adapter(
                 transformer,
                 lora_path,
-                is_trainable=True,
+                expected_rank=lora_config["rank"],
+                expected_alpha=lora_config["alpha"],
+                expected_dropout=lora_config.get("dropout", 0.0),
+                expected_target_modules=lora_config["target_modules"],
             )
             wrapped.set_adapter("default")
             self._set_transformer(wrapped)
             return
 
-        lora_config = build.lora
-        assert lora_config is not None
         cfg = LoraConfig(
             r=lora_config["rank"],
             lora_alpha=lora_config["alpha"],
+            lora_dropout=lora_config.get("dropout", 0.0),
             init_lora_weights=lora_config.get(
                 "init_lora_weights",
                 self._lora_default_init_weights,
@@ -115,6 +123,7 @@ def build_lora_config(lora_config: Any) -> Any:
     return LoraConfig(
         r=lora_config["rank"],
         lora_alpha=lora_config["alpha"],
+        lora_dropout=lora_config.get("dropout", 0.0),
         init_lora_weights="gaussian",
         target_modules=lora_config["target_modules"],
     )
@@ -159,8 +168,8 @@ def copy_adapter_weights(
         )
 
 
-def freeze_adapter_params(module: Any, adapter: str) -> None:
-    """Set ``requires_grad=False`` on every parameter of the named PEFT adapter.
+def freeze_checkpoint_owned_adapter_params(module: Any, adapter: str) -> None:
+    """Freeze a mutable PEFT adapter and register it for exact checkpoint resume.
 
     Used for NFT's ``previous`` adapter: it is only forward-evaluated under
     no_grad and refreshed by weight copy (``sync_previous_policy_adapter``),
@@ -172,20 +181,33 @@ def freeze_adapter_params(module: Any, adapter: str) -> None:
     """
 
     marker = f".{adapter}."
-    frozen = 0
-    for name, param in module.named_parameters():
-        if marker in name:
-            param.requires_grad_(False)
-            frozen += 1
-    if frozen == 0:
+    matched = [
+        (name, parameter)
+        for name, parameter in module.named_parameters(remove_duplicate=False)
+        if marker in name
+    ]
+    if not matched:
         raise RuntimeError(
             f"no parameters found for adapter {adapter!r} to freeze",
         )
+    prior_requires_grad = [parameter.requires_grad for _, parameter in matched]
+    try:
+        for _, parameter in matched:
+            parameter.requires_grad_(False)
+        register_checkpoint_owned_state(module, (name for name, _ in matched))
+    except BaseException:
+        for (_, parameter), requires_grad in zip(
+            matched,
+            prior_requires_grad,
+            strict=True,
+        ):
+            parameter.requires_grad_(requires_grad)
+        raise
 
 
 __all__ = [
     "LoraModelMixin",
     "build_lora_config",
     "copy_adapter_weights",
-    "freeze_adapter_params",
+    "freeze_checkpoint_owned_adapter_params",
 ]

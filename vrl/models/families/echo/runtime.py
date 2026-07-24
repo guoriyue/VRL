@@ -32,6 +32,9 @@ logger = init_logger(__name__)
 def build_echo_replay_runtime_bundle(build: ModelBuild) -> RuntimeBundle:
     """Build the trainer replay bundle: Echo's velocity transformer only."""
 
+    from vrl.models.families.echo.config import resolve_echo_video_dimensions
+
+    video_height, video_width = resolve_echo_video_dimensions(build)
     from diffusers import FlowMatchEulerDiscreteScheduler
 
     from vrl.models.families.echo.model import (
@@ -47,7 +50,6 @@ def build_echo_replay_runtime_bundle(build: ModelBuild) -> RuntimeBundle:
 
     dtype = build.parameter_dtype
     device = torch.device(build.device) if build.device is not None else torch.device("cpu")
-    sampling = getattr(build, "sampling_config", None) or {}
     gemma_path = (build.model_config or {}).get("gemma_path")
     if not gemma_path:
         raise ValueError(
@@ -64,8 +66,8 @@ def build_echo_replay_runtime_bundle(build: ModelBuild) -> RuntimeBundle:
         ),
         device=device,
         dtype=dtype,
-        video_height=int(sampling.get("height", 512)),
-        video_width=int(sampling.get("width", 768)),
+        video_height=video_height,
+        video_width=video_width,
     )
     # Same flow-matching scheduler as the rollout side (model.py from_build): Echo's
     # released DMD few-step sampler is bypassed; RL drives the velocity field with
@@ -96,11 +98,10 @@ class EchoChunkExecutor(DiffusionChunkExecutorBase):
 
     family: str = "echo"
     task: str = "t2v"
-    # Echo's default release resolution is 1280x736, 241 frames @ 24fps; the RL
-    # smoke/proof runs override these down for single-card feasibility.
+    # Frame count and FPS remain request behavior. The spatial grid is instead
+    # fixed when the Echo wrapper is constructed and checked below.
     default_num_frames: int = 25
     default_fps: int | None = 24
-    default_max_sequence_length: int = 512
 
     def __init__(
         self,
@@ -111,6 +112,19 @@ class EchoChunkExecutor(DiffusionChunkExecutorBase):
         self.model = model
         self.default_samples_per_chunk = max(1, int(samples_per_chunk))
 
+    def parse_sampling_params(self, request: GenerationRequest) -> DiffusionSamplingParams:
+        """Require requests to use the wrapper's fixed latent-grid dimensions."""
+
+        params = super().parse_sampling_params(request)
+        dimensions = (params.base.height, params.base.width)
+        expected = (self.model.video_height, self.model.video_width)
+        if dimensions != expected:
+            raise ValueError(
+                f"Echo sampling dimensions {dimensions[0]}x{dimensions[1]} must equal "
+                f"the model construction dimensions {expected[0]}x{expected[1]}",
+            )
+        return params
+
     def encode_prompt_for_chunk(
         self,
         *,
@@ -119,8 +133,11 @@ class EchoChunkExecutor(DiffusionChunkExecutorBase):
         params: DiffusionSamplingParams,
         chunk: SampleChunk,
     ) -> dict[str, Any]:
-        del generation_request, video_request, params
-        return self.model.encode_prompt(chunk.prompt)
+        del generation_request, params
+        return self.model.encode_prompt(
+            chunk.prompt,
+            video_request.negative_prompt or None,
+        )
 
 
 __all__ = [

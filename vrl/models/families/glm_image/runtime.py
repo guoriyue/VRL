@@ -9,27 +9,14 @@ import torch
 from vrl.generation.bindings.token_autoregressive import ARChunkInputs, ARDiscreteChunkExecutorBase
 from vrl.generation.execution.chunks import SampleChunk
 from vrl.generation.types import GenerationRequest
-from vrl.models.families.glm_image.model import (
-    glm_image_token_num,
-)
 from vrl.models.families.glm_image.runner import GlmImageTokenRunner
 from vrl.models.interfaces.runtime import ModelBuild
 from vrl.models.steps.token.build import token_model_config_base
 
-# GLM-Image LoRA defaults; applied at read time so the carried ``model.lora``
-# block only needs the values it overrides (same shape as the emu3 stub).
-_GLM_IMAGE_LORA_DEFAULTS: dict[str, Any] = {
-    "rank": 32,
-    "alpha": 64,
-    "target_modules": ("q_proj", "v_proj"),
-    "dropout": 0.0,
-    "init": "gaussian",
-}
-
 
 def glm_image_config_from_build(build: ModelBuild) -> dict[str, Any]:
     sampling_config = build.sampling_config or {}
-    config = token_model_config_base(build, _GLM_IMAGE_LORA_DEFAULTS)
+    config = token_model_config_base(build)
 
     for key in (
         "temperature",
@@ -77,8 +64,6 @@ class GlmImageChunkExecutor(ARDiscreteChunkExecutorBase):
     """
 
     family: str = "glm_image"
-    _runner_cls = GlmImageTokenRunner
-    _runner_attention_family = "glm_image"
     task: str = "ar_t2i"
 
     def __init__(self, model: Any) -> None:
@@ -144,10 +129,7 @@ class GlmImageChunkExecutor(ARDiscreteChunkExecutorBase):
         )
         cond_embeds = self._embed(prompt_ids)
 
-        total_token_num = glm_image_token_num(image_height, image_width)
         return ARChunkInputs(
-            max_new_tokens=total_token_num,
-            decode_dtype=str(cond_embeds.dtype),
             init_args=(cond_embeds, prompt_mask),
             init_kwargs={
                 "token_h": token_h,
@@ -172,10 +154,11 @@ class GlmImageChunkExecutor(ARDiscreteChunkExecutorBase):
             uncond_attention_mask=torch.zeros_like(prompt_mask),
             context={
                 "temperature": temperature,
-                "top_p": top_p,
                 "image_height": image_height,
                 "image_width": image_width,
-                "image_token_num": total_token_num,
+                # Display/provenance-only: OnlineTrainer writes the behavior
+                # sampler policy into its first-step ``rollout_context`` record.
+                "top_p": top_p,
             },
             # Every generated position is a free codebook draw, so the
             # default all-ones token mask is correct.

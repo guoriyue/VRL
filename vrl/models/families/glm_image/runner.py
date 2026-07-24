@@ -124,20 +124,15 @@ class GlmImageTokenRunner(ARDiscreteTokenRunner):
                 ),
                 temperature=temp,
                 top_p=float(nucleus),
-                total_token_num=int(total_token_num),
                 base_position_schedule=base_schedule,
                 prompt_valid_lens=prompt_valid_lens,
                 kv_rows=kv_rows,
             ),
-            cache_lanes={},
+            row_count=batch_size,
+            step_count=total_token_num,
             row_lanes={
                 "cond_last_hidden": last_hidden,
                 "cond_attn": cond_attention_mask,
-            },
-            cache_lane_owners={},
-            row_lane_owners={
-                "cond_last_hidden": "glm_image.cond_last_hidden",
-                "cond_attn": "glm_image.cond_attn",
             },
         )
 
@@ -169,7 +164,7 @@ class GlmImageTokenRunner(ARDiscreteTokenRunner):
         self,
         state: ARDiscreteTokenState,
         batch: TokenStepBatch,
-    ) -> tuple[dict[str, Any], dict[str, Any]]:
+    ) -> dict[str, Any]:
         assert isinstance(state, GlmImageARState)
         row_indices = batch.row_indices
         position = batch.position
@@ -180,8 +175,8 @@ class GlmImageTokenRunner(ARDiscreteTokenRunner):
         state.logprobs[rows, position] = lp
 
         if position + 1 >= state.total_token_num:
-            return {}, {}
-        return {}, self._advance_after_sample(state, batch=batch, sampled=sampled)
+            return {}
+        return self._advance_after_sample(state, batch=batch, sampled=sampled)
 
     def _sample_image_token(
         self,

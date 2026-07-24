@@ -51,7 +51,9 @@ def _core(*, executor, uses_slots: bool, policy_version: int | None):
     core._policy_version = policy_version
     core._memory_parking = WorkerMemoryParking(
         "w0",
-        GenerationRuntimeLaunchContract(family="sd3_5", model_build={}),
+        GenerationRuntimeLaunchContract(
+            family="sd3_5", model_build={}, expected_model_identity={"schema": "test"}
+        ),
     )
     core.load_policy = lambda: None  # type: ignore[method-assign]
     return core

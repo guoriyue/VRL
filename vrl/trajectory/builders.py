@@ -11,7 +11,6 @@ from vrl.trajectory.types import (
     ReplayInput,
     TrajectoryAxis,
     TrajectoryBatch,
-    TrajectoryMetrics,
     TrajectorySegment,
     TrajectoryTensor,
 )
@@ -51,7 +50,6 @@ class _TrajectoryBatchBuilder:
 
         batch_size = len(self.sample_rows)
         timestep_count = int(old_log_prob.shape[1])
-        device = getattr(old_log_prob, "device", None)
         tensors: dict[str, TrajectoryTensor] = {
             "observations": TrajectoryTensor(
                 "observations",
@@ -111,7 +109,6 @@ class _TrajectoryBatchBuilder:
             family=self.request.family,
             task=self.request.task,
             sample_rows=list(self.sample_rows),
-            group_ids=self._prompt_group_ids(device=device),
             axes={
                 "sample": TrajectoryAxis("sample", "sample", batch_size),
                 "denoise": TrajectoryAxis("denoise", "denoise_step", timestep_count),
@@ -132,6 +129,7 @@ class _TrajectoryBatchBuilder:
                     },
                 )
             },
+            primary_segment="denoise",
             reward_views={
                 reward_modality: RewardView(
                     name=reward_modality,
@@ -139,11 +137,6 @@ class _TrajectoryBatchBuilder:
                     metadata={"output_ref": "GenerationOutput.output"},
                 )
             },
-            metrics=TrajectoryMetrics(
-                num_samples=batch_size,
-                axis_lengths={"sample": batch_size, "denoise": timestep_count},
-                values={"num_steps": timestep_count},
-            ),
             context=self._serializable_context(context),
         )
         return TrajectoryValidator(trajectory).validate_batch()
@@ -265,13 +258,11 @@ class _TrajectoryBatchBuilder:
             tensor_ref("denoise", "finalized_chunk_latents"),
             *(tensor_ref("denoise", name) for name in replay_tensor_names),
         )
-        device = getattr(old_log_prob, "device", None)
         trajectory = TrajectoryBatch(
             request_id=self.request.request_id,
             family=self.request.family,
             task=self.request.task,
             sample_rows=list(self.sample_rows),
-            group_ids=self._prompt_group_ids(device=device),
             axes={
                 "sample": TrajectoryAxis("sample", "sample", batch_size),
                 "temporal_chunk": TrajectoryAxis(
@@ -305,6 +296,7 @@ class _TrajectoryBatchBuilder:
                     },
                 )
             },
+            primary_segment="denoise",
             reward_views={
                 reward_modality: RewardView(
                     name=reward_modality,
@@ -312,22 +304,7 @@ class _TrajectoryBatchBuilder:
                     metadata={"output_ref": "GenerationOutput.output"},
                 )
             },
-            metrics=TrajectoryMetrics(
-                num_samples=batch_size,
-                axis_lengths={
-                    "sample": batch_size,
-                    "temporal_chunk": chunk_count,
-                    "denoise_transition": transition_count,
-                },
-                values={
-                    "num_temporal_chunks": chunk_count,
-                    "num_denoise_transitions": transition_count,
-                },
-            ),
-            context={
-                **self._serializable_context(context),
-                "trajectory_mode": "trainable_chunk_denoise",
-            },
+            context=self._serializable_context(context),
         )
         return TrajectoryValidator(trajectory).validate_batch()
 
@@ -355,13 +332,11 @@ class _TrajectoryBatchBuilder:
                 f"output has {output_rows} rows, expected {batch_size}",
             )
         reward_modality = self._reward_modality_for_task()
-        device = getattr(output, "device", None)
         trajectory = TrajectoryBatch(
             request_id=self.request.request_id,
             family=self.request.family,
             task=self.request.task,
             sample_rows=list(self.sample_rows),
-            group_ids=self._prompt_group_ids(device=device),
             axes={
                 "sample": TrajectoryAxis("sample", "sample", batch_size),
                 "temporal_chunk": TrajectoryAxis(
@@ -388,6 +363,7 @@ class _TrajectoryBatchBuilder:
                     metadata={"temporal_chunk_axis": "temporal_chunk"},
                 )
             },
+            primary_segment=None,
             reward_views={
                 reward_modality: RewardView(
                     name=reward_modality,
@@ -395,18 +371,7 @@ class _TrajectoryBatchBuilder:
                     value_range="unit",
                 )
             },
-            metrics=TrajectoryMetrics(
-                num_samples=batch_size,
-                axis_lengths={
-                    "sample": batch_size,
-                    "temporal_chunk": temporal_chunk_count,
-                },
-                values={"num_temporal_chunks": temporal_chunk_count},
-            ),
-            context={
-                **self._serializable_context(context),
-                "trajectory_mode": "generation_only",
-            },
+            context=self._serializable_context(context),
         )
         return TrajectoryValidator(trajectory).validate_batch()
 
@@ -426,13 +391,11 @@ class _TrajectoryBatchBuilder:
 
         batch_size = len(self.sample_rows)
         token_count = int(token_ids.shape[1])
-        device = getattr(token_ids, "device", None)
         trajectory = TrajectoryBatch(
             request_id=self.request.request_id,
             family=self.request.family,
             task=self.request.task,
             sample_rows=list(self.sample_rows),
-            group_ids=self._prompt_group_ids(device=device),
             axes={
                 "sample": TrajectoryAxis("sample", "sample", batch_size),
                 "token": TrajectoryAxis("token", "discrete_token", token_count),
@@ -502,6 +465,7 @@ class _TrajectoryBatchBuilder:
                     },
                 )
             },
+            primary_segment="image_tokens",
             reward_views={
                 "image": RewardView(
                     name="image",
@@ -509,11 +473,6 @@ class _TrajectoryBatchBuilder:
                     metadata={"output_ref": "GenerationOutput.output"},
                 )
             },
-            metrics=TrajectoryMetrics(
-                num_samples=batch_size,
-                axis_lengths={"sample": batch_size, "token": token_count},
-                values={"num_tokens": token_count},
-            ),
             context=self._serializable_context(context),
         )
         return TrajectoryValidator(trajectory).validate_batch()
@@ -529,14 +488,12 @@ class _TrajectoryBatchBuilder:
         prompt_attention_mask: Any,
         uncond_input_ids: Any,
         uncond_attention_mask: Any,
-        images_for_reward: Any | None,
         context: dict[str, Any],
     ) -> TrajectoryBatch:
         """Build a continuous image-token trajectory from NextStep rollout tensors."""
 
         batch_size = len(self.sample_rows)
         token_count = int(token_log_probs.shape[1])
-        device = getattr(token_log_probs, "device", None)
         segments: dict[str, TrajectorySegment] = {
             "image_tokens": TrajectorySegment(
                 name="image_tokens",
@@ -609,48 +566,24 @@ class _TrajectoryBatchBuilder:
                 },
             )
         }
-        reward_refs: tuple[str, ...] = ()
-        if images_for_reward is not None:
-            segments["decoded"] = TrajectorySegment(
-                name="decoded",
-                modality="image",
-                trainable=False,
-                distribution="deterministic",
-                tensors={
-                    "images_for_reward": TrajectoryTensor(
-                        "images_for_reward",
-                        images_for_reward,
-                        ("sample",),
-                        "replay_input",
-                    )
-                },
-            )
-            reward_refs = (tensor_ref("decoded", "images_for_reward"),)
-
         trajectory = TrajectoryBatch(
             request_id=self.request.request_id,
             family=self.request.family,
             task=self.request.task,
             sample_rows=list(self.sample_rows),
-            group_ids=self._prompt_group_ids(device=device),
             axes={
                 "sample": TrajectoryAxis("sample", "sample", batch_size),
                 "token": TrajectoryAxis("token", "continuous_token", token_count),
             },
             segments=segments,
+            primary_segment="image_tokens",
             reward_views={
                 "image": RewardView(
                     name="image",
-                    tensor_refs=reward_refs,
                     value_range="tanh",
                     metadata={"output_ref": "GenerationOutput.output"},
                 )
             },
-            metrics=TrajectoryMetrics(
-                num_samples=batch_size,
-                axis_lengths={"sample": batch_size, "token": token_count},
-                values={"num_tokens": token_count},
-            ),
             context=self._serializable_context(context),
         )
         return TrajectoryValidator(trajectory).validate_batch()
@@ -659,9 +592,7 @@ class _TrajectoryBatchBuilder:
         self,
         *,
         segments: dict[str, dict[str, Any]],
-        decoded_outputs: dict[str, Any],
         primary_segment: str,
-        reward_segments: tuple[str, ...] | None = None,
         context: dict[str, Any],
     ) -> TrajectoryBatch:
         """Build a multi-segment categorical trajectory without flattening segments."""
@@ -669,8 +600,6 @@ class _TrajectoryBatchBuilder:
         if not segments:
             raise ValueError("segments must be non-empty")
         batch_size = len(self.sample_rows)
-        first_segment = next(iter(segments.values()))
-        device = getattr(first_segment.get("token_ids"), "device", None)
 
         axes = {"sample": TrajectoryAxis("sample", "sample", batch_size)}
         trajectory_segments: dict[str, TrajectorySegment] = {}
@@ -738,7 +667,6 @@ class _TrajectoryBatchBuilder:
                     ),
                 },
                 reward_view="image" if name == primary_segment else None,
-                advantage_scope="segment",
                 replay_inputs={
                     "logprob": ReplayInput(
                         name="logprob",
@@ -756,74 +684,24 @@ class _TrajectoryBatchBuilder:
                 },
             )
 
-        decoded_tensors = {
-            name: TrajectoryTensor(
-                name,
-                value,
-                ("sample",),
-                "replay_input",
-            )
-            for name, value in decoded_outputs.items()
-            if value is not None
-        }
-        reward_segment_names = reward_segments or (primary_segment,)
-        reward_refs: tuple[str, ...] = ()
-        if decoded_tensors:
-            trajectory_segments["decoded"] = TrajectorySegment(
-                name="decoded",
-                modality="mixed",
-                trainable=False,
-                distribution="deterministic",
-                tensors=decoded_tensors,
-            )
-            reward_refs = tuple(
-                tensor_ref("decoded", name)
-                for name in reward_segment_names
-                if name in decoded_tensors
-            )
-
-        axis_lengths = {
-            name: axis.length for name, axis in axes.items() if axis.length is not None
-        }
         trajectory = TrajectoryBatch(
             request_id=self.request.request_id,
             family=self.request.family,
             task=self.request.task,
             sample_rows=list(self.sample_rows),
-            group_ids=self._prompt_group_ids(device=device),
             axes=axes,
             segments=trajectory_segments,
+            primary_segment=primary_segment,
             reward_views={
                 "image": RewardView(
                     name="image",
-                    tensor_refs=reward_refs,
                     value_range="tanh",
                     metadata={"output_ref": "GenerationOutput.output"},
                 )
             },
-            metrics=TrajectoryMetrics(
-                num_samples=batch_size,
-                axis_lengths=axis_lengths,
-                values={"num_segments": len(segments)},
-            ),
-            context={
-                **self._serializable_context(context),
-                "primary_segment": primary_segment,
-                "segment_names": tuple(segments),
-            },
+            context=self._serializable_context(context),
         )
         return TrajectoryValidator(trajectory).validate_batch()
-
-    def _prompt_group_ids(
-        self,
-        *,
-        device: Any,
-    ) -> Any:
-        return torch.tensor(
-            [row.prompt_index for row in self.sample_rows],
-            dtype=torch.long,
-            device=device,
-        )
 
     def _chunk_denoise_shape(self, value: Any) -> tuple[int, int]:
         shape = getattr(value, "shape", None)
@@ -1078,7 +956,6 @@ def build_ar_continuous_trajectory(
     prompt_attention_mask: Any,
     uncond_input_ids: Any,
     uncond_attention_mask: Any,
-    images_for_reward: Any | None,
     context: dict[str, Any],
 ) -> TrajectoryBatch:
     """Build a continuous image-token trajectory from NextStep rollout tensors."""
@@ -1095,7 +972,6 @@ def build_ar_continuous_trajectory(
         prompt_attention_mask=prompt_attention_mask,
         uncond_input_ids=uncond_input_ids,
         uncond_attention_mask=uncond_attention_mask,
-        images_for_reward=images_for_reward,
         context=context,
     )
 
@@ -1105,9 +981,7 @@ def build_ar_multisegment_trajectory(
     request: GenerationRequest,
     sample_rows: list[GenerationSampleRow],
     segments: dict[str, dict[str, Any]],
-    decoded_outputs: dict[str, Any],
     primary_segment: str,
-    reward_segments: tuple[str, ...] | None = None,
     context: dict[str, Any],
 ) -> TrajectoryBatch:
     """Build a multi-segment categorical trajectory without flattening segments."""
@@ -1117,9 +991,7 @@ def build_ar_multisegment_trajectory(
         sample_rows=sample_rows,
     ).build_ar_multisegment_trajectory(
         segments=segments,
-        decoded_outputs=decoded_outputs,
         primary_segment=primary_segment,
-        reward_segments=reward_segments,
         context=context,
     )
 

@@ -75,7 +75,6 @@ def _request(num_steps: int = 10, samples: int = 8, sbs: int = 2) -> GenerationR
         inputs=["a test prompt"],
         samples_per_prompt=samples,
         sampling={"height": 64, "width": 64, "num_steps": num_steps, "samples_per_chunk": sbs},
-        return_artifacts={"output"},
         metadata={"dataset": "unit", "_runtime_debug": True},
     )
 
@@ -291,7 +290,6 @@ class _ListGatherer:
             request_id=request.request_id,
             family=request.family,
             task=request.task,
-            prompts=list(request.prompts),
             sample_rows=list(sample_rows),
             output=list(chunks),
         )

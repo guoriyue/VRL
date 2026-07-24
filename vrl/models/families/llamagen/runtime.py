@@ -13,32 +13,62 @@ from vrl.generation.bindings.token_autoregressive import (
 )
 from vrl.generation.execution.chunks import SampleChunk
 from vrl.generation.types import GenerationRequest
+from vrl.models.families.llamagen.config import (
+    LLAMAGEN_CAPTION_TOKEN_NUM,
+    LLAMAGEN_DOWNSAMPLE_SIZE,
+    LLAMAGEN_IMAGE_TOKEN_NUM,
+    llamagen_image_grid_side,
+    llamagen_image_size,
+)
 from vrl.models.families.llamagen.runner import LlamaGenARModelRunner
 from vrl.models.interfaces.runtime import ModelBuild
 from vrl.models.steps.token.build import token_model_config_base
-
-# LlamaGen LoRA defaults: the vendored GPT uses fused llama-style projection
-# names (wqkv / wo), not per-head q_proj/k_proj/v_proj. Applied at read time so
-# the carried ``model.lora`` block only needs the values it overrides.
-_LLAMAGEN_LORA_DEFAULTS: dict[str, Any] = {
-    "rank": 32,
-    "alpha": 64,
-    "target_modules": ("wqkv", "wo"),
-    "dropout": 0.0,
-    "init": "gaussian",
-}
 
 
 def llamagen_config_from_build(build: ModelBuild) -> dict[str, Any]:
     model_config = build.model_config or {}
     sampling_config = build.sampling_config or {}
-    config = token_model_config_base(build, _LLAMAGEN_LORA_DEFAULTS)
+    config = token_model_config_base(build)
 
-    for key in ("guidance_scale", "temperature", "top_k", "top_p", "image_token_num"):
+    for key in ("guidance_scale", "temperature", "top_k", "top_p"):
         if key in sampling_config:
             config[key] = sampling_config[key]
 
-    for key in ("gpt_ckpt", "vq_ckpt", "gpt_model", "t5_path", "t5_revision"):
+    image_token_num = int(
+        model_config.get("image_token_num", LLAMAGEN_IMAGE_TOKEN_NUM),
+    )
+    llamagen_image_grid_side(image_token_num)
+    for name, expected, owner in (
+        (
+            "image_token_num",
+            image_token_num,
+            f"model.image_token_num={image_token_num}",
+        ),
+        (
+            "image_size",
+            llamagen_image_size(image_token_num, LLAMAGEN_DOWNSAMPLE_SIZE),
+            "the decoded size derived from model.image_token_num and VQ stride",
+        ),
+        (
+            "max_text_length",
+            LLAMAGEN_CAPTION_TOKEN_NUM,
+            "the checkpoint caption-prefix length",
+        ),
+    ):
+        requested = sampling_config.get(name)
+        if requested is not None and int(requested) != expected:
+            raise ValueError(
+                f"sampling.{name}={int(requested)} must equal {owner} ({expected})",
+            )
+    config["image_token_num"] = image_token_num
+
+    for key in (
+        "gpt_ckpt",
+        "vq_ckpt",
+        "gpt_model",
+        "t5_path",
+        "t5_revision",
+    ):
         # ``None`` means "unset" in YAML; defer to LlamaGenConfig's own default.
         value = model_config.get(key)
         if value is not None:
@@ -66,17 +96,52 @@ class LlamaGenChunkExecutor(ARDiscreteChunkExecutorBase):
     """
 
     family: str = "llamagen"
-    _runner_cls = LlamaGenARModelRunner
-    _runner_attention_family = "llamagen"
     task: str = "ar_t2i"
-    default_image_token_num: int | None = 256
-    default_image_size: int | None = 256
-    default_max_text_length: int | None = 120
 
     def __init__(self, model: Any) -> None:
         self.model = model
 
+    @property
+    def default_image_token_num(self) -> int:
+        """Derive the request default from the GPT construction topology."""
+
+        return int(self.model.config.image_token_num)
+
+    @property
+    def default_image_size(self) -> int:
+        """Derive decoded pixels from the fixed token grid and VQ stride."""
+
+        return llamagen_image_size(
+            self.default_image_token_num,
+            int(self.model.config.downsample_size),
+        )
+
+    @property
+    def default_max_text_length(self) -> int:
+        """Derive the request default from the checkpoint caption prefix."""
+
+        return int(self.model.config.cls_token_num)
+
     # -- protocol ------------------------------------------------------
+
+    def resolve_scheduler_batch_size(
+        self,
+        request: GenerationRequest,
+        *,
+        row_count: int,
+    ) -> int | None:
+        """Require every native static-KV step to cover the full chunk."""
+
+        batch_size = super().resolve_scheduler_batch_size(
+            request,
+            row_count=row_count,
+        )
+        if batch_size is not None and batch_size < row_count:
+            raise ValueError(
+                "llamagen requires request.sampling.ar_scheduler_batch_size "
+                f"to be null or >= chunk sample count ({row_count}); got {batch_size}",
+            )
+        return batch_size
 
     def _ar_runner(self, request: GenerationRequest) -> LlamaGenARModelRunner:
         """Build the LlamaGen runner without a shared attention backend.
@@ -106,6 +171,19 @@ class LlamaGenChunkExecutor(ARDiscreteChunkExecutorBase):
         sampling = request.sampling
         params: ARSamplingParams = self.layout.parse_sampling_params(request)
 
+        image_token_num = int(self.model.config.image_token_num)
+        if params.image_token_num != image_token_num:
+            raise ValueError(
+                f"llamagen requires image_token_num == model.image_token_num "
+                f"({image_token_num}); got {params.image_token_num}. The token "
+                "grid is baked into the GPT's 2D RoPE table."
+            )
+        expected_image_size = self.default_image_size
+        if params.image_size != expected_image_size:
+            raise ValueError(
+                f"llamagen requires image_size={expected_image_size} for "
+                f"model.image_token_num={image_token_num}; got {params.image_size}."
+            )
         cls_token_num = int(self.model.config.cls_token_num)
         if params.max_text_length != cls_token_num:
             raise ValueError(
@@ -114,8 +192,12 @@ class LlamaGenChunkExecutor(ARDiscreteChunkExecutorBase):
                 "prefix length is baked into the GPT's rope table."
             )
 
-        guidance_scale = float(sampling.get("guidance_scale", 7.5))
-        temperature = float(sampling.get("temperature", 1.0))
+        guidance_scale = float(
+            sampling.get("guidance_scale", self.model.config.guidance_scale),
+        )
+        temperature = float(
+            sampling.get("temperature", self.model.config.temperature),
+        )
         top_k = int(sampling.get("top_k", self.model.config.top_k))
         top_p = float(sampling.get("top_p", self.model.config.top_p))
 
@@ -128,8 +210,6 @@ class LlamaGenChunkExecutor(ARDiscreteChunkExecutorBase):
         uncond_embeds = self.model.uncond_caption_embeds(chunk.sample_count)
 
         return ARChunkInputs(
-            max_new_tokens=params.image_token_num,
-            decode_dtype=str(cond_embeds.dtype),
             # Upstream generate() drives the uncond branch with the COND
             # prompt's mask (cat([emb_masks, emb_masks])). Full-batch
             # scheduling is a hard requirement: the vendored static KV cache
@@ -152,12 +232,12 @@ class LlamaGenChunkExecutor(ARDiscreteChunkExecutorBase):
             uncond_input_ids=torch.zeros_like(prompt_ids),
             uncond_attention_mask=torch.zeros_like(prompt_mask),
             context={
-                "guidance_scale": guidance_scale,
                 "temperature": temperature,
+                # Display/provenance-only: OnlineTrainer writes these behavior
+                # sampler knobs into its first-step ``rollout_context`` record.
+                "guidance_scale": guidance_scale,
                 "top_k": top_k,
                 "top_p": top_p,
-                "image_token_num": params.image_token_num,
-                "uncond_source": "caption_embedder_uncond_embedding",
             },
         )
 

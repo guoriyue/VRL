@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 import json
+import sys
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 import torch
-from omegaconf import OmegaConf
+from omegaconf import DictConfig, OmegaConf
 from PIL import Image
 
 from vrl.config.loading import load_config
@@ -19,6 +20,7 @@ SANA_PRECISION = RolePrecision(
     float32_precision="ieee",
     outer_autocast=False,
 )
+SANA_IDENTITY = {"schema": "vrl.model-identity/v1", "sources": {}, "build": {}}
 
 
 def _write_run(tmp_path: Path, *, empty_manifest: bool = False) -> Path:
@@ -35,8 +37,16 @@ def _write_run(tmp_path: Path, *, empty_manifest: bool = False) -> Path:
                 "use_lora": False,
                 "lora": None,
             },
-            "data": {"eval_manifest": str(manifest)},
-            "precision": "bf16",
+            "data": {
+                "manifest": str(manifest),
+                "eval_manifest": str(manifest),
+                "preprocessing": {},
+                "sampler": {"type": "sequential_window"},
+            },
+            "precision": {
+                "float32_precision": "ieee",
+                "training": {"dtype": "fp16"},
+            },
             "sampling": {
                 "width": 8,
                 "height": 8,
@@ -80,7 +90,9 @@ def _write_run(tmp_path: Path, *, empty_manifest: bool = False) -> Path:
     (checkpoint / "checkpoint_meta.json").write_text(
         json.dumps(
             {
+                "schema_version": 2,
                 "family": "sana",
+                "model_identity": SANA_IDENTITY,
                 "completed_epoch": 25,
                 "checkpoint_file_bytes": len(payload),
                 "uses_lora": False,
@@ -93,7 +105,11 @@ def _write_run(tmp_path: Path, *, empty_manifest: bool = False) -> Path:
 
 def _allow_minimal_protocol(monkeypatch) -> None:
     monkeypatch.setattr(checkpoint_eval, "_normalize_run_config", lambda cfg: cfg)
-    monkeypatch.setattr(checkpoint_eval, "_materialize_model_snapshot", lambda cfg: cfg)
+    monkeypatch.setattr(
+        checkpoint_eval,
+        "_materialize_model_snapshot",
+        checkpoint_eval.parse_config,
+    )
     monkeypatch.setattr(
         checkpoint_eval,
         "_materialize_reward_model_snapshots",
@@ -117,14 +133,30 @@ def _allow_minimal_protocol(monkeypatch) -> None:
         return path, path, prompts
 
     monkeypatch.setattr(checkpoint_eval, "_resolve_protocol_manifests", resolve_manifests)
+    monkeypatch.setattr(
+        checkpoint_eval,
+        "resolve_checkpoint_model_identity",
+        lambda _build: SANA_IDENTITY,
+    )
 
 
 def test_main_writes_provenance_bound_report(monkeypatch, tmp_path, capsys) -> None:
     run_dir = _write_run(tmp_path)
     _allow_minimal_protocol(monkeypatch)
 
-    def fake_generate(cfg, targets, prompts, *, output_dir, sampling, device):
-        del cfg, sampling, device
+    def fake_generate(
+        root,
+        precision,
+        targets,
+        prompts,
+        *,
+        output_dir,
+        sampling,
+        device,
+        expected_model_identity,
+    ):
+        del root, precision, sampling, device
+        assert expected_model_identity == SANA_IDENTITY
         generated = []
         for target in targets:
             for sample_index in range(checkpoint_eval.EVAL_SAMPLES_PER_PROMPT):
@@ -224,12 +256,45 @@ def test_report_reader_rejects_empty_metrics(monkeypatch, tmp_path) -> None:
         checkpoint_eval.main(["--run-dir", str(run_dir), "--device", "cpu"])
 
 
+def test_main_rejects_checkpoint_identity_before_model_snapshot(monkeypatch, tmp_path) -> None:
+    run_dir = _write_run(tmp_path)
+    _allow_minimal_protocol(monkeypatch)
+    meta_path = run_dir / "checkpoint-25" / "checkpoint_meta.json"
+    meta = json.loads(meta_path.read_text())
+    meta["model_identity"] = {"schema": "wrong/v1"}
+    meta_path.write_text(json.dumps(meta))
+    materialized = False
+
+    def fail_if_materialized(_cfg):
+        nonlocal materialized
+        materialized = True
+        raise AssertionError("model snapshot must not be materialized")
+
+    monkeypatch.setattr(checkpoint_eval, "_materialize_model_snapshot", fail_if_materialized)
+
+    with pytest.raises(ValueError, match="metadata model identity mismatch"):
+        checkpoint_eval.main(["--run-dir", str(run_dir), "--device", "cpu"])
+
+    assert materialized is False
+
+
 def test_report_reader_rejects_changed_config_provenance(monkeypatch, tmp_path) -> None:
     run_dir = _write_run(tmp_path)
     _allow_minimal_protocol(monkeypatch)
 
-    def fake_generate(cfg, targets, prompts, *, output_dir, sampling, device):
-        del cfg, sampling, device
+    def fake_generate(
+        root,
+        precision,
+        targets,
+        prompts,
+        *,
+        output_dir,
+        sampling,
+        device,
+        expected_model_identity,
+    ):
+        del root, precision, sampling, device
+        assert expected_model_identity == SANA_IDENTITY
         images = []
         for target in targets:
             for sample_index in range(2):
@@ -354,6 +419,122 @@ def test_fullparam_long_config_is_the_exact_registered_protocol() -> None:
     assert normalized.actor.ppo_epochs == 1
     assert normalized.trainer.total_epochs == 300
     assert normalized.trainer.save_freq == 5
+
+
+def test_exact_protocol_normalization_runs_typed_structural_validation(
+    monkeypatch,
+) -> None:
+    canonical = load_config(checkpoint_eval.CANONICAL_CONFIG_NAME)
+    validated: list[dict] = []
+
+    def record_parse(cfg):
+        resolved = OmegaConf.to_container(cfg, resolve=True)
+        assert isinstance(resolved, dict)
+        validated.append(resolved)
+
+    monkeypatch.setattr(checkpoint_eval, "parse_config", record_parse)
+
+    normalized = checkpoint_eval._normalize_run_config(canonical)
+
+    assert validated == [OmegaConf.to_container(normalized, resolve=True)]
+
+
+def _historical_fullparam_config() -> DictConfig:
+    raw = OmegaConf.to_container(
+        load_config(checkpoint_eval.CANONICAL_CONFIG_NAME),
+        resolve=True,
+    )
+    assert isinstance(raw, dict)
+
+    raw["algorithm"]["kl_reward_coef"] = 0.0
+    raw["data"]["preprocessing"]["target_text"] = "none"
+    raw["distributed"]["rollout"].update(
+        {
+            "chunk_placement_strategy": "round_robin",
+            "health_check_first_wait_s": 0.0,
+            "health_check_interval_s": 30.0,
+            "health_check_timeout_s": 30.0,
+            "max_inflight_chunks_per_worker": 1,
+            "pipelined": False,
+            "sync_trainable_state": True,
+        },
+    )
+    raw["rollout"]["trajectory_storage"] = {
+        "device": "preserve",
+        "dtype": "preserve",
+    }
+    raw["reward"]["kwargs"]["aesthetic"].pop("device")
+    raw["precision"].pop("float32_precision")
+    raw["precision"]["training"].pop("outer_autocast")
+    raw["precision"]["rollout"].pop("outer_autocast")
+    raw["trainer"]["entrypoint"] = "vrl.scripts.diffusion.train:train_diffusion_grpo"
+    return OmegaConf.create(raw)
+
+
+def test_historical_fullparam_shape_normalizes_to_the_live_protocol() -> None:
+    normalized = checkpoint_eval._normalize_run_config(
+        _historical_fullparam_config(),
+    )
+    canonical = load_config(checkpoint_eval.CANONICAL_CONFIG_NAME)
+
+    assert OmegaConf.to_container(normalized, resolve=True) == OmegaConf.to_container(
+        canonical,
+        resolve=True,
+    )
+
+
+@pytest.mark.parametrize(
+    ("path", "value"),
+    [
+        ("algorithm.kl_reward_coef", 0.1),
+        ("data.preprocessing.target_text", "caption"),
+        ("distributed.rollout.chunk_placement_strategy", "dynamic"),
+        ("distributed.rollout.max_inflight_chunks_per_worker", 2),
+        ("distributed.rollout.sync_trainable_state", False),
+        ("rollout.trajectory_storage.device", "cpu"),
+        ("rollout.trajectory_storage.unexpected", True),
+        ("reward.kwargs.aesthetic.device", "cpu"),
+        ("precision.float32_precision", "tf32"),
+        ("precision.training.dtype", "bf16"),
+        ("precision.training.outer_autocast", True),
+        ("precision.rollout.outer_autocast", True),
+        ("trainer.entrypoint", "custom.module:train"),
+    ],
+)
+def test_historical_shape_normalization_rejects_behavioral_drift(
+    path: str,
+    value: object,
+) -> None:
+    changed = _historical_fullparam_config()
+    OmegaConf.update(changed, path, value, merge=False)
+
+    with pytest.raises(
+        ValueError,
+        match="does not match the registered SANA full-parameter protocol",
+    ):
+        checkpoint_eval._normalize_run_config(changed)
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "precision.float32_precision",
+        "precision.training.outer_autocast",
+        "precision.rollout.outer_autocast",
+    ],
+)
+def test_live_entrypoint_requires_explicit_precision_protocol(path: str) -> None:
+    changed = load_config(checkpoint_eval.CANONICAL_CONFIG_NAME)
+    section_path, field_name = path.rsplit(".", maxsplit=1)
+    section = OmegaConf.select(changed, section_path)
+    assert isinstance(section, DictConfig)
+    del section[field_name]
+
+    with pytest.raises(
+        ValueError,
+        match="does not match the registered SANA full-parameter protocol",
+    ):
+        checkpoint_eval._normalize_run_config(changed)
 
 
 @pytest.mark.parametrize(
@@ -607,6 +788,52 @@ def test_official_generation_keeps_two_images_in_one_fixed_seed_stream() -> None
     assert checkpoint_eval._group_seed(1) - checkpoint_eval._group_seed(0) == 2
 
 
+@pytest.mark.parametrize(
+    ("revision", "expected_revision"),
+    [
+        pytest.param("immutable-revision", "immutable-revision", id="pinned"),
+        pytest.param(None, None, id="absent"),
+    ],
+)
+def test_official_scheduler_uses_model_loader_revision_projection(
+    monkeypatch,
+    revision,
+    expected_revision,
+) -> None:
+    calls: list[tuple[object, dict]] = []
+
+    class DPMSolverMultistepScheduler:
+        def __init__(self) -> None:
+            self.config = {
+                key: value
+                for key, value in sana_inference.SCHEDULER_PROTOCOL.items()
+                if key != "class_name"
+            }
+
+        @classmethod
+        def from_pretrained(cls, path, **kwargs):
+            calls.append((path, kwargs))
+            return cls()
+
+    monkeypatch.setitem(
+        sys.modules,
+        "diffusers",
+        SimpleNamespace(DPMSolverMultistepScheduler=DPMSolverMultistepScheduler),
+    )
+    build = SimpleNamespace(
+        model_name_or_path="test/sana",
+        revision=revision,
+    )
+
+    scheduler = sana_inference.load_official_scheduler(build)
+
+    expected_kwargs = {"subfolder": "scheduler"}
+    if expected_revision is not None:
+        expected_kwargs["revision"] = expected_revision
+    assert isinstance(scheduler, DPMSolverMultistepScheduler)
+    assert calls == [("test/sana", expected_kwargs)]
+
+
 def test_official_generation_rejects_sampling_drift() -> None:
     class DPMSolverMultistepScheduler:
         def __init__(self) -> None:
@@ -655,6 +882,7 @@ def test_generation_uses_fresh_base_before_reading_fullparam_checkpoints(
         model=model,
         precision=SANA_PRECISION,
     )
+    expected_bundle = bundle
     entry = SimpleNamespace(
         resolve_model_build=lambda *args, **kwargs: object(),
         build_rollout=lambda build: bundle,
@@ -673,16 +901,24 @@ def test_generation_uses_fresh_base_before_reading_fullparam_checkpoints(
                 payload={"family": "sana"},
                 meta={"uses_lora": False},
                 next_epoch=int(Path(path).name.split("-")[-1]),
-                trainable_state={"epoch": int(Path(path).name.split("-")[-1])},
             )
         ),
     )
 
-    def fake_load(bundle_arg, state, *, strict):
-        assert bundle_arg is bundle
+    def fake_restore(
+        checkpoint,
+        *,
+        bundle: object,
+        family: str,
+        expected_model_identity: dict,
+        strict: bool,
+    ):
+        assert bundle is expected_bundle
+        assert family == "sana"
+        assert expected_model_identity == SANA_IDENTITY
         assert strict is True
-        model.state = f"checkpoint-{state['epoch']}"
-        events.append(f"load:{state['epoch']}")
+        model.state = f"checkpoint-{checkpoint.next_epoch}"
+        events.append(f"load:{checkpoint.next_epoch}")
 
     def fake_generate(model_arg, **kwargs):
         del kwargs
@@ -695,10 +931,22 @@ def test_generation_uses_fresh_base_before_reading_fullparam_checkpoints(
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes(b"png")
 
-    monkeypatch.setattr(checkpoint_eval, "load_trainable_state", fake_load)
+    monkeypatch.setattr(checkpoint_eval, "restore_model_checkpoint", fake_restore)
     monkeypatch.setattr(checkpoint_eval, "generate_prompt_images", fake_generate)
     monkeypatch.setattr(checkpoint_eval, "load_official_scheduler", lambda build: object())
     monkeypatch.setattr(media, "write_png", fake_write_png)
+    materialized_identity = {"schema": "local", "sources": {"main": "stable"}}
+    identity_calls: list[object] = []
+
+    def resolve_materialized_identity(build):
+        identity_calls.append(build)
+        return materialized_identity
+
+    monkeypatch.setattr(
+        checkpoint_eval,
+        "resolve_checkpoint_model_identity",
+        resolve_materialized_identity,
+    )
     first_checkpoint = tmp_path / "checkpoint-25"
     targets = [
         checkpoint_eval.CheckpointTarget("baseline", -1, None, None, None),
@@ -718,16 +966,32 @@ def test_generation_uses_fresh_base_before_reading_fullparam_checkpoints(
         ),
     ]
 
+    root = checkpoint_eval.parse_config(
+        OmegaConf.create(
+            {
+                "model": {"family": "sana", "path": "unit-checkpoint"},
+                "precision": {
+                    "float32_precision": "ieee",
+                    "training": {"dtype": "fp32"},
+                },
+            },
+        ),
+    )
+    precision = checkpoint_eval.resolve_precision_policy(root)
     generated = checkpoint_eval._generate_images(
-        OmegaConf.create({"model": {"family": "sana"}}),
+        root,
+        precision,
         targets,
         ["fox"],
         output_dir=tmp_path / "eval",
         sampling={},
         device=torch.device("cpu"),
+        expected_model_identity=SANA_IDENTITY,
     )
 
     assert len(generated) == 6
+    assert len(identity_calls) == 2
+    assert identity_calls[0] is identity_calls[1]
     assert events == [
         "generate:base",
         "read:25",
@@ -737,3 +1001,82 @@ def test_generation_uses_fresh_base_before_reading_fullparam_checkpoints(
         "load:50",
         "generate:checkpoint-50",
     ]
+
+
+def test_generate_images_rejects_materialized_source_drift_before_generation(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    import vrl.families.registry as model_families
+
+    build = object()
+    built = False
+    generated = False
+
+    class FakeModel:
+        def eval(self):
+            return self
+
+    def build_rollout(actual_build):
+        nonlocal built
+        assert actual_build is build
+        built = True
+        return SimpleNamespace(model=FakeModel())
+
+    entry = SimpleNamespace(
+        resolve_model_build=lambda *args, **kwargs: build,
+        build_rollout=build_rollout,
+    )
+    monkeypatch.setattr(
+        model_families,
+        "get_model_family_entry",
+        lambda _family: entry,
+    )
+    identities = iter(
+        (
+            {"schema": "local", "sources": {"main": "before"}},
+            {"schema": "local", "sources": {"main": "after"}},
+        ),
+    )
+    monkeypatch.setattr(
+        checkpoint_eval,
+        "resolve_checkpoint_model_identity",
+        lambda actual_build: next(identities) if actual_build is build else None,
+    )
+
+    def fail_if_generated(*args, **kwargs):
+        del args, kwargs
+        nonlocal generated
+        generated = True
+        raise AssertionError("generation must not run after local source drift")
+
+    monkeypatch.setattr(checkpoint_eval, "generate_prompt_images", fail_if_generated)
+    root = checkpoint_eval.parse_config(
+        OmegaConf.create(
+            {
+                "model": {"family": "sana", "path": "unit-checkpoint"},
+                "precision": {
+                    "float32_precision": "ieee",
+                    "training": {"dtype": "fp32"},
+                },
+            },
+        ),
+    )
+
+    with pytest.raises(
+        RuntimeError,
+        match="materialized SANA model source changed during runtime construction",
+    ):
+        checkpoint_eval._generate_images(
+            root,
+            checkpoint_eval.resolve_precision_policy(root),
+            [checkpoint_eval.CheckpointTarget("baseline", -1, None, None, None)],
+            ["fox"],
+            output_dir=tmp_path / "eval",
+            sampling={},
+            device=torch.device("cpu"),
+            expected_model_identity=SANA_IDENTITY,
+        )
+
+    assert built is True
+    assert generated is False

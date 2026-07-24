@@ -7,4 +7,3 @@ sampling:
   guidance_scale: 3.0
   temperature: 1.0
   max_text_length: 128
-  ar_scheduler_batch_size: null

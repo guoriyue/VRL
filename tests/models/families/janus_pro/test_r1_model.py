@@ -4,11 +4,13 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
+import pytest
 import torch
 import torch.nn as nn
 
 from tests.models.steps.token.fixtures import StubVQ, build_stub_janus_model
 from vrl.generation import GenerationRequest, GenerationSampleRow, build_sample_rows
+from vrl.generation.execution.chunks import SampleChunk
 from vrl.models.families.janus_pro import JANUS_R1_SEGMENTS
 from vrl.models.families.janus_pro.model import (
     JanusProModel,
@@ -16,7 +18,7 @@ from vrl.models.families.janus_pro.model import (
 from vrl.models.families.janus_pro.runtime import JanusProR1ChunkExecutor
 from vrl.models.interfaces import ReplayRequest, ReplayResult
 from vrl.rollouts.batch import RolloutBatch
-from vrl.trajectory import build_ar_multisegment_trajectory, build_training_view
+from vrl.trajectory import TrajectoryResolver, build_ar_multisegment_trajectory
 
 HIDDEN = 16
 TEXT_VOCAB = 128
@@ -112,7 +114,6 @@ def _sample_rows() -> list[GenerationSampleRow]:
             prompt_index=0,
             sample_index=index,
             prompt="draw text",
-            prompt_id="p0",
             group_id="g0",
             sample_id=f"s{index}",
             trajectory_id=f"t{index}",
@@ -153,7 +154,6 @@ def _r1_rollout_batch() -> RolloutBatch:
         task="ar_t2i_r1",
         inputs=["draw text"],
         samples_per_prompt=2,
-        return_artifacts={"output", "trajectory"},
     )
     trajectory = build_ar_multisegment_trajectory(
         request=request,
@@ -175,18 +175,13 @@ def _r1_rollout_batch() -> RolloutBatch:
                 visual=True,
             ),
         },
-        decoded_outputs={"final_image": torch.ones(2, 3, 2, 2)},
         primary_segment="final_image",
         context={},
     )
     return RolloutBatch(
-        observations=torch.ones(2, 1, 3, dtype=torch.long),
-        actions=final_ids,
         rewards=torch.zeros(2),
-        dones=torch.ones(2, dtype=torch.bool),
         group_ids=torch.tensor([0, 0]),
         trajectory=trajectory,
-        training_view=build_training_view(trajectory, primary_segment="final_image"),
     )
 
 
@@ -268,6 +263,12 @@ def test_generate_with_refine_returns_three_segments_and_selects_final_image() -
     )
 
     assert sample_calls == [10, 20]
+    assert out["context"] == {
+        "temperature": 0.9,
+        "guidance_scale": 5.0,
+        "refine_mode": "selfcheck",
+        "task_stages": JANUS_R1_SEGMENTS,
+    }
     assert set(out["segments"]) == set(JANUS_R1_SEGMENTS)
     assert out["segments"]["initial_image"]["token_ids"].shape == (2, 4)
     assert out["segments"]["selfcheck_text"]["token_ids"].shape == (2, 3)
@@ -298,17 +299,25 @@ def test_r1_model_replay_forward_returns_requested_replay_segments() -> None:
     assert set(result.segments) == set(JANUS_R1_SEGMENTS[1:])
     assert result.segments["selfcheck_text"].values["logits"].shape == (2, 2, TEXT_VOCAB)
     assert result.segments["final_image"].values["logits"].shape == (2, 3, IMAGE_VOCAB)
+    actions = TrajectoryResolver.from_batch(batch).role_value("final_image", "action")
     assert torch.equal(
         result.segments["final_image"].values["token_ids"],
-        batch.actions,
+        actions,
     )
 
 
 class _ExecutorModel:
     processor = _Processor()
     device = torch.device("cpu")
-    config = SimpleNamespace(r1_refine_mode="selfcheck")
     language_model = _LM()
+
+    def __init__(self) -> None:
+        self.config = SimpleNamespace(
+            guidance_scale=6.25,
+            temperature=0.45,
+            r1_refine_mode="selfcheck",
+        )
+        self.sampling_calls: list[tuple[float, float]] = []
 
     def generate_with_refine(
         self,
@@ -325,6 +334,7 @@ class _ExecutorModel:
         image_size: int,
         refine_mode: str,
     ) -> dict[str, object]:
+        self.sampling_calls.append((guidance_scale, temperature))
         del (
             guidance_scale,
             temperature,
@@ -366,9 +376,73 @@ class _ExecutorModel:
         }
 
 
-def test_r1_executor_forward_emits_canonical_family_and_segment_schema() -> None:
+@pytest.mark.parametrize(
+    ("sampling_overrides", "expected"),
+    [
+        ({}, (6.25, 0.45)),
+        (
+            {
+                "guidance_scale": 4.0,
+                "temperature": 0.8,
+            },
+            (4.0, 0.8),
+        ),
+    ],
+)
+def test_r1_executor_uses_request_overrides_then_model_defaults(
+    monkeypatch: pytest.MonkeyPatch,
+    sampling_overrides: dict[str, float],
+    expected: tuple[float, float],
+) -> None:
+    model = _ExecutorModel()
+    executor = JanusProR1ChunkExecutor(model)
+    monkeypatch.setattr(
+        executor,
+        "_r1_image_sampler",
+        lambda *, request, scheduler_batch_size: object(),
+    )
+    request = GenerationRequest(
+        request_id="r1",
+        family="janus_pro_r1",
+        task="ar_t2i_r1",
+        inputs=["draw text"],
+        samples_per_prompt=1,
+        sampling={
+            "image_token_num": 4,
+            "image_size": 32,
+            "max_text_length": 8,
+            "max_reflect_len": 3,
+            "final_image_policy": "always_generate",
+            **sampling_overrides,
+        },
+    )
+
+    executor.forward_chunk_plan(
+        request,
+        SampleChunk(
+            prompt_index=0,
+            prompt="draw text",
+            sample_start=0,
+            sample_count=1,
+        ),
+    )
+
+    assert model.sampling_calls == [expected]
+
+
+def test_r1_executor_forward_emits_canonical_family_and_segment_schema(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """Checks R1 executor forward emits canonical family and segment schema."""
     executor = JanusProR1ChunkExecutor(_ExecutorModel())
+    scheduler_batch_sizes: list[int | None] = []
+    monkeypatch.setattr(
+        executor,
+        "_r1_image_sampler",
+        lambda *, request, scheduler_batch_size: (
+            scheduler_batch_sizes.append(scheduler_batch_size) or object()
+        ),
+    )
     request = GenerationRequest(
         request_id="r1",
         family="janus_pro_r1",
@@ -381,20 +455,25 @@ def test_r1_executor_forward_emits_canonical_family_and_segment_schema() -> None
             "max_text_length": 8,
             "max_reflect_len": 3,
             "final_image_policy": "always_generate",
+            "ar_scheduler_batch_size": 1,
         },
-        return_artifacts={"output", "r1_segments"},
     )
     specs = build_sample_rows(request)
 
-    out = executor.forward_plan(request, specs, executor.plan(request, specs))
+    out = executor.forward_plan(request, specs, executor.plan(request))
 
     assert out.family == "janus_pro_r1"
     assert out.task == "ar_t2i_r1"
     assert out.output.shape == (2, 3, 2, 2)
-    assert out.output is out.trajectory.segments["decoded"].tensors["final_image"].value
+    assert scheduler_batch_sizes == [1]
     assert "segments" not in out.extra
     assert "selfcheck_text" not in out.extra
     assert out.trajectory is not None
+    assert "decoded" not in out.trajectory.segments
+    assert out.trajectory.reward_views["image"].tensor_refs == ()
+    assert out.trajectory.reward_views["image"].metadata == {
+        "output_ref": "GenerationOutput.output"
+    }
     assert set(out.trajectory.segments) >= set(JANUS_R1_SEGMENTS)
     assert out.trajectory.segments["final_image"].tensors["token_ids"].value.shape == (2, 4)
     assert out.trajectory.segments["selfcheck_text"].tensors["token_ids"].value.shape == (2, 4)

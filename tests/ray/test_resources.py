@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from dataclasses import fields
+
 import pytest
 import torch
 from omegaconf import OmegaConf
@@ -69,6 +71,30 @@ def test_auto_split_uses_remaining_visible_gpus_for_rollout() -> None:
     assert resolved.reward_num_workers == 0
     assert resolved.requires_trainer_reservation is True
     assert trainer_torch_device(resolved) == "cuda:0"
+
+
+def test_resolved_resource_summaries_are_derived_from_topology() -> None:
+    resolved = resolve_distributed_resources(
+        _cfg(
+            {
+                "visible_devices": [0, 1],
+                "trainer": {"devices": [0]},
+                "rollout": {"devices": [1], "gpus_per_worker": 1},
+            },
+        ),
+    )
+
+    assert resolved.rollout_num_gpus == 1
+    assert resolved.colocated is False
+    assert resolved.requires_trainer_reservation is True
+    stored_fields = {field.name for field in fields(resolved)}
+    assert stored_fields.isdisjoint(
+        {"rollout_num_gpus", "colocated", "requires_trainer_reservation"},
+    )
+
+    layout = build_bundle_layout(resolved)
+    assert "trainer_bundle_indices" not in {field.name for field in fields(layout)}
+    assert layout.bundle_gpu_ids == (0, 1)
 
 
 def test_explicit_split_devices_do_not_overlap() -> None:
@@ -1045,7 +1071,7 @@ def test_colocated_reward_on_dedicated_gpu_owns_its_own_bundle() -> None:
     layout = build_bundle_layout(resolved)
     # Colocated trainer+rollout -> no reserved trainer bundle; reward owns a
     # bundle distinct from rollout (its own GPU 1).
-    assert layout.trainer_bundle_indices == ()
+    assert layout.bundle_gpu_ids == (0, 1)
     assert layout.reward_bundle_indices != ()
     assert set(layout.rollout_bundle_indices).isdisjoint(layout.reward_bundle_indices)
 

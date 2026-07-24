@@ -1,13 +1,9 @@
 """Mochi-1 t2v family (10B AsymmDiT + T5-XXL)."""
 
-from vrl.models.families.mochi.model import (
-    MochiModel,
-    MochiReplayModel,
-    MochiSamplingState,
-)
+from __future__ import annotations
 
-__all__ = [
-    "MochiModel",
-    "MochiReplayModel",
-    "MochiSamplingState",
-]
+# Deliberately exports nothing. The family registry dispatches by dotted
+# submodule path (vrl/families/registry.py), so a package-root re-export is a
+# second surface nothing imports; keeping this module empty is also what stops
+# config discovery from pulling the torch-backed model runtime.
+__all__: list[str] = []

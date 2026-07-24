@@ -85,6 +85,99 @@ def test_weighted_mean_matches_token_grpo_per_segment() -> None:
     )
 
 
+def test_inner_token_grpo_input_contains_only_loss_inputs(monkeypatch) -> None:
+    signal = _segment_signal(
+        "initial_image",
+        torch.zeros(1, 2),
+        torch.zeros(1, 2),
+    )
+    inputs = _inputs({"initial_image": signal}, torch.ones(1))
+    inputs.signals.context.update(
+        {"segment_order": ["initial_image"], "unused_by_token_grpo": object()},
+    )
+    inputs.rewards = object()
+    inputs.group_ids = object()
+    inputs.model = object()
+    inputs.rollout_batch = object()
+    inputs.timestep_index = 7
+    captured: list[AlgorithmInput] = []
+    original_compute_loss = TokenGRPO.compute_loss
+
+    def capture_input(self, inner_inputs):
+        captured.append(inner_inputs)
+        return original_compute_loss(self, inner_inputs)
+
+    monkeypatch.setattr(TokenGRPO, "compute_loss", capture_input)
+
+    MultiSegmentTokenGRPO(
+        MultiSegmentTokenGRPOConfig(
+            kl_coef=0.0,
+            segment_weights={"initial_image": 1.0},
+        ),
+    ).compute_loss(inputs)
+
+    assert len(captured) == 1
+    inner_inputs = captured[0]
+    assert inner_inputs.signals is not None
+    assert torch.equal(inner_inputs.advantages, torch.ones(1))
+    assert torch.equal(inner_inputs.signals.group_ids, inputs.signals.group_ids)
+    assert inner_inputs.signals.primary_segment == "initial_image"
+    assert inner_inputs.signals.context == {}
+    assert inner_inputs.rewards is None
+    assert inner_inputs.group_ids is None
+    assert inner_inputs.model is None
+    assert inner_inputs.rollout_batch is None
+    assert inner_inputs.timestep_index is None
+
+
+def test_signal_mapping_order_cannot_be_overridden_by_context(monkeypatch) -> None:
+    final = _segment_signal(
+        "final_image",
+        torch.zeros(1, 2),
+        torch.zeros(1, 2),
+    )
+    initial = _segment_signal(
+        "initial_image",
+        torch.zeros(1, 2),
+        torch.zeros(1, 2),
+    )
+    inputs = _inputs(
+        {
+            "final_image": final,
+            "initial_image": initial,
+        },
+        torch.ones(1),
+    )
+    inputs.signals.context["segment_order"] = [
+        "initial_image",
+        "final_image",
+    ]
+    segment_order: list[str | None] = []
+    original_compute_loss = TokenGRPO.compute_loss
+
+    def capture_input(self, inner_inputs):
+        segment_order.append(inner_inputs.signals.primary_segment)
+        return original_compute_loss(self, inner_inputs)
+
+    monkeypatch.setattr(TokenGRPO, "compute_loss", capture_input)
+
+    MultiSegmentTokenGRPO(
+        MultiSegmentTokenGRPOConfig(
+            kl_coef=0.0,
+            train_segments={
+                "initial_image": True,
+                "final_image": True,
+            },
+            segment_weights={
+                "initial_image": 1.0,
+                "final_image": 1.0,
+            },
+        ),
+    ).compute_loss(inputs)
+
+    assert segment_order == ["final_image", "initial_image"]
+
+
 def test_default_selfcheck_weight_zero_does_not_affect_loss() -> None:
     """Checks default selfcheck weight zero does not affect loss."""
     adv = torch.ones(1)

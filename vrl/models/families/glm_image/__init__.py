@@ -9,24 +9,8 @@ frozen postprocess.
 
 from __future__ import annotations
 
-from vrl.models.families.glm_image.model import (
-    GlmImageConfig,
-    GlmImageModel,
-    GlmImageReplayModel,
-    glm_image_decode_position_schedule,
-    glm_image_grid_dims,
-    glm_image_prefill_position_ids,
-    glm_image_token_num,
-)
-from vrl.models.families.glm_image.runtime import GlmImageChunkExecutor
-
-__all__ = [
-    "GlmImageChunkExecutor",
-    "GlmImageConfig",
-    "GlmImageModel",
-    "GlmImageReplayModel",
-    "glm_image_decode_position_schedule",
-    "glm_image_grid_dims",
-    "glm_image_prefill_position_ids",
-    "glm_image_token_num",
-]
+# Deliberately exports nothing. The family registry dispatches by dotted
+# submodule path (vrl/families/registry.py), so a package-root re-export is a
+# second surface nothing imports; keeping this module empty is also what stops
+# config discovery from pulling the torch-backed model runtime.
+__all__: list[str] = []

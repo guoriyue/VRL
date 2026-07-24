@@ -3,9 +3,13 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-import torch
+# Torch is a call-time dependency, not an import-time one: this module's config
+# dataclass is what ``algorithm.kind`` dispatch loads during config parsing,
+# and every annotation is a string under PEP 563.
+if TYPE_CHECKING:
+    import torch
 
 from vrl.algorithms.grpo.continuous import GRPO, ClippedPolicyConfig
 from vrl.algorithms.logprob_mismatch import (
@@ -36,6 +40,9 @@ class TokenGRPO(GRPO):
         self,
         inputs: AlgorithmInput,
     ) -> tuple[Any, TrainStepMetrics]:
+
+        import torch
+
         cfg = self.config
 
         # signals presence + required_signal_keys are enforced upstream by
@@ -141,6 +148,9 @@ class TokenGRPO(GRPO):
 
 
 def _token_kl_per_token(log_ratio: torch.Tensor, estimator: str) -> torch.Tensor:
+
+    import torch
+
     if estimator == "k1":
         return log_ratio
     if estimator == "k2":

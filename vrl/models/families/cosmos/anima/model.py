@@ -18,12 +18,13 @@ import torch.nn.functional as F
 from torch import nn
 
 from vrl.generation.types import VideoGenerationRequest
+from vrl.models.checkpoint_identity import validate_checkpoint_source_member
 from vrl.models.families.cosmos import CosmosReplayForward
 from vrl.models.families.cosmos.anima.adapter import AnimaLLMAdapter
 from vrl.models.interfaces.runtime import ModelBuild
 from vrl.models.steps.denoise import (
     DiffusionModelBase,
-    DiffusionSamplingStateBase,
+    GuidedDiffusionSamplingStateBase,
     ReplayRolloutStubs,
 )
 from vrl.models.steps.denoise.common import (
@@ -36,7 +37,7 @@ from vrl.models.steps.denoise.common.lora import LoraModelMixin
 
 
 @dataclass
-class AnimaSamplingState(DiffusionSamplingStateBase):
+class AnimaSamplingState(GuidedDiffusionSamplingStateBase):
     """Private Anima sampling state."""
 
     prompt_embeds: torch.Tensor
@@ -78,14 +79,14 @@ class AnimaModel(CosmosReplayForward, LoraModelMixin, DiffusionModelBase):
     def from_build(cls, build: ModelBuild) -> AnimaModel:
         """Load Anima's transformer, Qwen3 encoder, and VAE from local files.
 
-        Resolves the single-file artifact paths in place first (explicit path >
-        checkpoint-root relative file > HF hub cache search), mutating
-        ``build.model_config`` so downstream readers (bundle provenance, the
-        replay path) see the resolved locations.
+        Resolves loader-local single-file paths first (explicit path >
+        checkpoint-root relative file > HF hub cache search). ``ModelBuild``
+        remains immutable so checkpoint identity keeps describing the configured
+        source and members rather than machine-local cache paths.
         """
         from vrl.models.loader import model_config_revision_kwargs, model_revision_kwargs
 
-        model_config = build.model_config or {}
+        paths = dict(build.model_config or {})
         root = str(build.model_name_or_path or "").strip()
         # These three artifacts share model.path and therefore one immutable
         # revision. The tokenizer paths below are independent repositories.
@@ -97,13 +98,13 @@ class AnimaModel(CosmosReplayForward, LoraModelMixin, DiffusionModelBase):
         ):
             resolved = _resolve_artifact(
                 root,
-                explicit_path=model_config.get(path_field, ""),
-                relative_file=model_config.get(file_field, ""),
+                explicit_path=paths.get(path_field, ""),
+                relative_file=paths.get(file_field, ""),
                 field_name=path_field,
                 **revision_kwargs,
             )
             if resolved:
-                model_config[path_field] = resolved
+                paths[path_field] = resolved
 
         from diffusers import AutoencoderKLQwenImage, FlowMatchEulerDiscreteScheduler
         from diffusers.image_processor import VaeImageProcessor
@@ -111,7 +112,6 @@ class AnimaModel(CosmosReplayForward, LoraModelMixin, DiffusionModelBase):
         from safetensors.torch import load_file
         from transformers import Qwen2Tokenizer, Qwen3Model, T5TokenizerFast
 
-        paths = build.model_config or {}
         dtype = build.parameter_dtype
 
         transformer_checkpoint = load_file(paths["transformer_path"], device="cpu")
@@ -594,6 +594,10 @@ def _resolve_artifact(
         return explicit_path
     if not (root and relative_file):
         return ""
+    relative_file = validate_checkpoint_source_member(
+        relative_file,
+        field_name=f"model.{field_name.removesuffix('_path')}_file",
+    )
     root_path = Path(root).expanduser()
     if root_path.exists() or root.startswith(("/", "./", "../", "~")):
         return str(root_path / relative_file)

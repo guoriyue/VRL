@@ -6,19 +6,20 @@ import argparse
 import csv
 import json
 import logging
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
 from omegaconf import DictConfig, OmegaConf
 from PIL import Image
 
-from vrl.config.builders import build_configs
 from vrl.config.loading import load_config
+from vrl.config.precision import PrecisionPolicy, resolve_precision_policy
+from vrl.config.schema import RootConfig, parse_config
 from vrl.families.registry import get_model_family_entry
 from vrl.generation.types import VideoGenerationRequest
 from vrl.models.dtypes import resolve_torch_dtype
 from vrl.trainers.data import load_prompt_manifest
-from vrl.trainers.precision import torch_dtype_for_trainer_precision
 from vrl.utils.media import to_pil_image
 
 logger = logging.getLogger(__name__)
@@ -132,15 +133,17 @@ def main(argv: list[str] | None = None) -> None:
         raise ValueError("--limit must be >= 0")
 
     cfg = load_config(args.config, overrides=args.overrides)
+    _configure_lora_for_inference(
+        cfg, lora_path=args.lora_path, use_config_lora=args.use_config_lora
+    )
+    root = parse_config(cfg)
+    precision = resolve_precision_policy(root)
     prompts = _load_prompts(args, cfg)
     if args.limit:
         prompts = prompts[: args.limit]
     if not prompts:
         raise ValueError("provide at least one prompt source")
 
-    _configure_lora_for_inference(
-        cfg, lora_path=args.lora_path, use_config_lora=args.use_config_lora
-    )
     sampling = _resolve_sampling(args, cfg)
     out_dir = Path(args.output_dir).expanduser().resolve()
     image_dir = out_dir / "images"
@@ -168,11 +171,24 @@ def main(argv: list[str] | None = None) -> None:
     import torch
 
     device = _resolve_device(args.device, torch)
-    dtype = _resolve_dtype(args.dtype, cfg, device=device, torch=torch)
+    dtype = _resolve_dtype(
+        args.dtype,
+        root,
+        precision=precision,
+        device=device,
+        torch=torch,
+    )
     logger.info("Building Anima runtime on device=%s dtype=%s", device, dtype)
-    entry = get_model_family_entry(str(cfg.model.family))
+    if root.model is None:
+        raise ValueError("Anima generation requires model configuration")
+    entry = get_model_family_entry(str(root.model.family))
     bundle = entry.build_rollout(
-        entry.resolve_model_build(cfg, device, parameter_dtype_override=dtype),
+        entry.resolve_model_build(
+            root,
+            device,
+            precision=precision,
+            parameter_dtype_override=dtype,
+        ),
     )
     model = bundle.model.eval()
 
@@ -237,15 +253,27 @@ def _configure_lora_for_inference(
     lora_path: str,
     use_config_lora: bool,
 ) -> None:
+    model = cfg.get("model")
+    if not isinstance(model, Mapping):
+        raise ValueError("model must be a mapping")
+    lora = model.get("lora")
+    if lora is not None and not isinstance(lora, Mapping):
+        raise ValueError("model.lora must be a mapping")
+
     if lora_path:
-        cfg.model.use_lora = True
-        cfg.model.lora.path = str(_resolve_lora_path(lora_path))
+        OmegaConf.update(cfg, "model.use_lora", True, force_add=True)
+        OmegaConf.update(
+            cfg,
+            "model.lora.path",
+            str(_resolve_lora_path(lora_path)),
+            force_add=True,
+        )
         return
 
-    configured_path = str(cfg.model.lora.path or "").strip()
-    if bool(cfg.model.use_lora) and not configured_path and not use_config_lora:
+    configured_path = str((lora or {}).get("path") or "").strip()
+    if bool(model.get("use_lora")) and not configured_path and not use_config_lora:
         logger.warning("Disabling empty training LoRA config for base-model inference")
-        cfg.model.use_lora = False
+        OmegaConf.update(cfg, "model.use_lora", False)
 
 
 def _resolve_lora_path(path: str) -> Path:
@@ -283,12 +311,20 @@ def _resolve_device(device_arg: str, torch: Any) -> Any:
     return torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
 
-def _resolve_dtype(dtype_arg: str, cfg: DictConfig, *, device: Any, torch: Any) -> Any:
+def _resolve_dtype(
+    dtype_arg: str,
+    root: RootConfig,
+    *,
+    precision: PrecisionPolicy,
+    device: Any,
+    torch: Any,
+) -> Any:
     if dtype_arg != "auto":
         return resolve_torch_dtype(dtype_arg)
 
-    trainer_config = build_configs(cfg)["trainer"]
-    dtype = torch_dtype_for_trainer_precision(trainer_config, torch)
+    if root.trainer is None:
+        raise ValueError("Anima generation requires an online trainer config")
+    dtype = resolve_torch_dtype(precision.training.dtype)
     if getattr(device, "type", str(device)) == "cpu":
         return torch.float32
     return dtype

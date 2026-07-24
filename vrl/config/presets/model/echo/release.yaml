@@ -12,6 +12,11 @@ model:
   gemma_path: google/gemma-3-12b-it
   gemma_revision: 96b6f1eccf38110c56df3a15bffe176da04bfd80
 
+  # Fixed LTX wrapper grid. Sampling requests derive H/W from these values;
+  # an experiment may override the model values for a smaller fixed grid.
+  video_height: 512
+  video_width: 768
+
   use_lora: true
   lora:
     rank: 32

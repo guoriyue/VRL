@@ -1,19 +1,9 @@
 """Cosmos3 Omni vision generator family (T2V, flow-matching GRPO RL)."""
 
-from vrl.models.families.cosmos.cosmos3.model import (
-    Cosmos3Model,
-    Cosmos3ReplayModel,
-    Cosmos3SamplingState,
-)
-from vrl.models.families.cosmos.cosmos3.runtime import (
-    Cosmos3ChunkExecutor,
-    build_cosmos3_replay_runtime_bundle,
-)
+from __future__ import annotations
 
-__all__ = [
-    "Cosmos3ChunkExecutor",
-    "Cosmos3Model",
-    "Cosmos3ReplayModel",
-    "Cosmos3SamplingState",
-    "build_cosmos3_replay_runtime_bundle",
-]
+# Deliberately exports nothing. The family registry dispatches by dotted
+# submodule path (vrl/families/registry.py), so a package-root re-export is a
+# second surface nothing imports; keeping this module empty is also what stops
+# config discovery from pulling the torch-backed model runtime.
+__all__: list[str] = []

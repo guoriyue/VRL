@@ -42,6 +42,12 @@ actor:
     enable: true
     decay: 0.9
     update_interval: 1
+  # Stream the optimizer-target batch one prompt group at a time so host RAM
+  # holds ~1 group instead of all 32 (derives gradient_accumulation_steps=32).
+  microbatch_size: 1
+  # Fail fast if one streamed group already uses >90% of host RAM instead of
+  # OOMing minutes into rollout (0.0 disables the guard).
+  host_memory_budget_fraction: 0.9
 
 rollout:
   # Paper-shaped RL batch: 8 outputs per input condition and 32 input
@@ -49,12 +55,6 @@ rollout:
   # so rollout denoising can stream on limited memory.
   n_samples_per_prompt: 8
   prompts_per_batch: 32
-  # Stream the optimizer-target batch one prompt group at a time so host RAM
-  # holds ~1 group instead of all 32 (derives gradient_accumulation_steps=32).
-  microbatch_size: 1
-  # Fail fast if one streamed group already uses >90% of host RAM instead of
-  # OOMing minutes into rollout (0.0 disables the guard).
-  host_memory_budget_fraction: 0.9
   samples_per_chunk: 1
   noise_level: 0.7
   sde:
@@ -89,4 +89,3 @@ reward:
 production:
   kling_video_reward:
     enabled: true
-    report_path: outputs/cosmos_world_model_production_report.md

@@ -4,9 +4,10 @@
 对称 colocated 编排、真实 cross-node 2×1 LoRA run 和真实 full-parameter FSDP run 均已落地并验证。
 下方 “Done” 记录是当前完成证据；更早的 parked 状态与 Phase 计划只保留为历史实施轨迹。
 
-> **阅读边界（2026-07-18）**：顶部完成记录覆盖旧的“尚未实现”段落。未做的 offline DPO、
-> optimizer/EMA resume、HF-format LoRA export 与 FSDP+compile 都是明确 non-goal 或独立未来工作，
-> 不重新打开本 sprint，也不把 `done/` 当作这些事项的 active owner。
+> **阅读边界（2026-07-23）**：顶部完成记录覆盖旧的“尚未实现”段落。FSDP optimizer/EMA
+> resume 与 HF-format LoRA export 后续已在 checkpoint ownership 工作中落地；offline DPO
+> multi-rank 与 FSDP+compile 仍是独立 non-goal。下方 Phase 计划保留为历史实施轨迹，不再代表
+> 当前 capability。
 
 > **复核更新（2026-06-20）**：本 doc「无真实 2-GPU run」一句**已 stale**——一条 **DDP** 多卡路径其后独立落地并归档
 > `done/`（`vrl/trainers/strategy.py:464 DDPStrategy`、`SPRINT_symmetric_colocated_ddp` + `SPRINT_ddp_2x1_first_run_findings`,
@@ -81,10 +82,17 @@ real NCCL" lesson), each now fixed with a regression test:
    CheckpointError. Config uses `precision_policy=none` (fp32 sharded master + bf16
    via the trainer's autocast, consistent across forward/recompute). GC is required
    (no-GC OOMs a 44GB L40S at 480p/33f).
-5. **checkpoint gather deadlock**: the trainable-state gather is a collective but the
+5. **checkpoint gather deadlock**: the checkpoint-state gather is a collective but the
    recipe gated the whole save to rank0 → rank0 hung at the all-gather. Fixed: the
-   gather runs on every rank, only rank0 writes; sharded LoRA `save_pretrained` is
-   skipped under fsdp (payload carries the gathered state). `test_save_training_checkpoint_non_primary_gathers_but_writes_nothing`.
+   gather runs on every rank and the strategy context derives the sole writer.
+   A second all-rank gather now materializes optional EMA adapter weights for
+   rank0-only HF `save_pretrained`, while `checkpoint.pt` retains raw resume state.
+   `test_save_training_checkpoint_non_primary_gathers_but_writes_nothing` and
+   `test_checkpoint_keeps_raw_state_and_exports_ema_on_every_fsdp_rank`.
+
+后续 exact-owned-state、immutable identity与 artifact failure agreement的完整判定见
+[Checkpoint identity and owned state](SPRINT_checkpoint_identity_and_owned_state.md) 和
+[EMA adapter artifact export](SPRINT_ema_adapter_artifact_export.md)。
 
 **Done (2026-06-22) — FULL-PARAM FSDP validated:** the case FSDP actually earns its
 keep. `online_grpo_ocr_fsdp_2x1_fullparam` (SD3.5 GRPO OCR, `model.use_lora=false`)

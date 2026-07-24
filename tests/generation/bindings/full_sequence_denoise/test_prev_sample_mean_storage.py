@@ -28,8 +28,6 @@ def _config(*, return_prev_sample_mean: bool) -> DenoiseLoopConfig:
         sde=DenoiseSDEParams(
             noise_level=1.0,
             sde_type="flow_grpo",
-            sde_window_size=0,
-            sde_window_range=(0, 0),
             same_latent=False,
             return_kl=False,
             return_prev_sample_mean=return_prev_sample_mean,

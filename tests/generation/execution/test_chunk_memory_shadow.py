@@ -163,6 +163,7 @@ def _probe_core(executor: Any) -> GenerationWorkerCore:
     contract = GenerationRuntimeLaunchContract(
         family="sd3_5",
         model_build={},
+        expected_model_identity={"schema": "test"},
         policy_version=1,
     )
     core = GenerationWorkerCore("rollout-0", contract)
@@ -353,6 +354,7 @@ def test_worker_forwards_chunk_memory_without_runtime_debug() -> None:
     contract = GenerationRuntimeLaunchContract(
         family="sd3_5",
         model_build={},
+        expected_model_identity={"schema": "test"},
         policy_version=1,
     )
     core = GenerationWorkerCore("rollout-0", contract)

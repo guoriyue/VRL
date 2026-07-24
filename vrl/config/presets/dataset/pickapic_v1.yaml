@@ -7,7 +7,6 @@
 # ~0.5M preference pairs — enough for an offline Diffusion-DPO refine.
 data:
   loader: pickapic_preference
-  source: huggingface
   dataset_name: pickapic-anonymous/pickapic_v1
   cache_dir: ""
   split: train

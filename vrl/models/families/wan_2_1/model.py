@@ -30,18 +30,24 @@ import logging
 import random
 import sys
 from collections.abc import Callable, Iterator, Mapping
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from enum import Enum
-from typing import Any, get_args
+from typing import Any
 
 import torch
 
 from vrl.generation.types import VideoGenerationRequest
-from vrl.models.interfaces.runtime import ModelBuild, PipelineOffloadMode
+from vrl.models.families.wan_2_1.config import (
+    normalize_wan_boundary_ratio,
+    normalize_wan_trainable_transformers,
+    wan_topology_from_build,
+)
+from vrl.models.interfaces.runtime import ModelBuild
+from vrl.models.peft_adapter import load_trainable_lora_adapter
 from vrl.models.steps.denoise import (
     DiffusersPipelineModelBase,
     DiffusionModelBase,
-    DiffusionSamplingStateBase,
+    GuidedDiffusionSamplingStateBase,
     ReplayRolloutStubs,
 )
 from vrl.models.steps.denoise.common import (
@@ -81,7 +87,7 @@ def _batch_align_tensor(value: torch.Tensor, batch_size: int) -> torch.Tensor:
 
 
 @dataclass
-class WanT2VSamplingState(DiffusionSamplingStateBase):
+class WanT2VSamplingState(GuidedDiffusionSamplingStateBase):
     """Private Wan T2V sampling state. Engine MUST NOT introspect."""
 
     prompt_embeds: torch.Tensor
@@ -93,7 +99,7 @@ class WanT2VSamplingState(DiffusionSamplingStateBase):
 
 
 @dataclass
-class WanI2VSamplingState(DiffusionSamplingStateBase):
+class WanI2VSamplingState(GuidedDiffusionSamplingStateBase):
     """Private Wan I2V sampling state. Engine MUST NOT introspect."""
 
     prompt_embeds: torch.Tensor
@@ -147,11 +153,11 @@ class WanT2VDiffusersModel(
         super().__init__(pipeline=pipeline, device=device)
         self._pipeline_offload: _PipelineOffloadState | None = None
         self.transformer_2 = getattr(pipeline, "transformer_2", None)
-        self._boundary_ratio = _optional_float(
+        self._boundary_ratio = normalize_wan_boundary_ratio(
             _config_value(getattr(pipeline, "config", None), "boundary_ratio"),
-            "boundary_ratio",
+            field_name="pipeline boundary_ratio",
         )
-        self._trainable_transformer_names = _normalize_trainable_transformers(
+        self._trainable_transformer_names = normalize_wan_trainable_transformers(
             trainable_transformers,
             dual_stage=self._boundary_ratio is not None,
         )
@@ -173,6 +179,7 @@ class WanT2VDiffusersModel(
     @classmethod
     def from_build(cls, build: ModelBuild) -> WanT2VDiffusersModel:
         """Load the diffusers WanPipeline + freeze non-trainable modules."""
+        boundary_ratio, trainable_transformers = wan_topology_from_build(build)
         from diffusers import WanPipeline
 
         from vrl.models.loader import model_pretrained_kwargs
@@ -182,7 +189,11 @@ class WanT2VDiffusersModel(
             torch_dtype=build.parameter_dtype,
             **model_pretrained_kwargs(build),
         )
-        _validate_wan_pipeline(pipeline, task="Wan T2V")
+        _validate_wan_pipeline(
+            pipeline,
+            task="Wan T2V",
+            expected_boundary_ratio=boundary_ratio,
+        )
         pipeline.vae.requires_grad_(False)
         pipeline.text_encoder.requires_grad_(False)
         offload_mode = _resolve_wan_offload_mode(build)
@@ -198,7 +209,7 @@ class WanT2VDiffusersModel(
         return cls(
             pipeline=pipeline,
             device=build.device,
-            trainable_transformers=(build.model_config or {}).get("trainable_transformers"),
+            trainable_transformers=trainable_transformers,
             expert_lifecycle_profiling=bool(
                 (build.model_config or {}).get("expert_lifecycle_profiling", False),
             ),
@@ -232,7 +243,7 @@ class WanT2VDiffusersModel(
     def apply_lora(self, build: ModelBuild) -> None:
         """Attach LoRA to the configured Wan trainable transformer(s)."""
 
-        from peft import LoraConfig, PeftModel, get_peft_model
+        from peft import LoraConfig, get_peft_model
 
         lora_path = build.lora_path
         names = self._trainable_transformer_names
@@ -243,8 +254,8 @@ class WanT2VDiffusersModel(
             )
 
         lora_config = build.lora
-        if not lora_path and lora_config is None:
-            raise ValueError("LoRA runtime build requires lora_config when lora_path is empty")
+        if lora_config is None:
+            raise ValueError("LoRA runtime build requires model.lora configuration")
 
         for name in names:
             transformer = self._wan_transformers()[name]
@@ -252,17 +263,20 @@ class WanT2VDiffusersModel(
             if not _defer_wan_trainable_device_move(build):
                 transformer.to(self.device)
             if lora_path:
-                wrapped = PeftModel.from_pretrained(
+                wrapped = load_trainable_lora_adapter(
                     transformer,
                     lora_path,
-                    is_trainable=True,
+                    expected_rank=lora_config["rank"],
+                    expected_alpha=lora_config["alpha"],
+                    expected_dropout=lora_config.get("dropout", 0.0),
+                    expected_target_modules=lora_config["target_modules"],
                 )
                 wrapped.set_adapter("default")
             else:
-                assert lora_config is not None
                 cfg = LoraConfig(
                     r=lora_config["rank"],
                     lora_alpha=lora_config["alpha"],
+                    lora_dropout=lora_config.get("dropout", 0.0),
                     init_lora_weights=lora_config.get(
                         "init_lora_weights",
                         self._lora_default_init_weights,
@@ -827,7 +841,7 @@ class WanT2VReplayModel(ReplayRolloutStubs, WanT2VDiffusersModel):
         self._scheduler = scheduler
         self._device = device
         self._boundary_ratio = boundary_ratio
-        self._trainable_transformer_names = _normalize_trainable_transformers(
+        self._trainable_transformer_names = normalize_wan_trainable_transformers(
             trainable_transformers,
             dual_stage=boundary_ratio is not None,
         )
@@ -841,11 +855,10 @@ class WanT2VReplayModel(ReplayRolloutStubs, WanT2VDiffusersModel):
 
         The generic replay loader constructs only the primary transformer +
         scheduler; Wan2.2 dual-stage checkpoints carry a second transformer
-        whose presence is decided by ``boundary_ratio`` (explicit config or
-        the pipeline config). Late-load it here and redo the ctor wiring
-        (trainable-name normalization + freeze) that depends on it.
+        whose presence is decided by the canonical build topology. Late-load it
+        here and apply the already-normalized policy ownership.
         """
-        boundary_ratio = _boundary_ratio_from_build(build)
+        boundary_ratio, trainable_transformers = wan_topology_from_build(build)
         if boundary_ratio is not None and self.transformer_2 is None:
             from vrl.models.loader import load_diffusers_transformer
 
@@ -855,10 +868,7 @@ class WanT2VReplayModel(ReplayRolloutStubs, WanT2VDiffusersModel):
                 subfolder="transformer_2",
             )
         self._boundary_ratio = boundary_ratio
-        self._trainable_transformer_names = _normalize_trainable_transformers(
-            (build.model_config or {}).get("trainable_transformers"),
-            dual_stage=boundary_ratio is not None,
-        )
+        self._trainable_transformer_names = trainable_transformers
         self._expert_lifecycle_profiling = bool(
             (build.model_config or {}).get("expert_lifecycle_profiling", False),
         )
@@ -942,6 +952,7 @@ class WanI2VDiffusersModel(WanT2VDiffusersModel):
     @classmethod
     def from_build(cls, build: ModelBuild) -> WanI2VDiffusersModel:
         """Load WanImageToVideoPipeline + freeze generation-only modules."""
+        boundary_ratio, trainable_transformers = wan_topology_from_build(build)
         from diffusers import WanImageToVideoPipeline
 
         from vrl.models.loader import model_pretrained_kwargs
@@ -951,7 +962,11 @@ class WanI2VDiffusersModel(WanT2VDiffusersModel):
             torch_dtype=build.parameter_dtype,
             **model_pretrained_kwargs(build),
         )
-        _validate_wan_pipeline(pipeline, task="Wan I2V")
+        _validate_wan_pipeline(
+            pipeline,
+            task="Wan I2V",
+            expected_boundary_ratio=boundary_ratio,
+        )
         pipeline.set_progress_bar_config(disable=True)
 
         for module_name in ("vae", "text_encoder", "image_encoder"):
@@ -973,7 +988,7 @@ class WanI2VDiffusersModel(WanT2VDiffusersModel):
         return cls(
             pipeline=pipeline,
             device=build.device,
-            trainable_transformers=(build.model_config or {}).get("trainable_transformers"),
+            trainable_transformers=trainable_transformers,
             expert_lifecycle_profiling=bool(
                 (build.model_config or {}).get("expert_lifecycle_profiling", False),
             ),
@@ -1247,55 +1262,27 @@ def _transformer_config(transformer: Any) -> Any:
     return getattr(transformer, "config", None)
 
 
-def _validate_wan_pipeline(pipeline: Any, *, task: str) -> None:
+def _validate_wan_pipeline(
+    pipeline: Any,
+    *,
+    task: str,
+    expected_boundary_ratio: float | None,
+) -> None:
     if bool(_config_value(pipeline.config, "expand_timesteps", False)):
         raise NotImplementedError(
             f"{task} RL does not yet support expand_timesteps pipelines.",
         )
-    if (
-        _config_value(pipeline.config, "boundary_ratio") is not None
-        and getattr(pipeline, "transformer_2", None) is None
-    ):
-        raise ValueError(f"{task} dual-stage pipeline is missing transformer_2")
-
-
-def normalize_wan_model_build(build: ModelBuild) -> ModelBuild:
-    """Project public Wan offload config into rollout-only runtime state."""
-
-    if build.family not in {"wan_2_1", "wan_2_1_i2v"}:
-        raise ValueError(f"Wan build normalizer received family {build.family!r}")
-
-    extra = dict(build.model_config or {})
-    legacy = sorted(
-        key
-        for key in ("enable_model_cpu_offload", "enable_sequential_cpu_offload")
-        if key in extra
+    loaded_boundary_ratio = normalize_wan_boundary_ratio(
+        _config_value(pipeline.config, "boundary_ratio"),
+        field_name="pipeline boundary_ratio",
     )
-    if legacy:
+    if loaded_boundary_ratio != expected_boundary_ratio:
         raise ValueError(
-            f"removed Wan model config key(s): {', '.join('model.' + key for key in legacy)}; "
-            "use model.offload_mode='none', 'model', or 'sequential'",
+            f"{task} pipeline boundary_ratio disagrees with the canonical ModelBuild: "
+            f"pipeline={loaded_boundary_ratio!r}, build={expected_boundary_ratio!r}",
         )
-
-    mode = extra.get("offload_mode")
-    if "offload_mode" not in extra and build.rollout is not None:
-        mode = build.rollout.pipeline_offload_mode
-    if mode is None or mode == "":
-        mode = "none"
-    mode = str(mode)
-    allowed_modes = get_args(PipelineOffloadMode)
-    if mode not in allowed_modes:
-        raise ValueError(
-            f"model.offload_mode must be one of {list(allowed_modes)}, got {mode!r}",
-        )
-    extra.pop("offload_mode", None)
-    build.model_config = extra
-    if build.rollout is not None:
-        build.rollout = replace(
-            build.rollout,
-            pipeline_offload_mode=mode,
-        )
-    return build
+    if loaded_boundary_ratio is not None and getattr(pipeline, "transformer_2", None) is None:
+        raise ValueError(f"{task} dual-stage pipeline is missing transformer_2")
 
 
 def _resolve_wan_offload_mode(build: ModelBuild) -> str:
@@ -1432,55 +1419,6 @@ def _cuda_parameter_bytes(module: Any) -> int:
     return total
 
 
-def _optional_float(value: Any, field_name: str) -> float | None:
-    if value is None or value == "":
-        return None
-    try:
-        return float(value)
-    except (TypeError, ValueError) as exc:
-        raise ValueError(f"{field_name} must be a float or null") from exc
-
-
-def _boundary_ratio_from_build(build: ModelBuild) -> float | None:
-    """Dual-stage boundary for the replay build: explicit ``model.boundary_ratio``
-    wins; Wan2.2 checkpoints read it from the pipeline config (the replay model
-    loads no pipeline of its own, so this is where transformer_2 loading is
-    decided)."""
-
-    model_config = build.model_config or {}
-    if "boundary_ratio" in model_config:
-        return _optional_float(model_config.get("boundary_ratio"), "model.boundary_ratio")
-    if "Wan2.2" not in str(build.model_name_or_path):
-        return None
-    from diffusers import DiffusionPipeline
-
-    config = DiffusionPipeline.load_config(build.model_name_or_path)
-    return _optional_float(config.get("boundary_ratio"), "pipeline boundary_ratio")
-
-
-def _normalize_trainable_transformers(value: Any, *, dual_stage: bool) -> tuple[str, ...]:
-    if value is None or value == "":
-        names = ("transformer_2",) if dual_stage else ("transformer",)
-    elif isinstance(value, str):
-        text = value.strip().lower()
-        names = ("transformer", "transformer_2") if text in {"all", "both"} else (text,)
-    else:
-        names = tuple(str(item).strip().lower() for item in value)
-
-    allowed = {"transformer", "transformer_2"} if dual_stage else {"transformer"}
-    out: list[str] = []
-    for name in names:
-        if name not in allowed:
-            raise ValueError(
-                f"invalid Wan trainable transformer {name!r}; allowed={sorted(allowed)}",
-            )
-        if name not in out:
-            out.append(name)
-    if not out:
-        raise ValueError("Wan trainable_transformers must not be empty")
-    return tuple(out)
-
-
 def _config_value(config: Any, name: str, default: Any = None) -> Any:
     if isinstance(config, dict):
         return config.get(name, default)
@@ -1494,5 +1432,4 @@ __all__ = [
     "WanT2VDiffusersModel",
     "WanT2VReplayModel",
     "WanT2VSamplingState",
-    "normalize_wan_model_build",
 ]

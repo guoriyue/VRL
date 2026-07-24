@@ -30,7 +30,6 @@ def test_byte_counter_counts_trajectory_tensor_leaves() -> None:
                 prompt_index=0,
                 sample_index=0,
                 prompt="p",
-                prompt_id="p0",
                 group_id="g0",
                 sample_id="s0",
                 trajectory_id="t0",
@@ -50,7 +49,6 @@ def test_byte_counter_counts_trajectory_tensor_leaves() -> None:
     expected = sum(
         tensor.numel() * tensor.element_size()
         for tensor in (
-            trajectory.group_ids,
             token_ids,
             old_log_prob,
             token_mask,

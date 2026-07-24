@@ -19,7 +19,7 @@ class Evaluator(Protocol):
 
     Evaluators may publish ``replay_granularity='trajectory'`` when causal
     state requires one ordered replay over every policy action. The default is
-    step replay, preserving existing full-sequence and token behavior.
+    step replay for evaluators that recompute one denoise transition per call.
 
     Replay ownership lives on the model. Evaluators must not route train-time
     replay through collectors.

@@ -10,11 +10,8 @@ from vrl.rollouts.collector.batch_builder import (
     RolloutBatchBuildContext,
     TrajectoryRolloutBatchBuilder,
 )
-from vrl.rollouts.collector.config import (
-    RolloutCollectorConfig,
-    build_rollout_config_from_cfg,
-)
-from vrl.trajectory import build_ar_multisegment_trajectory
+from vrl.rollouts.collector.config import RolloutCollectorConfig
+from vrl.trajectory import TrajectoryResolver, build_ar_multisegment_trajectory
 
 
 def _sample_rows() -> list[GenerationSampleRow]:
@@ -23,7 +20,6 @@ def _sample_rows() -> list[GenerationSampleRow]:
             prompt_index=0,
             sample_index=0,
             prompt="draw text",
-            prompt_id="p0",
             group_id="g0",
             sample_id="s0",
             trajectory_id="t0",
@@ -33,7 +29,6 @@ def _sample_rows() -> list[GenerationSampleRow]:
             prompt_index=0,
             sample_index=1,
             prompt="draw text",
-            prompt_id="p0",
             group_id="g0",
             sample_id="s1",
             trajectory_id="t1",
@@ -63,7 +58,7 @@ def test_r1_train_segments_derive_from_algorithm_config() -> None:
     cfg.algorithm.train_segments.initial_image = False
     cfg.algorithm.train_segments.selfcheck_text = True
 
-    rollout = build_rollout_config_from_cfg(cfg)
+    rollout = RolloutCollectorConfig.from_cfg(cfg)
 
     assert rollout.get("train_segments") == {
         "initial_image": False,
@@ -75,8 +70,7 @@ def test_r1_train_segments_derive_from_algorithm_config() -> None:
 def test_r1_collector_uses_r1_task_request_and_trajectory_batch() -> None:
     """Checks R1 collector uses R1 task request and trajectory batch."""
     rollout_config = RolloutCollectorConfig(
-        values={
-            "n_samples_per_prompt": 2,
+        request_sampling={
             "guidance_scale": 5.0,
             "temperature": 0.9,
             "image_token_num": 576,
@@ -102,22 +96,18 @@ def test_r1_collector_uses_r1_task_request_and_trajectory_batch() -> None:
     assert plan.request.family == "janus_pro_r1"
     assert plan.request.task == entry.task
     assert plan.request.sampling["max_reflect_len"] == 32
-    assert "trajectory" in plan.request.return_artifacts
 
 
 def test_r1_trajectory_batch_keeps_segments_separate() -> None:
     """Checks R1 trajectory batch keeps segments separate."""
     batch_size = 2
-    initial_images = torch.ones(batch_size, 3, 2, 2)
     final_images = torch.zeros(batch_size, 3, 2, 2)
-    selfcheck = torch.ones(batch_size, 2, dtype=torch.long)
     request = GenerationRequest(
         request_id="r1",
         family="janus_pro_r1",
         task="ar_t2i_r1",
         inputs=["draw text"],
         samples_per_prompt=2,
-        return_artifacts={"output", "trajectory"},
     )
     segments = {
         "initial_image": _segment(batch_size, 3, visual=True),
@@ -128,11 +118,6 @@ def test_r1_trajectory_batch_keeps_segments_separate() -> None:
         request=request,
         sample_rows=_sample_rows(),
         segments=segments,
-        decoded_outputs={
-            "initial_image": initial_images,
-            "final_image": final_images,
-            "selfcheck": selfcheck,
-        },
         primary_segment="final_image",
         context={"mode": "r1"},
     )
@@ -140,7 +125,6 @@ def test_r1_trajectory_batch_keeps_segments_separate() -> None:
         request_id=request.request_id,
         family=request.family,
         task=request.task,
-        prompts=list(request.prompts),
         sample_rows=_sample_rows(),
         output=final_images,
         trajectory=trajectory,
@@ -160,6 +144,10 @@ def test_r1_trajectory_batch_keeps_segments_separate() -> None:
         2,
     )
     assert trajectory.segments["final_image"].tensors["token_ids"].value.shape == (batch_size, 5)
+    assert "decoded" not in trajectory.segments
+    assert trajectory.reward_views["image"].tensor_refs == ()
+    assert trajectory.reward_views["image"].metadata == {"output_ref": "GenerationOutput.output"}
     assert "log_probs" not in packed.extras
-    assert packed.actions.shape == (batch_size, 5)
+    actions = TrajectoryResolver.from_batch(packed).role_value("final_image", "action")
+    assert actions.shape == (batch_size, 5)
     assert packed.context["mode"] == "r1"

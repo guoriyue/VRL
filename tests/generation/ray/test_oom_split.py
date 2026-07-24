@@ -115,7 +115,6 @@ class _CoverageGatherer:
             request_id=request.request_id,
             family=request.family,
             task=request.task,
-            prompts=list(request.prompts),
             sample_rows=list(sample_rows),
             output=list(chunks),
         )
@@ -359,7 +358,6 @@ class _RoutingWorker:
             request_id=request_id,
             family=request.family,
             task=request.task,
-            prompts=list(request.prompts),
             sample_rows=list(sample_rows),
             output=[{"pipelined": True}],
         )

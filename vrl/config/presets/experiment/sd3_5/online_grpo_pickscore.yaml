@@ -8,9 +8,6 @@ defaults:
   - /reward/pickscore
 
 
-sampling:
-  max_sequence_length: 128
-
 actor:
   optim:
     lr: 3.0e-4

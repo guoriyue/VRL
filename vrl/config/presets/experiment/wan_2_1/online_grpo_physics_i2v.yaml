@@ -47,4 +47,3 @@ reward:
 production:
   kling_video_reward:
     enabled: false
-    report_path: outputs/wan_i2v_14b_physics_smoke/production_report.md

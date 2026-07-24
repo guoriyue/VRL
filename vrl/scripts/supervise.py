@@ -37,9 +37,14 @@ import signal
 import subprocess
 import sys
 import time
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field, fields
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+from vrl.trainers.metrics_io import online_metric_columns
+
+if TYPE_CHECKING:
+    from vrl.trainers.core.types import DebugConfig, RolloutOrchestrationConfig
 
 from vrl.scripts.train import RUN_VERDICT_NAME, rank_run_verdict_name
 
@@ -98,41 +103,123 @@ class TrainLaunch:
 
 
 @dataclass(frozen=True, slots=True)
+class ContinuousHealthPolicy:
+    """Health thresholds that exist only under a continuous rollout schedule.
+
+    Bundling them is what makes the illegal states unrepresentable: a strict run
+    cannot carry a stale-version limit, and a continuous run cannot be supervised
+    without one. Expressed as two independent fields on the gate config, both
+    mistakes were reachable and had to be rejected by cross-field validation.
+    """
+
+    max_stale_policy_versions: int
+    max_stale_logprob_diff: float = 0.05
+
+    def __post_init__(self) -> None:
+        if self.max_stale_policy_versions < 0:
+            raise ValueError("max_stale_policy_versions must be >= 0")
+        if not math.isfinite(self.max_stale_logprob_diff) or self.max_stale_logprob_diff < 0:
+            raise ValueError("max_stale_logprob_diff must be finite and >= 0")
+
+
+@dataclass(frozen=True, slots=True)
 class HealthGateConfig:
     """Thresholds for the opt-in metrics health gate.
 
     Presence of this config is what enables the gate (``RunSupervisor.health``),
     so "enabled but unconfigured" and "thresholds set but disabled" cannot be
-    expressed. ``max_stale_policy_versions`` additionally opts into the
-    continuous-rollout metrics. The gate intentionally does not infer learning
-    progress from ``reward_mean``: rotating prompts and stochastic rollouts make
-    such a threshold experiment-specific. Fixed evaluation remains an external
-    checkpoint-evaluation concern.
+    expressed. ``continuous`` carries the same property one level down: its
+    presence, derived from the resolved training schedule, is what selects the
+    continuous metrics protocol, so an operational threshold cannot silently opt
+    a strict run into a different contract. The gate intentionally does not infer
+    learning progress from ``reward_mean``: rotating prompts and stochastic
+    rollouts make such a threshold experiment-specific. Fixed evaluation remains
+    an external checkpoint-evaluation concern.
     """
 
     poll_seconds: float = 5.0
     failure_limit: int = 3
     max_pre_update_logprob_diff: float = 0.01
-    max_stale_policy_versions: int | None = None
-    max_stale_logprob_diff: float = 0.05
+    continuous: ContinuousHealthPolicy | None = None
     min_reward_std: float = 1e-4
     min_grad_norm: float = 1e-8
 
     def __post_init__(self) -> None:
+        required_columns = set(_REQUIRED_HEALTH_METRICS)
+        if self.continuous is not None:
+            required_columns.update(_CONTINUOUS_HEALTH_METRICS)
+        missing_columns = sorted(required_columns - set(online_metric_columns()))
+        if missing_columns:
+            raise AssertionError(
+                "health metrics are absent from the online CSV protocol: "
+                + ", ".join(missing_columns),
+            )
         if self.poll_seconds <= 0:
             raise ValueError("poll_seconds must be > 0")
         if self.failure_limit < 1:
             raise ValueError("failure_limit must be >= 1")
-        if self.max_stale_policy_versions is not None and self.max_stale_policy_versions < 0:
-            raise ValueError("max_stale_policy_versions must be >= 0")
         for name in (
             "max_pre_update_logprob_diff",
-            "max_stale_logprob_diff",
             "min_reward_std",
             "min_grad_norm",
         ):
             if not math.isfinite(getattr(self, name)) or getattr(self, name) < 0:
                 raise ValueError(f"{name} must be finite and >= 0")
+
+    @classmethod
+    def from_cli(
+        cls,
+        args: argparse.Namespace,
+        *,
+        schedule: RolloutOrchestrationConfig,
+        debug: DebugConfig,
+    ) -> HealthGateConfig:
+        """Reconcile operator CLI thresholds against the resolved training config.
+
+        The training config is the authority: its schedule decides which metrics
+        protocol the gate speaks, and its own thresholds are the defaults. The CLI
+        may only tighten them, so an operational knob cannot put the supervisor and
+        the trainer on different contracts.
+
+        Both inputs are the trainer's typed sections rather than YAML string paths.
+        A path read here needs a fallback default, and that default silently wins
+        whenever the key is absent — including the documented case where a recipe
+        deliberately relies on ``ContinuousRolloutConfig``'s own defaults.
+        """
+
+        stale_limit = args.health_max_stale_policy_versions
+        continuous: ContinuousHealthPolicy | None = None
+        if schedule.schedule_mode == "continuous":
+            training_stale_limit = schedule.continuous.max_stale_policy_versions
+            if stale_limit is None:
+                stale_limit = training_stale_limit
+            if stale_limit > training_stale_limit:
+                raise ValueError(
+                    "health max_stale_policy_versions cannot exceed the training "
+                    f"schedule limit ({stale_limit} > {training_stale_limit})",
+                )
+            continuous = ContinuousHealthPolicy(
+                max_stale_policy_versions=stale_limit,
+                max_stale_logprob_diff=args.health_max_stale_logprob_diff,
+            )
+        elif stale_limit is not None:
+            raise ValueError(
+                "--health-max-stale-policy-versions requires "
+                "trainer.rollout_orchestration.schedule_mode=continuous",
+            )
+
+        parity_limit = args.health_max_pre_update_logprob_diff
+        if parity_limit is None:
+            parity_limit = float(debug.max_abs_logprob_diff)
+
+        return cls(
+            poll_seconds=args.health_poll_seconds,
+            failure_limit=args.health_failure_limit,
+            max_pre_update_logprob_diff=parity_limit,
+            continuous=continuous,
+            min_reward_std=args.health_min_reward_std,
+            min_grad_norm=args.health_min_grad_norm,
+        )
 
 
 class MetricsHealthGate:
@@ -244,8 +331,9 @@ class MetricsHealthGate:
     ) -> tuple[list[str], dict[str, float]]:
         reasons: list[str] = []
         parsed: dict[str, float] = {}
+        continuous = self.config.continuous
         required_metrics = list(_REQUIRED_HEALTH_METRICS)
-        if self.config.max_stale_policy_versions is not None:
+        if continuous is not None:
             required_metrics.extend(_CONTINUOUS_HEALTH_METRICS)
         for name in required_metrics:
             raw = row.get(name)
@@ -264,20 +352,17 @@ class MetricsHealthGate:
 
         stale_versions = parsed.get("continuous_stale_versions")
         producer_errors = parsed.get("continuous_producer_errors")
-        if stale_versions is not None:
+        if continuous is not None and stale_versions is not None:
             if stale_versions < 0 or not stale_versions.is_integer():
                 reasons.append(
                     "continuous_stale_versions must be a non-negative integer "
                     f"(got {stale_versions:g})",
                 )
-            elif (
-                self.config.max_stale_policy_versions is not None
-                and stale_versions > self.config.max_stale_policy_versions
-            ):
+            elif stale_versions > continuous.max_stale_policy_versions:
                 reasons.append(
                     "continuous_stale_versions "
                     f"{stale_versions:g} exceeds maximum "
-                    f"{self.config.max_stale_policy_versions}",
+                    f"{continuous.max_stale_policy_versions}",
                 )
         if producer_errors is not None and (
             producer_errors < 0 or not producer_errors.is_integer()
@@ -289,12 +374,12 @@ class MetricsHealthGate:
 
         parity = parsed.get("pre_update_logprob_abs_diff_max")
         parity_limit = self.config.max_pre_update_logprob_diff
-        if stale_versions is not None and stale_versions > 0:
+        if continuous is not None and stale_versions is not None and stale_versions > 0:
             # With bounded async rollout this metric includes intentional policy
             # drift, not only rollout/replay numerical parity. Keep a separate,
             # looser importance-ratio safety bound instead of misclassifying every
             # valid stale row as a parity failure.
-            parity_limit = self.config.max_stale_logprob_diff
+            parity_limit = continuous.max_stale_logprob_diff
         if parity is not None and parity > parity_limit:
             reasons.append(
                 f"pre_update_logprob_abs_diff_max {parity:g} exceeds maximum {parity_limit:g}",
@@ -337,8 +422,9 @@ class MetricsHealthGate:
             "metrics": parsed,
             "thresholds": {
                 "max_pre_update_logprob_diff": self.config.max_pre_update_logprob_diff,
-                "max_stale_policy_versions": self.config.max_stale_policy_versions,
-                "max_stale_logprob_diff": self.config.max_stale_logprob_diff,
+                "continuous": (
+                    None if self.config.continuous is None else asdict(self.config.continuous)
+                ),
                 "min_reward_std": self.config.min_reward_std,
                 "min_grad_norm": self.config.min_grad_norm,
             },
@@ -370,6 +456,14 @@ class RunSupervisor:
     def __post_init__(self) -> None:
         if self.expected_world_size < 1:
             raise ValueError("expected_world_size must be >= 1")
+        if self.max_attempts < 0:
+            raise ValueError("max_attempts must be >= 0")
+        if self.same_cause_limit < 1:
+            raise ValueError("same_cause_limit must be >= 1")
+        for name in ("term_grace_seconds", "backoff_seconds"):
+            value = float(getattr(self, name))
+            if not math.isfinite(value) or value < 0:
+                raise ValueError(f"{name} must be finite and >= 0")
         if self.health is not None:
             self._health_gate = MetricsHealthGate(self.health, self.output_dir)
 
@@ -732,16 +826,17 @@ def build_parser() -> argparse.ArgumentParser:
         "the latest complete checkpoint, stop on repeated same-cause failures.",
     )
     parser.add_argument("--config", required=True, help="Bundled config name or YAML path.")
+    supervisor_defaults = {item.name: item.default for item in fields(RunSupervisor)}
     parser.add_argument(
         "--max-attempts",
-        type=int,
-        default=0,
+        type=_bounded_number(int, 0),
+        default=supervisor_defaults["max_attempts"],
         help="Total attempt budget (0 = unbounded; the same-cause breaker still applies).",
     )
     parser.add_argument(
         "--same-cause-limit",
-        type=int,
-        default=2,
+        type=_bounded_number(int, 1),
+        default=supervisor_defaults["same_cause_limit"],
         help="Stop after this many CONSECUTIVE failures with the same error class.",
     )
     parser.add_argument(
@@ -750,9 +845,10 @@ def build_parser() -> argparse.ArgumentParser:
         help="Stop without restarting when consecutive training-invariant rows are unhealthy; "
         "does not judge reward trends or evaluation quality.",
     )
-    # Threshold defaults live on HealthGateConfig; the CLI only mirrors them so
-    # the two layers cannot drift apart.
+    # Threshold defaults live on the typed health configs; the CLI only mirrors
+    # them so the two layers cannot drift apart.
     health_defaults = HealthGateConfig()
+    continuous_defaults = {item.name: item.default for item in fields(ContinuousHealthPolicy)}
     parser.add_argument(
         "--health-poll-seconds",
         type=_bounded_number(float, 0, exclusive=True),
@@ -770,22 +866,25 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--health-max-pre-update-logprob-diff",
         type=_bounded_number(float, 0),
-        default=health_defaults.max_pre_update_logprob_diff,
-        help="Maximum healthy pre-update log-probability difference "
-        f"(default: {health_defaults.max_pre_update_logprob_diff:g}).",
+        default=None,
+        help="Maximum healthy pre-update log-probability difference. When omitted, "
+        "derive trainer.debug.max_abs_logprob_diff from the resolved training config.",
     )
     parser.add_argument(
         "--health-max-stale-policy-versions",
         type=_bounded_number(int, 0),
-        default=health_defaults.max_stale_policy_versions,
-        help="Enable continuous-rollout health checks with this maximum stale version.",
+        default=None,
+        help="Operational stale-version limit for a continuous training schedule. "
+        "When omitted, use the schedule's own "
+        "trainer.rollout_orchestration.continuous.max_stale_policy_versions. "
+        "It may be stricter, but not wider, than the training schedule.",
     )
     parser.add_argument(
         "--health-max-stale-logprob-diff",
         type=_bounded_number(float, 0),
-        default=health_defaults.max_stale_logprob_diff,
+        default=continuous_defaults["max_stale_logprob_diff"],
         help="Maximum healthy log-probability drift for stale rollouts "
-        f"(default: {health_defaults.max_stale_logprob_diff:g}).",
+        f"(default: {continuous_defaults['max_stale_logprob_diff']:g}).",
     )
     parser.add_argument(
         "--health-min-reward-std",
@@ -813,7 +912,8 @@ def main(argv: list[str] | None = None) -> None:
         level=logging.INFO,
         format="%(asctime)s %(name)s %(levelname)s %(message)s",
     )
-    args = build_parser().parse_args(argv)
+    parser = build_parser()
+    args = parser.parse_args(argv)
 
     from vrl.config.loading import load_config
     from vrl.utils.config import cfg_path
@@ -832,19 +932,29 @@ def main(argv: list[str] | None = None) -> None:
     except ValueError as exc:
         raise SystemExit(str(exc)) from exc
 
-    health = (
-        HealthGateConfig(
-            poll_seconds=args.health_poll_seconds,
-            failure_limit=args.health_failure_limit,
-            max_pre_update_logprob_diff=args.health_max_pre_update_logprob_diff,
-            max_stale_policy_versions=args.health_max_stale_policy_versions,
-            max_stale_logprob_diff=args.health_max_stale_logprob_diff,
-            min_reward_std=args.health_min_reward_std,
-            min_grad_norm=args.health_min_grad_norm,
-        )
-        if args.health_metrics
-        else None
-    )
+    health: HealthGateConfig | None = None
+    if args.health_metrics:
+        # Only the health gate needs the typed training config, so it is built
+        # only here: doing it unconditionally would make the supervisor reject
+        # recipes its child would still run. Otherwise supervise forwards
+        # overrides verbatim and leaves validation to vrl.scripts.train.
+        from vrl.config.builders import build_configs
+
+        trainer = build_configs(cfg).trainer
+        if trainer is None:
+            raise SystemExit(
+                "--health-metrics requires an online recipe; this config resolves "
+                "to an offline trainer that writes no metrics.csv",
+            )
+        try:
+            health = HealthGateConfig.from_cli(
+                args,
+                schedule=trainer.rollout_orchestration,
+                debug=trainer.debug,
+            )
+        except (TypeError, ValueError) as error:
+            parser.error(str(error))
+
     supervisor = RunSupervisor(
         command=list(launch.command),
         output_dir=Path(output_dir),

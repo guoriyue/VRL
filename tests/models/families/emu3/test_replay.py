@@ -20,7 +20,7 @@ from vrl.models.families.emu3.model import emu3_grid_token_num
 from vrl.models.interfaces import ReplayResult
 from vrl.models.utils import count_trainable_params
 from vrl.rollouts.batch import RolloutBatch
-from vrl.trajectory import build_ar_discrete_trajectory, build_training_view
+from vrl.trajectory import TrajectoryResolver, build_ar_discrete_trajectory
 
 HEIGHT, WIDTH = 2, 3
 TOTAL = emu3_grid_token_num(HEIGHT, WIDTH)  # 11
@@ -44,7 +44,6 @@ def _sample_rows() -> list[GenerationSampleRow]:
             prompt_index=0,
             sample_index=index,
             prompt=request.prompts[0],
-            prompt_id="p0",
             group_id="g0",
             sample_id=f"s{index}",
             trajectory_id=f"t{index}",
@@ -81,13 +80,9 @@ def _discrete_batch(context: dict | None = None) -> RolloutBatch:
         ),
     )
     return RolloutBatch(
-        observations=torch.ones(2, 1, 4, dtype=torch.long),
-        actions=token_ids,
         rewards=torch.zeros(2),
-        dones=torch.ones(2, dtype=torch.bool),
         group_ids=torch.tensor([0, 0]),
         trajectory=trajectory,
-        training_view=build_training_view(trajectory),
     )
 
 
@@ -110,7 +105,8 @@ def test_replay_forward_returns_masked_gen_vocab_logits() -> None:
     assert set(segment.values) == {"logits", "image_token_ids"}
     logits = segment.values["logits"]
     assert logits.shape == (2, TOTAL, TINY_GEN_VOCAB)
-    assert torch.equal(segment.values["image_token_ids"], batch.actions)
+    actions = TrajectoryResolver.from_batch(batch).role_value("image_tokens", "action")
+    assert torch.equal(segment.values["image_token_ids"], actions)
 
     # Free positions: image columns finite, structural columns -inf.
     free = logits[:, 0, :]
@@ -153,7 +149,8 @@ def test_replay_model_replays_without_vq_or_processor() -> None:
         TINY_GEN_VOCAB,
     )
     with pytest.raises(RuntimeError, match="cannot decode image tokens"):
-        model.decode_image_tokens(batch.actions, height=HEIGHT, width=WIDTH)
+        actions = TrajectoryResolver.from_batch(batch).role_value("image_tokens", "action")
+        model.decode_image_tokens(actions, height=HEIGHT, width=WIDTH)
     with pytest.raises(RuntimeError, match="Emu3Processor"):
         _ = model.processor
     with pytest.raises(RuntimeError, match="VQ decoder"):

@@ -74,7 +74,6 @@ class ChunkAutoregressiveDenoiseLogProbEvaluator(Evaluator):
             old_log_prob=old_log_prob,
             mask=mask,
             ref_log_prob=ref_log_prob,
-            distribution="gaussian",
         )
 
     @staticmethod

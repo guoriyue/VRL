@@ -11,8 +11,6 @@ data:
   task_type: text_to_video
   preprocessing:
     format: jsonl
-    target_text: none
-    media_type: video
     conditioning: text_only
   sampler:
     type: random_without_replacement

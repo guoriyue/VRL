@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import time
+from typing import TYPE_CHECKING
 
 import torch
 
@@ -10,24 +11,41 @@ from vrl.generation.steps.denoise.teacache import TeaCacheState, teacache_signal
 from vrl.generation.types import VideoGenerationRequest
 from vrl.math.denoise.flow_matching import sde_step_with_logprob
 from vrl.models.interfaces import RuntimeBundle
+from vrl.utils.config import cfg_path
 
 _PROMPT = "a physical scene, high quality"
 
+if TYPE_CHECKING:
+    from vrl.config.precision import PrecisionPolicy
+    from vrl.config.schema import RootConfig
 
-def build_runtime(cfg, device) -> RuntimeBundle:
+
+def build_runtime(
+    root: RootConfig,
+    device,
+    *,
+    precision: PrecisionPolicy,
+) -> RuntimeBundle:
     """Build a registered diffusion rollout runtime from its resolved config."""
 
     from vrl.families.registry import (
         get_model_family_entry,
     )
 
-    cfg.model.use_lora = True
-    entry = get_model_family_entry(str(cfg.model.family))
-    build = entry.resolve_model_build(cfg, device)
+    if root.model is None:
+        raise ValueError("diffusion performance probe requires model configuration")
+    entry = get_model_family_entry(str(root.model.family))
+    build = entry.resolve_model_build(root, device, precision=precision)
     return entry.build_rollout(build)
 
 
-def build_model(cfg, device, dtype):
+def build_model(
+    root: RootConfig,
+    device,
+    dtype,
+    *,
+    precision: PrecisionPolicy,
+):
     """Compatibility facade for the recorded TeaCache drift probe.
 
     That one-shot probe owns its historical BF16 context locally. Refuse a
@@ -37,7 +55,7 @@ def build_model(cfg, device, dtype):
 
     from vrl.models.dtypes import dtype_to_precision_token
 
-    runtime = build_runtime(cfg, device)
+    runtime = build_runtime(root, device, precision=precision)
     token = dtype_to_precision_token(dtype)
     if runtime.precision.dtype != token:
         raise ValueError(
@@ -52,6 +70,18 @@ def prepare_sampling_state(model, cfg):
     """Encode the shared prompt and prepare the model's sampling state."""
 
     sampling = cfg.sampling
+    max_sequence_length = cfg_path(cfg, "sampling.max_sequence_length")
+    if max_sequence_length is None:
+        max_sequence_length = cfg_path(cfg, "model.executor.max_sequence_length")
+    if max_sequence_length is not None:
+        max_sequence_length = int(max_sequence_length)
+    encode_kwargs = {
+        "guidance_scale": float(sampling.guidance_scale),
+    }
+    request_extra = {}
+    if max_sequence_length is not None:
+        encode_kwargs["max_sequence_length"] = max_sequence_length
+        request_extra["max_sequence_length"] = max_sequence_length
     request = VideoGenerationRequest(
         prompt=_PROMPT,
         negative_prompt=None,
@@ -61,13 +91,12 @@ def prepare_sampling_state(model, cfg):
         num_steps=int(sampling.num_steps),
         guidance_scale=float(sampling.guidance_scale),
         seed=0,
-        extra={"max_sequence_length": int(sampling.max_sequence_length)},
+        extra=request_extra,
     )
     prompt = model.encode_prompt(
         [_PROMPT],
         None,
-        guidance_scale=float(sampling.guidance_scale),
-        max_sequence_length=int(sampling.max_sequence_length),
+        **encode_kwargs,
     )
     return model.prepare_sampling(request, prompt)
 

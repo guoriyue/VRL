@@ -4,13 +4,68 @@ import json
 import os
 from pathlib import Path
 
+import pytest
 from omegaconf import OmegaConf
 from PIL import Image
 
 from vrl.scripts.common.online import _resolve_reference_artifacts
 from vrl.scripts.data import bootstrap, common, danbooru, setup, video_world
-from vrl.trainers.data import load_prompt_manifest
+from vrl.trainers.data import load_prompt_examples_from_config, load_prompt_manifest
 from vrl.trainers.data.artifacts import require_reference_images
+
+
+def test_runtime_data_loader_derives_plain_prompt_manifest(tmp_path: Path) -> None:
+    manifest = tmp_path / "prompts.txt"
+    manifest.write_text("a red fox\n", encoding="utf-8")
+
+    examples = load_prompt_examples_from_config(
+        OmegaConf.create(
+            {
+                "manifest": str(manifest),
+                "preprocessing": {"format": "text"},
+            },
+        ),
+    )
+
+    assert [example.prompt for example in examples] == ["a red fox"]
+    assert examples[0].reference_image is None
+
+
+def test_runtime_data_loader_derives_image_prompt_manifest(tmp_path: Path) -> None:
+    manifest = tmp_path / "prompts.jsonl"
+    manifest.write_text(
+        json.dumps({"image": "reference.png", "caption": "a red fox"}) + "\n",
+        encoding="utf-8",
+    )
+
+    examples = load_prompt_examples_from_config(
+        OmegaConf.create(
+            {
+                "manifest": str(manifest),
+                "preprocessing": {
+                    "format": "image_caption_jsonl",
+                    "image_field": "image",
+                    "caption_field": "caption",
+                },
+            },
+        ),
+    )
+
+    assert [example.prompt for example in examples] == ["a red fox"]
+    assert examples[0].reference_image == "reference.png"
+
+
+def test_runtime_data_loader_rejects_explicit_format_conflict() -> None:
+    data = OmegaConf.create(
+        {
+            "loader": "prompt_manifest",
+            "manifest": "unused.jsonl",
+            "preprocessing": {"format": "image_caption_jsonl"},
+        },
+    )
+
+    with pytest.raises(ValueError, match=r"requires.*prompt_image_manifest"):
+        load_prompt_examples_from_config(data)
 
 
 def test_video_world_bridge_rows_match_cosmos_consumer(

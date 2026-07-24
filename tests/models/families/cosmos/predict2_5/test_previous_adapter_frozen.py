@@ -3,10 +3,10 @@
 The previous-policy adapter is forward-only (no_grad replay, refreshed by weight
 copy, never optimized). If its PEFT params keep ``requires_grad=True`` the DDP
 reducer expects a gradient they never get, and the first backward dies unless
-``find_unused_parameters=true`` is forced. ``_freeze_adapter_params`` (called in
-``apply_lora``) freezes exactly the named adapter via the ``.{name}.`` marker
-that PEFT puts in every adapter param path, so ``find_unused_parameters=false``
-stays correct.
+``find_unused_parameters=true`` is forced. The shared freeze/register primitive
+freezes exactly the named adapter via PEFT's ``.{name}.`` marker, so
+``find_unused_parameters=false`` stays correct while checkpoint resume keeps
+the mutable frozen snapshot.
 """
 
 from __future__ import annotations
@@ -15,7 +15,10 @@ import pytest
 import torch
 from torch import nn
 
-from vrl.models.families.cosmos.predict2_5.model import _freeze_adapter_params
+from vrl.models.interfaces.runtime import checkpoint_owned_state_names
+from vrl.models.steps.denoise.common.lora import (
+    freeze_checkpoint_owned_adapter_params,
+)
 
 
 class _PeftLikeModule(nn.Module):
@@ -46,7 +49,7 @@ def test_freezes_only_the_named_adapter() -> None:
     # all start trainable (PEFT default)
     assert all(p.requires_grad for _, p in m.named_parameters())
 
-    _freeze_adapter_params(m, "previous")
+    freeze_checkpoint_owned_adapter_params(m, "previous")
 
     frozen = {n for n, p in m.named_parameters() if not p.requires_grad}
     trainable = {n for n, p in m.named_parameters() if p.requires_grad}
@@ -59,9 +62,30 @@ def test_freezes_only_the_named_adapter() -> None:
         "base.lora_A.default.weight",
         "base.lora_B.default.weight",
     }
+    assert checkpoint_owned_state_names(m) == frozen | trainable
 
 
 def test_raises_if_adapter_absent() -> None:
     m = _PeftLikeModule()
     with pytest.raises(RuntimeError, match="no parameters found for adapter"):
-        _freeze_adapter_params(m, "nonexistent")
+        freeze_checkpoint_owned_adapter_params(m, "nonexistent")
+
+    assert all(parameter.requires_grad for _, parameter in m.named_parameters())
+    assert checkpoint_owned_state_names(m) == {name for name, _ in m.named_parameters()}
+
+
+def test_registration_failure_rolls_back_requires_grad(monkeypatch) -> None:
+    m = _PeftLikeModule()
+
+    def reject_registration(*_args, **_kwargs) -> None:
+        raise RuntimeError("registration failed")
+
+    monkeypatch.setattr(
+        "vrl.models.steps.denoise.common.lora.register_checkpoint_owned_state",
+        reject_registration,
+    )
+
+    with pytest.raises(RuntimeError, match="registration failed"):
+        freeze_checkpoint_owned_adapter_params(m, "previous")
+
+    assert all(parameter.requires_grad for _, parameter in m.named_parameters())

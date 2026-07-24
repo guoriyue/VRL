@@ -77,6 +77,7 @@ def _on_demand_runtime(
             launch_contract=GenerationRuntimeLaunchContract(
                 family="sd3_5",
                 model_build={},
+                expected_model_identity={"schema": "test"},
             ),
             gatherer=object(),
         ),

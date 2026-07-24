@@ -8,12 +8,14 @@ from typing import Any
 
 
 def plain_mapping(value: Any, *, field_name: str) -> dict[str, Any]:
-    """Deep-convert an OmegaConf config (or Mapping) into a plain ``dict``.
+    """Deep-convert a typed/OmegaConf config (or Mapping) into a plain ``dict``.
 
     OmegaConf is checked first: a ``DictConfig`` is itself a ``Mapping``, so a
     shallow ``dict(value)`` would leave nested ``ListConfig``/``DictConfig``
     values intact, which downstream serialization (the Ray launch contract)
-    rejects. ``to_container`` recurses to plain list/dict.
+    rejects. ``to_container`` recurses to plain list/dict. Pydantic models use
+    ``exclude_unset`` so omitted defaults stay absent while explicit false,
+    zero, and null values retain their presence semantics.
     """
 
     try:
@@ -23,6 +25,13 @@ def plain_mapping(value: Any, *, field_name: str) -> dict[str, Any]:
 
     if OmegaConf is not None and OmegaConf.is_config(value):
         raw = OmegaConf.to_container(value, resolve=True, throw_on_missing=True)
+        if isinstance(raw, Mapping):
+            return dict(raw)
+        raise TypeError(f"{field_name} must be a mapping")
+
+    model_dump = getattr(value, "model_dump", None)
+    if callable(model_dump):
+        raw = model_dump(mode="python", exclude_unset=True)
         if isinstance(raw, Mapping):
             return dict(raw)
         raise TypeError(f"{field_name} must be a mapping")

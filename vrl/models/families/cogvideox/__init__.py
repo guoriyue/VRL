@@ -1,13 +1,9 @@
 """CogVideoX t2v family (v-prediction DDPM DiT + T5-XXL)."""
 
-from vrl.models.families.cogvideox.model import (
-    CogVideoXModel,
-    CogVideoXReplayModel,
-    CogVideoXSamplingState,
-)
+from __future__ import annotations
 
-__all__ = [
-    "CogVideoXModel",
-    "CogVideoXReplayModel",
-    "CogVideoXSamplingState",
-]
+# Deliberately exports nothing. The family registry dispatches by dotted
+# submodule path (vrl/families/registry.py), so a package-root re-export is a
+# second surface nothing imports; keeping this module empty is also what stops
+# config discovery from pulling the torch-backed model runtime.
+__all__: list[str] = []

@@ -7,6 +7,5 @@ data:
   eval_manifest: datasets/drawbench/eval_64.txt
   preprocessing:
     format: text
-    target_text: none
   sampler:
     type: random_without_replacement

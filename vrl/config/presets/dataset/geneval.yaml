@@ -5,6 +5,5 @@ data:
   eval_manifest: datasets/geneval/test.jsonl
   preprocessing:
     format: jsonl
-    metadata_schema: geneval
   sampler:
     type: random_without_replacement

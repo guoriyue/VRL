@@ -14,7 +14,6 @@ data:
     format: image_caption_jsonl
     image_field: image
     caption_field: caption
-    media_type: video
     conditioning: reference_image
   sampler:
     type: random_without_replacement

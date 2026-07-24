@@ -51,7 +51,6 @@ model:
 
 sampling:
   num_frames: 93
-  fps: 16
   # 15, not 10: at 10 steps generation fragility dominates group variance
   # (SDE-draw "luck", see the overfit-validation recipe's sampling comment) —
   # 5 deterministic tail steps past the [0,10) window restore the quality floor.

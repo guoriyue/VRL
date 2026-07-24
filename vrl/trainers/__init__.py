@@ -1,31 +1,13 @@
-"""RL trainers: training loop orchestration and weight sync."""
+"""RL trainers: training loop orchestration and weight sync.
 
-from vrl.trainers.core.base import Trainer
-from vrl.trainers.core.types import (
-    RolloutOrchestrationConfig,
-    TrainerConfig,
-    TrainState,
-)
-from vrl.trainers.online import OnlineTrainer
-from vrl.trainers.online.ema import EMAModuleWrapper
-from vrl.trainers.weight_sync import (
-    RayRuntimeWeightSyncer,
-    WeightSyncer,
-    build_runtime_weight_syncer,
-    build_trainable_state_sync_getter,
-    flatten_trainable_module_state,
-)
+Deliberately exports nothing. The package root previously mirrored eleven
+symbols spanning both the torch-free config contracts and the torch-heavy
+trainer/weight-sync runtime, so no import of it could be cheap and nothing
+imported it. The real boundary is one level down: ``vrl.trainers.online``
+defers ``OnlineTrainer`` behind its config, and ``vrl.trainers.core.types`` is
+torch-free on its own. Import from the owning module.
+"""
 
-__all__ = [
-    "EMAModuleWrapper",
-    "OnlineTrainer",
-    "RayRuntimeWeightSyncer",
-    "RolloutOrchestrationConfig",
-    "TrainState",
-    "Trainer",
-    "TrainerConfig",
-    "WeightSyncer",
-    "build_runtime_weight_syncer",
-    "build_trainable_state_sync_getter",
-    "flatten_trainable_module_state",
-]
+from __future__ import annotations
+
+__all__: list[str] = []

@@ -96,6 +96,7 @@ def _core(
     contract = GenerationRuntimeLaunchContract(
         family="sd3_5",
         model_build={},
+        expected_model_identity={"schema": "test"},
         policy_version=1,
         versioned_weight_sync=versioned_weight_sync,
     )

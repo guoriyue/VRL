@@ -100,7 +100,6 @@ def _t_critical(df: int) -> float:
 class RunMetrics:
     """Per-step collection phases from one training run."""
 
-    run_dir: Path
     collect_wall: list[float] = field(default_factory=list)
     generation_wall: list[float] = field(default_factory=list)
     reward_wall: list[float] = field(default_factory=list)
@@ -147,7 +146,7 @@ def read_run_metrics(run_dir: Path, *, warmup_iterations: int) -> RunMetrics:
             f"{run_dir}: {len(rows)} recorded steps but warmup drops {warmup_iterations}",
         )
 
-    metrics = RunMetrics(run_dir=run_dir)
+    metrics = RunMetrics()
     for row in steady:
         # A row missing collect.* means the step did no collection (e.g. a
         # gradient-accumulation microbatch); skip rather than score it as zero.

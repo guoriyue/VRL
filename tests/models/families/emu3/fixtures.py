@@ -23,8 +23,8 @@ from types import SimpleNamespace
 
 import torch
 
+from vrl.models.families.emu3.config import Emu3Config
 from vrl.models.families.emu3.model import (
-    Emu3Config,
     Emu3Model,
     Emu3ReplayCore,
     Emu3ReplayModel,

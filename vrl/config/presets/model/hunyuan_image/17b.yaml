@@ -5,8 +5,6 @@
 # (~16.6 GB) and byT5 text encoders are parked on CPU by from_build.
 model:
   family: hunyuan_image
-  executor:
-    max_sequence_length: 1000
   path: hunyuanvideo-community/HunyuanImage-2.1-Diffusers
   revision: 7e7b7a177de58591aeaffca0929f4765003d7ced
 

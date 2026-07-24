@@ -12,40 +12,11 @@ from tests.models.families.llamagen.fixtures import (
     TINY_VOCAB_SIZE,
     build_tiny_llamagen_model,
 )
-from vrl.generation import GenerationRequest, GenerationSampleRow
 from vrl.generation.composition.token_autoregressive.token_loop import TokenAutoregressiveLoop
 from vrl.generation.steps.token import TokenStepBatch
 from vrl.models.families.llamagen.runner import LlamaGenARModelRunner
 
 BATCH = 2
-
-
-def _request() -> GenerationRequest:
-    return GenerationRequest(
-        request_id="req",
-        family="llamagen",
-        task="ar_t2i",
-        inputs=["a photo of a cat"],
-        samples_per_prompt=BATCH,
-        sampling={"seed": 0},
-    )
-
-
-def _sample_rows() -> list[GenerationSampleRow]:
-    request = _request()
-    return [
-        GenerationSampleRow(
-            prompt_index=0,
-            sample_index=index,
-            prompt=request.prompts[0],
-            prompt_id="p0",
-            group_id="g0",
-            sample_id=f"s{index}",
-            trajectory_id=f"t{index}",
-            seed=0,
-        )
-        for index in range(BATCH)
-    ]
 
 
 def _conditioning(model) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
@@ -61,12 +32,7 @@ def _conditioning(model) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
 def _run_loop(model, *, top_k: int = 0, guidance_scale: float = 3.0):
     cond, uncond, mask = _conditioning(model)
     return TokenAutoregressiveLoop(
-        request=_request(),
-        sample_rows=_sample_rows(),
         runner=LlamaGenARModelRunner(model),
-        max_new_tokens=TINY_BLOCK_SIZE,
-        tokenizer_key="llamagen",
-        dtype=str(cond.dtype),
         scheduler_batch_size=BATCH,
         init_args=(cond, uncond, mask, mask),
         init_kwargs={
@@ -91,8 +57,7 @@ def test_rollout_logprobs_match_teacher_forced_replay() -> None:
     """
     model = build_tiny_llamagen_model()
     torch.manual_seed(0)
-    result = _run_loop(model, guidance_scale=3.0)
-    token_ids, logprobs = result.finalized
+    token_ids, logprobs = _run_loop(model, guidance_scale=3.0)
 
     assert token_ids.shape == (BATCH, TINY_BLOCK_SIZE)
     assert logprobs.shape == (BATCH, TINY_BLOCK_SIZE)
@@ -111,10 +76,30 @@ def test_top_k_one_is_deterministic_greedy() -> None:
     """top_k=1 collapses the guided sampling distribution to argmax."""
     model = build_tiny_llamagen_model()
     torch.manual_seed(0)
-    first, _ = _run_loop(model, top_k=1).finalized
+    first, _ = _run_loop(model, top_k=1)
     torch.manual_seed(123)
-    second, _ = _run_loop(model, top_k=1).finalized
+    second, _ = _run_loop(model, top_k=1)
     assert torch.equal(first, second)
+
+
+def test_none_image_token_count_uses_model_default() -> None:
+    model = build_tiny_llamagen_model()
+    runner = LlamaGenARModelRunner(model)
+    cond, uncond, mask = _conditioning(model)
+
+    init = runner.init_token(cond, uncond, mask, mask, image_token_num=None)
+
+    assert init.step_count == model.config.image_token_num
+    assert init.state.total_token_num == model.config.image_token_num
+
+
+def test_zero_image_token_count_is_rejected() -> None:
+    model = build_tiny_llamagen_model()
+    runner = LlamaGenARModelRunner(model)
+    cond, uncond, mask = _conditioning(model)
+
+    with pytest.raises(ValueError, match="image_token_num must be >= 1"):
+        runner.init_token(cond, uncond, mask, mask, image_token_num=0)
 
 
 def test_step_requires_full_batch_row_coverage() -> None:
@@ -131,9 +116,7 @@ def test_step_requires_full_batch_row_coverage() -> None:
     )
     partial = TokenStepBatch(
         row_indices=[0],
-        positions=[0],
         position=0,
-        cache_lanes={},
         row_lanes={
             "cond_logits": init.row_lanes["cond_logits"][:1],
             "uncond_logits": init.row_lanes["uncond_logits"][:1],
@@ -151,9 +134,7 @@ def test_step_counters_report_native_cache() -> None:
     init = runner.init_token(cond, uncond, mask, mask, image_token_num=TINY_BLOCK_SIZE)
     step = TokenStepBatch(
         row_indices=list(range(BATCH)),
-        positions=[0] * BATCH,
         position=0,
-        cache_lanes={},
         row_lanes={
             "cond_logits": init.row_lanes["cond_logits"],
             "uncond_logits": init.row_lanes["uncond_logits"],

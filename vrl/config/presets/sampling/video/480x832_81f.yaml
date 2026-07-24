@@ -3,4 +3,3 @@ sampling:
   width: 832
   height: 480
   num_frames: 81
-  max_sequence_length: 512

@@ -34,6 +34,10 @@ algorithm:
 actor:
   optim:
     lr: 1.0e-4   # LoRA needs ~1e-4; the paper's 1e-5 is for full-finetune.
+  # One training group per streamed replay slice; the host guard checks that
+  # slice before the remaining prompt groups are collected.
+  microbatch_size: 1
+  host_memory_budget_fraction: 0.9
 
 trainer:
   output_dir: outputs/janus_pro_1b_r1_aesthetic_grpo
@@ -61,7 +65,3 @@ rollout:
   #    allows (no extra GPU memory).
   n_samples_per_prompt: 8
   prompts_per_batch: 8
-  # microbatch_size=1 -> gas=prompts_per_batch; host RAM holds ~1 group's AR
-  # replay tensors at a time (host_memory_budget_fraction guards it).
-  microbatch_size: 1
-  host_memory_budget_fraction: 0.9

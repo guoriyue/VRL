@@ -18,6 +18,7 @@ SANA_PRECISION = RolePrecision(
     float32_precision="ieee",
     outer_autocast=False,
 )
+SANA_IDENTITY = {"schema": "vrl.model-identity/v1", "sources": {}, "build": {}}
 
 
 @pytest.fixture(autouse=True)
@@ -108,16 +109,18 @@ def _checkpoint(tmp_path: Path, **meta_overrides) -> SimpleNamespace:
     checkpoint_path = checkpoint_dir / "checkpoint.pt"
     checkpoint_path.write_bytes(b"full-parameter-state")
     meta = {
+        "schema_version": 2,
         "family": "sana",
+        "model_identity": SANA_IDENTITY,
         "uses_lora": False,
         "checkpoint_file_bytes": checkpoint_path.stat().st_size,
         **meta_overrides,
     }
+    (checkpoint_dir / "checkpoint_meta.json").write_text(json.dumps(meta))
     return SimpleNamespace(
         checkpoint_path=checkpoint_path,
         payload={"family": "sana"},
         meta=meta,
-        trainable_state={"transformer": {"weight": torch.ones(1)}},
     )
 
 
@@ -130,6 +133,23 @@ def test_parser_uses_official_sana_defaults() -> None:
     assert (args.height, args.width) == (1024, 1024)
     assert args.steps == 20
     assert args.guidance_scale == 4.5
+
+
+def test_run_rejects_structurally_invalid_family_before_checkpoint_lookup(
+    tmp_path,
+) -> None:
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    cfg = _config()
+    cfg.model.family = "not-a-family"
+    OmegaConf.save(cfg, run_dir / "resolved_config.yaml")
+
+    with pytest.raises(ValueError, match="unsupported model family"):
+        checkpoint_compare.run_comparison(
+            checkpoint_compare.build_parser().parse_args(
+                ["--run-dir", str(run_dir)],
+            ),
+        )
 
 
 def test_run_generates_base_before_strict_restore_and_current(
@@ -147,9 +167,11 @@ def test_run_generates_base_before_strict_restore_and_current(
         trainable_modules={"transformer": model.transformer},
         precision=SANA_PRECISION,
     )
+    expected_bundle = bundle
     build = SimpleNamespace(
         model_name_or_path="test/sana",
-        model_config={"revision": None},
+        revision=None,
+        model_config={},
         parameter_dtype=torch.float16,
     )
     schedulers: list[DPMSolverMultistepScheduler] = []
@@ -159,9 +181,18 @@ def test_run_generates_base_before_strict_restore_and_current(
         events.append("read:checkpoint")
         return checkpoint
 
-    def fake_load_state(actual_bundle, state, *, strict):
-        assert actual_bundle is bundle
-        assert state is checkpoint.trainable_state
+    def fake_restore(
+        actual_checkpoint,
+        *,
+        bundle: object,
+        family: str,
+        expected_model_identity: dict,
+        strict: bool,
+    ):
+        assert actual_checkpoint is checkpoint
+        assert bundle is expected_bundle
+        assert family == "sana"
+        assert expected_model_identity == SANA_IDENTITY
         assert strict is True
         events.append("load:strict")
         model.pipeline.current = True
@@ -174,7 +205,12 @@ def test_run_generates_base_before_strict_restore_and_current(
         return scheduler
 
     monkeypatch.setattr(checkpoint_compare, "load_training_checkpoint", fake_load_checkpoint)
-    monkeypatch.setattr(checkpoint_compare, "load_trainable_state", fake_load_state)
+    monkeypatch.setattr(checkpoint_compare, "restore_model_checkpoint", fake_restore)
+    monkeypatch.setattr(
+        checkpoint_compare,
+        "resolve_checkpoint_model_identity",
+        lambda actual_build: SANA_IDENTITY,
+    )
     monkeypatch.setattr(
         diffusion_build, "resolve_family_model_build", lambda *args, **kwargs: build
     )
@@ -257,6 +293,87 @@ def test_run_refuses_to_mix_artifacts_with_an_existing_comparison(
     assert (output_dir / "current.png").read_bytes() == b"stale"
 
 
+def test_run_rejects_meta_identity_before_model_construction(monkeypatch, tmp_path) -> None:
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    OmegaConf.save(_config(), run_dir / "resolved_config.yaml")
+    _checkpoint(run_dir, model_identity={"schema": "wrong/v1"})
+    build = SimpleNamespace()
+    built = False
+
+    def fail_if_built(_build):
+        nonlocal built
+        built = True
+        raise AssertionError("model construction must not run")
+
+    monkeypatch.setattr(
+        diffusion_build,
+        "resolve_family_model_build",
+        lambda *args, **kwargs: build,
+    )
+    monkeypatch.setattr(diffusion_build, "build_family_runtime_bundle", fail_if_built)
+    monkeypatch.setattr(
+        checkpoint_compare,
+        "resolve_checkpoint_model_identity",
+        lambda actual_build: SANA_IDENTITY,
+    )
+
+    with pytest.raises(ValueError, match="metadata model identity mismatch"):
+        checkpoint_compare.run_comparison(
+            checkpoint_compare.build_parser().parse_args(
+                ["--run-dir", str(run_dir), "--device", "cpu"],
+            ),
+        )
+
+    assert built is False
+
+
+def test_run_rejects_model_source_drift_before_generation(monkeypatch, tmp_path) -> None:
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    OmegaConf.save(_config(), run_dir / "resolved_config.yaml")
+    _checkpoint(run_dir)
+    build = object()
+    built = False
+    identities = iter(
+        (
+            SANA_IDENTITY,
+            {"schema": "vrl.model-identity/v1", "sources": {"main": "changed"}},
+        ),
+    )
+
+    def build_bundle(actual_build):
+        nonlocal built
+        assert actual_build is build
+        built = True
+        return SimpleNamespace(model=object())
+
+    monkeypatch.setattr(
+        diffusion_build,
+        "resolve_family_model_build",
+        lambda *args, **kwargs: build,
+    )
+    monkeypatch.setattr(diffusion_build, "build_family_runtime_bundle", build_bundle)
+    monkeypatch.setattr(
+        checkpoint_compare,
+        "resolve_checkpoint_model_identity",
+        lambda actual_build: next(identities) if actual_build is build else None,
+    )
+
+    with pytest.raises(
+        RuntimeError,
+        match="SANA model source changed during runtime construction",
+    ):
+        checkpoint_compare.run_comparison(
+            checkpoint_compare.build_parser().parse_args(
+                ["--run-dir", str(run_dir), "--device", "cpu"],
+            ),
+        )
+
+    assert built is True
+    assert not (run_dir / "sana_checkpoint_compare").exists()
+
+
 @pytest.mark.parametrize(
     ("path", "value", "message"),
     [
@@ -283,14 +400,11 @@ def test_config_protocol_leaves_precision_to_resolved_yaml(policy_dtype: str) ->
 
 
 @pytest.mark.parametrize(
-    ("payload_family", "meta_overrides", "message"),
+    ("meta_overrides", "message"),
     [
-        pytest.param("wan", {}, "payload family", id="payload-family"),
-        pytest.param("sana", {"family": "wan"}, "metadata family", id="metadata-family"),
-        pytest.param("sana", {"uses_lora": True}, "uses_lora=false", id="lora"),
-        pytest.param("sana", {"uses_lora": None}, "uses_lora=false", id="missing-lora-proof"),
+        pytest.param({"uses_lora": True}, "uses_lora=false", id="lora"),
+        pytest.param({"uses_lora": None}, "uses_lora=false", id="missing-lora-proof"),
         pytest.param(
-            "sana",
             {"checkpoint_file_bytes": 1},
             "byte count",
             id="byte-count",
@@ -299,12 +413,10 @@ def test_config_protocol_leaves_precision_to_resolved_yaml(policy_dtype: str) ->
 )
 def test_checkpoint_protocol_rejects_wrong_identity(
     tmp_path,
-    payload_family,
     meta_overrides,
     message,
 ) -> None:
     checkpoint = _checkpoint(tmp_path, **meta_overrides)
-    checkpoint.payload["family"] = payload_family
 
     with pytest.raises(ValueError, match=message):
         checkpoint_compare._validate_checkpoint(checkpoint)

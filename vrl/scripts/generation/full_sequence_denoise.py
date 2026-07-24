@@ -100,6 +100,8 @@ def _resolve_probe_model_build(args: argparse.Namespace, entry: Any, device: Any
 
     from omegaconf import OmegaConf
 
+    from vrl.config.precision import resolve_precision_policy
+    from vrl.config.schema import parse_config
     from vrl.models.dtypes import dtype_to_precision_token, resolve_torch_dtype
 
     role_precision = dtype_to_precision_token(resolve_torch_dtype(args.dtype))
@@ -126,7 +128,13 @@ def _resolve_probe_model_build(args: argparse.Namespace, entry: Any, device: Any
             "precision": precision,
         },
     )
-    build = entry.resolve_model_build(cfg, device)
+    root = parse_config(cfg)
+    precision_policy = resolve_precision_policy(root)
+    build = entry.resolve_model_build(
+        root,
+        device,
+        precision=precision_policy,
+    )
     build.rollout = replace(build.require_rollout(), base_weight_sync=False)
     return build
 

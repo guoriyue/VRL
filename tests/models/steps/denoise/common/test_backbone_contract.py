@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Literal
 
+import pytest
 import torch
 import torch.nn as nn
 
@@ -90,7 +91,6 @@ def test_backbone_batched_cfg_calls_transformer_once_and_returns_contract() -> N
     assert output.noise_pred.shape == (2, 1)
     assert output.noise_pred_cond.shape == (2, 1)
     assert output.noise_pred_uncond.shape == (2, 1)
-    assert output.metrics["transformer_calls"] == 1
 
 
 def test_backbone_separate_cfg_calls_transformer_twice() -> None:
@@ -113,5 +113,40 @@ def test_backbone_separate_cfg_calls_transformer_twice() -> None:
     )
 
     assert len(transformer.calls) == 2
-    assert output.metrics["transformer_calls"] == 2
     assert output.noise_pred.shape == (2, 1)
+
+
+def test_backbone_single_branch_calls_transformer_once_without_cfg() -> None:
+    transformer = _RecordingTransformer()
+    module = DiffusionBackboneCaller(transformer, _Adapter(cfg_mode="single_branch"))
+
+    output = module(
+        DiffusionBackboneInput(
+            hidden_states=torch.ones(2, 1),
+            timestep=torch.tensor([2.0, 3.0]),
+            prompt_embeds=torch.ones(2, 4),
+            guidance_scale=2.0,
+            do_cfg=False,
+        )
+    )
+
+    assert len(transformer.calls) == 1
+    assert torch.equal(output.noise_pred, output.noise_pred_cond)
+    assert torch.count_nonzero(output.noise_pred_uncond) == 0
+
+
+def test_backbone_single_branch_rejects_cfg() -> None:
+    transformer = _RecordingTransformer()
+    module = DiffusionBackboneCaller(transformer, _Adapter(cfg_mode="single_branch"))
+
+    with pytest.raises(ValueError, match="single_branch runner cannot run CFG"):
+        module(
+            DiffusionBackboneInput(
+                hidden_states=torch.ones(2, 1),
+                timestep=torch.tensor([2.0, 3.0]),
+                prompt_embeds=torch.ones(2, 4),
+                negative_prompt_embeds=torch.zeros(2, 4),
+                guidance_scale=2.0,
+                do_cfg=True,
+            )
+        )

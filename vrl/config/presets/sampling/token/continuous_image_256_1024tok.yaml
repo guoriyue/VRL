@@ -6,4 +6,3 @@ sampling:
   num_steps: 20
   guidance_scale: 4.5
   max_text_length: 256
-  ar_scheduler_batch_size: null

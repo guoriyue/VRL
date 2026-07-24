@@ -9,18 +9,31 @@ import signal
 import sys
 import threading
 import time
+from dataclasses import fields
 from pathlib import Path
 
 import pytest
 from omegaconf import OmegaConf
 
+from vrl.algorithms.types import InitialReplayStats, TrainStepMetrics
 from vrl.scripts.supervise import (
     HEALTH_VERDICT_NAME,
+    ContinuousHealthPolicy,
     HealthGateConfig,
     MetricsHealthGate,
     RunSupervisor,
     build_parser,
     build_train_launch,
+)
+from vrl.trainers.core.types import (
+    ContinuousRolloutConfig,
+    DebugConfig,
+    RolloutOrchestrationConfig,
+)
+from vrl.trainers.metrics_io import (
+    build_online_metric_row,
+    format_online_metric_row,
+    online_metric_columns,
 )
 
 _METRICS_HEADER = "epoch,loss,reward_mean,reward_std,grad_norm,pre_update_logprob_abs_diff_max\n"
@@ -189,6 +202,7 @@ def test_restart_resumes_from_latest_complete_checkpoint(tmp_path) -> None:
         family="unit",
         progress={"next_epoch": 4, "global_step": 4},
         rng_state={},
+        model_identity={"schema": "test"},
     )
 
     attempts_file = tmp_path / "attempts"
@@ -535,6 +549,187 @@ def test_metrics_health_gate_is_disabled_by_default() -> None:
     assert args.health_metrics is False
 
 
+def test_supervisor_cli_defaults_are_derived_from_runtime_config() -> None:
+    args = build_parser().parse_args(["--config", "unit"])
+    defaults = {item.name: item.default for item in fields(RunSupervisor)}
+
+    assert args.max_attempts == defaults["max_attempts"]
+    assert args.same_cause_limit == defaults["same_cause_limit"]
+
+
+@pytest.mark.parametrize(
+    ("option", "value"),
+    [
+        ("--max-attempts", "-1"),
+        ("--same-cause-limit", "0"),
+    ],
+)
+def test_supervisor_cli_rejects_invalid_retry_bounds(option: str, value: str) -> None:
+    with pytest.raises(SystemExit):
+        build_parser().parse_args(["--config", "unit", option, value])
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "message"),
+    [
+        ({"max_attempts": -1}, "max_attempts"),
+        ({"same_cause_limit": 0}, "same_cause_limit"),
+        ({"term_grace_seconds": -1.0}, "term_grace_seconds"),
+        ({"backoff_seconds": -1.0}, "backoff_seconds"),
+        ({"term_grace_seconds": float("inf")}, "term_grace_seconds"),
+        ({"backoff_seconds": float("nan")}, "backoff_seconds"),
+    ],
+)
+def test_supervisor_runtime_rejects_invalid_retry_config(
+    kwargs: dict[str, float | int],
+    message: str,
+) -> None:
+    with pytest.raises(ValueError, match=message):
+        RunSupervisor(command=[], output_dir=Path("unused"), **kwargs)
+
+
+def _health_args(*extra: str):
+    return build_parser().parse_args(["--config", "unit", "--health-metrics", *extra])
+
+
+def test_health_config_derives_strict_parity_limit_from_training_config() -> None:
+    health = HealthGateConfig.from_cli(
+        _health_args(),
+        schedule=RolloutOrchestrationConfig(schedule_mode="strict_on_policy"),
+        debug=DebugConfig(max_abs_logprob_diff=0.004),
+    )
+
+    assert health.continuous is None
+    assert health.max_pre_update_logprob_diff == pytest.approx(0.004)
+
+
+def test_health_config_keeps_explicit_parity_override() -> None:
+    health = HealthGateConfig.from_cli(
+        _health_args("--health-max-pre-update-logprob-diff", "0.02"),
+        schedule=RolloutOrchestrationConfig(schedule_mode="strict_on_policy"),
+        debug=DebugConfig(max_abs_logprob_diff=0.004),
+    )
+
+    assert health.max_pre_update_logprob_diff == pytest.approx(0.02)
+
+
+@pytest.mark.parametrize(
+    ("override", "expected"),
+    [(None, 2), ("0", 0)],
+)
+def test_health_config_derives_continuous_metrics_from_training_schedule(
+    override: str | None,
+    expected: int,
+) -> None:
+    extra = () if override is None else ("--health-max-stale-policy-versions", override)
+
+    health = HealthGateConfig.from_cli(
+        _health_args(*extra),
+        schedule=RolloutOrchestrationConfig(
+            schedule_mode="continuous",
+            continuous=ContinuousRolloutConfig(max_stale_policy_versions=2),
+        ),
+        debug=DebugConfig(),
+    )
+
+    assert health.continuous is not None
+    assert health.continuous.max_stale_policy_versions == expected
+
+
+def test_health_config_accepts_a_continuous_schedule_on_its_own_defaults() -> None:
+    """A recipe that omits the stale key inherits ContinuousRolloutConfig's default.
+
+    ``base/rollout/orchestration/continuous.yaml`` documents exactly this: the
+    queue/staleness defaults live on the typed config, not in YAML. Reading the
+    key through a raw config path made the supervisor reject every such recipe.
+    """
+
+    health = HealthGateConfig.from_cli(
+        _health_args(),
+        schedule=RolloutOrchestrationConfig(schedule_mode="continuous"),
+        debug=DebugConfig(),
+    )
+
+    assert health.continuous is not None
+    assert health.continuous.max_stale_policy_versions == (
+        RolloutOrchestrationConfig().continuous.max_stale_policy_versions
+    )
+
+
+def test_health_config_rejects_stale_override_wider_than_training() -> None:
+    with pytest.raises(ValueError, match="cannot exceed"):
+        HealthGateConfig.from_cli(
+            _health_args("--health-max-stale-policy-versions", "2"),
+            schedule=RolloutOrchestrationConfig(
+                schedule_mode="continuous",
+                continuous=ContinuousRolloutConfig(max_stale_policy_versions=1),
+            ),
+            debug=DebugConfig(),
+        )
+
+
+def test_health_config_rejects_stale_override_for_strict_schedule() -> None:
+    with pytest.raises(ValueError, match=r"requires.*schedule_mode=continuous"):
+        HealthGateConfig.from_cli(
+            _health_args("--health-max-stale-policy-versions", "0"),
+            schedule=RolloutOrchestrationConfig(schedule_mode="strict_on_policy"),
+            debug=DebugConfig(),
+        )
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        {"max_stale_policy_versions": -1},
+        {"max_stale_policy_versions": 1, "max_stale_logprob_diff": -0.1},
+        {"max_stale_policy_versions": 1, "max_stale_logprob_diff": float("nan")},
+    ],
+)
+def test_continuous_health_policy_rejects_invalid_thresholds(
+    kwargs: dict[str, float | int],
+) -> None:
+    with pytest.raises(ValueError):
+        ContinuousHealthPolicy(**kwargs)
+
+
+def test_health_required_columns_must_exist_in_online_metric_protocol(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import vrl.scripts.supervise as supervise
+
+    monkeypatch.setattr(
+        supervise,
+        "_REQUIRED_HEALTH_METRICS",
+        ("removed_metric",),
+    )
+
+    with pytest.raises(AssertionError, match="removed_metric"):
+        HealthGateConfig()
+
+
+def test_health_gate_reads_a_complete_online_metric_row(tmp_path) -> None:
+    out = tmp_path / "run"
+    out.mkdir()
+    row = build_online_metric_row(
+        0,
+        TrainStepMetrics(
+            loss=1.0,
+            reward_mean=2.0,
+            reward_std=0.2,
+            grad_norm=0.1,
+            initial_replay=InitialReplayStats(logprob_abs_diff_max=0.001),
+        ),
+    )
+    (out / "metrics.csv").write_text(
+        ",".join(online_metric_columns()) + "\n" + format_online_metric_row(row),
+    )
+
+    gate = MetricsHealthGate(HealthGateConfig(failure_limit=1), out)
+
+    assert gate.judge_new_rows() is False
+    assert not (out / HEALTH_VERDICT_NAME).exists()
+
+
 def test_metrics_health_gate_cli_thresholds_are_configurable() -> None:
     args = build_parser().parse_args(
         [
@@ -609,8 +804,10 @@ def test_continuous_health_gate_uses_stale_drift_bound() -> None:
     gate = MetricsHealthGate(
         HealthGateConfig(
             max_pre_update_logprob_diff=0.01,
-            max_stale_policy_versions=1,
-            max_stale_logprob_diff=0.05,
+            continuous=ContinuousHealthPolicy(
+                max_stale_policy_versions=1,
+                max_stale_logprob_diff=0.05,
+            ),
         ),
         Path("unused"),
     )
@@ -624,6 +821,23 @@ def test_continuous_health_gate_uses_stale_drift_bound() -> None:
 
     assert stale_reasons == []
     assert any("exceeds maximum 0.01" in reason for reason in on_policy_reasons)
+
+
+def test_continuous_schedule_requires_metrics_even_with_zero_stale_limit() -> None:
+    gate = MetricsHealthGate(
+        HealthGateConfig(
+            continuous=ContinuousHealthPolicy(max_stale_policy_versions=0),
+        ),
+        Path("unused"),
+    )
+    row = _continuous_metric_row(0)
+    del row["continuous_stale_versions"]
+    del row["continuous_producer_errors"]
+
+    reasons, _ = gate._metric_health_reasons(row)
+
+    assert "metric continuous_stale_versions is missing" in reasons
+    assert "metric continuous_producer_errors is missing" in reasons
 
 
 @pytest.mark.parametrize(
@@ -641,7 +855,7 @@ def test_continuous_health_gate_rejects_scheduler_failures(
     expected,
 ) -> None:
     gate = MetricsHealthGate(
-        HealthGateConfig(max_stale_policy_versions=1),
+        HealthGateConfig(continuous=ContinuousHealthPolicy(max_stale_policy_versions=1)),
         Path("unused"),
     )
 
@@ -660,7 +874,10 @@ def test_continuous_health_gate_only_flags_new_producer_errors(tmp_path) -> None
     out = tmp_path / "run"
     out.mkdir()
     gate = MetricsHealthGate(
-        HealthGateConfig(max_stale_policy_versions=1, failure_limit=3),
+        HealthGateConfig(
+            continuous=ContinuousHealthPolicy(max_stale_policy_versions=1),
+            failure_limit=3,
+        ),
         out,
     )
 
@@ -685,7 +902,10 @@ def test_continuous_health_gate_trips_on_consecutive_producer_error_increases(
     out = tmp_path / "run"
     out.mkdir()
     gate = MetricsHealthGate(
-        HealthGateConfig(max_stale_policy_versions=1, failure_limit=3),
+        HealthGateConfig(
+            continuous=ContinuousHealthPolicy(max_stale_policy_versions=1),
+            failure_limit=3,
+        ),
         out,
     )
 
@@ -719,7 +939,7 @@ def test_continuous_health_gate_baselines_existing_producer_errors(tmp_path) -> 
         output_dir=out,
         health=HealthGateConfig(
             poll_seconds=0.01,
-            max_stale_policy_versions=1,
+            continuous=ContinuousHealthPolicy(max_stale_policy_versions=1),
             failure_limit=1,
         ),
         sleep=lambda _: None,

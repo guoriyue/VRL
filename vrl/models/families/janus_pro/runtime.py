@@ -33,21 +33,11 @@ from vrl.utils.logging import init_logger
 
 logger = init_logger(__name__)
 
-# Janus LoRA defaults mirror the upstream Janus-Pro RL recipe; applied at read
-# time so the carried ``model.lora`` block only needs the values it overrides.
-_JANUS_LORA_DEFAULTS: dict[str, Any] = {
-    "rank": 32,
-    "alpha": 64,
-    "target_modules": ("q_proj", "v_proj"),
-    "dropout": 0.0,
-    "init": "gaussian",
-}
-
 
 def janus_config_from_build(build: ModelBuild) -> dict[str, Any]:
     model_config = build.model_config or {}
     sampling_config = build.sampling_config or {}
-    config = token_model_config_base(build, _JANUS_LORA_DEFAULTS)
+    config = token_model_config_base(build)
 
     for key in ("guidance_scale", "temperature", "image_token_num"):
         if key in sampling_config:
@@ -128,8 +118,12 @@ class JanusProChunkExecutor(ARDiscreteChunkExecutorBase):
         sampling = request.sampling
         params: ARSamplingParams = self.layout.parse_sampling_params(request)
 
-        guidance_scale = float(sampling.get("guidance_scale", 5.0))
-        temperature = float(sampling.get("temperature", 1.0))
+        guidance_scale = float(
+            sampling.get("guidance_scale", self.model.config.guidance_scale),
+        )
+        temperature = float(
+            sampling.get("temperature", self.model.config.temperature),
+        )
 
         repeated_prompts = [chunk.prompt] * chunk.sample_count
         prompt_ids, prompt_mask = self._tokenize_prompts(
@@ -153,8 +147,6 @@ class JanusProChunkExecutor(ARDiscreteChunkExecutorBase):
         uncond_embeds = self._embed(uncond_ids)
 
         return ARChunkInputs(
-            max_new_tokens=params.image_token_num,
-            decode_dtype=str(cond_embeds.dtype),
             init_args=(cond_embeds, uncond_embeds, prompt_mask, uncond_mask),
             init_kwargs={
                 "guidance_scale": guidance_scale,
@@ -167,9 +159,10 @@ class JanusProChunkExecutor(ARDiscreteChunkExecutorBase):
             uncond_input_ids=uncond_ids,
             uncond_attention_mask=uncond_mask,
             context={
-                "guidance_scale": guidance_scale,
                 "temperature": temperature,
-                "image_token_num": params.image_token_num,
+                # Display/provenance-only: OnlineTrainer writes the sampling
+                # policy into its first-step ``rollout_context`` debug record.
+                "guidance_scale": guidance_scale,
             },
         )
 
@@ -253,6 +246,10 @@ class JanusProR1ChunkExecutor(JanusProChunkExecutor):
 
         self.require_native_ar_engine(request)
         self.layout.validate_chunk(request, chunk)
+        scheduler_batch_size = self.resolve_scheduler_batch_size(
+            request,
+            row_count=chunk.sample_count,
+        )
         sampling = request.sampling
         params: ARSamplingParams = self.layout.parse_sampling_params(request)
 
@@ -271,13 +268,16 @@ class JanusProR1ChunkExecutor(JanusProChunkExecutor):
             record_function("engine.cache_read"),
             record_function("engine.cache_write"),
         ):
-            chunk_specs = self.layout.chunk_sample_rows(request, chunk)
             result = call_with_supported_kwargs(
                 self.model.generate_with_refine,
                 prompt_ids,
                 prompt_mask,
-                guidance_scale=float(sampling.get("guidance_scale", 5.0)),
-                temperature=float(sampling.get("temperature", 1.0)),
+                guidance_scale=float(
+                    sampling.get("guidance_scale", self.model.config.guidance_scale),
+                ),
+                temperature=float(
+                    sampling.get("temperature", self.model.config.temperature),
+                ),
                 image_token_num=params.image_token_num,
                 max_reflect_len=int(sampling.get("max_reflect_len", 80)),
                 task_stages=_parse_task_stages(sampling.get("task_stages")),
@@ -287,8 +287,7 @@ class JanusProR1ChunkExecutor(JanusProChunkExecutor):
                 refine_mode=_resolve_refine_mode(sampling, self.model),
                 image_sampler=self._r1_image_sampler(
                     request=request,
-                    sample_rows=chunk_specs,
-                    params=params,
+                    scheduler_batch_size=scheduler_batch_size,
                 ),
             )
 
@@ -316,15 +315,9 @@ class JanusProR1ChunkExecutor(JanusProChunkExecutor):
         self,
         *,
         request: GenerationRequest,
-        sample_rows: Sequence[GenerationSampleRow],
-        params: ARSamplingParams,
+        scheduler_batch_size: int | None,
     ) -> Any:
         """Build an R1 image sampler backed by the shared AR decode loop driver."""
-
-        rows = list(sample_rows)
-        scheduler_batch_size = (
-            params.ar_scheduler_batch_size if params.use_ar_scheduler else len(rows)
-        )
 
         def sample(
             cond_embeds: torch.Tensor,
@@ -333,19 +326,12 @@ class JanusProR1ChunkExecutor(JanusProChunkExecutor):
             uncond_mask: torch.Tensor,
             **kwargs: Any,
         ) -> tuple[torch.Tensor, torch.Tensor]:
-            image_token_num = int(kwargs.get("image_token_num", params.image_token_num))
-            decode_result = TokenAutoregressiveLoop(
-                request=request,
-                sample_rows=rows,
+            return TokenAutoregressiveLoop(
                 runner=self._ar_runner(request),
-                max_new_tokens=image_token_num,
-                tokenizer_key="janus_pro_r1",
-                dtype=str(cond_embeds.dtype),
                 scheduler_batch_size=scheduler_batch_size,
                 init_args=(cond_embeds, uncond_embeds, cond_mask, uncond_mask),
                 init_kwargs=kwargs,
             ).run()
-            return decode_result.finalized
 
         return sample
 
@@ -397,11 +383,6 @@ class JanusProR1ChunkGatherer:
             request=request,
             sample_rows=list(sample_rows),
             segments=segment_extra,
-            decoded_outputs={
-                "initial_image": cat["initial_image"],
-                "final_image": cat["final_image"],
-                "selfcheck": cat["selfcheck"],
-            },
             primary_segment="final_image",
             context=dict(ordered[0].context),
         )
@@ -409,7 +390,6 @@ class JanusProR1ChunkGatherer:
             request_id=request.request_id,
             family=request.family,
             task=request.task,
-            prompts=list(request.prompts),
             sample_rows=list(sample_rows),
             output=cat["final_image"],
             trajectory=trajectory,

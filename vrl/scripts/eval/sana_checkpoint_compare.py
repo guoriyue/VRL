@@ -27,7 +27,11 @@ from typing import Any
 import torch
 
 from vrl.config.loading import load_config
+from vrl.config.precision import resolve_precision_policy
+from vrl.config.schema import parse_config
+from vrl.models.checkpoint_identity import resolve_checkpoint_model_identity
 from vrl.models.dtypes import dtype_to_wire_name
+from vrl.models.loader import model_revision_kwargs
 from vrl.models.precision import float32_precision_state, model_precision
 from vrl.scripts.eval.sana_inference import (
     SCHEDULER_PROTOCOL,
@@ -36,8 +40,10 @@ from vrl.scripts.eval.sana_inference import (
     validate_scheduler,
 )
 from vrl.trainers.checkpointing import (
-    load_trainable_state,
     load_training_checkpoint,
+    read_checkpoint_meta,
+    restore_model_checkpoint,
+    validate_checkpoint_meta_compatibility,
 )
 from vrl.utils.media import to_pil_image, write_png
 
@@ -105,6 +111,8 @@ def run_comparison(args: argparse.Namespace) -> dict[str, str]:
     if not config_path.is_file():
         raise FileNotFoundError(f"training run has no resolved config: {config_path}")
     cfg = load_config(config_path)
+    root = parse_config(cfg)
+    precision = resolve_precision_policy(root)
     _validate_resolved_config(cfg)
     _validate_sampling_args(args)
 
@@ -137,8 +145,22 @@ def run_comparison(args: argparse.Namespace) -> dict[str, str]:
         resolve_family_model_build,
     )
 
-    build = resolve_family_model_build(cfg, device, for_rollout=True)
+    build = resolve_family_model_build(
+        root,
+        device,
+        precision=precision,
+        for_rollout=True,
+    )
+    model_identity = resolve_checkpoint_model_identity(build)
+    validate_checkpoint_meta_compatibility(
+        read_checkpoint_meta(expected_checkpoint_file.parent),
+        family="sana",
+        expected_model_identity=model_identity,
+        strict=True,
+    )
     bundle = build_family_runtime_bundle(build)
+    if resolve_checkpoint_model_identity(build) != model_identity:
+        raise RuntimeError("SANA model source changed during runtime construction")
     model = bundle.model.eval()
     dtype_record = _model_precision_snapshot(model)
 
@@ -166,8 +188,14 @@ def run_comparison(args: argparse.Namespace) -> dict[str, str]:
     _validate_checkpoint(checkpoint)
     checkpoint_path = checkpoint.checkpoint_path
     checkpoint_meta = dict(checkpoint.meta)
-    logger.info("Loading full-parameter checkpoint through the generic trainable-state boundary")
-    load_trainable_state(bundle, checkpoint.trainable_state, strict=True)
+    logger.info("Loading full-parameter checkpoint through the generic checkpoint boundary")
+    restore_model_checkpoint(
+        checkpoint,
+        bundle=bundle,
+        family="sana",
+        expected_model_identity=model_identity,
+        strict=True,
+    )
     del checkpoint
     gc.collect()
     checkpoint_record = _checkpoint_record(checkpoint_path, checkpoint_meta)
@@ -201,7 +229,7 @@ def run_comparison(args: argparse.Namespace) -> dict[str, str]:
         "model": {
             "family": "sana",
             "path": str(build.model_name_or_path),
-            "revision": _model_revision(build),
+            "revision": model_revision_kwargs(build).get("revision"),
         },
         "checkpoint": checkpoint_record,
         "sampling": {
@@ -290,12 +318,6 @@ def _validate_sampling_args(args: argparse.Namespace) -> None:
 
 
 def _validate_checkpoint(checkpoint: Any) -> None:
-    payload_family = str(checkpoint.payload.get("family", "")).strip().lower()
-    if payload_family != "sana":
-        raise ValueError(f"checkpoint payload family must be 'sana'; got {payload_family!r}")
-    meta_family = str(checkpoint.meta.get("family", "")).strip().lower()
-    if meta_family != "sana":
-        raise ValueError(f"checkpoint metadata family must be 'sana'; got {meta_family!r}")
     if checkpoint.meta.get("uses_lora") is not False:
         raise ValueError(
             "checkpoint metadata must declare uses_lora=false for full-parameter comparison",
@@ -369,15 +391,6 @@ def _artifact_record(path: Path, output_dir: Path) -> dict[str, Any]:
         "sha256": _sha256(path),
         "bytes": path.stat().st_size,
     }
-
-
-def _model_revision(build: Any) -> str | None:
-    model_config = build.model_config or {}
-    revision = model_config.get("revision")
-    if revision is None:
-        return None
-    text = str(revision).strip()
-    return text or None
 
 
 def _resolve_device(value: str) -> torch.device:

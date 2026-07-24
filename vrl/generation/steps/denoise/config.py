@@ -13,8 +13,6 @@ class DenoiseSDEParams:
 
     noise_level: float
     sde_type: str
-    sde_window_size: int
-    sde_window_range: tuple[int, int]
     same_latent: bool
     return_kl: bool
     return_prev_sample_mean: bool = False

@@ -15,7 +15,7 @@ from tests.models.families.llamagen.fixtures import (
 from vrl.generation import GenerationRequest, GenerationSampleRow
 from vrl.models.interfaces import ReplayResult
 from vrl.rollouts.batch import RolloutBatch
-from vrl.trajectory import build_ar_discrete_trajectory, build_training_view
+from vrl.trajectory import TrajectoryResolver, build_ar_discrete_trajectory
 
 
 def _request(samples: int = 2) -> GenerationRequest:
@@ -35,7 +35,6 @@ def _sample_rows(count: int = 2) -> list[GenerationSampleRow]:
             prompt_index=0,
             sample_index=index,
             prompt=request.prompts[0],
-            prompt_id="p0",
             group_id="g0",
             sample_id=f"s{index}",
             trajectory_id=f"t{index}",
@@ -64,13 +63,9 @@ def _rollout_batch(model) -> RolloutBatch:
         context={"model_family": "llamagen"},
     )
     return RolloutBatch(
-        observations=torch.ones(2, 1, 3, dtype=torch.long),
-        actions=token_ids,
         rewards=torch.zeros(2),
-        dones=torch.ones(2, dtype=torch.bool),
         group_ids=torch.tensor([0, 0]),
         trajectory=trajectory,
-        training_view=build_training_view(trajectory),
     )
 
 
@@ -144,7 +139,8 @@ def test_replay_forward_returns_typed_replay_result() -> None:
     assert segment.segment == "image_tokens"
     assert set(segment.values) == {"logits", "image_token_ids"}
     assert segment.values["logits"].shape == (2, TINY_BLOCK_SIZE, TINY_VOCAB_SIZE)
-    assert torch.equal(segment.values["image_token_ids"], batch.actions)
+    actions = TrajectoryResolver.from_batch(batch).role_value("image_tokens", "action")
+    assert torch.equal(segment.values["image_token_ids"], actions)
 
 
 def test_model_exposes_trainer_replay_methods() -> None:

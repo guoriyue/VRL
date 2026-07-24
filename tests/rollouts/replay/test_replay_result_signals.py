@@ -9,7 +9,7 @@ from vrl.generation import GenerationRequest, GenerationSampleRow
 from vrl.models.interfaces import ReplayResult, ReplaySegmentResult
 from vrl.rollouts.batch import RolloutBatch
 from vrl.rollouts.evaluators.trajectory import TrajectorySignalBuilder
-from vrl.trajectory import build_ar_discrete_trajectory, build_training_view
+from vrl.trajectory import build_ar_discrete_trajectory
 
 
 def _request() -> GenerationRequest:
@@ -29,7 +29,6 @@ def _sample_rows() -> list[GenerationSampleRow]:
             prompt_index=0,
             sample_index=index,
             prompt=request.prompts[0],
-            prompt_id="p0",
             group_id="g0",
             sample_id=f"s{index}",
             trajectory_id=f"t{index}",
@@ -56,13 +55,9 @@ def _discrete_batch() -> tuple[RolloutBatch, torch.Tensor, torch.Tensor]:
         context={"model_family": "janus_pro"},
     )
     batch = RolloutBatch(
-        observations=torch.ones(2, 1, 3, dtype=torch.long),
-        actions=token_ids,
         rewards=torch.zeros(2),
-        dones=torch.ones(2, dtype=torch.bool),
         group_ids=torch.tensor([0, 0]),
         trajectory=trajectory,
-        training_view=build_training_view(trajectory),
     )
     return batch, old_log_prob, token_mask
 
@@ -167,9 +162,40 @@ def test_segment_signal_reads_old_logprob_mask_and_distribution_from_trajectory(
     signal = TrajectorySignalBuilder(batch).segment_signal(
         segment_name=segment.segment,
         log_prob=torch.full((2, 2), -1.0),
-        distribution="wrong",
     )
 
     assert signal.distribution == "categorical"
     assert torch.equal(signal.old_log_prob, old_log_prob)
     assert torch.equal(signal.mask, token_mask)
+
+
+def test_signal_builder_requires_a_canonical_trajectory() -> None:
+    batch = RolloutBatch(
+        rewards=torch.zeros(1),
+        group_ids=torch.zeros(1, dtype=torch.long),
+    )
+
+    with pytest.raises(RuntimeError, match=r"batch\.trajectory.*TrajectoryBatch"):
+        TrajectorySignalBuilder(batch)
+
+
+def test_signal_builder_rejects_unknown_segment() -> None:
+    batch, _, _ = _discrete_batch()
+
+    with pytest.raises(RuntimeError, match="unknown trajectory segment 'missing'"):
+        TrajectorySignalBuilder(batch).segment_signal(
+            segment_name="missing",
+            log_prob=torch.zeros(2, 2),
+        )
+
+
+def test_signal_builder_rejects_mismatched_trajectory_mask() -> None:
+    batch, _, _ = _discrete_batch()
+    assert batch.trajectory is not None
+    batch.trajectory.segments["image_tokens"].tensors["token_mask"].value = torch.ones(2, 1)
+
+    with pytest.raises(RuntimeError, match="trajectory signal mask shape mismatch"):
+        TrajectorySignalBuilder(batch).segment_signal(
+            segment_name="image_tokens",
+            log_prob=torch.zeros(2, 2),
+        )

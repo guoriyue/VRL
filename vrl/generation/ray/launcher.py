@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from dataclasses import asdict, dataclass, field, replace
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from vrl.generation.execution import (
     ChunkPlacementPolicy,
@@ -29,9 +29,13 @@ from vrl.models.dtypes import dtype_to_wire_name
 from vrl.ray.actor_group import RayActorGroup
 from vrl.ray.dependencies import require_ray
 from vrl.ray.placement import RolePlacement
-from vrl.utils.config import cfg_path, to_builtin_deep
+from vrl.utils.config import cfg_path, plain_mapping, to_builtin_deep
 
 logger = logging.getLogger(__name__)
+
+if TYPE_CHECKING:
+    from vrl.config.precision import PrecisionPolicy
+    from vrl.config.schema import RootConfig
 
 
 @dataclass(slots=True)
@@ -70,11 +74,12 @@ class RayGenerationLauncher:
                 f"got {type(launch_inputs).__name__}",
             )
         rollout_config = config
+        worker = rollout_config.worker
         contract = launch_inputs.launch_contract
         chunk_gatherer = require_chunk_gatherer(launch_inputs.gatherer)
 
         bundle_indices = list(placement.bundle_indices)
-        if rollout_config.pipelined and len(bundle_indices) != 1:
+        if worker.pipelined and len(bundle_indices) != 1:
             raise ValueError(
                 "pipelined Ray generation requires exactly one rollout placement "
                 f"bundle; received {len(bundle_indices)}. Per-worker request "
@@ -94,7 +99,7 @@ class RayGenerationLauncher:
                 worker_cls=RayGenerationWorker,
                 worker_configs=worker_configs,
                 worker_ids=worker_ids,
-                num_cpus=rollout_config.cpus_per_worker,
+                num_cpus=worker.cpus_per_worker,
                 num_gpus=rollout_config.resources.rollout_gpus_per_worker,
                 placement_group=placement_group,
                 bundle_indices=bundle_indices,
@@ -127,25 +132,23 @@ class RayGenerationLauncher:
             executor = RayGenerationExecutor(
                 DistributedExecutionPlanner(
                     policy=ChunkPlacementPolicy(
-                        strategy=rollout_config.chunk_placement_strategy,
+                        strategy=worker.chunk_placement_strategy,
                     ),
                 ),
                 workers,
                 chunk_gatherer,
-                max_inflight_chunks_per_worker=(rollout_config.max_inflight_chunks_per_worker),
-                pipelined=rollout_config.pipelined,
+                max_inflight_chunks_per_worker=worker.max_inflight_chunks_per_worker,
+                pipelined=worker.pipelined,
             )
-            weight_sync = (
-                RayGenerationWeightSync(workers) if rollout_config.sync_trainable_state else None
-            )
+            weight_sync = RayGenerationWeightSync(workers) if worker.sync_trainable_state else None
             runtime = RayGenerationRuntime(
                 executor,
                 weight_sync=weight_sync,
                 owned_workers=workers,
                 colocated=rollout_config.resources.colocated,
-                health_check_interval_s=rollout_config.health_check_interval_s,
-                health_check_timeout_s=rollout_config.health_check_timeout_s,
-                health_check_first_wait_s=rollout_config.health_check_first_wait_s,
+                health_check_interval_s=worker.health_check_interval_s,
+                health_check_timeout_s=worker.health_check_timeout_s,
+                health_check_first_wait_s=worker.health_check_first_wait_s,
             )
             if contract.policy_version is not None:
                 runtime.current_policy_version = contract.policy_version
@@ -198,23 +201,26 @@ class RayGenerationLauncher:
 
     def launch_from_cfg(
         self,
-        cfg: Any,
+        root: RootConfig,
         *,
-        resources: Any,
+        precision: PrecisionPolicy,
+        config: RayGenerationConfig,
         entry: Any,
         driver_bundle: Any,
+        expected_model_identity: dict[str, Any],
         placement: RolePlacement,
     ) -> GenerationRuntime:
-        """Build the Ray generation runtime from training config and launch inputs."""
+        """Build launch inputs from config and launch one resolved Ray runtime."""
 
-        config = RayGenerationConfig.from_cfg(
-            cfg,
-            resources=resources,
-        ).validate_driver_state(
+        config.validate_driver_state(
             driver_bundle=driver_bundle,
         )
         runtime_device = "cuda" if config.resources.rollout_gpus_per_worker > 0 else "cpu"
-        build = entry.resolve_model_build(cfg, runtime_device)
+        build = entry.resolve_model_build(
+            root,
+            runtime_device,
+            precision=precision,
+        )
         # The lifecycle resolver, not the model config, owns whether rollout
         # workers will receive trainable-state updates. Thread that resolved fact
         # into the one build option that needs it before the Ray payload is frozen.
@@ -224,18 +230,27 @@ class RayGenerationLauncher:
                 # Full-finetune sync replaces base parameters; LoRA sync only
                 # sends adapters. Resolve that lifecycle fact once here so the
                 # quantizer does not have to reinterpret model configuration.
-                base_weight_sync=(config.sync_trainable_state and not build.use_lora),
+                base_weight_sync=(config.worker.sync_trainable_state and not build.use_lora),
             )
-        if bool(cfg_path(cfg, "model.torch_compile.enable", False)) and not (
+        if bool(cfg_path(root, "model.torch_compile.enable", False)) and not (
             entry.runtime_capabilities.supports_torch_compile
         ):
             raise ValueError(
                 f"{entry.family} does not support torch compile but "
                 "model.torch_compile.enable is set",
             )
+        from vrl.models.checkpoint_identity import resolve_checkpoint_model_identity
+
+        rollout_model_identity = resolve_checkpoint_model_identity(build)
+        if rollout_model_identity != expected_model_identity:
+            raise ValueError(
+                "rollout model identity does not match the driver replay model "
+                "identity before Ray worker launch: "
+                f"replay={expected_model_identity!r}, rollout={rollout_model_identity!r}",
+            )
         schedule_mode = str(
             cfg_path(
-                cfg,
+                root,
                 "trainer.rollout_orchestration.schedule_mode",
                 "strict_on_policy",
             ),
@@ -244,15 +259,16 @@ class RayGenerationLauncher:
             launch_contract=GenerationRuntimeLaunchContract(
                 family=entry.family,
                 model_build=_model_build_payload(build),
-                executor_kwargs=build_executor_kwargs(entry, cfg),
+                expected_model_identity=expected_model_identity,
+                executor_kwargs=build_executor_kwargs(entry, root),
                 policy_version=0,
-                torch_profiler=_runtime_profiler(cfg),
+                torch_profiler=_runtime_profiler(root),
                 # The schedule is the source of truth for whether a worker may
                 # serve an older request after a weight sync. Full-parameter
                 # payloads fail closed to the draining path until a byte-budget
                 # gate proves their retained slots fit in host RAM.
                 versioned_weight_sync=(
-                    config.sync_trainable_state
+                    config.worker.sync_trainable_state
                     and schedule_mode == "continuous"
                     and build.use_lora
                 ),
@@ -285,6 +301,12 @@ def build_executor_kwargs(entry: Any, cfg: Any) -> dict[str, Any]:
     """
     from vrl.families.registry import GENERIC_FULL_SEQUENCE_DENOISE_EXECUTOR
 
+    executor_config = cfg_path(cfg, "model.executor", None)
+    entry.validate_model_runtime_sections(
+        executor_config=executor_config,
+        memory_config=cfg_path(cfg, "model.memory", None),
+    )
+
     kwargs: dict[str, Any] = {}
     # Only executors that publish this constructor capability receive the
     # request-chunk size; generation regime does not determine their API.
@@ -299,8 +321,16 @@ def build_executor_kwargs(entry: Any, cfg: Any) -> dict[str, Any]:
     # from yaml in ONE pass (config is homogeneous — no per-field extraction);
     # family/task identity comes from the registry entry. Families with their
     # own executor hardcode these as class attrs and skip this.
-    if entry.executor_cls == GENERIC_FULL_SEQUENCE_DENOISE_EXECUTOR:
-        kwargs.update(dict(cfg_path(cfg, "model.executor", {}) or {}))
+    if (
+        entry.executor_cls == GENERIC_FULL_SEQUENCE_DENOISE_EXECUTOR
+        and executor_config is not None
+    ):
+        kwargs.update(
+            plain_mapping(
+                executor_config,
+                field_name="model.executor",
+            ),
+        )
     return kwargs
 
 

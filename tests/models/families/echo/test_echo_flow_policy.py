@@ -9,27 +9,39 @@ encode/prepare/export/restore plumbing the shared diffusion executor drives.
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+
+import pytest
 import torch
 import torch.nn as nn
 from diffusers import FlowMatchEulerDiscreteScheduler
 
 from tests.models.steps.denoise.fixtures import stamp_model_precision
-from vrl.generation.types import VideoGenerationRequest
+from vrl.generation.types import GenerationRequest, VideoGenerationRequest
 from vrl.models.families.echo.model import (
     EchoModel,
     EchoReplayModel,
     EchoSamplingState,
     _sigma_from_timestep,
 )
+from vrl.models.families.echo.runtime import EchoChunkExecutor
 
 
 class _FakeEcho(nn.Module):
     """Stand-in for LTX2DiffusionWrapper: returns a preset x0 for any input."""
 
-    def __init__(self, channels: int = 128) -> None:
+    def __init__(
+        self,
+        channels: int = 128,
+        *,
+        video_height: int = 256,
+        video_width: int = 256,
+    ) -> None:
         super().__init__()
         # A real nn.Module so `_transformer_dtype()` / trainable_modules work.
         self.model = nn.Linear(channels, channels)
+        self.video_height = video_height
+        self.video_width = video_width
         self.x0: torch.Tensor | None = None
         self.last_timestep: torch.Tensor | None = None
 
@@ -109,7 +121,6 @@ def test_forward_step_velocity_is_rectified_flow_of_x0() -> None:
         video_context=torch.randn(2, 3, 16),
         attention_mask=torch.ones(2, 3),
         num_train_timesteps=num_train,
-        guidance_scale=1.0,
     )
     out = model.forward_step(state, 0)
     v = out["noise_pred"]
@@ -132,6 +143,40 @@ def test_encode_prompt_keeps_video_context_drops_audio() -> None:
     assert enc["video_context"].shape == (1, 3, 16)
 
 
+@pytest.mark.parametrize("negative_prompt", [None, "", []])
+def test_echo_encode_prompt_accepts_only_empty_negative_conditioning(
+    negative_prompt: str | list[str] | None,
+) -> None:
+    model, _ = _build_model()
+
+    encoded = model.encode_prompt("a dog", negative_prompt=negative_prompt)
+
+    assert set(encoded) == {"video_context", "attention_mask"}
+
+
+@pytest.mark.parametrize("negative_prompt", ["low quality", ["low quality"]])
+def test_echo_encode_prompt_rejects_non_empty_negative_conditioning(
+    negative_prompt: str | list[str],
+) -> None:
+    model, _ = _build_model()
+
+    with pytest.raises(ValueError, match="does not support negative prompts"):
+        model.encode_prompt("a dog", negative_prompt=negative_prompt)
+
+
+def test_echo_executor_forwards_negative_prompt_to_model_contract() -> None:
+    model, _ = _build_model()
+    executor = EchoChunkExecutor(model)
+
+    with pytest.raises(ValueError, match="does not support negative prompts"):
+        executor.encode_prompt_for_chunk(
+            generation_request=object(),
+            video_request=SimpleNamespace(negative_prompt="low quality"),
+            params=object(),
+            chunk=SimpleNamespace(prompt="a dog"),
+        )
+
+
 def test_prepare_sampling_builds_noise_latents_and_schedule() -> None:
     model, _ = _build_model()
     encoded = {"video_context": torch.randn(2, 3, 16), "attention_mask": torch.ones(2, 3)}
@@ -140,6 +185,55 @@ def test_prepare_sampling_builds_noise_latents_and_schedule() -> None:
     assert state.latents.dtype == torch.float32
     assert len(state.timesteps) == 4
     assert state.num_train_timesteps == 1000
+    assert not hasattr(state, "guidance_scale")
+
+
+def test_prepare_sampling_rejects_unbaked_guidance() -> None:
+    model, _ = _build_model()
+    encoded = {"video_context": torch.randn(1, 3, 16), "attention_mask": torch.ones(1, 3)}
+    request = _request()
+    request.guidance_scale = 4.5
+
+    with pytest.raises(ValueError, match=r"guidance_scale must be 1\.0"):
+        model.prepare_sampling(request, encoded)
+
+
+def test_prepare_sampling_rejects_dimensions_different_from_model_construction() -> None:
+    model, _ = _build_model()
+    encoded = {"video_context": torch.randn(1, 3, 16), "attention_mask": torch.ones(1, 3)}
+    request = _request()
+    request.width = 224
+
+    with pytest.raises(
+        ValueError,
+        match=r"request dimensions 256x224.*construction dimensions 256x256",
+    ):
+        model.prepare_sampling(request, encoded)
+
+
+def test_executor_rejects_dimension_mismatch_before_prompt_encoding() -> None:
+    model, _ = _build_model()
+    executor = EchoChunkExecutor(model)
+    request = GenerationRequest(
+        request_id="req",
+        family="echo",
+        task="t2v",
+        inputs=["a cat"],
+        samples_per_prompt=1,
+        sampling={
+            "height": 256,
+            "width": 224,
+            "num_frames": 25,
+            "num_steps": 4,
+            "guidance_scale": 1.0,
+        },
+    )
+
+    with pytest.raises(
+        ValueError,
+        match=r"sampling dimensions 256x224.*construction dimensions 256x256",
+    ):
+        executor.parse_sampling_params(request)
 
 
 def test_export_restore_roundtrip_feeds_forward_step() -> None:
@@ -155,12 +249,11 @@ def test_export_restore_roundtrip_feeds_forward_step() -> None:
         video_context=torch.randn(2, 3, 16),
         attention_mask=torch.ones(2, 3),
         num_train_timesteps=1000,
-        guidance_scale=1.0,
     )
     replay = model.export_replay_tensors(state)
     ctx = model.export_batch_context(state)
     assert set(replay) == {"video_context", "attention_mask"}
-    assert ctx["num_train_timesteps"] == 1000
+    assert ctx == {"num_train_timesteps": 1000}
 
     # Stored denoise timesteps are [B, num_steps]; restore one step.
     stored_ts = torch.tensor([[300.0, 600.0, 700.0, 900.0]] * 2)
@@ -254,7 +347,6 @@ def test_replay_model_is_transformer_only_and_runs_velocity_forward() -> None:
         video_context=torch.randn(2, 3, 16),
         attention_mask=torch.ones(2, 3),
         num_train_timesteps=1000,
-        guidance_scale=1.0,
     )
     out = replay.forward_step(state, 0)
     assert out["noise_pred"].shape == latents.shape

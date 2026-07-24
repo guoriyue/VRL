@@ -31,6 +31,7 @@ from tests.models.steps.denoise.fixtures import (
     stamp_model_precision,
 )
 from vrl.config.precision import RolePrecision
+from vrl.config.schema import FSDPConfig
 from vrl.models.families.wan_2_1.model import (
     WanI2VReplayModel,
     WanI2VSamplingState,
@@ -38,6 +39,20 @@ from vrl.models.families.wan_2_1.model import (
 from vrl.models.interfaces.runtime import ModelBuild
 from vrl.trainers.distributed import DistributedTrainingContext
 from vrl.trainers.strategy import FSDPStrategy
+
+
+def _fsdp_strategy(
+    context: DistributedTrainingContext,
+    **overrides: object,
+) -> FSDPStrategy:
+    config = FSDPConfig.model_validate(overrides)
+    return FSDPStrategy(
+        context,
+        mesh_dims=config.mesh,
+        precision_policy=config.precision_policy,
+        reshard_after_forward=config.reshard_after_forward,
+        cpu_offload=config.cpu_offload,
+    )
 
 
 def _free_port() -> int:
@@ -54,6 +69,7 @@ def _build_policy(seed: int = 0) -> WanI2VReplayModel:
     )
     build = ModelBuild(
         model_name_or_path="tiny-wan-i2v",
+        revision=None,
         device=torch.device("cpu"),
         parameter_dtype=torch.float32,
         family="wan_2_1_i2v",
@@ -84,6 +100,7 @@ def _build_dual_policy(seed: int = 0) -> WanI2VReplayModel:
     )
     build = ModelBuild(
         model_name_or_path="tiny-wan2.2-i2v",
+        revision=None,
         device=torch.device("cpu"),
         parameter_dtype=torch.float32,
         family="wan_2_1_i2v",
@@ -206,22 +223,20 @@ def _run_rank(
     try:
         context = DistributedTrainingContext(
             strategy="fsdp",
-            distributed=True,
             rank=rank,
             world_size=world_size,
-            is_primary=rank == 0,
             device=torch.device("cpu"),
         )
-        strategy = FSDPStrategy(context, precision_policy="none")
+        strategy = _fsdp_strategy(context, precision_policy="none")
         policy = strategy.prepare_model(_build_policy())
         optimizer = torch.optim.AdamW(
             [parameter for parameter in policy.parameters() if parameter.requires_grad],
             lr=1e-2,
         )
 
-        before = strategy.export_trainable_state(_bundle(policy))
+        before = strategy.export_checkpoint_state(_bundle(policy))
         grad_norm = _train_once(policy, strategy, optimizer)
-        after = strategy.export_trainable_state(_bundle(policy))
+        after = strategy.export_checkpoint_state(_bundle(policy))
         optimizer_state = strategy.export_optimizer_state(policy, optimizer)
 
         adapter_state = after["transformer"]
@@ -233,7 +248,7 @@ def _run_rank(
 
         if rank == 0:
             torch.save(
-                {"trainable": after, "optimizer": optimizer_state},
+                {"checkpoint": after, "optimizer": optimizer_state},
                 checkpoint_path,
             )
         dist.barrier()
@@ -244,9 +259,9 @@ def _run_rank(
             [parameter for parameter in resumed.parameters() if parameter.requires_grad],
             lr=1e-2,
         )
-        strategy.load_trainable_state(_bundle(resumed), checkpoint["trainable"], strict=True)
+        strategy.load_checkpoint_state(_bundle(resumed), checkpoint["checkpoint"], strict=True)
         strategy.load_optimizer_state(resumed, resumed_optimizer, checkpoint["optimizer"])
-        restored = strategy.export_trainable_state(_bundle(resumed))
+        restored = strategy.export_checkpoint_state(_bundle(resumed))
         resume_matches = all(
             torch.equal(value, restored["transformer"][key])
             for key, value in after["transformer"].items()
@@ -254,7 +269,7 @@ def _run_rank(
 
         resumed_before = restored
         resumed_grad_norm = _train_once(resumed, strategy, resumed_optimizer)
-        resumed_after = strategy.export_trainable_state(_bundle(resumed))
+        resumed_after = strategy.export_checkpoint_state(_bundle(resumed))
         continued = any(
             not torch.equal(value, resumed_after["transformer"][key])
             for key, value in resumed_before["transformer"].items()
@@ -328,20 +343,18 @@ def _run_dual_rank(
     try:
         context = DistributedTrainingContext(
             strategy="fsdp",
-            distributed=True,
             rank=rank,
             world_size=world_size,
-            is_primary=rank == 0,
             device=torch.device("cpu"),
         )
-        strategy = FSDPStrategy(context, precision_policy="none")
+        strategy = _fsdp_strategy(context, precision_policy="none")
         policy = strategy.prepare_model(_build_dual_policy())
         optimizer = torch.optim.AdamW(
             [parameter for parameter in policy.parameters() if parameter.requires_grad],
             lr=1e-2,
         )
 
-        before = strategy.export_trainable_state(_bundle(policy))
+        before = strategy.export_checkpoint_state(_bundle(policy))
         high_grad = _train_once(
             policy,
             strategy,
@@ -349,7 +362,7 @@ def _run_dual_rank(
             timestep=750.0,
             boundary_ratio=0.5,
         )
-        after_high = strategy.export_trainable_state(_bundle(policy))
+        after_high = strategy.export_checkpoint_state(_bundle(policy))
         high_only = _module_changed(before, after_high, "transformer") and not _module_changed(
             before,
             after_high,
@@ -363,7 +376,7 @@ def _run_dual_rank(
             timestep=250.0,
             boundary_ratio=0.5,
         )
-        after_low = strategy.export_trainable_state(_bundle(policy))
+        after_low = strategy.export_checkpoint_state(_bundle(policy))
         low_only = _module_changed(
             after_high,
             after_low,
@@ -377,7 +390,7 @@ def _run_dual_rank(
 
         if rank == 0:
             torch.save(
-                {"trainable": after_low, "optimizer": optimizer_state},
+                {"checkpoint": after_low, "optimizer": optimizer_state},
                 checkpoint_path,
             )
         dist.barrier()
@@ -388,9 +401,9 @@ def _run_dual_rank(
             [parameter for parameter in resumed.parameters() if parameter.requires_grad],
             lr=1e-2,
         )
-        strategy.load_trainable_state(_bundle(resumed), checkpoint["trainable"], strict=True)
+        strategy.load_checkpoint_state(_bundle(resumed), checkpoint["checkpoint"], strict=True)
         strategy.load_optimizer_state(resumed, resumed_optimizer, checkpoint["optimizer"])
-        restored = strategy.export_trainable_state(_bundle(resumed))
+        restored = strategy.export_checkpoint_state(_bundle(resumed))
         restored_optimizer = strategy.export_optimizer_state(resumed, resumed_optimizer)
         queue.put(
             (
@@ -460,13 +473,11 @@ def _run_cuda_rank(rank: int, world_size: int, port: int, queue: mp.Queue) -> No
         device = torch.device("cuda", rank)
         context = DistributedTrainingContext(
             strategy="fsdp",
-            distributed=True,
             rank=rank,
             world_size=world_size,
-            is_primary=rank == 0,
             device=device,
         )
-        strategy = FSDPStrategy(context, precision_policy="none")
+        strategy = _fsdp_strategy(context, precision_policy="none")
         policy = strategy.prepare_model(_build_policy())
 
         from torch.distributed.tensor import DTensor
@@ -481,9 +492,9 @@ def _run_cuda_rank(rank: int, world_size: int, port: int, queue: mp.Queue) -> No
             [parameter for parameter in policy.parameters() if parameter.requires_grad],
             lr=1e-2,
         )
-        before = strategy.export_trainable_state(_bundle(policy))
+        before = strategy.export_checkpoint_state(_bundle(policy))
         grad_norm = _train_once(policy, strategy, optimizer, device=device)
-        after = strategy.export_trainable_state(_bundle(policy))
+        after = strategy.export_checkpoint_state(_bundle(policy))
         changed = any(
             not torch.equal(value, after["transformer"][key])
             for key, value in before["transformer"].items()
@@ -510,13 +521,11 @@ def _run_dual_cuda_offload_rank(
         device = torch.device("cuda", rank)
         context = DistributedTrainingContext(
             strategy="fsdp",
-            distributed=True,
             rank=rank,
             world_size=world_size,
-            is_primary=rank == 0,
             device=device,
         )
-        strategy = FSDPStrategy(
+        strategy = _fsdp_strategy(
             context,
             precision_policy="none",
             cpu_offload=True,

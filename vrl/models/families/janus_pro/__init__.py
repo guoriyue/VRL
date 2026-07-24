@@ -10,25 +10,11 @@ Requires the upstream package ``deepseek-ai/Janus`` (not on PyPI):
 
 from __future__ import annotations
 
+# Public transition table imported by model/runtime during package initialization.
 JANUS_R1_SEGMENTS = ("initial_image", "selfcheck_text", "final_image")
 
-from vrl.models.families.janus_pro.model import (  # noqa: E402
-    JanusProConfig,
-    JanusProModel,
-    image_token_logits_from_hidden,
-)
-from vrl.models.families.janus_pro.runtime import (  # noqa: E402
-    JanusProChunkExecutor,
-    JanusProR1ChunkExecutor,
-    JanusProR1ChunkGatherer,
-)
-
-__all__ = [
-    "JANUS_R1_SEGMENTS",
-    "JanusProChunkExecutor",
-    "JanusProConfig",
-    "JanusProModel",
-    "JanusProR1ChunkExecutor",
-    "JanusProR1ChunkGatherer",
-    "image_token_logits_from_hidden",
-]
+# Deliberately exports nothing. The family registry dispatches by dotted
+# submodule path (vrl/families/registry.py), so a package-root re-export is a
+# second surface nothing imports; keeping this module empty is also what stops
+# config discovery from pulling the torch-backed model runtime.
+__all__: list[str] = []

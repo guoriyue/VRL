@@ -64,7 +64,6 @@ def _batch_with_sentinel_timestep_tensors() -> tuple[RolloutBatch, list[_NoFullM
             prompt_index=index,
             sample_index=0,
             prompt=f"p{index}",
-            prompt_id=f"p{index}",
             group_id=f"g{index}",
             sample_id=f"s{index}",
             trajectory_id=f"t{index}",
@@ -89,10 +88,7 @@ def _batch_with_sentinel_timestep_tensors() -> tuple[RolloutBatch, list[_NoFullM
     segment.tensors["timesteps"].value = timesteps
     return (
         RolloutBatch(
-            observations=observations,
-            actions=actions,
             rewards=torch.ones(2),
-            dones=torch.zeros(2),
             group_ids=torch.arange(2),
             trajectory=trajectory,
         ),

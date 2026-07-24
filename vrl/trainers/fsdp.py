@@ -13,21 +13,21 @@ exercised on a single CPU rank (``world_size=1`` + gloo) in
 ``tests/trainers/test_fsdp.py``, which is enough to prove wrapping, forward /
 backward, full-state gather, and load round-trip without real multi-GPU.
 
-The online GRPO rank-split loop and torchrun↔Ray phase leasing live in the
-recipe/resource layers; this module owns only process-group setup, FSDP wrapping,
-and collective model/optimizer state conversion.
+Boundaries this module does NOT cross (they belong to later phases of
+``SPRINT_multi_gpu_training.md``): the online GRPO rank-split collect/train loop,
+the torchrun↔Ray rollout coordination, and optimizer/EMA state sharding.
 """
 
 from __future__ import annotations
 
 import logging
 from collections.abc import Iterator, Mapping
-from dataclasses import replace
 from typing import Any
 
 import torch
 from torch import nn
 
+from vrl.models.interfaces.runtime import checkpoint_owned_state_names
 from vrl.trainers.distributed import DistributedTrainingContext
 
 logger = logging.getLogger(__name__)
@@ -52,7 +52,6 @@ def init_training_process_group(
     if not context.distributed or dist.is_initialized():
         return
     if context.device.type == "cuda":
-        # ``LOCAL_RANK`` is the launcher's pre-mask process ordinal;
         # ``context.device`` is the CUDA ordinal inside this rank's masked view.
         torch.cuda.set_device(context.device)
     dist.init_process_group(
@@ -123,62 +122,6 @@ def mixed_precision_policy(
         )
     raise ValueError(
         f"distributed.training.fsdp.precision_policy must be 'actor' or 'none', got {name!r}",
-    )
-
-
-def normalize_fsdp_parameter_dtype(
-    module: nn.Module,
-    target_dtype: torch.dtype,
-    *,
-    allow_cast: bool,
-) -> None:
-    """Make an FSDP parameter group uniform without hiding dtype provenance.
-
-    FSDP2 validates original parameter dtypes before its mixed-precision cast.
-    Diffusers deliberately leaves a small set of normalization/conditioning
-    parameters in FP32 even when the resolved model dtype is BF16. The actor
-    policy stores all model parameters in its resolved low precision and relies
-    on the FP32-master optimizer for update precision, so normalize those source
-    tensors before sharding. A ``none`` policy promises native dtype semantics
-    and therefore fails instead of silently changing them.
-    """
-
-    if not target_dtype.is_floating_point:
-        raise TypeError(f"FSDP target parameter dtype must be floating, got {target_dtype}")
-    mismatched = [
-        (name, parameter)
-        for name, parameter in module.named_parameters()
-        if parameter.dtype != target_dtype
-    ]
-    if not mismatched:
-        return
-    unsupported = [
-        (name, parameter.dtype)
-        for name, parameter in mismatched
-        if not parameter.is_floating_point()
-    ]
-    preview = ", ".join(f"{name}:{parameter.dtype}" for name, parameter in mismatched[:8])
-    if unsupported or not allow_cast:
-        reason = "non-floating parameters" if unsupported else "precision_policy='none'"
-        raise ValueError(
-            f"FSDP parameter dtype normalization is disabled for {reason}; "
-            f"target={target_dtype}, mismatched={preview}",
-        )
-
-    source_counts: dict[torch.dtype, int] = {}
-    cast_numel = 0
-    with torch.no_grad():
-        for _, parameter in mismatched:
-            source_counts[parameter.dtype] = source_counts.get(parameter.dtype, 0) + 1
-            cast_numel += parameter.numel()
-            parameter.data = parameter.data.to(dtype=target_dtype)
-    logger.info(
-        "FSDP parameter dtype normalization: target=%s tensors=%d numel=%d sources=%s examples=%s",
-        target_dtype,
-        len(mismatched),
-        cast_numel,
-        {str(dtype): count for dtype, count in source_counts.items()},
-        preview,
     )
 
 
@@ -253,19 +196,16 @@ def apply_fsdp(
     parameters are DTensors sharded over ``mesh``; its ``forward`` is unchanged.
     """
 
+    from dataclasses import replace
+
     from torch.distributed.fsdp import CPUOffloadPolicy, fully_shard
 
     offload_kwargs = {"offload_policy": CPUOffloadPolicy()} if cpu_offload else {}
 
-    base = unwrap_module(handle)
-    # The root owns the role-boundary cast. Recasting every block input is both
-    # redundant and unsafe with non-reentrant activation checkpointing: the
-    # first forward enters through FSDP's block pre-hook, while checkpoint
-    # recomputation may reuse already-materialized inputs. Wan's FP32 RoPE
-    # tensors then become BF16 only in the original pass, so checkpoint detects
-    # BF16/FP32 intermediate metadata drift. This matches FSDP1's established
-    # root-casts/non-root-does-not-cast policy while retaining BF16 parameters.
+    # Only the root module casts forward inputs to the compute dtype; inner blocks
+    # receive already-cast activations, so re-casting them is wasted work.
     block_mp_policy = replace(mp_policy, cast_forward_inputs=False)
+    base = unwrap_module(handle)
     for block in iter_blocks(base):
         fully_shard(
             block,
@@ -326,6 +266,54 @@ def gather_full_state_dict(module: nn.Module) -> dict[str, Any]:
     }
 
 
+def gather_rollout_state_dict(module: nn.Module) -> dict[str, Any]:
+    """Gather requires-grad parameters for rollout sync on every rank.
+
+    Asking DCP for a full state before filtering materializes the frozen base on
+    every rank, which defeats LoRA's memory scaling. Keep the state sharded while
+    selecting the ``requires_grad`` parameter keys, then all-gather only those
+    DTensor leaves. Frozen checkpoint-owned state is deliberately excluded:
+    rollout workers receive only the live policy parameters they execute.
+    """
+
+    from torch.distributed.checkpoint.state_dict import (
+        StateDictOptions,
+        get_model_state_dict,
+    )
+    from torch.distributed.tensor import DTensor
+
+    trainable_names = {
+        str(name) for name, parameter in module.named_parameters() if parameter.requires_grad
+    }
+    if not trainable_names:
+        raise ValueError(f"{type(module).__name__} has no trainable parameters")
+
+    sharded_state = get_model_state_dict(
+        module,
+        options=StateDictOptions(
+            full_state_dict=False,
+            cpu_offload=False,
+            ignore_frozen_params=True,
+        ),
+    )
+    missing = sorted(trainable_names - set(sharded_state))
+    if missing:
+        preview = ", ".join(missing[:5])
+        suffix = " ..." if len(missing) > 5 else ""
+        raise ValueError(f"sharded state is missing trainable parameters: {preview}{suffix}")
+
+    gathered: dict[str, Any] = {}
+    # All ranks must enter DTensor collectives in the same order.
+    for name in sorted(trainable_names):
+        value = sharded_state[name]
+        if isinstance(value, DTensor):
+            value = value.full_tensor()
+        if not isinstance(value, torch.Tensor):
+            raise TypeError(f"trainable state {name!r} must be a tensor")
+        gathered[name] = value.detach().cpu().clone()
+    return gathered
+
+
 def gather_trainable_state_dict(
     module: nn.Module,
     *,
@@ -382,20 +370,63 @@ def gather_trainable_state_dict(
     return gathered
 
 
-def load_trainable_state_dict(
+def gather_checkpoint_state_dict(module: nn.Module) -> dict[str, Any]:
+    """Gather exactly trainable plus registered checkpoint-owned state.
+
+    DCP exposes the sharded state mapping without materializing full tensors.
+    Selection happens before ``DTensor.full_tensor()``, so frozen base weights
+    never enter an all-gather while exceptional frozen mutable state (for
+    example DiffusionNFT's ``previous`` adapter) is still checkpointed.
+    """
+
+    from torch.distributed.checkpoint.state_dict import (
+        StateDictOptions,
+        get_model_state_dict,
+    )
+    from torch.distributed.tensor import DTensor
+
+    owned_names = checkpoint_owned_state_names(module)
+    if not owned_names:
+        raise ValueError(f"{type(module).__name__} has no checkpoint-owned state")
+    trainable_names = frozenset(
+        str(name) for name, parameter in module.named_parameters() if parameter.requires_grad
+    )
+    has_registered_frozen_state = owned_names != trainable_names
+    sharded_state = get_model_state_dict(
+        module,
+        options=StateDictOptions(
+            full_state_dict=False,
+            cpu_offload=False,
+            # The ordinary LoRA path lets DCP omit the frozen base entirely.
+            # Opt out only when the model registered a frozen mutable exception.
+            ignore_frozen_params=not has_registered_frozen_state,
+        ),
+    )
+    missing = sorted(owned_names - set(sharded_state))
+    if missing:
+        preview = ", ".join(missing[:5])
+        suffix = " ..." if len(missing) > 5 else ""
+        raise ValueError(f"sharded state is missing checkpoint-owned state: {preview}{suffix}")
+
+    gathered: dict[str, Any] = {}
+    # All ranks must enter selected DTensor collectives in the same order.
+    for name in sorted(owned_names):
+        value = sharded_state[name]
+        if isinstance(value, DTensor):
+            value = value.full_tensor()
+        if not isinstance(value, torch.Tensor):
+            raise TypeError(f"checkpoint-owned state {name!r} must be a tensor")
+        gathered[name] = value.detach().cpu().clone()
+    return gathered
+
+
+def load_checkpoint_state_dict(
     module: nn.Module,
     state: Mapping[str, Any],
     *,
     strict: bool = True,
 ) -> None:
-    """Load full trainable tensors into their local DTensor shards.
-
-    New checkpoints contain exactly the trainable parameters. Known frozen
-    parameters and buffers are also accepted for compatibility with legacy full
-    checkpoints. In strict mode, every current trainable parameter must exist and
-    unknown keys are rejected; frozen keys need not exist because the immutable
-    base model is reconstructed before resume.
-    """
+    """Load exact checkpoint-owned full tensors into local DTensor shards."""
 
     from torch.distributed.checkpoint.state_dict import (
         StateDictOptions,
@@ -404,30 +435,33 @@ def load_trainable_state_dict(
     )
 
     if not isinstance(state, Mapping):
-        raise TypeError("trainable state must be a mapping")
+        raise TypeError("checkpoint state must be a mapping")
 
     local_state = get_model_state_dict(
         module,
         options=StateDictOptions(full_state_dict=False, cpu_offload=False),
     )
-    known_names = set(local_state)
-    trainable_names = {
-        str(name) for name, parameter in module.named_parameters() if parameter.requires_grad
-    }
-    missing = sorted(trainable_names - set(state))
-    unexpected = sorted(set(state) - known_names)
+    owned_names = checkpoint_owned_state_names(module)
+    missing_local = sorted(owned_names - set(local_state))
+    if missing_local:
+        raise ValueError(
+            f"FSDP local state is missing checkpoint-owned state before load: {missing_local}",
+        )
+    missing = sorted(owned_names - set(state))
+    unexpected = sorted(set(state) - owned_names)
     if strict and (missing or unexpected):
         raise ValueError(
-            "checkpoint trainable parameter keys mismatch: "
-            f"missing={missing}, unexpected={unexpected}",
+            f"checkpoint owned-state keys mismatch: missing={missing}, unexpected={unexpected}",
         )
 
-    compatible = {name: value for name, value in state.items() if name in known_names}
+    compatible = {
+        name: value for name, value in state.items() if name in owned_names and name in local_state
+    }
     if not compatible:
         return
     # DCP performs the layout-aware full-tensor -> DTensor scatter. Its own
-    # strict=False is intentional: strictness above applies to mutable trainable
-    # state, while absent frozen base keys are valid in the new checkpoint format.
+    # strict=False is intentional: strictness above applies to exact owned state,
+    # while absent immutable base keys are valid in schema v2.
     set_model_state_dict(
         module,
         compatible,
@@ -437,6 +471,17 @@ def load_trainable_state_dict(
             strict=False,
         ),
     )
+
+
+def load_trainable_state_dict(
+    module: nn.Module,
+    state: Mapping[str, Any],
+    *,
+    strict: bool = True,
+) -> None:
+    """Compatibility facade; use ``load_checkpoint_state_dict`` for resume."""
+
+    load_checkpoint_state_dict(module, state, strict=strict)
 
 
 def load_full_state_dict(
@@ -564,6 +609,10 @@ def load_full_optimizer_state_dict(
     file itself, ``broadcast_from_rank0=True`` makes rank0's copy authoritative
     and DCP re-shards each moment onto the local DTensor layout. A no-op
     broadcast at ``world_size=1``.
+
+    An ``FP32MasterWeightOptimizer`` holds masters that are DTensors distinct
+    from the model's, which DCP cannot re-shard by FQN identity, so its state is
+    re-distributed onto the live master layout explicitly instead.
     """
 
     from vrl.trainers.optimizer import FP32MasterWeightOptimizer
@@ -672,3 +721,59 @@ def _distribute_fp32_master_optimizer_state(
     local["state"] = local_entries
     local["fp32_master_weights"] = local_master_state
     return local
+
+
+def normalize_fsdp_parameter_dtype(
+    module: nn.Module,
+    target_dtype: torch.dtype,
+    *,
+    allow_cast: bool,
+) -> None:
+    """Make an FSDP parameter group uniform without hiding dtype provenance.
+
+    FSDP2 validates original parameter dtypes before its mixed-precision cast.
+    Diffusers deliberately leaves a small set of normalization/conditioning
+    parameters in FP32 even when the resolved model dtype is BF16. The actor
+    policy stores all model parameters in its resolved low precision and relies
+    on the FP32-master optimizer for update precision, so normalize those source
+    tensors before sharding. A ``none`` policy promises native dtype semantics
+    and therefore fails instead of silently changing them.
+    """
+
+    if not target_dtype.is_floating_point:
+        raise TypeError(f"FSDP target parameter dtype must be floating, got {target_dtype}")
+    mismatched = [
+        (name, parameter)
+        for name, parameter in module.named_parameters()
+        if parameter.dtype != target_dtype
+    ]
+    if not mismatched:
+        return
+    unsupported = [
+        (name, parameter.dtype)
+        for name, parameter in mismatched
+        if not parameter.is_floating_point()
+    ]
+    preview = ", ".join(f"{name}:{parameter.dtype}" for name, parameter in mismatched[:8])
+    if unsupported or not allow_cast:
+        reason = "non-floating parameters" if unsupported else "precision_policy='none'"
+        raise ValueError(
+            f"FSDP parameter dtype normalization is disabled for {reason}; "
+            f"target={target_dtype}, mismatched={preview}",
+        )
+
+    source_counts: dict[torch.dtype, int] = {}
+    cast_numel = 0
+    with torch.no_grad():
+        for _, parameter in mismatched:
+            source_counts[parameter.dtype] = source_counts.get(parameter.dtype, 0) + 1
+            cast_numel += parameter.numel()
+            parameter.data = parameter.data.to(dtype=target_dtype)
+    logger.info(
+        "FSDP parameter dtype normalization: target=%s tensors=%d numel=%d sources=%s examples=%s",
+        target_dtype,
+        len(mismatched),
+        cast_numel,
+        {str(dtype): count for dtype, count in source_counts.items()},
+        preview,
+    )

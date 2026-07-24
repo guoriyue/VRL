@@ -35,7 +35,8 @@ def _state(*, forced: torch.Tensor, guidance_scale: float = 2.0) -> Emu3ARState:
         logprobs=torch.empty(1, forced.shape[0]),
         guidance_scale=guidance_scale,
         temperature=1.0,
-        total_token_num=int(forced.shape[0]),
+        paged_cond_states=[object()],
+        paged_uncond_states=[object()],
         forced_gen_index=forced,
     )
 

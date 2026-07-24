@@ -41,6 +41,12 @@ actor:
   timestep_fraction: 0.25
   timestep_selection: strided
   replay_samples_per_chunk: 1
+  # Collect/train/release one prompt group at a time. Four CPU-parked Wan
+  # rollout actors already consume about 68 GiB between phases; retaining both
+  # prompt groups' video trajectories until backward crosses the host-memory
+  # safety margin even though the GPU batch itself fits.
+  microbatch_size: 1
+  host_memory_budget_fraction: 0.98
   ema:
     enable: false
 
@@ -50,12 +56,6 @@ sampling:
 rollout:
   prompts_per_batch: 2
   n_samples_per_prompt: 4
-  # Collect/train/release one prompt group at a time. Four CPU-parked Wan
-  # rollout actors already consume about 68 GiB between phases; retaining both
-  # prompt groups' video trajectories until backward crosses the host-memory
-  # safety margin even though the GPU batch itself fits.
-  microbatch_size: 1
-  host_memory_budget_fraction: 0.98
   samples_per_chunk: 1
   noise_level: 0.7
   sde:

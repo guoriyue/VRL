@@ -19,8 +19,6 @@ class RenoiseStepResult:
 
     next_sample: Any
     log_prob: Any
-    next_sample_mean: Any
-    std_dev: Any
 
 
 def renoise_step_with_logprob(
@@ -105,8 +103,6 @@ def renoise_step_with_logprob(
     return RenoiseStepResult(
         next_sample=action,
         log_prob=log_prob,
-        next_sample_mean=mean,
-        std_dev=sigma_view,
     )
 
 

@@ -52,12 +52,26 @@ class ARChunkExecutorBase(
             default_max_text_length=self.default_max_text_length,
         )
 
+    def resolve_scheduler_batch_size(
+        self,
+        request: GenerationRequest,
+        *,
+        row_count: int,
+    ) -> int | None:
+        """Resolve the row bound at the executor policy boundary.
+
+        ``row_count`` is available for family compatibility checks; the shared
+        request-local scheduler itself accepts any positive bound.
+        """
+
+        del row_count
+        return self.layout.resolve_scheduler_batch_size(request)
+
     # -- request-level plumbing (shared; families own the chunk step) ----
 
     def plan(
         self,
         request: GenerationRequest,
-        sample_rows: Sequence[GenerationSampleRow],
     ) -> Any:
         from vrl.generation.execution.planner import build_engine_plan
 
@@ -167,9 +181,6 @@ class ARChunkInputs:
     context.
     """
 
-    max_new_tokens: int
-    # str(cond_embeds.dtype) — the decode loop's activation dtype source.
-    decode_dtype: str
     init_args: tuple[Any, ...]
     init_kwargs: dict[str, Any]
     # Passed verbatim to ``model.decode_image_tokens(token_ids, **kwargs)``.
@@ -254,6 +265,10 @@ class ARDiscreteChunkExecutorBase(ARChunkExecutorBase):
 
         self.require_native_ar_engine(request)
         self.layout.validate_chunk(request, chunk)
+        scheduler_batch_size = self.resolve_scheduler_batch_size(
+            request,
+            row_count=chunk.sample_count,
+        )
 
         seed = request.sampling.get("seed")
         if seed is not None:
@@ -267,18 +282,12 @@ class ARDiscreteChunkExecutorBase(ARChunkExecutorBase):
             record_function("engine.cache_read"),
             record_function("engine.cache_write"),
         ):
-            decode_result = TokenAutoregressiveLoop(
-                request=request,
-                sample_rows=self.layout.chunk_sample_rows(request, chunk),
+            token_ids, token_log_probs = TokenAutoregressiveLoop(
                 runner=self._ar_runner(request),
-                max_new_tokens=inputs.max_new_tokens,
-                tokenizer_key=self.family,
-                dtype=inputs.decode_dtype,
-                scheduler_batch_size=chunk.sample_count,
+                scheduler_batch_size=scheduler_batch_size,
                 init_args=inputs.init_args,
                 init_kwargs=inputs.init_kwargs,
             ).run()
-        token_ids, token_log_probs = decode_result.finalized
         with record_function("engine.vq_decode"):
             images = self.model.decode_image_tokens(
                 token_ids,
@@ -366,7 +375,6 @@ class ARDiscreteChunkGatherer:
             request_id=request.request_id,
             family=request.family,
             task=request.task,
-            prompts=list(request.prompts),
             sample_rows=list(sample_rows),
             output=cat["output"],
             trajectory=trajectory,

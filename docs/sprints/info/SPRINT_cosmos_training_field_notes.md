@@ -136,7 +136,7 @@ Per-phase footprints (832x480x49, 10 steps):
 
 以下是当时运行暴露的 knob 语义；当前公开 grammar 已统一为
 `rollout.n_samples_per_prompt`、`rollout.prompts_per_batch`、
-`rollout.samples_per_chunk`、`rollout.microbatch_size` 与
+`rollout.samples_per_chunk`、`actor.microbatch_size` 与
 `actor.replay_samples_per_chunk`，不要照抄旧名字：
 
 - 历史 `rollout.n` 曾是 diffusion group size；当前统一使用
@@ -147,7 +147,7 @@ Per-phase footprints (832x480x49, 10 steps):
   `sample_batch_size=2` is the safe ceiling.
 - **`algorithm.mini_batch` 是历史 dead parameter，当前已经删除**；不要恢复它。当前样本轴
   replay 分块的唯一事实来源是 `actor.replay_samples_per_chunk`，prompt-group streaming 则由
-  `rollout.microbatch_size` 表达。
+  `actor.microbatch_size` 表达。
 
 Two wrong turns I made (recorded so the next person doesn't repeat them):
 

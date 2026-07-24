@@ -17,15 +17,16 @@ import torch.nn as nn
 from tests.trainers.online._collector_control import CollectorControlFake
 from tests.trainers.online._helpers import (
     _algorithm_inputs,
+    _diffusion_rollout_batch,
     _stamp_model_precision,
     _trajectory_signals,
 )
 from vrl.algorithms.types import TrainStepMetrics
 from vrl.config.precision import RolePrecision
-from vrl.rollouts.batch import RolloutBatch
 from vrl.rollouts.evaluators.base import Evaluator
-from vrl.trainers.core.types import EMAConfig, OptimConfig, TrainerConfig
+from vrl.trainers.core.types import EMAConfig, OptimConfig
 from vrl.trainers.online import OnlineTrainer
+from vrl.trainers.online.config import OnlineBatchPlan, TrainerConfig
 from vrl.trainers.online.trainer import _create_grad_scaler
 from vrl.trainers.optimizer import FP32MasterWeightOptimizer
 from vrl.trainers.strategy import SingleProcessStrategy
@@ -267,14 +268,10 @@ class _Collector(CollectorControlFake):
 
     async def collect_unscored(self, prompts, **kwargs):
         group_size = int(kwargs["group_size"])
-        return RolloutBatch(
-            observations=torch.zeros(group_size, 2, 1),
-            actions=torch.zeros(group_size, 2, 1),
+        return _diffusion_rollout_batch(
             rewards=torch.arange(group_size, dtype=torch.float32),
-            dones=torch.ones(group_size, dtype=torch.bool),
             group_ids=torch.zeros(group_size, dtype=torch.long),
-            context={},
-            prompts=list(prompts) * group_size,
+            num_steps=2,
         )
 
 
@@ -309,13 +306,11 @@ def _build_trainer(tmp_path):
         evaluator=_Evaluator(),
         model=model,
         config=TrainerConfig(
-            prompts_per_batch=1,
+            batch_plan=OnlineBatchPlan(prompts_per_batch=1, n_samples_per_prompt=2),
             timestep_fraction=1.0,
-            total_epochs=1,
             drop_zero_advantage=False,
             optim=OptimConfig(lr=0.01),
             ema=EMAConfig(enable=True, update_interval=1),
-            n_samples_per_prompt=2,
             train_precision="no",
             output_dir=str(tmp_path),
         ),

@@ -84,7 +84,8 @@
 
 - `configs/experiment/diffusion/wan_2_2/online_grpo_physics_i2v.yaml`，镜像现有
   `configs/experiment/diffusion/wan_2_1/online_grpo_physics_i2v.yaml`，但 `defaults` 指
-  `/model/diffusion/wan_2_2/i2v_a14b`（带 `boundary_ratio` + 默认 low-noise `trainable_transformers`）。
+  `/model/diffusion/wan_2_2/i2v_a14b`（boundary 从固定 revision 的 pipeline config 派生，
+  默认 low-noise `trainable_transformers`）。
 - 显式声明 `model.trainable_transformers`（默认 = low-noise `transformer_2`；要两个专家时设 `both`）。
 - rollout/trainer 其余 knob 对齐 wan_2_1 物理 run，先小 `total_epochs` 做 smoke。
 
@@ -141,7 +142,8 @@
 
 ### 已完成
 - **任务 1（recipe，code-only）✅**：建好 `configs/experiment/diffusion/wan_2_2/online_grpo_physics_i2v.yaml`
-  （镜像 wan_2_1 物理 I2V；`defaults` 指 `/model/diffusion/wan_2_2/i2v_a14b`，boundary_ratio=0.9；
+  （镜像 wan_2_1 物理 I2V；`defaults` 指 `/model/diffusion/wan_2_2/i2v_a14b`，boundary 从固定
+  pipeline revision 派生为 0.9；
   显式 `model.trainable_transformers=['transformer_2']` 低噪专家；`total_epochs=2` smoke）。dry-load 干净，
   dual-stage 模型 config 正常解析（family=wan_2_1_i2v、两专家 transformer/transformer_2）。
 - **模型**：`Wan-AI/Wan2.2-I2V-A14B-Diffusers` 已下载到 `/mnt/nvme/hf`（118GB，50 文件，transformer +

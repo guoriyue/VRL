@@ -7,14 +7,82 @@ import typing
 import pytest
 from omegaconf import OmegaConf
 
+from vrl.config.model_schema import (
+    LoraSection,
+    ModelExecutorSection,
+    ModelMemorySection,
+    ModelSection,
+    TorchCompileSection,
+    VaeDecodeMemorySection,
+)
+from vrl.config.sampling_schema import (
+    ARSamplingSection,
+    DenoiseImageSamplingSection,
+    EchoSamplingSection,
+    JanusProSamplingSection,
+    TextEncodedImageSamplingSection,
+    VideoSamplingSection,
+)
 from vrl.config.schema import (
     AlgorithmConfig,
     DataConfig,
     RewardConfig,
+    RootConfig,
     parse_config,
 )
+from vrl.families.names import _FAMILY_BY_ALIAS
+from vrl.families.registry import (
+    FAMILY_REGISTRY,
+    GENERIC_FULL_SEQUENCE_DENOISE_EXECUTOR,
+    SHARED_MODEL_SECTION_CLS,
+    get_model_family_entry,
+)
+from vrl.models.families.causvid.config import CausVidModelSection
+from vrl.models.families.cosmos.anima.config import CosmosAnimaModelSection
+from vrl.models.families.cosmos.predict2_5.config import (
+    CosmosPredict25ModelSection,
+)
+from vrl.models.families.echo.config import EchoModelSection
+from vrl.models.families.flux.config import FluxModelSection
+from vrl.models.families.janus_pro.config import JanusProModelSection
+from vrl.models.families.llamagen.config import LlamaGenModelSection
+from vrl.models.families.magi_1.config import Magi1ModelSection
+from vrl.models.families.nextstep_1.config import NextStep1ModelSection
+from vrl.models.families.wan_2_1.config import WanModelSection
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
+
+# This independent fixture pins the public capability contract for every
+# canonical family. Production derives executor support from its binding and
+# records memory support as target-section names; the test intentionally does
+# not derive either expected value from those production fields.
+_MODEL_RUNTIME_CAPABILITY_MATRIX = {
+    "sd3_5": (True, True),
+    "causvid": (False, False),
+    "magi_1": (False, False),
+    "flux": (True, True),
+    "qwen_image": (True, True),
+    "sana": (True, True),
+    "lumina2": (True, True),
+    "hunyuan_video": (True, True),
+    "mochi": (True, True),
+    "hunyuan_image": (True, True),
+    "pixart_sigma": (True, True),
+    "cogvideox": (True, True),
+    "wan_2_1": (True, True),
+    "wan_2_1_i2v": (False, True),
+    "cosmos-predict2": (False, True),
+    "cosmos-predict2.5": (False, True),
+    "cosmos3": (False, True),
+    "cosmos-predict2-anima": (True, True),
+    "echo": (False, False),
+    "janus_pro": (False, False),
+    "janus_pro_r1": (False, False),
+    "nextstep_1": (False, False),
+    "emu3": (False, False),
+    "glm_image": (False, False),
+    "llamagen": (False, False),
+}
 
 
 def _literal_args(annotation) -> tuple[str, ...]:
@@ -53,6 +121,23 @@ def _kling_video_reward_kwargs(**overrides) -> dict:
     }
     base.update(overrides)
     return base
+
+
+@pytest.mark.parametrize("value", [None, 1, 8])
+def test_sampling_scheduler_batch_size_accepts_null_or_positive_integer(
+    value: int | None,
+) -> None:
+    sampling = ARSamplingSection.model_validate({"ar_scheduler_batch_size": value})
+
+    assert sampling.ar_scheduler_batch_size == value
+
+
+@pytest.mark.parametrize("value", [True, False, 0, -1, 1.0, 1.5, "2"])
+def test_sampling_scheduler_batch_size_rejects_coercible_or_non_positive_values(
+    value: object,
+) -> None:
+    with pytest.raises(ValueError, match="must be a positive integer or null"):
+        ARSamplingSection.model_validate({"ar_scheduler_batch_size": value})
 
 
 # ── Algorithm kind discriminator ──────────────────────────────────────────────
@@ -139,6 +224,54 @@ def test_algorithm_dispatch_covers_schema_kind_vocabulary() -> None:
     assert all(algorithm_config_class(kind) for kind in kinds)
 
 
+def test_positive_kl_reward_coef_is_accepted_for_diffusion_rollouts() -> None:
+    cfg = _minimal_grpo_cfg()
+    cfg.algorithm.kl_reward_coef = 0.25
+
+    assert parse_config(cfg).algorithm.kl_reward_coef == 0.25
+
+
+@pytest.mark.parametrize(
+    "kind",
+    ["token_grpo", "token_grpo_multisegment", "diffusion_dpo"],
+)
+def test_positive_kl_reward_coef_rejects_trajectories_without_step_kl(
+    kind: str,
+) -> None:
+    cfg = OmegaConf.create(
+        {"algorithm": {"kind": kind, "kl_reward_coef": 0.25}},
+    )
+
+    with pytest.raises(
+        ValueError,
+        match=r"algorithm\.kl_reward_coef > 0 requires a diffusion rollout trajectory",
+    ):
+        parse_config(cfg)
+
+
+def test_zero_kl_reward_coef_remains_valid_for_token_rollouts() -> None:
+    cfg = OmegaConf.create(
+        {"algorithm": {"kind": "token_grpo", "kl_reward_coef": 0.0}},
+    )
+
+    assert parse_config(cfg).algorithm.kl_reward_coef == 0.0
+
+
+@pytest.mark.parametrize(
+    "value",
+    [-0.1, True, "0.25", float("inf"), float("-inf"), float("nan")],
+)
+def test_kl_reward_coef_rejects_invalid_public_values(value: object) -> None:
+    cfg = _minimal_grpo_cfg()
+    cfg.algorithm.kl_reward_coef = value
+
+    with pytest.raises(
+        ValueError,
+        match=r"algorithm\.kl_reward_coef must be a finite number >= 0",
+    ):
+        parse_config(cfg)
+
+
 # ── rollout / sampling string-setting Literals ────────────────────────────────
 
 
@@ -158,19 +291,161 @@ def test_unknown_denoise_mode_raises() -> None:
         parse_config(cfg)
 
 
-def test_attention_backend_defaults_to_vllm_paged() -> None:
-    """attention_backend is a registered, typed key (no false unknown-key warning)."""
-    cfg = _minimal_grpo_cfg()
+def test_shared_attention_backend_omission_stays_unset() -> None:
+    """The runtime fallback owns the default; typed config stores no duplicate."""
+    cfg = _minimal_grpo_cfg(model={"family": "janus_pro"})
     cfg.sampling = {}
-    assert parse_config(cfg).sampling.attention_backend == "vllm_paged"
+    sampling = parse_config(cfg).sampling
+
+    assert type(sampling) is JanusProSamplingSection
+    assert sampling.attention_backend is None
+    assert sampling.model_dump(exclude_unset=True) == {}
+
+
+def test_shared_attention_family_accepts_explicit_backend() -> None:
+    cfg = _minimal_grpo_cfg(model={"family": "janus_pro"})
+    cfg.sampling = {"attention_backend": "torch_native"}
+
+    assert parse_config(cfg).sampling.attention_backend == "torch_native"
 
 
 def test_unknown_attention_backend_raises() -> None:
     """An out-of-set attention_backend is rejected at parse with the dotted path."""
-    cfg = _minimal_grpo_cfg()
+    cfg = _minimal_grpo_cfg(model={"family": "janus_pro"})
     cfg.sampling = {"attention_backend": "bogus"}
     with pytest.raises(ValueError, match=r"unknown sampling\.attention_backend"):
         parse_config(cfg)
+
+
+@pytest.mark.parametrize("family", ["glm_image", "llamagen"])
+def test_native_cache_family_rejects_typed_attention_backend(family: str) -> None:
+    cfg = _minimal_grpo_cfg(model={"family": family})
+    cfg.sampling = {"attention_backend": "torch_native"}
+
+    with pytest.raises(ValueError, match=r"unknown sampling\.attention_backend"):
+        parse_config(cfg)
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("image_token_num", 256),
+        ("image_size", 256),
+        ("max_text_length", 120),
+    ],
+)
+def test_llamagen_sampling_rejects_model_derived_topology(
+    field: str,
+    value: object,
+) -> None:
+    cfg = _minimal_grpo_cfg(
+        model={"family": "llamagen"},
+        sampling={field: value},
+    )
+
+    with pytest.raises(ValueError, match=rf"unknown sampling\.{field}"):
+        parse_config(cfg)
+
+
+@pytest.mark.parametrize(
+    "family",
+    ["janus_pro", "nextstep_1", "emu3", "glm_image"],
+)
+def test_text_encoded_ar_families_keep_request_text_length(family: str) -> None:
+    cfg = _minimal_grpo_cfg(
+        model={"family": family},
+        sampling={"max_text_length": 128},
+    )
+
+    sampling = parse_config(cfg).sampling
+
+    assert sampling is not None
+    assert sampling.max_text_length == 128
+
+
+def test_sampling_schema_is_selected_from_model_family() -> None:
+    cfg = _minimal_grpo_cfg(model={"family": "sana"})
+    cfg.sampling = {"max_sequence_length": 300}
+
+    sampling = parse_config(cfg).sampling
+
+    assert type(sampling) is TextEncodedImageSamplingSection
+    assert sampling.max_sequence_length == 300
+
+
+def test_sampling_section_requires_model_family_for_schema_selection() -> None:
+    cfg = _minimal_grpo_cfg(sampling={"num_steps": 10})
+
+    with pytest.raises(ValueError, match=r"sampling requires model\.family"):
+        parse_config(cfg)
+
+
+@pytest.mark.parametrize(
+    ("family", "expected_type"),
+    [
+        ("hunyuan_image", DenoiseImageSamplingSection),
+        ("cosmos-predict2", VideoSamplingSection),
+        ("cosmos3", VideoSamplingSection),
+        ("echo", EchoSamplingSection),
+    ],
+)
+def test_family_without_text_length_rejects_max_sequence_length(
+    family: str,
+    expected_type: type,
+) -> None:
+    cfg = _minimal_grpo_cfg(model={"family": family})
+    cfg.sampling = {"max_sequence_length": 512}
+
+    with pytest.raises(ValueError, match=r"unknown sampling\.max_sequence_length"):
+        parse_config(cfg)
+
+    parsed = parse_config(
+        _minimal_grpo_cfg(model={"family": family}, sampling={}),
+    )
+    assert type(parsed.sampling) is expected_type
+
+
+def test_echo_accepts_only_baked_guidance_value() -> None:
+    valid = _minimal_grpo_cfg(model={"family": "echo"})
+    valid.sampling = {"guidance_scale": 1.0}
+    assert parse_config(valid).sampling.guidance_scale == 1.0
+
+    invalid = _minimal_grpo_cfg(model={"family": "echo"})
+    invalid.sampling = {"guidance_scale": 4.5}
+    with pytest.raises(ValueError, match=r"unknown sampling\.guidance_scale=4\.5"):
+        parse_config(invalid)
+
+
+@pytest.mark.parametrize(
+    ("family", "field", "value"),
+    [
+        ("janus_pro", "max_reflect_len", 80),
+        ("nextstep_1", "temperature", 0.9),
+        ("emu3", "image_token_num", 256),
+        ("glm_image", "guidance_scale", 4.5),
+        ("magi_1", "guidance_scale", 4.5),
+    ],
+)
+def test_sampling_fields_are_rejected_outside_their_behavior_owner(
+    family: str,
+    field: str,
+    value: object,
+) -> None:
+    cfg = _minimal_grpo_cfg(model={"family": family}, sampling={field: value})
+
+    with pytest.raises(ValueError, match=rf"unknown sampling\.{field}"):
+        parse_config(cfg)
+
+
+def test_reflection_length_is_owned_only_by_janus_r1() -> None:
+    cfg = _minimal_grpo_cfg(
+        model={"family": "janus_pro_r1"},
+        sampling={"max_reflect_len": 80},
+    )
+    cfg.algorithm.kind = "token_grpo_multisegment"
+    cfg.rollout.final_image_policy = "always_generate"
+
+    assert parse_config(cfg).sampling.max_reflect_len == 80
 
 
 def test_unknown_final_image_policy_raises() -> None:
@@ -212,7 +487,7 @@ def test_training_keys_are_registered_not_unknown() -> None:
 
 
 def test_wan_model_keys_are_scoped_to_wan_family() -> None:
-    """Wan dual-stage/offload keys are accepted only for Wan model families."""
+    """Wan trainable-topology/offload keys are accepted only for Wan families."""
     from vrl.config.unknown_keys import find_unknown_keys
 
     wan_cfg = OmegaConf.create(
@@ -220,7 +495,6 @@ def test_wan_model_keys_are_scoped_to_wan_family() -> None:
             "model": {
                 "family": "wan_2_1_i2v",
                 "path": "Wan-AI/Wan2.2-I2V-A14B-Diffusers",
-                "boundary_ratio": 0.9,
                 "trainable_transformers": ["transformer_2"],
                 "offload_mode": "sequential",
             },
@@ -233,7 +507,6 @@ def test_wan_model_keys_are_scoped_to_wan_family() -> None:
             "model": {
                 "family": "wan_i2v",
                 "path": "Wan-AI/Wan2.2-I2V-A14B-Diffusers",
-                "boundary_ratio": 0.9,
                 "trainable_transformers": ["transformer_2"],
                 "offload_mode": "sequential",
             },
@@ -259,32 +532,104 @@ def test_wan_model_keys_are_scoped_to_wan_family() -> None:
     ]
 
 
-def test_nextstep_freeze_vae_is_scoped_to_nextstep_family() -> None:
-    """freeze_vae is a NextStep model key, not a global model knob."""
+@pytest.mark.parametrize("family", ["wan_2_1", "wan_2_1_i2v", "wan", "wan_i2v"])
+def test_wan_boundary_ratio_is_source_derived_not_public_config(family: str) -> None:
     from vrl.config.unknown_keys import find_unknown_keys
 
-    nextstep_cfg = OmegaConf.create(
+    cfg = OmegaConf.create(
         {
             "model": {
-                "family": "nextstep_1",
-                "path": "stepfun-ai/NextStep-1.1",
-                "vae_path": "stepfun-ai/NextStep-1-f8ch16-Tokenizer",
-                "freeze_vae": True,
+                "family": family,
+                "path": "Wan-AI/Wan2.2-I2V-A14B-Diffusers",
+                "boundary_ratio": 0.9,
             },
         },
     )
-    assert find_unknown_keys(nextstep_cfg) == []
 
-    sd3_cfg = OmegaConf.create(
-        {
-            "model": {
-                "family": "sd3_5",
-                "path": "stabilityai/stable-diffusion-3.5-medium",
-                "freeze_vae": True,
-            },
+    assert find_unknown_keys(cfg) == ["model.boundary_ratio"]
+    with pytest.raises(ValueError, match=r"unknown model\.boundary_ratio"):
+        parse_config(cfg)
+
+
+@pytest.mark.parametrize(
+    "family",
+    ["janus_pro", "janus", "janus_pro_r1", "janus_r1"],
+)
+@pytest.mark.parametrize("trust_remote_code", [False, True])
+def test_janus_keys_and_aliases_select_shared_family_section(
+    family: str,
+    trust_remote_code: bool,
+) -> None:
+    from vrl.config.unknown_keys import find_unknown_keys
+
+    cfg_data: dict[str, object] = {
+        "model": {
+            "family": family,
+            "trust_remote_code": trust_remote_code,
+            "vq_latent_channels": 8,
         },
-    )
-    assert find_unknown_keys(sd3_cfg) == ["model.freeze_vae"]
+    }
+    if family in {"janus_pro_r1", "janus_r1"}:
+        cfg_data.update(
+            {
+                "algorithm": {"kind": "token_grpo_multisegment"},
+                "rollout": {"final_image_policy": "always_generate"},
+            },
+        )
+    cfg = OmegaConf.create(cfg_data)
+
+    assert find_unknown_keys(cfg) == []
+    parsed = parse_config(cfg)
+    assert isinstance(parsed.model, JanusProModelSection)
+    assert parsed.model.trust_remote_code is trust_remote_code
+    assert parsed.model.vq_latent_channels == 8
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [("trust_remote_code", False), ("vq_latent_channels", 8)],
+)
+def test_janus_keys_are_unknown_for_shared_token_sibling(
+    field: str,
+    value: object,
+) -> None:
+    from vrl.config.unknown_keys import find_unknown_keys
+
+    cfg = OmegaConf.create({"model": {"family": "emu3", field: value}})
+
+    assert find_unknown_keys(cfg) == [f"model.{field}"]
+
+
+@pytest.mark.parametrize("family", ["nextstep_1", "nextstep"])
+@pytest.mark.parametrize("freeze_vae", [False, True])
+def test_nextstep_keys_and_alias_select_family_section(
+    family: str,
+    freeze_vae: bool,
+) -> None:
+    from vrl.config.unknown_keys import find_unknown_keys
+
+    payload = {
+        "freeze_vae": freeze_vae,
+        "vae_path": "stepfun-ai/NextStep-1-f8ch16-Tokenizer",
+        "vae_revision": "immutable",
+    }
+    cfg = OmegaConf.create({"model": {"family": family, **payload}})
+
+    assert find_unknown_keys(cfg) == []
+    parsed = parse_config(cfg)
+    assert isinstance(parsed.model, NextStep1ModelSection)
+    assert parsed.model.freeze_vae is freeze_vae
+    assert parsed.model.vae_path == payload["vae_path"]
+    assert parsed.model.vae_revision == payload["vae_revision"]
+
+
+@pytest.mark.parametrize("field", ["freeze_vae", "vae_path", "vae_revision"])
+def test_nextstep_keys_are_unknown_for_shared_token_sibling(field: str) -> None:
+    from vrl.config.unknown_keys import find_unknown_keys
+
+    cfg = OmegaConf.create({"model": {"family": "emu3", field: "unexpected"}})
+
+    assert find_unknown_keys(cfg) == [f"model.{field}"]
 
 
 def test_unknown_wan_offload_mode_raises() -> None:
@@ -299,6 +644,491 @@ def test_unknown_wan_offload_mode_raises() -> None:
         },
     )
     with pytest.raises(ValueError, match=r"unknown model\.offload_mode"):
+        parse_config(cfg)
+
+
+@pytest.mark.parametrize("expert_lifecycle_profiling", [False, True])
+def test_root_retains_selected_family_model_section_and_serializes_its_fields(
+    expert_lifecycle_profiling: bool,
+) -> None:
+    cfg = OmegaConf.create(
+        {
+            "model": {
+                "family": "wan_2_1_i2v",
+                "path": "Wan-AI/Wan2.2-I2V-A14B-Diffusers",
+                "expert_lifecycle_profiling": expert_lifecycle_profiling,
+                "offload_mode": "sequential",
+            },
+        },
+    )
+
+    parsed = parse_config(cfg)
+
+    assert isinstance(parsed.model, WanModelSection)
+    assert parsed.model.expert_lifecycle_profiling is expert_lifecycle_profiling
+    assert parsed.model.offload_mode == "sequential"
+    assert parsed.model_dump()["model"]["expert_lifecycle_profiling"] is expert_lifecycle_profiling
+    assert parsed.model_dump()["model"]["offload_mode"] == "sequential"
+
+
+@pytest.mark.parametrize("family", ["cosmos-predict2.5", "cosmos_predict2_5"])
+@pytest.mark.parametrize("skip_text_encoder", [False, True])
+def test_cosmos_predict25_keys_and_alias_select_family_section(
+    family: str,
+    skip_text_encoder: bool,
+) -> None:
+    from vrl.config.unknown_keys import find_unknown_keys
+
+    cfg = OmegaConf.create(
+        {
+            "model": {
+                "family": family,
+                "skip_text_encoder": skip_text_encoder,
+            },
+        },
+    )
+
+    assert find_unknown_keys(cfg) == []
+    parsed = parse_config(cfg)
+    assert isinstance(parsed.model, CosmosPredict25ModelSection)
+    assert parsed.model.skip_text_encoder is skip_text_encoder
+    assert parsed.model_dump()["model"]["skip_text_encoder"] is skip_text_encoder
+
+
+def test_cosmos_predict25_key_is_unknown_for_shared_predict2() -> None:
+    from vrl.config.unknown_keys import find_unknown_keys
+
+    cfg = OmegaConf.create(
+        {
+            "model": {
+                "family": "cosmos-predict2",
+                "skip_text_encoder": True,
+            },
+        },
+    )
+
+    assert find_unknown_keys(cfg) == ["model.skip_text_encoder"]
+
+
+@pytest.mark.parametrize(
+    "family",
+    ["cosmos-predict2-anima", "anima", "cosmos_anima"],
+)
+def test_cosmos_anima_keys_and_aliases_select_family_section(family: str) -> None:
+    from vrl.config.unknown_keys import find_unknown_keys
+
+    cfg = OmegaConf.create(
+        {
+            "model": {
+                "family": family,
+                "qwen_tokenizer_path": "Qwen/Qwen2.5-0.5B",
+                "scheduler_shift": 3.0,
+                "transformer_file": "split_files/diffusion_models/anima.safetensors",
+            },
+        },
+    )
+
+    assert find_unknown_keys(cfg) == []
+    parsed = parse_config(cfg)
+    assert isinstance(parsed.model, CosmosAnimaModelSection)
+    assert parsed.model.scheduler_shift == 3.0
+    assert parsed.model.transformer_file == "split_files/diffusion_models/anima.safetensors"
+
+
+def test_cosmos_anima_key_is_unknown_for_shared_predict2() -> None:
+    from vrl.config.unknown_keys import find_unknown_keys
+
+    cfg = OmegaConf.create(
+        {
+            "model": {
+                "family": "cosmos-predict2",
+                "scheduler_shift": 3.0,
+            },
+        },
+    )
+
+    assert find_unknown_keys(cfg) == ["model.scheduler_shift"]
+
+
+@pytest.mark.parametrize("family", ["llamagen", "llamagen_t2i"])
+def test_llamagen_keys_and_alias_select_family_section(family: str) -> None:
+    from vrl.config.unknown_keys import find_unknown_keys
+
+    payload = {
+        "gpt_ckpt": "custom-gpt.pt",
+        "gpt_model": "GPT-XL",
+        "image_token_num": 256,
+        "t5_path": "org/t5",
+        "t5_revision": "immutable",
+        "vq_ckpt": "custom-vq.pt",
+    }
+    cfg = OmegaConf.create({"model": {"family": family, **payload}})
+
+    assert find_unknown_keys(cfg) == []
+    parsed = parse_config(cfg)
+    assert isinstance(parsed.model, LlamaGenModelSection)
+    assert parsed.model is not None
+    parsed_payload = parsed.model.model_dump()
+    assert {key: parsed_payload[key] for key in payload} == payload
+
+
+@pytest.mark.parametrize(
+    "field",
+    [
+        "gpt_ckpt",
+        "gpt_model",
+        "image_token_num",
+        "t5_path",
+        "t5_revision",
+        "vq_ckpt",
+    ],
+)
+def test_llamagen_keys_are_unknown_for_shared_token_sibling(field: str) -> None:
+    from vrl.config.unknown_keys import find_unknown_keys
+
+    cfg = OmegaConf.create({"model": {"family": "emu3", field: "unexpected"}})
+
+    assert find_unknown_keys(cfg) == [f"model.{field}"]
+
+
+@pytest.mark.parametrize(
+    ("family", "section_cls", "payload"),
+    [
+        ("flux", FluxModelSection, {"nft_previous_adapter": True}),
+        (
+            "echo",
+            EchoModelSection,
+            {
+                "gemma_path": "google/gemma-3-12b-it",
+                "gemma_revision": "revision",
+                "video_height": 256,
+                "video_width": 256,
+            },
+        ),
+        (
+            "causvid",
+            CausVidModelSection,
+            {
+                "accept_noncommercial_license": True,
+                "base_model_path": "Wan-AI/Wan2.1-T2V-1.3B",
+                "checkpoint_file": "autoregressive_checkpoint/model.pt",
+            },
+        ),
+        (
+            "magi_1",
+            Magi1ModelSection,
+            {
+                "python_executable": "third_party/MAGI-1/.venv/bin/python",
+                "source_path": "third_party/MAGI-1",
+                "timeout_seconds": 3600,
+            },
+        ),
+    ],
+)
+def test_family_owned_denoise_keys_select_their_public_sections(
+    family: str,
+    section_cls: type[ModelSection],
+    payload: dict[str, object],
+) -> None:
+    from vrl.config.unknown_keys import find_unknown_keys
+
+    cfg = OmegaConf.create({"model": {"family": family, **payload}})
+
+    assert find_unknown_keys(cfg) == []
+    parsed = parse_config(cfg)
+    assert type(parsed.model) is section_cls
+    assert parsed.model is not None
+    parsed_payload = parsed.model.model_dump()
+    assert {key: parsed_payload[key] for key in payload} == payload
+
+
+@pytest.mark.parametrize("accepted", [False, True])
+def test_causvid_license_acknowledgement_preserves_both_public_states(
+    accepted: bool,
+) -> None:
+    parsed = parse_config(
+        OmegaConf.create(
+            {
+                "model": {
+                    "family": "causvid",
+                    "accept_noncommercial_license": accepted,
+                },
+            },
+        ),
+    )
+
+    assert isinstance(parsed.model, CausVidModelSection)
+    assert parsed.model.accept_noncommercial_license is accepted
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("nft_previous_adapter", True),
+        ("gemma_path", "google/gemma-3-12b-it"),
+        ("accept_noncommercial_license", True),
+        ("source_path", "third_party/MAGI-1"),
+    ],
+)
+def test_family_owned_denoise_keys_are_unknown_for_shared_sibling(
+    field: str,
+    value: object,
+) -> None:
+    from vrl.config.unknown_keys import find_unknown_keys
+
+    cfg = OmegaConf.create({"model": {"family": "sd3_5", field: value}})
+
+    assert find_unknown_keys(cfg) == [f"model.{field}"]
+
+
+def test_model_family_aliases_select_their_canonical_section_classes() -> None:
+    for alias, family in _FAMILY_BY_ALIAS.items():
+        canonical = parse_config(
+            OmegaConf.create({"model": {"family": family}}),
+        )
+        parsed_alias = parse_config(
+            OmegaConf.create({"model": {"family": alias}}),
+        )
+
+        assert type(parsed_alias.model) is type(canonical.model)
+        assert parsed_alias.model.family == alias
+
+
+def test_model_runtime_capability_matrix_covers_every_registered_family() -> None:
+    assert set(_MODEL_RUNTIME_CAPABILITY_MATRIX) == set(FAMILY_REGISTRY)
+
+    for family, (supports_executor, supports_memory) in _MODEL_RUNTIME_CAPABILITY_MATRIX.items():
+        entry = get_model_family_entry(family)
+
+        assert (entry.executor_cls == GENERIC_FULL_SEQUENCE_DENOISE_EXECUTOR) is supports_executor
+        assert entry.runtime_capabilities.supported_model_memory_sections == (
+            frozenset({"vae_decode"}) if supports_memory else frozenset()
+        )
+
+
+def test_shared_nested_model_sections_preserve_explicit_falsy_presence() -> None:
+    raw_model = {
+        "family": "flux",
+        "lora": {
+            "rank": 0,
+            "alpha": 0,
+            "path": None,
+            "target_modules": [],
+            "init_lora_weights": False,
+            "dropout": 0.0,
+            "init": None,
+        },
+        "memory": {
+            "vae_decode": {
+                "tiling": False,
+                "slicing": None,
+            },
+        },
+        "torch_compile": {
+            "enable": False,
+            "mode": None,
+        },
+        "executor": {
+            "num_frames": 0,
+            "max_sequence_length": 0,
+            "fps": None,
+            "chunk_passthrough_keys": [],
+        },
+    }
+
+    parsed = parse_config(OmegaConf.create({"model": raw_model}))
+
+    assert isinstance(parsed.model, ModelSection)
+    assert isinstance(parsed.model.lora, LoraSection)
+    assert isinstance(parsed.model.memory, ModelMemorySection)
+    assert isinstance(parsed.model.memory.vae_decode, VaeDecodeMemorySection)
+    assert isinstance(parsed.model.torch_compile, TorchCompileSection)
+    assert isinstance(parsed.model.executor, ModelExecutorSection)
+    assert parsed.model.model_dump(exclude_unset=True) == raw_model
+
+    # Re-selecting a family subclass from an already-typed shared section must
+    # not materialize omitted defaults into the runtime projection.
+    reparsed = RootConfig.model_validate(
+        {"model": ModelSection.model_validate(raw_model)},
+    )
+    assert reparsed.model is not None
+    assert reparsed.model.model_dump(exclude_unset=True) == raw_model
+
+
+@pytest.mark.parametrize(
+    ("model_fragment", "path"),
+    [
+        ({"lora": {"rnak": 16}}, "model.lora.rnak"),
+        (
+            {"memory": {"vae_decode": {"tileing": True}}},
+            "model.memory.vae_decode.tileing",
+        ),
+        ({"memory": {"transformer": {}}}, "model.memory.transformer"),
+        ({"torch_compile": {"enabled": True}}, "model.torch_compile.enabled"),
+        (
+            {"executor": {"max_seq_length": 300}},
+            "model.executor.max_seq_length",
+        ),
+        ({"pth": "org/model"}, "model.pth"),
+    ],
+)
+def test_model_subtree_typos_fail_closed_with_complete_paths(
+    model_fragment: dict[str, object],
+    path: str,
+) -> None:
+    from vrl.config.unknown_keys import find_unknown_keys
+
+    cfg = OmegaConf.create(
+        {
+            "model": {
+                "family": "flux",
+                **model_fragment,
+            },
+        },
+    )
+
+    assert find_unknown_keys(cfg) == [path]
+    with pytest.raises(ValueError) as error:
+        parse_config(cfg)
+    assert str(error.value) == f"unknown {path}"
+
+
+@pytest.mark.parametrize(
+    ("family", "supports_executor", "supports_memory"),
+    [
+        (family, supports_executor, supports_memory)
+        for family, (supports_executor, supports_memory) in sorted(
+            _MODEL_RUNTIME_CAPABILITY_MATRIX.items(),
+        )
+    ],
+)
+def test_model_runtime_sections_follow_family_capabilities(
+    family: str,
+    supports_executor: bool,
+    supports_memory: bool,
+) -> None:
+    executor_cfg = OmegaConf.create(
+        {
+            "model": {
+                "family": family,
+                "executor": {"max_sequence_length": 123},
+            },
+        },
+    )
+    if supports_executor:
+        parsed = parse_config(executor_cfg)
+        assert parsed.model is not None
+        assert parsed.model.executor is not None
+        assert parsed.model.executor.model_dump(exclude_unset=True) == {
+            "max_sequence_length": 123,
+        }
+    else:
+        with pytest.raises(
+            ValueError,
+            match=rf"model family {family!r} does not support model\.executor",
+        ):
+            parse_config(executor_cfg)
+
+    for tiling in (False, True):
+        memory_cfg = OmegaConf.create(
+            {
+                "model": {
+                    "family": family,
+                    "memory": {"vae_decode": {"tiling": tiling}},
+                },
+            },
+        )
+        if supports_memory:
+            parsed = parse_config(memory_cfg)
+            assert parsed.model is not None
+            assert parsed.model.memory is not None
+            assert parsed.model.memory.model_dump(exclude_unset=True) == {
+                "vae_decode": {"tiling": tiling},
+            }
+        else:
+            with pytest.raises(
+                ValueError,
+                match=(
+                    rf"model family {family!r} does not support "
+                    r"model\.memory section\(s\): vae_decode"
+                ),
+            ):
+                parse_config(memory_cfg)
+
+
+@pytest.mark.parametrize("empty_value", [None, {}])
+def test_empty_model_runtime_sections_are_valid_for_every_family(
+    empty_value: object,
+) -> None:
+    for family in _MODEL_RUNTIME_CAPABILITY_MATRIX:
+        parsed = parse_config(
+            OmegaConf.create(
+                {
+                    "model": {
+                        "family": family,
+                        "executor": empty_value,
+                        "memory": empty_value,
+                    },
+                },
+            ),
+        )
+
+        assert parsed.model is not None
+
+
+def test_model_family_aliases_preserve_runtime_section_capabilities() -> None:
+    def parse_error(family: str, section: str, value: object) -> str | None:
+        try:
+            parse_config(
+                OmegaConf.create(
+                    {"model": {"family": family, section: value}},
+                ),
+            )
+        except ValueError as error:
+            return str(error)
+        return None
+
+    runtime_sections = {
+        "executor": {"max_sequence_length": 123},
+        "memory": {"vae_decode": {"tiling": True}},
+    }
+    for alias, family in _FAMILY_BY_ALIAS.items():
+        for section, value in runtime_sections.items():
+            assert parse_error(alias, section, value) == parse_error(
+                family,
+                section,
+                value,
+            )
+
+
+def test_shared_only_families_use_the_shared_model_section() -> None:
+    shared_families = [
+        entry.family
+        for entry in FAMILY_REGISTRY.values()
+        if entry.model_section_cls == SHARED_MODEL_SECTION_CLS
+    ]
+    assert shared_families
+
+    for family in shared_families:
+        parsed = parse_config(
+            OmegaConf.create({"model": {"family": family, "path": f"org/{family}"}}),
+        )
+
+        assert type(parsed.model) is ModelSection
+        assert parsed.model.path == f"org/{family}"
+
+
+def test_unknown_model_family_fails_at_typed_parse() -> None:
+    cfg = OmegaConf.create({"model": {"family": "not_a_family", "path": "org/model"}})
+
+    with pytest.raises(ValueError, match=r"unsupported model family: 'not_a_family'"):
+        parse_config(cfg)
+
+
+def test_present_model_section_requires_a_family() -> None:
+    cfg = OmegaConf.create({"model": {"path": "org/model"}})
+
+    with pytest.raises(ValueError, match=r"config missing required field: model\.family"):
         parse_config(cfg)
 
 
@@ -505,7 +1335,6 @@ def test_valid_data_loaders_are_accepted(loader: str) -> None:
                 "format": "image_caption_jsonl",
                 "image_field": "image",
                 "caption_field": "caption",
-                "media_type": "video",
                 "conditioning": "reference_image",
             },
             sampler={"type": "random_without_replacement"},
@@ -548,7 +1377,6 @@ def test_omitted_loader_derives_from_preprocessing_format(fmt: str, expected: st
                 "format": fmt,
                 "image_field": "image",
                 "caption_field": "caption",
-                "media_type": "video",
                 "conditioning": "reference_image",
             },
             sampler={"type": "random_without_replacement"},
@@ -562,6 +1390,41 @@ def test_omitted_loader_derives_from_preprocessing_format(fmt: str, expected: st
     assert data.loader == expected
 
 
+@pytest.mark.parametrize(
+    ("loader", "fmt", "message"),
+    [
+        (
+            "prompt_manifest",
+            "image_caption_jsonl",
+            r"requires.*prompt_image_manifest",
+        ),
+        (
+            "prompt_image_manifest",
+            "text",
+            r"requires.*image_caption_jsonl",
+        ),
+    ],
+)
+def test_explicit_data_loader_rejects_preprocessing_format_conflict(
+    loader: str,
+    fmt: str,
+    message: str,
+) -> None:
+    with pytest.raises(ValueError, match=message):
+        DataConfig(
+            loader=loader,
+            manifest="train.jsonl",
+            eval_manifest="eval.jsonl",
+            preprocessing={
+                "format": fmt,
+                "image_field": "image",
+                "caption_field": "caption",
+                "conditioning": "reference_image",
+            },
+            sampler={"type": "random_without_replacement"},
+        )
+
+
 def test_prompt_image_manifest_requires_image_caption_fields() -> None:
     """Checks prompt image manifest requires image caption fields."""
     with pytest.raises(ValueError, match=r"data\.preprocessing\.caption_field"):
@@ -572,7 +1435,6 @@ def test_prompt_image_manifest_requires_image_caption_fields() -> None:
             preprocessing={
                 "format": "image_caption_jsonl",
                 "image_field": "image",
-                "media_type": "video",
                 "conditioning": "reference_image",
             },
             sampler={"type": "random_without_replacement"},
@@ -809,7 +1671,6 @@ def test_production_video_reward_accepts_image_to_video_task_type() -> None:
                     "format": "image_caption_jsonl",
                     "image_field": "image",
                     "caption_field": "caption",
-                    "media_type": "video",
                     "conditioning": "reference_image",
                 },
                 "sampler": {"type": "random_without_replacement"},
@@ -836,6 +1697,26 @@ def test_production_video_reward_accepts_image_to_video_task_type() -> None:
     parsed = parse_config(cfg)
 
     assert parsed.data.task_type == "image_to_video"
+
+
+def test_production_schema_defaults_known_gate_to_disabled() -> None:
+    cfg = OmegaConf.create({"production": {}})
+
+    parsed = parse_config(cfg)
+
+    assert parsed.production is not None
+    assert parsed.production.kling_video_reward.enabled is False
+
+
+def test_production_schema_accepts_enabled_gate() -> None:
+    cfg = OmegaConf.create(
+        {"production": {"kling_video_reward": {"enabled": True}}},
+    )
+
+    parsed = parse_config(cfg)
+
+    assert parsed.production is not None
+    assert parsed.production.kling_video_reward.enabled is True
 
 
 def test_production_video_reward_missing_reward_name_raises() -> None:

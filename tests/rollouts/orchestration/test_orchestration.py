@@ -25,12 +25,8 @@ def _batch(prompts: list[str], group_size: int):
         dtype=torch.long,
     )
     return RolloutBatch(
-        observations=torch.zeros(batch_size, 1, 1),
-        actions=torch.zeros(batch_size, 1, 1),
         rewards=torch.arange(batch_size, dtype=torch.float32),
-        dones=torch.ones(batch_size, dtype=torch.bool),
         group_ids=group_ids,
-        prompts=[prompt for prompt in prompts for _ in range(group_size)],
     )
 
 
@@ -187,10 +183,13 @@ async def test_strict_schedule_collects_and_syncs_with_rollout_metadata() -> Non
     assert iteration.policy_version == 1
     assert iteration.prompt_count == 2
     assert iteration.sample_count == 4
+    assert iteration.metadata == {}
     assert len(iteration.batches) == 2
     assert iteration.batches[0].context["rollout_id"] == 0
     assert iteration.batches[0].context["rollout_policy_version"] == 1
     assert iteration.batches[0].context["schedule_mode"] == "strict_on_policy"
+    assert iteration.batches[0].context["prompt_count"] == 2
+    assert iteration.batches[0].context["sample_count"] == 4
     assert len(syncer.calls) == 2
     assert runtime.current_policy_version == 2
     assert collector.activation_calls == 1

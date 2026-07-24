@@ -19,12 +19,13 @@ import logging
 from typing import Any
 
 import torch
-from omegaconf import DictConfig, OmegaConf
 from torch.utils.checkpoint import (
     CheckpointPolicy,
     checkpoint,
     create_selective_checkpoint_contexts,
 )
+
+from vrl.utils.config import cfg_path
 
 logger = logging.getLogger(__name__)
 
@@ -83,22 +84,17 @@ def _normalize_gradient_checkpointing(value: Any) -> str:
     )
 
 
-def resolve_gradient_checkpointing_mode(cfg: DictConfig) -> str:
+def resolve_gradient_checkpointing_mode(cfg: Any) -> str:
     """The recipe's effective checkpointing mode: off | full | selective.
 
-    Optional key: base yaml no longer restates the dataclass default, so an
-    absent key means "use the TrainerConfig default" — derived, not copied.
+    The public actor key is the source of truth. Absence means off.
     """
 
-    from vrl.trainers.core.types import TrainerConfig
-
-    enabled = OmegaConf.select(cfg, "actor.gradient_checkpointing")
-    if enabled is None:
-        enabled = TrainerConfig.__dataclass_fields__["gradient_checkpointing"].default
+    enabled = cfg_path(cfg, "actor.gradient_checkpointing", None)
     return _normalize_gradient_checkpointing(enabled)
 
 
-def require_compile_checkpointing_compatible(cfg: DictConfig) -> None:
+def require_compile_checkpointing_compatible(cfg: Any) -> None:
     """Refuse model.torch_compile.enable=true combined with grad-checkpointing.
 
     compile + manual checkpointing collide: torch.compile traces
@@ -115,7 +111,7 @@ def require_compile_checkpointing_compatible(cfg: DictConfig) -> None:
     mode = resolve_gradient_checkpointing_mode(cfg)
     if mode == "off":
         return
-    if bool(OmegaConf.select(cfg, "model.torch_compile.enable")):
+    if bool(cfg_path(cfg, "model.torch_compile.enable", False)):
         raise ValueError(
             f"actor.gradient_checkpointing={mode!r} cannot combine with "
             "model.torch_compile.enable=true: torch.compile traces "
@@ -127,7 +123,7 @@ def require_compile_checkpointing_compatible(cfg: DictConfig) -> None:
 
 def enable_transformer_gradient_checkpointing(
     bundle: Any,
-    cfg: DictConfig,
+    cfg: Any,
     *,
     require_method: bool = True,
 ) -> None:

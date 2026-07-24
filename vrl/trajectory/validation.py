@@ -13,7 +13,7 @@ from vrl.trajectory.types import (
     TrajectorySegment,
     TrajectoryTensor,
 )
-from vrl.trajectory.views import LossUnit, RewardView, TrainingView
+from vrl.trajectory.views import RewardView
 
 # Curated denylist: engine-execution telemetry keys (chunk timing / memory
 # counters) that must NOT leak into serialized trajectory metrics.
@@ -75,30 +75,6 @@ class TrajectoryValidator:
                 "sample axis length does not match sample_rows: "
                 f"{sample_axis.length} != {len(batch.sample_rows)}",
             )
-        group_length = self._leading_length(batch.group_ids)
-        if group_length is None:
-            self._fail("TrajectoryBatch.group_ids must be a sample-aligned sequence")
-        if group_length != len(batch.sample_rows):
-            self._fail(
-                "group_ids length does not match sample_rows: "
-                f"{group_length} != {len(batch.sample_rows)}",
-            )
-        if batch.metrics.num_samples is not None and batch.metrics.num_samples != len(
-            batch.sample_rows,
-        ):
-            self._fail(
-                "TrajectoryMetrics.num_samples does not match sample_rows: "
-                f"{batch.metrics.num_samples} != {len(batch.sample_rows)}",
-            )
-        for axis_name, length in batch.metrics.axis_lengths.items():
-            axis = batch.axes.get(axis_name)
-            if axis is None:
-                self._fail(f"TrajectoryMetrics.axis_lengths references unknown axis {axis_name!r}")
-            if axis.length is not None and int(length) != axis.length:
-                self._fail(
-                    f"TrajectoryMetrics.axis_lengths[{axis_name!r}]={length} "
-                    f"does not match TrajectoryAxis.length={axis.length}",
-                )
         forbidden_metrics = FORBIDDEN_TRAJECTORY_METRICS.intersection(batch.metrics.values)
         if forbidden_metrics:
             self._fail(
@@ -109,6 +85,28 @@ class TrajectoryValidator:
         self.tensor_refs.clear()
         for segment_key, segment in batch.segments.items():
             self._validate_segment(segment_key, segment)
+
+        trainable_segments = {
+            name for name, segment in batch.segments.items() if segment.trainable
+        }
+        if trainable_segments:
+            if batch.primary_segment is None:
+                self._fail(
+                    "TrajectoryBatch.primary_segment is required when trainable segments exist",
+                )
+            if batch.primary_segment not in batch.segments:
+                self._fail(
+                    f"TrajectoryBatch.primary_segment={batch.primary_segment!r} is unknown",
+                )
+            if batch.primary_segment not in trainable_segments:
+                self._fail(
+                    f"TrajectoryBatch.primary_segment={batch.primary_segment!r} "
+                    "must reference a trainable segment",
+                )
+        elif batch.primary_segment is not None:
+            self._fail(
+                "TrajectoryBatch.primary_segment must be None when no trainable segments exist",
+            )
 
         for view_key, view in batch.reward_views.items():
             if not isinstance(view, RewardView):
@@ -130,61 +128,6 @@ class TrajectoryValidator:
                 self._fail(f"RewardView {view.name!r} references unknown tensor {ref!r}")
         self._reject_runtime_state(view.metadata, f"RewardView {view.name!r}.metadata")
         return view
-
-    def validate_training_view(self, view: TrainingView) -> TrainingView:
-        """Validate that a training view references existing loss tensors."""
-
-        if not view.loss_units:
-            self._fail("TrainingView.loss_units must be non-empty")
-        if view.primary_segment is not None and view.primary_segment not in self.batch.segments:
-            self._fail(f"TrainingView.primary_segment={view.primary_segment!r} is unknown")
-
-        for unit in view.loss_units:
-            self.validate_loss_unit(unit)
-
-        self._reject_runtime_state(view.metadata, "TrainingView.metadata")
-        return view
-
-    def validate_loss_unit(self, unit: LossUnit) -> LossUnit:
-        """Validate one loss unit against trajectory tensor refs and axes."""
-
-        refs = self._ensure_tensor_refs()
-        if unit.segment not in self.batch.segments:
-            self._fail(f"LossUnit.segment={unit.segment!r} is unknown")
-        if unit.axis not in self.batch.axes:
-            self._fail(f"LossUnit.axis={unit.axis!r} is unknown")
-        for field_name, ref in (
-            ("action_ref", unit.action_ref),
-            ("old_log_prob_ref", unit.old_log_prob_ref),
-            ("mask_ref", unit.mask_ref),
-        ):
-            if ref not in refs:
-                self._fail(f"LossUnit.{field_name} references unknown tensor {ref!r}")
-            ref_segment = ref.split(".", 1)[0]
-            if ref_segment != unit.segment:
-                self._fail(
-                    f"LossUnit.{field_name} must reference segment {unit.segment!r}, "
-                    f"got {ref_segment!r}",
-                )
-            if unit.axis not in refs[ref].axes:
-                self._fail(
-                    f"LossUnit.{field_name} must reference tensor with axis {unit.axis!r}",
-                )
-        self._require_ref_role(unit.action_ref, "action", "LossUnit.action_ref")
-        self._require_ref_role(
-            unit.old_log_prob_ref,
-            "old_log_prob",
-            "LossUnit.old_log_prob_ref",
-        )
-        self._require_ref_role(unit.mask_ref, "mask", "LossUnit.mask_ref")
-        for replay_ref in unit.replay_input_refs:
-            if "." not in replay_ref:
-                self._fail(f"LossUnit replay input ref {replay_ref!r} must be 'segment.name'")
-            segment_name, replay_name = replay_ref.split(".", 1)
-            segment = self.batch.segments.get(segment_name)
-            if segment is None or replay_name not in segment.replay_inputs:
-                self._fail(f"LossUnit references unknown replay input {replay_ref!r}")
-        return unit
 
     def _validate_segment(
         self,
@@ -321,22 +264,6 @@ class TrajectoryValidator:
                 refs[tensor_ref(segment.name, tensor.name)] = tensor
         return refs
 
-    def _require_ref_role(self, ref: str, role: str, field_name: str) -> None:
-        refs = self._ensure_tensor_refs()
-        actual = refs[ref].role
-        if actual != role:
-            self._fail(f"{field_name} must reference role {role!r}, got {actual!r}")
-
-    @staticmethod
-    def _leading_length(value: Any) -> int | None:
-        shape = getattr(value, "shape", None)
-        if shape is not None and len(shape) > 0:
-            return int(shape[0])
-        try:
-            return len(value)
-        except TypeError:
-            return None
-
     def _reject_runtime_state(
         self,
         value: Any,
@@ -389,17 +316,8 @@ def tensor_ref(segment: str, tensor: str) -> str:
     return f"{segment}.{tensor}"
 
 
-def replay_input_ref(segment: str, replay_input: str) -> str:
-    """Return the canonical string ref for a segment replay input."""
-
-    if not segment or not replay_input:
-        raise ValueError("segment and replay_input must be non-empty")
-    return f"{segment}.{replay_input}"
-
-
 __all__ = [
     "TrajectoryValidationError",
     "TrajectoryValidator",
-    "replay_input_ref",
     "tensor_ref",
 ]

@@ -26,7 +26,7 @@ from typing import Any
 import torch
 from torch import nn
 
-from vrl.trainers.core.types import TrainerConfig
+from vrl.trainers.online.config import TrainerConfig
 
 OptimizerFactory = Callable[[Iterable[nn.Parameter]], torch.optim.Optimizer]
 

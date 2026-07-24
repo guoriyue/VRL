@@ -15,7 +15,7 @@ from vrl.models.families.glm_image.model import glm_image_token_num
 from vrl.models.interfaces import ReplayResult
 from vrl.models.utils import count_trainable_params
 from vrl.rollouts.batch import RolloutBatch
-from vrl.trajectory import build_ar_discrete_trajectory, build_training_view
+from vrl.trajectory import TrajectoryResolver, build_ar_discrete_trajectory
 
 # 128x192 target -> large 4x6 (24 tokens) + preview 13x19 (247 tokens).
 HEIGHT, WIDTH = 128, 192
@@ -39,7 +39,6 @@ def _sample_rows() -> list[GenerationSampleRow]:
             prompt_index=0,
             sample_index=index,
             prompt=request.prompts[0],
-            prompt_id="p0",
             group_id="g0",
             sample_id=f"s{index}",
             trajectory_id=f"t{index}",
@@ -73,13 +72,9 @@ def _discrete_batch(context: dict | None = None) -> RolloutBatch:
         ),
     )
     return RolloutBatch(
-        observations=torch.ones(2, 1, 4, dtype=torch.long),
-        actions=token_ids,
         rewards=torch.zeros(2),
-        dones=torch.ones(2, dtype=torch.bool),
         group_ids=torch.tensor([0, 0]),
         trajectory=trajectory,
-        training_view=build_training_view(trajectory),
     )
 
 
@@ -105,7 +100,8 @@ def test_replay_forward_returns_codebook_logits() -> None:
     # image_start/image_end/reserved columns never appear in replay logits.
     assert logits.shape == (2, TOTAL, TINY_CODEBOOK)
     assert torch.isfinite(logits).all()
-    assert torch.equal(segment.values["image_token_ids"], batch.actions)
+    actions = TrajectoryResolver.from_batch(batch).role_value("image_tokens", "action")
+    assert torch.equal(segment.values["image_token_ids"], actions)
 
 
 def test_replay_forward_requires_pixel_dims_in_context() -> None:
@@ -172,8 +168,9 @@ def test_replay_model_replays_without_vision_tower_or_decode_stack() -> None:
         TINY_CODEBOOK,
     )
     with pytest.raises(RuntimeError, match="cannot decode image tokens"):
+        actions = TrajectoryResolver.from_batch(batch).role_value("image_tokens", "action")
         model.decode_image_tokens(
-            batch.actions,
+            actions,
             height=HEIGHT,
             width=WIDTH,
             prompts=["a", "b"],

@@ -151,6 +151,7 @@ def _core(
             if pipeline_offload_mode != "none"
             else {}
         ),
+        expected_model_identity={"schema": "test"},
         policy_version=1,
         sleep_offload=sleep_offload,
     )

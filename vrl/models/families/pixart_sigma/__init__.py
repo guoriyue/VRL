@@ -1,15 +1,9 @@
 """PixArt-Sigma t2i family (epsilon DDPM DiT + SDXL KL-VAE)."""
 
-from vrl.models.families.pixart_sigma.model import (
-    PixArtSigmaModel,
-    PixArtSigmaReplayModel,
-    PixArtSigmaSamplingState,
-    pixart_ddim_scheduler,
-)
+from __future__ import annotations
 
-__all__ = [
-    "PixArtSigmaModel",
-    "PixArtSigmaReplayModel",
-    "PixArtSigmaSamplingState",
-    "pixart_ddim_scheduler",
-]
+# Deliberately exports nothing. The family registry dispatches by dotted
+# submodule path (vrl/families/registry.py), so a package-root re-export is a
+# second surface nothing imports; keeping this module empty is also what stops
+# config discovery from pulling the torch-backed model runtime.
+__all__: list[str] = []

@@ -14,8 +14,6 @@ algorithm:
 actor:
   optim:
     lr: 1.0e-4
-
-rollout:
   # Stream one prompt group at a time (rbs=8 -> gradient_accumulation_steps=8)
   # so host RAM holds ~1 group's AR replay tensors instead of all 8 before
   # backward. Gradient-identical to full-batch: advantages are per-group

@@ -255,7 +255,8 @@ family-专属键的真实消费面（确认只 Wan 2.2 读）：`boundary_ratio`
 - 已落地：采用 family-aware schema，而不是 loader-local fail-loud。`RootConfig.model`
   的 unknown-key block 通过 `model.family` 选择 family-specific key set；静态 lint
   通过 variants 识别 family-owned code reads。
-- 已落地：`boundary_ratio` / `trainable_transformers` 只在 Wan schema 合法；
+- 已落地：`trainable_transformers` 只在 Wan schema 合法；`boundary_ratio` 后续进一步从
+  固定 revision 的 pipeline config 派生，不再是公开配置键；
   `freeze_vae` 只在 NextStep schema 合法；`reference_image` 只在 Wan/Cosmos Predict2
   schema 合法。
 - 已落地：两个 Wan CPU offload bool 合并为 `offload_mode` enum；旧 bool 在 Wan loader

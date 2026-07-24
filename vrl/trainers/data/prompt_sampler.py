@@ -4,8 +4,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import Enum
+from typing import TYPE_CHECKING
 
-import torch
+# Call-time dependency only: ``vrl.config.schema`` imports PromptSamplingStrategy
+# (a plain Enum) to validate every recipe, and must not pay for torch to do it.
+if TYPE_CHECKING:
+    import torch
 
 
 class PromptSamplingStrategy(str, Enum):
@@ -71,11 +75,15 @@ class PromptBatchSampler:
     def preview(self, *, epoch: int = 0) -> list[int]:
         """Return this rank's next indices without consuming the generator."""
 
+        import torch
+
         preview_generator = torch.Generator(device=self.generator.device)
         preview_generator.set_state(self.generator.get_state().clone())
         return self._sample_with(preview_generator, epoch=epoch)
 
     def _sample_with(self, generator: torch.Generator, *, epoch: int) -> list[int]:
+        import torch
+
         global_batch_size = self.prompts_per_rank * self.num_replicas
         if self.strategy is PromptSamplingStrategy.RANDOM_WITHOUT_REPLACEMENT:
             global_indices = torch.randperm(

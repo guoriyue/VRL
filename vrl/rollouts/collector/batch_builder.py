@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -17,7 +16,6 @@ from vrl.trajectory import (
     TrajectorySegment,
     TrajectoryStoragePolicy,
     apply_trajectory_storage_policy,
-    build_training_view,
     named_tensor,
     role_tensor,
 )
@@ -51,19 +49,14 @@ class TrajectoryRolloutBatchBuilder:
         )
         self.output.trajectory = self.trajectory
 
-    def reward_scoring_input(
-        self,
-        metadata: Mapping[str, Any],
-    ) -> RewardScoringInput:
+    def reward_scoring_input(self) -> RewardScoringInput:
         reward_outputs = self.reward_outputs()
         return RewardScoringInput(
             outputs=reward_outputs,
-            prompts=[row.prompt for row in self.output.sample_rows],
             source_request_id=self.output.request_id,
             sample_rows=tuple(self.output.sample_rows),
-            metadata=dict(metadata),
+            metadata=dict(self.context.metadata),
             device=self._infer_device(reward_outputs),
-            expected_count=len(self.output.sample_rows),
         )
 
     def reward_outputs(self) -> Any:
@@ -91,8 +84,8 @@ class TrajectoryRolloutBatchBuilder:
                 "no trainable policy segment or replay facts were recorded",
             )
         if self._is_multisegment_categorical(trainable):
-            return self._pack_ar_multisegment(trainable, rewards_raw)
-        segment = self._primary_trainable_segment(preferred=self._primary_segment_name())
+            return self._pack_ar_multisegment(rewards_raw)
+        segment = self._primary_trainable_segment()
         if segment.distribution == "flow_matching" or (
             segment.distribution == "gaussian" and segment.modality == "latent"
         ):
@@ -110,7 +103,6 @@ class TrajectoryRolloutBatchBuilder:
         rewards_raw: torch.Tensor,
     ) -> RolloutBatch:
         observations = role_tensor(segment, "observation").value
-        actions = role_tensor(segment, "action").value
         kl_tensor = named_tensor(segment, "kl").value
         device = observations.device
 
@@ -128,20 +120,11 @@ class TrajectoryRolloutBatchBuilder:
             rollout_context["runtime_debug"] = runtime_debug
 
         return RolloutBatch(
-            observations=observations,
-            actions=actions,
             rewards=rewards_adjusted,
-            dones=torch.ones(observations.shape[0], dtype=torch.bool, device=device),
             group_ids=self._group_ids(device=device),
             extras={},
             context=rollout_context,
-            videos=self.output.output,
-            prompts=[row.prompt for row in self.output.sample_rows],
             trajectory=self.trajectory,
-            training_view=build_training_view(
-                self.trajectory,
-                primary_segment=segment.name,
-            ),
         )
 
     def _pack_ar_tokens(
@@ -149,86 +132,32 @@ class TrajectoryRolloutBatchBuilder:
         segment: TrajectorySegment,
         rewards_raw: torch.Tensor,
     ) -> RolloutBatch:
-        actions = role_tensor(segment, "action").value
         prompt_ids = named_tensor(segment, "prompt_input_ids").value
         device = self.context.device or prompt_ids.device
-        images = self.output.output
 
         return RolloutBatch(
-            observations=prompt_ids.unsqueeze(1),
-            actions=actions,
             rewards=rewards_raw.to(device),
-            dones=torch.ones(
-                len(self.output.sample_rows),
-                dtype=torch.bool,
-                device=device,
-            ),
             group_ids=self._group_ids(device=device),
             extras={},
             context=dict(self.trajectory.context),
-            videos=images.unsqueeze(2),
-            prompts=[row.prompt for row in self.output.sample_rows],
             trajectory=self.trajectory,
-            training_view=build_training_view(
-                self.trajectory,
-                primary_segment=segment.name,
-            ),
         )
 
     def _pack_ar_multisegment(
         self,
-        trainable: list[TrajectorySegment],
         rewards_raw: torch.Tensor,
     ) -> RolloutBatch:
-        primary_name = self._primary_segment_name() or "final_image"
-        primary = self.trajectory.segments.get(primary_name)
-        if primary is None or not primary.trainable:
-            primary = trainable[-1]
-            primary_name = primary.name
+        primary = self._primary_trainable_segment()
 
         token_ids = role_tensor(primary, "action").value
-        prompt_ids = self._optional_named_tensor(primary, "prompt_input_ids")
-        if prompt_ids is None:
-            prompt_ids = torch.zeros(
-                token_ids.shape[0],
-                1,
-                dtype=torch.long,
-                device=token_ids.device,
-            )
-        device = self.context.device or prompt_ids.device
-        final_image = self._decoded_tensor("final_image")
-        if final_image is None:
-            final_image = self.output.output
+        device = self.context.device or token_ids.device
 
-        rollout_context = dict(self.trajectory.context)
-        rollout_context.pop("primary_segment", None)
-        rollout_context.pop("segment_names", None)
         return RolloutBatch(
-            observations=prompt_ids.unsqueeze(1),
-            actions=token_ids,
             rewards=rewards_raw.to(device),
-            dones=torch.ones(
-                len(self.output.sample_rows),
-                dtype=torch.bool,
-                device=device,
-            ),
             group_ids=self._group_ids(device=device),
             extras={},
-            context={
-                **rollout_context,
-                "r1_segment_names": tuple(
-                    name
-                    for name, segment in self.trajectory.segments.items()
-                    if segment.distribution == "categorical"
-                ),
-            },
-            videos=final_image.unsqueeze(2),
-            prompts=[row.prompt for row in self.output.sample_rows],
+            context=dict(self.trajectory.context),
             trajectory=self.trajectory,
-            training_view=build_training_view(
-                self.trajectory,
-                primary_segment=primary_name,
-            ),
         )
 
     def _reward_output(self, view: RewardView) -> Any:
@@ -275,35 +204,23 @@ class TrajectoryRolloutBatchBuilder:
 
     def _primary_trainable_segment(
         self,
-        *,
-        preferred: str | None = None,
     ) -> TrajectorySegment:
-        if preferred is not None:
-            segment = self.trajectory.segments.get(preferred)
-            if segment is not None and segment.trainable:
-                return segment
-        for segment in self.trajectory.segments.values():
-            if segment.trainable:
-                return segment
-        raise RuntimeError("TrajectoryBatch has no trainable segment")
-
-    def _optional_named_tensor(
-        self,
-        segment: TrajectorySegment,
-        name: str,
-    ) -> Any | None:
-        tensor = segment.tensors.get(name)
-        return None if tensor is None else tensor.value
+        primary_name = self.trajectory.primary_segment
+        if primary_name is None:
+            raise RuntimeError("TrajectoryBatch has no primary trainable segment")
+        segment = self.trajectory.segments.get(primary_name)
+        if segment is None or not segment.trainable:
+            raise RuntimeError(
+                "TrajectoryBatch.primary_segment must reference a trainable segment",
+            )
+        return segment
 
     def _group_ids(self, *, device: Any) -> torch.Tensor:
-        group_ids = self.trajectory.group_ids
-        if isinstance(group_ids, torch.Tensor):
-            return group_ids.to(device=device, dtype=torch.long)
-        return torch.tensor(group_ids, dtype=torch.long, device=device)
-
-    def _primary_segment_name(self) -> str | None:
-        value = self.trajectory.context.get("primary_segment")
-        return value if isinstance(value, str) else None
+        return torch.tensor(
+            [row.prompt_index for row in self.output.sample_rows],
+            dtype=torch.long,
+            device=device,
+        )
 
     def _is_multisegment_categorical(
         self,
@@ -314,13 +231,6 @@ class TrajectoryRolloutBatchBuilder:
         return len(trainable) > 1 and all(
             segment.distribution == "categorical" for segment in trainable
         )
-
-    def _decoded_tensor(self, name: str) -> Any | None:
-        decoded = self.trajectory.segments.get("decoded")
-        if decoded is None:
-            return None
-        tensor = decoded.tensors.get(name)
-        return None if tensor is None else tensor.value
 
     def _infer_device(self, value: Any) -> Any:
         if self.context.device is not None:

@@ -13,94 +13,10 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import TYPE_CHECKING
 
-from omegaconf import DictConfig, OmegaConf
-
-from vrl.config.precision import resolve_precision_policy
-from vrl.models.dtypes import resolve_torch_dtype
-from vrl.ray.resources import (
-    format_distributed_resource_plan,
-    resolve_distributed_resources,
-    trainer_torch_device,
-)
-from vrl.trainers.checkpointing import (
-    LORA_WEIGHTS_NAME,
-    capture_rng_state,
-    load_training_checkpoint_from_config,
-    prepare_metrics_csv,
-    prepare_model_config_for_training_resume,
-    restore_rng_state,
-    restore_training_checkpoint,
-    save_resolved_config,
-    save_training_checkpoint,
-)
-from vrl.trainers.core.types import OptimConfig, TrainerConfig
-
-if TYPE_CHECKING:
-    from vrl.algorithms.dpo import DiffusionDPOConfig
-    from vrl.trainers.offline import OfflineDPOTrainerConfig
+from omegaconf import DictConfig
 
 logger = logging.getLogger(__name__)
-
-
-def _build_offline_dpo_trainer_config(
-    cfg: DictConfig,
-    dpo_config: DiffusionDPOConfig,
-    *,
-    train_batch_size: int,
-    gradient_accumulation_steps: int,
-) -> OfflineDPOTrainerConfig:
-    """Resolve the DPO trainer from the public actor optimizer config."""
-
-    from vrl.config.validation import require
-    from vrl.trainers.offline import OfflineDPOTrainerConfig
-
-    raw_optim = OmegaConf.to_container(
-        cfg.actor.optim,
-        resolve=True,
-        throw_on_missing=True,
-    )
-    if not isinstance(raw_optim, dict):
-        raise ValueError("actor.optim must be a mapping")
-    optim = OptimConfig(**raw_optim)
-    if optim.optim_8bit:
-        raise ValueError(
-            "actor.optim.optim_8bit=true is not supported by OfflineDPOTrainer; "
-            "use AdamW/Adafactor without 8-bit optimizer state",
-        )
-    use_adafactor = bool(require(cfg, "actor.use_adafactor"))
-    if use_adafactor:
-        adam_only_keys = sorted({"adam_beta1", "adam_beta2", "eps"} & raw_optim.keys())
-        if adam_only_keys:
-            paths = ", ".join(f"actor.optim.{key}" for key in adam_only_keys)
-            raise ValueError(
-                f"actor.use_adafactor=true does not consume AdamW-only key(s): {paths}",
-            )
-
-    scale_lr = bool(require(cfg, "actor.scale_lr"))
-    effective_batch_size = train_batch_size * gradient_accumulation_steps
-    lr = float(optim.lr) * effective_batch_size if scale_lr else float(optim.lr)
-    trainer_fields = TrainerConfig.__dataclass_fields__
-    return OfflineDPOTrainerConfig(
-        beta=float(dpo_config.beta),
-        sft_weight=float(dpo_config.sft_weight),
-        lr=lr,
-        adam_beta1=float(optim.adam_beta1),
-        adam_beta2=float(optim.adam_beta2),
-        adam_weight_decay=float(optim.weight_decay),
-        adam_epsilon=float(optim.eps),
-        max_grad_norm=float(
-            OmegaConf.select(
-                cfg,
-                "actor.max_norm",
-                default=trainer_fields["max_norm"].default,
-            ),
-        ),
-        gradient_accumulation_steps=gradient_accumulation_steps,
-        prediction_type=str(require(cfg, "actor.prediction_type")),
-        use_adafactor=use_adafactor,
-    )
 
 
 def _build_encoders(pipeline, num_frames: int, device, dtype):
@@ -154,56 +70,72 @@ def _build_encoders(pipeline, num_frames: int, device, dtype):
 
 def train_wan_2_1_dpo(cfg: DictConfig) -> None:
     """Run Wan-family Diffusion-DPO training driven by a merged YAML config."""
+
+    from vrl.config.builders import build_configs, build_offline_dpo_trainer_config
+    from vrl.families.names import normalize_model_family
+
+    built = build_configs(cfg)
+    configured_family = None if built.root.model is None else built.root.model.family
+    family = normalize_model_family(str(configured_family or ""))
+    if family != "wan_2_1":
+        raise ValueError(
+            "Wan Diffusion-DPO requires model.family='wan_2_1' "
+            f"(alias 'wan' is accepted); got {configured_family!r}",
+        )
+
     import torch
     from torch.utils.data import DataLoader
 
     from vrl.algorithms.dpo import DiffusionDPOConfig
-    from vrl.config.builders import build_algorithm_config
-    from vrl.config.validation import optional_none, require, validate_training_config
+    from vrl.config.validation import optional_none, require
     from vrl.families.registry import get_model_family_entry
+    from vrl.models.checkpoint_identity import resolve_checkpoint_model_identity
+    from vrl.models.dtypes import resolve_torch_dtype
+    from vrl.ray.resources import (
+        format_distributed_resource_plan,
+        resolve_distributed_resources,
+        trainer_torch_device,
+    )
+    from vrl.trainers.activation_checkpointing import enable_transformer_gradient_checkpointing
+    from vrl.trainers.checkpointing import (
+        LORA_WEIGHTS_NAME,
+        AdapterExport,
+        capture_rng_state,
+        load_training_checkpoint_for_resume,
+        prepare_metrics_csv,
+        restore_rng_state,
+        restore_training_checkpoint,
+        save_resolved_config,
+        save_training_checkpoint,
+        validate_checkpoint_compatibility,
+    )
     from vrl.trainers.data import collate_preference, load_pickapic
     from vrl.trainers.offline import (
         OfflineDPOTrainer,
         wan_forward,
     )
 
-    # DPO doesn't go through `build_configs()`, so validate explicitly here
-    # to keep the YAML-as-source-of-truth contract (SPRINT patch 3 Phase 6).
-    validate_training_config(cfg)
-
     trainer_cfg_yaml = cfg.trainer
     sampling = cfg.sampling
     data_cfg = cfg.data
 
-    dpo_config = build_algorithm_config(cfg)
+    dpo_config = built.algorithm
     if not isinstance(dpo_config, DiffusionDPOConfig):
         raise TypeError(
             f"Wan-DPO expects algorithm.kind=diffusion_dpo, got {type(dpo_config).__name__}",
         )
 
-    precision = resolve_precision_policy(cfg)
+    precision = built.precision
     train_batch_size = int(require(cfg, "actor.train_batch_size"))
     grad_accum = int(require(cfg, "actor.gradient_accumulation_steps"))
-    trainer_cfg = _build_offline_dpo_trainer_config(
+    trainer_cfg = build_offline_dpo_trainer_config(
         cfg,
         dpo_config,
         train_batch_size=train_batch_size,
         gradient_accumulation_steps=grad_accum,
     )
-    # Optional knobs: base yaml no longer restates dataclass defaults, so an
-    # absent key falls back to the typed default — derived, never copied.
-    _trainer_fields = TrainerConfig.__dataclass_fields__
-    resume_strict = OmegaConf.select(cfg, "trainer.resume_strict")
-    if resume_strict is None:
-        resume_strict = _trainer_fields["resume_strict"].default
-    resume_strict = bool(resume_strict)
-    resume_checkpoint = load_training_checkpoint_from_config(cfg)
-    prepare_model_config_for_training_resume(
-        cfg,
-        resume_checkpoint,
-        strict=resume_strict,
-    )
-
+    resume_config = built.resume
+    resume_checkpoint = load_training_checkpoint_for_resume(resume_config)
     resources = resolve_distributed_resources(cfg)
     logger.info(format_distributed_resource_plan(resources))
     device = torch.device(trainer_torch_device(resources))
@@ -212,24 +144,33 @@ def train_wan_2_1_dpo(cfg: DictConfig) -> None:
     # DPO needs the full family bundle because its VAE and text encoder prepare
     # preference pairs. Registry selection and model projection stay identical
     # to generation; only the downstream optimizer makes this a training path.
-    family_entry = get_model_family_entry(str(require(cfg, "model.family")))
+    family_entry = get_model_family_entry(family)
     build = family_entry.resolve_model_build(
-        cfg,
+        built.root,
         device,
+        precision=precision,
         for_rollout=True,
         precision_role="training",
-        parameter_dtype_override=weight_dtype,
+    )
+    model_identity = resolve_checkpoint_model_identity(build)
+    validate_checkpoint_compatibility(
+        resume_checkpoint,
+        family=family,
+        expected_model_identity=model_identity,
+        strict=resume_config.strict,
     )
     bundle = family_entry.build_rollout(build)
+    loaded_model_identity = resolve_checkpoint_model_identity(build)
+    if loaded_model_identity != model_identity:
+        raise RuntimeError(
+            "model checkpoint source changed during Wan DPO bundle construction; "
+            f"before={model_identity!r}, after={loaded_model_identity!r}",
+        )
     wan_model = bundle.model
     pipeline = bundle.raw_handle
     transformer = wan_model.transformer
 
-    gradient_checkpointing = OmegaConf.select(cfg, "actor.gradient_checkpointing")
-    if gradient_checkpointing is None:
-        gradient_checkpointing = _trainer_fields["gradient_checkpointing"].default
-    if bool(gradient_checkpointing):
-        transformer.enable_gradient_checkpointing()
+    enable_transformer_gradient_checkpointing(bundle, cfg)
 
     # 2. Encoders bound to the loaded pipeline
     num_frames = int(sampling.num_frames)
@@ -290,7 +231,8 @@ def train_wan_2_1_dpo(cfg: DictConfig) -> None:
             trainer=trainer,
             bundle=bundle,
             family="wan_2_1",
-            strict=resume_strict,
+            expected_model_identity=model_identity,
+            strict=resume_config.strict,
         )
         logger.info(
             "Resuming from %s, start_step=%d",
@@ -314,7 +256,7 @@ def train_wan_2_1_dpo(cfg: DictConfig) -> None:
     metric_fields = tuple(f.name for f in _dc_fields(DPOStepMetrics))
     prepare_metrics_csv(
         csv_path,
-        "step," + ",".join(metric_fields) + "\n",
+        ("step", *metric_fields),
         resume_at=(
             ("step", resume_checkpoint.next_step) if resume_checkpoint is not None else None
         ),
@@ -335,8 +277,8 @@ def train_wan_2_1_dpo(cfg: DictConfig) -> None:
 
     # LoRA-only checkpoints export the adapter weights; full fine-tunes export
     # nothing extra. The decision is fixed for the run, so resolve it once.
-    export_modules = (
-        {LORA_WEIGHTS_NAME: transformer}
+    adapter_exports = (
+        {LORA_WEIGHTS_NAME: AdapterExport(transformer)}
         if bool(require(cfg, "model.use_lora")) and hasattr(transformer, "save_pretrained")
         else None
     )
@@ -387,7 +329,8 @@ def train_wan_2_1_dpo(cfg: DictConfig) -> None:
                     "global_step": trainer.global_step,
                 },
                 rng_state=capture_rng_state(),
-                export_modules=export_modules,
+                adapter_exports=adapter_exports,
+                model_identity=model_identity,
             )
             logger.info("Saved checkpoint -> %s", ckpt)
 
@@ -405,7 +348,8 @@ def train_wan_2_1_dpo(cfg: DictConfig) -> None:
             "global_step": trainer.global_step,
         },
         rng_state=capture_rng_state(),
-        export_modules=export_modules,
+        adapter_exports=adapter_exports,
+        model_identity=model_identity,
     )
     logger.info("Final checkpoint -> %s", final_path)
     logger.info("DPO training complete.")

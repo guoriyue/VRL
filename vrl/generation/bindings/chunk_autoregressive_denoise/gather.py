@@ -75,7 +75,6 @@ class ChunkAutoregressiveDenoiseGatherer:
             request_id=request.request_id,
             family=request.family,
             task=request.task,
-            prompts=list(request.prompts),
             sample_rows=rows,
             output=output,
             trajectory=trajectory,

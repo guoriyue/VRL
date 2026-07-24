@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import inspect
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any
 
 import torch
@@ -21,26 +21,13 @@ class RewardScoringInput:
     """Batch-aligned reward scorer input built from one engine GenerationOutput."""
 
     outputs: Any
-    prompts: Sequence[str]
     source_request_id: str
     sample_rows: Sequence[GenerationSampleRow]
     metadata: Mapping[str, Any]
     device: Any
-    expected_count: int | None = None
-    batch_size: int = field(init=False)
 
     def __post_init__(self) -> None:
-        batch_size = self._outputs_batch_size(self.outputs)
-        if self.expected_count is not None and batch_size != self.expected_count:
-            raise ValueError(
-                "reward output/sample batch mismatch: "
-                f"outputs={batch_size}, samples={self.expected_count}",
-            )
-        if len(self.prompts) != batch_size:
-            raise ValueError(
-                "reward prompt/output batch mismatch: "
-                f"prompts={len(self.prompts)}, outputs={batch_size}",
-            )
+        batch_size = self.batch_size
         if not self.source_request_id:
             raise ValueError("reward source_request_id must be non-empty")
         if len(self.sample_rows) != batch_size:
@@ -48,14 +35,7 @@ class RewardScoringInput:
                 "reward sample-row/output batch mismatch: "
                 f"sample_rows={len(self.sample_rows)}, outputs={batch_size}",
             )
-        for index, (prompt, row) in enumerate(
-            zip(self.prompts, self.sample_rows, strict=True),
-        ):
-            if prompt != row.prompt:
-                raise ValueError(
-                    "reward prompt/sample-row mismatch: "
-                    f"index={index}, prompt={prompt!r}, row.prompt={row.prompt!r}",
-                )
+        for index, row in enumerate(self.sample_rows):
             row_request_id = row.metadata.get("request_id")
             if row_request_id is not None and row_request_id != self.source_request_id:
                 raise ValueError(
@@ -63,7 +43,10 @@ class RewardScoringInput:
                     f"index={index}, source_request_id={self.source_request_id!r}, "
                     f"row.request_id={row_request_id!r}",
                 )
-        object.__setattr__(self, "batch_size", batch_size)
+
+    @property
+    def batch_size(self) -> int:
+        return self._outputs_batch_size(self.outputs)
 
     @staticmethod
     def _outputs_batch_size(outputs: Any) -> int:
@@ -158,7 +141,7 @@ class RewardScorer:
                 policy_version = row.metadata.get("policy_version")
                 rollouts.append(
                     RewardRollout(
-                        prompt=request.prompts[index],
+                        prompt=row.prompt,
                         output=request.outputs[index],
                         source_request_id=request.source_request_id,
                         sample_id=row.sample_id,

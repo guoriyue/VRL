@@ -8,6 +8,7 @@ from tests.trainers.online._collector_control import CollectorControlFake
 from tests.trainers.online._helpers import (
     DEFAULT_PRECISION,
     _algorithm_inputs,
+    _diffusion_rollout_batch,
     _stamp_model_precision,
     _trajectory_signals,
 )
@@ -29,9 +30,9 @@ class TestAdvantageAndMetrics:
         import torch.nn as nn
 
         from vrl.algorithms.types import PolicyUpdateStats, TrainStepMetrics
-        from vrl.rollouts.batch import RolloutBatch
-        from vrl.trainers.core.types import DebugConfig, EMAConfig, OptimConfig, TrainerConfig
+        from vrl.trainers.core.types import DebugConfig, EMAConfig, OptimConfig
         from vrl.trainers.online import OnlineTrainer
+        from vrl.trainers.online.config import OnlineBatchPlan, TrainerConfig
 
         class _Algorithm:
             class _Config:
@@ -92,19 +93,15 @@ class TestAdvantageAndMetrics:
                 for _ in range(group_size):
                     rewards.append(self._reward_values[self._cursor])
                     self._cursor += 1
-                return RolloutBatch(
-                    observations=torch.zeros(group_size, 2, 1),
-                    actions=torch.zeros(group_size, 2, 1),
+                return _diffusion_rollout_batch(
                     rewards=torch.tensor(rewards, dtype=torch.float32),
-                    dones=torch.ones(group_size, dtype=torch.bool),
                     group_ids=torch.zeros(group_size, dtype=torch.long),
+                    num_steps=2,
                     extras={
                         "reward_components": {
                             "observer": torch.tensor(rewards, dtype=torch.float32) + 10.0,
                         },
                     },
-                    prompts=list(prompts) * group_size,
-                    context={},
                 )
 
         class _Evaluator(Evaluator):
@@ -142,17 +139,18 @@ class TestAdvantageAndMetrics:
             evaluator=_Evaluator(),
             model=model,
             config=TrainerConfig(
-                prompts_per_batch=1,
+                batch_plan=OnlineBatchPlan(
+                    prompts_per_batch=1,
+                    n_samples_per_prompt=2,
+                    gradient_accumulation_steps=gradient_accumulation_steps,
+                ),
                 timestep_fraction=1.0,
-                total_epochs=1,
                 ppo_epochs=ppo_epochs,
-                gradient_accumulation_steps=gradient_accumulation_steps,
                 drop_zero_advantage=False,
                 output_dir="outputs/",
                 optim=OptimConfig(lr=0.01),
                 ema=EMAConfig(),
                 debug=DebugConfig(),
-                n_samples_per_prompt=2,
             ),
             device="cpu",
         )
@@ -183,8 +181,8 @@ class TestAdvantageAndMetrics:
 
         assert metrics.update.approx_kl == pytest.approx(0.5)
 
-    def test_cea_metrics_capture_only_the_first_optimizer_boundary(self) -> None:
-        """Initial replay covers every timestep before the first optimizer boundary."""
+    def test_cea_metrics_capture_the_complete_first_optimizer_update(self) -> None:
+        """Initial replay covers every replay unit in the first optimizer update."""
         import asyncio
         from dataclasses import replace
 
@@ -201,18 +199,17 @@ class TestAdvantageAndMetrics:
         )
         metrics = asyncio.run(trainer.train_on_rollout_batch(two_boundaries))
 
-        # Each boundary evaluates two sample chunks x two timesteps. Calls 1..4
-        # precede the first optimizer step; calls 5..8 are the second boundary.
+        # One optimizer target evaluates four sample chunks x two timesteps.
         assert metrics.update.clip_fraction == pytest.approx(4.5)
-        assert metrics.initial_replay.clip_fraction == pytest.approx(2.5)
+        assert metrics.initial_replay.clip_fraction == pytest.approx(4.5)
         assert metrics.update.active_clip_fraction == pytest.approx(0.45)
-        assert metrics.initial_replay.active_clip_fraction == pytest.approx(0.25)
+        assert metrics.initial_replay.active_clip_fraction == pytest.approx(0.45)
         assert metrics.logprob_mismatch.logprob_abs_diff_max == pytest.approx(
             0.008,
             abs=1e-6,
         )
         assert metrics.initial_replay.logprob_abs_diff_max == pytest.approx(
-            0.004,
+            0.008,
             abs=1e-6,
         )
         assert metrics.initial_replay.finite is True
@@ -226,15 +223,12 @@ class TestAdvantageAndMetrics:
 
         from vrl.algorithms.logprob_mismatch import LogprobMismatchStats
         from vrl.algorithms.types import PolicyUpdateStats, TrainStepMetrics
-        from vrl.rollouts.batch import RolloutBatch
         from vrl.trainers.online.trainer import _ReplayMetrics, _training_sample_chunks
 
-        batch = RolloutBatch(
-            observations=torch.zeros(10, 1, 1),
-            actions=torch.zeros(10, 1, 1),
+        batch = _diffusion_rollout_batch(
             rewards=torch.zeros(10),
-            dones=torch.ones(10, dtype=torch.bool),
             group_ids=torch.zeros(10, dtype=torch.long),
+            num_steps=1,
         )
         chunks = _training_sample_chunks(batch, torch.ones(10), samples_per_chunk=8)
         assert [chunk.loss_weight for chunk in chunks] == pytest.approx([0.8, 0.2])
@@ -287,9 +281,10 @@ class TestAdvantageAndMetrics:
         from vrl.algorithms.types import TrainStepMetrics
         from vrl.generation import GenerationRequest, GenerationSampleRow
         from vrl.rollouts.batch import RolloutBatch
-        from vrl.trainers.core.types import DebugConfig, EMAConfig, OptimConfig, TrainerConfig
+        from vrl.trainers.core.types import DebugConfig, EMAConfig, OptimConfig
         from vrl.trainers.online import OnlineTrainer
-        from vrl.trajectory import build_ar_discrete_trajectory, build_training_view
+        from vrl.trainers.online.config import OnlineBatchPlan, TrainerConfig
+        from vrl.trajectory import build_ar_discrete_trajectory
 
         class _Algorithm:
             class _Config:
@@ -332,7 +327,6 @@ class TestAdvantageAndMetrics:
                         prompt_index=index // group_size,
                         sample_index=index % group_size,
                         prompt=prompts[index // group_size],
-                        prompt_id=f"prompt-{index // group_size}",
                         group_id=f"group-{index // group_size}",
                         sample_id=f"sample-{index}",
                         trajectory_id=f"trajectory-{index}",
@@ -355,15 +349,10 @@ class TestAdvantageAndMetrics:
                     context={"model_family": "janus_pro"},
                 )
                 return RolloutBatch(
-                    observations=torch.zeros(batch_size, 1, 1),
-                    actions=torch.zeros(batch_size, 1, 1),
                     rewards=torch.ones(batch_size, dtype=torch.float32),
-                    dones=torch.ones(batch_size, dtype=torch.bool),
                     group_ids=torch.zeros(batch_size, dtype=torch.long),
-                    prompts=prompts * group_size,
                     context={},
                     trajectory=trajectory,
-                    training_view=build_training_view(trajectory),
                 )
 
         class _Evaluator(Evaluator):
@@ -380,14 +369,12 @@ class TestAdvantageAndMetrics:
             evaluator=_Evaluator(),
             model=model,
             config=TrainerConfig(
-                prompts_per_batch=1,
+                batch_plan=OnlineBatchPlan(prompts_per_batch=1, n_samples_per_prompt=2),
                 timestep_fraction=1.0,
-                total_epochs=1,
                 output_dir="outputs/",
                 optim=OptimConfig(lr=0.01),
                 ema=EMAConfig(),
                 debug=DebugConfig(),
-                n_samples_per_prompt=2,
                 drop_zero_advantage=True,
             ),
             device="cpu",

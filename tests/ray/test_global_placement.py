@@ -7,6 +7,8 @@ tests use real Ray on whatever GPUs/CPUs the host exposes.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 import pytest
 from omegaconf import OmegaConf
 
@@ -41,7 +43,6 @@ def test_bundle_plan_dedicated_trainer_rollout_reward_distinct_bundles() -> None
     plan = build_bundle_layout(resolved)
 
     assert plan.bundle_gpu_ids == (0, 1, 2)
-    assert plan.trainer_bundle_indices == (0,)
     assert plan.rollout_bundle_indices == (1,)
     assert plan.reward_bundle_indices == (2,)
     assert set(plan.rollout_bundle_indices).isdisjoint(plan.reward_bundle_indices)
@@ -61,7 +62,6 @@ def test_bundle_plan_multi_rollout_worker_one_bundle_per_gpu() -> None:
     plan = build_bundle_layout(resolved)
 
     assert plan.bundle_gpu_ids == (0, 1, 2, 3)
-    assert plan.trainer_bundle_indices == (0,)
     assert plan.rollout_bundle_indices == (1, 2, 3)
     assert plan.reward_bundle_indices == ()
     assert plan.total_bundles == 4
@@ -103,7 +103,6 @@ def test_bundle_plan_colocated_debug_single_bundle_no_trainer_reservation() -> N
     )
     plan = build_bundle_layout(resolved)
 
-    assert plan.trainer_bundle_indices == ()
     assert plan.rollout_bundle_indices == (0,)
     assert plan.bundle_gpu_ids == (0,)
     assert plan.total_bundles == 1
@@ -121,7 +120,6 @@ def test_bundle_plan_cross_node_skips_trainer_reservation() -> None:
     )
     plan = build_bundle_layout(resolved)
 
-    assert plan.trainer_bundle_indices == ()
     # Rollout ordinals are budget tokens (1, 2) under cross_node.
     assert plan.rollout_bundle_indices == (0, 1)
     assert plan.bundle_gpu_ids == (1, 2)
@@ -139,7 +137,6 @@ def test_bundle_plan_cpu_only_rollout_uses_cpu_bundles() -> None:
     plan = build_bundle_layout(resolved)
 
     assert plan.bundle_gpu_ids == (None, None)
-    assert plan.trainer_bundle_indices == ()
     assert plan.rollout_bundle_indices == (0, 1)
     assert plan.total_bundles == 2
 
@@ -167,8 +164,21 @@ def test_bundle_plan_dedicated_reward_appends_fresh_bundle() -> None:
 # logic is verified deterministically without multi-GPU hardware.
 
 
-def _owner(resources: dict) -> GlobalRayPlacementOwner:
-    return GlobalRayPlacementOwner(_resolve(resources))
+@dataclass(frozen=True, slots=True)
+class _WorkerCPUConfig:
+    cpus_per_worker: float
+
+
+def _worker(*, cpus_per_worker: float = 1.0) -> _WorkerCPUConfig:
+    return _WorkerCPUConfig(cpus_per_worker=cpus_per_worker)
+
+
+def _owner(
+    resources: dict,
+    *,
+    worker: _WorkerCPUConfig | None = None,
+) -> GlobalRayPlacementOwner:
+    return GlobalRayPlacementOwner(_resolve(resources), worker or _worker())
 
 
 def test_assign_roles_matches_requested_ordinals_under_permuted_probe() -> None:
@@ -268,15 +278,15 @@ def test_bundle_requirements_size_shared_bundle_to_max_role_cpu() -> None:
                 "share_with_rollout": True,
             },
         },
+        worker=_worker(cpus_per_worker=2.0),
     )
-    owner.rollout_cpus_per_worker = 2.0
     # reward_cpus_per_worker default is 0.5; shared bundle must take 2.0.
     requirements = owner._bundle_requirements()
     shared_bundle = owner.layout.rollout_bundle_indices[0]
     assert requirements[shared_bundle]["CPU"] == 2.0
     assert requirements[shared_bundle]["GPU"] == 1.0
     # Trainer-reserved bundle holds the GPU with only a token CPU.
-    trainer_bundle = owner.layout.trainer_bundle_indices[0]
+    trainer_bundle = owner.layout.bundle_gpu_ids.index(owner.resources.trainer_devices[0])
     assert requirements[trainer_bundle] == {"CPU": 0.001, "GPU": 1.0}
 
 
@@ -298,8 +308,8 @@ def test_required_local_cluster_cpus_uses_placement_bundle_sum() -> None:
                 "num_workers": 1,
             },
         },
+        worker=_worker(cpus_per_worker=4.0),
     )
-    owner.rollout_cpus_per_worker = 4.0
 
     assert owner._bundle_requirements() == [
         {"CPU": 4.0, "GPU": 1.0},
@@ -320,11 +330,26 @@ def test_required_local_cluster_cpus_rejects_invalid_bundle_cpu(quantity: float)
                 "gpus_per_worker": 1,
             },
         },
+        worker=_worker(cpus_per_worker=quantity),
     )
-    owner.rollout_cpus_per_worker = quantity
 
     with pytest.raises(ValueError, match="finite and > 0"):
         owner.required_local_cluster_cpus()
+
+
+def test_placement_owner_consumes_exact_rollout_cpu_capability() -> None:
+    worker = _worker(cpus_per_worker=2.5)
+    owner = _owner(
+        {
+            "visible_devices": [],
+            "trainer": {"num_gpus": 0},
+            "rollout": {"num_gpus": 0, "gpus_per_worker": 0, "num_workers": 1},
+        },
+        worker=worker,
+    )
+
+    assert owner.rollout_worker is worker
+    assert owner._bundle_requirements() == [{"CPU": 2.5}]
 
 
 def test_shutdown_retries_same_placement_group_after_remove_failure(monkeypatch) -> None:
@@ -601,7 +626,7 @@ def test_owner_reserves_trainer_gpu_and_binds_roles_on_simulated_gpus() -> None:
                 "reward": {"devices": [2], "gpus_per_worker": 1, "num_workers": 1},
             },
         ),
-        rollout_cpus_per_worker=1.0,
+        _worker(),
     )
     try:
         owner.create()
@@ -640,7 +665,7 @@ def test_owner_shares_one_bundle_for_rollout_and_reward_on_simulated_gpus() -> N
                 },
             },
         ),
-        rollout_cpus_per_worker=1.0,
+        _worker(),
     )
     try:
         owner.create()

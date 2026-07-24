@@ -48,8 +48,7 @@ class CosmosPredict25ChunkExecutor(DiffusionChunkExecutorBase):
         return self.model.encode_prompt(
             chunk.prompt,
             video_request.negative_prompt or None,
-            max_sequence_length=params.base.max_sequence_length,
-            guidance_scale=params.base.guidance_scale,
+            **params.base.text_encode_kwargs(),
         )
 
 

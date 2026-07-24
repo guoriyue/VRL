@@ -2,16 +2,36 @@
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import pytest
+import torch
 from omegaconf import OmegaConf
 
+from vrl.config.precision import resolve_precision_policy
+from vrl.config.schema import parse_config
 from vrl.families.registry import get_model_family_entry
+from vrl.generation.execution.chunks import SampleChunk
 from vrl.generation.types import GenerationRequest
+from vrl.models.families.glm_image.config import GlmImageConfig
+from vrl.models.families.glm_image.model import GlmImageConfig as ModelGlmImageConfig
 from vrl.models.families.glm_image.runner import GlmImageTokenRunner
 from vrl.models.families.glm_image.runtime import (
     GlmImageChunkExecutor,
     glm_image_config_from_build,
 )
+
+
+@pytest.mark.parametrize("decode_offload_ar", [True, False])
+def test_runtime_config_defaults_and_model_compatibility_export(
+    decode_offload_ar: bool,
+) -> None:
+    config = GlmImageConfig(decode_offload_ar=decode_offload_ar)
+    entry = get_model_family_entry("glm_image")
+
+    assert config.model_path == entry.family_build.default_model_path
+    assert config.decode_offload_ar is decode_offload_ar
+    assert ModelGlmImageConfig is GlmImageConfig
 
 
 def test_resolve_model_build_defaults_to_glm_image_checkpoint() -> None:
@@ -27,7 +47,13 @@ def test_resolve_model_build_defaults_to_glm_image_checkpoint() -> None:
         },
     )
 
-    build = get_model_family_entry("glm_image").resolve_model_build(cfg, device="cpu")
+    root = parse_config(cfg)
+    precision = resolve_precision_policy(root)
+    build = get_model_family_entry("glm_image").resolve_model_build(
+        root,
+        device="cpu",
+        precision=precision,
+    )
 
     assert build.model_name_or_path == "zai-org/GLM-Image"
 
@@ -58,8 +84,15 @@ def test_resolve_model_build_carries_sampling_and_lora_overrides() -> None:
         }
     )
 
-    build = get_model_family_entry("glm_image").resolve_model_build(cfg, device="cpu")
+    root = parse_config(cfg)
+    precision = resolve_precision_policy(root)
+    build = get_model_family_entry("glm_image").resolve_model_build(
+        root,
+        device="cpu",
+        precision=precision,
+    )
     config = glm_image_config_from_build(build)
+    resolved = GlmImageConfig(**config)
 
     assert build.model_name_or_path == "/ckpt/glm-image"
     assert config["temperature"] == 0.8
@@ -68,9 +101,16 @@ def test_resolve_model_build_carries_sampling_and_lora_overrides() -> None:
     assert config["image_width"] == 1152
     assert config["decode_num_inference_steps"] == 50
     assert config["decode_guidance_scale"] == 2.0
-    # Carried lora block overrides the family defaults, rest stays default.
+    # Only the explicit override is projected; the config owns all defaults.
     assert config["lora_rank"] == 8
-    assert config["lora_alpha"] == 64
+    assert "lora_alpha" not in config
+    assert resolved.lora_alpha == 64
+    assert resolved.lora_target_modules == (
+        "q_proj",
+        "k_proj",
+        "v_proj",
+        "o_proj",
+    )
     # image_token_num/image_size are grid-derived; guidance_scale does not
     # exist for the AR (no CFG) — never config knobs.
     assert "image_token_num" not in config
@@ -78,13 +118,11 @@ def test_resolve_model_build_carries_sampling_and_lora_overrides() -> None:
     assert "guidance_scale" not in config
 
 
-def test_executor_declares_identity_and_runner() -> None:
+def test_executor_declares_family_identity() -> None:
     executor = GlmImageChunkExecutor(model=object())
 
     assert executor.family == "glm_image"
     assert executor.task == "ar_t2i"
-    assert executor._runner_cls is GlmImageTokenRunner
-    assert executor._runner_attention_family == "glm_image"
 
 
 def test_executor_rejects_explicit_attention_backend() -> None:
@@ -110,3 +148,67 @@ def test_executor_rejects_explicit_attention_backend() -> None:
     )
     runner = executor._ar_runner(request_native)
     assert isinstance(runner, GlmImageTokenRunner)
+
+
+def test_chunk_context_keeps_replay_shape_and_sampling_provenance_only(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    ids = torch.tensor([[1, 2]], dtype=torch.long)
+    mask = torch.ones_like(ids)
+    model = SimpleNamespace(
+        config=SimpleNamespace(
+            temperature=0.9,
+            top_p=0.75,
+            image_height=64,
+            image_width=96,
+        ),
+    )
+
+    def encode_generation_prompts(
+        prompts: list[str],
+        *,
+        max_text_length: int,
+        image_height: int,
+        image_width: int,
+    ) -> tuple[torch.Tensor, torch.Tensor, tuple[int, int, int, int]]:
+        assert prompts == ["draw text"]
+        assert max_text_length == 8
+        assert (image_height, image_width) == (64, 96)
+        return ids, mask, (4, 6, 2, 3)
+
+    model.encode_generation_prompts = encode_generation_prompts
+    executor = GlmImageChunkExecutor(model)
+    monkeypatch.setattr(executor, "_embed", lambda token_ids: token_ids.unsqueeze(-1).float())
+    request = GenerationRequest(
+        request_id="req",
+        family="glm_image",
+        task="ar_t2i",
+        inputs=["draw text"],
+        samples_per_prompt=1,
+        sampling={
+            "temperature": 0.8,
+            "top_p": 0.6,
+            "image_height": 64,
+            "image_width": 96,
+            "max_text_length": 8,
+            "decode_guidance_scale": 2.0,
+        },
+    )
+
+    prepared = executor.prepare_chunk_inputs(
+        request,
+        SampleChunk(
+            prompt_index=0,
+            prompt="draw text",
+            sample_start=0,
+            sample_count=1,
+        ),
+    )
+
+    assert prepared.context == {
+        "temperature": 0.8,
+        "image_height": 64,
+        "image_width": 96,
+        "top_p": 0.6,
+    }
+    assert prepared.image_decode_kwargs["guidance_scale"] == 2.0

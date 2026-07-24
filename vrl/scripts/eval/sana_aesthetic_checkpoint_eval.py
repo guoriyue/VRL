@@ -23,6 +23,8 @@ import math
 import os
 import re
 import statistics
+from collections.abc import Callable
+from copy import deepcopy
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -30,6 +32,9 @@ from typing import Any
 from omegaconf import DictConfig, OmegaConf
 
 from vrl.config.loading import load_config
+from vrl.config.precision import PrecisionPolicy, resolve_precision_policy
+from vrl.config.schema import RootConfig, parse_config
+from vrl.models.checkpoint_identity import resolve_checkpoint_model_identity
 from vrl.scripts.eval.sana_inference import (
     OFFICIAL_SAMPLING_PROTOCOL,
     SCHEDULER_PROTOCOL,
@@ -39,9 +44,10 @@ from vrl.scripts.eval.sana_inference import (
 from vrl.trainers.checkpointing import (
     TRAINING_CHECKPOINT_NAME,
     is_complete_checkpoint,
-    load_trainable_state,
     load_training_checkpoint,
     read_checkpoint_meta,
+    restore_model_checkpoint,
+    validate_checkpoint_meta_compatibility,
 )
 from vrl.trainers.data import load_prompt_manifest
 
@@ -60,10 +66,15 @@ EVAL_SAMPLES_PER_PROMPT = 2
 # This is the fixed scientific comparison interval, not a training IO knob.
 EVAL_CHECKPOINT_INTERVAL = 25
 CANONICAL_CONFIG_NAME = "experiment/sana/online_grpo_aesthetic_fullparam_long"
-# Re-pinned after transport-neutral config keys (reward health_check_interval_s /
-# health_check_timeout_s, inference device) gained defaults; sampling, reward, and
-# optimization protocol values are unchanged from the b898129d pin.
-CANONICAL_PROTOCOL_SHA256 = "6710452dafd656b53e2ef4b0716a8022832d00fca7bc9689356b30e2450aa667"
+# The entrypoint this protocol's runs were launched from, and its replacement.
+# vrl/scripts/diffusion/ no longer exists; the module path survives only inside
+# the resolved_config.yaml these historical run directories already wrote.
+_RETIRED_ENTRYPOINT = "vrl.scripts.diffusion.train:train_diffusion_grpo"
+_LIVE_ENTRYPOINT = "vrl.scripts.train:train_online"
+# Semantic digest of the resolved canonical preset; recomputed against the merged
+# config schema (see _normalize_run_config, which fails closed if the bundled
+# preset drifts without updating this pin).
+CANONICAL_PROTOCOL_SHA256 = "970c2e28937842b3f6fe0b1b4359292fe8e95dba3a5be52b5f3bdf059830b189"
 # Frozen protocol-asset identities. These hashes name two concrete datasets;
 # they are not a duplicated prompt taxonomy or a user-facing config table.
 TRAIN_MANIFEST_SHA256 = "86580c8136a4b6d9fc6bbcc6d8e8e172b15fca6b5c6c956cc770255d8011de56"
@@ -150,7 +161,30 @@ def main(argv: list[str] | None = None) -> None:
     targets = _discover_checkpoint_targets(run_dir, cfg)
     device = _resolve_device(args.device)
     sampling = _resolve_sampling()
-    build_cfg = _materialize_model_snapshot(cfg)
+    identity_root = parse_config(cfg)
+    if identity_root.model is None:
+        raise ValueError("SANA checkpoint evaluation requires model configuration")
+    identity_precision = resolve_precision_policy(identity_root)
+    from vrl.families.registry import get_model_family_entry
+
+    identity_entry = get_model_family_entry(str(identity_root.model.family))
+    identity_build = identity_entry.resolve_model_build(
+        identity_root,
+        device,
+        precision=identity_precision,
+        for_rollout=True,
+    )
+    model_identity = resolve_checkpoint_model_identity(identity_build)
+    for target in targets:
+        if target.path is not None:
+            validate_checkpoint_meta_compatibility(
+                read_checkpoint_meta(target.path),
+                family="sana",
+                expected_model_identity=model_identity,
+                strict=True,
+            )
+    build_root = _materialize_model_snapshot(cfg)
+    build_precision = resolve_precision_policy(build_root)
     reward_models = _materialize_reward_model_snapshots(
         _build_reward_model_definitions(cfg, generation_device=str(device)),
     )
@@ -158,12 +192,14 @@ def main(argv: list[str] | None = None) -> None:
     eval_dir.mkdir(parents=True, exist_ok=True)
 
     generated = _generate_images(
-        build_cfg,
+        build_root,
+        build_precision,
         targets,
         prompts,
         output_dir=eval_dir,
         sampling=sampling,
         device=device,
+        expected_model_identity=model_identity,
     )
     sample_scores = _score_images(generated, reward_models)
     sample_path = run_dir / SAMPLES_RELATIVE_PATH
@@ -337,6 +373,152 @@ def load_report_metrics(run_dir: str | Path) -> list[dict[str, float]]:
     return rows
 
 
+def _section(config: Any, *path: str) -> dict[str, Any] | None:
+    """The nested mapping at ``path``, or None when any hop is absent/not a dict."""
+
+    for key in path:
+        if not isinstance(config, dict):
+            return None
+        config = config.get(key)
+    return config if isinstance(config, dict) else None
+
+
+def _drop_default_key(
+    section: dict[str, Any] | None,
+    key: str,
+    *,
+    default: Any,
+    resolve: Callable[[Any], Any] | None = None,
+) -> None:
+    """Erase a key whose value means the same thing as leaving it unwritten.
+
+    ``resolve`` is for keys whose public spelling is wider than their meaning
+    (``kl_reward_coef: 0.0`` and an absent key both resolve to 0.0); an invalid
+    value is left in place so the caller still reports it as real drift.
+    """
+
+    if section is None or key not in section:
+        return
+    value = section[key]
+    if resolve is not None:
+        try:
+            value = resolve(value)
+        except ValueError:
+            return
+    if value == default:
+        section.pop(key)
+
+
+def _erase_meaningless_spelling(
+    actual: dict[str, Any],
+    canonical: dict[str, Any],
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Erase spelling differences that carry no meaning; leave real drift visible.
+
+    Two rules, not one case per key:
+
+    1. A key whose value equals its default says the same thing as an absent
+       key, so it is dropped from BOTH configs. Applying it symmetrically is
+       what keeps this a rule instead of a list of which-side-is-older patches:
+       new preset keys that default to their current value stop needing an
+       entry here at all.
+    2. The retired ``vrl.scripts.diffusion.train`` entrypoint took its precision
+       protocol from the family registry rather than YAML, so only a run from
+       that entrypoint is granted the injection. The live entrypoint must spell
+       precision out, and ``PrecisionConfig`` has no defaults to fall back on.
+    """
+
+    from dataclasses import fields as dataclass_fields
+
+    from vrl.config.algorithm import resolve_kl_reward_coef
+    from vrl.config.schema import RolloutWorkerSection
+    from vrl.trajectory import (
+        TrajectoryStoragePolicy,
+        trajectory_storage_policy_from_cfg,
+    )
+
+    def storage_policy(value: Any) -> Any:
+        """Resolve a storage block, refusing one that carries unknown keys.
+
+        ``trajectory_storage_policy_from_cfg`` ignores extra keys, so resolving
+        directly would let an unrecognized knob ride along inside an otherwise
+        default block. Rejecting keeps it visible as real drift.
+        """
+
+        policy_fields = {item.name for item in dataclass_fields(TrajectoryStoragePolicy)}
+        if isinstance(value, dict) and set(value) != policy_fields:
+            raise ValueError(f"unexpected trajectory_storage keys: {sorted(set(value))}")
+        return trajectory_storage_policy_from_cfg(value)
+
+    trainer = actual.get("trainer")
+    uses_retired_entrypoint = (
+        isinstance(trainer, dict)
+        and trainer.get("entrypoint") == _RETIRED_ENTRYPOINT
+        and _section(canonical, "trainer") is not None
+        and canonical["trainer"].get("entrypoint") == _LIVE_ENTRYPOINT
+    )
+
+    # Rule 1. Defaults come from their live owner, never a copied literal, so a
+    # changed default cannot silently keep validating stale runs.
+    default_equivalent: list[tuple[tuple[str, ...], str, Any, Any]] = [
+        (
+            ("algorithm",),
+            "kl_reward_coef",
+            resolve_kl_reward_coef(None),
+            resolve_kl_reward_coef,
+        ),
+        (("data", "preprocessing"), "target_text", "none", None),
+        (
+            ("rollout",),
+            "trajectory_storage",
+            trajectory_storage_policy_from_cfg(None),
+            storage_policy,
+        ),
+        (("reward", "kwargs", "aesthetic"), "device", None, None),
+        *(
+            (("distributed", "rollout"), name, default, None)
+            for name, default in RolloutWorkerSection().model_dump().items()
+        ),
+    ]
+    for path, key, default, resolve in default_equivalent:
+        for side in (actual, canonical):
+            _drop_default_key(_section(side, *path), key, default=default, resolve=resolve)
+
+    # Rule 2. Same erasure, but only a retired-entrypoint SANA fp16 run earns it.
+    precision = _section(actual, "precision")
+    canonical_precision = _section(canonical, "precision")
+    if (
+        uses_retired_entrypoint
+        and precision is not None
+        and canonical_precision is not None
+        and _section(actual, "model") is not None
+        and actual["model"].get("family") == "sana"
+        and _section(canonical, "model") is not None
+        and canonical["model"].get("family") == "sana"
+    ):
+        stages = [
+            (_section(precision, stage), _section(canonical_precision, stage))
+            for stage in ("training", "rollout")
+        ]
+        if all(
+            stage is not None
+            and canonical_stage is not None
+            and stage.get("dtype") == canonical_stage.get("dtype") == "fp16"
+            for stage, canonical_stage in stages
+        ):
+            _drop_default_key(canonical_precision, "float32_precision", default="ieee")
+            for _, canonical_stage in stages:
+                _drop_default_key(canonical_stage, "outer_autocast", default=False)
+
+    if uses_retired_entrypoint:
+        trainer["entrypoint"] = _LIVE_ENTRYPOINT
+
+    # Both are returned because both were edited: rule 1 erases defaults on
+    # whichever side spells them, so the caller must compare the pair it gets
+    # back rather than its own copy of the canonical config.
+    return actual, canonical
+
+
 def _normalize_run_config(cfg: DictConfig) -> DictConfig:
     """Require the exact pre-registered full-parameter long-run config."""
 
@@ -350,15 +532,26 @@ def _normalize_run_config(cfg: DictConfig) -> DictConfig:
             "bundled SANA aesthetic preset changed without a protocol schema update: "
             f"{canonical_digest} != {CANONICAL_PROTOCOL_SHA256}",
         )
-    if actual != expected:
-        mismatch = _first_config_difference(actual, expected)
+    # Compare on copies: the erasure edits both sides, and the canonical config
+    # is also this function's return value once the run is accepted.
+    normalized_actual, normalized_expected = _erase_meaningless_spelling(
+        deepcopy(actual),
+        deepcopy(expected),
+    )
+    if normalized_actual != normalized_expected:
+        mismatch = _first_config_difference(normalized_actual, normalized_expected)
         raise ValueError(
             "resolved config does not match the registered SANA full-parameter protocol"
             + (f": {mismatch}" if mismatch else ""),
         )
-    normalized = OmegaConf.create(actual)
+    # A run that passes IS the registered protocol, so hand downstream the
+    # canonical spelling rather than whichever historical shape wrote it. That
+    # keeps every consumer reading fully-spelled keys (reward kwargs, precision)
+    # instead of the omissions the comparison just proved irrelevant.
+    normalized = OmegaConf.create(expected)
     OmegaConf.resolve(normalized)
     assert isinstance(normalized, DictConfig)
+    parse_config(normalized)
     return normalized
 
 
@@ -662,7 +855,7 @@ def _build_reward_model_definitions(
     return reward_models
 
 
-def _materialize_model_snapshot(cfg: DictConfig) -> DictConfig:
+def _materialize_model_snapshot(cfg: DictConfig) -> RootConfig:
     """Pin SANA architecture/frozen modules through the official Hub API."""
 
     from huggingface_hub import snapshot_download
@@ -677,7 +870,7 @@ def _materialize_model_snapshot(cfg: DictConfig) -> DictConfig:
     materialized = OmegaConf.create(plain)
     OmegaConf.resolve(materialized)
     assert isinstance(materialized, DictConfig)
-    return materialized
+    return parse_config(materialized)
 
 
 def _materialize_reward_model_snapshots(
@@ -761,20 +954,39 @@ def _aesthetic_asset_record() -> dict[str, Any]:
 
 
 def _generate_images(
-    cfg: DictConfig,
+    root: RootConfig,
+    precision: PrecisionPolicy,
     targets: list[CheckpointTarget],
     prompts: list[str],
     *,
     output_dir: Path,
     sampling: dict[str, Any],
     device: Any,
+    expected_model_identity: dict[str, Any],
 ) -> list[GeneratedImage]:
     from vrl.families.registry import get_model_family_entry
     from vrl.utils.media import write_png
 
-    entry = get_model_family_entry(str(cfg.model.family))
-    build = entry.resolve_model_build(cfg, device, for_rollout=True)
+    if root.model is None:
+        raise ValueError("SANA checkpoint evaluation requires model configuration")
+    entry = get_model_family_entry(str(root.model.family))
+    build = entry.resolve_model_build(
+        root,
+        device,
+        precision=precision,
+        for_rollout=True,
+    )
+    # Checkpoint compatibility stays bound to the configured Hub repo+commit.
+    # The downloaded tree has a different, content-based identity, so retain it
+    # separately only to prove the local snapshot did not change while loading.
+    materialized_model_identity = resolve_checkpoint_model_identity(build)
     bundle = entry.build_rollout(build)
+    loaded_materialized_identity = resolve_checkpoint_model_identity(build)
+    if loaded_materialized_identity != materialized_model_identity:
+        raise RuntimeError(
+            "materialized SANA model source changed during runtime construction: "
+            f"before={materialized_model_identity!r}, after={loaded_materialized_identity!r}",
+        )
     model = bundle.model.eval()
     generated: list[GeneratedImage] = []
     checkpoint_read = False
@@ -791,8 +1003,6 @@ def _generate_images(
                 if target.path is None:
                     raise ValueError(f"checkpoint target has no path: {target.label}")
                 checkpoint = load_training_checkpoint(target.path)
-                if str(checkpoint.payload.get("family", "")) != "sana":
-                    raise ValueError(f"checkpoint family is not sana: {target.path}")
                 if checkpoint.meta.get("uses_lora") is not False:
                     raise ValueError(
                         f"full-parameter checkpoint must declare uses_lora=false: {target.path}",
@@ -806,9 +1016,14 @@ def _generate_images(
                         f"checkpoint progress changed during evaluation: {target.path} "
                         f"next_epoch={checkpoint.next_epoch}, expected={source_epoch}",
                     )
-                trainable_state = checkpoint.trainable_state
-                load_trainable_state(bundle, trainable_state, strict=True)
-                del checkpoint, trainable_state
+                restore_model_checkpoint(
+                    checkpoint,
+                    bundle=bundle,
+                    family="sana",
+                    expected_model_identity=expected_model_identity,
+                    strict=True,
+                )
+                del checkpoint
                 checkpoint_read = True
             for prompt_index, prompt in enumerate(prompts):
                 group_seed = _group_seed(prompt_index)

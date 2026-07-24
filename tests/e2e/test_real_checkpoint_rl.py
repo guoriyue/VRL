@@ -21,12 +21,14 @@ from omegaconf import OmegaConf
 from tests import ci_envs
 from vrl.config.builders import build_configs
 from vrl.config.loading import load_config
+from vrl.config.precision import PrecisionPolicy
+from vrl.config.schema import RootConfig
 from vrl.families.registry import ModelFamilyEntry, get_model_family_entry
 from vrl.generation import GenerationOutput, GenerationRequest, build_sample_rows
 from vrl.generation.execution.planner import build_engine_plan
 from vrl.ray.resources import resolve_distributed_resources
 from vrl.rollouts.collector import build_rollout_collector
-from vrl.rollouts.collector.config import build_rollout_config_from_cfg
+from vrl.rollouts.collector.config import RolloutCollectorConfig
 from vrl.scripts.common.factory import (
     build_algorithm_and_evaluator_from_cfg,
     build_reward,
@@ -218,8 +220,6 @@ CASES: tuple[RealCheckpointCase, ...] = (
             "sampling.guidance_scale=1.0",
             "sampling.temperature=1.0",
             "sampling.attention_backend=torch_native",
-            "sampling.use_ar_scheduler=false",
-            "sampling.ar_scheduler_batch_size=null",
         ),
         min_cuda_memory_gib=16.0,
     ),
@@ -410,8 +410,6 @@ CASES: tuple[RealCheckpointCase, ...] = (
             "rollout.noise_level=1.0",
             "sampling.guidance_scale=1.0",
             "sampling.attention_backend=torch_native",
-            "sampling.use_ar_scheduler=false",
-            "sampling.ar_scheduler_batch_size=null",
         ),
         min_cuda_memory_gib=64.0,
     ),
@@ -435,7 +433,7 @@ def test_new_diffusion_algorithm_case_overrides_build_without_gpu(
     assert has_reference_kl is (case.case_id == "sd3_5_dance_grpo")
 
     built = build_configs(load_config(case.config, overrides=list(case.overrides)))
-    assert hasattr(built["algorithm"], "kl_coef") is has_reference_kl
+    assert hasattr(built.algorithm, "kl_coef") is has_reference_kl
 
 
 class _IndexReward:
@@ -465,7 +463,7 @@ class _DirectExecutorGenerationRuntime:
         rows = build_sample_rows(request)
         with torch.no_grad():
             plan_fn = getattr(self.executor, "plan", None)
-            plan = plan_fn(request, rows) if callable(plan_fn) else build_engine_plan(request)
+            plan = plan_fn(request) if callable(plan_fn) else build_engine_plan(request)
             return self.executor.forward_plan(request, rows, plan)
 
     async def offload(self) -> None:
@@ -574,10 +572,17 @@ def test_real_checkpoint_online_rl_updates_trainable_weights(
     try:
         device = torch.device("cuda")
         built = build_configs(cfg)
-        trainer_config = built["trainer"]
+        trainer_config = built.trainer
         dtype = torch_dtype_for_trainer_precision(trainer_config, torch)
-        bundle = _build_runtime_bundle(case, entry, cfg, device, dtype)
-        collector_config = build_rollout_config_from_cfg(cfg)
+        bundle = _build_runtime_bundle(
+            case,
+            entry,
+            built.root,
+            built.precision,
+            device,
+            dtype,
+        )
+        collector_config = RolloutCollectorConfig.from_cfg(cfg)
         if case.synthetic_replay_rollout:
             collector = _SyntheticDiffusionReplayCollector(
                 model=bundle.model,
@@ -718,14 +723,16 @@ async def _shutdown_if_present(value: Any) -> None:
 def _build_runtime_bundle(
     case: RealCheckpointCase,
     entry: ModelFamilyEntry,
-    cfg: Any,
+    root: RootConfig,
+    precision: PrecisionPolicy,
     device: torch.device,
     dtype: torch.dtype,
 ) -> Any:
     for_rollout = not case.synthetic_replay_rollout
     build = entry.resolve_model_build(
-        cfg,
+        root,
         device,
+        precision=precision,
         for_rollout=for_rollout,
         parameter_dtype_override=dtype,
     )
@@ -761,7 +768,7 @@ def _synthetic_diffusion_replay_batch(
 ) -> Any:
     from vrl.math.denoise.flow_matching import sde_step_with_logprob
     from vrl.rollouts.batch import RolloutBatch
-    from vrl.trajectory import build_diffusion_trajectory, build_training_view
+    from vrl.trajectory import build_diffusion_trajectory
 
     num_steps = max(1, int(cfg.sampling.num_steps))
     height = int(cfg.sampling.height)
@@ -790,7 +797,6 @@ def _synthetic_diffusion_replay_batch(
             "num_steps": num_steps,
             "guidance_scale": float(cfg.sampling.guidance_scale),
         },
-        return_artifacts={"trajectory"},
         policy_version=None if policy_version is None else int(policy_version),
     )
     sample_rows = build_sample_rows(request)
@@ -877,17 +883,15 @@ def _synthetic_diffusion_replay_batch(
     )
     rewards = torch.arange(batch_size, device=device, dtype=torch.float32)
     return RolloutBatch(
-        observations=observations.detach(),
-        actions=actions,
         rewards=rewards,
-        dones=torch.ones(batch_size, device=device, dtype=torch.bool),
-        group_ids=trajectory.group_ids,
+        group_ids=torch.tensor(
+            [row.prompt_index for row in sample_rows],
+            dtype=torch.long,
+            device=device,
+        ),
         extras={},
         context=dict(trajectory.context),
-        videos=None,
-        prompts=[row.prompt for row in sample_rows],
         trajectory=trajectory,
-        training_view=build_training_view(trajectory, primary_segment="denoise"),
     )
 
 

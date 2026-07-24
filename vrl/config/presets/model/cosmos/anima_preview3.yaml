@@ -3,6 +3,8 @@
 # only and does not download artifacts.
 model:
   family: cosmos-predict2-anima
+  executor:
+    max_sequence_length: 128
   path: circlestone-labs/Anima
   revision: 53eec3898af698b2cf2a11379021fc9c5465d228
   transformer_file: split_files/diffusion_models/anima-preview3-base.safetensors

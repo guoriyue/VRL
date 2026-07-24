@@ -27,69 +27,39 @@ Upstream decode:   https://github.com/FoundationVision/LlamaGen/blob/main/autore
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass
 from typing import Any
 
 import torch
 import torch.nn as nn
 
+from vrl.models.checkpoint_identity import validate_checkpoint_source_member
 from vrl.models.dtypes import resolve_torch_dtype
-from vrl.models.interfaces import ReplayRequest, ReplayResult, ReplaySegmentResult
+from vrl.models.families.llamagen.config import (
+    LLAMAGEN_CAPTION_DIM,
+    LLAMAGEN_CAPTION_TOKEN_NUM,
+    LLAMAGEN_DOWNSAMPLE_SIZE,
+    LLAMAGEN_GPT_CKPT,
+    LLAMAGEN_HF_REPO,
+    LLAMAGEN_IMAGE_TOKEN_NUM,
+    LLAMAGEN_T5_PATH,
+    LLAMAGEN_VQ_CKPT,
+    LlamaGenConfig,
+)
+from vrl.models.interfaces import (
+    ReplayRequest,
+    ReplayResult,
+    ReplaySegmentResult,
+    require_replay_segments,
+    require_zero_replay_timestep,
+)
 from vrl.models.steps.token.base import ARModelBase, ARReplayRolloutStubs
+from vrl.models.steps.token.lora import install_token_lora_adapter
 from vrl.utils.logging import init_logger
 
 logger = init_logger(__name__)
 
-# LlamaGen t2i_XL_stage1_256 constants (from upstream sample_t2i.py defaults
-# and the GPT-XL/VQ-16 factory args in the vendored files).
-LLAMAGEN_IMAGE_TOKEN_NUM = 256  # 16 x 16 latent grid per 256 px image
+# LlamaGen t2i_XL_stage1_256 model architecture constant.
 LLAMAGEN_IMAGE_VOCAB_SIZE = 16_384  # VQ-16 codebook size == GPT vocab size
-LLAMAGEN_DOWNSAMPLE_SIZE = 16  # VQ-16 spatial downsample factor
-LLAMAGEN_CAPTION_TOKEN_NUM = 120  # fixed T5 caption prefix length (cls_token_num)
-LLAMAGEN_CAPTION_DIM = 2048  # flan-t5-xl d_model
-LLAMAGEN_HF_REPO = "peizesun/llamagen_t2i"
-LLAMAGEN_GPT_CKPT = "t2i_XL_stage1_256.pt"
-LLAMAGEN_VQ_CKPT = "vq_ds16_t2i.pt"
-LLAMAGEN_T5_PATH = "google/flan-t5-xl"
-
-
-@dataclass(slots=True)
-class LlamaGenConfig:
-    """Hyper-parameters for the LlamaGen wrapper.
-
-    Defaults target ``t2i_XL_stage1_256.pt`` (775M GPT-XL, 256 px stage1).
-    """
-
-    model_path: str = LLAMAGEN_HF_REPO
-    revision: str | None = None
-    gpt_ckpt: str = LLAMAGEN_GPT_CKPT
-    vq_ckpt: str = LLAMAGEN_VQ_CKPT
-    gpt_model: str = "GPT-XL"
-    t5_path: str = LLAMAGEN_T5_PATH
-    t5_revision: str | None = None
-    dtype: str = "bfloat16"
-    device: str = "cuda"
-
-    # LoRA — attaches to the vendored GPT's fused attention projections.
-    use_lora: bool = True
-    lora_rank: int = 32
-    lora_alpha: int = 64
-    lora_dropout: float = 0.0
-    lora_target_modules: tuple[str, ...] = ("wqkv", "wo")
-    lora_init: str = "gaussian"
-
-    # Generation defaults — used by the AR runtime runner. Upstream demo uses
-    # cfg_scale=7.5, top_k=1000; top_k defaults to 0 (off) here so the rollout
-    # behavior distribution stays closest to the conditional policy GRPO scores.
-    guidance_scale: float = 7.5
-    temperature: float = 1.0
-    top_k: int = 0
-    top_p: float = 1.0
-    image_token_num: int = LLAMAGEN_IMAGE_TOKEN_NUM
-    cls_token_num: int = LLAMAGEN_CAPTION_TOKEN_NUM
-    caption_dim: int = LLAMAGEN_CAPTION_DIM
-    downsample_size: int = LLAMAGEN_DOWNSAMPLE_SIZE
-    codebook_embed_dim: int = 8
 
 
 class LlamaGenModel(ARModelBase):
@@ -216,20 +186,7 @@ class LlamaGenModel(ARModelBase):
         return next(self._gpt_trunk().parameters()).dtype
 
     def _apply_lora(self, gpt: Any) -> Any:
-        try:
-            from peft import LoraConfig, get_peft_model
-        except ImportError as e:  # pragma: no cover
-            raise ImportError("PEFT is required for use_lora=True. pip install peft>=0.12") from e
-
-        lora_cfg = LoraConfig(
-            r=self.config.lora_rank,
-            lora_alpha=self.config.lora_alpha,
-            lora_dropout=self.config.lora_dropout,
-            init_lora_weights=self.config.lora_init,
-            target_modules=list(self.config.lora_target_modules),
-            bias="none",
-        )
-        gpt = get_peft_model(gpt, lora_cfg)
+        gpt = install_token_lora_adapter(gpt, self.config)
         logger.info(
             "Applied LoRA (rank=%d, alpha=%d) to LlamaGen GPT targets %s.",
             self.config.lora_rank,
@@ -388,9 +345,14 @@ class LlamaGenModel(ARModelBase):
         Reads T5 prompt ids/mask and sampled image tokens from
         ``batch.trajectory``, re-encodes the caption with the frozen T5 (so
         the conditioning is identical to rollout), and recomputes logits under
-        the current model. AR has no denoising step: ``timestep_idx`` ignored.
+        the current model. AR has no denoising step, so only index zero is valid.
         """
-        del request, timestep_idx
+        require_zero_replay_timestep(timestep_idx, owner=type(self).__name__)
+        require_replay_segments(
+            request,
+            ("image_tokens",),
+            owner=type(self).__name__,
+        )
         from vrl.trajectory import TrajectoryResolver
 
         resolver = TrajectoryResolver.from_batch(batch)
@@ -483,6 +445,10 @@ def _resolve_checkpoint_file(
     revision: str | None,
 ) -> str:
     """Local dir join or HF hub download for one LlamaGen ``.pt`` file."""
+    filename = validate_checkpoint_source_member(
+        filename,
+        field_name="LlamaGen checkpoint filename",
+    )
     if os.path.isdir(model_path):
         path = os.path.join(model_path, filename)
         if not os.path.exists(path):

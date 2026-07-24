@@ -17,7 +17,7 @@ from vrl.rollouts.batch import RolloutBatch
 from vrl.rollouts.evaluators.token.multi_segment_token_logprob import (
     MultiSegmentTokenLogProbEvaluator,
 )
-from vrl.trajectory import build_ar_multisegment_trajectory, build_training_view
+from vrl.trajectory import build_ar_multisegment_trajectory
 
 _PRECISION = RolePrecision(
     dtype="fp32",
@@ -32,7 +32,6 @@ def _sample_rows() -> list[GenerationSampleRow]:
             prompt_index=0,
             sample_index=0,
             prompt="draw a chart",
-            prompt_id="p0",
             group_id="g0",
             sample_id="s0",
             trajectory_id="t0",
@@ -42,7 +41,6 @@ def _sample_rows() -> list[GenerationSampleRow]:
             prompt_index=0,
             sample_index=1,
             prompt="draw a chart",
-            prompt_id="p0",
             group_id="g0",
             sample_id="s1",
             trajectory_id="t1",
@@ -82,7 +80,6 @@ def _trajectory_batch(context: dict | None = None) -> RolloutBatch:
         task="ar_t2i_r1",
         inputs=["draw a chart"],
         samples_per_prompt=2,
-        return_artifacts={"output", "trajectory"},
     )
     trajectory = build_ar_multisegment_trajectory(
         request=request,
@@ -105,23 +102,14 @@ def _trajectory_batch(context: dict | None = None) -> RolloutBatch:
                 modality="image",
             ),
         },
-        decoded_outputs={
-            "initial_image": torch.zeros(2, 3, 4, 4),
-            "final_image": torch.ones(2, 3, 4, 4),
-            "selfcheck": selfcheck_ids,
-        },
         primary_segment="final_image",
         context=context or {},
     )
     return RolloutBatch(
-        observations=torch.ones(2, 1, 3, dtype=torch.long),
-        actions=final_ids,
         rewards=torch.zeros(2),
-        dones=torch.ones(2, dtype=torch.bool),
         group_ids=torch.tensor([0, 0]),
         extras={},
         trajectory=trajectory,
-        training_view=build_training_view(trajectory, primary_segment="final_image"),
     )
 
 
@@ -185,6 +173,7 @@ def test_evaluator_can_replay_text_segment_without_using_image_path() -> None:
     signals = evaluator.evaluate(model, batch)
 
     assert model.calls == [("selfcheck_text", "text")]
+    assert signals.primary_segment == "selfcheck_text"
     assert signals.segments["selfcheck_text"].log_prob.shape == (2, 2)
 
 
@@ -210,6 +199,7 @@ def test_evaluator_applies_rollout_temperature_to_all_segments() -> None:
         .squeeze(-1)
     )
     assert torch.allclose(signals.segments["selfcheck_text"].log_prob, expected, atol=1e-6)
+    assert signals.context == {"temperature": 0.5}
 
 
 def test_evaluator_reads_r1_segments_from_canonical_trajectory_fields() -> None:
@@ -227,3 +217,5 @@ def test_evaluator_reads_r1_segments_from_canonical_trajectory_fields() -> None:
     assert signals.primary.log_prob.shape == (2, 3)
     assert signals.segments["selfcheck_text"].log_prob.shape == (2, 2)
     assert signals.segments["final_image"].old_log_prob.shape == (2, 3)
+    assert "primary_segment" not in signals.context
+    assert "segment_order" not in signals.context
