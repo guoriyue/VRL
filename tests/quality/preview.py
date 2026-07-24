@@ -31,12 +31,14 @@ def build_preview_request(
     # every explicit numeric chunk size from the experiment YAML.
     if configured_chunk_size == "auto":
         overrides["samples_per_chunk"] = 1
+    # Preserve the current precedence: an explicit seed in the example's
+    # request_overrides wins; otherwise the deterministic preview seed is used.
+    overrides.setdefault("seed", seed)
     return builder.build(
         [example.generation_input()],
         group_size=1,
         metadata=example.reward_metadata(),
         request_overrides=overrides,
-        seed=seed,
     ).request
 
 

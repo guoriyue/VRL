@@ -861,9 +861,6 @@ class FSDPStrategy(_TrainingStateParking, Strategy):
 
         load_full_optimizer_state_dict(model, optimizer, state)
 
-    def validate_training_state_parking(self) -> None:
-        return None
-
     def park_training_state(self, state: TrainingMemoryState) -> None:
         """Park this rank's shards, then agree with every peer before returning.
 
@@ -896,9 +893,6 @@ class FSDPStrategy(_TrainingStateParking, Strategy):
             raise failure
         if failure is not None:
             raise failure
-
-    def restore_training_state(self, state: TrainingMemoryState) -> None:
-        _TrainingStateParking.restore_training_state(self, state)
 
     def all_ranks_succeeded(self, succeeded: bool) -> bool:
         """Reduce a per-rank success flag to one answer shared by every rank."""
@@ -998,8 +992,8 @@ class DDPStrategy(Strategy):
         # unwrapped state_dict() IS the full policy-facing state — same key space as
         # inner.named_parameters(), which select_trainable_state() checks against.
         #
-        # Do NOT route this through the FSDP gather_full_state_dict (DCP
-        # get_model_state_dict full_state_dict=True): at world_size>1 its distributed
+        # Do NOT route this through the FSDP DCP full-state gather
+        # (get_model_state_dict full_state_dict=True): at world_size>1 its distributed
         # all-gather path drops the PEFT LoRA keys for a *replicated* (non-sharded)
         # module, so select_trainable_state() then reports every lora_A/lora_B param
         # "missing" and the first weight sync raises. The ws=1 CPU test never hit that

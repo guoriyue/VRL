@@ -143,14 +143,14 @@ class PhaseTimer:
     """Accumulating phase timer with optional CUDA sync.
 
     Each ``time(name)`` call returns a context manager whose wall time is
-    added to ``self.times[name]``. When ``sync=True`` and CUDA is available,
+    added to ``self.times[name]``. When CUDA is available,
     ``torch.cuda.synchronize()`` is called on both ends so async GPU kernels
     are captured.
     """
 
-    def __init__(self, enabled: bool = False, sync: bool = True) -> None:
+    def __init__(self, enabled: bool = False) -> None:
         self.enabled = enabled
-        self.sync = sync and torch.cuda.is_available()
+        self.sync = torch.cuda.is_available()
         self.times: dict[str, float] = defaultdict(float)
         self.events: list[tuple[str, float, float]] = []
 

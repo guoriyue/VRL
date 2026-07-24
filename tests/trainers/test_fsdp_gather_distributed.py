@@ -25,12 +25,12 @@ from torch import nn
 
 peft = pytest.importorskip("peft")
 
+from tests.trainers._state_dict_helpers import gather_full_state_dict  # noqa: E402
 from vrl.trainers.distributed import DistributedTrainingContext  # noqa: E402
 from vrl.trainers.fsdp import (  # noqa: E402
     apply_fsdp,
     build_fsdp_mesh,
     gather_checkpoint_state_dict,
-    gather_full_state_dict,
     load_checkpoint_state_dict,
     mixed_precision_policy,
 )

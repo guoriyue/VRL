@@ -51,7 +51,6 @@ class _RequestBuilder:
         *,
         metadata: dict[str, Any] | None = None,
         request_overrides: dict[str, Any] | None = None,
-        seed: int | None = None,
         runtime_debug: bool = False,
         policy_version: int | None = None,
     ) -> CollectorRequest:
@@ -61,7 +60,7 @@ class _RequestBuilder:
             task="collect",
             inputs=list(inputs),
             samples_per_prompt=group_size,
-            sampling={"seed": seed},
+            sampling=dict(request_overrides or {}),
             metadata={"source": "collector-test"},
             policy_version=policy_version,
         )
@@ -274,7 +273,13 @@ def test_collector_routes_request_through_runtime_reward_and_trajectory_batch() 
     )
 
     batch = asyncio.run(
-        collect_scored(collector, ["p0", "p1"], group_size=2, seed=5, policy_version=7),
+        collect_scored(
+            collector,
+            ["p0", "p1"],
+            group_size=2,
+            request_overrides={"seed": 5},
+            policy_version=7,
+        ),
     )
 
     assert len(runtime.requests) == 1

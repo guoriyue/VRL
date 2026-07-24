@@ -22,7 +22,6 @@ def test_inspect_cluster_splits_driver_vs_non_driver(monkeypatch):
     )
     assert topo.driver_gpus == 0.0
     assert topo.non_driver_gpus == 3.0
-    assert topo.has_non_driver_gpus is True
 
 
 def test_inspect_cluster_single_node_has_no_non_driver_gpus(monkeypatch):
@@ -30,7 +29,6 @@ def test_inspect_cluster_single_node_has_no_non_driver_gpus(monkeypatch):
     topo = dependencies.inspect_cluster(_ray([_node("10.0.0.1", 1.0)]))
     assert topo.driver_gpus == 1.0
     assert topo.non_driver_gpus == 0.0
-    assert topo.has_non_driver_gpus is False
 
 
 def test_inspect_cluster_skips_dead_nodes(monkeypatch):
@@ -39,7 +37,6 @@ def test_inspect_cluster_skips_dead_nodes(monkeypatch):
         _ray([_node("10.0.0.1", 0.0), _node("10.0.0.2", 1.0, alive=False)]),
     )
     assert topo.non_driver_gpus == 0.0
-    assert topo.has_non_driver_gpus is False
 
 
 def test_inspect_cluster_accepts_explicit_driver_ip():

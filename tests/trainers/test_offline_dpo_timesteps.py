@@ -50,7 +50,6 @@ def _noop_encode_text(captions):  # pragma: no cover
 def _make_trainer(
     scheduler_timesteps,
     *,
-    timestep_subset=None,
     float32_precision: str = "ieee",
 ) -> OfflineDPOTrainer:
     scheduler = SimpleNamespace(
@@ -59,7 +58,6 @@ def _make_trainer(
     )
     cfg = OfflineDPOTrainerConfig(
         prediction_type="epsilon",
-        timestep_subset=timestep_subset,
     )
     model = torch.nn.Linear(4, 4)
     model.precision = RolePrecision(
@@ -88,13 +86,6 @@ class TestSampleTimesteps:
         ts = trainer._sample_timesteps(8)
         assert ts.shape == (8,)
         assert (ts >= 0).all() and (ts < 20).all()
-
-    def test_explicit_subset_takes_precedence(self) -> None:
-        # Subset wins even if scheduler has its own timesteps.
-        """Checks explicit subset takes precedence."""
-        trainer = _make_trainer(torch.arange(50), timestep_subset=(5, 10))
-        ts = trainer._sample_timesteps(20)
-        assert (ts >= 5).all() and (ts < 10).all()
 
     def test_empty_timesteps_raises(self) -> None:
         """Red-line: do not silently fall back to num_train_timesteps."""

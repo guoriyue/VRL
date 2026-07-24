@@ -194,7 +194,7 @@ def test_unknown_replay_granularity_fails_fast() -> None:
     [
         TokenLogProbEvaluator(),
         ContinuousTokenLogProbEvaluator(),
-        MultiSegmentTokenLogProbEvaluator(),
+        MultiSegmentTokenLogProbEvaluator(enabled_segments=()),
     ],
 )
 def test_token_evaluators_replay_multi_token_trajectories_once(evaluator: object) -> None:

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Mapping
+from collections.abc import Iterable
 from typing import Any
 
 import torch
@@ -26,14 +26,8 @@ class MultiSegmentTokenLogProbEvaluator(Evaluator):
 
     replay_granularity = "trajectory"
 
-    def __init__(
-        self,
-        *,
-        enabled_segments: Iterable[str] | Mapping[str, bool] | None = None,
-        mask_key: str = "token_mask",
-    ) -> None:
+    def __init__(self, *, enabled_segments: Iterable[str]) -> None:
         self.enabled_segments = enabled_segments
-        self.mask_key = mask_key
 
     def evaluate(
         self,
@@ -57,7 +51,7 @@ class MultiSegmentTokenLogProbEvaluator(Evaluator):
                 "MultiSegmentTokenLogProbEvaluator requires trajectory segments",
             )
 
-        enabled_names = self._enabled_segment_names(segments)
+        enabled_names = [name for name in self.enabled_segments if name in segments]
         if not enabled_names:
             raise RuntimeError("no enabled R1 segments to evaluate")
 
@@ -99,12 +93,12 @@ class MultiSegmentTokenLogProbEvaluator(Evaluator):
                 segment_name=name,
                 log_prob=new_lp,
                 old_log_prob=self._segment_tensor(segment, "token_log_probs").detach(),
-                mask=self._segment_tensor(segment, self.mask_key).to(
+                mask=self._segment_tensor(segment, "token_mask").to(
                     dtype=new_lp.dtype,
                     device=new_lp.device,
                 ),
                 ref_log_prob=ref_lp,
-                mask_key=self.mask_key,
+                mask_key="token_mask",
             )
 
         primary_name = self._primary_segment_name(batch, enabled_names)
@@ -114,21 +108,6 @@ class MultiSegmentTokenLogProbEvaluator(Evaluator):
             context=signal_builder.context,
             primary_segment=primary_name,
         )
-
-    def _enabled_segment_names(self, segments: dict[str, Any]) -> list[str]:
-        if self.enabled_segments is None:
-            return [
-                name
-                for name, segment in segments.items()
-                if bool(segment.get("enabled", segment.get("train", True)))
-            ]
-        if isinstance(self.enabled_segments, Mapping):
-            return [
-                name
-                for name, enabled in self.enabled_segments.items()
-                if enabled and name in segments
-            ]
-        return [name for name in self.enabled_segments if name in segments]
 
     def _compute_segment_logprobs(
         self,
@@ -157,26 +136,12 @@ class MultiSegmentTokenLogProbEvaluator(Evaluator):
 
     @staticmethod
     def _trajectory_segment_payload(segment: Any) -> dict[str, Any]:
-        payload: dict[str, Any] = {
+        return {
             "name": segment.name,
             "token_ids": role_tensor(segment, "action").value,
             "token_log_probs": role_tensor(segment, "old_log_prob").value,
             "token_mask": role_tensor(segment, "mask").value,
-            "visual": bool(segment.metadata.get("visual", segment.modality == "image")),
-            "cfg": bool(segment.metadata.get("cfg", False)),
-            "train": bool(segment.metadata.get("train", segment.trainable)),
-            "modality": segment.modality,
         }
-        for key in (
-            "prompt_embeds",
-            "attention_mask",
-            "prompt_attention_mask",
-            "prompt_input_ids",
-        ):
-            tensor = segment.tensors.get(key)
-            if tensor is not None:
-                payload[key] = tensor.value
-        return payload
 
     @staticmethod
     def _extract_logprobs(
@@ -195,10 +160,6 @@ class MultiSegmentTokenLogProbEvaluator(Evaluator):
     @staticmethod
     def _segment_tensor(segment: dict[str, Any], key: str) -> torch.Tensor:
         value = segment.get(key)
-        if value is None:
-            replay = segment.get("replay")
-            if isinstance(replay, dict):
-                value = replay.get(key)
         if value is None:
             name = segment.get("name", "<unknown>")
             raise RuntimeError(f"R1 segment {name!r} is missing tensor field {key!r}")

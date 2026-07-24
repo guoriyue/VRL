@@ -38,9 +38,6 @@ class TokenLogProbEvaluator(Evaluator):
 
     replay_granularity = "trajectory"
 
-    def __init__(self, mask_key: str = "token_mask") -> None:
-        self.mask_key = mask_key
-
     def evaluate(
         self,
         model: ReplayModel,
@@ -97,7 +94,7 @@ class TokenLogProbEvaluator(Evaluator):
             log_prob=new_lp,
             old_log_prob=None,
             ref_log_prob=ref_lp,
-            mask_key=self.mask_key,
+            mask_key="token_mask",
         )
 
     # ------------------------------------------------------------------

@@ -224,48 +224,6 @@ def apply_fsdp(
     return handle
 
 
-def gather_full_state_dict(module: nn.Module) -> dict[str, Any]:
-    """Gather a sharded module's params into a full CPU state dict ON EVERY RANK.
-
-    FSDP2 holds each parameter as a DTensor shard; checkpoint and rollout sync
-    both need ordinary full tensors in the unwrapped, policy-facing key space.
-    ``get_model_state_dict(full_state_dict=True)`` all-gathers + materializes each
-    param to a full tensor, and (verified on a single CPU rank) returns plain
-    ``torch.Tensor`` leaves with no ``module.`` / ``_orig_mod.`` / FSDP shard-key
-    leakage.
-
-    ``cpu_offload`` MUST stay False: with ``cpu_offload=True`` DCP returns the full
-    state ONLY on rank0 and an EMPTY dict on every other rank (a rank0-only
-    checkpoint optimization). That is wrong for the symmetric colocated model, where
-    EACH rank pushes its gathered weights to its own colocated rollout — non-rank0
-    would get nothing and ``select_trainable_state`` then reports every LoRA param
-    "missing" (reproduced on a real 2x1 NCCL run; the world_size=1 CPU test never
-    hit it because the gather is a no-op there). We move the full tensors to CPU
-    ourselves below, so each rank still ends with plain CPU tensors. The first
-    version is rank-replicated full state, not sharded checkpoints
-    (``SPRINT_multi_gpu_training.md`` §8).
-    """
-
-    from torch.distributed.checkpoint.state_dict import (
-        StateDictOptions,
-        get_model_state_dict,
-    )
-    from torch.distributed.tensor import DTensor
-
-    state = get_model_state_dict(
-        module,
-        options=StateDictOptions(full_state_dict=True, cpu_offload=False),
-    )
-    # full_state_dict=True already all-gathers each param to a full tensor;
-    # defensively materialize any DTensor leaf (no-op gather in a real single-mesh
-    # run) so the contract — plain full CPU tensors — holds regardless of how many
-    # meshes the process has built.
-    return {
-        key: (value.full_tensor() if isinstance(value, DTensor) else value).detach().cpu()
-        for key, value in state.items()
-    }
-
-
 def gather_rollout_state_dict(module: nn.Module) -> dict[str, Any]:
     """Gather requires-grad parameters for rollout sync on every rank.
 
@@ -326,6 +284,15 @@ def gather_trainable_state_dict(
     selecting the ``requires_grad`` parameter keys, then all-gather only those
     DTensor leaves. Buffers are deliberately excluded: this is the mutable
     trainable-state contract, not a standalone model checkpoint.
+
+    ``cpu_offload`` MUST stay False: with ``cpu_offload=True`` DCP returns the
+    gathered state ONLY on rank0 and an EMPTY dict on every other rank (a
+    rank0-only checkpoint optimization). That is wrong for the symmetric colocated
+    model, where EACH rank pushes its gathered weights to its own colocated
+    rollout — non-rank0 would get nothing and ``select_trainable_state`` then
+    reports every LoRA param "missing" (reproduced on a real 2x1 NCCL run; the
+    world_size=1 CPU test never hit it because the gather is a no-op there). We
+    move the selected tensors to CPU ourselves, so each rank keeps plain CPU tensors.
     """
 
     from torch.distributed.checkpoint.state_dict import (
@@ -559,8 +526,8 @@ def gather_full_optimizer_state_dict(
     FSDP2 optimizer state (Adam moments) lives as DTensor shards keyed by the
     optimizer's positional param ids; ``get_optimizer_state_dict`` re-keys by
     parameter FQN (checkpoint-stable across runs) and, with
-    ``full_state_dict=True``, all-gathers each moment to a full tensor. Same
-    ``cpu_offload=False`` rationale as ``gather_full_state_dict``: with offload
+    ``full_state_dict=True``, all-gathers each moment to a full tensor. The
+    every-rank ``cpu_offload=False`` rationale applies here too: with offload
     DCP returns the state only on rank0 and empties elsewhere, which breaks
     every-rank symmetric callers; we move to CPU ourselves. Checkpoint export
     passes ``rank0_only=True`` so every rank joins the collectives while only

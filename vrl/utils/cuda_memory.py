@@ -192,20 +192,15 @@ def empty_cuda_cache() -> None:
         return
 
 
-def release_cuda_memory(
-    *,
-    gc_collect: bool = False,
-    ipc_collect: bool = False,
-) -> None:
+def release_cuda_memory(*, ipc_collect: bool = False) -> None:
     """Release best-effort CUDA memory after large runtime objects are dropped."""
 
-    if gc_collect:
-        try:
-            import gc
+    try:
+        import gc
 
-            gc.collect()
-        except Exception:
-            pass
+        gc.collect()
+    except Exception:
+        pass
 
     try:
         import torch

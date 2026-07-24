@@ -20,6 +20,7 @@ import pytest
 import torch
 from torch import nn
 
+from tests.trainers._state_dict_helpers import gather_full_state_dict
 from vrl.config.loading import load_config
 from vrl.config.schema import FSDPConfig, RootConfig, parse_config
 from vrl.models.interfaces.runtime import register_checkpoint_owned_state
@@ -28,7 +29,6 @@ from vrl.trainers.fsdp import (
     apply_fsdp,
     build_fsdp_mesh,
     gather_checkpoint_state_dict,
-    gather_full_state_dict,
     init_training_process_group,
     iter_blocks,
     load_checkpoint_state_dict,

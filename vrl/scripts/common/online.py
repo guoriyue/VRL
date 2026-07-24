@@ -225,10 +225,10 @@ def _require_supported_online_strategy(context: DistributedTrainingContext) -> N
     ``ddp`` replicates the full module and all-reduces gradients; ``fsdp`` shards
     params/grads/optimizer as DTensor and the per-layer all-gather / reduce-scatter
     crosses ranks instead. The export seam already gathers a full, unwrapped,
-    policy-facing state on every rank (FSDPStrategy.export_rollout_state /
-    gather_full_state_dict), so rollout weight sync and checkpointing are identical
-    to single-process from the recipe's point of view. Only a genuinely unsupported
-    strategy reaches the raise below.
+    policy-facing state on every rank (FSDPStrategy.export_rollout_state, via DCP
+    get_model_state_dict(full_state_dict=True)), so rollout weight sync and
+    checkpointing are identical to single-process from the recipe's point of view.
+    Only a genuinely unsupported strategy reaches the raise below.
     """
 
     if context.strategy not in {"single_process", "ddp", "fsdp"}:

@@ -168,7 +168,6 @@ def test_evaluator_can_replay_text_segment_without_using_image_path() -> None:
     """Checks evaluator can replay text segment without using image path."""
     batch = _trajectory_batch()
     assert batch.trajectory is not None
-    batch.trajectory.segments["selfcheck_text"].metadata["train"] = True
     model = _SegmentReplayModel()
     evaluator = MultiSegmentTokenLogProbEvaluator(
         enabled_segments=("selfcheck_text",),

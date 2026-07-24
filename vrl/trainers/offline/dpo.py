@@ -57,9 +57,6 @@ class OfflineDPOTrainerConfig:
     prediction_type: str = field(
         default="flow_matching"
     )  # "epsilon" | "v_prediction" | "flow_matching"
-    timestep_subset: tuple[int, int] | None = field(
-        default=None
-    )  # restrict sampling, e.g. (0, 200)
 
 
 @dataclass(slots=True)
@@ -201,23 +198,19 @@ class OfflineDPOTrainer:
     # ------------------------------------------------------------------
 
     def _sample_timesteps(self, bsz: int) -> torch.Tensor:
-        if self.config.timestep_subset is not None:
-            lo, hi = self.config.timestep_subset
-        else:
-            # Resolve the timestep range explicitly. Silently using
-            # ``num_train_timesteps`` when ``scheduler.timesteps`` is empty
-            # would mask the common bug of forgetting to call
-            # ``scheduler.set_timesteps(...)`` before training, which can
-            # silently change the sampling distribution.
-            ts = getattr(self.noise_scheduler, "timesteps", None)
-            if ts is None or len(ts) == 0:
-                raise RuntimeError(
-                    "noise_scheduler.timesteps is empty/missing. Either "
-                    "call scheduler.set_timesteps(num_inference_steps) "
-                    "before training, or pass an explicit "
-                    "``OfflineDPOTrainerConfig.timestep_subset=(lo, hi)``."
-                )
-            lo, hi = 0, len(ts)
+        # Resolve the timestep range explicitly. Silently using
+        # ``num_train_timesteps`` when ``scheduler.timesteps`` is empty
+        # would mask the common bug of forgetting to call
+        # ``scheduler.set_timesteps(...)`` before training, which can
+        # silently change the sampling distribution.
+        ts = getattr(self.noise_scheduler, "timesteps", None)
+        if ts is None or len(ts) == 0:
+            raise RuntimeError(
+                "noise_scheduler.timesteps is empty/missing. "
+                "Call scheduler.set_timesteps(num_inference_steps) "
+                "before training."
+            )
+        lo, hi = 0, len(ts)
         return torch.randint(lo, hi, (bsz,), device=self.device).long()
 
     def _inject_noise(

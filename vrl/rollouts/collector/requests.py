@@ -50,7 +50,6 @@ class GenerationRequestBuilder:
         *,
         metadata: Mapping[str, Any] | None = None,
         request_overrides: Mapping[str, Any] | None = None,
-        seed: int | None = None,
         runtime_debug: bool = False,
         policy_version: int | None = None,
     ) -> CollectorRequest:
@@ -58,8 +57,6 @@ class GenerationRequestBuilder:
             str(field_name): list(value) if isinstance(value, tuple) else value
             for field_name, value in self.config.generation_sampling().items()
         }
-        if seed is not None:
-            sampling["seed"] = seed
         sampling.update(dict(request_overrides or {}))
 
         group_metadata = dict(metadata or {})

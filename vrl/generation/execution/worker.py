@@ -578,7 +578,7 @@ class GenerationWorkerCore:
             if error_traceback is not None:
                 traceback.clear_frames(error_traceback)
                 error.__traceback__ = None
-            release_cuda_memory(gc_collect=True)
+            release_cuda_memory()
             return PipelinedRequestOutOfMemory(
                 request_id=request.request_id,
                 worker_id=self.worker_id,

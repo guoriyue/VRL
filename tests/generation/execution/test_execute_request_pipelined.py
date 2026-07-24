@@ -135,7 +135,7 @@ def test_cuda_oom_clears_worker_state_and_returns_typed_retry(monkeypatch) -> No
         worker_id="w0",
         error="CUDA out of memory while pipelining request",
     )
-    assert cleanup_calls == [{"gc_collect": True}]
+    assert cleanup_calls == [{}]
 
 
 def test_non_oom_pipeline_error_propagates_without_cleanup(monkeypatch) -> None:

@@ -7,7 +7,7 @@ from dataclasses import dataclass, field, replace
 from typing import Any, Literal
 
 from vrl.config.reward_inference import reward_inference_configs_from_cfg
-from vrl.utils.config import cfg_get
+from vrl.utils.config import cfg_get, to_builtin
 
 
 @dataclass(frozen=True, slots=True)
@@ -435,14 +435,10 @@ def _validate_fsdp_trainer_disjoint(
         )
 
 
-def trainer_torch_device(
-    resolved: ResolvedDistributedResources,
-    *,
-    actual_trainer_devices: tuple[int, ...] | list[int] | None = None,
-) -> str:
+def trainer_torch_device(resolved: ResolvedDistributedResources) -> str:
     """Return the torch device string the single-process trainer should use."""
 
-    devices = tuple(actual_trainer_devices or resolved.trainer_devices)
+    devices = tuple(resolved.trainer_devices)
     if not devices:
         return "cpu"
     return f"cuda:{int(devices[0])}"
@@ -504,11 +500,7 @@ def reward_torch_device(
     return trainer_torch_device(resolved)
 
 
-def format_distributed_resource_plan(
-    resolved: ResolvedDistributedResources,
-    *,
-    actual_placement: Any | None = None,
-) -> str:
+def format_distributed_resource_plan(resolved: ResolvedDistributedResources) -> str:
     """Format a compact resource plan for logs and errors."""
 
     parts = [
@@ -534,8 +526,6 @@ def format_distributed_resource_plan(
         f"{resolved.lifecycle.handoff.release_trainer_before_reward}"
         f",reward_after_score:{resolved.lifecycle.handoff.release_reward_after_score}",
     ]
-    if actual_placement is not None:
-        parts.append(f"actual={actual_placement}")
     return "Distributed resources: " + " ".join(parts)
 
 
@@ -1171,7 +1161,7 @@ def _parse_rollout_gpu_pool(
 
     pool = "auto"
     if new_pool is not _MISSING:
-        pool = str(_to_plain(new_pool)).strip().lower()
+        pool = str(to_builtin(new_pool)).strip().lower()
         if pool not in {"auto", "trainer", "dedicated"}:
             raise ValueError(
                 "distributed.resources.rollout.gpu_pool must be 'auto', 'trainer', "
@@ -1197,7 +1187,7 @@ def _parse_reward_gpu_pool(reward_node: Any) -> str:
             "(auto|rollout|dedicated) or the legacy share_with_rollout, not both",
         )
     if gpu_pool is not _MISSING:
-        value = str(_to_plain(gpu_pool)).strip().lower()
+        value = str(to_builtin(gpu_pool)).strip().lower()
         if value not in {"auto", "rollout", "dedicated"}:
             raise ValueError(
                 "distributed.resources.reward.gpu_pool must be 'auto', 'rollout', "
@@ -1264,7 +1254,7 @@ def _reject_removed_distributed_keys(rollout_runtime: Any, reward_runtime: Any) 
 
 
 def _parse_devices(value: Any) -> list[int] | str:
-    value = _to_plain(value)
+    value = to_builtin(value)
     if _is_auto(value):
         return "auto"
     if value is None:
@@ -1286,7 +1276,7 @@ def _parse_devices(value: Any) -> list[int] | str:
 
 
 def _parse_num_gpus(value: Any, *, field_name: str) -> int | str | None:
-    value = _to_plain(value)
+    value = to_builtin(value)
     if _is_auto(value):
         return "auto"
     if value is None:
@@ -1304,7 +1294,7 @@ def _parse_num_workers(
     role: str = "rollout",
     allow_zero: bool = False,
 ) -> int | str:
-    value = _to_plain(value)
+    value = to_builtin(value)
     if _is_auto(value):
         return "auto"
     try:
@@ -1362,16 +1352,6 @@ def _auto_visible_cuda_devices() -> tuple[int, ...]:
 
 def _is_auto(value: Any) -> bool:
     return isinstance(value, str) and value.strip().lower() == "auto"
-
-
-def _to_plain(value: Any) -> Any:
-    try:
-        from omegaconf import DictConfig, ListConfig, OmegaConf
-    except Exception:
-        return value
-    if isinstance(value, (DictConfig, ListConfig)):
-        return OmegaConf.to_container(value, resolve=True)
-    return value
 
 
 __all__ = [

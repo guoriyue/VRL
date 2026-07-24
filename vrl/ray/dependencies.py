@@ -41,20 +41,13 @@ class ClusterTopology:
     """Live Ray-cluster GPU layout: GPUs on the driver/head node vs on the other
     (worker) nodes.
 
-    The single basis for the single-node-vs-multi-node decision: cross_node
-    auto-detect (``run_online_recipe``) and the cross-node preflight
-    (``vrl.ray.placement.cross_node_preflight``) both read it instead of each
+    The single basis for the single-node-vs-multi-node decision: the cross-node
+    preflight (``vrl.ray.placement.cross_node_preflight``) reads it instead of
     re-walking ``ray.nodes()``.
     """
 
     driver_gpus: float
     non_driver_gpus: float
-
-    @property
-    def has_non_driver_gpus(self) -> bool:
-        """GPUs exist off the driver node -- i.e. a multi-node rollout topology."""
-
-        return self.non_driver_gpus > 0
 
 
 def inspect_cluster(ray: Any, *, driver_node_ip: str | None = None) -> ClusterTopology:

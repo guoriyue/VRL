@@ -31,7 +31,7 @@ def test_engine_request_builder_reads_resolved_request_sampling() -> None:
             ),
         ],
         3,
-        seed=7,
+        request_overrides={"seed": 7},
         policy_version=11,
         metadata={"difficulty": "easy", "target_text": "HELLO"},
     )

@@ -121,12 +121,7 @@ def require_compile_checkpointing_compatible(cfg: Any) -> None:
         )
 
 
-def enable_transformer_gradient_checkpointing(
-    bundle: Any,
-    cfg: Any,
-    *,
-    require_method: bool = True,
-) -> None:
+def enable_transformer_gradient_checkpointing(bundle: Any, cfg: Any) -> None:
     """Enable transformer gradient checkpointing while preserving family policy.
 
     Mode is off | full | selective (see ``_normalize_gradient_checkpointing``).
@@ -147,11 +142,9 @@ def enable_transformer_gradient_checkpointing(
     for name, module in trainable_modules.items():
         enable = getattr(module, "enable_gradient_checkpointing", None)
         if enable is None:
-            if require_method:
-                raise AttributeError(
-                    f"trainable module {name!r} does not expose enable_gradient_checkpointing",
-                )
-            continue
+            raise AttributeError(
+                f"trainable module {name!r} does not expose enable_gradient_checkpointing",
+            )
         if mode == "selective":
             try:
                 enable(gradient_checkpointing_func=selective_checkpoint_func)

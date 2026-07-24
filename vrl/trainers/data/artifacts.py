@@ -164,9 +164,6 @@ def validate_artifact_manifest(
     artifact_fields: Sequence[str] = DEFAULT_ARTIFACT_FIELDS,
     required_artifact_fields: Sequence[str] = (),
     required_metadata_fields: Sequence[str] = (),
-    allow_absolute_paths: bool = False,
-    require_readable: bool = True,
-    reject_metadata_domain: bool = True,
 ) -> ArtifactManifestReport:
     """Validate one prompt manifest that references external binary artifacts."""
 
@@ -177,7 +174,7 @@ def validate_artifact_manifest(
     warnings: list[str] = []
     for row_index, example in enumerate(examples):
         metadata = dict(getattr(example, "metadata", None) or {})
-        if reject_metadata_domain and "domain" in metadata:
+        if "domain" in metadata:
             raise ArtifactManifestError(
                 f"{path}: row {row_index} metadata.domain is reserved; "
                 "use metadata.source or metadata.dataset instead",
@@ -198,15 +195,14 @@ def validate_artifact_manifest(
                 resolved_path = resolve_artifact_path(
                     raw_value,
                     data_root=root,
-                    allow_absolute=allow_absolute_paths,
+                    allow_absolute=False,
                 )
                 if not resolved_path.exists():
                     raise ArtifactManifestError(
                         f"{path}: row {row_index} {field_name} does not exist: "
                         f"{resolved_path}",
                     )
-                if require_readable:
-                    _assert_readable(resolved_path, manifest_path=path, row_index=row_index)
+                _assert_readable(resolved_path, manifest_path=path, row_index=row_index)
                 resolved.append(
                     ResolvedArtifact(
                         row_index=row_index,

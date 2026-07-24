@@ -30,9 +30,6 @@ class ContinuousTokenLogProbEvaluator(Evaluator):
 
     replay_granularity = "trajectory"
 
-    def __init__(self, mask_key: str = "token_mask") -> None:
-        self.mask_key = mask_key
-
     def evaluate(
         self,
         model: ReplayModel,
@@ -64,7 +61,7 @@ class ContinuousTokenLogProbEvaluator(Evaluator):
             segment_name="image_tokens",
             log_prob=new_lp,
             ref_log_prob=ref_lp,
-            mask_key=self.mask_key,
+            mask_key="token_mask",
         )
 
     @staticmethod

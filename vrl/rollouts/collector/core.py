@@ -146,7 +146,6 @@ class RolloutCollector:
         group_size: int,
         metadata: Mapping[str, Any] | None = None,
         request_overrides: Mapping[str, Any] | None = None,
-        seed: int | None = None,
         runtime_debug: bool = False,
         policy_version: int | None = None,
     ) -> UnscoredRollout:
@@ -164,7 +163,6 @@ class RolloutCollector:
             int(group_size),
             metadata=metadata,
             request_overrides=request_overrides,
-            seed=seed,
             runtime_debug=runtime_debug,
             policy_version=policy_version,
         )

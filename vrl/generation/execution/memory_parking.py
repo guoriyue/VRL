@@ -182,7 +182,7 @@ class WorkerMemoryParking:
             # MemPool registry while preserving the diagnostic stack itself.
             if build_error.__traceback__ is not None:
                 traceback.clear_frames(build_error.__traceback__)
-            release_cuda_memory(gc_collect=True, ipc_collect=True)
+            release_cuda_memory(ipc_collect=True)
             try:
                 pool.close()
             except BaseException as close_error:
@@ -426,7 +426,7 @@ class WorkerMemoryParking:
                 )
                 raise
         yield
-        release_cuda_memory(gc_collect=True, ipc_collect=True)
+        release_cuda_memory(ipc_collect=True)
         if pool is not None:
             try:
                 pool.close()
@@ -436,7 +436,7 @@ class WorkerMemoryParking:
                     cumem_broken=True,
                 )
                 raise
-            release_cuda_memory(gc_collect=True, ipc_collect=True)
+            release_cuda_memory(ipc_collect=True)
         self._parking = self._next_plan(state)
         self._phase = _ParkingPhase.ACTIVE
         self._failure_reason = None
