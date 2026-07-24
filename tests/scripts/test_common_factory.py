@@ -21,12 +21,12 @@ from vrl.config.schema import parse_config
 from vrl.families.registry import get_model_family_entry
 from vrl.ray.resources import resolve_distributed_resources
 from vrl.rollouts.collector.config import RolloutCollectorConfig
+from vrl.run import OnlineRunConfig
 from vrl.scripts.common.factory import (
     build_algorithm_and_evaluator_from_cfg,
     build_reward,
     validate_reward_memory_parking,
 )
-from vrl.scripts.common.resolved_run import OnlineRunConfig
 
 
 def _built_reward(

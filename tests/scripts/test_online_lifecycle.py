@@ -8,12 +8,13 @@ import pytest
 import torch
 from omegaconf import OmegaConf
 
+from vrl import run as resolved_run
 from vrl.algorithms.grpo.continuous import GRPOConfig
 from vrl.config.precision import RolePrecision
 from vrl.config.schema import RootConfig
 from vrl.families.semantics import PolicySemantics
 from vrl.models.interfaces import ReplayResult
-from vrl.scripts.common import online, resolved_run
+from vrl.scripts.common import online
 from vrl.trainers.online.config import OnlineBatchPlan
 
 ray = pytest.importorskip("ray")

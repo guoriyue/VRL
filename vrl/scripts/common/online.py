@@ -28,12 +28,12 @@ from vrl.ray.resources import (
 from vrl.rollouts.collector import build_rollout_collector
 from vrl.rollouts.orchestration import validate_rollout_schedule_topology
 from vrl.rollouts.stats import RolloutStats
+from vrl.run import resolve_online_run
 from vrl.scripts.common.factory import (
     build_algorithm_and_evaluator_from_cfg,
     build_reward,
     validate_reward_memory_parking,
 )
-from vrl.scripts.common.resolved_run import resolve_online_run
 from vrl.trainers.activation_checkpointing import (
     enable_transformer_gradient_checkpointing,
 )

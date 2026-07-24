@@ -83,7 +83,7 @@ def train_wan_2_1_dpo(cfg: DictConfig) -> None:
             f"(alias 'wan' is accepted); got {configured_family!r}",
         )
 
-    from vrl.scripts.common.resolved_run import resolve_run
+    from vrl.run import resolve_run
 
     # Shared resolution seam: family entry, distributed resources, and the
     # trainer device all come from one composer. The wan-only guard above must
