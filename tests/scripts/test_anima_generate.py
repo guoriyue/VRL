@@ -227,20 +227,12 @@ def test_generate_records_the_batch_seed_for_every_sample(monkeypatch, tmp_path)
     assert [row["seed"] for row in rows] == [37, 37]
 
 
-def test_generate_cuda_device_fails_fast_when_unavailable() -> None:
+def test_generate_cuda_device_fails_fast_when_unavailable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """Checks generate cuda device fails fast when unavailable."""
+    import torch
 
-    class _Cuda:
-        @staticmethod
-        def is_available() -> bool:
-            return False
-
-    class _Torch:
-        cuda = _Cuda()
-
-        @staticmethod
-        def device(value: str) -> object:
-            return type("Device", (), {"type": value.split(":", 1)[0]})()
-
-    with pytest.raises(RuntimeError, match="CUDA device was requested"):
-        generate._resolve_device("cuda:0", _Torch)
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: False)
+    with pytest.raises(RuntimeError, match="CUDA device requested but CUDA is unavailable"):
+        generate.resolve_eval_device("cuda:0")

@@ -60,7 +60,7 @@ def test_r1_train_segments_derive_from_algorithm_config() -> None:
 
     rollout = RolloutCollectorConfig.from_cfg(cfg)
 
-    assert rollout.get("train_segments") == {
+    assert rollout.request_sampling.get("train_segments") == {
         "initial_image": False,
         "selfcheck_text": True,
         "final_image": True,

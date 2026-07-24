@@ -12,8 +12,6 @@ descriptor import strings lazily to avoid a registry import cycle.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
-
 from vrl.models.interfaces.runtime import (
     ModelBuild,
     RuntimeBundle,
@@ -35,9 +33,6 @@ from vrl.utils.logging import init_logger
 
 logger = init_logger(__name__)
 
-if TYPE_CHECKING:
-    from vrl.config.precision import PrecisionPolicy
-    from vrl.config.schema import RootConfig
 
 
 def build_denoise_runtime_bundle(
@@ -162,36 +157,6 @@ def _check_requires_lora(entry, build: ModelBuild) -> None:
         )
 
 
-def resolve_family_model_build(
-    root: RootConfig,
-    device,
-    *,
-    precision: PrecisionPolicy,
-    for_rollout: bool = True,
-    parameter_dtype_override=None,
-) -> ModelBuild:
-    """Resolve a diffusion build through the canonical family registry."""
-
-    from vrl.config.schema import RootConfig
-    from vrl.families.registry import get_model_family_entry
-
-    if not isinstance(root, RootConfig):
-        raise TypeError(
-            "root must be a validated RootConfig; raw DictConfig/Mapping "
-            f"inputs are not accepted (got {type(root).__name__})",
-        )
-    if root.model is None:
-        raise ValueError("validated root is missing model configuration")
-    entry = get_model_family_entry(str(root.model.family))
-    return entry.resolve_model_build(
-        root,
-        device,
-        precision=precision,
-        for_rollout=for_rollout,
-        parameter_dtype_override=parameter_dtype_override,
-    )
-
-
 def build_family_runtime_bundle(
     build: ModelBuild,
     *,
@@ -274,5 +239,4 @@ __all__ = [
     "build_denoise_runtime_bundle",
     "build_family_replay_runtime_bundle",
     "build_family_runtime_bundle",
-    "resolve_family_model_build",
 ]

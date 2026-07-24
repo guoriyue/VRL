@@ -24,7 +24,7 @@ def build_preview_request(
     overrides = dict(example.request_overrides)
     configured_chunk_size = overrides.get(
         "samples_per_chunk",
-        builder.config.get("samples_per_chunk"),
+        builder.config.request_sampling.get("samples_per_chunk"),
     )
     # Ray resolves ``auto`` from runtime memory. The direct preview has exactly
     # one sample, so only that unresolved sentinel needs a local value. Preserve

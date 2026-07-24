@@ -24,12 +24,9 @@ def test_sana_training_path_matches_native_flow_euler_at_every_step() -> None:
     from vrl.config.loading import load_config
     from vrl.config.precision import resolve_precision_policy
     from vrl.config.schema import parse_config
+    from vrl.families.registry import get_model_family_entry
     from vrl.generation.types import VideoGenerationRequest
     from vrl.math.denoise.flow_matching import sde_step_with_logprob
-    from vrl.models.steps.denoise.build import (
-        build_family_runtime_bundle,
-        resolve_family_model_build,
-    )
 
     cfg = load_config("experiment/sana/online_grpo_aesthetic")
     repo_id = str(cfg.model.path)
@@ -42,12 +39,14 @@ def test_sana_training_path_matches_native_flow_euler_at_every_step() -> None:
     precision = resolve_precision_policy(root)
 
     device = torch.device("cuda")
-    build = resolve_family_model_build(
+    entry = get_model_family_entry("sana")
+    build = entry.resolve_model_build(
         root,
         device,
         precision=precision,
+        for_rollout=True,
     )
-    bundle = build_family_runtime_bundle(build)
+    bundle = entry.build_rollout(build)
     model = bundle.model
     assert model.transformer.dtype is torch.float16
     assert model.pipeline.text_encoder.dtype is torch.bfloat16

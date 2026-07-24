@@ -11,7 +11,6 @@ from vrl.config.builders import BuiltConfigs
 from vrl.families.registry import ModelFamilyEntry
 from vrl.models.dtypes import resolve_torch_dtype
 from vrl.ray.resources import reward_torch_device
-from vrl.utils.config import cfg_get
 
 
 def _validate_topology_derived_reward_kwargs(
@@ -270,10 +269,10 @@ def build_algorithm_and_evaluator_from_cfg(
             evaluator=DiffusionSDELogProbEvaluator(
                 scheduler,
                 noise_level=float(
-                    cfg_get(collector_config, "noise_level", 1.0),
+                    collector_config.request_sampling.get("noise_level", 1.0),
                 ),
                 sde_type=str(
-                    cfg_get(collector_config, "sde_type", "flow_grpo"),
+                    collector_config.request_sampling.get("sde_type", "flow_grpo"),
                 ),
                 math_dtype=math_dtype,
             ),

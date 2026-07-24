@@ -19,6 +19,7 @@ from vrl.config.schema import RootConfig, parse_config
 from vrl.families.registry import get_model_family_entry
 from vrl.generation.types import VideoGenerationRequest
 from vrl.models.dtypes import resolve_torch_dtype
+from vrl.scripts.eval._device import resolve_eval_device
 from vrl.trainers.data import load_prompt_manifest
 from vrl.utils.media import to_pil_image
 
@@ -170,7 +171,7 @@ def main(argv: list[str] | None = None) -> None:
 
     import torch
 
-    device = _resolve_device(args.device, torch)
+    device = resolve_eval_device(args.device)
     dtype = _resolve_dtype(
         args.dtype,
         root,
@@ -298,17 +299,6 @@ def _resolve_sampling(args: argparse.Namespace, cfg: DictConfig) -> dict[str, An
             or OmegaConf.select(cfg, "sampling.max_sequence_length", default=128),
         ),
     }
-
-
-def _resolve_device(device_arg: str, torch: Any) -> Any:
-    if device_arg != "auto":
-        device = torch.device(device_arg)
-        if getattr(device, "type", str(device)) == "cuda" and not torch.cuda.is_available():
-            raise RuntimeError(
-                f"CUDA device was requested ({device_arg}), but torch.cuda.is_available() is false",
-            )
-        return device
-    return torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
 
 def _resolve_dtype(

@@ -33,7 +33,7 @@ from vrl.rollouts.collector import build_rollout_collector
 from vrl.rollouts.collector.config import RolloutCollectorConfig
 from vrl.rollouts.collector.requests import GenerationRequestBuilder
 from vrl.trajectory import TrajectoryStoragePolicy
-from vrl.utils.config import cfg_get, import_from_path
+from vrl.utils.config import import_from_path
 
 
 def _typed_model_build_inputs(payload):
@@ -779,21 +779,6 @@ def test_request_sampling_projects_only_generation_owned_rollout_values() -> Non
         assert driver_key not in sampling
     assert "trajectory_storage" not in sampling
     assert rollout.trajectory_storage == TrajectoryStoragePolicy()
-
-
-def test_collector_config_get_adapts_local_and_request_state() -> None:
-    rollout = RolloutCollectorConfig(
-        request_sampling={"num_steps": 4},
-        kl_reward_coef=0.5,
-        trajectory_storage=TrajectoryStoragePolicy(device="cpu"),
-    )
-
-    assert cfg_get(rollout, "num_steps") == 4
-    assert cfg_get(rollout, "kl_reward_coef") == pytest.approx(0.5)
-    assert cfg_get(rollout, "trajectory_storage") == TrajectoryStoragePolicy(
-        device="cpu",
-    )
-    assert cfg_get(rollout, "missing", "fallback") == "fallback"
 
 
 def test_all_registry_entries_build_collectors_from_the_same_entry() -> None:

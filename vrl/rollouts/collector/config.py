@@ -30,13 +30,6 @@ class RolloutCollectorConfig:
         default_factory=TrajectoryStoragePolicy,
     )
 
-    def get(self, name: str, default: Any = None) -> Any:
-        """Adapt typed local fields and request values to generic config readers."""
-
-        if name in {"kl_reward_coef", "trajectory_storage"}:
-            return getattr(self, name)
-        return self.request_sampling.get(name, default)
-
     def generation_sampling(self) -> dict[str, Any]:
         """Build the request payload, deriving wire storage from the typed policy."""
 
