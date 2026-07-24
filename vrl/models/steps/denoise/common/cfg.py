@@ -30,31 +30,16 @@ class DiffusionBranch:
         }
 
 
-@dataclass(slots=True)
-class DiffusionBranchBatch:
-    """Batched CFG call where uncond rows precede cond rows."""
-
-    hidden_states: torch.Tensor
-    timestep: torch.Tensor
-    encoder_hidden_states: torch.Tensor
-    extra_kwargs: dict[str, Any] = field(default_factory=dict)
-
-    def as_transformer_kwargs(self) -> dict[str, Any]:
-        return {
-            "hidden_states": self.hidden_states,
-            "timestep": self.timestep,
-            "encoder_hidden_states": self.encoder_hidden_states,
-            **self.extra_kwargs,
-            "return_dict": False,
-        }
-
-
 def pack_batched_cfg(
     *,
     cond: DiffusionBranch,
     uncond: DiffusionBranch,
-) -> DiffusionBranchBatch:
-    """Pack uncond+cond branches for a single batched CFG transformer call."""
+) -> DiffusionBranch:
+    """Pack uncond+cond branches for a single batched CFG transformer call.
+
+    Uncond rows precede cond rows in the packed batch dimension; the batched
+    branch carries no ``metadata`` (its default empty mapping).
+    """
 
     _validate_pair("hidden_states", cond.hidden_states, uncond.hidden_states)
     _validate_pair("timestep", cond.timestep, uncond.timestep)
@@ -63,7 +48,7 @@ def pack_batched_cfg(
         cond.encoder_hidden_states,
         uncond.encoder_hidden_states,
     )
-    return DiffusionBranchBatch(
+    return DiffusionBranch(
         hidden_states=torch.cat([uncond.hidden_states, cond.hidden_states], dim=0),
         timestep=torch.cat([uncond.timestep, cond.timestep], dim=0),
         encoder_hidden_states=torch.cat(

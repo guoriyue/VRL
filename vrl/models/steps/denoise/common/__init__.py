@@ -9,7 +9,6 @@ from vrl.models.steps.denoise.common.backbone import (
 )
 from vrl.models.steps.denoise.common.cfg import (
     DiffusionBranch,
-    DiffusionBranchBatch,
     combine_cfg,
     pack_batched_cfg,
     split_batched_cfg_output,
@@ -37,7 +36,6 @@ __all__ = [
     "DiffusionBackboneRunner",
     "DiffusionBackboneRunnerBase",
     "DiffusionBranch",
-    "DiffusionBranchBatch",
     "LatentDecodePlan",
     "align_replay_tensor",
     "broadcast_spatial_timestep",

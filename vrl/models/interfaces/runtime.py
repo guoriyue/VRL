@@ -139,21 +139,12 @@ class RolloutBuildOptions:
     pipeline_offload_mode: PipelineOffloadMode = "none"
 
     def __post_init__(self) -> None:
-        from vrl.models.dtypes import (
-            dtype_to_precision_token,
-            dtype_to_wire_name,
-            resolve_torch_dtype,
-        )
+        from vrl.models.dtypes import require_plain_dtype
 
-        prompt_encoder_dtype = resolve_torch_dtype(self.prompt_encoder_dtype)
-        prompt_encoder_name = dtype_to_wire_name(prompt_encoder_dtype)
-        try:
-            dtype_to_precision_token(prompt_encoder_dtype)
-        except ValueError as error:
-            raise ValueError(
-                "rollout prompt encoder dtype must be fp16, bf16, or fp32; "
-                f"got {prompt_encoder_name!r}",
-            ) from error
+        prompt_encoder_dtype = require_plain_dtype(
+            self.prompt_encoder_dtype,
+            what="rollout prompt encoder dtype",
+        )
         object.__setattr__(self, "prompt_encoder_dtype", prompt_encoder_dtype)
 
         if not isinstance(self.base_weight_sync, bool):
@@ -213,11 +204,7 @@ class ModelBuild:
     rollout: RolloutBuildOptions | Mapping[str, Any] | None = None
 
     def __post_init__(self) -> None:
-        from vrl.models.dtypes import (
-            dtype_to_precision_token,
-            dtype_to_wire_name,
-            resolve_torch_dtype,
-        )
+        from vrl.models.dtypes import require_plain_dtype
 
         if not isinstance(self.family, str) or not self.family:
             raise ValueError("ModelBuild.family must be a non-empty string")
@@ -233,16 +220,14 @@ class ModelBuild:
             raise TypeError(
                 "ModelBuild.precision must be RolePrecision or a mapping",
             )
-        self.parameter_dtype = resolve_torch_dtype(self.parameter_dtype)
-        parameter_name = dtype_to_wire_name(self.parameter_dtype)
-        try:
-            dtype_to_precision_token(self.parameter_dtype)
-        except ValueError as error:
-            raise ValueError(
-                "runtime parameter dtype must be fp16, bf16, or fp32; "
-                f"got {parameter_name!r}. FP8 and NVFP4 are selective rollout "
-                "quantization formats; neither is parameter storage.",
-            ) from error
+        self.parameter_dtype = require_plain_dtype(
+            self.parameter_dtype,
+            what="runtime parameter dtype",
+            detail=(
+                ". FP8 and NVFP4 are selective rollout quantization formats; "
+                "neither is parameter storage."
+            ),
+        )
         if isinstance(self.rollout, Mapping):
             self.rollout = RolloutBuildOptions(**dict(self.rollout))
         elif self.rollout is not None and not isinstance(self.rollout, RolloutBuildOptions):

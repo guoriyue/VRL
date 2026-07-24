@@ -385,9 +385,10 @@ class _CausVidPolicyModel(LoraModelMixin, DiffusionModelBase):
         else:
             self._backend.transformer = transformer
 
-    def apply_full_finetune(self) -> None:
+    def apply_full_finetune(self, build: ModelBuild) -> None:
         self.transformer.requires_grad_(True)
-        self.transformer.to(self.device)
+        if not build.defer_trainable_device_move:
+            self.transformer.to(self.device)
 
     def enable_gradient_checkpointing(self) -> None:
         core = getattr(self._backend, "_causal_core", self.transformer)

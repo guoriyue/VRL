@@ -573,9 +573,6 @@ _register_model_family(
             replay_runtime_builder=(
                 "vrl.models.families.causvid.runtime:build_causvid_replay_runtime_bundle"
             ),
-            rollout_runtime_builder=(
-                "vrl.models.families.causvid.runtime:build_causvid_runtime_bundle"
-            ),
         ),
         runtime_capabilities=GenerationRuntimeCapabilities(
             supports_torch_compile=True,

@@ -101,4 +101,32 @@ def dtype_to_precision_token(value: Any) -> str:
     return _DTYPE_SPELLINGS[wire_name][0]
 
 
-__all__ = ["dtype_to_precision_token", "dtype_to_wire_name", "resolve_torch_dtype"]
+def require_plain_dtype(value: Any, *, what: str, detail: str = "") -> Any:
+    """Resolve ``value`` to a plain public-precision ``torch.dtype`` or raise.
+
+    Wraps the ``resolve_torch_dtype`` -> ``dtype_to_wire_name`` ->
+    ``dtype_to_precision_token`` gate every construction boundary that stores a
+    parameter/encoder dtype needs: it returns the resolved fp32/bf16/fp16
+    ``torch.dtype`` and rejects sub-byte quantization dtypes (FP8/NVFP4), which
+    are selective rollout GEMM schemes rather than storage precisions. ``what``
+    names the offending field in the error; ``detail`` appends caller-specific
+    guidance to the message tail.
+    """
+
+    dtype = resolve_torch_dtype(value)
+    wire_name = dtype_to_wire_name(dtype)
+    try:
+        dtype_to_precision_token(dtype)
+    except ValueError as error:
+        raise ValueError(
+            f"{what} must be fp16, bf16, or fp32; got {wire_name!r}{detail}",
+        ) from error
+    return dtype
+
+
+__all__ = [
+    "dtype_to_precision_token",
+    "dtype_to_wire_name",
+    "require_plain_dtype",
+    "resolve_torch_dtype",
+]
