@@ -43,6 +43,10 @@ from vrl.ray.resources import (
 
 logger = logging.getLogger(__name__)
 
+# Seconds to wait for the run-level placement group to become ready before the
+# owner declares the cluster unable to satisfy its bundles.
+_PLACEMENT_READY_TIMEOUT_S = 600.0
+
 
 class _RolloutCPUConfig(Protocol):
     """Read-only resource view shared with the generation worker snapshot."""
@@ -223,8 +227,6 @@ class GlobalRayPlacementOwner:
 
     resources: ResolvedDistributedResources
     rollout_worker: _RolloutCPUConfig
-    placement_strategy: str | None = None
-    ready_timeout_s: float = 600.0
     layout: BundleLayout = field(init=False)
     _placement_group: Any | None = field(default=None, init=False, repr=False)
     _placement_ready: bool = field(default=False, init=False, repr=False)
@@ -253,7 +255,8 @@ class GlobalRayPlacementOwner:
 
         ray = require_ray()
         bundle_requirements = self._bundle_requirements()
-        strategy = self._strategy()
+        # Cross-node spreads bundles across nodes; single-node packs them.
+        strategy = "SPREAD" if self.resources.cross_node else "PACK"
         pg = _create_raw_placement_group(bundle_requirements, strategy=strategy)
         # Claim the raw handle before waiting for readiness. A ready/probe/assign
         # failure whose removal also fails must leave this exact placement group
@@ -261,10 +264,10 @@ class GlobalRayPlacementOwner:
         self._placement_group = pg
         try:
             try:
-                ray.get(pg.ready(), timeout=float(self.ready_timeout_s))
+                ray.get(pg.ready(), timeout=_PLACEMENT_READY_TIMEOUT_S)
             except Exception as exc:
                 raise RuntimeError(
-                    f"Ray placement group not ready after {self.ready_timeout_s:.0f}s: "
+                    f"Ray placement group not ready after {_PLACEMENT_READY_TIMEOUT_S:.0f}s: "
                     f"bundles={bundle_requirements} strategy={strategy!r}. "
                     "The cluster cannot satisfy these bundles -- check whether "
                     "resident actors hold the GPUs this group is trying to reserve.",
@@ -401,12 +404,6 @@ class GlobalRayPlacementOwner:
         return tuple(matched)
 
     # -- internals -----------------------------------------------------------
-
-    def _strategy(self) -> str:
-        if self.placement_strategy:
-            return self.placement_strategy
-        # Cross-node spreads bundles across nodes; single-node packs them.
-        return "SPREAD" if self.resources.cross_node else "PACK"
 
     def _bundle_requirements(self) -> list[dict[str, float]]:
         requirements: list[dict[str, float]] = []

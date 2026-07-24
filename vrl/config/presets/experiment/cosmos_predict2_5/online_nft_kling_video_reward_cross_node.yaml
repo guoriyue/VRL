@@ -27,7 +27,7 @@ distributed:
     # GPUs by (node_ip, gpu_id) pairs instead of bare ordinals, and skips the
     # head-local trainer reservation so the head can run with --num-gpus=0. No
     # separate placement_strategy key is needed -- it is derived from this flag
-    # (vrl/ray/placement.py GlobalRayPlacementOwner._strategy).
+    # (vrl/ray/placement.py GlobalRayPlacementOwner.create).
     cross_node: true
     # Trainer (head GPU) and rollout (node B GPU) are physically disjoint hosts,
     # so no same-card overlap permission is needed.

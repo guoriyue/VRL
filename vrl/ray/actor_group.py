@@ -39,7 +39,6 @@ class RayActorGroup:
         placement_group: Any | None = None,
         bundle_indices: Sequence[int] | None = None,
         startup_method: str | None = None,
-        metadata_method: str = "worker_metadata",
         concurrency_groups: Mapping[str, int] | None = None,
     ) -> RayActorGroup:
         """Launch actors for ``worker_cls`` using serializable worker configs."""
@@ -77,7 +76,7 @@ class RayActorGroup:
                 startup_refs = [getattr(actor, startup_method).remote() for actor in actors]
                 ray.get(startup_refs)
 
-            metadata_refs = [getattr(actor, metadata_method).remote() for actor in actors]
+            metadata_refs = [actor.worker_metadata.remote() for actor in actors]
             metadata = ray.get(metadata_refs)
             handles = [
                 RayActorHandle(
