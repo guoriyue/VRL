@@ -14,7 +14,7 @@ from typing import Any
 import torch
 from omegaconf import DictConfig, OmegaConf
 
-from vrl.config.builders import build_configs
+from vrl.config.builders import BuiltConfigs, build_configs
 from vrl.config.schema import RootConfig
 from vrl.config.validation import require
 from vrl.families.registry import (
@@ -372,22 +372,23 @@ def _warn_global_std_streaming_divergence(
     )
 
 
-def _default_reference_model(bundle: Any, cfg: Any) -> Any | None:
+def _default_reference_model(bundle: Any, built: BuiltConfigs) -> Any | None:
     """Reference model for KL: the (LoRA) policy itself when use_lora and kl_coef>0, else None."""
 
-    # Convention for config reads in this module: keys that family configs
-    # legitimately omit (e.g. cosmos full-param dropped use_lora from its model
-    # yaml) are read with OmegaConf.select + explicit default, which also
-    # tolerates a missing parent section. Required keys keep raw attribute
-    # access on purpose — a missing required key must fail loudly at startup,
-    # not silently default.
-    kl_coef = float(OmegaConf.select(cfg, "algorithm.kl_coef", default=0.0) or 0.0)
-    if bool(OmegaConf.select(cfg, "model.use_lora", default=False)) and kl_coef > 0:
+    # Read off the already-resolved typed bundle instead of re-walking raw cfg.
+    # kl_coef is optional across algorithm-config families: only the
+    # ClippedPolicy-derived configs (grpo/dance_grpo) define it, while
+    # flow_dppo/grpo_guard extend GroupAdvantageConfig and legitimately omit it,
+    # so read the typed field with a default rather than assume every algorithm
+    # config carries it. model.use_lora is always a field on the typed
+    # ModelSection (pydantic default None -> falsy), so read it directly.
+    kl_coef = float(getattr(built.algorithm, "kl_coef", 0.0) or 0.0)
+    if bool(built.root.model.use_lora) and kl_coef > 0:
         return bundle.model
     return None
 
 
-def _load_sft_latents_from_config(cfg: DictConfig, family: str) -> dict[str, Any] | None:
+def _load_sft_latents_from_config(built: BuiltConfigs, family: str) -> dict[str, Any] | None:
     """Load the clean-latents shard when the diffusion-loss regularizer is on.
 
     The schema cross-check already rejected sft_weight>0 without
@@ -395,29 +396,35 @@ def _load_sft_latents_from_config(cfg: DictConfig, family: str) -> dict[str, Any
     fails loud on a family-mismatched or malformed shard).
     """
 
-    weight = float(OmegaConf.select(cfg, "algorithm.sft_weight", default=0.0) or 0.0)
+    # sft_weight is defined only on GRPOConfig (grpo/dance_grpo); every other
+    # algorithm config legitimately omits it, so read the typed field off the
+    # resolved bundle with a default instead of assuming presence.
+    weight = float(getattr(built.algorithm, "sft_weight", 0.0) or 0.0)
     if weight <= 0:
         return None
-    path = OmegaConf.select(cfg, "data.sft_latents", default=None)
+    data = built.root.data
+    path = data.sft_latents if data is not None else None
     if not path:
         raise ValueError("algorithm.sft_weight > 0 requires data.sft_latents")
     from vrl.trainers.data.sft_latents import load_sft_latents
 
+    model = built.root.model
     return load_sft_latents(
         str(path),
         family=family,
-        model_path=str(OmegaConf.select(cfg, "model.path", default="")),
-        model_revision=str(OmegaConf.select(cfg, "model.revision", default="") or ""),
+        model_path=str(model.path or ""),
+        model_revision=str(model.revision or ""),
     )
 
 
 def _export_transformer_lora(
     bundle: Any,
-    cfg: DictConfig,
+    *,
+    use_lora: bool,
 ) -> dict[str, AdapterExport] | None:
     """Export diffusion transformer LoRA weights when configured."""
 
-    if not bool(OmegaConf.select(cfg, "model.use_lora", default=False)):
+    if not use_lora:
         return None
     exportable = {
         str(name): module
@@ -439,11 +446,12 @@ def _export_transformer_lora(
 
 def _export_language_model_lora(
     bundle: Any,
-    cfg: DictConfig,
+    *,
+    use_lora: bool,
 ) -> dict[str, AdapterExport] | None:
     """Export AR language-model LoRA weights when configured."""
 
-    if bool(OmegaConf.select(cfg, "model.use_lora", default=False)):
+    if use_lora:
         return {LORA_WEIGHTS_NAME: AdapterExport(bundle.model.language_model)}
     return None
 
@@ -907,7 +915,7 @@ async def run_online_recipe(
         log_host_memory("after_rollout_backend_build", log=logger)
 
         ref_model = (
-            _default_reference_model(bundle, cfg)
+            _default_reference_model(bundle, built)
             if family_entry.policy_semantics.step_kind == "denoise"
             and str(cfg.algorithm.kind) != "diffusion_nft"
             else None
@@ -933,7 +941,7 @@ async def run_online_recipe(
             device=device,
             strategy=strategy,
             sft_latents=_load_sft_latents_from_config(
-                cfg,
+                built,
                 family_entry.family,
             ),
         )
@@ -985,10 +993,11 @@ async def run_online_recipe(
             gc.collect()
             log_host_memory("after_resume_checkpoint_release", log=logger)
 
+        model_use_lora = bool(built.root.model.use_lora)
         adapter_exports = (
-            _export_transformer_lora(bundle, cfg)
+            _export_transformer_lora(bundle, use_lora=model_use_lora)
             if family_entry.policy_semantics.step_kind == "denoise"
-            else _export_language_model_lora(bundle, cfg)
+            else _export_language_model_lora(bundle, use_lora=model_use_lora)
         )
         run = OnlineRecipeRun(
             bundle=bundle,

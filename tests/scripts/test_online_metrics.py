@@ -10,7 +10,6 @@ import pytest
 import torch
 import torch.distributed as dist
 import torch.multiprocessing as mp
-from omegaconf import OmegaConf
 
 from vrl.scripts.common.online import (
     OnlineRecipeRun,
@@ -42,9 +41,8 @@ def test_dual_transformer_lora_export_is_namespaced() -> None:
     bundle = SimpleNamespace(
         trainable_modules={"transformer": high, "transformer_2": low},
     )
-    cfg = OmegaConf.create({"model": {"use_lora": True}})
 
-    exported = _export_transformer_lora(bundle, cfg)
+    exported = _export_transformer_lora(bundle, use_lora=True)
 
     assert exported == {
         "lora_weights/transformer": AdapterExport(high),
