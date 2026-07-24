@@ -87,7 +87,7 @@ def generate_rollout_preview(
     from vrl.models.dtypes import dtype_to_wire_name
     from vrl.models.interfaces.replay import require_runtime_model
     from vrl.models.loader import assert_rollout_quantization_applied
-    from vrl.rollouts.collector.config import build_rollout_config_from_cfg
+    from vrl.rollouts.collector.config import RolloutCollectorConfig
     from vrl.trainers.data import load_prompt_examples_from_config
     from vrl.utils.config import cfg_path, import_from_path, to_builtin_deep
 
@@ -141,7 +141,7 @@ def generate_rollout_preview(
 
     request_builder = GenerationRequestBuilder(
         entry=entry,
-        config=build_rollout_config_from_cfg(root),
+        config=RolloutCollectorConfig.from_cfg(root),
     )
     items: list[dict[str, Any]] = []
     for index, example in enumerate(examples):

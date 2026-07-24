@@ -21,9 +21,11 @@ from vrl.config.validation import (
 )
 
 if TYPE_CHECKING:
+    from vrl.algorithms.dpo import DiffusionDPOConfig
     from vrl.algorithms.logprob_mismatch import PrecisionCorrectionConfig
     from vrl.trainers.checkpointing import TrainingResumeConfig
     from vrl.trainers.core.types import PrecisionDriftGuardConfig
+    from vrl.trainers.offline import OfflineDPOTrainerConfig
     from vrl.trainers.online.config import OnlineBatchPlan, TrainerConfig
 
 
@@ -333,6 +335,68 @@ def build_trainer_config(
     return TrainerConfig(**payload)
 
 
+def build_offline_dpo_trainer_config(
+    cfg: DictConfig,
+    dpo_config: DiffusionDPOConfig,
+    *,
+    train_batch_size: int,
+    gradient_accumulation_steps: int,
+) -> OfflineDPOTrainerConfig:
+    """Slice merged YAML into ``OfflineDPOTrainerConfig``.
+
+    The offline twin of ``build_trainer_config``: same public ``actor.*``
+    optimizer section, projected into the offline trainer instead. It lives here
+    rather than on the config dataclass because ``vrl.trainers.offline`` holds no
+    YAML knowledge, and rather than in the recipe script because a public config
+    projection is not a script-private detail.
+    """
+
+    from vrl.trainers.core.types import OptimConfig
+    from vrl.trainers.offline import OfflineDPOTrainerConfig
+
+    raw_optim = OmegaConf.to_container(
+        cfg.actor.optim,
+        resolve=True,
+        throw_on_missing=True,
+    )
+    if not isinstance(raw_optim, dict):
+        raise ValueError("actor.optim must be a mapping")
+    optim = OptimConfig(**raw_optim)
+    if optim.optim_8bit:
+        raise ValueError(
+            "actor.optim.optim_8bit=true is not supported by OfflineDPOTrainer; "
+            "use AdamW/Adafactor without 8-bit optimizer state",
+        )
+    use_adafactor = bool(require(cfg, "actor.use_adafactor"))
+    if use_adafactor:
+        adam_only_keys = sorted({"adam_beta1", "adam_beta2", "eps"} & raw_optim.keys())
+        if adam_only_keys:
+            paths = ", ".join(f"actor.optim.{key}" for key in adam_only_keys)
+            raise ValueError(
+                f"actor.use_adafactor=true does not consume AdamW-only key(s): {paths}",
+            )
+
+    scale_lr = bool(require(cfg, "actor.scale_lr"))
+    effective_batch_size = train_batch_size * gradient_accumulation_steps
+    lr = float(optim.lr) * effective_batch_size if scale_lr else float(optim.lr)
+    max_grad_norm = OmegaConf.select(cfg, "actor.max_norm")
+    if max_grad_norm is None:
+        max_grad_norm = OfflineDPOTrainerConfig().max_grad_norm
+    return OfflineDPOTrainerConfig(
+        beta=float(dpo_config.beta),
+        sft_weight=float(dpo_config.sft_weight),
+        lr=lr,
+        adam_beta1=float(optim.adam_beta1),
+        adam_beta2=float(optim.adam_beta2),
+        adam_weight_decay=float(optim.weight_decay),
+        adam_epsilon=float(optim.eps),
+        max_grad_norm=float(max_grad_norm),
+        gradient_accumulation_steps=gradient_accumulation_steps,
+        prediction_type=str(require(cfg, "actor.prediction_type")),
+        use_adafactor=use_adafactor,
+    )
+
+
 def build_algorithm_config(cfg: DictConfig):
     """Dispatch on ``algorithm.kind`` and return the typed algorithm config."""
 
@@ -373,9 +437,7 @@ def build_configs(cfg: DictConfig) -> BuiltConfigs:
     # Normalize the raw source before typed parsing so persisted config and all
     # runtime consumers receive one truthful model tree.
     prepare_model_config_for_training_resume(cfg, resume)
-    validated = validate_training_config(cfg)
-    root = validated.root
-    precision = validated.precision
+    root, precision = validate_training_config(cfg)
     algorithm = build_algorithm_config(cfg)
     is_offline_dpo = root.algorithm is not None and root.algorithm.kind == "diffusion_dpo"
     trainer = None if is_offline_dpo else build_trainer_config(cfg, precision=precision)
@@ -400,6 +462,7 @@ __all__ = [
     "RewardRuntimeConfig",
     "build_algorithm_config",
     "build_configs",
+    "build_offline_dpo_trainer_config",
     "build_online_batch_plan",
     "build_reward_config",
     "build_trainer_config",

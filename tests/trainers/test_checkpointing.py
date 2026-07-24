@@ -22,7 +22,6 @@ from vrl.trainers.checkpointing import (
     load_training_checkpoint,
     prepare_model_config_for_training_resume,
     resolve_training_resume_config,
-    resolve_training_resume_strict,
     restore_model_checkpoint,
     restore_training_checkpoint,
     save_training_checkpoint,
@@ -44,14 +43,14 @@ def test_resume_strict_uses_checkpoint_policy(
     trainer = {} if value is None else {"resume_strict": value}
     cfg = OmegaConf.create({"trainer": trainer})
 
-    assert resolve_training_resume_strict(cfg) is expected
+    assert resolve_training_resume_config(cfg).strict is expected
 
 
 def test_resume_strict_rejects_string_truthiness() -> None:
     cfg = OmegaConf.create({"trainer": {"resume_strict": "false"}})
 
     with pytest.raises(TypeError, match="must be a boolean"):
-        resolve_training_resume_strict(cfg)
+        resolve_training_resume_config(cfg)
 
 
 @pytest.mark.parametrize(
@@ -72,16 +71,18 @@ def test_resume_config_resolves_fresh_and_checkpoint_paths(
     assert resolved.strict is False
 
 
-def test_loaded_checkpoint_resume_facade_still_clears_warm_start_path(tmp_path) -> None:
-    cfg = OmegaConf.create({"model": {"lora": {"path": "/tmp/warm-start"}}})
-    checkpoint = TrainingCheckpoint(
-        checkpoint_dir=tmp_path,
-        checkpoint_path=tmp_path / TRAINING_CHECKPOINT_NAME,
-        payload={},
-        meta={},
+def test_nonstrict_resume_clears_the_warm_start_adapter_path() -> None:
+    cfg = OmegaConf.create(
+        {
+            "model": {"lora": {"path": "/tmp/warm-start"}},
+            "trainer": {"resume_from": "/tmp/checkpoint-4", "resume_strict": False},
+        },
     )
 
-    prepare_model_config_for_training_resume(cfg, checkpoint, strict=False)
+    prepare_model_config_for_training_resume(
+        cfg,
+        resolve_training_resume_config(cfg),
+    )
 
     assert cfg.model.lora.path == ""
 

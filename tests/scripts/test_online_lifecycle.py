@@ -8,6 +8,7 @@ import pytest
 import torch
 from omegaconf import OmegaConf
 
+from vrl.algorithms.grpo.continuous import GRPOConfig
 from vrl.config.precision import RolePrecision
 from vrl.config.schema import RootConfig
 from vrl.families.semantics import PolicySemantics
@@ -357,6 +358,10 @@ def _install_common_fakes(
             ),
             trainer=trainer_config,
             precision=precision,
+            # Typed, matching the recipe's algorithm.kind=grpo: the run path
+            # reads built.algorithm.global_std, so a namespace stub here would
+            # only re-hide the field it is meant to exercise.
+            algorithm=GRPOConfig(kl_coef=0.0),
             reward=SimpleNamespace(
                 weights={"kling_video_reward": 1.0},
                 kwargs={},
@@ -410,7 +415,11 @@ def _install_common_fakes(
         lambda *args, **kwargs: _FakePlacementOwner(state, *args, **kwargs),
     )
     monkeypatch.setattr(online, "validate_reward_memory_parking", lambda *args, **kwargs: None)
-    monkeypatch.setattr(online, "build_rollout_config_from_cfg", lambda cfg: object())
+    monkeypatch.setattr(
+        online.RolloutCollectorConfig,
+        "from_cfg",
+        staticmethod(lambda cfg: object()),
+    )
     monkeypatch.setattr(online, "build_reward", lambda *args, **kwargs: reward)
     monkeypatch.setattr(
         online,

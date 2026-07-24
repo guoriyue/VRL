@@ -20,7 +20,7 @@ from vrl.config.precision import RolePrecision
 from vrl.config.schema import parse_config
 from vrl.families.registry import get_model_family_entry
 from vrl.ray.resources import resolve_distributed_resources
-from vrl.rollouts.collector.config import build_rollout_config_from_cfg
+from vrl.rollouts.collector.config import RolloutCollectorConfig
 from vrl.scripts.common.factory import (
     build_algorithm_and_evaluator_from_cfg,
     build_reward,
@@ -47,7 +47,7 @@ def test_diffusion_grpo_evaluator_uses_resolved_rollout_sde_config() -> None:
             "rollout.sde.type=cps",
         ],
     )
-    collector_config = build_rollout_config_from_cfg(cfg)
+    collector_config = RolloutCollectorConfig.from_cfg(cfg)
 
     pair = build_algorithm_and_evaluator_from_cfg(
         cfg,
@@ -83,7 +83,7 @@ def test_diffusion_factory_accepts_each_kind_exact_config_type(
         cfg,
         family_entry=get_model_family_entry("sd3_5"),
         built=build_configs(cfg),
-        collector_config=build_rollout_config_from_cfg(cfg),
+        collector_config=RolloutCollectorConfig.from_cfg(cfg),
         scheduler=object(),
     )
 
@@ -97,7 +97,7 @@ def test_chunk_autoregressive_factory_builds_grouped_grpo_evaluator() -> None:
         cfg,
         family_entry=get_model_family_entry("causvid"),
         built=build_configs(cfg),
-        collector_config=build_rollout_config_from_cfg(cfg),
+        collector_config=RolloutCollectorConfig.from_cfg(cfg),
     )
 
     assert type(pair.algorithm) is GRPO
@@ -112,7 +112,7 @@ def test_generation_only_chunk_family_fails_before_algorithm_construction() -> N
             cfg,
             family_entry=get_model_family_entry("magi_1"),
             built=build_configs(cfg),
-            collector_config=build_rollout_config_from_cfg(cfg),
+            collector_config=RolloutCollectorConfig.from_cfg(cfg),
         )
 
 
@@ -138,7 +138,7 @@ def test_chunk_autoregressive_factory_rejects_undefined_algorithm_semantics(
             cfg,
             family_entry=get_model_family_entry("causvid"),
             built=build_configs(cfg),
-            collector_config=build_rollout_config_from_cfg(cfg),
+            collector_config=RolloutCollectorConfig.from_cfg(cfg),
         )
 
 
@@ -153,7 +153,7 @@ def test_chunk_autoregressive_factory_rejects_non_fp32_transition_math() -> None
             cfg,
             family_entry=get_model_family_entry("causvid"),
             built=build_configs(cfg),
-            collector_config=build_rollout_config_from_cfg(cfg),
+            collector_config=RolloutCollectorConfig.from_cfg(cfg),
         )
 
 
@@ -167,7 +167,7 @@ def test_chunk_autoregressive_factory_rejects_full_sequence_sft_regularizer() ->
             cfg,
             family_entry=get_model_family_entry("causvid"),
             built=built,
-            collector_config=build_rollout_config_from_cfg(cfg),
+            collector_config=RolloutCollectorConfig.from_cfg(cfg),
         )
 
 
@@ -196,7 +196,7 @@ def test_diffusion_factory_rejects_a_sibling_config_type(
             cfg,
             family_entry=get_model_family_entry("sd3_5"),
             built=built,
-            collector_config=build_rollout_config_from_cfg(cfg),
+            collector_config=RolloutCollectorConfig.from_cfg(cfg),
             scheduler=object(),
         )
 
@@ -447,7 +447,7 @@ def test_token_objective_rejects_unused_math_precision_override() -> None:
             cfg,
             built=built,
             family_entry=get_model_family_entry("emu3"),
-            collector_config=build_rollout_config_from_cfg(cfg),
+            collector_config=RolloutCollectorConfig.from_cfg(cfg),
         )
 
 

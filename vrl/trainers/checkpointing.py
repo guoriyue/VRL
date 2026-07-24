@@ -768,41 +768,22 @@ def load_training_checkpoint_for_resume(
     return load_training_checkpoint(resume.checkpoint_path)
 
 
-def load_training_checkpoint_from_config(cfg: Any) -> TrainingCheckpoint | None:
-    """Public convenience facade for callers without a shared build result."""
-
-    return load_training_checkpoint_for_resume(resolve_training_resume_config(cfg))
-
-
-def resolve_training_resume_strict(cfg: Any) -> bool:
-    """Compatibility facade for the shared checkpoint-restore policy."""
-
-    return resolve_training_resume_config(cfg).strict
-
-
 def prepare_model_config_for_training_resume(
     cfg: Any,
-    checkpoint: TrainingCheckpoint | TrainingResumeConfig | None,
-    *,
-    strict: bool = DEFAULT_CHECKPOINT_STRICT,
+    resume: TrainingResumeConfig,
 ) -> None:
     """Remove warm-start adapter paths when doing full training resume.
 
     Full resume restores ``RuntimeBundle.trainable_modules`` from
     ``checkpoint.pt``. Loading an unrelated ``model.lora.path`` before that can
     silently alter adapter structure, so strict mode rejects the combination.
-    ``TrainingResumeConfig`` lets the config-build boundary normalize before
-    checkpoint I/O; accepting a loaded checkpoint preserves the public
-    compatibility facade for direct callers.
+    Runs on the resolved policy rather than a loaded checkpoint so the config
+    build normalizes the model tree before any checkpoint I/O happens.
     """
 
-    if isinstance(checkpoint, TrainingResumeConfig):
-        has_checkpoint = checkpoint.checkpoint_path is not None
-        strict = checkpoint.strict
-    else:
-        has_checkpoint = checkpoint is not None
-    if not has_checkpoint:
+    if resume.checkpoint_path is None:
         return
+    strict = resume.strict
     lora_path = cfg_path(cfg, "model.lora.path", None)
     if lora_path is None:
         return
@@ -1851,12 +1832,10 @@ __all__ = [
     "load_trainable_state",
     "load_training_checkpoint",
     "load_training_checkpoint_for_resume",
-    "load_training_checkpoint_from_config",
     "prepare_metrics_csv",
     "prepare_model_config_for_training_resume",
     "read_checkpoint_meta",
     "resolve_training_resume_config",
-    "resolve_training_resume_strict",
     "restore_model_checkpoint",
     "restore_rng_state",
     "restore_training_checkpoint",

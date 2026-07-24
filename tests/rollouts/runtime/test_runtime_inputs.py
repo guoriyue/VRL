@@ -30,7 +30,7 @@ from vrl.models.families.janus_pro.runtime import JanusProR1ChunkGatherer
 from vrl.models.families.nextstep_1.runtime import NextStep1ChunkGatherer
 from vrl.ray.placement import RolePlacement
 from vrl.ray.resources import resolve_distributed_resources
-from vrl.rollouts.collector.config import build_rollout_config_from_cfg
+from vrl.rollouts.collector.config import RolloutCollectorConfig
 
 
 def _capture_launch_inputs(
@@ -306,7 +306,7 @@ def test_generation_chunk_auto_reaches_ray_runtime_without_executor_coercion() -
     )
 
     assert "samples_per_chunk" not in inputs.launch_contract.executor_kwargs
-    assert build_rollout_config_from_cfg(cfg).request_sampling["samples_per_chunk"] == "auto"
+    assert RolloutCollectorConfig.from_cfg(cfg).request_sampling["samples_per_chunk"] == "auto"
 
 
 @pytest.mark.parametrize(

@@ -5,13 +5,11 @@ from __future__ import annotations
 import pytest
 
 from vrl.algorithms.dpo import DiffusionDPOConfig
+from vrl.config.builders import build_offline_dpo_trainer_config
 from vrl.config.loading import load_config
 from vrl.config.precision import PrecisionPolicy
 from vrl.config.schema import RootConfig
-from vrl.scripts.families.wan_2_1.train_dpo import (
-    _build_offline_dpo_trainer_config,
-    train_wan_2_1_dpo,
-)
+from vrl.scripts.families.wan_2_1.train_dpo import train_wan_2_1_dpo
 
 
 def _resolved_trainer_config(overrides: list[str] | None = None):
@@ -19,7 +17,7 @@ def _resolved_trainer_config(overrides: list[str] | None = None):
         "experiment/wan_2_1/offline_dpo_pickapic",
         overrides=overrides,
     )
-    return _build_offline_dpo_trainer_config(
+    return build_offline_dpo_trainer_config(
         cfg,
         DiffusionDPOConfig(beta=123.0, sft_weight=0.25),
         train_batch_size=int(cfg.actor.train_batch_size),

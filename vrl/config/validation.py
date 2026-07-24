@@ -9,7 +9,6 @@ must not enter the Pydantic schema.
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -76,14 +75,6 @@ def path_exists(cfg: DictConfig, path: str) -> bool:
             return False
         node = node[key]
     return True
-
-
-@dataclass(frozen=True, slots=True)
-class ValidatedTrainingInput:
-    """Typed public config and decisions proven valid for one build."""
-
-    root: RootConfig
-    precision: PrecisionPolicy
 
 
 def validate_reward_config(cfg: DictConfig) -> RewardConfig:
@@ -334,8 +325,13 @@ def _validate_image_to_video_source_report(
         raise ValueError("data.source_report eval_rows does not match data.eval_manifest")
 
 
-def validate_training_config(cfg: DictConfig) -> ValidatedTrainingInput:
-    """Validate config once and return the typed input consumed by builders."""
+def validate_training_config(cfg: DictConfig) -> tuple[RootConfig, PrecisionPolicy]:
+    """Validate config once and return the typed config plus its precision policy.
+
+    Returns the pair rather than a wrapper struct: the precision policy is a pure
+    derivation of ``root``, and it is returned only so the caller does not resolve
+    it a second time (asserted by tests/config/test_builders.py).
+    """
     from vrl.config.unknown_keys import warn_unknown_keys
 
     warn_unknown_keys(cfg)
@@ -350,11 +346,10 @@ def validate_training_config(cfg: DictConfig) -> ValidatedTrainingInput:
     require_compile_checkpointing_compatible(root)
     if bool(OmegaConf.select(cfg, "production.kling_video_reward.enabled", default=False)):
         validate_production_kling_video_reward_config(cfg)
-    return ValidatedTrainingInput(root=root, precision=precision)
+    return root, precision
 
 
 __all__ = [
-    "ValidatedTrainingInput",
     "optional_none",
     "path_exists",
     "require",

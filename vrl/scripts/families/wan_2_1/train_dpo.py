@@ -13,71 +13,10 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import TYPE_CHECKING
 
-from omegaconf import DictConfig, OmegaConf
-
-if TYPE_CHECKING:
-    from vrl.algorithms.dpo import DiffusionDPOConfig
-    from vrl.trainers.offline import OfflineDPOTrainerConfig
+from omegaconf import DictConfig
 
 logger = logging.getLogger(__name__)
-
-
-def _build_offline_dpo_trainer_config(
-    cfg: DictConfig,
-    dpo_config: DiffusionDPOConfig,
-    *,
-    train_batch_size: int,
-    gradient_accumulation_steps: int,
-) -> OfflineDPOTrainerConfig:
-    """Resolve the DPO trainer from the public actor optimizer config."""
-
-    from vrl.config.validation import require
-    from vrl.trainers.core.types import OptimConfig
-    from vrl.trainers.offline import OfflineDPOTrainerConfig
-
-    raw_optim = OmegaConf.to_container(
-        cfg.actor.optim,
-        resolve=True,
-        throw_on_missing=True,
-    )
-    if not isinstance(raw_optim, dict):
-        raise ValueError("actor.optim must be a mapping")
-    optim = OptimConfig(**raw_optim)
-    if optim.optim_8bit:
-        raise ValueError(
-            "actor.optim.optim_8bit=true is not supported by OfflineDPOTrainer; "
-            "use AdamW/Adafactor without 8-bit optimizer state",
-        )
-    use_adafactor = bool(require(cfg, "actor.use_adafactor"))
-    if use_adafactor:
-        adam_only_keys = sorted({"adam_beta1", "adam_beta2", "eps"} & raw_optim.keys())
-        if adam_only_keys:
-            paths = ", ".join(f"actor.optim.{key}" for key in adam_only_keys)
-            raise ValueError(
-                f"actor.use_adafactor=true does not consume AdamW-only key(s): {paths}",
-            )
-
-    scale_lr = bool(require(cfg, "actor.scale_lr"))
-    effective_batch_size = train_batch_size * gradient_accumulation_steps
-    lr = float(optim.lr) * effective_batch_size if scale_lr else float(optim.lr)
-    max_grad_norm = OmegaConf.select(cfg, "actor.max_norm")
-    if max_grad_norm is None:
-        max_grad_norm = OfflineDPOTrainerConfig().max_grad_norm
-    return OfflineDPOTrainerConfig(
-        beta=float(dpo_config.beta),
-        sft_weight=float(dpo_config.sft_weight),
-        lr=lr,
-        adam_beta1=float(optim.adam_beta1),
-        adam_beta2=float(optim.adam_beta2),
-        adam_weight_decay=float(optim.weight_decay),
-        adam_epsilon=float(optim.eps),
-        max_grad_norm=float(max_grad_norm),
-        gradient_accumulation_steps=gradient_accumulation_steps,
-        prediction_type=str(require(cfg, "actor.prediction_type")),
-        use_adafactor=use_adafactor,
-    )
 
 
 def _build_encoders(pipeline, num_frames: int, device, dtype):
@@ -132,7 +71,7 @@ def _build_encoders(pipeline, num_frames: int, device, dtype):
 def train_wan_2_1_dpo(cfg: DictConfig) -> None:
     """Run Wan-family Diffusion-DPO training driven by a merged YAML config."""
 
-    from vrl.config.builders import build_configs
+    from vrl.config.builders import build_configs, build_offline_dpo_trainer_config
     from vrl.families.names import normalize_model_family
 
     built = build_configs(cfg)
@@ -189,7 +128,7 @@ def train_wan_2_1_dpo(cfg: DictConfig) -> None:
     precision = built.precision
     train_batch_size = int(require(cfg, "actor.train_batch_size"))
     grad_accum = int(require(cfg, "actor.gradient_accumulation_steps"))
-    trainer_cfg = _build_offline_dpo_trainer_config(
+    trainer_cfg = build_offline_dpo_trainer_config(
         cfg,
         dpo_config,
         train_batch_size=train_batch_size,

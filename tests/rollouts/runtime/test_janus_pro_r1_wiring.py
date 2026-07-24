@@ -10,10 +10,7 @@ from vrl.rollouts.collector.batch_builder import (
     RolloutBatchBuildContext,
     TrajectoryRolloutBatchBuilder,
 )
-from vrl.rollouts.collector.config import (
-    RolloutCollectorConfig,
-    build_rollout_config_from_cfg,
-)
+from vrl.rollouts.collector.config import RolloutCollectorConfig
 from vrl.trajectory import TrajectoryResolver, build_ar_multisegment_trajectory
 
 
@@ -61,7 +58,7 @@ def test_r1_train_segments_derive_from_algorithm_config() -> None:
     cfg.algorithm.train_segments.initial_image = False
     cfg.algorithm.train_segments.selfcheck_text = True
 
-    rollout = build_rollout_config_from_cfg(cfg)
+    rollout = RolloutCollectorConfig.from_cfg(cfg)
 
     assert rollout.get("train_segments") == {
         "initial_image": False,

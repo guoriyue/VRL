@@ -1022,8 +1022,6 @@ def test_global_std_streaming_divergence_warning(caplog) -> None:
     """global_std=true + streaming with >1 group/microbatch warns; exempt cases don't."""
     import logging
 
-    from omegaconf import OmegaConf
-
     from vrl.scripts.common.online import _warn_global_std_streaming_divergence
 
     def _plan(rbs: int, gas: int) -> OnlineBatchPlan:
@@ -1034,22 +1032,21 @@ def test_global_std_streaming_divergence_warning(caplog) -> None:
         )
 
     logger_name = "vrl.scripts.common.online"
-    cfg_true = OmegaConf.create({"algorithm": {"global_std": True}})
 
-    def _warns(cfg, plan) -> bool:
+    def _warns(plan, *, global_std: bool) -> bool:
         caplog.clear()
         with caplog.at_level(logging.WARNING, logger=logger_name):
-            _warn_global_std_streaming_divergence(cfg, plan)
+            _warn_global_std_streaming_divergence(plan, global_std=global_std)
         return any("global_std=true with streaming" in r.getMessage() for r in caplog.records)
 
     # global_std=true + 2 groups/microbatch (rbs=8, gas=4) -> warn (the sd3 case).
-    assert _warns(cfg_true, _plan(8, 4))
+    assert _warns(_plan(8, 4), global_std=True)
     # Exempt: microbatch_size=1 (gas=8 -> 1 group/microbatch; per-group == global).
-    assert not _warns(cfg_true, _plan(8, 8))
+    assert not _warns(_plan(8, 8), global_std=True)
     # Exempt: global_std=false (per-group std is streaming-equivalent).
-    assert not _warns(OmegaConf.create({"algorithm": {"global_std": False}}), _plan(8, 4))
+    assert not _warns(_plan(8, 4), global_std=False)
     # Exempt: legacy full-batch (gas=0, no streaming).
-    assert not _warns(cfg_true, _plan(8, 0))
+    assert not _warns(_plan(8, 0), global_std=True)
 
 
 def test_host_memory_budget_fail_fast(monkeypatch) -> None:

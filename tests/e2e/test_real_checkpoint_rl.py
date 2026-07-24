@@ -28,7 +28,7 @@ from vrl.generation import GenerationOutput, GenerationRequest, build_sample_row
 from vrl.generation.execution.planner import build_engine_plan
 from vrl.ray.resources import resolve_distributed_resources
 from vrl.rollouts.collector import build_rollout_collector
-from vrl.rollouts.collector.config import build_rollout_config_from_cfg
+from vrl.rollouts.collector.config import RolloutCollectorConfig
 from vrl.scripts.common.factory import (
     build_algorithm_and_evaluator_from_cfg,
     build_reward,
@@ -582,7 +582,7 @@ def test_real_checkpoint_online_rl_updates_trainable_weights(
             device,
             dtype,
         )
-        collector_config = build_rollout_config_from_cfg(cfg)
+        collector_config = RolloutCollectorConfig.from_cfg(cfg)
         if case.synthetic_replay_rollout:
             collector = _SyntheticDiffusionReplayCollector(
                 model=bundle.model,

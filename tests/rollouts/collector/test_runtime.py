@@ -24,7 +24,7 @@ from vrl.rollouts.collector.batch_builder import (
     RolloutBatchBuildContext,
     TrajectoryRolloutBatchBuilder,
 )
-from vrl.rollouts.collector.config import build_rollout_config_from_cfg
+from vrl.rollouts.collector.config import RolloutCollectorConfig
 from vrl.rollouts.collector.core import RolloutCollector
 from vrl.rollouts.collector.requests import CollectorRequest, GenerationRequestBuilder
 from vrl.rollouts.collector.rewards import (
@@ -308,7 +308,7 @@ def test_nextstep_noise_level_reaches_generation_request_from_rollout_owner() ->
     cfg = OmegaConf.create({"rollout": {"noise_level": 0.37}})
     builder = GenerationRequestBuilder(
         entry=get_model_family_entry("nextstep_1"),
-        config=build_rollout_config_from_cfg(cfg),
+        config=RolloutCollectorConfig.from_cfg(cfg),
     )
 
     request = builder.build(["draw text"], group_size=1).request

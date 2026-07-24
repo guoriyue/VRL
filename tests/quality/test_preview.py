@@ -10,7 +10,7 @@ from omegaconf import OmegaConf
 from PIL import Image
 
 from tests.quality.preview import build_preview_request, write_preview_image
-from vrl.rollouts.collector.config import build_rollout_config_from_cfg
+from vrl.rollouts.collector.config import RolloutCollectorConfig
 from vrl.rollouts.collector.requests import GenerationRequestBuilder
 from vrl.trainers.data.prompts import PromptExample
 
@@ -29,7 +29,7 @@ def test_preview_request_uses_real_prompt_overrides_and_one_sample(
             task="t2i",
             request_metadata_namespace=None,
         ),
-        config=build_rollout_config_from_cfg(
+        config=RolloutCollectorConfig.from_cfg(
             OmegaConf.create(
                 {
                     "rollout": {"samples_per_chunk": configured_chunk_size},

@@ -605,20 +605,6 @@ def _value_for(
     return _MISSING
 
 
-def _resolve_token_config(
-    build: ModelBuild,
-    *,
-    config_builder: str,
-    config_cls: str,
-) -> Any:
-    """Build the effective lightweight config owned by one token family."""
-
-    from vrl.utils.config import import_from_path
-
-    projected = import_from_path(config_builder)(build)
-    return import_from_path(config_cls)(**projected)
-
-
 def _resolve_token_lora_values(
     resolved_config: Any,
     *,
@@ -685,11 +671,10 @@ def resolve_checkpoint_model_identity(
     recipe = entry.family_build
     resolved_token_config = None
     if isinstance(recipe, TokenFamilyBuild):
-        resolved_token_config = _resolve_token_config(
-            build,
-            config_builder=recipe.config_builder,
-            config_cls=recipe.config_cls,
-        )
+        # Project through the registry-declared builder model construction uses,
+        # so identity sees the family's effective config, not the raw build.
+        projected = import_from_path(recipe.config_builder)(build)
+        resolved_token_config = import_from_path(recipe.config_cls)(**projected)
         # Family config dataclasses own effective defaults for their public
         # source/member/value fields. The public field name is deliberately the
         # same attribute name, so this remains registry-driven and table-free.

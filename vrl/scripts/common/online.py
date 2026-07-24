@@ -32,7 +32,7 @@ from vrl.ray.resources import (
     trainer_torch_device,
 )
 from vrl.rollouts.collector import build_rollout_collector
-from vrl.rollouts.collector.config import build_rollout_config_from_cfg
+from vrl.rollouts.collector.config import RolloutCollectorConfig
 from vrl.rollouts.orchestration import validate_rollout_schedule_topology
 from vrl.scripts.common.factory import (
     build_algorithm_and_evaluator_from_cfg,
@@ -314,7 +314,11 @@ def _log_rollout_memory_plan(
         )
 
 
-def _warn_global_std_streaming_divergence(cfg: Any, batch_plan: OnlineBatchPlan) -> None:
+def _warn_global_std_streaming_divergence(
+    batch_plan: OnlineBatchPlan,
+    *,
+    global_std: bool,
+) -> None:
     """Warn when global_std advantage normalization is silently per-microbatch.
 
     GRPO ``global_std=true`` normalizes advantages by the std across ALL prompt
@@ -325,11 +329,17 @@ def _warn_global_std_streaming_divergence(cfg: Any, batch_plan: OnlineBatchPlan)
     global-std intent. ``microbatch_size=1`` is exempt: one group per microbatch
     makes per-group and "global" std identical. Surfaced, not blocked, because
     keeping global_std is an experiment-owner decision.
+
+    Same signature shape as ``_log_rollout_memory_plan``: the batch plan the
+    diagnostic reasons about, plus its one value from another owner as a keyword.
+    ``global_std`` belongs to the algorithm config, so the caller passes the
+    typed field rather than re-reading a YAML path whose default would silently
+    win if the key ever moved.
     """
     gas = batch_plan.gradient_accumulation_steps
     if not batch_plan.streaming:
         return
-    if not bool(OmegaConf.select(cfg, "algorithm.global_std", default=False)):
+    if not global_std:
         return
     rbs = batch_plan.prompts_per_batch
     groups_per_microbatch = batch_plan.microbatch_size
@@ -702,7 +712,10 @@ async def run_online_recipe(
             built.root.rollout.samples_per_chunk if built.root.rollout is not None else None
         ),
     )
-    _warn_global_std_streaming_divergence(cfg, batch_plan)
+    _warn_global_std_streaming_divergence(
+        batch_plan,
+        global_std=built.algorithm.global_std,
+    )
     if trainer_config.profile:
         os.environ["VRL_PROFILE"] = "1"
 
@@ -823,7 +836,7 @@ async def run_online_recipe(
         if resources.cross_node:
             cross_node_preflight(ray, resources)
         placement_owner.create()
-        collector_config = build_rollout_config_from_cfg(built.root)
+        collector_config = RolloutCollectorConfig.from_cfg(built.root)
         reward_fn = build_reward(
             built=built,
             resources=resources,

@@ -49,53 +49,51 @@ class RolloutCollectorConfig:
             }
         return sampling
 
+    @classmethod
+    def from_cfg(cls, cfg: Any) -> RolloutCollectorConfig:
+        """Project validated public fields into collector-local and request state."""
 
-def build_rollout_config_from_cfg(cfg: Any) -> RolloutCollectorConfig:
-    """Project validated public fields into collector-local and request state."""
-
-    request_sampling: dict[str, Any] = {}
-    _merge_flat_section_values(
-        request_sampling,
-        cfg,
-        "rollout",
-        allowed=generation_request_rollout_fields(),
-    )
-    sde_values = _cfg_mapping(cfg, "rollout.sde")
-    for source_key, target_key in {
-        "type": "sde_type",
-        "window_size": "sde_window_size",
-        "window_range": "sde_window_range",
-    }.items():
-        if source_key in sde_values and sde_values[source_key] is not None:
-            request_sampling[target_key] = to_builtin_deep(sde_values[source_key])
-    _merge_flat_section_values(
-        request_sampling,
-        cfg,
-        "sampling",
-        allowed=_sampling_fields_for_cfg(cfg),
-    )
-    _copy_value(
-        request_sampling,
-        cfg,
-        "train_segments",
-        "algorithm.train_segments",
-    )
-    kl_reward_coef = resolve_kl_reward_coef(
-        cfg_path(cfg, "algorithm.kl_reward_coef", None),
-    )
-    trajectory_storage = trajectory_storage_policy_from_cfg(
-        cfg_path(cfg, "rollout.trajectory_storage", None),
-    )
-    has_sde_values = any(
-        name in request_sampling for name in ("sde_type", "sde_window_size", "sde_window_range")
-    )
-    if has_sde_values:
-        request_sampling["return_kl"] = kl_reward_coef > 0.0
-    return RolloutCollectorConfig(
-        request_sampling=request_sampling,
-        kl_reward_coef=kl_reward_coef,
-        trajectory_storage=trajectory_storage,
-    )
+        request_sampling: dict[str, Any] = {}
+        _merge_flat_section_values(
+            request_sampling,
+            cfg,
+            "rollout",
+            allowed=generation_request_rollout_fields(),
+        )
+        sde_values = _cfg_mapping(cfg, "rollout.sde")
+        for source_key, target_key in {
+            "type": "sde_type",
+            "window_size": "sde_window_size",
+            "window_range": "sde_window_range",
+        }.items():
+            if source_key in sde_values and sde_values[source_key] is not None:
+                request_sampling[target_key] = to_builtin_deep(sde_values[source_key])
+        _merge_flat_section_values(
+            request_sampling,
+            cfg,
+            "sampling",
+            allowed=_sampling_fields_for_cfg(cfg),
+        )
+        train_segments = cfg_path(cfg, "algorithm.train_segments", None)
+        if train_segments is not None:
+            request_sampling["train_segments"] = to_builtin_deep(train_segments)
+        kl_reward_coef = resolve_kl_reward_coef(
+            cfg_path(cfg, "algorithm.kl_reward_coef", None),
+        )
+        trajectory_storage = trajectory_storage_policy_from_cfg(
+            cfg_path(cfg, "rollout.trajectory_storage", None),
+        )
+        has_sde_values = any(
+            name in request_sampling
+            for name in ("sde_type", "sde_window_size", "sde_window_range")
+        )
+        if has_sde_values:
+            request_sampling["return_kl"] = kl_reward_coef > 0.0
+        return cls(
+            request_sampling=request_sampling,
+            kl_reward_coef=kl_reward_coef,
+            trajectory_storage=trajectory_storage,
+        )
 
 
 def _merge_flat_section_values(
@@ -119,17 +117,6 @@ def _merge_flat_section_values(
                 f"remove the duplicate from {section}",
             )
         values[name] = normalized
-
-
-def _copy_value(
-    values: dict[str, Any],
-    cfg: Any,
-    name: str,
-    path: str,
-) -> None:
-    value = cfg_path(cfg, path, _MISSING)
-    if value is not _MISSING and value is not None:
-        values[name] = to_builtin_deep(value)
 
 
 def _cfg_mapping(cfg: Any, path: str) -> dict[str, Any]:
@@ -178,5 +165,4 @@ _MISSING = object()
 
 __all__ = [
     "RolloutCollectorConfig",
-    "build_rollout_config_from_cfg",
 ]
