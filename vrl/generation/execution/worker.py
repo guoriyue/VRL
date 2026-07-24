@@ -337,7 +337,7 @@ class GenerationWorkerCore:
             ChunkMemoryReading,
         )
         from vrl.generation.execution.chunks import SampleChunk
-        from vrl.utils.profiling import record_function
+        from vrl.utils.profiling import profile_range
 
         if not torch.cuda.is_available():
             raise RuntimeError("chunk-size probe requires CUDA")
@@ -379,7 +379,7 @@ class GenerationWorkerCore:
                 prompt_output = executor.run_prompt_encode_stage(
                     prompt_input,
                     stage_durations=stage_durations,
-                    record_function=record_function,
+                    record_function=profile_range,
                 )
                 prepared = executor.run_prepare_stage(
                     prompt_output,

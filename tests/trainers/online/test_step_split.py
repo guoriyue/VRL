@@ -206,7 +206,7 @@ def test_backward_uses_named_profile_range(tmp_path, monkeypatch) -> None:
         finally:
             events.append(f"exit:{name}")
 
-    monkeypatch.setattr(profiling, "record_function", _record)
+    monkeypatch.setattr(profiling, "profile_range", _record)
     trainer._backward(trainer.model.weight.sum())
 
     assert events == ["enter:trainer.backward", "exit:trainer.backward"]

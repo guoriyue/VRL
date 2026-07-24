@@ -58,11 +58,11 @@ class RayGenerationExecutor:
     async def execute(self, request: GenerationRequest) -> GenerationOutput:
         import time
 
-        from vrl.utils.profiling import record_function
+        from vrl.utils.profiling import profile_range
 
         _gen_start = time.perf_counter()
         sample_rows = build_sample_rows(request)
-        with record_function("engine.plan"):
+        with profile_range("engine.plan"):
             generation_plan = self.planner.plan_with_engine(
                 request,
                 self.workers,

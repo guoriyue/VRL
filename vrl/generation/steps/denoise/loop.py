@@ -15,7 +15,7 @@ from vrl.generation.steps.denoise.teacache import (
 )
 from vrl.math.denoise.flow_matching import sde_step_with_logprob
 from vrl.trajectory.storage import trajectory_tensor_bytes
-from vrl.utils.profiling import record_function
+from vrl.utils.profiling import profile_range
 
 
 @dataclass(slots=True)
@@ -172,8 +172,8 @@ def run_denoise_loop(
         num_steps_to_run = max(1, min(num_steps_to_run, int(config.execute_steps)))
     with torch.no_grad():
         for step_idx in range(num_steps_to_run):
-            with record_function("generation.denoise_step"):
-                with record_function("generation.latent_snapshot"):
+            with profile_range("generation.denoise_step"):
+                with profile_range("generation.latent_snapshot"):
                     latents_ori = state.latents.clone()
                     timestep = state.timesteps[step_idx]
 
@@ -183,7 +183,7 @@ def run_denoise_loop(
                 ):
                     noise_pred = teacache.cached_noise_pred
                 else:
-                    with record_function("generation.denoise_forward"):
+                    with profile_range("generation.denoise_forward"):
                         step_output = model.forward_step(state, step_idx)
                     noise_pred = step_output["noise_pred"]
                     if teacache is not None:
@@ -192,14 +192,14 @@ def run_denoise_loop(
                 ref_noise_pred = None
                 if buffers.ref_noise_preds is not None:
                     with (
-                        record_function("generation.ref_denoise_forward"),
+                        profile_range("generation.ref_denoise_forward"),
                         model.disable_adapter(),
                     ):
                         ref_step_output = model.forward_step(state, step_idx)
                     ref_noise_pred = ref_step_output["noise_pred"]
 
                 if config.denoise_mode == "native":
-                    with record_function("generation.scheduler_step"):
+                    with profile_range("generation.scheduler_step"):
                         prev_latents = state.scheduler.step(
                             noise_pred,
                             timestep,
@@ -221,7 +221,7 @@ def run_denoise_loop(
                     in_sde_window = config.sde_window is None or (
                         config.sde_window[0] <= step_idx < config.sde_window[1]
                     )
-                    with record_function("generation.scheduler_step"):
+                    with profile_range("generation.scheduler_step"):
                         sde_result = sde_step_with_logprob(
                             state.scheduler,
                             noise_pred.float(),
@@ -235,10 +235,10 @@ def run_denoise_loop(
                             step_index=step_idx,
                         )
                     prev_latents = sde_result.prev_sample
-                with record_function("generation.latent_write"):
+                with profile_range("generation.latent_write"):
                     state.latents = prev_latents
 
-            with record_function("generation.trajectory_buffer_write"):
+            with profile_range("generation.trajectory_buffer_write"):
                 buffers.observations[:, step_idx].copy_(latents_ori.detach())
                 buffers.actions[:, step_idx].copy_(
                     prev_latents.detach().to(dtype=buffers.actions.dtype),

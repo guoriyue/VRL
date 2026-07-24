@@ -14,9 +14,6 @@ nsys stays an external collector: Python only emits NVTX ranges, it never wraps
 or manages the ``nsys`` CLI. The manifest is the trust anchor — any later claim
 about a profile must cite ``requested``/``effective``/``missing`` activities
 there, not just a summary table that may be silently incomplete.
-
-``record_function`` remains as a compatibility alias for existing call sites;
-new code should import ``profile_range``.
 """
 
 from __future__ import annotations
@@ -242,7 +239,10 @@ def _activity_enum_by_name() -> dict[str, Any]:
 
     import torch
 
-    return {name.lower(): member for name, member in torch.profiler.ProfilerActivity.__members__.items()}
+    return {
+        name.lower(): member
+        for name, member in torch.profiler.ProfilerActivity.__members__.items()
+    }
 
 
 def _resolve_activities(
@@ -265,8 +265,7 @@ def _resolve_activities(
     unknown = [name for name in requested_names if name not in by_name]
     if unknown:
         raise ValueError(
-            f"Unknown torch profiler activities {unknown}; "
-            f"valid names are {sorted(by_name)}",
+            f"Unknown torch profiler activities {unknown}; valid names are {sorted(by_name)}",
         )
 
     if supported is None:
@@ -406,15 +405,10 @@ def _write_manifest(
         )
 
 
-# Compatibility alias for existing call sites. profile_range is the name new
-# code should use; this stays one migration cycle.
-record_function = profile_range
-
 __all__ = [
     "ResolvedActivities",
     "TorchProfilerConfig",
     "capture_torch_trace",
     "nvtx_enabled",
     "profile_range",
-    "record_function",
 ]

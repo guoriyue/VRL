@@ -26,7 +26,7 @@ def build_engine_plan(
     the request's ``sampling["samples_per_chunk"]``, then ``samples_per_prompt``.
     """
 
-    from vrl.utils.profiling import record_function
+    from vrl.utils.profiling import profile_range
 
     if max_samples_per_chunk is not None:
         chunk_size = max(1, int(max_samples_per_chunk))
@@ -40,7 +40,7 @@ def build_engine_plan(
                 ),
             ),
         )
-    with record_function("engine.plan"):
+    with profile_range("engine.plan"):
         return EnginePlan(
             chunks=build_prompt_chunks(
                 request.prompts,

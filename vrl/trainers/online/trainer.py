@@ -866,9 +866,9 @@ class OnlineTrainer(Trainer):
     # ------------------------------------------------------------------
 
     def _backward(self, loss: Any) -> None:
-        from vrl.utils.profiling import record_function
+        from vrl.utils.profiling import profile_range
 
-        with record_function("trainer.backward"):
+        with profile_range("trainer.backward"):
             self._strategy.backward(loss, grad_scaler=self._grad_scaler)
 
     def _compute_replay_loss(
@@ -883,12 +883,12 @@ class OnlineTrainer(Trainer):
 
         from vrl.algorithms.trajectory import AlgorithmInput
         from vrl.rollouts.evaluators.types import SignalRequest, TrajectorySignalBatch
-        from vrl.utils.profiling import record_function
+        from vrl.utils.profiling import profile_range
 
         if not bool(getattr(self.algorithm, "uses_evaluator", True)):
             # DiffusionNFT owns its raw transformer boundaries and applies the
             # resolved contract there; its objective reductions remain outside.
-            with record_function("trainer.loss"):
+            with profile_range("trainer.loss"):
                 return algorithm_adapter.compute_loss(
                     self.algorithm,
                     AlgorithmInput(
@@ -909,7 +909,7 @@ class OnlineTrainer(Trainer):
         )
         # The evaluator scopes only replay_forward; SDE/log-prob/gather math
         # and the algorithm loss remain outside autocast.
-        with record_function("trainer.replay"):
+        with profile_range("trainer.replay"):
             signals = self.evaluator.evaluate(
                 self.model,
                 chunk_batch,
@@ -920,7 +920,7 @@ class OnlineTrainer(Trainer):
                     need_kl_intermediates=need_kl_intermediates,
                 ),
             )
-        with record_function("trainer.loss"):
+        with profile_range("trainer.loss"):
             if not isinstance(signals, TrajectorySignalBatch):
                 raise TypeError(
                     "evaluator output must be TrajectorySignalBatch; "
@@ -1418,7 +1418,7 @@ class OnlineTrainer(Trainer):
         """
         from vrl.algorithms.trajectory import AlgorithmAdapter
         from vrl.rollouts.evaluators.types import SignalRequest, TrajectorySignalBatch
-        from vrl.utils.profiling import record_function
+        from vrl.utils.profiling import profile_range
 
         cfg = self.config
         optimizer = self._ensure_optimizer()
@@ -1513,7 +1513,7 @@ class OnlineTrainer(Trainer):
             )
             with (
                 torch.no_grad(),
-                record_function("trainer.replay"),
+                profile_range("trainer.replay"),
             ):
                 _dbg_signals = self.evaluator.evaluate(
                     self.model,
@@ -1613,7 +1613,7 @@ class OnlineTrainer(Trainer):
                 _dbg_adv = first_debug_chunk.advantages.to(self.device)
                 with (
                     torch.no_grad(),
-                    record_function("trainer.replay"),
+                    profile_range("trainer.replay"),
                 ):
                     _invariant = _invariant_check(
                         model=self.model,
@@ -1662,7 +1662,7 @@ class OnlineTrainer(Trainer):
             def _guard_evaluate(timestep_idx: int) -> TrajectorySignalBatch:
                 with (
                     torch.no_grad(),
-                    record_function("trainer.replay"),
+                    profile_range("trainer.replay"),
                 ):
                     _sig = self.evaluator.evaluate(
                         self.model,
@@ -1901,9 +1901,9 @@ class OnlineTrainer(Trainer):
         if total_groups <= 0:
             raise ValueError("sft regularizer total_groups must be positive")
 
-        from vrl.utils.profiling import record_function
+        from vrl.utils.profiling import profile_range
 
-        with record_function("trainer.sft_regularizer"):
+        with profile_range("trainer.sft_regularizer"):
             sft_term = self._sft_regularizer_loss(chunk_batch)
             scaled_term = sft_term * float(loss_weight) / int(total_groups)
         self._backward(scaled_term)

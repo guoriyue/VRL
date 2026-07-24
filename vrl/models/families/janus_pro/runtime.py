@@ -242,7 +242,7 @@ class JanusProR1ChunkExecutor(JanusProChunkExecutor):
         request: GenerationRequest,
         chunk: SampleChunk,
     ) -> JanusProR1ChunkResult:
-        from vrl.utils.profiling import record_function
+        from vrl.utils.profiling import profile_range
 
         self.require_native_ar_engine(request)
         self.layout.validate_chunk(request, chunk)
@@ -256,7 +256,7 @@ class JanusProR1ChunkExecutor(JanusProChunkExecutor):
         if params.seed is not None:
             torch.manual_seed(params.seed + self.layout.chunk_seed_offset(request, chunk))
 
-        with record_function("engine.prefill"):
+        with profile_range("engine.prefill"):
             repeated_prompts = [chunk.prompt] * chunk.sample_count
             prompt_ids, prompt_mask, uncond_ids, uncond_mask = self._tokenize_r1_prompts(
                 repeated_prompts,
@@ -264,9 +264,9 @@ class JanusProR1ChunkExecutor(JanusProChunkExecutor):
             )
 
         with (
-            record_function("engine.decode_step"),
-            record_function("engine.cache_read"),
-            record_function("engine.cache_write"),
+            profile_range("engine.decode_step"),
+            profile_range("engine.cache_read"),
+            profile_range("engine.cache_write"),
         ):
             result = call_with_supported_kwargs(
                 self.model.generate_with_refine,

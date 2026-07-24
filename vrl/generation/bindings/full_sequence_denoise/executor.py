@@ -299,14 +299,14 @@ class DiffusionChunkExecutorBase(
         request: GenerationRequest,
         chunk: SampleChunk,
     ) -> DiffusionChunkResult:
-        from vrl.utils.profiling import record_function
+        from vrl.utils.profiling import profile_range
 
         stage_durations: dict[str, float] = {}
         prompt_input = self.build_prompt_stage_input(request, chunk)
         prompt_output = self.run_prompt_encode_stage(
             prompt_input,
             stage_durations=stage_durations,
-            record_function=record_function,
+            record_function=profile_range,
         )
         prepared = self.run_prepare_stage(
             prompt_output,
@@ -477,10 +477,10 @@ class DiffusionChunkExecutorBase(
     ) -> Any:
         """Prepare latent state for one diffusion sample chunk."""
 
-        from vrl.utils.profiling import record_function
+        from vrl.utils.profiling import profile_range
 
         model = self.model
-        with record_function("generation.prepare_sampling"):
+        with profile_range("generation.prepare_sampling"):
             state = model.prepare_sampling(request, encoded, **(prepare_kwargs or {}))
         chunk_batch = state.latents.shape[0]
         if int(chunk_batch) != config.sample_count:
@@ -513,14 +513,14 @@ class DiffusionChunkExecutorBase(
     ) -> DiffusionChunkResult:
         """Decode the final latents and pack one diffusion chunk result."""
 
-        from vrl.utils.profiling import record_function
+        from vrl.utils.profiling import profile_range
 
         model = self.model
         state = denoise_result.state
         # Byte-admission shadow: the decode + pack spike is the second memory
         # phase, measured separately from the denoise plateau.
         reset_cuda_peak()
-        with record_function("generation.decode_latents"):
+        with profile_range("generation.decode_latents"):
             video = model.decode_latents(state.latents)
         # Pack decoded video as uint8 before it crosses the worker->driver
         # wire: every downstream consumer (reward models, mp4 artifacts)

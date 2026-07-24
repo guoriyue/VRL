@@ -27,7 +27,7 @@ from vrl.rollouts.collector.requests import (
     GenerationRequestBuilder,
 )
 from vrl.rollouts.collector.rewards import RewardScorer
-from vrl.utils.profiling import record_function
+from vrl.utils.profiling import profile_range
 
 
 @dataclass(slots=True)
@@ -225,7 +225,7 @@ class RolloutCollector:
         require_reward_release = self._requires_reward_memory_release()
         self._reward_phase_started = require_reward_release
         reward_inputs = [builder.reward_scoring_input() for builder in builders]
-        with record_function("collector.reward_score"):
+        with profile_range("collector.reward_score"):
             score_result = await self.reward_scorer.score_many(
                 reward_inputs,
                 require_memory_release=require_reward_release,

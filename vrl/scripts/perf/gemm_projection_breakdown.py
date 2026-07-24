@@ -54,7 +54,7 @@ from vrl.scripts.perf.common.synthetic_diffusion import (
     build_synthetic_inputs,
 )
 from vrl.utils.logging import init_logger
-from vrl.utils.profiling import record_function
+from vrl.utils.profiling import profile_range
 
 logger = init_logger(__name__)
 
@@ -171,7 +171,7 @@ def instrument_projection_gemms(model: nn.Module) -> Iterator[dict[str, list[str
 
     def make_wrapper(orig_forward: Any, label: str) -> Any:
         def wrapped(*args: Any, **kwargs: Any) -> Any:
-            with record_function(label):
+            with profile_range(label):
                 return orig_forward(*args, **kwargs)
 
         return wrapped

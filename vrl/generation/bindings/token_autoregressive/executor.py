@@ -261,7 +261,7 @@ class ARDiscreteChunkExecutorBase(ARChunkExecutorBase):
         from vrl.generation.composition.token_autoregressive.token_loop import (
             TokenAutoregressiveLoop,
         )
-        from vrl.utils.profiling import record_function
+        from vrl.utils.profiling import profile_range
 
         self.require_native_ar_engine(request)
         self.layout.validate_chunk(request, chunk)
@@ -274,13 +274,13 @@ class ARDiscreteChunkExecutorBase(ARChunkExecutorBase):
         if seed is not None:
             torch.manual_seed(int(seed) + self.layout.chunk_seed_offset(request, chunk))
 
-        with record_function("engine.prefill"):
+        with profile_range("engine.prefill"):
             inputs = self.prepare_chunk_inputs(request, chunk)
 
         with (
-            record_function("engine.decode_step"),
-            record_function("engine.cache_read"),
-            record_function("engine.cache_write"),
+            profile_range("engine.decode_step"),
+            profile_range("engine.cache_read"),
+            profile_range("engine.cache_write"),
         ):
             token_ids, token_log_probs = TokenAutoregressiveLoop(
                 runner=self._ar_runner(request),
@@ -288,7 +288,7 @@ class ARDiscreteChunkExecutorBase(ARChunkExecutorBase):
                 init_args=inputs.init_args,
                 init_kwargs=inputs.init_kwargs,
             ).run()
-        with record_function("engine.vq_decode"):
+        with profile_range("engine.vq_decode"):
             images = self.model.decode_image_tokens(
                 token_ids,
                 **inputs.image_decode_kwargs,
