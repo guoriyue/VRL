@@ -12,6 +12,7 @@ from PIL import Image
 
 from vrl.config.loading import load_config
 from vrl.config.precision import RolePrecision
+from vrl.models import checkpoint_identity
 from vrl.scripts.eval import sana_aesthetic_checkpoint_eval as checkpoint_eval
 from vrl.scripts.eval import sana_inference
 
@@ -134,7 +135,7 @@ def _allow_minimal_protocol(monkeypatch) -> None:
 
     monkeypatch.setattr(checkpoint_eval, "_resolve_protocol_manifests", resolve_manifests)
     monkeypatch.setattr(
-        checkpoint_eval,
+        checkpoint_identity,
         "resolve_checkpoint_model_identity",
         lambda _build: SANA_IDENTITY,
     )
@@ -943,7 +944,7 @@ def test_generation_uses_fresh_base_before_reading_fullparam_checkpoints(
         return materialized_identity
 
     monkeypatch.setattr(
-        checkpoint_eval,
+        checkpoint_identity,
         "resolve_checkpoint_model_identity",
         resolve_materialized_identity,
     )
@@ -1039,7 +1040,7 @@ def test_generate_images_rejects_materialized_source_drift_before_generation(
         ),
     )
     monkeypatch.setattr(
-        checkpoint_eval,
+        checkpoint_identity,
         "resolve_checkpoint_model_identity",
         lambda actual_build: next(identities) if actual_build is build else None,
     )

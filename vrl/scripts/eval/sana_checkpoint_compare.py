@@ -29,7 +29,7 @@ import torch
 from vrl.config.loading import load_config
 from vrl.config.precision import resolve_precision_policy
 from vrl.config.schema import parse_config
-from vrl.models.checkpoint_identity import resolve_checkpoint_model_identity
+from vrl.models import checkpoint_identity
 from vrl.models.dtypes import dtype_to_wire_name
 from vrl.models.loader import model_revision_kwargs
 from vrl.models.precision import float32_precision_state, model_precision
@@ -139,26 +139,29 @@ def run_comparison(args: argparse.Namespace) -> dict[str, str]:
         )
 
     device = resolve_eval_device(args.device)
-    from vrl.models.steps.denoise.build import (
-        build_family_runtime_bundle,
-        resolve_family_model_build,
-    )
+    from vrl.families.registry import get_model_family_entry
+    from vrl.run import resolve_model
 
-    build = resolve_family_model_build(
+    entry = get_model_family_entry("sana")
+    resolved = resolve_model(
+        entry,
         root,
         device,
         precision=precision,
         for_rollout=True,
     )
-    model_identity = resolve_checkpoint_model_identity(build)
+    build = resolved.build
+    model_identity = resolved.identity
     validate_checkpoint_meta_compatibility(
         read_checkpoint_meta(expected_checkpoint_file.parent),
         family="sana",
         expected_model_identity=model_identity,
         strict=True,
     )
-    bundle = build_family_runtime_bundle(build)
-    if resolve_checkpoint_model_identity(build) != model_identity:
+    bundle = entry.build_rollout(build)
+    # The registered mismatch wording below predates run.materialize and is
+    # pinned by this tool's tests, so the recheck stays inline.
+    if checkpoint_identity.resolve_checkpoint_model_identity(build) != model_identity:
         raise RuntimeError("SANA model source changed during runtime construction")
     model = bundle.model.eval()
     dtype_record = _model_precision_snapshot(model)

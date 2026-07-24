@@ -9,8 +9,9 @@ import torch
 from omegaconf import OmegaConf
 from PIL import Image
 
+import vrl.families.registry as model_families
 from vrl.config.precision import RolePrecision
-from vrl.models.steps.denoise import build as diffusion_build
+from vrl.models import checkpoint_identity
 from vrl.scripts.eval import sana_checkpoint_compare as checkpoint_compare
 from vrl.scripts.eval import sana_inference
 
@@ -205,17 +206,18 @@ def test_run_generates_base_before_strict_restore_and_current(
         sana_inference.validate_scheduler(scheduler)
         return scheduler
 
+    entry = SimpleNamespace(
+        resolve_model_build=lambda *args, **kwargs: build,
+        build_rollout=lambda value: bundle,
+    )
     monkeypatch.setattr(checkpoint_compare, "load_training_checkpoint", fake_load_checkpoint)
     monkeypatch.setattr(checkpoint_compare, "restore_model_checkpoint", fake_restore)
     monkeypatch.setattr(
-        checkpoint_compare,
+        checkpoint_identity,
         "resolve_checkpoint_model_identity",
         lambda actual_build: SANA_IDENTITY,
     )
-    monkeypatch.setattr(
-        diffusion_build, "resolve_family_model_build", lambda *args, **kwargs: build
-    )
-    monkeypatch.setattr(diffusion_build, "build_family_runtime_bundle", lambda value: bundle)
+    monkeypatch.setattr(model_families, "get_model_family_entry", lambda family: entry)
     monkeypatch.setattr(checkpoint_compare, "_load_official_scheduler", fake_load_scheduler)
     result = checkpoint_compare.run_comparison(
         checkpoint_compare.build_parser().parse_args(
@@ -308,13 +310,15 @@ def test_run_rejects_meta_identity_before_model_construction(monkeypatch, tmp_pa
         raise AssertionError("model construction must not run")
 
     monkeypatch.setattr(
-        diffusion_build,
-        "resolve_family_model_build",
-        lambda *args, **kwargs: build,
+        model_families,
+        "get_model_family_entry",
+        lambda family: SimpleNamespace(
+            resolve_model_build=lambda *args, **kwargs: build,
+            build_rollout=fail_if_built,
+        ),
     )
-    monkeypatch.setattr(diffusion_build, "build_family_runtime_bundle", fail_if_built)
     monkeypatch.setattr(
-        checkpoint_compare,
+        checkpoint_identity,
         "resolve_checkpoint_model_identity",
         lambda actual_build: SANA_IDENTITY,
     )
@@ -350,13 +354,15 @@ def test_run_rejects_model_source_drift_before_generation(monkeypatch, tmp_path)
         return SimpleNamespace(model=object())
 
     monkeypatch.setattr(
-        diffusion_build,
-        "resolve_family_model_build",
-        lambda *args, **kwargs: build,
+        model_families,
+        "get_model_family_entry",
+        lambda family: SimpleNamespace(
+            resolve_model_build=lambda *args, **kwargs: build,
+            build_rollout=build_bundle,
+        ),
     )
-    monkeypatch.setattr(diffusion_build, "build_family_runtime_bundle", build_bundle)
     monkeypatch.setattr(
-        checkpoint_compare,
+        checkpoint_identity,
         "resolve_checkpoint_model_identity",
         lambda actual_build: next(identities) if actual_build is build else None,
     )

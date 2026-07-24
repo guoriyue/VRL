@@ -34,7 +34,7 @@ from omegaconf import DictConfig, OmegaConf
 from vrl.config.loading import load_config
 from vrl.config.precision import PrecisionPolicy, resolve_precision_policy
 from vrl.config.schema import RootConfig, parse_config
-from vrl.models.checkpoint_identity import resolve_checkpoint_model_identity
+from vrl.models import checkpoint_identity
 from vrl.scripts.eval._device import resolve_eval_device
 from vrl.scripts.eval.sana_inference import (
     OFFICIAL_SAMPLING_PROTOCOL,
@@ -167,15 +167,16 @@ def main(argv: list[str] | None = None) -> None:
         raise ValueError("SANA checkpoint evaluation requires model configuration")
     identity_precision = resolve_precision_policy(identity_root)
     from vrl.families.registry import get_model_family_entry
+    from vrl.run import resolve_model
 
     identity_entry = get_model_family_entry(str(identity_root.model.family))
-    identity_build = identity_entry.resolve_model_build(
+    model_identity = resolve_model(
+        identity_entry,
         identity_root,
         device,
         precision=identity_precision,
         for_rollout=True,
-    )
-    model_identity = resolve_checkpoint_model_identity(identity_build)
+    ).identity
     for target in targets:
         if target.path is not None:
             validate_checkpoint_meta_compatibility(
@@ -955,23 +956,28 @@ def _generate_images(
     expected_model_identity: dict[str, Any],
 ) -> list[GeneratedImage]:
     from vrl.families.registry import get_model_family_entry
+    from vrl.run import resolve_model
     from vrl.utils.media import write_png
 
     if root.model is None:
         raise ValueError("SANA checkpoint evaluation requires model configuration")
     entry = get_model_family_entry(str(root.model.family))
-    build = entry.resolve_model_build(
+    # Checkpoint compatibility stays bound to the configured Hub repo+commit.
+    # The downloaded tree has a different, content-based identity, so retain it
+    # separately only to prove the local snapshot did not change while loading.
+    resolved = resolve_model(
+        entry,
         root,
         device,
         precision=precision,
         for_rollout=True,
     )
-    # Checkpoint compatibility stays bound to the configured Hub repo+commit.
-    # The downloaded tree has a different, content-based identity, so retain it
-    # separately only to prove the local snapshot did not change while loading.
-    materialized_model_identity = resolve_checkpoint_model_identity(build)
+    build = resolved.build
+    materialized_model_identity = resolved.identity
     bundle = entry.build_rollout(build)
-    loaded_materialized_identity = resolve_checkpoint_model_identity(build)
+    # The registered mismatch wording below predates run.materialize and is
+    # pinned by this protocol's tests, so the recheck stays inline.
+    loaded_materialized_identity = checkpoint_identity.resolve_checkpoint_model_identity(build)
     if loaded_materialized_identity != materialized_model_identity:
         raise RuntimeError(
             "materialized SANA model source changed during runtime construction: "

@@ -13,6 +13,7 @@ from vrl.algorithms.grpo.continuous import GRPOConfig
 from vrl.config.precision import RolePrecision
 from vrl.config.schema import RootConfig
 from vrl.families.semantics import PolicySemantics
+from vrl.models import checkpoint_identity
 from vrl.models.interfaces import ReplayResult
 from vrl.scripts.common import online
 from vrl.trainers.online.config import OnlineBatchPlan
@@ -396,7 +397,13 @@ def _install_common_fakes(
             (checkpoint, family, expected_model_identity, strict),
         )
 
-    monkeypatch.setattr(online, "resolve_checkpoint_model_identity", _resolve_model_identity)
+    # resolve_model/materialize live in vrl.run and reach the identity resolver
+    # through its source module, so the stub targets the owner as well.
+    monkeypatch.setattr(
+        checkpoint_identity,
+        "resolve_checkpoint_model_identity",
+        _resolve_model_identity,
+    )
     monkeypatch.setattr(online, "validate_checkpoint_compatibility", _validate_checkpoint)
     monkeypatch.setattr(
         resolved_run.ray_resources,
@@ -559,7 +566,7 @@ async def test_checkpoint_source_change_stops_after_model_before_ray_or_reward(
         return next(identities)
 
     monkeypatch.setattr(
-        online,
+        checkpoint_identity,
         "resolve_checkpoint_model_identity",
         _resolve_changed_identity,
     )

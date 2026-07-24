@@ -83,7 +83,7 @@ def train_wan_2_1_dpo(cfg: DictConfig) -> None:
             f"(alias 'wan' is accepted); got {configured_family!r}",
         )
 
-    from vrl.run import resolve_run
+    from vrl.run import materialize, resolve_model, resolve_run
 
     # Shared resolution seam: family entry, distributed resources, and the
     # trainer device all come from one composer. The wan-only guard above must
@@ -100,7 +100,6 @@ def train_wan_2_1_dpo(cfg: DictConfig) -> None:
 
     from vrl.algorithms.dpo import DiffusionDPOConfig
     from vrl.config.validation import optional_none, require
-    from vrl.models.checkpoint_identity import resolve_checkpoint_model_identity
     from vrl.models.dtypes import resolve_torch_dtype
     from vrl.ray.resources import format_distributed_resource_plan
     from vrl.trainers.activation_checkpointing import enable_transformer_gradient_checkpointing
@@ -149,27 +148,22 @@ def train_wan_2_1_dpo(cfg: DictConfig) -> None:
     # DPO needs the full family bundle because its VAE and text encoder prepare
     # preference pairs. Registry selection and model projection stay identical
     # to generation; only the downstream optimizer makes this a training path.
-    build = family_entry.resolve_model_build(
+    resolved_model = resolve_model(
+        family_entry,
         built.root,
         device,
         precision=precision,
         for_rollout=True,
         precision_role="training",
     )
-    model_identity = resolve_checkpoint_model_identity(build)
+    model_identity = resolved_model.identity
     validate_checkpoint_compatibility(
         resume_checkpoint,
         family=family,
         expected_model_identity=model_identity,
         strict=resume_config.strict,
     )
-    bundle = family_entry.build_rollout(build)
-    loaded_model_identity = resolve_checkpoint_model_identity(build)
-    if loaded_model_identity != model_identity:
-        raise RuntimeError(
-            "model checkpoint source changed during Wan DPO bundle construction; "
-            f"before={model_identity!r}, after={loaded_model_identity!r}",
-        )
+    bundle = materialize(resolved_model, context="Wan DPO bundle construction")
     wan_model = bundle.model
     pipeline = bundle.raw_handle
     transformer = wan_model.transformer

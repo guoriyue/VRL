@@ -17,7 +17,6 @@ from omegaconf import DictConfig, OmegaConf
 from vrl.config.builders import BuiltConfigs
 from vrl.config.validation import require
 from vrl.generation.ray.launcher import RayGenerationLauncher
-from vrl.models.checkpoint_identity import resolve_checkpoint_model_identity
 from vrl.models.interfaces import require_runtime_model
 from vrl.ray.dependencies import require_ray
 from vrl.ray.placement import GlobalRayPlacementOwner, cross_node_preflight
@@ -28,7 +27,7 @@ from vrl.ray.resources import (
 from vrl.rollouts.collector import build_rollout_collector
 from vrl.rollouts.orchestration import validate_rollout_schedule_topology
 from vrl.rollouts.stats import RolloutStats
-from vrl.run import resolve_online_run
+from vrl.run import materialize, resolve_model, resolve_online_run
 from vrl.scripts.common.factory import (
     build_algorithm_and_evaluator_from_cfg,
     build_reward,
@@ -747,13 +746,14 @@ async def run_online_recipe(
                 f"{family_entry.family} requires data.preprocessing.conditioning=reference_image",
             )
 
-    replay_build = family_entry.resolve_model_build(
+    resolved_model = resolve_model(
+        family_entry,
         built.root,
         device,
         precision=built.precision,
         for_rollout=False,
     )
-    model_identity = resolve_checkpoint_model_identity(replay_build)
+    model_identity = resolved_model.identity
     validate_checkpoint_compatibility(
         resume_checkpoint,
         family=family_entry.family,
@@ -786,13 +786,7 @@ async def run_online_recipe(
     resume_dir = resume_checkpoint.checkpoint_dir if resume_checkpoint is not None else None
 
     log_host_memory("before_trainer_bundle_build", log=logger)
-    bundle = family_entry.build_replay(replay_build)
-    loaded_model_identity = resolve_checkpoint_model_identity(replay_build)
-    if loaded_model_identity != model_identity:
-        raise RuntimeError(
-            "model checkpoint source changed during replay bundle construction; "
-            f"before={model_identity!r}, after={loaded_model_identity!r}",
-        )
+    bundle = materialize(resolved_model, replay=True, context="replay bundle construction")
     log_host_memory("after_trainer_bundle_build", log=logger)
     if family_entry.policy_semantics.step_kind == "denoise":
         enable_transformer_gradient_checkpointing(bundle, built.root)
