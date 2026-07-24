@@ -5,7 +5,7 @@
 来源：dead-code-audit workflow（五种死代码形态 + 对抗验证 + 删除类二次字符串引用检查）。
 关联：[[SPRINT_deadcode_00_overview]]；与 [[SPRINT_trajectory_views_types_dead_fields_cleanup]]（死字段规则同源）、[[SPRINT_fbag_00_overview]]（`gather_full_state_dict` 的 cohesive-keep 判定，见 §1.4 复核）、[[SPRINT_grab_bag_file_audit]]（`require_method=False` 历史 producer，见 §1.18）、[[SPRINT_design_smell_audit]]（`mask_key` 假旋钮先例，见 §1.17）、[[SPRINT_native_generation_engine_program]]（在飞 sprint，`vrl/ray/` 文件重叠，见 §1.6/§1.8/§1.9）互有承接。
 
-> **执行状态（2026-07-24）**：16 条已落地 `c951ceba`。§1.3 `collect_prompt_batches` **撤销**（复核发现 `remap_group_ids_` 是 per-prompt 优势归一化的承重代码，非死代码）。§1.6/§1.8/§1.9（3 条 ray/ 项）**延后**至 native-generation-engine sprint 之后。
+> **执行状态（2026-07-24）**：16 条已落地 `c951ceba`。§1.3 `collect_prompt_batches` **撤销**（复核发现 `remap_group_ids_` 是 per-prompt 优势归一化的承重代码，非死代码）。§1.6/§1.8/§1.9（3 条 ray/ 项）已落地 `58c4e0b3`（在飞 sprint 已合并，无 worktree 冲突）。
 
 > 章节编号沿用原始审计（§1.1–§1.23），以保内部交叉引用不断链。已落地的三条（§1.1、§1.13、§1.19）从 §1 移入 §2，故 §1 编号有意留空档。所有 §1 条目的 KEY grep 已于 2026-07-24 对 `7c748532` 重跑，位置行号按当前树更新，逻辑判定零偏差。
 

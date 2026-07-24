@@ -9,7 +9,7 @@ origin 落地**（见 §2）、**1 条情况已变需重评**（见 §3）。REL
 [[SPRINT_deadcode_00_overview]]、[[SPRINT_single_caller_inlines]]、
 [[SPRINT_generation_regime_decision_layering]]、[[SPRINT_native_generation_engine_program]]。
 
-> **执行状态（2026-07-24）**：9 条已落地 `b54d4205`（类型下沉/去重/门禁，无 import 环，models→trainers 边归零）。**延后 2 条**：§1.A.3 signal 搬家（会引入 contested 的 rollouts→algorithms 反向边，待人工定夺）、§1.C.3 probe Protocol（待与 native-generation-engine sprint 协调）。
+> **执行状态（2026-07-24）**：9 条已落地 `b54d4205`（类型下沉/去重/门禁，无 import 环，models→trainers 边归零）。原延后 2 条已落地 `7a4f2b5f`：§1.C.3 probe Protocol（`DiffusionStagedChunkExecutor`）+ §1.A.3 signal——**采用 lazy-import 方案 (b) 而非搬文件方案 (a)**，消除 config-parse 期 eager torch 且**不引入** contested 的 rollouts→algorithms 反向边。
 
 ## 0. 一句话（复核后仍成立的两个结论）
 
