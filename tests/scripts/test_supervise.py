@@ -12,16 +12,20 @@ from dataclasses import fields
 from pathlib import Path
 
 import pytest
-from omegaconf import OmegaConf
 
 from vrl.algorithms.types import InitialReplayStats, TrainStepMetrics
 from vrl.scripts.supervise import (
     HEALTH_VERDICT_NAME,
+    ContinuousHealthPolicy,
     HealthGateConfig,
     MetricsHealthGate,
     RunSupervisor,
-    _build_health_gate_config,
     build_parser,
+)
+from vrl.trainers.core.types import (
+    ContinuousRolloutConfig,
+    DebugConfig,
+    RolloutOrchestrationConfig,
 )
 from vrl.trainers.metrics_io import (
     build_online_metric_row,
@@ -307,47 +311,28 @@ def test_supervisor_runtime_rejects_invalid_retry_config(
         RunSupervisor(command=[], output_dir=Path("unused"), **kwargs)
 
 
+def _health_args(*extra: str):
+    return build_parser().parse_args(["--config", "unit", "--health-metrics", *extra])
+
+
 def test_health_config_derives_strict_parity_limit_from_training_config() -> None:
-    args = build_parser().parse_args(["--config", "unit", "--health-metrics"])
-    cfg = OmegaConf.create(
-        {
-            "trainer": {
-                "debug": {"max_abs_logprob_diff": 0.004},
-                "rollout_orchestration": {"schedule_mode": "strict_on_policy"},
-            },
-        },
+    health = HealthGateConfig.from_cli(
+        _health_args(),
+        schedule=RolloutOrchestrationConfig(schedule_mode="strict_on_policy"),
+        debug=DebugConfig(max_abs_logprob_diff=0.004),
     )
 
-    health = _build_health_gate_config(args, cfg)
-
-    assert health is not None
-    assert health.continuous is False
-    assert health.max_stale_policy_versions is None
+    assert health.continuous is None
     assert health.max_pre_update_logprob_diff == pytest.approx(0.004)
 
 
 def test_health_config_keeps_explicit_parity_override() -> None:
-    args = build_parser().parse_args(
-        [
-            "--config",
-            "unit",
-            "--health-metrics",
-            "--health-max-pre-update-logprob-diff",
-            "0.02",
-        ],
-    )
-    cfg = OmegaConf.create(
-        {
-            "trainer": {
-                "debug": {"max_abs_logprob_diff": 0.004},
-                "rollout_orchestration": {"schedule_mode": "strict_on_policy"},
-            },
-        },
+    health = HealthGateConfig.from_cli(
+        _health_args("--health-max-pre-update-logprob-diff", "0.02"),
+        schedule=RolloutOrchestrationConfig(schedule_mode="strict_on_policy"),
+        debug=DebugConfig(max_abs_logprob_diff=0.004),
     )
 
-    health = _build_health_gate_config(args, cfg)
-
-    assert health is not None
     assert health.max_pre_update_logprob_diff == pytest.approx(0.02)
 
 
@@ -359,88 +344,75 @@ def test_health_config_derives_continuous_metrics_from_training_schedule(
     override: str | None,
     expected: int,
 ) -> None:
-    argv = ["--config", "unit", "--health-metrics"]
-    if override is not None:
-        argv.extend(["--health-max-stale-policy-versions", override])
-    args = build_parser().parse_args(argv)
-    cfg = OmegaConf.create(
-        {
-            "trainer": {
-                "debug": {"max_abs_logprob_diff": 0.01},
-                "rollout_orchestration": {
-                    "schedule_mode": "continuous",
-                    "continuous": {"max_stale_policy_versions": 2},
-                },
-            },
-        },
+    extra = () if override is None else ("--health-max-stale-policy-versions", override)
+
+    health = HealthGateConfig.from_cli(
+        _health_args(*extra),
+        schedule=RolloutOrchestrationConfig(
+            schedule_mode="continuous",
+            continuous=ContinuousRolloutConfig(max_stale_policy_versions=2),
+        ),
+        debug=DebugConfig(),
     )
 
-    health = _build_health_gate_config(args, cfg)
+    assert health.continuous is not None
+    assert health.continuous.max_stale_policy_versions == expected
 
-    assert health is not None
-    assert health.continuous is True
-    assert health.max_stale_policy_versions == expected
+
+def test_health_config_accepts_a_continuous_schedule_on_its_own_defaults() -> None:
+    """A recipe that omits the stale key inherits ContinuousRolloutConfig's default.
+
+    ``base/rollout/orchestration/continuous.yaml`` documents exactly this: the
+    queue/staleness defaults live on the typed config, not in YAML. Reading the
+    key through a raw config path made the supervisor reject every such recipe.
+    """
+
+    health = HealthGateConfig.from_cli(
+        _health_args(),
+        schedule=RolloutOrchestrationConfig(schedule_mode="continuous"),
+        debug=DebugConfig(),
+    )
+
+    assert health.continuous is not None
+    assert health.continuous.max_stale_policy_versions == (
+        RolloutOrchestrationConfig().continuous.max_stale_policy_versions
+    )
 
 
 def test_health_config_rejects_stale_override_wider_than_training() -> None:
-    args = build_parser().parse_args(
-        [
-            "--config",
-            "unit",
-            "--health-metrics",
-            "--health-max-stale-policy-versions",
-            "2",
-        ],
-    )
-    cfg = OmegaConf.create(
-        {
-            "trainer": {
-                "rollout_orchestration": {
-                    "schedule_mode": "continuous",
-                    "continuous": {"max_stale_policy_versions": 1},
-                },
-            },
-        },
-    )
-
     with pytest.raises(ValueError, match="cannot exceed"):
-        _build_health_gate_config(args, cfg)
+        HealthGateConfig.from_cli(
+            _health_args("--health-max-stale-policy-versions", "2"),
+            schedule=RolloutOrchestrationConfig(
+                schedule_mode="continuous",
+                continuous=ContinuousRolloutConfig(max_stale_policy_versions=1),
+            ),
+            debug=DebugConfig(),
+        )
 
 
 def test_health_config_rejects_stale_override_for_strict_schedule() -> None:
-    args = build_parser().parse_args(
-        [
-            "--config",
-            "unit",
-            "--health-metrics",
-            "--health-max-stale-policy-versions",
-            "0",
-        ],
-    )
-    cfg = OmegaConf.create(
-        {
-            "trainer": {
-                "rollout_orchestration": {"schedule_mode": "strict_on_policy"},
-            },
-        },
-    )
-
     with pytest.raises(ValueError, match=r"requires.*schedule_mode=continuous"):
-        _build_health_gate_config(args, cfg)
+        HealthGateConfig.from_cli(
+            _health_args("--health-max-stale-policy-versions", "0"),
+            schedule=RolloutOrchestrationConfig(schedule_mode="strict_on_policy"),
+            debug=DebugConfig(),
+        )
 
 
 @pytest.mark.parametrize(
     "kwargs",
     [
-        {"continuous": True},
-        {"continuous": False, "max_stale_policy_versions": 1},
+        {"max_stale_policy_versions": -1},
+        {"max_stale_policy_versions": 1, "max_stale_logprob_diff": -0.1},
+        {"max_stale_policy_versions": 1, "max_stale_logprob_diff": float("nan")},
     ],
 )
-def test_health_runtime_rejects_schedule_threshold_mismatch(
-    kwargs: dict[str, bool | int],
+def test_continuous_health_policy_rejects_invalid_thresholds(
+    kwargs: dict[str, float | int],
 ) -> None:
     with pytest.raises(ValueError):
-        HealthGateConfig(**kwargs)
+        ContinuousHealthPolicy(**kwargs)
 
 
 def test_health_required_columns_must_exist_in_online_metric_protocol(
@@ -555,9 +527,10 @@ def test_continuous_health_gate_uses_stale_drift_bound() -> None:
     gate = MetricsHealthGate(
         HealthGateConfig(
             max_pre_update_logprob_diff=0.01,
-            continuous=True,
-            max_stale_policy_versions=1,
-            max_stale_logprob_diff=0.05,
+            continuous=ContinuousHealthPolicy(
+                max_stale_policy_versions=1,
+                max_stale_logprob_diff=0.05,
+            ),
         ),
         Path("unused"),
     )
@@ -576,8 +549,7 @@ def test_continuous_health_gate_uses_stale_drift_bound() -> None:
 def test_continuous_schedule_requires_metrics_even_with_zero_stale_limit() -> None:
     gate = MetricsHealthGate(
         HealthGateConfig(
-            continuous=True,
-            max_stale_policy_versions=0,
+            continuous=ContinuousHealthPolicy(max_stale_policy_versions=0),
         ),
         Path("unused"),
     )
@@ -606,7 +578,7 @@ def test_continuous_health_gate_rejects_scheduler_failures(
     expected,
 ) -> None:
     gate = MetricsHealthGate(
-        HealthGateConfig(continuous=True, max_stale_policy_versions=1),
+        HealthGateConfig(continuous=ContinuousHealthPolicy(max_stale_policy_versions=1)),
         Path("unused"),
     )
 
@@ -626,8 +598,7 @@ def test_continuous_health_gate_only_flags_new_producer_errors(tmp_path) -> None
     out.mkdir()
     gate = MetricsHealthGate(
         HealthGateConfig(
-            continuous=True,
-            max_stale_policy_versions=1,
+            continuous=ContinuousHealthPolicy(max_stale_policy_versions=1),
             failure_limit=3,
         ),
         out,
@@ -655,8 +626,7 @@ def test_continuous_health_gate_trips_on_consecutive_producer_error_increases(
     out.mkdir()
     gate = MetricsHealthGate(
         HealthGateConfig(
-            continuous=True,
-            max_stale_policy_versions=1,
+            continuous=ContinuousHealthPolicy(max_stale_policy_versions=1),
             failure_limit=3,
         ),
         out,
@@ -692,8 +662,7 @@ def test_continuous_health_gate_baselines_existing_producer_errors(tmp_path) -> 
         output_dir=out,
         health=HealthGateConfig(
             poll_seconds=0.01,
-            continuous=True,
-            max_stale_policy_versions=1,
+            continuous=ContinuousHealthPolicy(max_stale_policy_versions=1),
             failure_limit=1,
         ),
         sleep=lambda _: None,
