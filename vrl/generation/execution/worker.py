@@ -179,14 +179,14 @@ class GenerationWorkerCore:
         except BaseException as error:
             self._memory_parking.record_model_failure(policy_obj, error)
             raise
-        # The single scalar now means "current submit version": current_policy_version()
-        # is what the producer reads to stamp NEW requests, so it must track the
-        # latest installed version even in slot mode. Per-chunk results take their
-        # version from request.policy_version, not this field.
+        # The single scalar now means "current submit version": it must track the
+        # latest installed version even in slot mode. It reaches the producer
+        # through this method's ACK (returned below) and worker_metadata()'s
+        # "policy_version" field — the producer stamps NEW requests from
+        # RolloutLifecycle.current_policy_version() -> runtime.current_policy_version
+        # (attribute), not by reading this worker directly. Per-chunk results take
+        # their version from request.policy_version, not this field.
         self._policy_version = int(policy_version)
-        return self._policy_version
-
-    def current_policy_version(self) -> int | None:
         return self._policy_version
 
     def supports_versioned_trainable_state(self) -> bool:

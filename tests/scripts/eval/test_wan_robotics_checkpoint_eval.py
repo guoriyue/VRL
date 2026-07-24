@@ -9,6 +9,7 @@ import pytest
 import torch
 from omegaconf import OmegaConf
 
+from vrl.models import checkpoint_identity
 from vrl.scripts.eval import wan_robotics_checkpoint_eval as checkpoint_eval
 from vrl.trainers.data import PromptExample
 
@@ -298,6 +299,13 @@ def test_base_generation_never_reads_a_training_checkpoint(
     monkeypatch.setattr(checkpoint_eval, "_resolve_target", lambda *args: target)
     monkeypatch.setattr(checkpoint_eval, "_build_protocol", lambda *args, **kwargs: protocol)
     monkeypatch.setattr(checkpoint_eval, "get_model_family_entry", lambda family: entry)
+    # run.resolve_model resolves identity off the build; the fake entry returns a
+    # bare object(), so stub the resolver at its owning module (the seam-test pattern).
+    monkeypatch.setattr(
+        checkpoint_identity,
+        "resolve_checkpoint_model_identity",
+        lambda actual_build: {"schema": "test"},
+    )
     monkeypatch.setattr(
         checkpoint_eval,
         "load_training_checkpoint",

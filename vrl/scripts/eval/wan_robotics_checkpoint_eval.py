@@ -25,6 +25,7 @@ from typing import Any
 import torch
 from omegaconf import DictConfig, OmegaConf
 
+from vrl import run
 from vrl.config.loading import load_config
 from vrl.config.precision import resolve_precision_policy
 from vrl.config.schema import parse_config
@@ -212,8 +213,8 @@ def generate_shard(args: argparse.Namespace) -> dict[str, Any]:
         # resolved config through the typed schema and precision policy first.
         root = parse_config(cfg)
         precision = resolve_precision_policy(root)
-        build = entry.resolve_model_build(root, device, precision=precision, for_rollout=True)
-        bundle = entry.build_rollout(build)
+        resolved = run.resolve_model(entry, root, device, precision=precision, for_rollout=True)
+        bundle = entry.build_rollout(resolved.build)
         if target.path is not None:
             checkpoint = load_training_checkpoint(target.path)
             _validate_loaded_checkpoint(checkpoint, target)
