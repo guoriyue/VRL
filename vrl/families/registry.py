@@ -57,10 +57,6 @@ class GenerationRuntimeCapabilities:
     supports_torch_compile: bool = False
     accepts_samples_per_chunk: bool = False
     memory_parking: GenerationParkingProfile = GenerationParkingProfile.MODEL
-    supports_policy_replay: bool = True
-    runs_in_isolated_subprocess: bool = False
-    supports_cumem_pool: bool = False
-    requires_frozen_component_parking: bool = False
     supported_model_memory_sections: frozenset[str] = field(default_factory=frozenset)
 
     def __post_init__(self) -> None:
@@ -462,8 +458,6 @@ def _full_sequence_denoise_entry(
             supports_torch_compile=True,
             accepts_samples_per_chunk=True,
             memory_parking=GenerationParkingProfile.CUMEM,
-            supports_cumem_pool=True,
-            requires_frozen_component_parking=True,
             supported_model_memory_sections=supported_model_memory_sections,
         )
     return ModelFamilyEntry(

@@ -13,7 +13,7 @@ import functools
 import math
 from collections.abc import Mapping
 from dataclasses import fields as dataclass_fields
-from typing import Annotated, Any, ClassVar, Literal, get_args, get_type_hints
+from typing import Annotated, Any, ClassVar, Literal, TypeVar, get_args, get_type_hints
 
 from omegaconf import DictConfig, OmegaConf
 from omegaconf.errors import MissingMandatoryValue
@@ -339,11 +339,6 @@ def generation_request_rollout_fields() -> frozenset[str]:
     )
 
 
-# Kept as a public import facade while the accurate section name is used by
-# registry ownership and RootConfig.
-ModelConfig = ModelSection
-
-
 @functools.cache
 def _model_section_class_from_path(path: str) -> type[ModelSection]:
     section_cls = import_from_path(path)
@@ -385,6 +380,34 @@ def _model_section_block_for_unknown_keys(mapping: Mapping[str, Any]) -> ConfigB
     return _model_section_block(section_cls)
 
 
+_SectionT = TypeVar("_SectionT", bound=ConfigBase)
+
+
+def _revalidate_section(
+    section_cls: type[_SectionT],
+    payload: Any,
+    *,
+    section: str,
+) -> _SectionT:
+    """Validate a bare section payload and re-anchor errors to its YAML path.
+
+    The selected family class validates the bare ``model``/``sampling`` payload;
+    on failure its error is re-prefixed so callers still receive the public
+    ``<section>.<field>`` location instead of the bare field name.
+    """
+
+    try:
+        return section_cls.model_validate(payload)
+    except ValidationError as exc:
+        message = _extract_error_message(exc)
+        if message.startswith("unknown ") and not message.startswith(f"unknown {section}."):
+            message = f"unknown {section}.{message[len('unknown ') :]}"
+        elif message.startswith("config missing required field: "):
+            rest = message[len("config missing required field: ") :]
+            message = f"config missing required field: {section}.{rest}"
+        raise ValueError(message) from exc
+
+
 def _parse_model_section(value: Any) -> ModelSection | None:
     if value is None:
         return None
@@ -403,18 +426,7 @@ def _parse_model_section(value: Any) -> ModelSection | None:
         raise ValueError("model must be a mapping")
 
     if payload is not None:
-        try:
-            parsed = section_cls.model_validate(payload)
-        except ValidationError as exc:
-            # The selected class validates the bare model payload. Re-anchor its
-            # error so callers still receive the public YAML path.
-            message = _extract_error_message(exc)
-            if message.startswith("unknown ") and not message.startswith("unknown model."):
-                message = f"unknown model.{message[len('unknown ') :]}"
-            elif message.startswith("config missing required field: "):
-                rest = message[len("config missing required field: ") :]
-                message = f"config missing required field: model.{rest}"
-            raise ValueError(message) from exc
+        parsed = _revalidate_section(section_cls, payload, section="model")
 
     entry = get_model_family_entry(str(parsed.family))
     entry.validate_model_runtime_sections(
@@ -482,16 +494,7 @@ def _parse_sampling_section(
     else:
         raise ValueError("sampling must be a mapping")
 
-    try:
-        return section_cls.model_validate(payload)
-    except ValidationError as exc:
-        message = _extract_error_message(exc)
-        if message.startswith("unknown ") and not message.startswith("unknown sampling."):
-            message = f"unknown sampling.{message[len('unknown ') :]}"
-        elif message.startswith("config missing required field: "):
-            rest = message[len("config missing required field: ") :]
-            message = f"config missing required field: sampling.{rest}"
-        raise ValueError(message) from exc
+    return _revalidate_section(section_cls, payload, section="sampling")
 
 
 # ── Section key registries (values validated by their own layers) ────────────
@@ -1067,7 +1070,6 @@ def parse_config(cfg: DictConfig) -> RootConfig:
 __all__ = [
     "AlgorithmConfig",
     "DataConfig",
-    "ModelConfig",
     "ModelSection",
     "RewardConfig",
     "RolloutConfig",
