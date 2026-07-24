@@ -143,8 +143,8 @@ def test_multisegment_primary_is_typed_and_not_mirrored_in_context() -> None:
         request=request,
         sample_rows=build_sample_rows(request),
         segments={
-            "initial_image": _segment_payload(train=True),
-            "final_image": _segment_payload(train=True),
+            "initial_image": _segment_payload(),
+            "final_image": _segment_payload(),
         },
         primary_segment="final_image",
         context={"temperature": 1.0},
@@ -173,6 +173,12 @@ def test_multisegment_primary_rejects_unknown_or_nontrainable_segment(
         task="ar_t2i_r1",
         inputs=["draw"],
         samples_per_prompt=1,
+        sampling={
+            "train_segments": {
+                "initial_image": True,
+                "final_image": final_trainable,
+            },
+        },
     )
 
     with pytest.raises(TrajectoryValidationError, match=message):
@@ -180,8 +186,8 @@ def test_multisegment_primary_rejects_unknown_or_nontrainable_segment(
             request=request,
             sample_rows=build_sample_rows(request),
             segments={
-                "initial_image": _segment_payload(train=True),
-                "final_image": _segment_payload(train=final_trainable),
+                "initial_image": _segment_payload(),
+                "final_image": _segment_payload(),
             },
             primary_segment=primary_segment,
             context={},
@@ -201,8 +207,8 @@ def test_stack_rejects_different_primary_segments() -> None:
             request=request,
             sample_rows=build_sample_rows(request),
             segments={
-                "initial_image": _segment_payload(train=True),
-                "final_image": _segment_payload(train=True),
+                "initial_image": _segment_payload(),
+                "final_image": _segment_payload(),
             },
             primary_segment=primary,
             context={},
@@ -230,17 +236,17 @@ def test_derived_training_view_symbols_are_not_public(symbol: str) -> None:
 
 def _segment_payload(
     *,
-    train: bool,
     batch_size: int = 1,
     token_count: int = 2,
 ) -> dict[str, object]:
+    # Trainability is driven by ``request.sampling['train_segments']`` (or the
+    # ``visual`` default when the request omits it), never by a payload key.
     return {
         "token_ids": torch.ones(batch_size, token_count, dtype=torch.long),
         "token_log_probs": torch.zeros(batch_size, token_count),
         "token_mask": torch.ones(batch_size, token_count),
         "prompt_embeds": torch.zeros(batch_size, 3, 4),
         "attention_mask": torch.ones(batch_size, 3, dtype=torch.long),
-        "train": train,
         "visual": True,
     }
 
@@ -338,12 +344,10 @@ def _structural_trajectories() -> list[tuple[str, TrajectoryBatch, dict[str, int
         sample_rows=sample_rows,
         segments={
             "initial_image": _segment_payload(
-                train=True,
                 batch_size=batch_size,
                 token_count=initial_token_count,
             ),
             "final_image": _segment_payload(
-                train=True,
                 batch_size=batch_size,
                 token_count=final_token_count,
             ),

@@ -54,13 +54,11 @@ def _trajectory_segment(
     token_ids: torch.Tensor,
     *,
     modality: str,
-    train: bool = True,
 ) -> dict[str, torch.Tensor | str | bool]:
     batch_size = token_ids.shape[0]
     return {
         "name": name,
         "visual": modality == "image",
-        "train": train,
         "token_ids": token_ids,
         "token_log_probs": torch.zeros_like(token_ids, dtype=torch.float32),
         "token_mask": torch.ones_like(token_ids, dtype=torch.float32),
@@ -80,6 +78,13 @@ def _trajectory_batch(context: dict | None = None) -> RolloutBatch:
         task="ar_t2i_r1",
         inputs=["draw a chart"],
         samples_per_prompt=2,
+        sampling={
+            "train_segments": {
+                "initial_image": True,
+                "selfcheck_text": True,
+                "final_image": True,
+            },
+        },
     )
     trajectory = build_ar_multisegment_trajectory(
         request=request,
@@ -94,7 +99,6 @@ def _trajectory_batch(context: dict | None = None) -> RolloutBatch:
                 "selfcheck_text",
                 selfcheck_ids,
                 modality="text",
-                train=True,
             ),
             "final_image": _trajectory_segment(
                 "final_image",

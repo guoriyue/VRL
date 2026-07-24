@@ -39,59 +39,65 @@ class _FakeHead:
         )
 
 
+class _RecordingHead:
+    """Identity-velocity head that records the conditioning it evaluated.
+
+    ``.net(x, t, c)`` returns ``c`` so ``_flow_terminal_mean`` with num_steps=1
+    yields the (guided) velocity directly, letting the CFG-combine tests assert
+    which conditioning tensors the walk evaluated. Calling the head directly
+    raises, mirroring ``_FakeHead``'s guard that logprob paths use ``.net``.
+    """
+
+    def __init__(self) -> None:
+        self.calls: list[torch.Tensor] = []
+
+    def net(self, x: torch.Tensor, t: torch.Tensor, c: torch.Tensor) -> torch.Tensor:
+        del x, t
+        self.calls.append(c)
+        return c
+
+    def __call__(self, *args: object, **kwargs: object) -> torch.Tensor:
+        raise AssertionError(
+            "flow-matching logprob must call image_head.net, not the head's "
+            "forward (which is the training-loss path)"
+        )
+
+
 def test_cfg_scale_one_uses_only_the_conditional_velocity() -> None:
     """CFG scale one is the no-guidance branch and must not evaluate uncond."""
     cond = torch.full((1, 2), 3.0)
     uncond = torch.full((1, 2), 1.0)
-    calls: list[torch.Tensor] = []
-
-    def velocity(
-        _x: torch.Tensor,
-        _t: torch.Tensor,
-        conditioning: torch.Tensor,
-    ) -> torch.Tensor:
-        calls.append(conditioning)
-        return conditioning
+    head = _RecordingHead()
 
     mean = _flow_terminal_mean(
-        image_head=None,
+        image_head=head,
         cond=cond,
         x=torch.zeros_like(cond),
         num_steps=1,
         cfg_uncond=uncond,
         guidance_scale=1.0,
-        velocity_fn=velocity,
     )
 
     assert torch.equal(mean, cond)
-    assert calls == [cond]
+    assert head.calls == [cond]
 
 
 def test_cfg_scale_zero_does_not_enable_the_unconditional_branch() -> None:
     cond = torch.full((1, 2), 3.0)
     uncond = torch.full((1, 2), 1.0)
-    calls: list[torch.Tensor] = []
-
-    def velocity(
-        _x: torch.Tensor,
-        _t: torch.Tensor,
-        conditioning: torch.Tensor,
-    ) -> torch.Tensor:
-        calls.append(conditioning)
-        return conditioning
+    head = _RecordingHead()
 
     mean = _flow_terminal_mean(
-        image_head=None,
+        image_head=head,
         cond=cond,
         x=torch.zeros_like(cond),
         num_steps=1,
         cfg_uncond=uncond,
         guidance_scale=0.0,
-        velocity_fn=velocity,
     )
 
     assert torch.equal(mean, cond)
-    assert calls == [cond]
+    assert head.calls == [cond]
 
 
 def test_cfg_scale_two_matches_upstream_unconditional_base_formula() -> None:
@@ -100,13 +106,12 @@ def test_cfg_scale_two_matches_upstream_unconditional_base_formula() -> None:
     uncond = torch.full((1, 2), 1.0)
 
     mean = _flow_terminal_mean(
-        image_head=None,
+        image_head=_RecordingHead(),
         cond=cond,
         x=torch.zeros_like(cond),
         num_steps=1,
         cfg_uncond=uncond,
         guidance_scale=2.0,
-        velocity_fn=lambda _x, _t, conditioning: conditioning,
     )
 
     assert torch.equal(mean, torch.full_like(cond, 5.0))

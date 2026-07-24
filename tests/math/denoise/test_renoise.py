@@ -48,8 +48,15 @@ def test_renoise_replay_keeps_gradient_on_prediction_only() -> None:
 
 @pytest.mark.parametrize("sigma", [0.0, -0.1])
 def test_renoise_rejects_deterministic_or_reverse_sigma(sigma: float) -> None:
+    # Supply ``noise`` so the required-arg check does not preempt the sigma
+    # validation this test is asserting on.
     with pytest.raises(ValueError, match="next_sigma must be > 0"):
-        renoise_step_with_logprob(torch.zeros(1, 2), sigma)
+        renoise_step_with_logprob(torch.zeros(1, 2), sigma, noise=torch.zeros(1, 2))
+
+
+def test_renoise_requires_noise_or_next_sample() -> None:
+    with pytest.raises(ValueError, match="exactly one of noise or next_sample"):
+        renoise_step_with_logprob(torch.zeros(1, 2), 0.2)
 
 
 @pytest.mark.parametrize(
@@ -78,5 +85,7 @@ def test_renoise_rejects_invalid_sigma_shape(
     sigma: torch.Tensor,
     message: str,
 ) -> None:
+    # Supply ``noise`` so the required-arg check does not preempt the sigma-shape
+    # validation this test is asserting on.
     with pytest.raises(ValueError, match=message):
-        renoise_step_with_logprob(torch.zeros(2, 1), sigma)
+        renoise_step_with_logprob(torch.zeros(2, 1), sigma, noise=torch.zeros(2, 1))

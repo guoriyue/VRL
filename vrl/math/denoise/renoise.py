@@ -27,7 +27,6 @@ def renoise_step_with_logprob(
     *,
     next_sample: Any | None = None,
     noise: Any | None = None,
-    generator: Any | None = None,
     math_dtype: Any = None,
 ) -> RenoiseStepResult:
     """Sample or score ``x_next ~ N((1-sigma)*x0, sigma^2 I)``.
@@ -38,6 +37,11 @@ def renoise_step_with_logprob(
     flow through the current model prediction, never through the recorded
     behavior action.
 
+    Sampling always consumes the caller-supplied ``noise``; there is no internal
+    fresh-noise draw, so rollout owns the per-sample RNG (``runner.py`` builds one
+    ``torch.Generator`` per sample) and replay scores the exact stored action.
+    Exactly one of ``noise`` (sample) or ``next_sample`` (score) must be given.
+
     Rollout quantizes the sampled action to the input latent dtype *before*
     scoring it. Replay therefore scores the exact serialized action rather than
     a higher-precision value that was never observed by the next model forward.
@@ -45,10 +49,10 @@ def renoise_step_with_logprob(
 
     import torch
 
-    if next_sample is not None and (noise is not None or generator is not None):
-        raise ValueError("next_sample cannot be combined with noise or generator")
-    if noise is not None and generator is not None:
-        raise ValueError("noise cannot be combined with generator")
+    if next_sample is not None and noise is not None:
+        raise ValueError("next_sample cannot be combined with noise")
+    if next_sample is None and noise is None:
+        raise ValueError("exactly one of noise or next_sample is required")
     if not isinstance(pred_original_sample, torch.Tensor):
         raise TypeError("pred_original_sample must be a torch.Tensor")
 
@@ -69,19 +73,11 @@ def renoise_step_with_logprob(
     mean = (1 - sigma_view) * x0
 
     if next_sample is None:
-        if noise is None:
-            noise = torch.randn(
-                x0.shape,
-                generator=generator,
-                device=x0.device,
-                dtype=dtype,
+        noise = noise.to(device=x0.device, dtype=dtype)
+        if tuple(noise.shape) != tuple(x0.shape):
+            raise ValueError(
+                f"noise shape {tuple(noise.shape)} must match latent shape {tuple(x0.shape)}",
             )
-        else:
-            noise = noise.to(device=x0.device, dtype=dtype)
-            if tuple(noise.shape) != tuple(x0.shape):
-                raise ValueError(
-                    f"noise shape {tuple(noise.shape)} must match latent shape {tuple(x0.shape)}",
-                )
         # This cast is part of the behavior policy: the next causal forward sees
         # the checkpoint dtype, and replay must score that same stored tensor.
         action = (mean + sigma_view * noise).to(original_dtype)

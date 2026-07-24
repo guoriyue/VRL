@@ -20,7 +20,6 @@ diffusion. We follow the same convention.
 from __future__ import annotations
 
 import math
-from collections.abc import Callable
 from typing import Any
 
 import torch
@@ -34,7 +33,6 @@ def _flow_terminal_mean(
     num_steps: int,
     cfg_uncond: torch.Tensor | None,
     guidance_scale: float,
-    velocity_fn: Callable[..., torch.Tensor] | None,
 ) -> torch.Tensor:
     """Run the deterministic Euler prefix and return the terminal flow mean.
 
@@ -47,7 +45,6 @@ def _flow_terminal_mean(
     predictor as ``image_head.net(x, t, c)`` (a ``SimpleMLPAdaLN``). The
     head's own ``forward(z, target, mask)`` is the training-loss path, not
     the velocity field, so we never call the head directly — always ``.net``.
-    Pass ``velocity_fn`` to override.
     """
 
     B = cond.shape[0]
@@ -55,8 +52,6 @@ def _flow_terminal_mean(
     dt = 1.0 / num_steps
 
     def _velocity(xk: torch.Tensor, tk: torch.Tensor, c: torch.Tensor) -> torch.Tensor:
-        if velocity_fn is not None:
-            return velocity_fn(xk, tk, c)
         return image_head.net(xk, tk, c)
 
     def _guided_velocity(xk: torch.Tensor, tk: torch.Tensor) -> torch.Tensor:
@@ -109,7 +104,6 @@ def flow_sample_with_logprob(
     guidance_scale: float = 1.0,
     generator: torch.Generator | None = None,
     initial_noise: torch.Tensor | None = None,
-    velocity_fn: Callable[..., torch.Tensor] | None = None,
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
     """Sample one continuous token from the flow head and return its log-prob.
 
@@ -142,7 +136,6 @@ def flow_sample_with_logprob(
         initial_noise: Optional explicit ``x_0`` prior. When provided, this
             exact tensor is used as the deterministic flow prefix and returned
             for replay.
-        velocity_fn: Optional override for how to call image_head.
 
     Returns:
         ``(token, log_prob, initial_noise)`` where ``token`` is ``[B, D]``,
@@ -183,7 +176,6 @@ def flow_sample_with_logprob(
         num_steps=num_steps,
         cfg_uncond=cfg_uncond,
         guidance_scale=guidance_scale,
-        velocity_fn=velocity_fn,
     )
 
     std_scalar = _flow_noise_std(noise_level, num_steps)
@@ -204,45 +196,32 @@ def flow_logprob_at(
     image_head: Any,
     cond: torch.Tensor,  # [B, D_hidden]
     target_token: torch.Tensor,  # [B, D_token]
-    saved_noise: torch.Tensor | None = None,
+    saved_noise: torch.Tensor,
     *,
     num_steps: int = 20,
     noise_level: float = 1.0,
     cfg_uncond: torch.Tensor | None = None,
     guidance_scale: float = 1.0,
-    velocity_fn: Callable[..., torch.Tensor] | None = None,
 ) -> torch.Tensor:
     """Recompute log-prob of a previously-sampled continuous token.
 
-    The replay assumes the deterministic flow ODE prefix is **the same
-    seed-determined trajectory** as collection time — which we can only
-    guarantee if we either (a) save the prior x_0 and any per-step noise
-    as ``saved_noise``, or (b) accept a Monte-Carlo approximation by
-    re-running with a fresh prior.
-
-    Strategy implemented here: re-run the deterministic prefix with the
-    *current* policy's velocity field, take its terminal mean ``mu``, and
-    compute log p(target_token | mu, std). This matches what
-    ``sde_step_with_logprob`` does in the diffusion path — the "old" and
-    "fresh" log-probs differ only because the velocity field has been
-    updated by SGD, which is exactly what GRPO's ratio is supposed to
-    capture.
+    The replay reuses ``saved_noise`` — the exact prior ``x_0`` stashed at
+    collection time — so the deterministic flow ODE prefix walks the **same
+    seed-determined trajectory** as collection. The terminal mean ``mu`` is then
+    recomputed with the *current* policy's velocity field, and we return
+    log p(target_token | mu, std). This matches what ``sde_step_with_logprob``
+    does in the diffusion path — the "old" and "fresh" log-probs differ only
+    because the velocity field has been updated by SGD, which is exactly what
+    GRPO's ratio is supposed to capture.
 
     Returns:
         ``[B]`` log-probabilities with grad flowing through ``image_head``.
     """
-    B, D = target_token.shape
     device = target_token.device
     dtype = target_token.dtype
 
-    if saved_noise is not None:
-        # Reproducible mode: caller has stashed x_0 and used it everywhere.
-        x = saved_noise.to(device=device, dtype=dtype)
-    else:
-        # Fallback mode: fresh x_0 ~ N(0, I). Biased, but matches what the
-        # SD3/Wan flow-matching path does today (they also don't replay
-        # collection-time noise verbatim).
-        x = torch.randn(B, D, device=device, dtype=dtype)
+    # Reproducible replay: caller has stashed x_0 and used it everywhere.
+    x = saved_noise.to(device=device, dtype=dtype)
 
     mean = _flow_terminal_mean(
         image_head,
@@ -251,7 +230,6 @@ def flow_logprob_at(
         num_steps=num_steps,
         cfg_uncond=cfg_uncond,
         guidance_scale=guidance_scale,
-        velocity_fn=velocity_fn,
     )
 
     std_scalar = _flow_noise_std(noise_level, num_steps)

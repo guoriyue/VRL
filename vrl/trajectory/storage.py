@@ -6,8 +6,9 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any, Literal, get_args
 
+from vrl.trajectory.device import map_tensor_tree
 from vrl.trajectory.types import TrajectoryBatch
-from vrl.utils.config import cfg_get, to_builtin
+from vrl.utils.config import to_builtin
 
 TrajectoryStorageDevice = Literal["preserve", "cpu"]
 TrajectoryStorageDType = Literal["preserve", "float32", "float16", "bfloat16"]
@@ -45,16 +46,17 @@ def trajectory_storage_policy_from_cfg(value: object) -> TrajectoryStoragePolicy
     if value is None:
         return TrajectoryStoragePolicy()
     value = to_builtin(value)
-    if isinstance(value, TrajectoryStoragePolicy):
-        return value
     if isinstance(value, Mapping):
         return TrajectoryStoragePolicy(
             device=str(value.get("device", "preserve")),
             dtype=str(value.get("dtype", "preserve")),
         )
-    device = cfg_get(value, "device", "preserve")
-    dtype = cfg_get(value, "dtype", "preserve")
-    return TrajectoryStoragePolicy(device=str(device), dtype=str(dtype))
+    # A non-None, non-mapping value is a misconfiguration (e.g. a bare
+    # ``trajectory_storage: cpu`` string surviving config resolution). Fail
+    # loudly instead of silently degrading to a default no-op policy.
+    raise TypeError(
+        f"rollout.trajectory_storage must be a mapping with 'device'/'dtype' keys, got {value!r}",
+    )
 
 
 def apply_trajectory_storage_policy(
@@ -95,23 +97,18 @@ def trajectory_tensor_bytes(value: object) -> int:
 
 
 def _apply_value_policy(value: Any, policy: TrajectoryStoragePolicy) -> Any:
-    if _is_torch_tensor(value):
+    def _place(tensor: Any) -> Any:
         kwargs: dict[str, Any] = {}
         if policy.device == "cpu":
             kwargs["device"] = "cpu"
         dtype = _torch_dtype(policy.dtype)
-        if dtype is not None and value.is_floating_point():
+        if dtype is not None and tensor.is_floating_point():
             kwargs["dtype"] = dtype
         if not kwargs:
-            return value
-        return value.to(**kwargs)
-    if isinstance(value, dict):
-        return {key: _apply_value_policy(inner, policy) for key, inner in value.items()}
-    if isinstance(value, list):
-        return [_apply_value_policy(inner, policy) for inner in value]
-    if isinstance(value, tuple):
-        return tuple(_apply_value_policy(inner, policy) for inner in value)
-    return value
+            return tensor
+        return tensor.to(**kwargs)
+
+    return map_tensor_tree(value, _place, is_leaf=_is_torch_tensor)
 
 
 def _tensor_bytes(value: object, *, seen: set[int]) -> int:

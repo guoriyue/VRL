@@ -69,6 +69,11 @@ def test_storage_policy_parser_rejects_unknown_values() -> None:
     with pytest.raises(ValueError, match="trajectory storage dtype"):
         trajectory_storage_policy_from_cfg({"dtype": "int8"})
 
+    # A bare non-mapping scalar (e.g. ``trajectory_storage: cpu``) is a
+    # misconfiguration and must fail loudly rather than degrade to a default.
+    with pytest.raises(TypeError, match="must be a mapping"):
+        trajectory_storage_policy_from_cfg("cpu")
+
 
 def _trajectory():
     request = GenerationRequest(

@@ -290,10 +290,6 @@ class _TrajectoryBatchBuilder:
                             tensor_refs=replay_tensor_refs,
                         ),
                     },
-                    metadata={
-                        "temporal_chunk_axis": "temporal_chunk",
-                        "transition_axis": "denoise_transition",
-                    },
                 )
             },
             primary_segment="denoise",
@@ -360,7 +356,6 @@ class _TrajectoryBatchBuilder:
                         ),
                     },
                     reward_view=reward_modality,
-                    metadata={"temporal_chunk_axis": "temporal_chunk"},
                 )
             },
             primary_segment=None,
@@ -805,19 +800,15 @@ class _TrajectoryBatchBuilder:
 
     @staticmethod
     def _segment_trainable(value: Any, name: str, payload: dict[str, Any]) -> bool:
-        if "train" in payload:
-            return bool(payload["train"])
-        if "enabled" in payload:
-            return bool(payload["enabled"])
+        # ``value`` is ``request.sampling['train_segments']`` — a ``dict[str, bool]``
+        # validated at factory startup (grpo.multisegment train_segments field),
+        # or ``None`` when the request omits it. No producer supplies any other
+        # shape (a non-dict crashes config resolution) and the generation-side
+        # payload never carries a train/enabled key, so the only live branches
+        # are the dict lookup and the visual-default fallback.
         if value is None:
             return bool(payload.get("visual", True))
-        if isinstance(value, dict):
-            return bool(value.get(name, False))
-        if isinstance(value, str):
-            return name == value
-        if isinstance(value, (list, tuple, set, frozenset)):
-            return name in value
-        return bool(value)
+        return bool(value.get(name, False))
 
 
 def build_diffusion_trajectory(
