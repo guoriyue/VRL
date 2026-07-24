@@ -136,7 +136,10 @@ def train_wan_2_1_dpo(cfg: DictConfig) -> None:
     )
     resume_config = built.resume
     resume_checkpoint = load_training_checkpoint_for_resume(resume_config)
-    resources = resolve_distributed_resources(cfg)
+    resources = resolve_distributed_resources(
+        cfg,
+        reward_inference=built.reward.inference_configs if built.reward else None,
+    )
     logger.info(format_distributed_resource_plan(resources))
     device = torch.device(trainer_torch_device(resources))
     weight_dtype = resolve_torch_dtype(precision.training.dtype)

@@ -25,7 +25,7 @@ def _install_pre_model_fakes(
     checkpoint: object,
 ) -> None:
     monkeypatch.setattr(registry, "get_model_family_entry", lambda _family: entry)
-    monkeypatch.setattr(ray_resources, "resolve_distributed_resources", lambda _cfg: object())
+    monkeypatch.setattr(ray_resources, "resolve_distributed_resources", lambda _cfg, **_kwargs: object())
     monkeypatch.setattr(ray_resources, "format_distributed_resource_plan", lambda _plan: "")
     monkeypatch.setattr(ray_resources, "trainer_torch_device", lambda _plan: "cpu")
     monkeypatch.setattr(

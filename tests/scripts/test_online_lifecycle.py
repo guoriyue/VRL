@@ -370,6 +370,7 @@ def _install_common_fakes(
             reward=SimpleNamespace(
                 weights={"kling_video_reward": 1.0},
                 kwargs={},
+                inference_configs={},
             ),
             resume=SimpleNamespace(checkpoint_path=None, strict=True),
         ),
@@ -748,7 +749,7 @@ async def test_distributed_disjoint_rollout_fails_before_model_or_ray_launch(
         world_size=2,
         device=torch.device("cuda:0"),
     )
-    monkeypatch.setattr(online, "resolve_distributed_resources", lambda _cfg: resources)
+    monkeypatch.setattr(online, "resolve_distributed_resources", lambda _cfg, **_kwargs: resources)
     monkeypatch.setattr(
         online,
         "resolve_training_context",
@@ -792,7 +793,7 @@ async def test_shared_gpu_parking_capability_fails_before_model_or_ray_launch(
             ),
         ),
     )
-    monkeypatch.setattr(online, "resolve_distributed_resources", lambda _cfg: resources)
+    monkeypatch.setattr(online, "resolve_distributed_resources", lambda _cfg, **_kwargs: resources)
     monkeypatch.setattr(
         online,
         "validate_reward_memory_parking",

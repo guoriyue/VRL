@@ -34,7 +34,7 @@ def _built_reward(
     kwargs: dict[str, dict],
 ) -> SimpleNamespace:
     return SimpleNamespace(
-        reward=RewardRuntimeConfig(weights=weights, kwargs=kwargs),
+        reward=RewardRuntimeConfig(weights=weights, kwargs=kwargs, inference_configs={}),
     )
 
 

@@ -6,7 +6,10 @@ import ast
 from dataclasses import dataclass, field, replace
 from typing import Any, Literal
 
-from vrl.config.reward_inference import reward_inference_configs_from_cfg
+from vrl.config.reward_inference import (
+    RewardInferenceConfig,
+    reward_inference_configs_from_cfg,
+)
 from vrl.utils.config import cfg_get, to_builtin
 
 
@@ -159,16 +162,26 @@ class ResolvedDistributedResources:
 _MISSING = object()
 
 
-def resolve_distributed_resources(cfg: Any) -> ResolvedDistributedResources:
+def resolve_distributed_resources(
+    cfg: Any,
+    *,
+    reward_inference: dict[str, RewardInferenceConfig] | None = None,
+) -> ResolvedDistributedResources:
     """Resolve role-level resource config into concrete CUDA ordinals.
 
     This is the single source of truth for trainer/rollout/reward GPU
     ownership. It intentionally does static ownership checks only; memory
     pressure is still a runtime concern.
+
+    ``reward_inference`` is the already-resolved per-component deployment map
+    (``BuiltConfigs.reward.inference_configs``); training scripts pass it so the
+    reward inference is resolved once at config-build time. When omitted (e.g.
+    isolated resource tests) it falls back to resolving from ``cfg``.
     """
 
     config = _distributed_resource_config_from_cfg(cfg)
-    reward_inference = reward_inference_configs_from_cfg(cfg)
+    if reward_inference is None:
+        reward_inference = reward_inference_configs_from_cfg(cfg)
     local_reward_configured = any(
         inference.kind == "in_process" for inference in reward_inference.values()
     )

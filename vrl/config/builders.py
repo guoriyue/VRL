@@ -13,6 +13,10 @@ from vrl.config.precision import (
     PrecisionPolicy,
     resolve_precision_policy,
 )
+from vrl.config.reward_inference import (
+    RewardInferenceConfig,
+    parse_reward_inference_config,
+)
 from vrl.config.schema import RewardConfig, RootConfig
 from vrl.config.validation import (
     path_exists,
@@ -35,6 +39,9 @@ class RewardRuntimeConfig:
 
     weights: dict[str, float]
     kwargs: dict[str, dict[str, Any]]
+    # Per-component inference deployment, resolved once here (compute-once) so GPU
+    # placement reads it off this bundle instead of re-walking the raw reward cfg.
+    inference_configs: dict[str, RewardInferenceConfig]
 
 
 @dataclass(frozen=True, slots=True)
@@ -421,7 +428,18 @@ def build_reward_config(cfg: DictConfig | RewardConfig) -> RewardRuntimeConfig:
     kwargs = {
         name: dict(component_kwargs or {}) for name, component_kwargs in reward.kwargs.items()
     }
-    return RewardRuntimeConfig(weights=weights, kwargs=kwargs)
+    inference_configs = {
+        name: parse_reward_inference_config(
+            (kwargs.get(name) or {}).get("inference"),
+            context=f"reward.kwargs.{name}.inference",
+        )
+        for name in weights
+    }
+    return RewardRuntimeConfig(
+        weights=weights,
+        kwargs=kwargs,
+        inference_configs=inference_configs,
+    )
 
 
 def build_configs(cfg: DictConfig) -> BuiltConfigs:
