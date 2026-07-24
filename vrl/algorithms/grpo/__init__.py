@@ -1,22 +1,10 @@
 """GRPO algorithm family.
 
-The package-level ``GRPO`` / ``GRPOConfig`` names intentionally refer to the
-continuous diffusion variant, so existing diffusion training imports keep the
-same behavior after the package split.
+Deliberately exports nothing. ``vrl.config.algorithm`` imports each config by
+submodule to answer ``algorithm.kind``, so an eager re-export here made every
+config parse load all three torch-backed objective implementations.
 """
 
-from vrl.algorithms.grpo.continuous import GRPO, GRPOConfig
-from vrl.algorithms.grpo.multisegment import (
-    MultiSegmentTokenGRPO,
-    MultiSegmentTokenGRPOConfig,
-)
-from vrl.algorithms.grpo.token import TokenGRPO, TokenGRPOConfig
+from __future__ import annotations
 
-__all__ = [
-    "GRPO",
-    "GRPOConfig",
-    "MultiSegmentTokenGRPO",
-    "MultiSegmentTokenGRPOConfig",
-    "TokenGRPO",
-    "TokenGRPOConfig",
-]
+__all__: list[str] = []

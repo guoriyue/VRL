@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import subprocess
+import sys
 from dataclasses import FrozenInstanceError, fields
 
 import pytest
@@ -12,17 +14,28 @@ from vrl.trainers.core.types import OptimConfig
 from vrl.trainers.online.config import OnlineBatchPlan, TrainerConfig
 
 
-def test_trainer_config_public_facades_share_online_owner() -> None:
-    from vrl.trainers import OnlineBatchPlan as root_plan
-    from vrl.trainers import TrainerConfig as root_export
+def test_trainer_config_public_facade_shares_online_owner() -> None:
     from vrl.trainers.online import OnlineBatchPlan as online_plan
     from vrl.trainers.online import TrainerConfig as online_export
     from vrl.trainers.online.config import OnlineBatchPlan, TrainerConfig
 
-    assert root_export is TrainerConfig
     assert online_export is TrainerConfig
-    assert root_plan is OnlineBatchPlan
     assert online_plan is OnlineBatchPlan
+
+
+def test_config_contracts_import_without_torch() -> None:
+    """The online facade must reach TrainerConfig without the trainer runtime.
+
+    ``vrl.config.schema`` imports TrainerConfig to validate every recipe, so a
+    torch-heavy path here taxes all config parsing. Run in a subprocess because
+    the in-process test session has already imported torch.
+    """
+
+    probe = (
+        "import sys; from vrl.trainers.online import TrainerConfig; "
+        "raise SystemExit(1 if 'torch' in sys.modules else 0)"
+    )
+    assert subprocess.run([sys.executable, "-c", probe], check=False).returncode == 0
 
 
 def test_core_package_does_not_claim_online_trainer_config() -> None:

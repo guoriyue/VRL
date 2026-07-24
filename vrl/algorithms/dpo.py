@@ -14,9 +14,13 @@ protocol (which is reward/advantage-based and explicitly rejects DPO).
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
-import torch
-import torch.nn.functional as F
+# Torch is a call-time dependency, not an import-time one: this module's config
+# dataclass is what ``algorithm.kind`` dispatch loads during config parsing,
+# and every annotation is a string under PEP 563.
+if TYPE_CHECKING:
+    import torch
 
 
 @dataclass(slots=True)
@@ -39,6 +43,10 @@ def diffusion_dpo_loss(
     target: torch.Tensor,
     beta: float,
 ) -> dict[str, torch.Tensor]:
+
+    import torch
+    import torch.nn.functional as F
+
     """Compute the Diffusion-DPO loss for one batch of preference pairs.
 
     Tensor layout: each tensor has leading dim ``2*B`` where the first ``B``
@@ -71,9 +79,7 @@ def diffusion_dpo_loss(
             f"ref_pred={tuple(ref_pred.shape)} target={tuple(target.shape)}"
         )
     if model_pred.shape[0] % 2 != 0:
-        raise ValueError(
-            f"leading dim must be 2*B (winner-then-loser); got {model_pred.shape[0]}"
-        )
+        raise ValueError(f"leading dim must be 2*B (winner-then-loser); got {model_pred.shape[0]}")
 
     reduce_dims = tuple(range(1, model_pred.ndim))
 
@@ -109,6 +115,9 @@ def diffusion_sft_loss(
     model_pred_winner: torch.Tensor,
     target_winner: torch.Tensor,
 ) -> torch.Tensor:
+
+    import torch.nn.functional as F
+
     """Plain MSE on the winner only — useful as auxiliary regulariser.
 
     Pass ``model_pred[:B]`` and ``target[:B]`` (the winner halves).

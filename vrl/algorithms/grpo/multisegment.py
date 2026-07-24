@@ -3,9 +3,13 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-import torch
+# Torch is a call-time dependency, not an import-time one: this module's config
+# dataclass is what ``algorithm.kind`` dispatch loads during config parsing,
+# and every annotation is a string under PEP 563.
+if TYPE_CHECKING:
+    import torch
 
 from vrl.algorithms.grpo.token import TokenGRPO, TokenGRPOConfig
 from vrl.algorithms.trajectory import AlgorithmInput
@@ -45,6 +49,7 @@ class MultiSegmentTokenGRPO(TokenGRPO):
         self,
         inputs: AlgorithmInput,
     ) -> tuple[Any, TrainStepMetrics]:
+
         # signals presence + required_signal_keys are enforced upstream by
         # AlgorithmAdapter.validate_inputs (inherited from GRPO).
         if inputs.advantages is None:

@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import json
 import re
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -266,9 +268,9 @@ def test_all_experiments_load_and_validate() -> None:
         assert "output_dir" in cfg.trainer, f"{name} missing trainer.output_dir"
         assert "kind" in cfg.algorithm, f"{name} missing algorithm.kind"
         assert "adv_estimator" not in cfg.algorithm, f"{name} still uses adv_estimator"
-        validated = validate_training_config(cfg)
+        root, _ = validate_training_config(cfg)
         raw_model = OmegaConf.to_container(cfg.model, resolve=True)
-        typed_model = validated.root.model
+        typed_model = root.model
         assert isinstance(raw_model, dict)
         assert typed_model is not None
         typed_payload = typed_model.model_dump(exclude_unset=True)
@@ -991,3 +993,23 @@ def test_reward_collection_mode_rejected_under_continuous_scheduling() -> None:
             schedule_mode="continuous",
             reward_collection_mode="per_group_streaming",
         )
+
+
+def test_config_parsing_stays_torch_free() -> None:
+    """Resolving any recipe must not load torch.
+
+    Three package facades defer their torch-backed submodules to keep this true
+    (vrl.trajectory, vrl.trainers.data, vrl.algorithms.grpo). Without this test
+    the next eager re-export in any of them silently puts torch back on the
+    config path, where nothing else would notice. Subprocess because the test
+    session has already imported torch.
+    """
+
+    probe = (
+        "import sys; "
+        "from vrl.config.loading import load_config; "
+        "from vrl.config.schema import parse_config; "
+        "parse_config(load_config('experiment/sana/online_grpo_aesthetic')); "
+        "raise SystemExit(1 if 'torch' in sys.modules else 0)"
+    )
+    assert subprocess.run([sys.executable, "-c", probe], check=False).returncode == 0
