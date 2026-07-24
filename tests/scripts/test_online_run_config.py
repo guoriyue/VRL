@@ -7,7 +7,7 @@ from dataclasses import FrozenInstanceError
 import pytest
 
 from vrl.config.schema import RootConfig
-from vrl.scripts.common.online import OnlineRunConfig
+from vrl.scripts.common.resolved_run import OnlineRunConfig
 
 
 def _root(**trainer: object) -> RootConfig:

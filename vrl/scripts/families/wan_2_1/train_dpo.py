@@ -83,19 +83,26 @@ def train_wan_2_1_dpo(cfg: DictConfig) -> None:
             f"(alias 'wan' is accepted); got {configured_family!r}",
         )
 
-    import torch
+    from vrl.scripts.common.resolved_run import resolve_run
+
+    # Shared resolution seam: family entry, distributed resources, and the
+    # trainer device all come from one composer. The wan-only guard above must
+    # stay ahead of it so a non-Wan config fails with the DPO-specific error
+    # before any registry or resource resolution runs; resolve_run re-runs the
+    # (pure, idempotent) config build internally.
+    resolved = resolve_run(cfg)
+    built = resolved.built
+    family_entry = resolved.family
+    resources = resolved.resources
+    device = resolved.device
+
     from torch.utils.data import DataLoader
 
     from vrl.algorithms.dpo import DiffusionDPOConfig
     from vrl.config.validation import optional_none, require
-    from vrl.families.registry import get_model_family_entry
     from vrl.models.checkpoint_identity import resolve_checkpoint_model_identity
     from vrl.models.dtypes import resolve_torch_dtype
-    from vrl.ray.resources import (
-        format_distributed_resource_plan,
-        resolve_distributed_resources,
-        trainer_torch_device,
-    )
+    from vrl.ray.resources import format_distributed_resource_plan
     from vrl.trainers.activation_checkpointing import enable_transformer_gradient_checkpointing
     from vrl.trainers.checkpointing import (
         LORA_WEIGHTS_NAME,
@@ -136,18 +143,12 @@ def train_wan_2_1_dpo(cfg: DictConfig) -> None:
     )
     resume_config = built.resume
     resume_checkpoint = load_training_checkpoint_for_resume(resume_config)
-    resources = resolve_distributed_resources(
-        cfg,
-        reward_inference=built.reward.inference_configs if built.reward else None,
-    )
     logger.info(format_distributed_resource_plan(resources))
-    device = torch.device(trainer_torch_device(resources))
     weight_dtype = resolve_torch_dtype(precision.training.dtype)
 
     # DPO needs the full family bundle because its VAE and text encoder prepare
     # preference pairs. Registry selection and model projection stay identical
     # to generation; only the downstream optimizer makes this a training path.
-    family_entry = get_model_family_entry(family)
     build = family_entry.resolve_model_build(
         built.root,
         device,

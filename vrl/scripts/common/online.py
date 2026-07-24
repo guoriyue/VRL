@@ -14,13 +14,8 @@ from typing import Any
 import torch
 from omegaconf import DictConfig, OmegaConf
 
-from vrl.config.builders import BuiltConfigs, build_configs
-from vrl.config.schema import RootConfig
+from vrl.config.builders import BuiltConfigs
 from vrl.config.validation import require
-from vrl.families.registry import (
-    get_model_family_entry,
-)
-from vrl.generation.ray.config import RayGenerationConfig
 from vrl.generation.ray.launcher import RayGenerationLauncher
 from vrl.models.checkpoint_identity import resolve_checkpoint_model_identity
 from vrl.models.interfaces import require_runtime_model
@@ -28,12 +23,9 @@ from vrl.ray.dependencies import require_ray
 from vrl.ray.placement import GlobalRayPlacementOwner, cross_node_preflight
 from vrl.ray.resources import (
     format_distributed_resource_plan,
-    resolve_distributed_resources,
     reward_torch_device,
-    trainer_torch_device,
 )
 from vrl.rollouts.collector import build_rollout_collector
-from vrl.rollouts.collector.config import RolloutCollectorConfig
 from vrl.rollouts.orchestration import validate_rollout_schedule_topology
 from vrl.rollouts.stats import RolloutStats
 from vrl.scripts.common.factory import (
@@ -41,6 +33,7 @@ from vrl.scripts.common.factory import (
     build_reward,
     validate_reward_memory_parking,
 )
+from vrl.scripts.common.resolved_run import resolve_online_run
 from vrl.trainers.activation_checkpointing import (
     enable_transformer_gradient_checkpointing,
 )
@@ -73,41 +66,6 @@ from vrl.utils.profiling import profile_range
 logger = logging.getLogger(__name__)
 
 _RAY_ADDRESS_ENV = "RAY_ADDRESS"
-
-
-def _run_integer(value: object, *, path: str, minimum: int | None = None) -> int:
-    if isinstance(value, bool) or not isinstance(value, int):
-        raise ValueError(f"{path} must be an integer (got {value!r})")
-    if minimum is not None and value < minimum:
-        raise ValueError(f"{path} must be >= {minimum} (got {value})")
-    return value
-
-
-@dataclass(frozen=True, slots=True)
-class OnlineRunConfig:
-    """Controller-owned epoch, checkpoint cadence, and prompt RNG policy."""
-
-    total_epochs: int
-    save_freq: int = 50
-    seed: int = 0
-
-    def __post_init__(self) -> None:
-        _run_integer(self.total_epochs, path="trainer.total_epochs", minimum=0)
-        _run_integer(self.save_freq, path="trainer.save_freq", minimum=0)
-        _run_integer(self.seed, path="trainer.seed")
-
-    @classmethod
-    def from_root(cls, root: RootConfig) -> OnlineRunConfig:
-        trainer = root.trainer
-        total_epochs = None if trainer is None else trainer.total_epochs
-        if total_epochs is None:
-            raise ValueError("config missing required key: trainer.total_epochs")
-        values: dict[str, Any] = {"total_epochs": total_epochs}
-        if trainer.save_freq is not None:
-            values["save_freq"] = trainer.save_freq
-        if trainer.seed is not None:
-            values["seed"] = trainer.seed
-        return cls(**values)
 
 
 @dataclass(slots=True)
@@ -715,11 +673,13 @@ async def run_online_recipe(
     """Run a family online training job through shared recipe glue."""
 
     _preflight_production_video_reward(cfg)
-    built = build_configs(cfg)
-    run_config = OnlineRunConfig.from_root(built.root)
-    if built.root.model is None:
-        raise ValueError("online recipe requires model configuration")
-    family_entry = get_model_family_entry(str(built.root.model.family))
+    resolved = resolve_online_run(cfg)
+    built = resolved.built
+    run_config = resolved.run
+    family_entry = resolved.family
+    resources = resolved.resources
+    generation_config = resolved.generation
+    device = resolved.device
     trainer_config = built.trainer
     if trainer_config is None:
         raise ValueError("online recipe cannot use an offline-only trainer config")
@@ -746,18 +706,9 @@ async def run_online_recipe(
     # fields are derived after the preflight, next to the trainer that reads them.
     resume_config = built.resume
     resume_checkpoint = load_training_checkpoint_for_resume(resume_config)
-    resources = resolve_distributed_resources(
-        cfg,
-        reward_inference=built.reward.inference_configs if built.reward else None,
-    )
-    generation_config = RayGenerationConfig.from_cfg(
-        built.root,
-        resources=resources,
-    )
     validate_rollout_schedule_topology(trainer_config.rollout_orchestration, resources)
     validate_reward_memory_parking(resources=resources, built=built)
     logger.info(format_distributed_resource_plan(resources))
-    device = torch.device(trainer_torch_device(resources))
     # Resolve the training process identity (rank/device) and fail-fast on
     # strategies the online recipe can't yet drive end-to-end, before building the
     # model / Ray runtime.
@@ -876,7 +827,7 @@ async def run_online_recipe(
         if resources.cross_node:
             cross_node_preflight(ray, resources)
         placement_owner.create()
-        collector_config = RolloutCollectorConfig.from_cfg(built.root)
+        collector_config = resolved.collector
         reward_fn = build_reward(
             built=built,
             resources=resources,

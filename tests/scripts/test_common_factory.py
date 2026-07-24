@@ -26,7 +26,7 @@ from vrl.scripts.common.factory import (
     build_reward,
     validate_reward_memory_parking,
 )
-from vrl.scripts.common.online import OnlineRunConfig
+from vrl.scripts.common.resolved_run import OnlineRunConfig
 
 
 def _built_reward(

@@ -13,7 +13,7 @@ from vrl.config.precision import RolePrecision
 from vrl.config.schema import RootConfig
 from vrl.families.semantics import PolicySemantics
 from vrl.models.interfaces import ReplayResult
-from vrl.scripts.common import online
+from vrl.scripts.common import online, resolved_run
 from vrl.trainers.online.config import OnlineBatchPlan
 
 ray = pytest.importorskip("ray")
@@ -330,8 +330,10 @@ def _install_common_fakes(
     )
 
     monkeypatch.setattr(online, "_preflight_production_video_reward", lambda cfg: None)
+    # The resolution seam moved into resolve_online_run, which calls its
+    # dependencies through their source modules; stub those seams at the owner.
     monkeypatch.setattr(
-        online,
+        resolved_run.registry,
         "get_model_family_entry",
         lambda family: _FakeFamilyEntry(state),
     )
@@ -340,7 +342,7 @@ def _install_common_fakes(
         rollout_base_precision="float32",
     )
     monkeypatch.setattr(
-        online,
+        resolved_run.builders,
         "build_configs",
         lambda cfg: SimpleNamespace(
             root=RootConfig.model_validate(
@@ -395,9 +397,15 @@ def _install_common_fakes(
 
     monkeypatch.setattr(online, "resolve_checkpoint_model_identity", _resolve_model_identity)
     monkeypatch.setattr(online, "validate_checkpoint_compatibility", _validate_checkpoint)
-    monkeypatch.setattr(online, "resolve_distributed_resources", lambda cfg, **kwargs: resources)
+    monkeypatch.setattr(
+        resolved_run.ray_resources,
+        "resolve_distributed_resources",
+        lambda cfg, **kwargs: resources,
+    )
     monkeypatch.setattr(online, "format_distributed_resource_plan", lambda resources: "resources")
-    monkeypatch.setattr(online, "trainer_torch_device", lambda resources: "cpu")
+    monkeypatch.setattr(
+        resolved_run.ray_resources, "trainer_torch_device", lambda resources: "cpu"
+    )
     monkeypatch.setattr(
         online,
         "reward_torch_device",
@@ -422,7 +430,7 @@ def _install_common_fakes(
     )
     monkeypatch.setattr(online, "validate_reward_memory_parking", lambda *args, **kwargs: None)
     monkeypatch.setattr(
-        online.RolloutCollectorConfig,
+        resolved_run.RolloutCollectorConfig,
         "from_cfg",
         staticmethod(lambda cfg: object()),
     )
@@ -749,7 +757,11 @@ async def test_distributed_disjoint_rollout_fails_before_model_or_ray_launch(
         world_size=2,
         device=torch.device("cuda:0"),
     )
-    monkeypatch.setattr(online, "resolve_distributed_resources", lambda _cfg, **_kwargs: resources)
+    monkeypatch.setattr(
+        resolved_run.ray_resources,
+        "resolve_distributed_resources",
+        lambda _cfg, **_kwargs: resources,
+    )
     monkeypatch.setattr(
         online,
         "resolve_training_context",
@@ -793,7 +805,11 @@ async def test_shared_gpu_parking_capability_fails_before_model_or_ray_launch(
             ),
         ),
     )
-    monkeypatch.setattr(online, "resolve_distributed_resources", lambda _cfg, **_kwargs: resources)
+    monkeypatch.setattr(
+        resolved_run.ray_resources,
+        "resolve_distributed_resources",
+        lambda _cfg, **_kwargs: resources,
+    )
     monkeypatch.setattr(
         online,
         "validate_reward_memory_parking",
