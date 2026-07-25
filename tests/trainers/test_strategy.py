@@ -469,17 +469,6 @@ def test_checkpoint_and_rollout_state_have_distinct_ownership() -> None:
     assert "cache" not in checkpoint
 
 
-def test_legacy_strategy_state_names_are_explicit_checkpoint_facades() -> None:
-    strategy = SingleProcessStrategy()
-    bundle = _Bundle()
-
-    canonical = strategy.export_checkpoint_state(bundle)
-    legacy = strategy.export_trainable_state(bundle)
-
-    assert canonical.keys() == legacy.keys()
-    assert torch.equal(canonical["adapter"]["weight"], legacy["adapter"]["weight"])
-
-
 def test_barrier_is_noop() -> None:
     assert SingleProcessStrategy().barrier() is None
 

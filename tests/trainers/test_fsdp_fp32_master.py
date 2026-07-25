@@ -136,7 +136,7 @@ def test_fsdp_bf16_fp32_master_step_and_checkpoint_round_trip(
     assert all(master.dtype == torch.float32 for master in masters)
 
     _step(policy, strategy, optimizer)
-    model_checkpoint = strategy.export_trainable_state(policy)
+    model_checkpoint = strategy.export_checkpoint_state(policy)
     checkpoint = strategy.export_optimizer_state(policy, optimizer)
     assert "fp32_master_weights" in checkpoint
     assert all(
@@ -147,7 +147,7 @@ def test_fsdp_bf16_fp32_master_step_and_checkpoint_round_trip(
 
     torch.manual_seed(7)
     restored_policy, restored_strategy, restored = _build()
-    restored_strategy.load_trainable_state(restored_policy, model_checkpoint)
+    restored_strategy.load_checkpoint_state(restored_policy, model_checkpoint)
     restored_strategy.load_optimizer_state(restored_policy, restored, checkpoint)
     for actual, expected in zip(
         restored.parameters(),
@@ -185,8 +185,8 @@ def _run_two_rank_master_round_trip(
         build_fsdp_mesh,
         gather_full_optimizer_state_dict,
         gather_trainable_state_dict,
+        load_checkpoint_state_dict,
         load_full_optimizer_state_dict,
-        load_trainable_state_dict,
         mixed_precision_policy,
     )
 
@@ -228,7 +228,7 @@ def _run_two_rank_master_round_trip(
         optimizer_state = gather_full_optimizer_state_dict(model, optimizer)
 
         restored_model, restored_optimizer = build()
-        load_trainable_state_dict(restored_model, model_state)
+        load_checkpoint_state_dict(restored_model, model_state)
         load_full_optimizer_state_dict(
             restored_model,
             restored_optimizer,

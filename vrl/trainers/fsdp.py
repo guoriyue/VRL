@@ -224,54 +224,6 @@ def apply_fsdp(
     return handle
 
 
-def gather_rollout_state_dict(module: nn.Module) -> dict[str, Any]:
-    """Gather requires-grad parameters for rollout sync on every rank.
-
-    Asking DCP for a full state before filtering materializes the frozen base on
-    every rank, which defeats LoRA's memory scaling. Keep the state sharded while
-    selecting the ``requires_grad`` parameter keys, then all-gather only those
-    DTensor leaves. Frozen checkpoint-owned state is deliberately excluded:
-    rollout workers receive only the live policy parameters they execute.
-    """
-
-    from torch.distributed.checkpoint.state_dict import (
-        StateDictOptions,
-        get_model_state_dict,
-    )
-    from torch.distributed.tensor import DTensor
-
-    trainable_names = {
-        str(name) for name, parameter in module.named_parameters() if parameter.requires_grad
-    }
-    if not trainable_names:
-        raise ValueError(f"{type(module).__name__} has no trainable parameters")
-
-    sharded_state = get_model_state_dict(
-        module,
-        options=StateDictOptions(
-            full_state_dict=False,
-            cpu_offload=False,
-            ignore_frozen_params=True,
-        ),
-    )
-    missing = sorted(trainable_names - set(sharded_state))
-    if missing:
-        preview = ", ".join(missing[:5])
-        suffix = " ..." if len(missing) > 5 else ""
-        raise ValueError(f"sharded state is missing trainable parameters: {preview}{suffix}")
-
-    gathered: dict[str, Any] = {}
-    # All ranks must enter DTensor collectives in the same order.
-    for name in sorted(trainable_names):
-        value = sharded_state[name]
-        if isinstance(value, DTensor):
-            value = value.full_tensor()
-        if not isinstance(value, torch.Tensor):
-            raise TypeError(f"trainable state {name!r} must be a tensor")
-        gathered[name] = value.detach().cpu().clone()
-    return gathered
-
-
 def gather_trainable_state_dict(
     module: nn.Module,
     *,
@@ -279,11 +231,16 @@ def gather_trainable_state_dict(
 ) -> dict[str, Any]:
     """Gather only trainable parameters as full CPU tensors on every rank.
 
+    This is both the rollout weight-sync gather (``rank0_only=False``: every
+    rank pushes its own gathered weights to its colocated rollout) and the
+    rank0-only checkpoint gather.
+
     Asking DCP for a full state before filtering materializes the frozen base on
     every rank, which defeats LoRA's memory scaling. Keep the state sharded while
     selecting the ``requires_grad`` parameter keys, then all-gather only those
-    DTensor leaves. Buffers are deliberately excluded: this is the mutable
-    trainable-state contract, not a standalone model checkpoint.
+    DTensor leaves. Buffers and frozen checkpoint-owned state are deliberately
+    excluded: this is the mutable trainable-state contract, not a standalone
+    model checkpoint.
 
     ``cpu_offload`` MUST stay False: with ``cpu_offload=True`` DCP returns the
     gathered state ONLY on rank0 and an EMPTY dict on every other rank (a
@@ -438,17 +395,6 @@ def load_checkpoint_state_dict(
             strict=False,
         ),
     )
-
-
-def load_trainable_state_dict(
-    module: nn.Module,
-    state: Mapping[str, Any],
-    *,
-    strict: bool = True,
-) -> None:
-    """Compatibility facade; use ``load_checkpoint_state_dict`` for resume."""
-
-    load_checkpoint_state_dict(module, state, strict=strict)
 
 
 def load_full_state_dict(

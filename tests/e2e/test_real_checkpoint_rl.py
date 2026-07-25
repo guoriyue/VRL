@@ -26,6 +26,7 @@ from vrl.config.schema import RootConfig
 from vrl.families.registry import ModelFamilyEntry, get_model_family_entry
 from vrl.generation import GenerationOutput, GenerationRequest, build_sample_rows
 from vrl.generation.execution.planner import build_engine_plan
+from vrl.models.dtypes import resolve_torch_dtype
 from vrl.ray.resources import resolve_distributed_resources
 from vrl.rollouts.collector import build_rollout_collector
 from vrl.rollouts.collector.config import RolloutCollectorConfig
@@ -34,7 +35,6 @@ from vrl.scripts.common.factory import (
     build_reward,
 )
 from vrl.trainers.online import OnlineTrainer
-from vrl.trainers.precision import torch_dtype_for_trainer_precision
 from vrl.utils.config import import_from_path
 from vrl.utils.model_diagnostics import trainable_state_digest
 
@@ -573,7 +573,7 @@ def test_real_checkpoint_online_rl_updates_trainable_weights(
         device = torch.device("cuda")
         built = build_configs(cfg)
         trainer_config = built.trainer
-        dtype = torch_dtype_for_trainer_precision(trainer_config, torch)
+        dtype = resolve_torch_dtype(built.precision.training.dtype)
         bundle = _build_runtime_bundle(
             case,
             entry,

@@ -47,14 +47,7 @@ from vrl.models.interfaces import ModelBuild, RuntimeBundle
 from vrl.ray import resources as ray_resources
 from vrl.ray.resources import ResolvedDistributedResources
 from vrl.rollouts.collector.config import RolloutCollectorConfig
-
-
-def _run_integer(value: object, *, path: str, minimum: int | None = None) -> int:
-    if isinstance(value, bool) or not isinstance(value, int):
-        raise ValueError(f"{path} must be an integer (got {value!r})")
-    if minimum is not None and value < minimum:
-        raise ValueError(f"{path} must be >= {minimum} (got {value})")
-    return value
+from vrl.utils.config import require_exact_int
 
 
 @dataclass(frozen=True, slots=True)
@@ -66,9 +59,9 @@ class OnlineRunConfig:
     seed: int = 0
 
     def __post_init__(self) -> None:
-        _run_integer(self.total_epochs, path="trainer.total_epochs", minimum=0)
-        _run_integer(self.save_freq, path="trainer.save_freq", minimum=0)
-        _run_integer(self.seed, path="trainer.seed")
+        require_exact_int(self.total_epochs, path="trainer.total_epochs", minimum=0)
+        require_exact_int(self.save_freq, path="trainer.save_freq", minimum=0)
+        require_exact_int(self.seed, path="trainer.seed")
 
     @classmethod
     def from_root(cls, root: RootConfig) -> OnlineRunConfig:

@@ -42,7 +42,7 @@ from vrl.scripts.eval.denoise_video_generation import generate_one_video
 from vrl.trainers.checkpointing import (
     TRAINING_CHECKPOINT_NAME,
     is_complete_checkpoint,
-    load_trainable_state,
+    load_checkpoint_state,
     load_training_checkpoint,
     read_checkpoint_meta,
 )
@@ -219,7 +219,7 @@ def generate_shard(args: argparse.Namespace) -> dict[str, Any]:
             checkpoint = load_training_checkpoint(target.path)
             _validate_loaded_checkpoint(checkpoint, target)
             trainable_state = checkpoint.trainable_state
-            load_trainable_state(bundle, trainable_state, strict=True)
+            load_checkpoint_state(bundle, trainable_state, strict=True)
             del trainable_state, checkpoint
             gc.collect()
         model = bundle.model.eval()

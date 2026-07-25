@@ -122,20 +122,6 @@ class Strategy(Protocol):
         """Load a schema-v1 full-state root through the strategy boundary."""
         ...
 
-    def export_trainable_state(self, bundle: Any) -> dict[str, dict[str, Any]]:
-        """Compatibility facade for the former checkpoint API name."""
-        ...
-
-    def load_trainable_state(
-        self,
-        bundle: Any,
-        state: dict[str, Any],
-        *,
-        strict: bool = True,
-    ) -> None:
-        """Compatibility facade for the former checkpoint API name."""
-        ...
-
     def export_optimizer_state(
         self,
         model: nn.Module,
@@ -378,22 +364,6 @@ class SingleProcessStrategy(_TrainingStateParking, Strategy):
         from vrl.trainers.checkpointing import load_full_checkpoint_state
 
         load_full_checkpoint_state(bundle, state, strict=strict)
-
-    def export_trainable_state(self, bundle: Any) -> dict[str, dict[str, Any]]:
-        """Compatibility facade; checkpoint callers use ``export_checkpoint_state``."""
-
-        return self.export_checkpoint_state(bundle)
-
-    def load_trainable_state(
-        self,
-        bundle: Any,
-        state: dict[str, Any],
-        *,
-        strict: bool = True,
-    ) -> None:
-        """Compatibility facade; checkpoint callers use ``load_checkpoint_state``."""
-
-        self.load_checkpoint_state(bundle, state, strict=strict)
 
     def export_optimizer_state(
         self,
@@ -750,13 +720,13 @@ class FSDPStrategy(_TrainingStateParking, Strategy):
 
     def export_rollout_state(self, bundle: Any) -> dict[str, Any]:
         from vrl.models.utils import unwrap_compile_and_ddp
-        from vrl.trainers.fsdp import gather_rollout_state_dict
+        from vrl.trainers.fsdp import gather_trainable_state_dict
         from vrl.trainers.weight_sync import require_trainable_modules
 
         modules = require_trainable_modules(bundle)
         state: dict[str, Any] = {}
         for module_name, module in modules.items():
-            gathered = gather_rollout_state_dict(unwrap_compile_and_ddp(module))
+            gathered = gather_trainable_state_dict(unwrap_compile_and_ddp(module))
             state.update({f"{module_name}.{name}": value for name, value in gathered.items()})
         if not state:
             raise ValueError("trainable module state is empty")
@@ -813,22 +783,6 @@ class FSDPStrategy(_TrainingStateParking, Strategy):
                     state[name],
                     strict=strict,
                 )
-
-    def export_trainable_state(self, bundle: Any) -> dict[str, dict[str, Any]]:
-        """Compatibility facade; checkpoint callers use ``export_checkpoint_state``."""
-
-        return self.export_checkpoint_state(bundle)
-
-    def load_trainable_state(
-        self,
-        bundle: Any,
-        state: dict[str, Any],
-        *,
-        strict: bool = True,
-    ) -> None:
-        """Compatibility facade; checkpoint callers use ``load_checkpoint_state``."""
-
-        self.load_checkpoint_state(bundle, state, strict=strict)
 
     def export_optimizer_state(
         self,
@@ -1050,22 +1004,6 @@ class DDPStrategy(Strategy):
         from vrl.trainers.checkpointing import load_full_checkpoint_state
 
         load_full_checkpoint_state(bundle, state, strict=strict)
-
-    def export_trainable_state(self, bundle: Any) -> dict[str, dict[str, Any]]:
-        """Compatibility facade; checkpoint callers use ``export_checkpoint_state``."""
-
-        return self.export_checkpoint_state(bundle)
-
-    def load_trainable_state(
-        self,
-        bundle: Any,
-        state: dict[str, Any],
-        *,
-        strict: bool = True,
-    ) -> None:
-        """Compatibility facade; checkpoint callers use ``load_checkpoint_state``."""
-
-        self.load_checkpoint_state(bundle, state, strict=strict)
 
     def export_optimizer_state(
         self,

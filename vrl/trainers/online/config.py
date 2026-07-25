@@ -13,17 +13,8 @@ from vrl.trainers.core.types import (
     PrecisionDriftGuardConfig,
     RolloutOrchestrationConfig,
 )
+from vrl.utils.config import require_exact_int
 from vrl.utils.profiling import TorchProfilerConfig
-
-
-def _require_int(value: object, *, path: str, minimum: int) -> int:
-    """Validate an exact integer configuration boundary."""
-
-    if isinstance(value, bool) or not isinstance(value, int):
-        raise ValueError(f"{path} must be an integer >= {minimum} (got {value!r})")
-    if value < minimum:
-        raise ValueError(f"{path} must be >= {minimum} (got {value})")
-    return value
 
 
 @dataclass(frozen=True, slots=True)
@@ -37,22 +28,22 @@ class OnlineBatchPlan:
     host_memory_budget_fraction: float = field(default=0.0, metadata={"yaml": "actor"})
 
     def __post_init__(self) -> None:
-        prompts = _require_int(
+        prompts = require_exact_int(
             self.prompts_per_batch,
             path="rollout.prompts_per_batch",
             minimum=1,
         )
-        _require_int(
+        require_exact_int(
             self.n_samples_per_prompt,
             path="rollout.n_samples_per_prompt",
             minimum=1,
         )
-        accumulation_steps = _require_int(
+        accumulation_steps = require_exact_int(
             self.gradient_accumulation_steps,
             path="actor.gradient_accumulation_steps",
             minimum=0,
         )
-        _require_int(
+        require_exact_int(
             self.replay_samples_per_chunk,
             path="actor.replay_samples_per_chunk",
             minimum=0,

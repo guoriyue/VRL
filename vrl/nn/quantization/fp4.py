@@ -189,27 +189,6 @@ class Fp4Linear(QuantizedLinear):
         self.weight_scale = scales
         self.weight_tensor_scale = tensor_scale
 
-    def drop_master(self) -> int:
-        """Free the source master while preserving the derived NVFP4 cache."""
-
-        if self.weight is None:
-            return 0
-        freed = self.weight.numel() * self.weight.element_size()
-        self.weight = None
-        return freed
-
-    def _load_from_state_dict(self, state_dict, prefix, *args) -> None:
-        if self.weight is None and f"{prefix}weight" in state_dict:
-            raise RuntimeError(
-                "cannot load base weights into a master-free Fp4Linear "
-                f"({prefix.rstrip('.')}): the source master was dropped "
-                "(drop_master). Master-free is for adapter-only/frozen "
-                "rollouts; full-finetune weight-sync must keep the master.",
-            )
-        super()._load_from_state_dict(state_dict, prefix, *args)
-        if self.weight is not None:
-            self._requantize_weight()
-
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         shape = x.shape
         x_2d = x.reshape(-1, shape[-1]).to(torch.bfloat16).contiguous()

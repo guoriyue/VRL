@@ -1472,23 +1472,6 @@ def _select_owned_checkpoint_state(
     return selected
 
 
-def export_trainable_state(bundle: Any) -> dict[str, dict[str, Any]]:
-    """Compatibility facade; use :func:`export_checkpoint_state` for resume."""
-
-    return export_checkpoint_state(bundle)
-
-
-def load_trainable_state(
-    bundle: Any,
-    state: dict[str, Any],
-    *,
-    strict: bool = DEFAULT_CHECKPOINT_STRICT,
-) -> None:
-    """Compatibility facade; use :func:`load_checkpoint_state` for resume."""
-
-    load_checkpoint_state(bundle, state, strict=strict)
-
-
 def capture_rng_state(**generators: torch.Generator) -> dict[str, Any]:
     """Capture process RNG state plus named torch.Generator states."""
 
@@ -1830,13 +1813,11 @@ __all__ = [
     "TrainingResumeConfig",
     "capture_rng_state",
     "export_checkpoint_state",
-    "export_trainable_state",
     "find_latest_complete_checkpoint",
     "infer_next_epoch",
     "is_complete_checkpoint",
     "load_checkpoint_state",
     "load_full_checkpoint_state",
-    "load_trainable_state",
     "load_training_checkpoint",
     "load_training_checkpoint_for_resume",
     "prepare_metrics_csv",

@@ -484,9 +484,6 @@ def test_save_training_checkpoint_prefers_primary_only_snapshot_seams(tmp_path) 
             self.calls.append(bundle)
             return {"module": {"weight": torch.full((1, 1), 7.0)}}
 
-        def export_trainable_state(self, bundle):
-            raise AssertionError(f"generic export used for checkpoint: {bundle!r}")
-
     class _CheckpointTrainer(_Trainer):
         def checkpoint_state_dict(self):
             return {"step": 3, "global_step": 8}

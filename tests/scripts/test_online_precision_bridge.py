@@ -16,7 +16,6 @@ from vrl.config.loading import load_config
 from vrl.config.precision import resolve_precision_policy
 from vrl.models.dtypes import resolve_torch_dtype
 from vrl.trainers.core.types import PrecisionDriftGuardConfig
-from vrl.trainers.precision import torch_dtype_for_trainer_precision
 
 # Derive every online recipe from the experiment glob (the single source of
 # truth in test_load_all_experiments) rather than hand-maintaining a subset —
@@ -31,24 +30,24 @@ def test_bridge_uses_aligned_public_precision(experiment):
     cfg = load_config(f"experiment/{experiment}")
     trainer_config = build_configs(cfg).trainer
     policy = resolve_precision_policy(cfg)
+    # The bridge contract is the role-label equality below (train/rollout labels
+    # equal the resolved policy labels); the label -> torch dtype resolution is
+    # covered by the plain-policy cases and resolve_torch_dtype's own tests.
     assert trainer_config.train_precision == policy.training.label
     assert trainer_config.rollout_precision == policy.rollout.label
     assert policy.training == policy.rollout
-    assert torch_dtype_for_trainer_precision(trainer_config, torch) is resolve_torch_dtype(
-        policy.training.dtype,
-    )
 
 
 def test_precision_block_drives_trainer():
     """Checks precision block drives trainer."""
     cfg = load_config("experiment/sd3_5/online_grpo_ocr")
     cfg = _with_precision("sd3_5/online_grpo_ocr", _plain_policy("fp32"))
-    assert torch_dtype_for_trainer_precision(build_configs(cfg).trainer, torch) is torch.float32
+    assert resolve_torch_dtype(build_configs(cfg).trainer.train_precision) is torch.float32
 
     cfg = _with_precision("sd3_5/online_grpo_ocr", _plain_policy("bf16"))
     trainer_config = build_configs(cfg).trainer
     assert trainer_config.train_precision == "bf16"
-    assert torch_dtype_for_trainer_precision(trainer_config, torch) is torch.bfloat16
+    assert resolve_torch_dtype(trainer_config.train_precision) is torch.bfloat16
 
 
 def test_fp16_precision_block_drives_trainer_and_rollout():
@@ -62,7 +61,7 @@ def test_fp16_precision_block_drives_trainer_and_rollout():
     assert trainer_config.train_precision == "fp16"
     assert trainer_config.rollout_precision == "fp16"
     assert built.precision.diffusion_math == "fp32"
-    assert torch_dtype_for_trainer_precision(trainer_config, torch) is torch.float16
+    assert resolve_torch_dtype(trainer_config.train_precision) is torch.float16
 
 
 @pytest.mark.parametrize(

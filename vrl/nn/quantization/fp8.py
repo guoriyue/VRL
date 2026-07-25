@@ -113,36 +113,6 @@ class Fp8Linear(QuantizedLinear):
         self.weight_fp8 = (w / scale).to(torch.float8_e4m3fn)
         self.weight_scale = scale
 
-    def drop_master(self) -> int:
-        """Free the source-dtype master, keeping only the fp8 cache (+scales).
-
-        Valid whenever weight-sync never loads base weights into this module:
-        LoRA rollouts sync adapters only, and probes/inference sync nothing.
-        A subsequent state-dict load fails loud instead of silently skipping
-        the (gone) master. Returns the bytes freed.
-        """
-        if self.weight is None:
-            return 0
-        freed = self.weight.numel() * self.weight.element_size()
-        self.weight = None
-        return freed
-
-    def _load_from_state_dict(self, state_dict, prefix, *args) -> None:
-        if self.weight is None and f"{prefix}weight" in state_dict:
-            raise RuntimeError(
-                "cannot load base weights into a master-free Fp8Linear "
-                f"({prefix.rstrip('.')}): the source master was dropped "
-                "(drop_master). Master-free is for adapter-only/frozen "
-                "rollouts; full-finetune weight-sync must keep the master.",
-            )
-        super()._load_from_state_dict(state_dict, prefix, *args)
-        # Full-parameter sync overwrites `weight`, so refresh the fp8 cache.
-        # Adapter-only sync still recurses through every child module even though
-        # its state dict contains only LoRA keys. Master-free rollout linears have
-        # no `weight` by design; their frozen fp8 cache must remain untouched.
-        if self.weight is not None:
-            self._requantize_weight()
-
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         shape = x.shape
         x_2d = x.reshape(-1, shape[-1])

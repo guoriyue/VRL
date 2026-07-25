@@ -123,15 +123,7 @@ def _all_ranks_have_work(has_work: bool, device: torch.device) -> bool:
     microbatch/step count per rank regardless of filtering).
     """
 
-    dist = torch.distributed
-    if not (dist.is_available() and dist.is_initialized() and dist.get_world_size() > 1):
-        return has_work
-    flag = torch.tensor([1 if has_work else 0], dtype=torch.int64)
-    # NCCL collectives require GPU tensors; gloo (tests) handles CPU directly.
-    if dist.get_backend() == "nccl":
-        flag = flag.to(device)
-    dist.all_reduce(flag, op=dist.ReduceOp.MIN)
-    return bool(flag.item() > 0)
+    return _distributed_all_true(has_work, device)
 
 
 # ---------------------------------------------------------------------------
