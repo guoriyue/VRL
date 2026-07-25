@@ -25,10 +25,12 @@ their peak across merged microbatches.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 import math
-from collections.abc import Mapping
+import time
+from collections.abc import Iterator, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Protocol
@@ -67,6 +69,20 @@ class RolloutStats:
 
         for name, seconds in phases.items():
             self.add_phase(str(name), float(seconds))
+
+    @contextlib.contextmanager
+    def phase(self, name: str) -> Iterator[None]:
+        """Time the enclosed block into phase ``name``.
+
+        Recorded in a ``finally`` so a failing phase still reports the wall
+        clock it burned before raising.
+        """
+
+        start = time.perf_counter()
+        try:
+            yield
+        finally:
+            self.add_phase(name, time.perf_counter() - start)
 
     def add_counter(self, name: str, value: float = 1.0) -> None:
         """Accumulate a unitless count without treating it as phase time."""

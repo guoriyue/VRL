@@ -23,7 +23,6 @@ from vrl.rollouts.orchestration.continuous.types import (
 from vrl.rollouts.orchestration.types import (
     RolloutIteration,
     RolloutScheduleMode,
-    annotate_batch_context,
     build_rollout_iteration,
 )
 from vrl.rollouts.stats import RolloutStats
@@ -207,7 +206,7 @@ class ContinuousRolloutConsumer:
                 "continuous_ready_groups_at_demand": int(ready_groups_at_demand),
             },
         )
-        return annotate_batch_context(iteration)
+        return iteration.annotate_batch_context()
 
 
 def _assign_group_index(batch: RolloutBatch, index: int) -> None:

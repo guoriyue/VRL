@@ -8,7 +8,6 @@ import torch
 from vrl.rollouts.batch import RolloutBatch
 from vrl.rollouts.orchestration.types import (
     RolloutScheduleMode,
-    annotate_batch_context,
     build_rollout_iteration,
 )
 
@@ -78,7 +77,7 @@ def test_context_projection_typed_values_override_reserved_collisions() -> None:
         },
     )
 
-    annotate_batch_context(iteration)
+    iteration.annotate_batch_context()
 
     assert batch.context["rollout_id"] == 7
     assert batch.context["rollout_policy_version"] == 3
@@ -104,7 +103,7 @@ def test_context_projection_preserves_non_reserved_metadata() -> None:
         },
     )
 
-    annotate_batch_context(iteration)
+    iteration.annotate_batch_context()
 
     assert iteration.metadata == {
         "consume_policy_version": 2,

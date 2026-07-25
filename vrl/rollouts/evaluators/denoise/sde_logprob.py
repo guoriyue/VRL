@@ -5,18 +5,15 @@ from __future__ import annotations
 import contextlib
 
 import vrl.math.denoise.flow_matching as flow_matching_math
-from vrl.models.interfaces import (
-    ReplayModel,
-    require_replay_model,
-)
+from vrl.models.interfaces import ReplayModel
 from vrl.rollouts.batch import RolloutBatch
-from vrl.rollouts.evaluators.base import Evaluator
+from vrl.rollouts.evaluators.base import Evaluator, ReplayEvaluatorBase
 from vrl.rollouts.evaluators.trajectory import TrajectorySignalBuilder
 from vrl.rollouts.evaluators.types import SignalRequest, TrajectorySignalBatch
 from vrl.trajectory.device import move_value_to_device
 
 
-class DiffusionSDELogProbEvaluator(Evaluator):
+class DiffusionSDELogProbEvaluator(ReplayEvaluatorBase, Evaluator):
     """Signal extraction for flow-matching diffusion models.
 
     Uses ``sde_step_with_logprob`` to compute log-probabilities and
@@ -58,12 +55,7 @@ class DiffusionSDELogProbEvaluator(Evaluator):
         """
         import torch
 
-        model = require_replay_model(model, owner="DiffusionSDELogProbEvaluator.model")
-        if ref_model is not None:
-            ref_model = require_replay_model(
-                ref_model,
-                owner="DiffusionSDELogProbEvaluator.ref_model",
-            )
+        model, ref_model = self._require_models(model, ref_model)
         if signal_request is None:
             signal_request = SignalRequest()
 

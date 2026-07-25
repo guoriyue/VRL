@@ -15,6 +15,7 @@ from vrl.generation.ray.runtime import RayGenerationRuntime
 from vrl.rollouts.batch import RolloutBatch
 from vrl.rollouts.orchestration.continuous.owner import ContinuousRolloutOwner
 from vrl.rollouts.orchestration.continuous.types import ContinuousRolloutSettings
+from vrl.rollouts.stats import RolloutStats
 
 
 def _batch(prompts: list[str], group_size: int) -> RolloutBatch:
@@ -128,9 +129,9 @@ class _OwnerLifecycle:
     async def push_prepared_weights(
         self,
         prepared: Any,
-        phase_times: dict[str, float],
+        stats: RolloutStats,
     ) -> int:
-        del phase_times
+        del stats
         self.push_calls.append(prepared)
         self.push_threads.append(threading.get_ident())
         if len(self.push_calls) == self.fail_push_call:
@@ -377,9 +378,9 @@ async def test_real_runtime_cleanup_failure_does_not_replace_ack_root() -> None:
         async def push_prepared_weights(
             self,
             prepared: Any,
-            phase_times: dict[str, float],
+            stats: RolloutStats,
         ) -> int:
-            del phase_times
+            del stats
             version = int(runtime.current_policy_version or 0) + 1
             await runtime.update_weights(prepared, version)
             return version

@@ -31,6 +31,7 @@ from vrl.rollouts.orchestration.continuous.scheduler import RolloutScheduler
 from vrl.rollouts.orchestration.continuous.staleness import StalenessPolicy
 from vrl.rollouts.orchestration.continuous.types import ContinuousRolloutItem
 from vrl.rollouts.orchestration.types import RolloutScheduleMode
+from vrl.rollouts.stats import RolloutStats
 
 
 def _batch(prompt: str, samples: int = 2) -> RolloutBatch:
@@ -88,11 +89,11 @@ class _Lifecycle:
     def current_policy_version(self) -> int | None:
         return self.version
 
-    async def ensure_initial_weights(self, phase_times: dict[str, float]) -> None:
-        del phase_times
+    async def ensure_initial_weights(self, stats: RolloutStats) -> None:
+        del stats
 
-    async def activate_rollout_runtime(self, phase_times: dict[str, float]) -> None:
-        del phase_times
+    async def activate_rollout_runtime(self, stats: RolloutStats) -> None:
+        del stats
 
 
 def _producer(
@@ -688,8 +689,6 @@ def _item(
     version: int | None,
     phase_times: dict[str, float] | None = None,
 ) -> ContinuousRolloutItem:
-    from vrl.rollouts.stats import RolloutStats
-
     return ContinuousRolloutItem(
         group_key=group_key,
         rollout_policy_version=version,

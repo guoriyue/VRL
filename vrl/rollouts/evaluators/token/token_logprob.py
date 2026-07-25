@@ -16,15 +16,15 @@ from __future__ import annotations
 import torch
 
 from vrl.math.token.logprob import gather_categorical_log_probs
-from vrl.models.interfaces import ReplayModel, require_replay_model
+from vrl.models.interfaces import ReplayModel
 from vrl.rollouts.batch import RolloutBatch
-from vrl.rollouts.evaluators.base import Evaluator
+from vrl.rollouts.evaluators.base import Evaluator, ReplayEvaluatorBase
 from vrl.rollouts.evaluators.token.ref_pass import ref_forward
 from vrl.rollouts.evaluators.trajectory import TrajectorySignalBuilder
 from vrl.rollouts.evaluators.types import SignalRequest, TrajectorySignalBatch
 
 
-class TokenLogProbEvaluator(Evaluator):
+class TokenLogProbEvaluator(ReplayEvaluatorBase, Evaluator):
     """Recompute per-token log-probs of sampled tokens under the replay model.
 
     Two-pass when ``need_ref=True``:
@@ -48,9 +48,7 @@ class TokenLogProbEvaluator(Evaluator):
         signal_request: SignalRequest | None = None,
     ) -> TrajectorySignalBatch:
         del timestep_idx
-        model = require_replay_model(model, owner="TokenLogProbEvaluator.model")
-        if ref_model is not None:
-            ref_model = require_replay_model(ref_model, owner="TokenLogProbEvaluator.ref_model")
+        model, ref_model = self._require_models(model, ref_model)
         request = signal_request or SignalRequest()
 
         from vrl.trajectory import TrajectoryResolver

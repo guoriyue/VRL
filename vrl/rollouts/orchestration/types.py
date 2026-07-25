@@ -65,6 +65,24 @@ class RolloutIteration:
 
         return sum(int(batch.rewards.shape[0]) for batch in self.batches)
 
+    def annotate_batch_context(self) -> RolloutIteration:
+        """Copy this iteration's schedule metadata onto each batch's ``context``.
+
+        Returns ``self`` so a schedule can build and annotate in one expression.
+        """
+
+        schedule_context = {
+            **self.metadata,
+            "rollout_id": self.rollout_id,
+            "rollout_policy_version": self.policy_version,
+            "schedule_mode": self.mode.value,
+            "prompt_count": self.prompt_count,
+            "sample_count": self.sample_count,
+        }
+        for batch in self.batches:
+            batch.context = {**dict(batch.context), **schedule_context}
+        return self
+
 
 def build_rollout_iteration(
     *,
@@ -79,7 +97,7 @@ def build_rollout_iteration(
 
     Pure: does not mutate the input batches. Callers that need the schedule
     metadata copied onto each batch's ``context`` should call
-    ``annotate_batch_context`` explicitly.
+    ``RolloutIteration.annotate_batch_context`` explicitly.
     """
 
     return RolloutIteration(
@@ -92,27 +110,10 @@ def build_rollout_iteration(
     )
 
 
-def annotate_batch_context(iteration: RolloutIteration) -> RolloutIteration:
-    """Copy the iteration's schedule metadata onto each batch's ``context``."""
-
-    schedule_context = {
-        **iteration.metadata,
-        "rollout_id": iteration.rollout_id,
-        "rollout_policy_version": iteration.policy_version,
-        "schedule_mode": iteration.mode.value,
-        "prompt_count": iteration.prompt_count,
-        "sample_count": iteration.sample_count,
-    }
-    for batch in iteration.batches:
-        batch.context = {**dict(batch.context), **schedule_context}
-    return iteration
-
-
 __all__ = [
     "RewardCollectionMode",
     "RolloutIteration",
     "RolloutScheduleMode",
     "RolloutScheduleState",
-    "annotate_batch_context",
     "build_rollout_iteration",
 ]

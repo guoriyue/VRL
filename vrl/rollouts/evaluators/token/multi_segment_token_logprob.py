@@ -12,17 +12,16 @@ from vrl.models.interfaces import (
     ReplayRequest,
     ReplayResult,
     ReplaySegmentResult,
-    require_replay_model,
 )
 from vrl.rollouts.batch import RolloutBatch
-from vrl.rollouts.evaluators.base import Evaluator
+from vrl.rollouts.evaluators.base import Evaluator, ReplayEvaluatorBase
 from vrl.rollouts.evaluators.token.ref_pass import ref_forward
 from vrl.rollouts.evaluators.trajectory import TrajectorySignalBuilder
 from vrl.rollouts.evaluators.types import SegmentSignal, SignalRequest, TrajectorySignalBatch
 from vrl.trajectory import role_tensor
 
 
-class MultiSegmentTokenLogProbEvaluator(Evaluator):
+class MultiSegmentTokenLogProbEvaluator(ReplayEvaluatorBase, Evaluator):
     """Replay each enabled R1 segment without concatenating image/text tokens."""
 
     replay_granularity = "trajectory"
@@ -39,12 +38,7 @@ class MultiSegmentTokenLogProbEvaluator(Evaluator):
         signal_request: SignalRequest | None = None,
     ) -> TrajectorySignalBatch:
         del timestep_idx
-        model = require_replay_model(model, owner="MultiSegmentTokenLogProbEvaluator.model")
-        if ref_model is not None:
-            ref_model = require_replay_model(
-                ref_model,
-                owner="MultiSegmentTokenLogProbEvaluator.ref_model",
-            )
+        model, ref_model = self._require_models(model, ref_model)
         request = signal_request or SignalRequest()
         segments = self._segments_from_batch(batch)
         if not isinstance(segments, dict):

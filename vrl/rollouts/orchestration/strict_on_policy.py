@@ -5,16 +5,12 @@ from __future__ import annotations
 from typing import Any
 
 from vrl.rollouts.orchestration.prompt_collection import collect_prompt_batches
-from vrl.rollouts.orchestration.rollout_runtime import (
-    RolloutRuntimeCoordinator,
-    record_phase,
-)
+from vrl.rollouts.orchestration.rollout_runtime import RolloutRuntimeCoordinator
 from vrl.rollouts.orchestration.types import (
     RewardCollectionMode,
     RolloutIteration,
     RolloutScheduleMode,
     RolloutScheduleState,
-    annotate_batch_context,
     build_rollout_iteration,
 )
 from vrl.rollouts.stats import RolloutStats
@@ -64,28 +60,25 @@ class StrictOnPolicyRolloutSchedule:
         next_prompts: list[Any] | None = None,
     ) -> RolloutIteration:
         del next_prompts
-        # Schedule-level phases (weight init / driver offload / activate / collect /
-        # sync) are timed into a local dict via the lifecycle's record_phase;
-        # the per-request collect stats accumulate into a typed RolloutStats.
-        # Both are merged onto the iteration so nothing about the reported
-        # breakdown changes.
-        schedule_phases: dict[str, float] = {}
+        # One accumulator for the whole iteration: schedule-level phases (weight
+        # init / driver offload / activate / collect / sync) and the per-request
+        # collect stats land in the same typed object.
         stats = RolloutStats()
         # Capability validation happens before weight export or collection so a
         # distributed strategy cannot enter a shared-GPU phase by pretending the
         # single-process parking implementation applies to it.
         self.lifecycle.validate_training_state_parking()
-        await self.lifecycle.ensure_initial_weights(schedule_phases)
+        await self.lifecycle.ensure_initial_weights(stats)
         rollout_id = self.state.rollout_id
         self.state.rollout_id += 1
         policy_version = self.lifecycle.current_policy_version()
 
-        parked = self.lifecycle.park_training_state_for_rollout(schedule_phases)
+        parked = self.lifecycle.park_training_state_for_rollout(stats)
         batches: list[Any] | None = None
         phase_error: BaseException | None = None
         try:
-            await self.lifecycle.activate_rollout_runtime(schedule_phases)
-            with record_phase(schedule_phases, "rollout.collect_s"):
+            await self.lifecycle.activate_rollout_runtime(stats)
+            with stats.phase("rollout.collect_s"):
                 batches = await collect_prompt_batches(
                     collector=self.lifecycle.collector,
                     prompts=list(prompts),
@@ -101,7 +94,7 @@ class StrictOnPolicyRolloutSchedule:
         cleanup_errors: list[BaseException] = []
         rollout_memory_released = False
         try:
-            await self.lifecycle.offload_rollout_runtime_memory(schedule_phases)
+            await self.lifecycle.offload_rollout_runtime_memory(stats)
             rollout_memory_released = True
         except BaseException as error:
             cleanup_errors.append(error)
@@ -111,7 +104,7 @@ class StrictOnPolicyRolloutSchedule:
         # down the rollout runtime before the strategy restores training state.
         if parked and rollout_memory_released:
             try:
-                self.lifecycle.restore_training_state_after_rollout(schedule_phases)
+                self.lifecycle.restore_training_state_after_rollout(stats)
             except BaseException as error:
                 cleanup_errors.append(error)
 
@@ -127,23 +120,18 @@ class StrictOnPolicyRolloutSchedule:
             ) from cleanup_errors[0]
         assert batches is not None
 
-        stats.add_phases(schedule_phases)
-        return annotate_batch_context(
-            build_rollout_iteration(
-                rollout_id=rollout_id,
-                policy_version=policy_version,
-                mode=self.mode,
-                batches=batches,
-                prompt_count=len(prompts),
-                stats=stats,
-            )
-        )
+        return build_rollout_iteration(
+            rollout_id=rollout_id,
+            policy_version=policy_version,
+            mode=self.mode,
+            batches=batches,
+            prompt_count=len(prompts),
+            stats=stats,
+        ).annotate_batch_context()
 
     async def after_train_step(self) -> RolloutStats:
-        phase_times: dict[str, float] = {}
-        await self.lifecycle.sync_weights_after_train(phase_times)
         stats = RolloutStats()
-        stats.add_phases(phase_times)
+        await self.lifecycle.sync_weights_after_train(stats)
         return stats
 
     def reset(self) -> None:
@@ -158,7 +146,9 @@ class StrictOnPolicyRolloutSchedule:
         # The top-level strategy owner restores only after this shutdown proves
         # that every shared rollout/reward owner was released.
         self.lifecycle.validate_training_state_parking()
-        self.lifecycle.park_training_state_for_rollout({})
+        # Shutdown reports no timings, but parking stays unconditional; a
+        # throwaway accumulator keeps the five recording sites branch-free.
+        self.lifecycle.park_training_state_for_rollout(RolloutStats())
         await self.lifecycle.shutdown_collector_runtime()
 
 

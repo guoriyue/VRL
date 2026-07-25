@@ -23,10 +23,7 @@ from vrl.rollouts.orchestration.continuous.queue import ContinuousRolloutQueue
 from vrl.rollouts.orchestration.continuous.scheduler import RolloutScheduler
 from vrl.rollouts.orchestration.continuous.staleness import StalenessPolicy
 from vrl.rollouts.orchestration.continuous.types import ContinuousRolloutSettings
-from vrl.rollouts.orchestration.rollout_runtime import (
-    RolloutRuntimeCoordinator,
-    record_phase,
-)
+from vrl.rollouts.orchestration.rollout_runtime import RolloutRuntimeCoordinator
 from vrl.rollouts.orchestration.types import (
     RolloutIteration,
     RolloutScheduleMode,
@@ -116,7 +113,10 @@ class _ContinuousOwnerRuntime:
         async def operation() -> RolloutIteration:
             if not prompts:
                 raise ValueError("continuous rollout requires at least one prompt")
-            phase_times: dict[str, float] = {}
+            # Load-bearing local: pipeline startup pushes the initial weights
+            # before the consumer drains an iteration, so the object that will
+            # own these timings does not exist yet. Merged in below.
+            startup_stats = RolloutStats()
 
             if self.producer is None:
                 await self._start_pipeline(
@@ -124,7 +124,7 @@ class _ContinuousOwnerRuntime:
                     group_size=group_size,
                     runtime_debug=runtime_debug,
                     initial_weights=initial_weights,
-                    phase_times=phase_times,
+                    stats=startup_stats,
                 )
             elif self._installed_prompt_batch is None:
                 self._set_prompt_batch(
@@ -173,7 +173,7 @@ class _ContinuousOwnerRuntime:
                     runtime_debug=runtime_debug,
                 )
                 lookahead_requested = 1.0
-            iteration.stats.add_phases(phase_times)
+            iteration.stats.merge(startup_stats)
             iteration.stats.observe_gauge(
                 "continuous.lookahead_requested",
                 lookahead_requested,
@@ -214,29 +214,21 @@ class _ContinuousOwnerRuntime:
         """Commit one main-thread snapshot and reopen admission only on success."""
 
         async def operation() -> RolloutStats:
-            phase_times: dict[str, float] = {}
             stats = RolloutStats()
             producer = self.producer
             if producer is None:
-                await self.lifecycle.push_prepared_weights(
-                    prepared_weights,
-                    phase_times,
-                )
-                stats.add_phases(phase_times)
+                await self.lifecycle.push_prepared_weights(prepared_weights, stats)
                 return stats
 
             non_draining = self.lifecycle.supports_non_draining_weight_sync()
-            with record_phase(phase_times, "continuous.weight_sync_pause_s"):
+            with stats.phase("continuous.weight_sync_pause_s"):
                 producer.pause_admission()
                 # There is deliberately no finally-resume here.  A partial worker
                 # update leaves the fleet's installed version unknown, so failure
                 # keeps admission closed and _run_command quarantines the owner.
                 if not non_draining:
                     await producer.drain_prompt_batch(wait_timeout_s=self.wait_timeout_s)
-                await self.lifecycle.push_prepared_weights(
-                    prepared_weights,
-                    phase_times,
-                )
+                await self.lifecycle.push_prepared_weights(prepared_weights, stats)
                 assert self.queue is not None
                 assert self.scheduler is not None
                 self.scheduler.validate_ready_versions(
@@ -244,7 +236,6 @@ class _ContinuousOwnerRuntime:
                     current_version=self.lifecycle.current_policy_version(),
                 )
                 producer.resume_admission()
-            stats.add_phases(phase_times)
             stats.observe_gauge(
                 "continuous.weight_sync_barrier_mode",
                 float(non_draining),
@@ -362,14 +353,14 @@ class _ContinuousOwnerRuntime:
         group_size: int,
         runtime_debug: bool,
         initial_weights: Any,
-        phase_times: dict[str, float],
+        stats: RolloutStats,
     ) -> None:
         # The trainer exported this immutable CPU snapshot before crossing the
         # owner boundary. Worker ACK validation happens inside the weight-sync
         # stack before push_prepared_weights publishes the committed version.
         # None means the persistent runtime already owns initialized weights.
         if initial_weights is not None:
-            await self.lifecycle.push_prepared_weights(initial_weights, phase_times)
+            await self.lifecycle.push_prepared_weights(initial_weights, stats)
 
         capacity = max(self.max_ready_groups, len(prompts))
         self.queue = ContinuousRolloutQueue(

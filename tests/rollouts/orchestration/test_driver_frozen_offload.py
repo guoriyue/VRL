@@ -14,6 +14,7 @@ from typing import Any
 import torch
 
 from vrl.rollouts.orchestration.rollout_runtime import RolloutRuntimeCoordinator
+from vrl.rollouts.stats import RolloutStats
 from vrl.trainers.strategy import SingleProcessStrategy, TrainingMemoryState
 
 
@@ -76,13 +77,13 @@ def _coordinator(model: _FakeDriverModel) -> RolloutRuntimeCoordinator:
 def test_offload_and_restore_move_frozen_components() -> None:
     model = _FakeDriverModel(with_frozen_hook=True)
     lifecycle = _coordinator(model)
-    phases: dict[str, float] = {}
+    stats = RolloutStats()
 
-    assert lifecycle.park_training_state_for_rollout(phases) is True
+    assert lifecycle.park_training_state_for_rollout(stats) is True
     assert model.to_calls == [torch.device("cpu")]
     assert model.frozen_calls == [torch.device("cpu")]  # frozen components parked
 
-    lifecycle.restore_training_state_after_rollout(phases)
+    lifecycle.restore_training_state_after_rollout(stats)
     assert model.to_calls[-1].type == "cuda"
     assert model.frozen_calls[-1].type == "cuda"  # frozen components restored
 
@@ -92,7 +93,7 @@ def test_model_without_frozen_hook_is_unaffected() -> None:
     model = _FakeDriverModel(with_frozen_hook=False)
     lifecycle = _coordinator(model)
 
-    assert lifecycle.park_training_state_for_rollout({}) is True
-    lifecycle.restore_training_state_after_rollout({})
+    assert lifecycle.park_training_state_for_rollout(RolloutStats()) is True
+    lifecycle.restore_training_state_after_rollout(RolloutStats())
     assert model.to_calls == [torch.device("cpu"), torch.device("cuda")]
     assert model.frozen_calls == []

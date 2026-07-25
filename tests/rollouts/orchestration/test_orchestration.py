@@ -362,6 +362,7 @@ async def test_prepared_weight_push_never_reenters_live_getter() -> None:
     import torch
 
     from vrl.rollouts.orchestration.rollout_runtime import RolloutRuntimeCoordinator
+    from vrl.rollouts.stats import RolloutStats
 
     runtime = _Runtime()
     syncer = _Syncer(runtime)
@@ -392,7 +393,7 @@ async def test_prepared_weight_push_never_reenters_live_getter() -> None:
     assert prepared is not None
     with torch.no_grad():
         live.fill_(9.0)
-    await lifecycle.push_prepared_weights(prepared, {})
+    await lifecycle.push_prepared_weights(prepared, RolloutStats())
 
     assert getter_calls == 1
     assert initialized is True
@@ -406,6 +407,7 @@ async def test_failed_prepared_weight_push_does_not_publish_initialized_state() 
     import torch
 
     from vrl.rollouts.orchestration.rollout_runtime import RolloutRuntimeCoordinator
+    from vrl.rollouts.stats import RolloutStats
 
     runtime = _Runtime()
     initialized = False
@@ -431,7 +433,7 @@ async def test_failed_prepared_weight_push_does_not_publish_initialized_state() 
     prepared = lifecycle.prepare_initial_weight_sync_state()
 
     with pytest.raises(RuntimeError, match="push failed"):
-        await lifecycle.push_prepared_weights(prepared, {})
+        await lifecycle.push_prepared_weights(prepared, RolloutStats())
 
     assert initialized is False
     assert runtime.current_policy_version == 0

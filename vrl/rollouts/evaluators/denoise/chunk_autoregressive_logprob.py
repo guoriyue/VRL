@@ -5,15 +5,15 @@ from __future__ import annotations
 import contextlib
 from typing import Any
 
-from vrl.models.interfaces import ReplayModel, ReplayRequest, require_replay_model
+from vrl.models.interfaces import ReplayModel, ReplayRequest
 from vrl.rollouts.batch import RolloutBatch
-from vrl.rollouts.evaluators.base import Evaluator
+from vrl.rollouts.evaluators.base import Evaluator, ReplayEvaluatorBase
 from vrl.rollouts.evaluators.trajectory import TrajectorySignalBuilder
 from vrl.rollouts.evaluators.types import SignalRequest, TrajectorySignalBatch
 from vrl.trajectory import TrajectoryResolver
 
 
-class ChunkAutoregressiveDenoiseLogProbEvaluator(Evaluator):
+class ChunkAutoregressiveDenoiseLogProbEvaluator(ReplayEvaluatorBase, Evaluator):
     """Replay a complete causal-chunk trajectory in one ordered model pass.
 
     A scalar denoise-step replay would repeatedly rebuild the temporal prefix
@@ -36,17 +36,9 @@ class ChunkAutoregressiveDenoiseLogProbEvaluator(Evaluator):
         signal_request: SignalRequest | None = None,
     ) -> TrajectorySignalBatch:
         del timestep_idx
-        model = require_replay_model(
-            model,
-            owner="ChunkAutoregressiveDenoiseLogProbEvaluator.model",
-        )
+        model, ref_model = self._require_models(model, ref_model)
         if signal_request is None:
             signal_request = SignalRequest()
-        if ref_model is not None:
-            ref_model = require_replay_model(
-                ref_model,
-                owner="ChunkAutoregressiveDenoiseLogProbEvaluator.ref_model",
-            )
 
         request = ReplayRequest(segment_names=("denoise",))
         current = model.replay_forward(batch, request=request).require_segment("denoise")

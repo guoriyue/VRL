@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
-import contextlib
-import time
 from collections.abc import Callable, Mapping
 from typing import Any, Protocol, runtime_checkable
 
 import torch
+
+from vrl.rollouts.stats import RolloutStats
 
 
 @runtime_checkable
@@ -28,15 +28,6 @@ class RolloutCollectorControl(Protocol):
     async def offload_runtime_memory(self) -> None: ...
 
     async def shutdown(self) -> None: ...
-
-
-@contextlib.contextmanager
-def record_phase(phase_times: dict[str, float], name: str):
-    start = time.perf_counter()
-    try:
-        yield
-    finally:
-        phase_times[name] = phase_times.get(name, 0.0) + time.perf_counter() - start
 
 
 class RolloutRuntimeCoordinator:
@@ -68,16 +59,16 @@ class RolloutRuntimeCoordinator:
         self._set_weights_initialized = set_weights_initialized
         self._last_policy_version = self._runtime_policy_version(default=None)
 
-    async def ensure_initial_weights(self, phase_times: dict[str, float]) -> None:
+    async def ensure_initial_weights(self, stats: RolloutStats) -> None:
         prepared = self.prepare_initial_weight_sync_state()
         if prepared is not None:
-            await self.push_prepared_weights(prepared, phase_times)
+            await self.push_prepared_weights(prepared, stats)
 
-    async def sync_weights_after_train(self, phase_times: dict[str, float]) -> int | None:
+    async def sync_weights_after_train(self, stats: RolloutStats) -> int | None:
         if self.weight_syncer is None:
             return self.current_policy_version()
         prepared = self.prepare_weight_sync_state()
-        return await self.push_prepared_weights(prepared, phase_times)
+        return await self.push_prepared_weights(prepared, stats)
 
     def prepare_weight_sync_state(self) -> dict[str, Any] | None:
         """Capture an immutable CPU policy snapshot on the caller's thread.
@@ -107,7 +98,7 @@ class RolloutRuntimeCoordinator:
     async def push_prepared_weights(
         self,
         prepared: dict[str, Any] | None,
-        phase_times: dict[str, float],
+        stats: RolloutStats,
     ) -> int | None:
         """Push a prepared snapshot without reading trainer-owned state."""
 
@@ -115,7 +106,7 @@ class RolloutRuntimeCoordinator:
             return self.current_policy_version()
         if prepared is None:
             raise ValueError("weight sync requires a prepared state snapshot")
-        with record_phase(phase_times, "rollout.weight_sync_s"):
+        with stats.phase("rollout.weight_sync_s"):
             await self.weight_syncer.push(prepared)
         self._set_weights_initialized(True)
         self._last_policy_version = self._runtime_policy_version(
@@ -165,30 +156,24 @@ class RolloutRuntimeCoordinator:
             return
         self.strategy.validate_training_state_parking()
 
-    def park_training_state_for_rollout(self, phase_times: dict[str, float]) -> bool:
+    def park_training_state_for_rollout(self, stats: RolloutStats) -> bool:
         if not self.requires_training_state_parking():
             return False
-        with record_phase(phase_times, "rollout.offload_driver_s"):
+        with stats.phase("rollout.offload_driver_s"):
             state = self.training_state_getter()
             self.strategy.park_training_state(state)
         return True
 
-    def restore_training_state_after_rollout(self, phase_times: dict[str, float]) -> None:
-        with record_phase(phase_times, "rollout.restore_driver_s"):
+    def restore_training_state_after_rollout(self, stats: RolloutStats) -> None:
+        with stats.phase("rollout.restore_driver_s"):
             self.strategy.restore_training_state(self.training_state_getter())
 
-    async def activate_rollout_runtime(
-        self,
-        phase_times: dict[str, float],
-    ) -> None:
-        with record_phase(phase_times, "rollout.activate_runtime_s"):
+    async def activate_rollout_runtime(self, stats: RolloutStats) -> None:
+        with stats.phase("rollout.activate_runtime_s"):
             await self.collector.activate_runtime()
 
-    async def offload_rollout_runtime_memory(
-        self,
-        phase_times: dict[str, float],
-    ) -> None:
-        with record_phase(phase_times, "rollout.offload_runtime_s"):
+    async def offload_rollout_runtime_memory(self, stats: RolloutStats) -> None:
+        with stats.phase("rollout.offload_runtime_s"):
             await self.collector.offload_runtime_memory()
 
     async def shutdown_collector_runtime(self) -> None:
@@ -245,4 +230,4 @@ def _validate_prepared_weight_snapshot(value: Any) -> None:
             _validate_prepared_weight_snapshot(child)
 
 
-__all__ = ["RolloutCollectorControl", "RolloutRuntimeCoordinator", "record_phase"]
+__all__ = ["RolloutCollectorControl", "RolloutRuntimeCoordinator"]

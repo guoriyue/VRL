@@ -14,6 +14,7 @@ from vrl.rollouts.orchestration.strict_on_policy import (
     RolloutPhaseCleanupError,
     StrictOnPolicyRolloutSchedule,
 )
+from vrl.rollouts.stats import RolloutStats
 
 
 class _RaisingCollector:
@@ -43,30 +44,30 @@ class _RecordingLifecycle:
     def validate_training_state_parking(self) -> None:
         self.calls.append("validate_training_state_parking")
 
-    async def ensure_initial_weights(self, _phase_times: dict[str, float]) -> None:
+    async def ensure_initial_weights(self, _stats: RolloutStats) -> None:
         self.calls.append("ensure_initial_weights")
 
     def current_policy_version(self) -> int | None:
         return 0
 
-    def park_training_state_for_rollout(self, _phase_times: dict[str, float]) -> bool:
+    def park_training_state_for_rollout(self, _stats: RolloutStats) -> bool:
         self.calls.append("park_training_state_for_rollout")
         return self._parked
 
-    async def activate_rollout_runtime(self, _phase_times: dict[str, float]) -> None:
+    async def activate_rollout_runtime(self, _stats: RolloutStats) -> None:
         self.calls.append("activate_rollout_runtime")
 
-    async def offload_rollout_runtime_memory(self, _phase_times: dict[str, float]) -> None:
+    async def offload_rollout_runtime_memory(self, _stats: RolloutStats) -> None:
         self.calls.append("offload_rollout_runtime_memory")
         if self.fail_rollout_offload:
             raise RuntimeError("rollout offload blew up")
 
-    def restore_training_state_after_rollout(self, _phase_times: dict[str, float]) -> None:
+    def restore_training_state_after_rollout(self, _stats: RolloutStats) -> None:
         self.calls.append("restore_training_state_after_rollout")
         if self.fail_restore:
             raise RuntimeError("trainer restore blew up")
 
-    async def sync_weights_after_train(self, _phase_times: dict[str, float]) -> int | None:
+    async def sync_weights_after_train(self, _stats: RolloutStats) -> int | None:
         self.calls.append("sync_weights_after_train")
         return 1
 
