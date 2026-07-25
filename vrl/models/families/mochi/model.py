@@ -39,21 +39,19 @@ from vrl.models.interfaces.runtime import ModelBuild
 from vrl.models.steps.denoise import (
     DiffusersPipelineModelBase,
     DiffusersReplayModelBase,
-    GuidedDiffusionSamplingStateBase,
-    diffusers_pipeline_dtypes,
 )
 from vrl.models.steps.denoise.common import (
     ChunkedLatentDecoder,
     DiffusionBackboneCaller,
     DiffusionBackboneInput,
-    DiffusionBackboneRunnerBase,
     DiffusionBranch,
+    EncoderAttentionMaskRunnerBase,
     LatentDecodePlan,
+    MaskedPromptCollectorMixin,
+    TrainTimestepMaskedPromptSamplingState,
     expand_batch_timestep,
-    pack_eval_timestep,
 )
 from vrl.models.steps.denoise.common.lora import LoraModelMixin
-from vrl.models.steps.denoise.common.tensors import require_tensor
 
 
 def standard_mochi_scheduler(scheduler_config: Any, num_steps: int, device: Any) -> Any:
@@ -77,44 +75,28 @@ def standard_mochi_scheduler(scheduler_config: Any, num_steps: int, device: Any)
 
 
 @dataclass
-class MochiSamplingState(GuidedDiffusionSamplingStateBase):
+class MochiSamplingState(TrainTimestepMaskedPromptSamplingState):
     """Private Mochi sampling state. Engine MUST NOT introspect."""
 
-    prompt_embeds: torch.Tensor
-    prompt_attention_mask: torch.Tensor | None
-    negative_prompt_embeds: torch.Tensor | None
-    negative_prompt_attention_mask: torch.Tensor | None
-    do_cfg: bool
-    num_train_timesteps: int
 
-
-class MochiModel(LoraModelMixin, DiffusersPipelineModelBase, DiffusionBackboneRunnerBase):
+class MochiModel(
+    MaskedPromptCollectorMixin,
+    LoraModelMixin,
+    DiffusersPipelineModelBase,
+    EncoderAttentionMaskRunnerBase,
+):
     """Diffusers-backed Mochi-1 t2v model."""
 
     cfg_mode = "batched_cfg"
     cfg_base = "uncond"
+    sampling_state_cls = MochiSamplingState
 
-    def build_branch(
-        self,
-        request: DiffusionBackboneInput,
-        branch: str,
-    ) -> DiffusionBranch:
-        """Map Mochi transformer kwargs into the shared backbone contract."""
-        if branch == "cond":
-            embeds = request.prompt_embeds
-            mask = request.extra.get("encoder_attention_mask")
-        else:
-            embeds = require_tensor(
-                request.negative_prompt_embeds,
-                "negative_prompt_embeds",
-            )
-            mask = request.extra.get("negative_encoder_attention_mask")
-        return DiffusionBranch(
-            hidden_states=request.hidden_states,
-            timestep=request.timestep,
-            encoder_hidden_states=embeds,
-            extra_kwargs={"encoder_attention_mask": mask},
-        )
+    # -- backend ownership (called by runtime, not by collectors) -------
+    _pipeline_classname = "MochiPipeline"
+    _frozen_encoder_names = ("text_encoder",)
+    # T5-XXL (~9.5 GB bf16) + the 20 GB 10B transformer exceed a 32 GB card;
+    # park the encoder on CPU (Qwen-Image discipline).
+    _prompt_encoder_on_cpu = True
 
     def postprocess_branch(
         self,
@@ -125,32 +107,6 @@ class MochiModel(LoraModelMixin, DiffusersPipelineModelBase, DiffusionBackboneRu
         """Negate: a velocity in Mochi's reversed time axis is -v_standard."""
         del request, branch
         return -raw_output
-
-    # -- backend ownership (called by runtime, not by collectors) -------
-
-    @classmethod
-    def from_build(cls, build: ModelBuild) -> MochiModel:
-        """Load the diffusers Mochi pipeline + freeze non-trainable modules."""
-        from diffusers import MochiPipeline
-
-        model_dtype = build.parameter_dtype
-        prompt_encoder_dtype, load_kwargs = diffusers_pipeline_dtypes(build, model_dtype)
-        pipeline = MochiPipeline.from_pretrained(
-            build.model_name_or_path,
-            **load_kwargs,
-        )
-        pipeline.vae.requires_grad_(False)
-        # T5-XXL (~9.5 GB bf16) + the 20 GB 10B transformer exceed a 32 GB
-        # card; park the encoder on CPU (Qwen-Image discipline).
-        text_encoder = getattr(pipeline, "text_encoder", None)
-        if text_encoder is not None:
-            text_encoder.requires_grad_(False)
-            text_encoder.to("cpu", dtype=prompt_encoder_dtype)
-        pipeline.vae.to(build.device, dtype=torch.float32)
-        return cls(
-            pipeline=pipeline,
-            device=build.device,
-        )
 
     # -- encode_prompt -------------------------------------------------
 
@@ -297,53 +253,6 @@ class MochiModel(LoraModelMixin, DiffusersPipelineModelBase, DiffusionBackboneRu
             ),
         )
         return output.as_dict()
-
-    # -- collector boundary --------------------------------------------
-
-    def export_batch_context(self, state: MochiSamplingState) -> dict[str, Any]:
-        """Project Mochi sampling state into trajectory context."""
-        return {
-            "guidance_scale": state.guidance_scale,
-            "cfg": state.do_cfg,
-            "num_train_timesteps": state.num_train_timesteps,
-        }
-
-    def export_replay_tensors(self, state: MochiSamplingState) -> dict[str, Any]:
-        """Project Mochi sampling state into per-sample trajectory tensors."""
-        tensors: dict[str, Any] = {"prompt_embeds": state.prompt_embeds}
-        if state.prompt_attention_mask is not None:
-            tensors["prompt_attention_mask"] = state.prompt_attention_mask
-        if state.negative_prompt_embeds is not None:
-            tensors["negative_prompt_embeds"] = state.negative_prompt_embeds
-        if state.negative_prompt_attention_mask is not None:
-            tensors["negative_prompt_attention_mask"] = state.negative_prompt_attention_mask
-        return tensors
-
-    def restore_eval_state(
-        self,
-        replay_tensors: dict[str, Any],
-        batch_context: dict[str, Any],
-        latents: Any,
-        step_idx: int,
-    ) -> MochiSamplingState:
-        """Rebuild MochiSamplingState from a batch slice for the eval forward path."""
-        ts = replay_tensors["timesteps"]
-        timesteps = pack_eval_timestep(ts, step_idx)
-        return MochiSamplingState(
-            latents=latents,
-            timesteps=timesteps,
-            scheduler=None,  # not needed for forward_step (no scheduler.step here)
-            prompt_embeds=replay_tensors["prompt_embeds"],
-            prompt_attention_mask=replay_tensors.get("prompt_attention_mask"),
-            negative_prompt_embeds=replay_tensors.get("negative_prompt_embeds"),
-            negative_prompt_attention_mask=replay_tensors.get(
-                "negative_prompt_attention_mask",
-            ),
-            guidance_scale=batch_context["guidance_scale"],
-            do_cfg=batch_context["cfg"]
-            and replay_tensors.get("negative_prompt_embeds") is not None,
-            num_train_timesteps=int(batch_context["num_train_timesteps"]),
-        )
 
     # -- decode_latents ------------------------------------------------
 

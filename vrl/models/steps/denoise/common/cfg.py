@@ -77,18 +77,32 @@ def combine_cfg(
     guidance_scale: float,
     do_cfg: bool,
     base: DiffusionCFGBase = "uncond",
+    normalize: bool = False,
 ) -> torch.Tensor:
-    """Combine conditional and unconditional branch predictions."""
+    """Combine conditional and unconditional branch predictions.
+
+    ``normalize`` reproduces the norm-preserving combine of the Lumina2 and
+    Qwen-Image pipelines: after the linear blend, rescale the result back to
+    the conditional branch's norm along the channel axis. It is a flag rather
+    than a second function because it operates on the value this function has
+    just produced, from inputs it already holds.
+    """
 
     if not do_cfg:
         return cond
     if uncond is None:
         raise ValueError("uncond branch is required when do_cfg=True")
     if base == "uncond":
-        return uncond + float(guidance_scale) * (cond - uncond)
-    if base == "cond":
-        return cond + float(guidance_scale) * (cond - uncond)
-    raise ValueError(f"unsupported CFG base: {base!r}")
+        combined = uncond + float(guidance_scale) * (cond - uncond)
+    elif base == "cond":
+        combined = cond + float(guidance_scale) * (cond - uncond)
+    else:
+        raise ValueError(f"unsupported CFG base: {base!r}")
+    if not normalize:
+        return combined
+    cond_norm = torch.norm(cond, dim=-1, keepdim=True)
+    combined_norm = torch.norm(combined, dim=-1, keepdim=True)
+    return combined * (cond_norm / combined_norm)
 
 
 def _validate_pair(name: str, cond: torch.Tensor, uncond: torch.Tensor) -> None:

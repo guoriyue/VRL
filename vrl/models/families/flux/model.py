@@ -39,7 +39,6 @@ from vrl.models.steps.denoise import (
     DiffusersPipelineModelBase,
     DiffusersReplayModelBase,
     GuidedDiffusionSamplingStateBase,
-    diffusers_pipeline_dtypes,
 )
 from vrl.models.steps.denoise.common import (
     ChunkedLatentDecoder,
@@ -95,6 +94,16 @@ class FluxModel(LoraModelMixin, DiffusersPipelineModelBase, DiffusionBackboneRun
     cfg_mode = "single_branch"
     cfg_base = "cond"
 
+    # -- backend ownership (called by runtime, not by collectors) -------
+    _pipeline_classname = "FluxPipeline"
+    _frozen_encoder_names = ("text_encoder", "text_encoder_2")
+    # FLUX.1-dev's T5-XXL encoder is ~9.4 GB and the transformer is ~24 GB
+    # (bf16); together they exceed a single 32 GB card. The encoders feed only
+    # the one-shot encode_prompt, so park them on CPU (the enable_model_cpu_offload
+    # discipline) and leave the whole card for the denoiser. encode_prompt runs
+    # them on their own device and moves the embeds to the GPU.
+    _prompt_encoder_on_cpu = True
+
     def build_branch(
         self,
         request: DiffusionBackboneInput,
@@ -132,45 +141,15 @@ class FluxModel(LoraModelMixin, DiffusersPipelineModelBase, DiffusionBackboneRun
         self._decode_height = 1024
         self._decode_width = 1024
 
-    # -- backend ownership (called by runtime, not by collectors) -------
-
     @classmethod
     def from_build(cls, build: ModelBuild) -> FluxModel:
-        """Load the diffusers FLUX pipeline + freeze non-trainable modules."""
-        from diffusers import FluxPipeline
-
+        """Reject the NFT previous-adapter config before paying the pipeline load."""
         if (build.model_config or {}).get("nft_previous_adapter") and not build.use_lora:
             raise RuntimeError(
                 "model.nft_previous_adapter requires LoRA (the frozen previous "
                 "adapter is a PEFT adapter); set model.use_lora=true.",
             )
-
-        model_dtype = build.parameter_dtype
-        # Prompt encoders use their rollout-only precision policy. VAE remains
-        # family-owned FP32 below because decode fidelity is a separate concern.
-        prompt_encoder_dtype, load_kwargs = diffusers_pipeline_dtypes(build, model_dtype)
-        pipeline = FluxPipeline.from_pretrained(
-            build.model_name_or_path,
-            **load_kwargs,
-        )
-        pipeline.vae.requires_grad_(False)
-        # FLUX.1-dev's T5-XXL encoder is ~9.4 GB and the transformer is ~24 GB
-        # (bf16); together they exceed a single 32 GB card. The encoders feed only
-        # the one-shot encode_prompt, so park them on CPU (the enable_model_cpu_offload
-        # discipline) and leave the whole card for the denoiser. encode_prompt runs
-        # them on their own device and moves the embeds to the GPU.
-        for enc in (
-            getattr(pipeline, "text_encoder", None),
-            getattr(pipeline, "text_encoder_2", None),
-        ):
-            if enc is not None:
-                enc.requires_grad_(False)
-                enc.to("cpu", dtype=prompt_encoder_dtype)
-        pipeline.vae.to(build.device, dtype=torch.float32)
-        return cls(
-            pipeline=pipeline,
-            device=build.device,
-        )
+        return super().from_build(build)
 
     # -- DiffusionNFT previous-policy adapter -----------------------------
     # NFT parametrizes its negative branch against a frozen ``previous`` copy of

@@ -36,20 +36,17 @@ from typing import Any
 import torch
 
 from vrl.generation.types import VideoGenerationRequest
-from vrl.models.interfaces.runtime import ModelBuild
 from vrl.models.steps.denoise import (
     DiffusersPipelineModelBase,
     DiffusersReplayModelBase,
     GuidedDiffusionSamplingStateBase,
-    diffusers_pipeline_dtypes,
 )
 from vrl.models.steps.denoise.common import (
-    ChunkedLatentDecoder,
     DiffusionBackboneCaller,
     DiffusionBackboneInput,
     DiffusionBackboneRunnerBase,
     DiffusionBranch,
-    LatentDecodePlan,
+    VaeDecodeMixin,
     expand_batch_timestep,
     pack_eval_timestep,
 )
@@ -98,7 +95,12 @@ class SD3SamplingState(GuidedDiffusionSamplingStateBase):
     do_cfg: bool
 
 
-class SD3_5Model(LoraModelMixin, DiffusersPipelineModelBase, DiffusionBackboneRunnerBase):
+class SD3_5Model(
+    VaeDecodeMixin,
+    LoraModelMixin,
+    DiffusersPipelineModelBase,
+    DiffusionBackboneRunnerBase,
+):
     """Diffusers-backed SD 3.5 t2i model.
 
     The model implements the backbone-runner protocol itself (``cfg_mode`` /
@@ -108,6 +110,13 @@ class SD3_5Model(LoraModelMixin, DiffusersPipelineModelBase, DiffusionBackboneRu
 
     cfg_mode = "batched_cfg"
     cfg_base = "uncond"
+
+    # -- backend ownership (called by runtime, not by collectors) -------
+    _pipeline_classname = "StableDiffusion3Pipeline"
+    _frozen_encoder_names = ("text_encoder", "text_encoder_2", "text_encoder_3")
+    # T5-XXL plus two CLIP encoders still fit beside the 2B/8B MMDiT; keep them
+    # on-device (no CPU offload dance like Qwen-Image's 15 GB VL).
+    _prompt_encoder_on_cpu = False
 
     def __init__(
         self,
@@ -121,36 +130,6 @@ class SD3_5Model(LoraModelMixin, DiffusersPipelineModelBase, DiffusionBackboneRu
     def _set_transformer(self, transformer: Any) -> None:
         super()._set_transformer(transformer)
         install_sd3_joint_attention_processor(transformer)
-
-    # -- backend ownership (called by runtime, not by collectors) -------
-
-    @classmethod
-    def from_build(cls, build: ModelBuild) -> SD3_5Model:
-        """Load the diffusers SD3.5 pipeline + freeze non-trainable modules."""
-        from diffusers import StableDiffusion3Pipeline
-
-        model_dtype = build.parameter_dtype
-        prompt_encoder_dtype, load_kwargs = diffusers_pipeline_dtypes(build, model_dtype)
-        pipeline = StableDiffusion3Pipeline.from_pretrained(
-            build.model_name_or_path,
-            **load_kwargs,
-        )
-        pipeline.vae.requires_grad_(False)
-        for enc in (
-            pipeline.text_encoder,
-            pipeline.text_encoder_2,
-            pipeline.text_encoder_3,
-        ):
-            if enc is not None:
-                enc.requires_grad_(False)
-                enc.to(build.device, dtype=prompt_encoder_dtype)
-        pipeline.vae.to(build.device, dtype=torch.float32)
-        # getattr: bare/test builds may omit ``memory`` (same fallback contract
-        # as ``prompt_encoder_dtype`` above).
-        return cls(
-            pipeline=pipeline,
-            device=build.device,
-        )
 
     # -- encode_prompt -------------------------------------------------
 
@@ -375,32 +354,6 @@ class SD3_5Model(LoraModelMixin, DiffusersPipelineModelBase, DiffusionBackboneRu
             guidance_scale=batch_context["guidance_scale"],
             do_cfg=batch_context["cfg"] and batch_context["guidance_scale"] > 1.0,
         )
-
-    # -- decode_latents ------------------------------------------------
-
-    def decode_latents(self, latents: torch.Tensor) -> torch.Tensor:
-        """Decode latents → image via SD3 VAE (4D, no T dim)."""
-        pipe = self.pipeline
-        scaling_factor = pipe.vae.config.scaling_factor
-        shift_factor = getattr(pipe.vae.config, "shift_factor", 0.0) or 0.0
-        decoder = ChunkedLatentDecoder(
-            LatentDecodePlan(
-                prepare_latents=lambda chunk: (
-                    chunk.to(pipe.vae.dtype) / scaling_factor + shift_factor
-                ),
-                vae_decode=lambda chunk: pipe.vae.decode(
-                    chunk,
-                    return_dict=False,
-                )[0],
-                postprocess=lambda image: pipe.image_processor.postprocess(
-                    image,
-                    output_type="pt",
-                ),
-                output_layout="image_bchw",
-                decode_batch_size=getattr(pipe, "decode_batch_size", None),
-            ),
-        )
-        return decoder(latents)
 
 
 class SD3_5ReplayModel(DiffusersReplayModelBase, SD3_5Model):

@@ -26,12 +26,12 @@ from vrl.models.interfaces import (
     require_replay_segments,
 )
 from vrl.models.interfaces.runtime import ModelBuild
+from vrl.models.peft_adapter import activate_adapter_on, disable_adapter_on
 from vrl.models.precision import model_autocast
-from vrl.models.utils import (
+from vrl.models.weight_utils import (
     TrainableStateSlots,
-    activate_adapter_on,
-    disable_adapter_on,
     load_weights_into,
+    validate_weights_for,
 )
 
 
@@ -321,8 +321,6 @@ class DiffusionModelBase(nn.Module, ABC):
     def validate_trainable_state(self, state_dict: Mapping[str, Any]) -> None:
         """Validate a sync payload without mutating the active policy."""
 
-        from vrl.models.utils import validate_weights_for
-
         transformer = self._require_transformer()
         validate_weights_for(
             transformer,
@@ -385,11 +383,25 @@ class DiffusionModelBase(nn.Module, ABC):
     def apply_lora(self, build: ModelBuild) -> None:  # pragma: no cover (default no-op)
         raise NotImplementedError
 
-    def apply_full_finetune(
-        self,
-        build: ModelBuild,
-    ) -> None:  # pragma: no cover (default no-op)
-        raise NotImplementedError
+    def apply_full_finetune(self, build: ModelBuild) -> None:
+        """Mark the transformer fully trainable (no-LoRA path)."""
+
+        transformer = self._require_transformer()
+        transformer.requires_grad_(True)
+        if not build.defer_trainable_device_move:
+            transformer.to(self.device)
+
+    def _set_transformer(self, transformer: Any) -> None:
+        """Register a replacement trainable transformer (LoRA wrap, compile, …).
+
+        Default: ``self.transformer`` is the only handle. Families that keep a
+        second reference to the same module — a diffusers pipeline, Echo's LTX
+        wrapper, CausVid's backend — override to keep both in sync, and a
+        pipeline-less replay subclass of such a family must override BACK to
+        this default (its ``pipeline`` raises).
+        """
+
+        self.transformer = transformer
 
     def torch_compile_transformer(self, mode: str) -> None:
         """Apply torch.compile to the family transformer in-place."""
@@ -432,8 +444,14 @@ class DiffusionModelBase(nn.Module, ABC):
         raise NotImplementedError
 
     @property
-    def trainable_modules(self) -> dict[str, Any]:  # pragma: no cover
-        raise NotImplementedError
+    def trainable_modules(self) -> dict[str, Any]:
+        """Named modules the trainer optimizes and weight sync targets.
+
+        One transformer is the family-wide shape; Wan (dual expert) and MAGI
+        (no trainable module at all) are the only overrides.
+        """
+
+        return {"transformer": self._require_transformer()}
 
     @property
     def scheduler(self) -> Any:  # pragma: no cover
@@ -536,12 +554,13 @@ class DiffusersPipelineModelBase(DiffusionModelBase):
 
     Factors the members that were byte-identical across those families:
     pipeline/device/scheduler/raw_handle access, frozen encoder device discovery,
-    distilled-guidance detection, transformer swap, the single-transformer
-    trainable map, full-finetune, and scheduler timestep init. A family
-    overrides only where it genuinely differs (FLUX's dual-encoder discovery,
-    sd3's attention processor reinstall on ``_set_transformer``, wan's
-    multi-transformer ``trainable_modules``/LoRA, Predict2.5's NFT
-    full-finetune guard).
+    distilled-guidance detection, transformer swap, scheduler timestep init, and
+    ``from_build`` — the pipeline load plus the freeze/placement of VAE and
+    prompt encoders, driven by the three class declarations below. A family
+    overrides only where it genuinely differs (FLUX's dual-encoder discovery and
+    NFT guard, SANA's scheduler swap, sd3's attention processor reinstall on
+    ``_set_transformer``, wan's multi-transformer ``trainable_modules``/LoRA,
+    Predict2.5's NFT full-finetune guard).
     Families NOT backed by a diffusers pipeline (echo's LTX wrapper, anima's
     single-file checkpoint) stay on ``DiffusionModelBase`` directly.
     """
@@ -584,10 +603,6 @@ class DiffusersPipelineModelBase(DiffusionModelBase):
         return bool(getattr(self.transformer.config, "guidance_embeds", False))
 
     @property
-    def trainable_modules(self) -> dict[str, Any]:
-        return {"transformer": self.transformer}
-
-    @property
     def scheduler(self) -> Any:
         return self.pipeline.scheduler
 
@@ -595,11 +610,54 @@ class DiffusersPipelineModelBase(DiffusionModelBase):
     def raw_handle(self) -> Any:
         return self.pipeline
 
-    def apply_full_finetune(self, build: ModelBuild) -> None:
-        """Mark the transformer fully trainable (no-LoRA path)."""
-        self.transformer.requires_grad_(True)
-        if not build.defer_trainable_device_move:
-            self.transformer.to(self.device)
+    # -- backend ownership -------------------------------------------------
+    # The three facts that differ between families whose loading is otherwise
+    # byte-identical. Declaring them (instead of copying ``from_build``) is how a
+    # family opts into the shared loader below.
+
+    # Resolved with ``getattr(diffusers, name)`` — the same by-name mechanism
+    # ``vrl.models.loader.load_diffusers_transformer`` uses for components.
+    _pipeline_classname: str = ""
+    _frozen_encoder_names: tuple[str, ...] = ("text_encoder",)
+    # Deliberately has NO default: whether the prompt encoder co-resides with the
+    # transformer or is parked on CPU is a per-family memory decision, and the
+    # comment that justifies it needs an anchor on the family itself.
+    _prompt_encoder_on_cpu: bool
+
+    @classmethod
+    def from_build(cls, build: ModelBuild) -> DiffusersPipelineModelBase:
+        """Load the family pipeline and freeze everything but the transformer."""
+
+        import diffusers
+
+        if not cls._pipeline_classname:
+            raise NotImplementedError(
+                f"{cls.__name__} must declare _pipeline_classname (and the two "
+                "sibling declarations) or override from_build",
+            )
+        pipeline_cls = getattr(diffusers, cls._pipeline_classname)
+        # Prompt encoders follow the rollout-only precision policy; the VAE stays
+        # family-owned fp32 below because decode fidelity is a separate concern.
+        prompt_encoder_dtype, load_kwargs = diffusers_pipeline_dtypes(
+            build,
+            build.parameter_dtype,
+        )
+        pipeline = pipeline_cls.from_pretrained(
+            build.model_name_or_path,
+            **load_kwargs,
+        )
+        pipeline.vae.requires_grad_(False)
+        encoder_device = "cpu" if cls._prompt_encoder_on_cpu else build.device
+        for name in cls._frozen_encoder_names:
+            encoder = getattr(pipeline, name, None)
+            if encoder is not None:
+                encoder.requires_grad_(False)
+                encoder.to(encoder_device, dtype=prompt_encoder_dtype)
+        pipeline.vae.to(build.device, dtype=torch.float32)
+        return cls(
+            pipeline=pipeline,
+            device=build.device,
+        )
 
     def set_num_steps(self, n: int) -> None:
         """Initialize the scheduler timesteps for sampling.

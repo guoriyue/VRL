@@ -35,8 +35,9 @@ from __future__ import annotations
 
 import random
 import sys
+from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, ClassVar
 
 import torch
 
@@ -45,21 +46,18 @@ from vrl.models.interfaces.runtime import ModelBuild
 from vrl.models.steps.denoise import (
     DiffusersPipelineModelBase,
     DiffusersReplayModelBase,
-    GuidedDiffusionSamplingStateBase,
-    diffusers_pipeline_dtypes,
 )
 from vrl.models.steps.denoise.common import (
-    ChunkedLatentDecoder,
     DiffusionBackboneCaller,
     DiffusionBackboneInput,
-    DiffusionBackboneRunnerBase,
     DiffusionBranch,
-    LatentDecodePlan,
+    EncoderAttentionMaskRunnerBase,
+    MaskedPromptCollectorMixin,
+    MaskedPromptSamplingState,
+    VaeDecodeMixin,
     expand_batch_timestep,
-    pack_eval_timestep,
 )
 from vrl.models.steps.denoise.common.lora import LoraModelMixin
-from vrl.models.steps.denoise.common.tensors import require_tensor
 
 # 512/1024-MS checkpoints train without micro-conditioning, but the
 # transformer forward still requires the dict when config.sample_size == 128;
@@ -98,17 +96,17 @@ def pixart_ddim_scheduler(scheduler_config: Any, num_steps: int, device: Any) ->
 
 
 @dataclass
-class PixArtSigmaSamplingState(GuidedDiffusionSamplingStateBase):
+class PixArtSigmaSamplingState(MaskedPromptSamplingState):
     """Private PixArt-Sigma sampling state. Engine MUST NOT introspect."""
 
-    prompt_embeds: torch.Tensor
-    prompt_attention_mask: torch.Tensor | None
-    negative_prompt_embeds: torch.Tensor | None
-    negative_prompt_attention_mask: torch.Tensor | None
-    do_cfg: bool
 
-
-class PixArtSigmaModel(LoraModelMixin, DiffusersPipelineModelBase, DiffusionBackboneRunnerBase):
+class PixArtSigmaModel(
+    VaeDecodeMixin,
+    MaskedPromptCollectorMixin,
+    LoraModelMixin,
+    DiffusersPipelineModelBase,
+    EncoderAttentionMaskRunnerBase,
+):
     """Diffusers-backed PixArt-Sigma t2i model (epsilon DDPM family).
 
     Implements the backbone-runner protocol itself. Both CFG branches pad to
@@ -119,31 +117,16 @@ class PixArtSigmaModel(LoraModelMixin, DiffusersPipelineModelBase, DiffusionBack
 
     cfg_mode = "batched_cfg"
     cfg_base = "uncond"
+    branch_extra_kwargs: ClassVar[Mapping[str, Any]] = {
+        "added_cond_kwargs": _ADDED_COND_KWARGS,
+    }
+    sampling_state_cls = PixArtSigmaSamplingState
 
-    def build_branch(
-        self,
-        request: DiffusionBackboneInput,
-        branch: str,
-    ) -> DiffusionBranch:
-        """Map PixArt-Sigma transformer kwargs into the shared backbone contract."""
-        if branch == "cond":
-            embeds = request.prompt_embeds
-            mask = request.extra.get("encoder_attention_mask")
-        else:
-            embeds = require_tensor(
-                request.negative_prompt_embeds,
-                "negative_prompt_embeds",
-            )
-            mask = request.extra.get("negative_encoder_attention_mask")
-        return DiffusionBranch(
-            hidden_states=request.hidden_states,
-            timestep=request.timestep,
-            encoder_hidden_states=embeds,
-            extra_kwargs={
-                "encoder_attention_mask": mask,
-                "added_cond_kwargs": _ADDED_COND_KWARGS,
-            },
-        )
+    # -- backend ownership (called by runtime, not by collectors) -------
+    _pipeline_classname = "PixArtSigmaPipeline"
+    _frozen_encoder_names = ("text_encoder",)
+    # T5-XXL (~9.5 GB bf16); park on CPU (Qwen-Image discipline).
+    _prompt_encoder_on_cpu = True
 
     def postprocess_branch(
         self,
@@ -162,31 +145,6 @@ class PixArtSigmaModel(LoraModelMixin, DiffusersPipelineModelBase, DiffusionBack
         if raw_output.shape[1] == 2 * latent_channels:
             return raw_output.chunk(2, dim=1)[0]
         return raw_output
-
-    # -- backend ownership (called by runtime, not by collectors) -------
-
-    @classmethod
-    def from_build(cls, build: ModelBuild) -> PixArtSigmaModel:
-        """Load the diffusers PixArt-Sigma pipeline + freeze non-trainable modules."""
-        from diffusers import PixArtSigmaPipeline
-
-        model_dtype = build.parameter_dtype
-        prompt_encoder_dtype, load_kwargs = diffusers_pipeline_dtypes(build, model_dtype)
-        pipeline = PixArtSigmaPipeline.from_pretrained(
-            build.model_name_or_path,
-            **load_kwargs,
-        )
-        pipeline.vae.requires_grad_(False)
-        text_encoder = getattr(pipeline, "text_encoder", None)
-        if text_encoder is not None:
-            # T5-XXL (~9.5 GB bf16); park on CPU (Qwen-Image discipline).
-            text_encoder.requires_grad_(False)
-            text_encoder.to("cpu", dtype=prompt_encoder_dtype)
-        pipeline.vae.to(build.device, dtype=torch.float32)
-        return cls(
-            pipeline=pipeline,
-            device=build.device,
-        )
 
     # -- encode_prompt -------------------------------------------------
 
@@ -342,78 +300,6 @@ class PixArtSigmaModel(LoraModelMixin, DiffusersPipelineModelBase, DiffusionBack
             ),
         )
         return output.as_dict()
-
-    # -- collector boundary --------------------------------------------
-
-    def export_batch_context(self, state: PixArtSigmaSamplingState) -> dict[str, Any]:
-        """Project PixArt-Sigma sampling state into trajectory context."""
-        return {
-            "guidance_scale": state.guidance_scale,
-            "cfg": state.do_cfg,
-        }
-
-    def export_replay_tensors(self, state: PixArtSigmaSamplingState) -> dict[str, Any]:
-        """Project PixArt-Sigma sampling state into per-sample trajectory tensors.
-
-        Masks / negative embeds are only stored when present, so ``restore``
-        reads them with ``.get`` and the no-CFG path stays tensor-free.
-        """
-        tensors: dict[str, Any] = {"prompt_embeds": state.prompt_embeds}
-        if state.prompt_attention_mask is not None:
-            tensors["prompt_attention_mask"] = state.prompt_attention_mask
-        if state.negative_prompt_embeds is not None:
-            tensors["negative_prompt_embeds"] = state.negative_prompt_embeds
-        if state.negative_prompt_attention_mask is not None:
-            tensors["negative_prompt_attention_mask"] = state.negative_prompt_attention_mask
-        return tensors
-
-    def restore_eval_state(
-        self,
-        replay_tensors: dict[str, Any],
-        batch_context: dict[str, Any],
-        latents: Any,
-        step_idx: int,
-    ) -> PixArtSigmaSamplingState:
-        """Rebuild PixArtSigmaSamplingState from a batch slice for the eval path."""
-        ts = replay_tensors["timesteps"]
-        timesteps = pack_eval_timestep(ts, step_idx)
-        return PixArtSigmaSamplingState(
-            latents=latents,
-            timesteps=timesteps,
-            scheduler=None,  # not needed for forward_step (no scheduler.step here)
-            prompt_embeds=replay_tensors["prompt_embeds"],
-            prompt_attention_mask=replay_tensors.get("prompt_attention_mask"),
-            negative_prompt_embeds=replay_tensors.get("negative_prompt_embeds"),
-            negative_prompt_attention_mask=replay_tensors.get(
-                "negative_prompt_attention_mask",
-            ),
-            guidance_scale=batch_context["guidance_scale"],
-            do_cfg=batch_context["cfg"]
-            and replay_tensors.get("negative_prompt_embeds") is not None,
-        )
-
-    # -- decode_latents ------------------------------------------------
-
-    def decode_latents(self, latents: torch.Tensor) -> torch.Tensor:
-        """Decode latents -> image via the SDXL KL-VAE (4D, scaling only)."""
-        pipe = self.pipeline
-        vae = pipe.vae
-        scaling_factor = vae.config.scaling_factor
-        # SDXL VAE ships no shift_factor; read it defensively like sd3.
-        shift_factor = getattr(vae.config, "shift_factor", 0.0) or 0.0
-        decoder = ChunkedLatentDecoder(
-            LatentDecodePlan(
-                prepare_latents=lambda chunk: chunk.to(vae.dtype) / scaling_factor + shift_factor,
-                vae_decode=lambda chunk: vae.decode(chunk, return_dict=False)[0],
-                postprocess=lambda image: pipe.image_processor.postprocess(
-                    image,
-                    output_type="pt",
-                ),
-                output_layout="image_bchw",
-                decode_batch_size=getattr(pipe, "decode_batch_size", None),
-            ),
-        )
-        return decoder(latents)
 
 
 class PixArtSigmaReplayModel(DiffusersReplayModelBase, PixArtSigmaModel):

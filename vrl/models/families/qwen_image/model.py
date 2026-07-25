@@ -29,12 +29,10 @@ from typing import Any
 import torch
 
 from vrl.generation.types import VideoGenerationRequest
-from vrl.models.interfaces.runtime import ModelBuild
 from vrl.models.steps.denoise import (
     DiffusersPipelineModelBase,
     DiffusersReplayModelBase,
     GuidedDiffusionSamplingStateBase,
-    diffusers_pipeline_dtypes,
 )
 from vrl.models.steps.denoise.common import (
     ChunkedLatentDecoder,
@@ -73,12 +71,25 @@ class QwenImageModel(LoraModelMixin, DiffusersPipelineModelBase, DiffusionBackbo
     classifier-free guidance where cond/uncond prompts tokenize to DIFFERENT
     sequence lengths (their masks differ), so the two branches cannot be packed
     into one batched call — hence ``separate_cfg`` (two independent forwards)
-    instead of sd3_5's ``batched_cfg``. ``finalize_noise_pred`` reproduces
-    Qwen-Image's norm-preserving CFG combine.
+    instead of sd3_5's ``batched_cfg``.
     """
 
     cfg_mode = "separate_cfg"
     cfg_base = "uncond"
+    # Qwen-Image's pipeline rescales the combined prediction back to the
+    # conditional branch's norm:
+    #     comb  = uncond + s * (cond - uncond)
+    #     noise = comb * (||cond|| / ||comb||)
+    cfg_normalization = True
+
+    # -- backend ownership (called by runtime, not by collectors) -------
+    _pipeline_classname = "QwenImagePipeline"
+    _frozen_encoder_names = ("text_encoder",)
+    # Qwen-Image's Qwen2.5-VL text encoder is ~15 GB (bf16); with the ~20 GB+
+    # transformer it cannot co-reside on a 32 GB card. The encoder feeds only the
+    # one-shot encode_prompt, so park it on CPU (enable_model_cpu_offload
+    # discipline); encode_prompt runs it there and moves embeds to the GPU.
+    _prompt_encoder_on_cpu = True
 
     def build_branch(
         self,
@@ -108,26 +119,6 @@ class QwenImageModel(LoraModelMixin, DiffusersPipelineModelBase, DiffusionBackbo
             extra_kwargs=extra_kwargs,
         )
 
-    def finalize_noise_pred(
-        self,
-        request: DiffusionBackboneInput,
-        combined: torch.Tensor,
-        cond: torch.Tensor,
-        uncond: torch.Tensor,
-    ) -> torch.Tensor:
-        """Qwen-Image norm-preserving CFG: rescale the combined pred to the cond norm.
-
-        Mirrors diffusers QwenImagePipeline:
-            comb = uncond + s * (cond - uncond)   # done by combine_cfg upstream
-            noise = comb * (||cond|| / ||comb||)
-        """
-        del uncond
-        if not request.do_cfg:
-            return combined
-        cond_norm = torch.norm(cond, dim=-1, keepdim=True)
-        comb_norm = torch.norm(combined, dim=-1, keepdim=True)
-        return combined * (cond_norm / comb_norm)
-
     def __init__(
         self,
         *,
@@ -140,34 +131,6 @@ class QwenImageModel(LoraModelMixin, DiffusersPipelineModelBase, DiffusionBackbo
         # prepare -> denoise -> decode sequentially per chunk).
         self._decode_height = 1024
         self._decode_width = 1024
-
-    # -- backend ownership (called by runtime, not by collectors) -------
-
-    @classmethod
-    def from_build(cls, build: ModelBuild) -> QwenImageModel:
-        """Load the diffusers Qwen-Image pipeline + freeze non-trainable modules."""
-        from diffusers import QwenImagePipeline
-
-        model_dtype = build.parameter_dtype
-        prompt_encoder_dtype, load_kwargs = diffusers_pipeline_dtypes(build, model_dtype)
-        pipeline = QwenImagePipeline.from_pretrained(
-            build.model_name_or_path,
-            **load_kwargs,
-        )
-        pipeline.vae.requires_grad_(False)
-        # Qwen-Image's Qwen2.5-VL text encoder is ~15 GB (bf16); with the ~20 GB+
-        # transformer it cannot co-reside on a 32 GB card. The encoder feeds only the
-        # one-shot encode_prompt, so park it on CPU (enable_model_cpu_offload
-        # discipline); encode_prompt runs it there and moves embeds to the GPU.
-        text_encoder = getattr(pipeline, "text_encoder", None)
-        if text_encoder is not None:
-            text_encoder.requires_grad_(False)
-            text_encoder.to("cpu", dtype=prompt_encoder_dtype)
-        pipeline.vae.to(build.device, dtype=torch.float32)
-        return cls(
-            pipeline=pipeline,
-            device=build.device,
-        )
 
     def _set_dynamic_timesteps(self, num_steps: int, image_seq_len: int, device: Any) -> Any:
         """Set Qwen-Image timesteps with the resolution-derived ``mu`` (diffusers parity)."""

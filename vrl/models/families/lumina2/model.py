@@ -19,8 +19,8 @@ Lumina2 specifics vs SD3 (the reference family):
   is magnitude-based) and it keeps the exported cond/uncond branches
   sign-consistent with what the SDE step consumes.
 - TRUE classifier-free guidance run as SEPARATE branches (mirrors the
-  reference pipeline), with Lumina's norm-preserving rescale
-  (``cfg_normalization``) reproduced in ``finalize_noise_pred``.
+  reference pipeline), with Lumina's norm-preserving rescale reproduced by the
+  shared ``cfg_normalization`` combine (the pipeline argument of that name).
 - ``cfg_trunc_ratio`` (late-step CFG truncation) is NOT supported: a
   step-index-dependent CFG rule cannot be recomputed on the replay path
   (the eval forward sees one packed step, not the original index).
@@ -36,66 +36,49 @@ from typing import Any
 import torch
 
 from vrl.generation.types import VideoGenerationRequest
-from vrl.models.interfaces.runtime import ModelBuild
 from vrl.models.steps.denoise import (
     DiffusersPipelineModelBase,
     DiffusersReplayModelBase,
-    GuidedDiffusionSamplingStateBase,
-    diffusers_pipeline_dtypes,
 )
 from vrl.models.steps.denoise.common import (
-    ChunkedLatentDecoder,
     DiffusionBackboneCaller,
     DiffusionBackboneInput,
-    DiffusionBackboneRunnerBase,
     DiffusionBranch,
-    LatentDecodePlan,
+    EncoderAttentionMaskRunnerBase,
+    MaskedPromptCollectorMixin,
+    TrainTimestepMaskedPromptSamplingState,
+    VaeDecodeMixin,
     expand_batch_timestep,
-    pack_eval_timestep,
 )
 from vrl.models.steps.denoise.common.lora import LoraModelMixin
-from vrl.models.steps.denoise.common.tensors import require_tensor
 
 
 @dataclass
-class Lumina2SamplingState(GuidedDiffusionSamplingStateBase):
+class Lumina2SamplingState(TrainTimestepMaskedPromptSamplingState):
     """Private Lumina2 sampling state. Engine MUST NOT introspect."""
 
-    prompt_embeds: torch.Tensor
-    prompt_attention_mask: torch.Tensor | None
-    negative_prompt_embeds: torch.Tensor | None
-    negative_prompt_attention_mask: torch.Tensor | None
-    do_cfg: bool
-    num_train_timesteps: int
 
-
-class Lumina2Model(LoraModelMixin, DiffusersPipelineModelBase, DiffusionBackboneRunnerBase):
+class Lumina2Model(
+    VaeDecodeMixin,
+    MaskedPromptCollectorMixin,
+    LoraModelMixin,
+    DiffusersPipelineModelBase,
+    EncoderAttentionMaskRunnerBase,
+):
     """Diffusers-backed Lumina-Image-2.0 t2i model."""
 
     cfg_mode = "separate_cfg"
     cfg_base = "uncond"
+    # Lumina's reference pipeline rescales the combined prediction back to the
+    # conditional branch's norm on every CFG step.
+    cfg_normalization = True
+    sampling_state_cls = Lumina2SamplingState
 
-    def build_branch(
-        self,
-        request: DiffusionBackboneInput,
-        branch: str,
-    ) -> DiffusionBranch:
-        """Map Lumina2 transformer kwargs into the shared backbone contract."""
-        if branch == "cond":
-            embeds = request.prompt_embeds
-            mask = request.extra.get("encoder_attention_mask")
-        else:
-            embeds = require_tensor(
-                request.negative_prompt_embeds,
-                "negative_prompt_embeds",
-            )
-            mask = request.extra.get("negative_encoder_attention_mask")
-        return DiffusionBranch(
-            hidden_states=request.hidden_states,
-            timestep=request.timestep,
-            encoder_hidden_states=embeds,
-            extra_kwargs={"encoder_attention_mask": mask},
-        )
+    # -- backend ownership (called by runtime, not by collectors) -------
+    _pipeline_classname = "Lumina2Pipeline"
+    _frozen_encoder_names = ("text_encoder",)
+    # Gemma-2-2B co-resides with the 2.6B DiT; keep it on-device.
+    _prompt_encoder_on_cpu = False
 
     def postprocess_branch(
         self,
@@ -111,46 +94,6 @@ class Lumina2Model(LoraModelMixin, DiffusersPipelineModelBase, DiffusionBackbone
         """
         del request, branch
         return -raw_output
-
-    def finalize_noise_pred(
-        self,
-        request: DiffusionBackboneInput,
-        combined: torch.Tensor,
-        cond: torch.Tensor,
-        uncond: torch.Tensor,
-    ) -> torch.Tensor:
-        """Lumina2 norm-preserving CFG: rescale the combined pred to the cond norm."""
-        del uncond
-        if not request.do_cfg:
-            return combined
-        cond_norm = torch.norm(cond, dim=-1, keepdim=True)
-        comb_norm = torch.norm(combined, dim=-1, keepdim=True)
-        return combined * (cond_norm / comb_norm)
-
-    # -- backend ownership (called by runtime, not by collectors) -------
-
-    @classmethod
-    def from_build(cls, build: ModelBuild) -> Lumina2Model:
-        """Load the diffusers Lumina2 pipeline + freeze non-trainable modules."""
-        from diffusers import Lumina2Pipeline
-
-        model_dtype = build.parameter_dtype
-        prompt_encoder_dtype, load_kwargs = diffusers_pipeline_dtypes(build, model_dtype)
-        pipeline = Lumina2Pipeline.from_pretrained(
-            build.model_name_or_path,
-            **load_kwargs,
-        )
-        pipeline.vae.requires_grad_(False)
-        text_encoder = getattr(pipeline, "text_encoder", None)
-        if text_encoder is not None:
-            # Gemma-2-2B co-resides with the 2.6B DiT; keep it on-device.
-            text_encoder.requires_grad_(False)
-            text_encoder.to(build.device, dtype=prompt_encoder_dtype)
-        pipeline.vae.to(build.device, dtype=torch.float32)
-        return cls(
-            pipeline=pipeline,
-            device=build.device,
-        )
 
     # -- encode_prompt -------------------------------------------------
 
@@ -294,75 +237,6 @@ class Lumina2Model(LoraModelMixin, DiffusersPipelineModelBase, DiffusionBackbone
             ),
         )
         return output.as_dict()
-
-    # -- collector boundary --------------------------------------------
-
-    def export_batch_context(self, state: Lumina2SamplingState) -> dict[str, Any]:
-        """Project Lumina2 sampling state into trajectory context."""
-        return {
-            "guidance_scale": state.guidance_scale,
-            "cfg": state.do_cfg,
-            "num_train_timesteps": state.num_train_timesteps,
-        }
-
-    def export_replay_tensors(self, state: Lumina2SamplingState) -> dict[str, Any]:
-        """Project Lumina2 sampling state into per-sample trajectory tensors."""
-        tensors: dict[str, Any] = {"prompt_embeds": state.prompt_embeds}
-        if state.prompt_attention_mask is not None:
-            tensors["prompt_attention_mask"] = state.prompt_attention_mask
-        if state.negative_prompt_embeds is not None:
-            tensors["negative_prompt_embeds"] = state.negative_prompt_embeds
-        if state.negative_prompt_attention_mask is not None:
-            tensors["negative_prompt_attention_mask"] = state.negative_prompt_attention_mask
-        return tensors
-
-    def restore_eval_state(
-        self,
-        replay_tensors: dict[str, Any],
-        batch_context: dict[str, Any],
-        latents: Any,
-        step_idx: int,
-    ) -> Lumina2SamplingState:
-        """Rebuild Lumina2SamplingState from a batch slice for the eval forward path."""
-        ts = replay_tensors["timesteps"]
-        timesteps = pack_eval_timestep(ts, step_idx)
-        return Lumina2SamplingState(
-            latents=latents,
-            timesteps=timesteps,
-            scheduler=None,  # not needed for forward_step (no scheduler.step here)
-            prompt_embeds=replay_tensors["prompt_embeds"],
-            prompt_attention_mask=replay_tensors.get("prompt_attention_mask"),
-            negative_prompt_embeds=replay_tensors.get("negative_prompt_embeds"),
-            negative_prompt_attention_mask=replay_tensors.get(
-                "negative_prompt_attention_mask",
-            ),
-            guidance_scale=batch_context["guidance_scale"],
-            do_cfg=batch_context["cfg"]
-            and replay_tensors.get("negative_prompt_embeds") is not None,
-            num_train_timesteps=int(batch_context["num_train_timesteps"]),
-        )
-
-    # -- decode_latents ------------------------------------------------
-
-    def decode_latents(self, latents: torch.Tensor) -> torch.Tensor:
-        """Decode latents -> image via the KL VAE (scaling + shift, 4D)."""
-        pipe = self.pipeline
-        vae = pipe.vae
-        scaling_factor = vae.config.scaling_factor
-        shift_factor = getattr(vae.config, "shift_factor", 0.0) or 0.0
-        decoder = ChunkedLatentDecoder(
-            LatentDecodePlan(
-                prepare_latents=lambda chunk: chunk.to(vae.dtype) / scaling_factor + shift_factor,
-                vae_decode=lambda chunk: vae.decode(chunk, return_dict=False)[0],
-                postprocess=lambda image: pipe.image_processor.postprocess(
-                    image,
-                    output_type="pt",
-                ),
-                output_layout="image_bchw",
-                decode_batch_size=getattr(pipe, "decode_batch_size", None),
-            ),
-        )
-        return decoder(latents)
 
 
 class Lumina2ReplayModel(DiffusersReplayModelBase, Lumina2Model):

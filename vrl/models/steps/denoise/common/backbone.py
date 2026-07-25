@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass, field
-from typing import Any, Literal, Protocol
+from typing import Any, ClassVar, Literal, Protocol
 
 import torch
 
@@ -14,6 +15,7 @@ from vrl.models.steps.denoise.common.cfg import (
     pack_batched_cfg,
     split_batched_cfg_output,
 )
+from vrl.models.steps.denoise.common.tensors import require_tensor
 
 DiffusionCFGMode = Literal["batched_cfg", "separate_cfg", "single_branch"]
 
@@ -53,6 +55,7 @@ class DiffusionBackboneRunner(Protocol):
 
     cfg_mode: DiffusionCFGMode
     cfg_base: DiffusionCFGBase
+    cfg_normalization: bool
 
     def build_branch(
         self,
@@ -83,9 +86,16 @@ class DiffusionBackboneRunnerBase:
     nothing to do after the transformer call: ``postprocess_branch`` and
     ``finalize_noise_pred`` were byte-identical identity methods across
     sd3_5/flux/wan. They live here once; a runner overrides only when it does
-    real math (qwen_image's norm-preserving CFG rescale in
-    ``finalize_noise_pred``).
+    real math (cosmos predict2 converts the combined prediction back to the
+    noise domain in ``finalize_noise_pred``).
     """
+
+    # Norm-preserving CFG: rescale the combined prediction back to the
+    # conditional branch's norm. Their reference pipelines make this a
+    # family-level fact, not a per-step decision, so it selects a branch of
+    # ``combine_cfg`` instead of an overridden method. lumina2 and qwen_image
+    # turn it on; every other family does the plain linear combine.
+    cfg_normalization: bool = False
 
     def postprocess_branch(
         self,
@@ -105,6 +115,48 @@ class DiffusionBackboneRunnerBase:
     ) -> torch.Tensor:
         del request, cond, uncond
         return combined
+
+
+class EncoderAttentionMaskRunnerBase(DiffusionBackboneRunnerBase):
+    """``build_branch`` for families conditioned on embeds + an attention mask.
+
+    sana, lumina2, mochi and pixart_sigma mapped their branches identically:
+    the branch's sequence embeds as ``encoder_hidden_states`` and its padding
+    mask as ``encoder_attention_mask``, with pixart_sigma's constant
+    micro-conditioning dict the only addition.
+
+    This is a SIBLING opt-in, not a default on ``DiffusionBackboneRunnerBase``:
+    a family that forgets to map its own transformer kwargs must fail loud, so
+    the base deliberately declares no ``build_branch``.
+    """
+
+    # Constant kwargs every branch of the family needs (pixart_sigma's
+    # ``added_cond_kwargs``). Both branches must carry the SAME value — the
+    # batched-CFG kwarg packer rejects branch-specific non-tensors.
+    branch_extra_kwargs: ClassVar[Mapping[str, Any]] = {}
+
+    def build_branch(
+        self,
+        request: DiffusionBackboneInput,
+        branch: str,
+    ) -> DiffusionBranch:
+        """Map the branch's prompt embeds and attention mask into a branch call."""
+
+        if branch == "cond":
+            embeds = request.prompt_embeds
+            mask = request.extra.get("encoder_attention_mask")
+        else:
+            embeds = require_tensor(
+                request.negative_prompt_embeds,
+                "negative_prompt_embeds",
+            )
+            mask = request.extra.get("negative_encoder_attention_mask")
+        return DiffusionBranch(
+            hidden_states=request.hidden_states,
+            timestep=request.timestep,
+            encoder_hidden_states=embeds,
+            extra_kwargs={"encoder_attention_mask": mask, **self.branch_extra_kwargs},
+        )
 
 
 class DiffusionBackboneCaller:
@@ -151,6 +203,7 @@ class DiffusionBackboneCaller:
             guidance_scale=request.guidance_scale,
             do_cfg=request.do_cfg,
             base=getattr(self.runner, "cfg_base", "uncond"),
+            normalize=getattr(self.runner, "cfg_normalization", False),
         )
         noise_pred = self.runner.finalize_noise_pred(
             request,

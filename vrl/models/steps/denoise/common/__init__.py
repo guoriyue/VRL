@@ -6,6 +6,7 @@ from vrl.models.steps.denoise.common.backbone import (
     DiffusionBackboneOutput,
     DiffusionBackboneRunner,
     DiffusionBackboneRunnerBase,
+    EncoderAttentionMaskRunnerBase,
 )
 from vrl.models.steps.denoise.common.cfg import (
     DiffusionBranch,
@@ -16,6 +17,12 @@ from vrl.models.steps.denoise.common.cfg import (
 from vrl.models.steps.denoise.common.latent_decode import (
     ChunkedLatentDecoder,
     LatentDecodePlan,
+    VaeDecodeMixin,
+)
+from vrl.models.steps.denoise.common.masked_prompt import (
+    MaskedPromptCollectorMixin,
+    MaskedPromptSamplingState,
+    TrainTimestepMaskedPromptSamplingState,
 )
 from vrl.models.steps.denoise.common.tensors import (
     align_replay_tensor,
@@ -37,7 +44,12 @@ __all__ = [
     "DiffusionBackboneRunner",
     "DiffusionBackboneRunnerBase",
     "DiffusionBranch",
+    "EncoderAttentionMaskRunnerBase",
     "LatentDecodePlan",
+    "MaskedPromptCollectorMixin",
+    "MaskedPromptSamplingState",
+    "TrainTimestepMaskedPromptSamplingState",
+    "VaeDecodeMixin",
     "align_replay_tensor",
     "broadcast_spatial_timestep",
     "combine_cfg",

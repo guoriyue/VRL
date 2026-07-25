@@ -148,10 +148,6 @@ class EchoModel(LoraModelMixin, DiffusionModelBase):
         return self._dtype
 
     @property
-    def trainable_modules(self) -> dict[str, Any]:
-        return {"transformer": self.transformer}
-
-    @property
     def scheduler(self) -> Any:
         return self._scheduler
 
@@ -170,11 +166,6 @@ class EchoModel(LoraModelMixin, DiffusionModelBase):
         """Fixed pixel width used to construct the Echo latent-grid wrapper."""
 
         return int(self._echo.video_width)
-
-    def apply_full_finetune(self, build: ModelBuild) -> None:
-        self.transformer.requires_grad_(True)
-        if not build.defer_trainable_device_move:
-            self.transformer.to(self.device)
 
     def enable_gradient_checkpointing(self) -> None:
         """Turn on activation checkpointing in the LTX velocity blocks.

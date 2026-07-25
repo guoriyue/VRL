@@ -37,35 +37,32 @@ from vrl.models.interfaces.runtime import ModelBuild
 from vrl.models.steps.denoise import (
     DiffusersPipelineModelBase,
     DiffusersReplayModelBase,
-    GuidedDiffusionSamplingStateBase,
     diffusers_pipeline_dtypes,
 )
 from vrl.models.steps.denoise.common import (
-    ChunkedLatentDecoder,
     DiffusionBackboneCaller,
     DiffusionBackboneInput,
-    DiffusionBackboneRunnerBase,
-    DiffusionBranch,
-    LatentDecodePlan,
+    EncoderAttentionMaskRunnerBase,
+    MaskedPromptCollectorMixin,
+    MaskedPromptSamplingState,
+    VaeDecodeMixin,
     expand_batch_timestep,
-    pack_eval_timestep,
 )
 from vrl.models.steps.denoise.common.lora import LoraModelMixin
-from vrl.models.steps.denoise.common.tensors import require_tensor
 
 
 @dataclass
-class SanaSamplingState(GuidedDiffusionSamplingStateBase):
+class SanaSamplingState(MaskedPromptSamplingState):
     """Private SANA sampling state. Engine MUST NOT introspect."""
 
-    prompt_embeds: torch.Tensor
-    prompt_attention_mask: torch.Tensor | None
-    negative_prompt_embeds: torch.Tensor | None
-    negative_prompt_attention_mask: torch.Tensor | None
-    do_cfg: bool
 
-
-class SanaModel(LoraModelMixin, DiffusersPipelineModelBase, DiffusionBackboneRunnerBase):
+class SanaModel(
+    VaeDecodeMixin,
+    MaskedPromptCollectorMixin,
+    LoraModelMixin,
+    DiffusersPipelineModelBase,
+    EncoderAttentionMaskRunnerBase,
+):
     """Diffusers-backed SANA t2i model.
 
     Implements the backbone-runner protocol itself. Both CFG branches pad to
@@ -76,28 +73,7 @@ class SanaModel(LoraModelMixin, DiffusersPipelineModelBase, DiffusionBackboneRun
 
     cfg_mode = "batched_cfg"
     cfg_base = "uncond"
-
-    def build_branch(
-        self,
-        request: DiffusionBackboneInput,
-        branch: str,
-    ) -> DiffusionBranch:
-        """Map SANA transformer kwargs into the shared backbone contract."""
-        if branch == "cond":
-            embeds = request.prompt_embeds
-            mask = request.extra.get("encoder_attention_mask")
-        else:
-            embeds = require_tensor(
-                request.negative_prompt_embeds,
-                "negative_prompt_embeds",
-            )
-            mask = request.extra.get("negative_encoder_attention_mask")
-        return DiffusionBranch(
-            hidden_states=request.hidden_states,
-            timestep=request.timestep,
-            encoder_hidden_states=embeds,
-            extra_kwargs={"encoder_attention_mask": mask},
-        )
+    sampling_state_cls = SanaSamplingState
 
     # -- backend ownership (called by runtime, not by collectors) -------
 
@@ -336,76 +312,6 @@ class SanaModel(LoraModelMixin, DiffusersPipelineModelBase, DiffusionBackboneRun
             ),
         )
         return output.as_dict()
-
-    # -- collector boundary --------------------------------------------
-
-    def export_batch_context(self, state: SanaSamplingState) -> dict[str, Any]:
-        """Project SANA sampling state into trajectory context."""
-        return {
-            "guidance_scale": state.guidance_scale,
-            "cfg": state.do_cfg,
-        }
-
-    def export_replay_tensors(self, state: SanaSamplingState) -> dict[str, Any]:
-        """Project SANA sampling state into per-sample trajectory tensors.
-
-        Masks / negative embeds are only stored when present, so ``restore``
-        reads them with ``.get`` and the no-CFG path stays tensor-free.
-        """
-        tensors: dict[str, Any] = {"prompt_embeds": state.prompt_embeds}
-        if state.prompt_attention_mask is not None:
-            tensors["prompt_attention_mask"] = state.prompt_attention_mask
-        if state.negative_prompt_embeds is not None:
-            tensors["negative_prompt_embeds"] = state.negative_prompt_embeds
-        if state.negative_prompt_attention_mask is not None:
-            tensors["negative_prompt_attention_mask"] = state.negative_prompt_attention_mask
-        return tensors
-
-    def restore_eval_state(
-        self,
-        replay_tensors: dict[str, Any],
-        batch_context: dict[str, Any],
-        latents: Any,
-        step_idx: int,
-    ) -> SanaSamplingState:
-        """Rebuild SanaSamplingState from a batch slice for the eval forward path."""
-        ts = replay_tensors["timesteps"]
-        timesteps = pack_eval_timestep(ts, step_idx)
-        return SanaSamplingState(
-            latents=latents,
-            timesteps=timesteps,
-            scheduler=None,  # not needed for forward_step (no scheduler.step here)
-            prompt_embeds=replay_tensors["prompt_embeds"],
-            prompt_attention_mask=replay_tensors.get("prompt_attention_mask"),
-            negative_prompt_embeds=replay_tensors.get("negative_prompt_embeds"),
-            negative_prompt_attention_mask=replay_tensors.get(
-                "negative_prompt_attention_mask",
-            ),
-            guidance_scale=batch_context["guidance_scale"],
-            do_cfg=batch_context["cfg"]
-            and replay_tensors.get("negative_prompt_embeds") is not None,
-        )
-
-    # -- decode_latents ------------------------------------------------
-
-    def decode_latents(self, latents: torch.Tensor) -> torch.Tensor:
-        """Decode latents -> image via DC-AE (4D, no shift_factor, no unpack)."""
-        pipe = self.pipeline
-        vae = pipe.vae
-        scaling_factor = vae.config.scaling_factor
-        decoder = ChunkedLatentDecoder(
-            LatentDecodePlan(
-                prepare_latents=lambda chunk: chunk.to(vae.dtype) / scaling_factor,
-                vae_decode=lambda chunk: vae.decode(chunk, return_dict=False)[0],
-                postprocess=lambda image: pipe.image_processor.postprocess(
-                    image,
-                    output_type="pt",
-                ),
-                output_layout="image_bchw",
-                decode_batch_size=getattr(pipe, "decode_batch_size", None),
-            ),
-        )
-        return decoder(latents)
 
 
 class SanaReplayModel(DiffusersReplayModelBase, SanaModel):

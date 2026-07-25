@@ -59,3 +59,55 @@ class ChunkedLatentDecoder:
         if self.plan.prepare_decoded is not None:
             decoded = self.plan.prepare_decoded(decoded)
         return self.plan.postprocess(decoded)
+
+
+class VaeDecodeMixin:
+    """``decode_latents`` for families whose denormalization is scale + shift.
+
+    sd3_5, pixart_sigma, lumina2, hunyuan_image, sana and hunyuan_video carried
+    byte-identical decode bodies; the only real differences were the output
+    layout and whether the VAE ships a ``shift_factor``.
+
+    OPT IN BY LISTING THIS MIXIN FIRST in the bases. ``decode_latents`` is an
+    ``@abstractmethod`` on ``DiffusionModelBase``, so a mixin placed after
+    ``DiffusersPipelineModelBase`` loses the MRO race, the abstract method
+    survives, and the class raises ``TypeError`` at instantiation — the same
+    reason ``LoraModelMixin`` precedes it.
+
+    Families whose decode is more than scale + shift keep their own override:
+    flux/qwen_image unpack packed latents first, mochi/cogvideox denormalize
+    with per-channel ``latents_mean``/``latents_std``, and cosmos/wan/echo/
+    causvid decode outside a diffusers image processor entirely.
+    """
+
+    # hunyuan_video is the only member that decodes 5D latents; everything else
+    # produces images.
+    _decode_output_layout: LatentOutputLayout = "image_bchw"
+
+    def decode_latents(self, latents: torch.Tensor) -> torch.Tensor:
+        """Decode latents through the pipeline VAE and its output processor."""
+
+        pipe = self.pipeline
+        vae = pipe.vae
+        scaling_factor = vae.config.scaling_factor
+        # Read unconditionally. DC-AE (sana) and the two Hunyuan VAEs ship no
+        # ``shift_factor`` at all, so the default makes the shift a no-op there
+        # — one arithmetic path instead of a per-family branch, and a
+        # checkpoint that ever gains the field is then handled like sd3's.
+        shift_factor = getattr(vae.config, "shift_factor", 0.0) or 0.0
+
+        def postprocess(decoded: torch.Tensor) -> torch.Tensor:
+            if self._decode_output_layout == "video_btchw":
+                return pipe.video_processor.postprocess_video(decoded, output_type="pt")
+            return pipe.image_processor.postprocess(decoded, output_type="pt")
+
+        decoder = ChunkedLatentDecoder(
+            LatentDecodePlan(
+                prepare_latents=lambda chunk: chunk.to(vae.dtype) / scaling_factor + shift_factor,
+                vae_decode=lambda chunk: vae.decode(chunk, return_dict=False)[0],
+                postprocess=postprocess,
+                output_layout=self._decode_output_layout,
+                decode_batch_size=getattr(pipe, "decode_batch_size", None),
+            ),
+        )
+        return decoder(latents)

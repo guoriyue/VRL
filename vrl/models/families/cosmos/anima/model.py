@@ -188,10 +188,6 @@ class AnimaModel(CosmosReplayForward, LoraModelMixin, DiffusionModelBase):
         self.scheduler.set_timesteps(int(n), device=self.device)
 
     @property
-    def trainable_modules(self) -> dict[str, Any]:
-        return {"transformer": self.transformer}
-
-    @property
     def scheduler(self) -> Any:
         return self._scheduler
 
@@ -202,9 +198,6 @@ class AnimaModel(CosmosReplayForward, LoraModelMixin, DiffusionModelBase):
     @property
     def device(self) -> Any:
         return self._device
-
-    def _set_transformer(self, transformer: Any) -> None:
-        self.transformer = transformer
 
     def encode_prompt(
         self,

@@ -36,12 +36,10 @@ from typing import Any
 import torch
 
 from vrl.generation.types import VideoGenerationRequest
-from vrl.models.interfaces.runtime import ModelBuild
 from vrl.models.steps.denoise import (
     DiffusersPipelineModelBase,
     DiffusersReplayModelBase,
     GuidedDiffusionSamplingStateBase,
-    diffusers_pipeline_dtypes,
 )
 from vrl.models.steps.denoise.common import (
     ChunkedLatentDecoder,
@@ -130,6 +128,12 @@ class CogVideoXModel(LoraModelMixin, DiffusersPipelineModelBase, DiffusionBackbo
     cfg_mode = "batched_cfg"
     cfg_base = "uncond"
 
+    # -- backend ownership (called by runtime, not by collectors) -------
+    _pipeline_classname = "CogVideoXPipeline"
+    _frozen_encoder_names = ("text_encoder",)
+    # T5-XXL (~9.5 GB bf16); park on CPU (Qwen-Image discipline).
+    _prompt_encoder_on_cpu = True
+
     def build_branch(
         self,
         request: DiffusionBackboneInput,
@@ -148,31 +152,6 @@ class CogVideoXModel(LoraModelMixin, DiffusersPipelineModelBase, DiffusionBackbo
             timestep=request.timestep,
             encoder_hidden_states=embeds,
             extra_kwargs={"image_rotary_emb": request.extra.get("image_rotary_emb")},
-        )
-
-    # -- backend ownership (called by runtime, not by collectors) -------
-
-    @classmethod
-    def from_build(cls, build: ModelBuild) -> CogVideoXModel:
-        """Load the diffusers CogVideoX pipeline + freeze non-trainable modules."""
-        from diffusers import CogVideoXPipeline
-
-        model_dtype = build.parameter_dtype
-        prompt_encoder_dtype, load_kwargs = diffusers_pipeline_dtypes(build, model_dtype)
-        pipeline = CogVideoXPipeline.from_pretrained(
-            build.model_name_or_path,
-            **load_kwargs,
-        )
-        pipeline.vae.requires_grad_(False)
-        text_encoder = getattr(pipeline, "text_encoder", None)
-        if text_encoder is not None:
-            # T5-XXL (~9.5 GB bf16); park on CPU (Qwen-Image discipline).
-            text_encoder.requires_grad_(False)
-            text_encoder.to("cpu", dtype=prompt_encoder_dtype)
-        pipeline.vae.to(build.device, dtype=torch.float32)
-        return cls(
-            pipeline=pipeline,
-            device=build.device,
         )
 
     # -- encode_prompt -------------------------------------------------

@@ -20,9 +20,11 @@ from vrl.generation.types import VideoGenerationRequest
 from vrl.models.families.cosmos import CosmosReplayForward
 from vrl.models.families.cosmos.predict2.model import CosmosPredict2Model
 from vrl.models.families.flux.model import FluxModel
+from vrl.models.families.mochi.model import MochiModel
 from vrl.models.families.sd3_5.model import SD3_5Model
 from vrl.models.families.wan_2_1.model import WanT2VDiffusersModel
 from vrl.models.interfaces import ReplayResult
+from vrl.models.interfaces.runtime import RolloutBuildOptions
 from vrl.models.steps.denoise import DiffusionModelBase
 from vrl.rollouts.batch import RolloutBatch
 from vrl.trajectory import build_diffusion_trajectory
@@ -138,10 +140,6 @@ class _ModelBaseStub(DiffusionModelBase):
         return object()
 
     @property
-    def trainable_modules(self) -> dict[str, Any]:
-        return {"transformer": self.transformer}
-
-    @property
     def scheduler(self) -> Any:
         return None
 
@@ -157,6 +155,78 @@ class _BackendPipelineStub(nn.Module):
         self.vae = nn.Linear(2, 2)
         self.text_encoder = nn.Linear(2, 2)
         self.device = torch.device("cpu")
+
+
+class _LoadedModule:
+    """Records the freeze/placement calls the shared loader makes on it."""
+
+    def __init__(self) -> None:
+        self.requires_grad_enabled: bool | None = None
+        self.to_calls: list[tuple[Any, torch.dtype | None]] = []
+
+    def requires_grad_(self, enabled: bool) -> None:
+        self.requires_grad_enabled = enabled
+
+    def to(self, device: Any, dtype: torch.dtype | None = None) -> None:
+        self.to_calls.append((device, dtype))
+
+
+class _LoadedPipeline:
+    def __init__(self) -> None:
+        self.transformer = _LoadedModule()
+        self.vae = _LoadedModule()
+        self.text_encoder = _LoadedModule()
+
+
+def _bare_build() -> SimpleNamespace:
+    return SimpleNamespace(
+        model_name_or_path="genmo/mochi-1-preview",
+        parameter_dtype=torch.bfloat16,
+        rollout=RolloutBuildOptions(prompt_encoder_dtype=torch.float16),
+        device="cuda:0",
+    )
+
+
+def test_shared_from_build_parks_the_prompt_encoder_off_device(monkeypatch) -> None:
+    """``_prompt_encoder_on_cpu`` is the only thing that decides encoder placement."""
+    from diffusers import MochiPipeline
+
+    pipeline = _LoadedPipeline()
+    monkeypatch.setattr(
+        MochiPipeline,
+        "from_pretrained",
+        staticmethod(lambda *args, **kwargs: pipeline),
+    )
+
+    model = MochiModel.from_build(_bare_build())
+
+    assert model.pipeline is pipeline
+    assert pipeline.text_encoder.requires_grad_enabled is False
+    assert pipeline.text_encoder.to_calls == [("cpu", torch.float16)]
+    # The VAE never follows the encoder: fp32 on the compute device, always.
+    assert pipeline.vae.requires_grad_enabled is False
+    assert pipeline.vae.to_calls == [("cuda:0", torch.float32)]
+
+
+def test_shared_from_build_skips_an_absent_declared_encoder(monkeypatch) -> None:
+    """A pipeline variant without one of the declared encoders loads anyway.
+
+    The loop reads encoders with ``getattr(..., None)``, so a checkpoint that
+    ships fewer encoders than the family declares is a skip, not a crash.
+    """
+    from diffusers import StableDiffusion3Pipeline
+
+    pipeline = _LoadedPipeline()  # only ``text_encoder``, not _2 / _3
+    monkeypatch.setattr(
+        StableDiffusion3Pipeline,
+        "from_pretrained",
+        staticmethod(lambda *args, **kwargs: pipeline),
+    )
+
+    model = SD3_5Model.from_build(_bare_build())
+
+    assert model.pipeline is pipeline
+    assert pipeline.text_encoder.to_calls == [("cuda:0", torch.float16)]
 
 
 def test_pipeline_model_base_discovers_primary_encoder_device() -> None:
@@ -205,6 +275,22 @@ def _peft_disable_flags(module: nn.Module) -> list[bool]:
         if isinstance(disabled, bool):
             flags.append(disabled)
     return flags
+
+
+def test_trainable_modules_default_reports_the_registered_transformer() -> None:
+    """The stub declares no ``trainable_modules``; the base default answers."""
+    runtime = _ModelBaseStub()
+
+    assert runtime.trainable_modules == {"transformer": runtime.transformer}
+
+
+def test_trainable_modules_default_fails_loud_without_a_transformer() -> None:
+    """The default routes through ``_require_transformer``, not a bare attribute."""
+    runtime = _ModelBaseStub()
+    runtime.transformer = None
+
+    with pytest.raises(RuntimeError, match="no registered trainable transformer"):
+        _ = runtime.trainable_modules
 
 
 def test_diffusion_model_base_registers_only_transformer_child() -> None:

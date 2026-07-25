@@ -33,20 +33,17 @@ from typing import Any
 import torch
 
 from vrl.generation.types import VideoGenerationRequest
-from vrl.models.interfaces.runtime import ModelBuild
 from vrl.models.steps.denoise import (
     DiffusersPipelineModelBase,
     DiffusersReplayModelBase,
     GuidedDiffusionSamplingStateBase,
-    diffusers_pipeline_dtypes,
 )
 from vrl.models.steps.denoise.common import (
-    ChunkedLatentDecoder,
     DiffusionBackboneCaller,
     DiffusionBackboneInput,
     DiffusionBackboneRunnerBase,
     DiffusionBranch,
-    LatentDecodePlan,
+    VaeDecodeMixin,
     expand_batch_timestep,
     pack_eval_timestep,
 )
@@ -62,11 +59,29 @@ class HunyuanVideoSamplingState(GuidedDiffusionSamplingStateBase):
     pooled_prompt_embeds: torch.Tensor
 
 
-class HunyuanVideoModel(LoraModelMixin, DiffusersPipelineModelBase, DiffusionBackboneRunnerBase):
+class HunyuanVideoModel(
+    VaeDecodeMixin,
+    LoraModelMixin,
+    DiffusersPipelineModelBase,
+    DiffusionBackboneRunnerBase,
+):
     """Diffusers-backed HunyuanVideo t2v model (guidance-distilled)."""
 
     cfg_mode = "single_branch"
     cfg_base = "cond"
+    # The causal video VAE decodes 5D latents; the shared decoder permutes the
+    # frame axis back to [B, C, T, H, W].
+    _decode_output_layout = "video_btchw"
+
+    # -- backend ownership (called by runtime, not by collectors) -------
+    _pipeline_classname = "HunyuanVideoPipeline"
+    _frozen_encoder_names = ("text_encoder", "text_encoder_2")
+    # The LLaVA-LLaMA-3-8B encoder is ~15 GB bf16; with the 25 GB 13B
+    # transformer it cannot co-reside on a 32 GB card. It feeds only the
+    # one-shot encode_prompt, so park it on CPU (Qwen-Image discipline). The
+    # pipeline's encode_prompt drives BOTH encoders on one device, so the tiny
+    # CLIP-L pooled encoder parks with it rather than mixing devices in one call.
+    _prompt_encoder_on_cpu = True
 
     def build_branch(
         self,
@@ -85,41 +100,6 @@ class HunyuanVideoModel(LoraModelMixin, DiffusersPipelineModelBase, DiffusionBac
                 "pooled_projections": request.extra["pooled_projections"],
                 "guidance": request.extra["guidance"],
             },
-        )
-
-    # -- backend ownership (called by runtime, not by collectors) -------
-
-    @classmethod
-    def from_build(cls, build: ModelBuild) -> HunyuanVideoModel:
-        """Load the diffusers HunyuanVideo pipeline + freeze non-trainable modules."""
-        from diffusers import HunyuanVideoPipeline
-
-        model_dtype = build.parameter_dtype
-        prompt_encoder_dtype, load_kwargs = diffusers_pipeline_dtypes(build, model_dtype)
-        pipeline = HunyuanVideoPipeline.from_pretrained(
-            build.model_name_or_path,
-            **load_kwargs,
-        )
-        pipeline.vae.requires_grad_(False)
-        # The LLaVA-LLaMA-3-8B encoder is ~15 GB bf16; with the 25 GB 13B
-        # transformer it cannot co-reside on a 32 GB card. It feeds only the
-        # one-shot encode_prompt, so park it on CPU (Qwen-Image discipline);
-        # the tiny CLIP-L pooled encoder stays on-device.
-        text_encoder = getattr(pipeline, "text_encoder", None)
-        if text_encoder is not None:
-            text_encoder.requires_grad_(False)
-            text_encoder.to("cpu", dtype=prompt_encoder_dtype)
-        text_encoder_2 = getattr(pipeline, "text_encoder_2", None)
-        if text_encoder_2 is not None:
-            # The pipeline's encode_prompt drives BOTH encoders on one device;
-            # CLIP-L on GPU + LLaMA on CPU mixes devices inside one call, so
-            # the tiny pooled encoder parks on CPU with the LLaMA.
-            text_encoder_2.requires_grad_(False)
-            text_encoder_2.to("cpu", dtype=prompt_encoder_dtype)
-        pipeline.vae.to(build.device, dtype=torch.float32)
-        return cls(
-            pipeline=pipeline,
-            device=build.device,
         )
 
     # -- encode_prompt -------------------------------------------------
@@ -290,27 +270,6 @@ class HunyuanVideoModel(LoraModelMixin, DiffusersPipelineModelBase, DiffusionBac
             pooled_prompt_embeds=replay_tensors["pooled_prompt_embeds"],
             guidance_scale=batch_context["guidance_scale"],
         )
-
-    # -- decode_latents ------------------------------------------------
-
-    def decode_latents(self, latents: torch.Tensor) -> torch.Tensor:
-        """Decode 5D latents -> video [B, C, T, H, W] via the causal video VAE."""
-        pipe = self.pipeline
-        vae = pipe.vae
-        scaling_factor = vae.config.scaling_factor
-        decoder = ChunkedLatentDecoder(
-            LatentDecodePlan(
-                prepare_latents=lambda chunk: chunk.to(vae.dtype) / scaling_factor,
-                vae_decode=lambda chunk: vae.decode(chunk, return_dict=False)[0],
-                postprocess=lambda video: pipe.video_processor.postprocess_video(
-                    video,
-                    output_type="pt",
-                ),
-                output_layout="video_btchw",
-                decode_batch_size=getattr(pipe, "decode_batch_size", None),
-            ),
-        )
-        return decoder(latents)
 
 
 class HunyuanVideoReplayModel(DiffusersReplayModelBase, HunyuanVideoModel):

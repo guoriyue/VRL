@@ -364,10 +364,6 @@ class _CausVidPolicyModel(LoraModelMixin, DiffusionModelBase):
         return self._backend.device
 
     @property
-    def trainable_modules(self) -> dict[str, Any]:
-        return {"transformer": self.transformer}
-
-    @property
     def scheduler(self) -> CausVidSchedule:
         # Grouped CausVid replay owns a discrete causal recipe, not a diffusers
         # scheduler. RuntimeBundle still exposes it at the standard boundary.
@@ -384,11 +380,6 @@ class _CausVidPolicyModel(LoraModelMixin, DiffusionModelBase):
             setter(transformer)
         else:
             self._backend.transformer = transformer
-
-    def apply_full_finetune(self, build: ModelBuild) -> None:
-        self.transformer.requires_grad_(True)
-        if not build.defer_trainable_device_move:
-            self.transformer.to(self.device)
 
     def enable_gradient_checkpointing(self) -> None:
         core = getattr(self._backend, "_causal_core", self.transformer)

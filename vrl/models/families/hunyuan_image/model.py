@@ -49,20 +49,17 @@ from typing import Any
 import torch
 
 from vrl.generation.types import VideoGenerationRequest
-from vrl.models.interfaces.runtime import ModelBuild
 from vrl.models.steps.denoise import (
     DiffusersPipelineModelBase,
     DiffusersReplayModelBase,
     GuidedDiffusionSamplingStateBase,
-    diffusers_pipeline_dtypes,
 )
 from vrl.models.steps.denoise.common import (
-    ChunkedLatentDecoder,
     DiffusionBackboneCaller,
     DiffusionBackboneInput,
     DiffusionBackboneRunnerBase,
     DiffusionBranch,
-    LatentDecodePlan,
+    VaeDecodeMixin,
     expand_batch_timestep,
     pack_eval_timestep,
 )
@@ -86,7 +83,12 @@ class HunyuanImageSamplingState(GuidedDiffusionSamplingStateBase):
     guidance_embeds: bool
 
 
-class HunyuanImageModel(LoraModelMixin, DiffusersPipelineModelBase, DiffusionBackboneRunnerBase):
+class HunyuanImageModel(
+    VaeDecodeMixin,
+    LoraModelMixin,
+    DiffusersPipelineModelBase,
+    DiffusionBackboneRunnerBase,
+):
     """Diffusers-backed HunyuanImage-2.1 t2i model (true CFG, dual text streams).
 
     Implements the backbone-runner protocol itself. Cond/uncond prompts carry
@@ -98,6 +100,18 @@ class HunyuanImageModel(LoraModelMixin, DiffusersPipelineModelBase, DiffusionBac
 
     cfg_mode = "separate_cfg"
     cfg_base = "uncond"
+
+    # -- backend ownership (called by runtime, not by collectors) -------
+    _pipeline_classname = "HunyuanImagePipeline"
+    _frozen_encoder_names = ("text_encoder", "text_encoder_2")
+    # The Qwen2.5-VL-7B encoder is ~16.6 GB bf16; with the ~35 GB 17B
+    # transformer it cannot co-reside on a 32 GB card, so it is parked on
+    # CPU (Qwen-Image discipline). The 0.9 GB byT5 glyph encoder joins it
+    # because HunyuanImagePipeline.encode_prompt runs BOTH encoders on one
+    # ``device`` argument — splitting devices would need reimplementing the
+    # pipeline's private glyph extraction/zero-fill path. byT5 only runs
+    # for quoted glyph text, so the CPU forward is a negligible one-shot.
+    _prompt_encoder_on_cpu = True
 
     def build_branch(
         self,
@@ -128,38 +142,6 @@ class HunyuanImageModel(LoraModelMixin, DiffusersPipelineModelBase, DiffusionBac
                 "encoder_attention_mask_2": mask_2,
                 "guidance": request.extra["guidance"],
             },
-        )
-
-    # -- backend ownership (called by runtime, not by collectors) -------
-
-    @classmethod
-    def from_build(cls, build: ModelBuild) -> HunyuanImageModel:
-        """Load the diffusers HunyuanImage pipeline + freeze non-trainable modules."""
-        from diffusers import HunyuanImagePipeline
-
-        model_dtype = build.parameter_dtype
-        prompt_encoder_dtype, load_kwargs = diffusers_pipeline_dtypes(build, model_dtype)
-        pipeline = HunyuanImagePipeline.from_pretrained(
-            build.model_name_or_path,
-            **load_kwargs,
-        )
-        pipeline.vae.requires_grad_(False)
-        # The Qwen2.5-VL-7B encoder is ~16.6 GB bf16; with the ~35 GB 17B
-        # transformer it cannot co-reside on a 32 GB card, so it is parked on
-        # CPU (Qwen-Image discipline). The 0.9 GB byT5 glyph encoder joins it
-        # because HunyuanImagePipeline.encode_prompt runs BOTH encoders on one
-        # ``device`` argument — splitting devices would need reimplementing the
-        # pipeline's private glyph extraction/zero-fill path. byT5 only runs
-        # for quoted glyph text, so the CPU forward is a negligible one-shot.
-        for encoder_name in ("text_encoder", "text_encoder_2"):
-            encoder = getattr(pipeline, encoder_name, None)
-            if encoder is not None:
-                encoder.requires_grad_(False)
-                encoder.to("cpu", dtype=prompt_encoder_dtype)
-        pipeline.vae.to(build.device, dtype=torch.float32)
-        return cls(
-            pipeline=pipeline,
-            device=build.device,
         )
 
     # -- encode_prompt -------------------------------------------------
@@ -407,27 +389,6 @@ class HunyuanImageModel(LoraModelMixin, DiffusersPipelineModelBase, DiffusionBac
             and replay_tensors.get("negative_prompt_embeds") is not None,
             guidance_embeds=batch_context["guidance_embeds"],
         )
-
-    # -- decode_latents ------------------------------------------------
-
-    def decode_latents(self, latents: torch.Tensor) -> torch.Tensor:
-        """Decode 4D latents -> image [B, C, H, W] via the 32x image VAE."""
-        pipe = self.pipeline
-        vae = pipe.vae
-        scaling_factor = vae.config.scaling_factor
-        decoder = ChunkedLatentDecoder(
-            LatentDecodePlan(
-                prepare_latents=lambda chunk: chunk.to(vae.dtype) / scaling_factor,
-                vae_decode=lambda chunk: vae.decode(chunk, return_dict=False)[0],
-                postprocess=lambda image: pipe.image_processor.postprocess(
-                    image,
-                    output_type="pt",
-                ),
-                output_layout="image_bchw",
-                decode_batch_size=getattr(pipe, "decode_batch_size", None),
-            ),
-        )
-        return decoder(latents)
 
 
 class HunyuanImageReplayModel(DiffusersReplayModelBase, HunyuanImageModel):
