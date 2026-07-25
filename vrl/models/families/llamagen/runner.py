@@ -6,7 +6,8 @@ difference: the vendored LlamaGen GPT owns a *static, in-place* KV cache
 ``past_key_values`` protocol required by the shared attention backends in
 ``vrl.nn.modules.ar_attention_backends``. The runner therefore drives the
 native cache directly — no ``attention_backend`` is injected — and the family
-executor overrides ``_ar_runner`` accordingly.
+executor declares ``_native_runner_reason`` so the shared base builds it that
+way.
 
 The cond/uncond pair runs as one combined ``2B`` batch (upstream
 ``generate.py`` layout: ``[cond rows | uncond rows]``), so the per-layer cache

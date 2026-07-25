@@ -3,25 +3,35 @@
 from __future__ import annotations
 
 from pathlib import Path
-from types import SimpleNamespace
 from typing import Any
 
 import pytest
 import torch
 
+from vrl.config.precision import RolePrecision
+from vrl.models.interfaces.runtime import ModelBuild
 
-def _build(revision: str | None) -> SimpleNamespace:
-    model_config: dict[str, Any] = {
-        "transformer_file": "weights/transformer.safetensors",
-        "text_encoder_file": "weights/text_encoder.safetensors",
-        "vae_file": "weights/vae.safetensors",
-    }
-    return SimpleNamespace(
-        model_name_or_path="org/anima",
+
+def _anima_build(
+    *,
+    revision: str | None,
+    model_name_or_path: str = "org/anima",
+    model_config: dict[str, Any] | None = None,
+) -> ModelBuild:
+    return ModelBuild(
+        model_name_or_path=model_name_or_path,
         revision=revision,
-        model_config=model_config,
-        parameter_dtype=torch.float32,
         device=torch.device("cpu"),
+        parameter_dtype=torch.float32,
+        family="cosmos-predict2-anima",
+        precision=RolePrecision("fp32", "tf32", outer_autocast=False),
+        model_config=model_config
+        if model_config is not None
+        else {
+            "transformer_file": "weights/transformer.safetensors",
+            "text_encoder_file": "weights/text_encoder.safetensors",
+            "vae_file": "weights/vae.safetensors",
+        },
     )
 
 
@@ -106,7 +116,7 @@ def test_anima_rollout_resolves_every_artifact_at_model_revision(
     monkeypatch.setattr(anima_model, "_load_anima_transformer", stop_after_load)
 
     with pytest.raises(_StopAfterResolution):
-        anima_model.AnimaModel.from_build(_build(revision))
+        anima_model.AnimaModel.from_build(_anima_build(revision=revision))
 
     assert [call["field_name"] for call in calls] == [
         "transformer_path",
@@ -152,13 +162,10 @@ def test_anima_rollout_resolution_preserves_build_identity(
         "t5_tokenizer_path": str(t5_tokenizer),
         "t5_tokenizer_revision": None,
     }
-    build = SimpleNamespace(
-        family="cosmos-predict2-anima",
-        model_name_or_path=str(root),
+    build = _anima_build(
         revision=None,
+        model_name_or_path=str(root),
         model_config=model_config,
-        parameter_dtype=torch.float32,
-        device=torch.device("cpu"),
     )
     configured_model_config = dict(model_config)
     identity_before = resolve_checkpoint_model_identity(build)
@@ -221,7 +228,7 @@ def test_anima_replay_resolves_transformer_at_model_revision(
     monkeypatch.setattr(anima_model, "_load_anima_transformer", stop_after_load)
 
     with pytest.raises(_StopAfterResolution):
-        anima_runtime.load_anima_transformer(_build(revision))
+        anima_runtime.load_anima_transformer(_anima_build(revision=revision))
 
     assert len(calls) == 1
     assert calls[0]["field_name"] == "transformer_path"

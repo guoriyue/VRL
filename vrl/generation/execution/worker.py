@@ -598,12 +598,6 @@ class GenerationWorkerCore:
         )
         try:
             device = self._executor_device(self.executor)
-            forward_chunk_plan = getattr(self.executor, "forward_chunk_plan", None)
-            if not callable(forward_chunk_plan):
-                raise TypeError(
-                    f"{type(self.executor).__name__} must implement "
-                    "forward_chunk_plan(...) for distributed chunk execution",
-                )
             with (
                 capture_torch_trace(
                     self._profiler_config,
@@ -615,7 +609,7 @@ class GenerationWorkerCore:
                 ),
                 profile_range("engine.forward_chunk"),
             ):
-                return forward_chunk_plan(request, chunk)
+                return self.executor.forward_chunk_plan(request, chunk)
         except Exception:
             logger.exception("generation chunk execution failed")
             raise

@@ -2,25 +2,16 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
-from vrl.generation.bindings.chunk_autoregressive_denoise.gather import (
-    ChunkAutoregressiveDenoiseGatherer,
-)
 from vrl.generation.execution.chunks import (
     SampleChunk,
-    run_sample_chunks_with_oom_retry,
     validate_chunk_range,
 )
+from vrl.generation.execution.executor_base import ChunkExecutorBase
 from vrl.generation.execution.planner import build_engine_plan
-from vrl.generation.protocols import GenerationChunkExecutor
-from vrl.generation.types import (
-    GenerationOutput,
-    GenerationRequest,
-    GenerationSampleRow,
-)
+from vrl.generation.types import GenerationRequest
 
 
 @dataclass(slots=True)
@@ -91,7 +82,7 @@ class ChunkAutoregressiveDenoiseResult:
         return self.old_log_prob is not None
 
 
-class ChunkAutoregressiveDenoiseExecutorBase(GenerationChunkExecutor):
+class ChunkAutoregressiveDenoiseExecutorBase(ChunkExecutorBase):
     """Shared request transport around family-owned chunk generation.
 
     Cache allocation, per-temporal-chunk scheduling, denoise math, and decode
@@ -104,6 +95,15 @@ class ChunkAutoregressiveDenoiseExecutorBase(GenerationChunkExecutor):
     model: Any
     default_samples_per_chunk: int = 1
 
+    def __init__(self, model: Any, *, samples_per_chunk: int | None = None) -> None:
+        # Keyword-only and optional: the worker constructs executors by dotted
+        # string (``executor_cls(model, **executor_kwargs)``) and only injects
+        # samples_per_chunk for families whose registry entry declares
+        # ``accepts_samples_per_chunk``. Unset keeps the class default.
+        self.model = model
+        if samples_per_chunk is not None:
+            self.default_samples_per_chunk = max(1, int(samples_per_chunk))
+
     def plan(
         self,
         request: GenerationRequest,
@@ -112,18 +112,6 @@ class ChunkAutoregressiveDenoiseExecutorBase(GenerationChunkExecutor):
             request,
             max_samples_per_chunk=self.default_samples_per_chunk,
         )
-
-    def forward_plan(
-        self,
-        request: GenerationRequest,
-        sample_rows: Sequence[GenerationSampleRow],
-        engine_plan: Any,
-    ) -> GenerationOutput:
-        chunks = run_sample_chunks_with_oom_retry(
-            engine_plan.chunks,
-            lambda chunk: self.forward_chunk_plan(request, chunk),
-        )
-        return self.gather_chunks(request, sample_rows, chunks)
 
     def forward_chunk_plan(
         self,
@@ -158,18 +146,6 @@ class ChunkAutoregressiveDenoiseExecutorBase(GenerationChunkExecutor):
                 "different prompt/sample chunk",
             )
         return result
-
-    def gather_chunks(
-        self,
-        request: GenerationRequest,
-        sample_rows: Sequence[GenerationSampleRow],
-        chunks: Sequence[ChunkAutoregressiveDenoiseResult],
-    ) -> GenerationOutput:
-        return ChunkAutoregressiveDenoiseGatherer().gather_chunks(
-            request,
-            sample_rows,
-            chunks,
-        )
 
 
 __all__ = [

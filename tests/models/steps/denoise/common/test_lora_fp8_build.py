@@ -179,6 +179,8 @@ def test_shared_builder_drops_master_before_quantized_lora_gpu_move(monkeypatch)
             self.scheduler = object()
             self.raw_handle = object()
             self.trainable_modules = {"transformer": self.transformer}
+            # No save_pretrained on the tracking transformer: nothing to publish.
+            self.adapter_roots: dict[str, Any] = {}
 
         @classmethod
         def from_build(cls, _build: Any) -> _Policy:
@@ -242,6 +244,8 @@ def test_shared_builder_installs_pipeline_offload_after_final_cpu_module_tree(
             self.scheduler = object()
             self.raw_handle = object()
             self.trainable_modules = {"transformer": self.transformer}
+            # No save_pretrained on the tracking transformer: nothing to publish.
+            self.adapter_roots: dict[str, Any] = {}
             self.uses_pipeline_cpu_offload = False
             self.pipeline_cpu_offload_healthy = True
 
@@ -327,6 +331,11 @@ def test_shared_builder_preserves_resolved_role_precision() -> None:
         def trainable_modules(self) -> dict[str, Any]:
             return {"transformer": self.transformer}
 
+        @property
+        def adapter_roots(self) -> dict[str, Any]:
+            # No save_pretrained on a plain nn module: nothing to publish.
+            return {}
+
         def apply_full_finetune(self, _build: Any) -> None:
             self.transformer.requires_grad_(True)
 
@@ -346,11 +355,7 @@ def test_shared_builder_preserves_resolved_role_precision() -> None:
         model_config={"use_lora": False},
     )
 
-    bundle = build_denoise_runtime_bundle(
-        build,
-        model_cls=_Policy,
-        memory_owner="fake VAE",
-    )
+    bundle = build_denoise_runtime_bundle(build, model_cls=_Policy)
 
     assert bundle.precision is build.precision
     assert bundle.precision.outer_autocast is False
@@ -416,6 +421,11 @@ def test_full_finetune_dtype_move_preserves_quantized_cache(
         @property
         def trainable_modules(self) -> dict[str, Any]:
             return {"transformer": self.transformer}
+
+        @property
+        def adapter_roots(self) -> dict[str, Any]:
+            # No save_pretrained on a plain nn module: nothing to publish.
+            return {}
 
         def quantize_rollout_fp8(self, recipe: str = "rowwise") -> list[str]:
             assert recipe == "rowwise"

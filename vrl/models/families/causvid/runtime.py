@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from typing import Any
-
 from vrl.generation.bindings.chunk_autoregressive_denoise import (
     ChunkAutoregressiveDenoiseExecutorBase,
 )
@@ -18,10 +16,6 @@ class CausVidChunkExecutor(ChunkAutoregressiveDenoiseExecutorBase):
 
     family: str = "causvid"
     task: str = "t2v"
-
-    def __init__(self, model: Any, *, samples_per_chunk: int = 1) -> None:
-        self.model = model
-        self.default_samples_per_chunk = max(1, int(samples_per_chunk))
 
 
 def build_causvid_replay_runtime_bundle(build: ModelBuild) -> RuntimeBundle:

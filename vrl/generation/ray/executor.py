@@ -12,13 +12,13 @@ from vrl.generation.execution.chunk_placement import (
 )
 from vrl.generation.execution.ids import build_sample_rows
 from vrl.generation.execution.types import (
+    ChunkExecutionEnvelope,
     ChunkExecutionResult,
     DistributedWorkerHandle,
     PipelinedRequestOutOfMemory,
     StaleSlotDiscard,
 )
 from vrl.generation.protocols import ChunkGatherer, ChunkResult
-from vrl.generation.ray.utils import is_oom_error, require_correlated_result
 from vrl.generation.types import GenerationOutput, GenerationRequest
 from vrl.ray.actor_pool import RayActorJob, run_actor_jobs
 
@@ -157,7 +157,7 @@ class RayGenerationExecutor:
             assignment.envelope.chunk_key: assignment.envelope for assignment in assignments
         }
         for result in results:
-            require_correlated_result(result, envelope_by_chunk_key)
+            _require_correlated_result(result, envelope_by_chunk_key)
 
         # A stale-slot result is a typed graceful discard, not a failure: the
         # request's policy version was evicted from its worker's slot window under
@@ -350,7 +350,7 @@ class RayGenerationExecutor:
                     final.append(result)
                     continue
                 chunk = result.chunk
-                if not is_oom_error(result.error) or chunk.sample_count <= 1:
+                if not _is_oom_error(result.error) or chunk.sample_count <= 1:
                     raise RuntimeError(
                         "distributed rollout chunk failed "
                         f"(worker_id={result.worker_id}, chunk={chunk}): "
@@ -403,7 +403,7 @@ class RayGenerationExecutor:
                 pending.extend(result for _, result in pairs)
             pending.extend(call(envelope) for call, envelope in local_calls)
             for result in pending:
-                require_correlated_result(result, envelope_by_chunk_key)
+                _require_correlated_result(result, envelope_by_chunk_key)
         return final, splits
 
     def _remote_worker_methods(self) -> dict[str, Any]:
@@ -420,6 +420,34 @@ class RayGenerationExecutor:
                 )
             methods[worker.worker_id] = remote
         return methods
+
+
+def _require_correlated_result(
+    result: ChunkExecutionResult,
+    envelope_by_chunk_key: dict[str, ChunkExecutionEnvelope],
+) -> ChunkExecutionEnvelope:
+    """Require a worker result to match a submitted request and chunk."""
+
+    envelope = envelope_by_chunk_key.get(result.chunk.chunk_key)
+    if envelope is None:
+        raise RuntimeError(
+            "distributed rollout returned an unknown chunk "
+            f"(worker_id={result.worker_id}, chunk={result.chunk.chunk_key})",
+        )
+    expected_request_id = envelope.request.request_id
+    if result.request_id != expected_request_id:
+        raise RuntimeError(
+            "distributed rollout request_id mismatch "
+            f"(worker_id={result.worker_id}, chunk={result.chunk.chunk_key}, "
+            f"expected={expected_request_id!r}, actual={result.request_id!r})",
+        )
+    return envelope
+
+
+def _is_oom_error(message: str) -> bool:
+    """Match CUDA/HIP allocator failures flattened to text by a worker."""
+
+    return "out of memory" in message.lower()
 
 
 __all__ = ["RayGenerationExecutor"]

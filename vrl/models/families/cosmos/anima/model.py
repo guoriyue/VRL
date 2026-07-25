@@ -84,13 +84,11 @@ class AnimaModel(CosmosReplayForward, LoraModelMixin, DiffusionModelBase):
         remains immutable so checkpoint identity keeps describing the configured
         source and members rather than machine-local cache paths.
         """
-        from vrl.models.loader import model_config_revision_kwargs, model_revision_kwargs
-
         paths = dict(build.model_config or {})
         root = str(build.model_name_or_path or "").strip()
         # These three artifacts share model.path and therefore one immutable
         # revision. The tokenizer paths below are independent repositories.
-        revision_kwargs = model_revision_kwargs(build)
+        revision_kwargs = build.revision_kwargs
         for path_field, file_field in (
             ("transformer_path", "transformer_file"),
             ("text_encoder_path", "text_encoder_file"),
@@ -142,14 +140,14 @@ class AnimaModel(CosmosReplayForward, LoraModelMixin, DiffusionModelBase):
         qwen_tokenizer = Qwen2Tokenizer.from_pretrained(
             paths["qwen_tokenizer_path"],
             local_files_only=True,
-            **model_config_revision_kwargs(build, "qwen_tokenizer_revision"),
+            **build.config_revision_kwargs("qwen_tokenizer_revision"),
         )
         if qwen_tokenizer.pad_token is None:
             qwen_tokenizer.pad_token = qwen_tokenizer.eos_token
         t5_tokenizer = T5TokenizerFast.from_pretrained(
             paths["t5_tokenizer_path"],
             local_files_only=True,
-            **model_config_revision_kwargs(build, "t5_tokenizer_revision"),
+            **build.config_revision_kwargs("t5_tokenizer_revision"),
         )
 
         transformer.requires_grad_(False)

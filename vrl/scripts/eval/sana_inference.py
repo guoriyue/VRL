@@ -13,7 +13,7 @@ from typing import Any
 
 import torch
 
-from vrl.models.loader import model_revision_kwargs
+from vrl.models.interfaces.runtime import ModelBuild
 from vrl.utils.media import to_pil_image
 
 # These mappings are persisted protocol identities, not tunable defaults.
@@ -38,14 +38,14 @@ SCHEDULER_PROTOCOL = {
 }
 
 
-def load_official_scheduler(build: Any) -> Any:
+def load_official_scheduler(build: ModelBuild) -> Any:
     """Load and validate a fresh scheduler from the pinned model snapshot."""
 
     from diffusers import DPMSolverMultistepScheduler
 
     kwargs: dict[str, Any] = {
         "subfolder": "scheduler",
-        **model_revision_kwargs(build),
+        **build.revision_kwargs,
     }
     if Path(str(build.model_name_or_path)).expanduser().is_dir():
         kwargs["local_files_only"] = True

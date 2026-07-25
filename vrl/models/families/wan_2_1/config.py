@@ -101,11 +101,9 @@ def normalize_wan_model_build(build: ModelBuild) -> ModelBuild:
 
     from diffusers import DiffusionPipeline
 
-    from vrl.models.loader import model_revision_kwargs
-
     source_config = DiffusionPipeline.load_config(
         build.model_name_or_path,
-        **model_revision_kwargs(build),
+        **build.revision_kwargs,
     )
     if not isinstance(source_config, Mapping):
         raise TypeError(

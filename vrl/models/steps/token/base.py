@@ -101,15 +101,10 @@ class ARModelBase(nn.Module):
         """Load only the trainable AR parameters from a rollout sync state.
 
         The payload carries ``model.*`` keys for this wrapper's ``requires_grad``
-        parameters. ``label`` is the concrete class name so a malformed-payload
-        error names the actual model (base or replay subclass).
+        parameters, so the wrapper itself — base or replay subclass — is the
+        module the payload is validated against.
         """
-        return load_weights_into(
-            self,
-            state_dict,
-            prefix="model",
-            label=type(self).__name__,
-        )
+        return load_weights_into(self, state_dict, prefix="model")
 
     def quantize_rollout_fp8(self, recipe: str = "rowwise") -> list[str]:
         """Swap the language trunk's big GEMMs to fp8 in place (rollout only).
@@ -122,9 +117,9 @@ class ARModelBase(nn.Module):
         core keeps its configured base-precision parameters and is never quantized.
         """
 
-        from vrl.nn.quantization import LM_EXCLUDE, swap_linears_to_fp8
+        from vrl.nn.quantization import LM_EXCLUDE, Fp8Linear
 
-        return swap_linears_to_fp8(
+        return Fp8Linear.swap_linears(
             self.language_model,
             recipe=recipe,
             exclude=LM_EXCLUDE,
@@ -139,9 +134,9 @@ class ARModelBase(nn.Module):
         profile shared with diffusion models.
         """
 
-        from vrl.nn.quantization import LM_EXCLUDE, swap_linears_to_nvfp4
+        from vrl.nn.quantization import LM_EXCLUDE, Fp4Linear
 
-        return swap_linears_to_nvfp4(
+        return Fp4Linear.swap_linears(
             self.language_model,
             exclude=LM_EXCLUDE,
         )
@@ -149,6 +144,19 @@ class ARModelBase(nn.Module):
     def disable_adapter(self) -> contextlib.AbstractContextManager[None]:
         """Disable the LoRA adapter for a reference forward, or no-op when absent."""
         return disable_adapter_on(self.language_model)
+
+    @property
+    def adapter_roots(self) -> dict[str, Any]:
+        """The one PEFT-adapter root, keyed by its checkpoint root name.
+
+        Token families register the whole wrapper as the single checkpoint root
+        (``trainable_modules={"model": self}``) but attach LoRA one hop in, on
+        ``language_model``. Unfiltered on purpose, unlike the diffusion twin
+        (:meth:`DiffusionModelBase.adapter_roots`): with exactly one root, a
+        trunk that cannot export must raise, not silently publish nothing.
+        """
+
+        return {"model": self.language_model}
 
     def _resolve_image_token_replay(
         self,

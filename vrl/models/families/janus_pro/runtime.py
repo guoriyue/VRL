@@ -29,6 +29,7 @@ from vrl.models.families.janus_pro.runner import JanusProARModelRunner
 from vrl.models.interfaces.runtime import ModelBuild
 from vrl.models.steps.token.build import token_model_config_base
 from vrl.trajectory import build_ar_multisegment_trajectory
+from vrl.utils.cuda_memory import cuda_peak_allocated_mb
 from vrl.utils.logging import init_logger
 
 logger = init_logger(__name__)
@@ -89,22 +90,16 @@ class JanusProChunkExecutor(ARDiscreteChunkExecutorBase):
 
     These keys map directly into ``JanusProCollector``'s ``RolloutBatch``
     packing so the trainer's ``replay_forward`` contract stays explicit.
+
+    ``model`` is a ``JanusProModel``, or any stub exposing the same interface:
+    ``processor``, ``device``, ``language_model``, runner-step primitives, and
+    ``decode_image_tokens``.
     """
 
     family: str = "janus_pro"
     _runner_cls = JanusProARModelRunner
     _runner_attention_family = "janus_pro"
     task: str = "ar_t2i"
-
-    def __init__(self, model: Any) -> None:
-        """Construct the executor.
-
-        Args:
-          model: a ``JanusProModel`` (or a stub exposing the same
-            interface: ``processor``, ``device``, ``language_model``,
-            runner-step primitives, and ``decode_image_tokens``).
-        """
-        self.model = model
 
     # -- protocol ------------------------------------------------------
 
@@ -299,16 +294,8 @@ class JanusProR1ChunkExecutor(JanusProChunkExecutor):
             selfcheck=result["selfcheck"],
             segments=result["segments"],
             context=dict(result["context"]),
-            peak_memory_mb=self.layout.peak_memory_mb(),
+            peak_memory_mb=cuda_peak_allocated_mb(),
         )
-
-    def gather_chunks(
-        self,
-        request: GenerationRequest,
-        sample_rows: Sequence[GenerationSampleRow],
-        chunks: Sequence[JanusProR1ChunkResult],
-    ) -> GenerationOutput:
-        return JanusProR1ChunkGatherer().gather_chunks(request, sample_rows, chunks)
 
     def _r1_image_sampler(
         self,

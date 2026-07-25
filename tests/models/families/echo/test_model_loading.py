@@ -4,13 +4,14 @@ from __future__ import annotations
 
 import sys
 import types
-from types import SimpleNamespace
 from typing import Any
 
 import pytest
 import torch
 
 from vrl.config.loading import load_config
+from vrl.config.precision import RolePrecision
+from vrl.models.interfaces.runtime import ModelBuild
 
 
 class _FakeEcho(torch.nn.Module):
@@ -54,21 +55,21 @@ def _patch_echo_dependencies(
     )
 
 
-def _build(gemma_path: str, revision: str | None) -> SimpleNamespace:
-    model_config = {
-        "gemma_path": gemma_path,
-        "use_lora": False,
-        "video_height": 64,
-        "video_width": 64,
-    }
-    return SimpleNamespace(
+def _build(gemma_path: str, revision: str | None) -> ModelBuild:
+    return ModelBuild(
         model_name_or_path="jdopensource/JoyAI-Echo",
         revision=revision,
-        model_config=model_config,
-        sampling_config={"height": 64, "width": 64},
-        parameter_dtype=torch.float32,
         device=torch.device("cpu"),
-        num_steps=None,
+        parameter_dtype=torch.float32,
+        family="echo",
+        precision=RolePrecision("fp32", "tf32", outer_autocast=False),
+        model_config={
+            "gemma_path": gemma_path,
+            "use_lora": False,
+            "video_height": 64,
+            "video_width": 64,
+        },
+        sampling_config={"height": 64, "width": 64},
     )
 
 

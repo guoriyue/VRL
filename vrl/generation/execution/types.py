@@ -29,6 +29,26 @@ class DistributedWorkerHandle:
     worker_id: str
     actor: Any | None = None
 
+    def require_installed_policy_version(self, installed: Any, expected: int) -> None:
+        """Require this worker's ACK for the expected installed policy version.
+
+        ``installed`` crosses Ray as whatever the worker returned, so it is
+        validated as an integer before it is compared.
+        """
+
+        try:
+            installed_version = int(installed)
+        except (TypeError, ValueError) as exc:
+            raise RuntimeError(
+                f"worker {self.worker_id!r} returned invalid installed policy "
+                f"version {installed!r}",
+            ) from exc
+        if installed_version != int(expected):
+            raise RuntimeError(
+                f"worker {self.worker_id!r} installed policy version {installed_version}, "
+                f"expected {int(expected)}",
+            )
+
 
 ChunkPlacementStrategy = Literal["round_robin", "dynamic"]
 ParkingBackend = Literal["cpu_only", "cpu_offload", "cumem"]

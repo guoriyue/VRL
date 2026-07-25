@@ -27,15 +27,7 @@ class CosmosChunkExecutor(ReferenceConditionedChunks, DiffusionChunkExecutorBase
     task: str = "v2w"
     default_num_frames: int = 93
     default_fps: int | None = 16
-
-    def __init__(
-        self,
-        model: Any,  # CosmosPredict2Model
-        *,
-        samples_per_chunk: int = 8,
-    ) -> None:
-        self.model = model
-        self.default_samples_per_chunk = max(1, int(samples_per_chunk))
+    default_samples_per_chunk: int = 8
 
     def build_chunk_encoded(
         self,

@@ -25,6 +25,7 @@ class _TinyRuntimeModel(nn.Module):
     def __init__(self) -> None:
         super().__init__()
         self.weight = nn.Parameter(torch.ones(1))
+        self.language_model = nn.Linear(1, 1)
 
     def replay_forward(self, *_args: Any, **_kwargs: Any) -> None:
         return None
@@ -34,6 +35,12 @@ class _TinyRuntimeModel(nn.Module):
 
     def load_trainable_state(self, state_dict: dict[str, Any]) -> Any:
         return self.load_state_dict(state_dict, strict=False)
+
+    @property
+    def adapter_roots(self) -> dict[str, Any]:
+        # Mirrors ARModelBase: the checkpoint root is the wrapper, the adapter
+        # is one hop in on language_model.
+        return {"model": self.language_model}
 
 
 class _JanusReplayCore(nn.Module):

@@ -238,7 +238,9 @@ class _Model:
 class _Executor(DiffusionChunkExecutorBase):
     family = "test"
     task = "t2i"
-    model = _Model()
+
+    def __init__(self) -> None:
+        super().__init__(_Model())
 
 
 class _StageTrackingExecutor(DiffusionChunkExecutorBase):
@@ -246,6 +248,7 @@ class _StageTrackingExecutor(DiffusionChunkExecutorBase):
     task = "t2i"
 
     def __init__(self) -> None:
+        super().__init__(_Model())
         self.calls: list[str] = []
 
     def build_prompt_stage_input(
@@ -314,7 +317,9 @@ def test_decode_denoise_result_packs_video_as_uint8() -> None:
     class _UnitVideoExecutor(DiffusionChunkExecutorBase):
         family = "test"
         task = "t2i"
-        model = _UnitVideoModel()
+
+        def __init__(self) -> None:
+            super().__init__(_UnitVideoModel())
 
     executor = _UnitVideoExecutor()
     denoise = executor.run_denoise_steps(

@@ -30,7 +30,6 @@ from vrl.config.precision import resolve_precision_policy
 from vrl.config.schema import parse_config
 from vrl.models import checkpoint_identity
 from vrl.models.dtypes import dtype_to_wire_name
-from vrl.models.loader import model_revision_kwargs
 from vrl.models.precision import float32_precision_state, model_precision
 from vrl.rewards.inference import sha256_file
 from vrl.scripts.eval._device import resolve_eval_device
@@ -231,7 +230,7 @@ def run_comparison(args: argparse.Namespace) -> dict[str, str]:
         "model": {
             "family": "sana",
             "path": str(build.model_name_or_path),
-            "revision": model_revision_kwargs(build).get("revision"),
+            "revision": build.revision_kwargs.get("revision"),
         },
         "checkpoint": checkpoint_record,
         "sampling": {

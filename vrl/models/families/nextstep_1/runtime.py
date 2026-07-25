@@ -24,6 +24,7 @@ from vrl.models.families.nextstep_1.runner import NextStep1ARModelRunner
 from vrl.models.interfaces.runtime import ModelBuild
 from vrl.models.steps.token.build import token_model_config_base
 from vrl.trajectory import build_ar_continuous_trajectory
+from vrl.utils.cuda_memory import cuda_peak_allocated_mb
 
 
 def nextstep_config_from_build(build: ModelBuild) -> dict[str, Any]:
@@ -96,12 +97,6 @@ class NextStep1ChunkExecutor(ARChunkExecutorBase):
     default_image_token_num: int | None = None
     default_image_size: int | None = None
 
-    def __init__(
-        self,
-        model: Any,  # NextStep1Model
-    ) -> None:
-        self.model = model
-
     # -- protocol ------------------------------------------------------
 
     def forward_chunk_plan(
@@ -167,7 +162,6 @@ class NextStep1ChunkExecutor(ARChunkExecutorBase):
         ).run()
 
         images = self.model.decode_image_tokens(tokens, image_size=params.image_size)
-        peak_mem_mb = self.layout.peak_memory_mb()
 
         return NextStep1ARChunkResult(
             prompt_index=chunk.prompt_index,
@@ -186,16 +180,8 @@ class NextStep1ChunkExecutor(ARChunkExecutorBase):
                 "num_steps": num_steps,
                 "noise_level": noise_level,
             },
-            peak_memory_mb=peak_mem_mb,
+            peak_memory_mb=cuda_peak_allocated_mb(),
         )
-
-    def gather_chunks(
-        self,
-        request: GenerationRequest,
-        sample_rows: Sequence[GenerationSampleRow],
-        chunks: Sequence[NextStep1ARChunkResult],
-    ) -> GenerationOutput:
-        return NextStep1ChunkGatherer().gather_chunks(request, sample_rows, chunks)
 
     # -- internals -----------------------------------------------------
 

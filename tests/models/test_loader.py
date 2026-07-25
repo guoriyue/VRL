@@ -101,13 +101,15 @@ def test_flow_match_replay_keeps_native_shift_config(monkeypatch) -> None:
     assert loader.load_flow_match_scheduler(SimpleNamespace()) is scheduler
 
 
-def test_model_config_revision_kwargs_omit_absent_dependency_revision() -> None:
-    from vrl.models.loader import model_config_revision_kwargs
-
-    assert (
-        model_config_revision_kwargs(
-            SimpleNamespace(model_config={}),
-            "tokenizer_revision",
-        )
-        == {}
+def test_config_revision_kwargs_omit_absent_dependency_revision() -> None:
+    build = ModelBuild(
+        model_name_or_path="org/model",
+        revision="immutable-revision",
+        device="cpu",
+        parameter_dtype=torch.float16,
+        family="sd3_5",
+        precision=RolePrecision("fp16", "tf32"),
+        model_config={},
     )
+
+    assert build.config_revision_kwargs("tokenizer_revision") == {}

@@ -16,7 +16,8 @@ Follows the Emu3 token-loop pattern with two GLM-specific deviations:
     rope; GLM's block has post_self_attn/post_mlp layernorms and a 3-axis
     mrope), and ``torch_native`` cannot inject position ids. Like the
     LlamaGen runner, this runner drives the HF trunk + ``DynamicCache``
-    directly; the family executor overrides ``_ar_runner`` accordingly.
+    directly; the family executor declares ``_native_runner_reason`` so the
+    shared base builds it without an attention backend.
 """
 
 from __future__ import annotations

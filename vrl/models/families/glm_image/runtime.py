@@ -61,43 +61,27 @@ class GlmImageChunkExecutor(ARDiscreteChunkExecutorBase):
       ``image_token_num`` knob.
     - The trajectory context carries ``image_height``/``image_width``
       (replay rebuilds the mrope position schedule from them).
+
+    ``model`` is a ``GlmImageModel``, or any stub exposing the same interface:
+    ``processor``, ``device``, ``language_model``,
+    ``encode_generation_prompts``, runner-step primitives, and
+    ``decode_image_tokens``.
     """
 
     family: str = "glm_image"
     task: str = "ar_t2i"
-
-    def __init__(self, model: Any) -> None:
-        """Construct the executor.
-
-        Args:
-          model: a ``GlmImageModel`` (or a stub exposing the same interface:
-            ``processor``, ``device``, ``language_model``,
-            ``encode_generation_prompts``, runner-step primitives, and
-            ``decode_image_tokens``).
-        """
-        self.model = model
+    _runner_cls = GlmImageTokenRunner
+    # DOCUMENTED DEVIATION (llamagen precedent): GLM-Image decode positions are
+    # 3-axis mrope schedules and its decoder block carries
+    # post_self_attn/post_mlp layernorms — the shared ``vllm_paged`` backend
+    # hand-walks 2-layernorm LLaMA-style blocks with 1D rope, and
+    # ``torch_native`` cannot inject position ids, so the runner drives the HF
+    # trunk + DynamicCache itself.
+    _native_runner_reason = (
+        "mrope position schedules are driven natively inside the family runner."
+    )
 
     # -- protocol ------------------------------------------------------
-
-    def _ar_runner(self, request: GenerationRequest) -> GlmImageTokenRunner:
-        """Build the GLM-Image runner without a shared attention backend.
-
-        DOCUMENTED DEVIATION (llamagen precedent): GLM-Image decode positions
-        are 3-axis mrope schedules and its decoder block carries
-        post_self_attn/post_mlp layernorms — the shared ``vllm_paged``
-        backend hand-walks 2-layernorm LLaMA-style blocks with 1D rope, and
-        ``torch_native`` cannot inject position ids, so the runner drives the
-        HF trunk + DynamicCache itself. An explicit ``attention_backend``
-        request is rejected instead of silently ignored.
-        """
-        backend = request.sampling.get("attention_backend")
-        if backend is not None:
-            raise ValueError(
-                "glm_image does not support request.sampling.attention_backend="
-                f"{backend!r}: mrope position schedules are driven natively "
-                "inside the family runner."
-            )
-        return GlmImageTokenRunner(self.model)
 
     def prepare_chunk_inputs(
         self,

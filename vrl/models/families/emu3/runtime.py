@@ -54,23 +54,17 @@ class Emu3ChunkExecutor(ARDiscreteChunkExecutorBase):
     the forced structural positions, prompt-side replay inputs, and a context
     with ``image_height``/``image_width`` (replay needs them to rebuild the
     structural mask).
+
+    ``model`` is an ``Emu3Model``, or any stub exposing the same interface:
+    ``processor``, ``device``, ``language_model``,
+    ``encode_generation_prompts``, runner-step primitives, and
+    ``decode_image_tokens``.
     """
 
     family: str = "emu3"
     _runner_cls = Emu3TokenRunner
     _runner_attention_family = "emu3"
     task: str = "ar_t2i"
-
-    def __init__(self, model: Any) -> None:
-        """Construct the executor.
-
-        Args:
-          model: an ``Emu3Model`` (or a stub exposing the same interface:
-            ``processor``, ``device``, ``language_model``,
-            ``encode_generation_prompts``, runner-step primitives, and
-            ``decode_image_tokens``).
-        """
-        self.model = model
 
     # -- protocol ------------------------------------------------------
 

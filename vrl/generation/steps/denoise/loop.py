@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
-from contextlib import suppress
 from dataclasses import dataclass, field
 from typing import Any
 
 import torch
 
+from vrl.generation.execution.chunk_placement import cuda_occupancy_snapshot
 from vrl.generation.steps.denoise.config import DenoiseLoopConfig
 from vrl.generation.steps.denoise.teacache import (
     TeaCacheState,
@@ -15,6 +15,11 @@ from vrl.generation.steps.denoise.teacache import (
 )
 from vrl.math.denoise.flow_matching import sde_step_with_logprob
 from vrl.trajectory.storage import trajectory_tensor_bytes
+from vrl.utils.cuda_memory import (
+    cuda_peak_allocated_bytes,
+    cuda_peak_allocated_mb,
+    reset_cuda_peak,
+)
 from vrl.utils.profiling import profile_range
 
 
@@ -46,40 +51,6 @@ class DenoiseTrajectoryBuffers:
     kl: torch.Tensor
     prev_sample_means: torch.Tensor | None = None
     ref_noise_preds: torch.Tensor | None = None
-
-
-def reset_cuda_peak() -> None:
-    """Reset process CUDA peak counters at a generation phase boundary."""
-
-    if torch.cuda.is_available():
-        with suppress(Exception):
-            torch.cuda.reset_peak_memory_stats()
-
-
-def cuda_phase_peak_bytes() -> int | None:
-    """Return the current phase's CUDA allocation peak when available."""
-
-    if not torch.cuda.is_available():
-        return None
-    try:
-        return int(torch.cuda.max_memory_allocated())
-    except Exception:
-        return None
-
-
-def _cuda_occupancy_snapshot() -> dict[str, int] | None:
-    if not torch.cuda.is_available():
-        return None
-    try:
-        free_bytes, total_bytes = torch.cuda.mem_get_info()
-        return {
-            "baseline_allocated_bytes": int(torch.cuda.memory_allocated()),
-            "reserved_start_bytes": int(torch.cuda.memory_reserved()),
-            "free_start_bytes": int(free_bytes),
-            "total_bytes": int(total_bytes),
-        }
-    except Exception:
-        return None
 
 
 def preallocate_denoise_buffers(
@@ -152,7 +123,7 @@ def run_denoise_loop(
     chunk_batch = state.latents.shape[0]
     device = state.latents.device
     reset_cuda_peak()
-    occupancy = _cuda_occupancy_snapshot()
+    occupancy = cuda_occupancy_snapshot()
     latent_bytes = int(state.latents.numel() * state.latents.element_size())
     if config.seed is not None:
         generator = torch.Generator(device=device)
@@ -271,8 +242,8 @@ def run_denoise_loop(
                         ref_noise_pred.detach().to(dtype=buffers.ref_noise_preds.dtype),
                     )
 
-    denoise_peak_bytes = cuda_phase_peak_bytes()
-    peak_memory_mb = None if denoise_peak_bytes is None else denoise_peak_bytes / (1024 * 1024)
+    denoise_peak_bytes = cuda_peak_allocated_bytes()
+    peak_memory_mb = cuda_peak_allocated_mb()
     memory = None
     if occupancy is not None and denoise_peak_bytes is not None:
         memory = {
@@ -352,8 +323,6 @@ def _expand_timestep_for_buffer(
 __all__ = [
     "DenoiseLoopResult",
     "DenoiseTrajectoryBuffers",
-    "cuda_phase_peak_bytes",
     "preallocate_denoise_buffers",
-    "reset_cuda_peak",
     "run_denoise_loop",
 ]

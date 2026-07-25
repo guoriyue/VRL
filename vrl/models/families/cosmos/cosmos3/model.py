@@ -87,11 +87,9 @@ class Cosmos3Model(CosmosReplayForward, LoraModelMixin, DiffusersPipelineModelBa
         # Lazy: diffusers@main (Cosmos3 classes) must not be imported at module load.
         from diffusers import Cosmos3OmniPipeline
 
-        from vrl.models.loader import model_revision_kwargs
-
         kwargs: dict[str, Any] = {
             "torch_dtype": build.parameter_dtype,
-            **model_revision_kwargs(build),
+            **build.revision_kwargs,
         }
         # enable_safety_checker=False avoids the cosmos_guardrail import/dep in dev.
         pipeline = Cosmos3OmniPipeline.from_pretrained(

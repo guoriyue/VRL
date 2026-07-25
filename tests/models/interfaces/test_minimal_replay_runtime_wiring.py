@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import contextlib
-from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -9,13 +8,7 @@ import torch
 import torch.nn as nn
 
 from vrl.config.precision import QuantizationPolicy, RolePrecision
-from vrl.models.interfaces.runtime import (
-    ModelBuild,
-    RolloutBuildOptions,
-    bundle_loads_full_generation_modules,
-    full_generation_bundle_metadata,
-    minimal_replay_bundle_metadata,
-)
+from vrl.models.interfaces.runtime import ModelBuild, RolloutBuildOptions
 
 
 def test_role_precision_rejects_quantized_base_dtype() -> None:
@@ -246,6 +239,12 @@ class _TinyRuntimeModel(nn.Module):
     def load_trainable_state(self, state_dict: dict[str, Any]) -> Any:
         return self.load_state_dict(state_dict, strict=False)
 
+    @property
+    def adapter_roots(self) -> dict[str, Any]:
+        # Mirrors ARModelBase: the checkpoint root is the wrapper, the adapter
+        # is one hop in on language_model.
+        return {"model": self.language_model}
+
 
 def _build(**overrides: Any) -> ModelBuild:
     """Build a ModelBuild from friendly overrides.
@@ -350,7 +349,7 @@ def test_registry_descriptor_replay_builder_returns_minimal_bundle(
         ),
     )
 
-    assert bundle_loads_full_generation_modules(bundle) is False
+    assert bundle.loads_full_generation_modules is False
     assert loaded_builds
     if family == "sana":
         assert loaded_builds[-1].parameter_dtype is torch.float16
@@ -415,7 +414,7 @@ def test_wan_i2v_replay_builder_uses_i2v_replay_model(
         _build(family="wan_2_1_i2v"),
     )
 
-    assert bundle_loads_full_generation_modules(bundle) is False
+    assert bundle.loads_full_generation_modules is False
     assert isinstance(bundle.model, WanI2VReplayModel)
 
 
@@ -458,7 +457,7 @@ def test_wan_dual_stage_replay_builder_loads_low_noise_transformer(
         ),
     )
 
-    assert bundle_loads_full_generation_modules(bundle) is False
+    assert bundle.loads_full_generation_modules is False
     # Primary first (generic ctor), then the prepare_replay late-load.
     assert loaded_subfolders == ["transformer", "transformer_2"]
     assert set(bundle.trainable_modules) == {"transformer_2"}
@@ -501,7 +500,7 @@ def test_cosmos_predict25_replay_builder_keeps_diffusion_nft_surface(
         ),
     )
 
-    assert bundle_loads_full_generation_modules(bundle) is False
+    assert bundle.loads_full_generation_modules is False
     assert bundle.raw_handle is None
     assert callable(bundle.model.diffusion_nft_prepare_transformer_input)
     with pytest.raises(RuntimeError, match="pipeline"):
@@ -530,7 +529,7 @@ def test_anima_replay_builder_uses_only_transformer_checkpoint(
         ),
     )
 
-    assert bundle_loads_full_generation_modules(bundle) is False
+    assert bundle.loads_full_generation_modules is False
     assert bundle.raw_handle is None
     assert set(bundle.trainable_modules) == {"transformer"}
     assert not hasattr(bundle.model, "text_encoder")
@@ -696,7 +695,7 @@ def test_ar_replay_builders_return_minimal_bundles(
         _build(family=family, use_lora=use_lora),
     )
 
-    assert bundle_loads_full_generation_modules(bundle) is False
+    assert bundle.loads_full_generation_modules is False
     assert bundle.raw_handle is None
     assert set(bundle.trainable_modules) == {"model"}
 
@@ -740,26 +739,5 @@ def test_ar_rollout_builders_follow_registry_descriptors(
         ),
     )
 
-    assert bundle_loads_full_generation_modules(bundle) is True
+    assert bundle.loads_full_generation_modules is True
     assert bundle.raw_handle is bundle.model
-
-
-def test_bundle_metadata_drives_consumer_down_opposite_branches() -> None:
-    """The two bundle builders are consumed into opposite ownership decisions.
-
-    Asserts the behavior the metadata exists for — ``bundle_loads_full_generation_modules``
-    returning True for a full-generation bundle and False for a minimal one — instead
-    of mirroring each builder's literal ``{KEY: bool}`` return value.
-    """
-    full = SimpleNamespace(metadata=full_generation_bundle_metadata())
-    minimal = SimpleNamespace(metadata=minimal_replay_bundle_metadata())
-
-    assert bundle_loads_full_generation_modules(full) is True
-    assert bundle_loads_full_generation_modules(minimal) is False
-
-
-def test_bundle_loads_full_generation_modules_defaults_false() -> None:
-    """Missing flag, missing metadata, or null metadata all read as not-owning."""
-    assert bundle_loads_full_generation_modules(SimpleNamespace(metadata={})) is False
-    assert bundle_loads_full_generation_modules(SimpleNamespace()) is False
-    assert bundle_loads_full_generation_modules(SimpleNamespace(metadata=None)) is False

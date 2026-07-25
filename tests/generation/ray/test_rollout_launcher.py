@@ -98,6 +98,7 @@ def _worker_setup_hook(repo_root: str) -> Any:
                 scheduler=None,
                 raw_handle=None,
                 precision=build.precision,
+                loads_full_generation_modules=True,
             )
 
         # The hook executes before worker imports the launch contract. Publishing

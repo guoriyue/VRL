@@ -182,12 +182,10 @@ class WanT2VDiffusersModel(
         boundary_ratio, trainable_transformers = wan_topology_from_build(build)
         from diffusers import WanPipeline
 
-        from vrl.models.loader import model_pretrained_kwargs
-
         pipeline = WanPipeline.from_pretrained(
             build.model_name_or_path,
             torch_dtype=build.parameter_dtype,
-            **model_pretrained_kwargs(build),
+            **build.pretrained_kwargs,
         )
         _validate_wan_pipeline(
             pipeline,
@@ -444,12 +442,7 @@ class WanT2VDiffusersModel(
         for name, module in self.trainable_modules.items():
             target = getattr(module, "_orig_mod", module)
             prefixed = {f"{name}.{key}": value for key, value in validated[name].items()}
-            results[name] = load_weights_into(
-                target,
-                prefixed,
-                prefix=name,
-                label=type(target).__name__,
-            )
+            results[name] = load_weights_into(target, prefixed, prefix=name)
         return results
 
     def validate_trainable_state(self, state_dict: Mapping[str, Any]) -> None:
@@ -473,12 +466,7 @@ class WanT2VDiffusersModel(
         for name, module in modules.items():
             prefix = f"{name}."
             module_state = {key: value for key, value in state.items() if key.startswith(prefix)}
-            validated[name] = validate_weights_for(
-                module,
-                module_state,
-                prefix=name,
-                label=type(module).__name__,
-            )
+            validated[name] = validate_weights_for(module, module_state, prefix=name)
         return validated
 
     def _set_wan_transformer(self, name: str, transformer: Any) -> None:
@@ -954,12 +942,10 @@ class WanI2VDiffusersModel(WanT2VDiffusersModel):
         boundary_ratio, trainable_transformers = wan_topology_from_build(build)
         from diffusers import WanImageToVideoPipeline
 
-        from vrl.models.loader import model_pretrained_kwargs
-
         pipeline = WanImageToVideoPipeline.from_pretrained(
             build.model_name_or_path,
             torch_dtype=build.parameter_dtype,
-            **model_pretrained_kwargs(build),
+            **build.pretrained_kwargs,
         )
         _validate_wan_pipeline(
             pipeline,

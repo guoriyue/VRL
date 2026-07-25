@@ -10,8 +10,6 @@ reference-conditioning chunk logic.
 
 from __future__ import annotations
 
-from typing import Any
-
 from vrl.generation.bindings.full_sequence_denoise import (
     DiffusionChunkExecutorBase,
     ReferenceConditionedChunks,
@@ -25,15 +23,6 @@ class Wan_2_1I2VChunkExecutor(ReferenceConditionedChunks, DiffusionChunkExecutor
     task: str = "i2v"
     default_num_frames: int = 81
     default_max_sequence_length: int = 512
-
-    def __init__(
-        self,
-        model: Any,
-        *,
-        samples_per_chunk: int = 1,
-    ) -> None:
-        self.model = model
-        self.default_samples_per_chunk = max(1, int(samples_per_chunk))
 
 
 __all__ = [

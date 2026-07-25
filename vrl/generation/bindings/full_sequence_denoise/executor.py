@@ -3,30 +3,21 @@
 from __future__ import annotations
 
 import time
-from collections.abc import Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
 import torch
 
-from vrl.generation.bindings.full_sequence_denoise.gather import DiffusionChunkGatherer
 from vrl.generation.bindings.full_sequence_denoise.layout import (
     DiffusionRequestLayout,
     DiffusionSamplingParams,
 )
-from vrl.generation.execution.chunks import (
-    SampleChunk,
-    run_sample_chunks_with_oom_retry,
-)
+from vrl.generation.execution.chunks import SampleChunk
+from vrl.generation.execution.executor_base import ChunkExecutorBase
 from vrl.generation.execution.planner import build_engine_plan
-from vrl.generation.protocols import (
-    GenerationChunkExecutor,
-)
 from vrl.generation.steps.denoise.config import DenoiseLoopConfig
 from vrl.generation.steps.denoise.loop import (
     DenoiseLoopResult,
-    cuda_phase_peak_bytes,
-    reset_cuda_peak,
     run_denoise_loop,
 )
 from vrl.generation.types import (
@@ -40,6 +31,11 @@ from vrl.trajectory.storage import (
     apply_value_storage_policy,
     trajectory_storage_policy_from_cfg,
     trajectory_tensor_bytes,
+)
+from vrl.utils.cuda_memory import (
+    cuda_peak_allocated_bytes,
+    cuda_peak_allocated_mb,
+    reset_cuda_peak,
 )
 from vrl.utils.media import load_reference_image, to_uint8
 
@@ -170,9 +166,7 @@ class ReferenceConditionedChunks:
         return load_reference_image(ref)
 
 
-class DiffusionChunkExecutorBase(
-    GenerationChunkExecutor,
-):
+class DiffusionChunkExecutorBase(ChunkExecutorBase):
     """Common GenerationRequest -> diffusion GenerationOutput execution path."""
 
     family: str
@@ -183,6 +177,15 @@ class DiffusionChunkExecutorBase(
     default_fps: int | None = None
     default_max_sequence_length: int | None = None
     sde_type: str = "flow_grpo"
+
+    def __init__(self, model: Any, *, samples_per_chunk: int | None = None) -> None:
+        # Keyword-only and optional: the worker constructs executors by dotted
+        # string (``executor_cls(model, **executor_kwargs)``) and only injects
+        # samples_per_chunk for families whose registry entry declares
+        # ``accepts_samples_per_chunk``. Unset keeps the class default.
+        self.model = model
+        if samples_per_chunk is not None:
+            self.default_samples_per_chunk = max(1, int(samples_per_chunk))
 
     # -- protocol ------------------------------------------------------
 
@@ -256,18 +259,6 @@ class DiffusionChunkExecutorBase(
             denoise_mode=params.denoise_mode,
             teacache=params.teacache,
         )
-
-    def forward_plan(
-        self,
-        request: GenerationRequest,
-        sample_rows: list[GenerationSampleRow],
-        plan: Any,
-    ) -> GenerationOutput:
-        chunks = run_sample_chunks_with_oom_retry(
-            plan.chunks,
-            lambda chunk: self.forward_chunk_plan(request, chunk),
-        )
-        return self.gather_chunks(request, sample_rows, chunks)
 
     def forward_plan_pipelined(
         self,
@@ -550,11 +541,11 @@ class DiffusionChunkExecutorBase(
             }
         context = dict(model.export_batch_context(state))
 
-        decode_peak_bytes = cuda_phase_peak_bytes()
+        decode_peak_bytes = cuda_peak_allocated_bytes()
+        decode_peak_mb = cuda_peak_allocated_mb()
         memory = None
         if denoise_result.memory is not None and decode_peak_bytes is not None:
             memory = {**denoise_result.memory, "decode_peak_bytes": decode_peak_bytes}
-        decode_peak_mb = None if decode_peak_bytes is None else decode_peak_bytes / (1024 * 1024)
         phase_peaks = [
             peak for peak in (denoise_result.peak_memory_mb, decode_peak_mb) if peak is not None
         ]
@@ -579,18 +570,6 @@ class DiffusionChunkExecutorBase(
                 "diffusion_replay_tensor_bytes": trajectory_tensor_bytes(replay_tensors),
                 "diffusion_video_bytes": trajectory_tensor_bytes(video),
             },
-        )
-
-    def gather_chunks(
-        self,
-        request: GenerationRequest,
-        sample_rows: Sequence[GenerationSampleRow],
-        chunks: Sequence[DiffusionChunkResult],
-    ) -> GenerationOutput:
-        return DiffusionChunkGatherer().gather_chunks(
-            request,
-            sample_rows,
-            chunks,
         )
 
     # -- family hooks --------------------------------------------------
@@ -698,7 +677,7 @@ class DiffusionChunkExecutor(DiffusionChunkExecutorBase):
         chunk_passthrough_keys: tuple[str, ...] = (),
         samples_per_chunk: int = 8,
     ) -> None:
-        self.model = model
+        super().__init__(model, samples_per_chunk=samples_per_chunk)
         self.family = family
         self.task = task
         self.default_num_frames = int(num_frames)
@@ -707,4 +686,3 @@ class DiffusionChunkExecutor(DiffusionChunkExecutorBase):
         )
         self.default_fps = None if fps is None else int(fps)
         self.chunk_passthrough_keys = tuple(chunk_passthrough_keys)
-        self.default_samples_per_chunk = max(1, int(samples_per_chunk))

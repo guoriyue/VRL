@@ -196,11 +196,9 @@ class CosmosPredict25Model(CosmosReplayForward, DiffusersPipelineModelBase):
         import diffusers.pipelines.cosmos.pipeline_cosmos2_5_predict as _predict_mod
         from diffusers import Cosmos2_5_PredictBasePipeline
 
-        from vrl.models.loader import model_revision_kwargs
-
         kwargs: dict[str, Any] = {
             "torch_dtype": build.parameter_dtype,
-            **model_revision_kwargs(build),
+            **build.revision_kwargs,
         }
         revision = kwargs.get("revision")
         skip_text_encoder = bool((build.model_config or {}).get("skip_text_encoder", False))

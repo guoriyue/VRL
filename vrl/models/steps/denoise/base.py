@@ -311,23 +311,13 @@ class DiffusionModelBase(nn.Module, ABC):
         """Load trainable transformer weights from ``transformer.*`` sync keys."""
 
         transformer = self._require_transformer()
-        return load_weights_into(
-            transformer,
-            state_dict,
-            prefix="transformer",
-            label=type(transformer).__name__,
-        )
+        return load_weights_into(transformer, state_dict, prefix="transformer")
 
     def validate_trainable_state(self, state_dict: Mapping[str, Any]) -> None:
         """Validate a sync payload without mutating the active policy."""
 
         transformer = self._require_transformer()
-        validate_weights_for(
-            transformer,
-            state_dict,
-            prefix="transformer",
-            label=type(transformer).__name__,
-        )
+        validate_weights_for(transformer, state_dict, prefix="transformer")
 
     # -- versioned trainable-state slots (non-draining weight sync) ---------
     # Diffusion families support versioned slots generically: activation reuses
@@ -423,9 +413,9 @@ class DiffusionModelBase(nn.Module, ABC):
         ``torch_compile_transformer`` so inductor sees the fp8 modules.
         """
 
-        from vrl.nn.quantization import swap_linears_to_fp8
+        from vrl.nn.quantization import Fp8Linear
 
-        return swap_linears_to_fp8(self.transformer, recipe=recipe)
+        return Fp8Linear.swap_linears(self.transformer, recipe=recipe)
 
     def quantize_rollout_nvfp4(self) -> list[str]:
         """Swap validated rollout MLP GEMMs to NVFP4 in place.
@@ -436,9 +426,9 @@ class DiffusionModelBase(nn.Module, ABC):
         cross-family dispatch boundary used by the rollout loader.
         """
 
-        from vrl.nn.quantization import swap_linears_to_nvfp4
+        from vrl.nn.quantization import Fp4Linear
 
-        return swap_linears_to_nvfp4(self.transformer)
+        return Fp4Linear.swap_linears(self.transformer)
 
     def set_num_steps(self, n: int) -> None:  # pragma: no cover
         raise NotImplementedError
@@ -452,6 +442,27 @@ class DiffusionModelBase(nn.Module, ABC):
         """
 
         return {"transformer": self._require_transformer()}
+
+    @property
+    def adapter_roots(self) -> dict[str, Any]:
+        """Trainable roots whose PEFT adapter can be published as an artifact.
+
+        Keyed by checkpoint root name, so a multi-expert family (Wan) exports
+        one namespaced artifact per root instead of overwriting a single path.
+
+        The ``save_pretrained`` filter belongs HERE and not in the checkpoint
+        exporter: on the diffusion side a root that cannot ``save_pretrained``
+        is a family that simply publishes no adapter artifact — ``checkpoint.pt``
+        still resumes it — whereas the AR side has exactly one root and must
+        fail loudly if it turns out unexportable. Centralizing the filter would
+        downgrade that AR raise to a silent no-export.
+        """
+
+        return {
+            name: module
+            for name, module in self.trainable_modules.items()
+            if hasattr(module, "save_pretrained")
+        }
 
     @property
     def scheduler(self) -> Any:  # pragma: no cover
@@ -531,12 +542,9 @@ def diffusers_pipeline_dtypes(
     prompt_encoder_dtype = getattr(rollout, "prompt_encoder_dtype", None)
     if prompt_encoder_dtype is None:
         prompt_encoder_dtype = torch.float16 if model_dtype == torch.float32 else model_dtype
-    load_kwargs: dict[str, Any] = {}
-    from vrl.models.loader import model_pretrained_kwargs
-
     # Full-pipeline rollout and component-only replay must resolve the same
     # immutable Hub snapshot; otherwise parity can compare different weights.
-    load_kwargs.update(model_pretrained_kwargs(build))
+    load_kwargs: dict[str, Any] = build.pretrained_kwargs
     if model_dtype == torch.float32 and prompt_encoder_dtype != torch.float32:
         load_kwargs["torch_dtype"] = {
             "transformer": torch.float32,

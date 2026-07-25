@@ -118,9 +118,6 @@ class _GenericChunkExecutor(ChunkAutoregressiveDenoiseExecutorBase):
     task = "t2v"
     default_samples_per_chunk = 1
 
-    def __init__(self, model: Any) -> None:
-        self.model = model
-
 
 def test_generic_executor_delegates_temporal_generation_to_model() -> None:
     request = _request()

@@ -7,10 +7,7 @@ from types import SimpleNamespace
 import pytest
 from omegaconf import OmegaConf
 
-from vrl.generation.ray.config import (
-    RayGenerationConfig,
-    validate_colocated_replay_memory,
-)
+from vrl.generation.ray.config import RayGenerationConfig
 from vrl.ray.resources import resolve_distributed_resources
 from vrl.utils.cuda_memory import is_cuda_out_of_memory
 from vrl.utils.memory import HostMemorySnapshot, format_host_memory
@@ -69,18 +66,11 @@ def test_colocated_full_generation_bundle_can_fail_strict_guard(
 ) -> None:
     """Checks colocated full generation bundle can fail strict guard."""
     monkeypatch.setenv("VRL_STRICT_REPLAY_MEMORY_GUARD", "1")
-    bundle = SimpleNamespace(
-        metadata={
-            "loads_full_generation_modules": True,
-        },
-    )
+    bundle = SimpleNamespace(loads_full_generation_modules=True)
     config = _ray_config(colocated=True)
 
     with pytest.raises(ValueError, match="loads_full_generation_modules=true"):
-        validate_colocated_replay_memory(
-            bundle=bundle,
-            rollout_config=config,
-        )
+        config.validate_driver_state(driver_bundle=bundle)
 
 
 def test_non_colocated_full_generation_bundle_passes_memory_guard(
@@ -88,10 +78,7 @@ def test_non_colocated_full_generation_bundle_passes_memory_guard(
 ) -> None:
     """Checks non colocated full generation bundle passes memory guard."""
     monkeypatch.setenv("VRL_STRICT_REPLAY_MEMORY_GUARD", "1")
-    bundle = SimpleNamespace(metadata={"loads_full_generation_modules": True})
+    bundle = SimpleNamespace(loads_full_generation_modules=True)
     config = _ray_config(colocated=False)
 
-    validate_colocated_replay_memory(
-        bundle=bundle,
-        rollout_config=config,
-    )
+    assert config.validate_driver_state(driver_bundle=bundle) is config

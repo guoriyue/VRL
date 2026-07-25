@@ -19,8 +19,10 @@ from vrl.generation.execution.types import DistributedWorkerHandle
 from vrl.generation.launch_contract import GenerationRuntimeLaunchContract
 from vrl.generation.ray.config import RayGenerationConfig
 from vrl.generation.ray.launch_inputs import RayGenerationLaunchInputs
-from vrl.generation.ray.launcher import RayGenerationLauncher
-from vrl.generation.ray.utils import all_workers_support_versioned_slots
+from vrl.generation.ray.launcher import (
+    RayGenerationLauncher,
+    _all_workers_support_versioned_slots,
+)
 from vrl.ray.placement import GlobalRayPlacementOwner, RolePlacement
 from vrl.ray.resources import resolve_distributed_resources
 
@@ -35,8 +37,16 @@ class _CpuPolicy:
 
 @dataclass
 class _Bundle:
+    """Driver-bundle stand-in for the CUDA-ownership checks these tests cover.
+
+    ``loads_full_generation_modules`` defaults to the replay answer so the
+    colocated-RAM guard stays out of the way; the guard has its own tests in
+    ``tests/trainers/test_memory_guards.py``.
+    """
+
     model: Any
     trainable_modules: dict[str, Any]
+    loads_full_generation_modules: bool = False
 
 
 _TEST_MODEL_IDENTITY = {"schema": "test"}
@@ -295,7 +305,7 @@ def test_runtime_capability_is_and_over_all_workers(local_ray) -> None:
     weight_sync = object()
 
     assert (
-        all_workers_support_versioned_slots(
+        _all_workers_support_versioned_slots(
             local_ray,
             _slot_handles(local_ray, True, True),
             weight_sync=weight_sync,
@@ -303,7 +313,7 @@ def test_runtime_capability_is_and_over_all_workers(local_ray) -> None:
         is True
     )
     assert (
-        all_workers_support_versioned_slots(
+        _all_workers_support_versioned_slots(
             local_ray,
             _slot_handles(local_ray, True, False),
             weight_sync=weight_sync,
@@ -317,7 +327,7 @@ def test_runtime_capability_false_without_weight_sync_or_workers(local_ray) -> N
     """No weight sync (sync_trainable_state off) or no workers -> safe draining
     barrier (False), never a silent True."""
     assert (
-        all_workers_support_versioned_slots(
+        _all_workers_support_versioned_slots(
             local_ray,
             _slot_handles(local_ray, True, True),
             weight_sync=None,
@@ -325,7 +335,7 @@ def test_runtime_capability_false_without_weight_sync_or_workers(local_ray) -> N
         is False
     )
     assert (
-        all_workers_support_versioned_slots(
+        _all_workers_support_versioned_slots(
             local_ray,
             [],
             weight_sync=object(),
@@ -340,7 +350,7 @@ def test_runtime_capability_false_when_a_worker_query_raises(local_ray) -> None:
     back to the safe draining barrier, not crash the launch or optimistically
     assume support."""
     assert (
-        all_workers_support_versioned_slots(
+        _all_workers_support_versioned_slots(
             local_ray,
             _slot_handles(local_ray, True, None),
             weight_sync=object(),
@@ -384,7 +394,7 @@ def test_launcher_capability_failure_kills_candidate_actor_group(
 
     monkeypatch.setattr(
         launcher_module,
-        "all_workers_support_versioned_slots",
+        "_all_workers_support_versioned_slots",
         _failing_query,
     )
     cfg = _launch_cfg()
@@ -529,7 +539,7 @@ def test_placement_and_launcher_consume_the_same_worker_snapshot(monkeypatch) ->
     )
     monkeypatch.setattr(
         launcher_module,
-        "all_workers_support_versioned_slots",
+        "_all_workers_support_versioned_slots",
         lambda *_args, **_kwargs: False,
     )
     entry = get_model_family_entry("sd3_5")

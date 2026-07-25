@@ -6,7 +6,6 @@ import asyncio
 from typing import Any, Protocol
 
 from vrl.generation.execution.types import DistributedWorkerHandle
-from vrl.generation.ray.utils import require_installed_policy_version
 from vrl.ray.dependencies import require_ray
 
 
@@ -42,11 +41,7 @@ class RayGenerationWeightSync(GenerationWeightSync):
                 remote_workers.append((worker, remote))
             else:
                 installed = update_weights(state_ref, policy_version)
-                require_installed_policy_version(
-                    worker_id=worker.worker_id,
-                    installed=installed,
-                    expected=policy_version,
-                )
+                worker.require_installed_policy_version(installed, policy_version)
 
         if not remote_workers:
             return
@@ -72,11 +67,7 @@ class RayGenerationWeightSync(GenerationWeightSync):
             installed_versions,
             strict=True,
         ):
-            require_installed_policy_version(
-                worker_id=worker.worker_id,
-                installed=installed,
-                expected=policy_version,
-            )
+            worker.require_installed_policy_version(installed, policy_version)
 
 
 __all__ = [

@@ -50,7 +50,6 @@ def load_weights_into(
     state_dict: Mapping[str, Any],
     *,
     prefix: str,
-    label: str,
 ) -> Any:
     """Load a flattened trainable-weight sync payload into ``module``.
 
@@ -61,12 +60,7 @@ def load_weights_into(
     silently leaving weights stale.
     """
 
-    stripped = validate_weights_for(
-        module,
-        state_dict,
-        prefix=prefix,
-        label=label,
-    )
+    stripped = validate_weights_for(module, state_dict, prefix=prefix)
     module = unwrap_compile_and_ddp(module)
     return module.load_state_dict(stripped, strict=False)
 
@@ -76,10 +70,16 @@ def validate_weights_for(
     state_dict: Mapping[str, Any],
     *,
     prefix: str,
-    label: str,
 ) -> dict[str, Any]:
-    """Validate one flattened sync payload without changing live weights."""
+    """Validate one flattened sync payload without changing live weights.
 
+    Every rejection below names the module the payload failed against. That name
+    is the class the checks actually run on, so it is derived from the same
+    unwrapped module rather than threaded in by each caller.
+    """
+
+    module = unwrap_compile_and_ddp(module)
+    label = type(module).__name__
     state = dict(state_dict)
     if not state:
         raise ValueError(f"{label}: load_trainable_state received an empty state dict")
@@ -92,8 +92,6 @@ def validate_weights_for(
             f"with {dot!r}; got {bad[:5]}",
         )
     stripped = {key[len(dot) :]: value for key, value in state.items()}
-
-    module = unwrap_compile_and_ddp(module)
 
     named_parameters = getattr(module, "named_parameters", None)
     if not callable(named_parameters):

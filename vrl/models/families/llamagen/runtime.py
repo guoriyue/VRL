@@ -97,9 +97,14 @@ class LlamaGenChunkExecutor(ARDiscreteChunkExecutorBase):
 
     family: str = "llamagen"
     task: str = "ar_t2i"
-
-    def __init__(self, model: Any) -> None:
-        self.model = model
+    _runner_cls = LlamaGenARModelRunner
+    # DOCUMENTED DEVIATION: the vendored GPT's static in-place KV cache does not
+    # implement the HF ``past_key_values`` protocol the shared ``torch_native``
+    # / ``vllm_paged`` backends require, so the runner drives the native cache
+    # itself.
+    _native_runner_reason = (
+        "the vendored GPT uses its own static KV cache inside the family runner."
+    )
 
     @property
     def default_image_token_num(self) -> int:
@@ -142,24 +147,6 @@ class LlamaGenChunkExecutor(ARDiscreteChunkExecutorBase):
                 f"to be null or >= chunk sample count ({row_count}); got {batch_size}",
             )
         return batch_size
-
-    def _ar_runner(self, request: GenerationRequest) -> LlamaGenARModelRunner:
-        """Build the LlamaGen runner without a shared attention backend.
-
-        DOCUMENTED DEVIATION: the vendored GPT's static in-place KV cache does
-        not implement the HF ``past_key_values`` protocol the shared
-        ``torch_native`` / ``vllm_paged`` backends require, so the runner
-        drives the native cache itself. An explicit ``attention_backend``
-        request is rejected instead of silently ignored.
-        """
-        backend = request.sampling.get("attention_backend")
-        if backend is not None:
-            raise ValueError(
-                "llamagen does not support request.sampling.attention_backend="
-                f"{backend!r}: the vendored GPT uses its own static KV cache "
-                "inside the family runner."
-            )
-        return LlamaGenARModelRunner(self.model)
 
     def prepare_chunk_inputs(
         self,

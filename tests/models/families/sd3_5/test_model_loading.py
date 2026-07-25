@@ -1,12 +1,12 @@
 from __future__ import annotations
 
-from types import SimpleNamespace
 from typing import Any
 
 import torch
 
+from vrl.config.precision import RolePrecision
 from vrl.models.families.sd3_5.model import SD3_5Model
-from vrl.models.interfaces.runtime import RolloutBuildOptions
+from vrl.models.interfaces.runtime import ModelBuild, RolloutBuildOptions
 
 
 class _FakeModule:
@@ -51,13 +51,16 @@ def test_sd3_fp32_runtime_loads_frozen_components_without_fp32_peak(monkeypatch)
         staticmethod(fake_from_pretrained),
     )
 
-    build = SimpleNamespace(
+    build = ModelBuild(
         model_name_or_path="stabilityai/stable-diffusion-3.5-medium",
+        revision=None,
+        device="cuda:0",
         parameter_dtype=torch.float32,
+        family="sd3_5",
+        precision=RolePrecision("fp32", "tf32", outer_autocast=False),
         rollout=RolloutBuildOptions(
             prompt_encoder_dtype=torch.float16,
         ),
-        device="cuda:0",
     )
 
     model = SD3_5Model.from_build(build)

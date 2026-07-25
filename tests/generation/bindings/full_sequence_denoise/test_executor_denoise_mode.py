@@ -56,9 +56,6 @@ class _Executor(DiffusionChunkExecutorBase):
     family = "fake"
     task = "t2i"
 
-    def __init__(self, model: object) -> None:
-        self.model = model
-
 
 class _Model:
     def forward_step(self, state: object, step_idx: int) -> dict[str, torch.Tensor]:

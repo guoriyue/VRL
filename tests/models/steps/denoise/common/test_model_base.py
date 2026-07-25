@@ -24,7 +24,7 @@ from vrl.models.families.mochi.model import MochiModel
 from vrl.models.families.sd3_5.model import SD3_5Model
 from vrl.models.families.wan_2_1.model import WanT2VDiffusersModel
 from vrl.models.interfaces import ReplayResult
-from vrl.models.interfaces.runtime import RolloutBuildOptions
+from vrl.models.interfaces.runtime import ModelBuild, RolloutBuildOptions
 from vrl.models.steps.denoise import DiffusionModelBase
 from vrl.rollouts.batch import RolloutBatch
 from vrl.trajectory import build_diffusion_trajectory
@@ -178,12 +178,15 @@ class _LoadedPipeline:
         self.text_encoder = _LoadedModule()
 
 
-def _bare_build() -> SimpleNamespace:
-    return SimpleNamespace(
+def _bare_build() -> ModelBuild:
+    return ModelBuild(
         model_name_or_path="genmo/mochi-1-preview",
-        parameter_dtype=torch.bfloat16,
-        rollout=RolloutBuildOptions(prompt_encoder_dtype=torch.float16),
+        revision=None,
         device="cuda:0",
+        parameter_dtype=torch.bfloat16,
+        family="mochi",
+        precision=RolePrecision("bf16", "tf32"),
+        rollout=RolloutBuildOptions(prompt_encoder_dtype=torch.float16),
     )
 
 

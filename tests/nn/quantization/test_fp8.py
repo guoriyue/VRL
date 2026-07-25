@@ -281,7 +281,6 @@ def test_master_free_fp8_survives_adapter_only_weight_sync():
         policy,
         {"transformer.lora": update},
         prefix="transformer",
-        label="adapter policy",
     )
 
     assert policy.base_layer.weight is None

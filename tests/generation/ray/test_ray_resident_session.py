@@ -75,6 +75,7 @@ def build_tiny_runtime_bundle(build: ModelBuild) -> RuntimeBundle:
         scheduler=None,
         raw_handle=None,
         precision=build.precision,
+        loads_full_generation_modules=True,
     )
 
 

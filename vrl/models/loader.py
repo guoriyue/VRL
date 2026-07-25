@@ -5,33 +5,11 @@ from __future__ import annotations
 
 from typing import Any
 
-
-def model_revision_kwargs(build: Any) -> dict[str, str]:
-    """Return the immutable model snapshot argument for every upstream loader."""
-
-    revision = getattr(build, "revision", None)
-    return {"revision": str(revision)} if revision else {}
-
-
-def model_pretrained_kwargs(build: Any) -> dict[str, Any]:
-    """Return repository-wide options shared by full and component loaders."""
-
-    kwargs: dict[str, Any] = model_revision_kwargs(build)
-    model_config = getattr(build, "model_config", None) or {}
-    if "local_files_only" in model_config:
-        kwargs["local_files_only"] = bool(model_config["local_files_only"])
-    return kwargs
-
-
-def model_config_revision_kwargs(build: Any, field: str) -> dict[str, str]:
-    """Return an optional revision kwarg owned by one model-config repository."""
-
-    revision = (getattr(build, "model_config", None) or {}).get(field)
-    return {"revision": str(revision)} if revision else {}
+from vrl.models.interfaces.runtime import ModelBuild
 
 
 def load_diffusers_transformer(
-    build: Any,
+    build: ModelBuild,
     class_name: str,
     *,
     subfolder: str = "transformer",
@@ -40,7 +18,7 @@ def load_diffusers_transformer(
 
     import diffusers
 
-    load_kwargs = model_pretrained_kwargs(build)
+    load_kwargs = build.pretrained_kwargs
     transformer_cls = getattr(diffusers, class_name)
     return transformer_cls.from_pretrained(
         build.model_name_or_path,
@@ -51,7 +29,7 @@ def load_diffusers_transformer(
 
 
 def load_diffusers_scheduler(
-    build: Any,
+    build: ModelBuild,
     class_name: str,
     *,
     subfolder: str = "scheduler",
@@ -60,7 +38,7 @@ def load_diffusers_scheduler(
 
     import diffusers
 
-    load_kwargs = model_pretrained_kwargs(build)
+    load_kwargs = build.pretrained_kwargs
     scheduler_cls = getattr(diffusers, class_name)
     scheduler = scheduler_cls.from_pretrained(
         build.model_name_or_path,
@@ -75,12 +53,12 @@ def load_diffusers_scheduler(
     # prepare_sampling; replay: build_*_replay_runtime_bundle). Only eager-set the
     # static schedules (SD3.5 / Wan), whose sigmas depend solely on num_steps.
     if num_steps is not None and not getattr(scheduler.config, "use_dynamic_shifting", False):
-        scheduler.set_timesteps(int(num_steps), device=getattr(build, "device", None))
+        scheduler.set_timesteps(int(num_steps), device=build.device)
     return scheduler
 
 
 def load_flow_match_scheduler(
-    build: Any,
+    build: ModelBuild,
     *,
     subfolder: str = "scheduler",
 ) -> Any:
@@ -101,7 +79,7 @@ def load_flow_match_scheduler(
     rebuilt = scheduler_cls.from_config(dict(scheduler.config), shift=float(flow_shift))
     num_steps = build.num_steps
     if num_steps is not None:
-        rebuilt.set_timesteps(int(num_steps), device=getattr(build, "device", None))
+        rebuilt.set_timesteps(int(num_steps), device=build.device)
     return rebuilt
 
 
@@ -165,6 +143,9 @@ def apply_rollout_quantization(model: Any, build: Any) -> int:
             "compiled forward is ~10x slower than eager). Use recipe='rowwise' "
             "(compile-clean) or disable model.torch_compile.",
         )
+    # The profile literals below are log text only: this dispatch keys off the
+    # config format string and never holds a scheme class. The swap's actual
+    # scope is `QuantizedLinear.default_target_profile` on Fp8Linear/Fp4Linear.
     if format_name == "fp8":
         swapped = model.quantize_rollout_fp8(recipe=recipe or "rowwise")
         policy_detail = f"recipe={recipe or 'rowwise'}, profile=attention_mlp"
@@ -264,8 +245,5 @@ __all__ = [
     "load_diffusers_scheduler",
     "load_diffusers_transformer",
     "load_flow_match_scheduler",
-    "model_config_revision_kwargs",
-    "model_pretrained_kwargs",
-    "model_revision_kwargs",
     "validate_rollout_quantization_support",
 ]

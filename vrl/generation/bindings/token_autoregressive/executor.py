@@ -10,25 +10,24 @@ import torch
 
 from vrl.generation.bindings.token_autoregressive.layout import ARRequestLayout, right_pad
 from vrl.generation.execution.chunks import SampleChunk
-from vrl.generation.protocols import GenerationChunkExecutor
+from vrl.generation.execution.executor_base import ChunkExecutorBase
 from vrl.generation.types import (
     GenerationOutput,
     GenerationRequest,
     GenerationSampleRow,
 )
+from vrl.utils.cuda_memory import cuda_peak_allocated_mb
 
 
-class ARChunkExecutorBase(
-    GenerationChunkExecutor,
-):
+class ARChunkExecutorBase(ChunkExecutorBase):
     """Base helpers for AR family executors.
 
-    Owns the request-level plumbing (``plan`` / ``forward_plan``), mirroring
-    ``DiffusionChunkExecutorBase``: the full-request
-    path IS the production chunk path plus the family gatherer, so there is a
-    single trajectory/metrics assembly line. Subclasses still own tokenization
-    details, sampling math, decoding, and family-specific output packing
-    (``forward_chunk_plan`` + their chunk gatherer).
+    Owns the request-level plumbing (``plan`` plus the inherited
+    ``forward_plan``), mirroring ``DiffusionChunkExecutorBase``: the
+    full-request path IS the production chunk path plus the family gatherer, so
+    there is a single trajectory/metrics assembly line. Subclasses still own
+    tokenization details, sampling math, decoding, and family-specific output
+    packing (``forward_chunk_plan`` + their registered chunk gatherer).
     """
 
     family: str
@@ -43,6 +42,14 @@ class ARChunkExecutorBase(
     # janus_pro_r1 rolls out with the janus_pro architecture/backend).
     _runner_cls: type | None = None
     _runner_attention_family: str | None = None
+    # Set by families whose runner drives its own KV cache and therefore takes
+    # no shared attention backend. The text completes "<family> does not
+    # support request.sampling.attention_backend=<backend>: <reason>", so an
+    # explicit backend request is rejected instead of silently ignored.
+    _native_runner_reason: str | None = None
+
+    def __init__(self, model: Any) -> None:
+        self.model = model
 
     @property
     def layout(self) -> ARRequestLayout:
@@ -77,40 +84,30 @@ class ARChunkExecutorBase(
 
         return build_engine_plan(request)
 
-    def forward_plan(
-        self,
-        request: GenerationRequest,
-        sample_rows: Sequence[GenerationSampleRow],
-        engine_plan: Any,
-    ) -> GenerationOutput:
-        """Full-request path: the production chunk path plus the gatherer.
-
-        Runs every planned chunk through ``forward_chunk_plan`` (with the same
-        OOM-split retry the diffusion base uses) and assembles the output with
-        the family chunk gatherer — the exact objects the per-chunk Ray
-        dispatch produces and gathers, so this path cannot drift from
-        production the way the old hand-rolled full-batch implementations did.
-        """
-        from vrl.generation.execution.chunks import run_sample_chunks_with_oom_retry
-
-        chunks = run_sample_chunks_with_oom_retry(
-            engine_plan.chunks,
-            lambda chunk: self.forward_chunk_plan(request, chunk),
-        )
-        return self.gather_chunks(request, list(sample_rows), chunks)
-
     def _ar_runner(self, request: GenerationRequest) -> Any:
         """Build the family AR runner with the attention backend wired."""
+
+        if self._runner_cls is None:
+            raise RuntimeError(f"{type(self).__name__} must declare _runner_cls")
+        sampling = request.sampling
+        if self._native_runner_reason is not None:
+            backend = sampling.get("attention_backend")
+            if backend is not None:
+                raise ValueError(
+                    f"{self.family} does not support request.sampling."
+                    f"attention_backend={backend!r}: {self._native_runner_reason}",
+                )
+            return self._runner_cls(self.model)
+
         from vrl.nn.modules.ar_attention_backends import (
             attention_backend_name,
             resolve_attention_backend,
         )
 
-        if self._runner_cls is None or self._runner_attention_family is None:
+        if self._runner_attention_family is None:
             raise RuntimeError(
-                f"{type(self).__name__} must declare _runner_cls and _runner_attention_family",
+                f"{type(self).__name__} must declare _runner_attention_family",
             )
-        sampling = request.sampling
         return self._runner_cls(
             self.model,
             attention_backend=resolve_attention_backend(
@@ -297,16 +294,8 @@ class ARDiscreteChunkExecutorBase(ARChunkExecutorBase):
             uncond_input_ids=inputs.uncond_input_ids,
             uncond_attention_mask=inputs.uncond_attention_mask,
             context=dict(inputs.context),
-            peak_memory_mb=self.layout.peak_memory_mb(),
+            peak_memory_mb=cuda_peak_allocated_mb(),
         )
-
-    def gather_chunks(
-        self,
-        request: GenerationRequest,
-        sample_rows: Sequence[GenerationSampleRow],
-        chunks: Sequence[ARDiscreteChunkResult],
-    ) -> GenerationOutput:
-        return ARDiscreteChunkGatherer().gather_chunks(request, sample_rows, chunks)
 
 
 @dataclass(frozen=True, slots=True)

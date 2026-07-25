@@ -19,13 +19,6 @@ from vrl.models.interfaces.replay import RuntimeModel
 TORCH_COMPILE_MODEL_KEY = "torch_compile"
 PipelineOffloadMode = Literal["none", "model", "sequential"]
 
-# The trainer and Ray rollout worker load different runtime surfaces: rollout
-# workers own full generation state for sampling/decoding; trainers own only
-# the modules needed to replay recorded trajectory actions. The one fact the
-# runtime actually reads is whether a bundle owns full generation modules,
-# consumed by the colocated-RAM guard (``validate_colocated_replay_memory``)
-# to size host memory.
-LOADS_FULL_GENERATION_MODULES_KEY = "loads_full_generation_modules"
 # Internal module attribute carrying the non-derivable part of checkpoint
 # ownership. The complete set is derived from this plus trainable parameters.
 _CHECKPOINT_OWNED_STATE_NAMES_ATTR = "_vrl_checkpoint_owned_state_names"
@@ -97,27 +90,6 @@ def checkpoint_owned_state_names(module: Any) -> frozenset[str]:
     if unknown:
         raise ValueError(f"registered checkpoint-owned state no longer exists: {unknown}")
     return trainable | registered
-
-
-def full_generation_bundle_metadata() -> dict[str, Any]:
-    """Return metadata for a runtime bundle that owns full generation modules."""
-
-    return {LOADS_FULL_GENERATION_MODULES_KEY: True}
-
-
-def minimal_replay_bundle_metadata() -> dict[str, Any]:
-    """Return metadata for a trainer bundle that owns only replay modules."""
-
-    return {LOADS_FULL_GENERATION_MODULES_KEY: False}
-
-
-def bundle_loads_full_generation_modules(bundle: Any) -> bool:
-    """Return whether a runtime bundle declares full generation module ownership."""
-
-    metadata = getattr(bundle, "metadata", {}) or {}
-    if not isinstance(metadata, Mapping):
-        return False
-    return bool(metadata.get(LOADS_FULL_GENERATION_MODULES_KEY, False))
 
 
 @dataclass(frozen=True, slots=True)
@@ -317,6 +289,30 @@ class ModelBuild:
         """The whole ``model.memory`` block (consumer extracts its sub-block)."""
         return (self.model_config or {}).get("memory")
 
+    @property
+    def revision_kwargs(self) -> dict[str, str]:
+        """The immutable model snapshot argument for every upstream loader."""
+        return {"revision": str(self.revision)} if self.revision else {}
+
+    @property
+    def pretrained_kwargs(self) -> dict[str, Any]:
+        """Repository-wide options shared by full and component loaders."""
+        kwargs: dict[str, Any] = self.revision_kwargs
+        model_config = self.model_config or {}
+        if "local_files_only" in model_config:
+            kwargs["local_files_only"] = bool(model_config["local_files_only"])
+        return kwargs
+
+    def config_revision_kwargs(self, field: str) -> dict[str, str]:
+        """An optional revision kwarg owned by one model-config repository.
+
+        ``revision`` above pins the model repository itself; families that pull
+        a tokenizer or encoder from a *separate* repository record that repo's
+        snapshot under its own ``model_config`` key, named by ``field``.
+        """
+        revision = (self.model_config or {}).get(field)
+        return {"revision": str(revision)} if revision else {}
+
 
 @dataclass
 class RuntimeBundle:
@@ -343,15 +339,19 @@ class RuntimeBundle:
     the complete role on ``model`` for replay algorithms that call the
     transformer outside the family ``forward_step`` wrapper.
 
-    ``metadata`` may include generic replay/runtime flags used by shared
-    trainer infrastructure. Build these through this module's
-    ``full_generation_bundle_metadata`` / ``minimal_replay_bundle_metadata``
-    so family runtimes share one contract:
+    ``loads_full_generation_modules`` is true when the bundle owns
+    generation-only modules such as prompt encoders, VAE/VQ decoders, or a full
+    pipeline object. Rollout workers own that full generation state for
+    sampling/decoding; trainers own only the modules needed to replay recorded
+    trajectory actions. Consumed by the colocated-RAM guard in
+    ``RayGenerationConfig.validate_driver_state`` to size host memory.
 
-    - ``loads_full_generation_modules``: true when the bundle owns
-      generation-only modules such as prompt encoders, VAE/VQ decoders, or a
-      full pipeline object. Consumed by the colocated-RAM guard
-      (``validate_colocated_replay_memory``).
+    ``adapter_roots`` maps checkpoint root name to the module holding that
+    root's PEFT adapter, which is not always the root itself (token families
+    register the wrapper but attach LoRA to ``language_model`` inside it).
+    Snapshotted after the family attaches LoRA so ``build_adapter_exports`` can
+    publish artifacts without reaching past the narrow ``RuntimeModel``
+    contract. Empty for a family that owns no exportable adapter.
     """
 
     model: RuntimeModel
@@ -359,7 +359,8 @@ class RuntimeBundle:
     scheduler: Any
     raw_handle: Any
     precision: RolePrecision
-    metadata: dict[str, Any] = field(default_factory=dict)
+    loads_full_generation_modules: bool
+    adapter_roots: dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         if not isinstance(self.precision, RolePrecision):

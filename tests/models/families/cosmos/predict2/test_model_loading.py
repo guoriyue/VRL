@@ -27,10 +27,12 @@ from __future__ import annotations
 import importlib.machinery
 import sys
 import types
-from types import SimpleNamespace
 from typing import Any
 
 import torch
+
+from vrl.config.precision import RolePrecision
+from vrl.models.interfaces.runtime import ModelBuild
 
 
 class _FakeModule:
@@ -118,10 +120,13 @@ def test_cosmos_predict2_from_build_swaps_safety_checker_and_re_enables_grad(
         staticmethod(fake_from_pretrained),
     )
 
-    build = SimpleNamespace(
+    build = ModelBuild(
         model_name_or_path="nvidia/Cosmos-Predict2-2B-Video2World",
-        parameter_dtype=torch.bfloat16,
+        revision=None,
         device="cuda:0",
+        parameter_dtype=torch.bfloat16,
+        family="cosmos-predict2",
+        precision=RolePrecision("bf16", "tf32"),
     )
 
     # The wrapper's contract is to leave training code with autograd enabled

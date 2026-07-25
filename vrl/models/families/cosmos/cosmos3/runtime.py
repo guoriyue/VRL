@@ -59,10 +59,9 @@ class Cosmos3ChunkExecutor(DiffusionChunkExecutorBase):
     default_num_frames: int = 93
     default_fps: int | None = 24
 
-    def __init__(self, model: Any, *, samples_per_chunk: int = 1) -> None:
+    def __init__(self, model: Any, *, samples_per_chunk: int | None = None) -> None:
         del samples_per_chunk  # cosmos3 is strictly batch=1 (pipeline constraint)
-        self.model = model
-        self.default_samples_per_chunk = 1
+        super().__init__(model)
 
     def encode_prompt_for_chunk(
         self,

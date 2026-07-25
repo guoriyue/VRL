@@ -12,12 +12,7 @@ descriptor import strings lazily to avoid a registry import cycle.
 
 from __future__ import annotations
 
-from vrl.models.interfaces.runtime import (
-    ModelBuild,
-    RuntimeBundle,
-    full_generation_bundle_metadata,
-    minimal_replay_bundle_metadata,
-)
+from vrl.models.interfaces.runtime import ModelBuild, RuntimeBundle
 from vrl.models.loader import (
     apply_rollout_quantization,
     load_diffusers_scheduler,
@@ -34,12 +29,10 @@ from vrl.utils.logging import init_logger
 logger = init_logger(__name__)
 
 
-
 def build_denoise_runtime_bundle(
     build: ModelBuild,
     *,
     model_cls: type,
-    memory_owner: str,
 ) -> RuntimeBundle:
     """Load one diffusion rollout model and apply the shared runtime policy."""
 
@@ -108,7 +101,7 @@ def build_denoise_runtime_bundle(
     apply_generation_memory_policy(
         model,
         memory_config=build.memory,
-        owner=memory_owner,
+        owner=f"{build.family} model",
     )
     apply_float32_precision(build.precision.float32_precision)
     return RuntimeBundle(
@@ -117,7 +110,8 @@ def build_denoise_runtime_bundle(
         scheduler=model.scheduler,
         raw_handle=model.raw_handle,
         precision=build.precision,
-        metadata=full_generation_bundle_metadata(),
+        loads_full_generation_modules=True,
+        adapter_roots=model.adapter_roots,
     )
 
 
@@ -125,7 +119,7 @@ def assemble_replay_bundle(
     model: object,
     build: ModelBuild,
 ) -> RuntimeBundle:
-    """Apply shared training knobs and assemble minimal replay metadata."""
+    """Apply shared training knobs and assemble a minimal replay bundle."""
 
     build.require_replay()
     if build.use_lora:
@@ -144,7 +138,8 @@ def assemble_replay_bundle(
         scheduler=model.scheduler,
         raw_handle=None,
         precision=build.precision,
-        metadata=minimal_replay_bundle_metadata(),
+        loads_full_generation_modules=False,
+        adapter_roots=model.adapter_roots,
     )
 
 
@@ -186,7 +181,6 @@ def build_family_runtime_bundle(
     return build_denoise_runtime_bundle(
         build,
         model_cls=import_from_path(recipe.model_cls),
-        memory_owner=f"{entry.family} model",
     )
 
 

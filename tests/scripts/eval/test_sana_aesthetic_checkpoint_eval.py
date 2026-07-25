@@ -13,6 +13,7 @@ from PIL import Image
 from vrl.config.loading import load_config
 from vrl.config.precision import RolePrecision
 from vrl.models import checkpoint_identity
+from vrl.models.interfaces.runtime import ModelBuild
 from vrl.scripts.eval import sana_aesthetic_checkpoint_eval as checkpoint_eval
 from vrl.scripts.eval import sana_inference
 
@@ -796,7 +797,7 @@ def test_official_generation_keeps_two_images_in_one_fixed_seed_stream() -> None
         pytest.param(None, None, id="absent"),
     ],
 )
-def test_official_scheduler_uses_model_loader_revision_projection(
+def test_official_scheduler_uses_build_revision_projection(
     monkeypatch,
     revision,
     expected_revision,
@@ -821,9 +822,13 @@ def test_official_scheduler_uses_model_loader_revision_projection(
         "diffusers",
         SimpleNamespace(DPMSolverMultistepScheduler=DPMSolverMultistepScheduler),
     )
-    build = SimpleNamespace(
+    build = ModelBuild(
         model_name_or_path="test/sana",
         revision=revision,
+        device="cpu",
+        parameter_dtype=torch.float16,
+        family="sana",
+        precision=SANA_PRECISION,
     )
 
     scheduler = sana_inference.load_official_scheduler(build)

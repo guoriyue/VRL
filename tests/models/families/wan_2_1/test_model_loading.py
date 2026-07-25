@@ -30,7 +30,8 @@ from typing import Any
 import pytest
 import torch
 
-from vrl.models.interfaces.runtime import RolloutBuildOptions
+from vrl.config.precision import RolePrecision
+from vrl.models.interfaces.runtime import ModelBuild, RolloutBuildOptions
 
 
 def _rollout_build_options(offload_mode: str) -> RolloutBuildOptions:
@@ -91,6 +92,26 @@ def _canonical_model_config(**overrides: Any) -> dict[str, Any]:
         "trainable_transformers": ["transformer"],
         **overrides,
     }
+
+
+def _i2v_build(
+    *,
+    model_name_or_path: str = "Wan-AI/Wan2.1-I2V-14B-480P-Diffusers",
+    device: torch.device | None = None,
+    rollout: RolloutBuildOptions | None = None,
+    **model_config: Any,
+) -> ModelBuild:
+    """A Wan I2V build; keyword overrides ride the canonical ``model_config`` block."""
+    return ModelBuild(
+        model_name_or_path=model_name_or_path,
+        revision=None,
+        device=device if device is not None else torch.device("cuda:0"),
+        parameter_dtype=torch.bfloat16,
+        family="wan_2_1_i2v",
+        precision=RolePrecision("bf16", "tf32"),
+        model_config=_canonical_model_config(**model_config),
+        rollout=rollout,
+    )
 
 
 def _patch_from_pretrained(monkeypatch) -> tuple[_FakePipeline, list[dict[str, Any]]]:
@@ -175,11 +196,8 @@ def test_wan_i2v_from_build_sequential_cpu_offload(monkeypatch) -> None:
 
     pipeline, calls = _patch_from_pretrained(monkeypatch)
 
-    build = SimpleNamespace(
-        model_name_or_path="Wan-AI/Wan2.1-I2V-14B-480P-Diffusers",
-        parameter_dtype=torch.bfloat16,
+    build = _i2v_build(
         device=torch.device("cuda:3"),
-        model_config=_canonical_model_config(),
         rollout=_rollout_build_options("sequential"),
     )
 
@@ -204,11 +222,8 @@ def test_wan_i2v_from_build_model_cpu_offload(monkeypatch) -> None:
 
     pipeline, calls = _patch_from_pretrained(monkeypatch)
 
-    build = SimpleNamespace(
-        model_name_or_path="Wan-AI/Wan2.1-I2V-14B-480P-Diffusers",
-        parameter_dtype=torch.bfloat16,
+    build = _i2v_build(
         device=torch.device("cuda:2"),
-        model_config=_canonical_model_config(),
         rollout=_rollout_build_options("model"),
     )
 
@@ -234,13 +249,9 @@ def test_wan_i2v_sequential_offload_attaches_lora_without_full_gpu_move(monkeypa
 
     pipeline, _ = _patch_from_pretrained(monkeypatch)
     monkeypatch.setattr(peft, "get_peft_model", lambda transformer, _cfg: transformer)
-    build = SimpleNamespace(
-        model_name_or_path="Wan-AI/Wan2.1-I2V-14B-480P-Diffusers",
-        parameter_dtype=torch.bfloat16,
-        device=torch.device("cuda:0"),
-        model_config=_canonical_model_config(),
+    build = _i2v_build(
         rollout=_rollout_build_options("sequential"),
-        lora_path=None,
+        use_lora=True,
         lora={"rank": 2, "alpha": 2, "target_modules": ["to_q"]},
     )
 
@@ -601,12 +612,7 @@ def test_wan_i2v_from_build_no_offload_stages_frozen_modules(monkeypatch) -> Non
 
     pipeline, calls = _patch_from_pretrained(monkeypatch)
 
-    build = SimpleNamespace(
-        model_name_or_path="Wan-AI/Wan2.1-I2V-14B-480P-Diffusers",
-        parameter_dtype=torch.bfloat16,
-        device=torch.device("cuda:0"),
-        model_config=_canonical_model_config(),
-    )
+    build = _i2v_build()
 
     model = WanI2VDiffusersModel.from_build(build)
 
@@ -624,12 +630,7 @@ def test_wan_i2v_from_build_honors_local_files_only(monkeypatch) -> None:
     from vrl.models.families.wan_2_1.model import WanI2VDiffusersModel
 
     _, calls = _patch_from_pretrained(monkeypatch)
-    build = SimpleNamespace(
-        model_name_or_path="Wan-AI/Wan2.1-I2V-14B-480P-Diffusers",
-        parameter_dtype=torch.bfloat16,
-        device=torch.device("cuda:0"),
-        model_config=_canonical_model_config(local_files_only=True),
-    )
+    build = _i2v_build(local_files_only=True)
 
     WanI2VDiffusersModel.from_build(build)
 
@@ -642,12 +643,7 @@ def test_wan_i2v_from_build_rejects_legacy_offload_keys(monkeypatch) -> None:
 
     _patch_from_pretrained(monkeypatch)
 
-    build = SimpleNamespace(
-        model_name_or_path="Wan-AI/Wan2.1-I2V-14B-480P-Diffusers",
-        parameter_dtype=torch.bfloat16,
-        device=torch.device("cuda:0"),
-        model_config=_canonical_model_config(enable_model_cpu_offload=True),
-    )
+    build = _i2v_build(enable_model_cpu_offload=True)
 
     with pytest.raises(ValueError, match=r"model\.enable_model_cpu_offload"):
         WanI2VDiffusersModel.from_build(build)
@@ -661,14 +657,9 @@ def test_wan_i2v_from_build_accepts_dual_stage_pipeline(monkeypatch) -> None:
     pipeline.config = SimpleNamespace(boundary_ratio=0.5, expand_timesteps=False)
     pipeline.transformer_2 = _FakeModule()
 
-    build = SimpleNamespace(
-        model_name_or_path="Wan-AI/Wan2.1-I2V-14B-480P-Diffusers",
-        parameter_dtype=torch.bfloat16,
-        device=torch.device("cuda:0"),
-        model_config=_canonical_model_config(
-            boundary_ratio=0.5,
-            trainable_transformers=["transformer_2"],
-        ),
+    build = _i2v_build(
+        boundary_ratio=0.5,
+        trainable_transformers=["transformer_2"],
     )
 
     model = WanI2VDiffusersModel.from_build(build)
@@ -686,14 +677,10 @@ def test_wan_i2v_from_build_rejects_expand_timesteps_pipeline(monkeypatch) -> No
     pipeline.config = SimpleNamespace(boundary_ratio=0.5, expand_timesteps=True)
     pipeline.transformer_2 = _FakeModule()
 
-    build = SimpleNamespace(
+    build = _i2v_build(
         model_name_or_path="Wan-AI/Wan2.2-I2V-5B-Diffusers",
-        parameter_dtype=torch.bfloat16,
-        device=torch.device("cuda:0"),
-        model_config=_canonical_model_config(
-            boundary_ratio=0.5,
-            trainable_transformers=["transformer_2"],
-        ),
+        boundary_ratio=0.5,
+        trainable_transformers=["transformer_2"],
     )
 
     with pytest.raises(NotImplementedError, match="expand_timesteps"):
@@ -847,14 +834,10 @@ def test_wan_rollout_rejects_source_change_after_build_normalization(
     pipeline, _ = _patch_from_pretrained(monkeypatch)
     pipeline.config = SimpleNamespace(boundary_ratio=0.5, expand_timesteps=False)
     pipeline.transformer_2 = _FakeModule()
-    build = SimpleNamespace(
+    build = _i2v_build(
         model_name_or_path="Wan-AI/Wan2.2-I2V-A14B-Diffusers",
-        parameter_dtype=torch.bfloat16,
-        device=torch.device("cuda:0"),
-        model_config=_canonical_model_config(
-            boundary_ratio=0.9,
-            trainable_transformers=["transformer_2"],
-        ),
+        boundary_ratio=0.9,
+        trainable_transformers=["transformer_2"],
     )
 
     with pytest.raises(

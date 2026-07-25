@@ -46,8 +46,6 @@ def build_echo_replay_runtime_bundle(build: ModelBuild) -> RuntimeBundle:
     logger.info("Building echo replay runtime bundle from %s", build.model_name_or_path)
     from ltx_distillation.models.ltx_wrapper import create_ltx2_wrapper
 
-    from vrl.models.loader import model_config_revision_kwargs, model_revision_kwargs
-
     dtype = build.parameter_dtype
     device = torch.device(build.device) if build.device is not None else torch.device("cpu")
     gemma_path = (build.model_config or {}).get("gemma_path")
@@ -58,11 +56,11 @@ def build_echo_replay_runtime_bundle(build: ModelBuild) -> RuntimeBundle:
     echo = create_ltx2_wrapper(
         checkpoint_path=_resolve_echo_checkpoint(
             build.model_name_or_path,
-            **model_revision_kwargs(build),
+            **build.revision_kwargs,
         ),
         gemma_path=_resolve_gemma_dir(
             str(gemma_path),
-            **model_config_revision_kwargs(build, "gemma_revision"),
+            **build.config_revision_kwargs("gemma_revision"),
         ),
         device=device,
         dtype=dtype,
@@ -102,15 +100,6 @@ class EchoChunkExecutor(DiffusionChunkExecutorBase):
     # fixed when the Echo wrapper is constructed and checked below.
     default_num_frames: int = 25
     default_fps: int | None = 24
-
-    def __init__(
-        self,
-        model: Any,
-        *,
-        samples_per_chunk: int = 1,
-    ) -> None:
-        self.model = model
-        self.default_samples_per_chunk = max(1, int(samples_per_chunk))
 
     def parse_sampling_params(self, request: GenerationRequest) -> DiffusionSamplingParams:
         """Require requests to use the wrapper's fixed latent-grid dimensions."""

@@ -237,15 +237,13 @@ class EchoModel(LoraModelMixin, DiffusionModelBase):
             raise ValueError(
                 "Echo requires model.gemma_path (a Gemma-3-12B HF repo id or local dir)",
             )
-        from vrl.models.loader import model_config_revision_kwargs, model_revision_kwargs
-
         checkpoint = _resolve_echo_checkpoint(
             build.model_name_or_path,
-            **model_revision_kwargs(build),
+            **build.revision_kwargs,
         )
         gemma_path = _resolve_gemma_dir(
             gemma_ref,
-            **model_config_revision_kwargs(build, "gemma_revision"),
+            **build.config_revision_kwargs("gemma_revision"),
         )
 
         text_encoder = create_text_encoder_wrapper(

@@ -15,12 +15,7 @@ from __future__ import annotations
 from typing import Any
 
 from vrl.models.dtypes import dtype_to_wire_name
-from vrl.models.interfaces.runtime import (
-    ModelBuild,
-    RuntimeBundle,
-    full_generation_bundle_metadata,
-    minimal_replay_bundle_metadata,
-)
+from vrl.models.interfaces.runtime import ModelBuild, RuntimeBundle
 from vrl.models.precision import apply_float32_precision
 
 
@@ -117,9 +112,8 @@ def build_token_family_bundle(
         scheduler=None,
         raw_handle=None if replay else model,
         precision=build.precision,
-        metadata=(
-            minimal_replay_bundle_metadata() if replay else full_generation_bundle_metadata()
-        ),
+        loads_full_generation_modules=not replay,
+        adapter_roots=model.adapter_roots,
     )
 
 

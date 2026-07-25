@@ -184,17 +184,6 @@ class ARRequestLayout:
         b_ids, b_mask = right_pad(b_ids, b_mask, target_length=target_length, pad_id=pad_id)
         return a_ids, a_mask, b_ids, b_mask
 
-    def peak_memory_mb(self) -> float | None:
-        """Read CUDA peak allocated memory in MiB, when available."""
-
-        if not torch.cuda.is_available():
-            return None
-        try:
-            peak_bytes = torch.cuda.max_memory_allocated()
-        except Exception:
-            return None
-        return peak_bytes / (1024 * 1024)
-
     @staticmethod
     def _sampling_int(
         sampling: dict[str, Any],

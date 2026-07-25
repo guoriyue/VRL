@@ -9,7 +9,6 @@ from dataclasses import dataclass
 from typing import Any
 
 from vrl.generation.execution.types import ChunkPlacementStrategy
-from vrl.models.interfaces.runtime import bundle_loads_full_generation_modules
 from vrl.ray.resources import (
     ResolvedDistributedResources,
 )
@@ -115,89 +114,76 @@ class RayGenerationConfig:
     ) -> RayGenerationConfig:
         """Validate driver CUDA ownership before Ray rollout actors are launched."""
 
-        driver_cuda_devices = _driver_cuda_devices(driver_bundle)
-        _validate_driver_cuda_ownership(self, driver_cuda_devices)
-        validate_colocated_replay_memory(
-            bundle=driver_bundle,
-            rollout_config=self,
-        )
+        self._validate_driver_cuda_ownership(_driver_cuda_devices(driver_bundle))
+        self._validate_colocated_replay_memory(driver_bundle)
         return self
 
+    def _validate_driver_cuda_ownership(self, driver_cuda_devices: set[int]) -> None:
+        if not driver_cuda_devices:
+            return
 
-def validate_colocated_replay_memory(
-    *,
-    bundle: Any,
-    rollout_config: RayGenerationConfig,
-) -> None:
-    """Warn or fail when trainer and Ray worker both own full generation state.
+        resources = self.resources
+        if resources.cross_node:
+            # Cross-node: the driver's head-local cuda ordinal and a remote rollout
+            # GPU live in different ordinal spaces, so a set-intersection overlap
+            # check is meaningless. Node-level isolation is enforced by the launcher
+            # preflight (head --num-gpus=0) and validate_actor_gpu_ids node check.
+            return
+        overlap = driver_cuda_devices & set(resources.rollout_devices)
+        if not overlap:
+            return
 
-    This guard does not implement a family-specific minimal replay loader. It
-    makes the risk explicit and provides a strict mode for CI or future recipes
-    once those loaders exist.
-    """
+        overlap_list = sorted(overlap)
+        rollout_devices = list(resources.rollout_devices)
+        if not resources.colocated:
+            raise ValueError(
+                f"Trainer device cuda:{overlap_list[0]} overlaps rollout devices "
+                f"{rollout_devices}, but resources.allow_overlap=false. "
+                "Use CUDA_VISIBLE_DEVICES=0,1,2,3 with auto split for throughput, or set "
+                "distributed.resources.rollout.gpu_pool=trainer for time-shared colocation.",
+            )
 
-    if not (
-        rollout_config.resources.colocated
-        and rollout_config.resources.rollout_num_workers >= 1
-        and rollout_config.resources.rollout_gpus_per_worker > 0
-    ):
-        return
-    if not bundle_loads_full_generation_modules(bundle):
-        return
+        # Keep a runtime-boundary backstop in addition to resource resolution: an
+        # overlapping driver/rollout GPU is safe only when phases hand it over.
+        if resources.lifecycle.rollout.mode != "on_demand":
+            raise ValueError(
+                f"Trainer device cuda:{overlap_list[0]} overlaps rollout devices "
+                f"{rollout_devices}, but the resolved rollout lifecycle is not on_demand. "
+                "Shared trainer/rollout GPUs must hand ownership over between phases.",
+            )
 
-    message = (
-        "trainer bundle declares loads_full_generation_modules=true while "
-        "colocated Ray rollout is enabled; host RAM can contain the trainer "
-        "generation model plus a rollout worker generation model. Implement a "
-        "family-specific minimal replay loader before enabling strict guard."
-    )
-    strict = os.environ.get("VRL_STRICT_REPLAY_MEMORY_GUARD", "").strip().lower() in {
-        "1",
-        "true",
-        "yes",
-        "on",
-    }
-    if strict:
-        raise ValueError(message)
-    logger.warning(message)
+    def _validate_colocated_replay_memory(self, bundle: Any) -> None:
+        """Warn or fail when trainer and Ray worker both own full generation state.
 
+        This guard does not implement a family-specific minimal replay loader. It
+        makes the risk explicit and provides a strict mode for CI or future recipes
+        once those loaders exist.
+        """
 
-def _validate_driver_cuda_ownership(
-    config: RayGenerationConfig,
-    driver_cuda_devices: set[int],
-) -> None:
-    if not driver_cuda_devices:
-        return
+        if not (
+            self.resources.colocated
+            and self.resources.rollout_num_workers >= 1
+            and self.resources.rollout_gpus_per_worker > 0
+        ):
+            return
+        if not bundle.loads_full_generation_modules:
+            return
 
-    resources = config.resources
-    if resources.cross_node:
-        # Cross-node: the driver's head-local cuda ordinal and a remote rollout
-        # GPU live in different ordinal spaces, so a set-intersection overlap
-        # check is meaningless. Node-level isolation is enforced by the launcher
-        # preflight (head --num-gpus=0) and validate_actor_gpu_ids node check.
-        return
-    overlap = driver_cuda_devices & set(resources.rollout_devices)
-    if not overlap:
-        return
-
-    overlap_list = sorted(overlap)
-    rollout_devices = list(resources.rollout_devices)
-    if not resources.colocated:
-        raise ValueError(
-            f"Trainer device cuda:{overlap_list[0]} overlaps rollout devices "
-            f"{rollout_devices}, but resources.allow_overlap=false. "
-            "Use CUDA_VISIBLE_DEVICES=0,1,2,3 with auto split for throughput, or set "
-            "distributed.resources.rollout.gpu_pool=trainer for time-shared colocation.",
+        message = (
+            "trainer bundle declares loads_full_generation_modules=true while "
+            "colocated Ray rollout is enabled; host RAM can contain the trainer "
+            "generation model plus a rollout worker generation model. Implement a "
+            "family-specific minimal replay loader before enabling strict guard."
         )
-
-    # Keep a runtime-boundary backstop in addition to resource resolution: an
-    # overlapping driver/rollout GPU is safe only when phases hand it over.
-    if resources.lifecycle.rollout.mode != "on_demand":
-        raise ValueError(
-            f"Trainer device cuda:{overlap_list[0]} overlaps rollout devices "
-            f"{rollout_devices}, but the resolved rollout lifecycle is not on_demand. "
-            "Shared trainer/rollout GPUs must hand ownership over between phases.",
-        )
+        strict = os.environ.get("VRL_STRICT_REPLAY_MEMORY_GUARD", "").strip().lower() in {
+            "1",
+            "true",
+            "yes",
+            "on",
+        }
+        if strict:
+            raise ValueError(message)
+        logger.warning(message)
 
 
 def _driver_cuda_devices(driver_bundle: Any) -> set[int]:
@@ -284,5 +270,4 @@ def _cuda_device_index(device: Any) -> int | None:
 __all__ = [
     "RayGenerationConfig",
     "RolloutWorkerConfig",
-    "validate_colocated_replay_memory",
 ]

@@ -20,8 +20,7 @@ from vrl.generation.execution.types import (
     PipelinedRequestOutOfMemory,
     StaleSlotDiscard,
 )
-from vrl.generation.ray.executor import RayGenerationExecutor
-from vrl.generation.ray.utils import is_oom_error
+from vrl.generation.ray.executor import RayGenerationExecutor, _is_oom_error
 from vrl.generation.types import GenerationOutput, GenerationRequest
 
 _OOM_MESSAGE = "CUDA out of memory. Tried to allocate 4.00 GiB"
@@ -305,9 +304,9 @@ def test_stale_slot_discard_is_not_runtime_error() -> None:
 
 
 def test_is_oom_error_classifier() -> None:
-    assert is_oom_error(_OOM_MESSAGE)
-    assert is_oom_error("torch.OutOfMemoryError: HIP out of memory")
-    assert not is_oom_error("ValueError: shape mismatch")
+    assert _is_oom_error(_OOM_MESSAGE)
+    assert _is_oom_error("torch.OutOfMemoryError: HIP out of memory")
+    assert not _is_oom_error("ValueError: shape mismatch")
 
 
 @dataclass

@@ -128,7 +128,7 @@ class ModelSection(_ClosedModelSection):
             source="main",
         ),
     )
-    # Reader: vrl.models.loader.model_pretrained_kwargs. Long-run configs can
+    # Reader: ModelBuild.pretrained_kwargs. Long-run configs can
     # fail closed on a missing cached artifact instead of consulting the Hub.
     # Load-source knob only (same weights either way), so identity-excluded.
     local_files_only: bool = Field(

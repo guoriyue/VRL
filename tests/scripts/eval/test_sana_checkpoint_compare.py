@@ -12,6 +12,7 @@ from PIL import Image
 import vrl.families.registry as model_families
 from vrl.config.precision import RolePrecision
 from vrl.models import checkpoint_identity
+from vrl.models.interfaces.runtime import ModelBuild
 from vrl.scripts.eval import sana_checkpoint_compare as checkpoint_compare
 from vrl.scripts.eval import sana_inference
 
@@ -170,11 +171,14 @@ def test_run_generates_base_before_strict_restore_and_current(
         precision=SANA_PRECISION,
     )
     expected_bundle = bundle
-    build = SimpleNamespace(
+    build = ModelBuild(
         model_name_or_path="test/sana",
         revision=None,
-        model_config={},
+        device="cpu",
         parameter_dtype=torch.float16,
+        family="sana",
+        precision=SANA_PRECISION,
+        model_config={},
     )
     schedulers: list[DPMSolverMultistepScheduler] = []
 

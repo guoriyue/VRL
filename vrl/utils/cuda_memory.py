@@ -216,6 +216,43 @@ def release_cuda_memory(*, ipc_collect: bool = False) -> None:
         return
 
 
+def reset_cuda_peak() -> None:
+    """Reset the process CUDA peak counters at a phase boundary.
+
+    Pairs with :func:`cuda_peak_allocated_bytes`: resetting at each phase
+    boundary is what makes the readback phase-scoped instead of a
+    process-lifetime high-water mark.
+    """
+
+    try:
+        import torch
+
+        if torch.cuda.is_available():
+            torch.cuda.reset_peak_memory_stats()
+    except Exception:
+        return
+
+
+def cuda_peak_allocated_bytes() -> int | None:
+    """Peak CUDA bytes allocated since the last reset (None without CUDA)."""
+
+    try:
+        import torch
+
+        if not torch.cuda.is_available():
+            return None
+        return int(torch.cuda.max_memory_allocated())
+    except Exception:
+        return None
+
+
+def cuda_peak_allocated_mb() -> float | None:
+    """:func:`cuda_peak_allocated_bytes` in MiB, for debug metric payloads."""
+
+    peak_bytes = cuda_peak_allocated_bytes()
+    return None if peak_bytes is None else peak_bytes / (1024 * 1024)
+
+
 def gpu_used_bytes(device: str | None = None) -> int:
     """Driver-level physical bytes in use on a CUDA device (0 without CUDA).
 
@@ -272,9 +309,12 @@ def release_cuda_memory_for_parking(device: str | None = None) -> None:
 __all__ = [
     "CUDA_RUNTIME_RESIDUAL_BYTES_LIMIT",
     "CumemPool",
+    "cuda_peak_allocated_bytes",
+    "cuda_peak_allocated_mb",
     "empty_cuda_cache",
     "gpu_used_bytes",
     "is_cuda_out_of_memory",
     "release_cuda_memory",
     "release_cuda_memory_for_parking",
+    "reset_cuda_peak",
 ]
