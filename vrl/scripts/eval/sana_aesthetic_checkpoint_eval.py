@@ -15,7 +15,6 @@ from __future__ import annotations
 
 import argparse
 import csv
-import gc
 import hashlib
 import json
 import logging
@@ -35,6 +34,7 @@ from vrl.config.loading import load_config
 from vrl.config.precision import PrecisionPolicy, resolve_precision_policy
 from vrl.config.schema import RootConfig, parse_config
 from vrl.models import checkpoint_identity
+from vrl.rewards.inference import sha256_file
 from vrl.scripts.eval._device import resolve_eval_device
 from vrl.scripts.eval.sana_inference import (
     OFFICIAL_SAMPLING_PROTOCOL,
@@ -51,6 +51,7 @@ from vrl.trainers.checkpointing import (
     validate_checkpoint_meta_compatibility,
 )
 from vrl.trainers.data import load_prompt_manifest
+from vrl.utils.cuda_memory import release_cuda_memory
 
 logger = logging.getLogger(__name__)
 
@@ -1064,7 +1065,7 @@ def _generate_images(
                 del decoded
     finally:
         del model, bundle
-        _release_cuda()
+        release_cuda_memory()
     return generated
 
 
@@ -1126,7 +1127,7 @@ def _score_images(
                 row[f"r_{reward_model.name}"] = request.select_score(scores)
         finally:
             del model
-            _release_cuda()
+            release_cuda_memory()
     return rows
 
 
@@ -1416,23 +1417,9 @@ def _write_json_atomic(path: Path, value: dict[str, Any]) -> None:
         temporary.unlink(missing_ok=True)
 
 
-def _sha256(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as handle:
-        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
-
-
-def _release_cuda() -> None:
-    gc.collect()
-    try:
-        import torch
-
-        if torch.cuda.is_available():
-            torch.cuda.empty_cache()
-    except ImportError:
-        pass
+# Canonical per-file digest lives in vrl.rewards.inference; keep the private name
+# as an alias so the pinned test refs (checkpoint_eval._sha256) keep resolving.
+_sha256 = sha256_file
 
 
 if __name__ == "__main__":

@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import argparse
 import csv
-import gc
 import json
 import logging
 import re
@@ -19,14 +18,18 @@ from vrl.config.loading import load_config
 from vrl.config.precision import PrecisionPolicy, resolve_precision_policy
 from vrl.config.schema import RootConfig, parse_config
 from vrl.families.registry import get_model_family_entry
-from vrl.generation.types import VideoGenerationRequest
-from vrl.math.denoise.flow_matching import sde_step_with_logprob
 from vrl.models.checkpoint_identity import resolve_checkpoint_model_identity
 from vrl.models.dtypes import resolve_torch_dtype
 from vrl.rewards.inference import RewardInferenceArtifact, RewardInferenceRequest
 from vrl.rewards.models.kling_video_reward import KlingVideoRewardModel
 from vrl.scripts.eval._device import resolve_eval_device
+from vrl.scripts.eval._kling_reward import resolve_kling_worker_config
 from vrl.scripts.eval._sampling import resolve_eval_sampling
+from vrl.scripts.eval.denoise_video_generation import (
+    generate_one_video,
+    seed_for,
+    video_to_cthw,
+)
 from vrl.trainers.checkpointing import (
     load_training_checkpoint,
     read_checkpoint_meta,
@@ -34,6 +37,7 @@ from vrl.trainers.checkpointing import (
     validate_checkpoint_meta_compatibility,
 )
 from vrl.trainers.data import load_prompt_manifest
+from vrl.utils.cuda_memory import release_cuda_memory
 from vrl.utils.media import write_mp4
 
 logger = logging.getLogger(__name__)
@@ -311,7 +315,7 @@ def _generate_all(
     try:
         for target in checkpoint_targets:
             if bundle is None or not keep_model_between_checkpoints:
-                _release_cuda()
+                release_cuda_memory()
                 logger.info(
                     "Building Cosmos Predict2.5 generation bundle for %s",
                     target.label,
@@ -348,10 +352,10 @@ def _generate_all(
             if not keep_model_between_checkpoints:
                 del bundle
                 bundle = None
-                _release_cuda()
+                release_cuda_memory()
     finally:
         del bundle
-        _release_cuda()
+        release_cuda_memory()
     return generated
 
 
@@ -404,86 +408,12 @@ def _generate_checkpoint_videos(
     return videos
 
 
-def _seed_for(
-    *,
-    base_seed: int,
-    prompt_index: int,
-    sample_index: int,
-    samples_per_prompt: int,
-) -> int:
-    # Keep seeds identical across checkpoints so reward changes reflect weights,
-    # not a different latent-noise draw.
-    return int(base_seed) + int(prompt_index) * int(samples_per_prompt) + int(sample_index)
-
-
-def _generate_one_video(
-    model: Any,
-    *,
-    prompt: str,
-    seed: int,
-    sampling: dict[str, Any],
-) -> torch.Tensor:
-    encoded = model.encode_prompt(
-        prompt,
-        None,
-        max_sequence_length=int(sampling["max_sequence_length"]),
-        guidance_scale=float(sampling["guidance_scale"]),
-    )
-    request = VideoGenerationRequest(
-        prompt=prompt,
-        width=int(sampling["width"]),
-        height=int(sampling["height"]),
-        frame_count=int(sampling["num_frames"]),
-        num_steps=int(sampling["num_steps"]),
-        guidance_scale=float(sampling["guidance_scale"]),
-        seed=int(seed),
-        fps=int(sampling["fps"]),
-        extra={"max_sequence_length": int(sampling["max_sequence_length"])},
-    )
-    state = model.prepare_sampling(request, encoded)
-    generator = torch.Generator(device=state.latents.device)
-    generator.manual_seed(int(seed))
-    with torch.no_grad():
-        for step_idx, timestep in enumerate(state.timesteps):
-            step_output = model.forward_step(state, step_idx)
-            if str(sampling["denoise_mode"]) == "native":
-                state.latents = state.scheduler.step(
-                    step_output["noise_pred"].float(),
-                    timestep,
-                    state.latents.float(),
-                    return_dict=False,
-                )[0]
-            else:
-                state.latents = sde_step_with_logprob(
-                    state.scheduler,
-                    step_output["noise_pred"].float(),
-                    timestep.unsqueeze(0),
-                    state.latents.float(),
-                    generator=generator,
-                    deterministic=False,
-                    return_dt=False,
-                    noise_level=float(sampling["noise_level"]),
-                    sde_type=str(sampling["sde_type"]),
-                    step_index=step_idx,
-                ).prev_sample
-        decoded = model.decode_latents(state.latents)
-    return _video_to_cthw(decoded.detach().cpu())
-
-
-def _video_to_cthw(video: torch.Tensor) -> torch.Tensor:
-    """Normalize decoded video to channel-first [C,T,H,W]."""
-
-    if video.ndim == 5:
-        if video.shape[0] != 1:
-            raise ValueError(f"expected one decoded video, got shape={tuple(video.shape)}")
-        video = video[0]
-    if video.ndim != 4:
-        raise ValueError(f"expected decoded video rank 4/5, got shape={tuple(video.shape)}")
-    if video.shape[0] in {1, 3, 4}:
-        return video[:3]
-    if video.shape[1] in {1, 3, 4}:
-        return video[:, :3].permute(1, 0, 2, 3).contiguous()
-    raise ValueError(f"cannot infer channel axis for decoded video shape={tuple(video.shape)}")
+# Generation helpers live in the shared denoise_video_generation module (wan reuses
+# generate_one_video too). Keep the private names as aliases so the call sites above
+# and the pinned test refs (eval_script._seed_for / _video_to_cthw) keep resolving.
+_seed_for = seed_for
+_generate_one_video = generate_one_video
+_video_to_cthw = video_to_cthw
 
 
 def _score_generated_videos(
@@ -492,7 +422,7 @@ def _score_generated_videos(
     *,
     score_key: str,
 ) -> list[dict[str, Any]]:
-    worker_config = _reward_worker_config(cfg)
+    worker_config = resolve_kling_worker_config(cfg)
     logger.info("Loading Kling VideoReward for %d videos", len(generated))
     model = KlingVideoRewardModel(worker_config)
     request = RewardInferenceRequest(
@@ -538,21 +468,8 @@ def _score_generated_videos(
             )
     finally:
         del model
-        _release_cuda()
+        release_cuda_memory()
     return rows
-
-
-def _reward_worker_config(cfg: DictConfig) -> dict[str, Any]:
-    reward_cfg = OmegaConf.select(cfg, "reward.kwargs.kling_video_reward", default={})
-    reward_cfg = OmegaConf.to_container(reward_cfg, resolve=True) or {}
-    if not isinstance(reward_cfg, dict):
-        raise ValueError("reward.kwargs.kling_video_reward must be a mapping")
-    worker_config = dict(reward_cfg.get("worker_config") or {})
-    worker_config.setdefault(
-        "reward_model_name",
-        str(reward_cfg.get("reward_name") or "KlingTeam/VideoReward@main"),
-    )
-    return worker_config
 
 
 def _score_key(args: argparse.Namespace, cfg: DictConfig) -> str:
@@ -607,12 +524,6 @@ def _summarize_scores(rows: list[dict[str, Any]]) -> dict[str, Any]:
             "max": float(tensor.max().item()),
         }
     return summary
-
-
-def _release_cuda() -> None:
-    gc.collect()
-    if torch.cuda.is_available():
-        torch.cuda.empty_cache()
 
 
 if __name__ == "__main__":

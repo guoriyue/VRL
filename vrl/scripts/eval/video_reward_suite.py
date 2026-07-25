@@ -40,11 +40,11 @@ from pathlib import Path
 from typing import Any
 
 import torch
-from omegaconf import OmegaConf
 
 from vrl.config.loading import load_config
 from vrl.rewards.inference import RewardInferenceArtifact, RewardInferenceRequest
 from vrl.scripts.eval._device import resolve_eval_device
+from vrl.scripts.eval._kling_reward import resolve_kling_worker_config
 from vrl.trainers.data.prompts import load_prompt_manifest
 
 logger = logging.getLogger(__name__)
@@ -208,7 +208,7 @@ def _score_kling(
 ) -> dict[str, dict[str, float]]:
     from vrl.rewards.models.kling_video_reward import KlingVideoRewardModel
 
-    worker_config = _kling_worker_config(kling_config)
+    worker_config = resolve_kling_worker_config(load_config(kling_config))
     worker_config.setdefault("device", str(device))
     logger.info("loading Kling VideoReward for %d videos", len(videos))
     model = KlingVideoRewardModel(worker_config)
@@ -233,20 +233,6 @@ def _score_kling(
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
     return scores
-
-
-def _kling_worker_config(kling_config: str) -> dict[str, Any]:
-    cfg = load_config(kling_config)
-    reward_cfg = OmegaConf.select(cfg, "reward.kwargs.kling_video_reward", default={})
-    reward_cfg = OmegaConf.to_container(reward_cfg, resolve=False) or {}
-    if not isinstance(reward_cfg, dict):
-        raise ValueError(f"{kling_config} has no reward.kwargs.kling_video_reward mapping")
-    worker_config = dict(reward_cfg.get("worker_config") or {})
-    worker_config.setdefault(
-        "reward_model_name",
-        str(reward_cfg.get("reward_name") or "KlingTeam/VideoReward@main"),
-    )
-    return worker_config
 
 
 def _score_vbench(

@@ -9,12 +9,12 @@ The source Video2World manifests remain unchanged.
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
 from collections.abc import Iterable, Mapping
 from pathlib import Path
 from typing import Any
 
+from vrl.rewards.inference import sha256_file
 from vrl.scripts.data.common import emit, write_jsonl, write_report
 from vrl.trainers.data.artifacts import (
     SOURCE_BACKED_VIDEO_WORLD_METADATA_FIELDS,
@@ -66,14 +66,6 @@ def _read_jsonl(path: Path) -> list[dict[str, Any]]:
     return rows
 
 
-def _sha256(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as handle:
-        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
-
-
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--train-manifest", type=Path, required=True)
@@ -121,8 +113,8 @@ def main(argv: list[str] | None = None) -> None:
         "train_unique_prompts": len(train_prompts),
         "eval_unique_prompts": len(eval_prompts),
         "prompt_overlap": sorted(train_prompts & eval_prompts),
-        "train_sha256": _sha256(train_output),
-        "eval_sha256": _sha256(eval_output),
+        "train_sha256": sha256_file(train_output),
+        "eval_sha256": sha256_file(eval_output),
         "validation_summary": validation.to_dict(),
     }
     report_path = output_dir / f"{args.name}_report.json"

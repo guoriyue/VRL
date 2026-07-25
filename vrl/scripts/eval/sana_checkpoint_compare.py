@@ -15,7 +15,6 @@ from __future__ import annotations
 
 import argparse
 import gc
-import hashlib
 import json
 import logging
 import os
@@ -33,6 +32,7 @@ from vrl.models import checkpoint_identity
 from vrl.models.dtypes import dtype_to_wire_name
 from vrl.models.loader import model_revision_kwargs
 from vrl.models.precision import float32_precision_state, model_precision
+from vrl.rewards.inference import sha256_file
 from vrl.scripts.eval._device import resolve_eval_device
 from vrl.scripts.eval.sana_inference import (
     SCHEDULER_PROTOCOL,
@@ -395,12 +395,9 @@ def _artifact_record(path: Path, output_dir: Path) -> dict[str, Any]:
     }
 
 
-def _sha256(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as handle:
-        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
+# Canonical per-file digest lives in vrl.rewards.inference; keep the private name
+# as an alias so the pinned test ref (checkpoint_compare._sha256) keeps resolving.
+_sha256 = sha256_file
 
 
 def _write_json_atomic(path: Path, payload: dict[str, Any]) -> None:

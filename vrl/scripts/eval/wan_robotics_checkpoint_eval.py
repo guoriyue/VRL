@@ -48,6 +48,7 @@ from vrl.trainers.checkpointing import (
 )
 from vrl.trainers.data import PromptExample, load_prompt_manifest
 from vrl.utils.artifacts import resolve_artifact_path
+from vrl.utils.cuda_memory import release_cuda_memory
 from vrl.utils.media import write_mp4
 
 logger = logging.getLogger(__name__)
@@ -277,7 +278,7 @@ def generate_shard(args: argparse.Namespace) -> dict[str, Any]:
                 del video
     finally:
         del model, bundle
-        _release_cuda()
+        release_cuda_memory()
 
     provenance = {
         "schema": REPORT_SCHEMA,
@@ -371,7 +372,7 @@ def score_shards(args: argparse.Namespace) -> dict[str, Any]:
             )
     finally:
         del model
-        _release_cuda()
+        release_cuda_memory()
 
     summary = summarize_scores(scored)
     report = {
@@ -877,12 +878,6 @@ def _fsync_directory(path: Path) -> None:
         os.fsync(directory_fd)
     finally:
         os.close(directory_fd)
-
-
-def _release_cuda() -> None:
-    gc.collect()
-    if torch.cuda.is_available():
-        torch.cuda.empty_cache()
 
 
 if __name__ == "__main__":

@@ -88,7 +88,7 @@ def test_reward_worker_config_adds_reward_model_name_default() -> None:
         },
     )
 
-    worker_config = eval_script._reward_worker_config(cfg)
+    worker_config = eval_script.resolve_kling_worker_config(cfg)
 
     assert worker_config["local_files_only"] is True
     assert worker_config["reward_model_name"] == "KlingTeam/VideoReward@main"
@@ -307,7 +307,7 @@ def test_generate_all_releases_model_before_rebuilding(monkeypatch, tmp_path) ->
         bundle_ids.append(id(bundle))
         return bundle
 
-    monkeypatch.setattr(eval_script, "_release_cuda", gc.collect)
+    monkeypatch.setattr(eval_script, "release_cuda_memory", gc.collect)
     entry = SimpleNamespace(
         family="cosmos-predict2.5",
         build_rollout=fake_build_runtime_bundle,
