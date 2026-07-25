@@ -1,16 +1,25 @@
-"""Fail-closed PEFT LoRA warm-start loading.
+"""PEFT/LoRA adapter lifecycle: warm-start loading, peeling, and on/off switching.
 
-PEFT reconstructs an adapter from its saved ``adapter_config.json``.  Public
-wm-infra LoRA settings must therefore be checked before PEFT mutates the base
-model; otherwise the saved topology silently wins over the requested one.
+Loading is fail-closed. PEFT reconstructs an adapter from its saved
+``adapter_config.json``.  Public wm-infra LoRA settings must therefore be checked
+before PEFT mutates the base model; otherwise the saved topology silently wins
+over the requested one.
+
+The helpers below :func:`load_trainable_lora_adapter` act on an *already attached*
+adapter: :func:`peel_peft` reaches the wrapped inner module, while
+:func:`disable_adapter_on` / :func:`activate_adapter_on` switch the adapter for a
+reference or previous-policy forward pass.
 """
 
 from __future__ import annotations
 
+import contextlib
 import warnings
-from collections.abc import Iterable
+from collections.abc import Iterable, Iterator, Mapping
 from dataclasses import dataclass
 from typing import Any
+
+from vrl.models.weight_utils import unwrap_compile_and_ddp
 
 _MISSING = object()
 
@@ -207,4 +216,135 @@ def load_trainable_lora_adapter(
     )
 
 
-__all__ = ["load_trainable_lora_adapter"]
+def peel_peft(module: Any) -> Any:
+    """Peel a PEFT wrapper (``base_model.model``) off ``module``, else return it.
+
+    PEFT replaces the target ``nn.Linear`` modules in place, so the peeled inner
+    module still routes through the LoRA layers. Cannot key off
+    ``hasattr(module, "base_model")`` alone: HF ``PreTrainedModel`` exposes
+    ``base_model`` as a property returning ``self`` even without a PEFT wrap, and
+    that object has no ``.model`` attr. Only peel when the PEFT inner path exists.
+    """
+
+    inner = getattr(module, "base_model", None)
+    if inner is not None and hasattr(inner, "model") and inner.model is not module:
+        return inner.model
+    return module
+
+
+def disable_adapter_on(module: Any) -> contextlib.AbstractContextManager[None]:
+    """Context manager disabling ``module``'s LoRA/PEFT adapter, or a no-op when absent.
+
+    Used for the reference (adapter-off) forward pass. Switches on the module
+    behind any DDP/``torch.compile`` wrapper (same reason as
+    :func:`activate_adapter_on`) and covers both adapter-disable surfaces:
+
+    - PEFT ``PeftModel.disable_adapter()`` — already a context manager;
+    - diffusers ``PeftAdapterMixin`` ``disable_adapters()`` / ``enable_adapters()``.
+
+    The plural surface matters: ``WanTransformer3DModel`` / cosmos-predict2 carry
+    LoRA via ``PeftAdapterMixin.add_adapter`` and expose ONLY the plural pair, so
+    checking the singular method alone silently failed to disable the adapter —
+    the reference forward (e.g. the diffusion GRPO KL term in
+    ``evaluators/diffusion/sde_logprob.py``) then ran with the policy adapter
+    still on. A module exposing neither surface is genuinely adapter-less and
+    returns a null context.
+    """
+
+    host = unwrap_compile_and_ddp(module)
+
+    disable = getattr(host, "disable_adapter", None)
+    if callable(disable):
+        return disable()
+
+    disable_adapters = getattr(host, "disable_adapters", None)
+    enable_adapters = getattr(host, "enable_adapters", None)
+    if callable(disable_adapters) and callable(enable_adapters):
+        if not _has_plural_adapter_loaded(host):
+            return contextlib.nullcontext()
+
+        @contextlib.contextmanager
+        def _disabled() -> Iterator[None]:
+            disabled_before = _plural_adapter_disable_flags(host)
+            restore_enabled = (
+                any(not disabled for disabled in disabled_before) if disabled_before else True
+            )
+            disable_adapters()
+            try:
+                yield
+            finally:
+                if restore_enabled:
+                    enable_adapters()
+
+        return _disabled()
+
+    return contextlib.nullcontext()
+
+
+def _has_plural_adapter_loaded(module: Any) -> bool:
+    """Whether a diffusers-style plural adapter surface has real adapters loaded."""
+
+    loaded = getattr(module, "_hf_peft_config_loaded", None)
+    if loaded is False:
+        return False
+    peft_config = getattr(module, "peft_config", None)
+    return not (isinstance(peft_config, Mapping) and not peft_config)
+
+
+def _plural_adapter_disable_flags(module: Any) -> tuple[bool, ...]:
+    """Return per-layer disable flags for PEFT tuner layers when exposed."""
+
+    named_modules = getattr(module, "named_modules", None)
+    if not callable(named_modules):
+        return ()
+    flags: list[bool] = []
+    for _name, child in named_modules():
+        disabled = getattr(child, "disable_adapters", None)
+        if isinstance(disabled, bool):
+            flags.append(disabled)
+            continue
+        disabled = getattr(child, "_disable_adapters", None)
+        if isinstance(disabled, bool):
+            flags.append(disabled)
+    return tuple(flags)
+
+
+def activate_adapter_on(module: Any, name: str) -> contextlib.AbstractContextManager[None]:
+    """Context manager activating PEFT adapter ``name``, restoring ``"default"`` on exit.
+
+    The named-adapter sibling of :func:`disable_adapter_on`, used for the
+    previous-policy forward pass. The adapter is switched on the module *behind*
+    any DDP / ``torch.compile`` wrapper: those wrappers do not proxy PEFT's
+    ``set_adapter``, but they wrap the same underlying module, so the switch is
+    visible to the wrapped grad forward too. ``set_adapter`` exists on both the
+    PEFT ``PeftModel`` and the diffusers ``PeftAdapterMixin`` surfaces. Unlike
+    *disabling* — a sensible no-op on an adapter-less module — activating a
+    *named* adapter requires one, so a module without ``set_adapter`` raises
+    rather than silently forwarding the wrong weights.
+    """
+
+    host = unwrap_compile_and_ddp(module)
+    set_adapter = getattr(host, "set_adapter", None)
+    if not callable(set_adapter):
+        raise RuntimeError(
+            f"cannot activate adapter {name!r}: {type(host).__name__} has no "
+            "set_adapter(); attach a PEFT adapter before requesting it",
+        )
+
+    @contextlib.contextmanager
+    def _activated() -> Iterator[None]:
+        set_adapter(name)
+        try:
+            yield
+        finally:
+            set_adapter("default")
+
+    return _activated()
+
+
+__all__ = [
+    "activate_adapter_on",
+    "disable_adapter_on",
+    "load_trainable_lora_adapter",
+    "peel_peft",
+]
