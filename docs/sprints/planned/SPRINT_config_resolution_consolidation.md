@@ -2,10 +2,78 @@
 
 状态：**planned（2026-07-24）**。
 
-> **执行状态**：**P1 已落地**（`collector/core.py` 直接读 `self.config.trajectory_storage` /
-> `.kl_reward_coef`，修掉了 §2.2/§4 描述的会 `raise TypeError` 的 latent crash——该路径在
-> `score_rollouts` 中，CPU 快测未覆盖，实测确会崩；测试 fake 改用真 `RolloutCollectorConfig`）。
-> P2–P6 仍待做。
+> **执行状态（2026-07-24，全部 6 phase 已处理）**：
+> - **P1 已落地** `4e6b9a47`——`collector/core.py` 直接读 `self.config.trajectory_storage` /
+>   `.kl_reward_coef`，修掉 §2.2/§4 描述的会 `raise TypeError` 的 latent crash（`score_rollouts`
+>   路径，CPU 快测未覆盖，实测确会崩）。
+> - **P2 已落地** `c0a46347`——reward inference map 聚合到 `RewardRuntimeConfig.inference_configs`
+>   （build 时解析一次），`resolve_distributed_resources` 读它；raw-cfg walk 保留为隔离 resource
+>   测试的 fallback（该函数有 ~100 个调用点，全改签名不划算）。
+> - **P3 已调研→撤销**（0 编辑）——三处标的经查都是**合理边界**，合并会改变行为：AR
+>   paged/engine/scheduler 旋钮是执行策略而非 sampling 内容（有守卫测试
+>   `test_scheduler_policy_is_not_duplicated_in_sampling_params` 断言它们**不该**进
+>   `ARSamplingParams`）；`samples_per_chunk` 的另两处服务不同执行路径、默认值不同；
+>   `trajectory_storage` per-chunk 正是 §5 Non-Goal 保护的 wire/进程边界重解析（executor.py:338）。
+>   **本 sprint 对 P3 的乐观定性被证据推翻**——这里没有可清的散落。
+> - **P4 已落地** `45332ca9`——5 份 `_resolve_device` + 2 份 `_resolve_sampling` 聚合进
+>   `scripts/eval/_device.py` / `_sampling.py`（net −64 行）。
+> - **P5 已落地** `b3b7cb78`——`online.py` 深处的 `OmegaConf.select` raw 重读改为读 `BuiltConfigs`
+>   typed 字段（use_lora/kl_coef/sft/model.path），并修一处 `model.path` None→"None" 隐患。
+> - **P6 部分落地** `d9b08dd4`——`_resolve_rollout_num_workers` 折进 `_resolve_role_num_workers`；
+>   其余 5 项经查是**合理的 family-specific 代码**（echo 双入口、wan offload 被测试 pin 的 backstop、
+>   wan topology / vae_decode_memory 需碰 ModelBuild/wire 边界、单文件 checkpoint 三家 precedence 已
+>   分化），保留——印证 §5 Non-Goals。
+>
+> **总结**：真正可清的散落比 survey 初判的更少。P1 修了一个真 crash，P2/P4/P5 落了三处实在的聚合，
+> P6 收了一处重复；P3 与 P6 大部分标的经执行验证是**合理边界而非散落**——这更强地印证了 §0 的结论：
+> origin 近期已把绝大多数散落收干净，剩的多是各安其位的边界。
+>
+> **P7（追加，2026-07-24）：`ResolvedRun` 编排聚合座——已落地 `28dbacea`。** P1–P6 之后用户
+> 正确指出："random splitted" 的真身不在叶子 resolver（那些各有其主），而在**编排**：
+> `run_online_recipe` 内联手串 `build_configs → OnlineRunConfig → family entry →
+> resolve_distributed_resources → RayGenerationConfig.from_cfg → trainer_torch_device →
+> RolloutCollectorConfig.from_cfg`，`train_dpo` 再抄共享子集——组合逻辑本身没有 owner。
+> 新增 **`vrl/run.py`** 作为**唯一组合座**：
+> `ResolvedRun`（built + family + resources + device，全入口共享）、
+> `ResolvedOnlineRun`（+ run + generation + collector）、`resolve_run` / `resolve_online_run`
+> （逐字保序复刻原脚本语句与守卫，fail-fast 次序不变）。两个入口改为一次 resolve + 解包，
+> `OnlineRunConfig` 随迁。**新入口从此只调组合座、读字段，不再手串链条**——"config 如何变成
+> runtime 对象"有了一个可指的地方。这是 §3 SINGLE-BOUNDARY + RESOLVED-BUNDLE 模式补上的
+> 最后一层（入口层的 bundle），仍不是 god-object：它组合各层 owner，不吸收它们。
+
+> **P8（追加，2026-07-24）：模型物化座——已落地 `0d7993c0`（附带修真 bug `79aa62e9`）。** 第二条
+> 被手抄 12 处的链：`resolve_model_build → checkpoint identity → build_rollout/replay → identity
+> 复查`。`vrl/run.py` 增加 `ResolvedModel` + `resolve_model`（便宜投影段）与 `materialize`
+> （bundle + 复查段，`context` 保住各站点逐字报错措辞）；两段拆分是因为 online 的 checkpoint
+> preflight 恰在两段之间（lifecycle 测试 pin 次序）。已接座：online、wan DPO、两个 sana eval。
+> **有据保留 inline**：从不算 identity 的站点（perf/generation/denoise/anima/wan_i2v——接座会新增
+> 全树哈希与未 pin revision 的 raise 路径）、cosmos eval（`parameter_dtype_override` + pin 措辞）、
+> `launcher.py`/`worker.py`（run 层之下，import 成环；worker 复查是进程边界防御）。顺带发现并修复
+> wan_robotics eval 的潜伏 TypeError（传 raw DictConfig 且漏 `precision`，被测试 fake 遮蔽）。
+
+> **P9（追加，2026-07-24）：收座带来的删除红利——已落地 `c9dcfdb1`。** 接座之后按五形态复查，
+> 删掉三个因此丧失存在理由的扁平函数：`RolloutCollectorConfig.get()` 鸭子类型适配器（typed 分支
+> form-2 死亡，余下读者改直读 `request_sampling`，适配器及其自测一并删除）、
+> `resolve_family_model_build` 门面（生产调用者归零，TEST-ONLY=死，sana e2e 测试改走 entry 门面）、
+> anima `_resolve_device`（第 6 份逐字拷贝，此前因 torch-作参签名逃过 P4 去重）。有据保留：
+> `OnlineRunConfig.from_root`（独立被测的投影契约，keep-list）、`reward_inference_configs_from_cfg`
+> 的 fallback 分支（约 100 个 resource 测试依赖其从 cfg 派生 reward placement 的语义）。
+
+> **P10（追加，2026-07-25）：全仓 resolver/choreography 终扫——已落地 10 个批提交
+> `fec43e2b`..`89804e3c`。** 用户指出"类似问题全仓很多处"，遂做全仓审计（10 区域猎手 × 逐条
+> 对抗验证，本 session 全部已裁决的 keep 烘进规则防重报）：**55 条候选 → 40 条确认 / 15 条否决**
+> （否决的是被误当散落的合理边界：AR 旋钮分离、wire 边界、swap_linears 循环、cross-rank moment
+> reduction 等）。40 条中 **39 条执行、1 条按其自身判决 keep**（adjudicated eval 前缀）。分 10 批
+> 落地（config-families / ray-utils / generation-core / generation-bindings / models-core /
+> families-token / families-media / rollouts-trajectory / trainers-algos / rewards-scripts），
+> 每批独立 ruff + config lint + fast 子集验证。**净删约 1500+ 行**：删 test-only/零调用（precision
+> 模块、trainable-state facade、stack_trajectory_batches、ray facade、record_function 别名、
+> GenerationRuntimeCapabilities 4 死字段等）、抽共享 owner（peel_peft、ordered_covering_chunks、
+> resolve_image_token_replay、set_mu_shifted_timesteps、require_exact_int、resolve_kling_worker_config
+> 等约 15 个）、扁平化 `_TrajectoryBatchBuilder` 类、折叠 causvid bundle。附带发现并修 2 个潜伏
+> bug（causvid full-finetune replay 的 apply_full_finetune 签名 TypeError；wan_robotics 已在早前批修）。
+> **另发现一个预存的测试隔离 flake**（`test_chunk_memory_shadow::test_probe_fits_confirms_and_truncates_steps`
+> 在全量顺序里非确定性失败、单独/干净 HEAD 均正常）——非本轮引入，留作独立 issue。
 
 父 program：[Argument and state ownership](../done/SPRINT_argument_and_state_ownership_program.md)
 
