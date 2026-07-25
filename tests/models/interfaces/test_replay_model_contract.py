@@ -145,11 +145,14 @@ def test_single_segment_ar_replay_rejects_unsupported_protocol_values(
     family: str,
 ) -> None:
     replay_cls = registered_replay_model_classes()[family]
+    # ``__new__`` without ``__init__``: the guards must fire before any model
+    # state is touched, so an uninitialized instance is enough to prove it.
+    model = replay_cls.__new__(replay_cls)
     with pytest.raises(ValueError, match="timestep_idx must be 0"):
-        replay_cls.replay_forward(object(), object(), timestep_idx=1)
+        replay_cls.replay_forward(model, object(), timestep_idx=1)
     with pytest.raises(ValueError, match="supports segments"):
         replay_cls.replay_forward(
-            object(),
+            model,
             object(),
             timestep_idx=0,
             request=ReplayRequest(segment_names=("unsupported",)),

@@ -84,7 +84,7 @@ class LlamaGenARModelRunner(ARDiscreteTokenRunner):
         batch_size, caption_len = cond_attention_mask.shape
         device = self.model.device
         dtype = self.model.dtype
-        trunk = self.model._gpt_trunk()
+        trunk = self.model._lm_trunk()
         # Generation is inference-only; eval() keeps the vendored forward on
         # its deterministic branches (freqs_cis[input_pos], no logits slice).
         trunk.eval()
@@ -213,7 +213,7 @@ class LlamaGenARModelRunner(ARDiscreteTokenRunner):
         sampled: torch.Tensor,  # [B]
     ) -> dict[str, Any]:
         batch_size = sampled.shape[0]
-        trunk = self.model._gpt_trunk()
+        trunk = self.model._lm_trunk()
         # Combined [cond | uncond] batch: both branches consume the token
         # sampled from the guided distribution (upstream decode_one_token).
         x = sampled.view(-1, 1)

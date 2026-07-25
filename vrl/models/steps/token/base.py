@@ -1,16 +1,22 @@
-"""Shared base for autoregressive model wrappers on the RL path.
+"""Shared bases for autoregressive model wrappers on the RL path.
 
 AR families (janus_pro, nextstep_1, ...) each wrap a ``self.language_model``
-trunk and sync trainable weights under the ``model.`` prefix. Two behaviors were
-byte-identical across families — trainable-state load and adapter disable — so
-they live here once and a new AR family inherits them instead of copying. This
-is the AR analog of :class:`vrl.models.steps.denoise.base.DiffusionModelBase`, minus
-the diffusion-only pieces (versioned slots, denoise ``forward_step``): AR wrappers
+trunk and sync trainable weights under the ``model.`` prefix. The behaviors that
+were byte-identical across families live here once — trainable-state load,
+adapter disable, the decoder-trunk accessor, the loaded-checkpoint shape guard,
+and the single-segment ``image_tokens`` replay prologue — so a new AR family
+inherits them instead of copying. This is the AR analog of
+:class:`vrl.models.steps.denoise.base.DiffusionModelBase`, minus the
+diffusion-only pieces (versioned slots, denoise ``forward_step``): AR wrappers
 keep their own family-specific forward / replay / LoRA-attach math.
 
 Unlike ``DiffusionModelBase`` this base is intentionally NOT an ABC — AR families
 expose different rollout/replay surfaces, so there is no single abstract contract
 to enforce here beyond ``nn.Module``.
+
+:class:`ARReplayCore` is the trainer-side counterpart: the minimal module set a
+family needs to recompute log-probs, plus the strict checkpoint load that every
+family's replay path performs.
 """
 
 from __future__ import annotations
@@ -18,7 +24,7 @@ from __future__ import annotations
 import contextlib
 from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, ClassVar, TypeVar
 
 import torch
 import torch.nn as nn
@@ -27,34 +33,69 @@ from vrl.generation.steps.token import (
     TokenStepBatch,
     TokenStepOutput,
 )
-from vrl.models.utils import disable_adapter_on, load_weights_into
+from vrl.models.interfaces.replay import (
+    ReplayRequest,
+    require_replay_segments,
+    require_zero_replay_timestep,
+)
+from vrl.models.peft_adapter import disable_adapter_on, peel_peft
+from vrl.models.weight_utils import load_weights_into
 
-
-def require_module_attrs(
-    module: Any,
-    attrs: tuple[str, ...],
-    *,
-    owner: str,
-    prefix: str = "",
-) -> None:
-    """Fail loud if ``module`` is missing any of ``attrs`` (checkpoint-shape check).
-
-    Every AR family runs the same guard right after load: probe the freshly
-    loaded module for the handful of submodules its forward path needs, and
-    raise "does not look like {owner}" on the first one absent. ``prefix`` only
-    names a nested surface in the message (e.g. ``"model."``); callers pass the
-    already-resolved inner module, so it never changes which object is probed.
-    """
-
-    for attr in attrs:
-        if not hasattr(module, attr):
-            raise RuntimeError(
-                f"Loaded model is missing `{prefix}{attr}` — does not look like {owner}.",
-            )
+# ``typing.Self`` is 3.11+; this project floors at 3.10, so the classmethod
+# constructor below keeps the pre-Self idiom to stay precise for subclasses.
+ReplayCoreT = TypeVar("ReplayCoreT", bound="ARReplayCore")
 
 
 class ARModelBase(nn.Module):
     """Shared model base for autoregressive families on the RL path."""
+
+    # What a correctly loaded checkpoint should look like, e.g. "an
+    # Emu3ForConditionalGeneration checkpoint". It names an UPSTREAM class, so
+    # it cannot be derived from ``type(self).__name__``; ``_require_module_attrs``
+    # reads it to build the shape-mismatch message.
+    checkpoint_description: ClassVar[str] = ""
+
+    def _require_module_attrs(
+        self,
+        module: Any,
+        attrs: tuple[str, ...],
+        *,
+        prefix: str = "",
+    ) -> None:
+        """Fail loud if ``module`` is missing any of ``attrs`` (checkpoint-shape check).
+
+        Every AR family runs the same guard right after load: probe the freshly
+        loaded module for the handful of submodules its forward path needs, and
+        raise "does not look like {checkpoint_description}" on the first one
+        absent. ``prefix`` only names a nested surface in the message (e.g.
+        ``"model."``); callers pass the already-resolved inner module, so it
+        never changes which object is probed.
+        """
+
+        for attr in attrs:
+            if not hasattr(module, attr):
+                raise RuntimeError(
+                    f"Loaded model is missing `{prefix}{attr}` — "
+                    f"does not look like {self.checkpoint_description}.",
+                )
+
+    def _lm_trunk(self) -> nn.Module:
+        """Return the decoder trunk that emits ``last_hidden_state``.
+
+        For emu3 / glm_image / nextstep_1 / llamagen the family's
+        ``language_model`` IS the bare trunk (Emu3TextModel, GlmImageTextModel,
+        the Qwen-style NextStep decoder, LlamaGen's vendored Transformer): the
+        vocabulary projection lives in a separate top-level head, so calling the
+        trunk already yields hidden states. Peeling PEFT hands attention
+        backends the raw module without changing the math — PEFT replaces the
+        target ``nn.Linear`` submodules in place, so the peeled trunk still
+        routes through the LoRA layers.
+
+        Janus overrides this: its ``language_model`` is a ``LlamaForCausalLM``
+        whose call returns text-vocab logits, so the trunk is one hop further in.
+        """
+
+        return peel_peft(self.language_model)
 
     def load_trainable_state(self, state_dict: Mapping[str, Any]) -> Any:
         """Load only the trainable AR parameters from a rollout sync state.
@@ -109,6 +150,32 @@ class ARModelBase(nn.Module):
         """Disable the LoRA adapter for a reference forward, or no-op when absent."""
         return disable_adapter_on(self.language_model)
 
+    def _resolve_image_token_replay(
+        self,
+        batch: Any,
+        timestep_idx: int,
+        request: ReplayRequest | None,
+    ) -> tuple[dict[str, Any], Any]:
+        """Shared prefix for the single-segment ``image_tokens`` replay path.
+
+        Validates the replay request against the ``("image_tokens",)`` segment
+        set and the no-timestep-axis contract, then resolves the recorded
+        trajectory into its replay tensor dict and the sampled action tensor.
+        Families read ``prompt_input_ids`` / ``prompt_attention_mask`` (and any
+        family-specific keys such as ``uncond_*`` / ``saved_noise``) off the
+        returned dict, and own the embed + forward + wrap tail.
+        """
+
+        owner = type(self).__name__
+        require_zero_replay_timestep(timestep_idx, owner=owner)
+        require_replay_segments(request, ("image_tokens",), owner=owner)
+        from vrl.trajectory import TrajectoryResolver
+
+        resolver = TrajectoryResolver.from_batch(batch)
+        replay = resolver.replay_tensor_dict("image_tokens")
+        action = resolver.role_value("image_tokens", "action")
+        return replay, action
+
 
 class ARReplayRolloutStubs:
     """Rollout-only surface stubs shared by AR replay models.
@@ -121,6 +188,135 @@ class ARReplayRolloutStubs:
 
     def decode_image_tokens(self, *args: Any, **kwargs: Any) -> Any:
         raise RuntimeError(f"{type(self).__name__} cannot decode image tokens")
+
+
+class ARReplayCore(nn.Module):
+    """The minimal module set an AR family needs to replay recorded actions.
+
+    Trainer replay only recomputes log-probs, so a family core constructs the
+    text trunk plus its generation head and skips the VQ decoder / vision tower
+    that the rollout wrapper owns. Subclasses build those submodules under the
+    upstream checkpoint's own names in ``__init__`` — that is what lets the
+    checkpoint state dict load by name — and inherit the load path below.
+
+    The load walks the shard index directly (transformers 5 removed
+    ``load_sharded_checkpoint``) and skips shards carrying no core keys at all,
+    so a GLM-Image-sized checkpoint leaves its vision/VQ shards on disk
+    untouched. It lived as three per-family copies that rotted independently:
+    emu3's copy got the transformers-5 fix, janus_pro's kept the deleted import
+    and broke.
+    """
+
+    # Checkpoint subfolder owning this core's config and weights — GLM-Image's
+    # hybrid repo keeps the AR section under ``vision_language_encoder``.
+    # ``None`` means the weights sit at the repository root.
+    checkpoint_subfolder: ClassVar[str | None] = None
+
+    def __init__(self, config: Any) -> None:
+        super().__init__()
+        self.config = config
+
+    @classmethod
+    def from_pretrained(
+        cls: type[ReplayCoreT],
+        model_path: str,
+        *,
+        device: Any,
+        dtype: Any,
+        revision: str | None = None,
+        trust_remote_code: bool = False,
+    ) -> ReplayCoreT:
+        """Config-init this core and strict-load its checkpoint weights.
+
+        The shared replay-loader shape across every AR family: ``AutoConfig``
+        -> ``cls(config)`` -> strict :meth:`_load_checkpoint` -> place on
+        ``device``/``dtype`` and ``eval()``. ``trust_remote_code`` stays a
+        keyword rather than a class attribute because it is a user-facing
+        config key (Janus' custom config class needs it). Families keep only
+        their own pre-flight, e.g. Janus' upstream-package import check.
+        """
+
+        from transformers import AutoConfig
+
+        from vrl.models.steps.token.loader import resolve_hf_checkpoint_dir
+
+        subfolder = cls.checkpoint_subfolder
+        config_kwargs: dict[str, Any] = {
+            "revision": revision,
+            "trust_remote_code": trust_remote_code,
+        }
+        # transformers defaults ``subfolder`` to "", so only pass a real one.
+        if subfolder is not None:
+            config_kwargs["subfolder"] = subfolder
+        core = cls(AutoConfig.from_pretrained(model_path, **config_kwargs))
+        core._load_checkpoint(
+            resolve_hf_checkpoint_dir(model_path, subfolder=subfolder, revision=revision),
+        )
+        return core.to(device=device, dtype=dtype).eval()
+
+    def _load_checkpoint(self, checkpoint_dir: str) -> None:
+        """Load this core's weights from a sharded/single HF checkpoint, strictly.
+
+        Only shards carrying keys this core owns are read (per the shard index);
+        both safetensors and legacy ``pytorch_model.bin`` layouts are supported.
+        Raises when any core key is left unloaded — a replay module silently
+        running on random init is the worst possible failure mode.
+        """
+
+        import json
+        import os
+
+        from transformers.modeling_utils import load_state_dict
+
+        owner = type(self).__name__
+        core_keys = set(self.state_dict())
+        loaded_keys: set[str] = set()
+
+        index_names = ("model.safetensors.index.json", "pytorch_model.bin.index.json")
+        single_names = ("model.safetensors", "pytorch_model.bin")
+
+        index_path = next(
+            (
+                os.path.join(checkpoint_dir, name)
+                for name in index_names
+                if os.path.exists(os.path.join(checkpoint_dir, name))
+            ),
+            None,
+        )
+        if index_path is not None:
+            with open(index_path) as index_file:
+                weight_map = json.load(index_file)["weight_map"]
+            shard_names = sorted(
+                {name for key, name in weight_map.items() if key in core_keys},
+            )
+            for shard_name in shard_names:
+                state = load_state_dict(os.path.join(checkpoint_dir, shard_name))
+                self.load_state_dict(state, strict=False)
+                loaded_keys.update(set(state) & core_keys)
+        else:
+            single_path = next(
+                (
+                    os.path.join(checkpoint_dir, name)
+                    for name in single_names
+                    if os.path.exists(os.path.join(checkpoint_dir, name))
+                ),
+                None,
+            )
+            if single_path is None:
+                raise FileNotFoundError(
+                    f"No supported {owner} checkpoint file found in {checkpoint_dir}",
+                )
+            state = load_state_dict(single_path)
+            self.load_state_dict(state, strict=False)
+            loaded_keys.update(set(state) & core_keys)
+
+        missing_replay = sorted(core_keys - loaded_keys)
+        if missing_replay:
+            preview = ", ".join(missing_replay[:5])
+            suffix = " ..." if len(missing_replay) > 5 else ""
+            raise RuntimeError(
+                f"{owner} checkpoint is missing keys: {preview}{suffix}",
+            )
 
 
 @dataclass(slots=True, kw_only=True)
@@ -198,6 +394,6 @@ __all__ = [
     "ARDiscreteTokenRunner",
     "ARDiscreteTokenState",
     "ARModelBase",
+    "ARReplayCore",
     "ARReplayRolloutStubs",
-    "require_module_attrs",
 ]

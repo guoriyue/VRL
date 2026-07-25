@@ -56,16 +56,15 @@ from vrl.models.interfaces import (
     ReplaySegmentResult,
     require_replay_segments,
     require_zero_replay_timestep,
-    resolve_image_token_replay,
     single_segment_result,
 )
+from vrl.models.peft_adapter import peel_peft
 from vrl.models.steps.token.base import (
     ARModelBase,
+    ARReplayCore,
     ARReplayRolloutStubs,
-    require_module_attrs,
 )
 from vrl.models.steps.token.lora import install_token_lora_adapter
-from vrl.models.utils import peel_peft
 from vrl.trajectory import role_tensor
 from vrl.utils.logging import init_logger
 
@@ -124,6 +123,8 @@ class JanusProModel(ARModelBase):
     in a single ``nn.Module`` so it integrates cleanly with FSDP / EMA.
     """
 
+    checkpoint_description = "a Janus MultiModalityCausalLM checkpoint"
+
     def __init__(
         self,
         config: JanusProConfig | None = None,
@@ -161,11 +162,9 @@ class JanusProModel(ARModelBase):
         self.mmgpt = mmgpt
 
         # Sanity: confirm gen_head + gen_vision_model exist
-        base = self._base()
-        require_module_attrs(
-            base,
+        self._require_module_attrs(
+            self._base(),
             ("gen_head", "gen_vision_model", "language_model"),
-            owner="a Janus MultiModalityCausalLM checkpoint",
         )
 
     # ------------------------------------------------------------------
@@ -179,7 +178,8 @@ class JanusProModel(ARModelBase):
     def _lm_trunk(self) -> nn.Module:
         """Return the LlamaModel trunk that emits ``last_hidden_state``.
 
-        Layering depends on whether LoRA is attached:
+        One hop deeper than the shared default, because Janus' layering
+        depends on whether LoRA is attached:
           * No LoRA:  ``language_model`` is ``LlamaForCausalLM``; its
             ``.model`` is the ``LlamaModel`` trunk.
           * With LoRA: ``language_model`` is a PEFT ``LoraModel`` wrapping
@@ -191,9 +191,9 @@ class JanusProModel(ARModelBase):
         for image-token generation. We need the raw hidden states, so we
         unwrap all the way down to ``LlamaModel``.
         """
-        # ``peel_peft`` yields LlamaForCausalLM (or the bare lm without LoRA);
-        # the extra ``.model`` hop reaches the LlamaModel trunk beneath it.
-        cls_lm = peel_peft(self._base().language_model)
+        # The base peels PEFT and yields LlamaForCausalLM (or the bare lm
+        # without LoRA); the extra ``.model`` hop reaches the trunk beneath it.
+        cls_lm = super()._lm_trunk()
         return cls_lm.model if hasattr(cls_lm, "model") else cls_lm
 
     @property
@@ -379,11 +379,10 @@ class JanusProModel(ARModelBase):
             }
             return ReplayResult(segments=segments)
 
-        replay, image_token_ids = resolve_image_token_replay(
+        replay, image_token_ids = self._resolve_image_token_replay(
             batch,
             timestep_idx,
             request,
-            owner=type(self).__name__,
         )
         prompt_ids = replay["prompt_input_ids"]
         prompt_mask = replay["prompt_attention_mask"]
@@ -962,7 +961,7 @@ class JanusProModel(ARModelBase):
         )
 
 
-class JanusProReplayCore(nn.Module):
+class JanusProReplayCore(ARReplayCore):
     """Minimal Janus module set needed for trainer replay.
 
     The full upstream class constructs vision encoders and the VQ decoder in
@@ -971,8 +970,7 @@ class JanusProReplayCore(nn.Module):
     """
 
     def __init__(self, config: Any) -> None:
-        super().__init__()
-        self.config = config
+        super().__init__(config)
 
         from janus.models.modeling_vlm import model_name_to_cls
         from transformers import LlamaForCausalLM
@@ -1089,7 +1087,12 @@ def _load_janus_from_pretrained(config: JanusProConfig) -> tuple[Any, Any]:
 
 
 def _load_janus_replay_core_from_pretrained(config: JanusProConfig) -> JanusProReplayCore:
-    """Load Janus replay modules without constructing VQ or vision modules."""
+    """Load Janus replay modules without constructing VQ or vision modules.
+
+    The upstream-package pre-flight lives here rather than in
+    ``JanusProReplayCore.__init__`` so a caller that hands the wrapper an
+    already-built core never needs the ``janus`` package installed.
+    """
 
     try:
         import janus.models.modeling_vlm  # noqa: F401
@@ -1100,14 +1103,10 @@ def _load_janus_replay_core_from_pretrained(config: JanusProConfig) -> JanusProR
             "  cd Janus && pip install -e ."
         ) from e
 
-    from vrl.models.steps.token.loader import load_replay_core
-
-    return load_replay_core(
-        JanusProReplayCore,
+    return JanusProReplayCore.from_pretrained(
         config.model_path,
         device=config.device,
         dtype=resolve_torch_dtype(config.dtype),
-        owner="Janus",
         revision=config.revision,
         trust_remote_code=config.trust_remote_code,
     )

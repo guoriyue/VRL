@@ -92,7 +92,7 @@ def test_uncond_caption_embeds_is_learned_null_caption() -> None:
     """CFG uncond branch == CaptionEmbedder's uncond_embedding prefix slice."""
     model = build_tiny_llamagen_model()
     uncond = model.uncond_caption_embeds(3)
-    buffer = model._gpt_trunk().cls_embedding.uncond_embedding[:TINY_CLS_TOKEN_NUM]
+    buffer = model._lm_trunk().cls_embedding.uncond_embedding[:TINY_CLS_TOKEN_NUM]
     assert uncond.shape == (3, TINY_CLS_TOKEN_NUM, TINY_CAPTION_DIM)
     torch.testing.assert_close(uncond[0], buffer)
     torch.testing.assert_close(uncond[2], buffer)
@@ -101,7 +101,7 @@ def test_uncond_caption_embeds_is_learned_null_caption() -> None:
 def test_forward_image_logits_shape_and_grad() -> None:
     """Teacher-forced logits cover every image position over the image vocab."""
     model = build_tiny_llamagen_model()
-    for p in model._gpt_trunk().output.parameters():
+    for p in model._lm_trunk().output.parameters():
         p.requires_grad_(True)
     enc = model.t5_tokenizer(["ab", "abcd"], max_length=TINY_CLS_TOKEN_NUM)
     embs, mask = model.encode_caption(enc["input_ids"], enc["attention_mask"])

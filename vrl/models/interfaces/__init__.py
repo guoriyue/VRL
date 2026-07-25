@@ -11,7 +11,6 @@ from vrl.models.interfaces.replay import (
     require_replay_segments,
     require_runtime_model,
     require_zero_replay_timestep,
-    resolve_image_token_replay,
     single_segment_result,
 )
 from vrl.models.interfaces.runtime import (
@@ -38,6 +37,5 @@ __all__ = [
     "require_replay_segments",
     "require_runtime_model",
     "require_zero_replay_timestep",
-    "resolve_image_token_replay",
     "single_segment_result",
 ]

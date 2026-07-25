@@ -64,16 +64,14 @@ from vrl.models.interfaces import (
     ReplayRequest,
     ReplayResult,
     replay_context_image_size,
-    resolve_image_token_replay,
     single_segment_result,
 )
 from vrl.models.steps.token.base import (
     ARModelBase,
+    ARReplayCore,
     ARReplayRolloutStubs,
-    require_module_attrs,
 )
 from vrl.models.steps.token.lora import install_token_lora_adapter
-from vrl.models.utils import peel_peft
 from vrl.utils.logging import init_logger
 
 logger = init_logger(__name__)
@@ -227,6 +225,8 @@ class GlmImageModel(ARModelBase):
     first ``decode_image_tokens`` call and parked on CPU between decodes.
     """
 
+    checkpoint_description = "a GlmImageForConditionalGeneration checkpoint"
+
     def __init__(
         self,
         config: GlmImageConfig | None = None,
@@ -274,19 +274,10 @@ class GlmImageModel(ARModelBase):
     # ------------------------------------------------------------------
 
     def _require_surface(self, attrs: tuple[str, ...]) -> None:
-        require_module_attrs(
-            self.glm,
-            attrs,
-            owner="a GlmImageForConditionalGeneration checkpoint",
-        )
+        self._require_module_attrs(self.glm, attrs)
 
     def _require_inner_surface(self, attrs: tuple[str, ...]) -> None:
-        require_module_attrs(
-            self.glm.model,
-            attrs,
-            owner="a GlmImageForConditionalGeneration checkpoint",
-            prefix="model.",
-        )
+        self._require_module_attrs(self.glm.model, attrs, prefix="model.")
 
     @property
     def processor(self) -> Any:
@@ -309,15 +300,6 @@ class GlmImageModel(ARModelBase):
     @property
     def dtype(self) -> torch.dtype:
         return next(self.glm.parameters()).dtype
-
-    def _lm_trunk(self) -> nn.Module:
-        """Return the GlmImageTextModel trunk that emits ``last_hidden_state``.
-
-        Like Emu3, the text model IS the bare trunk (the vision-vocab
-        projection lives in the top-level ``lm_head``). We peel the PEFT
-        wrapper so the runner drives the raw HF module directly.
-        """
-        return peel_peft(self.language_model)
 
     # ------------------------------------------------------------------
     # LoRA / reference-policy helpers
@@ -536,11 +518,10 @@ class GlmImageModel(ARModelBase):
 
         AR has no notion of a denoising step, so only index zero is valid.
         """
-        replay, image_token_ids = resolve_image_token_replay(
+        replay, image_token_ids = self._resolve_image_token_replay(
             batch,
             timestep_idx,
             request,
-            owner=type(self).__name__,
         )
         prompt_ids = replay["prompt_input_ids"]
         prompt_mask = replay["prompt_attention_mask"]
@@ -692,7 +673,7 @@ def _upsample_token_ids(token_ids: torch.Tensor, token_h: int, token_w: int) -> 
 # ---------------------------------------------------------------------------
 
 
-class GlmImageReplayCore(nn.Module):
+class GlmImageReplayCore(ARReplayCore):
     """Minimal GLM-Image module set needed for trainer replay.
 
     ``GlmImageForConditionalGeneration.__init__`` constructs the ViT vision
@@ -703,13 +684,14 @@ class GlmImageReplayCore(nn.Module):
     ``vision_language_encoder/model.safetensors.index.json``).
     """
 
+    checkpoint_subfolder = GLM_IMAGE_AR_SUBFOLDER
+
     def __init__(self, config: Any) -> None:
-        super().__init__()
+        super().__init__(config)
         from transformers.models.glm_image.modeling_glm_image import (
             GlmImageTextModel,
         )
 
-        self.config = config
         inner = nn.Module()
         inner.language_model = GlmImageTextModel._from_config(config.text_config)
         self.model = inner
@@ -732,7 +714,12 @@ class GlmImageReplayModel(ARReplayRolloutStubs, GlmImageModel):
         nn.Module.__init__(self)
         self.config = config or GlmImageConfig()
         if glm is None:
-            glm = _load_glm_image_replay_core_from_pretrained(self.config)
+            glm = GlmImageReplayCore.from_pretrained(
+                self.config.model_path,
+                device=self.config.device,
+                dtype=resolve_torch_dtype(self.config.dtype),
+                revision=self.config.revision,
+            )
 
         for p in glm.parameters():
             p.requires_grad_(False)
@@ -852,29 +839,6 @@ def _load_glm_image_decode_pipeline(config: GlmImageConfig) -> Any:
         module.requires_grad_(False)
         module.eval()
     return pipe
-
-
-def _load_glm_image_replay_core_from_pretrained(
-    config: GlmImageConfig,
-) -> GlmImageReplayCore:
-    """Load GLM-Image replay modules without the vision tower / VQ encoder.
-
-    Config-inits the minimal module set, then loads only the replay-core
-    shards via the shared AR loader, pointed at the
-    ``vision_language_encoder`` checkpoint subfolder.
-    """
-
-    from vrl.models.steps.token.loader import load_replay_core
-
-    return load_replay_core(
-        GlmImageReplayCore,
-        config.model_path,
-        device=config.device,
-        dtype=resolve_torch_dtype(config.dtype),
-        owner="GLM-Image",
-        revision=config.revision,
-        subfolder=GLM_IMAGE_AR_SUBFOLDER,
-    )
 
 
 __all__ = [

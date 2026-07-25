@@ -44,16 +44,14 @@ from vrl.models.interfaces import (
     ReplayRequest,
     ReplayResult,
     replay_context_image_size,
-    resolve_image_token_replay,
     single_segment_result,
 )
 from vrl.models.steps.token.base import (
     ARModelBase,
+    ARReplayCore,
     ARReplayRolloutStubs,
-    require_module_attrs,
 )
 from vrl.models.steps.token.lora import install_token_lora_adapter
-from vrl.models.utils import peel_peft
 from vrl.utils.logging import init_logger
 
 logger = init_logger(__name__)
@@ -162,6 +160,8 @@ class Emu3Model(ARModelBase):
     single ``nn.Module`` so it integrates cleanly with the rollout sync path.
     """
 
+    checkpoint_description = "an Emu3ForConditionalGeneration checkpoint"
+
     def __init__(
         self,
         config: Emu3Config | None = None,
@@ -207,19 +207,10 @@ class Emu3Model(ARModelBase):
     # ------------------------------------------------------------------
 
     def _require_surface(self, attrs: tuple[str, ...]) -> None:
-        require_module_attrs(
-            self.emu3,
-            attrs,
-            owner="an Emu3ForConditionalGeneration checkpoint",
-        )
+        self._require_module_attrs(self.emu3, attrs)
 
     def _require_inner_surface(self, attrs: tuple[str, ...]) -> None:
-        require_module_attrs(
-            self.emu3.model,
-            attrs,
-            owner="an Emu3ForConditionalGeneration checkpoint",
-            prefix="model.",
-        )
+        self._require_module_attrs(self.emu3.model, attrs, prefix="model.")
 
     @property
     def processor(self) -> Any:
@@ -250,16 +241,6 @@ class Emu3Model(ARModelBase):
     @property
     def dtype(self) -> torch.dtype:
         return next(self.emu3.parameters()).dtype
-
-    def _lm_trunk(self) -> nn.Module:
-        """Return the Emu3TextModel trunk that emits ``last_hidden_state``.
-
-        Unlike Janus (whose ``language_model`` is a ForCausalLM that projects
-        to text logits), Emu3's text model IS the bare trunk — there is no
-        lm_head inside it. We still peel the PEFT wrapper so attention
-        backends drive the raw HF module directly.
-        """
-        return peel_peft(self.language_model)
 
     # ------------------------------------------------------------------
     # LoRA / reference-policy helpers
@@ -485,11 +466,10 @@ class Emu3Model(ARModelBase):
 
         AR has no notion of a denoising step, so only index zero is valid.
         """
-        replay, image_token_ids = resolve_image_token_replay(
+        replay, image_token_ids = self._resolve_image_token_replay(
             batch,
             timestep_idx,
             request,
-            owner=type(self).__name__,
         )
         prompt_ids = replay["prompt_input_ids"]
         prompt_mask = replay["prompt_attention_mask"]
@@ -569,7 +549,7 @@ class Emu3Model(ARModelBase):
 # ---------------------------------------------------------------------------
 
 
-class Emu3ReplayCore(nn.Module):
+class Emu3ReplayCore(ARReplayCore):
     """Minimal Emu3 module set needed for trainer replay.
 
     ``Emu3ForConditionalGeneration.__init__`` constructs the VQVAE; replay
@@ -581,13 +561,12 @@ class Emu3ReplayCore(nn.Module):
     """
 
     def __init__(self, config: Any) -> None:
-        super().__init__()
+        super().__init__(config)
         from transformers.models.emu3.modeling_emu3 import (
             Emu3ImageVocabularyMapping,
             Emu3TextModel,
         )
 
-        self.config = config
         inner = nn.Module()
         inner.text_model = Emu3TextModel._from_config(config.text_config)
         inner.vocabulary_mapping = Emu3ImageVocabularyMapping(config.vocabulary_map)
@@ -611,7 +590,12 @@ class Emu3ReplayModel(ARReplayRolloutStubs, Emu3Model):
         nn.Module.__init__(self)
         self.config = config or Emu3Config()
         if emu3 is None:
-            emu3 = _load_emu3_replay_core_from_pretrained(self.config)
+            emu3 = Emu3ReplayCore.from_pretrained(
+                self.config.model_path,
+                device=self.config.device,
+                dtype=resolve_torch_dtype(self.config.dtype),
+                revision=self.config.revision,
+            )
 
         for p in emu3.parameters():
             p.requires_grad_(False)
@@ -661,26 +645,6 @@ def _load_emu3_from_pretrained(config: Emu3Config) -> tuple[Any, Any]:
     )
     emu3 = emu3.to(device=config.device).eval()
     return emu3, processor
-
-
-def _load_emu3_replay_core_from_pretrained(config: Emu3Config) -> Emu3ReplayCore:
-    """Load Emu3 replay modules without constructing the VQ decoder.
-
-    Same load shape as the janus_pro replay loader (config-init the minimal
-    module set, then strict-check a ``strict=False`` checkpoint load against
-    the core's own keys).
-    """
-
-    from vrl.models.steps.token.loader import load_replay_core
-
-    return load_replay_core(
-        Emu3ReplayCore,
-        config.model_path,
-        device=config.device,
-        dtype=resolve_torch_dtype(config.dtype),
-        owner="Emu3",
-        revision=config.revision,
-    )
 
 
 __all__ = [

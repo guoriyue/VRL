@@ -44,12 +44,10 @@ from vrl.models.families.nextstep_1.config import (
 from vrl.models.interfaces import (
     ReplayRequest,
     ReplayResult,
-    resolve_image_token_replay,
     single_segment_result,
 )
 from vrl.models.steps.token.base import ARModelBase, ARReplayRolloutStubs
 from vrl.models.steps.token.lora import install_token_lora_adapter
-from vrl.models.utils import peel_peft
 
 # ---------------------------------------------------------------------------
 # Wrapper
@@ -240,11 +238,10 @@ class NextStep1Model(ARModelBase):
         Returns:
           ``ReplayResult`` with ``log_probs`` and ``tokens`` for ``image_tokens``.
         """
-        replay, tokens = resolve_image_token_replay(
+        replay, tokens = self._resolve_image_token_replay(
             batch,
             timestep_idx,
             request,
-            owner=type(self).__name__,
         )
         prompt_ids = replay["prompt_input_ids"]
         prompt_mask = replay["prompt_attention_mask"]
@@ -340,11 +337,6 @@ class NextStep1Model(ARModelBase):
     @staticmethod
     def _last_hidden(kv: Any) -> torch.Tensor:
         return kv["last_hidden"]
-
-    def _lm_trunk(self) -> Any:
-        """Return the Qwen-style decoder trunk, peeling PEFT when attached."""
-
-        return peel_peft(self.language_model)
 
     def _step_llm(
         self,

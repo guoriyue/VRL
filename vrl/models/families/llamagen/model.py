@@ -48,16 +48,13 @@ from vrl.models.families.llamagen.config import (
 from vrl.models.interfaces import (
     ReplayRequest,
     ReplayResult,
-    resolve_image_token_replay,
     single_segment_result,
 )
 from vrl.models.steps.token.base import (
     ARModelBase,
     ARReplayRolloutStubs,
-    require_module_attrs,
 )
 from vrl.models.steps.token.lora import install_token_lora_adapter
-from vrl.models.utils import peel_peft
 from vrl.utils.logging import init_logger
 
 logger = init_logger(__name__)
@@ -72,6 +69,8 @@ class LlamaGenModel(ARModelBase):
     Composes the vendored GPT (LoRA target), the frozen VQGAN decoder, and the
     frozen flan-t5-xl encoder (CPU-parked) in one ``nn.Module``.
     """
+
+    checkpoint_description = "a LlamaGen t2i Transformer"
 
     def __init__(
         self,
@@ -121,11 +120,10 @@ class LlamaGenModel(ARModelBase):
         self.t5_encoder = t5_encoder
         self._t5_tokenizer = t5_tokenizer
 
-        trunk = self._gpt_trunk()
-        require_module_attrs(
+        trunk = self._lm_trunk()
+        self._require_module_attrs(
             trunk,
             ("cls_embedding", "tok_embeddings", "output", "layers"),
-            owner="a LlamaGen t2i Transformer",
         )
         if trunk.model_type != "t2i":
             raise RuntimeError(
@@ -140,18 +138,14 @@ class LlamaGenModel(ARModelBase):
     # Sub-module accessors
     # ------------------------------------------------------------------
 
-    def _gpt_trunk(self) -> nn.Module:
-        """Return the unwrapped vendored Transformer (peels a PEFT wrap).
-
-        PEFT replaces the target ``nn.Linear`` modules in-place, so calling
-        the peeled trunk still routes through the LoRA layers (same pattern as
-        Janus' ``_lm_trunk``).
-        """
-        return peel_peft(self.gpt)
-
     @property
     def language_model(self) -> nn.Module:
-        """The (possibly PEFT-wrapped) GPT — ``ARModelBase.disable_adapter`` target."""
+        """The (possibly PEFT-wrapped) GPT — the vendored Transformer itself.
+
+        There is no ForCausalLM layer between the wrapper and the trunk here,
+        so ``ARModelBase._lm_trunk`` (peel PEFT off this) already yields the
+        vendored Transformer, and ``disable_adapter`` targets the same object.
+        """
         return self.gpt
 
     @property
@@ -166,11 +160,11 @@ class LlamaGenModel(ARModelBase):
 
     @property
     def device(self) -> torch.device:
-        return next(self._gpt_trunk().parameters()).device
+        return next(self._lm_trunk().parameters()).device
 
     @property
     def dtype(self) -> torch.dtype:
-        return next(self._gpt_trunk().parameters()).dtype
+        return next(self._lm_trunk().parameters()).dtype
 
     def _apply_lora(self, gpt: Any) -> Any:
         gpt = install_token_lora_adapter(gpt, self.config)
@@ -236,7 +230,7 @@ class LlamaGenModel(ARModelBase):
         Its attention mask is the conditional prompt's mask (upstream passes
         ``cat([emb_masks, emb_masks])``); callers reuse the cond mask.
         """
-        uncond = self._gpt_trunk().cls_embedding.uncond_embedding
+        uncond = self._lm_trunk().cls_embedding.uncond_embedding
         uncond = uncond[: self.config.cls_token_num]
         return (
             uncond.unsqueeze(0).expand(batch_size, -1, -1).to(device=self.device, dtype=self.dtype)
@@ -263,7 +257,7 @@ class LlamaGenModel(ARModelBase):
         Returns logits ``[B, L_img, vocab_size]`` (the trunk's ``output`` head
         IS the image vocab — no separate gen_head exists in LlamaGen).
         """
-        trunk = self._gpt_trunk()
+        trunk = self._lm_trunk()
         # A leftover rollout KV cache would hijack the teacher-forced pass
         # (vendored Attention consults ``kv_cache`` whenever it is set).
         self._clear_kv_caches()
@@ -313,7 +307,7 @@ class LlamaGenModel(ARModelBase):
 
     def _clear_kv_caches(self) -> None:
         """Detach the vendored per-layer static KV caches (rollout-only state)."""
-        for block in self._gpt_trunk().layers:
+        for block in self._lm_trunk().layers:
             block.attention.kv_cache = None
 
     # ------------------------------------------------------------------
@@ -334,11 +328,10 @@ class LlamaGenModel(ARModelBase):
         the conditioning is identical to rollout), and recomputes logits under
         the current model. AR has no denoising step, so only index zero is valid.
         """
-        replay, image_token_ids = resolve_image_token_replay(
+        replay, image_token_ids = self._resolve_image_token_replay(
             batch,
             timestep_idx,
             request,
-            owner=type(self).__name__,
         )
         prompt_ids = replay["prompt_input_ids"]
         prompt_mask = replay["prompt_attention_mask"]
