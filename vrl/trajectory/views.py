@@ -5,8 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
-from vrl.trajectory.types import TrajectorySegment, TrajectoryTensor
-from vrl.utils.validation import require_string_tuple
+from vrl.trajectory.types import TrajectorySegment, TrajectoryTensor, require_string_tuple
 
 RewardValueRange = Literal["unit", "tanh"]
 

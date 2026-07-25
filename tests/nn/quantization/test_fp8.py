@@ -263,7 +263,7 @@ def test_master_free_fp8_survives_adapter_only_weight_sync():
     calls every child's ``_load_from_state_dict`` for an adapter-only payload, so
     the fp8 cache must stay intact instead of trying to requantize a missing master.
     """
-    from vrl.models.utils import load_weights_into
+    from vrl.models.weight_utils import load_weights_into
 
     class _AdapterPolicy(nn.Module):
         def __init__(self) -> None:

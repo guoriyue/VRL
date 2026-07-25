@@ -9,7 +9,7 @@ from typing import Any
 
 import torch
 
-from vrl.models.utils import unwrap_compile_and_ddp
+from vrl.models.weight_utils import unwrap_compile_and_ddp
 from vrl.trajectory.device import map_tensor_tree
 
 TrainableStateGetter = Callable[[], dict[str, Any]]

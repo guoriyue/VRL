@@ -11,7 +11,6 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Literal
 
 from vrl.generation.types import GenerationSampleRow
-from vrl.utils.validation import require_string_tuple
 
 if TYPE_CHECKING:
     from vrl.trajectory.views import RewardView
@@ -44,6 +43,20 @@ DistributionKind = Literal[
     "deterministic",
     "custom",
 ]
+
+
+def require_string_tuple(name: str, values: tuple[str, ...]) -> None:
+    """Raise ValueError if any element of ``values`` is not a non-empty string.
+
+    Guards the ``tensor_refs`` tuples that name tensors inside a segment — here
+    for ``ReplayInput`` and in ``vrl.trajectory.views`` for ``RewardView``. An
+    empty or non-string ref would only fail much later, at resolve time, with no
+    pointer back to the record that declared it.
+    """
+
+    for value in values:
+        if not isinstance(value, str) or not value:
+            raise ValueError(f"{name} must contain non-empty strings")
 
 
 @dataclass(frozen=True, slots=True)

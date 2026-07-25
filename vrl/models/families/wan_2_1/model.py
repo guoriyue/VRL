@@ -43,7 +43,7 @@ from vrl.models.families.wan_2_1.config import (
     wan_topology_from_build,
 )
 from vrl.models.interfaces.runtime import ModelBuild
-from vrl.models.peft_adapter import load_trainable_lora_adapter
+from vrl.models.peft_adapter import disable_adapter_on, load_trainable_lora_adapter
 from vrl.models.steps.denoise import (
     DiffusersPipelineModelBase,
     DiffusionModelBase,
@@ -62,7 +62,7 @@ from vrl.models.steps.denoise.common import (
 )
 from vrl.models.steps.denoise.common.lora import LoraModelMixin
 from vrl.models.steps.denoise.common.tensors import require_tensor
-from vrl.models.utils import disable_adapter_on, load_weights_into, validate_weights_for
+from vrl.models.weight_utils import load_weights_into, validate_weights_for
 
 logger = logging.getLogger(__name__)
 
