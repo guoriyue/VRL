@@ -117,6 +117,61 @@ its t2v/i2v variant from cfg although family selection had already picked the
 registry entry; capabilities were constructed both registry-side and
 family-side). One construction site; everyone else imports or is handed it.
 
+### Placement — where a shared helper belongs (the four rules)
+
+Learned during the homeless-function audit (2026-07-25), which is the sequel to
+the dead-code sweep above. Deduplicating a body into a shared free function is
+only **half** the fix. The other half is giving it a subject. When you hoist
+logic out of N types, the `self` it lost comes back disguised — as a string
+parameter, as an `Any`, or as N copies of a wrapper. A sweep that merges bodies
+without asking "whose method is this?" grows the helper population instead of
+shrinking it.
+
+> **If a parameter exists only to tell the function who called it, what type its
+> own argument really is, or which constant this copy uses, that parameter is a
+> `self` that was dropped on the floor. Put the body on the thing that was
+> passing it.**
+
+**Rule 1 — A name argument is a lost `self`.** About to write `owner=`,
+`label=`, `what=`, `context=`, or `prefix=`? If the value at every call site is
+`type(self).__name__` or the caller's own family literal, the body belongs on
+the base class and derives the name itself. *Counter-test that keeps it free:*
+the string names a **config key** (`require_exact_int(value, path="model.family")`),
+a **manifest field**, an **error domain** (the dataclass being validated), or a
+label a second un-derivable caller supplies. Those are correct as free functions.
+
+**Rule 2 — `Any` needs a receipt.** A parameter typed `Any` must be justified by
+a real import cycle or a genuinely unvalidated input (raw YAML, a dotted-string
+import, an arbitrary user module tree). Otherwise annotate it — and if
+annotating makes the owning type the only required parameter, it is a method or
+property on that type. The defensive `getattr(x, "field", default)` guarding a
+declared field disappears with it.
+
+**Rule 3 — Two copies is a coincidence; three is a class attribute.** When the
+same body appears in ≥2 sibling subclasses and differs only in a constant, the
+constant becomes a class attribute and the body a shared default. Pick the shape
+by asking *what happens if a future family forgets*: must fail loud → keep the
+abstract method and add an **opt-in mixin**; safe to forget → a base default.
+**Always list mixins before the Protocol/ABC in the bases list** — get it wrong
+on an ABC and you get a `TypeError` (fine); get it wrong on a `Protocol` and the
+`...` stub silently wins and returns `None`. *Counter-test that keeps the
+copies:* the bodies are identical text but assert **different theorems**, and
+each copy's comment is that proof. Merging those deletes the argument, not the
+duplication.
+
+**Rule 4 — An untyped bag with a closed key set is a field.** A finite key set,
+few writers, and a reader that `getattr`-probes or `.get(KEY, default)` means
+the bag should be a typed dataclass field — delete the key constant and its
+factory/reader trio. (This is the dead-field rule above, applied to dicts.)
+
+Two failure modes to avoid while applying these: do not pile unrelated concerns
+onto one type to "give them a home" — a god-object is the disease, not the cure;
+and do not promote a deliberately-approximate package-private heuristic into a
+shared API, which advertises a guess as a contract. When a helper is genuinely
+subject-less — inputs fully determine output, no identity threaded, no type
+erosion — a free function in a well-named module is the right answer, and
+`vrl/utils/` is where it goes.
+
 ### Long-term Assets vs One-shot Validation
 
 - Distinguish **one-shot validation artifacts** (KILL-RISK gates, feasibility spikes, smoke probes, scratch datasets, intermediate manifests, throwaway logs) from **long-term assets** (production tools, configs, dataset generators, tests, model wrappers, sprint docs, entrypoints). Both deliver value, but follow different lifecycles.
