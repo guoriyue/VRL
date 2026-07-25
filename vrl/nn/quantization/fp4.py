@@ -29,11 +29,7 @@ from vrl.nn.quantization.formats import (
     NVFP4_SCALE_INNER_ROWS,
     NVFP4_SCALE_ROW_TILE,
 )
-from vrl.nn.quantization.targeting import (
-    DEFAULT_EXCLUDE,
-    LinearTargetProfile,
-    matches_linear_target,
-)
+from vrl.nn.quantization.targeting import LinearTargetProfile
 
 _E2M1_BOUNDS = torch.tensor(E2M1_MIDPOINTS)
 
@@ -142,24 +138,41 @@ def quantize_nvfp4(
     )
 
 
+def _alignment_error(linear: nn.Linear) -> str | None:
+    """Why packed NVFP4 ``scaled_mm`` cannot take ``linear``'s shape, else ``None``.
+
+    One source for both lanes: the constructor raises this message, and the swap
+    traversal skips the same shapes through ``Fp4Linear.can_replace``. Two copies
+    would eventually let traversal hand the constructor a shape it rejects.
+    """
+
+    if linear.in_features % NVFP4_K_ALIGNMENT:
+        return (
+            f"Fp4Linear needs in_features % {NVFP4_K_ALIGNMENT} == 0 for "
+            f"packed nvfp4 scaled_mm, got {linear.in_features}"
+        )
+    if linear.out_features % NVFP4_N_ALIGNMENT:
+        return (
+            f"Fp4Linear needs out_features % {NVFP4_N_ALIGNMENT} == 0 for "
+            f"nvfp4 scaled_mm, got {linear.out_features}"
+        )
+    return None
+
+
 class Fp4Linear(QuantizedLinear):
     """Drop-in ``nn.Linear`` replacement whose selected GEMM runs in NVFP4."""
 
     quantization_scheme = "nvfp4"
     cache_buffer_names = ("weight_fp4", "weight_scale", "weight_tensor_scale")
+    # Attention stays in the base dtype until full-attention NVFP4 passes a real
+    # rollout -> replay SDE/reward gate.
+    default_target_profile = LinearTargetProfile.MLP_ONLY
 
     def __init__(self, linear: nn.Linear) -> None:
         super().__init__()
-        if linear.in_features % NVFP4_K_ALIGNMENT:
-            raise ValueError(
-                f"Fp4Linear needs in_features % {NVFP4_K_ALIGNMENT} == 0 for "
-                f"packed nvfp4 scaled_mm, got {linear.in_features}",
-            )
-        if linear.out_features % NVFP4_N_ALIGNMENT:
-            raise ValueError(
-                f"Fp4Linear needs out_features % {NVFP4_N_ALIGNMENT} == 0 for "
-                f"nvfp4 scaled_mm, got {linear.out_features}",
-            )
+        error = _alignment_error(linear)
+        if error is not None:
+            raise ValueError(error)
         self.in_features = linear.in_features
         self.out_features = linear.out_features
         self.recipe = "nvfp4"
@@ -180,6 +193,12 @@ class Fp4Linear(QuantizedLinear):
         )
         self.register_buffer("weight_tensor_scale", torch.empty(0), persistent=False)
         self._requantize_weight()
+
+    @classmethod
+    def can_replace(cls, linear: nn.Linear) -> bool:
+        """Skip shapes packed NVFP4 ``scaled_mm`` cannot take (see ``_alignment_error``)."""
+
+        return _alignment_error(linear) is None
 
     def _requantize_weight(self) -> None:
         """Rebuild the packed NVFP4 weight and scales from the source master."""
@@ -214,44 +233,9 @@ class Fp4Linear(QuantizedLinear):
         return f"in={self.in_features}, out={self.out_features}, recipe={self.recipe}, fp4=e2m1"
 
 
-def swap_linears_to_nvfp4(
-    root: nn.Module,
-    *,
-    exclude: tuple[str, ...] = DEFAULT_EXCLUDE,
-    min_features: int = 1024,
-    target_profile: LinearTargetProfile | str = LinearTargetProfile.MLP_ONLY,
-) -> list[str]:
-    """Replace eligible large policy Linears with :class:`Fp4Linear` in place.
-
-    Production defaults to MLP-only targeting. Candidates must also avoid the
-    shared exclusion taxonomy, meet the size threshold, and satisfy packed
-    scaled-mm alignment.
-    """
-
-    target_profile = LinearTargetProfile(target_profile)
-    swapped: list[str] = []
-    for parent_path, parent in root.named_modules():
-        for child_name, child in list(parent.named_children()):
-            if not isinstance(child, nn.Linear):
-                continue
-            path = f"{parent_path}.{child_name}" if parent_path else child_name
-            if any(token in path for token in exclude):
-                continue
-            if not matches_linear_target(path, target_profile):
-                continue
-            if child.in_features < min_features or child.out_features < min_features:
-                continue
-            if child.in_features % NVFP4_K_ALIGNMENT or child.out_features % NVFP4_N_ALIGNMENT:
-                continue
-            setattr(parent, child_name, Fp4Linear(child))
-            swapped.append(path)
-    return swapped
-
-
 __all__ = [
     "Fp4Linear",
     "nvfp4_available",
     "quantize_nvfp4",
-    "swap_linears_to_nvfp4",
     "to_blocked_scale_layout",
 ]

@@ -41,12 +41,12 @@ import torch.nn.functional as F
 
 from vrl.models.families.sd3_5.model import install_sd3_joint_attention_processor
 from vrl.nn.quantization import (
+    Fp4Linear,
+    Fp8Linear,
     LinearTargetProfile,
     QuantizedLinear,
     drop_quantized_masters,
     nvfp4_available,
-    swap_linears_to_fp8,
-    swap_linears_to_nvfp4,
 )
 from vrl.scripts.perf.common.fp8_math import relative_l1_drift
 
@@ -221,6 +221,16 @@ def _accuracy(output: torch.Tensor, reference: torch.Tensor) -> dict[str, float]
     }
 
 
+def _scheme_linear_cls(scheme: str) -> type[QuantizedLinear]:
+    """Map a CLI scheme name onto the quantized-linear class that owns its policy."""
+
+    schemes: dict[str, type[QuantizedLinear]] = {"fp8": Fp8Linear, "nvfp4": Fp4Linear}
+    try:
+        return schemes[scheme]
+    except KeyError as exc:
+        raise ValueError(f"unsupported quantized scheme {scheme!r}") from exc
+
+
 def _resolve_target_profile(
     scheme: str,
     requested: str,
@@ -229,11 +239,7 @@ def _resolve_target_profile(
         return None
     if requested != "scheme_default":
         return LinearTargetProfile(requested)
-    if scheme == "fp8":
-        return LinearTargetProfile.ATTENTION_MLP
-    if scheme == "nvfp4":
-        return LinearTargetProfile.MLP_ONLY
-    raise ValueError(f"unsupported profile scheme {scheme!r}")
+    return _scheme_linear_cls(scheme).default_target_profile
 
 
 def _apply_scheme(
@@ -245,11 +251,7 @@ def _apply_scheme(
         return []
     if target_profile is None:
         raise ValueError(f"quantized scheme {scheme!r} requires a target profile")
-    if scheme == "fp8":
-        return swap_linears_to_fp8(model, target_profile=target_profile)
-    if scheme == "nvfp4":
-        return swap_linears_to_nvfp4(model, target_profile=target_profile)
-    raise ValueError(f"unsupported quantized scheme {scheme!r}")
+    return _scheme_linear_cls(scheme).swap_linears(model, target_profile=target_profile)
 
 
 def _target_manifest(

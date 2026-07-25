@@ -16,7 +16,7 @@ import pytest
 import torch
 from torch import nn
 
-from vrl.nn.quantization import Fp8Linear, swap_linears_to_fp8
+from vrl.nn.quantization import Fp8Linear
 
 
 def _fp8_capable() -> bool:
@@ -112,7 +112,7 @@ class _DiT(nn.Module):
 
 def test_swap_targets_big_attention_and_mlp_only():
     dit = _DiT(dim=1024, heads=8, depth=2)
-    swapped = swap_linears_to_fp8(dit, min_features=1024)
+    swapped = Fp8Linear.swap_linears(dit, min_features=1024)
 
     # every block's attention + MLP linears are quantized...
     for i in range(2):
@@ -130,7 +130,7 @@ def test_swap_targets_big_attention_and_mlp_only():
 
 def test_mlp_only_target_profile_excludes_attention() -> None:
     dit = _DiT(dim=1024, heads=8, depth=1)
-    swapped = swap_linears_to_fp8(dit, target_profile="mlp_only")
+    swapped = Fp8Linear.swap_linears(dit, target_profile="mlp_only")
     assert swapped == ["blocks.0.ff.net.0", "blocks.0.ff.net.2"]
     assert isinstance(dit.blocks[0].attn.to_q, nn.Linear)
     assert not isinstance(dit.blocks[0].attn.to_q, Fp8Linear)
@@ -139,19 +139,19 @@ def test_mlp_only_target_profile_excludes_attention() -> None:
 def test_invalid_target_profile_raises_before_fp8_mutation() -> None:
     dit = _DiT(dim=1024, heads=8, depth=1)
     with pytest.raises(ValueError, match="bogus"):
-        swap_linears_to_fp8(dit, target_profile="bogus")
+        Fp8Linear.swap_linears(dit, target_profile="bogus")
     assert not any(isinstance(module, Fp8Linear) for module in dit.modules())
 
 
 def test_min_features_skips_small_linears():
     dit = _DiT(dim=512, heads=8, depth=1)
-    swapped = swap_linears_to_fp8(dit, min_features=1024)  # 512 < 1024 → skip all
+    swapped = Fp8Linear.swap_linears(dit, min_features=1024)  # 512 < 1024 → skip all
     assert swapped == []
 
 
 def test_exclude_substring_is_respected():
     dit = _DiT(dim=1024, heads=8, depth=1)
-    swapped = swap_linears_to_fp8(
+    swapped = Fp8Linear.swap_linears(
         dit, min_features=1024, exclude=("to_q", "norm", "embed", "proj_out")
     )
     assert not any("to_q" in p for p in swapped)
@@ -181,7 +181,7 @@ def test_swap_excludes_qwen_modulation_and_text_input():
             self.proj_out = nn.Linear(dim, dim)
 
     dit = _QwenDiT(dim=1024, depth=2)
-    swapped = swap_linears_to_fp8(dit, min_features=1024)
+    swapped = Fp8Linear.swap_linears(dit, min_features=1024)
 
     # modulation + text-conditioning input stay bf16
     assert not any("_mod" in p for p in swapped), swapped
@@ -277,11 +277,7 @@ def test_master_free_fp8_survives_adapter_only_weight_sync():
     cached_weight = policy.base_layer.weight_fp8.clone()
     update = torch.ones_like(policy.lora)
 
-    load_weights_into(
-        policy,
-        {"transformer.lora": update},
-        prefix="transformer",
-    )
+    load_weights_into(policy, {"transformer.lora": update}, prefix="transformer")
 
     assert policy.base_layer.weight is None
     assert torch.equal(policy.base_layer.weight_fp8, cached_weight)
@@ -588,7 +584,7 @@ def test_end_to_end_dit_stack_drift_is_bounded(capsys):
     dim, depth = 1024, 24
     ref_model = _DiT(dim, heads=8, depth=depth).cuda().to(torch.bfloat16).eval()
     fp8_model = copy.deepcopy(ref_model)
-    swapped = swap_linears_to_fp8(fp8_model, recipe="rowwise", min_features=1024)
+    swapped = Fp8Linear.swap_linears(fp8_model, recipe="rowwise", min_features=1024)
     assert len(swapped) == depth * 6  # 4 attn + 2 mlp per block
 
     x = torch.randn(2, 256, dim, device="cuda", dtype=torch.bfloat16)

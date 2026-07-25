@@ -11,16 +11,9 @@ import inspect
 from collections.abc import Mapping
 from typing import Any
 
-import torch
-
 from vrl.nn.layers.attention.paged import ARAttentionConfig
 from vrl.nn.modules.ar_decoder import VllmDecoderPagedAttentionBackend
-from vrl.nn.modules.torch_attention import (
-    PrefillFn,
-    StepFn,
-    TorchNativeDecoderAttentionBackend,
-    require_past_key_values,
-)
+from vrl.nn.modules.torch_attention import TorchNativeDecoderAttentionBackend
 
 _backend_builders = {
     "vllm_paged": "build_vllm_attention_backend",
@@ -57,12 +50,13 @@ def resolve_attention_backend(
     builder = globals()[builder_name]
     parameters = inspect.signature(builder).parameters
     accepts_var_kwargs = any(
-        parameter.kind is inspect.Parameter.VAR_KEYWORD
-        for parameter in parameters.values()
+        parameter.kind is inspect.Parameter.VAR_KEYWORD for parameter in parameters.values()
     )
-    supported = dict(kwargs) if accepts_var_kwargs else {
-        key: value for key, value in kwargs.items() if key in parameters
-    }
+    supported = (
+        dict(kwargs)
+        if accepts_var_kwargs
+        else {key: value for key, value in kwargs.items() if key in parameters}
+    )
     if "family" in parameters or accepts_var_kwargs:
         supported["family"] = family
     return builder(model, **supported)
@@ -97,18 +91,12 @@ def build_torch_native_backend(
 ) -> TorchNativeDecoderAttentionBackend:
     """Build the shared HF-cache fallback backend for an AR family model."""
 
-    config = _ar_config(
-        family=family,
-        backend_label=f"{family}_torch_native_attention",
-    )
-    prefill_fn, step_fn = _native_decode_fns(
-        model,
-        backend_label=str(config.extra["backend_label"]),
-    )
     return TorchNativeDecoderAttentionBackend(
-        config=config,
-        prefill_fn=prefill_fn,
-        step_fn=step_fn,
+        trunk=_lm_trunk(model),
+        config=_ar_config(
+            family=family,
+            backend_label=f"{family}_torch_native_attention",
+        ),
     )
 
 
@@ -126,47 +114,6 @@ def _ar_config(
         block_size=block_size,
         extra=extras,
     )
-
-
-def _native_decode_fns(model: Any, *, backend_label: str) -> tuple[PrefillFn, StepFn]:
-    trunk = _lm_trunk(model)
-
-    def _prefill(embeds: torch.Tensor, mask: torch.Tensor) -> tuple[torch.Tensor, Any]:
-        outputs = trunk(
-            inputs_embeds=embeds,
-            attention_mask=mask,
-            use_cache=True,
-            output_hidden_states=True,
-        )
-        return _last_token_hidden(outputs), require_past_key_values(outputs, backend_label)
-
-    def _step(embeds: torch.Tensor, mask: torch.Tensor, kv: Any) -> tuple[torch.Tensor, Any]:
-        outputs = trunk(
-            inputs_embeds=embeds,
-            attention_mask=mask,
-            past_key_values=kv,
-            use_cache=True,
-            output_hidden_states=True,
-        )
-        return _last_token_hidden(outputs), require_past_key_values(outputs, backend_label)
-
-    return _prefill, _step
-
-
-def _last_token_hidden(outputs: Any) -> torch.Tensor:
-    hidden = getattr(outputs, "last_hidden_state", None)
-    if hidden is None:
-        hidden_states = getattr(outputs, "hidden_states", None)
-        if not hidden_states:
-            raise RuntimeError(
-                "language model output must expose last_hidden_state or hidden_states",
-            )
-        hidden = hidden_states[-1]
-    if hidden.ndim == 3:
-        return hidden[:, -1, :]
-    if hidden.ndim == 2:
-        return hidden
-    raise RuntimeError(f"language model hidden state must be rank 2 or 3, got {hidden.ndim}")
 
 
 def _lm_trunk(model: Any) -> Any:

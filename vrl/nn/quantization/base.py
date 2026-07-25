@@ -8,9 +8,16 @@ master cleanup and device moves remain scheme-neutral.
 from __future__ import annotations
 
 from collections.abc import Callable
+from typing import Any
 
 import torch
 from torch import nn
+
+from vrl.nn.quantization.targeting import (
+    DEFAULT_EXCLUDE,
+    LinearTargetProfile,
+    matches_linear_target,
+)
 
 
 class QuantizedLinear(nn.Module):
@@ -21,15 +28,80 @@ class QuantizedLinear(nn.Module):
     base dtype: when a source master exists, caches are rebuilt from the moved
     master; master-free rollout caches move as raw bytes and preserve their exact
     format.
+
+    They also own their module-tree swap policy: ``default_target_profile`` is the
+    validated production scope for the scheme, and ``can_replace`` rejects shapes
+    its kernels cannot take. ``swap_linears`` is the one traversal both feed.
     """
 
     quantization_scheme: str
     cache_buffer_names: tuple[str, ...] = ()
+    # The scheme's validated production scope. Annotation-only so a new scheme
+    # that forgets it fails loudly on the first default-profile swap instead of
+    # silently inheriting another scheme's accuracy/perf trade-off.
+    default_target_profile: LinearTargetProfile
 
     def _requantize_weight(self) -> None:
         """Rebuild derived low-precision buffers from ``self.weight``."""
 
         raise NotImplementedError
+
+    @classmethod
+    def can_replace(cls, linear: nn.Linear) -> bool:
+        """Whether this scheme's kernels accept ``linear``'s shape.
+
+        Traversal skips a rejected Linear rather than failing, so a policy with a
+        few unsupported shapes still quantizes everything else.
+        """
+
+        return True
+
+    @classmethod
+    def swap_linears(
+        cls,
+        root: nn.Module,
+        *,
+        exclude: tuple[str, ...] = DEFAULT_EXCLUDE,
+        min_features: int = 1024,
+        target_profile: LinearTargetProfile | str | None = None,
+        **init_kwargs: Any,
+    ) -> list[str]:
+        """Replace eligible ``nn.Linear`` modules under ``root`` with ``cls`` in place.
+
+        A Linear is quantized when its dotted path matches no ``exclude``
+        substring, belongs to ``target_profile``, meets ``min_features`` on both
+        dimensions, and passes ``cls.can_replace``. ``init_kwargs`` reach the
+        scheme constructor (fp8's ``recipe``). Returns the dotted paths swapped.
+        """
+
+        # Resolved before the traversal on purpose: an invalid profile must raise
+        # with the model untouched. It cannot be a signature default either --
+        # ``cls`` does not exist while the ``def`` is evaluated.
+        profile = (
+            cls.default_target_profile
+            if target_profile is None
+            else LinearTargetProfile(target_profile)
+        )
+        swapped: list[str] = []
+        # Replaced in place as we go: collecting every target first would keep all
+        # source Linears alive beside their quantized copies, roughly doubling the
+        # swap's peak memory on a rollout-sized policy.
+        for parent_path, parent in root.named_modules():
+            for child_name, child in list(parent.named_children()):
+                if not isinstance(child, nn.Linear):
+                    continue
+                path = f"{parent_path}.{child_name}" if parent_path else child_name
+                if any(token in path for token in exclude):
+                    continue
+                if not matches_linear_target(path, profile):
+                    continue
+                if child.in_features < min_features or child.out_features < min_features:
+                    continue
+                if not cls.can_replace(child):
+                    continue
+                setattr(parent, child_name, cls(child, **init_kwargs))
+                swapped.append(path)
+        return swapped
 
     def drop_master(self) -> int:
         """Free the source-dtype master, keeping only the derived cache.
@@ -108,6 +180,10 @@ def drop_quantized_masters(root: nn.Module) -> int:
     Returns the bytes freed. Valid whenever weight-sync never loads base weights
     into these modules (adapter-only or sync-free rollouts) — see the per-scheme
     ``drop_master`` docstrings.
+
+    Deliberately a free function while ``swap_linears`` is a classmethod: this
+    walk is scheme-agnostic (it visits every scheme under ``root`` at once),
+    reads no class attribute, and constructs nothing, so it has no subject.
     """
     return sum(
         module.drop_master() for module in root.modules() if isinstance(module, QuantizedLinear)

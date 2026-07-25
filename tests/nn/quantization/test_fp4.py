@@ -12,7 +12,6 @@ from vrl.config.precision import QuantizationPolicy, RolePrecision
 from vrl.nn.quantization import (
     Fp4Linear,
     drop_quantized_masters,
-    swap_linears_to_nvfp4,
 )
 from vrl.nn.quantization.formats import (
     E2M1_VALUES,
@@ -207,7 +206,7 @@ class _Blockish(nn.Module):
 
 def test_swap_targets_aligned_big_mlp_linears_only() -> None:
     model = _Blockish(1024)
-    swapped = swap_linears_to_nvfp4(model)
+    swapped = Fp4Linear.swap_linears(model)
     assert swapped == ["ff_up"]
     assert isinstance(model.ff_up, Fp4Linear)
     assert isinstance(model.to_q, nn.Linear)
@@ -219,7 +218,7 @@ def test_swap_targets_aligned_big_mlp_linears_only() -> None:
 
 def test_attention_mlp_profile_includes_aligned_attention() -> None:
     model = _Blockish(1024)
-    swapped = swap_linears_to_nvfp4(model, target_profile="attention_mlp")
+    swapped = Fp4Linear.swap_linears(model, target_profile="attention_mlp")
     assert swapped == ["to_q", "ff_up"]
     assert isinstance(model.to_q, Fp4Linear)
     assert isinstance(model.ff_up, Fp4Linear)
@@ -228,7 +227,7 @@ def test_attention_mlp_profile_includes_aligned_attention() -> None:
 def test_invalid_target_profile_raises_before_mutation() -> None:
     model = _Blockish(1024)
     with pytest.raises(ValueError, match="bogus"):
-        swap_linears_to_nvfp4(model, target_profile="bogus")
+        Fp4Linear.swap_linears(model, target_profile="bogus")
     assert not any(isinstance(module, Fp4Linear) for module in model.modules())
 
 

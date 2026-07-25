@@ -38,11 +38,7 @@ from torch import nn
 
 from vrl.nn.quantization.base import QuantizedLinear
 from vrl.nn.quantization.formats import FP8_E4M3_MAX
-from vrl.nn.quantization.targeting import (
-    DEFAULT_EXCLUDE,
-    LinearTargetProfile,
-    matches_linear_target,
-)
+from vrl.nn.quantization.targeting import LinearTargetProfile
 
 # Block size for the ``blockwise`` recipe (standard 128).
 FP8_BLOCK = 128
@@ -65,6 +61,9 @@ class Fp8Linear(QuantizedLinear):
 
     quantization_scheme = "fp8"
     cache_buffer_names = ("weight_fp8", "weight_scale")
+    # ``attention_mlp`` is the production FP8 scope; ``mlp_only`` exists to give
+    # the conservative NVFP4 targeting a matched-scope comparison.
+    default_target_profile = LinearTargetProfile.ATTENTION_MLP
 
     def __init__(self, linear: nn.Linear, *, recipe: str = "rowwise") -> None:
         super().__init__()
@@ -179,42 +178,4 @@ class Fp8Linear(QuantizedLinear):
         return f"in={self.in_features}, out={self.out_features}, recipe={self.recipe}, fp8=e4m3"
 
 
-def swap_linears_to_fp8(
-    root: nn.Module,
-    *,
-    recipe: str = "rowwise",
-    exclude: tuple[str, ...] = DEFAULT_EXCLUDE,
-    min_features: int = 1024,
-    target_profile: LinearTargetProfile | str = LinearTargetProfile.ATTENTION_MLP,
-) -> list[str]:
-    """Replace big ``nn.Linear`` modules under ``root`` with :class:`Fp8Linear` in place.
-
-    Quantizes a Linear only when its dotted path matches no ``exclude`` substring,
-    belongs to ``target_profile``, and both dimensions meet ``min_features``.
-    ``attention_mlp`` remains the production FP8 profile; ``mlp_only`` provides a
-    matched-scope comparison with conservative NVFP4 targeting.
-    """
-
-    target_profile = LinearTargetProfile(target_profile)
-    swapped: list[str] = []
-    for parent_path, parent in root.named_modules():
-        for child_name, child in list(parent.named_children()):
-            if not isinstance(child, nn.Linear):
-                continue
-            path = f"{parent_path}.{child_name}" if parent_path else child_name
-            if any(token in path for token in exclude):
-                continue
-            if not matches_linear_target(path, target_profile):
-                continue
-            if child.in_features < min_features or child.out_features < min_features:
-                continue
-            setattr(parent, child_name, Fp8Linear(child, recipe=recipe))
-            swapped.append(path)
-    return swapped
-
-
-__all__ = [
-    "DEFAULT_EXCLUDE",
-    "Fp8Linear",
-    "swap_linears_to_fp8",
-]
+__all__ = ["Fp8Linear"]

@@ -12,11 +12,8 @@ facade; consumers import from ``vrl.nn.quantization``, not per-scheme modules.
 from __future__ import annotations
 
 from vrl.nn.quantization.base import QuantizedLinear, drop_quantized_masters
-from vrl.nn.quantization.fp4 import Fp4Linear, nvfp4_available, swap_linears_to_nvfp4
-from vrl.nn.quantization.fp8 import (
-    Fp8Linear,
-    swap_linears_to_fp8,
-)
+from vrl.nn.quantization.fp4 import Fp4Linear, nvfp4_available
+from vrl.nn.quantization.fp8 import Fp8Linear
 from vrl.nn.quantization.targeting import DEFAULT_EXCLUDE, LM_EXCLUDE, LinearTargetProfile
 
 __all__ = [
@@ -28,6 +25,4 @@ __all__ = [
     "QuantizedLinear",
     "drop_quantized_masters",
     "nvfp4_available",
-    "swap_linears_to_fp8",
-    "swap_linears_to_nvfp4",
 ]

@@ -1,15 +1,16 @@
 """Contract + equivalence tests for the torch_native AR attention backend.
 
 The skeleton (:class:`TorchNativeDecoderAttentionBackend`) is shared by every
-``torch_native`` family: it splits the family KV into one cache per row for
-``sequence_states`` and re-concatenates the selected rows the runner hands back.
-These tests pin two properties that the bit-identical refactor relies on:
+``torch_native`` family: it drives one HF trunk call and splits the returned KV
+into one cache per row for ``sequence_states``, re-concatenating the selected
+rows the runner hands back. These tests pin two properties that the
+bit-identical refactor relies on:
 
 1. The skeleton selects / concatenates / re-splits rows in order, so a runner that
    indexes ``sequence_states`` by ``row_indices`` sees exactly the rows it asked for.
-2. A NextStep-style ``{past_key_values, last_hidden}`` KV stepped as one concatenated
-   batch is identical to stepping each row separately — the batch-independence that
-   makes folding the old per-branch ``_step_llm`` calls into one step bit-identical.
+2. A batch of rows stepped as one concatenated forward is identical to stepping
+   each row separately — the batch-independence that makes folding the old
+   per-branch decode calls into one step bit-identical.
 """
 
 from __future__ import annotations
@@ -17,6 +18,7 @@ from __future__ import annotations
 from types import SimpleNamespace
 from typing import Any
 
+import pytest
 import torch
 
 from vrl.nn.layers.attention.paged import (
@@ -35,27 +37,36 @@ def _config() -> ARAttentionConfig:
     )
 
 
+class _RowIdentityTrunk:
+    """Trunk whose KV is a per-row identity tensor, so row order is observable."""
+
+    def __init__(self) -> None:
+        self.stepped_past: Any = None
+
+    def __call__(
+        self,
+        *,
+        inputs_embeds: torch.Tensor,
+        attention_mask: torch.Tensor,
+        past_key_values: Any,
+        use_cache: bool,
+        output_hidden_states: bool,
+    ) -> SimpleNamespace:
+        del attention_mask, use_cache, output_hidden_states
+        if past_key_values is None:
+            past = torch.arange(inputs_embeds.shape[0], dtype=torch.float32).reshape(-1, 1)
+        else:
+            self.stepped_past = past_key_values.clone()
+            past = past_key_values + 100.0
+        return SimpleNamespace(hidden_states=(inputs_embeds,), past_key_values=past)
+
+
 def test_skeleton_selects_and_reconcats_rows_in_order() -> None:
     """prefill splits KV into per-row states; step concats the rows it is handed,
     in the given order, and re-splits the result one cache per row."""
 
-    seen: dict[str, Any] = {}
-
-    def prefill_fn(embeds: torch.Tensor, mask: torch.Tensor) -> tuple[torch.Tensor, Any]:
-        del mask
-        batch = embeds.shape[0]
-        # Per-row identity KV so we can assert ordering survives split/concat.
-        kv = torch.arange(batch, dtype=torch.float32).reshape(batch, 1)
-        return embeds[:, -1, :], kv
-
-    def step_fn(embeds: torch.Tensor, mask: torch.Tensor, kv: Any) -> tuple[torch.Tensor, Any]:
-        del mask
-        seen["kv"] = kv.clone()
-        return embeds[:, 0, :], kv + 100.0
-
-    backend = TorchNativeDecoderAttentionBackend(
-        config=_config(), prefill_fn=prefill_fn, step_fn=step_fn
-    )
+    trunk = _RowIdentityTrunk()
+    backend = TorchNativeDecoderAttentionBackend(trunk=trunk, config=_config())
 
     pre = backend.prefill(
         ARAttentionPrefillInput(
@@ -75,56 +86,46 @@ def test_skeleton_selects_and_reconcats_rows_in_order() -> None:
             sequence_states=(pre.sequence_states[2], pre.sequence_states[0]),
         )
     )
-    assert torch.equal(seen["kv"], torch.tensor([[2.0], [0.0]]))
+    assert torch.equal(trunk.stepped_past, torch.tensor([[2.0], [0.0]]))
     assert len(out.sequence_states) == 2
     assert torch.equal(out.sequence_states[0], torch.tensor([[102.0]]))
     assert torch.equal(out.sequence_states[1], torch.tensor([[100.0]]))
 
 
-class _StubKVModel:
-    """Minimal NextStep-style model: dict KV with a per-row ``_step_llm``."""
+class _RowIndependentTrunk:
+    """Trunk whose KV is the running per-row sum — no cross-batch interaction."""
 
-    def _init_kv(self, embeds: torch.Tensor, mask: torch.Tensor | None) -> dict[str, Any]:
-        del mask
-        return {"past_key_values": embeds.sum(dim=1), "last_hidden": embeds[:, -1]}
-
-    @staticmethod
-    def _last_hidden(kv: dict[str, Any]) -> torch.Tensor:
-        return kv["last_hidden"]
-
-    def _step_llm(self, kv: dict[str, Any], new_embed: torch.Tensor) -> tuple[dict[str, Any], torch.Tensor]:
-        past = kv["past_key_values"] + new_embed  # per-row, no cross-batch interaction
-        return {"past_key_values": past, "last_hidden": past}, past
-
-
-def _build_stub_backend(model: _StubKVModel) -> TorchNativeDecoderAttentionBackend:
-    def prefill_fn(embeds: torch.Tensor, mask: torch.Tensor) -> tuple[torch.Tensor, Any]:
-        kv = model._init_kv(embeds, mask)
-        return model._last_hidden(kv), kv
-
-    def step_fn(embeds: torch.Tensor, mask: torch.Tensor, kv: Any) -> tuple[torch.Tensor, Any]:
-        del mask
-        kv_next, last_hidden = model._step_llm(kv, embeds[:, 0, :])
-        return last_hidden, kv_next
-
-    return TorchNativeDecoderAttentionBackend(
-        config=_config(), prefill_fn=prefill_fn, step_fn=step_fn
-    )
+    def __call__(
+        self,
+        *,
+        inputs_embeds: torch.Tensor,
+        attention_mask: torch.Tensor,
+        past_key_values: Any,
+        use_cache: bool,
+        output_hidden_states: bool,
+    ) -> SimpleNamespace:
+        del attention_mask, use_cache, output_hidden_states
+        summed = inputs_embeds.sum(dim=1)
+        past = summed if past_key_values is None else past_key_values + summed
+        return SimpleNamespace(hidden_states=(past.unsqueeze(1),), past_key_values=past)
 
 
-def test_dict_kv_batched_step_equals_per_row_steps() -> None:
+def test_batched_step_equals_per_row_steps() -> None:
     """Stepping [row0; row1] as one batch == stepping each row alone — the
     batch-independence that makes the concatenated cond/uncond step bit-identical
-    to the old per-branch ``_step_llm`` calls."""
+    to the old per-branch decode calls."""
 
     torch.manual_seed(0)
-    model = _StubKVModel()
-    backend = _build_stub_backend(model)
+    backend = TorchNativeDecoderAttentionBackend(
+        trunk=_RowIndependentTrunk(),
+        config=_config(),
+    )
 
-    embeds = torch.randn(2, 3, 4)
     pre = backend.prefill(
         ARAttentionPrefillInput(
-            inputs_embeds=embeds, attention_mask=torch.ones(2, 3), branch="cond"
+            inputs_embeds=torch.randn(2, 3, 4),
+            attention_mask=torch.ones(2, 3),
+            branch="cond",
         )
     )
     step_embed = torch.randn(2, 1, 4)
@@ -154,8 +155,39 @@ def test_dict_kv_batched_step_equals_per_row_steps() -> None:
     )
     for row in range(2):
         torch.testing.assert_close(
-            batched.sequence_states[row]["past_key_values"],
-            separate[row].sequence_states[0]["past_key_values"],
+            batched.sequence_states[row],
+            separate[row].sequence_states[0],
+        )
+
+
+class _CachelessTrunk:
+    """Trunk that answers without a KV cache (``use_cache`` silently ignored)."""
+
+    def __call__(
+        self,
+        *,
+        inputs_embeds: torch.Tensor,
+        attention_mask: torch.Tensor,
+        past_key_values: Any,
+        use_cache: bool,
+        output_hidden_states: bool,
+    ) -> SimpleNamespace:
+        del attention_mask, past_key_values, use_cache, output_hidden_states
+        return SimpleNamespace(hidden_states=(inputs_embeds,), past_key_values=None)
+
+
+def test_missing_past_key_values_fails_with_the_backend_label() -> None:
+    """A cache-less trunk must fail loud, naming the backend that asked for it."""
+
+    backend = TorchNativeDecoderAttentionBackend(trunk=_CachelessTrunk(), config=_config())
+
+    with pytest.raises(RuntimeError, match="stub_torch_native trunk forward returned no"):
+        backend.prefill(
+            ARAttentionPrefillInput(
+                inputs_embeds=torch.randn(2, 3, 4),
+                attention_mask=torch.ones(2, 3),
+                branch="cond",
+            )
         )
 
 
@@ -217,8 +249,11 @@ def test_shared_torch_native_builder_uses_hf_cache_forward() -> None:
     )
 
     assert backend.config.family == "hooked_family"
+    assert backend.backend_label == "hooked_family_torch_native_attention"
     assert pre.last_hidden.shape == (2, 4)
     assert model.trunk.calls[0]["output_hidden_states"] is True
+    # Prefill and step share one forward, so prefill passes the HF default explicitly.
+    assert model.trunk.calls[0]["past_key_values"] is None
 
     out = backend.step(
         ARAttentionStepInput(

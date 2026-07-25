@@ -17,6 +17,7 @@ from vrl.scripts.perf.quantized_sd3_forward_profile import (
     _apply_scheme,
     _manifest_sha256,
     _require_matching_manifest,
+    _resolve_target_profile,
     _target_manifest,
     _unique_tensor_bytes,
 )
@@ -86,6 +87,14 @@ def test_manifest_mismatch_fails_loud() -> None:
 
     with pytest.raises(RuntimeError, match=r"only_fp8=.*attn\.to_q"):
         _require_matching_manifest("fp8", fp8_manifest, "nvfp4", nvfp4_manifest)
+
+
+def test_scheme_default_profile_comes_from_the_scheme_class() -> None:
+    """scheme_default reads the swap owner's class attribute, not a local copy."""
+
+    assert _resolve_target_profile("fp8", "scheme_default") is LinearTargetProfile.ATTENTION_MLP
+    assert _resolve_target_profile("nvfp4", "scheme_default") is LinearTargetProfile.MLP_ONLY
+    assert _resolve_target_profile("bf16", "scheme_default") is None
 
 
 def test_apply_scheme_rejects_legacy_fp4_name() -> None:
