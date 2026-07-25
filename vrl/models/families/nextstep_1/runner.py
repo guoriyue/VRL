@@ -16,12 +16,12 @@ from vrl.math.token.flow_matching import flow_sample_with_logprob
 from vrl.models.steps.token.paged_attention_helpers import (
     append_attention_token,
     normalize_paged_last_hidden,
+    prefill_ar_prompt,
     scatter_paged_states,
     select_paged_states,
 )
 from vrl.nn.layers.attention.paged import (
     ARAttentionBackend,
-    ARAttentionPrefillInput,
     ARAttentionStepInput,
 )
 
@@ -91,7 +91,8 @@ class NextStep1ARModelRunner:
         )
         logprobs = torch.zeros(batch_size, image_token_num, device=device, dtype=torch.float32)
 
-        cond_prefill = self._prefill_paged(
+        cond_prefill = prefill_ar_prompt(
+            self.attention_backend,
             prompt_embeds,
             prompt_mask,
             branch="cond",
@@ -102,7 +103,8 @@ class NextStep1ARModelRunner:
         paged_cond_states = list(cond_prefill.sequence_states)
         paged_uncond_states = None
         if uncond_embeds is not None and uncond_mask is not None:
-            uncond_prefill = self._prefill_paged(
+            uncond_prefill = prefill_ar_prompt(
+                self.attention_backend,
                 uncond_embeds,
                 uncond_mask,
                 branch="uncond",
@@ -193,23 +195,6 @@ class NextStep1ARModelRunner:
                 token=token,
             )
         return {}
-
-    def _prefill_paged(
-        self,
-        inputs_embeds: torch.Tensor,
-        attention_mask: torch.Tensor,
-        *,
-        branch: str,
-        image_token_num: int,
-    ) -> Any:
-        return self.attention_backend.prefill(
-            ARAttentionPrefillInput(
-                inputs_embeds=inputs_embeds,
-                attention_mask=attention_mask,
-                branch=branch,
-                metadata={"image_token_num": image_token_num},
-            )
-        )
 
     def _advance_paged_attention(
         self,

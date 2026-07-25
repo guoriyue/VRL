@@ -48,12 +48,16 @@ from vrl.models.families.llamagen.config import (
 from vrl.models.interfaces import (
     ReplayRequest,
     ReplayResult,
-    ReplaySegmentResult,
-    require_replay_segments,
-    require_zero_replay_timestep,
+    resolve_image_token_replay,
+    single_segment_result,
 )
-from vrl.models.steps.token.base import ARModelBase, ARReplayRolloutStubs
+from vrl.models.steps.token.base import (
+    ARModelBase,
+    ARReplayRolloutStubs,
+    require_module_attrs,
+)
 from vrl.models.steps.token.lora import install_token_lora_adapter
+from vrl.models.utils import peel_peft
 from vrl.utils.logging import init_logger
 
 logger = init_logger(__name__)
@@ -118,12 +122,11 @@ class LlamaGenModel(ARModelBase):
         self._t5_tokenizer = t5_tokenizer
 
         trunk = self._gpt_trunk()
-        for attr in ("cls_embedding", "tok_embeddings", "output", "layers"):
-            if not hasattr(trunk, attr):
-                raise RuntimeError(
-                    f"Loaded model is missing `{attr}` — does not look like a "
-                    "LlamaGen t2i Transformer."
-                )
+        require_module_attrs(
+            trunk,
+            ("cls_embedding", "tok_embeddings", "output", "layers"),
+            owner="a LlamaGen t2i Transformer",
+        )
         if trunk.model_type != "t2i":
             raise RuntimeError(
                 f"LlamaGen wrapper requires a t2i GPT; got model_type={trunk.model_type!r}"
@@ -144,11 +147,7 @@ class LlamaGenModel(ARModelBase):
         the peeled trunk still routes through the LoRA layers (same pattern as
         Janus' ``_lm_trunk``).
         """
-        m = self.gpt
-        inner = getattr(m, "base_model", None)
-        if inner is not None and hasattr(inner, "model") and inner.model is not m:
-            return inner.model
-        return m
+        return peel_peft(self.gpt)
 
     @property
     def language_model(self) -> nn.Module:
@@ -335,29 +334,20 @@ class LlamaGenModel(ARModelBase):
         the conditioning is identical to rollout), and recomputes logits under
         the current model. AR has no denoising step, so only index zero is valid.
         """
-        require_zero_replay_timestep(timestep_idx, owner=type(self).__name__)
-        require_replay_segments(
+        replay, image_token_ids = resolve_image_token_replay(
+            batch,
+            timestep_idx,
             request,
-            ("image_tokens",),
             owner=type(self).__name__,
         )
-        from vrl.trajectory import TrajectoryResolver
-
-        resolver = TrajectoryResolver.from_batch(batch)
-        replay = resolver.replay_tensor_dict("image_tokens")
         prompt_ids = replay["prompt_input_ids"]
         prompt_mask = replay["prompt_attention_mask"]
-        image_token_ids = resolver.role_value("image_tokens", "action")
 
         caption_embeds, caption_mask = self.encode_caption(prompt_ids, prompt_mask)
         logits = self.forward_image_logits(caption_embeds, caption_mask, image_token_ids)
-        return ReplayResult(
-            segments={
-                "image_tokens": ReplaySegmentResult(
-                    segment="image_tokens",
-                    values={"logits": logits, "image_token_ids": image_token_ids},
-                ),
-            },
+        return single_segment_result(
+            "image_tokens",
+            {"logits": logits, "image_token_ids": image_token_ids},
         )
 
     # ------------------------------------------------------------------

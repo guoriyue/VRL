@@ -63,12 +63,17 @@ from vrl.models.families.glm_image.config import GlmImageConfig
 from vrl.models.interfaces import (
     ReplayRequest,
     ReplayResult,
-    ReplaySegmentResult,
-    require_replay_segments,
-    require_zero_replay_timestep,
+    replay_context_image_size,
+    resolve_image_token_replay,
+    single_segment_result,
 )
-from vrl.models.steps.token.base import ARModelBase, ARReplayRolloutStubs
+from vrl.models.steps.token.base import (
+    ARModelBase,
+    ARReplayRolloutStubs,
+    require_module_attrs,
+)
 from vrl.models.steps.token.lora import install_token_lora_adapter
+from vrl.models.utils import peel_peft
 from vrl.utils.logging import init_logger
 
 logger = init_logger(__name__)
@@ -269,20 +274,19 @@ class GlmImageModel(ARModelBase):
     # ------------------------------------------------------------------
 
     def _require_surface(self, attrs: tuple[str, ...]) -> None:
-        for attr in attrs:
-            if not hasattr(self.glm, attr):
-                raise RuntimeError(
-                    f"Loaded model is missing `{attr}` — does not look like "
-                    "a GlmImageForConditionalGeneration checkpoint."
-                )
+        require_module_attrs(
+            self.glm,
+            attrs,
+            owner="a GlmImageForConditionalGeneration checkpoint",
+        )
 
     def _require_inner_surface(self, attrs: tuple[str, ...]) -> None:
-        for attr in attrs:
-            if not hasattr(self.glm.model, attr):
-                raise RuntimeError(
-                    f"Loaded model is missing `model.{attr}` — does not look "
-                    "like a GlmImageForConditionalGeneration checkpoint."
-                )
+        require_module_attrs(
+            self.glm.model,
+            attrs,
+            owner="a GlmImageForConditionalGeneration checkpoint",
+            prefix="model.",
+        )
 
     @property
     def processor(self) -> Any:
@@ -313,11 +317,7 @@ class GlmImageModel(ARModelBase):
         projection lives in the top-level ``lm_head``). We peel the PEFT
         wrapper so the runner drives the raw HF module directly.
         """
-        lm = self.language_model
-        peft_inner = getattr(lm, "base_model", None)
-        if peft_inner is not None and hasattr(peft_inner, "model") and peft_inner.model is not lm:
-            return peft_inner.model
-        return lm
+        return peel_peft(self.language_model)
 
     # ------------------------------------------------------------------
     # LoRA / reference-policy helpers
@@ -536,19 +536,14 @@ class GlmImageModel(ARModelBase):
 
         AR has no notion of a denoising step, so only index zero is valid.
         """
-        require_zero_replay_timestep(timestep_idx, owner=type(self).__name__)
-        require_replay_segments(
+        replay, image_token_ids = resolve_image_token_replay(
+            batch,
+            timestep_idx,
             request,
-            ("image_tokens",),
             owner=type(self).__name__,
         )
-        from vrl.trajectory import TrajectoryResolver
-
-        resolver = TrajectoryResolver.from_batch(batch)
-        replay = resolver.replay_tensor_dict("image_tokens")
         prompt_ids = replay["prompt_input_ids"]
         prompt_mask = replay["prompt_attention_mask"]
-        image_token_ids = resolver.role_value("image_tokens", "action")
 
         grids = self._replay_grids(batch, int(image_token_ids.shape[1]))
 
@@ -560,13 +555,9 @@ class GlmImageModel(ARModelBase):
             image_token_ids,
             grids=grids,
         )  # [B, L_img, V_codebook]
-        return ReplayResult(
-            segments={
-                "image_tokens": ReplaySegmentResult(
-                    segment="image_tokens",
-                    values={"logits": logits, "image_token_ids": image_token_ids},
-                ),
-            },
+        return single_segment_result(
+            "image_tokens",
+            {"logits": logits, "image_token_ids": image_token_ids},
         )
 
     def _replay_grids(
@@ -580,24 +571,12 @@ class GlmImageModel(ARModelBase):
         trajectory context; the grid math is deterministic from them (and NOT
         from the token count alone for non-square sizes).
         """
-        context = getattr(batch, "context", None) or {}
-        trajectory = getattr(batch, "trajectory", None)
-        if not context and trajectory is not None:
-            context = getattr(trajectory, "context", None) or {}
-        height = context.get("image_height")
-        width = context.get("image_width")
-        if height is None or width is None:
-            raise RuntimeError(
-                "GLM-Image replay requires image_height/image_width in the "
-                "rollout context to rebuild the mrope position schedule.",
-            )
-        height, width = int(height), int(width)
-        expected = glm_image_token_num(height, width)
-        if expected != token_count:
-            raise RuntimeError(
-                f"GLM-Image replay token count {token_count} does not match "
-                f"the {height}x{width} target (expected {expected}).",
-            )
+        height, width = replay_context_image_size(
+            batch,
+            token_count=token_count,
+            expected_token_num=glm_image_token_num,
+            owner="GLM-Image",
+        )
         token_h, token_w, prev_h, prev_w = glm_image_grid_dims(height, width)
         return ((token_h, token_w), (prev_h, prev_w))
 
@@ -885,30 +864,17 @@ def _load_glm_image_replay_core_from_pretrained(
     ``vision_language_encoder`` checkpoint subfolder.
     """
 
-    from transformers import AutoConfig
+    from vrl.models.steps.token.loader import load_replay_core
 
-    from vrl.models.steps.token.loader import (
-        load_replay_core_checkpoint,
-        resolve_hf_checkpoint_dir,
-    )
-
-    dtype = resolve_torch_dtype(config.dtype)
-    model_config = AutoConfig.from_pretrained(
+    return load_replay_core(
+        GlmImageReplayCore,
         config.model_path,
-        subfolder=GLM_IMAGE_AR_SUBFOLDER,
-        revision=config.revision,
-    )
-    core = GlmImageReplayCore(model_config)
-    load_replay_core_checkpoint(
-        core,
-        resolve_hf_checkpoint_dir(
-            config.model_path,
-            subfolder=GLM_IMAGE_AR_SUBFOLDER,
-            revision=config.revision,
-        ),
+        device=config.device,
+        dtype=resolve_torch_dtype(config.dtype),
         owner="GLM-Image",
+        revision=config.revision,
+        subfolder=GLM_IMAGE_AR_SUBFOLDER,
     )
-    return core.to(device=config.device, dtype=dtype).eval()
 
 
 __all__ = [

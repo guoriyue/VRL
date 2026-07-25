@@ -44,12 +44,12 @@ from vrl.models.families.nextstep_1.config import (
 from vrl.models.interfaces import (
     ReplayRequest,
     ReplayResult,
-    ReplaySegmentResult,
-    require_replay_segments,
-    require_zero_replay_timestep,
+    resolve_image_token_replay,
+    single_segment_result,
 )
 from vrl.models.steps.token.base import ARModelBase, ARReplayRolloutStubs
 from vrl.models.steps.token.lora import install_token_lora_adapter
+from vrl.models.utils import peel_peft
 
 # ---------------------------------------------------------------------------
 # Wrapper
@@ -240,21 +240,16 @@ class NextStep1Model(ARModelBase):
         Returns:
           ``ReplayResult`` with ``log_probs`` and ``tokens`` for ``image_tokens``.
         """
-        require_zero_replay_timestep(timestep_idx, owner=type(self).__name__)
-        require_replay_segments(
+        replay, tokens = resolve_image_token_replay(
+            batch,
+            timestep_idx,
             request,
-            ("image_tokens",),
             owner=type(self).__name__,
         )
-        from vrl.trajectory import TrajectoryResolver
-
-        resolver = TrajectoryResolver.from_batch(batch)
-        replay = resolver.replay_tensor_dict("image_tokens")
         prompt_ids = replay["prompt_input_ids"]
         prompt_mask = replay["prompt_attention_mask"]
         uncond_ids = replay.get("uncond_input_ids")
         uncond_mask = replay.get("uncond_attention_mask")
-        tokens = resolver.role_value("image_tokens", "action")
         saved_noise = replay["saved_noise"]
 
         embed = self.language_model.get_input_embeddings()
@@ -272,13 +267,9 @@ class NextStep1Model(ARModelBase):
             num_steps=batch.context.get("num_steps"),
             noise_level=batch.context.get("noise_level"),
         )
-        return ReplayResult(
-            segments={
-                "image_tokens": ReplaySegmentResult(
-                    segment="image_tokens",
-                    values={"log_probs": log_probs, "tokens": tokens},
-                ),
-            },
+        return single_segment_result(
+            "image_tokens",
+            {"log_probs": log_probs, "tokens": tokens},
         )
 
     # ------------------------------------------------------------------
@@ -353,11 +344,7 @@ class NextStep1Model(ARModelBase):
     def _lm_trunk(self) -> Any:
         """Return the Qwen-style decoder trunk, peeling PEFT when attached."""
 
-        lm = self.language_model
-        peft_inner = getattr(lm, "base_model", None)
-        if peft_inner is not None and hasattr(peft_inner, "model") and peft_inner.model is not lm:
-            return peft_inner.model
-        return lm
+        return peel_peft(self.language_model)
 
     def _step_llm(
         self,

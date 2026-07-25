@@ -30,6 +30,29 @@ from vrl.generation.steps.token import (
 from vrl.models.utils import disable_adapter_on, load_weights_into
 
 
+def require_module_attrs(
+    module: Any,
+    attrs: tuple[str, ...],
+    *,
+    owner: str,
+    prefix: str = "",
+) -> None:
+    """Fail loud if ``module`` is missing any of ``attrs`` (checkpoint-shape check).
+
+    Every AR family runs the same guard right after load: probe the freshly
+    loaded module for the handful of submodules its forward path needs, and
+    raise "does not look like {owner}" on the first one absent. ``prefix`` only
+    names a nested surface in the message (e.g. ``"model."``); callers pass the
+    already-resolved inner module, so it never changes which object is probed.
+    """
+
+    for attr in attrs:
+        if not hasattr(module, attr):
+            raise RuntimeError(
+                f"Loaded model is missing `{prefix}{attr}` — does not look like {owner}.",
+            )
+
+
 class ARModelBase(nn.Module):
     """Shared model base for autoregressive families on the RL path."""
 
@@ -176,4 +199,5 @@ __all__ = [
     "ARDiscreteTokenState",
     "ARModelBase",
     "ARReplayRolloutStubs",
+    "require_module_attrs",
 ]

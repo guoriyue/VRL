@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from contextlib import AbstractContextManager
 from dataclasses import dataclass, field
 from typing import Any, Protocol, cast, runtime_checkable
@@ -158,6 +158,77 @@ def require_zero_replay_timestep(timestep_idx: int, *, owner: str) -> None:
         )
 
 
+def resolve_image_token_replay(
+    batch: Any,
+    timestep_idx: int,
+    request: ReplayRequest | None,
+    *,
+    owner: str,
+) -> tuple[dict[str, Any], Any]:
+    """Shared prefix for the single-segment ``image_tokens`` replay path.
+
+    Validates the replay request against the ``("image_tokens",)`` segment set
+    and the no-timestep-axis contract, then resolves the recorded trajectory
+    into its replay tensor dict and the sampled action tensor. Families read
+    ``prompt_input_ids`` / ``prompt_attention_mask`` (and any family-specific
+    keys such as ``uncond_*`` / ``saved_noise``) off the returned dict, and own
+    the embed + forward + wrap tail.
+    """
+
+    require_zero_replay_timestep(timestep_idx, owner=owner)
+    require_replay_segments(request, ("image_tokens",), owner=owner)
+    from vrl.trajectory import TrajectoryResolver
+
+    resolver = TrajectoryResolver.from_batch(batch)
+    replay = resolver.replay_tensor_dict("image_tokens")
+    action = resolver.role_value("image_tokens", "action")
+    return replay, action
+
+
+def single_segment_result(name: str, values: dict[str, Any]) -> ReplayResult:
+    """Wrap one segment's payload as a ``ReplayResult`` (key == segment name)."""
+
+    return ReplayResult(
+        segments={name: ReplaySegmentResult(segment=name, values=values)},
+    )
+
+
+def replay_context_image_size(
+    batch: Any,
+    *,
+    token_count: int,
+    expected_token_num: Callable[[int, int], int],
+    owner: str,
+) -> tuple[int, int]:
+    """Read and validate the rollout image size from the trajectory context.
+
+    The executor stores pixel ``image_height``/``image_width`` in the trajectory
+    context (NOT derivable from the token count alone for non-square ratios).
+    Returns ``(height, width)`` after confirming the recorded size reproduces
+    ``token_count`` under the family ``expected_token_num``.
+    """
+
+    context = getattr(batch, "context", None) or {}
+    trajectory = getattr(batch, "trajectory", None)
+    if not context and trajectory is not None:
+        context = getattr(trajectory, "context", None) or {}
+    height = context.get("image_height")
+    width = context.get("image_width")
+    if height is None or width is None:
+        raise RuntimeError(
+            f"{owner} replay requires image_height/image_width in the rollout "
+            "context to rebuild the replay token schedule.",
+        )
+    height, width = int(height), int(width)
+    expected = expected_token_num(height, width)
+    if expected != token_count:
+        raise RuntimeError(
+            f"{owner} replay token count {token_count} does not match the "
+            f"{height}x{width} image size (expected {expected}).",
+        )
+    return height, width
+
+
 # Derived from the Protocol definitions (same pattern as the contract tests),
 # so a method add/rename auto-widens the runtime checks and error messages.
 _REPLAY_MODEL_METHODS = tuple(sorted(ReplayModel.__protocol_attrs__))
@@ -198,8 +269,11 @@ __all__ = [
     "ReplayResult",
     "ReplaySegmentResult",
     "RuntimeModel",
+    "replay_context_image_size",
     "require_replay_model",
     "require_replay_segments",
     "require_runtime_model",
     "require_zero_replay_timestep",
+    "resolve_image_token_replay",
+    "single_segment_result",
 ]

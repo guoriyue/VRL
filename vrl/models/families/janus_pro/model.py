@@ -56,9 +56,16 @@ from vrl.models.interfaces import (
     ReplaySegmentResult,
     require_replay_segments,
     require_zero_replay_timestep,
+    resolve_image_token_replay,
+    single_segment_result,
 )
-from vrl.models.steps.token.base import ARModelBase, ARReplayRolloutStubs
+from vrl.models.steps.token.base import (
+    ARModelBase,
+    ARReplayRolloutStubs,
+    require_module_attrs,
+)
 from vrl.models.steps.token.lora import install_token_lora_adapter
+from vrl.models.utils import peel_peft
 from vrl.trajectory import role_tensor
 from vrl.utils.logging import init_logger
 
@@ -100,12 +107,8 @@ def image_token_logits_from_hidden(
       ``[B, L_img, JANUS_IMAGE_VOCAB_SIZE]``.
     """
     # ``gen_head`` lives on the underlying mmgpt; PEFT wrapping preserves it.
-    # See JanusProModel._base for why we can't use hasattr(base_model) as the key.
-    inner = getattr(mmgpt, "base_model", None)
-    if inner is not None and hasattr(inner, "model") and inner.model is not mmgpt:
-        base = inner.model
-    else:
-        base = mmgpt
+    # ``peel_peft`` documents why hasattr(base_model) alone is not the key.
+    base = peel_peft(mmgpt)
     return base.gen_head(hidden_states)
 
 
@@ -159,30 +162,19 @@ class JanusProModel(ARModelBase):
 
         # Sanity: confirm gen_head + gen_vision_model exist
         base = self._base()
-        for attr in ("gen_head", "gen_vision_model", "language_model"):
-            if not hasattr(base, attr):
-                raise RuntimeError(
-                    f"Loaded model is missing `{attr}` — does not look like "
-                    "a Janus MultiModalityCausalLM checkpoint."
-                )
+        require_module_attrs(
+            base,
+            ("gen_head", "gen_vision_model", "language_model"),
+            owner="a Janus MultiModalityCausalLM checkpoint",
+        )
 
     # ------------------------------------------------------------------
     # Sub-module accessors
     # ------------------------------------------------------------------
 
     def _base(self) -> nn.Module:
-        """Return the unwrapped MultiModalityCausalLM (peels PEFT wrap).
-
-        Cannot key off ``hasattr(m, "base_model")`` alone: HF
-        ``PreTrainedModel`` exposes ``base_model`` as a property returning
-        ``self`` even when there's no PEFT wrap, and that object has no
-        ``.model`` attr. Only peel when the PEFT inner path exists.
-        """
-        m = self.mmgpt
-        inner = getattr(m, "base_model", None)
-        if inner is not None and hasattr(inner, "model") and inner.model is not m:
-            return inner.model
-        return m
+        """Return the unwrapped MultiModalityCausalLM (peels a PEFT wrap)."""
+        return peel_peft(self.mmgpt)
 
     def _lm_trunk(self) -> nn.Module:
         """Return the LlamaModel trunk that emits ``last_hidden_state``.
@@ -199,13 +191,9 @@ class JanusProModel(ARModelBase):
         for image-token generation. We need the raw hidden states, so we
         unwrap all the way down to ``LlamaModel``.
         """
-        lm = self._base().language_model
-        peft_inner = getattr(lm, "base_model", None)
-        if peft_inner is not None and hasattr(peft_inner, "model") and peft_inner.model is not lm:
-            # PEFT-wrapped: peft.base_model.model is LlamaForCausalLM
-            cls_lm = peft_inner.model
-        else:
-            cls_lm = lm
+        # ``peel_peft`` yields LlamaForCausalLM (or the bare lm without LoRA);
+        # the extra ``.model`` hop reaches the LlamaModel trunk beneath it.
+        cls_lm = peel_peft(self._base().language_model)
         return cls_lm.model if hasattr(cls_lm, "model") else cls_lm
 
     @property
@@ -391,13 +379,14 @@ class JanusProModel(ARModelBase):
             }
             return ReplayResult(segments=segments)
 
-        from vrl.trajectory import TrajectoryResolver
-
-        resolver = TrajectoryResolver.from_batch(batch)
-        replay = resolver.replay_tensor_dict("image_tokens")
+        replay, image_token_ids = resolve_image_token_replay(
+            batch,
+            timestep_idx,
+            request,
+            owner=type(self).__name__,
+        )
         prompt_ids = replay["prompt_input_ids"]
         prompt_mask = replay["prompt_attention_mask"]
-        image_token_ids = resolver.role_value("image_tokens", "action")
 
         embed = self.language_model.get_input_embeddings()
         prompt_embeds = embed(prompt_ids)
@@ -406,13 +395,9 @@ class JanusProModel(ARModelBase):
             prompt_mask,
             image_token_ids,
         )  # [B, L_img, V_img]
-        return ReplayResult(
-            segments={
-                "image_tokens": ReplaySegmentResult(
-                    segment="image_tokens",
-                    values={"logits": logits, "image_token_ids": image_token_ids},
-                ),
-            },
+        return single_segment_result(
+            "image_tokens",
+            {"logits": logits, "image_token_ids": image_token_ids},
         )
 
     def _r1_segment_payload_from_trajectory(
@@ -490,8 +475,8 @@ class JanusProModel(ARModelBase):
         temperature = require_positive_temperature(temperature)
 
         mode = (refine_mode or "selfcheck").lower()
-        if mode not in {"selfcheck", "always", "never"}:
-            raise ValueError("refine_mode must be one of: 'selfcheck', 'always', 'never'")
+        if mode not in {"selfcheck", "always"}:
+            raise ValueError("refine_mode must be one of: 'selfcheck', 'always'")
 
         prompt_input_ids = prompt_input_ids.to(self.device)
         prompt_attention_mask = prompt_attention_mask.to(self.device)
@@ -620,28 +605,21 @@ class JanusProModel(ARModelBase):
             dim=1,
         )
 
-        if mode != "never":
-            refined_ids, refined_logps = sample_image(
-                final_cond_embeds,
-                final_uncond_embeds,
-                final_cond_mask,
-                final_uncond_mask,
-                guidance_scale=guidance_scale,
-                temperature=temperature,
-                image_token_num=image_token_num,
-            )
-            refined_image = self.decode_image_tokens(
-                refined_ids,
-                image_size=image_size,
-            )
-        else:
-            refined_ids = initial_ids
-            refined_logps = initial_logps
-            refined_image = initial_image
+        refined_ids, refined_logps = sample_image(
+            final_cond_embeds,
+            final_uncond_embeds,
+            final_cond_mask,
+            final_uncond_mask,
+            guidance_scale=guidance_scale,
+            temperature=temperature,
+            image_token_num=image_token_num,
+        )
+        refined_image = self.decode_image_tokens(
+            refined_ids,
+            image_size=image_size,
+        )
 
-        if mode == "never":
-            use_refined = torch.zeros_like(selfcheck, dtype=torch.bool)
-        elif mode == "always":
+        if mode == "always":
             use_refined = torch.ones_like(selfcheck, dtype=torch.bool)
         else:
             # Reference R1 semantics: "Yes" accepts the first image;
@@ -1122,26 +1100,17 @@ def _load_janus_replay_core_from_pretrained(config: JanusProConfig) -> JanusProR
             "  cd Janus && pip install -e ."
         ) from e
 
-    from transformers import AutoConfig
+    from vrl.models.steps.token.loader import load_replay_core
 
-    dtype = resolve_torch_dtype(config.dtype)
-    model_config = AutoConfig.from_pretrained(
+    return load_replay_core(
+        JanusProReplayCore,
         config.model_path,
-        trust_remote_code=config.trust_remote_code,
-        revision=config.revision,
-    )
-    core = JanusProReplayCore(model_config)
-    from vrl.models.steps.token.loader import (
-        load_replay_core_checkpoint,
-        resolve_hf_checkpoint_dir,
-    )
-
-    load_replay_core_checkpoint(
-        core,
-        resolve_hf_checkpoint_dir(config.model_path, revision=config.revision),
+        device=config.device,
+        dtype=resolve_torch_dtype(config.dtype),
         owner="Janus",
+        revision=config.revision,
+        trust_remote_code=config.trust_remote_code,
     )
-    return core.to(device=config.device, dtype=dtype).eval()
 
 
 __all__ = [

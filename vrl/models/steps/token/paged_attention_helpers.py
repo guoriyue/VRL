@@ -27,9 +27,30 @@ __all__ = [
     "PagedCFGTokenRunner",
     "append_attention_token",
     "normalize_paged_last_hidden",
+    "prefill_ar_prompt",
     "scatter_paged_states",
     "select_paged_states",
 ]
+
+
+def prefill_ar_prompt(
+    attention_backend: ARAttentionBackend,
+    inputs_embeds: torch.Tensor,
+    attention_mask: torch.Tensor,
+    *,
+    branch: str,
+    image_token_num: int,
+) -> Any:
+    """Prefill one CFG branch through the paged attention backend."""
+
+    return attention_backend.prefill(
+        ARAttentionPrefillInput(
+            inputs_embeds=inputs_embeds,
+            attention_mask=attention_mask,
+            branch=branch,
+            metadata={"image_token_num": image_token_num},
+        )
+    )
 
 
 def append_attention_token(attention_mask: torch.Tensor) -> torch.Tensor:
@@ -236,13 +257,12 @@ class PagedCFGTokenRunner(ARDiscreteTokenRunner):
         branch: str,
         image_token_num: int,
     ) -> Any:
-        return self.attention_backend.prefill(
-            ARAttentionPrefillInput(
-                inputs_embeds=inputs_embeds,
-                attention_mask=attention_mask,
-                branch=branch,
-                metadata={"image_token_num": image_token_num},
-            )
+        return prefill_ar_prompt(
+            self.attention_backend,
+            inputs_embeds,
+            attention_mask,
+            branch=branch,
+            image_token_num=image_token_num,
         )
 
     def _sample_ar_step(

@@ -39,6 +39,22 @@ def unwrap_compile_and_ddp(module: Any) -> Any:
         module = unwrapped
 
 
+def peel_peft(module: Any) -> Any:
+    """Peel a PEFT wrapper (``base_model.model``) off ``module``, else return it.
+
+    PEFT replaces the target ``nn.Linear`` modules in place, so the peeled inner
+    module still routes through the LoRA layers. Cannot key off
+    ``hasattr(module, "base_model")`` alone: HF ``PreTrainedModel`` exposes
+    ``base_model`` as a property returning ``self`` even without a PEFT wrap, and
+    that object has no ``.model`` attr. Only peel when the PEFT inner path exists.
+    """
+
+    inner = getattr(module, "base_model", None)
+    if inner is not None and hasattr(inner, "model") and inner.model is not module:
+        return inner.model
+    return module
+
+
 def load_weights_into(
     module: Any,
     state_dict: Mapping[str, Any],

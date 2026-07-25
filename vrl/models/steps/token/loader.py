@@ -98,7 +98,48 @@ def load_replay_core_checkpoint(core: Any, checkpoint_dir: str, *, owner: str) -
         )
 
 
+def load_replay_core(
+    core_cls: type[Any],
+    model_path: str,
+    *,
+    device: Any,
+    dtype: Any,
+    owner: str,
+    revision: str | None = None,
+    subfolder: str | None = None,
+    trust_remote_code: bool = False,
+) -> Any:
+    """Config-init a replay core and strict-load its checkpoint weights.
+
+    The shared replay-loader shape across every AR family: ``AutoConfig`` ->
+    ``core_cls(config)`` -> strict ``load_replay_core_checkpoint`` -> place on
+    ``device``/``dtype`` and ``eval()``. ``subfolder`` threads through both the
+    config load and the checkpoint dir (GLM-Image's ``vision_language_encoder``);
+    ``trust_remote_code`` covers Janus' custom config class. Families keep only
+    their own pre-flight (e.g. Janus' upstream-package import check).
+    """
+
+    from transformers import AutoConfig
+
+    config_kwargs: dict[str, Any] = {
+        "revision": revision,
+        "trust_remote_code": trust_remote_code,
+    }
+    # transformers defaults ``subfolder`` to "", so only pass a real one.
+    if subfolder is not None:
+        config_kwargs["subfolder"] = subfolder
+    config = AutoConfig.from_pretrained(model_path, **config_kwargs)
+    core = core_cls(config)
+    load_replay_core_checkpoint(
+        core,
+        resolve_hf_checkpoint_dir(model_path, subfolder=subfolder, revision=revision),
+        owner=owner,
+    )
+    return core.to(device=device, dtype=dtype).eval()
+
+
 __all__ = [
+    "load_replay_core",
     "load_replay_core_checkpoint",
     "resolve_hf_checkpoint_dir",
 ]
