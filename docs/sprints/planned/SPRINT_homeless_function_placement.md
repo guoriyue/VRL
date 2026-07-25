@@ -14,13 +14,19 @@
 
 ## 执行状态
 
+**全部完成。** 10 组重构分两批落地，每批独立门禁验证（`ruff check .` + config lint + 全量 fast 子集）。
+最终：3691 passed / 0 failed（起始基线 3584）。
+
 | 组 | 内容 | 状态 |
 |---|---|---|
-| 前置 | `models/utils.py` 拆分（adapter → `peft_adapter.py`；权重 → 新模块）、`utils/validation.py` 归 trajectory | 执行中（tranche A） |
-| 1 | denoise 四个 opt-in mixin | 执行中（tranche A） |
-| 2 | `DiffusionModelBase`/`DiffusersPipelineModelBase` 吸收 `from_build` 等 | 执行中（tranche A） |
-| 3 | `ARModelBase` + 新 `ARReplayCore` | 执行中（tranche A） |
-| 4-10 | executor 基类 / `ray/utils.py` 解散 / `ModelBuild`+`RuntimeBundle` / `ray/resources.py` / `rollouts/` / `trainers/` / `nn/` | 待执行（tranche B） |
+| 前置 | `models/utils.py` 拆分（adapter → `peft_adapter.py`；权重 → `weight_utils.py`）、`utils/validation.py` 归 trajectory | ✅ `4e709581` / `161bdc90` |
+| 1 | denoise 四个 opt-in mixin | ✅ `bbaa4c4d` |
+| 2 | `DiffusionModelBase`/`DiffusersPipelineModelBase` 吸收 `from_build` 等 | ✅ `bbaa4c4d` |
+| 3 | `ARModelBase` + 新 `ARReplayCore` | ✅ `28b1354b` |
+| 4, 5, 6 | executor 基类 / `ray/utils.py` 解散 / `ModelBuild`+`RuntimeBundle` | ✅ `4fb66e50` |
+| 7, 9 | `ray/resources.py` / `trainers/` strategy mixin | ✅ `9e44e835` |
+| 8 | `rollouts/` accumulators + evaluator base | ✅ `921f6341` |
+| 10 | `nn/` QuantizedLinear.swap_linears | ✅ `65a04aee` |
 
 ---
 

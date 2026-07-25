@@ -12,7 +12,7 @@ object.
 ## Decision evidence
 
 1. The generic orchestration layer merges runtime metadata into the same
-   payload. `vrl/rollouts/orchestration/types.py::annotate_batch_context`
+   payload. `vrl/rollouts/orchestration/types.py::RolloutIteration.annotate_batch_context`
    combines `iteration.metadata` with `batch.context`; both strict and
    continuous schedules consume that behavior. A family dataclass would need a
    serialization wrapper at this boundary or would prevent generic metadata
