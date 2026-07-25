@@ -1,11 +1,12 @@
 """Offline Diffusion-DPO trainer.
 
-Generic over diffusion model family. Forward adapters may call either a raw
-diffusion backbone or the trainable backbone registered inside a policy module.
-The two batteries-included paths are:
+Generic over diffusion model family: the caller supplies the forward adapter,
+the encoders, and the scheduler, so nothing here names a family. What IS built
+in is the noise/target convention, one branch of ``_inject_noise`` per
+``prediction_type``:
 
-  * SD UNet (epsilon prediction, ``DDPMScheduler.add_noise``)
-  * Wan / SD3 transformer (flow-matching velocity, ``scheduler.scale_noise``)
+  * ``epsilon`` / ``v_prediction`` (``DDPMScheduler.add_noise``)
+  * ``flow_matching`` velocity (``scheduler.scale_noise``, or a sigma lookup)
 
 For Wan video models, image-only datasets (Pick-a-Pic) are handled by the
 caller's ``encode_pixels`` replicating each image along the temporal dim
@@ -106,29 +107,11 @@ def _build_optimizer(
 # ---------------------------------------------------------------------------
 
 # A ForwardFn takes ``(model, noisy_latents, timesteps, encoder_hidden_states,
-# extra_kwargs)`` and returns the prediction tensor.
+# extra_kwargs)`` and returns the prediction tensor. Concrete adapters live with
+# the family recipe that selects them (e.g. ``wan_forward`` in
+# ``vrl/scripts/families/wan_2_1/train_dpo.py``), never here: this module must
+# stay family-neutral.
 ForwardFn = Callable[..., torch.Tensor]
-
-
-def wan_forward(
-    model: nn.Module,
-    noisy_latents: torch.Tensor,
-    timesteps: torch.Tensor,
-    encoder_hidden_states: torch.Tensor,
-    extra: dict[str, Any] | None = None,
-) -> torch.Tensor:
-    """Wan transformer forward; unwrap policy modules before raw backbone call."""
-    del extra
-    forward_model = getattr(model, "transformer", None)
-    if forward_model is None:
-        forward_model = model
-    out = forward_model(
-        hidden_states=noisy_latents,
-        timestep=timesteps,
-        encoder_hidden_states=encoder_hidden_states,
-        return_dict=False,
-    )[0]
-    return out
 
 
 # ---------------------------------------------------------------------------
@@ -152,8 +135,8 @@ class OfflineDPOTrainer:
       * Provide ``encode_text`` — turns a list of captions into the
         ``encoder_hidden_states`` tensor shaped ``[2B, ..., D]``
         (winner-then-loser convention).
-      * Provide ``forward_fn`` — model-family-specific forward
-        (``wan_forward`` provided here).
+      * Provide ``forward_fn`` — the model-family-specific forward; it lives
+        with the family recipe, not in this module.
       * Provide ``noise_scheduler`` for sampling timesteps + injecting
         noise. Flow-matching schedulers use ``scale_noise``; epsilon
         schedulers use ``add_noise``.

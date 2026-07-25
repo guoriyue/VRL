@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import ast
 from dataclasses import dataclass, field, replace
-from typing import Any, Literal
+from typing import Any, ClassVar, Literal
 
 from vrl.config.reward_inference import (
     RewardInferenceConfig,
@@ -17,16 +17,122 @@ from vrl.utils.config import cfg_get, to_builtin
 class RoleResourceConfig:
     """GPU ownership request for one execution role."""
 
+    # Which ``distributed.resources.<role>`` block this request was parsed from.
+    # A ClassVar, not a field: it is fixed by the subclass, and dataclasses.fields
+    # (the source of truth for the accepted YAML keys, vrl/config/schema.py) must
+    # not start advertising it as a settable key.
+    role: ClassVar[str] = "trainer"
+
     num_gpus: int | str | None = "auto"
     devices: list[int] | str = "auto"
 
+    @property
+    def key_prefix(self) -> str:
+        """Public config path of this role's block, for error messages."""
+
+        return f"distributed.resources.{self.role}"
+
 
 @dataclass(frozen=True, slots=True)
-class RolloutResourceConfig(RoleResourceConfig):
-    """GPU ownership request for rollout workers."""
+class WorkerRoleResourceConfig(RoleResourceConfig):
+    """GPU ownership request for a role that runs worker replicas.
+
+    The trainer is the driver process itself and owns no worker count. Rollout
+    and reward both do, and both answer the same two questions about their own
+    request -- how many GPUs am I asking for, and how many workers does that
+    resolve to -- so the arithmetic lives on the request instead of in free
+    functions that had the role name threaded in beside it.
+    """
 
     gpus_per_worker: float = 1.0
     num_workers: int | str = "auto"
+
+    def requested_gpu_count(self, *, available_count: int) -> int:
+        """GPU count this role requests from a pool of ``available_count`` GPUs."""
+
+        parsed_num_gpus = _parse_num_gpus(
+            self.num_gpus,
+            field_name=f"{self.key_prefix}.num_gpus",
+        )
+        if parsed_num_gpus != "auto" and parsed_num_gpus is not None:
+            count = int(parsed_num_gpus)
+            if count < 0:
+                raise ValueError(f"{self.key_prefix}.num_gpus must be >= 0")
+            return count
+        if float(self.gpus_per_worker) == 0.0:
+            return 0
+
+        parsed_workers = _parse_num_workers(
+            self.num_workers,
+            field_name=f"{self.key_prefix}.num_workers",
+        )
+        if parsed_workers != "auto":
+            return int(parsed_workers * float(self.gpus_per_worker))
+        return int(available_count)
+
+    def resolve_num_workers(
+        self,
+        *,
+        resolved_gpu_count: int,
+        allow_zero_workers: bool = False,
+    ) -> int:
+        """Worker count for the GPUs this role actually resolved to.
+
+        ``resolved_gpu_count`` is the length of the resolved device tuple, not
+        the ``num_gpus`` request field.
+        """
+
+        # ``allow_zero_workers`` distinguishes the rollout path (a CPU-only rollout
+        # may scale to zero workers) from the reward path (at least one worker once
+        # configured). It only relaxes the CPU-branch minimum and the parser's
+        # zero-worker gate; the GPU-branch ``resolved_gpu_count == 0`` shortcut is
+        # unreachable for rollout because ``resolve_distributed_resources`` raises
+        # earlier when rollout requests GPUs but none resolve.
+        gpus_per_worker = float(self.gpus_per_worker)
+        minimum = 0 if allow_zero_workers else 1
+        requested = _parse_num_workers(
+            self.num_workers,
+            field_name=f"{self.key_prefix}.num_workers",
+            allow_zero=allow_zero_workers and gpus_per_worker == 0 and resolved_gpu_count == 0,
+        )
+        if gpus_per_worker == 0:
+            workers = 1 if requested == "auto" else int(requested)
+            if workers < minimum:
+                raise ValueError(f"{self.key_prefix}.num_workers must be >= {minimum}")
+            return workers
+
+        if resolved_gpu_count == 0 and requested == "auto":
+            return 0
+
+        if requested == "auto":
+            workers_float = resolved_gpu_count / gpus_per_worker
+            if int(workers_float) != workers_float:
+                raise ValueError(
+                    f"{self.key_prefix}.num_gpus must be divisible by "
+                    f"{self.key_prefix}.gpus_per_worker",
+                )
+            workers = int(workers_float)
+        else:
+            workers = int(requested)
+            expected_gpus = int(workers * gpus_per_worker)
+            if expected_gpus != resolved_gpu_count:
+                raise ValueError(
+                    f"{self.key_prefix}.num_workers * gpus_per_worker must "
+                    f"equal {self.role} GPU count: {workers} * {gpus_per_worker:g} "
+                    f"!= {resolved_gpu_count}",
+                )
+
+        if workers < 1:
+            raise ValueError(f"{self.key_prefix}.num_workers must be >= 1")
+        return workers
+
+
+@dataclass(frozen=True, slots=True)
+class RolloutResourceConfig(WorkerRoleResourceConfig):
+    """GPU ownership request for rollout workers."""
+
+    role: ClassVar[str] = "rollout"
+
     # Rollout GPU pool source (public key: distributed.resources.rollout.gpu_pool).
     # Mirrors reward.gpu_pool so all roles share one "which pool do I borrow" grammar:
     #   "auto"      derive from topology: a dedicated spare GPU when one exists,
@@ -39,11 +145,11 @@ class RolloutResourceConfig(RoleResourceConfig):
 
 
 @dataclass(frozen=True, slots=True)
-class RewardResourceConfig(RoleResourceConfig):
+class RewardResourceConfig(WorkerRoleResourceConfig):
     """GPU ownership request for in-process reward inference."""
 
-    gpus_per_worker: float = 1.0
-    num_workers: int | str = "auto"
+    role: ClassVar[str] = "reward"
+
     # Reward GPU pool source (public key: distributed.resources.reward.gpu_pool;
     # the legacy share_with_rollout bool maps here at parse time):
     #   "auto"      derive from topology: a dedicated spare GPU when one exists,
@@ -158,6 +264,66 @@ class ResolvedDistributedResources:
             and not self.cross_node
         )
 
+    @property
+    def trainer_torch_device(self) -> str:
+        """Torch device string the single-process trainer should use."""
+
+        devices = tuple(self.trainer_devices)
+        if not devices:
+            return "cpu"
+        return f"cuda:{int(devices[0])}"
+
+    def reward_torch_device(self, *, trainer_device: Any | None = None) -> str:
+        """Device for the local, in-process reward runtime.
+
+        A resolved reward GPU is a local reservation, not a Ray worker placement.
+        The in-process runtime can therefore consume exactly one execution slot.
+        A CPU-only resource request selects CPU; cross-node reward ordinals are only
+        Ray budget tokens and cannot name a device in the driver process. Multiple
+        workers or remote reward inference need a real transport boundary instead.
+
+        When no reward GPU is reserved, reward inference follows the trainer device.
+        ``trainer_device`` lets torchrun callers provide their rank-local device
+        instead of the resolver's rank-agnostic trainer ordinal.
+        """
+
+        devices = tuple(self.reward_devices)
+        if len(devices) > 1:
+            raise ValueError(
+                "Local reward inference supports at most one resolved reward GPU, "
+                f"got {list(devices)}. Rewards score in the driver process; split "
+                "multi-GPU reward inference requires a remote runtime boundary.",
+            )
+        if self.reward_num_workers > 1:
+            raise ValueError(
+                "Local reward inference supports at most one resolved reward worker, "
+                f"got {self.reward_num_workers}. Parallel reward workers require "
+                "a remote runtime boundary.",
+            )
+        if self.reward_num_workers == 1 and self.reward_gpus_per_worker == 0:
+            return "cpu"
+
+        if self.cross_node and devices:
+            raise ValueError(
+                "distributed.resources.cross_node=true cannot place local reward "
+                f"inference on reward devices {list(devices)}: cross-node device ids "
+                "are Ray budget tokens, not driver-local CUDA ordinals. Remove the "
+                "reward resource block to score on the trainer device, or implement "
+                "a remote reward transport.",
+            )
+        if devices:
+            return f"cuda:{int(devices[0])}"
+        if self.reward_uses_trainer_device:
+            if trainer_device is not None:
+                return str(trainer_device)
+            return self.trainer_torch_device
+        # Callers may ask for a device before a reward section is attached. Keep
+        # the historical fallback, while active configured rewards are governed by
+        # reward_uses_trainer_device above.
+        if trainer_device is not None:
+            return str(trainer_device)
+        return self.trainer_torch_device
+
 
 _MISSING = object()
 
@@ -231,7 +397,6 @@ def resolve_distributed_resources(
         training_world_size if fsdp_asymmetric else (1 if visible_devices else 0)
     )
     trainer_devices = _resolve_role_devices(
-        role="trainer",
         visible_devices=visible_devices,
         role_config=config.trainer,
         default_auto_count=trainer_default_auto,
@@ -257,7 +422,6 @@ def resolve_distributed_resources(
         trainer_devices=trainer_devices,
         rollout_config=config.rollout,
         allow_overlap=config.allow_overlap,
-        gpu_pool=config.rollout.gpu_pool,
     )
     rollout_num_gpus = len(rollout_devices)
 
@@ -275,11 +439,8 @@ def resolve_distributed_resources(
             "distributed.resources.rollout.gpu_pool=trainer to time-share a trainer GPU.",
         )
 
-    rollout_num_workers = _resolve_role_num_workers(
-        role="rollout",
-        num_workers=config.rollout.num_workers,
-        num_gpus=rollout_num_gpus,
-        gpus_per_worker=rollout_gpus_per_worker,
+    rollout_num_workers = config.rollout.resolve_num_workers(
+        resolved_gpu_count=rollout_num_gpus,
         allow_zero_workers=True,
     )
 
@@ -313,11 +474,8 @@ def resolve_distributed_resources(
             f"resolved reward GPUs, got {list(reward_devices)}. Remove the GPU "
             "request or set gpus_per_worker=1.",
         )
-    reward_num_workers = _resolve_role_num_workers(
-        role="reward",
-        num_workers=config.reward.num_workers,
-        num_gpus=reward_num_gpus,
-        gpus_per_worker=reward_gpus_per_worker,
+    reward_num_workers = config.reward.resolve_num_workers(
+        resolved_gpu_count=reward_num_gpus,
     )
     if reward_gpus_per_worker > 0 and reward_num_gpus == 0 and reward_num_workers > 0:
         raise ValueError(
@@ -450,69 +608,29 @@ def _validate_fsdp_trainer_disjoint(
         )
 
 
-def trainer_torch_device(resolved: ResolvedDistributedResources) -> str:
-    """Return the torch device string the single-process trainer should use."""
+def require_reward_device(resolved: ResolvedDistributedResources, device: str) -> None:
+    """Reject a caller device that contradicts the resolved reward placement."""
 
-    devices = tuple(resolved.trainer_devices)
-    if not devices:
-        return "cpu"
-    return f"cuda:{int(devices[0])}"
-
-
-def reward_torch_device(
-    resolved: ResolvedDistributedResources,
-    *,
-    trainer_device: Any | None = None,
-) -> str:
-    """Return the device for the local, in-process reward runtime.
-
-    A resolved reward GPU is a local reservation, not a Ray worker placement.
-    The in-process runtime can therefore consume exactly one execution slot.
-    A CPU-only resource request selects CPU; cross-node reward ordinals are only
-    Ray budget tokens and cannot name a device in the driver process. Multiple
-    workers or remote reward inference need a real transport boundary instead.
-
-    When no reward GPU is reserved, reward inference follows the trainer device.
-    ``trainer_device`` lets torchrun callers provide their rank-local device
-    instead of the resolver's rank-agnostic trainer ordinal.
-    """
-
-    devices = tuple(resolved.reward_devices)
-    if len(devices) > 1:
+    # Symmetric torchrun ranks keep physical ordinals in the resource plan
+    # for Ray placement, but CUDA_VISIBLE_DEVICES narrows each rank to local
+    # logical cuda:0. The caller passes that actual trainer/reward device;
+    # let an unreserved shared reward inherit it instead of comparing it to
+    # the placement-only physical ordinal.
+    placement_device = resolved.reward_torch_device()
+    expected_device = resolved.reward_torch_device(trainer_device=device).strip().lower()
+    actual_device = str(device).strip().lower()
+    same_device_kind = actual_device.startswith("cuda") == placement_device.startswith("cuda")
+    matches_resource_plan = (
+        same_device_kind
+        if resolved.reward_uses_trainer_device
+        else actual_device == expected_device
+    )
+    if not matches_resource_plan:
         raise ValueError(
-            "Local reward inference supports at most one resolved reward GPU, "
-            f"got {list(devices)}. Rewards score in the driver process; split "
-            "multi-GPU reward inference requires a remote runtime boundary.",
+            f"reward device {str(device)!r} conflicts with distributed resources "
+            f"resolved device {placement_device!r}; resource topology is the "
+            "execution-device source of truth.",
         )
-    if resolved.reward_num_workers > 1:
-        raise ValueError(
-            "Local reward inference supports at most one resolved reward worker, "
-            f"got {resolved.reward_num_workers}. Parallel reward workers require "
-            "a remote runtime boundary.",
-        )
-    if resolved.reward_num_workers == 1 and resolved.reward_gpus_per_worker == 0:
-        return "cpu"
-
-    if resolved.cross_node and devices:
-        raise ValueError(
-            "distributed.resources.cross_node=true cannot place local reward "
-            f"inference on reward devices {list(devices)}: cross-node device ids "
-            "are Ray budget tokens, not driver-local CUDA ordinals. Remove the "
-            "reward resource block to score on the trainer device, or implement "
-            "a remote reward transport.",
-        )
-    if devices:
-        return f"cuda:{int(devices[0])}"
-    if resolved.reward_uses_trainer_device:
-        if trainer_device is not None:
-            return str(trainer_device)
-        return trainer_torch_device(resolved)
-    # Callers may ask for a device before a reward section is attached. Keep
-    # the historical fallback, while active configured rewards are governed by
-    # reward_uses_trainer_device above.
-    if trainer_device is not None:
-        return str(trainer_device)
-    return trainer_torch_device(resolved)
 
 
 def format_distributed_resource_plan(resolved: ResolvedDistributedResources) -> str:
@@ -611,60 +729,62 @@ def _resolve_cross_node_visible_devices(
         )
 
     total = (
-        _explicit_role_gpu_count("trainer", config.trainer)
-        + _explicit_role_gpu_count("rollout", config.rollout)
-        + _explicit_role_gpu_count("reward", config.reward)
+        _explicit_role_gpu_count(config.trainer)
+        + _explicit_role_gpu_count(config.rollout)
+        + _explicit_role_gpu_count(config.reward)
     )
     return tuple(range(total))
 
 
-def _explicit_role_gpu_count(role: str, role_config: RoleResourceConfig) -> int:
+def _explicit_role_gpu_count(role_config: RoleResourceConfig) -> int:
     """Return an explicit integer GPU count for a role under ``cross_node``."""
 
     devices = _parse_devices(role_config.devices)
     if devices != "auto":
-        return len(_dedupe_ints(devices, field_name=f"distributed.resources.{role}.devices"))
+        return len(_dedupe_ints(devices, field_name=f"{role_config.key_prefix}.devices"))
 
-    num_gpus = _parse_num_gpus(role_config.num_gpus, field_name=f"{role}.num_gpus")
+    num_gpus = _parse_num_gpus(
+        role_config.num_gpus,
+        field_name=f"{role_config.key_prefix}.num_gpus",
+    )
     if num_gpus == "auto" or num_gpus is None:
         raise ValueError(
             "distributed.resources.cross_node=true requires an explicit integer "
-            f"distributed.resources.{role}.num_gpus (got 'auto'/null): the Ray "
+            f"{role_config.key_prefix}.num_gpus (got 'auto'/null): the Ray "
             "cluster is not queryable at resolution time, so the GPU budget must be "
             "declared up front.",
         )
     if int(num_gpus) < 0:
-        raise ValueError(f"distributed.resources.{role}.num_gpus must be >= 0")
+        raise ValueError(f"{role_config.key_prefix}.num_gpus must be >= 0")
     return int(num_gpus)
 
 
 def _resolve_role_devices(
     *,
-    role: str,
     visible_devices: tuple[int, ...],
     role_config: RoleResourceConfig,
     default_auto_count: int,
 ) -> tuple[int, ...]:
+    prefix = role_config.key_prefix
     explicit_devices = _parse_devices(role_config.devices)
-    num_gpus = _parse_num_gpus(role_config.num_gpus, field_name=f"{role}.num_gpus")
+    num_gpus = _parse_num_gpus(role_config.num_gpus, field_name=f"{prefix}.num_gpus")
 
     if explicit_devices != "auto":
-        devices = tuple(_dedupe_ints(explicit_devices, field_name=f"{role}.devices"))
-        _validate_subset(devices, visible_devices, field_name=f"{role}.devices")
+        devices = tuple(_dedupe_ints(explicit_devices, field_name=f"{prefix}.devices"))
+        _validate_subset(devices, visible_devices, field_name=f"{prefix}.devices")
         if num_gpus != "auto" and num_gpus is not None and int(num_gpus) != len(devices):
             raise ValueError(
-                f"distributed.resources.{role}.num_gpus={num_gpus} does not match "
-                f"len(distributed.resources.{role}.devices)={len(devices)}",
+                f"{prefix}.num_gpus={num_gpus} does not match "
+                f"len({prefix}.devices)={len(devices)}",
             )
         return devices
 
     count = default_auto_count if num_gpus == "auto" or num_gpus is None else int(num_gpus)
     if count < 0:
-        raise ValueError(f"distributed.resources.{role}.num_gpus must be >= 0")
+        raise ValueError(f"{prefix}.num_gpus must be >= 0")
     if count > len(visible_devices):
         raise ValueError(
-            f"distributed.resources.{role}.num_gpus={count} exceeds visible devices "
-            f"{list(visible_devices)}",
+            f"{prefix}.num_gpus={count} exceeds visible devices {list(visible_devices)}",
         )
     return tuple(visible_devices[:count])
 
@@ -675,22 +795,22 @@ def _resolve_rollout_devices(
     trainer_devices: tuple[int, ...],
     rollout_config: RolloutResourceConfig,
     allow_overlap: bool,
-    gpu_pool: str,
 ) -> tuple[int, ...]:
+    gpu_pool = rollout_config.gpu_pool
     explicit_devices = _parse_devices(rollout_config.devices)
     num_gpus = _parse_num_gpus(
         rollout_config.num_gpus,
-        field_name="rollout.num_gpus",
+        field_name=f"{rollout_config.key_prefix}.num_gpus",
     )
 
     if explicit_devices != "auto":
         devices = tuple(
-            _dedupe_ints(explicit_devices, field_name="distributed.resources.rollout.devices"),
+            _dedupe_ints(explicit_devices, field_name=f"{rollout_config.key_prefix}.devices"),
         )
         _validate_subset(
             devices,
             visible_devices,
-            field_name="distributed.resources.rollout.devices",
+            field_name=f"{rollout_config.key_prefix}.devices",
         )
         if num_gpus != "auto" and num_gpus is not None and int(num_gpus) != len(devices):
             raise ValueError(
@@ -722,13 +842,7 @@ def _resolve_rollout_devices(
     if gpu_pool == "trainer":
         # Borrow the trainer GPU(s): pin rollout onto them even when spare GPUs exist
         # ("share the trainer card", not "find a free one").
-        requested = _requested_role_gpu_count(
-            role="rollout",
-            num_gpus=rollout_config.num_gpus,
-            num_workers=rollout_config.num_workers,
-            gpus_per_worker=rollout_config.gpus_per_worker,
-            available_count=len(trainer_devices),
-        )
+        requested = rollout_config.requested_gpu_count(available_count=len(trainer_devices))
         if requested == 0:
             return ()
         if requested > len(trainer_devices):
@@ -744,13 +858,7 @@ def _resolve_rollout_devices(
     # the overlap fallback (a spare GPU is required); `auto` allows it under allow_overlap.
     excluded = set(trainer_devices)
     pool = tuple(device for device in visible_devices if device not in excluded)
-    requested = _requested_role_gpu_count(
-        role="rollout",
-        num_gpus=rollout_config.num_gpus,
-        num_workers=rollout_config.num_workers,
-        gpus_per_worker=rollout_config.gpus_per_worker,
-        available_count=len(pool),
-    )
+    requested = rollout_config.requested_gpu_count(available_count=len(pool))
     return _slice_pool_with_overlap_fallback(
         requested=requested,
         pool=pool,
@@ -813,17 +921,17 @@ def _resolve_reward_devices(
     explicit_devices = _parse_devices(reward_config.devices)
     num_gpus = _parse_num_gpus(
         reward_config.num_gpus,
-        field_name="reward.num_gpus",
+        field_name=f"{reward_config.key_prefix}.num_gpus",
     )
 
     if explicit_devices != "auto":
         devices = tuple(
-            _dedupe_ints(explicit_devices, field_name="distributed.resources.reward.devices"),
+            _dedupe_ints(explicit_devices, field_name=f"{reward_config.key_prefix}.devices"),
         )
         _validate_subset(
             devices,
             visible_devices,
-            field_name="distributed.resources.reward.devices",
+            field_name=f"{reward_config.key_prefix}.devices",
         )
         if num_gpus != "auto" and num_gpus is not None and int(num_gpus) != len(devices):
             raise ValueError(
@@ -847,13 +955,7 @@ def _resolve_reward_devices(
         # shared single-GPU churn even on machines with spare GPUs.
         spare_excluded = set(trainer_devices) | set(rollout_devices)
         spare_pool = tuple(device for device in visible_devices if device not in spare_excluded)
-        spare_requested = _requested_role_gpu_count(
-            role="reward",
-            num_gpus=reward_config.num_gpus,
-            num_workers=reward_config.num_workers,
-            gpus_per_worker=reward_config.gpus_per_worker,
-            available_count=len(spare_pool),
-        )
+        spare_requested = reward_config.requested_gpu_count(available_count=len(spare_pool))
         if spare_requested > 0 and len(spare_pool) >= spare_requested:
             devices = tuple(spare_pool[:spare_requested])
             _validate_reward_overlap(
@@ -867,13 +969,7 @@ def _resolve_reward_devices(
         pool_source = "rollout"
 
     if pool_source == "rollout":
-        requested = _requested_role_gpu_count(
-            role="reward",
-            num_gpus=reward_config.num_gpus,
-            num_workers=reward_config.num_workers,
-            gpus_per_worker=reward_config.gpus_per_worker,
-            available_count=len(rollout_devices),
-        )
+        requested = reward_config.requested_gpu_count(available_count=len(rollout_devices))
         if requested > len(rollout_devices):
             raise ValueError(
                 "Not enough rollout GPUs for reward shared inference pool: "
@@ -891,13 +987,7 @@ def _resolve_reward_devices(
 
     excluded = set(trainer_devices) | set(rollout_devices)
     pool = tuple(device for device in visible_devices if device not in excluded)
-    requested = _requested_role_gpu_count(
-        role="reward",
-        num_gpus=reward_config.num_gpus,
-        num_workers=reward_config.num_workers,
-        gpus_per_worker=reward_config.gpus_per_worker,
-        available_count=len(pool),
-    )
+    requested = reward_config.requested_gpu_count(available_count=len(pool))
     devices = _slice_pool_with_overlap_fallback(
         requested=requested,
         pool=pool,
@@ -968,83 +1058,6 @@ def _validate_reward_overlap(
             "distributed.resources.allow_overlap=false: "
             f"trainer={list(trainer_devices)} reward={list(devices)}",
         )
-
-
-def _requested_role_gpu_count(
-    *,
-    role: str,
-    num_gpus: int | str | None,
-    num_workers: int | str,
-    gpus_per_worker: float,
-    available_count: int,
-) -> int:
-    parsed_num_gpus = _parse_num_gpus(num_gpus, field_name=f"{role}.num_gpus")
-    if parsed_num_gpus != "auto" and parsed_num_gpus is not None:
-        count = int(parsed_num_gpus)
-        if count < 0:
-            raise ValueError(f"distributed.resources.{role}.num_gpus must be >= 0")
-        return count
-    if float(gpus_per_worker) == 0.0:
-        return 0
-
-    parsed_workers = _parse_num_workers(num_workers, role=role)
-    if parsed_workers != "auto":
-        return int(parsed_workers * float(gpus_per_worker))
-    return int(available_count)
-
-
-def _resolve_role_num_workers(
-    *,
-    role: str,
-    num_workers: int | str,
-    num_gpus: int,
-    gpus_per_worker: float,
-    allow_zero_workers: bool = False,
-) -> int:
-    # ``allow_zero_workers`` distinguishes the rollout path (a CPU-only rollout
-    # may scale to zero workers) from the reward path (at least one worker once
-    # configured). It only relaxes the CPU-branch minimum and the parser's
-    # zero-worker gate; the GPU-branch ``num_gpus == 0`` shortcut is unreachable
-    # for rollout because ``resolve_distributed_resources`` raises earlier when
-    # rollout requests GPUs but none resolve.
-    minimum = 0 if allow_zero_workers else 1
-    requested = _parse_num_workers(
-        num_workers,
-        role=role,
-        allow_zero=allow_zero_workers and gpus_per_worker == 0 and num_gpus == 0,
-    )
-    if gpus_per_worker == 0:
-        workers = 1 if requested == "auto" else int(requested)
-        if workers < minimum:
-            raise ValueError(
-                f"distributed.resources.{role}.num_workers must be >= {minimum}",
-            )
-        return workers
-
-    if num_gpus == 0 and requested == "auto":
-        return 0
-
-    if requested == "auto":
-        workers_float = num_gpus / gpus_per_worker
-        if int(workers_float) != workers_float:
-            raise ValueError(
-                f"distributed.resources.{role}.num_gpus must be divisible by "
-                f"distributed.resources.{role}.gpus_per_worker",
-            )
-        workers = int(workers_float)
-    else:
-        workers = int(requested)
-        expected_gpus = int(workers * gpus_per_worker)
-        if expected_gpus != num_gpus:
-            raise ValueError(
-                f"distributed.resources.{role}.num_workers * gpus_per_worker must "
-                f"equal {role} GPU count: {workers} * {gpus_per_worker:g} "
-                f"!= {num_gpus}",
-            )
-
-    if workers < 1:
-        raise ValueError(f"distributed.resources.{role}.num_workers must be >= 1")
-    return workers
 
 
 @dataclass(frozen=True, slots=True)
@@ -1274,14 +1287,14 @@ def _parse_num_gpus(value: Any, *, field_name: str) -> int | str | None:
     try:
         parsed = int(value)
     except (TypeError, ValueError) as exc:
-        raise ValueError(f"distributed.resources.{field_name} must be int, auto, or null") from exc
+        raise ValueError(f"{field_name} must be int, auto, or null") from exc
     return parsed
 
 
 def _parse_num_workers(
     value: Any,
     *,
-    role: str = "rollout",
+    field_name: str,
     allow_zero: bool = False,
 ) -> int | str:
     value = to_builtin(value)
@@ -1290,12 +1303,10 @@ def _parse_num_workers(
     try:
         parsed = int(value)
     except (TypeError, ValueError) as exc:
-        raise ValueError(
-            f"distributed.resources.{role}.num_workers must be int or auto",
-        ) from exc
+        raise ValueError(f"{field_name} must be int or auto") from exc
     if parsed < 0 or (parsed == 0 and not allow_zero):
         minimum = 0 if allow_zero else 1
-        raise ValueError(f"distributed.resources.{role}.num_workers must be >= {minimum}")
+        raise ValueError(f"{field_name} must be >= {minimum}")
     return parsed
 
 
@@ -1354,9 +1365,9 @@ __all__ = [
     "RewardResourceConfig",
     "RoleResourceConfig",
     "RolloutResourceConfig",
+    "WorkerRoleResourceConfig",
     "build_bundle_layout",
     "format_distributed_resource_plan",
+    "require_reward_device",
     "resolve_distributed_resources",
-    "reward_torch_device",
-    "trainer_torch_device",
 ]

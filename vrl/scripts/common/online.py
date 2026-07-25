@@ -21,8 +21,8 @@ from vrl.models.interfaces import require_runtime_model
 from vrl.ray.dependencies import require_ray
 from vrl.ray.placement import GlobalRayPlacementOwner, cross_node_preflight
 from vrl.ray.resources import (
+    ResolvedDistributedResources,
     format_distributed_resource_plan,
-    reward_torch_device,
 )
 from vrl.rollouts.collector import build_rollout_collector
 from vrl.rollouts.orchestration import validate_rollout_schedule_topology
@@ -37,8 +37,8 @@ from vrl.trainers.activation_checkpointing import (
     enable_transformer_gradient_checkpointing,
 )
 from vrl.trainers.checkpointing import (
-    LORA_WEIGHTS_NAME,
     AdapterExport,
+    build_adapter_exports,
     capture_rng_state,
     load_training_checkpoint_for_resume,
     prepare_metrics_csv,
@@ -91,9 +91,9 @@ class _RayClusterSession:
 
 
 def _initialize_ray_cluster(
-    resources: Any,
     ray: Any,
     *,
+    cross_node: bool,
     environ: Mapping[str, str] | None = None,
     local_num_cpus: int | None = None,
 ) -> _RayClusterSession:
@@ -115,7 +115,7 @@ def _initialize_ray_cluster(
         return _RayClusterSession(ray=ray, shutdown_on_exit=False)
 
     environment = os.environ if environ is None else environ
-    if bool(resources.cross_node):
+    if cross_node:
         address = str(environment.get(_RAY_ADDRESS_ENV, "")).strip()
         if not address or address in {"auto", "local"}:
             raise ValueError(
@@ -198,7 +198,7 @@ def _require_supported_online_strategy(context: DistributedTrainingContext) -> N
 
 def _require_supported_distributed_rollout_topology(
     context: DistributedTrainingContext,
-    resources: Any,
+    resources: ResolvedDistributedResources,
 ) -> None:
     """Reject multi-rank rollout ownership that the recipe cannot coordinate.
 
@@ -372,45 +372,6 @@ def _load_sft_latents_from_config(built: BuiltConfigs, family: str) -> dict[str,
         model_path=str(model.path or ""),
         model_revision=str(model.revision or ""),
     )
-
-
-def _export_transformer_lora(
-    bundle: Any,
-    *,
-    use_lora: bool,
-) -> dict[str, AdapterExport] | None:
-    """Export diffusion transformer LoRA weights when configured."""
-
-    if not use_lora:
-        return None
-    exportable = {
-        str(name): module
-        for name, module in getattr(bundle, "trainable_modules", {}).items()
-        if hasattr(module, "save_pretrained")
-    }
-    if len(exportable) == 1:
-        return {LORA_WEIGHTS_NAME: AdapterExport(next(iter(exportable.values())))}
-    if len(exportable) > 1:
-        # checkpoint.pt remains the resume source of truth. Namespaced adapter
-        # artifacts make each expert independently inspectable/publishable while
-        # preserving the legacy lora_weights/ path for ordinary one-root models.
-        return {
-            f"{LORA_WEIGHTS_NAME}/{name}": AdapterExport(module)
-            for name, module in exportable.items()
-        }
-    return None
-
-
-def _export_language_model_lora(
-    bundle: Any,
-    *,
-    use_lora: bool,
-) -> dict[str, AdapterExport] | None:
-    """Export AR language-model LoRA weights when configured."""
-
-    if use_lora:
-        return {LORA_WEIGHTS_NAME: AdapterExport(bundle.model.language_model)}
-    return None
 
 
 def _check_host_memory_budget(
@@ -731,10 +692,7 @@ async def run_online_recipe(
     # Rewards execute in this driver process. A dedicated local reward reservation
     # must therefore select the reward model's actual CUDA device; cross-node reward
     # ordinals are remote budget tokens and fail here before any model is loaded.
-    reward_device = reward_torch_device(
-        resources,
-        trainer_device=device,
-    )
+    reward_device = resources.reward_torch_device(trainer_device=device)
     if family_entry.task in {"i2v", "v2w"}:
         conditioning = OmegaConf.select(
             cfg,
@@ -814,8 +772,8 @@ async def run_online_recipe(
     run_error: BaseException | None = None
     try:
         ray_session = _initialize_ray_cluster(
-            resources,
             ray,
+            cross_node=resources.cross_node,
             local_num_cpus=placement_owner.required_local_cluster_cpus(),
         )
         if resources.cross_node:
@@ -938,11 +896,9 @@ async def run_online_recipe(
             gc.collect()
             log_host_memory("after_resume_checkpoint_release", log=logger)
 
-        model_use_lora = bool(built.root.model.use_lora)
-        adapter_exports = (
-            _export_transformer_lora(bundle, use_lora=model_use_lora)
-            if family_entry.policy_semantics.step_kind == "denoise"
-            else _export_language_model_lora(bundle, use_lora=model_use_lora)
+        adapter_exports = build_adapter_exports(
+            bundle,
+            use_lora=bool(built.root.model.use_lora),
         )
         run = OnlineRecipeRun(
             bundle=bundle,

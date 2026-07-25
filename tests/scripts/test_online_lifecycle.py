@@ -321,6 +321,8 @@ def _install_common_fakes(
         cross_node=False,
         rollout_num_workers=1,
         rollout_gpus_per_worker=0,
+        trainer_torch_device="cpu",
+        reward_torch_device=lambda *, trainer_device=None: "cpu",
         lifecycle=SimpleNamespace(
             handoff=SimpleNamespace(
                 release_rollout_before_train=False,
@@ -411,14 +413,6 @@ def _install_common_fakes(
         lambda cfg, **kwargs: resources,
     )
     monkeypatch.setattr(online, "format_distributed_resource_plan", lambda resources: "resources")
-    monkeypatch.setattr(
-        resolved_run.ray_resources, "trainer_torch_device", lambda resources: "cpu"
-    )
-    monkeypatch.setattr(
-        online,
-        "reward_torch_device",
-        lambda resources, *, trainer_device: "cpu",
-    )
     monkeypatch.setattr(
         online,
         "load_prompt_examples_from_config",
@@ -750,6 +744,8 @@ async def test_distributed_disjoint_rollout_fails_before_model_or_ray_launch(
         rollout_num_workers=1,
         rollout_gpus_per_worker=0,
         rollout_num_gpus=2,
+        trainer_torch_device="cpu",
+        reward_torch_device=lambda *, trainer_device=None: "cpu",
         lifecycle=SimpleNamespace(
             handoff=SimpleNamespace(
                 release_rollout_before_train=False,
@@ -804,6 +800,8 @@ async def test_shared_gpu_parking_capability_fails_before_model_or_ray_launch(
         cross_node=False,
         rollout_num_workers=1,
         rollout_gpus_per_worker=0,
+        trainer_torch_device="cpu",
+        reward_torch_device=lambda *, trainer_device=None: "cpu",
         lifecycle=SimpleNamespace(
             handoff=SimpleNamespace(
                 release_rollout_before_train=release_rollout_before_train,

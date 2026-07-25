@@ -304,44 +304,33 @@ class _TrainingStateParking:
         empty_cuda_cache()
 
 
-class SingleProcessStrategy(_TrainingStateParking, Strategy):
-    """The current single-GPU behavior, moved behind the strategy protocol.
+class _UnshardedStateStrategy:
+    """Checkpoint and optimizer state for backends where no tensor is sharded.
 
-    Every method here is the existing trainer / checkpoint / weight-sync logic
-    verbatim; this installs the seam without changing what a single-process run
-    does. ``context`` defaults to a rank0/world1 identity.
+    The shared precondition is "every rank already holds the full unsharded
+    tensor": single process trivially, DDP because it *replicates* the module
+    instead of splitting it. Under that precondition a rank's own
+    ``state_dict()`` already is the full policy-facing state, so these five
+    methods can call the plain checkpoint helpers with no collective at all.
+
+    ``FSDPStrategy`` is the counterexample and overrides all five: its
+    parameters, gradients, and optimizer moments live as DTensor shards, so
+    every one of these operations becomes an all-gather (or a re-scatter on
+    load) through ``vrl/trainers/fsdp.py``.
+
+    MRO WARNING: this mixin must be listed BEFORE ``Strategy`` in the bases.
+    ``Strategy`` is a ``Protocol``, so its ``...`` method stubs are real bodies
+    returning ``None`` — order it first and every method here is silently
+    shadowed, while ``callable(getattr(strategy, name, None))`` (the probe at
+    ``checkpointing.py``) still reports ``True`` and the checkpoint load turns
+    into a no-op instead of an error. ``tests/trainers/test_strategy_mro.py``
+    pins the order.
     """
-
-    def __init__(self, context: DistributedTrainingContext | None = None) -> None:
-        self.context = context or _single_process_context()
-
-    def prepare_model(self, model: Any) -> Any:
-        # Single process trains the model as-is; the seam exists so FSDP2 can wrap
-        # without the trainer changing.
-        return model
-
-    def backward(self, loss: torch.Tensor, *, grad_scaler: Any | None = None) -> None:
-        if grad_scaler is not None:
-            grad_scaler.scale(loss).backward()
-        else:
-            loss.backward()
-
-    def clip_grad_norm(
-        self,
-        parameters: Iterable[nn.Parameter],
-        max_norm: float,
-    ) -> float:
-        return float(nn.utils.clip_grad_norm_(parameters, max_norm))
 
     def export_checkpoint_state(self, bundle: Any) -> dict[str, dict[str, Any]]:
         from vrl.trainers.checkpointing import export_checkpoint_state
 
         return export_checkpoint_state(bundle)
-
-    def export_rollout_state(self, bundle: Any) -> dict[str, Any]:
-        from vrl.trainers.weight_sync import build_trainable_state_sync_getter, to_cpu_snapshot
-
-        return to_cpu_snapshot(build_trainable_state_sync_getter(bundle)())
 
     def load_checkpoint_state(
         self,
@@ -370,7 +359,9 @@ class SingleProcessStrategy(_TrainingStateParking, Strategy):
         model: nn.Module,
         optimizer: torch.optim.Optimizer,
     ) -> dict[str, Any]:
-        del model  # plain tensors: torch's native (positional-id) format suffices
+        # Unsharded parameters mean the moments are already full plain tensors on
+        # every rank, so torch's native (positional-id) format suffices.
+        del model
         return optimizer.state_dict()
 
     def load_optimizer_state(
@@ -381,6 +372,41 @@ class SingleProcessStrategy(_TrainingStateParking, Strategy):
     ) -> None:
         del model
         optimizer.load_state_dict(state)
+
+
+class SingleProcessStrategy(_TrainingStateParking, _UnshardedStateStrategy, Strategy):
+    """The current single-GPU behavior, moved behind the strategy protocol.
+
+    Every method here is the existing trainer / checkpoint / weight-sync logic
+    verbatim; this installs the seam without changing what a single-process run
+    does. ``context`` defaults to a rank0/world1 identity.
+    """
+
+    def __init__(self, context: DistributedTrainingContext | None = None) -> None:
+        self.context = context or _single_process_context()
+
+    def prepare_model(self, model: Any) -> Any:
+        # Single process trains the model as-is; the seam exists so FSDP2 can wrap
+        # without the trainer changing.
+        return model
+
+    def backward(self, loss: torch.Tensor, *, grad_scaler: Any | None = None) -> None:
+        if grad_scaler is not None:
+            grad_scaler.scale(loss).backward()
+        else:
+            loss.backward()
+
+    def clip_grad_norm(
+        self,
+        parameters: Iterable[nn.Parameter],
+        max_norm: float,
+    ) -> float:
+        return float(nn.utils.clip_grad_norm_(parameters, max_norm))
+
+    def export_rollout_state(self, bundle: Any) -> dict[str, Any]:
+        from vrl.trainers.weight_sync import build_trainable_state_sync_getter, to_cpu_snapshot
+
+        return to_cpu_snapshot(build_trainable_state_sync_getter(bundle)())
 
     def barrier(self) -> None:
         return None
@@ -871,17 +897,18 @@ class FSDPStrategy(_TrainingStateParking, Strategy):
         shutdown_training_process_group()
 
 
-class DDPStrategy(Strategy):
+class DDPStrategy(_UnshardedStateStrategy, Strategy):
     """DistributedDataParallel training behind the same seam.
 
     For a model that fits on one card (a 2B diffusion transformer + LoRA does), DDP
     replicates the full module on every rank and all-reduces gradients in the
     backward hooks — simpler and cheaper than FSDP2's shard/all-gather, which only
     earns its keep when the model does NOT fit. Because every rank keeps FULL
-    params, the checkpoint/rollout export is the same full-state path FSDP uses on
-    the unwrapped module (``unwrap_compile_and_ddp`` peels DDP's ``.module``; the
-    "gather" is a no-op at the plain-tensor level). Only ``prepare_model`` (wrap)
-    diverges from FSDPStrategy.
+    params, checkpoint and optimizer state need no gather at all: they come from
+    ``_UnshardedStateStrategy``, shared with single process, NOT from FSDP's
+    DTensor path. Rollout export is the one state seam DDP writes itself, because
+    it must peel DDP's ``.module`` and must NOT route through the DCP full-state
+    gather (see ``_unwrapped_full_state``).
 
     The online recipe drives this through the symmetric-colocated multi-rank path:
     each torchrun rank owns one local trainer/rollout GPU and draws a disjoint
@@ -962,11 +989,6 @@ class DDPStrategy(Strategy):
         full = {key: value.detach() for key, value in inner.state_dict().items()}
         return inner, full
 
-    def export_checkpoint_state(self, bundle: Any) -> dict[str, dict[str, Any]]:
-        from vrl.trainers.checkpointing import export_checkpoint_state
-
-        return export_checkpoint_state(bundle)
-
     def export_rollout_state(self, bundle: Any) -> dict[str, Any]:
         from vrl.trainers.weight_sync import (
             require_trainable_modules,
@@ -982,47 +1004,6 @@ class DDPStrategy(Strategy):
         if not state:
             raise ValueError("trainable module state is empty")
         return to_cpu_snapshot(state)
-
-    def load_checkpoint_state(
-        self,
-        bundle: Any,
-        state: dict[str, Any],
-        *,
-        strict: bool = True,
-    ) -> None:
-        from vrl.trainers.checkpointing import load_checkpoint_state
-
-        load_checkpoint_state(bundle, state, strict=strict)
-
-    def load_full_checkpoint_state(
-        self,
-        bundle: Any,
-        state: dict[str, Any],
-        *,
-        strict: bool = True,
-    ) -> None:
-        from vrl.trainers.checkpointing import load_full_checkpoint_state
-
-        load_full_checkpoint_state(bundle, state, strict=strict)
-
-    def export_optimizer_state(
-        self,
-        model: nn.Module,
-        optimizer: torch.optim.Optimizer,
-    ) -> dict[str, Any]:
-        # DDP replicates params (no sharding), so optimizer state is already
-        # full plain tensors on every rank — torch's native format suffices.
-        del model
-        return optimizer.state_dict()
-
-    def load_optimizer_state(
-        self,
-        model: nn.Module,
-        optimizer: torch.optim.Optimizer,
-        state: dict[str, Any],
-    ) -> None:
-        del model
-        optimizer.load_state_dict(state)
 
     def validate_training_state_parking(self) -> None:
         raise NotImplementedError(

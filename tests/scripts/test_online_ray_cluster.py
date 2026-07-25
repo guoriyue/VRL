@@ -15,7 +15,6 @@ from __future__ import annotations
 import signal
 import subprocess
 import sys
-from types import SimpleNamespace
 
 import pytest
 
@@ -32,10 +31,6 @@ def isolated_ray():
     ray.shutdown()
 
 
-def _resources(*, cross_node: bool) -> SimpleNamespace:
-    return SimpleNamespace(cross_node=cross_node)
-
-
 @pytest.mark.slow_test
 def test_local_run_starts_owned_cluster_even_when_environment_has_address(
     isolated_ray, monkeypatch
@@ -46,8 +41,8 @@ def test_local_run_starts_owned_cluster_even_when_environment_has_address(
     monkeypatch.setenv("RAY_ADDRESS", "10.0.0.9:6379")
 
     session = online._initialize_ray_cluster(
-        _resources(cross_node=False),
         isolated_ray,
+        cross_node=False,
         environ={"RAY_ADDRESS": "10.0.0.9:6379"},
         local_num_cpus=3,
     )
@@ -60,15 +55,13 @@ def test_local_run_starts_owned_cluster_even_when_environment_has_address(
 
 
 @pytest.mark.parametrize("address", [None, "", "auto", "local"])
-def test_cross_node_requires_concrete_operator_address(
-    isolated_ray, address: str | None
-) -> None:
+def test_cross_node_requires_concrete_operator_address(isolated_ray, address: str | None) -> None:
     environ = {} if address is None else {"RAY_ADDRESS": address}
 
     with pytest.raises(ValueError, match="requires a concrete RAY_ADDRESS"):
         online._initialize_ray_cluster(
-            _resources(cross_node=True),
             isolated_ray,
+            cross_node=True,
             environ=environ,
         )
 
@@ -105,8 +98,8 @@ def test_cross_node_attaches_only_to_explicit_address(isolated_ray) -> None:
         assert address, "operator head subprocess failed to start a cluster"
 
         session = online._initialize_ray_cluster(
-            _resources(cross_node=True),
             isolated_ray,
+            cross_node=True,
             environ={"RAY_ADDRESS": address},
             # Attached clusters own their resources; this local-only capacity
             # must not be forwarded to ray.init(address=<existing>).
@@ -134,13 +127,11 @@ def test_cross_node_attaches_only_to_explicit_address(isolated_ray) -> None:
 def test_preinitialized_connection_remains_owned_by_embedding_caller(
     isolated_ray,
 ) -> None:
-    isolated_ray.init(
-        address="local", num_cpus=1, include_dashboard=False, log_to_driver=False
-    )
+    isolated_ray.init(address="local", num_cpus=1, include_dashboard=False, log_to_driver=False)
 
     session = online._initialize_ray_cluster(
-        _resources(cross_node=False),
         isolated_ray,
+        cross_node=False,
         environ={},
         local_num_cpus=5,
     )
@@ -168,8 +159,8 @@ def test_ray_init_cannot_steal_cli_signal_handlers(isolated_ray) -> None:
         signal.signal(signal.SIGINT, cli_handler)
 
         online._initialize_ray_cluster(
-            _resources(cross_node=False),
             isolated_ray,
+            cross_node=False,
             environ={},
         )
 

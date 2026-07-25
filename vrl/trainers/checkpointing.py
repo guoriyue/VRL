@@ -17,7 +17,7 @@ from typing import Any
 
 import torch
 
-from vrl.models.interfaces.runtime import checkpoint_owned_state_names
+from vrl.models.interfaces.runtime import RuntimeBundle, checkpoint_owned_state_names
 from vrl.models.weight_utils import unwrap_compile_and_ddp
 from vrl.trainers.weight_sync import (
     require_trainable_modules,
@@ -173,6 +173,33 @@ class AdapterExport:
             raise ValueError(
                 f"adapter export module has no adapter named {self.adapter_name!r}",
             )
+
+
+def build_adapter_exports(
+    bundle: RuntimeBundle,
+    *,
+    use_lora: bool,
+) -> dict[str, AdapterExport] | None:
+    """Derive the PEFT artifacts a LoRA run publishes beside ``checkpoint.pt``.
+
+    ``checkpoint.pt`` stays the resume source of truth; these exports make each
+    adapter independently inspectable and publishable. A single root keeps the
+    legacy flat ``lora_weights/`` path; several roots (Wan's dual expert) are
+    namespaced under it by root name so they cannot overwrite each other.
+
+    Which modules are exportable is the bundle's decision, not this function's
+    — see ``DiffusionModelBase.adapter_roots`` for why that filter must not
+    move here.
+    """
+
+    if not use_lora:
+        return None
+    roots = bundle.adapter_roots
+    if not roots:
+        return None
+    if len(roots) == 1:
+        return {LORA_WEIGHTS_NAME: AdapterExport(next(iter(roots.values())))}
+    return {f"{LORA_WEIGHTS_NAME}/{name}": AdapterExport(module) for name, module in roots.items()}
 
 
 @dataclass(frozen=True, slots=True)
@@ -1811,6 +1838,7 @@ __all__ = [
     "AdapterExport",
     "TrainingCheckpoint",
     "TrainingResumeConfig",
+    "build_adapter_exports",
     "capture_rng_state",
     "export_checkpoint_state",
     "find_latest_complete_checkpoint",

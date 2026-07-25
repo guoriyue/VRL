@@ -86,7 +86,7 @@ def actor_scheduling_strategy(
     )
 
 
-def cross_node_preflight(ray: Any, resources: Any) -> None:
+def cross_node_preflight(ray: Any, resources: ResolvedDistributedResources) -> None:
     """Fail fast when the live Ray cluster cannot host cross-node rollout.
 
     Runs after ``ray.init()`` (resolution earlier in the pipeline cannot see the

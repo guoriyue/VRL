@@ -8,7 +8,10 @@ import torch
 from omegaconf import OmegaConf
 from torch import nn
 
-from vrl.models.interfaces.runtime import register_checkpoint_owned_state
+from vrl.config.precision import RolePrecision
+from vrl.models.interfaces.runtime import RuntimeBundle, register_checkpoint_owned_state
+from vrl.models.steps.denoise.base import DiffusionModelBase
+from vrl.models.steps.token.base import ARModelBase
 from vrl.trainers.checkpointing import (
     CHECKPOINT_META_NAME,
     CHECKPOINT_SCHEMA_VERSION,
@@ -16,6 +19,7 @@ from vrl.trainers.checkpointing import (
     TRAINING_CHECKPOINT_NAME,
     AdapterExport,
     TrainingCheckpoint,
+    build_adapter_exports,
     export_checkpoint_state,
     infer_next_epoch,
     load_checkpoint_state,
@@ -703,6 +707,145 @@ def test_adapter_export_accepts_safe_named_adapter(tmp_path) -> None:
     assert (
         tmp_path / "checkpoint-named-adapter" / LORA_WEIGHTS_NAME / "adapter_model.safetensors"
     ).is_file()
+
+
+# ── build_adapter_exports: bundle -> publishable adapter artifacts ────────────
+#
+# Driven through REAL model bases and a REAL RuntimeBundle, because the split of
+# responsibility is the thing under test: the model decides which roots are
+# exportable, this function only names and wraps them. The denoise base filters
+# on ``save_pretrained`` (a family with no publishable root simply publishes
+# nothing); the AR base does not (one root, so an unexportable trunk must raise
+# rather than silently export nothing).
+
+_EXPORT_PRECISION = RolePrecision(
+    dtype="fp32",
+    float32_precision="ieee",
+    outer_autocast=False,
+)
+
+
+class _PublishableModule(nn.Linear):
+    def __init__(self) -> None:
+        super().__init__(1, 1, bias=False)
+
+    def save_pretrained(self, *_args, **_kwargs):  # pragma: no cover - never called
+        raise AssertionError("build_adapter_exports must not write anything")
+
+
+class _DenoisePolicy(DiffusionModelBase):
+    """Minimal real diffusion policy: only ``trainable_modules`` is family data."""
+
+    def __init__(self, roots: dict[str, nn.Module]) -> None:
+        super().__init__()
+        self._roots = roots
+
+    @property
+    def trainable_modules(self) -> dict[str, nn.Module]:
+        return dict(self._roots)
+
+    def encode_prompt(self, prompt, negative_prompt=None, **kwargs):  # pragma: no cover
+        raise NotImplementedError
+
+    def prepare_sampling(self, request, encoded, **kwargs):  # pragma: no cover
+        raise NotImplementedError
+
+    def forward_step(self, state, step_idx):  # pragma: no cover
+        raise NotImplementedError
+
+    def decode_latents(self, latents):  # pragma: no cover
+        raise NotImplementedError
+
+
+class _TokenPolicy(ARModelBase):
+    """Minimal real AR policy: LoRA lives on ``language_model``, one hop in."""
+
+    def __init__(self, language_model: nn.Module) -> None:
+        super().__init__()
+        self.language_model = language_model
+
+    @property
+    def trainable_modules(self) -> dict[str, nn.Module]:
+        # What ``build_token_family_bundle`` registers: the whole wrapper.
+        return {"model": self}
+
+
+def _export_bundle(model) -> RuntimeBundle:
+    return RuntimeBundle(
+        model=model,
+        trainable_modules=model.trainable_modules,
+        scheduler=None,
+        raw_handle=None,
+        precision=_EXPORT_PRECISION,
+        loads_full_generation_modules=False,
+        adapter_roots=model.adapter_roots,
+    )
+
+
+def test_build_adapter_exports_namespaces_multiple_denoise_roots() -> None:
+    high = _PublishableModule()
+    low = _PublishableModule()
+    bundle = _export_bundle(_DenoisePolicy({"transformer": high, "transformer_2": low}))
+
+    assert build_adapter_exports(bundle, use_lora=True) == {
+        "lora_weights/transformer": AdapterExport(high),
+        "lora_weights/transformer_2": AdapterExport(low),
+    }
+
+
+def test_build_adapter_exports_keeps_the_flat_path_for_a_single_root() -> None:
+    transformer = _PublishableModule()
+    bundle = _export_bundle(_DenoisePolicy({"transformer": transformer}))
+
+    assert build_adapter_exports(bundle, use_lora=True) == {
+        LORA_WEIGHTS_NAME: AdapterExport(transformer),
+    }
+
+
+def test_build_adapter_exports_drops_a_denoise_root_that_cannot_publish() -> None:
+    """A full-finetune-shaped root is skipped, not turned into a failed export."""
+
+    publishable = _PublishableModule()
+    bundle = _export_bundle(
+        _DenoisePolicy({"transformer": publishable, "plain": nn.Linear(1, 1)}),
+    )
+
+    assert build_adapter_exports(bundle, use_lora=True) == {
+        LORA_WEIGHTS_NAME: AdapterExport(publishable),
+    }
+
+
+def test_build_adapter_exports_is_none_when_nothing_is_publishable() -> None:
+    bundle = _export_bundle(_DenoisePolicy({"transformer": nn.Linear(1, 1)}))
+
+    assert build_adapter_exports(bundle, use_lora=True) is None
+
+
+def test_build_adapter_exports_is_none_for_a_full_finetune() -> None:
+    bundle = _export_bundle(_DenoisePolicy({"transformer": _PublishableModule()}))
+
+    assert build_adapter_exports(bundle, use_lora=False) is None
+
+
+def test_build_adapter_exports_reaches_the_token_language_model() -> None:
+    """The AR root is the wrapper, but the exported adapter is one hop inside it."""
+
+    language_model = _PublishableModule()
+    bundle = _export_bundle(_TokenPolicy(language_model))
+
+    assert bundle.trainable_modules == {"model": bundle.model}
+    assert build_adapter_exports(bundle, use_lora=True) == {
+        LORA_WEIGHTS_NAME: AdapterExport(language_model),
+    }
+
+
+def test_build_adapter_exports_raises_for_an_unexportable_token_trunk() -> None:
+    """Red line: the AR side must fail loudly, never publish silently nothing."""
+
+    bundle = _export_bundle(_TokenPolicy(nn.Linear(1, 1)))
+
+    with pytest.raises(TypeError, match="save_pretrained"):
+        build_adapter_exports(bundle, use_lora=True)
 
 
 @pytest.mark.parametrize(

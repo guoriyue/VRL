@@ -13,8 +13,14 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
+from typing import TYPE_CHECKING, Any
 
 from omegaconf import DictConfig
+
+if TYPE_CHECKING:
+    # Config dispatch imports this module to find ``train_wan_2_1_dpo``; keep
+    # torch out of that import path (the helpers below import it themselves).
+    import torch
 
 logger = logging.getLogger(__name__)
 
@@ -68,6 +74,33 @@ def _build_encoders(pipeline, num_frames: int, device, dtype):
     return encode_pixels, encode_text
 
 
+def wan_forward(
+    model: torch.nn.Module,
+    noisy_latents: torch.Tensor,
+    timesteps: torch.Tensor,
+    encoder_hidden_states: torch.Tensor,
+    extra: dict[str, Any] | None = None,
+) -> torch.Tensor:
+    """Wan transformer forward; unwrap policy modules before raw backbone call.
+
+    The ``ForwardFn`` this recipe hands to ``OfflineDPOTrainer``. The trainer
+    itself stays family-neutral, so the Wan-shaped call — ``hidden_states`` /
+    ``timestep`` / ``encoder_hidden_states`` and the tuple return — belongs
+    here with the recipe that selects it.
+    """
+    del extra
+    forward_model = getattr(model, "transformer", None)
+    if forward_model is None:
+        forward_model = model
+    out = forward_model(
+        hidden_states=noisy_latents,
+        timestep=timesteps,
+        encoder_hidden_states=encoder_hidden_states,
+        return_dict=False,
+    )[0]
+    return out
+
+
 def train_wan_2_1_dpo(cfg: DictConfig) -> None:
     """Run Wan-family Diffusion-DPO training driven by a merged YAML config."""
 
@@ -104,8 +137,7 @@ def train_wan_2_1_dpo(cfg: DictConfig) -> None:
     from vrl.ray.resources import format_distributed_resource_plan
     from vrl.trainers.activation_checkpointing import enable_transformer_gradient_checkpointing
     from vrl.trainers.checkpointing import (
-        LORA_WEIGHTS_NAME,
-        AdapterExport,
+        build_adapter_exports,
         capture_rng_state,
         load_training_checkpoint_for_resume,
         prepare_metrics_csv,
@@ -116,10 +148,7 @@ def train_wan_2_1_dpo(cfg: DictConfig) -> None:
         validate_checkpoint_compatibility,
     )
     from vrl.trainers.data import collate_preference, load_pickapic
-    from vrl.trainers.offline import (
-        OfflineDPOTrainer,
-        wan_forward,
-    )
+    from vrl.trainers.offline import OfflineDPOTrainer
 
     trainer_cfg_yaml = cfg.trainer
     sampling = cfg.sampling
@@ -166,7 +195,6 @@ def train_wan_2_1_dpo(cfg: DictConfig) -> None:
     bundle = materialize(resolved_model, context="Wan DPO bundle construction")
     wan_model = bundle.model
     pipeline = bundle.raw_handle
-    transformer = wan_model.transformer
 
     enable_transformer_gradient_checkpointing(bundle, cfg)
 
@@ -275,10 +303,9 @@ def train_wan_2_1_dpo(cfg: DictConfig) -> None:
 
     # LoRA-only checkpoints export the adapter weights; full fine-tunes export
     # nothing extra. The decision is fixed for the run, so resolve it once.
-    adapter_exports = (
-        {LORA_WEIGHTS_NAME: AdapterExport(transformer)}
-        if bool(require(cfg, "model.use_lora")) and hasattr(transformer, "save_pretrained")
-        else None
+    adapter_exports = build_adapter_exports(
+        bundle,
+        use_lora=bool(require(cfg, "model.use_lora")),
     )
 
     step = resume_checkpoint.next_step if resume_checkpoint is not None else 0

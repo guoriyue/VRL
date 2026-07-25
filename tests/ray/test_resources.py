@@ -12,8 +12,6 @@ from vrl.ray.resources import (
     build_bundle_layout,
     format_distributed_resource_plan,
     resolve_distributed_resources,
-    reward_torch_device,
-    trainer_torch_device,
 )
 from vrl.trainers.distributed import resolve_training_context
 
@@ -70,7 +68,7 @@ def test_auto_split_uses_remaining_visible_gpus_for_rollout() -> None:
     assert resolved.rollout_num_workers == 3
     assert resolved.reward_num_workers == 0
     assert resolved.requires_trainer_reservation is True
-    assert trainer_torch_device(resolved) == "cuda:0"
+    assert resolved.trainer_torch_device == "cuda:0"
 
 
 def test_resolved_resource_summaries_are_derived_from_topology() -> None:
@@ -89,7 +87,12 @@ def test_resolved_resource_summaries_are_derived_from_topology() -> None:
     assert resolved.requires_trainer_reservation is True
     stored_fields = {field.name for field in fields(resolved)}
     assert stored_fields.isdisjoint(
-        {"rollout_num_gpus", "colocated", "requires_trainer_reservation"},
+        {
+            "rollout_num_gpus",
+            "colocated",
+            "requires_trainer_reservation",
+            "trainer_torch_device",
+        },
     )
 
     layout = build_bundle_layout(resolved)
@@ -276,8 +279,14 @@ def test_removed_reward_release_after_score_key_is_rejected() -> None:
 
 
 def test_devices_must_be_subset_of_visible_devices() -> None:
-    """Checks devices must be subset of visible devices."""
-    with pytest.raises(ValueError, match=r"outside distributed\.resources\.visible_devices"):
+    """Every role spells its own full config path in the failure, not a bare role name."""
+    with pytest.raises(
+        ValueError,
+        match=(
+            r"distributed\.resources\.trainer\.devices contains devices outside "
+            r"distributed\.resources\.visible_devices"
+        ),
+    ):
         resolve_distributed_resources(
             _cfg(
                 {
@@ -345,7 +354,7 @@ def test_cpu_only_rollout_uses_no_gpu_bundles() -> None:
     assert resolved.trainer_devices == ()
     assert resolved.rollout_devices == ()
     assert resolved.rollout_num_workers == 2
-    assert trainer_torch_device(resolved) == "cpu"
+    assert resolved.trainer_torch_device == "cpu"
 
 
 def test_cpu_only_rollout_rejects_a_gpu_device_assignment() -> None:
@@ -404,7 +413,7 @@ def test_trainer_only_plan_allows_zero_rollout_workers() -> None:
     assert resolved.trainer_devices == (0,)
     assert resolved.rollout_devices == ()
     assert resolved.rollout_num_workers == 0
-    assert trainer_torch_device(resolved) == "cuda:0"
+    assert resolved.trainer_torch_device == "cuda:0"
 
 
 def test_reward_torch_device_uses_the_reserved_local_gpu() -> None:
@@ -424,7 +433,7 @@ def test_reward_torch_device_uses_the_reserved_local_gpu() -> None:
         ),
     )
 
-    assert reward_torch_device(resolved, trainer_device="cuda:0") == "cuda:2"
+    assert resolved.reward_torch_device(trainer_device="cuda:0") == "cuda:2"
 
 
 def test_reward_torch_device_without_a_reservation_follows_the_rank_local_trainer() -> None:
@@ -439,7 +448,7 @@ def test_reward_torch_device_without_a_reservation_follows_the_rank_local_traine
         ),
     )
 
-    assert reward_torch_device(resolved, trainer_device="cuda:7") == "cuda:7"
+    assert resolved.reward_torch_device(trainer_device="cuda:7") == "cuda:7"
 
 
 def test_reward_torch_device_honors_an_explicit_cpu_slot() -> None:
@@ -460,7 +469,7 @@ def test_reward_torch_device_honors_an_explicit_cpu_slot() -> None:
         ),
     )
 
-    assert reward_torch_device(resolved, trainer_device="cuda:0") == "cpu"
+    assert resolved.reward_torch_device(trainer_device="cuda:0") == "cpu"
 
 
 def test_reward_torch_device_rejects_multiple_local_workers() -> None:
@@ -482,7 +491,7 @@ def test_reward_torch_device_rejects_multiple_local_workers() -> None:
     )
 
     with pytest.raises(ValueError, match="at most one resolved reward worker"):
-        reward_torch_device(resolved, trainer_device="cuda:0")
+        resolved.reward_torch_device(trainer_device="cuda:0")
 
 
 def test_reward_torch_device_rejects_multi_gpu_local_inference() -> None:
@@ -499,7 +508,7 @@ def test_reward_torch_device_rejects_multi_gpu_local_inference() -> None:
     )
 
     with pytest.raises(ValueError, match="at most one resolved reward GPU"):
-        reward_torch_device(resolved, trainer_device="cuda:0")
+        resolved.reward_torch_device(trainer_device="cuda:0")
 
 
 def test_reward_torch_device_rejects_cross_node_budget_tokens() -> None:
@@ -521,7 +530,7 @@ def test_reward_torch_device_rejects_cross_node_budget_tokens() -> None:
     )
 
     with pytest.raises(ValueError, match="cross-node device ids are Ray budget tokens"):
-        reward_torch_device(resolved, trainer_device="cuda:0")
+        resolved.reward_torch_device(trainer_device="cuda:0")
 
 
 def test_resource_plan_formatter_includes_key_fields() -> None:
@@ -567,7 +576,7 @@ def test_cross_node_rollout_satisfies_budget_from_explicit_counts() -> None:
     assert resolved.rollout_num_workers == 1
     assert resolved.colocated is False
     assert resolved.requires_trainer_reservation is False
-    assert trainer_torch_device(resolved) == "cuda:0"
+    assert resolved.trainer_torch_device == "cuda:0"
 
 
 def test_cross_node_scales_to_multiple_rollout_workers() -> None:
@@ -649,7 +658,7 @@ def test_cross_node_kling_recipe_keeps_the_local_reward_on_the_driver() -> None:
     assert resolved.cross_node is True
     assert resolved.rollout_devices == (1,)
     assert resolved.reward_devices == ()
-    assert reward_torch_device(resolved, trainer_device="cuda:0") == "cuda:0"
+    assert resolved.reward_torch_device(trainer_device="cuda:0") == "cuda:0"
 
 
 def test_reward_role_resolves_after_trainer_and_rollout_devices() -> None:
@@ -844,7 +853,7 @@ def test_explicit_cpu_reward_does_not_create_gpu_handoffs() -> None:
     assert resolved.lifecycle.handoff.release_trainer_before_reward is False
     assert resolved.lifecycle.handoff.release_rollout_before_reward is False
     assert resolved.lifecycle.handoff.release_reward_after_score is False
-    assert reward_torch_device(resolved, trainer_device="cuda:0") == "cpu"
+    assert resolved.reward_torch_device(trainer_device="cuda:0") == "cpu"
 
 
 def test_http_only_reward_owns_no_local_resource_or_handoff() -> None:
@@ -919,7 +928,7 @@ def test_mixed_http_and_local_reward_resources_cover_only_local_execution() -> N
     assert resolved.reward_devices == ()
     assert resolved.reward_num_workers == 1
     assert resolved.reward_gpus_per_worker == 0
-    assert reward_torch_device(resolved) == "cpu"
+    assert resolved.reward_torch_device() == "cpu"
     assert len(build_bundle_layout(resolved).reward_bundle_indices) == 1
 
 
@@ -1367,7 +1376,7 @@ def test_fsdp_4x_l4_rank_mask_resolves_one_logical_gpu(monkeypatch, rank: int) -
     resolved = resolve_distributed_resources(cfg)
     context = resolve_training_context(
         cfg,
-        device=torch.device(trainer_torch_device(resolved)),
+        device=torch.device(resolved.trainer_torch_device),
         env={"RANK": str(rank), "LOCAL_RANK": str(rank), "WORLD_SIZE": "4"},
     )
 

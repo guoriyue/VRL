@@ -13,10 +13,8 @@ import torch.multiprocessing as mp
 
 from vrl.scripts.common.online import (
     OnlineRecipeRun,
-    _export_transformer_lora,
     _prepare_metrics_csv_rank_consistent,
 )
-from vrl.trainers.checkpointing import AdapterExport
 from vrl.trainers.distributed import DistributedTrainingContext
 
 
@@ -33,21 +31,6 @@ def _free_port() -> int:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
         sock.bind(("127.0.0.1", 0))
         return int(sock.getsockname()[1])
-
-
-def test_dual_transformer_lora_export_is_namespaced() -> None:
-    high = SimpleNamespace(save_pretrained=lambda _path: None)
-    low = SimpleNamespace(save_pretrained=lambda _path: None)
-    bundle = SimpleNamespace(
-        trainable_modules={"transformer": high, "transformer_2": low},
-    )
-
-    exported = _export_transformer_lora(bundle, use_lora=True)
-
-    assert exported == {
-        "lora_weights/transformer": AdapterExport(high),
-        "lora_weights/transformer_2": AdapterExport(low),
-    }
 
 
 def test_online_checkpoint_threads_required_model_identity(

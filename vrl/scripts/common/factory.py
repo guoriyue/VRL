@@ -10,7 +10,7 @@ from omegaconf import DictConfig, OmegaConf
 from vrl.config.builders import BuiltConfigs
 from vrl.families.registry import ModelFamilyEntry
 from vrl.models.dtypes import resolve_torch_dtype
-from vrl.ray.resources import reward_torch_device
+from vrl.ray.resources import ResolvedDistributedResources, require_reward_device
 
 
 def _validate_topology_derived_reward_kwargs(
@@ -58,7 +58,7 @@ class AlgorithmEvaluatorPair:
 def build_reward(
     *,
     built: BuiltConfigs,
-    resources: Any | None,
+    resources: ResolvedDistributedResources | None,
     device: str = "cuda",
 ) -> Any:
     """Build the online reward function from the shared config loader output.
@@ -85,32 +85,7 @@ def build_reward(
         dict(reward.kwargs),
     )
     if resources is not None and not external_only:
-        # Symmetric torchrun ranks keep physical ordinals in the resource plan
-        # for Ray placement, but CUDA_VISIBLE_DEVICES narrows each rank to local
-        # logical cuda:0. The caller passes that actual trainer/reward device;
-        # let an unreserved shared reward inherit it instead of comparing it to
-        # the placement-only physical ordinal.
-        placement_device = reward_torch_device(resources)
-        expected_device = reward_torch_device(
-            resources,
-            trainer_device=device,
-        )
-        actual_device = str(device).strip().lower()
-        expected_device = expected_device.strip().lower()
-        same_device_kind = actual_device.startswith("cuda") == placement_device.startswith(
-            "cuda",
-        )
-        matches_resource_plan = (
-            same_device_kind
-            if resources.reward_uses_trainer_device
-            else actual_device == expected_device
-        )
-        if not matches_resource_plan:
-            raise ValueError(
-                f"reward device {str(device)!r} conflicts with distributed resources "
-                f"resolved device {placement_device!r}; resource topology is the "
-                "execution-device source of truth.",
-            )
+        require_reward_device(resources, str(device))
         validate_reward_memory_parking(
             resources=resources,
             built=built,
@@ -135,7 +110,7 @@ def build_reward(
 
 def validate_reward_memory_parking(
     *,
-    resources: Any,
+    resources: ResolvedDistributedResources,
     built: BuiltConfigs,
     device: str | None = None,
 ) -> None:
@@ -159,7 +134,7 @@ def validate_reward_memory_parking(
 
     validate_reward_memory_parking_components(
         names,
-        device=str(device or reward_torch_device(resources)),
+        device=str(device or resources.reward_torch_device()),
         reward_kwargs=reward_kwargs,
     )
 

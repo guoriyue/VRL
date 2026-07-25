@@ -36,7 +36,7 @@ from vrl.config.validation import (
     validate_reward_config,
     validate_training_config,
 )
-from vrl.ray.resources import resolve_distributed_resources, reward_torch_device
+from vrl.ray.resources import resolve_distributed_resources
 from vrl.rollouts.orchestration import validate_rollout_schedule_topology
 from vrl.scripts.common.factory import validate_reward_memory_parking
 
@@ -739,7 +739,7 @@ def test_wan_droid_fullparam_fsdp_4x_l4_uses_symmetric_reward_handoffs(
     assert resources.trainer_devices == resources.rollout_devices == (physical_device,)
     assert resources.reward_devices == ()
     assert resources.reward_uses_trainer_device is True
-    assert reward_torch_device(resources, trainer_device="cuda:0") == "cuda:0"
+    assert resources.reward_torch_device(trainer_device="cuda:0") == "cuda:0"
     assert resources.lifecycle.rollout.mode == "on_demand"
     assert resources.lifecycle.reward.mode == "on_demand"
     handoff = resources.lifecycle.handoff
