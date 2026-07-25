@@ -144,18 +144,6 @@ class TrajectoryBatch:
         if not self.task:
             raise ValueError("TrajectoryBatch.task must be non-empty")
 
-    @property
-    def num_samples(self) -> int:
-        """Return the sample count from the canonical sample rows."""
-
-        return len(self.sample_rows)
-
-    @property
-    def axis_lengths(self) -> dict[str, int]:
-        """Return known axis lengths from the canonical axis declarations."""
-
-        return {name: axis.length for name, axis in self.axes.items() if axis.length is not None}
-
 
 __all__ = [
     "AxisKind",

@@ -88,14 +88,14 @@ class TrajectoryRolloutBatchBuilder:
                 "no trainable policy segment or replay facts were recorded",
             )
         if self._is_multisegment_categorical(trainable):
-            return self._pack_ar_multisegment(rewards_raw)
+            return self._pack_ar(self._primary_trainable_segment(), rewards_raw)
         segment = self._primary_trainable_segment()
         if segment.distribution == "flow_matching" or (
             segment.distribution == "gaussian" and segment.modality == "latent"
         ):
             return self._pack_diffusion(segment, rewards_raw)
         if segment.distribution in ("categorical", "gaussian"):
-            return self._pack_ar_tokens(segment, rewards_raw)
+            return self._pack_ar(segment, rewards_raw)
         raise NotImplementedError(
             "trajectory rollout collection does not support distribution="
             f"{segment.distribution!r}",
@@ -131,30 +131,15 @@ class TrajectoryRolloutBatchBuilder:
             trajectory=self.trajectory,
         )
 
-    def _pack_ar_tokens(
+    def _pack_ar(
         self,
         segment: TrajectorySegment,
         rewards_raw: torch.Tensor,
     ) -> RolloutBatch:
-        prompt_ids = named_tensor(segment, "prompt_input_ids").value
-        device = self.context.device or prompt_ids.device
-
-        return RolloutBatch(
-            rewards=rewards_raw.to(device),
-            group_ids=self._group_ids(device=device),
-            extras={},
-            context=dict(self.trajectory.context),
-            trajectory=self.trajectory,
-        )
-
-    def _pack_ar_multisegment(
-        self,
-        rewards_raw: torch.Tensor,
-    ) -> RolloutBatch:
-        primary = self._primary_trainable_segment()
-
-        token_ids = role_tensor(primary, "action").value
-        device = self.context.device or token_ids.device
+        # Single-segment AR passes the trainable segment; the multisegment path
+        # passes its primary segment. Both carry an action-role tensor co-located
+        # on the batch device, so the fallback device source is identical.
+        device = self.context.device or role_tensor(segment, "action").value.device
 
         return RolloutBatch(
             rewards=rewards_raw.to(device),

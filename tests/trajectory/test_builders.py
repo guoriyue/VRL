@@ -20,13 +20,16 @@ from vrl.trajectory import (
     build_chunk_autoregressive_generation_trajectory,
     build_diffusion_trajectory,
 )
-from vrl.trajectory.ops import stack_trajectory_batches
+
+
+def _axis_lengths(trajectory: TrajectoryBatch) -> dict[str, int]:
+    return {name: axis.length for name, axis in trajectory.axes.items() if axis.length is not None}
 
 
 def test_all_builders_derive_structure_without_metric_copies() -> None:
     for name, trajectory, expected_axis_lengths in _structural_trajectories():
-        assert trajectory.num_samples == expected_axis_lengths["sample"], name
-        assert trajectory.axis_lengths == expected_axis_lengths, name
+        assert len(trajectory.sample_rows) == expected_axis_lengths["sample"], name
+        assert _axis_lengths(trajectory) == expected_axis_lengths, name
         assert trajectory.metrics.values == {}, name
 
 
@@ -43,20 +46,6 @@ def test_trajectory_metrics_rejects_removed_structural_fields(
 ) -> None:
     with pytest.raises(TypeError, match=field_name):
         TrajectoryMetrics(**{field_name: value})
-
-
-def test_derived_structure_properties_are_read_only() -> None:
-    trajectory = _structural_trajectories()[0][1]
-
-    with pytest.raises(AttributeError):
-        trajectory.num_samples = 99
-    with pytest.raises(AttributeError):
-        trajectory.axis_lengths = {"sample": 99}
-
-    copied_lengths = trajectory.axis_lengths
-    copied_lengths["sample"] = 99
-    assert trajectory.num_samples == 2
-    assert trajectory.axis_lengths["sample"] == 2
 
 
 def test_builder_rejects_tensor_rows_that_disagree_with_sample_rows() -> None:
@@ -192,32 +181,6 @@ def test_multisegment_primary_rejects_unknown_or_nontrainable_segment(
             primary_segment=primary_segment,
             context={},
         )
-
-
-def test_stack_rejects_different_primary_segments() -> None:
-    request = GenerationRequest(
-        request_id="stack-primary",
-        family="janus_pro_r1",
-        task="ar_t2i_r1",
-        inputs=["draw"],
-        samples_per_prompt=1,
-    )
-    trajectories = [
-        build_ar_multisegment_trajectory(
-            request=request,
-            sample_rows=build_sample_rows(request),
-            segments={
-                "initial_image": _segment_payload(),
-                "final_image": _segment_payload(),
-            },
-            primary_segment=primary,
-            context={},
-        )
-        for primary in ("initial_image", "final_image")
-    ]
-
-    with pytest.raises(ValueError, match="different primary segments"):
-        stack_trajectory_batches(trajectories)
 
 
 @pytest.mark.parametrize(

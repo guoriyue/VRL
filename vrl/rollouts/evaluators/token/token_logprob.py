@@ -19,6 +19,7 @@ from vrl.math.token.logprob import gather_categorical_log_probs
 from vrl.models.interfaces import ReplayModel, require_replay_model
 from vrl.rollouts.batch import RolloutBatch
 from vrl.rollouts.evaluators.base import Evaluator
+from vrl.rollouts.evaluators.token.ref_pass import ref_forward
 from vrl.rollouts.evaluators.trajectory import TrajectorySignalBuilder
 from vrl.rollouts.evaluators.types import SignalRequest, TrajectorySignalBatch
 
@@ -73,21 +74,11 @@ class TokenLogProbEvaluator(Evaluator):
 
         ref_lp = None
         if request.need_ref:
-            if ref_model is not None:
-                ref_lp = self._compute_logprobs(
-                    ref_model,
-                    batch,
-                    action_ids,
-                    temperature,
-                )
-            else:
-                with torch.no_grad(), model.disable_adapter():
-                    ref_lp = self._compute_logprobs(
-                        model,
-                        batch,
-                        action_ids,
-                        temperature,
-                    )
+            ref_lp = ref_forward(
+                model,
+                ref_model,
+                lambda m: self._compute_logprobs(m, batch, action_ids, temperature),
+            )
 
         return builder.single_segment(
             segment_name="image_tokens",
