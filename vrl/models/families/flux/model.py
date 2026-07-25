@@ -50,6 +50,7 @@ from vrl.models.steps.denoise.common import (
     LatentDecodePlan,
     expand_batch_timestep,
     pack_eval_timestep,
+    set_mu_shifted_timesteps,
 )
 from vrl.models.steps.denoise.common.lora import (
     LoraModelMixin,
@@ -223,20 +224,13 @@ class FluxModel(LoraModelMixin, DiffusersPipelineModelBase, DiffusionBackboneRun
         """Set FLUX timesteps with the resolution-derived ``mu`` (diffusers parity)."""
         from diffusers.pipelines.flux.pipeline_flux import calculate_shift
 
-        scheduler = self.scheduler
-        config = scheduler.config
-        if getattr(config, "use_dynamic_shifting", False):
-            mu = calculate_shift(
-                image_seq_len,
-                getattr(config, "base_image_seq_len", 256),
-                getattr(config, "max_image_seq_len", 4096),
-                getattr(config, "base_shift", 0.5),
-                getattr(config, "max_shift", 1.15),
-            )
-            scheduler.set_timesteps(num_steps, device=device, mu=mu)
-        else:
-            scheduler.set_timesteps(num_steps, device=device)
-        return scheduler.timesteps
+        return set_mu_shifted_timesteps(
+            self.scheduler,
+            num_steps=num_steps,
+            image_seq_len=image_seq_len,
+            device=device,
+            calculate_shift=calculate_shift,
+        )
 
     @staticmethod
     def _build_latent_image_ids(

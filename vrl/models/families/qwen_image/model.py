@@ -45,6 +45,7 @@ from vrl.models.steps.denoise.common import (
     LatentDecodePlan,
     expand_batch_timestep,
     pack_eval_timestep,
+    set_mu_shifted_timesteps,
 )
 from vrl.models.steps.denoise.common.lora import LoraModelMixin
 from vrl.models.steps.denoise.common.tensors import require_tensor
@@ -172,20 +173,13 @@ class QwenImageModel(LoraModelMixin, DiffusersPipelineModelBase, DiffusionBackbo
         """Set Qwen-Image timesteps with the resolution-derived ``mu`` (diffusers parity)."""
         from diffusers.pipelines.qwenimage.pipeline_qwenimage import calculate_shift
 
-        scheduler = self.pipeline.scheduler
-        config = scheduler.config
-        if getattr(config, "use_dynamic_shifting", False):
-            mu = calculate_shift(
-                image_seq_len,
-                config.get("base_image_seq_len", 256),
-                config.get("max_image_seq_len", 4096),
-                config.get("base_shift", 0.5),
-                config.get("max_shift", 1.15),
-            )
-            scheduler.set_timesteps(num_steps, device=device, mu=mu)
-        else:
-            scheduler.set_timesteps(num_steps, device=device)
-        return scheduler.timesteps
+        return set_mu_shifted_timesteps(
+            self.pipeline.scheduler,
+            num_steps=num_steps,
+            image_seq_len=image_seq_len,
+            device=device,
+            calculate_shift=calculate_shift,
+        )
 
     # -- encode_prompt -------------------------------------------------
 

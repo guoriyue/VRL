@@ -26,6 +26,7 @@ from vrl.models.steps.denoise.common.timestep import (
     broadcast_spatial_timestep,
     expand_batch_timestep,
     pack_eval_timestep,
+    set_mu_shifted_timesteps,
 )
 
 __all__ = [
@@ -44,6 +45,7 @@ __all__ = [
     "pack_batched_cfg",
     "pack_eval_timestep",
     "replay_tensor",
+    "set_mu_shifted_timesteps",
     "shared_replay_tensor",
     "split_batched_cfg_output",
 ]

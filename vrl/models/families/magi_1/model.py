@@ -219,7 +219,12 @@ class Magi1SubprocessModel(torch.nn.Module):
         super().__init__()
         self.config = config
         self._device = torch.device(device or "cpu")
-        self._base_config = _load_and_validate_installation(config)
+        self._base_config = prepare_magi_runtime_config(
+            _preflight_local_installation(config),
+            config=config,
+            sampling={},
+            sample_index=0,
+        )
         self.precision: Any = None
 
     @classmethod
@@ -526,18 +531,6 @@ def magi_subprocess_environment(source_path: Path) -> dict[str, str]:
         },
     )
     return env
-
-
-def _load_and_validate_installation(
-    config: Magi1SubprocessConfig,
-) -> dict[str, Any]:
-    payload = _preflight_local_installation(config)
-    return prepare_magi_runtime_config(
-        payload,
-        config=config,
-        sampling={},
-        sample_index=0,
-    )
 
 
 def _preflight_local_installation(
@@ -852,13 +845,13 @@ def _magi_mode(input_value: GenerationInput) -> tuple[str, str | None]:
             return "v2v", input_value.reference_video
         return "t2v", None
 
+    # Canonical task_type long forms only (semantics.py owns this vocabulary):
+    # video2world is image-conditioned in this repo — every v2w dataset preset
+    # declares conditioning: reference_image — so it routes to i2v, not v2v.
     aliases = {
-        "t2v": "t2v",
         "text_to_video": "t2v",
-        "i2v": "i2v",
         "image_to_video": "i2v",
-        "v2v": "v2v",
-        "video_to_video": "v2v",
+        "video2world": "i2v",
     }
     try:
         mode = aliases[task_type]
