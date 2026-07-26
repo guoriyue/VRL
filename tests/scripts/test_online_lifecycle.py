@@ -439,7 +439,7 @@ def _install_common_fakes(
     monkeypatch.setattr(online, "build_reward", lambda *args, **kwargs: reward)
     monkeypatch.setattr(
         online,
-        "build_algorithm_and_evaluator_from_cfg",
+        "build_algorithm_and_evaluator",
         lambda *args, **kwargs: SimpleNamespace(algorithm=object(), evaluator=None),
     )
     monkeypatch.setattr(

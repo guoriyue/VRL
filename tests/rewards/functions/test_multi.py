@@ -4,8 +4,12 @@ from __future__ import annotations
 
 import pytest
 
+from vrl.config.reward_inference import RewardInferenceConfig
 from vrl.rewards.base import RewardBatchReport, RewardCleanupError, RewardFunction
-from vrl.rewards.functions.registry import MultiReward
+from vrl.rewards.functions.registry import (
+    MultiReward,
+    validate_reward_memory_parking_components,
+)
 from vrl.rewards.runtime import InProcessRewardRuntime
 from vrl.rewards.service.client import HttpRewardRuntime
 from vrl.rewards.types import RewardRollout
@@ -315,6 +319,34 @@ def test_factory_parking_policy_distinguishes_cpu_and_dedicated_rewards() -> Non
     assert isinstance(dedicated_runtime, InProcessRewardRuntime)
     assert cpu_runtime.requires_memory_parking is False
     assert dedicated_runtime.requires_memory_parking is False
+
+
+@pytest.mark.parametrize(
+    "inference_configs",
+    [
+        {},
+        {
+            "ocr": RewardInferenceConfig(),
+            "stale": RewardInferenceConfig(),
+        },
+    ],
+)
+def test_from_dict_rejects_inconsistent_resolved_inference_keys(
+    inference_configs: dict[str, RewardInferenceConfig],
+) -> None:
+    with pytest.raises(ValueError, match="inference config keys must match component keys"):
+        MultiReward.from_dict(
+            {"ocr": 1.0},
+            device="cpu",
+            inference_configs=inference_configs,
+        )
+
+    with pytest.raises(ValueError, match="inference config keys must match component keys"):
+        validate_reward_memory_parking_components(
+            ("ocr",),
+            device="cpu",
+            inference_configs=inference_configs,
+        )
 
 
 def test_shared_parking_allows_one_gpu_reward_with_cpu_sibling() -> None:

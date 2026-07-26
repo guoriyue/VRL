@@ -5,46 +5,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from omegaconf import DictConfig, OmegaConf
-
 from vrl.config.builders import BuiltConfigs
 from vrl.families.registry import ModelFamilyEntry
 from vrl.models.dtypes import resolve_torch_dtype
 from vrl.ray.resources import ResolvedDistributedResources, require_reward_device
-
-
-def _validate_topology_derived_reward_kwargs(
-    reward_kwargs: dict[str, Any],
-) -> None:
-    """Reject public knobs whose values come from resolved GPU ownership."""
-
-    for name, kwargs in reward_kwargs.items():
-        extra = dict(kwargs or {})
-        for key in ("sleep_offload", "memory_parking_residual_bytes_limit"):
-            if key in extra:
-                raise ValueError(
-                    f"reward.kwargs.{name}.{key} is topology-derived and cannot "
-                    "be set in YAML; remove it and select shared or dedicated "
-                    "reward GPU ownership under distributed.resources.reward",
-                )
-
-
-def _all_rewards_use_external_inference(
-    reward_weights: dict[str, float],
-    reward_kwargs: dict[str, Any],
-) -> bool:
-    """Return whether every configured component is an external runtime client."""
-
-    from vrl.config.reward_inference import parse_reward_inference_config
-
-    return bool(reward_weights) and all(
-        parse_reward_inference_config(
-            dict(reward_kwargs.get(name) or {}).get("inference"),
-            context=f"reward.kwargs.{name}.inference",
-        ).kind
-        == "http"
-        for name in reward_weights
-    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -76,15 +40,10 @@ def build_reward(
         )
     if not any(weight > 0 for weight in reward.weights.values()):
         raise ValueError("At least one reward component must have weight > 0.")
-    _validate_topology_derived_reward_kwargs(dict(reward.kwargs))
     from vrl.rewards.functions.registry import MultiReward
 
     memory_parking_required: bool | None = None
-    external_only = _all_rewards_use_external_inference(
-        dict(reward.weights),
-        dict(reward.kwargs),
-    )
-    if resources is not None and not external_only:
+    if resources is not None and not reward.all_external_inference:
         require_reward_device(resources, str(device))
         validate_reward_memory_parking(
             resources=resources,
@@ -105,6 +64,7 @@ def build_reward(
         device=str(device),
         reward_kwargs=reward.kwargs,
         memory_parking_required=memory_parking_required,
+        inference_configs=reward.inference_configs,
     )
 
 
@@ -116,16 +76,12 @@ def validate_reward_memory_parking(
 ) -> None:
     """Validate shared reward parking without constructing a reward model."""
 
-    if built.reward is not None:
-        reward_kwargs = built.reward.kwargs
-        names = tuple(str(name) for name in built.reward.weights)
-    else:
-        reward_kwargs = {}
-        names = ()
-    reward_kwargs = dict(reward_kwargs or {})
-    _validate_topology_derived_reward_kwargs(reward_kwargs)
     if not bool(resources.lifecycle.handoff.release_reward_after_score):
         return
+    reward = built.reward
+    if reward is None or reward.all_external_inference:
+        return
+    names = tuple(reward.weights)
     if not names:
         return
     from vrl.rewards.functions.registry import (
@@ -135,12 +91,12 @@ def validate_reward_memory_parking(
     validate_reward_memory_parking_components(
         names,
         device=str(device or resources.reward_torch_device()),
-        reward_kwargs=reward_kwargs,
+        reward_kwargs=reward.kwargs,
+        inference_configs=reward.inference_configs,
     )
 
 
-def build_algorithm_and_evaluator_from_cfg(
-    cfg: DictConfig,
+def build_algorithm_and_evaluator(
     *,
     family_entry: ModelFamilyEntry,
     built: BuiltConfigs,
@@ -155,7 +111,10 @@ def build_algorithm_and_evaluator_from_cfg(
             "trainable actions, transition likelihoods, or policy replay evaluator",
         )
     algorithm_config = built.algorithm
-    kind = str(OmegaConf.select(cfg, "algorithm.kind", default=""))
+    algorithm_section = built.root.algorithm
+    if algorithm_section is None:
+        raise ValueError("online recipe requires an algorithm section")
+    kind = algorithm_section.kind
     diffusion_logprob_kinds = {"grpo", "dance_grpo", "flow_dppo", "grpo_guard"}
     precision = built.precision
     if precision.diffusion_math != "fp32" and kind not in diffusion_logprob_kinds:
@@ -321,7 +280,7 @@ def build_algorithm_and_evaluator_from_cfg(
 
 __all__ = [
     "AlgorithmEvaluatorPair",
-    "build_algorithm_and_evaluator_from_cfg",
+    "build_algorithm_and_evaluator",
     "build_reward",
     "validate_reward_memory_parking",
 ]

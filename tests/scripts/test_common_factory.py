@@ -14,7 +14,7 @@ from vrl.algorithms.grpo.continuous import (
     GRPOConfig,
     GRPOGuard,
 )
-from vrl.config.builders import RewardRuntimeConfig, build_configs
+from vrl.config.builders import build_configs, build_reward_config
 from vrl.config.loading import load_config
 from vrl.config.precision import RolePrecision
 from vrl.config.schema import parse_config
@@ -23,7 +23,7 @@ from vrl.ray.resources import resolve_distributed_resources
 from vrl.rollouts.collector.config import RolloutCollectorConfig
 from vrl.run import OnlineRunConfig
 from vrl.scripts.common.factory import (
-    build_algorithm_and_evaluator_from_cfg,
+    build_algorithm_and_evaluator,
     build_reward,
     validate_reward_memory_parking,
 )
@@ -34,7 +34,11 @@ def _built_reward(
     kwargs: dict[str, dict],
 ) -> SimpleNamespace:
     return SimpleNamespace(
-        reward=RewardRuntimeConfig(weights=weights, kwargs=kwargs, inference_configs={}),
+        reward=build_reward_config(
+            OmegaConf.create(
+                {"reward": {"components": weights, "kwargs": kwargs}},
+            ),
+        ),
     )
 
 
@@ -49,8 +53,7 @@ def test_diffusion_grpo_evaluator_uses_resolved_rollout_sde_config() -> None:
     )
     collector_config = RolloutCollectorConfig.from_cfg(cfg)
 
-    pair = build_algorithm_and_evaluator_from_cfg(
-        cfg,
+    pair = build_algorithm_and_evaluator(
         family_entry=get_model_family_entry("wan_2_1"),
         built=build_configs(cfg),
         collector_config=collector_config,
@@ -79,8 +82,7 @@ def test_diffusion_factory_accepts_each_kind_exact_config_type(
         overrides=[f"/recipe/online={recipe}"],
     )
 
-    pair = build_algorithm_and_evaluator_from_cfg(
-        cfg,
+    pair = build_algorithm_and_evaluator(
         family_entry=get_model_family_entry("sd3_5"),
         built=build_configs(cfg),
         collector_config=RolloutCollectorConfig.from_cfg(cfg),
@@ -93,8 +95,7 @@ def test_diffusion_factory_accepts_each_kind_exact_config_type(
 def test_chunk_autoregressive_factory_builds_grouped_grpo_evaluator() -> None:
     cfg = load_config("experiment/sd3_5/online_grpo_ocr")
 
-    pair = build_algorithm_and_evaluator_from_cfg(
-        cfg,
+    pair = build_algorithm_and_evaluator(
         family_entry=get_model_family_entry("causvid"),
         built=build_configs(cfg),
         collector_config=RolloutCollectorConfig.from_cfg(cfg),
@@ -108,8 +109,7 @@ def test_generation_only_chunk_family_fails_before_algorithm_construction() -> N
     cfg = load_config("experiment/sd3_5/online_grpo_ocr")
 
     with pytest.raises(RuntimeError, match=r"generation-only.*no trainable actions"):
-        build_algorithm_and_evaluator_from_cfg(
-            cfg,
+        build_algorithm_and_evaluator(
             family_entry=get_model_family_entry("magi_1"),
             built=build_configs(cfg),
             collector_config=RolloutCollectorConfig.from_cfg(cfg),
@@ -134,8 +134,7 @@ def test_chunk_autoregressive_factory_rejects_undefined_algorithm_semantics(
     )
 
     with pytest.raises(ValueError, match=message):
-        build_algorithm_and_evaluator_from_cfg(
-            cfg,
+        build_algorithm_and_evaluator(
             family_entry=get_model_family_entry("causvid"),
             built=build_configs(cfg),
             collector_config=RolloutCollectorConfig.from_cfg(cfg),
@@ -149,8 +148,7 @@ def test_chunk_autoregressive_factory_rejects_non_fp32_transition_math() -> None
     )
 
     with pytest.raises(ValueError, match="exact fp32 Gaussian re-noise"):
-        build_algorithm_and_evaluator_from_cfg(
-            cfg,
+        build_algorithm_and_evaluator(
             family_entry=get_model_family_entry("causvid"),
             built=build_configs(cfg),
             collector_config=RolloutCollectorConfig.from_cfg(cfg),
@@ -163,8 +161,7 @@ def test_chunk_autoregressive_factory_rejects_full_sequence_sft_regularizer() ->
     built.algorithm.sft_weight = 0.1
 
     with pytest.raises(ValueError, match=r"grouped causal-chunk replay.*sft_weight"):
-        build_algorithm_and_evaluator_from_cfg(
-            cfg,
+        build_algorithm_and_evaluator(
             family_entry=get_model_family_entry("causvid"),
             built=built,
             collector_config=RolloutCollectorConfig.from_cfg(cfg),
@@ -192,8 +189,7 @@ def test_diffusion_factory_rejects_a_sibling_config_type(
     built = replace(built, algorithm=wrong_config)
 
     with pytest.raises(TypeError, match=expected_name):
-        build_algorithm_and_evaluator_from_cfg(
-            cfg,
+        build_algorithm_and_evaluator(
             family_entry=get_model_family_entry("sd3_5"),
             built=built,
             collector_config=RolloutCollectorConfig.from_cfg(cfg),
@@ -443,8 +439,7 @@ def test_token_objective_rejects_unused_math_precision_override() -> None:
     built = build_configs(cfg)
 
     with pytest.raises(ValueError, match=r"precision\.diffusion_math\.dtype.*diffusion log-prob"):
-        build_algorithm_and_evaluator_from_cfg(
-            cfg,
+        build_algorithm_and_evaluator(
             built=built,
             family_entry=get_model_family_entry("emu3"),
             collector_config=RolloutCollectorConfig.from_cfg(cfg),
@@ -464,6 +459,7 @@ def test_reward_factory_passes_the_selected_local_device(monkeypatch) -> None:
         device="cuda",
         reward_kwargs=None,
         memory_parking_required=None,
+        inference_configs=None,
     ):
         del cls
         captured.update(
@@ -471,6 +467,7 @@ def test_reward_factory_passes_the_selected_local_device(monkeypatch) -> None:
             device=device,
             reward_kwargs=dict(reward_kwargs or {}),
             memory_parking_required=memory_parking_required,
+            inference_config_keys=tuple(inference_configs or ()),
         )
         return sentinel
 
@@ -488,6 +485,7 @@ def test_reward_factory_passes_the_selected_local_device(monkeypatch) -> None:
         "device": "cuda:2",
         "reward_kwargs": {"fake": {"marker": True}},
         "memory_parking_required": None,
+        "inference_config_keys": ("fake",),
     }
 
 
@@ -503,8 +501,9 @@ def test_http_reward_accepts_torchrun_rank_local_device(monkeypatch) -> None:
         device="cuda",
         reward_kwargs=None,
         memory_parking_required=None,
+        inference_configs=None,
     ):
-        del cls, score_dict, reward_kwargs
+        del cls, score_dict, reward_kwargs, inference_configs
         captured.update(
             device=device,
             memory_parking_required=memory_parking_required,
@@ -614,6 +613,53 @@ def test_shared_reward_capability_fails_before_component_construction(monkeypatc
     assert constructed is False
 
 
+def test_shared_reward_preflight_consumes_resolved_inference(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Config-driven parking does not parse component transport a second time."""
+    import vrl.rewards.functions.registry as reward_registry
+
+    built = _built_reward({"aesthetic": 1.0}, {"aesthetic": {}})
+
+    def unexpected_reparse(*args, **kwargs):
+        del args, kwargs
+        raise AssertionError("resolved reward inference must be consumed directly")
+
+    monkeypatch.setattr(
+        reward_registry,
+        "parse_reward_inference_config",
+        unexpected_reparse,
+    )
+
+    validate_reward_memory_parking(
+        resources=resolve_distributed_resources(_shared_reward_cfg("aesthetic")),
+        built=built,
+    )
+
+
+def test_reward_build_consumes_resolved_inference(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The real MultiReward construction path does not parse transport twice."""
+    import vrl.rewards.functions.registry as reward_registry
+
+    built = _built_reward({"ocr": 1.0}, {})
+
+    def unexpected_reparse(*args, **kwargs):
+        del args, kwargs
+        raise AssertionError("resolved reward inference must be consumed directly")
+
+    monkeypatch.setattr(
+        reward_registry,
+        "parse_reward_inference_config",
+        unexpected_reparse,
+    )
+
+    reward = build_reward(built=built, resources=None, device="cpu")
+
+    assert [name for name, _, _ in reward.rewards] == ["ocr"]
+
+
 def test_shared_reward_topology_automatically_enables_parking(monkeypatch) -> None:
     """The lifecycle flag, not a YAML sleep knob, drives runtime parking."""
     from vrl.rewards.functions.registry import MultiReward
@@ -627,8 +673,9 @@ def test_shared_reward_topology_automatically_enables_parking(monkeypatch) -> No
         device="cuda",
         reward_kwargs=None,
         memory_parking_required=None,
+        inference_configs=None,
     ):
-        del cls
+        del cls, inference_configs
         captured.update(
             score_dict=dict(score_dict),
             device=device,
@@ -665,8 +712,9 @@ def test_shared_reward_accepts_rank_local_cuda_after_physical_placement(
         device="cuda",
         reward_kwargs=None,
         memory_parking_required=None,
+        inference_configs=None,
     ):
-        del cls, score_dict, reward_kwargs
+        del cls, score_dict, reward_kwargs, inference_configs
         captured.update(
             device=device,
             memory_parking_required=memory_parking_required,
@@ -692,22 +740,24 @@ def test_shared_reward_accepts_rank_local_cuda_after_physical_placement(
     }
 
 
-def test_reward_preflight_rejects_yaml_lifecycle_override() -> None:
+@pytest.mark.parametrize(
+    "key",
+    ["sleep_offload", "memory_parking_residual_bytes_limit"],
+)
+def test_reward_config_rejects_yaml_lifecycle_override(key: str) -> None:
     """Resource topology is the only public reward lifecycle source."""
 
-    cfg = _shared_reward_cfg("aesthetic")
-    built = _built_reward(
-        {"aesthetic": 1.0},
-        {"aesthetic": {"sleep_offload": True}},
+    cfg = OmegaConf.create(
+        {
+            "reward": {
+                "components": {"aesthetic": 1.0},
+                "kwargs": {"aesthetic": {key: True}},
+            },
+        },
     )
-    with pytest.raises(ValueError, match="sleep_offload is topology-derived"):
-        validate_reward_memory_parking(
-            resources=resolve_distributed_resources(cfg),
-            built=built,
-        )
 
-    with pytest.raises(ValueError, match="sleep_offload is topology-derived"):
-        build_reward(built=built, resources=None, device="cuda:0")
+    with pytest.raises(ValueError, match=rf"{key} is topology-derived"):
+        build_reward_config(cfg)
 
 
 def test_factory_rejects_driver_device_outside_reward_resource_topology() -> None:

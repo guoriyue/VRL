@@ -5,9 +5,13 @@ Ported from the multi_score() pattern in flow_grpo/rewards.py.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import Any
 
-from vrl.config.reward_inference import parse_reward_inference_config
+from vrl.config.reward_inference import (
+    RewardInferenceConfig,
+    parse_reward_inference_config,
+)
 from vrl.rewards.base import RewardBatchReport, RewardCleanupError, RewardFunction
 from vrl.rewards.inference import RewardMemoryReleaseProof
 from vrl.rewards.runtime import build_reward_runtime
@@ -132,21 +136,46 @@ class MultiReward(RewardFunction):
         device: str = "cuda",
         reward_kwargs: dict[str, dict[str, Any]] | None = None,
         memory_parking_required: bool | None = None,
+        inference_configs: Mapping[str, RewardInferenceConfig] | None = None,
     ) -> MultiReward:
         """Build from ``{"name": weight}`` dict, like flow_grpo config.reward_fn.
 
         ``reward_kwargs`` allows passing per-reward init kwargs, keyed by name,
         e.g. ``{"ocr": {"debug_dir": "out/ocr_debug"}}``.
+
+        Config-driven callers pass their already-resolved ``inference_configs``.
+        Direct callers may omit it and use raw component kwargs as this public
+        construction boundary's source.
         """
         _register_builtins()
         reward_kwargs = reward_kwargs or {}
         configured_weights = {name: float(weight) for name, weight in score_dict.items()}
         reward_classes = {name: get_reward(name) for name in configured_weights}
+        if inference_configs is None:
+            resolved_inference_configs: Mapping[str, RewardInferenceConfig] = {
+                name: parse_reward_inference_config(
+                    dict(reward_kwargs.get(name) or {}).get("inference"),
+                    context=f"reward.kwargs.{name}.inference",
+                )
+                for name in configured_weights
+            }
+        else:
+            component_names = set(configured_weights)
+            inference_names = set(inference_configs)
+            if inference_names != component_names:
+                missing = sorted(component_names - inference_names)
+                unknown = sorted(inference_names - component_names)
+                raise ValueError(
+                    "reward inference config keys must match component keys; "
+                    f"missing={missing}, unknown={unknown}",
+                )
+            resolved_inference_configs = inference_configs
         if memory_parking_required:
             validate_reward_memory_parking_components(
                 tuple(reward_classes),
                 device=device,
                 reward_kwargs=reward_kwargs,
+                inference_configs=resolved_inference_configs,
             )
 
         triples: list[tuple[str, float, RewardFunction]] = []
@@ -154,10 +183,8 @@ class MultiReward(RewardFunction):
             reward_cls = reward_classes[name]
             # `or {}`: a bare YAML key (kwargs: <name>:) parses as None.
             extra = dict(reward_kwargs.get(name) or {})
-            inference = parse_reward_inference_config(
-                extra.pop("inference", None),
-                context=f"reward.kwargs.{name}.inference",
-            )
+            extra.pop("inference", None)
+            inference = resolved_inference_configs[name]
             if "execution" in extra:
                 raise ValueError(
                     f"reward.kwargs.{name}.execution is no longer supported: the "
@@ -291,19 +318,38 @@ def validate_reward_memory_parking_components(
     *,
     device: str = "cuda",
     reward_kwargs: dict[str, dict[str, Any]] | None = None,
+    inference_configs: Mapping[str, RewardInferenceConfig] | None = None,
 ) -> None:
-    """Fail before model construction when a shared reward cannot fully park."""
+    """Fail before model construction when a shared reward cannot fully park.
+
+    Config-driven callers pass ``inference_configs`` from ``RewardRuntimeConfig``.
+    The fallback preserves this validator as a boundary for direct ``MultiReward``
+    construction, where raw component kwargs are the only available source.
+    """
 
     _register_builtins()
     kwargs_by_name = reward_kwargs or {}
+    if inference_configs is None:
+        inference_configs = {
+            name: parse_reward_inference_config(
+                dict(kwargs_by_name.get(name) or {}).get("inference"),
+                context=f"reward.kwargs.{name}.inference",
+            )
+            for name in names
+        }
+    component_names = set(names)
+    inference_names = set(inference_configs)
+    if inference_names != component_names:
+        missing = sorted(component_names - inference_names)
+        unknown = sorted(inference_names - component_names)
+        raise ValueError(
+            "reward inference config keys must match component keys; "
+            f"missing={missing}, unknown={unknown}",
+        )
     gpu_components = [
         name
         for name in names
-        if parse_reward_inference_config(
-            dict(kwargs_by_name.get(name) or {}).get("inference"),
-            context=f"reward.kwargs.{name}.inference",
-        ).kind
-        == "in_process"
+        if inference_configs[name].kind == "in_process"
         if get_reward(name)
         .resolve_execution_device(
             device=device,

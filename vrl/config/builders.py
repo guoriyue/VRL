@@ -43,6 +43,37 @@ class RewardRuntimeConfig:
     # placement reads it off this bundle instead of re-walking the raw reward cfg.
     inference_configs: dict[str, RewardInferenceConfig]
 
+    def __post_init__(self) -> None:
+        component_names = set(self.weights)
+        for field_name, component_map in (
+            ("kwargs", self.kwargs),
+            ("inference_configs", self.inference_configs),
+        ):
+            names = set(component_map)
+            if names != component_names:
+                missing = sorted(component_names - names)
+                unknown = sorted(names - component_names)
+                raise ValueError(
+                    f"reward runtime {field_name} keys must match component keys; "
+                    f"missing={missing}, unknown={unknown}",
+                )
+        for name, component_kwargs in self.kwargs.items():
+            for key in ("sleep_offload", "memory_parking_residual_bytes_limit"):
+                if key in component_kwargs:
+                    raise ValueError(
+                        f"reward.kwargs.{name}.{key} is topology-derived and cannot "
+                        "be set in YAML; remove it and select shared or dedicated "
+                        "reward GPU ownership under distributed.resources.reward",
+                    )
+
+    @property
+    def all_external_inference(self) -> bool:
+        """Whether every configured component executes through an HTTP service."""
+
+        return bool(self.inference_configs) and all(
+            inference.kind == "http" for inference in self.inference_configs.values()
+        )
+
 
 @dataclass(frozen=True, slots=True)
 class BuiltConfigs:
@@ -425,9 +456,11 @@ def build_reward_config(cfg: DictConfig | RewardConfig) -> RewardRuntimeConfig:
 
     reward = cfg if isinstance(cfg, RewardConfig) else validate_reward_config(cfg)
     weights = {name: float(weight) for name, weight in reward.components.items()}
-    kwargs = {
-        name: dict(component_kwargs or {}) for name, component_kwargs in reward.kwargs.items()
-    }
+    unknown_kwargs = sorted(set(reward.kwargs) - set(weights))
+    if unknown_kwargs:
+        keys = ", ".join(f"reward.kwargs.{name}" for name in unknown_kwargs)
+        raise ValueError(f"reward kwargs configured for unknown component(s): {keys}")
+    kwargs = {name: dict(reward.kwargs.get(name) or {}) for name in weights}
     inference_configs = {
         name: parse_reward_inference_config(
             (kwargs.get(name) or {}).get("inference"),

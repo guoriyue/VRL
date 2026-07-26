@@ -29,7 +29,7 @@ from vrl.rollouts.orchestration import validate_rollout_schedule_topology
 from vrl.rollouts.stats import RolloutStats
 from vrl.run import materialize, resolve_model, resolve_online_run
 from vrl.scripts.common.factory import (
-    build_algorithm_and_evaluator_from_cfg,
+    build_algorithm_and_evaluator,
     build_reward,
     validate_reward_memory_parking,
 )
@@ -785,8 +785,7 @@ async def run_online_recipe(
             resources=resources,
             device=reward_device,
         )
-        algorithm_and_evaluator = build_algorithm_and_evaluator_from_cfg(
-            cfg,
+        algorithm_and_evaluator = build_algorithm_and_evaluator(
             family_entry=family_entry,
             built=built,
             collector_config=collector_config,

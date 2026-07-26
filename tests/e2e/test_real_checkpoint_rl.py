@@ -31,7 +31,7 @@ from vrl.ray.resources import resolve_distributed_resources
 from vrl.rollouts.collector import build_rollout_collector
 from vrl.rollouts.collector.config import RolloutCollectorConfig
 from vrl.scripts.common.factory import (
-    build_algorithm_and_evaluator_from_cfg,
+    build_algorithm_and_evaluator,
     build_reward,
 )
 from vrl.trainers.online import OnlineTrainer
@@ -608,8 +608,7 @@ def test_real_checkpoint_online_rl_updates_trainable_weights(
                 config=collector_config,
                 runtime=_DirectExecutorGenerationRuntime(executor),
             )
-        pair = build_algorithm_and_evaluator_from_cfg(
-            cfg,
+        pair = build_algorithm_and_evaluator(
             family_entry=entry,
             built=built,
             collector_config=collector_config,
