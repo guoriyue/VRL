@@ -207,12 +207,10 @@ class ARReplayCore(nn.Module):
     upstream checkpoint's own names in ``__init__`` — that is what lets the
     checkpoint state dict load by name — and inherit the load path below.
 
-    The load walks the shard index directly (transformers 5 removed
-    ``load_sharded_checkpoint``) and skips shards carrying no core keys at all,
-    so a GLM-Image-sized checkpoint leaves its vision/VQ shards on disk
-    untouched. It lived as three per-family copies that rotted independently:
-    emu3's copy got the transformers-5 fix, janus_pro's kept the deleted import
-    and broke.
+    The Hugging Face format boundary lives in
+    :func:`vrl.models.steps.token.loader.load_ar_replay_checkpoint`, which skips
+    shards carrying no core keys at all. A GLM-Image-sized checkpoint therefore
+    leaves its vision/VQ shards on disk untouched.
     """
 
     # Checkpoint subfolder owning this core's config and weights — GLM-Image's
@@ -237,7 +235,7 @@ class ARReplayCore(nn.Module):
         """Config-init this core and strict-load its checkpoint weights.
 
         The shared replay-loader shape across every AR family: ``AutoConfig``
-        -> ``cls(config)`` -> strict :meth:`_load_checkpoint` -> place on
+        -> ``cls(config)`` -> strict checkpoint adapter -> place on
         ``device``/``dtype`` and ``eval()``. ``trust_remote_code`` stays a
         keyword rather than a class attribute because it is a user-facing
         config key (Janus' custom config class needs it). Families keep only
@@ -246,7 +244,7 @@ class ARReplayCore(nn.Module):
 
         from transformers import AutoConfig
 
-        from vrl.models.steps.token.loader import resolve_hf_checkpoint_dir
+        from vrl.models.steps.token import loader
 
         subfolder = cls.checkpoint_subfolder
         config_kwargs: dict[str, Any] = {
@@ -257,74 +255,15 @@ class ARReplayCore(nn.Module):
         if subfolder is not None:
             config_kwargs["subfolder"] = subfolder
         core = cls(AutoConfig.from_pretrained(model_path, **config_kwargs))
-        core._load_checkpoint(
-            resolve_hf_checkpoint_dir(model_path, subfolder=subfolder, revision=revision),
+        loader.load_ar_replay_checkpoint(
+            core,
+            loader.resolve_hf_checkpoint_dir(
+                model_path,
+                subfolder=subfolder,
+                revision=revision,
+            ),
         )
         return core.to(device=device, dtype=dtype).eval()
-
-    def _load_checkpoint(self, checkpoint_dir: str) -> None:
-        """Load this core's weights from a sharded/single HF checkpoint, strictly.
-
-        Only shards carrying keys this core owns are read (per the shard index);
-        both safetensors and legacy ``pytorch_model.bin`` layouts are supported.
-        Raises when any core key is left unloaded — a replay module silently
-        running on random init is the worst possible failure mode.
-        """
-
-        import json
-        import os
-
-        from transformers.modeling_utils import load_state_dict
-
-        owner = type(self).__name__
-        core_keys = set(self.state_dict())
-        loaded_keys: set[str] = set()
-
-        index_names = ("model.safetensors.index.json", "pytorch_model.bin.index.json")
-        single_names = ("model.safetensors", "pytorch_model.bin")
-
-        index_path = next(
-            (
-                os.path.join(checkpoint_dir, name)
-                for name in index_names
-                if os.path.exists(os.path.join(checkpoint_dir, name))
-            ),
-            None,
-        )
-        if index_path is not None:
-            with open(index_path) as index_file:
-                weight_map = json.load(index_file)["weight_map"]
-            shard_names = sorted(
-                {name for key, name in weight_map.items() if key in core_keys},
-            )
-            for shard_name in shard_names:
-                state = load_state_dict(os.path.join(checkpoint_dir, shard_name))
-                self.load_state_dict(state, strict=False)
-                loaded_keys.update(set(state) & core_keys)
-        else:
-            single_path = next(
-                (
-                    os.path.join(checkpoint_dir, name)
-                    for name in single_names
-                    if os.path.exists(os.path.join(checkpoint_dir, name))
-                ),
-                None,
-            )
-            if single_path is None:
-                raise FileNotFoundError(
-                    f"No supported {owner} checkpoint file found in {checkpoint_dir}",
-                )
-            state = load_state_dict(single_path)
-            self.load_state_dict(state, strict=False)
-            loaded_keys.update(set(state) & core_keys)
-
-        missing_replay = sorted(core_keys - loaded_keys)
-        if missing_replay:
-            preview = ", ".join(missing_replay[:5])
-            suffix = " ..." if len(missing_replay) > 5 else ""
-            raise RuntimeError(
-                f"{owner} checkpoint is missing keys: {preview}{suffix}",
-            )
 
 
 @dataclass(slots=True, kw_only=True)
