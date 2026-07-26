@@ -100,7 +100,7 @@ def build_denoise_runtime_bundle(
 
     apply_generation_memory_policy(
         model,
-        memory_config=build.memory,
+        memory=build.generation_memory,
         owner=f"{build.family} model",
     )
     apply_float32_precision(build.precision.float32_precision)

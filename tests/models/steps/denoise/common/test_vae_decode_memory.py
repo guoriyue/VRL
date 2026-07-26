@@ -1,18 +1,21 @@
 from __future__ import annotations
 
 import importlib
+from dataclasses import asdict
 from typing import Any
 
 import pytest
 import torch
 
 from vrl.config.precision import RolePrecision
+from vrl.models.interfaces.generation_memory import (
+    GenerationMemoryPolicy,
+    VaeDecodeMemory,
+)
 from vrl.models.interfaces.runtime import ModelBuild, RolloutBuildOptions
 from vrl.models.steps.denoise.common.vae_decode_memory import (
-    VaeDecodeMemory,
     apply_generation_memory_policy,
-    configure_memory_mechanisms,
-    vae_decode_memory_from_config,
+    configure_vae_decode_memory,
 )
 
 
@@ -27,36 +30,83 @@ class _FakeVAE:
         self.calls.append("enable_slicing")
 
 
-def test_configure_memory_mechanisms_calls_declared_methods() -> None:
+def test_configure_vae_decode_memory_calls_declared_methods() -> None:
     """Checks configure VAE decode calls declared methods."""
     vae = _FakeVAE()
     mem = VaeDecodeMemory(tiling=True, slicing=True)
 
-    configure_memory_mechanisms(vae, mem, owner="test VAE")
+    configure_vae_decode_memory(vae, mem, owner="test VAE")
 
     assert vae.calls == ["enable_tiling", "enable_slicing"]
 
 
-def test_configure_memory_mechanisms_raises_on_missing_method() -> None:
+def test_configure_vae_decode_memory_raises_on_missing_method() -> None:
     """Checks configure VAE decode raises on missing method."""
     mem = VaeDecodeMemory(tiling=True)
     with pytest.raises(TypeError, match="does not support requested enable_tiling"):
-        configure_memory_mechanisms(object(), mem, owner="test VAE")
+        configure_vae_decode_memory(object(), mem, owner="test VAE")
 
 
-def test_vae_decode_memory_rejects_unknown_keys() -> None:
-    """Checks VAE decode memory rejects unknown keys."""
-    with pytest.raises(ValueError, match=r"unknown model\.memory\.vae_decode key"):
-        vae_decode_memory_from_config({"mystery": True})
+def test_generation_memory_wire_mapping_rejects_unknown_keys() -> None:
+    """The typed wire boundary fails closed without a parallel key set."""
+    with pytest.raises(TypeError, match="unexpected keyword argument 'mystery'"):
+        GenerationMemoryPolicy(vae_decode={"mystery": True})
 
 
-def test_vae_decode_memory_uses_yaml_values_only() -> None:
-    """Checks VAE decode memory uses YAML values only."""
-    assert vae_decode_memory_from_config(None) == VaeDecodeMemory()
-    assert vae_decode_memory_from_config({}) == VaeDecodeMemory()
-    assert vae_decode_memory_from_config(
-        {"tiling": True, "slicing": False},
-    ) == VaeDecodeMemory(tiling=True, slicing=False)
+def test_generation_memory_wire_mapping_rehydrates_nested_policy() -> None:
+    memory = GenerationMemoryPolicy(
+        vae_decode={"tiling": True, "slicing": False},
+    )
+
+    assert memory.vae_decode == VaeDecodeMemory(tiling=True, slicing=False)
+
+
+def test_model_build_rehydrates_generation_memory_from_wire_payload() -> None:
+    build = ModelBuild(
+        model_name_or_path="fake/model",
+        revision=None,
+        device="cpu",
+        parameter_dtype="float32",
+        family="sana",
+        precision=RolePrecision("fp32", "tf32"),
+        rollout={"prompt_encoder_dtype": "float16"},
+        generation_memory={
+            "vae_decode": {
+                "tiling": True,
+                "slicing": False,
+            },
+        },
+    )
+
+    assert build.generation_memory == GenerationMemoryPolicy(
+        vae_decode=VaeDecodeMemory(tiling=True, slicing=False),
+    )
+    assert ModelBuild(**asdict(build)) == build
+
+
+def test_model_build_rejects_unresolved_or_replay_only_memory() -> None:
+    common = {
+        "model_name_or_path": "fake/model",
+        "revision": None,
+        "device": "cpu",
+        "parameter_dtype": "float32",
+        "family": "sana",
+        "precision": RolePrecision("fp32", "tf32"),
+    }
+
+    with pytest.raises(ValueError, match=r"must not carry model\.memory"):
+        ModelBuild(
+            **common,
+            rollout=RolloutBuildOptions(prompt_encoder_dtype="float16"),
+            model_config={"memory": {"vae_decode": {"tiling": True}}},
+        )
+    with pytest.raises(ValueError, match="generation_memory is rollout-only"):
+        ModelBuild(
+            **common,
+            generation_memory=GenerationMemoryPolicy(
+                vae_decode=VaeDecodeMemory(tiling=True),
+            ),
+        )
 
 
 class _FakeModel:
@@ -102,17 +152,21 @@ def _direct_rollout_build(
         family=family,
         precision=RolePrecision("fp32", "tf32"),
         rollout=RolloutBuildOptions(prompt_encoder_dtype="float16"),
-        model_config={} if memory is None else {"memory": memory},
+        generation_memory=(
+            None if memory is None else GenerationMemoryPolicy(vae_decode=memory["vae_decode"])
+        ),
     )
 
 
-def test_apply_generation_memory_policy_from_config() -> None:
+def test_apply_generation_memory_policy_from_resolved_policy() -> None:
     """Policy resolves the model's vae_decode target and applies knobs."""
     vae = _FakeVAE()
 
     apply_generation_memory_policy(
         _FakeModel(vae),
-        memory_config={"vae_decode": {"tiling": True, "slicing": False}},
+        memory=GenerationMemoryPolicy(
+            vae_decode=VaeDecodeMemory(tiling=True, slicing=False),
+        ),
         owner="test VAE",
     )
 
@@ -125,7 +179,7 @@ def test_apply_generation_memory_policy_has_no_python_defaults() -> None:
 
     apply_generation_memory_policy(
         _FakeModel(vae),
-        memory_config=None,
+        memory=None,
         owner="test VAE",
     )
 
@@ -136,7 +190,9 @@ def test_apply_generation_memory_policy_raises_on_missing_target_method() -> Non
     with pytest.raises(TypeError, match="does not support requested enable_tiling"):
         apply_generation_memory_policy(
             _FakeModel(object()),
-            memory_config={"vae_decode": {"tiling": True}},
+            memory=GenerationMemoryPolicy(
+                vae_decode=VaeDecodeMemory(tiling=True),
+            ),
             owner="test VAE",
         )
 
@@ -194,8 +250,10 @@ def test_wan_runtime_bundle_applies_model_build_memory_policy(
             rollout=RolloutBuildOptions(
                 prompt_encoder_dtype="float16",
             ),
+            generation_memory=GenerationMemoryPolicy(
+                vae_decode=VaeDecodeMemory(tiling=True, slicing=True),
+            ),
             sampling_config={"num_steps": 2},
-            model_config={"memory": {"vae_decode": {"tiling": True, "slicing": True}}},
         ),
     )
 
@@ -297,9 +355,11 @@ def test_full_generation_runtime_bundles_apply_model_build_memory_policy(
             rollout=RolloutBuildOptions(
                 prompt_encoder_dtype="float16",
             ),
+            generation_memory=GenerationMemoryPolicy(
+                vae_decode=VaeDecodeMemory(tiling=True, slicing=False),
+            ),
             sampling_config={"num_steps": 2},
             model_config={
-                "memory": {"vae_decode": {"tiling": True, "slicing": False}},
                 # LoRA path so LoRA-only descriptor families (predict2_5) pass
                 # their requires_lora guard; the fake's apply_lora is a no-op.
                 "use_lora": True,
@@ -327,18 +387,20 @@ def test_configured_section_without_target_fails(
     ):
         apply_generation_memory_policy(
             _FakeModel(vae=None),
-            memory_config={"vae_decode": vae_decode_config},
+            memory=GenerationMemoryPolicy(
+                vae_decode=VaeDecodeMemory(**vae_decode_config),
+            ),
             owner="test VAE",
         )
 
 
-@pytest.mark.parametrize("memory_config", [None, {}])
+@pytest.mark.parametrize("memory", [None, GenerationMemoryPolicy()])
 def test_targetless_model_passes_when_nothing_configured(
-    memory_config: dict[str, Any] | None,
+    memory: GenerationMemoryPolicy | None,
 ) -> None:
     apply_generation_memory_policy(
         _FakeModel(vae=None),
-        memory_config=memory_config,
+        memory=memory,
         owner="test VAE",
     )
 
@@ -505,19 +567,15 @@ def test_runtime_builders_apply_generation_memory_policy() -> None:
 
 
 def test_unknown_memory_section_fails_loud() -> None:
-    """A typo'd target section must error, never silently skip mechanisms."""
-    import pytest
-
-    with pytest.raises(ValueError, match="vae_deocde"):
-        apply_generation_memory_policy(
-            _FakeModel(_FakeVAE()),
-            memory_config={"vae_deocde": {"tiling": True}},
-            owner="test VAE",
+    """A typo'd target section must fail at the typed build boundary."""
+    with pytest.raises(TypeError, match="vae_deocde"):
+        GenerationMemoryPolicy(
+            **{"vae_deocde": {"tiling": True}},
         )
 
 
-def test_future_targets_apply_through_the_same_policy() -> None:
-    """Targets beyond vae_decode flow through the same policy unchanged."""
+def test_unconfigured_future_target_does_not_change_current_policy() -> None:
+    """Exposing another target does not make it configured implicitly."""
 
     class _TwoTargetModel:
         def __init__(self) -> None:
@@ -530,12 +588,11 @@ def test_future_targets_apply_through_the_same_policy() -> None:
     model = _TwoTargetModel()
     apply_generation_memory_policy(
         model,
-        memory_config={
-            "vae_decode": {"tiling": True},
-            "image_encoder": {"slicing": True},
-        },
+        memory=GenerationMemoryPolicy(
+            vae_decode=VaeDecodeMemory(tiling=True),
+        ),
         owner="test",
     )
 
     assert model.vae.calls == ["enable_tiling"]
-    assert model.encoder.calls == ["enable_slicing"]
+    assert model.encoder.calls == []

@@ -12,6 +12,7 @@ from dataclasses import dataclass, field
 from typing import Any, Literal, get_args
 
 from vrl.config.precision import QuantizationPolicy, RolePrecision
+from vrl.models.interfaces.generation_memory import GenerationMemoryPolicy
 from vrl.models.interfaces.replay import RuntimeModel
 
 # Single source of truth for the model_config compile block that the
@@ -140,11 +141,10 @@ class ModelBuild:
     ``model_config`` carries the model-owned remainder of ``cfg.model`` after
     registry identity, checkpoint path/revision, and executor settings are separated;
     ``sampling_config`` carries ``cfg.sampling``. The read properties expose
-    common curated views so
-    consumers read ``build.memory`` / ``build.lora`` / ``build.num_steps`` directly
-    instead of re-deriving from the raw block. They centralize the lora /
-    scheduler / memory / compile transforms in one place, so no read-time logic
-    is duplicated per family. Family-specific fields (e.g. anima checkpoint
+    common curated views so consumers read ``build.lora`` /
+    ``build.num_steps`` directly instead of re-deriving from the raw block.
+    The generation-memory policy is resolved into its own typed field before
+    this build can cross Ray. Family-specific fields (e.g. anima checkpoint
     paths) are read straight from ``model_config``. The universal typed fields
     are runtime-injected or needed by every family, so they stay typed.
     """
@@ -169,6 +169,9 @@ class ModelBuild:
     # until fully_shard can move and shard it block by block. This is resolved
     # from the training strategy, not exposed as a user config knob.
     defer_trainable_device_move: bool = False
+    # Resolved generation-only model memory policy. A primitive mapping is
+    # accepted only at the Ray wire boundary and normalized immediately.
+    generation_memory: GenerationMemoryPolicy | Mapping[str, Any] | None = None
     # Full-generation build inputs. ``None`` is the replay contract: replay owns
     # only differentiable policy modules and must not react to rollout FP8/frozen
     # component settings. A nested primitive mapping is accepted only for the Ray
@@ -200,11 +203,27 @@ class ModelBuild:
                 "neither is parameter storage."
             ),
         )
+        if self.model_config is not None and "memory" in self.model_config:
+            raise ValueError(
+                "ModelBuild.model_config must not carry model.memory; "
+                "resolve it into generation_memory",
+            )
         if isinstance(self.rollout, Mapping):
             self.rollout = RolloutBuildOptions(**dict(self.rollout))
         elif self.rollout is not None and not isinstance(self.rollout, RolloutBuildOptions):
             raise TypeError(
                 "ModelBuild.rollout must be RolloutBuildOptions, a mapping, or None",
+            )
+        if isinstance(self.generation_memory, Mapping):
+            self.generation_memory = GenerationMemoryPolicy(
+                **dict(self.generation_memory),
+            )
+        elif self.generation_memory is not None and not isinstance(
+            self.generation_memory,
+            GenerationMemoryPolicy,
+        ):
+            raise TypeError(
+                "ModelBuild.generation_memory must be GenerationMemoryPolicy, a mapping, or None",
             )
         if not isinstance(self.defer_trainable_device_move, bool):
             raise TypeError("ModelBuild.defer_trainable_device_move must be a bool")
@@ -212,6 +231,10 @@ class ModelBuild:
             raise ValueError(
                 "defer_trainable_device_move is replay-only and cannot be set "
                 "with ModelBuild.rollout",
+            )
+        if self.generation_memory is not None and self.rollout is None:
+            raise ValueError(
+                "generation_memory is rollout-only and requires ModelBuild.rollout",
             )
 
     def require_rollout(self) -> RolloutBuildOptions:
@@ -283,11 +306,6 @@ class ModelBuild:
         if not block.get("enable"):
             return None
         return {"enable": True, "mode": block.get("mode", "default")}
-
-    @property
-    def memory(self) -> dict[str, Any] | None:
-        """The whole ``model.memory`` block (consumer extracts its sub-block)."""
-        return (self.model_config or {}).get("memory")
 
     @property
     def revision_kwargs(self) -> dict[str, str]:

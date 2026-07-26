@@ -29,6 +29,10 @@ from vrl.families.registry import (
     get_model_family_entry,
 )
 from vrl.families.semantics import GenerationRegime, PolicySemantics
+from vrl.models.interfaces.generation_memory import (
+    GenerationMemoryPolicy,
+    VaeDecodeMemory,
+)
 from vrl.rollouts.collector import build_rollout_collector
 from vrl.rollouts.collector.config import RolloutCollectorConfig
 from vrl.rollouts.collector.requests import GenerationRequestBuilder
@@ -96,22 +100,28 @@ def test_model_build_projects_typed_sections_without_losing_falsy_presence() -> 
             "target_modules": [],
             "dropout": 0.0,
         },
-        "memory": {
-            "vae_decode": {
-                "tiling": False,
-                "slicing": False,
-            },
-        },
         "torch_compile": {
             "enable": False,
             "mode": "",
         },
     }
+    assert build.generation_memory == GenerationMemoryPolicy(
+        vae_decode=VaeDecodeMemory(tiling=False, slicing=False),
+    )
     assert build.sampling_config == {
         "guidance_scale": 0,
         "num_steps": 0,
         "max_sequence_length": None,
     }
+
+    replay_build = get_model_family_entry("sana").resolve_model_build(
+        root,
+        "cpu",
+        precision=precision,
+        for_rollout=False,
+    )
+    assert replay_build.generation_memory is None
+    assert "memory" not in (replay_build.model_config or {})
 
 
 def test_model_build_rejects_raw_config_and_wrong_precision_types() -> None:

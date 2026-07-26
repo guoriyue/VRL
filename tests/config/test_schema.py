@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import typing
+from dataclasses import fields
 
 import pytest
 from omegaconf import OmegaConf
@@ -50,6 +51,10 @@ from vrl.models.families.llamagen.config import LlamaGenModelSection
 from vrl.models.families.magi_1.config import Magi1ModelSection
 from vrl.models.families.nextstep_1.config import NextStep1ModelSection
 from vrl.models.families.wan_2_1.config import WanModelSection
+from vrl.models.interfaces.generation_memory import (
+    GenerationMemoryPolicy,
+    VaeDecodeMemory,
+)
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -954,6 +959,15 @@ def test_shared_nested_model_sections_preserve_explicit_falsy_presence() -> None
     )
     assert reparsed.model is not None
     assert reparsed.model.model_dump(exclude_unset=True) == raw_model
+
+
+def test_generation_memory_schema_and_policy_share_one_field_vocabulary() -> None:
+    assert tuple(ModelMemorySection.model_fields) == tuple(
+        policy_field.name for policy_field in fields(GenerationMemoryPolicy)
+    )
+    assert tuple(VaeDecodeMemorySection.model_fields) == tuple(
+        policy_field.name for policy_field in fields(VaeDecodeMemory)
+    )
 
 
 @pytest.mark.parametrize(

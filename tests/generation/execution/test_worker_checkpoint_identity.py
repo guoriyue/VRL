@@ -12,6 +12,10 @@ import vrl.families.registry as registry
 import vrl.models.checkpoint_identity as checkpoint_identity
 from vrl.generation.execution.worker import GenerationWorkerCore
 from vrl.generation.launch_contract import GenerationRuntimeLaunchContract
+from vrl.models.interfaces.generation_memory import (
+    GenerationMemoryPolicy,
+    VaeDecodeMemory,
+)
 
 
 class _RuntimeModel:
@@ -52,13 +56,19 @@ class _FamilyEntry:
 
     def __init__(self) -> None:
         self.build_calls = 0
+        self.last_build: Any | None = None
 
     def build_rollout(self, build: Any) -> Any:
         self.build_calls += 1
+        self.last_build = build
         return SimpleNamespace(model=_RuntimeModel())
 
 
-def _contract(expected_model_identity: dict[str, Any]) -> GenerationRuntimeLaunchContract:
+def _contract(
+    expected_model_identity: dict[str, Any],
+    *,
+    generation_memory: dict[str, Any] | None = None,
+) -> GenerationRuntimeLaunchContract:
     return GenerationRuntimeLaunchContract(
         family="unit",
         model_build={
@@ -74,6 +84,7 @@ def _contract(expected_model_identity: dict[str, Any]) -> GenerationRuntimeLaunc
             },
             "model_config": {},
             "sampling_config": {},
+            "generation_memory": generation_memory,
             "rollout": {
                 "prompt_encoder_dtype": "float32",
                 "base_weight_sync": False,
@@ -88,6 +99,7 @@ def _worker(
     *,
     entry: _FamilyEntry,
     identities: list[dict[str, Any]],
+    generation_memory: dict[str, Any] | None = None,
 ) -> GenerationWorkerCore:
     identity_iter = iter(identities)
     monkeypatch.setattr(registry, "get_model_family_entry", lambda _family: entry)
@@ -96,7 +108,13 @@ def _worker(
         "resolve_checkpoint_model_identity",
         lambda build: next(identity_iter),
     )
-    return GenerationWorkerCore("rollout-0", _contract(identities[0]))
+    return GenerationWorkerCore(
+        "rollout-0",
+        _contract(
+            identities[0],
+            generation_memory=generation_memory,
+        ),
+    )
 
 
 def test_worker_accepts_matching_identity_before_and_after_model_build(
@@ -114,6 +132,31 @@ def test_worker_accepts_matching_identity_before_and_after_model_build(
 
     assert isinstance(worker.executor, _ChunkExecutor)
     assert entry.build_calls == 1
+
+
+def test_worker_rehydrates_generation_memory_before_family_build(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    identity = {"schema": "test", "sources": {"base": "same"}}
+    entry = _FamilyEntry()
+    worker = _worker(
+        monkeypatch,
+        entry=entry,
+        identities=[identity, identity],
+        generation_memory={
+            "vae_decode": {
+                "tiling": True,
+                "slicing": False,
+            },
+        },
+    )
+
+    worker.load_policy()
+
+    assert entry.last_build is not None
+    assert entry.last_build.generation_memory == GenerationMemoryPolicy(
+        vae_decode=VaeDecodeMemory(tiling=True, slicing=False),
+    )
 
 
 def test_worker_rejects_cross_node_identity_mismatch_before_model_build(

@@ -277,6 +277,7 @@ class ModelFamilyEntry:
         model_revision = model_config.pop("revision", None)
         model_config.pop("family", None)
         model_config.pop("executor", None)
+        model_config.pop("memory", None)
         if isinstance(self.family_build, TokenFamilyBuild) and model_path is None:
             model_path = self.family_build.default_model_path
         if model_path is None or not str(model_path).strip():
@@ -303,10 +304,31 @@ class ModelFamilyEntry:
             else role_parameter_dtype
         )
         rollout = None
+        generation_memory = None
         if for_rollout:
             rollout = RolloutBuildOptions(
                 prompt_encoder_dtype=precision.prompt_encoder_dtype,
             )
+            model_memory = root.model.memory
+            if model_memory is not None and "vae_decode" in model_memory.model_fields_set:
+                from vrl.models.interfaces.generation_memory import (
+                    GenerationMemoryPolicy,
+                    VaeDecodeMemory,
+                )
+
+                vae_decode = model_memory.vae_decode
+                generation_memory = GenerationMemoryPolicy(
+                    vae_decode=VaeDecodeMemory(
+                        **(
+                            {}
+                            if vae_decode is None
+                            else vae_decode.model_dump(
+                                mode="python",
+                                exclude_none=True,
+                            )
+                        ),
+                    ),
+                )
         build = ModelBuild(
             model_name_or_path=str(model_path),
             revision=None if model_revision is None else str(model_revision),
@@ -316,6 +338,7 @@ class ModelFamilyEntry:
             precision=role_precision,
             model_config=model_config,
             sampling_config=sampling_config,
+            generation_memory=generation_memory,
             rollout=rollout,
             defer_trainable_device_move=(
                 isinstance(self.family_build, DenoiseFamilyBuild)

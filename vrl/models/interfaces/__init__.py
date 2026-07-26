@@ -1,5 +1,9 @@
 """Shared public model interfaces."""
 
+from vrl.models.interfaces.generation_memory import (
+    GenerationMemoryPolicy,
+    VaeDecodeMemory,
+)
 from vrl.models.interfaces.replay import (
     ReplayModel,
     ReplayRequest,
@@ -22,6 +26,7 @@ from vrl.models.interfaces.runtime import (
 )
 
 __all__ = [
+    "GenerationMemoryPolicy",
     "ModelBuild",
     "ReplayModel",
     "ReplayRequest",
@@ -30,6 +35,7 @@ __all__ = [
     "RolloutBuildOptions",
     "RuntimeBundle",
     "RuntimeModel",
+    "VaeDecodeMemory",
     "checkpoint_owned_state_names",
     "register_checkpoint_owned_state",
     "replay_context_image_size",

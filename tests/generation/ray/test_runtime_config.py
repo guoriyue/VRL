@@ -706,6 +706,31 @@ def test_launch_from_cfg_projects_model_compile_and_precision() -> None:
     }
 
 
+def test_launch_from_cfg_projects_resolved_generation_memory() -> None:
+    """The launch contract carries typed memory values, not raw model config."""
+    cfg = _launch_cfg()
+    cfg.model.memory = {
+        "vae_decode": {
+            "tiling": True,
+            "slicing": False,
+        },
+    }
+
+    launch_inputs = _capture_launch_inputs(
+        cfg,
+        get_model_family_entry("sd3_5"),
+    )
+
+    model_build = launch_inputs.launch_contract.model_build
+    assert model_build["generation_memory"] == {
+        "vae_decode": {
+            "tiling": True,
+            "slicing": False,
+        },
+    }
+    assert "memory" not in model_build["model_config"]
+
+
 def test_launch_from_cfg_projects_wan_offload_to_rollout_contract(monkeypatch) -> None:
     from diffusers import DiffusionPipeline
 

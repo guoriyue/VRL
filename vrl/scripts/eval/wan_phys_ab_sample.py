@@ -18,10 +18,8 @@ import torch
 from diffusers import WanPipeline
 from diffusers.utils import export_to_video
 
-from vrl.models.steps.denoise.common.vae_decode_memory import (
-    VaeDecodeMemory,
-    configure_memory_mechanisms,
-)
+from vrl.models.interfaces.generation_memory import VaeDecodeMemory
+from vrl.models.steps.denoise.common.vae_decode_memory import configure_vae_decode_memory
 
 PROMPTS = [
     "A whisk spins in the egg mixture, mixing it thoroughly.",
@@ -66,7 +64,7 @@ def main() -> None:
         pipe.enable_model_cpu_offload()
     else:
         pipe.to("cuda")
-    configure_memory_mechanisms(
+    configure_vae_decode_memory(
         pipe.vae,
         VaeDecodeMemory(tiling=True, slicing=True),
         owner="wan eval VAE",
