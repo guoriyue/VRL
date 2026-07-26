@@ -2,6 +2,16 @@
 
 状态：done（第一阶段 build-time policy 已落地，commit 3bb1a33 在 main 上 — apply_generation_memory_policy + generation_memory_targets() 统一 5 个 family loader，架构/单元测试 19 passed；第二阶段 generation-wide report 已演进为根目录 living logbook `docs/sprints/SPRINT_memory_plan_full.md` 的 L1，不计入本篇 scope）。
 
+> **当前状态修正（2026-07-25，`003ad92e`）。** 下文 §1.1、§2.3、§4.2 记录的是首次
+> policy 落地时的历史形状；其中“保留 raw `ModelBuild.memory`、runtime 再解析”的决策已被
+> 后续 ownership 审计取代。现行链路由 `ModelFamilyEntry.resolve_model_build` 唯一把已校验
+> 的 `model.memory.vae_decode` 解析为 `GenerationMemoryPolicy`，经
+> `ModelBuild.generation_memory` / Ray wire 下发；runtime 只把 typed policy 应用到 live
+> target。`ModelBuild.memory` 与 `vae_decode_memory_from_config` 已删除，raw
+> `model.memory` 不再进入 `model_config`。保留不变的是 config 路径、
+> `generation_memory_targets()` adapter，以及“policy 归 generation、mechanism 归 model”的
+> 分层原则。
+
 目标：把 generation 期间的内存控制从“每个模型 family 手工维护一份”改成按生命周期分层的统一 policy。第一阶段只收敛 build-time diffusion component memory，解决 VAE tiling/slicing 在 SD3.5、Wan、Anima、Cosmos Predict2 / Predict2.5 loader 里重复接线的问题；第二阶段只做 generation-wide memory report 和配置边界梳理，不创建一个到处 mutate 的大 manager。
 
 ## 0. 一句话

@@ -19,6 +19,14 @@
 > test-only `to_metrics` bridge: validation derives required names from the
 > dataclass, producers send the raw mapping, and tests use `dataclasses.asdict`.
 
+> **当前状态修正（2026-07-25，`003ad92e`）。** VAE memory 的现行值流是：
+> `ModelMemorySection` 校验 YAML → `ModelFamilyEntry.resolve_model_build` 唯一解析为
+> `GenerationMemoryPolicy` → `ModelBuild.generation_memory` 跨 Ray → worker 立即重建 typed
+> policy → runtime 对 live VAE 调一次 `apply_generation_memory_policy`。raw
+> `model.memory` 不再留在 `ModelBuild.model_config`，replay build 也不携带 generation-only
+> policy。全局 section 词汇从 `ModelMemorySection` 派生；各 family 是否支持某个 section
+> 仍由 registry capability table 明确授权，两者不是同一个 source of truth。
+
 ## 0. 诊断：有机制，无系统；而且机制只统一了一半
 
 ### 现有机制清单（各自正确、互不知晓）
@@ -38,8 +46,10 @@ Phase 0。旧蓝图把它列为现有 generation 机制是误判。）
 
 ### 已统一（generation 侧）
 
-`model.memory.vae_decode` → 模型声明 `generation_memory_targets()` → runtime builder
-调一次 `apply_generation_memory_policy`。家族零散布，单一来源 `MODEL_MEMORY_SECTIONS`。
+`model.memory.vae_decode` → registry 解析为 typed `GenerationMemoryPolicy` →
+`ModelBuild.generation_memory` 跨 Ray → 模型声明 `generation_memory_targets()` →
+runtime builder 调一次 `apply_generation_memory_policy`。家族零散布；schema section
+词汇与 resolved policy 字段有 parity gate，family 支持范围由独立 capability table 控制。
 
 ### trainer 侧 —— 不需要 frozen offload（2026-06-13 结论）
 
@@ -82,7 +92,8 @@ pipeline 全部声明为 `generation_only_modules`（absent）。
 ```text
 vrl/trainers/frozen_module.py                   已删（文件不存在）
 trainer_frozen_targets / apply_trainer_memory_policy  零引用（rg 无命中）
-MODEL_MEMORY_SECTIONS                            = ("vae_decode",)（vrl/models/interfaces/runtime.py:24）
+MODEL_MEMORY_SECTIONS                            从 ModelMemorySection.model_fields 派生
+_VAE_DECODE_MEMORY_SECTIONS                      family capability 明确授权 vae_decode
 vrl/config/presets/model/sd3_5/medium.yaml 的 frozen_offload  已删
 ```
 

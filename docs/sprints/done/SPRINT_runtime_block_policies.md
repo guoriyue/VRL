@@ -8,6 +8,10 @@
 （如 `vrl/models/diffusion/sd3_5/model.py:384`）。按 AGENTS.md「one-shot validation artifact」——价值是它产出的
 答案（已记录），不是代码的继续存在，故归 `done/`。
 
+> **当前状态修正（2026-07-25，`003ad92e`）。** §4 的 `_VAE_DECODE_KEYS` 代码是历史
+> 例子，现已删除。允许字段由 `VaeDecodeMemorySection` / `VaeDecodeMemory` 的 typed
+> structures 拥有并由 parity test 对齐，不再手工维护重复 key set。
+
 目标：给 rollout 里的逻辑运行块提供统一配置面，让不同模型 family 可以声明并消费自己的 block policy。第一阶段只做 **serial executor 内的策略下发**，不做物理 stage pipeline、不加 Ray stage worker、不改 collector/reward 边界。
 
 ## 核心结论

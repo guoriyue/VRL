@@ -75,6 +75,14 @@
 > **另发现一个预存的测试隔离 flake**（`test_chunk_memory_shadow::test_probe_fits_confirms_and_truncates_steps`
 > 在全量顺序里非确定性失败、单独/干净 HEAD 均正常）——非本轮引入，留作独立 issue。
 
+> **P11（追加，2026-07-25）：VAE memory late parse 已落地 `003ad92e`。** P6 中因
+> `ModelBuild` / Ray wire 边界而暂缓的项现已完成：`ModelMemorySection` 继续拥有用户输入与
+> presence 语义，`ModelFamilyEntry.resolve_model_build` 唯一构造
+> `GenerationMemoryPolicy`，`ModelBuild.generation_memory` 负责 typed wire contract，
+> runtime 只应用、不再解析 raw config。replay build 不携带 generation-only memory。
+> `vae_decode_memory_from_config`、`ModelBuild.memory` 和重复 key set 已删除；schema/policy
+> vocabulary parity、launcher payload、worker rehydrate、runtime apply 均有 CPU regression gate。
+
 父 program：[Argument and state ownership](SPRINT_argument_and_state_ownership_program.md)
 
 前置（origin 已落地）：[Config argument ownership and resolution](SPRINT_config_argument_ownership_and_resolution.md)

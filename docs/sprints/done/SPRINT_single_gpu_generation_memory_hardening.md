@@ -3,6 +3,12 @@
 状态：Part 2 / Part 3 implemented（2026-06-12，本仓工作区）；Part 1 owned by the
 wm-infra working-tree process（见 §1 分工边界）。
 
+> **当前状态修正（2026-07-25，`003ad92e`）。** 本文 §2–§3 的
+> `memory_config`、`vae_decode_memory_from_config`、`_VAE_DECODE_KEYS` 是当时实现记录，
+> 不是当前 API。现在 YAML typo 由 closed Pydantic schema 拒绝，registry 唯一解析出
+> `GenerationMemoryPolicy`，Ray worker 重建 typed policy，runtime 只调用
+> `configure_vae_decode_memory` 施加行为。family target contract 和 fail-loud 语义保持不变。
+
 ## 0. Core Decision
 
 没有多卡的前提下，把单卡 generation/training 的 memory 行为收束成**可控、统一、
