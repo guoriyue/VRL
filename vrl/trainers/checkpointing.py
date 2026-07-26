@@ -2,14 +2,13 @@
 
 from __future__ import annotations
 
-import csv
 import json
 import logging
 import os
 import re
 import shutil
 import tempfile
-from collections.abc import Mapping, Sequence
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath, PureWindowsPath
@@ -1568,112 +1567,6 @@ def save_resolved_config(cfg: Any, output_dir: str | Path, *, resumed: bool) -> 
     OmegaConf.save(cfg, path / f"resume_config_{stamp}.yaml")
 
 
-def prepare_metrics_csv(
-    csv_path: str | Path,
-    columns: Sequence[str],
-    *,
-    resume_at: tuple[str, int] | None,
-) -> None:
-    """Create a metrics CSV or align it atomically with a resume checkpoint.
-
-    A checkpoint at position N cannot support metrics already written for N or
-    later: those updates were not captured in the checkpoint and will be
-    recomputed. Keeping them would create duplicate positions after resume.
-    """
-
-    path = Path(csv_path)
-    if isinstance(columns, (str, bytes)):
-        raise ValueError("metrics columns must be a sequence of column names")
-    column_names = tuple(columns)
-    if (
-        not column_names
-        or any(
-            not isinstance(name, str) or not name or any(char in name for char in ",\r\n")
-            for name in column_names
-        )
-        or len(column_names) != len(set(column_names))
-    ):
-        raise ValueError("metrics columns must be unique non-empty CSV-safe strings")
-    normalized_header = ",".join(column_names) + "\n"
-    if resume_at is None:
-        path.write_text(normalized_header)
-        return
-
-    position_column, resume_position = resume_at
-    if resume_position < 0:
-        raise ValueError(f"metrics resume position must be >= 0, got {resume_position}")
-    if not path.exists():
-        logger.warning("Resume requested but metrics file does not exist; creating %s", path)
-        path.write_text(normalized_header)
-        return
-
-    text = path.read_text(encoding="utf-8")
-    complete_text = text if text.endswith("\n") else text.rpartition("\n")[0] + "\n"
-    lines = complete_text.splitlines(keepends=True)
-    existing_header = lines[0] if lines else ""
-    if existing_header.rstrip("\r\n") != normalized_header.rstrip("\n"):
-        raise ValueError(
-            f"{path} was written by a different metrics schema; appending "
-            "would silently misalign columns. Move the old file aside or "
-            "start a fresh output_dir.",
-        )
-
-    if position_column not in column_names:
-        raise ValueError(f"metrics CSV is missing resume column {position_column!r}: {path}")
-    position_index = column_names.index(position_column)
-    retained_lines: list[str] = []
-    previous_position = -1
-    truncated_rows = 0
-    for line_number, line in enumerate(lines[1:], start=2):
-        values = next(csv.reader([line]))
-        if len(values) != len(column_names):
-            raise ValueError(
-                f"metrics CSV row {line_number} has {len(values)} columns; "
-                f"expected {len(column_names)}: {path}",
-            )
-        raw_position = values[position_index]
-        try:
-            position = int(raw_position)
-        except ValueError as exc:
-            raise ValueError(
-                f"metrics CSV row {line_number} has a non-integer "
-                f"{position_column}: {raw_position!r}",
-            ) from exc
-        if position < 0 or position <= previous_position:
-            raise ValueError(
-                f"metrics CSV {position_column} must be strictly increasing "
-                f"non-negative integers; row {line_number} has {position}",
-            )
-        previous_position = position
-        if position < resume_position:
-            retained_lines.append(line)
-        else:
-            truncated_rows += 1
-
-    aligned_text = normalized_header + "".join(retained_lines)
-    if aligned_text != text:
-        temporary = path.with_suffix(f"{path.suffix}.tmp")
-        with temporary.open("w", encoding="utf-8") as handle:
-            handle.write(aligned_text)
-            handle.flush()
-            os.fsync(handle.fileno())
-        os.replace(temporary, path)
-    if truncated_rows:
-        logger.warning(
-            "Discarded %d metrics row(s) at %s >= %d before checkpoint resume",
-            truncated_rows,
-            position_column,
-            resume_position,
-        )
-    elif previous_position + 1 < resume_position:
-        logger.warning(
-            "Metrics end at %s=%d before checkpoint resume position %d",
-            position_column,
-            previous_position,
-            resume_position,
-        )
-
-
 def read_checkpoint_meta(checkpoint_dir: str | Path) -> dict[str, Any]:
     """Read checkpoint metadata if present."""
 
@@ -1848,7 +1741,6 @@ __all__ = [
     "load_full_checkpoint_state",
     "load_training_checkpoint",
     "load_training_checkpoint_for_resume",
-    "prepare_metrics_csv",
     "prepare_model_config_for_training_resume",
     "read_checkpoint_meta",
     "resolve_training_resume_config",

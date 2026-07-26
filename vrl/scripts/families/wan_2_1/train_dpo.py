@@ -140,7 +140,6 @@ def train_wan_2_1_dpo(cfg: DictConfig) -> None:
         build_adapter_exports,
         capture_rng_state,
         load_training_checkpoint_for_resume,
-        prepare_metrics_csv,
         restore_rng_state,
         restore_training_checkpoint,
         save_resolved_config,
@@ -148,6 +147,7 @@ def train_wan_2_1_dpo(cfg: DictConfig) -> None:
         validate_checkpoint_compatibility,
     )
     from vrl.trainers.data import collate_preference, load_pickapic
+    from vrl.trainers.metrics_io import prepare_metrics_csv
     from vrl.trainers.offline import OfflineDPOTrainer
 
     trainer_cfg_yaml = cfg.trainer

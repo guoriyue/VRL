@@ -41,7 +41,6 @@ from vrl.trainers.checkpointing import (
     build_adapter_exports,
     capture_rng_state,
     load_training_checkpoint_for_resume,
-    prepare_metrics_csv,
     restore_rng_state,
     restore_training_checkpoint,
     save_resolved_config,
@@ -54,6 +53,7 @@ from vrl.trainers.metrics_io import (
     build_online_metric_row,
     format_online_metric_row,
     online_metric_columns,
+    prepare_metrics_csv,
 )
 from vrl.trainers.online import OnlineTrainer
 from vrl.trainers.online.config import OnlineBatchPlan
