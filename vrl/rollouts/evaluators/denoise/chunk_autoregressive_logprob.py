@@ -7,13 +7,13 @@ from typing import Any
 
 from vrl.models.interfaces import ReplayModel, ReplayRequest
 from vrl.rollouts.batch import RolloutBatch
-from vrl.rollouts.evaluators.base import Evaluator, ReplayEvaluatorBase
+from vrl.rollouts.evaluators.base import ReplayEvaluatorBase
 from vrl.rollouts.evaluators.trajectory import TrajectorySignalBuilder
 from vrl.rollouts.evaluators.types import SignalRequest, TrajectorySignalBatch
 from vrl.trajectory import TrajectoryResolver
 
 
-class ChunkAutoregressiveDenoiseLogProbEvaluator(ReplayEvaluatorBase, Evaluator):
+class ChunkAutoregressiveDenoiseLogProbEvaluator(ReplayEvaluatorBase):
     """Replay a complete causal-chunk trajectory in one ordered model pass.
 
     A scalar denoise-step replay would repeatedly rebuild the temporal prefix

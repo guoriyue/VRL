@@ -18,13 +18,13 @@ import torch
 from vrl.math.token.logprob import gather_categorical_log_probs
 from vrl.models.interfaces import ReplayModel
 from vrl.rollouts.batch import RolloutBatch
-from vrl.rollouts.evaluators.base import Evaluator, ReplayEvaluatorBase
+from vrl.rollouts.evaluators.base import ReplayEvaluatorBase
 from vrl.rollouts.evaluators.token.ref_pass import ref_forward
 from vrl.rollouts.evaluators.trajectory import TrajectorySignalBuilder
 from vrl.rollouts.evaluators.types import SignalRequest, TrajectorySignalBatch
 
 
-class TokenLogProbEvaluator(ReplayEvaluatorBase, Evaluator):
+class TokenLogProbEvaluator(ReplayEvaluatorBase):
     """Recompute per-token log-probs of sampled tokens under the replay model.
 
     Two-pass when ``need_ref=True``:

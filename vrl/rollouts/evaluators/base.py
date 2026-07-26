@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from abc import ABC, abstractmethod
 from typing import Protocol, runtime_checkable
 
 from vrl.models.interfaces import ReplayModel, require_replay_model
@@ -37,8 +38,8 @@ class Evaluator(Protocol):
         ...
 
 
-class ReplayEvaluatorBase:
-    """Opt-in preamble for evaluators that replay through a ``ReplayModel``.
+class ReplayEvaluatorBase(ABC):
+    """Implementation base for evaluators that replay through a ``ReplayModel``.
 
     Every evaluator opened ``evaluate()`` by re-checking the model — and the
     optional reference model — against the ReplayModel contract, naming itself
@@ -46,10 +47,24 @@ class ReplayEvaluatorBase:
     ``f"{type(self).__name__}.model"`` at every call site, so the evaluator is
     the subject and derives it here instead of spelling it out per family.
 
-    List this **before** ``Evaluator`` in the bases: ``Evaluator`` is a
-    ``Protocol``, and with the wrong order its ``...`` stubs win the MRO
-    silently rather than failing at class creation.
+    ``Evaluator`` remains a separate structural contract for consumers. Concrete
+    evaluators inherit only this implementation base so an omitted ``evaluate``
+    fails at construction instead of resolving to a Protocol stub that returns
+    ``None``.
     """
+
+    @abstractmethod
+    def evaluate(
+        self,
+        model: ReplayModel,
+        batch: RolloutBatch,
+        timestep_idx: int,
+        ref_model: ReplayModel | None = None,
+        signal_request: SignalRequest | None = None,
+    ) -> TrajectorySignalBatch:
+        """Run replay and extract the requested trajectory signals."""
+
+        raise NotImplementedError
 
     def _require_models(
         self,

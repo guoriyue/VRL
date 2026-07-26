@@ -14,14 +14,14 @@ from vrl.models.interfaces import (
     ReplaySegmentResult,
 )
 from vrl.rollouts.batch import RolloutBatch
-from vrl.rollouts.evaluators.base import Evaluator, ReplayEvaluatorBase
+from vrl.rollouts.evaluators.base import ReplayEvaluatorBase
 from vrl.rollouts.evaluators.token.ref_pass import ref_forward
 from vrl.rollouts.evaluators.trajectory import TrajectorySignalBuilder
 from vrl.rollouts.evaluators.types import SegmentSignal, SignalRequest, TrajectorySignalBatch
 from vrl.trajectory import role_tensor
 
 
-class MultiSegmentTokenLogProbEvaluator(ReplayEvaluatorBase, Evaluator):
+class MultiSegmentTokenLogProbEvaluator(ReplayEvaluatorBase):
     """Replay each enabled R1 segment without concatenating image/text tokens."""
 
     replay_granularity = "trajectory"

@@ -69,7 +69,13 @@ class _ParkedTrainingState:
 
 
 class Strategy(Protocol):
-    """How one training step executes; the only seam the trainer depends on."""
+    """How one training step executes; the structural seam the trainer consumes.
+
+    Concrete strategies intentionally do not inherit this protocol. Their real
+    implementation bases and mixins own behavior; keeping this consumer contract
+    out of the MRO prevents an unimplemented ``...`` stub from silently
+    shadowing that behavior.
+    """
 
     context: DistributedTrainingContext
 
@@ -318,13 +324,8 @@ class _UnshardedStateStrategy:
     every one of these operations becomes an all-gather (or a re-scatter on
     load) through ``vrl/trainers/fsdp.py``.
 
-    MRO WARNING: this mixin must be listed BEFORE ``Strategy`` in the bases.
-    ``Strategy`` is a ``Protocol``, so its ``...`` method stubs are real bodies
-    returning ``None`` — order it first and every method here is silently
-    shadowed, while ``callable(getattr(strategy, name, None))`` (the probe at
-    ``checkpointing.py``) still reports ``True`` and the checkpoint load turns
-    into a no-op instead of an error. ``tests/trainers/test_strategy_mro.py``
-    pins the order.
+    Concrete strategies inherit this implementation mixin directly. ``Strategy``
+    stays outside their MRO as the structural contract consumed by the trainer.
     """
 
     def export_checkpoint_state(self, bundle: Any) -> dict[str, dict[str, Any]]:
@@ -374,7 +375,7 @@ class _UnshardedStateStrategy:
         optimizer.load_state_dict(state)
 
 
-class SingleProcessStrategy(_TrainingStateParking, _UnshardedStateStrategy, Strategy):
+class SingleProcessStrategy(_TrainingStateParking, _UnshardedStateStrategy):
     """The current single-GPU behavior, moved behind the strategy protocol.
 
     Every method here is the existing trainer / checkpoint / weight-sync logic
@@ -563,7 +564,7 @@ def _trainable_module_handles(model: Any) -> list[tuple[str, Any, Any]]:
     return handles
 
 
-class FSDPStrategy(_TrainingStateParking, Strategy):
+class FSDPStrategy(_TrainingStateParking):
     """FSDP2 (``fully_shard`` + DTensor) training behind the same seam.
 
     The model wraps once in ``prepare_model``; thereafter params/grads/optimizer
@@ -897,7 +898,7 @@ class FSDPStrategy(_TrainingStateParking, Strategy):
         shutdown_training_process_group()
 
 
-class DDPStrategy(_UnshardedStateStrategy, Strategy):
+class DDPStrategy(_UnshardedStateStrategy):
     """DistributedDataParallel training behind the same seam.
 
     For a model that fits on one card (a 2B diffusion transformer + LoRA does), DDP

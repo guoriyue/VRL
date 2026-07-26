@@ -7,13 +7,13 @@ import contextlib
 import vrl.math.denoise.flow_matching as flow_matching_math
 from vrl.models.interfaces import ReplayModel
 from vrl.rollouts.batch import RolloutBatch
-from vrl.rollouts.evaluators.base import Evaluator, ReplayEvaluatorBase
+from vrl.rollouts.evaluators.base import ReplayEvaluatorBase
 from vrl.rollouts.evaluators.trajectory import TrajectorySignalBuilder
 from vrl.rollouts.evaluators.types import SignalRequest, TrajectorySignalBatch
 from vrl.trajectory.device import move_value_to_device
 
 
-class DiffusionSDELogProbEvaluator(ReplayEvaluatorBase, Evaluator):
+class DiffusionSDELogProbEvaluator(ReplayEvaluatorBase):
     """Signal extraction for flow-matching diffusion models.
 
     Uses ``sde_step_with_logprob`` to compute log-probabilities and

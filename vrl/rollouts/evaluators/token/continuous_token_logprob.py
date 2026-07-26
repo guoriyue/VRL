@@ -16,13 +16,13 @@ import torch
 
 from vrl.models.interfaces import ReplayModel
 from vrl.rollouts.batch import RolloutBatch
-from vrl.rollouts.evaluators.base import Evaluator, ReplayEvaluatorBase
+from vrl.rollouts.evaluators.base import ReplayEvaluatorBase
 from vrl.rollouts.evaluators.token.ref_pass import ref_forward
 from vrl.rollouts.evaluators.trajectory import TrajectorySignalBuilder
 from vrl.rollouts.evaluators.types import SignalRequest, TrajectorySignalBatch
 
 
-class ContinuousTokenLogProbEvaluator(ReplayEvaluatorBase, Evaluator):
+class ContinuousTokenLogProbEvaluator(ReplayEvaluatorBase):
     """Recompute Gaussian log-probs of sampled continuous tokens.
 
     Two-pass when ``need_ref=True`` — use ``ref_model`` when provided, otherwise

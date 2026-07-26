@@ -1,27 +1,16 @@
-"""Where each training strategy resolves its shared state methods.
-
-``Strategy`` is a ``Protocol``, and an explicit Protocol base is a real class:
-its ``...`` method stubs are bodies that return ``None``. So listing a mixin
-AFTER ``Strategy`` does not raise — it silently replaces every shared method
-with a no-op that returns ``None``, while ``checkpointing.py``'s
-``callable(getattr(strategy, name, None))`` probe still reports ``True`` and
-skips straight past the load. That is a wrong-answer failure at resume time,
-far from the edit, so the bases order is pinned here by MRO owner rather than
-by behavior.
-"""
+"""Strategy implementation ownership and structural protocol boundaries."""
 
 from __future__ import annotations
 
-from typing import Any
-
 import pytest
+import torch
 
+from vrl.trainers.distributed import DistributedTrainingContext
 from vrl.trainers.strategy import (
     DDPStrategy,
     FSDPStrategy,
     SingleProcessStrategy,
     Strategy,
-    _TrainingStateParking,
     _UnshardedStateStrategy,
 )
 
@@ -36,6 +25,11 @@ _UNSHARDED_STATE_METHODS = (
 )
 
 _STRATEGY_CLASSES = (SingleProcessStrategy, DDPStrategy, FSDPStrategy)
+_STRATEGY_METHODS = tuple(
+    name
+    for name, value in Strategy.__dict__.items()
+    if not name.startswith("_") and callable(value)
+)
 
 
 def _owner(cls: type, name: str) -> type | None:
@@ -48,16 +42,16 @@ def _owner(cls: type, name: str) -> type | None:
 
 
 @pytest.mark.parametrize("strategy_cls", _STRATEGY_CLASSES, ids=lambda cls: cls.__name__)
-def test_every_mixin_precedes_the_strategy_protocol(strategy_cls: type) -> None:
-    """No mixin may sit behind ``Strategy``, whose stubs would then win."""
+def test_concrete_strategy_keeps_consumer_protocol_out_of_mro(strategy_cls: type) -> None:
+    assert Strategy not in strategy_cls.__mro__
 
-    mro = strategy_cls.__mro__
-    protocol_index = mro.index(Strategy)
-    for mixin in (_TrainingStateParking, _UnshardedStateStrategy):
-        if mixin in mro:
-            assert mro.index(mixin) < protocol_index, (
-                f"{mixin.__name__} must precede Strategy in {strategy_cls.__name__}"
-            )
+
+@pytest.mark.parametrize("strategy_cls", _STRATEGY_CLASSES, ids=lambda cls: cls.__name__)
+def test_concrete_strategy_exposes_structural_contract(strategy_cls: type) -> None:
+    strategy = _new_strategy(strategy_cls)
+
+    assert isinstance(strategy.context, DistributedTrainingContext)
+    assert all(callable(getattr(strategy, name, None)) for name in _STRATEGY_METHODS)
 
 
 @pytest.mark.parametrize(
@@ -80,29 +74,25 @@ def test_shared_state_methods_resolve_to_a_real_body(
     assert _owner(strategy_cls, method_name) is expected_owner
 
 
-@pytest.mark.parametrize("method_name", _UNSHARDED_STATE_METHODS)
-def test_protocol_stub_would_silently_win_if_ordered_first(method_name: str) -> None:
-    """The false side: this is why the order above is asserted, not assumed."""
-
-    class _MisorderedStrategy(Strategy, _UnshardedStateStrategy):
-        pass
-
-    assert _owner(_MisorderedStrategy, method_name) is Strategy
-    stub = getattr(_MisorderedStrategy, method_name)
-    # Fails silently rather than loudly on both counts: the stub is callable, so
-    # checkpointing's capability probe accepts it, and it returns None instead of
-    # raising, so a skipped checkpoint load looks like a successful one.
-    assert callable(stub)
-    assert _call_state_method(stub, method_name) is None
-
-
-def _call_state_method(stub: Any, method_name: str) -> Any:
-    """Invoke one Protocol stub with the arity its real signature declares."""
-
-    if method_name == "export_checkpoint_state":
-        return stub(None, object())
-    if method_name in {"load_checkpoint_state", "load_full_checkpoint_state"}:
-        return stub(None, object(), {})
-    if method_name == "export_optimizer_state":
-        return stub(None, object(), object())
-    return stub(None, object(), object(), {})
+def _new_strategy(strategy_cls: type) -> Strategy:
+    context = DistributedTrainingContext(
+        strategy={
+            SingleProcessStrategy: "single_process",
+            DDPStrategy: "ddp",
+            FSDPStrategy: "fsdp",
+        }[strategy_cls],
+        rank=0,
+        world_size=1,
+        device=torch.device("cpu"),
+    )
+    if strategy_cls is SingleProcessStrategy:
+        return SingleProcessStrategy(context)
+    if strategy_cls is DDPStrategy:
+        return DDPStrategy(context, find_unused_parameters=False)
+    return FSDPStrategy(
+        context,
+        mesh_dims=["dp"],
+        precision_policy="actor",
+        reshard_after_forward=True,
+        cpu_offload=False,
+    )
