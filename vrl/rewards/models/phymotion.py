@@ -34,7 +34,6 @@ from pathlib import Path
 from typing import Any
 
 from vrl.rewards.inference import RewardInferenceArtifact, RewardInferenceRequest
-from vrl.rewards.models.base import RewardModel
 from vrl.utils.logging import init_logger, kv
 
 logger = init_logger(__name__)
@@ -43,7 +42,7 @@ _AXES = ("kinematic", "contact", "dynamic")
 _DEFAULT_TIMEOUT_S = 1200
 
 
-class PhyMotionModel(RewardModel):
+class PhyMotionModel:
     """Score one video by delegating to an external PhyMotion command."""
 
     def __init__(self, worker_config: Mapping[str, Any]) -> None:

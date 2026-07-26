@@ -30,7 +30,7 @@ import torch
 
 from vrl.models.dtypes import resolve_torch_dtype
 from vrl.rewards.inference import RewardInferenceArtifact, RewardInferenceRequest
-from vrl.rewards.models.base import RewardModel, require_prompt_and_video_path
+from vrl.rewards.models.base import require_prompt_and_video_path
 from vrl.rewards.models.hub import resolve_model_root
 from vrl.utils.logging import init_logger, kv
 
@@ -79,7 +79,7 @@ _AXIS_PATTERNS = {
 }
 
 
-class UnifiedRewardVideoModel(RewardModel):
+class UnifiedRewardVideoModel:
     """Load UnifiedReward-2.0 and pointwise-score one (prompt, video) per call."""
 
     def __init__(self, worker_config: Mapping[str, Any]) -> None:

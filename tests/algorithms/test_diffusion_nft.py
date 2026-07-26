@@ -58,11 +58,11 @@ def test_diffusion_nft_does_not_tolerate_off_policy_staleness() -> None:
     """The capability that makes a continuous max_stale>0 config fail fast.
 
     NFT is likelihood-free, so it opts out explicitly; GRPO carries an IS
-    correction and relies on the safe default (no attribute = tolerant).
+    correction and declares that it tolerates bounded staleness.
     """
 
     assert DiffusionNFT.tolerates_off_policy_staleness is False
-    assert getattr(GRPO, "tolerates_off_policy_staleness", True) is True
+    assert GRPO.tolerates_off_policy_staleness is True
 
 
 @pytest.mark.parametrize("global_std", [False, True])

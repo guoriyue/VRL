@@ -8,7 +8,10 @@ import time
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Literal, Protocol, get_args, runtime_checkable
+from typing import TYPE_CHECKING, Any, Literal, Protocol, get_args, runtime_checkable
+
+if TYPE_CHECKING:
+    from vrl.rewards.models.base import RewardModel
 
 # Valid artifact media kinds. ``MediaType`` is the single source of truth; the
 # disk artifact store (vrl.rewards.artifacts) imports MEDIA_TYPES, and both it
@@ -359,7 +362,7 @@ def validate_reward_results(
 
 
 def score_artifacts_with_model(
-    model: Any,
+    model: RewardModel,
     request: RewardInferenceRequest,
     *,
     worker_id: str,

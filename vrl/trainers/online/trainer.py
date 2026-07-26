@@ -13,7 +13,7 @@ import time
 from collections import defaultdict
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import torch
 import torch.nn as nn
@@ -43,7 +43,6 @@ from vrl.rollouts.stats import (
     RolloutStats,
     StatsSink,
 )
-from vrl.trainers.core.base import Trainer
 from vrl.trainers.core.types import TrainState
 from vrl.trainers.online.config import TrainerConfig
 from vrl.trainers.online.ema import EMAModuleWrapper
@@ -60,6 +59,9 @@ from vrl.utils.model_diagnostics import (
     trainable_state_digest,
     write_jsonl,
 )
+
+if TYPE_CHECKING:
+    from vrl.algorithms.trajectory import AlgorithmAdapter
 
 logger = logging.getLogger(__name__)
 
@@ -662,7 +664,7 @@ def _balanced_training_sample_chunks(
     return chunks
 
 
-class OnlineTrainer(Trainer):
+class OnlineTrainer:
     """Orchestrates the CEA online RL loop.
 
     Pipeline: collect -> evaluate -> advantage -> loss -> backward -> step.
@@ -762,8 +764,8 @@ class OnlineTrainer(Trainer):
             set_weights_initialized=self._set_rollout_weights_initialized,
             # Default True: only likelihood-free objectives (DiffusionNFT) opt out,
             # which makes a continuous max_stale>0 config fail fast as unsound.
-            algorithm_tolerates_off_policy_staleness=bool(
-                getattr(self.algorithm, "tolerates_off_policy_staleness", True),
+            algorithm_tolerates_off_policy_staleness=(
+                self.algorithm.tolerates_off_policy_staleness
             ),
         )
         self._validate_trust_region_engages()
@@ -786,7 +788,7 @@ class OnlineTrainer(Trainer):
         configuration rejects a zero-version window because that execution is
         the ``strict_on_policy`` schedule.
         """
-        if not bool(getattr(self.algorithm, "requires_active_trust_region", False)):
+        if not self.algorithm.requires_active_trust_region:
             return
         cfg = self.config
         orchestration = cfg.rollout_orchestration
@@ -869,7 +871,7 @@ class OnlineTrainer(Trainer):
         chunk_advantages: torch.Tensor,
         timestep_index: int,
         *,
-        algorithm_adapter: Any,
+        algorithm_adapter: AlgorithmAdapter,
     ) -> tuple[torch.Tensor, TrainStepMetrics]:
         """Run the shared evaluator/algorithm decision for one replay timestep."""
 
@@ -877,7 +879,7 @@ class OnlineTrainer(Trainer):
         from vrl.rollouts.evaluators.types import SignalRequest, TrajectorySignalBatch
         from vrl.utils.profiling import profile_range
 
-        if not bool(getattr(self.algorithm, "uses_evaluator", True)):
+        if not self.algorithm.uses_evaluator:
             # DiffusionNFT owns its raw transformer boundaries and applies the
             # resolved contract there; its objective reductions remain outside.
             with profile_range("trainer.loss"):
@@ -896,9 +898,7 @@ class OnlineTrainer(Trainer):
         if self.evaluator is None:
             raise RuntimeError(f"{type(self.algorithm).__name__} requires an evaluator")
         kl_coef = float(getattr(self.algorithm.config, "kl_coef", 0.0))
-        need_kl_intermediates = kl_coef > 0 or bool(
-            getattr(self.algorithm, "needs_kl_intermediates", False),
-        )
+        need_kl_intermediates = kl_coef > 0 or self.algorithm.needs_kl_intermediates
         # The evaluator scopes only replay_forward; SDE/log-prob/gather math
         # and the algorithm loss remain outside autocast.
         with profile_range("trainer.replay"):
@@ -1282,7 +1282,7 @@ class OnlineTrainer(Trainer):
         if not _all_ranks_have_work(bool(batch.batches), self.device):
             return
         self._update_had_training_work = True
-        uses_evaluator = bool(getattr(self.algorithm, "uses_evaluator", True))
+        uses_evaluator = self.algorithm.uses_evaluator
         algorithm_adapter = AlgorithmAdapter()
         defer = uses_evaluator and bool(
             getattr(self.evaluator, "supports_deferred_replay_tensor_move", False),
@@ -1431,13 +1431,8 @@ class OnlineTrainer(Trainer):
         # 3. Train loop — gradient accumulation across per-prompt batches.
         self.model.train()
         agg_metrics = _ReplayMetrics()
-        uses_evaluator = bool(getattr(self.algorithm, "uses_evaluator", True))
+        uses_evaluator = self.algorithm.uses_evaluator
         algorithm_adapter = AlgorithmAdapter()
-        if not uses_evaluator and not callable(getattr(self.algorithm, "compute_loss", None)):
-            raise RuntimeError(
-                f"{type(self.algorithm).__name__} disabled evaluator use but does "
-                "not expose compute_loss(AlgorithmInput)",
-            )
 
         # If every batch was filtered out (all dead), skip training this step.
         # Unanimous across ranks (see _all_ranks_have_work): a backward fires
@@ -1921,7 +1916,7 @@ class OnlineTrainer(Trainer):
             or self.state.step != 0
             or self.state.global_step != 0
             or self.evaluator is None
-            or not bool(getattr(self.algorithm, "uses_evaluator", True))
+            or not self.algorithm.uses_evaluator
         ):
             return resolved
 
@@ -2046,15 +2041,15 @@ class OnlineTrainer(Trainer):
     # State dict
     # ------------------------------------------------------------------
 
-    def state_dict(self) -> dict:
+    def state_dict(self) -> dict[str, Any]:
         return self._state_dict(checkpoint_primary_only=False)
 
-    def checkpoint_state_dict(self) -> dict:
+    def checkpoint_state_dict(self) -> dict[str, Any]:
         """Build a resume snapshot without full state copies on every FSDP rank."""
 
         return self._state_dict(checkpoint_primary_only=True)
 
-    def _state_dict(self, *, checkpoint_primary_only: bool) -> dict:
+    def _state_dict(self, *, checkpoint_primary_only: bool) -> dict[str, Any]:
         # COLLECTIVE under fsdp (optimizer-moment + EMA-shadow gathers): the
         # checkpoint writer must call this on EVERY rank before its
         # primary-only file write, like the trainable-state gather.
@@ -2091,7 +2086,12 @@ class OnlineTrainer(Trainer):
                 d["ema"] = ema.state_dict()
         return d
 
-    def load_state_dict(self, state: dict, *, strict: bool = True) -> None:
+    def load_state_dict(
+        self,
+        state: dict[str, Any],
+        *,
+        strict: bool = True,
+    ) -> None:
         if not isinstance(state, dict):
             raise TypeError("OnlineTrainer.load_state_dict expects a dict")
 

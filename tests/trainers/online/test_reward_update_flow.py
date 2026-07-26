@@ -6,6 +6,7 @@ from tests.trainers.online._collector_control import CollectorControlFake
 from tests.trainers.online._helpers import (
     _algorithm_inputs,
     _diffusion_rollout_batch,
+    _EvaluatorAlgorithmFake,
     _stamp_model_precision,
     _trajectory_signals,
 )
@@ -31,7 +32,10 @@ class TestRewardUpdateFlow:
         captured_kwargs: list[dict] = []
         captured_inputs: list = []
 
-        class _Algorithm:
+        class _Algorithm(_EvaluatorAlgorithmFake):
+            required_signal_keys = ("log_prob",)
+            required_data_keys: tuple[str, ...] = ()
+
             class _Config:
                 global_std = False
                 eps = 1e-8
@@ -140,7 +144,10 @@ class TestRewardUpdateFlow:
         evaluate_batch_sizes: list[int] = []
         evaluate_group_ids: list[list[int]] = []
 
-        class _Algorithm:
+        class _Algorithm(_EvaluatorAlgorithmFake):
+            required_signal_keys = ("log_prob",)
+            required_data_keys: tuple[str, ...] = ()
+
             class _Config:
                 global_std = False
                 eps = 1e-8
@@ -247,7 +254,10 @@ class TestRewardUpdateFlow:
         collect_calls: list[list[str]] = []
         after_step_calls: list[int] = []
 
-        class _Algorithm:
+        class _Algorithm(_EvaluatorAlgorithmFake):
+            required_signal_keys = ("log_prob",)
+            required_data_keys: tuple[str, ...] = ()
+
             class _Config:
                 global_std = False
                 eps = 1e-8
@@ -568,7 +578,10 @@ class TestRewardUpdateFlow:
 
         recorded_grads: list[float] = []
 
-        class _Algorithm:
+        class _Algorithm(_EvaluatorAlgorithmFake):
+            required_signal_keys = ("log_prob",)
+            required_data_keys: tuple[str, ...] = ()
+
             class _Config:
                 global_std = False
                 eps = 1e-8
@@ -677,7 +690,10 @@ class TestRewardUpdateFlow:
         from vrl.trainers.online import OnlineTrainer
         from vrl.trainers.online.config import TrainerConfig
 
-        class _Algorithm:
+        class _Algorithm(_EvaluatorAlgorithmFake):
+            required_signal_keys = ("log_prob",)
+            required_data_keys: tuple[str, ...] = ()
+
             class _Config:
                 global_std = False
                 eps = 1e-8
@@ -798,7 +814,10 @@ def test_replay_samples_per_chunk_splits_backward_and_preserves_gradient(monkeyp
         _recording_move_training_batch_to_device,
     )
 
-    class _Algorithm:
+    class _Algorithm(_EvaluatorAlgorithmFake):
+        required_signal_keys = ("log_prob",)
+        required_data_keys: tuple[str, ...] = ()
+
         class _Config:
             global_std = False
             eps = 1e-8
@@ -941,7 +960,7 @@ def test_fixed_replay_chunk_remains_available_to_distributed_strategies() -> Non
     from vrl.trainers.online import OnlineTrainer
     from vrl.trainers.online.config import TrainerConfig
 
-    class _Algorithm:
+    class _Algorithm(_EvaluatorAlgorithmFake):
         class _Config:
             sft_weight = 0.0
 

@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
+from vrl.algorithms.base import Algorithm
 from vrl.config.builders import BuiltConfigs
 from vrl.families.registry import ModelFamilyEntry
 from vrl.models.dtypes import resolve_torch_dtype
@@ -15,7 +16,7 @@ from vrl.ray.resources import ResolvedDistributedResources, require_reward_devic
 class AlgorithmEvaluatorPair:
     """Algorithm instance plus its optional evaluator."""
 
-    algorithm: Any
+    algorithm: Algorithm
     evaluator: Any | None
 
 

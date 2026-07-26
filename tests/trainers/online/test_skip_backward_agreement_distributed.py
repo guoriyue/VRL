@@ -24,6 +24,7 @@ from torch import nn
 from tests.trainers.online._collector_control import CollectorControlFake
 from tests.trainers.online._helpers import (
     _diffusion_rollout_batch,
+    _EvaluatorAlgorithmFake,
     _stamp_model_precision,
     _trajectory_signals,
 )
@@ -334,7 +335,10 @@ def _run_replay_loop_rank(
         evaluate_calls: list[int] = []
         backward_calls: list[float] = []
 
-        class _Algorithm:
+        class _Algorithm(_EvaluatorAlgorithmFake):
+            required_signal_keys = ("log_prob",)
+            required_data_keys: tuple[str, ...] = ()
+
             class _Config:
                 global_std = False
                 eps = 1e-8

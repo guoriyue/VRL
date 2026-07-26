@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Any
 from vrl.algorithms.types import TrainStepMetrics
 
 if TYPE_CHECKING:
+    from vrl.algorithms.base import Algorithm
     from vrl.rollouts.evaluators.types import TrajectorySignalBatch
 
 
@@ -37,7 +38,7 @@ class AlgorithmInput:
 class AlgorithmAdapter:
     """Dispatch strict AlgorithmInput to objective-specific native APIs."""
 
-    def validate_inputs(self, algorithm: Any, inputs: AlgorithmInput) -> None:
+    def validate_inputs(self, algorithm: Algorithm, inputs: AlgorithmInput) -> None:
         """Fail fast — with available-vs-missing diagnostics — when the rollout
         payload lacks a tensor the algorithm's loss declares it needs.
 
@@ -48,8 +49,8 @@ class AlgorithmAdapter:
         (replay-tensor names, replay branch); this validates them against what
         actually arrived. Mirrors verl-omni's ``DiffusionLossFn.validate_inputs``.
         """
-        required_signal_keys = tuple(getattr(algorithm, "required_signal_keys", ()))
-        required_data_keys = tuple(getattr(algorithm, "required_data_keys", ()))
+        required_signal_keys = tuple(algorithm.required_signal_keys)
+        required_data_keys = tuple(algorithm.required_data_keys)
         algo = type(algorithm).__name__
 
         if required_signal_keys:
@@ -93,7 +94,7 @@ class AlgorithmAdapter:
                     f"Available data keys: [{', '.join(available)}].",
                 )
 
-    def compute_advantages(self, algorithm: Any, inputs: AlgorithmInput) -> Any:
+    def compute_advantages(self, algorithm: Algorithm, inputs: AlgorithmInput) -> Any:
         if inputs.advantages is not None:
             return inputs.advantages
         if inputs.rewards is None:
@@ -107,15 +108,9 @@ class AlgorithmAdapter:
 
     def compute_loss(
         self,
-        algorithm: Any,
+        algorithm: Algorithm,
         inputs: AlgorithmInput,
     ) -> tuple[Any, TrainStepMetrics]:
-        compute_loss = getattr(algorithm, "compute_loss", None)
-        if not callable(compute_loss):
-            raise TypeError(
-                f"{type(algorithm).__name__} must expose compute_loss(AlgorithmInput)",
-            )
-
         self.validate_inputs(algorithm, inputs)
 
         if inputs.advantages is None:
@@ -128,7 +123,7 @@ class AlgorithmAdapter:
                 rollout_batch=inputs.rollout_batch,
                 timestep_index=inputs.timestep_index,
             )
-        return compute_loss(inputs)
+        return algorithm.compute_loss(inputs)
 
 
 __all__ = [

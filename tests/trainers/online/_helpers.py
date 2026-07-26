@@ -18,6 +18,15 @@ DEFAULT_PRECISION = RolePrecision(
 )
 
 
+class _EvaluatorAlgorithmFake:
+    """Common capabilities for test algorithms that consume evaluator signals."""
+
+    uses_evaluator = True
+    tolerates_off_policy_staleness = True
+    requires_active_trust_region = False
+    needs_kl_intermediates = False
+
+
 def _stamp_model_precision(
     model: Any,
     *,

@@ -18,6 +18,7 @@ from tests.trainers.online._collector_control import CollectorControlFake
 from tests.trainers.online._helpers import (
     _algorithm_inputs,
     _diffusion_rollout_batch,
+    _EvaluatorAlgorithmFake,
     _stamp_model_precision,
     _trajectory_signals,
 )
@@ -30,7 +31,10 @@ from vrl.trainers.online.config import OnlineBatchPlan, TrainerConfig
 from vrl.trainers.online.trainer import TrainingBatch
 
 
-class _Algorithm:
+class _Algorithm(_EvaluatorAlgorithmFake):
+    required_signal_keys = ("log_prob",)
+    required_data_keys: tuple[str, ...] = ()
+
     class _Config:
         global_std = False
         eps = 1e-8

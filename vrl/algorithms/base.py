@@ -29,22 +29,34 @@ class Algorithm(Protocol):
     #   importance ratio r = pi_new/pi_old (Flow-DPPO / GRPO-Guard). When True the
     #   trainer refuses strict_on_policy + ppo_epochs==1, where r==1 makes the
     #   trust-region term identically zero (the run degenerates to plain GRPO).
-    #   False (default) for objectives whose ratio clip is only a safety rail
+    #   False for objectives whose ratio clip is only a safety rail
     #   (plain GRPO at ppo_epochs=1 is honest REINFORCE-with-group-baseline).
     #
     # required_signal_keys: ``SegmentSignal`` fields the loss reads from the
     #   evaluator replay (signal branch, ``uses_evaluator=True``).
     # required_data_keys: replay-tensor names the loss reads straight off the
     #   rollout batch (replay branch, ``uses_evaluator=False``).
-    # Empty by default so an algorithm opts into validation by declaring keys.
-    required_signal_keys: tuple[str, ...] = ()
-    required_data_keys: tuple[str, ...] = ()
+    # Every behavior and input field is a required declaration. Root objectives
+    # own their values; subclasses inherit only when the family theorem is the
+    # same. The consumer contract itself carries no behavioral defaults.
+    uses_evaluator: bool
+    tolerates_off_policy_staleness: bool
+    requires_active_trust_region: bool
+    needs_kl_intermediates: bool
+    required_signal_keys: tuple[str, ...]
+    required_data_keys: tuple[str, ...]
+
+    @property
+    def config(self) -> object:
+        """Return the objective-specific config read through optional shared knobs."""
+
+        ...
 
     def compute_advantages_from_tensors(
         self,
-        rewards: Any,        # [B] tensor
-        group_ids: Any,      # [B] tensor — prompt group assignment
-    ) -> Any:                # [B] tensor of advantages
+        rewards: Any,  # [B] tensor
+        group_ids: Any,  # [B] tensor — prompt group assignment
+    ) -> Any:  # [B] tensor of advantages
         """Compute per-sample advantages from reward tensors."""
         ...
 

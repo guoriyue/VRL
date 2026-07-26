@@ -12,6 +12,7 @@ import torch
 from tests.trainers.online._collector_control import CollectorControlFake
 from tests.trainers.online._helpers import (
     _diffusion_rollout_batch,
+    _EvaluatorAlgorithmFake,
     _stamp_model_precision,
 )
 from vrl.algorithms.logprob_mismatch import compute_logprob_mismatch_stats
@@ -305,7 +306,10 @@ def test_online_trainer_precision_guard_fails_before_optimizer_when_ratio_drifts
     from vrl.trainers.online import OnlineTrainer
     from vrl.trainers.online.config import OnlineBatchPlan, TrainerConfig
 
-    class _Algorithm:
+    class _Algorithm(_EvaluatorAlgorithmFake):
+        required_signal_keys: tuple[str, ...] = ()
+        required_data_keys: tuple[str, ...] = ()
+
         class _Config:
             global_std = False
             eps = 1e-8

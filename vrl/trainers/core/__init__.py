@@ -1,6 +1,5 @@
 """Core trainer contracts — shared by online and offline trainers."""
 
-from vrl.trainers.core.base import Trainer
 from vrl.trainers.core.types import (
     ContinuousRolloutConfig,
     DebugConfig,
@@ -19,5 +18,4 @@ __all__ = [
     "RolloutOrchestrationConfig",
     "TorchProfilerConfig",
     "TrainState",
-    "Trainer",
 ]

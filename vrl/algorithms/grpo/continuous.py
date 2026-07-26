@@ -6,7 +6,6 @@ from dataclasses import dataclass
 from typing import Any
 
 from vrl.algorithms.advantages import group_relative_advantages
-from vrl.algorithms.base import Algorithm
 from vrl.algorithms.logprob_mismatch import (
     PrecisionCorrectionConfig,
     apply_rejection_sample_mask,
@@ -49,7 +48,7 @@ class GRPOConfig(ClippedPolicyConfig):
     sft_weight: float = 0.0
 
 
-class GRPO(Algorithm):
+class GRPO:
     """Group Relative Policy Optimization for continuous rollout signals.
 
     Advantages are normalised within each prompt group:
@@ -59,11 +58,15 @@ class GRPO(Algorithm):
     per-sample log-probabilities produced by the evaluator.
     """
 
+    uses_evaluator = True
+    tolerates_off_policy_staleness = True
+
     # Signal-branch contract (AlgorithmAdapter.validate_inputs): the clipped
     # surrogate reads these from the evaluator replay. ref_log_prob is
     # conditional on kl_coef>0, so it is NOT a hard requirement here — the
     # KL branch validates it with its own detailed diagnostic.
     required_signal_keys = ("log_prob", "old_log_prob")
+    required_data_keys: tuple[str, ...] = ()
 
     # Trust-region subclasses (Flow-DPPO / GRPO-Guard) flip this True so the
     # trainer requests the SDE KL intermediates (dt) even when kl_coef == 0.

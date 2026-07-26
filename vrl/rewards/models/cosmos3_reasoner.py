@@ -42,7 +42,7 @@ import torch
 
 from vrl.models.dtypes import resolve_torch_dtype
 from vrl.rewards.inference import RewardInferenceArtifact, RewardInferenceRequest
-from vrl.rewards.models.base import RewardModel, require_prompt_and_video_path
+from vrl.rewards.models.base import require_prompt_and_video_path
 from vrl.utils.logging import init_logger, kv
 
 logger = init_logger(__name__)
@@ -83,7 +83,7 @@ _SCORE_REGEX = re.compile(
 )
 
 
-class Cosmos3ReasonerRewardModel(RewardModel):
+class Cosmos3ReasonerRewardModel:
     """Load the Cosmos3 reasoner (Qwen3-VL) and judge one (prompt, video) pair."""
 
     def __init__(self, worker_config: Mapping[str, Any]) -> None:

@@ -23,7 +23,7 @@ from vrl.rewards.assets.kling_prompt_templates import (
     build_kling_video_reward_prompt,
 )
 from vrl.rewards.inference import RewardInferenceArtifact, RewardInferenceRequest
-from vrl.rewards.models.base import RewardModel, require_prompt_and_video_path
+from vrl.rewards.models.base import require_prompt_and_video_path
 from vrl.rewards.models.hub import parse_hf_repo_revision
 from vrl.utils.logging import init_logger, kv
 
@@ -74,7 +74,7 @@ class _PeftLoraConfig:
     num_lora_modules: int = -1
 
 
-class KlingVideoRewardModel(RewardModel):
+class KlingVideoRewardModel:
     """One RewardModel: load KlingTeam/VideoReward weights and score a video artifact."""
 
     def __init__(self, worker_config: Mapping[str, Any]) -> None:

@@ -6,7 +6,6 @@ from dataclasses import dataclass
 from typing import Any
 
 from vrl.algorithms.advantages import group_relative_advantages
-from vrl.algorithms.base import Algorithm
 from vrl.algorithms.trajectory import AlgorithmInput
 from vrl.algorithms.types import PolicyUpdateStats, TrainStepMetrics
 from vrl.models.precision import model_autocast
@@ -43,7 +42,7 @@ class DiffusionNFTConfig:
     weight_copy_decay: float = 0.0
 
 
-class DiffusionNFT(Algorithm):
+class DiffusionNFT:
     """DiffusionNFT-style GRPO objective.
 
     This objective does not consume evaluator log-prob signals. It trains from
@@ -58,6 +57,9 @@ class DiffusionNFT(Algorithm):
     # trajectory, no log-probs. Declaring them lets the adapter fail fast with
     # available-vs-missing diagnostics, replacing the old inline per-key check.
     required_data_keys = ("latents_clean", "prompt_embeds", "timesteps")
+    required_signal_keys: tuple[str, ...] = ()
+    needs_kl_intermediates = False
+    requires_active_trust_region = False
     # DiffusionNFT is likelihood-free: it computes no importance-sampling ratio
     # to reweight off-policy samples, and its positive/negative decomposition is
     # taken against a previous-policy adapter that ``after_optimizer_step``

@@ -9,6 +9,7 @@ from tests.trainers.online._helpers import (
     DEFAULT_PRECISION,
     _algorithm_inputs,
     _diffusion_rollout_batch,
+    _EvaluatorAlgorithmFake,
     _stamp_model_precision,
     _trajectory_signals,
 )
@@ -34,7 +35,10 @@ class TestAdvantageAndMetrics:
         from vrl.trainers.online import OnlineTrainer
         from vrl.trainers.online.config import OnlineBatchPlan, TrainerConfig
 
-        class _Algorithm:
+        class _Algorithm(_EvaluatorAlgorithmFake):
+            required_signal_keys = ("log_prob", "old_log_prob")
+            required_data_keys: tuple[str, ...] = ()
+
             class _Config:
                 global_std = False
                 eps = 1e-8
@@ -286,7 +290,10 @@ class TestAdvantageAndMetrics:
         from vrl.trainers.online.config import OnlineBatchPlan, TrainerConfig
         from vrl.trajectory import build_ar_discrete_trajectory
 
-        class _Algorithm:
+        class _Algorithm(_EvaluatorAlgorithmFake):
+            required_signal_keys: tuple[str, ...] = ()
+            required_data_keys: tuple[str, ...] = ()
+
             class _Config:
                 global_std = True
                 eps = 1e-8
