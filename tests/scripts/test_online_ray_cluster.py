@@ -1,6 +1,6 @@
 """Ray cluster ownership tests for the online recipe, against real Ray.
 
-Every test drives ``online._initialize_ray_cluster`` with the real ``ray``
+Every test drives ``online._RayClusterSession.connect`` with the real ``ray``
 module; ownership is observed through ``ray.is_initialized()`` and the
 connected cluster's GCS address instead of recorded fake calls. Error-path
 tests raise before ``ray.init`` and stay in the fast lane; tests that start a
@@ -40,7 +40,7 @@ def test_local_run_starts_owned_cluster_even_when_environment_has_address(
     fail instead of starting the owned local cluster asserted below."""
     monkeypatch.setenv("RAY_ADDRESS", "10.0.0.9:6379")
 
-    session = online._initialize_ray_cluster(
+    session = online._RayClusterSession.connect(
         isolated_ray,
         cross_node=False,
         environ={"RAY_ADDRESS": "10.0.0.9:6379"},
@@ -59,7 +59,7 @@ def test_cross_node_requires_concrete_operator_address(isolated_ray, address: st
     environ = {} if address is None else {"RAY_ADDRESS": address}
 
     with pytest.raises(ValueError, match="requires a concrete RAY_ADDRESS"):
-        online._initialize_ray_cluster(
+        online._RayClusterSession.connect(
             isolated_ray,
             cross_node=True,
             environ=environ,
@@ -97,7 +97,7 @@ def test_cross_node_attaches_only_to_explicit_address(isolated_ray) -> None:
         address = head.stdout.readline().strip()
         assert address, "operator head subprocess failed to start a cluster"
 
-        session = online._initialize_ray_cluster(
+        session = online._RayClusterSession.connect(
             isolated_ray,
             cross_node=True,
             environ={"RAY_ADDRESS": address},
@@ -129,7 +129,7 @@ def test_preinitialized_connection_remains_owned_by_embedding_caller(
 ) -> None:
     isolated_ray.init(address="local", num_cpus=1, include_dashboard=False, log_to_driver=False)
 
-    session = online._initialize_ray_cluster(
+    session = online._RayClusterSession.connect(
         isolated_ray,
         cross_node=False,
         environ={},
@@ -158,7 +158,7 @@ def test_ray_init_cannot_steal_cli_signal_handlers(isolated_ray) -> None:
         signal.signal(signal.SIGTERM, cli_handler)
         signal.signal(signal.SIGINT, cli_handler)
 
-        online._initialize_ray_cluster(
+        online._RayClusterSession.connect(
             isolated_ray,
             cross_node=False,
             environ={},

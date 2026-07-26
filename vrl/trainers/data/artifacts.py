@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterable, Sequence
-from dataclasses import dataclass, fields
+from dataclasses import dataclass, fields, replace
 from pathlib import Path
 from typing import Any
 
@@ -35,6 +35,7 @@ SOURCE_BACKED_VIDEO_WORLD_METADATA_FIELDS = (
     "decode_method",
     "conditioning",
 )
+
 
 @dataclass(frozen=True, slots=True)
 class ResolvedArtifact:
@@ -87,6 +88,7 @@ class ArtifactManifestReport:
             "source_episode_overlap": list(self.source_episode_overlap),
         }
 
+
 def resolve_prompt_example_artifacts(
     example: PromptExample,
     *,
@@ -95,65 +97,83 @@ def resolve_prompt_example_artifacts(
 ) -> PromptExample:
     """Return a copy of a prompt example with artifact paths resolved."""
 
-    references = [
-        str(resolve_artifact_path(item, data_root=data_root, allow_absolute=allow_absolute))
-        for item in example.references
-    ]
-    reference_image = (
-        str(
-            resolve_artifact_path(
-                example.reference_image,
-                data_root=data_root,
-                allow_absolute=allow_absolute,
-            ),
-        )
-        if example.reference_image
-        else None
-    )
-    reference_video = (
-        str(
-            resolve_artifact_path(
-                example.reference_video,
-                data_root=data_root,
-                allow_absolute=allow_absolute,
-            ),
-        )
-        if example.reference_video
-        else None
+    resolved = resolve_prompt_example_references(
+        example,
+        data_root=data_root,
+        allow_absolute=allow_absolute,
     )
     target_image = (
         str(
             resolve_artifact_path(
-                example.target_image,
+                resolved.target_image,
                 data_root=data_root,
                 allow_absolute=allow_absolute,
             ),
         )
-        if example.target_image
+        if resolved.target_image
         else None
     )
     target_video = (
         str(
             resolve_artifact_path(
-                example.target_video,
+                resolved.target_video,
                 data_root=data_root,
                 allow_absolute=allow_absolute,
             ),
         )
-        if example.target_video
+        if resolved.target_video
         else None
     )
-    return PromptExample(
-        prompt=example.prompt,
-        target_text=example.target_text,
-        reference_image=reference_image,
-        reference_video=reference_video,
+    return replace(
+        resolved,
         target_image=target_image,
         target_video=target_video,
+        request_overrides=dict(resolved.request_overrides),
+        metadata=dict(resolved.metadata),
+    )
+
+
+def resolve_prompt_example_references(
+    example: PromptExample,
+    *,
+    data_root: str | Path | None = None,
+    allow_absolute: bool = False,
+) -> PromptExample:
+    """Return a copy with reference paths resolved and target identities intact."""
+
+    references = [
+        str(resolve_artifact_path(item, data_root=data_root, allow_absolute=allow_absolute))
+        for item in example.references
+    ]
+    reference_image_text = str(example.reference_image or "").strip()
+    reference_image = (
+        str(
+            resolve_artifact_path(
+                reference_image_text,
+                data_root=data_root,
+                allow_absolute=allow_absolute,
+            ),
+        )
+        if reference_image_text
+        else None
+    )
+    reference_video_text = str(example.reference_video or "").strip()
+    reference_video = (
+        str(
+            resolve_artifact_path(
+                reference_video_text,
+                data_root=data_root,
+                allow_absolute=allow_absolute,
+            ),
+        )
+        if reference_video_text
+        else None
+    )
+    return replace(
+        example,
+        reference_image=reference_image,
+        reference_video=reference_video,
         references=references,
-        task_type=example.task_type,
-        request_overrides=dict(example.request_overrides),
-        metadata=dict(example.metadata),
     )
 
 
@@ -199,8 +219,7 @@ def validate_artifact_manifest(
                 )
                 if not resolved_path.exists():
                     raise ArtifactManifestError(
-                        f"{path}: row {row_index} {field_name} does not exist: "
-                        f"{resolved_path}",
+                        f"{path}: row {row_index} {field_name} does not exist: {resolved_path}",
                     )
                 _assert_readable(resolved_path, manifest_path=path, row_index=row_index)
                 resolved.append(
@@ -265,7 +284,9 @@ def validate_source_backed_video_world_manifest_pair(
 ) -> ArtifactManifestReport:
     """Validate real Video2World manifests and first-frame reference provenance."""
 
-    artifact_fields = ("reference_image", "target_video") if require_target_video else ("reference_image",)
+    artifact_fields = (
+        ("reference_image", "target_video") if require_target_video else ("reference_image",)
+    )
     required_artifact_fields = artifact_fields
     return validate_artifact_manifest_pair(
         train_manifest,
@@ -356,6 +377,7 @@ __all__ = [
     "ResolvedArtifact",
     "require_reference_images",
     "resolve_prompt_example_artifacts",
+    "resolve_prompt_example_references",
     "validate_artifact_manifest",
     "validate_artifact_manifest_pair",
     "validate_source_backed_video_world_manifest_pair",

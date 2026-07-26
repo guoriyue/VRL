@@ -7,7 +7,7 @@ import inspect
 import logging
 import os
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -24,8 +24,12 @@ from vrl.ray.resources import (
     ResolvedDistributedResources,
     format_distributed_resource_plan,
 )
-from vrl.rollouts.collector import build_rollout_collector
-from vrl.rollouts.orchestration import validate_rollout_schedule_topology
+from vrl.rewards.base import RewardFunction
+from vrl.rollouts.collector import RolloutCollector, build_rollout_collector
+from vrl.rollouts.orchestration import (
+    RolloutSchedule,
+    validate_rollout_schedule_topology,
+)
 from vrl.rollouts.stats import RolloutStats
 from vrl.run import materialize, resolve_model, resolve_online_run
 from vrl.scripts.common.factory import (
@@ -47,7 +51,11 @@ from vrl.trainers.checkpointing import (
     save_training_checkpoint,
     validate_checkpoint_compatibility,
 )
-from vrl.trainers.data import PromptBatchSampler, load_prompt_examples_from_config
+from vrl.trainers.data import (
+    PromptBatchSampler,
+    load_prompt_examples_from_config,
+    resolve_prompt_example_references,
+)
 from vrl.trainers.distributed import DistributedTrainingContext, resolve_training_context
 from vrl.trainers.metrics_io import (
     build_online_metric_row,
@@ -57,7 +65,7 @@ from vrl.trainers.metrics_io import (
 )
 from vrl.trainers.online import OnlineTrainer
 from vrl.trainers.online.config import OnlineBatchPlan
-from vrl.trainers.strategy import build_strategy
+from vrl.trainers.strategy import Strategy, build_strategy
 from vrl.trainers.weight_sync import build_runtime_weight_syncer
 from vrl.utils.memory import capture_host_memory, format_host_memory, log_host_memory
 from vrl.utils.profiling import profile_range
@@ -82,6 +90,88 @@ class _RayClusterSession:
     shutdown_on_exit: bool
     _closed: bool = False
 
+    @classmethod
+    def connect(
+        cls,
+        ray: Any,
+        *,
+        cross_node: bool,
+        environ: Mapping[str, str] | None = None,
+        local_num_cpus: int | None = None,
+    ) -> _RayClusterSession:
+        """Connect to exactly the Ray cluster selected by the resource topology.
+
+        Single-node and per-rank-local runs always start a fresh local cluster,
+        even when the host has a stale ``RAY_ADDRESS`` or another user's Ray
+        instance. Cross-node runs require a concrete address; implicit
+        ``address='auto'`` discovery is unsafe on a shared host.
+        """
+
+        if ray.is_initialized():
+            logger.info(
+                "Ray cluster session: ownership=preinitialized driver_pid=%d ray_version=%s",
+                os.getpid(),
+                getattr(ray, "__version__", "unknown"),
+            )
+            return cls(ray=ray, shutdown_on_exit=False)
+
+        environment = os.environ if environ is None else environ
+        if cross_node:
+            address = str(environment.get(_RAY_ADDRESS_ENV, "")).strip()
+            if not address or address in {"auto", "local"}:
+                raise ValueError(
+                    "distributed.resources.cross_node=true requires a concrete "
+                    "RAY_ADDRESS (for example 10.0.0.1:6379); 'auto' and 'local' "
+                    "do not identify the operator-owned multi-node cluster",
+                )
+            ownership = "attached"
+        else:
+            # ``local`` bypasses RAY_ADDRESS and Ray's latest-cluster discovery.
+            address = "local"
+            ownership = "owned_local"
+
+        # Ray overwrites driver SIGTERM handling inside ray.init(). Signal
+        # ownership belongs to the launcher, whose cooperative handlers must
+        # survive cluster initialization so terminal cleanup still runs.
+        import signal
+
+        previous_handlers = {
+            signum: signal.getsignal(signum) for signum in (signal.SIGINT, signal.SIGTERM)
+        }
+        init_kwargs: dict[str, Any] = {"address": address}
+        if ownership == "owned_local":
+            if local_num_cpus is not None:
+                if (
+                    isinstance(local_num_cpus, bool)
+                    or not isinstance(local_num_cpus, int)
+                    or local_num_cpus <= 0
+                ):
+                    raise ValueError("local Ray num_cpus must be a positive integer")
+                init_kwargs["num_cpus"] = local_num_cpus
+            init_kwargs["include_dashboard"] = False
+        try:
+            context = ray.init(**init_kwargs)
+        finally:
+            for signum, handler in previous_handlers.items():
+                if handler is not None:
+                    signal.signal(signum, handler)
+        address_info = getattr(context, "address_info", None)
+        if not isinstance(address_info, Mapping):
+            address_info = {}
+        resolved_address = (
+            address_info.get("gcs_address") or address_info.get("address") or address
+        )
+        logger.info(
+            "Ray cluster session: ownership=%s driver_pid=%d address=%s "
+            "session_dir=%s ray_version=%s",
+            ownership,
+            os.getpid(),
+            resolved_address,
+            address_info.get("session_dir", "unknown"),
+            getattr(ray, "__version__", "unknown"),
+        )
+        return cls(ray=ray, shutdown_on_exit=True)
+
     def shutdown(self) -> None:
         if self._closed:
             return
@@ -90,86 +180,108 @@ class _RayClusterSession:
         self._closed = True
 
 
-def _initialize_ray_cluster(
-    ray: Any,
-    *,
-    cross_node: bool,
-    environ: Mapping[str, str] | None = None,
-    local_num_cpus: int | None = None,
-) -> _RayClusterSession:
-    """Connect to exactly the Ray cluster selected by the resource topology.
+@dataclass(slots=True)
+class _OnlineRecipeLifecycle:
+    """Own partial-construction state and terminal teardown for one recipe."""
 
-    Single-node and per-rank-local runs always start a fresh local cluster, even
-    when the host has a stale ``RAY_ADDRESS`` or another user's Ray instance.
-    Cross-node runs must provide a concrete address explicitly; implicit
-    ``address='auto'`` discovery is unsafe on a shared host because the most
-    recently started test cluster can win the startup race.
-    """
-
-    if ray.is_initialized():
-        logger.info(
-            "Ray cluster session: ownership=preinitialized driver_pid=%d ray_version=%s",
-            os.getpid(),
-            getattr(ray, "__version__", "unknown"),
-        )
-        return _RayClusterSession(ray=ray, shutdown_on_exit=False)
-
-    environment = os.environ if environ is None else environ
-    if cross_node:
-        address = str(environment.get(_RAY_ADDRESS_ENV, "")).strip()
-        if not address or address in {"auto", "local"}:
-            raise ValueError(
-                "distributed.resources.cross_node=true requires a concrete "
-                "RAY_ADDRESS (for example 10.0.0.1:6379); 'auto' and 'local' "
-                "do not identify the operator-owned multi-node cluster",
-            )
-        ownership = "attached"
-    else:
-        # ``local`` bypasses RAY_ADDRESS and Ray's latest-cluster discovery.
-        address = "local"
-        ownership = "owned_local"
-
-    # ray.init() documents that it overwrites the driver-process SIGTERM
-    # handler (ray._private.worker: "This method overwrite sigterm handler of
-    # the driver process"), replacing it with a bare sys.exit that skips the
-    # recipe's cleanup path. Signal ownership belongs to whoever launched this
-    # recipe (the vrl-train CLI installs cooperative-cancel handlers); snapshot
-    # and restore around init so Ray cannot silently take it.
-    import signal
-
-    previous_handlers = {
-        signum: signal.getsignal(signum) for signum in (signal.SIGINT, signal.SIGTERM)
-    }
-    init_kwargs: dict[str, Any] = {"address": address}
-    if ownership == "owned_local":
-        if local_num_cpus is not None:
-            if (
-                isinstance(local_num_cpus, bool)
-                or not isinstance(local_num_cpus, int)
-                or local_num_cpus <= 0
-            ):
-                raise ValueError("local Ray num_cpus must be a positive integer")
-            init_kwargs["num_cpus"] = local_num_cpus
-        init_kwargs["include_dashboard"] = False
-    try:
-        context = ray.init(**init_kwargs)
-    finally:
-        for signum, handler in previous_handlers.items():
-            if handler is not None:
-                signal.signal(signum, handler)
-    address_info = getattr(context, "address_info", None)
-    if not isinstance(address_info, Mapping):
-        address_info = {}
-    resolved_address = address_info.get("gcs_address") or address_info.get("address") or address
-    logger.info(
-        "Ray cluster session: ownership=%s driver_pid=%d address=%s session_dir=%s ray_version=%s",
-        ownership,
-        os.getpid(),
-        resolved_address,
-        address_info.get("session_dir", "unknown"),
-        getattr(ray, "__version__", "unknown"),
+    placement_owner: GlobalRayPlacementOwner
+    strategy: Strategy
+    ray_session: _RayClusterSession | None = None
+    reward_fn: RewardFunction | None = None
+    collector: RolloutCollector | None = None
+    rollout_schedule: RolloutSchedule | None = None
+    _shutdown_errors: list[tuple[str, Exception]] = field(
+        default_factory=list,
+        init=False,
     )
-    return _RayClusterSession(ray=ray, shutdown_on_exit=True)
+    _closed: bool = field(default=False, init=False)
+
+    async def shutdown(self, *, run_error: BaseException | None) -> None:
+        """Release every acquired role in dependency order.
+
+        Construction may fail after any field is assigned. The lifecycle keeps
+        those partial acquisitions together so terminal cleanup does not need a
+        parallel seven-argument state bundle.
+        """
+
+        if self._closed:
+            return
+        self._shutdown_errors.clear()
+
+        # The schedule owns the complete rollout pipeline. Before trainer
+        # construction, fall back to the collector; before collector
+        # construction, only the standalone reward runtime exists.
+        if self.rollout_schedule is not None:
+            pipeline_released = await self._shutdown_one(
+                "rollout_schedule",
+                self.rollout_schedule,
+            )
+        elif self.collector is not None:
+            pipeline_released = await self._shutdown_one(
+                "collector",
+                self.collector,
+            )
+        else:
+            pipeline_released = await self._shutdown_one(
+                "reward_fn",
+                self.reward_fn,
+            )
+
+        await self._shutdown_one("placement_owner", self.placement_owner)
+
+        # A failed role cleanup leaves shared-GPU ownership unknown. The
+        # strategy must still destroy process groups, but it may not restore a
+        # parked trainer into memory whose release was not proven.
+        await self._shutdown_one(
+            "strategy",
+            self.strategy,
+            call_kwargs={"restore_parked": pipeline_released},
+        )
+        # Ray is last: actor and placement cleanup above still need its client.
+        await self._shutdown_one("ray_session", self.ray_session)
+        self._closed = True
+
+        if not self._shutdown_errors:
+            return
+        for name, exc in self._shutdown_errors:
+            logger.error(
+                "%s shutdown failed during online recipe cleanup",
+                name,
+                exc_info=(type(exc), exc, exc.__traceback__),
+            )
+        if run_error is None:
+            name, exc = self._shutdown_errors[0]
+            raise RuntimeError(f"{name} shutdown failed during online recipe cleanup") from exc
+
+    async def _shutdown_one(
+        self,
+        name: str,
+        target: Any,
+        *,
+        call_kwargs: Mapping[str, Any] | None = None,
+    ) -> bool:
+        """Run one terminal cleanup, retrying one transient failure."""
+
+        if target is None:
+            return True
+        shutdown = getattr(target, "shutdown", None)
+        if not callable(shutdown):
+            self._shutdown_errors.append(
+                (name, TypeError(f"{name} does not expose callable shutdown()")),
+            )
+            return False
+        last_error: Exception | None = None
+        for _attempt in range(2):
+            try:
+                result = shutdown(**dict(call_kwargs or {}))
+                if inspect.isawaitable(result):
+                    await result
+                return True
+            except Exception as exc:
+                last_error = exc
+        assert last_error is not None
+        self._shutdown_errors.append((name, last_error))
+        return False
 
 
 def _require_supported_online_strategy(context: DistributedTrainingContext) -> None:
@@ -527,6 +639,37 @@ class OnlineRecipeRun:
             resume_at=("epoch", self.resume_epoch) if self.resume_epoch is not None else None,
         )
 
+    def prepare_metrics_csv_rank_consistent(
+        self,
+        training_context: DistributedTrainingContext,
+    ) -> None:
+        """Run the rank-0 CSV preflight and propagate its verdict to every rank.
+
+        Only rank 0 owns the output path in multi-node runs, so peers cannot safely
+        inspect the header themselves. Broadcasting the small error description
+        keeps every rank on the same side of the first training collective.
+        """
+
+        if not training_context.distributed:
+            self.prepare_metrics_csv()
+            return
+
+        failure: str | None = None
+        if training_context.is_primary:
+            try:
+                self.prepare_metrics_csv()
+            except Exception as exc:
+                failure = f"{type(exc).__name__}: {exc}"
+
+        payload = [failure]
+        torch.distributed.broadcast_object_list(
+            payload,
+            src=0,
+            device=training_context.device,
+        )
+        if payload[0] is not None:
+            raise RuntimeError(f"metrics CSV preflight failed on rank 0: {payload[0]}")
+
     def write_metric_row(self, epoch: int, metrics: Any) -> None:
         row = build_online_metric_row(epoch, metrics, self.component_names)
         with self.csv_path.open("a", encoding="utf-8") as handle:
@@ -554,77 +697,6 @@ class OnlineRecipeRun:
             model_identity=self.model_identity,
             strategy=self.strategy,
         )
-
-
-def _prepare_metrics_csv_rank_consistent(
-    run: OnlineRecipeRun,
-    training_context: DistributedTrainingContext,
-) -> None:
-    """Run the rank-0 CSV preflight and propagate its verdict to every rank.
-
-    Only rank 0 owns the output path in multi-node runs, so peers cannot safely
-    inspect the header themselves. Broadcasting the small error description
-    keeps every rank on the same side of the first training collective instead
-    of relying on torchrun to notice and terminate a lone rank-0 exception.
-    """
-
-    if not training_context.distributed:
-        run.prepare_metrics_csv()
-        return
-
-    failure: str | None = None
-    if training_context.is_primary:
-        try:
-            run.prepare_metrics_csv()
-        except Exception as exc:
-            failure = f"{type(exc).__name__}: {exc}"
-
-    payload = [failure]
-    torch.distributed.broadcast_object_list(
-        payload,
-        src=0,
-        device=training_context.device,
-    )
-    if payload[0] is not None:
-        raise RuntimeError(f"metrics CSV preflight failed on rank 0: {payload[0]}")
-
-
-def _resolve_reference_artifacts(examples: list[Any], cfg: DictConfig) -> None:
-    """Resolve manifest-relative REFERENCE paths once, at prompt load time.
-
-    Rollout executors, family collector hooks, and rewards all consume
-    reference paths; resolving the typed fields here means every consumer sees
-    the same absolute path instead
-    of each re-deriving it against its own data root. Rows without reference
-    fields (t2v recipes) pass through untouched; required-ness stays with the
-    family collector hooks. Absolute manifest paths pass through unchanged.
-
-    TARGET fields are deliberately NOT resolved: ``target_video`` is the
-    identity key into sft-latents shards (see ``PromptExample``), so rewriting
-    it to a machine-local absolute path would break every shard lookup.
-    """
-
-    from vrl.utils.artifacts import coerce_data_root, resolve_artifact_path
-
-    data_root = coerce_data_root(
-        OmegaConf.select(cfg, "data.artifact_data_root", default=None),
-    )
-    for example in examples:
-        for field_name in ("reference_image", "reference_video"):
-            raw = str(getattr(example, field_name, "") or "").strip()
-            if not raw:
-                continue
-            resolved = str(
-                resolve_artifact_path(raw, data_root=data_root, allow_absolute=True),
-            )
-            setattr(example, field_name, resolved)
-        references = list(getattr(example, "references", None) or [])
-        if references:
-            resolved_refs = [
-                str(resolve_artifact_path(item, data_root=data_root, allow_absolute=True))
-                for item in references
-            ]
-            example.references = resolved_refs
 
 
 async def run_online_recipe(
@@ -720,7 +792,16 @@ async def run_online_recipe(
     )
 
     examples = load_prompt_examples_from_config(cfg.data)
-    _resolve_reference_artifacts(examples, cfg)
+    data_config = built.root.data
+    artifact_data_root = data_config.artifact_data_root if data_config is not None else None
+    examples = [
+        resolve_prompt_example_references(
+            example,
+            data_root=artifact_data_root,
+            allow_absolute=True,
+        )
+        for example in examples
+    ]
     if family_entry.task in {"i2v", "v2w"}:
         from vrl.trainers.data.artifacts import require_reference_images
 
@@ -765,13 +846,13 @@ async def run_online_recipe(
         generation_config.worker,
     )
     ray = require_ray()
-    ray_session: _RayClusterSession | None = None
-    collector: Any | None = None
-    reward_fn: Any | None = None
-    trainer: OnlineTrainer | None = None
+    lifecycle = _OnlineRecipeLifecycle(
+        placement_owner=placement_owner,
+        strategy=strategy,
+    )
     run_error: BaseException | None = None
     try:
-        ray_session = _initialize_ray_cluster(
+        lifecycle.ray_session = _RayClusterSession.connect(
             ray,
             cross_node=resources.cross_node,
             local_num_cpus=placement_owner.required_local_cluster_cpus(),
@@ -780,7 +861,7 @@ async def run_online_recipe(
             cross_node_preflight(ray, resources)
         placement_owner.create()
         collector_config = resolved.collector
-        reward_fn = build_reward(
+        reward_fn = lifecycle.reward_fn = build_reward(
             built=built,
             resources=resources,
             device=reward_device,
@@ -795,7 +876,7 @@ async def run_online_recipe(
         # here, before the expensive rollout backend launch — not after the
         # first generation batch reaches scoring.
         await reward_fn.preflight()
-        collector = build_rollout_collector(
+        collector = lifecycle.collector = build_rollout_collector(
             family_entry,
             reward_fn=reward_fn,
             config=collector_config,
@@ -847,6 +928,7 @@ async def run_online_recipe(
                 family_entry.family,
             ),
         )
+        lifecycle.rollout_schedule = trainer.rollout_schedule
 
         if resume_checkpoint is not None:
             restore_training_checkpoint(
@@ -911,7 +993,7 @@ async def run_online_recipe(
             resume_epoch=resume_epoch,
             model_identity=model_identity,
         )
-        _prepare_metrics_csv_rank_consistent(run, training_context)
+        run.prepare_metrics_csv_rank_consistent(training_context)
 
         logger.info(
             "Starting %s online recipe: epochs=%d examples=%d n=%d",
@@ -977,17 +1059,7 @@ async def run_online_recipe(
         run_error = exc
         raise
     finally:
-        await _shutdown_online_recipe_runtime(
-            rollout_schedule=(
-                getattr(trainer, "rollout_schedule", None) if trainer is not None else None
-            ),
-            collector=collector,
-            reward_fn=reward_fn,
-            placement_owner=placement_owner,
-            strategy=strategy,
-            ray_session=ray_session,
-            run_error=run_error,
-        )
+        await lifecycle.shutdown(run_error=run_error)
 
 
 def _preflight_production_video_reward(cfg: DictConfig) -> None:
@@ -1004,99 +1076,6 @@ def _preflight_production_video_reward(cfg: DictConfig) -> None:
             "production.kling_video_reward requires the repo-owned Kling VideoReward "
             "inference backend under vrl/rewards/models/kling_video_reward.py.",
         ) from exc
-
-
-async def _shutdown_online_recipe_runtime(
-    *,
-    rollout_schedule: Any | None,
-    collector: Any | None,
-    reward_fn: Any | None,
-    placement_owner: Any | None,
-    strategy: Any | None,
-    ray_session: _RayClusterSession | None,
-    run_error: BaseException | None,
-) -> None:
-    shutdown_errors: list[tuple[str, Exception]] = []
-
-    async def _run_shutdown(
-        name: str,
-        target: Any,
-        method_name: str = "shutdown",
-        *,
-        attempts: int = 1,
-        call_kwargs: Mapping[str, Any] | None = None,
-    ) -> bool:
-        if target is None:
-            return True
-        shutdown = getattr(target, method_name, None)
-        if not callable(shutdown):
-            error = TypeError(f"{name} does not expose callable {method_name}()")
-            shutdown_errors.append((name, error))
-            return False
-        last_error: Exception | None = None
-        for _attempt in range(max(1, int(attempts))):
-            try:
-                result = shutdown(**dict(call_kwargs or {}))
-                if inspect.isawaitable(result):
-                    await result
-                return True
-            except Exception as exc:
-                last_error = exc
-        assert last_error is not None
-        shutdown_errors.append((name, last_error))
-        return False
-
-    # One owner releases the whole rollout pipeline, including reward runtimes.
-    # A schedule keeps continuous teardown on its owner loop and lets strict park
-    # the trainer before a shared reward pool is woken and destroyed. Construction
-    # failures fall back to the collector; only a failure before collector creation
-    # may shut down the standalone reward directly.
-    if rollout_schedule is not None:
-        pipeline_released = await _run_shutdown(
-            "rollout_schedule",
-            rollout_schedule,
-            attempts=2,
-        )
-    elif collector is not None:
-        pipeline_released = await _run_shutdown(
-            "collector",
-            collector,
-            attempts=2,
-        )
-    else:
-        pipeline_released = await _run_shutdown(
-            "reward_fn",
-            reward_fn,
-            attempts=2,
-        )
-    rollout_released = pipeline_released
-    reward_released = pipeline_released
-    await _run_shutdown("placement_owner", placement_owner, attempts=2)
-
-    # Distributed strategies must still destroy their process groups after a role
-    # cleanup failure. Single-process cleanup receives the ownership proof and
-    # abandons (rather than restores) a parked trainer when the shared GPU remains
-    # unknown.
-    await _run_shutdown(
-        "strategy",
-        strategy,
-        attempts=2,
-        call_kwargs={"restore_parked": rollout_released and reward_released},
-    )
-    # Ray is last: every handle-based actor/PG cleanup above needs the connection.
-    await _run_shutdown("ray_session", ray_session, attempts=2)
-
-    if not shutdown_errors:
-        return
-    for name, exc in shutdown_errors:
-        logger.error(
-            "%s shutdown failed during online recipe cleanup",
-            name,
-            exc_info=(type(exc), exc, exc.__traceback__),
-        )
-    if run_error is None:
-        name, exc = shutdown_errors[0]
-        raise RuntimeError(f"{name} shutdown failed during online recipe cleanup") from exc
 
 
 __all__ = [

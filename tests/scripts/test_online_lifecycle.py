@@ -16,6 +16,7 @@ from vrl.families.semantics import PolicySemantics
 from vrl.models import checkpoint_identity
 from vrl.models.interfaces import ReplayResult
 from vrl.scripts.common import online
+from vrl.trainers.data import PromptExample
 from vrl.trainers.online.config import OnlineBatchPlan
 
 ray = pytest.importorskip("ray")
@@ -416,7 +417,10 @@ def _install_common_fakes(
     monkeypatch.setattr(
         online,
         "load_prompt_examples_from_config",
-        lambda cfg: list(state.get("prompt_examples", ["prompt"])),
+        lambda cfg: [
+            PromptExample(prompt=str(prompt))
+            for prompt in state.get("prompt_examples", ["prompt"])
+        ],
     )
     monkeypatch.setattr(online, "require_runtime_model", lambda model, **kwargs: model)
     monkeypatch.setattr(
@@ -1062,15 +1066,14 @@ async def test_terminal_schedule_is_the_only_collector_shutdown_owner() -> None:
         def shutdown(self, *, restore_parked: bool = True) -> None:
             calls.append(f"strategy:{restore_parked}")
 
-    await online._shutdown_online_recipe_runtime(
+    lifecycle = online._OnlineRecipeLifecycle(
+        placement_owner=None,
+        strategy=_Strategy(),
         rollout_schedule=_Schedule(),
         collector=collector,
         reward_fn=_StandaloneReward(),
-        placement_owner=None,
-        strategy=_Strategy(),
-        ray_session=None,
-        run_error=None,
     )
+    await lifecycle.shutdown(run_error=None)
 
     assert calls == ["schedule", "collector", "strategy:True"]
 
@@ -1089,15 +1092,12 @@ async def test_terminal_placement_and_ray_cleanup_retry_once() -> None:
     placement = _FlakyCleanup()
     ray_session = _FlakyCleanup()
 
-    await online._shutdown_online_recipe_runtime(
-        rollout_schedule=None,
-        collector=None,
-        reward_fn=None,
+    lifecycle = online._OnlineRecipeLifecycle(
         placement_owner=placement,
         strategy=None,
         ray_session=ray_session,
-        run_error=None,
     )
+    await lifecycle.shutdown(run_error=None)
 
     assert placement.calls == 2
     assert ray_session.calls == 2
@@ -1115,14 +1115,12 @@ async def test_failed_role_cleanup_abandons_parked_restore_but_cleans_strategy()
         def shutdown(self, *, restore_parked: bool = True) -> None:
             restore_permissions.append(restore_parked)
 
-    await online._shutdown_online_recipe_runtime(
-        rollout_schedule=_FailingSchedule(),
-        collector=object(),
-        reward_fn=None,
+    lifecycle = online._OnlineRecipeLifecycle(
         placement_owner=None,
         strategy=_Strategy(),
-        ray_session=None,
-        run_error=RuntimeError("training failed"),
+        rollout_schedule=_FailingSchedule(),
+        collector=object(),
     )
+    await lifecycle.shutdown(run_error=RuntimeError("training failed"))
 
     assert restore_permissions == [False]

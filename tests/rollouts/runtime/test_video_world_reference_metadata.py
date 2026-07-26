@@ -2,16 +2,14 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from omegaconf import OmegaConf
-
 from vrl.families.registry import get_model_family_entry
 from vrl.rollouts.collector.config import RolloutCollectorConfig
 from vrl.rollouts.collector.requests import GenerationRequestBuilder
-from vrl.scripts.common.online import _resolve_reference_artifacts
 from vrl.trainers.data import load_prompt_manifest
 from vrl.trainers.data.artifacts import (
     require_reference_images,
     resolve_prompt_example_artifacts,
+    resolve_prompt_example_references,
 )
 
 
@@ -58,12 +56,12 @@ def test_cosmos_per_sample_reference_uses_vrl_data_root(monkeypatch, tmp_path: P
     """Checks Cosmos per sample reference resolves at load and passes the hook."""
     manifest = _write_reference_manifest(tmp_path)
     monkeypatch.setenv("VRL_DATA_ROOT", str(tmp_path))
-    examples = load_prompt_manifest(manifest)
-    cfg = OmegaConf.create({"data": {"manifest": manifest.as_posix()}})
-
     # Production sequence: run_online_recipe resolves reference paths at load
     # time, then the family hook only validates.
-    _resolve_reference_artifacts(examples, cfg)
+    examples = [
+        resolve_prompt_example_references(example, allow_absolute=True)
+        for example in load_prompt_manifest(manifest)
+    ]
     require_reference_images(
         examples,
         manifest_path=manifest,
@@ -78,17 +76,14 @@ def test_cosmos_per_sample_reference_uses_vrl_data_root(monkeypatch, tmp_path: P
 def test_cosmos_per_sample_reference_uses_artifact_data_root(tmp_path: Path) -> None:
     """Checks cosmos per_sample references resolve under data.artifact_data_root."""
     manifest = _write_reference_manifest(tmp_path)
-    examples = load_prompt_manifest(manifest)
-    cfg = OmegaConf.create(
-        {
-            "data": {
-                "manifest": manifest.as_posix(),
-                "artifact_data_root": str(tmp_path),
-            },
-        },
-    )
-
-    _resolve_reference_artifacts(examples, cfg)
+    examples = [
+        resolve_prompt_example_references(
+            example,
+            data_root=tmp_path,
+            allow_absolute=True,
+        )
+        for example in load_prompt_manifest(manifest)
+    ]
     require_reference_images(
         examples,
         manifest_path=manifest,

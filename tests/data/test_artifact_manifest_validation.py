@@ -6,8 +6,11 @@ from pathlib import Path
 import pytest
 
 from vrl.scripts.data import setup as setup_cli
-from vrl.trainers.data import load_prompt_manifest
-from vrl.trainers.data.artifacts import validate_artifact_manifest
+from vrl.trainers.data import PromptExample, load_prompt_manifest
+from vrl.trainers.data.artifacts import (
+    resolve_prompt_example_references,
+    validate_artifact_manifest,
+)
 from vrl.utils.artifacts import ArtifactManifestError, resolve_artifact_path
 
 
@@ -80,6 +83,36 @@ def test_target_artifacts_are_prompt_fields_and_validate(tmp_path: Path) -> None
     }
 
 
+def test_reference_resolution_preserves_target_identity_fields(tmp_path: Path) -> None:
+    """Reference consumers get absolute paths without changing target lookup keys."""
+
+    example = PromptExample(
+        prompt="open the drawer",
+        reference_image="references/frame.ppm",
+        reference_video="references/context.mp4",
+        target_image="targets/result.ppm",
+        target_video="targets/result.mp4",
+        references=["references/alternate.ppm"],
+    )
+
+    resolved = resolve_prompt_example_references(example, data_root=tmp_path)
+
+    assert resolved.reference_image == str((tmp_path / "references/frame.ppm").resolve())
+    assert resolved.reference_video == str((tmp_path / "references/context.mp4").resolve())
+    assert resolved.references == [
+        str((tmp_path / "references/alternate.ppm").resolve()),
+    ]
+    assert resolved.target_image == "targets/result.ppm"
+    assert resolved.target_video == "targets/result.mp4"
+    assert example.reference_image == "references/frame.ppm"
+
+    blank = resolve_prompt_example_references(
+        PromptExample(prompt="no reference", reference_image="  "),
+        data_root=tmp_path,
+    )
+    assert blank.reference_image is None
+
+
 def test_missing_reference_image_fails_with_manifest_row(tmp_path: Path) -> None:
     """Checks missing reference image fails with manifest row."""
     manifest = tmp_path / "missing.jsonl"
@@ -139,14 +172,17 @@ def test_setup_cli_creates_ignored_external_dirs(
     """Checks setup CLI creates ignored external dirs."""
     data_root = tmp_path / "external"
 
-    assert setup_cli.main(
-        [
-            "init-dirs",
-            "video-world",
-            "--data-root",
-            str(data_root),
-        ],
-    ) is None
+    assert (
+        setup_cli.main(
+            [
+                "init-dirs",
+                "video-world",
+                "--data-root",
+                str(data_root),
+            ],
+        )
+        is None
+    )
 
     assert (data_root / "video_world" / "references").is_dir()
     assert (data_root / "video_world" / "targets").is_dir()

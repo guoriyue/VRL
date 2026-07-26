@@ -11,10 +11,7 @@ import torch
 import torch.distributed as dist
 import torch.multiprocessing as mp
 
-from vrl.scripts.common.online import (
-    OnlineRecipeRun,
-    _prepare_metrics_csv_rank_consistent,
-)
+from vrl.scripts.common.online import OnlineRecipeRun
 from vrl.trainers.distributed import DistributedTrainingContext
 
 
@@ -94,7 +91,7 @@ def _run_metrics_preflight_rank(
             Path(marker_path).write_text("prepared\n", encoding="utf-8")
 
         try:
-            _prepare_metrics_csv_rank_consistent(
+            OnlineRecipeRun.prepare_metrics_csv_rank_consistent(
                 SimpleNamespace(prepare_metrics_csv=_prepare),
                 _context(distributed=True, primary=rank == 0),
             )
@@ -113,7 +110,7 @@ def test_metrics_csv_preflight_preserves_single_process_error() -> None:
     run = SimpleNamespace(prepare_metrics_csv=_raise_schema_error)
 
     with pytest.raises(ValueError, match="different metrics schema"):
-        _prepare_metrics_csv_rank_consistent(
+        OnlineRecipeRun.prepare_metrics_csv_rank_consistent(
             run,
             _context(distributed=False, primary=True),
         )
@@ -240,7 +237,7 @@ def test_metrics_csv_preflight_broadcasts_primary_failure(
     run = SimpleNamespace(prepare_metrics_csv=_raise_schema_error)
 
     with pytest.raises(RuntimeError, match="rank 0: ValueError: different metrics schema"):
-        _prepare_metrics_csv_rank_consistent(
+        OnlineRecipeRun.prepare_metrics_csv_rank_consistent(
             run,
             _context(distributed=True, primary=True),
         )
@@ -261,7 +258,7 @@ def test_metrics_csv_preflight_peer_uses_broadcast_verdict(
         prepared = True
 
     with pytest.raises(RuntimeError, match="rank 0: ValueError: different metrics schema"):
-        _prepare_metrics_csv_rank_consistent(
+        OnlineRecipeRun.prepare_metrics_csv_rank_consistent(
             SimpleNamespace(prepare_metrics_csv=_prepare),
             _context(distributed=True, primary=False),
         )
