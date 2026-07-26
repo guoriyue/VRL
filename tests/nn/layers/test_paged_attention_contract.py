@@ -11,6 +11,7 @@ from vrl.nn.layers.attention.paged import (
     ARAttentionPrefillOutput,
     ARAttentionStepInput,
     ARAttentionStepOutput,
+    VllmPagedAttentionConfig,
 )
 
 
@@ -19,7 +20,7 @@ def test_paged_attention_config_requires_identity() -> None:
     with pytest.raises(ValueError, match="family"):
         ARAttentionConfig(family="")
     with pytest.raises(ValueError, match="block_size"):
-        ARAttentionConfig(family="janus_pro", block_size=0)
+        VllmPagedAttentionConfig(family="janus_pro", block_size=0)
 
 
 def test_paged_attention_prefill_validates_batch_shape() -> None:
@@ -29,6 +30,17 @@ def test_paged_attention_prefill_validates_batch_shape() -> None:
             inputs_embeds=torch.zeros(2, 3, 4),
             attention_mask=torch.ones(1, 3),
             branch="cond",
+        )
+
+
+def test_paged_attention_prefill_requires_positive_token_budget() -> None:
+    """Checks paged attention prefill validates its typed token budget."""
+    with pytest.raises(ValueError, match="max_new_tokens"):
+        ARAttentionPrefillInput(
+            inputs_embeds=torch.zeros(1, 3, 4),
+            attention_mask=torch.ones(1, 3),
+            branch="cond",
+            max_new_tokens=0,
         )
 
 

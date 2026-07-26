@@ -6,8 +6,7 @@ calls live in ``vrl.nn.kernels.attention.vllm_paged``.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any
 
 import torch
@@ -19,17 +18,26 @@ class ARAttentionUnavailable(RuntimeError):
 
 @dataclass(frozen=True, slots=True)
 class ARAttentionConfig:
-    """Runtime identity for a paged-attention backend instance."""
+    """Runtime identity shared by AR attention backends."""
 
     family: str
-    block_size: int = 16
-    extra: Mapping[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         if not self.family:
             raise ValueError("ARAttentionConfig.family must be non-empty")
+
+
+@dataclass(frozen=True, slots=True)
+class VllmPagedAttentionConfig(ARAttentionConfig):
+    """Runtime configuration owned by the vLLM paged-attention backend."""
+
+    block_size: int = 16
+    cache_dtype: str = "auto"
+
+    def __post_init__(self) -> None:
+        ARAttentionConfig.__post_init__(self)
         if self.block_size < 1:
-            raise ValueError("ARAttentionConfig.block_size must be >= 1")
+            raise ValueError("VllmPagedAttentionConfig.block_size must be >= 1")
 
 
 @dataclass(frozen=True, slots=True)
@@ -39,12 +47,14 @@ class ARAttentionPrefillInput:
     inputs_embeds: torch.Tensor
     attention_mask: torch.Tensor
     branch: str
-    metadata: Mapping[str, Any] = field(default_factory=dict)
+    max_new_tokens: int = 1
 
     def __post_init__(self) -> None:
         _require_embed_mask_batch(self.inputs_embeds, self.attention_mask)
         if not self.branch:
             raise ValueError("ARAttentionPrefillInput.branch must be non-empty")
+        if self.max_new_tokens < 1:
+            raise ValueError("ARAttentionPrefillInput.max_new_tokens must be >= 1")
 
 
 @dataclass(frozen=True, slots=True)
@@ -126,4 +136,5 @@ __all__ = [
     "ARAttentionStepInput",
     "ARAttentionStepOutput",
     "ARAttentionUnavailable",
+    "VllmPagedAttentionConfig",
 ]

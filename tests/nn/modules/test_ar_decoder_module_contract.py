@@ -7,8 +7,8 @@ import torch
 
 from vrl.nn.layers.attention.paged import (
     ARAttentionBackend,
-    ARAttentionConfig,
     ARAttentionPrefillInput,
+    VllmPagedAttentionConfig,
 )
 from vrl.nn.modules.ar_decoder import VllmDecoderPagedAttentionBackend
 
@@ -43,7 +43,7 @@ def test_vllm_decoder_pack_prefill_compacts_left_padded_prompts() -> None:
             inputs_embeds=embeds,
             attention_mask=mask,
             branch="cond",
-            metadata={"image_token_num": 2},
+            max_new_tokens=2,
         )
     )
 
@@ -76,6 +76,6 @@ def test_vllm_decoder_pack_prefill_rejects_non_contiguous_prompt_mask() -> None:
 def _backend() -> VllmDecoderPagedAttentionBackend:
     return VllmDecoderPagedAttentionBackend(
         trunk=object(),
-        config=ARAttentionConfig(family="test"),
+        config=VllmPagedAttentionConfig(family="test"),
         kernels=object(),  # type: ignore[arg-type]
     )

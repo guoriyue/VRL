@@ -9,8 +9,8 @@ from typing import Any
 import torch
 
 from vrl.nn.layers.attention.paged import (
-    ARAttentionConfig,
     ARAttentionUnavailable,
+    VllmPagedAttentionConfig,
 )
 
 
@@ -34,7 +34,7 @@ class VllmPagedAttentionKernels:
 
     def __init__(
         self,
-        config: ARAttentionConfig,
+        config: VllmPagedAttentionConfig,
         *,
         import_module: Callable[[str], Any] | None = None,
     ) -> None:

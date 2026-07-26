@@ -50,7 +50,7 @@ def test_nextstep_vllm_paged_attention_matches_hf_qwen_one_step() -> None:
                 inputs_embeds=embeds,
                 attention_mask=mask,
                 branch="cond",
-                metadata={"image_token_num": 2},
+                max_new_tokens=2,
             )
         )
         hf_step = trunk(

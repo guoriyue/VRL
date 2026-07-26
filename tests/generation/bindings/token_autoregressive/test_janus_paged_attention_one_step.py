@@ -150,7 +150,7 @@ def test_janus_none_image_token_count_uses_model_default() -> None:
 
     assert init.step_count == model.config.image_token_num
     assert init.state.total_token_num == model.config.image_token_num
-    assert [request.metadata["image_token_num"] for request in backend.prefill_requests] == [
+    assert [request.max_new_tokens for request in backend.prefill_requests] == [
         model.config.image_token_num,
         model.config.image_token_num,
     ]

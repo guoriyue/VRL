@@ -12,12 +12,12 @@ import torch
 from vrl.nn.kernels.attention.vllm_paged import VllmPagedAttentionKernels
 from vrl.nn.layers.attention.paged import (
     ARAttentionBackend,
-    ARAttentionConfig,
     ARAttentionPrefillInput,
     ARAttentionPrefillOutput,
     ARAttentionStepInput,
     ARAttentionStepOutput,
     ARAttentionUnavailable,
+    VllmPagedAttentionConfig,
 )
 
 
@@ -49,16 +49,14 @@ class VllmDecoderPagedAttentionBackend(ARAttentionBackend):
         self,
         *,
         trunk: Any,
-        config: ARAttentionConfig,
+        config: VllmPagedAttentionConfig,
         kernels: VllmPagedAttentionKernels | None = None,
     ) -> None:
         super().__init__(config)
         self.trunk = trunk
         self.kernels = kernels or VllmPagedAttentionKernels(config)
-        self.cache_dtype = str(config.extra.get("cache_dtype", "auto"))
-        self.backend_label = str(
-            config.extra.get("backend_label", f"{config.family}_vllm_paged_attention")
-        )
+        self.cache_dtype = config.cache_dtype
+        self.backend_label = f"{config.family}_vllm_paged_attention"
         self._next_sequence_id = 0
         self._next_block_id = 0
         self._kv_caches: list[torch.Tensor] = []
@@ -141,7 +139,6 @@ class VllmDecoderPagedAttentionBackend(ARAttentionBackend):
         query_starts = [0]
         last_offsets: list[int] = []
         states: list[VllmDecoderPagedSequenceState] = []
-        max_new_tokens = self._max_new_tokens_from_metadata(request.metadata)
         sequence_ids = tuple(
             f"{request.branch}:{row}:{self._next_sequence_id + row}"
             for row in range(embeds.shape[0])
@@ -163,7 +160,7 @@ class VllmDecoderPagedAttentionBackend(ARAttentionBackend):
                     sequence_id=sequence_ids[row],
                     length=length,
                     next_position_id=end,
-                    block_ids=self._allocate_blocks(length + max_new_tokens),
+                    block_ids=self._allocate_blocks(length + request.max_new_tokens),
                 )
             )
         self._next_sequence_id += embeds.shape[0]
@@ -505,8 +502,7 @@ class VllmDecoderPagedAttentionBackend(ARAttentionBackend):
         end = int(valid_positions[-1].item()) + 1
         if end - start != int(length):
             raise ValueError(
-                f"{self.backend_label} requires prompt masks with one contiguous "
-                "valid-token span",
+                f"{self.backend_label} requires prompt masks with one contiguous valid-token span",
             )
         return start, end
 
@@ -518,16 +514,9 @@ class VllmDecoderPagedAttentionBackend(ARAttentionBackend):
         if not all(isinstance(state, VllmDecoderPagedSequenceState) for state in typed):
             got = sorted({type(state).__name__ for state in typed})
             raise TypeError(
-                "vLLM paged attention received incompatible sequence states: "
-                f"{got}",
+                f"vLLM paged attention received incompatible sequence states: {got}",
             )
         return typed  # type: ignore[return-value]
-
-    @staticmethod
-    def _max_new_tokens_from_metadata(metadata: Any) -> int:
-        if isinstance(metadata, dict) and "image_token_num" in metadata:
-            return max(1, int(metadata["image_token_num"]))
-        return 1
 
     def _num_attention_heads(self, attention: Any) -> int:
         return int(getattr(attention, "num_heads", self.trunk.config.num_attention_heads))
@@ -576,9 +565,7 @@ def _apply_rotary_pos_emb(
 ) -> tuple[torch.Tensor, torch.Tensor]:
     cos = cos.unsqueeze(unsqueeze_dim)
     sin = sin.unsqueeze(unsqueeze_dim)
-    return (query * cos) + (_rotate_half(query) * sin), (key * cos) + (
-        _rotate_half(key) * sin
-    )
+    return (query * cos) + (_rotate_half(query) * sin), (key * cos) + (_rotate_half(key) * sin)
 
 
 __all__ = [

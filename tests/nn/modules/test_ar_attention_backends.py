@@ -51,10 +51,10 @@ def test_resolve_vllm_forwards_family_and_backend_kwargs(monkeypatch) -> None:
     )
 
 
-def test_resolve_torch_native_ignores_vllm_only_kwargs(monkeypatch) -> None:
-    """Checks torch_native selection accepts unused vLLM kwargs without branching."""
+def test_resolve_torch_native_does_not_forward_vllm_only_kwargs(monkeypatch) -> None:
+    """Checks torch_native selection keeps vLLM-only configuration out of its builder."""
 
-    def build_backend(model: Any, *, family: str, **_ignored: Any) -> _StubBackend:
+    def build_backend(model: Any, *, family: str) -> _StubBackend:
         return _StubBackend(model, family)
 
     monkeypatch.setattr(backends, "build_torch_native_backend", build_backend)

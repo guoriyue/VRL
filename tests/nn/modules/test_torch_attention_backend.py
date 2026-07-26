@@ -31,10 +31,7 @@ from vrl.nn.modules.torch_attention import TorchNativeDecoderAttentionBackend
 
 
 def _config() -> ARAttentionConfig:
-    return ARAttentionConfig(
-        family="stub",
-        extra={"backend_label": "stub_torch_native"},
-    )
+    return ARAttentionConfig(family="stub")
 
 
 class _RowIdentityTrunk:
@@ -181,7 +178,9 @@ def test_missing_past_key_values_fails_with_the_backend_label() -> None:
 
     backend = TorchNativeDecoderAttentionBackend(trunk=_CachelessTrunk(), config=_config())
 
-    with pytest.raises(RuntimeError, match="stub_torch_native trunk forward returned no"):
+    with pytest.raises(
+        RuntimeError, match="stub_torch_native_attention trunk forward returned no"
+    ):
         backend.prefill(
             ARAttentionPrefillInput(
                 inputs_embeds=torch.randn(2, 3, 4),
