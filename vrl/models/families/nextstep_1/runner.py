@@ -96,7 +96,7 @@ class NextStep1ARModelRunner:
             prompt_embeds,
             prompt_mask,
             branch="cond",
-            image_token_num=int(image_token_num),
+            max_new_tokens=int(image_token_num),
         )
         c_cond = cond_prefill.last_hidden
         row_lanes = {"c_cond": c_cond, "cond_attn": prompt_mask}
@@ -108,7 +108,7 @@ class NextStep1ARModelRunner:
                 uncond_embeds,
                 uncond_mask,
                 branch="uncond",
-                image_token_num=int(image_token_num),
+                max_new_tokens=int(image_token_num),
             )
             row_lanes["c_uncond"] = uncond_prefill.last_hidden
             row_lanes["uncond_attn"] = uncond_mask
