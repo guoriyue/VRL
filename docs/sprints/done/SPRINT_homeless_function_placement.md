@@ -1,21 +1,26 @@
 # SPRINT: Homeless-function placement — giving shared helpers a subject
 
+状态：**done（2026-07-25，执行后复盘修订）**。
+
 > **来源**：2026-07-25 的全仓 homeless-function 审计（6 域猎手 × 逐条对抗验证，
 > 38 条候选 → 31 条存活 / 7 条驳回）。它是 `SPRINT_config_resolution_consolidation.md`
-> 那轮去重 sweep 的**续集**：上一轮把重复的函数体合并成共享自由函数是对的，但没有
-> 把它们放回各自的主语类型上，于是 `self` 以三种形态回来了——`owner=` 字符串、
-> `Any` 参数、N 份兄弟子类里的同形包装。
+> 那轮去重 sweep 的**续集**：上一轮合并了重复函数体，但部分结果仍需继续核对 ownership；
+> `owner=` 字符串、`Any` 参数、N 份兄弟子类里的同形包装都是调查信号，不单独构成
+> method 化的证据。
 >
 > **四条放置规则已固化到 AGENTS.md**（`### Placement — where a shared helper belongs`），
-> 那是本 sprint 最重要的产出；下面的 10 组重构是它的具体应用。
+> 并在本次执行后复盘中去掉了机械化结论；下面的 10 组重构是历史执行记录，不是可逐条
+> 套用的新 sweep 模板。
 >
-> **非目标清单（第 332 行起）同样是产出的一部分**：那 7 条经对抗验证判定必须保持自由
+> **下方非目标清单同样是产出的一部分**：那 7 条经对抗验证判定必须保持自由
 > 函数，理由都写在表里。后续 sweep 不要再"清理"它们。
 
 ## 执行状态
 
-**全部完成。** 10 组重构分两批落地，每批独立门禁验证（`ruff check .` + config lint + 全量 fast 子集）。
-最终：3691 passed / 0 failed（起始基线 3584）。
+**执行完成。** 10 组重构分两批落地，每批独立门禁验证（当时使用 `ruff check .` +
+config lint + 全量 fast 子集）。最终：3691 passed / 0 failed（起始基线 3584）。
+`done` 表示计划已经执行并验证，不表示其中每个 architecture judgment 都永久正确；后续审计
+发现的设计债记录在下方“执行后复盘”。
 
 | 组 | 内容 | 状态 |
 |---|---|---|
@@ -23,18 +28,48 @@
 | 1 | denoise 四个 opt-in mixin | ✅ `bbaa4c4d` |
 | 2 | `DiffusionModelBase`/`DiffusersPipelineModelBase` 吸收 `from_build` 等 | ✅ `bbaa4c4d` |
 | 3 | `ARModelBase` + 新 `ARReplayCore` | ✅ `28b1354b` |
-| 4, 5, 6 | executor 基类 / `ray/utils.py` 解散 / `ModelBuild`+`RuntimeBundle` | ✅ `4fb66e50` |
-| 7, 9 | `ray/resources.py` / `trainers/` strategy mixin | ✅ `9e44e835` |
-| 8 | `rollouts/` accumulators + evaluator base | ✅ `921f6341` |
-| 10 | `nn/` QuantizedLinear.swap_linears | ✅ `65a04aee` |
+| 4, 5, 6 | executor 基类 / `ray/utils.py` 解散 / `ModelBuild`+`RuntimeBundle` | ✅ `fcbff9ea` |
+| 7, 9 | `ray/resources.py` / `trainers/` strategy mixin | ✅ `ff6a57dd` |
+| 8 | `rollouts/` accumulators + evaluator base | ✅ `aa16ce2a` |
+| 10 | `nn/` `QuantizedLinear.swap_linears` | ✅ `183ee430` |
+
+## 执行后复盘
+
+本轮的共享实现多数仍然成立，但“给函数找主语”曾被写成了机械规则。当前证据要求修正
+三类判断：
+
+1. **`Protocol` 与 implementation base 必须分离。** `GenerationChunkExecutor`、
+   `Evaluator`、`Strategy` 是 consumer-facing structural contracts。concrete class 不应为了
+   声明符合接口而继承它们，更不应靠 mixin 排在 `Protocol` 前面来压过 `...` stub。
+   implementation base 应自行实现完整行为，或使用 ABC abstract method fail loud。
+   `Strategy` / `Evaluator` 部分已在 `52916de5` 落地；`ChunkExecutorBase` 尚待同样整改。
+2. **一个 construction site 不等于在底层做 registry lookup。**
+   `ChunkExecutorBase.gather_chunks` 从 neutral execution 层反向读取 family registry，
+   而 composition root 已经拥有 `ModelFamilyEntry` 和 gatherer。正确后续是由 composition
+   root 显式绑定或注入，保留独立 `ChunkGatherer` contract。此项仍是 outstanding，不属于
+   本文 `done` 状态所声称已修复的内容；它应与 Ray deadline 相关编辑串行落地，避免同时修改
+   generation execution/launcher 路径。
+3. **closed dict bag 的原整改只完成了一半，现已补齐。** item 10 落地后 AR attention
+   仍通过 `ARAttentionConfig.extra["backend_label"]` / `["cache_dtype"]` 传递封闭键，
+   `ARAttentionPrefillInput.metadata` 也只有一个生产键。`ead3e4d0` 随后把它们改成 typed
+   `cache_dtype` / `max_new_tokens` fields，并由 concrete backend 派生 label；本文件原先
+   把 `183ee430` 记作已完全消除此问题并不准确。
+
+同时确认 item 2 的 generic `DiffusersPipelineModelBase.from_build` 是正确结果：多个 family
+共享同一加载算法，差异由明确 class declarations 表达；特殊 family 继续 override。这里保留的
+“跨 family 一致形状”是统一 public construction contract 和显式 declarations，不是保留
+逐字相同的 per-family wrappers。
 
 ---
 
 # Placement plan — giving the homeless functions a subject
 
-**The one question this plan answers:** every function below was hoisted out of a type during a dedup sweep, and the `self` it lost came back as a string, an `Any`, or N copies. This says which type takes it back.
+**本计划回答的问题：** 一个共享函数出现 caller identity、`Any` 或 sibling wrappers 时，
+它是否有真实 owner；若有，哪个类型拥有相同 invariant。答案也可能是保留 domain function、
+public facade 或 adapter，而不是 method。
 
-**The one sentence to internalize:** *if a parameter exists only to tell the function who called it, what type its own argument really is, or which constant this copy uses, that parameter is a `self` that was dropped on the floor — put the body on the thing that was passing it.*
+**需要记住的一句话：** caller identity、type erosion 和重复 wrapper 是 ownership
+调查入口，不是自动改成 method 的判决。
 
 ---
 
@@ -194,7 +229,15 @@ and `ARChunkExecutorBase` gets `def __init__(self, model: Any) -> None: self.mod
 
 **4b. `gather_chunks` / `forward_plan`.** `ChunkExecutorBase` holds one concrete `gather_chunks` and one concrete `forward_plan` (the `run_sample_chunks_with_oom_retry` + gather pair). The three binding bases change their base from `GenerationChunkExecutor` to `ChunkExecutorBase` (one line each); nextstep_1/janus_pro executors follow automatically. `vrl/generation/protocols.py` stays a pure contract — `GenerationChunkExecutor` keeps exactly the two members `_require_chunked_executor` (`worker.py:758`) checks.
 
-The gatherer binding must end up with **one** construction site. The registry already owns it (`vrl/families/registry.py:156 gatherer_cls`, `:408-413 new_gatherer`, consumed at `ray/launcher.py:276`), so the base default should read the registry: `FAMILY_REGISTRY[self.family].new_gatherer().gather_chunks(...)`. Verified acyclic (registry imports nothing from `vrl.generation`) and all five gatherers are zero-arg constructible. *If* you prefer a `gatherer_cls` class attribute instead, you must delete `ModelFamilyEntry.gatherer_cls` in the same pass and reorder the classes (the gatherers are defined **after** the executors — `token_autoregressive/executor.py` executor:209/gatherer:313 — so a class-body reference NameErrors at import).
+The gatherer binding must end up with **one** construction site. The historical
+implementation made the base read the registry:
+`FAMILY_REGISTRY[self.family].new_gatherer().gather_chunks(...)`.
+
+**执行后复盘：construction-site 结论保留，放置结论撤回。** `ray/launcher.py` 这个
+composition root 已经持有 family entry 并构造 gatherer；neutral execution layer 不应反向
+import `vrl.families`. 后续应把同一个 registry-owned binding 显式注入 executor，而不是把
+registry lookup 藏进 `ChunkExecutorBase`. `ChunkGatherer` 仍是独立 contract，不与 executor
+合并。
 
 Do not merge the three `plan()` facades — their bodies genuinely differ, and `docs/sprints/done/SPRINT_runtime_payload_smallest_truth.md:41` records the decision to keep them. Do not delete executor-level `gather_chunks` access: `forward_plan_pipelined` (`full_sequence_denoise/executor.py:295`, live via `worker.py:553`) depends on it.
 
@@ -299,7 +342,18 @@ Free bonus, fix it: `_resolve_role_devices` passes an unprefixed `f"{role}.devic
 
 **8b. `annotate_batch_context` → `RolloutIteration.annotate_batch_context()`** (same file, `types.py:95-108`): one parameter, of the type declared 50 lines above, reads six of its fields and mutates its batches. Keep the `return self` so `strict_on_policy.py:131-140` stays a single expression; drop it from `__all__` (`:116`). **`build_rollout_iteration` STAYS a free factory** — a kwargs-only constructor helper is a legitimate free function and `docs/sprints/done/SPRINT_function_organization_audit.md:97` already exempts it; narrow that doc line to name the factory specifically. Call sites: `strict_on_policy.py:131`, `continuous/consumer.py:210`; tests at `tests/rollouts/orchestration/test_iteration_types.py:11,81,107`; doc pointer at `docs/sprints/reading/SPRINT_batch_context_dict_adjudication.md:15`.
 
-**8c. Evaluator preamble → `ReplayEvaluatorBase` mixin** in `vrl/rollouts/evaluators/base.py`, **not** on the `Evaluator` Protocol. All five evaluators open `evaluate()` with `require_replay_model(model, owner="XEvaluator.model")` — literally `f"{type(self).__name__}.model"` — at `token/token_logprob.py:51,53`, `token/continuous_token_logprob.py:43`, `token/multi_segment_token_logprob.py:42`, `denoise/sde_logprob.py:61`, `denoise/chunk_autoregressive_logprob.py:39`. The mixin holds `_require_models(self, model, ref_model=None)`; the five classes become `class XxxEvaluator(ReplayEvaluatorBase, Evaluator)` — the shape `SingleProcessStrategy(_TrainingStateParking, Strategy)` already uses — and each `evaluate()` opens with one line. Verified by execution: MRO is `A -> ReplayEvaluatorBase -> Evaluator -> Protocol`, `Evaluator.__protocol_attrs__` stays `['evaluate']`, so the ~15 duck-typed test fakes keep satisfying the structural check. `require_replay_model` keeps its `owner` kwarg — the mixin is now the thing passing it.
+**8c. Evaluator preamble → `ReplayEvaluatorBase` implementation base** in
+`vrl/rollouts/evaluators/base.py`, **not** on the `Evaluator` Protocol. All five
+evaluators open `evaluate()` with
+`require_replay_model(model, owner="XEvaluator.model")` — literally
+`f"{type(self).__name__}.model"` — so `_require_models` has a real shared owner.
+
+**执行后复盘：共享 preamble 的判断保留，`class XxxEvaluator(ReplayEvaluatorBase,
+Evaluator)` 的 nominal inheritance 撤回。** `Evaluator` 是 consumer-facing structural
+`Protocol`; concrete evaluators 应只继承 implementation base 并在结构上满足 contract。
+不能把 base order 当成阻止 `Protocol` 的 `...` stub 静默获胜的长期方案。
+`require_replay_model` 继续保留 `owner` kwarg，因为其他 boundary caller 仍会提供自己的
+error domain。
 
 **Verify:** `.venv/bin/python -m pytest tests/rollouts tests/trainers -q` (baselines 328 / 451) and `grep -rn record_phase vrl/ tests/` returns nothing.
 
@@ -309,7 +363,7 @@ Free bonus, fix it: `_resolve_role_devices` passes an unprefixed `f"{role}.devic
 
 ## 9. `vrl/trainers/` — one strategy mixin, one adapter-export owner, one family adapter evicted
 
-**Value: medium. Risk: medium (MRO ordering is silently wrong-answer here, not fail-loud).**
+**Value: medium. Risk: medium (`Protocol`-as-implementation-base can fail silently).**
 
 **9a. `_UnshardedStateStrategy` mixin** beside `_TrainingStateParking` (`vrl/trainers/strategy.py:167`), holding the **five** SingleProcess≡DDP bodies whose shared precondition is "every rank already holds the full unsharded tensor": `export_checkpoint_state` (`:336`/`:965`), `load_checkpoint_state` (`:346`/`:986`), `load_full_checkpoint_state` (`:357`/`:997`), `export_optimizer_state` (`:368`/`:1008`), `load_optimizer_state` (`:376`/`:1018`). Name the mixin after the **precondition**, and have its docstring name `FSDPStrategy` as the counterexample that overrides all five.
 ```python
@@ -319,7 +373,12 @@ class FSDPStrategy(_TrainingStateParking, Strategy)      # unchanged
 ```
 **Keep duplicated, deliberately:** `backward` (all three) — each copy's comment *is* the per-backend correctness argument ("FSDP2 reduce-scatters gradients inside the backward hooks" / "DDP all-reduces … this IS the synchronized step"), and it fits neither mixin's name. `clip_grad_norm` (SingleProcess/DDP) — same text, different theorem, and `FSDPStrategy._clip_cpu_offloaded_grad_norm` disproves the DDP version's premise. The proposed `_ProcessGroupStrategy` (barrier/all_ranks_succeeded/shutdown) — net LOC ≈ 0, and `all_ranks_succeeded`'s real body is already deduped into module-level `_distributed_all_ranks_succeeded` (`:1139`).
 
-**MRO is load-bearing and fails *silently*:** with `class C(Strategy, Mixin)` the Protocol's `...` stub wins and returns `None`, while `callable(getattr(obj, name, None))` is still `True` — so `vrl/trainers/checkpointing.py:868,905` would skip the load instead of raising. **Every mixin precedes `Strategy`.**
+**执行时发现的真实风险：** with `class C(Strategy, Mixin)` the Protocol's `...` stub
+wins and returns `None`, while `callable(getattr(obj, name, None))` is still
+`True`. 当时用“every mixin precedes `Strategy`”保护 MRO；执行后复盘判定这只是脆弱的
+顺序补丁。共享 strategy mixins 继续保留，但 concrete strategies 不应仅为声明 conformance
+而继承 consumer `Strategy` Protocol。它们应在结构上满足 contract；若需要 nominal
+implementation hierarchy，则另建 fail-loud ABC。
 
 Separately, the `DDPStrategy` docstring (`:876`) is stale on two counts ("the same full-state path FSDP uses", "only prepare_model diverges") — fix it in the same commit.
 
@@ -350,7 +409,11 @@ Separately, the `DDPStrategy` docstring (`:876`) is stale on two counts ("the sa
 
 **10b. `TorchNativeDecoderAttentionBackend` takes the shape of its paged sibling** (`vrl/nn/modules/torch_attention.py:40`). Give it `__init__(self, *, trunk, config)` setting `self.trunk` and `self.backend_label` — copying the fallback form at `ar_decoder.py:59-61` verbatim — and a private `_forward(embeds, mask, kv=None)` that raises inline. Deletes `require_past_key_values` (`:81`, whose `label` is threaded down two levels from `config.extra["backend_label"]`), `_native_decode_fns`, and the `PrefillFn`/`StepFn` aliases; `build_torch_native_backend` collapses to a single constructor call parallel to `build_vllm_attention_backend`.
 - `_last_token_hidden` moves in as a `@staticmethod`, unchanged — it is genuinely subject-less, and it is **not** a duplicate of `paged_attention_helpers.py:71` (that one rejects `[B,T,H]`; this one selects the last token and has a `last_hidden_state` → `hidden_states[-1]` fallback that flattening would bury).
-- **Do not** promote `backend_label` to a typed `ARAttentionConfig` field — `docs/sprints/done/SPRINT_design_smell_audit.md:174-181` already recorded that as "withdrawn"; the change already removes the one unguarded `config.extra[...]` read.
+- **执行时的旧裁决（已被复盘取代）：** 当时依据
+  `docs/sprints/done/SPRINT_design_smell_audit.md:174-181` 保留
+  `backend_label` in `config.extra`。当前 source audit 证明 `backend_label` /
+  `cache_dtype` 是 finite writer/reader set，且 backend 仍在 `.get(...)`；`ead3e4d0`
+  已以 typed fields 和 backend-owned derived labels 取代该旧裁决。
 - One real signature-surface change to declare in the PR: merging prefill and step means prefill now passes `past_key_values=None` explicitly. Equivalent for the HF decoders in play, but say so or keep the `kv is None` branch.
 - Rewrite the module docstring (`:11-14`) — its claim that NextStep-1 supplies its own `_init_kv`/`_step_llm` handles through this seam is false (`nextstep_1/model.py:344-347` returns a plain `peel_peft(self.language_model)`), and it is the only evidence the injection seam looks alive.
 - **Non-goal:** do not merge glm_image's two hand-written `past_key_values` guards (`runner.py:155-159,238-242`). glm_image cannot use this backend at all (it injects `position_ids`, `runner.py:17`, `runtime.py:89`), so sharing the guard would spread the label-threading to a third site. Three copies → two is the correct stopping point.
@@ -381,27 +444,57 @@ Also staying free inside the restructures above, for the same reason: `require_z
 
 ## The four placement rules
 
-Apply these mechanically before adding a parameter or a subclass method.
+这些规则用于提出 ownership hypothesis，不是机械重构清单。先读 caller、consumer、
+invariant、public boundary 和 tests，再决定 method、mixin、domain function 或 facade。
 
-**Rule 1 — A name argument is a lost `self`.**
-If you are about to write `owner=`, `label=`, `what=`, `context=`, or `prefix=` and the value at every call site is `type(self).__name__` or your own family's literal, the function belongs on your base class and should derive the name from `type(self).__name__`.
-*Counter-test that keeps it free:* the string names a **config key** (`path="model.family"`), a **manifest field** (`field_name`), or a **data label supplied by a second, un-derivable caller**. `require_exact_int(value, *, path)` is correct as written.
+**Rule 1 — A name argument is ownership evidence.**
+If you are about to write `owner=`, `label=`, `what=`, `context=`, or `prefix=`
+and the value at every call site is `type(self).__name__` or your own family's
+literal, inspect the base class as the possible owner. 这只证明需要调查：仅当该类型也拥有
+被命名的 invariant 时才移动，并由 `type(self).__name__` 派生 name。
+*Counter-test that keeps it free:* the string names a **config key**
+(`path="model.family"`), a **manifest field** (`field_name`), an **error
+domain**, a **data label supplied by a second, un-derivable caller**, or a
+public composition facade spanning several owners. `require_exact_int(value,
+*, path)` is correct as written.
 
 **Rule 2 — `Any` needs a receipt.**
-A parameter typed `Any` must be justified by a real import cycle or a genuinely unvalidated input (raw YAML, a dotted-string import, an arbitrary user module tree). Otherwise annotate it. If annotating it makes the owning type the function's only required parameter, it is a property or a method on that type — and the defensive `getattr(x, "field", default)` guarding a declared field goes away with it.
+A parameter typed `Any` must be justified by a real import cycle or a genuinely
+unvalidated input (raw YAML, a dotted-string import, an arbitrary user module
+tree). Otherwise annotate it. If annotating it makes one type the function's
+only required parameter, treat that as a strong ownership signal, not an
+automatic method conversion. Public facades, framework adapters, renderers and
+cross-owner composition can remain free. A defensive
+`getattr(x, "field", default)` guarding a declared field still goes away.
 *Applied:* `build: Any` → `ModelBuild` (item 6), `bundle: Any` → `RuntimeBundle` (items 6, 9), `resources: Any` → `ResolvedDistributedResources` (item 7).
 *Kept:* `gatherer: Any` in a registry-import guard, `ray: Any` as a lazy-framework handle.
 
-**Rule 3 — Two copies is a coincidence; three is a class attribute.**
-When the same body appears in ≥2 sibling subclasses and differs only in a constant, the constant becomes a class attribute and the body becomes a shared default. Choose the shape by asking *what happens if a future family forgets*:
-- forgetting must **fail loud** → keep the abstract method and add an **opt-in mixin** (`VaeDecodeMixin`, `EncoderAttentionMaskRunnerBase`) listed **first** in the bases;
+**Rule 3 — Repetition triggers ownership analysis.**
+Two or three copies determine audit priority, not placement. When sibling
+implementations enforce the same invariant and differ only in a constant, the
+constant can become a class attribute and the body a shared default. Choose the
+shape by asking *what happens if a future family forgets*:
+- forgetting must **fail loud** → keep the abstract method and add an **opt-in mixin** (`VaeDecodeMixin`, `EncoderAttentionMaskRunnerBase`) through an implementation hierarchy with an unambiguous owner;
 - forgetting is safe → a **base default** (`DiffusionModelBase.trainable_modules`, `ARChunkExecutorBase.__init__`).
-And **always put mixins before the Protocol/ABC in the bases list** — get it wrong on an ABC and you get a `TypeError` (fine); get it wrong on a `Protocol` and the `...` stub silently wins and returns `None` (`strategy.py`, verified).
 *Counter-test that keeps the copies:* the two bodies are identical text but assert **different theorems**, and each copy's comment is that proof (`backward`, `clip_grad_norm`). Merging deletes the argument, not just the duplication.
+
+Consumer-facing `Protocol` is a structural contract, not an incomplete
+implementation base. Concrete classes satisfy it structurally; do not inherit
+it merely to advertise conformance, and do not rely on mixin order to outrank
+its `...` stubs. Nominal implementation hierarchies use ABC abstract methods.
 
 **Rule 4 — An untyped bag with a closed key set is a field.**
 If grep finds a finite key set, a small number of writers, and a reader that has to `getattr`-probe or `.get(KEY, default)`, replace the bag with a typed dataclass field and delete the key constant plus its factory/reader trio. Every field of a resolved struct must have a non-logging consumer.
-*Applied:* `RuntimeBundle.metadata` → `loads_full_generation_modules: bool` (item 6), `phase_times: dict[str, float]` → `RolloutStats` (item 8), `config.extra["backend_label"]` → `self.backend_label` (item 10).
+*Applied:* `RuntimeBundle.metadata` → `loads_full_generation_modules: bool`
+(item 6), `phase_times: dict[str, float]` → `RolloutStats` (item 8).
+*Postmortem follow-up applied:* item 10 moved label ownership toward the backend
+but did not remove `config.extra["backend_label"]` / `["cache_dtype"]`.
+`ead3e4d0` completed the rule by adding typed `cache_dtype` /
+`max_new_tokens` fields and deriving labels in concrete backends.
+
+一个 genuinely subject-less helper 应留作 narrow domain function。只有在多个 package
+共享同一 primitive、且没有更窄 owner 时才放进 `vrl/utils/`; `vrl/utils/` 不是无 class
+函数的默认收容处。
 
 ---
 

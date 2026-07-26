@@ -1,12 +1,12 @@
 # SPRINT：Config resolution consolidation — 归拢散落的 resolved-config
 
-状态：**planned（2026-07-24）**。
+状态：**done（2026-07-25，P1–P10 均已裁决并落地或有据撤销）**。
 
 > **执行状态（2026-07-24，全部 6 phase 已处理）**：
 > - **P1 已落地** `4e6b9a47`——`collector/core.py` 直接读 `self.config.trajectory_storage` /
 >   `.kl_reward_coef`，修掉 §2.2/§4 描述的会 `raise TypeError` 的 latent crash（`score_rollouts`
 >   路径，CPU 快测未覆盖，实测确会崩）。
-> - **P2 已落地** `c0a46347`——reward inference map 聚合到 `RewardRuntimeConfig.inference_configs`
+> - **P2 已落地** `57077fe3`——reward inference map 聚合到 `RewardRuntimeConfig.inference_configs`
 >   （build 时解析一次），`resolve_distributed_resources` 读它；raw-cfg walk 保留为隔离 resource
 >   测试的 fallback（该函数有 ~100 个调用点，全改签名不划算）。
 > - **P3 已调研→撤销**（0 编辑）——三处标的经查都是**合理边界**，合并会改变行为：AR
@@ -15,11 +15,11 @@
 >   `ARSamplingParams`）；`samples_per_chunk` 的另两处服务不同执行路径、默认值不同；
 >   `trajectory_storage` per-chunk 正是 §5 Non-Goal 保护的 wire/进程边界重解析（executor.py:338）。
 >   **本 sprint 对 P3 的乐观定性被证据推翻**——这里没有可清的散落。
-> - **P4 已落地** `45332ca9`——5 份 `_resolve_device` + 2 份 `_resolve_sampling` 聚合进
+> - **P4 已落地** `62d7a562`——5 份 `_resolve_device` + 2 份 `_resolve_sampling` 聚合进
 >   `scripts/eval/_device.py` / `_sampling.py`（net −64 行）。
-> - **P5 已落地** `b3b7cb78`——`online.py` 深处的 `OmegaConf.select` raw 重读改为读 `BuiltConfigs`
+> - **P5 已落地** `21c57523`——`online.py` 深处的 `OmegaConf.select` raw 重读改为读 `BuiltConfigs`
 >   typed 字段（use_lora/kl_coef/sft/model.path），并修一处 `model.path` None→"None" 隐患。
-> - **P6 部分落地** `d9b08dd4`——`_resolve_rollout_num_workers` 折进 `_resolve_role_num_workers`；
+> - **P6 部分落地** `a2029924`——`_resolve_rollout_num_workers` 折进 `_resolve_role_num_workers`；
 >   其余 5 项经查是**合理的 family-specific 代码**（echo 双入口、wan offload 被测试 pin 的 backstop、
 >   wan topology / vae_decode_memory 需碰 ModelBuild/wire 边界、单文件 checkpoint 三家 precedence 已
 >   分化），保留——印证 §5 Non-Goals。
@@ -28,7 +28,7 @@
 > P6 收了一处重复；P3 与 P6 大部分标的经执行验证是**合理边界而非散落**——这更强地印证了 §0 的结论：
 > origin 近期已把绝大多数散落收干净，剩的多是各安其位的边界。
 >
-> **P7（追加，2026-07-24）：`ResolvedRun` 编排聚合座——已落地 `28dbacea`。** P1–P6 之后用户
+> **P7（追加，2026-07-24）：`ResolvedRun` 编排聚合座——已落地 `1ec5cbd7`。** P1–P6 之后用户
 > 正确指出："random splitted" 的真身不在叶子 resolver（那些各有其主），而在**编排**：
 > `run_online_recipe` 内联手串 `build_configs → OnlineRunConfig → family entry →
 > resolve_distributed_resources → RayGenerationConfig.from_cfg → trainer_torch_device →
@@ -41,7 +41,7 @@
 > runtime 对象"有了一个可指的地方。这是 §3 SINGLE-BOUNDARY + RESOLVED-BUNDLE 模式补上的
 > 最后一层（入口层的 bundle），仍不是 god-object：它组合各层 owner，不吸收它们。
 
-> **P8（追加，2026-07-24）：模型物化座——已落地 `0d7993c0`（附带修真 bug `79aa62e9`）。** 第二条
+> **P8（追加，2026-07-24）：模型物化座——已落地 `2095b003`（附带修真 bug `44cfaa1d`）。** 第二条
 > 被手抄 12 处的链：`resolve_model_build → checkpoint identity → build_rollout/replay → identity
 > 复查`。`vrl/run.py` 增加 `ResolvedModel` + `resolve_model`（便宜投影段）与 `materialize`
 > （bundle + 复查段，`context` 保住各站点逐字报错措辞）；两段拆分是因为 online 的 checkpoint
@@ -51,7 +51,7 @@
 > `launcher.py`/`worker.py`（run 层之下，import 成环；worker 复查是进程边界防御）。顺带发现并修复
 > wan_robotics eval 的潜伏 TypeError（传 raw DictConfig 且漏 `precision`，被测试 fake 遮蔽）。
 
-> **P9（追加，2026-07-24）：收座带来的删除红利——已落地 `c9dcfdb1`。** 接座之后按五形态复查，
+> **P9（追加，2026-07-24）：收座带来的删除红利——已落地 `3f8386b7`。** 接座之后按五形态复查，
 > 删掉三个因此丧失存在理由的扁平函数：`RolloutCollectorConfig.get()` 鸭子类型适配器（typed 分支
 > form-2 死亡，余下读者改直读 `request_sampling`，适配器及其自测一并删除）、
 > `resolve_family_model_build` 门面（生产调用者归零，TEST-ONLY=死，sana e2e 测试改走 entry 门面）、
@@ -60,7 +60,7 @@
 > 的 fallback 分支（约 100 个 resource 测试依赖其从 cfg 派生 reward placement 的语义）。
 
 > **P10（追加，2026-07-25）：全仓 resolver/choreography 终扫——已落地 10 个批提交
-> `fec43e2b`..`89804e3c`。** 用户指出"类似问题全仓很多处"，遂做全仓审计（10 区域猎手 × 逐条
+> `60401174`..`306b7009`。** 用户指出"类似问题全仓很多处"，遂做全仓审计（10 区域猎手 × 逐条
 > 对抗验证，本 session 全部已裁决的 keep 烘进规则防重报）：**55 条候选 → 40 条确认 / 15 条否决**
 > （否决的是被误当散落的合理边界：AR 旋钮分离、wire 边界、swap_linears 循环、cross-rank moment
 > reduction 等）。40 条中 **39 条执行、1 条按其自身判决 keep**（adjudicated eval 前缀）。分 10 批
@@ -75,9 +75,9 @@
 > **另发现一个预存的测试隔离 flake**（`test_chunk_memory_shadow::test_probe_fits_confirms_and_truncates_steps`
 > 在全量顺序里非确定性失败、单独/干净 HEAD 均正常）——非本轮引入，留作独立 issue。
 
-父 program：[Argument and state ownership](../done/SPRINT_argument_and_state_ownership_program.md)
+父 program：[Argument and state ownership](SPRINT_argument_and_state_ownership_program.md)
 
-前置（origin 已落地）：[Config argument ownership and resolution](../done/SPRINT_config_argument_ownership_and_resolution.md)
+前置（origin 已落地）：[Config argument ownership and resolution](SPRINT_config_argument_ownership_and_resolution.md)
 
 ## 0. 一句话
 
@@ -133,11 +133,19 @@ validated `RootConfig` 变成 `ModelBuild` 的地方，type-guard 拒绝 raw Ome
 `ModelBuild` 而非 cfg。`resolve_family_model_build`（`vrl/models/steps/denoise/build.py:165`）
 是它的 free-function facade。
 
-### 1.3 per-family from_build —— 刻意保留的跨家族一致形状
+### 1.3 model construction —— 保留 contract，一致算法共享实现
 
-~15 个 denoise `Model.from_build` + 5 个 token `*_config_from_build` 是 registry 通过
-`model_cls` / `config_builder` 挂进来的 per-family variant。它们**必须保持分立**（跨家族
-grepability，AGENTS keep-list），绝不能拍平成一张 data 表。
+执行后的现行裁决比初稿更精确：
+
+- denoise families 继续通过 registry 的 `model_cls` 暴露一致 `from_build` contract；
+- 加载算法真正相同的 families 共用
+  `DiffusersPipelineModelBase.from_build`，差异由 `_pipeline_classname`、
+  `_frozen_encoder_names`、`_prompt_encoder_on_cpu` 等显式 declarations 表达；
+- 有额外 scheduler、memory 或 checkpoint invariants 的 family 保留 override；
+- token `*_config_from_build` 仍是 registry 的 typed per-family variants，保持分立。
+
+因此“不拍平成 data table、保留跨 family grepability”的原则不变，但不再要求保留逐字相同的
+per-family wrappers。
 
 ### 1.4 origin 已经消灭的散落（引用近期 commit）
 
@@ -312,8 +320,9 @@ typed 字段）。
 
 ### 3.2 明确不合并（keep-list）
 
-- ~15 denoise `from_build` + 5 token `*_config_from_build` —— per-family variant，跨家族
-  grepability，**不拍平成 data 表**。
+- denoise `from_build` contract + token `*_config_from_build` —— 不拍平成 data table；
+  identical denoise loading algorithms 由 `DiffusersPipelineModelBase.from_build` 共享，
+  family-specific invariants 继续留在 declarations 或 override。
 - 顶层 boundary resolver（`build_trainer_config`、`resolve_model_build`、
   `resolve_distributed_resources`）—— 真实 ownership，**不并入任何总类**。
 - lazy-import dispatch（`algorithm_config_class`、`new_gatherer`）—— 保持 torch off config-parse。
@@ -357,7 +366,7 @@ P5  [online.py raw-cfg gate 上提] model.use_lora（×4）/ algorithm.kl_coef /
     重读。tensor 加载体保留，只把 gate/paths 换成 typed。
     Gate: LoRA on/off、SFT on/off、reference-model 分支的构造测试。
 
-P6  [families local dedup，低 value] 
+P6  [families local dedup，低 value]
     - wan_topology_from_build：normalizer 存 typed WanTopology，from_build 读一次；
     - _resolve_wan_offload_mode：直接读 rollout.pipeline_offload_mode；
     - resolve_echo_video_dimensions：resolve 一次；
@@ -376,7 +385,9 @@ P3–P6 是收尾质量项，可按需排期。
 
 - **不新建任何 god “resolve everything” class / `*Manager` / `*Container`。** 用户的
   “single data class” 直觉在此仓库是反模式；已有的分层 owner 就是答案。
-- **不拍平 per-family `from_build` / `*_config_from_build`**（15+5）成 data 表——跨家族一致形状。
+- **不把 `from_build` / `*_config_from_build` contract 拍平成 data table。**
+  identical denoise algorithms 可以共用 `DiffusersPipelineModelBase.from_build`；
+  token builders 和有额外 invariants 的 denoise override 保持分立。
 - **不合并 boundary resolver / lazy-import dispatch / per-role device 三兄弟**。
 - **不把 `_distributed_resource_config_from_cfg` 从 `vrl/ray/` 挪到 `vrl/config/builders.py`**：
   schema.py:781 显式把 reader 指向 resources.py，这是刻意的 ownership 选择，不是散落。

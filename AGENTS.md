@@ -121,43 +121,54 @@ family-side). One construction site; everyone else imports or is handed it.
 
 Learned during the homeless-function audit (2026-07-25), which is the sequel to
 the dead-code sweep above. Deduplicating a body into a shared free function is
-only **half** the fix. The other half is giving it a subject. When you hoist
-logic out of N types, the `self` it lost comes back disguised — as a string
-parameter, as an `Any`, or as N copies of a wrapper. A sweep that merges bodies
-without asking "whose method is this?" grows the helper population instead of
-shrinking it.
+only **half** the fix. The other half is checking whether the result has a real
+owner. When you hoist logic out of N types, identity can come back disguised —
+as a string parameter, as an `Any`, or as N copies of a wrapper. Those shapes
+are evidence to investigate, not proof that the function must become a method.
+Before moving it, confirm that the proposed type owns the invariant or lifecycle
+and that the move does not erase a public facade, protocol boundary, framework
+adapter, or cross-owner composition seam.
 
-> **If a parameter exists only to tell the function who called it, what type its
-> own argument really is, or which constant this copy uses, that parameter is a
-> `self` that was dropped on the floor. Put the body on the thing that was
-> passing it.**
+> **If a parameter only identifies the caller, narrows its own argument's type,
+> or selects the caller's constant, treat it as an ownership signal. Follow the
+> consumers and invariants before choosing a method, mixin, narrow domain
+> function, or deliberate facade.**
 
-**Rule 1 — A name argument is a lost `self`.** About to write `owner=`,
+**Rule 1 — A name argument is ownership evidence.** About to write `owner=`,
 `label=`, `what=`, `context=`, or `prefix=`? If the value at every call site is
-`type(self).__name__` or the caller's own family literal, the body belongs on
-the base class and derives the name itself. *Counter-test that keeps it free:*
-the string names a **config key** (`require_exact_int(value, path="model.family")`),
-a **manifest field**, an **error domain** (the dataclass being validated), or a
-label a second un-derivable caller supplies. Those are correct as free functions.
+`type(self).__name__` or the caller's own family literal, inspect whether the
+type also owns the behavior being named. Move it onto that type only when the
+answer is yes. *Counter-test that keeps it free:* the string names a **config
+key** (`require_exact_int(value, path="model.family")`), a **manifest field**, an
+**error domain** (the dataclass being validated), a label a second un-derivable
+caller supplies, or a public composition facade whose inputs span several
+owners. Those are correct as free functions.
 
 **Rule 2 — `Any` needs a receipt.** A parameter typed `Any` must be justified by
 a real import cycle or a genuinely unvalidated input (raw YAML, a dotted-string
 import, an arbitrary user module tree). Otherwise annotate it — and if
-annotating makes the owning type the only required parameter, it is a method or
-property on that type. The defensive `getattr(x, "field", default)` guarding a
-declared field disappears with it.
+annotating makes one type the only required parameter, that is a strong ownership
+signal. It becomes a method or property only when the type owns the invariant;
+public facades, adapters, renderers, and cross-owner composition may remain free.
+The defensive `getattr(x, "field", default)` guarding a declared field still
+disappears.
 
-**Rule 3 — Two copies is a coincidence; three is a class attribute.** When the
-same body appears in ≥2 sibling subclasses and differs only in a constant, the
-constant becomes a class attribute and the body a shared default. Pick the shape
-by asking *what happens if a future family forgets*: must fail loud → keep the
-abstract method and add an **opt-in mixin**; safe to forget → a base default.
-**Always list mixins before the Protocol/ABC in the bases list** — get it wrong
-on an ABC and you get a `TypeError` (fine); get it wrong on a `Protocol` and the
-`...` stub silently wins and returns `None`. *Counter-test that keeps the
-copies:* the bodies are identical text but assert **different theorems**, and
-each copy's comment is that proof. Merging those deletes the argument, not the
-duplication.
+**Rule 3 — Repetition triggers ownership analysis.** Two or three copies are a
+search priority, not an architectural verdict. When sibling implementations
+enforce the same invariant and differ only in a constant, the constant can
+become a class attribute and the body a shared default. Pick the shape by asking
+*what happens if a future family forgets*: must fail loud → keep an abstract
+method and add an **opt-in mixin**; safe to forget → use a base default.
+*Counter-test that keeps the copies:* identical text may assert **different
+theorems**, and each copy's comment is that proof. Merging those deletes the
+argument, not the duplication.
+
+Consumer-facing `Protocol` types are structural contracts, not incomplete
+implementation bases. Concrete classes and shared implementation bases should
+satisfy them structurally; they must not inherit a `Protocol` merely to advertise
+conformance while relying on another base to override its `...` stubs. MRO order
+is not a workaround for that design. When nominal inheritance is required, use
+an ABC with abstract methods that fail at class creation.
 
 **Rule 4 — An untyped bag with a closed key set is a field.** A finite key set,
 few writers, and a reader that `getattr`-probes or `.get(KEY, default)` means
@@ -169,8 +180,9 @@ onto one type to "give them a home" — a god-object is the disease, not the cur
 and do not promote a deliberately-approximate package-private heuristic into a
 shared API, which advertises a guess as a contract. When a helper is genuinely
 subject-less — inputs fully determine output, no identity threaded, no type
-erosion — a free function in a well-named module is the right answer, and
-`vrl/utils/` is where it goes.
+erosion — a free function in a narrow domain module is the right answer.
+`vrl/utils/` is reserved for genuinely cross-domain primitives with consumers in
+multiple packages, not as the default home for anything without a class.
 
 ### Long-term Assets vs One-shot Validation
 
