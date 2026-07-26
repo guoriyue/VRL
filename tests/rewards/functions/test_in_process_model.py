@@ -18,8 +18,9 @@ from vrl.rewards.types import RewardRollout
 class _FakeTorchReward(TorchRewardModel):
     """Toy torch reward model: score = mean of the in-memory media tensor."""
 
-    def _load(self) -> None:
+    def _load_module(self) -> torch.nn.Module:
         self.loaded_marker = True
+        return torch.nn.Identity()
 
     def score_media(self, *, media, prompt, request):
         return {"fake": float(media.float().mean().item())}
@@ -85,7 +86,51 @@ def test_pickscore_reward_model_constructs_lazily() -> None:
     )
     assert model.model_name == "x"
     assert model.processor_name == "y"
-    assert model._loaded is False  # no heavy load at construction
+    assert model._module is None  # no heavy load at construction
+
+
+def test_lazy_reward_models_share_one_complete_movable_module(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Every single-module reward supports lazy construction and later parking."""
+    from vrl.rewards.models.aesthetic import AestheticRewardModel
+    from vrl.rewards.models.motion_dynamics import MotionDynamicsModel
+    from vrl.rewards.models.pickscore import PickScoreRewardModel
+    from vrl.rewards.models.target_dino_similarity import TargetDinoSimilarityModel
+
+    class _MovableModule:
+        def __init__(self) -> None:
+            self.moves: list[str] = []
+
+        def to(self, device: str):
+            self.moves.append(str(device))
+            return self
+
+    models = [
+        AestheticRewardModel({"device": "cuda:7"}),
+        PickScoreRewardModel({"device": "cuda:7"}),
+        MotionDynamicsModel({"device": "cuda:7"}),
+        TargetDinoSimilarityModel({"device": "cuda:7"}),
+    ]
+    for model in models:
+        built_on: list[str] = []
+        module = _MovableModule()
+
+        def build(*, owner=model, result=module, devices=built_on):
+            devices.append(owner.device)
+            return result
+
+        monkeypatch.setattr(model, "_load_module", build)
+        model.move_to("cpu")
+        assert model._module is None
+
+        model.prepare_for_inference()
+        model.move_to("cuda:1")
+
+        assert built_on == ["cpu"]
+        assert model._module is module
+        assert module.moves == ["cuda:1"]
+        assert model.device == "cuda:1"
 
 
 def test_reward_artifact_transport_is_registry_visible() -> None:

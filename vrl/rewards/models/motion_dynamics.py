@@ -26,9 +26,10 @@ from typing import Any
 import torch
 
 from vrl.rewards.base import decode_artifact_frames
+from vrl.rewards.models.base import LazyTorchModuleModel
 
 
-class MotionDynamicsModel:
+class MotionDynamicsModel(LazyTorchModuleModel):
     """Score generated-video motion magnitude with RAFT-small optical flow."""
 
     def __init__(self, worker_config: Mapping[str, Any]) -> None:
@@ -48,31 +49,18 @@ class MotionDynamicsModel:
         # blend. Discrimination (static -> floor) is scale-invariant.
         self.magnitude_scale = float(cfg.get("magnitude_scale", 50.0))
         requested = str(cfg.get("device", "")).strip()
-        self.device = requested or ("cuda" if torch.cuda.is_available() else "cpu")
-        self._model: torch.nn.Module | None = None
+        super().__init__(
+            device=requested or ("cuda" if torch.cuda.is_available() else "cpu"),
+        )
 
-    def _flow_model(self) -> torch.nn.Module:
-        if self._model is None:
-            from torchvision.models.optical_flow import Raft_Small_Weights, raft_small
+    def _load_module(self) -> torch.nn.Module:
+        from torchvision.models.optical_flow import Raft_Small_Weights, raft_small
 
-            model = raft_small(weights=Raft_Small_Weights.DEFAULT, progress=False)
-            model.eval().to(self.device)
-            for param in model.parameters():
-                param.requires_grad_(False)
-            self._model = model
-        return self._model
-
-    def prepare_for_inference(self) -> None:
-        """Materialize RAFT weights inside the owning reward memory pool."""
-
-        self._flow_model()
-
-    def move_to(self, device: str) -> None:
-        """Move all materialized RAFT state for shared-GPU phase handoff."""
-
-        if self._model is not None:
-            self._model = self._model.to(device)
-        self.device = str(device)
+        model = raft_small(weights=Raft_Small_Weights.DEFAULT, progress=False)
+        model.eval().to(self.device)
+        for param in model.parameters():
+            param.requires_grad_(False)
+        return model
 
     def __call__(self, *, artifact: Any, request: Any) -> Mapping[str, float]:
         del request
@@ -95,7 +83,7 @@ class MotionDynamicsModel:
         )
         # RAFT expects images mapped to [-1, 1].
         images = nchw * 2.0 - 1.0
-        flows = self._flow_model()(images[:-1], images[1:])[-1]  # [T-1, 2, H, W]
+        flows = self._module_for_inference()(images[:-1], images[1:])[-1]  # [T-1, 2, H, W]
         magnitude = torch.linalg.vector_norm(flows, dim=1).flatten()  # pixels
         diagonal = float((self.flow_size**2 + self.flow_size**2) ** 0.5)
         magnitude = magnitude / diagonal

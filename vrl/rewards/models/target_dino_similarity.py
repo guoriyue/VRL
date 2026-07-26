@@ -31,6 +31,7 @@ from typing import Any
 import torch
 
 from vrl.rewards.base import decode_artifact_frames
+from vrl.rewards.models.base import LazyTorchModuleModel
 from vrl.utils.artifacts import default_data_root, resolve_artifact_path
 from vrl.utils.media import align_frame_counts, read_image_as_frames, read_video_frames
 
@@ -42,7 +43,7 @@ _IMAGENET_STD = (0.229, 0.224, 0.225)
 _DINO_INPUT_SIZE = 224
 
 
-class TargetDinoSimilarityModel:
+class TargetDinoSimilarityModel(LazyTorchModuleModel):
     """Compare generated frames against target media via frozen DINOv2 embeddings."""
 
     def __init__(self, worker_config: Mapping[str, Any]) -> None:
@@ -61,30 +62,17 @@ class TargetDinoSimilarityModel:
         self.hub_repo = str(cfg.get("dino_hub_repo", "facebookresearch/dinov2"))
         self.hub_model = str(cfg.get("dino_hub_model", "dinov2_vits14"))
         requested = str(cfg.get("device", "")).strip()
-        self.device = requested or ("cuda" if torch.cuda.is_available() else "cpu")
-        self._model: torch.nn.Module | None = None
+        super().__init__(
+            device=requested or ("cuda" if torch.cuda.is_available() else "cpu"),
+        )
 
-    def _encoder(self) -> torch.nn.Module:
+    def _load_module(self) -> torch.nn.Module:
         # Lazy so importing the module (e.g. for the registry) never pulls weights.
-        if self._model is None:
-            model = torch.hub.load(self.hub_repo, self.hub_model, verbose=False)
-            model.eval().to(self.device)
-            for param in model.parameters():
-                param.requires_grad_(False)
-            self._model = model
-        return self._model
-
-    def prepare_for_inference(self) -> None:
-        """Materialize DINO weights inside the owning reward memory pool."""
-
-        self._encoder()
-
-    def move_to(self, device: str) -> None:
-        """Move all materialized DINO state for shared-GPU phase handoff."""
-
-        if self._model is not None:
-            self._model = self._model.to(device)
-        self.device = str(device)
+        model = torch.hub.load(self.hub_repo, self.hub_model, verbose=False)
+        model.eval().to(self.device)
+        for param in model.parameters():
+            param.requires_grad_(False)
+        return model
 
     def __call__(self, *, artifact: Any, request: Any) -> Mapping[str, float]:
         del request
@@ -140,7 +128,7 @@ class TargetDinoSimilarityModel:
         mean = torch.tensor(_IMAGENET_MEAN, device=self.device).view(1, 3, 1, 1)
         std = torch.tensor(_IMAGENET_STD, device=self.device).view(1, 3, 1, 1)
         normalized = (nchw - mean) / std
-        features = self._encoder()(normalized)
+        features = self._module_for_inference()(normalized)
         return torch.nn.functional.normalize(features.float(), dim=-1)
 
     def _resolve(self, raw_path: str) -> Path:

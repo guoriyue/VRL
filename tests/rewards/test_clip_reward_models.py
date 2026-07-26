@@ -60,9 +60,9 @@ def test_aesthetic_model_reads_transformers_5_projected_image_features(
     monkeypatch.setattr(torch, "load", lambda *args, **kwargs: _aesthetic_head_state_dict())
 
     model = AestheticRewardModel({"device": "cpu", "dtype": "float32"})
-    model._load()
+    model.prepare_for_inference()
 
-    scores = model._scorer([object(), object()])
+    scores = model._module([object(), object()])
 
     assert scores.shape == (2,)
     assert torch.isfinite(scores).all()
@@ -105,7 +105,7 @@ def test_aesthetic_model_passes_optional_revision_to_clip_loaders(
     if revision is not None:
         config["model_revision"] = revision
 
-    AestheticRewardModel(config)._load()
+    AestheticRewardModel(config)._load_module()
 
     expected_kwargs = {"revision": revision} if revision is not None else {}
     assert calls == [
@@ -147,7 +147,7 @@ def test_pickscore_reads_transformers_5_projected_image_and_text_features() -> N
 
     model = PickScoreRewardModel({"device": "cpu"})
     model._processor = _FakeProcessor()
-    model._model = _FakeModel()
+    model._module = _FakeModel()
 
     score = model._score("prompt", [object(), object()])
 
@@ -205,7 +205,7 @@ def test_pickscore_passes_optional_revisions_to_matching_loaders(
     if model_revision is not None:
         config["model_revision"] = model_revision
 
-    PickScoreRewardModel(config)._load()
+    PickScoreRewardModel(config)._load_module()
 
     processor_kwargs = {"revision": processor_revision} if processor_revision is not None else {}
     model_kwargs = {"revision": model_revision} if model_revision is not None else {}

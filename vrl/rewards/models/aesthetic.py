@@ -20,9 +20,8 @@ class AestheticRewardModel(TorchRewardModel):
         self.model_revision = (
             str(self.worker_config.get("model_revision", "") or "").strip() or None
         )
-        self._scorer: Any = None
 
-    def _load(self) -> None:
+    def _load_module(self) -> Any:
         import torch
         import torch.nn as nn
         from transformers import CLIPModel, CLIPProcessor
@@ -76,7 +75,7 @@ class AestheticRewardModel(TorchRewardModel):
                 embed = embed / torch.linalg.vector_norm(embed, dim=-1, keepdim=True)
                 return self.mlp(embed).squeeze(1)
 
-        self._scorer = _AestheticScorer(self.dtype).to(self.device)
+        return _AestheticScorer(self.dtype).to(self.device)
 
     def score_media(self, *, media: Any, prompt: str, request: Any) -> Mapping[str, float]:
         import torch
@@ -101,7 +100,7 @@ class AestheticRewardModel(TorchRewardModel):
         else:
             images = [output]
 
-        scores = self._scorer(images)
+        scores = self._module_for_inference()(images)
         return {"aesthetic": float(scores.mean().item())}
 
 

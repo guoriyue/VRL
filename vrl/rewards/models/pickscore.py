@@ -35,18 +35,19 @@ class PickScoreRewardModel(TorchRewardModel):
             str(self.worker_config.get("model_revision", "") or "").strip() or None
         )
         self._processor: Any = None
-        self._model: Any = None
 
-    def _load(self) -> None:
+    def _load_module(self) -> Any:
         from transformers import CLIPModel, CLIPProcessor
 
         processor_kwargs = {"revision": self.processor_revision} if self.processor_revision else {}
         model_kwargs = {"revision": self.model_revision} if self.model_revision else {}
+        # CLIPProcessor owns CPU tokenization/image transforms only; the returned
+        # CLIP module is the complete movable accelerator state.
         self._processor = CLIPProcessor.from_pretrained(
             self.processor_name,
             **processor_kwargs,
         )
-        self._model = (
+        return (
             CLIPModel.from_pretrained(self.model_name, **model_kwargs)
             .eval()
             .to(self.device, dtype=self.dtype)
@@ -84,6 +85,7 @@ class PickScoreRewardModel(TorchRewardModel):
     def _score(self, prompt: str, images: list[Any]) -> float:
         import torch
 
+        model = self._module_for_inference()
         with torch.no_grad():
             image_inputs = self._processor(
                 images=images,
@@ -101,11 +103,11 @@ class PickScoreRewardModel(TorchRewardModel):
                 return_tensors="pt",
             )
             text_inputs = {k: v.to(self.device) for k, v in text_inputs.items()}
-            image_embs = self._model.get_image_features(**image_inputs).pooler_output
+            image_embs = model.get_image_features(**image_inputs).pooler_output
             image_embs = image_embs / image_embs.norm(p=2, dim=-1, keepdim=True)
-            text_embs = self._model.get_text_features(**text_inputs).pooler_output
+            text_embs = model.get_text_features(**text_inputs).pooler_output
             text_embs = text_embs / text_embs.norm(p=2, dim=-1, keepdim=True)
-            logit_scale = self._model.logit_scale.exp()
+            logit_scale = model.logit_scale.exp()
             scores = logit_scale * (text_embs @ image_embs.T)
             return float((scores.diag() / 26).mean().item())
 

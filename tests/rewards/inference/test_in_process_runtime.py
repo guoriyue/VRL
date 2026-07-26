@@ -155,11 +155,12 @@ class _LazyTorchModel(TorchRewardModel):
         super().__init__(worker_config)
         self.load_scopes: list[bool] = []
 
-    def _load(self) -> None:
+    def _load_module(self) -> torch.nn.Module:
         import vrl.utils.cuda_memory as cuda_memory_mod
 
         allocator = cuda_memory_mod._cumem_allocator()
         self.load_scopes.append(bool(allocator and getattr(allocator, "building", False)))
+        return torch.nn.Identity()
 
     def score_media(self, *, media, prompt, request):
         del prompt, request
@@ -178,7 +179,7 @@ _PARTIAL_PREPARE_REF: weakref.ReferenceType[_PartialPrepareState] | None = None
 
 
 class _FailingPrepareModel(TorchRewardModel):
-    def _load(self) -> None:
+    def _load_module(self) -> torch.nn.Module:
         global _PARTIAL_PREPARE_REF
         self.partial_state = _PartialPrepareState()
         _PARTIAL_PREPARE_REF = weakref.ref(self.partial_state)

@@ -11,6 +11,7 @@ tensor or a materialized disk artifact (``.pt`` / ``.mp4`` path).
 
 from __future__ import annotations
 
+from abc import ABC, abstractmethod
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any, Protocol
@@ -57,46 +58,68 @@ class RewardModel(Protocol):
     ) -> Mapping[str, float]: ...
 
 
-class TorchRewardModel:
+class LazyTorchModuleModel(ABC):
+    """Implementation base for rewards backed by one lazy movable module.
+
+    The single module handle is the complete accelerator-owned state. That
+    invariant makes CPU parking explicit and fail-closed: subclasses construct
+    one object with a callable ``to(device)`` method instead of leaving the
+    runtime to reflect over arbitrary attributes and guess what must move.
+    """
+
+    def __init__(self, *, device: str) -> None:
+        self.device = str(device)
+        self._module: Any | None = None
+
+    @abstractmethod
+    def _load_module(self) -> Any:
+        """Build the complete movable module on ``self.device``."""
+
+        raise NotImplementedError
+
+    def _module_for_inference(self) -> Any:
+        if self._module is None:
+            module = self._load_module()
+            if not callable(getattr(module, "to", None)):
+                raise TypeError(
+                    f"{type(self).__name__}._load_module() must return one movable "
+                    "module exposing to(device)",
+                )
+            self._module = module
+        return self._module
+
+    def prepare_for_inference(self) -> None:
+        """Materialize lazy model state inside the runtime's owning memory pool."""
+
+        self._module_for_inference()
+
+    def move_to(self, device: str) -> None:
+        """Move the complete materialized module for shared-GPU phase handoff."""
+
+        target = str(device)
+        if self._module is not None:
+            self._module = self._module.to(target)
+        self.device = target
+
+
+class TorchRewardModel(LazyTorchModuleModel, ABC):
     """Base class for torch reward models loaded in-process."""
 
     def __init__(self, worker_config: Mapping[str, Any]) -> None:
         cfg = dict(worker_config)
         self.worker_config = cfg
-        self.device = str(cfg.get("device", "cuda"))
+        super().__init__(device=str(cfg.get("device", "cuda")))
         self.dtype_str = str(cfg.get("dtype", "float32"))
-        self._loaded = False
 
     @property
     def dtype(self) -> Any:
         return resolve_torch_dtype(self.dtype_str)
 
-    def _load(self) -> None:
-        """Build the underlying model. Called once, lazily."""
-
-        raise NotImplementedError
-
+    @abstractmethod
     def score_media(self, *, media: Any, prompt: str, request: Any) -> Mapping[str, float]:
         """Return named scores for one artifact's media payload."""
 
         raise NotImplementedError
-
-    def _ensure_loaded(self) -> None:
-        if not self._loaded:
-            self._load()
-            self._loaded = True
-
-    def prepare_for_inference(self) -> None:
-        """Materialize lazy model state before the first score.
-
-        The in-process runtime calls this public lifecycle hook while building a
-        shared-GPU CuMem pool. Without it, a lightweight reward wrapper can be
-        constructed in the pool while its real CUDA weights are first allocated
-        later by ``__call__`` on the default allocator, making parking incomplete.
-        Dedicated-device runtimes keep their normal lazy first-score behavior.
-        """
-
-        self._ensure_loaded()
 
     def __call__(self, *, artifact: Any, request: Any) -> Mapping[str, float]:
         self.prepare_for_inference()
@@ -107,4 +130,9 @@ class TorchRewardModel:
         )
 
 
-__all__ = ["RewardModel", "TorchRewardModel", "require_prompt_and_video_path"]
+__all__ = [
+    "LazyTorchModuleModel",
+    "RewardModel",
+    "TorchRewardModel",
+    "require_prompt_and_video_path",
+]
