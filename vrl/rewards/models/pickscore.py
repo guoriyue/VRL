@@ -42,7 +42,7 @@ class PickScoreRewardModel(TorchRewardModel):
         processor_kwargs = {"revision": self.processor_revision} if self.processor_revision else {}
         model_kwargs = {"revision": self.model_revision} if self.model_revision else {}
         # CLIPProcessor owns CPU tokenization/image transforms only; the returned
-        # CLIP module is the complete movable accelerator state.
+        # CLIP module is the CUDA state the pool's build frame must capture.
         self._processor = CLIPProcessor.from_pretrained(
             self.processor_name,
             **processor_kwargs,

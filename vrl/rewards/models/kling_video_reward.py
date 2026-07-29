@@ -158,12 +158,6 @@ class KlingVideoRewardModel:
         self.inference_config = inference_config
         logger.info("loaded Kling VideoReward model %s", kv(device=self.device))
 
-    def move_to(self, device: str) -> None:
-        """Move the complete reward backbone for shared-GPU phase handoff."""
-
-        self.model = self.model.to(device)
-        self.device = str(device)
-
     def __call__(
         self,
         *,

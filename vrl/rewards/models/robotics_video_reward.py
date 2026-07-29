@@ -76,12 +76,6 @@ class RoboticsVideoRewardModel:
             if callable(prepare):
                 prepare()
 
-    def move_to(self, device: str) -> None:
-        """Move all three child models as one shared-GPU ownership unit."""
-
-        for child in (self.kling, self.dino, self.motion):
-            child.move_to(device)
-
     def __call__(
         self,
         *,

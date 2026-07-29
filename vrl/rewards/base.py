@@ -312,10 +312,11 @@ class RewardFunction:
         Sibling to :meth:`_init_reward_model`: same idea (configure ``self`` as a
         ``RewardFunction``), but the heavyweight path — media is written to disk
         via ``VideoRewardArtifactStore`` and scored through the selected runtime,
-        instead of passed in-memory. ``sleep_offload`` parks an in-process model
-        on CPU between scores (the
-        rollout/trainer own the GPU then), mirroring the rollout lease's
-        sleep/wake. ``model_factory`` / ``request_prefix`` / ``debug_basename``
+        instead of passed in-memory. ``sleep_offload`` releases an in-process
+        model's physical GPU pages between scores while its contents stay in
+        pinned host RAM (the rollout/trainer own the GPU then), mirroring the
+        rollout lease's sleep/wake.
+        ``model_factory`` / ``request_prefix`` / ``debug_basename``
         are the only per-reward differences (concrete rewards set their own
         ``reward_name`` / ``score_key`` / ``artifact_format`` defaults before
         delegating); everything else is shared wiring, so no concrete reward

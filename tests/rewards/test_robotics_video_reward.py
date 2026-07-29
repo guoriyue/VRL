@@ -13,13 +13,9 @@ class _FakeKling:
     def __init__(self, config):
         self.config = config
         self.prepared = False
-        self.moves = []
 
     def prepare_for_inference(self):
         self.prepared = True
-
-    def move_to(self, device):
-        self.moves.append(device)
 
     def __call__(self, *, artifact, request):
         del artifact, request
@@ -35,13 +31,9 @@ class _FakeDino:
     def __init__(self, config):
         self.config = config
         self.prepared = False
-        self.moves = []
 
     def prepare_for_inference(self):
         self.prepared = True
-
-    def move_to(self, device):
-        self.moves.append(device)
 
     def __call__(self, *, artifact, request):
         del artifact, request
@@ -52,13 +44,9 @@ class _FakeMotion:
     def __init__(self, config):
         self.config = config
         self.prepared = False
-        self.moves = []
 
     def prepare_for_inference(self):
         self.prepared = True
-
-    def move_to(self, device):
-        self.moves.append(device)
 
     def __call__(self, *, artifact, request):
         del artifact, request
@@ -124,24 +112,6 @@ def test_robotics_reward_prepares_every_lazy_child_in_pool(
     assert model.kling.prepared is True
     assert model.dino.prepared is True
     assert model.motion.prepared is True
-
-
-def test_robotics_reward_moves_every_child_as_one_unit(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    from vrl.rewards.models import robotics_video_reward as robotics
-
-    monkeypatch.setattr(robotics, "KlingVideoRewardModel", _FakeKling)
-    monkeypatch.setattr(robotics, "TargetDinoSimilarityModel", _FakeDino)
-    monkeypatch.setattr(robotics, "MotionDynamicsModel", _FakeMotion)
-    model = robotics.RoboticsVideoRewardModel({"device": "cuda:0"})
-
-    model.move_to("cpu")
-    model.move_to("cuda:0")
-
-    assert model.kling.moves == ["cpu", "cuda:0"]
-    assert model.dino.moves == ["cpu", "cuda:0"]
-    assert model.motion.moves == ["cpu", "cuda:0"]
 
 
 def test_robotics_reward_weights_reject_unknown_or_non_finite_values() -> None:

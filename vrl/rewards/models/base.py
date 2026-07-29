@@ -59,12 +59,14 @@ class RewardModel(Protocol):
 
 
 class LazyTorchModuleModel(ABC):
-    """Implementation base for rewards backed by one lazy movable module.
+    """Implementation base for rewards whose CUDA state is one memoized module.
 
-    The single module handle is the complete accelerator-owned state. That
-    invariant makes CPU parking explicit and fail-closed: subclasses construct
-    one object with a callable ``to(device)`` method instead of leaving the
-    runtime to reflect over arbitrary attributes and guess what must move.
+    Construction stays cheap — a reward can be built to read back its resolved
+    config, or built outside the caller's failure boundary, without pulling
+    weights. ``prepare_for_inference`` is the seam that forces materialization
+    at a moment the caller picks; the reward runtime calls it inside the CuMem
+    build frame so a lazy module cannot defer its allocations past that frame
+    and then survive every park.
     """
 
     def __init__(self, *, device: str) -> None:
@@ -73,33 +75,19 @@ class LazyTorchModuleModel(ABC):
 
     @abstractmethod
     def _load_module(self) -> Any:
-        """Build the complete movable module on ``self.device``."""
+        """Build this reward's complete CUDA state on ``self.device``."""
 
         raise NotImplementedError
 
     def _module_for_inference(self) -> Any:
         if self._module is None:
-            module = self._load_module()
-            if not callable(getattr(module, "to", None)):
-                raise TypeError(
-                    f"{type(self).__name__}._load_module() must return one movable "
-                    "module exposing to(device)",
-                )
-            self._module = module
+            self._module = self._load_module()
         return self._module
 
     def prepare_for_inference(self) -> None:
         """Materialize lazy model state inside the runtime's owning memory pool."""
 
         self._module_for_inference()
-
-    def move_to(self, device: str) -> None:
-        """Move the complete materialized module for shared-GPU phase handoff."""
-
-        target = str(device)
-        if self._module is not None:
-            self._module = self._module.to(target)
-        self.device = target
 
 
 class TorchRewardModel(LazyTorchModuleModel, ABC):

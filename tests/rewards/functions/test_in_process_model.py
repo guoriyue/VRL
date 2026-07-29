@@ -89,22 +89,14 @@ def test_pickscore_reward_model_constructs_lazily() -> None:
     assert model._module is None  # no heavy load at construction
 
 
-def test_lazy_reward_models_share_one_complete_movable_module(
+def test_lazy_reward_models_defer_module_construction(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Every single-module reward supports lazy construction and later parking."""
+    """Weights land in the runtime's CuMem build frame, never in ``__init__``."""
     from vrl.rewards.models.aesthetic import AestheticRewardModel
     from vrl.rewards.models.motion_dynamics import MotionDynamicsModel
     from vrl.rewards.models.pickscore import PickScoreRewardModel
     from vrl.rewards.models.target_dino_similarity import TargetDinoSimilarityModel
-
-    class _MovableModule:
-        def __init__(self) -> None:
-            self.moves: list[str] = []
-
-        def to(self, device: str):
-            self.moves.append(str(device))
-            return self
 
     models = [
         AestheticRewardModel({"device": "cuda:7"}),
@@ -114,23 +106,22 @@ def test_lazy_reward_models_share_one_complete_movable_module(
     ]
     for model in models:
         built_on: list[str] = []
-        module = _MovableModule()
+        module = object()
 
         def build(*, owner=model, result=module, devices=built_on):
             devices.append(owner.device)
             return result
 
         monkeypatch.setattr(model, "_load_module", build)
-        model.move_to("cpu")
-        assert model._module is None
+        assert model._module is None  # construction allocated nothing
 
         model.prepare_for_inference()
-        model.move_to("cuda:1")
 
-        assert built_on == ["cpu"]
+        assert built_on == ["cuda:7"]
         assert model._module is module
-        assert module.moves == ["cuda:1"]
-        assert model.device == "cuda:1"
+
+        model.prepare_for_inference()
+        assert built_on == ["cuda:7"]  # one build per runtime lifetime
 
 
 def test_reward_artifact_transport_is_registry_visible() -> None:
