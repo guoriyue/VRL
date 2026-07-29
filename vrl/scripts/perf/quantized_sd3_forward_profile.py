@@ -1,10 +1,10 @@
 """Profile quantized SD3.5 transformer forwards with real checkpoint weights.
 
 This is the model-level complement to ``quantized_linear_benchmark``. It loads
-the real SD3.5 Medium transformer, installs VRL's production attention
-processor, and compares BF16, default rowwise FP8, and MLP-only NVFP4 at the
-current 512px recipe shape (CLIP 77 + T5 128 text tokens). Effective batches 2
-and 32 represent one and sixteen samples after batched CFG respectively.
+the real SD3.5 Medium transformer with its stock diffusers attention processors
+and compares BF16, default rowwise FP8, and MLP-only NVFP4 at the current 512px
+recipe shape (CLIP 77 + T5 128 text tokens). Effective batches 2 and 32
+represent one and sixteen samples after batched CFG respectively.
 
 ``--target-profile`` can instead force FP8 and NVFP4 onto the identical MLP-only
 or attention+MLP path/shape manifest. This is an experimental comparison seam;
@@ -39,7 +39,6 @@ from typing import Any
 import torch
 import torch.nn.functional as F
 
-from vrl.models.families.sd3_5.model import install_sd3_joint_attention_processor
 from vrl.nn.quantization import (
     Fp4Linear,
     Fp8Linear,
@@ -109,8 +108,6 @@ def _load_transformer(model_name: str, *, allow_download: bool) -> torch.nn.Modu
         local_files_only=not allow_download,
     ).to("cuda")
     model.requires_grad_(False).eval()
-    if not install_sd3_joint_attention_processor(model):
-        raise RuntimeError("SD3 transformer did not accept VRL's joint attention processor")
     return model
 
 

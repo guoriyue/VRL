@@ -60,7 +60,7 @@ WanT2VDiffusersModel
      -> WanNativeTransformerExecutor
         -> WanTransformerBlock
            -> WanSelfAttention / WanCrossAttention
-              -> TorchSDPAAttentionKernel
+              -> F.scaled_dot_product_attention
            -> WanFeedForward
            -> WanAdaLayerNormModulation
 ```
@@ -181,7 +181,7 @@ head split / merge
 optional q/k norm application
 optional attention mask pass-through
 optional RoPE hook input
-call TorchSDPAAttentionKernel
+call F.scaled_dot_product_attention
 ```
 
 不包含 Wan-specific image context split、Cosmos GQA repeat、SD3 joint concat、diffusers Attention duck typing。

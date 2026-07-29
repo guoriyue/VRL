@@ -566,9 +566,8 @@ class DiffusersPipelineModelBase(DiffusionModelBase):
     ``from_build`` — the pipeline load plus the freeze/placement of VAE and
     prompt encoders, driven by the three class declarations below. A family
     overrides only where it genuinely differs (FLUX's dual-encoder discovery and
-    NFT guard, SANA's scheduler swap, sd3's attention processor reinstall on
-    ``_set_transformer``, wan's multi-transformer ``trainable_modules``/LoRA,
-    Predict2.5's NFT full-finetune guard).
+    NFT guard, SANA's scheduler swap, wan's multi-transformer
+    ``trainable_modules``/LoRA, Predict2.5's NFT full-finetune guard).
     Families NOT backed by a diffusers pipeline (echo's LTX wrapper, anima's
     single-file checkpoint) stay on ``DiffusionModelBase`` directly.
     """
@@ -706,11 +705,10 @@ class DiffusersReplayModelBase(ReplayRolloutStubs):
     Factors the byte-identical members of the per-family ``*ReplayModel``
     classes: the transformer/scheduler/device ctor, the no-pipeline guard, the
     transformer swap, and the scheduler/raw_handle accessors. A family
-    overrides only where it genuinely differs (sd3_5 reinstalls its attention
-    processor on ``_set_transformer``; flux/mochi/pixart_sigma re-standardize
-    their replay scheduler in ``prepare_replay``). ``Cosmos3ReplayModel`` stays
-    on ``ReplayRolloutStubs`` directly — it wraps a pipeline SHELL, not a bare
-    transformer, and reads ``self.pipeline``.
+    overrides only where it genuinely differs (flux/mochi/pixart_sigma
+    re-standardize their replay scheduler in ``prepare_replay``).
+    ``Cosmos3ReplayModel`` stays on ``ReplayRolloutStubs`` directly — it wraps a
+    pipeline SHELL, not a bare transformer, and reads ``self.pipeline``.
     """
 
     def __init__(self, *, transformer: Any, scheduler: Any, device: Any = None) -> None:

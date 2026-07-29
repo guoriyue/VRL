@@ -108,7 +108,10 @@ class ARAttentionKernel:
 `kv_state` is opaque:
 
 - `VllmPagedAttentionKernel`: block ids, physical KV cache, slot mapping, vLLM metadata.
-- `TorchSDPAAttentionKernel`: continuous per-sequence K/V tensors or HF-compatible cache equivalent.
+- `TorchSDPAKernel`: continuous per-sequence K/V tensors or HF-compatible cache equivalent.
+
+Both names are **proposed**, not existing types. No torch-SDPA wrapper exists in the repo today; when this
+sprint unparks, design it against the then-current torch/HF API rather than resurrecting a deleted class.
 
 The protocol must not assume `name -> kernel` is enough to build the full backend. Family adapters still
 decide how to expose the trunk and non-attention model pieces.
@@ -164,7 +167,7 @@ return ARAttention{Prefill,Step}Output
 `TorchNativeDecoderAttentionBackend` has two valid paths:
 
 1. Keep it as HF-forward fallback for CPU/no-vLLM while vLLM path uses the new driver.
-2. Move it to the same driver with `TorchSDPAAttentionKernel`.
+2. Move it to the same driver with a `TorchSDPAKernel`.
 
 Do not force path 2 unless parity is proven. Keeping HF-forward `torch_native` as a safety oracle is useful
 while the owned driver is new.
@@ -224,7 +227,7 @@ Add/keep these gates before touching production call sites:
 
 3. Kernel parity tests:
    - `VllmPagedAttentionKernel` vs current `_forward_vllm_attention` behavior before deleting old path.
-   - `TorchSDPAAttentionKernel` vs HF forward only if we choose to replace `torch_native`.
+   - `TorchSDPAKernel` vs HF forward only if we choose to replace `torch_native`.
 
 4. End-to-end AR regression:
 

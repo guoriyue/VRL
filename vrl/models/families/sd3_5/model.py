@@ -52,36 +52,6 @@ from vrl.models.steps.denoise.common import (
 )
 from vrl.models.steps.denoise.common.lora import LoraModelMixin
 from vrl.models.steps.denoise.common.tensors import require_tensor
-from vrl.nn.layers.attention.joint import SD3JointAttentionProcessor
-
-
-def install_sd3_joint_attention_processor(transformer: object) -> bool:
-    """Install VRL SD3 attention processor when the transformer supports it."""
-
-    for candidate in _candidate_transformers(transformer):
-        set_attn_processor = getattr(candidate, "set_attn_processor", None)
-        if callable(set_attn_processor):
-            set_attn_processor(SD3JointAttentionProcessor())
-            return True
-    return False
-
-
-def _candidate_transformers(transformer: object) -> tuple[object, ...]:
-    candidates: list[object] = []
-    stack = [transformer]
-    seen: set[int] = set()
-    while stack:
-        item = stack.pop(0)
-        marker = id(item)
-        if marker in seen:
-            continue
-        seen.add(marker)
-        candidates.append(item)
-        for attr in ("module", "base_model", "model"):
-            child = getattr(item, attr, None)
-            if child is not None:
-                stack.append(child)
-    return tuple(candidates)
 
 
 @dataclass
@@ -117,19 +87,6 @@ class SD3_5Model(
     # T5-XXL plus two CLIP encoders still fit beside the 2B/8B MMDiT; keep them
     # on-device (no CPU offload dance like Qwen-Image's 15 GB VL).
     _prompt_encoder_on_cpu = False
-
-    def __init__(
-        self,
-        *,
-        pipeline: Any,
-        device: Any = None,
-    ) -> None:
-        super().__init__(pipeline=pipeline, device=device)
-        install_sd3_joint_attention_processor(self.transformer)
-
-    def _set_transformer(self, transformer: Any) -> None:
-        super()._set_transformer(transformer)
-        install_sd3_joint_attention_processor(transformer)
 
     # -- encode_prompt -------------------------------------------------
 
@@ -357,20 +314,11 @@ class SD3_5Model(
 
 
 class SD3_5ReplayModel(DiffusersReplayModelBase, SD3_5Model):
-    """Replay-only SD3.5 model that owns no prompt encoders, VAE, or pipeline."""
+    """Replay-only SD3.5 model that owns no prompt encoders, VAE, or pipeline.
 
-    def __init__(self, *, transformer: Any, scheduler: Any, device: Any = None) -> None:
-        DiffusersReplayModelBase.__init__(
-            self,
-            transformer=transformer,
-            scheduler=scheduler,
-            device=device,
-        )
-        install_sd3_joint_attention_processor(transformer)
-
-    def _set_transformer(self, transformer: Any) -> None:
-        self.transformer = transformer
-        install_sd3_joint_attention_processor(transformer)
+    ``DiffusersReplayModelBase`` precedes ``SD3_5Model`` in the MRO, so the ctor
+    and the non-syncing ``_set_transformer`` both resolve to the replay base.
+    """
 
 
 __all__ = ["SD3SamplingState", "SD3_5Model", "SD3_5ReplayModel"]

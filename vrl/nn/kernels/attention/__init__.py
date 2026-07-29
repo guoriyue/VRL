@@ -1,5 +1,5 @@
-"""Attention kernel implementations."""
+"""Attention kernel implementations.
 
-from vrl.nn.kernels.attention.sdpa import TorchSDPAAttentionKernel
-
-__all__ = ["TorchSDPAAttentionKernel"]
+``vllm_paged`` is imported by path, not re-exported here, so importing this
+package never drags in vLLM.
+"""
