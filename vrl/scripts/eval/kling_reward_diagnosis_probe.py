@@ -1,9 +1,9 @@
 """#7 follow-up: WHY is Kling reward flat at 480p_33f — resolution or OOD rollouts?
 
-The first probe (kling_480p_discrimination_probe) showed real-vs-heavily-degraded
-does not separate. But that degradation mixed noise + frame-shuffle + frame-drop +
-an fps change, any of which could confound. This isolates a clean axis to tell two
-root causes apart:
+An earlier mixed-degradation experiment (since retired) found that a real rollout
+did not separate from a heavily-degraded copy. But that degradation changed noise,
+frame order, frame count and fps at once, so its result could not be attributed to
+any single variable. This isolates a clean axis to tell two root causes apart:
 
   H1 (reward blind at 480p): a pure gaussian-noise ladder on a real rollout does
       NOT lower the score -> the reward cannot see visual degradation at this

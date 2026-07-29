@@ -102,7 +102,7 @@ DDP correctness verified: rank0 and rank1 each draw a **disjoint** 16-prompt sli
 
 **ROOT CAUSE FOUND (2026-06-20) — the trained reward target is MIS-WEIGHTED at 480p_33f, not the policy.** Two de-risk probes (run on **both** L40S in parallel), all scores deterministic (rescore gap = 0.0000, so the spreads below are real model behavior):
 
-*Probe 1* (`kling_480p_discrimination_probe.py`) — real rollout vs a heavily-degraded copy (noise + shuffle + dropped frames): Overall did **not** drop (gap −0.24, degraded scored *higher*).
+*Probe 1* (mixed-degradation, **since retired**) — real rollout vs a heavily-degraded copy (noise + shuffle + dropped frames + an fps change): Overall did **not** drop (gap −0.24, degraded scored *higher*). Because it moved four variables at once the result could not be attributed to any one of them, which is exactly what Probe 2 was built to fix; the script was deleted so nobody re-runs the confounded version. To reproduce or extend this line of investigation, use `kling_reward_diagnosis_probe.py`.
 
 *Probe 2* (`kling_reward_diagnosis_probe.py`) — a clean gaussian-noise ladder (σ=0,20,40,80,160) on 32 real rollouts, isolating one axis:
 
