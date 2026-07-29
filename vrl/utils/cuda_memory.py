@@ -75,7 +75,13 @@ class CumemPool:
 
     @classmethod
     def try_create(cls, tag: str | None = None) -> CumemPool | None:
-        """Pool handle, or None when cumem is unavailable (CPU box / no vLLM)."""
+        """Availability probe: pool handle, or None on a CPU box / without vLLM.
+
+        Callers that need a pool must use :meth:`require`. Branching on this
+        None to build unpooled is how the deleted CPU-parking fallback came
+        back once already: it turns a misconfigured box into a silent 6x
+        slowdown that only appears to release GPU memory.
+        """
 
         allocator = _cumem_allocator()
         if allocator is None:

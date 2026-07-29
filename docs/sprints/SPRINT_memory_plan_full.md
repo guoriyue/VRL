@@ -248,7 +248,7 @@ foundation
        activate() wake后restore desired policy，readiness完成前不接收generate
 目标   已达成slime形状：权重tag驻留在host backing，physical GPU pages在phase间让位，
        回rollout相位免checkpoint cold reload
-依赖   CuMemAllocator；不可用时worker保留明确的CPU move fallback
+依赖   CuMemAllocator 硬依赖；不可用时worker在policy build前fail-loud，不降级为CPU move
 验收   2026-06-29 GPU probe已验证sleep/wake；本次lease并发与transactional commit使用
        deterministic CPU tests验收，未在占用中的GPU上重复实验
 ```

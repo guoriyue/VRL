@@ -110,6 +110,11 @@ pose-gpu = [
 # (vrl/nn/quantization/fp8.py). vLLM pins its own Torch ABI, so keep this
 # accelerator in a dedicated environment instead of co-installing it with the
 # diffusers model/reward stack. The public extra keeps its historical ar-vllm name.
+# NOTE: the kernels are optional, but vLLM's CuMemAllocator is a hard requirement
+# for shared-GPU memory parking (sleep_offload) in both the rollout worker and the
+# in-process reward runtime — those paths fail loud without it. The conflicts below
+# keep the ABI isolated, so shared-GPU run envs install vllm directly (--no-deps)
+# rather than through this extra. See README "Shared-GPU topologies".
 ar-vllm = [
     "vllm>=0.21.0,<0.22",
 ]

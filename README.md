@@ -224,6 +224,15 @@ it serves both full-sequence denoise and token-autoregressive families, not just
 > `.[cosmos]`, but a dedicated venv keeps this large, tightly pinned accelerator
 > stack isolated — the repo already ships one at `.venvs/vllm-omni`.
 
+> **Shared-GPU topologies need the `vllm` package importable in the run env.**
+> Separate from the `ar-vllm` kernel extra: whenever rollout and reward or trainer
+> share a card (`sleep_offload`), physical memory parking is CuMem-only and fails
+> loud at policy/model build without vLLM's `CuMemAllocator`. There is no CPU-move
+> fallback — the one that used to exist measured 6.2x slower per park cycle and
+> hid misconfiguration. `pyproject.toml` still declares `ar-vllm` conflicting with
+> `cosmos`/`reward` for ABI reasons, so install it into the run env directly
+> (`pip install "vllm>=0.21.0,<0.22" --no-deps`) rather than via the extra.
+
 > **`videoeval` also requires its own environment.** VBench 0.1.5 pins
 > `transformers==4.33.2`, while `cosmos` and `reward` require Transformers 5.13+
 > APIs. The conflict is declared in `pyproject.toml`, so uv can lock both valid

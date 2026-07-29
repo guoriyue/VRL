@@ -21,7 +21,8 @@
   model/Ray launch 前失败，direct schedule construction 仍有 unconditional runtime backstop；
 - single-process trainer parking 覆盖 live model/ref、Adam/AdamW8bit state、EMA、GradScaler 与 live
   gradients；DDP/FSDP shared topology 在 model/Ray launch 前 capability-gate；
-- rollout worker 对支持声明、concrete CPU/CuMem parking path、完整 worker report 与 physical residual
+- rollout worker 对支持声明、family 声明的 CuMem 或 model parking path（CuMem 不可用即 fail-loud，
+  无降级）、完整 worker report 与 physical residual
   做行为验证；offload/residual 失败时 strict 不恢复 trainer，先由 terminal cleanup 回收 rollout；
 - continuous producer/queue/consumer/runtime async 操作由 schedule-owned dedicated thread/event loop
   独占；main thread 只 export immutable CPU snapshot 并通过 command/future boundary 交给 owner；

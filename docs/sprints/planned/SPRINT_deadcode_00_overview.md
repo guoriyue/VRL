@@ -116,7 +116,8 @@ rollouts 的 2 条仍有效但支撑事实迁移（构造点迁至 `builders.py`
 **死代码线否决**（对抗验证或字符串引用检查救回）：`TrajectoryAxis.kind`（`ops.py` 有 raise 消费）、
 `ARRequestLayout.validate_chunk`（有活 runtime caller）、`Cosmos3ChunkExecutor(samples_per_chunk=)`
 （另一路径消费）、`RewardScorer._score_many_locked` 的 `score_batch` 回退（e2e fake 用）、
-`MultiSegmentTokenGRPO` dict-advantages 分支（活契约）、`CumemPool.require`（子进程脚本字符串用）、
+`MultiSegmentTokenGRPO` dict-advantages 分支（活契约）、`CumemPool.require`（reward/generation
+parking 的唯一生产构造器）、
 `scripts/train.py:TrainTarget`（YAML entrypoint 活派发）。
 
 **分层线否决**：`composition/` 单模块层不删、`LossUnit`+`TrainingView.loss_units` 不删、
