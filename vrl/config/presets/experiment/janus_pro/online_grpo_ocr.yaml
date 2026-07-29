@@ -1,4 +1,4 @@
-# Janus-Pro-1B OCR GRPO — AR image RL scored by rapidocr edit-distance.
+# Janus-Pro-1B OCR GRPO — AR image RL scored by paddleocr edit-distance.
 defaults:
   - /recipe/online/categorical_token_grpo
   - /model/janus_pro/1b

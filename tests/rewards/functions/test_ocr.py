@@ -39,20 +39,6 @@ class _FakePaddleOCR:
         return [[(None, (text, 1.0))]]
 
 
-def _has_rapidocr() -> bool:
-    try:
-        import rapidocr_onnxruntime  # noqa: F401
-
-        return True
-    except ImportError:
-        return False
-
-
-_skip_no_rapidocr = pytest.mark.skipif(
-    not _has_rapidocr(), reason="rapidocr_onnxruntime not installed"
-)
-
-
 def _make_ocr_rollout(
     target_text: str,
     video_tensor=None,
@@ -79,10 +65,13 @@ def _make_ocr_rollout(
     )
 
 
-@_skip_no_rapidocr
 @pytest.mark.asyncio
-async def test_ocr_reward_rapidocr_core_scoring_behaviors() -> None:
-    """Checks OCR reward rapidocr core scoring behaviors."""
+async def test_ocr_reward_paddleocr_core_scoring_behaviors() -> None:
+    """Checks OCR reward paddleocr core scoring behaviors."""
+    # The real engine is built lazily inside score(); gate on the dependency the
+    # production runtime actually imports (vrl.rewards.models.ocr::_build_paddle_ocr).
+    pytest.importorskip("paddleocr")
+
     reward = OCRReward(device="cpu")
 
     assert await reward.score(_make_ocr_rollout("")) == pytest.approx(0.0)
