@@ -1,10 +1,12 @@
 """GenerationWorkerCore sleep/wake (SPRINT_frozen_component_preservation, defect A).
 
 Level-1 offload-and-restore for on-demand activation: ``sleep`` delegates to the
-worker's memory-parking owner, which selects CuMem or model-owned parking while
-retaining the executor. Wan's model-owned path resets its existing Accelerate
-hooks; ordinary models move to CPU. ``wake`` restores active residency without
-a cold reload; ``release_policy`` remains the level-2 discard path.
+worker's memory-parking owner. The backend follows from the family's declared
+parking profile and its residency mode, never from what happens to be installed:
+a CuMem family without a working allocator fails loud rather than degrading.
+Wan's model-owned path resets its existing Accelerate hooks; model-profile
+families move to CPU. ``wake`` restores active residency without a cold reload;
+``release_policy`` remains the level-2 discard path.
 """
 
 from __future__ import annotations
@@ -189,7 +191,9 @@ def _install_cumem_pool(
     )
 
 
-def _disable_cumem_pool(monkeypatch: pytest.MonkeyPatch) -> None:
+def _make_cumem_unavailable(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Simulate a box without vLLM: ``require`` then raises through ``try_create``."""
+
     import vrl.generation.execution.memory_parking as parking_module
 
     monkeypatch.setattr(
@@ -824,20 +828,27 @@ def test_loaded_validation_drops_traceback_model_before_pool_close(
     assert model_was_released == [True]
 
 
-def test_load_policy_falls_back_when_cumem_unavailable(
+def test_sleep_offload_requires_cumem(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    _disable_cumem_pool(monkeypatch)
-    core = _core(None, sleep_offload=True)
-    model = _SleepModel()
-    core._build_executor = lambda: _build_executor(core, model)  # type: ignore[method-assign]
+    """A CuMem-profile family refuses to load at all when the allocator is missing."""
+    _make_cumem_unavailable(monkeypatch)
+    core = _core(None, sleep_offload=True)  # sd3_5 declares GenerationParkingProfile.CUMEM
+    built: list[bool] = []
 
-    core.load_policy()
+    def build() -> Any:
+        built.append(True)
+        return _build_executor(core, _SleepModel())
 
-    assert core.executor is not None
-    assert core.executor.model is model
-    assert core.sleep().backend == "cpu_offload"
-    assert model.to_calls == ["cpu"]
+    core._build_executor = build  # type: ignore[method-assign]
+
+    with pytest.raises(RuntimeError, match="CuMemAllocator is required"):
+        core.load_policy()
+
+    assert core.executor is None
+    # The pool is claimed before the weights load, so a misconfigured box never
+    # pays for a multi-GiB build it cannot park.
+    assert built == []
 
 
 def test_load_policy_does_not_pool_without_sleep_offload(
@@ -861,7 +872,7 @@ def test_load_policy_does_not_pool_without_sleep_offload(
     assert called == []
 
 
-def test_ar_cpu_fallback_does_not_enter_cumem_pool(
+def test_ar_model_parking_does_not_enter_cumem_pool(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """AR decode may call empty_cache, which is incompatible with the pool scope."""
@@ -884,9 +895,8 @@ def test_ar_cpu_fallback_does_not_enter_cumem_pool(
     assert called == []
 
 
-def test_cpu_fallback_rejects_executor_without_movable_model(monkeypatch) -> None:
-    core = _core(None, sleep_offload=True)
-    _disable_cumem_pool(monkeypatch)
+def test_model_parking_rejects_executor_without_movable_model() -> None:
+    core = _core(None, sleep_offload=True, family="janus_pro")  # declares MODEL profile
     core._build_executor = lambda: _build_executor(core, object())  # type: ignore[method-assign]
 
     with pytest.raises(RuntimeError, match=r"requires executor\.model\.to"):
@@ -895,26 +905,8 @@ def test_cpu_fallback_rejects_executor_without_movable_model(monkeypatch) -> Non
     assert core.executor is None
 
 
-def test_diffusion_cpu_fallback_requires_frozen_component_parking(monkeypatch) -> None:
-    class _MovableModel:
-        def to(self, device: Any) -> _MovableModel:
-            del device
-            return self
-
-    core = _core(None, sleep_offload=True)
-    _disable_cumem_pool(monkeypatch)
-    model = _MovableModel()
-    core._build_executor = lambda: _build_executor(core, model)  # type: ignore[method-assign]
-
-    with pytest.raises(RuntimeError, match="requires move_frozen_components"):
-        core.load_policy()
-
-    assert core.executor is None
-
-
-def test_executor_identity_failure_rolls_back_loaded_policy(monkeypatch) -> None:
-    core = _core(None, sleep_offload=True)
-    _disable_cumem_pool(monkeypatch)
+def test_executor_identity_failure_rolls_back_loaded_policy() -> None:
+    core = _core(None, sleep_offload=True, family="janus_pro")
     core._build_executor = lambda: _Executor(  # type: ignore[method-assign]
         _SleepModel(),
         family="wrong",
@@ -1027,9 +1019,8 @@ def test_cpu_offload_bounds_lazy_cuda_runtime_residual(
     residual = baseline + CUDA_RUNTIME_RESIDUAL_BYTES_LIMIT + extra_residual_bytes
     readings = iter((baseline, 10 * 1024**3, residual))
     monkeypatch.setattr(parking_module, "gpu_used_bytes", lambda: next(readings))
-    _disable_cumem_pool(monkeypatch)
     model = _SleepModel()
-    core = _core(None, sleep_offload=True)
+    core = _core(None, sleep_offload=True, family="janus_pro")  # declares MODEL profile
     core._build_executor = lambda: _build_executor(core, model)  # type: ignore[method-assign]
     core.load_policy()
 
@@ -1046,7 +1037,7 @@ def test_cpu_offload_bounds_lazy_cuda_runtime_residual(
 
 @pytest.mark.gpu
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is unavailable")
-def test_cuda_cpu_fallback_returns_to_preload_process_baseline(monkeypatch) -> None:
+def test_cuda_model_parking_returns_to_preload_process_baseline(monkeypatch) -> None:
     import vrl.generation.execution.memory_parking as parking_module
     from vrl.utils.cuda_memory import release_cuda_memory_for_parking
 
@@ -1062,7 +1053,7 @@ def test_cuda_cpu_fallback_returns_to_preload_process_baseline(monkeypatch) -> N
         def move_frozen_components(self, device: Any) -> None:
             del device
 
-    core = _core(None, sleep_offload=True)
+    core = _core(None, sleep_offload=True, family="janus_pro")  # declares MODEL profile
     # The production proof intentionally measures the whole device and fails
     # closed if any process grows during handoff. This real-CUDA mechanism test
     # isolates the pytest process because desktop GPU clients can legitimately
@@ -1078,7 +1069,6 @@ def test_cuda_cpu_fallback_returns_to_preload_process_baseline(monkeypatch) -> N
         "release_cuda_memory_for_parking",
         release_cuda_memory_for_parking,
     )
-    _disable_cumem_pool(monkeypatch)
     core._build_executor = lambda: _build_executor(  # type: ignore[method-assign]
         core,
         _TinyCudaModel(),

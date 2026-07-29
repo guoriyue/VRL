@@ -44,7 +44,13 @@ _VAE_DECODE_MEMORY_SECTIONS = frozenset({"vae_decode"})
 
 
 class GenerationParkingProfile(Enum):
-    """Family-level preference for the worker's single parking backend."""
+    """Family-level declaration of the worker's single parking backend.
+
+    Binding, not advisory: a ``CUMEM`` family whose allocator is unavailable
+    fails the policy build instead of degrading to ``MODEL``. Only the resolved
+    residency mode may override the choice (pipeline CPU offload already owns
+    the model's residency), and that is a mechanism conflict, not a fallback.
+    """
 
     MODEL = "model"
     CUMEM = "cumem"

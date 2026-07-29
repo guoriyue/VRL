@@ -163,16 +163,10 @@ class WorkerMemoryParking:
             )
             return executor
 
-        pool = CumemPool.try_create(tag=f"vrl:generation:{self.worker_id}:weights")
-        if pool is None:
-            executor = build_executor()
-            self._parking = _ParkingSession(
-                required=state.required,
-                profile=state.profile,
-                baseline_gpu_used_bytes=baseline_gpu_used_bytes,
-                backend=_ModelParking(),
-            )
-            return executor
+        # Require before building: a family that declared CuMem parking must fail
+        # in milliseconds on a misconfigured box, not after loading GiB of weights
+        # it would then have no way to release.
+        pool = CumemPool.require(tag=f"vrl:generation:{self.worker_id}:weights")
         backend = _CumemParking(pool)
         try:
             with pool.building():
@@ -244,17 +238,7 @@ class WorkerMemoryParking:
         if model is None or not callable(getattr(model, "to", None)):
             raise RuntimeError(
                 f"generation worker {self.worker_id!r} cannot completely park "
-                f"{type(executor).__name__}: CPU fallback requires executor.model.to(...)"
-            )
-        from vrl.families.registry import GenerationParkingProfile
-
-        if session.profile is GenerationParkingProfile.CUMEM and not callable(
-            getattr(model, "move_frozen_components", None),
-        ):
-            raise RuntimeError(
-                f"generation worker {self.worker_id!r} cannot completely park "
-                f"{type(model).__name__}: this CPU fallback requires "
-                "move_frozen_components(...)"
+                f"{type(executor).__name__}: model parking requires executor.model.to(...)"
             )
 
     def sleep(
@@ -511,6 +495,14 @@ class WorkerMemoryParking:
         state = self._parking
         if isinstance(state, _ParkingSession):
             return state
+        if state.required:
+            # build() is the only place that commits a backend. Manufacturing one
+            # here for a parking-required worker would silently reintroduce the
+            # CuMem-to-model downgrade that build() now refuses.
+            raise RuntimeError(
+                f"generation worker {self.worker_id!r} queried its parking backend "
+                "before policy build committed one",
+            )
         session = _ParkingSession(
             required=state.required,
             profile=state.profile,
