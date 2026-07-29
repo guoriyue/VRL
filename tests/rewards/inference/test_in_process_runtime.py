@@ -126,28 +126,6 @@ def _immovable_factory(worker_config):
     return _Immovable()
 
 
-class _MovableModel:
-    def __init__(self, worker_config):
-        self.device = str(worker_config.get("device", "cuda:0"))
-        self.moves: list[str] = []
-        self.prepared = False
-
-    def prepare_for_inference(self):
-        self.prepared = True
-
-    def move_to(self, device):
-        self.device = str(device)
-        self.moves.append(self.device)
-
-    def __call__(self, *, artifact, request):
-        del artifact, request
-        return {"overall": 2.0}
-
-
-def _movable_factory(worker_config):
-    return _MovableModel(worker_config)
-
-
 class _LazyTorchModel(TorchRewardModel):
     """Records whether its deferred state materialized inside a CuMem scope."""
 
@@ -424,38 +402,8 @@ async def test_dedicated_reward_runtime_stays_resident(monkeypatch) -> None:
 
 
 @pytest.mark.asyncio
-async def test_sleep_offload_falls_back_to_verified_cpu_parking(monkeypatch) -> None:
-    """A diffusers environment without vLLM still parks a movable reward."""
-    import vrl.utils.cuda_memory as cuda_memory_mod
-
-    monkeypatch.setattr(cuda_memory_mod, "_cumem_allocator", lambda: None)
-    runtime = InProcessRewardRuntime(
-        {
-            "device": "cuda:0",
-            "sleep_offload": True,
-            "model_factory": f"{__name__}:_movable_factory",
-        },
-    )
-    runtime._gpu_used_bytes = lambda: 1024  # type: ignore[method-assign]
-    runtime._release_cuda_memory_for_parking = lambda: None  # type: ignore[method-assign]
-
-    first = await runtime.score_batch(_parking_request())
-    first_proof = await runtime.park_memory()
-    second = await runtime.score_batch(_parking_request())
-    second_proof = await runtime.park_memory()
-
-    assert [result.selected_score for result in first] == [2.0]
-    assert [result.selected_score for result in second] == [2.0]
-    assert runtime._pool is None
-    assert runtime._model.prepared is True
-    assert runtime._model.moves == ["cpu", "cuda:0", "cpu"]
-    assert first_proof.released is second_proof.released is True
-    await runtime.shutdown()
-
-
-@pytest.mark.asyncio
-async def test_sleep_offload_without_cumem_rejects_immovable_model(monkeypatch) -> None:
-    """CPU fallback fails closed when a reward cannot move all model state."""
+async def test_sleep_offload_requires_cumem(monkeypatch) -> None:
+    """Without vLLM a parking reward fails loud instead of faking a CPU park."""
     import vrl.utils.cuda_memory as cuda_memory_mod
 
     monkeypatch.setattr(cuda_memory_mod, "_cumem_allocator", lambda: None)
@@ -469,8 +417,14 @@ async def test_sleep_offload_without_cumem_rejects_immovable_model(monkeypatch) 
     runtime._gpu_used_bytes = lambda: 1024  # type: ignore[method-assign]
     runtime._release_cuda_memory_for_parking = lambda: None  # type: ignore[method-assign]
 
-    with pytest.raises(RuntimeError, match="move_to"):
+    with pytest.raises(RuntimeError, match="CuMemAllocator is required"):
         await runtime.score_batch(_parking_request())
+
+    assert runtime._model is None
+    assert runtime._pool is None
+    # The pool is claimed before the baseline sample, so a failed require leaves
+    # no phantom baseline for shutdown's residual check to measure against.
+    assert runtime._preload_gpu_used_bytes is None
 
 
 def test_sleep_offload_rejects_injected_model() -> None:
