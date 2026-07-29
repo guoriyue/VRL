@@ -28,6 +28,12 @@ reward 现在只支持 in-process `execution="inline"`，Ray reward pool 已删�
 
 **✅ GPU 验收已跑（2026-06-29，GPU 0 独占，SD3.5-medium bf16，`vrl/scripts/perf/rollout_sleep_probe.py --backend both`）：**
 
+> **探针已退役（2026-07-28）。** `rollout_sleep_probe.py` 在产出下表后删除：`97b3a89f`
+> 之后 declared-CuMem family 不再回退到 naive CPU round trip，探针的 naive/cumem A/B
+> 失去生产参照物；脚本本身也已随 `ModelBuild` 演进失效（手搓 `SimpleNamespace` 缺
+> `pretrained_kwargs`，在加载模型前就抛 `AttributeError`）。**下表是这次测量的最终
+> provenance**，不再可重跑。表中未归档的只有 sleep/wake 的分项与逐周期 min/max 分布。
+
 | 指标 | naive | **cumem** | 冷重载 |
 |---|---|---|---|
 | sleep 后残留（驱动级 `mem_get_info`） | 1297 MB（仅 context） | 1327 MB（仅 context） | — |
@@ -108,7 +114,7 @@ sprint，不能复活本文的旧 bundle 假设。
 - **已核实（2026-06-29，原"架构选型未定"项收窄）：** 复核两处代码后，"actor 生命周期是否每周期保活"不是一个不可知的架构分叉，而是一个可测量的显存问题：
   1. **lease 模式下 bundle 根本不交还。** `_ensure_runtime` 重 launch 时传的是同一个 `state.placement`（`runtime.py:181-186`），launcher 里 `owned_placement_group = None`、PG 由 `GlobalRayPlacementOwner` 持有、`shutdown` 从不 remove PG（`launcher.py:88` 注释）。所以 `kill_actors` 杀掉的只是 **actor 进程**，bundle 一直为 rollout 保留、下周期同 bundle 重建——kill 的唯一作用是回收那张物理卡的显存（含 CUDA context），**不是**把 Ray 调度位让给别的角色。
   2. **on_demand 只有两类触发**（`resources.py:328-335`）：`release_before_train = colocated and not persistent_colocated`（trainer 同卡相位切换）或 `release_before_reward = reward_shared_with_rollout`（reward 共享卡）。结合 (1)：trainer 这一类只需让出物理显存 → in-process sleep 充分；reward 这一类可能要让出 bundle → 保留 teardown。
-  - 于是 A 收窄为**一个经验问题**：colocated 场景里 sleeping actor 残留的 CUDA context（~几百 MB）放在共享卡上，trainer 的训练步还塞得下吗？`rollout_sleep_probe.py` 在 free-GPU 机上给数字。这正是 verl-omni `sleep_level=1`（offload 保活）vs `level=2`（discard）的同一道选择——vrl 原本的 lease=kill+reload 等价于"永远 level-2"。
+  - 于是 A 收窄为**一个经验问题**：colocated 场景里 sleeping actor 残留的 CUDA context（~几百 MB）放在共享卡上，trainer 的训练步还塞得下吗？`rollout_sleep_probe.py`（一次性验收探针，已于 2026-07-28 退役删除；数字见上文表格，该表是最终 provenance）在 free-GPU 机上给数字。这正是 verl-omni `sleep_level=1`（offload 保活）vs `level=2`（discard）的同一道选择——vrl 原本的 lease=kill+reload 等价于"永远 level-2"。
 
 ---
 
