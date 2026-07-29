@@ -1,7 +1,10 @@
-# SPRINT: `rollouts` / `trainers` / `ray` 死代码清理（planned · RECONCILED）
+# SPRINT: `rollouts` / `trainers` / `ray` 死代码清理（done）
 
-状态：**RECONCILED（2026-07-24）against main @ `7c748532`**（= `origin/main` tip，自审计基线 `88ed756e` 以来落地约 63 个 cleanup/refactor commit）。原始审计（planned 2026-07-23，23 条对抗验证通过的死代码）已针对当前 checkout 逐条复核。
-复核结论：**20 条仍需处理**（14 STILL_VALID + 6 RELOCATED），**3 条已由 origin 落地**（`dones` / `expected_count` / `TrainState` 累加），**2 条虽仍有效但支撑事实已随 origin 迁移**（§1.5、§1.18，见 §3——它们仍列于 §1）。无 verdict 级 CHANGED/INDETERMINATE。
+状态：**DONE（2026-07-24）**。16 条由 `c951ceba` 落地，3 条 Ray 项由 `58c4e0b3` 落地，`collect_prompt_batches` finding 经复核撤销。
+
+> **历史审计，禁止照 §1 对当前 HEAD 执行。** 下文保留的是对 `7c748532` 的执行前证据；其中含已撤销 finding，必须以顶部执行状态为准。
+
+历史基线：main @ `7c748532`。原始审计有 23 条对抗验证 finding。
 来源：dead-code-audit workflow（五种死代码形态 + 对抗验证 + 删除类二次字符串引用检查）。
 关联：[[SPRINT_deadcode_00_overview]]；与 [[SPRINT_trajectory_views_types_dead_fields_cleanup]]（死字段规则同源）、[[SPRINT_fbag_00_overview]]（`gather_full_state_dict` 的 cohesive-keep 判定，见 §1.4 复核）、[[SPRINT_grab_bag_file_audit]]（`require_method=False` 历史 producer，见 §1.18）、[[SPRINT_design_smell_audit]]（`mask_key` 假旋钮先例，见 §1.17）、[[SPRINT_native_generation_engine_program]]（在飞 sprint，`vrl/ray/` 文件重叠，见 §1.6/§1.8/§1.9）互有承接。
 

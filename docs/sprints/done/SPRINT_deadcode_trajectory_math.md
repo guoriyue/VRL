@@ -1,6 +1,10 @@
-# SPRINT: `trajectory` 与 `math` 死字段/死参数/死分支清理（planned · RECONCILED）
+# SPRINT: `trajectory` 与 `math` 死字段/死参数/死分支清理（done）
 
-状态：**RECONCILED（2026-07-24）against main @ `7c748532`**（= `origin/main` tip）。原审计跑在旧树 `88ed756e`，此后约 63 个 cleanup/refactor commit 落地，原 15 条中**多数已被 origin 自行清掉**。本次复核逐条对当前 checked-out 树重新验证，得出：
+状态：**DONE（2026-07-24）**。§1 全部由 `cd6beea5` 落地；§3 的两条 finding 因新增行为测试撤销。
+
+> **历史审计，禁止照 §1 对当前 HEAD 执行。** 下文保留的是对 `7c748532` 的执行前证据与动作说明。
+
+历史基线：main @ `7c748532`。当时对原 15 条逐项复核得到：
 - **7 条仍需做**（4 条 STILL_VALID + 3 条 RELOCATED，位置行号已随周边重构漂移）— 见 §1；
 - **6 条已由 origin 落地**（复核确认，无需再做）— 见 §2；
 - **2 条情况已变**（需重新评估，原动作已不能原样执行）— 见 §3。

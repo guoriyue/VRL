@@ -1,6 +1,10 @@
-# SPRINT: 用户可设但无效的 config 旋钮清理（planned）
+# SPRINT: 用户可设但无效的 config 旋钮清理（done）
 
-状态：**RECONCILED（2026-07-24）**，对齐基线 main @ `7c748532`（= `origin/main` tip，自审计所在旧树 `88ed756e` 起累计约 63 个 cleanup/refactor 提交）。原始 5 条针对旧树采集，本次逐条独立复核后：**1 条仍需做**（STILL_VALID：`config_reads_in_code(root=...)` 死参数）+ **4 条已由 origin 落地**（`media_type` / `metadata_schema` / `target_text` / `DataConfig.source`，均在提交 `1aef2ea8 refactor(config): remove public no-op inputs` 中删除）+ **0 条情况已变**。
+状态：**DONE（2026-07-24）**。仍有效项已由 `7c0ee4c1` 落地，其余项见 §2 的先行提交。
+
+> **历史审计，禁止照 §1 对当前 HEAD 执行。** 下文保留的是对 `7c748532` 的执行前证据与动作说明；当前代码位置和符号集合已经变化。
+
+历史基线：main @ `7c748532`（= `origin/main` tip，自审计所在旧树 `88ed756e` 起累计约 63 个 cleanup/refactor 提交）。原始 5 条针对旧树采集，复核时为 **1 条仍需做** + **4 条已由 origin 落地**。
 来源：dead-code-audit workflow（五种死代码形态 + 对抗验证 + 删除类二次字符串引用检查），审计树 `88ed756e`；本文件为对齐 `7c748532` 后的复核版。
 关联：[[SPRINT_deadcode_00_overview]]；死字段/no-op 旋钮判定规则承接 [[SPRINT_trajectory_views_types_dead_fields_cleanup]]。
 

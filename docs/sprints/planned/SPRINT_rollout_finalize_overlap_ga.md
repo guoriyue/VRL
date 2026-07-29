@@ -10,7 +10,7 @@
 （`vrl/generation/bindings/full_sequence_denoise/executor.py::forward_plan_pipelined`）已实现同一模式——chunk N 的
 teardown（GPU→CPU 结果拷贝 + host 打包，copy stream）与 N+1 的
 produce（encode→prepare→denoise→decode，默认流）重叠，BIT-EXACT，经
-`run_chunk_through_pipeline` 复用同一批 stage 方法。但它：
+`vrl/generation/execution/pipeline.py::forward_chunks_pipelined` 复用同一批 stage 方法。但它：
 - **opt-in**（`distributed.rollout.pipelined`，默认 false）；
 - **仅单 worker + 多 chunk 时生效**（`RolloutWorkerSection` 注释）；
 - 实测只回收 ~20%（nsys 档案：rollout 64% busy / 36% 空转，其中 ~33% 是

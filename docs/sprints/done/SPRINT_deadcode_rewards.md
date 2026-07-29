@@ -1,6 +1,10 @@
-# SPRINT: `rewards` 死代码清理（planned）
+# SPRINT: `rewards` 死代码清理（done）
 
-状态：**RECONCILED（2026-07-24）**，对齐 main @ `7c748532`（= `origin/main` tip，自审计基线 `88ed756e` 起累计约 63 个 cleanup/refactor commit）。原始 13 条死代码审计发现，本次复核结果：**10 条仍需处理**（8 条 STILL_VALID + 2 条 RELOCATED，行号已随代码位移刷新）、**3 条已由 origin 落地**（3 个零消费者包 facade `__getattr__`，同一 commit `94761143` 一并删除）、**0 条情况已变**。仍待做的 10 条：1 条 medium（`cosmos3_reasoner` 不可达的 snapshot-download 回退分支）+ 9 条 low（5 个死参数、2 个 test-only 死字段、1 处 form-4 重复实现）。
+状态：**DONE（2026-07-24）**。全部仍有效项由 `b7714bdc` 落地；三个 package facade 先由 `94761143` 收敛。
+
+> **历史审计，禁止照 §1 对当前 HEAD 执行。** 下文保留的是对 `7c748532` 的执行前证据与动作说明。
+
+历史基线：main @ `7c748532`。原始 13 条发现复核时为 **10 条仍需处理** + **3 条先行落地**。
 来源：dead-code-audit workflow（五种死代码形态 + 对抗验证 + 删除类二次字符串引用检查），本次对当前 checked-out 树逐条 re-grep 复核。
 关联：[[SPRINT_deadcode_00_overview]]、[[SPRINT_reward_identity_and_score_keys]]（§1.8 的 `default_revision` 是该 sprint 删掉最后一个非默认 producer 后残留的死参数）、[[SPRINT_reward_service]]（原 §1.13 facade 现已由 origin 收敛，见 §2）、[[SPRINT_cosmos3_full_support]]（parked；§1.1 的 reasoner judge 已 shipped、不计划放开 `model_path` 守卫）。格式范本：[[SPRINT_trajectory_views_types_dead_fields_cleanup]]。
 

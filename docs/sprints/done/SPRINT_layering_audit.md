@@ -1,10 +1,10 @@
-# SPRINT: 分层审计——dataclass/arg 归属层与各层必要性（planned·已复核）
+# SPRINT: 分层审计——dataclass/arg 归属层与各层必要性（done）
 
-状态：**RECONCILED（2026-07-24）**，基线从审计时的旧树 `88ed756e` 迁到当前 main
-`@ 7c748532`（= origin/main tip，审计后又落地 ~63 个 cleanup/refactor commit）。原 14 条确认
-改动经**逐条独立复核**后：**12 条仍需做**（8 STILL_VALID + 4 RELOCATED，见 §1）、**1 条已由
-origin 落地**（见 §2）、**1 条情况已变需重评**（见 §3）。RELOCATED 指发现依然成立、但其代码位置
-在这 63 个 commit 中移动了行号/文件，§1 已把「位置」行更新到当前树。§4「已否决」照旧保留防重议。
+状态：**DONE（2026-07-24）**。11 个可执行 finding 由 `b54d4205` 与 `7a4f2b5f` 落地；唯一残余的 generation→models interface-floor gate 已拆到 [[SPRINT_generation_models_interface_floor]]。
+
+> **历史审计，禁止照 §1 对当前 HEAD 执行。** 例如 `unwrap_compile_and_ddp` 已迁到 `vrl/models/weight_utils.py`，原提议位置 `vrl/models/utils.py` 后来也已删除。下文保留的是对 `7c748532` 的执行前证据。
+
+历史基线：旧树 `88ed756e`，后迁到 main @ `7c748532`。原 14 条复核时为 12 条可执行、1 条先行落地、1 条现场已变。
 来源：layering-audit workflow（原判决 JSON：`scratchpad/layering_confirmed.json`）。关联：
 [[SPRINT_deadcode_00_overview]]、[[SPRINT_single_caller_inlines]]、
 [[SPRINT_generation_regime_decision_layering]]、[[SPRINT_native_generation_engine_program]]。

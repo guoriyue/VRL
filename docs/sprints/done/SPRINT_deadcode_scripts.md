@@ -1,6 +1,10 @@
-# SPRINT: `vrl/scripts/` 死代码清理（planned，RECONCILED）
+# SPRINT: `vrl/scripts/` 死代码清理（done）
 
-状态：**RECONCILED（2026-07-24）** 对齐 main @ `7c748532`（= origin/main tip；自审计跑过的旧树 `88ed756e` 以来落地了约 63 个 cleanup/refactor 提交）。原审计 16 条基于旧树，本次逐条对当前 checkout 复核后：**14 条仍待做**（9 条 STILL_VALID + 5 条 RELOCATED——证据/动作不变，仅部分行号位移），**1 条已由 origin 落地**（无需再做），**1 条情况已变**（需重新评估，原动作不再适用）。
+状态：**DONE（2026-07-24）**。§1 全部由 `ae3a3e96` 落地；`_video_to_cthw` finding 因现场活化撤销。
+
+> **历史审计，禁止照 §1 对当前 HEAD 执行。** 下文保留的是对 `7c748532` 的执行前证据与动作说明。
+
+历史基线：main @ `7c748532`。原审计 16 条复核时为 **14 条仍待做** + **1 条先行落地** + **1 条现场已变**。
 原审计来源：dead-code-audit workflow（五种死代码形态 + 对抗验证 + 删除类二次字符串引用检查）。复核 grep 纪律：排除 `.venv/ third_party/ outputs/ datasets/ docs/runs/ __pycache__/ egg-info`；同名符号按 finding 的 file+context 消歧；test-only 引用在生产读者已消失时仍记为 DONE。
 关联：[[SPRINT_deadcode_00_overview]]；`scripts/eval/sana_aesthetic_curve_verdict.py` 的阈值 hoist 与 [[SPRINT_sana_aesthetic_trustworthy_curve]] 的预注册协议对齐（见 §1.7）；`scripts/perf/gpu_preflight.py` 属 [[SPRINT_cosmos_video_mfu_kernels]] 的保留交付物（见 §1.14）。
 

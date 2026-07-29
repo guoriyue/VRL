@@ -1,6 +1,10 @@
-# SPRINT: model families 死代码与 `LORA_DEFAULTS` 去重（planned → reconciled）
+# SPRINT: model families 死代码与 `LORA_DEFAULTS` 去重（done）
 
-状态：**RECONCILED（2026-07-24）**，对齐 main @ `7c748532`（= origin/main tip）。原 audit 跑在旧树 `88ed756e`，其后 origin 已落地约 63 个 cleanup/refactor commit，故原 32 条发现里很多已被独立完成。本版对当前 checked-out 树逐条复核后：**22 条仍需做**（16 STILL_VALID + 6 RELOCATED，见 §1）、**7 条已由 origin 落地**（见 §2，无需再做）、**3 条现场已变需重新评估**（见 §3）。
+状态：**DONE（2026-07-24）**。§1 全部由 `6e0cfd8e` 落地；§3 的现场变化已由其各自 owner 处理。
+
+> **历史审计，禁止照 §1 对当前 HEAD 执行。** `TrainableStateSlots.versions()`、`count_trainable_params` 和原 `vrl/models/utils.py` 均已不存在。下文保留的是对 `7c748532` 的执行前证据。
+
+历史基线：main @ `7c748532`。原 32 条发现复核时为 **22 条仍需做** + **7 条先行落地** + **3 条现场已变**。
 来源：dead-code-audit workflow（五种死代码形态 + 对抗验证 + 删除类二次字符串引用检查）；本版叠加 2026-07-24 对 main @ `7c748532` 的逐条复核（grep 排除 `.venv/ third_party/ outputs/ datasets/ docs/runs/ __pycache__/ egg-info`）。
 关联：[[SPRINT_deadcode_00_overview]]、[[SPRINT_trajectory_views_types_dead_fields_cleanup]]（死字段规则同源）、[[SPRINT_generation_regime_decision_layering]]（`PolicySemantics` 为分发 source of truth，约束 §1.2 的落地方向）、[[SPRINT_sampling_config_knob_unification]]（`final_image_policy`/`guidance_scale_2` 的收敛记录，约束 §1.13/§1.23）、[[SPRINT_dead_code_wrapper_sweep]]（`count_trainable_params` 的历史合并意图，约束 §1.32）、[[SPRINT_native_generation_engine_program]]（**in-flight**，§1.27 与其未提交改动同文件，须排在其后）。
 

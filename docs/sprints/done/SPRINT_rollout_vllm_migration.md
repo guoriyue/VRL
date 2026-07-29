@@ -107,7 +107,7 @@ TeaCache 在仓库 10–35 step schedule 上已经判定为结构性边际收益
 近零收益的 feature 建 fp8 组合 GPU probe。fp8/TIS 自身的长期 owner 是
 `docs/sprints/done/SPRINT_fp8_rollout_gemm_kernel.md` 与
 `docs/sprints/done/SPRINT_low_precision_tis.md`；它们不需要 TeaCache 组合结果才能成立。未来若
-重新验证 RL-safe cache，owner 是 `docs/sprints/planned/SPRINT_rl_safe_feature_cache_probe.md`；
+重新验证 RL-safe cache，owner 是 `docs/sprints/parked/SPRINT_rl_safe_feature_cache_probe.md`；
 该 sprint 明确要求一次隔离一个变量，不复活 fp8+TeaCache 混合 probe。
 
 ### P2 — TeaCache viability across the repo + vLLM-omni diffusion spike

@@ -1,6 +1,10 @@
-# SPRINT: generation 栈死字段与死参数清理（planned / reconciled）
+# SPRINT: generation 栈死字段与死参数清理（done）
 
-状态：**RECONCILED（2026-07-24）**，对齐 main @ `7c748532`（= origin/main tip，自审计运行的旧树 `88ed756e` 以来已落地 ~63 个 cleanup/refactor commit）。原稿共 16 条对抗验证死代码，本次逐条针对当前 checked-out 树重新复核后：**10 条仍需处理**（5 STILL_VALID + 5 RELOCATED，见 §1）、**6 条已由 origin 落地**（见 §2，无需再做）、**0 条情况已变**（§3 为空）。RELOCATED 指判死结论不变、仅行号随 origin 的重构漂移；本稿已把 §1 每条的 `位置` 行更新到当前 `file:line` 并标注「行已移」。
+状态：**DONE（2026-07-24）**。§1 由 `7056ea69` 落地；`same_latent` 的协议哈希更新见 `801a5b77`。
+
+> **历史审计，禁止照 §1 对当前 HEAD 执行。** 下文保留的是对 `7c748532` 的执行前证据与动作说明；当前代码位置和符号集合已经变化。
+
+历史基线：main @ `7c748532`。原稿共 16 条对抗验证死代码，复核时为 **10 条仍需处理** + **6 条先行落地**。
 来源：dead-code-audit workflow（五种死代码形态 + 对抗验证 + 删除类二次字符串引用检查），原稿写于 `88ed756e`。
 关联：[[SPRINT_deadcode_00_overview]]；与 [[SPRINT_native_generation_engine_program]]（in-flight，动了 `generation/ray/`）在 §1.2 / §1.7 / §1.8 三条上重叠——这三条**必须排在该 sprint 之后**；[[SPRINT_trajectory_views_types_dead_fields_cleanup]]（死字段规则的先例：能 raise 的校验/控制流分支消费者一律保留）。
 

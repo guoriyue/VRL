@@ -17,3 +17,18 @@ the other three by STATUS.
 
 File new sprints at the level matching their status; move them as status changes
 (`git mv` keeps history).
+
+Lifecycle invariants:
+
+- A file in `planned/` must contain an executable current-state plan. A `DONE`,
+  `completed`, or “all items landed” execution banner means the file belongs in
+  `done/`, not `planned/`.
+- Move a completed sprint in the same commit that lands its final action. Do not
+  leave cleanup bookkeeping for a later sweep.
+- When a sprint is partially complete, split the remaining current-state action
+  into a short `planned/` file and archive the pre-execution audit in `done/`.
+- A sprint blocked on an owner decision or external capability belongs in
+  `parked/` and must name the event that moves it back to `planned/`.
+- Paths and line numbers in `done/` are historical evidence, not instructions
+  against current HEAD. Every new cleanup sprint must re-read the definition,
+  producers, non-test consumers, tests, and dotted-string/config references.

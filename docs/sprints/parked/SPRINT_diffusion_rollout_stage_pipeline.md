@@ -109,7 +109,7 @@
 > 3. **[≥2卡] data-parallel denoise 吞吐**:摸 VRL 的 continuous + rollout num_workers 现状（已支持到哪、差什么),给 ≥2 卡近线性 rollout 的落地路径。← denoise 吞吐的真杠杆。
 > 4. **[gating probe]** 任何把 denoise 自己切 stage 跨卡之前,先证它打得过 N 个 data-parallel monolithic actor(denoise 94-98% bound 下大概率打不过)——别把 denoise 拆 stage。
 >
-> Current implementation: `vrl/generation/diffusion/pipeline.py` contains only
+> Current implementation: `vrl/generation/execution/pipeline.py` contains only
 > the real single-worker compute/D2H overlap loop. Its default producer calls
 > `executor.forward_chunk_plan`; it contains no topology, stage payload, serial
 > runner, or placement API. Async reward additionally requires an explicit

@@ -1,6 +1,10 @@
-# SPRINT: `nn` paged-attention 死字段级联清理（planned）
+# SPRINT: `nn` paged-attention 死字段级联清理（done）
 
-状态：**RECONCILED（2026-07-24）**，对齐 main @ `7c748532`（= `origin/main` tip，自审计基线 `88ed756e` 起落地约 63 个 cleanup/refactor commit）。本次复核结论：**10 条全部仍需做（STILL_VALID）**，其中 **3 条零变动**（`free`、`debug_info` 三兄弟、`Fp4Linear.recipe`）、**7 条 RELOCATED**（字段定义未变，仅 caller/test 行号因 token 重构下移）；**0 条已由 origin 落地**、**0 条情况已变**。风险分布不变：**8 low + 2 medium**（medium：`ARAttentionStepInput.position`、`VllmDecoderPagedSequenceState.branch`）。全部来自 `vrl/nn/` paged-attention 路径及其两个 caller（`paged_attention_helpers.py` / `nextstep_1/runner.py`）与 `vrl/nn/quantization/fp4.py`。
+状态：**DONE（2026-07-24）**。全部 10 条由 `c5046266` 落地。
+
+> **历史审计，禁止照下文动作对当前 HEAD 执行。** 下文保留的是对 `7c748532` 的执行前证据与风险分析。
+
+历史基线：main @ `7c748532`。当时复核结论为 **10 条全部仍需做**，风险分布为 8 low + 2 medium。
 
 > **执行状态（2026-07-24）**：全部 10 条已落地 `c5046266`（分页注意力死字段级联 + `_ar_config` model 参数收敛）。
 
