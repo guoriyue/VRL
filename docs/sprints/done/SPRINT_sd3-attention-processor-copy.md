@@ -1,6 +1,20 @@
 # SPRINT: 删除 SD3 attention processor 的 upstream 复制品（planned）
 
-状态：**planned / CPU-only verification**。单独提交，不与依赖或 probe 删除混合。
+状态：**DONE（2026-07-28，`b582848f`）**。单独提交，未与依赖或 probe 删除混合。
+
+> **等价性是实测的，不是沿用旧结论。** 删除前跑了 18 组对照：16 个 attention block 配置
+> （`qk_norm` ∈ {None, rms_norm} × `context_pre_only` × encoder 有无 × fp32/bf16，
+> RMSNorm 权重随机化以确保 norm 分支真的生效）加 2 次 tiny `SD3Transformer2DModel`
+> 全量 forward（stock vs swapped）。**全部 bitwise 相同，max abs diff = 0.000000e+00。**
+> 本文原写「仓库自己的 equivalence test 已证明数值一致」**证据不足**——那个测试只覆盖
+> `qk_norm=None`，从未跑过 SD3.5-Medium 实际使用的 rms_norm 路径。结论成立，但当时并未被证明。
+>
+> **补充的能力损失（本文「能力边界」未列）**：`quantized_sd3_forward_profile.py` 里
+> 「transformer 是否接受 VRL processor」的 fail-loud `RuntimeError` 随之删除。它问的问题
+> 在没有 swap 之后不再成立，但这是删掉一个守卫，不是纯 no-op。
+>
+> 本文 change list 另漏两处，已补：perf runner 的 module docstring（仍宣称安装 VRL processor）、
+> 以及删掉唯一 export 后清空的 `vrl/nn/kernels/attention/__init__.py`。
 
 ## 目标
 

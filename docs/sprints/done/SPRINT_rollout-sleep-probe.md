@@ -1,6 +1,24 @@
 # SPRINT: 退役 rollout sleep A/B 探针（planned）
 
-状态：**planned / ready**。删除 `vrl/scripts/perf/rollout_sleep_probe.py`（198 行），不增加长期 GPU run。
+状态：**DONE（2026-07-28，`242cc3e0`）**。删除 `vrl/scripts/perf/rollout_sleep_probe.py`（198 行），未增加长期 GPU run。
+
+> **事实更正一：本探针不是 6.2x 的来源。** README 与 `vrl/rewards/runtime.py` 引用的
+> 6.2x 是 **reward 侧**实测（14GB Kling 规模、5090、`wake+score+sleep`=0.71s vs 4.42s），
+> 原文在 `parked/SPRINT_video_rollout_stage_overlap.md:25`，由 `2fe7fab4` 引入。本探针
+> 通篇只有 `_do_sleep`/`_do_wake`，**没有打分步骤**，物理上产不出该指标。它自己的数是
+> 4.4x（vs naive）与 6.4x（vs 冷重载）——两者相近，早先审计应是记混。删除不影响 6.2x。
+>
+> **事实更正二：本文第 7 行「naive 臂不再是生产能力」夸大。** `97b3a89f` 实际做的是让
+> declared-CuMem family 不再**静默降级**；`GenerationParkingProfile.MODEL`（CPU parking）
+> 仍是活的且是默认值。准确说法是「declared-CuMem family 失去了 naive 回退」。
+>
+> **删除的真实依据**（三条均已实证）：脚本已不可运行（手搓 `SimpleNamespace` 缺
+> `pretrained_kwargs`，在 `diffusers_pipeline_dtypes` 裸属性访问处抛 `AttributeError`，
+> 早于任何模型分配）、零引用、结论已归档。
+>
+> **归档完整性**：`done/SPRINT_frozen_component_preservation.md` 的表格保留了全部决策轴
+> （残留、trainer 拿回、碎片 delta、往返延迟、冷重载基线）；未归档的只有 sleep/wake 分项
+> 与逐周期 min/max 分布。本文原写「结果已经完整记录」略有夸大。
 
 ## 目标
 

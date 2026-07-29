@@ -1,6 +1,13 @@
 # SPRINT: 退役有混淆变量的 Kling 探针（planned）
 
-状态：**planned / CPU verification**。净删除 `107` 行、`1` 个 Python 文件。
+状态：**DONE（2026-07-28，`b205085a`）**。净删除 `107` 行、`1` 个 Python 文件，按计划落地。
+
+> **执行偏差**：本文验收里的 `ruff format` 步骤**未执行**。`kling_reward_diagnosis_probe.py`
+> 在 HEAD 时就已 format-dirty（用 `git show HEAD:` 版本过 `ruff format --check` 验证），
+> 格式化会把 4 行 docstring 改动放大成 ~78 行无关重排，违反 AGENTS.md 的 diff 纪律。
+> `ruff check` 通过；该文件的既有格式债留给单独的 formatting-only pass。
+> 另：本文验收的 grep 覆盖 `docs/sprints/planned`，而本文自身当时就在那里并 4 次点名被删文件，
+> 因此该 grep 在文档归档到 `done/` 前不可能干净。
 
 ## 目标
 

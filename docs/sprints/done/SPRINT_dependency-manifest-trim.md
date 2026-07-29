@@ -1,6 +1,22 @@
 # SPRINT: 删除不可达的 Prometheus 与 RapidOCR 依赖声明（planned）
 
-状态：**planned / CPU-only**。执行前以当时 HEAD 重取 `pyproject.toml` 与 `uv.lock` 基线。
+状态：**DONE（2026-07-28，`02adae55`）**。两条声明按计划删除，`uv lock` 已重生成。
+
+> **lock 结果**：`Resolved 314 packages`，`Removed rapidocr-onnxruntime v1.4.4`。
+> diff 表面是 `13 insertions, 316 deletions`，但**只删了 1 个 `[[package]]` block、新增 0 个**，
+> 全文唯一变动的 `version =` 行就是被删的 1.4.4——316 行里约 276 行是 environment-marker
+> 字符串因少了一个 extra-consumer 而坍缩。零无关升级。本文验收的「no unrelated dependency
+> upgrades」若照字面读这个行数会被误判，特此说明。
+> vLLM 间接带入的 `prometheus-client` / `prometheus-fastapi-instrumentator` 按要求保留
+> （`uv.lock:7060,7069,11561-11562`）。
+>
+> **顺带修掉一个真 bug**：`test_ocr` 原先 gate 在 `rapidocr_onnxruntime` 上却跑 PaddleOCR
+> 惰性路径——装了 rapidocr 而没装 paddleocr 的机器上，该用例会真跑并崩溃；其他机器则以
+> 错误理由 skip。现改为测试体内 `pytest.importorskip("paddleocr")`。
+>
+> **`pose` / `pose-gpu` 保留判据已复核成立**：`vrl/scripts/eval/anime_probe_common.py:113`
+> 确实 `from rtmlib import Wholebody`，而 `rtmlib` 未在 `pyproject.toml` 声明——extra 是
+> **声明不足**而非死代码，删掉会掩盖缺口。
 
 ## 目标
 
