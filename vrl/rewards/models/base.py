@@ -3,10 +3,28 @@
 ``RewardModel`` is the scoring contract: given one already-materialized
 artifact plus the request, return named scores. ``TorchRewardModel``
 implements it and absorbs the device/dtype/lazy-load boilerplate that every
-torch-nn reward used to hand-roll. Subclasses implement ``_load`` (build the
-model once) and ``score_media`` (score one media payload + prompt). Media is
-pulled via ``artifact.as_media()``, so the same model scores an in-memory
-tensor or a materialized disk artifact (``.pt`` / ``.mp4`` path).
+torch-nn reward used to hand-roll. Subclasses implement ``_load_module``
+(build the model once) and ``score_media`` (score one media payload +
+prompt). Media is pulled via ``artifact.as_media()``, so the same model
+scores an in-memory tensor or a materialized disk artifact (``.pt`` /
+``.mp4`` path).
+
+CANONICAL LAZY-MODULE PARKING CONTRACT (this module is the reference; rewards
+that cannot use ``TorchRewardModel`` — see ``motion_dynamics`` and
+``target_dino_similarity``, which need the whole artifact rather than
+``as_media()`` — hand-roll the same three members):
+
+- ``self._module: Any | None`` starts ``None``. Keeping the unbuilt state
+  observable is deliberate: ``functools.cached_property`` would build the
+  module on the very access that asks whether it was built, and the parking
+  invariant has to be assertable.
+- ``_module_for_inference()`` memoizes; it is the hot-path accessor called
+  per artifact (twice per artifact in ``target_dino_similarity``).
+- ``prepare_for_inference()`` is the public protocol hook. The reward runtime
+  probes it by name and calls it inside the CuMem build frame, so a lazy
+  module cannot defer its allocations past that frame and then survive every
+  park. A reward that omits it loads outside the frame and is caught only by
+  ``park_memory``'s residual gate — after a full load and a scored batch.
 """
 
 from __future__ import annotations
@@ -58,20 +76,19 @@ class RewardModel(Protocol):
     ) -> Mapping[str, float]: ...
 
 
-class LazyTorchModuleModel(ABC):
-    """Implementation base for rewards whose CUDA state is one memoized module.
+class TorchRewardModel(ABC):
+    """Base class for torch reward models loaded in-process."""
 
-    Construction stays cheap — a reward can be built to read back its resolved
-    config, or built outside the caller's failure boundary, without pulling
-    weights. ``prepare_for_inference`` is the seam that forces materialization
-    at a moment the caller picks; the reward runtime calls it inside the CuMem
-    build frame so a lazy module cannot defer its allocations past that frame
-    and then survive every park.
-    """
-
-    def __init__(self, *, device: str) -> None:
-        self.device = str(device)
+    def __init__(self, worker_config: Mapping[str, Any]) -> None:
+        cfg = dict(worker_config)
+        self.worker_config = cfg
+        self.device = str(cfg.get("device", "cuda"))
+        self.dtype_str = str(cfg.get("dtype", "float32"))
         self._module: Any | None = None
+
+    @property
+    def dtype(self) -> Any:
+        return resolve_torch_dtype(self.dtype_str)
 
     @abstractmethod
     def _load_module(self) -> Any:
@@ -89,20 +106,6 @@ class LazyTorchModuleModel(ABC):
 
         self._module_for_inference()
 
-
-class TorchRewardModel(LazyTorchModuleModel, ABC):
-    """Base class for torch reward models loaded in-process."""
-
-    def __init__(self, worker_config: Mapping[str, Any]) -> None:
-        cfg = dict(worker_config)
-        self.worker_config = cfg
-        super().__init__(device=str(cfg.get("device", "cuda")))
-        self.dtype_str = str(cfg.get("dtype", "float32"))
-
-    @property
-    def dtype(self) -> Any:
-        return resolve_torch_dtype(self.dtype_str)
-
     @abstractmethod
     def score_media(self, *, media: Any, prompt: str, request: Any) -> Mapping[str, float]:
         """Return named scores for one artifact's media payload."""
@@ -119,7 +122,6 @@ class TorchRewardModel(LazyTorchModuleModel, ABC):
 
 
 __all__ = [
-    "LazyTorchModuleModel",
     "RewardModel",
     "TorchRewardModel",
     "require_prompt_and_video_path",
