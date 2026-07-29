@@ -1,4 +1,4 @@
-# SPRINT: 退役 Kling 混淆实验探针（planned）
+# SPRINT: 退役有混淆变量的 Kling 探针（planned）
 
 状态：**planned / CPU verification**。净删除 `107` 行、`1` 个 Python 文件。
 
