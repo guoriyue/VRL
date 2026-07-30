@@ -1441,6 +1441,53 @@ async def test_repeated_offload_cleanup_failure_preserves_root_for_later_retry()
 
 
 @pytest.mark.asyncio
+async def test_waiter_cancellation_during_cleanup_retry_preserves_root_cause() -> None:
+    runtime = _on_demand_runtime()
+    offload_error = RuntimeError("sleep failed")
+    cleanup_error = RuntimeError("first cleanup failed")
+
+    class _BlockingRetryInner(_FakeInner):
+        shutdown_calls = 0
+
+        def __init__(self) -> None:
+            super().__init__()
+            self.retry_started = asyncio.Event()
+            self.finish_retry = asyncio.Event()
+
+        async def sleep_workers(self) -> None:
+            raise offload_error
+
+        async def shutdown(self) -> None:
+            self.shutdown_calls += 1
+            if self.shutdown_calls == 1:
+                raise cleanup_error
+            self.retry_started.set()
+            await self.finish_retry.wait()
+            self.calls.append("shutdown")
+
+    inner = _BlockingRetryInner()
+    runtime._inner_runtime = inner
+    waiter = asyncio.create_task(runtime.offload())
+    await asyncio.wait_for(inner.retry_started.wait(), timeout=1)
+
+    waiter.cancel()
+    with pytest.raises(asyncio.CancelledError) as caught:
+        await waiter
+
+    assert caught.value.__cause__ is offload_error
+    assert failure_identity_cause(caught.value) is offload_error
+    assert runtime.lifecycle.failure is offload_error
+    assert runtime.lifecycle.phase is RuntimePhase.SHUTTING_DOWN
+    assert runtime._inner_runtime is inner
+
+    inner.finish_retry.set()
+    await asyncio.wait_for(runtime.shutdown(), timeout=1)
+    assert inner.shutdown_calls == 2
+    assert runtime._inner_runtime is None
+    assert runtime.lifecycle.phase is RuntimePhase.TERMINATED
+
+
+@pytest.mark.asyncio
 async def test_concurrent_cold_activation_launches_and_restores_once() -> None:
     runtime = _on_demand_runtime()
     await _stage_pending_policy(runtime, "W", 3)

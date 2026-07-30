@@ -344,6 +344,28 @@ class _OnDemandRayGenerationRuntime:
             root_failure = self.lifecycle.failure
             try:
                 await self.shutdown()
+            except asyncio.CancelledError as cleanup_error:
+                current = asyncio.current_task()
+                if current is not None and current.cancelling():
+                    # shutdown() shields its shared cleanup task. Preserve caller
+                    # cancellation while attaching the already-published root.
+                    if root_failure is not None:
+                        cleanup_error.__cause__ = root_failure
+                    raise
+                if root_failure is None:
+                    raise
+                logger.error(
+                    "on-demand generation cleanup retry was cancelled after control error %r",
+                    error,
+                    exc_info=(
+                        type(cleanup_error),
+                        cleanup_error,
+                        cleanup_error.__traceback__,
+                    ),
+                )
+                root_failure.add_note(
+                    "generation terminal cleanup retry was also cancelled",
+                )
             except BaseException as cleanup_error:
                 # A control operation that already published a stable root keeps
                 # that identity across repeated cleanup failures. With no prior
