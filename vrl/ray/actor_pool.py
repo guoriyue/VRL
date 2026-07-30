@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import time
+import warnings
 from collections import deque
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass, field
@@ -39,7 +40,7 @@ class RayActorJob:
     keyword_args: Mapping[str, Any] = field(default_factory=dict)
 
 
-@dataclass(slots=True)
+@dataclass(eq=False, slots=True)
 class _AdmissionWaiter:
     """One caller's independent FIFO position on each compatible worker."""
 
@@ -636,7 +637,10 @@ class RayActorDispatcher:
         previous = set(waiter.candidates)
         desired = set(candidates)
         for worker_id in previous - desired:
-            self._admission_queues[worker_id].remove(waiter)
+            if not self._remove_waiter_from_queue(worker_id, waiter):
+                raise RuntimeError(
+                    f"Ray actor admission lost waiter for worker {worker_id!r}",
+                )
         for worker_id in candidates:
             if worker_id not in previous:
                 self._admission_queues[worker_id].append(waiter)
@@ -665,11 +669,23 @@ class RayActorDispatcher:
         if not waiter.candidates:
             return
         for worker_id in waiter.candidates:
-            queue = self._admission_queues[worker_id]
-            if waiter in queue:
-                queue.remove(waiter)
+            self._remove_waiter_from_queue(worker_id, waiter)
         waiter.candidates = ()
         self._changed.set()
+
+    def _remove_waiter_from_queue(
+        self,
+        worker_id: str,
+        waiter: _AdmissionWaiter,
+    ) -> bool:
+        """Remove exactly ``waiter`` without invoking dataclass value equality."""
+
+        queue = self._admission_queues[worker_id]
+        for index, queued_waiter in enumerate(queue):
+            if queued_waiter is waiter:
+                del queue[index]
+                return True
+        return False
 
     def _pending_workers(
         self,
@@ -690,4 +706,65 @@ class RayActorDispatcher:
             raise ValueError(f"unknown Ray actor worker ids: {unknown}")
 
 
-__all__ = ["RayActorCallError", "RayActorDispatcher", "RayActorJob"]
+async def run_actor_jobs(
+    jobs: list[RayActorJob],
+    *,
+    max_inflight_per_actor: int = 1,
+    generation_stall_timeout_s: float,
+    worker_methods: Mapping[str, Any] | None = None,
+    schedule: list[dict[str, Any]] | None = None,
+) -> list[tuple[int, Any]]:
+    """Compatibility facade for the former one-shot actor-job dispatcher.
+
+    New code must keep one ``RayActorDispatcher`` with the actor fleet so
+    concurrent operations share admission state. This facade preserves the
+    historical one-call API while routing its supported synchronous-actor
+    contract through that implementation.
+    """
+
+    warnings.warn(
+        "run_actor_jobs() is deprecated; keep a fleet-owned RayActorDispatcher "
+        "and call dispatcher.run()",
+        DeprecationWarning,
+        stacklevel=2,
+    )
+    if max_inflight_per_actor != 1:
+        raise ValueError(
+            "run_actor_jobs compatibility requires max_inflight_per_actor=1; "
+            "synchronous Ray actors have one real default-group slot",
+        )
+    generation_stall_timeout_s = validate_ray_timeout(
+        generation_stall_timeout_s,
+        name="generation_stall_timeout_s",
+    )
+    if not jobs:
+        return []
+
+    worker_ids = tuple(
+        dict.fromkeys(
+            [
+                *(job.worker_id for job in jobs if job.worker_id is not None),
+                *(worker_methods or {}),
+            ],
+        ),
+    )
+    if not worker_ids:
+        raise ValueError(
+            f"{len(jobs)} job(s) have no worker binding; pull-based "
+            "dispatch requires worker_methods",
+        )
+    return await RayActorDispatcher(worker_ids).run(
+        jobs,
+        operation="rollout.generation.chunk",
+        call_timeout_s=generation_stall_timeout_s,
+        worker_methods=worker_methods,
+        schedule=schedule,
+    )
+
+
+__all__ = [
+    "RayActorCallError",
+    "RayActorDispatcher",
+    "RayActorJob",
+    "run_actor_jobs",
+]

@@ -33,7 +33,12 @@ from vrl.generation.execution.types import (
 )
 from vrl.generation.ray.executor import RayGenerationExecutor
 from vrl.generation.types import GenerationOutput, GenerationRequest
-from vrl.ray.actor_pool import RayActorCallError, RayActorDispatcher, RayActorJob
+from vrl.ray.actor_pool import (
+    RayActorCallError,
+    RayActorDispatcher,
+    RayActorJob,
+    run_actor_jobs,
+)
 from vrl.ray.operation_deadline import RayOperationCancelled, RayOperationTimeout
 
 # Carried by the tests that actually drive `_FakeRef`/`_FakeWorker`; the planner
@@ -639,6 +644,80 @@ async def test_cancelling_local_admission_wait_keeps_dispatcher_open() -> None:
     assert await first == [(0, "first")]
     assert await dispatch("third") == [(0, "third")]
     assert received == ["first", "third"]
+
+
+@pytest.mark.asyncio
+async def test_cancelling_middle_admission_waiter_preserves_identity_fifo() -> None:
+    active_gate = asyncio.Event()
+    received: list[str] = []
+
+    def remote(payload: str) -> Any:
+        received.append(payload)
+        if payload == "active":
+            return _GatedRef(active_gate, payload)
+        return _FakeRef(payload, completion_rank=1)
+
+    dispatcher = RayActorDispatcher(("w0",))
+
+    async def dispatch(payload: str) -> list[tuple[int, Any]]:
+        return await dispatcher.run(
+            [RayActorJob(0, "w0", remote, payload)],
+            operation="test.identity_fifo",
+            call_timeout_s=30.0,
+        )
+
+    active = asyncio.create_task(dispatch("active"))
+    await asyncio.sleep(0)
+    head = asyncio.create_task(dispatch("head"))
+    await asyncio.sleep(0)
+    middle = asyncio.create_task(dispatch("middle"))
+    await asyncio.sleep(0)
+    tail = asyncio.create_task(dispatch("tail"))
+
+    for _ in range(20):
+        if len(dispatcher._admission_queues["w0"]) == 3:
+            break
+        await asyncio.sleep(0)
+    assert len(dispatcher._admission_queues["w0"]) == 3
+
+    middle.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await middle
+    assert len(dispatcher._admission_queues["w0"]) == 2
+
+    active_gate.set()
+    assert await asyncio.wait_for(active, timeout=1) == [(0, "active")]
+    assert await asyncio.wait_for(head, timeout=1) == [(0, "head")]
+    assert await asyncio.wait_for(tail, timeout=1) == [(0, "tail")]
+    assert await dispatch("after") == [(0, "after")]
+    assert received == ["active", "head", "tail", "after"]
+
+
+@_CONTROLLED_CLOCK
+def test_run_actor_jobs_compatibility_facade_uses_dispatcher() -> None:
+    worker = _FakeWorker("w0", speed_rank_base=0)
+    jobs = [
+        RayActorJob(
+            job_index=index,
+            worker_id="w0",
+            remote_method=worker.remote,
+            payload=f"chunk-{index}",
+        )
+        for index in range(2)
+    ]
+
+    with pytest.warns(DeprecationWarning, match="RayActorDispatcher"):
+        pairs = asyncio.run(
+            run_actor_jobs(
+                jobs,
+                generation_stall_timeout_s=30.0,
+            ),
+        )
+
+    assert pairs == [
+        (0, ("w0", "chunk-0")),
+        (1, ("w0", "chunk-1")),
+    ]
 
 
 @pytest.mark.asyncio

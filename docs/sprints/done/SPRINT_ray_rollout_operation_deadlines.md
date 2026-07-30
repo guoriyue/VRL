@@ -205,6 +205,8 @@ independent of the Ray transport type.
 
 - `RayActorGroup`：Ray actor construction/startup adapter；
 - `RayActorDispatcher`：fleet 级 default-group admission 与 submitted-ref owner；
+- `run_actor_jobs`：deprecated public API facade；旧的一次调用入口继续可导入，但内部委托
+  给 `RayActorDispatcher`，新代码必须让 dispatcher 跟随 fleet 生命周期；
 - `RayGenerationExecutor.execute`：pipelined single-flight public API facade；
 - `RayGenerationWeightSync`：all-worker transactional ACK boundary；
 - `RayGenerationRuntime`：admission、version publication 和 actor ownership boundary；
