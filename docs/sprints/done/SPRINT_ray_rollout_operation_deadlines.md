@@ -72,9 +72,13 @@ dispatcher admission does not consume budget and is not pre-queued in the actor 
 admitted, the deadline includes driver serialization, Ray transport, and execution time; it is
 not an “actor method body started” clock.
 
-Admission is FIFO per compatible worker across concurrent callers. A request with more pending
-chunks cannot synchronously reclaim a slot ahead of a waiting weight update; unrelated workers
-remain independently usable. This bounds non-draining sync admission without adding a privileged
+Admission is FIFO per compatible worker across concurrent callers. Each worker owns an independent
+waiter queue: when a request's pending/active shape changes, retained workers keep their FIFO
+position, removed workers drop only that position, and newly compatible workers append at that
+worker's tail. A request with more pending chunks therefore cannot reclaim a slot ahead of a
+waiting weight update, while unrelated workers remain independently usable. Submission scans one
+pending snapshot and stops once no physical slot remains; it does not retry blocked jobs before an
+actual slot-state change. This bounds non-draining sync admission without adding a privileged
 weight-sync concurrency group.
 
 One worker completing work never extends another worker's deadline. When any ref expires, all
@@ -82,10 +86,14 @@ results accumulated for that request are discarded, outstanding refs receive bes
 `ray.cancel(force=False)`, and the runtime destroys the fleet.
 
 The dispatcher is the single owner of cross-request admission and submitted-ref state. A terminal
-timeout, submitted-work cancellation, or actor failure closes it first-error-wins, cancels all
-active refs, and wakes every local admission waiter with the same terminal cause. This state cannot
-be request-local: request-local pools would pre-queue concurrent calls into the same synchronous
-actor mailbox before their deadlines start.
+timeout, partial/unknown submitted-work cancellation, or actor failure closes it first-error-wins,
+cancels all active refs, and wakes every local admission waiter with the same terminal cause. If
+all submitted refs completed successfully before cancellation won the driver race, transport has
+already linearized: the dispatcher returns the full result set so the caller still performs typed
+ACK validation and publishes resulting state. Propagating an ordinary cancellation there would
+allow workers to install policy v2 while the runtime remained RUNNING and advertised v1. This
+state cannot be request-local: request-local pools would pre-queue concurrent calls into the same
+synchronous actor mailbox before their deadlines start.
 
 The run-level automatic chunk-size verdict has a separate runtime single-flight lock, but its
 remote probes still enter this same dispatcher. This matters when one first request uses
@@ -111,9 +119,11 @@ deadline only after verified chunk progress; the dispatcher remains the sole own
 result ObjectRef and fleet terminal state.
 
 The worker publishes an immutable `PipelinedRequestProgress` snapshot through the existing health
-concurrency group. Only a strict increase in `completed_chunks` resets the stall deadline. Health
-success, a missing snapshot, or a repeated valid snapshot do not count as progress. A returned
-snapshot for a different request ID is a protocol violation.
+concurrency group. Only a strict increase in `completed_chunks` resets the stall deadline. The
+reset copies the initial deadline contract so operation, timeout, and diagnostic context remain
+the dispatcher's source of truth; only monotonic expiry is renewed. Health success, a missing
+snapshot, or a repeated valid snapshot do not count as progress. A returned snapshot for a
+different request ID is a protocol violation.
 
 Invalid type, request ID, total count, or regressing progress raises
 `PipelinedProgressError`, a terminal wire-contract error. Cancellation before lock/dispatcher
@@ -126,6 +136,10 @@ window.
 For a multi-worker transaction, “after submission” includes the case where one worker has already
 completed while another job is still waiting for admission. Cancelling there must fail closed:
 the driver cannot publish a policy version after only a subset of workers installed it.
+
+Runtime teardown stops and joins the background health-monitor thread through `asyncio.to_thread`.
+The monitor retains its bounded synchronous `stop()` lifecycle owner, while the async runtime loop
+remains able to advance concurrent shutdown and terminal-cleanup waiters during that join.
 
 ## Failure and ownership contract
 
@@ -175,7 +189,8 @@ independent of the Ray transport type.
 ## 修改内容
 
 - 新增 domain-neutral terminal error/cause-chain boundary。
-- 新增共享 Ray monotonic deadline、typed timeout、sync/async wait 和 cancellation adapter。
+- 新增共享 Ray monotonic deadline、typed timeout、sync wait 和 cancellation adapter；
+  async actor waits 统一由 fleet dispatcher 持有。
 - 为 placement probe、startup、capability、chunk-size probe、generation 和 weight sync 接入
   owner-local deadline。
 - 为 pipelined worker 增加严格 chunk progress 协议、request single-flight 和 fleet admission。

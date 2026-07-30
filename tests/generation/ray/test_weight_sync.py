@@ -432,6 +432,98 @@ async def test_cancelling_weight_sync_before_submission_keeps_runtime_running(
 
 
 @pytest.mark.asyncio
+async def test_completed_weight_sync_wins_cancellation_and_publishes_version(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    gate = asyncio.Event()
+    submitted = asyncio.Event()
+
+    class _GatedUpdateMethod:
+        def remote(self, _state_ref: Any, policy_version: int) -> _GatedObjectRef:
+            submitted.set()
+            return _GatedObjectRef(gate, policy_version)
+
+    ray = _FakeRay()
+    monkeypatch.setattr(weight_sync_module, "require_ray", lambda: ray)
+    dispatcher = RayActorDispatcher(("rollout-0",))
+    sync = RayGenerationWeightSync(
+        [
+            DistributedWorkerHandle(
+                worker_id="rollout-0",
+                actor=SimpleNamespace(update_weights=_GatedUpdateMethod()),
+            ),
+        ],
+        actor_dispatcher=dispatcher,
+        worker_rpc_timeout_s=30.0,
+    )
+    runtime = RayGenerationRuntime(
+        SimpleNamespace(actor_dispatcher=dispatcher),
+        weight_sync=sync,
+    )
+    runtime.current_policy_version = 1
+    update = asyncio.create_task(
+        runtime.update_weights({"w": 2}, policy_version=2),
+    )
+    await submitted.wait()
+
+    gate.set()
+    update.cancel()
+    await update
+
+    assert runtime.current_policy_version == 2
+    assert runtime.lifecycle.phase is RuntimePhase.RUNNING
+
+
+@pytest.mark.asyncio
+async def test_completed_weight_sync_cancellation_still_validates_wrong_ack(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    gate = asyncio.Event()
+    submitted = asyncio.Event()
+
+    class _WrongAckMethod:
+        @staticmethod
+        def remote(_state_ref: Any, policy_version: int) -> _GatedObjectRef:
+            del policy_version
+            submitted.set()
+            return _GatedObjectRef(gate, 99)
+
+    ray = _FakeRay()
+    monkeypatch.setattr(weight_sync_module, "require_ray", lambda: ray)
+    dispatcher = RayActorDispatcher(("rollout-0",))
+    sync = RayGenerationWeightSync(
+        [
+            DistributedWorkerHandle(
+                worker_id="rollout-0",
+                actor=SimpleNamespace(update_weights=_WrongAckMethod()),
+            ),
+        ],
+        actor_dispatcher=dispatcher,
+        worker_rpc_timeout_s=30.0,
+    )
+    runtime = RayGenerationRuntime(
+        SimpleNamespace(actor_dispatcher=dispatcher),
+        weight_sync=sync,
+    )
+    runtime.current_policy_version = 1
+    update = asyncio.create_task(
+        runtime.update_weights({"w": 2}, policy_version=2),
+    )
+    await submitted.wait()
+
+    gate.set()
+    update.cancel()
+    with pytest.raises(
+        RuntimeError,
+        match=r"rollout-0.*version 99.*expected 2",
+    ):
+        await update
+
+    assert runtime.current_policy_version == 1
+    assert runtime.lifecycle.phase is RuntimePhase.TERMINATED
+
+
+@pytest.mark.asyncio
 async def test_cancelling_partially_completed_weight_sync_terminalizes_runtime(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

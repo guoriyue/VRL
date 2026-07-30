@@ -520,6 +520,31 @@ async def test_cancellation_race_preserves_a_completed_actor_failure(
     assert closed.value.__cause__ is caught.value.__cause__
 
 
+@_CONTROLLED_CLOCK
+@pytest.mark.asyncio
+async def test_completed_actor_success_wins_cancellation_linearization() -> None:
+    gate = asyncio.Event()
+    dispatcher = RayActorDispatcher(("w0",))
+    task = asyncio.create_task(
+        dispatcher.run(
+            [RayActorJob(0, "w0", lambda _payload: _GatedRef(gate, "committed"), None)],
+            operation="test.cancel_after_success",
+            call_timeout_s=30.0,
+        ),
+    )
+    await asyncio.sleep(0)
+
+    gate.set()
+    task.cancel()
+
+    assert await task == [(0, "committed")]
+    assert await dispatcher.run(
+        [RayActorJob(0, "w0", lambda _payload: _FakeRef("next", 1), None)],
+        operation="test.after_committed_cancel",
+        call_timeout_s=30.0,
+    ) == [(0, "next")]
+
+
 @pytest.mark.asyncio
 async def test_concurrent_requests_start_deadline_after_shared_worker_admission(
     monkeypatch: pytest.MonkeyPatch,
@@ -614,6 +639,160 @@ async def test_cancelling_local_admission_wait_keeps_dispatcher_open() -> None:
     assert await first == [(0, "first")]
     assert await dispatch("third") == [(0, "third")]
     assert received == ["first", "third"]
+
+
+@pytest.mark.asyncio
+async def test_admission_wait_tracks_new_worker_without_losing_per_worker_fifo() -> None:
+    w1_gate = asyncio.Event()
+    a0_gate = asyncio.Event()
+    b_gate = asyncio.Event()
+    w1_submitted = asyncio.Event()
+    a0_submitted = asyncio.Event()
+    a1_submitted = asyncio.Event()
+    a2_submitted = asyncio.Event()
+    b_submitted = asyncio.Event()
+    w0_order: list[str] = []
+
+    def hold_w1(payload: str) -> _GatedRef:
+        w1_submitted.set()
+        return _GatedRef(w1_gate, payload)
+
+    def run_a_w0(payload: str) -> Any:
+        w0_order.append(payload)
+        if payload == "a0":
+            a0_submitted.set()
+            return _GatedRef(a0_gate, payload)
+        a1_submitted.set()
+        return _FakeRef(payload, completion_rank=1)
+
+    def run_a_w1(payload: str) -> _FakeRef:
+        a2_submitted.set()
+        return _FakeRef(payload, completion_rank=1)
+
+    def run_b(payload: str) -> _GatedRef:
+        w0_order.append(payload)
+        b_submitted.set()
+        return _GatedRef(b_gate, payload)
+
+    dispatcher = RayActorDispatcher(("w0", "w1"))
+    holding_w1 = asyncio.create_task(
+        dispatcher.run(
+            [RayActorJob(0, "w1", hold_w1, "hold-w1")],
+            operation="test.hold_w1",
+            call_timeout_s=30.0,
+        ),
+    )
+    await w1_submitted.wait()
+    run_a = asyncio.create_task(
+        dispatcher.run(
+            [
+                RayActorJob(0, "w0", run_a_w0, "a0"),
+                RayActorJob(1, "w0", run_a_w0, "a1"),
+                RayActorJob(2, "w1", run_a_w1, "a2"),
+            ],
+            operation="test.dynamic_candidates",
+            call_timeout_s=30.0,
+        ),
+    )
+    await a0_submitted.wait()
+    run_b_task = asyncio.create_task(
+        dispatcher.run(
+            [RayActorJob(0, "w0", run_b, "b")],
+            operation="test.wait_w0_first",
+            call_timeout_s=30.0,
+        ),
+    )
+
+    try:
+        for _ in range(20):
+            if dispatcher._admission_queues["w0"]:
+                break
+            await asyncio.sleep(0)
+        assert dispatcher._admission_queues["w0"]
+
+        a0_gate.set()
+        await asyncio.wait_for(b_submitted.wait(), timeout=1)
+        assert w0_order == ["a0", "b"]
+        assert not a1_submitted.is_set()
+
+        b_gate.set()
+        await asyncio.wait_for(a1_submitted.wait(), timeout=1)
+        assert w0_order == ["a0", "b", "a1"]
+        assert not a2_submitted.is_set()
+
+        w1_gate.set()
+        await asyncio.wait_for(a2_submitted.wait(), timeout=1)
+        assert await holding_w1 == [(0, "hold-w1")]
+        assert await run_b_task == [(0, "b")]
+        assert await run_a == [(0, "a0"), (1, "a1"), (2, "a2")]
+    finally:
+        a0_gate.set()
+        b_gate.set()
+        w1_gate.set()
+        await asyncio.gather(
+            holding_w1,
+            run_a,
+            run_b_task,
+            return_exceptions=True,
+        )
+
+
+@pytest.mark.asyncio
+async def test_submit_ready_does_not_retry_blocked_jobs_before_slot_change() -> None:
+    w0_gate = asyncio.Event()
+    w1_gate = asyncio.Event()
+    w0_submitted = asyncio.Event()
+    w1_submitted = asyncio.Event()
+    attempts: list[tuple[str, ...]] = []
+
+    def w0_remote(payload: str) -> Any:
+        if payload == "w0-active":
+            w0_submitted.set()
+            return _GatedRef(w0_gate, payload)
+        return _FakeRef(payload, completion_rank=1)
+
+    def w1_remote(payload: str) -> Any:
+        if payload == "w1-active":
+            w1_submitted.set()
+            return _GatedRef(w1_gate, payload)
+        return _FakeRef(payload, completion_rank=1)
+
+    dispatcher = RayActorDispatcher(("w0", "w1"))
+    original_try_acquire = dispatcher._try_acquire
+
+    def recording_try_acquire(
+        candidates: tuple[str, ...],
+        *,
+        waiter: Any,
+    ) -> str | None:
+        attempts.append(candidates)
+        return original_try_acquire(candidates, waiter=waiter)
+
+    dispatcher._try_acquire = recording_try_acquire
+    task = asyncio.create_task(
+        dispatcher.run(
+            [
+                RayActorJob(0, "w0", w0_remote, "w0-active"),
+                RayActorJob(1, "w0", w0_remote, "w0-pending-1"),
+                RayActorJob(2, "w1", w1_remote, "w1-active"),
+                RayActorJob(3, "w0", w0_remote, "w0-pending-2"),
+            ],
+            operation="test.bounded_submit_scan",
+            call_timeout_s=30.0,
+        ),
+    )
+    await asyncio.gather(w0_submitted.wait(), w1_submitted.wait())
+
+    assert attempts == [("w0",), ("w0",), ("w1",)]
+
+    w0_gate.set()
+    w1_gate.set()
+    assert await task == [
+        (0, "w0-active"),
+        (1, "w0-pending-1"),
+        (2, "w1-active"),
+        (3, "w0-pending-2"),
+    ]
 
 
 @pytest.mark.asyncio
