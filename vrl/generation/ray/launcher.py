@@ -30,6 +30,22 @@ from vrl.ray.placement import RolePlacement, validate_actor_gpu_ids
 logger = logging.getLogger(__name__)
 
 
+def _validate_runtime_inputs(
+    config: RayGenerationConfig,
+    launch_inputs: RayGenerationLaunchInputs,
+) -> None:
+    """Keep resident and on-demand factory branches on one typed boundary."""
+
+    if not isinstance(config, RayGenerationConfig):
+        raise TypeError(
+            f"config must be a RayGenerationConfig, got {type(config).__name__}",
+        )
+    if not isinstance(launch_inputs, RayGenerationLaunchInputs):
+        raise TypeError(
+            f"launch_inputs must be RayGenerationLaunchInputs, got {type(launch_inputs).__name__}",
+        )
+
+
 @dataclass(slots=True)
 class RayGenerationLauncher:
     """Create Ray generation actors and return a ``RayGenerationRuntime``."""
@@ -56,15 +72,7 @@ class RayGenerationLauncher:
         the group; the owner does that once at run shutdown.
         """
 
-        if not isinstance(config, RayGenerationConfig):
-            raise TypeError(
-                f"config must be a RayGenerationConfig, got {type(config).__name__}",
-            )
-        if not isinstance(launch_inputs, RayGenerationLaunchInputs):
-            raise TypeError(
-                "launch_inputs must be RayGenerationLaunchInputs, "
-                f"got {type(launch_inputs).__name__}",
-            )
+        _validate_runtime_inputs(config, launch_inputs)
         rollout_config = config
         worker = rollout_config.worker
         contract = launch_inputs.launch_contract
@@ -218,12 +226,14 @@ class RayGenerationLauncher:
     ) -> GenerationRuntime:
         """Create the runtime selected by the topology-derived lifecycle plan."""
 
+        _validate_runtime_inputs(config, launch_inputs)
         resources = config.resources
         rollout_on_demand = resources.lifecycle.rollout.mode == "on_demand"
         if rollout_on_demand:
             return _OnDemandRayGenerationRuntime(
                 config,
                 launch_inputs,
+                launcher=self,
                 placement=placement,
             )
         return self.launch(

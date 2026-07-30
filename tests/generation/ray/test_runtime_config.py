@@ -8,7 +8,7 @@ from collections.abc import Iterator
 from dataclasses import FrozenInstanceError, dataclass, replace
 from types import SimpleNamespace
 from typing import Any, ClassVar
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 import torch
@@ -28,7 +28,7 @@ from vrl.generation.ray.launcher import (
     RayGenerationLauncher,
     _all_workers_support_versioned_slots,
 )
-from vrl.generation.ray.lifecycle_fsm import RuntimePhase
+from vrl.generation.ray.lifecycle_fsm import RuntimeLifecycle, RuntimePhase
 from vrl.generation.ray.runtime import RayGenerationRuntime
 from vrl.generation.types import GenerationRequest
 from vrl.ray.actor_pool import RayActorDispatcher
@@ -965,22 +965,48 @@ def test_generation_launch_inputs_reject_model_compile_for_ar_family() -> None:
         _capture_launch_inputs(cfg, get_model_family_entry("janus_pro"))
 
 
-def test_create_runtime_launches_resident_topology() -> None:
+def _runtime_factory_inputs(
+    *,
+    rollout_mode: str = "resident",
+) -> tuple[RayGenerationConfig, RayGenerationLaunchInputs, RolePlacement]:
     config = _ray_config(_launch_cfg())
+    if rollout_mode == "on_demand":
+        config = replace(
+            config,
+            resources=replace(
+                config.resources,
+                lifecycle=replace(
+                    config.resources.lifecycle,
+                    rollout=replace(
+                        config.resources.lifecycle.rollout,
+                        mode="on_demand",
+                    ),
+                ),
+            ),
+        )
+    elif rollout_mode != "resident":
+        raise ValueError(f"unknown rollout mode: {rollout_mode}")
     entry = get_model_family_entry("sd3_5")
-    launch_inputs = RayGenerationLaunchInputs(
-        launch_contract=GenerationRuntimeLaunchContract(
-            family=entry.family,
-            model_build={},
-            expected_model_identity=_TEST_MODEL_IDENTITY,
+    return (
+        config,
+        RayGenerationLaunchInputs(
+            launch_contract=GenerationRuntimeLaunchContract(
+                family=entry.family,
+                model_build={},
+                expected_model_identity=_TEST_MODEL_IDENTITY,
+            ),
+            gatherer=entry.new_gatherer(),
         ),
-        gatherer=entry.new_gatherer(),
+        RolePlacement(
+            placement_group=object(),
+            bundle_indices=(),
+            expected_gpu_ids=(),
+        ),
     )
-    placement = RolePlacement(
-        placement_group=object(),
-        bundle_indices=(),
-        expected_gpu_ids=(),
-    )
+
+
+def test_create_runtime_launches_resident_topology() -> None:
+    config, launch_inputs, placement = _runtime_factory_inputs()
     launcher = RayGenerationLauncher(init_ray=False)
     expected_runtime = object()
 
@@ -1013,34 +1039,8 @@ def test_create_runtime_launches_resident_topology() -> None:
 
 
 def test_create_runtime_defers_on_demand_topology_launch() -> None:
-    resident_config = _ray_config(_launch_cfg())
-    resources = replace(
-        resident_config.resources,
-        lifecycle=replace(
-            resident_config.resources.lifecycle,
-            rollout=replace(
-                resident_config.resources.lifecycle.rollout,
-                mode="on_demand",
-            ),
-        ),
-    )
-    config = RayGenerationConfig(
-        resources=resources,
-        worker=resident_config.worker,
-    )
-    entry = get_model_family_entry("sd3_5")
-    launch_inputs = RayGenerationLaunchInputs(
-        launch_contract=GenerationRuntimeLaunchContract(
-            family=entry.family,
-            model_build={},
-            expected_model_identity=_TEST_MODEL_IDENTITY,
-        ),
-        gatherer=entry.new_gatherer(),
-    )
-    placement = RolePlacement(
-        placement_group=object(),
-        bundle_indices=(),
-        expected_gpu_ids=(),
+    config, launch_inputs, placement = _runtime_factory_inputs(
+        rollout_mode="on_demand",
     )
     launcher = RayGenerationLauncher(init_ray=False)
     expected_runtime = object()
@@ -1068,8 +1068,79 @@ def test_create_runtime_defers_on_demand_topology_launch() -> None:
     on_demand.assert_called_once_with(
         config,
         launch_inputs,
+        launcher=launcher,
         placement=placement,
     )
+
+
+@pytest.mark.asyncio
+async def test_deferred_activation_reuses_factory_launcher() -> None:
+    config, launch_inputs, placement = _runtime_factory_inputs(
+        rollout_mode="on_demand",
+    )
+    launcher = RayGenerationLauncher(
+        init_ray=False,
+        ray_init_kwargs={"address": "auto"},
+    )
+    candidate = SimpleNamespace(
+        current_policy_version=0,
+        lifecycle=RuntimeLifecycle(),
+        shutdown=AsyncMock(),
+    )
+
+    runtime = launcher.create_runtime(
+        config,
+        launch_inputs,
+        placement=placement,
+    )
+    assert runtime._launcher is launcher
+
+    with patch.object(
+        RayGenerationLauncher,
+        "launch_async",
+        autospec=True,
+        return_value=candidate,
+    ) as launch_async:
+        await runtime.activate()
+
+    launch_async.assert_awaited_once_with(
+        launcher,
+        config,
+        runtime._launch_inputs,
+        placement=placement,
+    )
+    await runtime.shutdown()
+    candidate.shutdown.assert_awaited_once_with()
+
+
+@pytest.mark.parametrize("rollout_mode", ["resident", "on_demand"])
+@pytest.mark.parametrize(
+    ("invalid_argument", "match"),
+    [
+        ("config", "config must be a RayGenerationConfig, got object"),
+        (
+            "launch_inputs",
+            "launch_inputs must be RayGenerationLaunchInputs, got object",
+        ),
+    ],
+)
+def test_create_runtime_has_one_typed_boundary(
+    rollout_mode: str,
+    invalid_argument: str,
+    match: str,
+) -> None:
+    config, launch_inputs, placement = _runtime_factory_inputs(
+        rollout_mode=rollout_mode,
+    )
+    config_arg: Any = object() if invalid_argument == "config" else config
+    launch_inputs_arg: Any = object() if invalid_argument == "launch_inputs" else launch_inputs
+
+    with pytest.raises(TypeError, match=match):
+        RayGenerationLauncher(init_ray=False).create_runtime(
+            config_arg,
+            launch_inputs_arg,
+            placement=placement,
+        )
 
 
 def test_launcher_default_ray_init_is_owned_local() -> None:

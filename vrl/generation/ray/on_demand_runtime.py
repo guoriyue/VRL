@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from dataclasses import dataclass, replace
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from vrl.generation.ray.config import RayGenerationConfig
 from vrl.generation.ray.launch_inputs import RayGenerationLaunchInputs
@@ -18,6 +18,9 @@ from vrl.generation.ray.runtime import RayGenerationRuntime
 from vrl.generation.types import GenerationOutput, GenerationRequest
 from vrl.ray.placement import RolePlacement
 from vrl.runtime_errors import TerminalRuntimeError, find_error_cause
+
+if TYPE_CHECKING:
+    from vrl.generation.ray.launcher import RayGenerationLauncher
 
 logger = logging.getLogger(__name__)
 
@@ -38,6 +41,7 @@ class _OnDemandRayGenerationRuntime:
         config: RayGenerationConfig,
         launch_inputs: RayGenerationLaunchInputs,
         *,
+        launcher: RayGenerationLauncher,
         placement: RolePlacement,
     ) -> None:
         resources = config.resources
@@ -61,6 +65,7 @@ class _OnDemandRayGenerationRuntime:
             launch_inputs,
             launch_contract=sleep_contract,
         )
+        self._launcher = launcher
         self._placement = placement
         self._inner_runtime: RayGenerationRuntime | None = None
         self._activation_task: asyncio.Task[RayGenerationRuntime] | None = None
@@ -399,9 +404,7 @@ class _OnDemandRayGenerationRuntime:
             if inner_runtime is not None:
                 return inner_runtime
 
-            from vrl.generation.ray.launcher import RayGenerationLauncher
-
-            candidate = await RayGenerationLauncher().launch_async(
+            candidate = await self._launcher.launch_async(
                 self._config,
                 self._launch_inputs,
                 placement=self._placement,

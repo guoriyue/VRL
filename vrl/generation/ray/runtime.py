@@ -29,7 +29,7 @@ class RayGenerationRuntime:
 
     def __init__(
         self,
-        executor: RayGenerationExecutor | Any,
+        executor: RayGenerationExecutor,
         *,
         weight_sync: GenerationWeightSync | None = None,
         owned_workers: list[DistributedWorkerHandle] | None = None,
@@ -201,9 +201,9 @@ class RayGenerationRuntime:
         weight_sync = self.weight_sync
         if weight_sync is None:
             raise RuntimeError("RayGenerationRuntime has no GenerationWeightSync")
+        resolved_policy_version = int(policy_version)
 
         try:
-            resolved_policy_version = int(policy_version)
             await weight_sync.push_to_rollout_workers(
                 state_ref,
                 resolved_policy_version,

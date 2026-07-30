@@ -13,6 +13,7 @@ from vrl.generation.launch_contract import GenerationRuntimeLaunchContract
 from vrl.generation.protocols import ChunkResult
 from vrl.generation.ray.config import RayGenerationConfig, RolloutWorkerConfig
 from vrl.generation.ray.launch_inputs import RayGenerationLaunchInputs
+from vrl.generation.ray.launcher import RayGenerationLauncher
 from vrl.generation.ray.on_demand_runtime import _OnDemandRayGenerationRuntime
 from vrl.generation.ray.runtime import RayGenerationRuntime
 from vrl.generation.types import GenerationOutput, GenerationRequest, GenerationSampleRow
@@ -220,6 +221,7 @@ def test_phase_handoff_keeps_actor_and_owner_placement(local_ray) -> None:
             worker=owner.rollout_worker,
         ),
         _launch_inputs(),
+        launcher=RayGenerationLauncher(init_ray=False),
         placement=owner.rollout_placement,
     )
     try:

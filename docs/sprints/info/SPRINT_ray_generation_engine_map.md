@@ -132,7 +132,9 @@ launcher 清理 candidate actors；placement group 仍由 `GlobalRayPlacementOwn
 ### 3.3 On-demand launch
 
 `RayGenerationLauncher.create_runtime(...)` 在 resolved rollout lifecycle 为
-`on_demand` 时直接构造 package-private `_OnDemandRayGenerationRuntime`。facade 自己持有：
+`on_demand` 时直接构造 package-private `_OnDemandRayGenerationRuntime`，并把当前 launcher
+实例交给它，因此 deferred activation 保留调用方的 Ray address/init policy，而不是另建
+默认 launcher。facade 自己持有：
 
 ```text
 config / launch_inputs / placement

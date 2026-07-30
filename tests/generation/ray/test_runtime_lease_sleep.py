@@ -37,6 +37,11 @@ class _Gatherer:
         raise AssertionError("runtime lifecycle fixture must not gather chunks")
 
 
+class _UnexpectedLauncher:
+    async def launch_async(self, *_args: Any, **_kwargs: Any) -> Any:
+        raise AssertionError("test did not configure a cold runtime launch")
+
+
 class _FakeInner:
     """Record ordered worker operations without requiring a Ray cluster."""
 
@@ -205,6 +210,7 @@ def _on_demand_runtime(
     *,
     sync_trainable_state: bool = True,
     colocated: bool = True,
+    launcher: Any | None = None,
 ) -> _OnDemandRayGenerationRuntime:
     config = _ray_config(
         sync_trainable_state=sync_trainable_state,
@@ -216,6 +222,7 @@ def _on_demand_runtime(
             launch_contract=_launch_contract(),
             gatherer=_Gatherer(),
         ),
+        launcher=launcher if launcher is not None else _UnexpectedLauncher(),
         placement=SimpleNamespace(),
     )
 
@@ -414,6 +421,7 @@ def test_on_demand_factory_requires_on_demand_plan() -> None:
                 launch_contract=_launch_contract(),
                 gatherer=_Gatherer(),
             ),
+            launcher=_UnexpectedLauncher(),
             placement=SimpleNamespace(),
         )
 
@@ -432,7 +440,7 @@ async def test_generate_requires_explicit_activation() -> None:
 
 
 @pytest.mark.asyncio
-async def test_cold_weights_are_staged_then_applied_during_activation(monkeypatch) -> None:
+async def test_cold_weights_are_staged_then_applied_during_activation() -> None:
     runtime = _on_demand_runtime()
     candidate = _FakeInner()
 
@@ -441,9 +449,7 @@ async def test_cold_weights_are_staged_then_applied_during_activation(monkeypatc
             del args, kwargs
             return candidate
 
-    import vrl.generation.ray.launcher as launcher_module
-
-    monkeypatch.setattr(launcher_module, "RayGenerationLauncher", _Launcher)
+    runtime._launcher = _Launcher()
     await runtime.update_weights("W2", 2)
 
     _assert_desired_policy(runtime, "W2", 2)
@@ -918,7 +924,7 @@ async def test_offload_cleanup_failure_retains_inner_for_shutdown_retry() -> Non
 
 
 @pytest.mark.asyncio
-async def test_concurrent_cold_activation_launches_and_restores_once(monkeypatch) -> None:
+async def test_concurrent_cold_activation_launches_and_restores_once() -> None:
     runtime = _on_demand_runtime()
     await _set_desired_policy(runtime, "W", 3)
     candidate = _BlockingRestoreInner()
@@ -931,9 +937,7 @@ async def test_concurrent_cold_activation_launches_and_restores_once(monkeypatch
             launch_calls += 1
             return candidate
 
-    import vrl.generation.ray.launcher as launcher_module
-
-    monkeypatch.setattr(launcher_module, "RayGenerationLauncher", _Launcher)
+    runtime._launcher = _Launcher()
     first = asyncio.create_task(runtime.activate())
     await asyncio.wait_for(candidate.restore_started.wait(), timeout=1)
     second = asyncio.create_task(runtime.activate())
@@ -974,9 +978,7 @@ async def test_concurrent_activation_wakes_and_restores_once() -> None:
 
 
 @pytest.mark.asyncio
-async def test_update_rejects_activation_overlap_while_offload_joins_it(
-    monkeypatch,
-) -> None:
+async def test_update_rejects_activation_overlap_while_offload_joins_it() -> None:
     runtime = _on_demand_runtime()
     await _set_desired_policy(runtime, "W1", 1)
     candidate = _BlockingRestoreInner()
@@ -986,9 +988,7 @@ async def test_update_rejects_activation_overlap_while_offload_joins_it(
             del args, kwargs
             return candidate
 
-    import vrl.generation.ray.launcher as launcher_module
-
-    monkeypatch.setattr(launcher_module, "RayGenerationLauncher", _Launcher)
+    runtime._launcher = _Launcher()
     activation = asyncio.create_task(runtime.activate())
     await asyncio.wait_for(candidate.restore_started.wait(), timeout=1)
 
@@ -1006,7 +1006,7 @@ async def test_update_rejects_activation_overlap_while_offload_joins_it(
 
 
 @pytest.mark.asyncio
-async def test_shutdown_joins_activation_after_waiter_cancellation(monkeypatch) -> None:
+async def test_shutdown_joins_activation_after_waiter_cancellation() -> None:
     runtime = _on_demand_runtime()
     await _set_desired_policy(runtime, "W", 4)
     candidate = _BlockingRestoreInner()
@@ -1016,9 +1016,7 @@ async def test_shutdown_joins_activation_after_waiter_cancellation(monkeypatch) 
             del args, kwargs
             return candidate
 
-    import vrl.generation.ray.launcher as launcher_module
-
-    monkeypatch.setattr(launcher_module, "RayGenerationLauncher", _Launcher)
+    runtime._launcher = _Launcher()
     waiter = asyncio.create_task(runtime.activate())
     await asyncio.wait_for(candidate.restore_started.wait(), timeout=1)
     waiter.cancel()
@@ -1039,9 +1037,7 @@ async def test_shutdown_joins_activation_after_waiter_cancellation(monkeypatch) 
 
 
 @pytest.mark.asyncio
-async def test_external_terminal_shutdown_is_the_only_activation_cleanup_owner(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+async def test_external_terminal_shutdown_is_the_only_activation_cleanup_owner() -> None:
     runtime = _on_demand_runtime()
     await _set_desired_policy(runtime, "W", 4)
     candidate = _BlockingRestoreInner()
@@ -1061,9 +1057,7 @@ async def test_external_terminal_shutdown_is_the_only_activation_cleanup_owner(
             del args, kwargs
             return candidate
 
-    import vrl.generation.ray.launcher as launcher_module
-
-    monkeypatch.setattr(launcher_module, "RayGenerationLauncher", _Launcher)
+    runtime._launcher = _Launcher()
     activation = asyncio.create_task(runtime.activate())
     await asyncio.wait_for(candidate.restore_started.wait(), timeout=1)
 
@@ -1170,7 +1164,7 @@ async def test_shutdown_joins_offload_before_teardown() -> None:
 
 
 @pytest.mark.asyncio
-async def test_activation_restore_failure_cleans_candidate_and_terminates(monkeypatch) -> None:
+async def test_activation_restore_failure_cleans_candidate_and_terminates() -> None:
     runtime = _on_demand_runtime()
     await _set_desired_policy(runtime, "W", 3)
     restore_error = RuntimeError("restore failed")
@@ -1187,9 +1181,7 @@ async def test_activation_restore_failure_cleans_candidate_and_terminates(monkey
             del args, kwargs
             return candidate
 
-    import vrl.generation.ray.launcher as launcher_module
-
-    monkeypatch.setattr(launcher_module, "RayGenerationLauncher", _Launcher)
+    runtime._launcher = _Launcher()
     with pytest.raises(RuntimeError, match="restore failed") as caught:
         await runtime.activate()
 
@@ -1204,7 +1196,6 @@ async def test_activation_restore_failure_cleans_candidate_and_terminates(monkey
 async def test_cold_restore_timeout_force_kills_unpublished_candidate(
     monkeypatch,
 ) -> None:
-    import vrl.generation.ray.launcher as launcher_module
     import vrl.generation.ray.runtime as runtime_module
 
     runtime = _on_demand_runtime()
@@ -1224,7 +1215,7 @@ async def test_cold_restore_timeout_force_kills_unpublished_candidate(
             assert no_restart is True
             cls.killed.append(target)
 
-    monkeypatch.setattr(launcher_module, "RayGenerationLauncher", _Launcher)
+    runtime._launcher = _Launcher()
     monkeypatch.setattr(runtime_module, "require_ray", lambda: _Ray)
 
     with pytest.raises(RayOperationTimeout) as caught:
@@ -1242,11 +1233,7 @@ async def test_cold_restore_timeout_force_kills_unpublished_candidate(
 
 
 @pytest.mark.asyncio
-async def test_cold_candidate_health_failure_terminalizes_outer_before_publication(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    import vrl.generation.ray.launcher as launcher_module
-
+async def test_cold_candidate_health_failure_terminalizes_outer_before_publication() -> None:
     runtime = _on_demand_runtime()
     await _set_desired_policy(runtime, "W2", 2)
     health_failure = RolloutWorkerUnreachable(
@@ -1273,7 +1260,7 @@ async def test_cold_candidate_health_failure_terminalizes_outer_before_publicati
             launch_calls += 1
             return candidate
 
-    monkeypatch.setattr(launcher_module, "RayGenerationLauncher", _Launcher)
+    runtime._launcher = _Launcher()
 
     with pytest.raises(RolloutWorkerUnreachable) as caught:
         await runtime.activate()
@@ -1293,9 +1280,7 @@ async def test_cold_candidate_health_failure_terminalizes_outer_before_publicati
 
 
 @pytest.mark.asyncio
-async def test_activation_launch_failure_terminalizes_without_publishing_candidate(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+async def test_activation_launch_failure_terminalizes_without_publishing_candidate() -> None:
     runtime = _on_demand_runtime()
     launch_error = RuntimeError("rollout worker startup failed")
 
@@ -1304,9 +1289,7 @@ async def test_activation_launch_failure_terminalizes_without_publishing_candida
             del args, kwargs
             raise launch_error
 
-    import vrl.generation.ray.launcher as launcher_module
-
-    monkeypatch.setattr(launcher_module, "RayGenerationLauncher", _Launcher)
+    runtime._launcher = _Launcher()
 
     with pytest.raises(RuntimeError, match="rollout worker startup failed") as caught:
         await runtime.activate()

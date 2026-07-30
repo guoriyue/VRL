@@ -17,6 +17,7 @@ from vrl.generation.launch_contract import GenerationRuntimeLaunchContract
 from vrl.generation.protocols import GenerationRuntime, PolicyVersionProvider
 from vrl.generation.ray.config import RayGenerationConfig
 from vrl.generation.ray.launch_inputs import RayGenerationLaunchInputs
+from vrl.generation.ray.launcher import RayGenerationLauncher
 from vrl.generation.ray.on_demand_runtime import _OnDemandRayGenerationRuntime
 from vrl.generation.ray.runtime import RayGenerationRuntime
 from vrl.ray.placement import RolePlacement
@@ -88,6 +89,7 @@ def _on_demand_runtime(
             ),
             gatherer=_Gatherer(),
         ),
+        launcher=RayGenerationLauncher(init_ray=False),
         placement=RolePlacement(
             placement_group=object(),
             bundle_indices=(),

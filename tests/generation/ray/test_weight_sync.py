@@ -132,6 +132,32 @@ async def test_local_update_return_is_the_commit_ack() -> None:
 
 
 @pytest.mark.asyncio
+async def test_invalid_policy_version_does_not_terminalize_resident_runtime() -> None:
+    class _RecordingSync:
+        def __init__(self) -> None:
+            self.calls: list[tuple[Any, int]] = []
+
+        async def push_to_rollout_workers(
+            self,
+            state_ref: Any,
+            policy_version: int,
+        ) -> None:
+            self.calls.append((state_ref, policy_version))
+
+    sync = _RecordingSync()
+    runtime = RayGenerationRuntime(SimpleNamespace(), weight_sync=sync)
+    runtime.current_policy_version = 3
+
+    with pytest.raises(TypeError):
+        await runtime.update_weights({"w": 2}, policy_version=object())
+
+    assert sync.calls == []
+    assert runtime.current_policy_version == 3
+    assert runtime.lifecycle.failure is None
+    assert runtime.lifecycle.phase is RuntimePhase.RUNNING
+
+
+@pytest.mark.asyncio
 async def test_local_update_rejects_wrong_installed_version() -> None:
     sync = RayGenerationWeightSync(
         [
