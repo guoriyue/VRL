@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import json
-from types import SimpleNamespace
+from pathlib import Path
 
 import pytest
 import torch
 from omegaconf import OmegaConf
+from safetensors.torch import load_file, save_file
 from torch import nn
 
 from vrl.config.precision import RolePrecision
@@ -32,6 +33,8 @@ from vrl.trainers.checkpointing import (
     validate_checkpoint_compatibility,
     validate_checkpoint_meta_compatibility,
 )
+from vrl.trainers.distributed import DistributedTrainingContext
+from vrl.trainers.online.ema import EMAModuleWrapper
 
 UNIT_IDENTITY = {"schema": "unit-model/v1"}
 
@@ -453,7 +456,7 @@ def test_save_training_checkpoint_routes_export_through_strategy(tmp_path) -> No
     class _SpyStrategy:
         def __init__(self) -> None:
             self.calls: list[object] = []
-            self.context = SimpleNamespace(is_primary=True, world_size=1)
+            self.context = _context()
 
         def export_checkpoint_state(self, bundle):
             self.calls.append(bundle)
@@ -482,7 +485,7 @@ def test_save_training_checkpoint_prefers_primary_only_snapshot_seams(tmp_path) 
     class _CheckpointStrategy:
         def __init__(self) -> None:
             self.calls: list[object] = []
-            self.context = SimpleNamespace(is_primary=True, world_size=1)
+            self.context = _context()
 
         def export_checkpoint_state(self, bundle):
             self.calls.append(bundle)
@@ -527,11 +530,16 @@ def test_save_training_checkpoint_non_primary_gathers_but_writes_nothing(tmp_pat
     class _SpyStrategy:
         def __init__(self) -> None:
             self.calls: list[object] = []
-            self.context = SimpleNamespace(is_primary=False, world_size=1)
+            # rank1 of 2: "not primary" only exists in a multi-rank world, and a
+            # multi-rank strategy owes the checkpoint a rank-agreement seam.
+            self.context = _context(rank=1, world_size=2)
 
         def export_checkpoint_state(self, bundle):
             self.calls.append(bundle)
             return {"module": {"weight": torch.full((1, 1), 9.0)}}
+
+        def all_ranks_succeeded(self, succeeded):
+            return succeeded
 
     strategy = _SpyStrategy()
     bundle = _Bundle()
@@ -561,7 +569,7 @@ def test_primary_checkpoint_publication_failure_reraises_after_rank_agreement(
 
     class _Strategy:
         def __init__(self) -> None:
-            self.context = SimpleNamespace(is_primary=True, world_size=2)
+            self.context = _context(world_size=2)
             self.agreements = []
 
         def export_checkpoint_state(self, bundle):
@@ -595,7 +603,7 @@ def test_primary_checkpoint_publication_failure_reraises_after_rank_agreement(
 def test_non_primary_receives_primary_checkpoint_publication_failure(tmp_path) -> None:
     class _Strategy:
         def __init__(self) -> None:
-            self.context = SimpleNamespace(is_primary=False, world_size=2)
+            self.context = _context(rank=1, world_size=2)
             self.agreements = []
 
         def export_checkpoint_state(self, bundle):
@@ -626,16 +634,24 @@ def test_non_primary_receives_primary_checkpoint_publication_failure(tmp_path) -
 
 
 def test_training_checkpoint_writes_optional_lora_export(tmp_path) -> None:
-    """Checks training checkpoint writes optional LoRA export."""
+    """The adapter artifact lands beside the resume checkpoint and is really loadable.
+
+    ``save_pretrained`` stays a stand-in (real PEFT also writes an adapter config,
+    which belongs to the PEFT-export tests), but the *file* it produces is a real
+    safetensors container, so the assertion can read the tensor back instead of
+    settling for "a file with that name exists".
+    """
 
     class _ExportModule(nn.Linear):
         def save_pretrained(self, path, *, state_dict, selected_adapters):
             assert state_dict.keys() == {"weight"}
             assert selected_adapters == ["default"]
             path.mkdir(parents=True)
-            (path / "adapter_model.safetensors").write_text("stub")
+            save_file(dict(state_dict), path / "adapter_model.safetensors")
 
     export_module = _ExportModule(1, 1, bias=False)
+    with torch.no_grad():
+        export_module.weight.fill_(4.0)
     save_training_checkpoint(
         tmp_path / "checkpoint-1",
         trainer=_Trainer(),
@@ -648,18 +664,23 @@ def test_training_checkpoint_writes_optional_lora_export(tmp_path) -> None:
     )
 
     assert (tmp_path / "checkpoint-1" / TRAINING_CHECKPOINT_NAME).exists()
-    assert (tmp_path / "checkpoint-1" / LORA_WEIGHTS_NAME / "adapter_model.safetensors").exists()
     assert (tmp_path / "checkpoint-1" / CHECKPOINT_META_NAME).exists()
+    exported = _exported_adapter_weight(
+        tmp_path / "checkpoint-1" / LORA_WEIGHTS_NAME / "adapter_model.safetensors",
+    )
+    assert torch.equal(exported, torch.full((1, 1), 4.0))
 
 
 def test_adapter_export_accepts_safe_namespaced_path(tmp_path) -> None:
     class _ExportModule(nn.Linear):
         def save_pretrained(self, path, *, state_dict, selected_adapters):
-            del state_dict, selected_adapters
+            del selected_adapters
             path.mkdir(parents=True)
-            (path / "adapter_model.safetensors").write_text("stub")
+            save_file(dict(state_dict), path / "adapter_model.safetensors")
 
     module = _ExportModule(1, 1, bias=False)
+    with torch.no_grad():
+        module.weight.fill_(5.0)
     artifact_name = f"{LORA_WEIGHTS_NAME}/transformer"
 
     save_training_checkpoint(
@@ -673,9 +694,10 @@ def test_adapter_export_accepts_safe_namespaced_path(tmp_path) -> None:
         adapter_exports={artifact_name: AdapterExport(module)},
     )
 
-    assert (
-        tmp_path / "checkpoint-namespaced" / artifact_name / "adapter_model.safetensors"
-    ).is_file()
+    exported = _exported_adapter_weight(
+        tmp_path / "checkpoint-namespaced" / artifact_name / "adapter_model.safetensors",
+    )
+    assert torch.equal(exported, torch.full((1, 1), 5.0))
 
 
 def test_adapter_export_accepts_safe_named_adapter(tmp_path) -> None:
@@ -688,9 +710,11 @@ def test_adapter_export_accepts_safe_named_adapter(tmp_path) -> None:
             assert state_dict.keys() == {"weight"}
             assert selected_adapters == ["publish"]
             path.mkdir(parents=True)
-            (path / "adapter_model.safetensors").write_text("stub")
+            save_file(dict(state_dict), path / "adapter_model.safetensors")
 
     module = _ExportModule()
+    with torch.no_grad():
+        module.weight.fill_(6.0)
     save_training_checkpoint(
         tmp_path / "checkpoint-named-adapter",
         trainer=_Trainer(),
@@ -704,9 +728,10 @@ def test_adapter_export_accepts_safe_named_adapter(tmp_path) -> None:
         },
     )
 
-    assert (
-        tmp_path / "checkpoint-named-adapter" / LORA_WEIGHTS_NAME / "adapter_model.safetensors"
-    ).is_file()
+    exported = _exported_adapter_weight(
+        tmp_path / "checkpoint-named-adapter" / LORA_WEIGHTS_NAME / "adapter_model.safetensors",
+    )
+    assert torch.equal(exported, torch.full((1, 1), 6.0))
 
 
 # ── build_adapter_exports: bundle -> publishable adapter artifacts ────────────
@@ -991,39 +1016,25 @@ def test_adapter_export_rejects_custom_adapter_effective_path_collision(tmp_path
 def test_training_checkpoint_exports_lora_with_ema_without_mutating_resume_state(
     tmp_path,
 ) -> None:
-    """Checks training checkpoint exports LoRA with EMA without mutating resume state."""
+    """The published adapter carries EMA weights; the resume checkpoint carries raw ones.
+
+    Driven by a real ``EMAModuleWrapper``, so the 7.0 in the artifact is the
+    wrapper's own running average copied in by its own ``copy_ema_to``, and the
+    restore afterwards is its own ``copy_temp_to`` — the previous stand-in filled
+    the number in itself, which made ``store_temp=True`` a claim about the stub
+    rather than about the swap. Here that claim is implied: a swap taken without
+    a snapshot could not restore 3.0 at all.
+    """
 
     class _ExportModule(nn.Linear):
-        def __init__(self) -> None:
-            super().__init__(1, 1, bias=False)
-            self.saved_weight = None
-
         def save_pretrained(self, path, *, state_dict, selected_adapters):
             assert selected_adapters == ["default"]
             path.mkdir(parents=True)
-            self.saved_weight = float(state_dict["weight"].item())
-            (path / "adapter_model.safetensors").write_text(str(self.saved_weight))
+            save_file(dict(state_dict), path / "adapter_model.safetensors")
 
-    class _EMA:
-        has_updates = True
-
-        def copy_ema_to(self, parameters, *, store_temp=True):
-            self.parameters = list(parameters)
-            assert store_temp is True
-            self.temp = [p.detach().clone() for p in self.parameters]
-            with torch.no_grad():
-                for p in self.parameters:
-                    p.fill_(7.0)
-
-        def copy_temp_to(self, parameters):
-            with torch.no_grad():
-                for p, temp in zip(parameters, self.temp, strict=True):
-                    p.copy_(temp)
-
-    export_module = _ExportModule()
+    export_module = _ExportModule(1, 1, bias=False)
     bundle = _Bundle(export_module)
-    with torch.no_grad():
-        bundle.module.weight.fill_(3.0)
+    ema = _ema_holding(export_module, average=7.0, live=3.0)
 
     save_training_checkpoint(
         tmp_path / "checkpoint-ema",
@@ -1034,52 +1045,43 @@ def test_training_checkpoint_exports_lora_with_ema_without_mutating_resume_state
         progress={"next_epoch": 1},
         rng_state={},
         adapter_exports={LORA_WEIGHTS_NAME: AdapterExport(export_module)},
-        export_ema=_EMA(),
+        export_ema=ema,
     )
 
     checkpoint = load_training_checkpoint(tmp_path / "checkpoint-ema")
     saved_trainable = checkpoint.checkpoint_state["module"]["weight"].item()
+    published = _exported_adapter_weight(
+        tmp_path / "checkpoint-ema" / LORA_WEIGHTS_NAME / "adapter_model.safetensors",
+    )
 
     assert saved_trainable == pytest.approx(3.0)
-    assert export_module.saved_weight == pytest.approx(7.0)
+    assert published.item() == pytest.approx(7.0)
     assert bundle.module.weight.item() == pytest.approx(3.0)
+    assert ema.temp_stored_parameters is None
 
 
 def test_training_checkpoint_skips_lora_ema_export_before_first_ema_update(
     tmp_path,
 ) -> None:
-    """Checks training checkpoint skips LoRA EMA export before first EMA update."""
+    """Before the first ``step()`` the EMA average is meaningless, so publish raw weights.
+
+    The real wrapper derives ``has_updates`` from ``num_updates``, so "unupdated"
+    is a state the object is genuinely in rather than a flag a stub sets. Its
+    stored average is deliberately 7.0 while the live weight is 3.0: an export
+    that swapped anyway would publish 7.0, and one that took a snapshot would
+    leave ``temp_stored_parameters`` behind.
+    """
 
     class _ExportModule(nn.Linear):
-        def __init__(self) -> None:
-            super().__init__(1, 1, bias=False)
-            self.saved_weight = None
-
         def save_pretrained(self, path, *, state_dict, selected_adapters):
             assert selected_adapters == ["default"]
             path.mkdir(parents=True)
-            self.saved_weight = float(state_dict["weight"].item())
-            (path / "adapter_model.safetensors").write_text(str(self.saved_weight))
+            save_file(dict(state_dict), path / "adapter_model.safetensors")
 
-    class _UnupdatedEMA:
-        has_updates = False
-
-        def __init__(self) -> None:
-            self.copy_called = False
-
-        def copy_ema_to(self, parameters, *, store_temp=True):
-            del parameters, store_temp
-            self.copy_called = True
-
-        def copy_temp_to(self, parameters):
-            del parameters
-            raise AssertionError("raw export must not restore an unused EMA swap")
-
-    export_module = _ExportModule()
+    export_module = _ExportModule(1, 1, bias=False)
     bundle = _Bundle(export_module)
-    with torch.no_grad():
-        bundle.module.weight.fill_(3.0)
-    ema = _UnupdatedEMA()
+    ema = _ema_holding(export_module, average=7.0, live=3.0, stepped=False)
+    assert ema.has_updates is False
 
     save_training_checkpoint(
         tmp_path / "checkpoint-raw-export",
@@ -1093,8 +1095,11 @@ def test_training_checkpoint_skips_lora_ema_export_before_first_ema_update(
         export_ema=ema,
     )
 
-    assert export_module.saved_weight == pytest.approx(3.0)
-    assert ema.copy_called is False
+    published = _exported_adapter_weight(
+        tmp_path / "checkpoint-raw-export" / LORA_WEIGHTS_NAME / "adapter_model.safetensors",
+    )
+    assert published.item() == pytest.approx(3.0)
+    assert ema.temp_stored_parameters is None  # no swap, so no snapshot was taken
     assert bundle.module.weight.item() == pytest.approx(3.0)
 
 
@@ -1142,7 +1147,7 @@ def test_training_checkpoint_restores_raw_weights_when_ema_gather_fails(tmp_path
     class _FailSecondGather:
         def __init__(self) -> None:
             self.calls = 0
-            self.context = SimpleNamespace(is_primary=True, world_size=1)
+            self.context = _context()
 
         def export_checkpoint_state(self, bundle):
             self.calls += 1
@@ -1150,25 +1155,9 @@ def test_training_checkpoint_restores_raw_weights_when_ema_gather_fails(tmp_path
                 raise RuntimeError("EMA gather failed")
             return export_checkpoint_state(bundle)
 
-    class _EMA:
-        has_updates = True
-
-        def copy_ema_to(self, parameters, *, store_temp=True):
-            assert store_temp is True
-            self.temp = [parameter.detach().clone() for parameter in parameters]
-            with torch.no_grad():
-                for parameter in parameters:
-                    parameter.fill_(7.0)
-
-        def copy_temp_to(self, parameters):
-            with torch.no_grad():
-                for parameter, temp in zip(parameters, self.temp, strict=True):
-                    parameter.copy_(temp)
-
     module = _ExportModule(1, 1, bias=False)
     bundle = _Bundle(module)
-    with torch.no_grad():
-        module.weight.fill_(3.0)
+    ema = _ema_holding(module, average=7.0, live=3.0)
     strategy = _FailSecondGather()
 
     with pytest.raises(RuntimeError, match="EMA gather failed"):
@@ -1181,34 +1170,38 @@ def test_training_checkpoint_restores_raw_weights_when_ema_gather_fails(tmp_path
             progress={"next_epoch": 1},
             rng_state={},
             adapter_exports={LORA_WEIGHTS_NAME: AdapterExport(module)},
-            export_ema=_EMA(),
+            export_ema=ema,
             strategy=strategy,
         )
 
     assert strategy.calls == 2
+    # The real wrapper's own copy_temp_to put the raw weights back, and dropped
+    # its snapshot while doing so.
     assert module.weight.item() == pytest.approx(3.0)
+    assert ema.temp_stored_parameters is None
     assert not (tmp_path / "checkpoint-failed-ema-gather").exists()
 
 
-def test_training_checkpoint_preserves_swap_failure_without_unset_restore(tmp_path) -> None:
+def test_training_checkpoint_preserves_swap_failure_without_unset_restore(
+    monkeypatch,
+    tmp_path,
+) -> None:
     class _ExportModule(nn.Linear):
         def save_pretrained(self, *_args, **_kwargs):
             raise AssertionError("failed swap must not reach artifact IO")
 
-    class _FailingEMA:
-        has_updates = True
-
-        def copy_ema_to(self, parameters, *, store_temp=True):
-            del parameters, store_temp
-            raise RuntimeError("EMA swap failed")
-
-        def copy_temp_to(self, parameters):
-            del parameters
-            raise AssertionError("no EMA snapshot was established")
-
     module = _ExportModule(1, 1, bias=False)
-    with torch.no_grad():
-        module.weight.fill_(3.0)
+    # Real EMA, one injected fault: the real wrapper always snapshots before it
+    # swaps, so "the swap failed before establishing a snapshot" only exists as an
+    # injected fault. Only copy_ema_to is patched — leaving the real copy_temp_to
+    # in place is what makes the assertion below bite: production calling it with
+    # no snapshot would raise "snapshot is not available" instead of the swap error.
+    ema = _ema_holding(module, average=7.0, live=3.0)
+
+    def failing_copy_ema_to(_parameters, *, store_temp=True):
+        raise RuntimeError("EMA swap failed")
+
+    monkeypatch.setattr(ema, "copy_ema_to", failing_copy_ema_to)
 
     with pytest.raises(RuntimeError, match="EMA swap failed"):
         save_training_checkpoint(
@@ -1220,10 +1213,11 @@ def test_training_checkpoint_preserves_swap_failure_without_unset_restore(tmp_pa
             progress={"next_epoch": 1},
             rng_state={},
             adapter_exports={LORA_WEIGHTS_NAME: AdapterExport(module)},
-            export_ema=_FailingEMA(),
+            export_ema=ema,
         )
 
     assert module.weight.item() == pytest.approx(3.0)
+    assert ema.temp_stored_parameters is None
     assert not (tmp_path / "checkpoint-failed-ema-swap").exists()
 
 
@@ -1234,7 +1228,7 @@ def test_peer_ema_swap_failure_rolls_back_before_second_export(tmp_path) -> None
 
     class _AgreementStrategy:
         def __init__(self) -> None:
-            self.context = SimpleNamespace(is_primary=True, world_size=2)
+            self.context = _context(world_size=2)
             self.exported_weights = []
             self.agreements = []
 
@@ -1249,25 +1243,9 @@ def test_peer_ema_swap_failure_rolls_back_before_second_export(tmp_path) -> None
                 return False
             return succeeded
 
-    class _EMA:
-        has_updates = True
-
-        def copy_ema_to(self, parameters, *, store_temp=True):
-            assert store_temp is True
-            self.temp = [parameter.detach().clone() for parameter in parameters]
-            with torch.no_grad():
-                for parameter in parameters:
-                    parameter.fill_(7.0)
-
-        def copy_temp_to(self, parameters):
-            with torch.no_grad():
-                for parameter, temp in zip(parameters, self.temp, strict=True):
-                    parameter.copy_(temp)
-
     module = _ExportModule(1, 1, bias=False)
     bundle = _Bundle(module)
-    with torch.no_grad():
-        module.weight.fill_(3.0)
+    ema = _ema_holding(module, average=7.0, live=3.0)
     strategy = _AgreementStrategy()
 
     with pytest.raises(RuntimeError, match="peer rank failed before"):
@@ -1280,11 +1258,13 @@ def test_peer_ema_swap_failure_rolls_back_before_second_export(tmp_path) -> None
             progress={"next_epoch": 1},
             rng_state={},
             adapter_exports={LORA_WEIGHTS_NAME: AdapterExport(module)},
-            export_ema=_EMA(),
+            export_ema=ema,
             strategy=strategy,
         )
 
+    # Only the raw gather ran: a second export would have seen the EMA's 7.0.
     assert strategy.exported_weights == pytest.approx([3.0])
+    assert ema.temp_stored_parameters is None
     assert strategy.agreements == [
         True,
         True,
@@ -1301,14 +1281,14 @@ def test_peer_ema_swap_failure_rolls_back_before_second_export(tmp_path) -> None
     assert not (tmp_path / "checkpoint-peer-swap-failure").exists()
 
 
-def test_peer_ema_swap_failure_propagates_local_rollback_failure(tmp_path) -> None:
+def test_peer_ema_swap_failure_propagates_local_rollback_failure(monkeypatch, tmp_path) -> None:
     class _ExportModule(nn.Linear):
         def save_pretrained(self, *_args, **_kwargs):
             raise AssertionError("failed rollback must not reach artifact IO")
 
     class _AgreementStrategy:
         def __init__(self) -> None:
-            self.context = SimpleNamespace(is_primary=True, world_size=2)
+            self.context = _context(world_size=2)
             self.agreements = []
 
         def export_checkpoint_state(self, bundle):
@@ -1320,21 +1300,17 @@ def test_peer_ema_swap_failure_propagates_local_rollback_failure(tmp_path) -> No
                 return False
             return succeeded
 
-    class _EMA:
-        has_updates = True
-
-        def copy_ema_to(self, parameters, *, store_temp=True):
-            assert store_temp is True
-            with torch.no_grad():
-                for parameter in parameters:
-                    parameter.fill_(7.0)
-
-        def copy_temp_to(self, parameters):
-            del parameters
-            raise RuntimeError("rank-local EMA rollback failed")
-
     module = _ExportModule(1, 1, bias=False)
     strategy = _AgreementStrategy()
+    # Real EMA, one injected fault: a real wrapper cannot be made to fail its own
+    # restore, and that failure is the whole subject here. Patching the one method
+    # keeps `has_updates`, the swap and the snapshot real.
+    ema = _ema_holding(module, average=7.0, live=3.0)
+
+    def failing_copy_temp_to(_parameters):
+        raise RuntimeError("rank-local EMA rollback failed")
+
+    monkeypatch.setattr(ema, "copy_temp_to", failing_copy_temp_to)
 
     with pytest.raises(
         RuntimeError,
@@ -1349,13 +1325,16 @@ def test_peer_ema_swap_failure_propagates_local_rollback_failure(tmp_path) -> No
             progress={"next_epoch": 1},
             rng_state={},
             adapter_exports={LORA_WEIGHTS_NAME: AdapterExport(module)},
-            export_ema=_EMA(),
+            export_ema=ema,
             strategy=strategy,
         )
 
     assert isinstance(error.value.__cause__, RuntimeError)
     assert str(error.value.__cause__) == "rank-local EMA rollback failed"
     assert strategy.agreements[-2:] == [True, False]
+    # The swap really happened and really could not be undone: the weights are
+    # left at the EMA average, which is exactly why this is a hard error.
+    assert module.weight.item() == pytest.approx(7.0)
     assert not (tmp_path / "checkpoint-failed-ema-rollback").exists()
 
 
@@ -1366,7 +1345,7 @@ def test_mixed_rank_ema_update_state_fails_before_swap_or_second_export(tmp_path
 
     class _Strategy:
         def __init__(self) -> None:
-            self.context = SimpleNamespace(is_primary=True, world_size=2)
+            self.context = _context(world_size=2)
             self.export_calls = 0
             self.agreements = []
 
@@ -1380,17 +1359,9 @@ def test_mixed_rank_ema_update_state_fails_before_swap_or_second_export(tmp_path
                 return False
             return succeeded
 
-    class _EMA:
-        has_updates = True
-
-        def copy_ema_to(self, *_args, **_kwargs):
-            raise AssertionError("mixed update state must fail before EMA swap")
-
-        def copy_temp_to(self, *_args, **_kwargs):
-            raise AssertionError("mixed update state established no snapshot")
-
     module = _ExportModule(1, 1, bias=False)
     strategy = _Strategy()
+    ema = _ema_holding(module, average=7.0, live=3.0)
 
     with pytest.raises(RuntimeError, match="disagree on EMA update state"):
         save_training_checkpoint(
@@ -1402,11 +1373,15 @@ def test_mixed_rank_ema_update_state_fails_before_swap_or_second_export(tmp_path
             progress={"next_epoch": 1},
             rng_state={},
             adapter_exports={LORA_WEIGHTS_NAME: AdapterExport(module)},
-            export_ema=_EMA(),
+            export_ema=ema,
             strategy=strategy,
         )
 
     assert strategy.export_calls == 1
+    # No swap was attempted: the sentinel assertions the previous stub raised are
+    # now the real wrapper's own state — weights untouched, no snapshot taken.
+    assert module.weight.item() == pytest.approx(3.0)
+    assert ema.temp_stored_parameters is None
     assert not (tmp_path / "checkpoint-mixed-ema-state").exists()
 
 
@@ -1418,32 +1393,19 @@ def test_non_primary_joins_ema_artifact_gather_and_restores_raw_weights(tmp_path
     class _GatherStrategy:
         def __init__(self) -> None:
             self.states = []
-            self.context = SimpleNamespace(is_primary=False, world_size=1)
+            self.context = _context(rank=1, world_size=2)
 
         def export_checkpoint_state(self, bundle):
             state = export_checkpoint_state(bundle)
             self.states.append(float(state["module"]["weight"].item()))
             return state
 
-    class _EMA:
-        has_updates = True
-
-        def copy_ema_to(self, parameters, *, store_temp=True):
-            assert store_temp is True
-            self.temp = [parameter.detach().clone() for parameter in parameters]
-            with torch.no_grad():
-                for parameter in parameters:
-                    parameter.fill_(7.0)
-
-        def copy_temp_to(self, parameters):
-            with torch.no_grad():
-                for parameter, temp in zip(parameters, self.temp, strict=True):
-                    parameter.copy_(temp)
+        def all_ranks_succeeded(self, succeeded):
+            return succeeded
 
     module = _ExportModule(1, 1, bias=False)
     bundle = _Bundle(module)
-    with torch.no_grad():
-        module.weight.fill_(3.0)
+    ema = _ema_holding(module, average=7.0, live=3.0)
     strategy = _GatherStrategy()
 
     result = save_training_checkpoint(
@@ -1455,13 +1417,15 @@ def test_non_primary_joins_ema_artifact_gather_and_restores_raw_weights(tmp_path
         progress={"next_epoch": 1},
         rng_state={},
         adapter_exports={LORA_WEIGHTS_NAME: AdapterExport(module)},
-        export_ema=_EMA(),
+        export_ema=ema,
         strategy=strategy,
     )
 
     assert result == {}
+    # The second gather sees the real EMA average, not a number a stub filled in.
     assert strategy.states == pytest.approx([3.0, 7.0])
     assert module.weight.item() == pytest.approx(3.0)
+    assert ema.temp_stored_parameters is None  # the swap was rolled back, not abandoned
     assert not (tmp_path / "checkpoint-nonprimary-ema").exists()
 
 
@@ -1475,7 +1439,7 @@ def test_adapter_export_derives_nested_module_state_prefix(tmp_path) -> None:
             self.saved_keys = set(state_dict)
             assert selected_adapters == ["default"]
             path.mkdir(parents=True)
-            (path / "adapter_model.safetensors").write_text("stub")
+            save_file(dict(state_dict), path / "adapter_model.safetensors")
 
     class _Root(nn.Module):
         def __init__(self) -> None:
@@ -1502,8 +1466,9 @@ def test_adapter_export_derives_nested_module_state_prefix(tmp_path) -> None:
 
 
 def test_adapter_export_selects_default_and_excludes_frozen_previous(tmp_path) -> None:
+    # peft is an optional extra, safetensors is a core dependency — only the
+    # former can legitimately be missing, so only the former guards the skip.
     peft = pytest.importorskip("peft")
-    safetensors = pytest.importorskip("safetensors.torch")
 
     from vrl.models.steps.denoise.common.lora import (
         freeze_checkpoint_owned_adapter_params,
@@ -1544,7 +1509,7 @@ def test_adapter_export_selects_default_and_excludes_frozen_previous(tmp_path) -
     root_state = checkpoint.checkpoint_state["module"]
     assert any(".previous." in name for name in root_state)
     artifact_dir = tmp_path / "checkpoint-default-only" / LORA_WEIGHTS_NAME
-    artifact = safetensors.load_file(str(artifact_dir / "adapter_model.safetensors"))
+    artifact = load_file(artifact_dir / "adapter_model.safetensors")
     assert artifact
     assert all(torch.equal(tensor, torch.full_like(tensor, 3.0)) for tensor in artifact.values())
     assert not (artifact_dir / "previous").exists()
@@ -1756,6 +1721,69 @@ def test_load_training_checkpoint_rejects_non_object_meta(tmp_path) -> None:
 
     with pytest.raises(TypeError, match="JSON object"):
         load_training_checkpoint(ckpt)
+
+
+def _context(*, rank: int = 0, world_size: int = 1) -> DistributedTrainingContext:
+    """The real context the checkpoint reads ``is_primary`` / ``world_size`` off.
+
+    ``is_primary`` is derived (``rank == 0``), so the two can no longer be written
+    independently: a hand-rolled namespace let a test claim "not primary, world
+    size 1", a state ``resolve_training_context`` cannot produce. ``strategy``
+    follows the same rule the resolver enforces — ``single_process`` is world 1.
+
+    The context is real; the strategies that carry it stay recording doubles,
+    because a ``world_size=2`` rank-agreement *sequence* cannot be produced by one
+    process. Those sequences run for real on gloo in
+    ``tests/trainers/test_fsdp_gather_distributed.py`` (default lane).
+    """
+
+    return DistributedTrainingContext(
+        strategy="single_process" if world_size == 1 else "fsdp",
+        rank=rank,
+        world_size=world_size,
+        device=torch.device("cpu"),
+    )
+
+
+def _ema_holding(
+    module: nn.Module,
+    *,
+    average: float,
+    live: float,
+    stepped: bool = True,
+) -> EMAModuleWrapper:
+    """A real EMA whose stored average differs from the module's live weights.
+
+    ``has_updates`` is derived from ``num_updates`` in the real wrapper, so a
+    ``step()`` is what makes it True — the hand-written doubles this replaces could
+    simply declare it, and they had drifted apart on whether they even recorded
+    the parameters they were handed. The step runs while the weights still equal
+    ``average`` so the running average stays exactly there, which is what makes
+    the EMA artifact distinguishable from the raw one on disk.
+    """
+
+    trainable = [parameter for parameter in module.parameters() if parameter.requires_grad]
+    with torch.no_grad():
+        for parameter in trainable:
+            parameter.fill_(average)
+    ema = EMAModuleWrapper(trainable, decay=0.9, device=torch.device("cpu"))
+    if stepped:
+        ema.step(trainable, 0)
+    with torch.no_grad():
+        for parameter in trainable:
+            parameter.fill_(live)
+    return ema
+
+
+def _exported_adapter_weight(path: Path) -> torch.Tensor:
+    """Read an exported adapter back through safetensors.
+
+    ``write_text("stub")`` produced a five-byte file that no safetensors reader can
+    open, so ``.exists()`` was the strongest claim available. Loading it proves the
+    artifact is the real container with the real tensor in it.
+    """
+
+    return load_file(path)["weight"]
 
 
 class _Trainer:

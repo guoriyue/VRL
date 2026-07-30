@@ -3,6 +3,7 @@ from __future__ import annotations
 import gc
 import json
 import weakref
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -13,6 +14,21 @@ from vrl.config.precision import RolePrecision
 from vrl.scripts.eval import cosmos_predict25_kling_eval as eval_script
 
 MODEL_IDENTITY = {"schema": "vrl.model-identity/v1", "sources": {}, "build": {}}
+
+# The generation loop's two boundaries: one needs a real Cosmos pipeline on a GPU,
+# the other needs a real libx264 encoder. The seed grid's claim does not depend on
+# either being real, and the e2e case named here runs both for real — reaching them
+# through the rollout + Kling video-reward artifact path rather than through this
+# script's own loop.
+_GENERATION_AND_MP4_NEED_REAL_WEIGHTS = pytest.mark.real_cover(
+    "tests/e2e/test_real_checkpoint_rl.py"
+    "::test_real_checkpoint_online_rl_updates_trainable_weights",
+    why=(
+        "a video frame can only come out of a real diffusion pipeline on a CUDA device, and an "
+        "mp4 can only come out of a real ffmpeg/libx264 encoder; the e2e case generates with "
+        "real weights and materializes real mp4 artifacts through vrl/rewards/artifacts.py"
+    ),
+)
 
 
 def _minimal_eval_config(*, family: str = "cosmos-predict2.5"):
@@ -39,13 +55,16 @@ def test_parse_checkpoint_accepts_label_and_path(tmp_path) -> None:
     assert target.path == checkpoint.resolve()
 
 
-def test_seed_grid_is_identical_across_checkpoints() -> None:
-    """Eval seeds depend only on the (prompt, sample) cell, never the checkpoint,
-    so reward deltas reflect weight changes and not a different latent-noise draw —
-    yet distinct cells still get distinct seeds (the grid is not degenerate)."""
+def test_seed_formula_lays_out_a_dense_non_colliding_grid() -> None:
+    """``base_seed + prompt*samples_per_prompt + sample`` fills the grid without gaps.
 
-    def seed(checkpoint_index: int, prompt_index: int, sample_index: int) -> int:
-        del checkpoint_index
+    Checkpoint independence is NOT asserted here: ``seed_for`` has no checkpoint
+    parameter, so at this level it is guaranteed by the signature and untestable.
+    The place it can actually break is the caller, covered by
+    ``test_seed_grid_cell_is_identical_across_checkpoints`` below.
+    """
+
+    def seed(prompt_index: int, sample_index: int) -> int:
         return eval_script._seed_for(
             base_seed=17,
             prompt_index=prompt_index,
@@ -53,13 +72,54 @@ def test_seed_grid_is_identical_across_checkpoints() -> None:
             samples_per_prompt=4,
         )
 
-    # Same cell across different checkpoints -> identical seed (the real contract).
-    assert seed(0, 2, 1) == seed(3, 2, 1)
+    grid = [
+        seed(prompt_index, sample_index) for prompt_index in range(3) for sample_index in range(4)
+    ]
 
-    # Non-degeneracy: different sample / prompt cells must not collide, otherwise a
-    # constant function would also satisfy the checkpoint-independence assert above.
-    assert seed(0, 2, 1) != seed(0, 2, 2)
-    assert seed(0, 2, 1) != seed(0, 3, 1)
+    assert grid == list(range(17, 29))
+
+
+@_GENERATION_AND_MP4_NEED_REAL_WEIGHTS
+def test_seed_grid_cell_is_identical_across_checkpoints(monkeypatch, tmp_path) -> None:
+    """The generator must derive each seed from the (prompt, sample) cell only.
+
+    ``target`` is in scope inside the generation loop, so folding the checkpoint
+    label into the seed is one live edit away — and it would silently turn every
+    reward delta into a different latent-noise draw instead of a weight effect.
+    That edit is invisible one level down in ``seed_for``, which never sees a
+    checkpoint at all, so the claim has to be driven through the real loop.
+
+    The seed grid itself is entirely real code here; only the two boundaries the
+    loop cannot cross in-process are replaced (see the ``real_cover`` label).
+    """
+
+    monkeypatch.setattr(
+        eval_script,
+        "_generate_one_video",
+        lambda _model, *, prompt, seed, sampling: torch.zeros(3, 1, 2, 2),
+    )
+    monkeypatch.setattr(
+        eval_script,
+        "write_mp4",
+        lambda _tensor, path, *, fps: Path(path).touch(),
+    )
+
+    def run(label: str) -> list[int]:
+        videos = eval_script._generate_checkpoint_videos(
+            object(),
+            eval_script.CheckpointTarget(label, tmp_path / label),
+            ["p0", "p1"],
+            samples_per_prompt=2,
+            base_seed=17,
+            output_dir=tmp_path / label,
+            sampling={"fps": 16.0},
+        )
+        return [video.seed for video in videos]
+
+    base, trained = run("base"), run("a-much-longer-label")
+
+    assert base == trained
+    assert len(set(base)) == 4  # non-degeneracy: four cells, four distinct seeds
 
 
 def test_video_to_cthw_accepts_btchw_layout() -> None:

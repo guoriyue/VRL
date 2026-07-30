@@ -7,8 +7,6 @@ helpers exactly, so installing the seam changes nothing for a single-GPU run.
 
 from __future__ import annotations
 
-from types import SimpleNamespace
-
 import pytest
 import torch
 from torch import nn
@@ -21,8 +19,8 @@ from vrl.trainers.weight_sync import build_trainable_state_sync_getter
 
 
 class _Bundle:
-    def __init__(self) -> None:
-        self.trainable_modules = {"adapter": nn.Linear(2, 1, bias=False)}
+    def __init__(self, module: nn.Module | None = None) -> None:
+        self.trainable_modules = {"adapter": module or nn.Linear(2, 1, bias=False)}
 
 
 def test_default_context_is_single_process() -> None:
@@ -117,21 +115,46 @@ class _CountingLinear(nn.Linear):
         return super().to(*args, **kwargs)
 
 
+@pytest.mark.real_cover(
+    "tests/trainers/test_strategy.py"
+    "::test_cuda_training_state_parking_round_trip_preserves_all_live_state",
+    why=(
+        "parking's destination IS cpu on this lane, so _move_tensor_tree_in_place is a no-op "
+        "and no CPU assertion can distinguish a branch that ran from one that was skipped; only "
+        "the gpu twin can watch the model, grads, optimizer, EMA and GradScaler tensors "
+        "actually land on cpu and come back"
+    ),
+)
 def test_training_state_parking_is_idempotent_and_deduplicates_model_identity() -> None:
+    """Exactly one move per park and per restore, however many times each is called.
+
+    ``model`` and ``ref_model`` are the same object, so a park that moved each
+    entry separately — or a second park that re-parked already-parked state —
+    shows up as extra ``to()`` calls beyond the one park + one restore asserted
+    below, and the grads/optimizer moments must survive the round trip untouched.
+    """
     model = _CountingLinear()
     optimizer = torch.optim.AdamW(model.parameters(), lr=0.1)
-    model(torch.ones(1, 2)).sum().backward()
-    optimizer.step()
+    # A real CPU GradScaler left exactly where a training step leaves it: the
+    # first scale/step/update cycle gives `_scale` and `_growth_tracker` real
+    # tensors, and the second scale/backward/unscale_ populates
+    # `_per_optimizer_states`. Those are the three private torch attributes
+    # parking reads by name (vrl/trainers/strategy.py) — a hand-written namespace
+    # could only restate the names it was copied from, so the assertions below
+    # are the only thing in the default lane that still checks torch has them.
+    scaler = torch.amp.GradScaler("cpu", init_scale=8.0, growth_interval=2)
+    scaler.scale(model(torch.ones(1, 2)).sum()).backward()
+    scaler.step(optimizer)
+    scaler.update()
     optimizer.zero_grad(set_to_none=True)
-    model(torch.full((1, 2), 2.0)).sum().backward()
+    scaler.scale(model(torch.full((1, 2), 2.0)).sum()).backward()
+    scaler.unscale_(optimizer)
+    assert isinstance(scaler._scale, torch.Tensor)
+    assert isinstance(scaler._growth_tracker, torch.Tensor)
+    assert scaler._per_optimizer_states[id(optimizer)]["found_inf_per_device"]
     grad_before = model.weight.grad.detach().clone()
     optimizer_before = _tensor_values(optimizer.state)
     ema = EMAModuleWrapper(model.parameters(), decay=0.9, device=torch.device("cpu"))
-    scaler = SimpleNamespace(
-        _scale=torch.tensor(8.0),
-        _growth_tracker=torch.tensor(2),
-        _per_optimizer_states={0: {"found_inf_per_device": {"cpu": torch.tensor(0.0)}}},
-    )
     state = TrainingMemoryState(
         model=model,
         ref_model=model,
@@ -457,7 +480,7 @@ def test_checkpoint_and_rollout_state_have_distinct_ownership() -> None:
     module.register_buffer("previous", torch.ones(1))
     module.register_buffer("cache", torch.zeros(1))
     register_checkpoint_owned_state(module, ["previous"])
-    bundle = SimpleNamespace(trainable_modules={"adapter": module})
+    bundle = _Bundle(module)
     strategy = SingleProcessStrategy()
 
     checkpoint = strategy.export_checkpoint_state(bundle)["adapter"]

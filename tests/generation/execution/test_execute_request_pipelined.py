@@ -47,6 +47,10 @@ def _core(*, executor, uses_slots: bool, policy_version: int | None):
     core = GenerationWorkerCore.__new__(GenerationWorkerCore)
     core.executor = executor
     core.worker_id = "w0"
+    # Payload injection, not a double: these tests start from a worker that is
+    # ALREADY in slot mode. How the flag is actually derived is asserted against a
+    # real GenerationWorkerCore and a real update_weights in
+    # test_worker_versioned_slots.py::test_update_weights_installs_versioned_slots_without_overwrite.
     core._uses_versioned_slots = uses_slots
     core._policy_version = policy_version
     core._memory_parking = WorkerMemoryParking(

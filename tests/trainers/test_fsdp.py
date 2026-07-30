@@ -430,30 +430,45 @@ def test_fsdp_rollout_export_filters_frozen_params(cpu_process_group) -> None:
     assert not any("head" in key or "frozen_cache" in key for key in checkpoint)
 
 
+@pytest.mark.real_cover(
+    "tests/trainers/test_fsdp_gather_distributed.py::test_checkpoint_state_is_selective_and_round_trips_on_every_rank",
+    why=(
+        "one rank cannot observe a frozen base staying out of an all-gather; "
+        "that counterpart spawns a real gloo process group and runs on every PR"
+    ),
+)
 @pytest.mark.parametrize("register_frozen", [False, True])
 def test_fsdp_checkpoint_gather_asks_dcp_to_skip_frozen_base_when_possible(
     monkeypatch,
     register_frozen,
 ) -> None:
+    """A registered frozen exception is the only reason to keep frozen base state.
+
+    The spy delegates to the real ``get_model_state_dict``, so the resulting key
+    set is torch's answer to ``ignore_frozen_params``, not a filter this test
+    re-implemented — a change to DCP's own semantics reddens here instead of
+    silently agreeing with a hand-copied comprehension.
+
+    The flag observation stays because the ``register_frozen=False`` arm has no
+    other observable: ``gather_checkpoint_state_dict`` only ever reads
+    ``owned_names``, so on one rank the flag's real payoff (a frozen base that
+    never enters an all-gather) cannot be seen.
+    """
+    import torch.distributed.checkpoint.state_dict as dcp
+
     module = nn.Linear(2, 1)
     module.bias.requires_grad_(False)
     if register_frozen:
         register_checkpoint_owned_state(module, ["bias"])
     observed: list[bool] = []
+    real_get_model_state_dict = dcp.get_model_state_dict
 
-    def fake_get_model_state_dict(actual, *, options):
+    def spy(actual, *, options):
         assert actual is module
         observed.append(options.ignore_frozen_params)
-        return {
-            name: parameter
-            for name, parameter in module.named_parameters()
-            if not options.ignore_frozen_params or parameter.requires_grad
-        }
+        return real_get_model_state_dict(actual, options=options)
 
-    monkeypatch.setattr(
-        "torch.distributed.checkpoint.state_dict.get_model_state_dict",
-        fake_get_model_state_dict,
-    )
+    monkeypatch.setattr(dcp, "get_model_state_dict", spy)
 
     state = gather_checkpoint_state_dict(module)
 

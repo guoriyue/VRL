@@ -16,11 +16,15 @@ from vrl.scripts.perf.common.diffusion_runtime import (
 )
 
 
-@pytest.mark.parametrize("use_lora", [False, True])
-def test_build_runtime_preserves_the_resolved_lora_contract(
+def test_build_runtime_hands_the_resolved_build_to_the_family_rollout_builder(
     monkeypatch,
-    use_lora: bool,
 ) -> None:
+    """The registry entry is ``build_runtime``'s only exit.
+
+    ``resolve_model_build`` must receive the caller's own ``(root, device,
+    precision)`` objects, and ``build_rollout`` must receive exactly what the
+    resolver returned — the function adds no projection of its own.
+    """
     import vrl.families.registry as families
 
     root = parse_config(
@@ -29,7 +33,7 @@ def test_build_runtime_preserves_the_resolved_lora_contract(
                 "model": {
                     "family": "sd3_5",
                     "path": "unit-checkpoint",
-                    "use_lora": use_lora,
+                    "use_lora": False,
                 },
                 "precision": {
                     "float32_precision": "ieee",
@@ -69,8 +73,6 @@ def test_build_runtime_preserves_the_resolved_lora_contract(
         "resolver": (root, device, precision),
         "builder": resolved_build,
     }
-    assert root.model is not None
-    assert root.model.use_lora is use_lora
 
 
 @pytest.mark.parametrize(

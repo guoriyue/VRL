@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 from pathlib import Path
-from types import SimpleNamespace
+from typing import Any
 
 import pytest
 import torch
+from omegaconf import OmegaConf
 
 from tests.config.test_load_all_experiments import _experiment_names
 from vrl.config.loading import load_config
@@ -17,6 +18,7 @@ from vrl.config.precision import (
     normalize_precision,
     resolve_precision_policy,
 )
+from vrl.config.schema import RootConfig
 from vrl.models.dtypes import (
     dtype_to_precision_token,
     dtype_to_wire_name,
@@ -24,26 +26,25 @@ from vrl.models.dtypes import (
 )
 
 
-def _cfg(precision=None, mixed_precision=None, bf16=None, allow_tf32=None):
-    actor = {}
-    if mixed_precision is not None:
-        actor["mixed_precision"] = mixed_precision
-    if bf16 is not None:
-        actor["bf16"] = bf16
+def _top(precision=None, allow_tf32=None) -> dict[str, Any]:
+    top: dict[str, Any] = {"actor": {}}
     if allow_tf32 is not None:
-        actor["optim"] = {"allow_tf32": allow_tf32}
-    top = {"actor": actor}
+        top["actor"] = {"optim": {"allow_tf32": allow_tf32}}
     if precision is not None:
         top["precision"] = precision
-    return SimpleNamespace(
-        precision=top.get("precision"),
-        actor=SimpleNamespace(
-            **{
-                key: SimpleNamespace(**value) if isinstance(value, dict) else value
-                for key, value in actor.items()
-            },
-        ),
-    )
+    return top
+
+
+def _cfg(precision=None, allow_tf32=None) -> RootConfig:
+    """Feed the resolver the type 13 of its 14 production call sites hand it.
+
+    Every malformed block below still reaches the resolver rather than tripping
+    pydantic first: ``RootConfig.precision`` is annotated ``Any`` so scalars,
+    legacy keys and typo'd sub-blocks pass through untouched, and ``actor.optim``
+    survives because the actor section allows the runtime fields through.
+    """
+
+    return RootConfig(**_top(precision, allow_tf32))
 
 
 # -- normalize / convert ----------------------------------------------
@@ -63,12 +64,12 @@ def _cfg(precision=None, mixed_precision=None, bf16=None, allow_tf32=None):
     ],
 )
 def test_normalize_precision(value, expected):
-    """Checks normalize precision."""
+    """The accepted vocabulary: five plain tokens, plus `no`/empty/None meaning fp32."""
     assert normalize_precision(value) == expected
 
 
 def test_normalize_rejects_unknown():
-    """Checks normalize rejects unknown."""
+    """Neither a quantization-only token nor a torch dtype spelling is a policy token."""
     with pytest.raises(ValueError):
         normalize_precision("int8")
     with pytest.raises(ValueError):
@@ -76,7 +77,7 @@ def test_normalize_rejects_unknown():
 
 
 def test_resolve_torch_dtype():
-    """Checks resolve torch dtype."""
+    """The plain policy tokens map onto torch dtypes without an alias table."""
     assert resolve_torch_dtype("fp32") is torch.float32
     assert resolve_torch_dtype("bf16") is torch.bfloat16
     assert resolve_torch_dtype("fp16") is torch.float16
@@ -116,6 +117,62 @@ def _plain_precision(dtype: str = "bf16") -> dict:
         "training": {"dtype": dtype},
         "rollout": {"dtype": dtype},
     }
+
+
+def _shaped(shape: str, top: dict[str, Any]):
+    """One of the two real config shapes the resolver is handed in production.
+
+    ``rootconfig`` is the main path (validation, every trainer entrypoint);
+    ``dictconfig`` is the raw ``load_config`` product that ``vrl/config/builders.py``
+    can still fall back to. ``_select`` carries a Mapping/``.get`` lookup *and* a
+    ``getattr`` lookup precisely to serve both, so the two must never disagree.
+    """
+
+    return RootConfig(**top) if shape == "rootconfig" else OmegaConf.create(top)
+
+
+@pytest.mark.parametrize("shape", ["rootconfig", "dictconfig"])
+def test_both_real_config_shapes_resolve_to_the_same_policy(shape: str):
+    """Nothing else asserts the two production input shapes agree.
+
+    Every other test in this file drives one shape, so ``_select``'s two lookup
+    paths could drift apart unnoticed — which matters because the fallback shape
+    is what a caller gets when it forgets to resolve the policy itself.
+    """
+
+    policy = resolve_precision_policy(_shaped(shape, _top(precision=_plain_precision())))
+
+    assert policy == PrecisionPolicy(
+        training=RolePrecision(dtype="bf16", float32_precision="tf32"),
+        rollout=RolePrecision(dtype="bf16", float32_precision="tf32"),
+        diffusion_math="fp32",
+        prompt_encoder_dtype="bf16",
+    )
+
+
+@pytest.mark.parametrize("shape", ["rootconfig", "dictconfig"])
+@pytest.mark.parametrize(
+    ("top", "message"),
+    [
+        pytest.param(_top(), "top-level `precision` is required", id="missing"),
+        pytest.param(_top(precision="bf16"), "scalar `precision`", id="scalar"),
+        pytest.param(
+            _top(precision=_plain_precision(), allow_tf32=True),
+            r"actor\.optim\.allow_tf32",
+            id="legacy-tf32",
+        ),
+    ],
+)
+def test_both_real_config_shapes_reject_the_same_way(shape: str, top: dict, message: str):
+    """The three migration errors only ever fire through this file's own inputs.
+
+    A missing block and a scalar block are read off ``precision``; the legacy key
+    is read off ``actor.optim`` — three different ``_select`` walks, and each one
+    has to reach the same error from either shape.
+    """
+
+    with pytest.raises(ValueError, match=message):
+        resolve_precision_policy(_shaped(shape, top))
 
 
 def test_nested_bf16_resolves_role_dtypes_and_protected_defaults():
@@ -313,7 +370,7 @@ def test_prompt_encoder_keys_are_derived_from_precision_config_dataclasses():
 
 
 def test_top_level_precision_is_required():
-    """Checks missing top-level precision is rejected."""
+    """There is no implicit default: a config with no precision block must not load."""
     with pytest.raises(ValueError, match="top-level `precision` is required"):
         resolve_precision_policy(_cfg())
 

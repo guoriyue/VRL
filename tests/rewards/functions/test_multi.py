@@ -12,6 +12,7 @@ from vrl.rewards.functions.registry import (
 )
 from vrl.rewards.runtime import InProcessRewardRuntime
 from vrl.rewards.service.client import HttpRewardRuntime
+from vrl.rewards.service.server import RewardService
 from vrl.rewards.types import RewardRollout
 from vrl.utils.cuda_memory import CUDA_RUNTIME_RESIDUAL_BYTES_LIMIT
 
@@ -479,28 +480,87 @@ def test_http_reward_rejects_inmemory_artifact_component() -> None:
         )
 
 
+class _NeverScoredRuntime:
+    """Service-side scoring runtime; preflight only ever reaches /ready and /info.
+
+    The stub asserts that itself, so a preflight that started scoring would fail
+    here rather than pass quietly.
+    """
+
+    async def score_batch(self, request):
+        raise AssertionError("preflight must not score")
+
+    async def shutdown(self) -> None:
+        return None
+
+
+@pytest.mark.real_cover(
+    "tests/rewards/service/test_service.py::test_client_scores_through_async_server_and_validates_identity",
+    why=(
+        "preflight must not score, so this runtime raises if reached; real "
+        "scoring over a live aiohttp server is that counterpart, which runs "
+        "on every PR rather than behind an opt-in flag"
+    ),
+)
 @pytest.mark.asyncio
-async def test_preflight_reaches_every_remote_runtime_and_skips_local_ones() -> None:
-    checked: list[str] = []
+async def test_preflight_reaches_every_remote_runtime_and_skips_local_ones(tmp_path) -> None:
+    """Preflight must complete a round trip for *each* remote component.
 
-    class _RemoteRuntime:
-        def __init__(self, name: str) -> None:
-            self._name = name
+    A component nobody contacted at launch fails after the first generation batch
+    instead, wasting the whole warmup. The observable is per-component and the
+    service produces it, not the test:
+    ``external_accelerator_isolation_verified`` only flips once that client's own
+    ``/ready`` + ``/info`` returned and ``/info`` advertised the overlap-safe
+    capability, so a preflight that stopped after the first component leaves the
+    second one False.
 
-        async def ensure_ready(self) -> None:
-            checked.append(self._name)
+    Call *order* is deliberately not asserted: ``/info`` does not carry a reward
+    name, so the real wire cannot attribute a request to a component, and
+    preflight fails fast on any component — nothing downstream depends on which
+    one is contacted first.
+    """
 
-        async def shutdown(self) -> None:
-            return None
+    service = RewardService(
+        _NeverScoredRuntime(),
+        host="127.0.0.1",
+        port=0,  # the OS picks a free port, so there is no bind race to lose
+        artifact_roots=[tmp_path],
+        model_name="unit-model",
+        model_version="unit-v1",
+        generation_overlap_safe=True,
+    )
+    await service.start()
+    host, port = service.address
 
-    remote_a = RewardFunction(reward_name="a", runtime=_RemoteRuntime("a"))
-    remote_b = RewardFunction(reward_name="b", runtime=_RemoteRuntime("b"))
+    def _client() -> HttpRewardRuntime:
+        return HttpRewardRuntime(
+            RewardInferenceConfig(
+                kind="http",
+                endpoint=f"http://{host}:{port}",
+                timeout_s=5,
+                expected_model="unit-model",
+            ),
+        )
+
+    remote_a = RewardFunction(reward_name="a", runtime=_client())
+    remote_b = RewardFunction(reward_name="b", runtime=_client())
+    # A real in-process runtime is the "skips local ones" half: it has no
+    # ensure_ready at all, so preflight's duck-type dispatch must step over it.
     local = RewardFunction(reward_name="c", runtime=InProcessRewardRuntime({}))
+    assert not hasattr(InProcessRewardRuntime, "ensure_ready")
     reward = MultiReward([("a", 1.0, remote_a), ("b", 1.0, remote_b), ("c", 1.0, local)])
+    try:
+        assert remote_a.external_accelerator_isolation_verified is False
+        assert remote_b.external_accelerator_isolation_verified is False
 
-    await reward.preflight()
+        await reward.preflight()
 
-    assert checked == ["a", "b"]
+        assert remote_a.external_accelerator_isolation_verified is True
+        assert remote_b.external_accelerator_isolation_verified is True
+    finally:
+        await remote_a.runtime.shutdown()
+        await remote_b.runtime.shutdown()
+        await service.shutdown_async()
 
 
 def test_mixed_runtime_components_fail_closed_for_generation_overlap(tmp_path) -> None:

@@ -4,8 +4,12 @@ A label that names a real counterpart is a promise about another file. Prose
 promises in this repo have already gone stale (``_FakeCuMem``'s docstring
 promised a memory-effect twin "when a vLLM-equipped GPU lane exists" while that
 twin already sat in the same file), so the promise is machine-checked here: a
-label naming a target that does not exist, or a target that does not live in a
-lane where the real thing actually runs, fails the suite.
+label with no reason, a label attached to nothing, a label naming a target that
+does not exist, and a tracked gap whose document is gone all fail the suite.
+
+What the guard cannot check is whether a named counterpart is genuinely real --
+a double can wear a lane marker, and a real one can run in the default lane. That
+argument lives in the mandatory ``why=``, for a reader to weigh.
 
 These checks read the labels off disk with ``tests/real_cover.py`` — the same
 parser ``--real-cover-report`` uses — so the guard and the register can never
@@ -21,6 +25,7 @@ from tests.real_cover import (
     REAL_LANES,
     REPO_ROOT,
     RealCoverLabel,
+    ResolvedTarget,
     collect_labels,
     iter_carrier_sources,
     resolve_target,
@@ -67,8 +72,16 @@ def test_every_label_is_attached_to_a_test_and_well_formed() -> None:
     assert not problems, _report(problems)
 
 
-def test_every_named_target_exists_and_lives_in_a_real_lane() -> None:
-    """The point of the guard: a dangling or lane-less counterpart fails here."""
+def test_every_named_target_exists() -> None:
+    """The point of the guard: a dangling counterpart fails here.
+
+    A counterpart in no real lane is accepted. Some run on every PR --
+    tests/trainers/test_ddp.py drives a real gloo process group in the default
+    lane -- and marking one `distributed` to satisfy a lane check would move it
+    behind --distributed and lose that coverage. The lane was never proof of
+    realness anyway (a double can wear @pytest.mark.gpu); the mandatory `why=`
+    above is what carries the argument.
+    """
 
     problems = []
     for label in LABELS:
@@ -167,7 +180,9 @@ def test_the_resolver_refuses_targets_that_cannot_discharge_a_label() -> None:
     assert resolve_target(_MODULE_LANE_TARGET).lanes == ("slow_test",)
     assert "no such file" in (resolve_target("tests/not_a_file.py::test_x").problem or "")
     assert "defines no" in (resolve_target(f"{_LANE_TARGET}_typo").problem or "")
-    assert "no real-lane marker" in (resolve_target(_CPU_TARGET).problem or "")
+    # A default-lane counterpart resolves cleanly with an empty lane tuple; the
+    # mandatory `why=` is what argues it is real, not the marker.
+    assert resolve_target(_CPU_TARGET) == ResolvedTarget(lanes=())
 
 
 def test_the_resolver_sees_a_lane_through_a_conditional_pytestmark(tmp_path) -> None:
@@ -201,11 +216,11 @@ def test_the_resolver_sees_a_lane_through_a_conditional_pytestmark(tmp_path) -> 
         ("tests/nn/layers/test_paged_attention_contract.py", ()),
     ],
 )
-def test_a_bare_file_target_needs_every_test_in_it_to_be_in_the_lane(
+def test_a_bare_file_target_reports_only_the_lanes_every_test_in_it_shares(
     target: str,
     expected: tuple[str, ...],
 ) -> None:
-    """A file-wide claim is only true if a union of one lane-marked test cannot buy it."""
+    """A union would let one lane-marked test vouch for a file full of CPU tests."""
 
     assert resolve_target(target).lanes == expected
 

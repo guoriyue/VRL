@@ -135,24 +135,24 @@ def resolve_target(target: str, root: Path = REPO_ROOT) -> ResolvedTarget:
             marks |= _own_marks(node, aliases)
             scope = node
     else:
-        # A bare file means "the whole file is the counterpart", so every test in
-        # it must be in the lane — a union would let one lane-marked test vouch
-        # for a file full of CPU tests.
+        # A bare file means "the whole file is the counterpart", so the lanes it
+        # reports are the ones EVERY test in it shares — a union would let one
+        # lane-marked test vouch for a file full of CPU tests.
         tests = _collected_children(tree)
         if not tests:
             return ResolvedTarget(problem=f"{file_part} defines no tests to stand in as cover")
         per_test = [marks | _own_marks(node, aliases) for node in tests]
         marks = set.intersection(*per_test)
 
-    lanes = tuple(sorted(marks & REAL_LANES))
-    if not lanes:
-        return ResolvedTarget(
-            problem=(
-                f"{target} carries no real-lane marker "
-                f"(needs one of {', '.join(sorted(REAL_LANES))})"
-            ),
-        )
-    return ResolvedTarget(lanes=lanes)
+    # An empty lane tuple is a valid answer, not a problem. A real counterpart can
+    # live in the default lane and be stronger evidence for it: tests/trainers/
+    # test_ddp.py runs a real gloo process group on every PR, and marking it
+    # `distributed` to satisfy a lane check would move it behind --distributed and
+    # lose that coverage. Nor was the marker ever proof of realness — a double can
+    # wear @pytest.mark.gpu. So the resolver only reports lanes; the guard decides
+    # what a label owes given them, and requires `why=` when there is no lane to
+    # point at.
+    return ResolvedTarget(lanes=tuple(sorted(marks & REAL_LANES)))
 
 
 # --- label discovery ---------------------------------------------------------

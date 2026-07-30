@@ -24,6 +24,21 @@ SANA_PRECISION = RolePrecision(
 )
 SANA_IDENTITY = {"schema": "vrl.model-identity/v1", "sources": {}, "build": {}}
 
+# The five `main()` tests below run on a minimal synthetic run directory and stub
+# out snapshot materialization plus image generation. Which pinned revisions get
+# materialized is covered for real by
+# `test_snapshot_materialization_uses_all_four_pinned_revisions`; what has no
+# counterpart anywhere is the download and the generation itself.
+_SNAPSHOTS_AND_GENERATION_NEED_THE_REAL_WEIGHTS = pytest.mark.real_cover(
+    None,
+    why=(
+        "materializing the four pinned Hub snapshots needs network access and multi-GB weights, "
+        "and generating the image grid from them needs a CUDA device; there is no SANA case in "
+        "tests/e2e, so this repo has no lane where either runs for real"
+    ),
+    tracked_in="docs/sprints/planned/SPRINT_zero-cost-real-object-swaps.md",
+)
+
 
 def _write_run(tmp_path: Path, *, empty_manifest: bool = False) -> Path:
     run_dir = tmp_path / "run"
@@ -106,6 +121,15 @@ def _write_run(tmp_path: Path, *, empty_manifest: bool = False) -> Path:
 
 
 def _allow_minimal_protocol(monkeypatch) -> None:
+    """Let a minimal synthetic run dir through, so the report machinery can be tested.
+
+    The identity patch on ``_normalize_run_config`` is what makes the tiny config in
+    ``_write_run`` acceptable — the real gate only accepts the registered
+    300-epoch protocol. That means none of these tests says anything about main()
+    calling the gate; the two tests driven from ``_write_protocol_run`` below own
+    that, on a run dir the real gate does accept.
+    """
+
     monkeypatch.setattr(checkpoint_eval, "_normalize_run_config", lambda cfg: cfg)
     monkeypatch.setattr(
         checkpoint_eval,
@@ -142,6 +166,7 @@ def _allow_minimal_protocol(monkeypatch) -> None:
     )
 
 
+@_SNAPSHOTS_AND_GENERATION_NEED_THE_REAL_WEIGHTS
 def test_main_writes_provenance_bound_report(monkeypatch, tmp_path, capsys) -> None:
     run_dir = _write_run(tmp_path)
     _allow_minimal_protocol(monkeypatch)
@@ -248,6 +273,7 @@ def test_main_writes_provenance_bound_report(monkeypatch, tmp_path, capsys) -> N
         checkpoint_eval.load_report_metrics(run_dir)
 
 
+@_SNAPSHOTS_AND_GENERATION_NEED_THE_REAL_WEIGHTS
 def test_report_reader_rejects_empty_metrics(monkeypatch, tmp_path) -> None:
     run_dir = _write_run(tmp_path)
     _allow_minimal_protocol(monkeypatch)
@@ -258,6 +284,7 @@ def test_report_reader_rejects_empty_metrics(monkeypatch, tmp_path) -> None:
         checkpoint_eval.main(["--run-dir", str(run_dir), "--device", "cpu"])
 
 
+@_SNAPSHOTS_AND_GENERATION_NEED_THE_REAL_WEIGHTS
 def test_main_rejects_checkpoint_identity_before_model_snapshot(monkeypatch, tmp_path) -> None:
     run_dir = _write_run(tmp_path)
     _allow_minimal_protocol(monkeypatch)
@@ -280,6 +307,7 @@ def test_main_rejects_checkpoint_identity_before_model_snapshot(monkeypatch, tmp
     assert materialized is False
 
 
+@_SNAPSHOTS_AND_GENERATION_NEED_THE_REAL_WEIGHTS
 def test_report_reader_rejects_changed_config_provenance(monkeypatch, tmp_path) -> None:
     run_dir = _write_run(tmp_path)
     _allow_minimal_protocol(monkeypatch)
@@ -345,6 +373,7 @@ def test_report_reader_rejects_changed_config_provenance(monkeypatch, tmp_path) 
         checkpoint_eval.load_report_metrics(run_dir)
 
 
+@_SNAPSHOTS_AND_GENERATION_NEED_THE_REAL_WEIGHTS
 def test_main_rejects_empty_manifest(monkeypatch, tmp_path) -> None:
     run_dir = _write_run(tmp_path, empty_manifest=True)
     _allow_minimal_protocol(monkeypatch)
@@ -515,6 +544,102 @@ def test_historical_shape_normalization_rejects_behavioral_drift(
         match="does not match the registered SANA full-parameter protocol",
     ):
         checkpoint_eval._normalize_run_config(changed)
+
+
+def _write_protocol_run(tmp_path: Path, *, drift: tuple[str, object] | None = None) -> Path:
+    """A run directory the real protocol gate accepts (or, with ``drift``, must reject).
+
+    ``_write_run`` writes a tiny synthetic config that the gate rejects on sight,
+    which is why its callers patch the gate out. This one writes a real historical
+    full-parameter shape, plus the 300-row metrics CSV and the supervisor log that
+    the two checks immediately after the gate demand — so ``main()`` can be driven
+    through the gate for real.
+    """
+
+    run_dir = tmp_path / "protocol-run"
+    run_dir.mkdir()
+    cfg = _historical_fullparam_config()
+    if drift is not None:
+        OmegaConf.update(cfg, drift[0], drift[1], merge=False)
+    OmegaConf.save(cfg, run_dir / "resolved_config.yaml")
+    (run_dir / "metrics.csv").write_text(
+        "epoch,loss\n"
+        + "".join(f"{epoch},1.0\n" for epoch in range(int(cfg.trainer.total_epochs))),
+        encoding="utf-8",
+    )
+    (run_dir / "supervisor.log").write_text("launched\n", encoding="utf-8")
+    return run_dir
+
+
+def test_main_runs_the_protocol_gate_before_touching_the_run(monkeypatch, tmp_path) -> None:
+    """``main()`` must call the gate, not merely be able to.
+
+    Every other ``main()`` test replaces ``_normalize_run_config`` with the identity
+    function, so the wiring between the two was uncovered: deleting the call from
+    ``main()`` left the whole file green. This run's config is the registered
+    protocol with one behavioural field changed, a rejection only the real gate can
+    produce — and nothing may be generated after it.
+    """
+
+    run_dir = _write_protocol_run(tmp_path, drift=("algorithm.kl_reward_coef", 0.1))
+    monkeypatch.setattr(
+        checkpoint_eval,
+        "_generate_images",
+        lambda *args, **kwargs: pytest.fail("generation started despite a rejected config"),
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="does not match the registered SANA full-parameter protocol",
+    ):
+        checkpoint_eval.main(["--run-dir", str(run_dir), "--device", "cpu"])
+
+
+def test_main_carries_the_gates_normalized_config_downstream(monkeypatch, tmp_path) -> None:
+    """What ``main()`` uses afterwards must be the gate's *return value*.
+
+    A gate that is called and then ignored (``_normalize_run_config(...)`` followed
+    by a second plain ``load_config``) passes the test above, so this one pins the
+    object: the first downstream consumer must receive the very object the gate
+    produced, and that object must carry the canonical spelling of keys the
+    historical file on disk omits. ``main()`` then stops at the first artifact this
+    synthetic run does not have — a checkpoint curve — which is also why generation
+    must never start.
+    """
+
+    run_dir = _write_protocol_run(tmp_path)
+    on_disk = OmegaConf.load(run_dir / "resolved_config.yaml")
+    assert "float32_precision" not in on_disk.precision  # the historical omission
+
+    normalized: list[object] = []
+    real_normalize = checkpoint_eval._normalize_run_config
+
+    def normalize_spy(cfg):
+        result = real_normalize(cfg)
+        normalized.append(result)
+        return result
+
+    received: list[object] = []
+    real_validate = checkpoint_eval._validate_training_metrics
+
+    def validate_spy(path, cfg):
+        received.append(cfg)
+        real_validate(path, cfg)
+
+    monkeypatch.setattr(checkpoint_eval, "_normalize_run_config", normalize_spy)
+    monkeypatch.setattr(checkpoint_eval, "_validate_training_metrics", validate_spy)
+    monkeypatch.setattr(
+        checkpoint_eval,
+        "_generate_images",
+        lambda *args, **kwargs: pytest.fail("generation started for a run with no checkpoints"),
+    )
+
+    with pytest.raises(ValueError, match="no complete checkpoint-N directories"):
+        checkpoint_eval.main(["--run-dir", str(run_dir), "--device", "cpu"])
+
+    assert len(normalized) == 1
+    assert received[0] is normalized[0]
+    assert OmegaConf.select(received[0], "precision.float32_precision") == "ieee"
 
 
 @pytest.mark.parametrize(

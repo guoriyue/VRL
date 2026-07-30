@@ -11,7 +11,7 @@ from omegaconf import OmegaConf
 from tests.conftest import real_local_ray
 from vrl import run as resolved_run
 from vrl.algorithms.grpo.continuous import GRPOConfig
-from vrl.config.precision import RolePrecision
+from vrl.config.precision import PrecisionPolicy, RolePrecision
 from vrl.config.schema import RootConfig
 from vrl.families.semantics import PolicySemantics
 from vrl.models import checkpoint_identity
@@ -340,9 +340,16 @@ def _install_common_fakes(
         "get_model_family_entry",
         lambda family: _FakeFamilyEntry(state),
     )
-    precision = SimpleNamespace(
-        rollout="float32",
-        rollout_base_precision="float32",
+    # The real resolved type. The namespace this replaces carried `rollout` as a
+    # bare string (the real field is a RolePrecision, which the same file already
+    # builds correctly in _FakeFamilyEntry.build_replay) plus a
+    # `rollout_base_precision` field that exists nowhere else in the repo.
+    fp32 = RolePrecision(dtype="fp32", float32_precision="ieee", outer_autocast=False)
+    precision = PrecisionPolicy(
+        training=fp32,
+        rollout=fp32,
+        diffusion_math="fp32",
+        prompt_encoder_dtype="fp32",
     )
     monkeypatch.setattr(
         resolved_run.builders,

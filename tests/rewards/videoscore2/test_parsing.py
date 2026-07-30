@@ -10,6 +10,7 @@ from __future__ import annotations
 import re
 from typing import ClassVar
 
+import pytest
 import torch
 
 from vrl.rewards.models.videoscore2 import (
@@ -136,9 +137,9 @@ def test_soft_scores_align_to_digit_after_each_marker() -> None:
         tokenizer=tokenizer,
     )
 
-    assert soft["visual_quality"] == _approx(4.0)
-    assert soft["text_alignment"] == _approx(2.0)
-    assert soft["physical_common_sense"] == _approx(5.0)
+    assert soft["visual_quality"] == pytest.approx(4.0, abs=1e-2)
+    assert soft["text_alignment"] == pytest.approx(2.0, abs=1e-2)
+    assert soft["physical_common_sense"] == pytest.approx(5.0, abs=1e-2)
 
 
 def test_soft_scores_anchor_last_marker_not_cot_mention() -> None:
@@ -161,9 +162,9 @@ def test_soft_scores_anchor_last_marker_not_cot_mention() -> None:
         tokenizer=tokenizer,
     )
 
-    assert soft["visual_quality"] == _approx(3.0)
-    assert soft["text_alignment"] == _approx(4.0)
-    assert soft["physical_common_sense"] == _approx(4.0)
+    assert soft["visual_quality"] == pytest.approx(3.0, abs=1e-2)
+    assert soft["text_alignment"] == pytest.approx(4.0, abs=1e-2)
+    assert soft["physical_common_sense"] == pytest.approx(4.0, abs=1e-2)
 
 
 def test_soft_scores_return_none_when_marker_missing() -> None:
@@ -180,7 +181,7 @@ def test_soft_scores_return_none_when_marker_missing() -> None:
         tokenizer=tokenizer,
     )
 
-    assert soft["visual_quality"] == _approx(4.0)
+    assert soft["visual_quality"] == pytest.approx(4.0, abs=1e-2)
     assert soft["text_alignment"] is None
     assert soft["physical_common_sense"] is None
 
@@ -198,14 +199,3 @@ def test_merge_rejects_soft_far_from_hard_keeps_near() -> None:
     }
     merged = _merge_soft_with_hard(soft, (3, 4, 5))
     assert merged == (3.0, 3.6, 5.0)
-
-
-def _approx(value: float, tol: float = 1e-2) -> object:
-    class _Approx:
-        def __eq__(self, other: object) -> bool:
-            return abs(float(other) - value) <= tol
-
-        def __repr__(self) -> str:
-            return f"~{value}"
-
-    return _Approx()

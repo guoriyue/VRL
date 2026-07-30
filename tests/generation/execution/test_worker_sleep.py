@@ -522,6 +522,9 @@ def test_partial_slot_activation_failure_is_not_returned_as_retryable_result() -
     model = _BrokenActivationModel()
     model.device = "cpu"
     core = _core(model, family="wan_2_1_i2v")
+    # Payload injection, not a double: the subject here is how a slot-mode worker
+    # survives a failed activation. The flag's real derivation is asserted in
+    # test_worker_versioned_slots.py::test_update_weights_installs_versioned_slots_without_overwrite.
     core._uses_versioned_slots = True
     request = GenerationRequest(
         request_id="failed-activation",
