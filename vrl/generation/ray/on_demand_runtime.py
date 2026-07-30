@@ -259,6 +259,15 @@ class _OnDemandRayGenerationRuntime:
         if activation is not None and not activation.done():
             try:
                 await asyncio.shield(activation)
+            except asyncio.CancelledError as error:
+                if self.lifecycle.phase is RuntimePhase.SHUTTING_DOWN:
+                    await self.shutdown()
+                failure = self.lifecycle.failure
+                if failure is not None:
+                    # shield creates a waiter-local cancellation, so recover the
+                    # stable root published by the cancelled activation owner.
+                    error.__cause__ = failure
+                raise
             except BaseException:
                 if self.lifecycle.phase is RuntimePhase.SHUTTING_DOWN:
                     await self.shutdown()
@@ -276,6 +285,14 @@ class _OnDemandRayGenerationRuntime:
             task.add_done_callback(self._offload_finished)
         try:
             await asyncio.shield(task)
+        except asyncio.CancelledError as error:
+            if self.lifecycle.phase is RuntimePhase.SHUTTING_DOWN:
+                await self.shutdown()
+            failure = self.lifecycle.failure
+            if failure is not None:
+                # shield does not retain the inner task's cancellation cause.
+                error.__cause__ = failure
+            raise
         except BaseException:
             if self.lifecycle.phase is RuntimePhase.SHUTTING_DOWN:
                 await self.shutdown()

@@ -1058,6 +1058,84 @@ async def test_offload_is_single_flight_and_idempotent() -> None:
 
 
 @pytest.mark.asyncio
+async def test_terminal_failure_cancels_offload_with_stable_root() -> None:
+    runtime = _on_demand_runtime()
+    inner = _BlockingSleepInner()
+    runtime._inner_runtime = inner
+    timeout = RayOperationTimeout("rollout.generation.sleep", 0.5)
+
+    offload = asyncio.create_task(runtime.offload())
+    await asyncio.wait_for(inner.sleep_started.wait(), timeout=1)
+    terminalize = asyncio.create_task(runtime._terminalize_after_failure(timeout))
+
+    with pytest.raises(asyncio.CancelledError) as caught:
+        await offload
+    assert await asyncio.wait_for(terminalize, timeout=1) is timeout
+
+    assert caught.value.__cause__ is timeout
+    assert failure_identity_cause(caught.value) is timeout
+    assert inner.calls == ["shutdown"]
+    assert runtime.lifecycle.failure is timeout
+    assert runtime.lifecycle.phase is RuntimePhase.TERMINATED
+
+
+@pytest.mark.asyncio
+async def test_terminal_failure_cancels_offload_waiting_for_activation_with_stable_root() -> None:
+    runtime = _on_demand_runtime()
+    await _set_desired_policy(runtime, "W", 3)
+    candidate = _BlockingRestoreInner()
+    timeout = RayOperationTimeout("rollout.generation.activation", 0.5)
+
+    class _Launcher:
+        async def launch_async(self, *args, **kwargs):
+            del args, kwargs
+            return candidate
+
+    runtime._launcher = _Launcher()
+    activation = asyncio.create_task(runtime.activate())
+    await asyncio.wait_for(candidate.restore_started.wait(), timeout=1)
+    offload = asyncio.create_task(runtime.offload())
+    await asyncio.sleep(0)
+    terminalize = asyncio.create_task(runtime._terminalize_after_failure(timeout))
+
+    with pytest.raises(asyncio.CancelledError) as caught:
+        await offload
+    with pytest.raises(asyncio.CancelledError):
+        await activation
+    assert await asyncio.wait_for(terminalize, timeout=1) is timeout
+
+    assert caught.value.__cause__ is timeout
+    assert failure_identity_cause(caught.value) is timeout
+    assert candidate.calls == ["shutdown"]
+    assert runtime.lifecycle.failure is timeout
+    assert runtime.lifecycle.phase is RuntimePhase.TERMINATED
+
+
+@pytest.mark.asyncio
+async def test_waiter_cancellation_does_not_cancel_offload_or_forge_root() -> None:
+    runtime = _on_demand_runtime()
+    inner = _BlockingSleepInner()
+    runtime._inner_runtime = inner
+
+    waiter = asyncio.create_task(runtime.offload())
+    await asyncio.wait_for(inner.sleep_started.wait(), timeout=1)
+    waiter.cancel()
+    with pytest.raises(asyncio.CancelledError) as caught:
+        await waiter
+
+    assert caught.value.__cause__ is None
+    assert runtime.lifecycle.failure is None
+    assert runtime._offload_task is not None
+    assert not runtime._offload_task.done()
+
+    inner.finish_sleep.set()
+    await asyncio.wait_for(runtime.offload(), timeout=1)
+    assert inner.calls == ["sleep"]
+    assert runtime._workers_offloaded is True
+    assert runtime.lifecycle.phase is RuntimePhase.RUNNING
+
+
+@pytest.mark.asyncio
 async def test_offload_failure_runs_terminal_cleanup() -> None:
     runtime = _on_demand_runtime()
     offload_error = RuntimeError("sleep failed")
