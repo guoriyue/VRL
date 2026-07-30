@@ -15,7 +15,8 @@ envelope-over-the-wire-to-result crossing by the real-cluster twins in
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Generator
+import inspect
+from collections.abc import Generator, Mapping
 from typing import Any
 
 import pytest
@@ -693,30 +694,37 @@ async def test_cancelling_middle_admission_waiter_preserves_identity_fifo() -> N
     assert received == ["active", "head", "tail", "after"]
 
 
-@_CONTROLLED_CLOCK
 def test_run_actor_jobs_preserves_deprecated_public_signature() -> None:
-    worker = _FakeWorker("w0", speed_rank_base=0)
-    jobs = [
-        RayActorJob(
-            job_index=index,
-            worker_id="w0",
-            remote_method=worker.remote,
-            payload=f"chunk-{index}",
-        )
-        for index in range(2)
-    ]
-
-    with pytest.warns(DeprecationWarning, match="RayActorDispatcher"):
-        pairs = asyncio.run(
-            run_actor_jobs(
-                jobs,
+    expected = inspect.Signature(
+        parameters=[
+            inspect.Parameter(
+                "jobs",
+                inspect.Parameter.POSITIONAL_OR_KEYWORD,
+                annotation=list[RayActorJob],
             ),
-        )
+            inspect.Parameter(
+                "max_inflight_per_actor",
+                inspect.Parameter.KEYWORD_ONLY,
+                default=1,
+                annotation=int,
+            ),
+            inspect.Parameter(
+                "worker_methods",
+                inspect.Parameter.KEYWORD_ONLY,
+                default=None,
+                annotation=Mapping[str, Any] | None,
+            ),
+            inspect.Parameter(
+                "schedule",
+                inspect.Parameter.KEYWORD_ONLY,
+                default=None,
+                annotation=list[dict[str, Any]] | None,
+            ),
+        ],
+        return_annotation=list[tuple[int, Any]],
+    )
 
-    assert pairs == [
-        (0, ("w0", "chunk-0")),
-        (1, ("w0", "chunk-1")),
-    ]
+    assert inspect.signature(run_actor_jobs, eval_str=True) == expected
 
 
 def test_run_actor_jobs_preserves_empty_call_and_logical_concurrency() -> None:
@@ -751,6 +759,40 @@ def test_run_actor_jobs_preserves_empty_call_and_logical_concurrency() -> None:
             return await task
 
     assert asyncio.run(run_concurrently()) == [(0, "first"), (1, "second")]
+
+
+@_CONTROLLED_CLOCK
+def test_run_actor_jobs_preserves_worker_methods_and_schedule_contract() -> None:
+    fast = _FakeWorker("w0", speed_rank_base=0)
+    slow = _FakeWorker("w1", speed_rank_base=100)
+    jobs = [
+        RayActorJob(job_index=i, worker_id=None, remote_method=None, payload=f"chunk-{i}")
+        for i in range(3)
+    ]
+    schedule: list[dict[str, Any]] = []
+
+    with pytest.warns(DeprecationWarning, match="RayActorDispatcher"):
+        pairs = asyncio.run(
+            run_actor_jobs(
+                jobs,
+                worker_methods={"w0": fast.remote, "w1": slow.remote},
+                schedule=schedule,
+            ),
+        )
+
+    assert pairs == [
+        (0, ("w0", "chunk-0")),
+        (1, ("w1", "chunk-1")),
+        (2, ("w0", "chunk-2")),
+    ]
+    rows = {row["job_index"]: row for row in schedule}
+    assert {job_index: row["worker_id"] for job_index, row in rows.items()} == {
+        0: "w0",
+        1: "w1",
+        2: "w0",
+    }
+    assert all(row["queue_wait_s"] >= 0.0 for row in rows.values())
+    assert all(row["execution_s"] >= 0.0 for row in rows.values())
 
 
 def test_run_actor_jobs_preserves_actor_exception_type() -> None:
@@ -1001,6 +1043,89 @@ async def test_actor_pool_caller_cancellation_cancels_submitted_refs(
 
     assert isinstance(caught.value.__cause__, RayOperationCancelled)
     assert cancelled == [never_ref]
+
+
+@_CONTROLLED_CLOCK
+@pytest.mark.asyncio
+async def test_run_one_completed_success_keeps_caller_cancellation_request_local() -> None:
+    gate = asyncio.Event()
+    waiter_started = asyncio.Event()
+    dispatcher = RayActorDispatcher(("w0",))
+
+    async def await_result(ref: Any, _deadline: Any) -> Any:
+        waiter_started.set()
+        return await ref
+
+    task = asyncio.create_task(
+        dispatcher.run_one(
+            RayActorJob(0, "w0", lambda _payload: _GatedRef(gate, "committed"), None),
+            operation="test.custom_wait",
+            call_timeout_s=30.0,
+            await_result=await_result,
+        ),
+    )
+    await waiter_started.wait()
+
+    gate.set()
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError) as caught:
+        await task
+
+    assert caught.value.__cause__ is None
+    assert await dispatcher.run(
+        [RayActorJob(0, "w0", lambda _payload: _FakeRef("next", 1), None)],
+        operation="test.after_custom_wait_cancel",
+        call_timeout_s=30.0,
+    ) == [(0, "next")]
+
+
+@_CONTROLLED_CLOCK
+@pytest.mark.asyncio
+async def test_run_one_completed_terminal_failure_wins_caller_cancellation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    gate = asyncio.Event()
+    waiter_started = asyncio.Event()
+    terminal = RayOperationTimeout("test.custom_wait", 30.0)
+    ref = _GatedErrorRef(gate, terminal)
+    cancelled: list[Any] = []
+
+    class _Ray:
+        @staticmethod
+        def cancel(value: Any, *, force: bool) -> None:
+            assert force is False
+            cancelled.append(value)
+
+    async def await_result(value: Any, _deadline: Any) -> Any:
+        waiter_started.set()
+        return await value
+
+    monkeypatch.setattr(deadline_module, "require_ray", lambda: _Ray)
+    dispatcher = RayActorDispatcher(("w0",))
+    task = asyncio.create_task(
+        dispatcher.run_one(
+            RayActorJob(0, "w0", lambda _payload: ref, None),
+            operation="test.custom_wait",
+            call_timeout_s=30.0,
+            await_result=await_result,
+        ),
+    )
+    await waiter_started.wait()
+
+    gate.set()
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError) as caught:
+        await task
+
+    assert caught.value.__cause__ is terminal
+    assert cancelled == [ref]
+    with pytest.raises(RuntimeError) as closed:
+        await dispatcher.run(
+            [],
+            operation="test.after_custom_wait_failure",
+            call_timeout_s=30.0,
+        )
+    assert closed.value.__cause__ is terminal
 
 
 @_CONTROLLED_CLOCK
