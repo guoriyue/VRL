@@ -52,6 +52,9 @@ class _FakeInner:
         self.executor = SimpleNamespace(workers=[])
         self.lifecycle = RuntimeLifecycle()
 
+    async def activate(self) -> None:
+        self.lifecycle.require_running("activate")
+
     async def sleep_workers(self) -> None:
         self.calls.append("sleep")
 
@@ -296,6 +299,29 @@ class _ParkingActor:
     def __init__(self, report: Any) -> None:
         self.sleep = _RemoteResult(report)
         self.wake = _RemoteResult(None)
+        self.release_policy = _RemoteResult(None)
+
+
+class _CleanupRay:
+    def __init__(self) -> None:
+        self.killed: list[Any] = []
+
+    def get(self, refs: list[Any], *, timeout: float) -> list[None]:
+        del timeout
+        return [None for _ in refs]
+
+    def kill(self, actor: Any, *, no_restart: bool) -> None:
+        assert no_restart is True
+        self.killed.append(actor)
+
+
+@pytest.fixture
+def cleanup_ray(monkeypatch: pytest.MonkeyPatch) -> _CleanupRay:
+    import vrl.generation.ray.runtime as runtime_module
+
+    ray = _CleanupRay()
+    monkeypatch.setattr(runtime_module, "require_ray", lambda: ray)
+    return ray
 
 
 def _parking_runtime(*reports: Any) -> RayGenerationRuntime:
@@ -310,6 +336,23 @@ def _parking_runtime(*reports: Any) -> RayGenerationRuntime:
         SimpleNamespace(),
         owned_workers=workers,
     )
+
+
+def _failed_parking_runtime(
+    failure: BaseException,
+) -> tuple[RayGenerationRuntime, _ParkingActor]:
+    actor = _ParkingActor(_parking_snapshot())
+    runtime = RayGenerationRuntime(
+        SimpleNamespace(),
+        owned_workers=[
+            DistributedWorkerHandle(
+                worker_id="rollout-0",
+                actor=actor,
+            ),
+        ],
+    )
+    runtime.lifecycle.fail(failure)
+    return runtime, actor
 
 
 @pytest.mark.asyncio
@@ -328,30 +371,119 @@ async def test_runtime_validates_complete_worker_parking_evidence() -> None:
 
 
 @pytest.mark.asyncio
-async def test_runtime_rejects_mismatched_worker_parking_evidence() -> None:
+async def test_runtime_rejects_mismatched_worker_parking_evidence(
+    cleanup_ray: _CleanupRay,
+) -> None:
     runtime = _parking_runtime(_parking_snapshot("another-worker"))
+    actor = runtime._owned_workers[0].actor
 
-    with pytest.raises(RuntimeError, match="mismatched worker memory-parking report"):
+    with pytest.raises(
+        RuntimeError,
+        match="mismatched worker memory-parking report",
+    ) as caught:
         await runtime.sleep_workers()
+
+    assert runtime.lifecycle.failure is caught.value
+    assert runtime.lifecycle.phase is RuntimePhase.TERMINATED
+    assert actor.release_policy.calls == 0
+    assert cleanup_ray.killed == [actor]
 
 
 @pytest.mark.asyncio
-async def test_runtime_rejects_worker_gpu_residual() -> None:
+async def test_runtime_rejects_worker_gpu_residual(
+    cleanup_ray: _CleanupRay,
+) -> None:
     runtime = _parking_runtime(_parking_snapshot(residual_bytes=1))
+    actor = runtime._owned_workers[0].actor
 
-    with pytest.raises(RuntimeError, match="incomplete cpu_offload memory parking"):
+    with pytest.raises(
+        RuntimeError,
+        match="incomplete cpu_offload memory parking",
+    ) as caught:
         await runtime.sleep_workers()
+
+    assert runtime.lifecycle.failure is caught.value
+    assert runtime.lifecycle.phase is RuntimePhase.TERMINATED
+    assert actor.release_policy.calls == 0
+    assert cleanup_ray.killed == [actor]
 
 
 @pytest.mark.asyncio
-async def test_runtime_requires_every_worker_parking_rpc_to_succeed() -> None:
+async def test_runtime_requires_every_worker_parking_rpc_to_succeed(
+    cleanup_ray: _CleanupRay,
+) -> None:
+    sleep_error = RuntimeError("worker sleep failed")
     runtime = _parking_runtime(
         _parking_snapshot("rollout-0"),
-        RuntimeError("worker sleep failed"),
+        sleep_error,
     )
+    actors = [worker.actor for worker in runtime._owned_workers]
 
-    with pytest.raises(RuntimeError, match="worker sleep failed"):
+    with pytest.raises(RuntimeError, match="worker sleep failed") as caught:
         await runtime.sleep_workers()
+
+    assert caught.value is sleep_error
+    assert runtime.lifecycle.failure is sleep_error
+    assert runtime.lifecycle.phase is RuntimePhase.TERMINATED
+    assert all(actor.release_policy.calls == 0 for actor in actors)
+    assert cleanup_ray.killed == actors
+
+
+@pytest.mark.asyncio
+async def test_worker_sleep_timeout_force_kills_without_graceful_release(
+    cleanup_ray: _CleanupRay,
+) -> None:
+    timeout = TimeoutError("worker sleep timed out")
+    runtime = _parking_runtime(timeout)
+    actor = runtime._owned_workers[0].actor
+
+    with pytest.raises(TimeoutError, match="worker sleep timed out") as caught:
+        await runtime.sleep_workers()
+
+    assert caught.value is timeout
+    assert runtime.lifecycle.failure is timeout
+    assert runtime.lifecycle.phase is RuntimePhase.TERMINATED
+    assert actor.release_policy.calls == 0
+    assert cleanup_ray.killed == [actor]
+
+
+@pytest.mark.asyncio
+async def test_worker_wake_timeout_force_kills_without_graceful_release(
+    cleanup_ray: _CleanupRay,
+) -> None:
+    timeout = TimeoutError("worker wake timed out")
+    runtime = _parking_runtime(_parking_snapshot())
+    actor = runtime._owned_workers[0].actor
+    actor.wake = _RemoteResult(timeout)
+
+    with pytest.raises(TimeoutError, match="worker wake timed out") as caught:
+        await runtime.wake_workers()
+
+    assert caught.value is timeout
+    assert runtime.lifecycle.failure is timeout
+    assert runtime.lifecycle.phase is RuntimePhase.TERMINATED
+    assert actor.release_policy.calls == 0
+    assert cleanup_ray.killed == [actor]
+
+
+@pytest.mark.asyncio
+async def test_cancelled_worker_sleep_force_kills_unknown_parking_state(
+    cleanup_ray: _CleanupRay,
+) -> None:
+    runtime = _parking_runtime(_parking_snapshot())
+    actor = runtime._owned_workers[0].actor
+    actor.sleep = SimpleNamespace(remote=lambda: _NeverRef())
+    parking = asyncio.create_task(runtime.sleep_workers())
+    await asyncio.sleep(0)
+
+    parking.cancel()
+    with pytest.raises(asyncio.CancelledError) as caught:
+        await parking
+
+    assert runtime.lifecycle.failure is caught.value
+    assert runtime.lifecycle.phase is RuntimePhase.TERMINATED
+    assert actor.release_policy.calls == 0
+    assert cleanup_ray.killed == [actor]
 
 
 @pytest.mark.asyncio
@@ -363,6 +495,9 @@ async def test_runtime_rejects_missing_worker_actor_before_parking() -> None:
 
     with pytest.raises(RuntimeError, match="generation workers have no actor"):
         await runtime.sleep_workers()
+
+    assert runtime.lifecycle.failure is None
+    assert runtime.lifecycle.phase is RuntimePhase.RUNNING
 
 
 @pytest.mark.asyncio
@@ -383,6 +518,9 @@ async def test_runtime_rejects_duplicate_worker_ids_before_parking() -> None:
 
     with pytest.raises(RuntimeError, match="duplicate generation worker ids"):
         await runtime.sleep_workers()
+
+    assert runtime.lifecycle.failure is None
+    assert runtime.lifecycle.phase is RuntimePhase.RUNNING
 
 
 def test_on_demand_factory_stamps_contract_for_cumem_offload() -> None:
@@ -845,6 +983,58 @@ async def test_update_cleanup_failure_retains_inner_for_retry() -> None:
     assert inner.shutdown_calls == 2
     assert runtime._inner_runtime is None
     assert runtime.lifecycle.phase is RuntimePhase.TERMINATED
+
+
+@pytest.mark.asyncio
+async def test_health_failure_before_offload_preserves_root_and_force_kills(
+    cleanup_ray: _CleanupRay,
+) -> None:
+    health_failure = RolloutWorkerUnreachable(
+        "rollout-0",
+        0.5,
+        TimeoutError("health probe timed out"),
+    )
+    inner, actor = _failed_parking_runtime(health_failure)
+    runtime = _on_demand_runtime()
+    runtime._inner_runtime = inner
+
+    with pytest.raises(RolloutWorkerUnreachable) as caught:
+        await runtime.offload()
+
+    assert caught.value is health_failure
+    assert inner.lifecycle.failure is health_failure
+    assert inner.lifecycle.phase is RuntimePhase.TERMINATED
+    assert runtime.lifecycle.failure is health_failure
+    assert runtime.lifecycle.phase is RuntimePhase.TERMINATED
+    assert runtime._inner_runtime is None
+    assert actor.release_policy.calls == 0
+    assert cleanup_ray.killed == [actor]
+
+
+@pytest.mark.asyncio
+async def test_health_failure_before_reactivation_preserves_root_and_force_kills(
+    cleanup_ray: _CleanupRay,
+) -> None:
+    health_failure = RolloutWorkerUnreachable(
+        "rollout-0",
+        0.5,
+        TimeoutError("health probe timed out"),
+    )
+    inner, actor = _failed_parking_runtime(health_failure)
+    runtime = _on_demand_runtime()
+    runtime._inner_runtime = inner
+
+    with pytest.raises(RolloutWorkerUnreachable) as caught:
+        await runtime.activate()
+
+    assert caught.value is health_failure
+    assert inner.lifecycle.failure is health_failure
+    assert inner.lifecycle.phase is RuntimePhase.TERMINATED
+    assert runtime.lifecycle.failure is health_failure
+    assert runtime.lifecycle.phase is RuntimePhase.TERMINATED
+    assert runtime._inner_runtime is None
+    assert actor.release_policy.calls == 0
+    assert cleanup_ray.killed == [actor]
 
 
 @pytest.mark.asyncio

@@ -227,10 +227,12 @@ class RayGenerationRuntime:
     async def _terminalize_after_failure(
         self,
         error: BaseException,
+        *,
+        force_shutdown: bool = False,
     ) -> BaseException:
         """Close admission and return the stable first failure after cleanup."""
 
-        failure = self._publish_failure(error)
+        failure = self._publish_failure(error, force_shutdown=force_shutdown)
         try:
             await self.shutdown()
         except BaseException as cleanup_error:
@@ -249,7 +251,12 @@ class RayGenerationRuntime:
             failure.add_note(f"generation terminal cleanup also failed: {cleanup_error!r}")
         return failure
 
-    def _publish_failure(self, error: BaseException) -> BaseException:
+    def _publish_failure(
+        self,
+        error: BaseException,
+        *,
+        force_shutdown: bool = False,
+    ) -> BaseException:
         """Publish the first failure and synchronously upgrade terminal cleanup."""
 
         # Publish the operation root before upgrading an existing graceful
@@ -259,11 +266,11 @@ class RayGenerationRuntime:
         proposed_failure = terminal_error if terminal_error is not None else error
         failure = self.lifecycle.fail(proposed_failure)
         terminal_failure = find_error_cause(failure, TerminalRuntimeError)
-        if terminal_error is not None or terminal_failure is not None:
+        if force_shutdown or terminal_error is not None or terminal_failure is not None:
             self._force_shutdown = True
-            # A terminal distributed operation proves that graceful RPC progress
-            # cannot be trusted. Cancel a runtime-owned graceful release barrier
-            # so an existing shutdown upgrades immediately to forceful teardown.
+            # A terminal or state-uncertain distributed operation proves that
+            # graceful RPC progress cannot be trusted. Cancel a runtime-owned
+            # release barrier so shutdown upgrades immediately to forceful teardown.
             current = asyncio.current_task()
             release_wait_task = self._release_wait_task
             if (
@@ -372,18 +379,9 @@ class RayGenerationRuntime:
             ) from failures[0]
         return None
 
-    async def sleep_workers(self) -> tuple[WorkerMemoryParkingSnapshot, ...]:
-        """Offload every owned worker's model to host RAM, freeing the GPU.
+    def _require_parking_workers(self) -> tuple[DistributedWorkerHandle, ...]:
+        """Return the complete, uniquely identified fleet used by sleep/wake."""
 
-        The workers stay alive (process + placement bundle retained); only their
-        weights leave the GPU. Failures are not suppressed: a worker that fails to
-        offload would otherwise hold the GPU a colocated trainer is about to use.
-        """
-        # Parking transitions and parked intervals are outside the active
-        # serving SLA, so lifecycle policy pauses monitoring across them.
-        self._health_monitor.pause()
-        if not self._owned_workers:
-            return ()
         missing_actor_ids = tuple(
             worker.worker_id for worker in self._owned_workers if worker.actor is None
         )
@@ -397,38 +395,87 @@ class RayGenerationRuntime:
         worker_ids = tuple(worker.worker_id for worker in active_workers)
         if len(set(worker_ids)) != len(worker_ids):
             raise RuntimeError(f"duplicate generation worker ids: {worker_ids}")
-        refs = [worker.actor.sleep.remote() for worker in active_workers]
-        values = await asyncio.wait_for(asyncio.gather(*refs), timeout=120) if refs else []
-        snapshots: list[WorkerMemoryParkingSnapshot] = []
-        for worker, value in zip(active_workers, values, strict=True):
-            if not isinstance(value, WorkerMemoryParkingSnapshot):
-                raise TypeError(
-                    f"worker {worker.worker_id!r} returned invalid memory-parking "
-                    f"report {type(value).__name__}",
-                )
-            if value.worker_id != worker.worker_id:
-                raise RuntimeError(
-                    "mismatched worker memory-parking report: "
-                    f"expected={worker.worker_id!r} actual={value.worker_id!r}",
-                )
-            value.validate()
-            snapshots.append(value)
-        return tuple(snapshots)
+        return active_workers
+
+    async def sleep_workers(self) -> tuple[WorkerMemoryParkingSnapshot, ...]:
+        """Offload every owned worker's model to host RAM, freeing the GPU.
+
+        The workers stay alive (process + placement bundle retained); only their
+        weights leave the GPU. Failures are not suppressed: a worker that fails to
+        offload would otherwise hold the GPU a colocated trainer is about to use.
+        """
+        self.lifecycle.require_running("sleep workers")
+        active_workers = self._require_parking_workers()
+        if not active_workers:
+            return ()
+        # Parking transitions and parked intervals are outside the active
+        # serving SLA, so lifecycle policy pauses monitoring across them.
+        self._health_monitor.pause()
+        try:
+            refs = [worker.actor.sleep.remote() for worker in active_workers]
+            values = await asyncio.wait_for(asyncio.gather(*refs), timeout=120)
+            snapshots: list[WorkerMemoryParkingSnapshot] = []
+            for worker, value in zip(active_workers, values, strict=True):
+                if not isinstance(value, WorkerMemoryParkingSnapshot):
+                    raise TypeError(
+                        f"worker {worker.worker_id!r} returned invalid memory-parking "
+                        f"report {type(value).__name__}",
+                    )
+                if value.worker_id != worker.worker_id:
+                    raise RuntimeError(
+                        "mismatched worker memory-parking report: "
+                        f"expected={worker.worker_id!r} actual={value.worker_id!r}",
+                    )
+                value.validate()
+                snapshots.append(value)
+            self.lifecycle.require_running("complete worker sleep")
+            return tuple(snapshots)
+        except asyncio.CancelledError as error:
+            failure = await self._terminalize_after_failure(
+                error,
+                force_shutdown=True,
+            )
+            if failure is not error:
+                error.__cause__ = failure
+            raise
+        except BaseException as error:
+            failure = await self._terminalize_after_failure(
+                error,
+                force_shutdown=True,
+            )
+            if failure is error:
+                raise
+            raise failure from failure.__cause__
 
     async def wake_workers(self) -> None:
         """Restore every owned worker's model from host RAM back onto its GPU."""
-        if not self._owned_workers:
+        self.lifecycle.require_running("wake workers")
+        active_workers = self._require_parking_workers()
+        if not active_workers:
             self._health_monitor.resume()
             return None
-        refs = [
-            worker.actor.wake.remote()
-            for worker in self._owned_workers
-            if worker.actor is not None
-        ]
-        if refs:
+        try:
+            refs = [worker.actor.wake.remote() for worker in active_workers]
             await asyncio.wait_for(asyncio.gather(*refs), timeout=120)
-        self._health_monitor.resume()
-        return None
+            self.lifecycle.require_running("complete worker wake")
+            self._health_monitor.resume()
+            return None
+        except asyncio.CancelledError as error:
+            failure = await self._terminalize_after_failure(
+                error,
+                force_shutdown=True,
+            )
+            if failure is not error:
+                error.__cause__ = failure
+            raise
+        except BaseException as error:
+            failure = await self._terminalize_after_failure(
+                error,
+                force_shutdown=True,
+            )
+            if failure is error:
+                raise
+            raise failure from failure.__cause__
 
 
 __all__ = ["RayGenerationRuntime"]

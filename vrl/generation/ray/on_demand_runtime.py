@@ -300,8 +300,14 @@ class _OnDemandRayGenerationRuntime:
                 await inner_runtime.sleep_workers()
                 self._workers_offloaded = True
         except BaseException as error:
-            self.lifecycle.fail(error)
-            raise
+            failure = self._publish_failure(error)
+            if isinstance(error, asyncio.CancelledError):
+                if failure is not error:
+                    error.__cause__ = failure
+                raise
+            if failure is error:
+                raise
+            raise failure from failure.__cause__
 
     async def shutdown(self) -> None:
         """Close admission and destroy the retained inner runtime exactly once."""
@@ -380,28 +386,31 @@ class _OnDemandRayGenerationRuntime:
     async def _activate_once(self) -> RayGenerationRuntime:
         try:
             inner_runtime = self._inner_runtime
-            if inner_runtime is not None and self._workers_offloaded:
-                await inner_runtime.wake_workers()
-                # Record physical truth before restoring weights so cleanup
-                # treats a failed restore as an awake runtime.
-                self._workers_offloaded = False
-                desired = self._desired_policy
-                if desired is not None and desired.policy_version != self._active_policy_version:
-                    await inner_runtime.update_weights(
-                        desired.state_ref,
-                        desired.policy_version,
-                    )
-                    with (
-                        inner_runtime.lifecycle.publication_guard(
-                            "publish restored policy version",
-                        ),
-                        self.lifecycle.publication_guard(
-                            "publish restored policy version",
-                        ),
-                    ):
-                        self._active_policy_version = desired.policy_version
-                return inner_runtime
             if inner_runtime is not None:
+                await inner_runtime.activate()
+                if self._workers_offloaded:
+                    await inner_runtime.wake_workers()
+                    # Record physical truth before restoring weights so cleanup
+                    # treats a failed restore as an awake runtime.
+                    self._workers_offloaded = False
+                    desired = self._desired_policy
+                    if (
+                        desired is not None
+                        and desired.policy_version != self._active_policy_version
+                    ):
+                        await inner_runtime.update_weights(
+                            desired.state_ref,
+                            desired.policy_version,
+                        )
+                        with (
+                            inner_runtime.lifecycle.publication_guard(
+                                "publish restored policy version",
+                            ),
+                            self.lifecycle.publication_guard(
+                                "publish restored policy version",
+                            ),
+                        ):
+                            self._active_policy_version = desired.policy_version
                 return inner_runtime
 
             candidate = await self._launcher.launch_async(

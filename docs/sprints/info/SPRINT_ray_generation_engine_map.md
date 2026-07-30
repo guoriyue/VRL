@@ -250,6 +250,11 @@ schedule 必须先 drain，再调用 `offload()`。on-demand facade 调用 inner
 的 `sleep_workers()` 进入 host-memory parking，下一次 `activate()` 再
 `wake_workers()`；resident runtime 的 `offload()` 是 protocol-required no-op。health
 monitor 在 sleep 前 pause，wake 成功后 resume，并重新应用 first-wait grace。
+sleep/wake 的 remote failure、120 秒 timeout、result-validation failure 或 submitted-work
+cancellation 都由 resident owner 先关闭 admission 并 force-kill actors；on-demand facade
+从异常链保留 inner 的首个 terminal root。重复 `activate()` 也先调用 inner
+`activate()` admission gate，不能把已被 health monitor 判死的 resident runtime 误报为
+active。
 
 ### Terminal shutdown
 
