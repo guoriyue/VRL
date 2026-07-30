@@ -11,6 +11,7 @@ import pytest
 
 from vrl.generation.execution.memory_parking import WorkerMemoryParking
 from vrl.generation.execution.types import (
+    ChunkProduceFence,
     PipelinedRequestOutOfMemory,
     StaleSlotDiscard,
 )
@@ -42,13 +43,13 @@ class _Executor:
         sample_rows,
         plan,
         *,
-        progress_callback=None,
+        completion_callback=None,
     ):
         self.calls.append((request, sample_rows, plan))
         if self.error is not None:
             raise self.error
-        if progress_callback is not None:
-            progress_callback(1)
+        if completion_callback is not None:
+            completion_callback(ChunkProduceFence(completed_chunks=1, event=None))
         return "GATHERED_OUTPUT"
 
 
@@ -88,8 +89,8 @@ def test_slot_mode_with_live_slot_activates_and_runs() -> None:
     assert len(ex.calls) == 1
 
 
-def test_worker_core_forwards_pipelined_progress_callback() -> None:
-    progress: list[int] = []
+def test_worker_core_forwards_pipelined_completion_callback() -> None:
+    fences: list[ChunkProduceFence] = []
     core = _core(
         executor=_Executor(_Model(set())),
         uses_slots=False,
@@ -101,11 +102,11 @@ def test_worker_core_forwards_pipelined_progress_callback() -> None:
         _request(5),
         "plan",
         "rows",
-        progress_callback=progress.append,
+        completion_callback=fences.append,
     )
 
     assert output == "GATHERED_OUTPUT"
-    assert progress == [1]
+    assert fences == [ChunkProduceFence(completed_chunks=1, event=None)]
 
 
 def test_slot_mode_with_evicted_slot_raises_stale_discard_and_does_not_run() -> None:

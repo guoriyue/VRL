@@ -20,6 +20,7 @@ from vrl.generation.execution.pipeline import (  # noqa: E402
     _move_tree_to_cpu_async,
     forward_chunks_pipelined,
 )
+from vrl.generation.execution.types import ChunkProduceFence  # noqa: E402
 
 pytestmark = pytest.mark.gpu
 
@@ -102,3 +103,17 @@ def test_pipelined_moves_real_slots_chunk_result_to_cpu() -> None:
     assert all(result.observations.device.type == "cpu" for result in results)
     assert all(result.video.device.type == "cpu" for result in results)
     assert [result.context["chunk"] for result in results] == [0, 1]
+
+
+def test_real_cuda_produce_fences_are_queryable_after_pipeline_completion() -> None:
+    fences: list[ChunkProduceFence] = []
+
+    forward_chunks_pipelined(
+        _executor(_produce),
+        "req",
+        [0, 1],
+        completion_callback=fences.append,
+    )
+
+    assert [fence.completed_chunks for fence in fences] == [1, 2]
+    assert all(fence.event is not None and fence.query() for fence in fences)

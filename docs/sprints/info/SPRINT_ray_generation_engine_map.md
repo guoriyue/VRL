@@ -194,6 +194,8 @@ multi-worker update 一旦任一 job 已提交，caller cancellation 就是 term
 
 single-worker pipeline 在 driver 侧 single-flight。worker 通过 health concurrency group
 发布 `PipelinedRequestProgress`；只有 `completed_chunks` 严格增长才重置 stall deadline。
+该计数只在已 record 的 device produce fence 经非阻塞 `query()` 确认完成后推进，
+不会把 host-side CUDA enqueue 误报为完成，也不会为进度逐 chunk synchronize。
 request lock 之后仍需通过 shared dispatcher；`run_one` 在真实 slot admission 后、提交前
 创建初始 deadline，并持有 main result ref。health success 本身不算业务进度。错误
 type/request ID/total/regression 是 terminal wire protocol failure。

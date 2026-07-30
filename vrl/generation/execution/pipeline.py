@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
 from typing import Any
+
+from vrl.generation.execution.types import ChunkCompletionCallback, ChunkProduceFence
 
 
 def _move_tree_to_cpu_async(value: Any, stream: Any) -> Any:
@@ -43,7 +44,7 @@ def forward_chunks_pipelined(
     request: Any,
     chunks: Any,
     *,
-    progress_callback: Callable[[int], None] | None = None,
+    completion_callback: ChunkCompletionCallback | None = None,
 ) -> list:
     """In-process software pipeline over a request's chunks: while chunk N+1's
     PRODUCE (encode->prepare->denoise->decode, GPU compute on the default stream)
@@ -94,11 +95,21 @@ def forward_chunks_pipelined(
 
             prev_result = executor.forward_chunk_plan(request, chunk)
             prev_idx = idx
-            if progress_callback is not None:
-                progress_callback(idx + 1)
             if cuda:
                 prev_done = torch.cuda.Event()
                 prev_done.record()  # default stream: this chunk's produce is enqueued
+            else:
+                prev_done = None
+            if completion_callback is not None:
+                # Registration happens only after the CUDA event is recorded.
+                # The callback retains this fence; it does not claim completion
+                # until a later non-blocking query observes the event.
+                completion_callback(
+                    ChunkProduceFence(
+                        completed_chunks=idx + 1,
+                        event=prev_done,
+                    ),
+                )
 
         # Flush the final chunk's teardown.
         if prev_result is not None:

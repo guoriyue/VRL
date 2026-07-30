@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Any, Literal, get_args
+from typing import Any, Literal, Protocol, TypeAlias, get_args
 
 from vrl.generation.execution.chunks import SampleChunk
 from vrl.generation.protocols import ChunkResult
@@ -52,6 +53,37 @@ class DistributedWorkerHandle:
 
 ChunkPlacementStrategy = Literal["round_robin", "dynamic"]
 ParkingBackend = Literal["cpu_only", "cpu_offload", "cumem"]
+
+
+class QueryableCompletion(Protocol):
+    """Non-blocking completion query implemented by device events."""
+
+    def query(self) -> bool: ...
+
+
+@dataclass(frozen=True, slots=True)
+class ChunkProduceFence:
+    """In-process fence for one chunk's device-side produce completion.
+
+    ``event=None`` represents synchronous CPU execution. CUDA callers publish
+    only events that have already been recorded; the Ray worker retains and
+    queries them locally rather than putting CUDA objects on the wire.
+    """
+
+    completed_chunks: int
+    event: QueryableCompletion | None
+
+    def __post_init__(self) -> None:
+        if self.completed_chunks < 1:
+            raise ValueError("chunk produce fence completed_chunks must be >= 1")
+
+    def query(self) -> bool:
+        """Return without synchronizing the device."""
+
+        return self.event is None or self.event.query()
+
+
+ChunkCompletionCallback: TypeAlias = Callable[[ChunkProduceFence], None]
 
 
 @dataclass(frozen=True, slots=True)
@@ -143,12 +175,15 @@ class PipelinedRequestOutOfMemory:
 
 
 __all__ = [
+    "ChunkCompletionCallback",
     "ChunkExecutionEnvelope",
     "ChunkExecutionResult",
     "ChunkPlacementStrategy",
+    "ChunkProduceFence",
     "DistributedWorkerHandle",
     "ParkingBackend",
     "PipelinedRequestOutOfMemory",
+    "QueryableCompletion",
     "StaleSlotDiscard",
     "WorkerMemoryParkingSnapshot",
 ]

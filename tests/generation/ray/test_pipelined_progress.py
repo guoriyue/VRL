@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import threading
+from collections import deque
 from types import SimpleNamespace
 from typing import Any
 
@@ -13,6 +14,7 @@ import vrl.generation.ray.executor as executor_module
 import vrl.ray.actor_pool as actor_pool_module
 import vrl.ray.operation_deadline as deadline_module
 from vrl.generation.execution.types import (
+    ChunkProduceFence,
     DistributedWorkerHandle,
     PipelinedRequestOutOfMemory,
 )
@@ -110,6 +112,7 @@ def test_ray_worker_reports_only_the_active_pipelined_request() -> None:
     worker = object.__new__(RayGenerationWorker)
     worker._pipelined_progress_lock = threading.Lock()
     worker._pipelined_progress = None
+    worker._pipelined_completion_fences = deque()
     observed: list[PipelinedRequestProgress | None] = []
 
     class _Core:
@@ -119,13 +122,13 @@ def test_ray_worker_reports_only_the_active_pipelined_request() -> None:
             engine_plan: Any,
             sample_rows: Any,
             *,
-            progress_callback: Any,
+            completion_callback: Any,
         ) -> str:
             del engine_plan, sample_rows
             observed.append(worker.pipelined_progress(request.request_id))
-            progress_callback(1)
+            completion_callback(ChunkProduceFence(completed_chunks=1, event=None))
             observed.append(worker.pipelined_progress(request.request_id))
-            progress_callback(2)
+            completion_callback(ChunkProduceFence(completed_chunks=2, event=None))
             return "complete"
 
     worker.core = _Core()
@@ -139,6 +142,103 @@ def test_ray_worker_reports_only_the_active_pipelined_request() -> None:
     assert all(snapshot.total_chunks == 2 for snapshot in observed if snapshot is not None)
     assert worker.pipelined_progress("req-progress") is None
     assert worker.pipelined_progress("another-request") is None
+
+
+def test_ray_worker_reports_only_contiguous_completed_fences() -> None:
+    class _Completion:
+        def __init__(self) -> None:
+            self.ready = False
+            self.query_calls = 0
+
+        def query(self) -> bool:
+            self.query_calls += 1
+            return self.ready
+
+    first_completion = _Completion()
+    second_completion = _Completion()
+    fences_registered = threading.Event()
+    release_request = threading.Event()
+    worker = object.__new__(RayGenerationWorker)
+    worker._pipelined_progress_lock = threading.Lock()
+    worker._pipelined_progress = None
+    worker._pipelined_completion_fences = deque()
+
+    class _Core:
+        @staticmethod
+        def execute_request_pipelined(
+            request: Any,
+            engine_plan: Any,
+            sample_rows: Any,
+            *,
+            completion_callback: Any,
+        ) -> str:
+            del request, engine_plan, sample_rows
+            completion_callback(
+                ChunkProduceFence(completed_chunks=1, event=first_completion),
+            )
+            completion_callback(
+                ChunkProduceFence(completed_chunks=2, event=second_completion),
+            )
+            fences_registered.set()
+            assert release_request.wait(timeout=1)
+            return "complete"
+
+    worker.core = _Core()
+    result: list[str] = []
+    execution = threading.Thread(
+        target=lambda: result.append(
+            worker.execute_request_pipelined(
+                SimpleNamespace(request_id="req-fences"),
+                SimpleNamespace(chunks=("c0", "c1")),
+                [],
+            ),
+        ),
+    )
+    execution.start()
+    assert fences_registered.wait(timeout=1)
+
+    assert worker.pipelined_progress("req-fences").completed_chunks == 0
+    second_completion.ready = True
+    assert worker.pipelined_progress("req-fences").completed_chunks == 0
+    assert second_completion.query_calls == 0
+
+    first_completion.ready = True
+    assert worker.pipelined_progress("req-fences").completed_chunks == 2
+
+    release_request.set()
+    execution.join(timeout=1)
+    assert not execution.is_alive()
+    assert result == ["complete"]
+    assert worker.pipelined_progress("req-fences") is None
+
+
+def test_ray_worker_completion_query_failure_does_not_publish_progress() -> None:
+    class _FailedCompletion:
+        @staticmethod
+        def query() -> bool:
+            raise RuntimeError("asynchronous CUDA failure")
+
+    worker = object.__new__(RayGenerationWorker)
+    worker._pipelined_progress_lock = threading.Lock()
+    worker._pipelined_progress = PipelinedRequestProgress(
+        request_id="req-query-error",
+        completed_chunks=0,
+        total_chunks=1,
+    )
+    worker._pipelined_completion_fences = deque(
+        [
+            ChunkProduceFence(
+                completed_chunks=1,
+                event=_FailedCompletion(),
+            ),
+        ],
+    )
+
+    with pytest.raises(RuntimeError, match="asynchronous CUDA failure"):
+        worker.pipelined_progress("req-query-error")
+
+    assert worker._pipelined_progress.completed_chunks == 0
+    assert len(worker._pipelined_completion_fences) == 1
 
 
 @pytest.mark.asyncio

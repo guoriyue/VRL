@@ -8,6 +8,7 @@ from __future__ import annotations
 import sys
 from contextlib import nullcontext
 from types import SimpleNamespace
+from typing import Any
 
 import pytest
 
@@ -16,6 +17,7 @@ from vrl.generation.execution.pipeline import (
     _move_tree_to_cpu_async,
     forward_chunks_pipelined,
 )
+from vrl.generation.execution.types import ChunkProduceFence
 
 
 def _executor(produce):
@@ -59,18 +61,86 @@ def test_every_chunk_produced_exactly_once() -> None:
     assert len(out) == len(chunks)
 
 
-def test_progress_advances_once_after_each_successful_chunk() -> None:
-    progress: list[int] = []
+def test_cpu_completion_fence_follows_each_successful_chunk(monkeypatch) -> None:
+    monkeypatch.setitem(
+        sys.modules,
+        "torch",
+        SimpleNamespace(cuda=SimpleNamespace(is_available=lambda: False)),
+    )
+    fences: list[ChunkProduceFence] = []
 
     output = forward_chunks_pipelined(
         _executor(lambda chunk: ("result", chunk)),
         "req",
         ["c0", "c1", "c2"],
-        progress_callback=progress.append,
+        completion_callback=fences.append,
     )
 
     assert output == [("result", "c0"), ("result", "c1"), ("result", "c2")]
-    assert progress == [1, 2, 3]
+    assert [fence.completed_chunks for fence in fences] == [1, 2, 3]
+    assert all(fence.event is None and fence.query() for fence in fences)
+
+
+def test_cuda_completion_fence_is_recorded_before_publication(monkeypatch) -> None:
+    operations: list[tuple[str, int]] = []
+    events: list[Any] = []
+
+    class _Event:
+        def __init__(self) -> None:
+            self.index = len(events)
+            self.recorded = False
+            events.append(self)
+
+        def record(self, _stream=None) -> None:
+            self.recorded = True
+            operations.append(("record", self.index))
+
+        def query(self) -> bool:
+            return False
+
+        def synchronize(self) -> None:
+            operations.append(("synchronize", self.index))
+
+    class _CopyStream:
+        @staticmethod
+        def wait_event(_event: Any) -> None:
+            return None
+
+    copy_stream = _CopyStream()
+    fake_torch = SimpleNamespace(
+        cuda=SimpleNamespace(
+            is_available=lambda: True,
+            Stream=lambda: copy_stream,
+            Event=_Event,
+        ),
+    )
+    monkeypatch.setitem(sys.modules, "torch", fake_torch)
+
+    import vrl.generation.execution.pipeline as pipeline
+
+    monkeypatch.setattr(
+        pipeline,
+        "_move_tree_to_cpu_async",
+        lambda result, _stream: result,
+    )
+    published: list[ChunkProduceFence] = []
+
+    def publish(fence: ChunkProduceFence) -> None:
+        assert fence.event is not None
+        assert fence.event.recorded is True
+        operations.append(("publish", fence.event.index))
+        published.append(fence)
+
+    assert forward_chunks_pipelined(
+        _executor(lambda chunk: ("result", chunk)),
+        "req",
+        ["c0"],
+        completion_callback=publish,
+    ) == [("result", "c0")]
+
+    assert published == [ChunkProduceFence(completed_chunks=1, event=events[0])]
+    assert published[0].query() is False
+    assert operations[:2] == [("record", 0), ("publish", 0)]
 
 
 def test_single_chunk_still_produces_and_tears_down() -> None:

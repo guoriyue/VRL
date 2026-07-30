@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import threading
+from collections import deque
 from typing import Any
 
 import ray
@@ -10,6 +11,7 @@ import ray
 from vrl.generation.execution.types import (
     ChunkExecutionEnvelope,
     ChunkExecutionResult,
+    ChunkProduceFence,
     PipelinedRequestOutOfMemory,
     WorkerMemoryParkingSnapshot,
 )
@@ -47,6 +49,7 @@ class RayGenerationWorker:
         )
         self._pipelined_progress_lock = threading.Lock()
         self._pipelined_progress: PipelinedRequestProgress | None = None
+        self._pipelined_completion_fences: deque[ChunkProduceFence] = deque()
 
     @ray.method(concurrency_group=HEALTH_CONCURRENCY_GROUP)
     def health(self) -> str:
@@ -109,10 +112,15 @@ class RayGenerationWorker:
         request_id = str(request.request_id)
         total_chunks = len(engine_plan.chunks)
         with self._pipelined_progress_lock:
-            if self._pipelined_progress is not None:
+            if self._pipelined_progress is not None or self._pipelined_completion_fences:
+                active_request_id = (
+                    self._pipelined_progress.request_id
+                    if self._pipelined_progress is not None
+                    else "unknown"
+                )
                 raise RuntimeError(
                     "pipelined worker received overlapping requests "
-                    f"{self._pipelined_progress.request_id!r} and {request_id!r}",
+                    f"{active_request_id!r} and {request_id!r}",
                 )
             self._pipelined_progress = PipelinedRequestProgress(
                 request_id=request_id,
@@ -120,34 +128,38 @@ class RayGenerationWorker:
                 total_chunks=total_chunks,
             )
 
-        def record_progress(completed_chunks: int) -> None:
+        def record_completion(fence: ChunkProduceFence) -> None:
             with self._pipelined_progress_lock:
                 current = self._pipelined_progress
                 if current is None or current.request_id != request_id:
                     raise RuntimeError(
                         f"pipelined progress lost active request {request_id!r}",
                     )
-                if completed_chunks != current.completed_chunks + 1:
+                expected = current.completed_chunks + len(self._pipelined_completion_fences) + 1
+                if fence.completed_chunks != expected:
                     raise RuntimeError(
-                        "pipelined progress must advance one chunk at a time "
+                        "pipelined completion fences must register one chunk at a time "
                         f"(request_id={request_id!r}, previous="
-                        f"{current.completed_chunks}, actual={completed_chunks})",
+                        f"{expected - 1}, actual={fence.completed_chunks})",
                     )
-                self._pipelined_progress = PipelinedRequestProgress(
-                    request_id=request_id,
-                    completed_chunks=completed_chunks,
-                    total_chunks=total_chunks,
-                )
+                if fence.completed_chunks > total_chunks:
+                    raise RuntimeError(
+                        "pipelined completion fence exceeds request chunk count "
+                        f"(request_id={request_id!r}, total={total_chunks}, "
+                        f"actual={fence.completed_chunks})",
+                    )
+                self._pipelined_completion_fences.append(fence)
 
         try:
             return self.core.execute_request_pipelined(
                 request,
                 engine_plan,
                 sample_rows,
-                progress_callback=record_progress,
+                completion_callback=record_completion,
             )
         finally:
             with self._pipelined_progress_lock:
+                self._pipelined_completion_fences.clear()
                 self._pipelined_progress = None
 
     @ray.method(concurrency_group=HEALTH_CONCURRENCY_GROUP)
@@ -161,6 +173,17 @@ class RayGenerationWorker:
             progress = self._pipelined_progress
             if progress is None or progress.request_id != request_id:
                 return None
+            while self._pipelined_completion_fences:
+                fence = self._pipelined_completion_fences[0]
+                if not fence.query():
+                    break
+                self._pipelined_completion_fences.popleft()
+                progress = PipelinedRequestProgress(
+                    request_id=request_id,
+                    completed_chunks=fence.completed_chunks,
+                    total_chunks=progress.total_chunks,
+                )
+                self._pipelined_progress = progress
             return progress
 
     def _ray_metadata(self) -> dict[str, Any]:

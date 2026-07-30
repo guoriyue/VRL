@@ -9,7 +9,12 @@ from vrl.runtime_errors import TerminalRuntimeError
 
 @dataclass(frozen=True, slots=True)
 class PipelinedRequestProgress:
-    """Cross-concurrency-group progress for one pipelined request."""
+    """Cross-concurrency-group progress for one pipelined request.
+
+    ``completed_chunks`` is the continuous prefix whose recorded device-side
+    produce fences have completed. It never counts host-side CUDA enqueue as
+    completion; final teardown and gather retain the last stall window.
+    """
 
     request_id: str
     completed_chunks: int

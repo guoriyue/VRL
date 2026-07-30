@@ -125,6 +125,12 @@ the dispatcher's source of truth; only monotonic expiry is renewed. Health succe
 snapshot, or a repeated valid snapshot do not count as progress. A returned snapshot for a
 different request ID is a protocol violation.
 
+`completed_chunks` 表示设备已经完成的连续 produce-fence 前沿，不是 Python 已经 enqueue 的
+chunk 数。CUDA path 在 default stream 上先 record event，再把进程内
+`ChunkProduceFence` 注册给 worker；health concurrency group 只用非阻塞 `event.query()`
+推进连续队首，不逐 chunk synchronize，也不破坏 produce/D2H overlap。最后一个 produce
+fence 完成后，final teardown/gather 仍使用最后一个完整 stall window。
+
 Invalid type, request ID, total count, or regressing progress raises
 `PipelinedProgressError`, a terminal wire-contract error. Cancellation before lock/dispatcher
 admission remains an ordinary caller cancellation because no actor state changed. Cancellation

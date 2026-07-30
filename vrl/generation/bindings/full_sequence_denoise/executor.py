@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import time
-from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -16,6 +15,7 @@ from vrl.generation.bindings.full_sequence_denoise.layout import (
 from vrl.generation.execution.chunks import SampleChunk
 from vrl.generation.execution.executor_base import ChunkExecutorBase
 from vrl.generation.execution.planner import build_engine_plan
+from vrl.generation.execution.types import ChunkCompletionCallback
 from vrl.generation.protocols import ChunkGatherer
 from vrl.generation.steps.denoise.config import DenoiseLoopConfig
 from vrl.generation.steps.denoise.loop import (
@@ -275,7 +275,7 @@ class DiffusionChunkExecutorBase(ChunkExecutorBase):
         sample_rows: list[GenerationSampleRow],
         plan: Any,
         *,
-        progress_callback: Callable[[int], None] | None = None,
+        completion_callback: ChunkCompletionCallback | None = None,
     ) -> GenerationOutput:
         """In-process software-pipelined variant of forward_plan: chunk N+1's
         produce (encode->prepare->denoise->decode, GPU compute on the default
@@ -297,7 +297,7 @@ class DiffusionChunkExecutorBase(ChunkExecutorBase):
             self,
             request,
             plan.chunks,
-            progress_callback=progress_callback,
+            completion_callback=completion_callback,
         )
         return self.gather_chunks(request, sample_rows, chunks)
 
