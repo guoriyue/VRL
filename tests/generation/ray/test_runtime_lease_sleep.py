@@ -1238,6 +1238,43 @@ async def test_waiter_cancellation_does_not_cancel_offload_or_forge_root() -> No
 
 
 @pytest.mark.asyncio
+async def test_offload_task_cleans_up_failure_after_waiter_cancellation() -> None:
+    runtime = _on_demand_runtime()
+    offload_error = RuntimeError("late sleep failure")
+
+    class _LateFailingInner(_FakeInner):
+        def __init__(self) -> None:
+            super().__init__()
+            self.sleep_started = asyncio.Event()
+            self.finish_sleep = asyncio.Event()
+
+        async def sleep_workers(self) -> None:
+            self.sleep_started.set()
+            await self.finish_sleep.wait()
+            raise offload_error
+
+    inner = _LateFailingInner()
+    runtime._inner_runtime = inner
+    waiter = asyncio.create_task(runtime.offload())
+    await asyncio.wait_for(inner.sleep_started.wait(), timeout=1)
+    control_task = runtime._offload_task
+    assert control_task is not None
+
+    waiter.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await waiter
+    inner.finish_sleep.set()
+    with pytest.raises(RuntimeError, match="late sleep failure") as caught:
+        await asyncio.wait_for(control_task, timeout=1)
+
+    assert caught.value is offload_error
+    assert inner.calls == ["shutdown"]
+    assert runtime._inner_runtime is None
+    assert runtime.lifecycle.failure is offload_error
+    assert runtime.lifecycle.phase is RuntimePhase.TERMINATED
+
+
+@pytest.mark.asyncio
 async def test_offload_failure_runs_terminal_cleanup() -> None:
     runtime = _on_demand_runtime()
     offload_error = RuntimeError("sleep failed")
@@ -1259,7 +1296,7 @@ async def test_offload_failure_runs_terminal_cleanup() -> None:
 
 
 @pytest.mark.asyncio
-async def test_offload_cleanup_failure_retains_inner_for_shutdown_retry() -> None:
+async def test_offload_cleanup_failure_retries_without_replacing_root() -> None:
     runtime = _on_demand_runtime()
     offload_error = RuntimeError("sleep failed")
     cleanup_error = RuntimeError("worker cleanup failed")
@@ -1279,18 +1316,17 @@ async def test_offload_cleanup_failure_retains_inner_for_shutdown_retry() -> Non
     inner = _FailingInner()
     runtime._inner_runtime = inner
 
-    with pytest.raises(RuntimeError, match="worker cleanup failed") as caught:
+    with pytest.raises(RuntimeError, match="sleep failed") as caught:
         await runtime.offload()
-    assert caught.value is cleanup_error
-    assert caught.value.__cause__ is offload_error
+    assert caught.value is offload_error
+    assert any("worker cleanup failed" in note for note in getattr(offload_error, "__notes__", ()))
     assert runtime.lifecycle.failure is offload_error
-    assert runtime.lifecycle.phase is RuntimePhase.SHUTTING_DOWN
-    assert runtime._inner_runtime is inner
+    assert runtime.lifecycle.phase is RuntimePhase.TERMINATED
+    assert runtime._inner_runtime is None
+    assert inner.shutdown_calls == 2
 
     await runtime.shutdown()
     assert inner.shutdown_calls == 2
-    assert runtime._inner_runtime is None
-    assert runtime.lifecycle.phase is RuntimePhase.TERMINATED
 
 
 @pytest.mark.asyncio

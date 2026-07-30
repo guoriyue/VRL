@@ -291,7 +291,17 @@ class _OnDemandRayGenerationRuntime:
                 await inner_runtime.sleep_workers()
                 self._workers_offloaded = True
         except BaseException as error:
-            failure = self._publish_failure(error)
+            shutdown_task = self._shutdown_task
+            if shutdown_task is not None and not shutdown_task.done():
+                failure = self._publish_failure(error)
+            else:
+                # A shielded control task can outlive every public waiter. It must
+                # own terminal cleanup instead of relying on a waiter to re-enter
+                # offload() and notice SHUTTING_DOWN.
+                failure = await self._terminalize_after_failure(
+                    error,
+                    join_control_tasks=False,
+                )
             if isinstance(error, asyncio.CancelledError):
                 if failure is not error:
                     error.__cause__ = failure

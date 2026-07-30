@@ -257,7 +257,8 @@ sleep/wake 的 remote failure、120 秒 timeout、result-validation failure 或 
 cancellation 都由 resident owner 先关闭 admission 并 force-kill actors；on-demand facade
 从异常链保留 inner 的首个 terminal root。重复 `activate()` 也先调用 inner
 `activate()` admission gate，不能把已被 health monitor 判死的 resident runtime 误报为
-active。
+active。offload control task 自己拥有失败清理；即使所有 public waiter 已取消，被
+shield 的 task 后续失败也会 teardown inner runtime，而不是停在 `SHUTTING_DOWN`。
 
 ### Terminal shutdown
 
@@ -290,7 +291,7 @@ deadline 也看不到 requests 之间的 idle process death。
 | Boundary | Responsibility | Verdict |
 |---|---|---|
 | `GenerationRuntime` | collector-facing lifecycle protocol | keep thin: public API |
-| `_OnDemandRayGenerationRuntime` | activation/offload tasks, inner runtime, desired/active policy state | keep private: shared-GPU phase owner |
+| `_OnDemandRayGenerationRuntime` | activation/offload tasks, inner runtime, pending/active policy state | keep private: shared-GPU phase owner |
 | `RayGenerationRuntime` | resident actors, executor, weight sync, health, teardown | keep: real resource owner |
 | `RayGenerationExecutor` | plan, dispatch, OOM, correlation, gather | keep: driver scheduler |
 | `RayGenerationWorker` | Ray methods and concurrency-group adapters | keep thin: framework boundary |
