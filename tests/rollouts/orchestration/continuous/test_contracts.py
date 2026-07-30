@@ -23,6 +23,7 @@ import pytest
 import torch
 
 from tests.rollouts.orchestration.continuous._helpers import _wait_until
+from vrl.ray.operation_deadline import RayOperationTimeout
 from vrl.rollouts.batch import RolloutBatch
 from vrl.rollouts.orchestration.continuous.consumer import ContinuousRolloutConsumer
 from vrl.rollouts.orchestration.continuous.producer import ContinuousRolloutProducer
@@ -30,6 +31,7 @@ from vrl.rollouts.orchestration.continuous.queue import ContinuousRolloutQueue
 from vrl.rollouts.orchestration.continuous.scheduler import RolloutScheduler
 from vrl.rollouts.orchestration.continuous.staleness import StalenessPolicy
 from vrl.rollouts.orchestration.continuous.types import ContinuousRolloutItem
+from vrl.rollouts.orchestration.prompt_collection import PromptCollectionCleanupError
 from vrl.rollouts.orchestration.types import RolloutScheduleMode
 from vrl.rollouts.stats import RolloutStats
 
@@ -257,6 +259,93 @@ async def test_control_loop_failure_reaches_consumer_without_timeout() -> None:
 
         assert caught.value.__cause__ is producer.state.fatal_error
         assert "admission invariant broke" in str(caught.value.__cause__)
+    finally:
+        await producer.stop()
+
+
+@pytest.mark.asyncio
+async def test_terminal_generation_error_is_not_retried_or_wrapped() -> None:
+    error = RayOperationTimeout(
+        "rollout.generation.chunk",
+        1.0,
+        context="request_id=req-terminal",
+    )
+
+    class _TerminalCollector(_GatedCollector):
+        async def collect_unscored(self, prompts: list[str], **kwargs: Any) -> _Unscored:
+            del prompts, kwargs
+            raise error
+
+    queue = ContinuousRolloutQueue(max_items=4)
+    producer = _producer(_TerminalCollector(), queue)
+
+    await producer.start()
+    try:
+        await _wait_until(lambda: producer.state.fatal_error is not None)
+        consumer = _consumer(queue, max_stale=0)
+
+        with pytest.raises(RayOperationTimeout) as caught:
+            await consumer.drain_for_iteration(
+                rollout_id=0,
+                min_groups=1,
+                current_version=1,
+                mode=RolloutScheduleMode.CONTINUOUS,
+                wait_timeout_s=60.0,
+                poll_interval_s=0.001,
+                producer_state=producer.state,
+            )
+
+        assert caught.value is error
+        assert producer.state.fatal_error is error
+        assert producer.state.submitted_count == 1
+        assert producer.state.inflight_count == 0
+        assert queue.size() == 0
+    finally:
+        await producer.stop()
+
+
+@pytest.mark.asyncio
+async def test_cleanup_wrapper_around_terminal_error_is_not_retried() -> None:
+    timeout = RayOperationTimeout(
+        "rollout.generation.chunk",
+        1.0,
+        context="request_id=req-cleanup",
+    )
+    wrapped = PromptCollectionCleanupError(
+        timeout,
+        [RuntimeError("reward cleanup failed")],
+    )
+
+    class _TerminalCollector(_GatedCollector):
+        async def collect_unscored(self, prompts: list[str], **kwargs: Any) -> _Unscored:
+            del prompts, kwargs
+            raise wrapped
+
+    queue = ContinuousRolloutQueue(max_items=4)
+    producer = _producer(_TerminalCollector(), queue)
+
+    await producer.start()
+    try:
+        await _wait_until(lambda: producer.state.fatal_error is not None)
+        consumer = _consumer(queue, max_stale=0)
+
+        with pytest.raises(PromptCollectionCleanupError) as caught:
+            await consumer.drain_for_iteration(
+                rollout_id=0,
+                min_groups=1,
+                current_version=1,
+                mode=RolloutScheduleMode.CONTINUOUS,
+                wait_timeout_s=60.0,
+                poll_interval_s=0.001,
+                producer_state=producer.state,
+            )
+
+        assert caught.value is wrapped
+        assert caught.value.root_cause is timeout
+        assert producer.state.fatal_error is wrapped
+        assert producer.state.submitted_count == 1
+        assert producer.state.inflight_count == 0
+        assert queue.size() == 0
     finally:
         await producer.stop()
 

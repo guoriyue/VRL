@@ -85,8 +85,8 @@ transformer / kernel / provider scheduling   mostly upstream or parked
 |---|---|---|
 | RL trajectory | `generation/steps/denoise/loop.py` 产出 observations/actions/log-probs；binding 与 `trajectory/builders.py` 构造 trainer-facing trajectory，validator 检查 role 与 axis | 这是 trainer-facing source of truth，不是 inference-only artifact wrapper |
 | Policy freshness | worker 按 request version 激活 slot；slot 被逐出时 `RayGenerationExecutor` 丢弃整条 request | mixed-policy partial result fail closed |
-| GPU/runtime lifecycle | `GenerationRuntime` 暴露 activate/generate/offload/shutdown；Ray runtime 串行 activate/offload/policy install，worker fleet 独占 actor/monitor/cleanup | shared-GPU handoff 与 terminal ownership 是 engine 行为 |
-| Rollout worker process reachability | a background probe watches a dedicated health concurrency group out of band | an unreachable process kills the fleet and hands checkpoint resume to the supervisor; a successful probe does not prove default-group business RPC progress |
+| GPU/runtime lifecycle | `GenerationRuntime` 暴露 activate/generate/offload/shutdown；schedule 排序 phase handoff；`RayGenerationRuntime` 直接拥有 executor/weight sync/actors/monitor/teardown，并拒绝 weight install 与 activation 重叠 | shared-GPU handoff 与 terminal ownership 是 engine 行为；当前不存在独立 WorkerFleet 或统一 transition lock |
+| Rollout worker process reachability | a background probe watches a dedicated health concurrency group out of band | an unreachable process kills the owned actors so active/next foreground work fails closed；failed verdict 之后 supervisor 才执行 bounded restart policy，获准 retry 时从最新 complete checkpoint 恢复 |
 | Full-sequence denoise + token-autoregressive | denoise step 自有 SDE loop；token-autoregressive composition 自有 token scheduler/cache row routing；两者汇入同一 `GenerationOutput`/trajectory | 一个顶层 engine 可以保留两种不同数学执行形态 |
 | RL group integrity | sample chunk OOM 时有序二分，gather 再检查完整覆盖 | OOM 不会静默少样本、重复样本或重排 GRPO group |
 
@@ -126,8 +126,9 @@ The process-reachability part of reliability is complete under
 [Rollout worker liveness](done/SPRINT_rollout_worker_liveness.md).
 This program keeps that health/lifecycle owner and does not duplicate it. The
 health concurrency group can answer while the actor's default group is busy or
-hung, so the monitor is not a business-operation progress signal. The configured
-blocking-call deadline below remains an unfinished, independent Sprint 0 gate.
+hung, so the monitor is not a business-operation progress signal. The independent
+[Ray rollout operation deadline](done/SPRINT_ray_rollout_operation_deadlines.md)
+gate is now complete.
 
 1. 把 request/output、policy version、weight install、failure cleanup、trajectory/replay
    这些 engine-owned 语义钉成 provider-independent contract tests。
@@ -209,10 +210,11 @@ These tests describe the wm-infra engine rather than a model-library API.
 External provider adapters must pass the same suite instead of copying private
 expectations. The completed
 [worker process-health sprint](done/SPRINT_rollout_worker_liveness.md) covers only
-actor-process reachability and supervisor handoff after an unreachable probe.
-Blocking-call deadlines and operation-boundary partial-result rejection remain
-unfinished Sprint 0 requirements; external providers cannot be promoted until
-that independent gate passes.
+actor-process reachability. The completed
+[Ray rollout operation deadline sprint](done/SPRINT_ray_rollout_operation_deadlines.md)
+covers blocking-call deadlines and operation-boundary partial-result rejection.
+External providers must reuse and pass both contracts rather than implementing a
+private timeout or partial-result policy.
 
 ### N1 — 保留两种 provider 粒度
 

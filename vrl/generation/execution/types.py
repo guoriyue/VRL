@@ -8,6 +8,7 @@ from typing import Any, Literal, get_args
 from vrl.generation.execution.chunks import SampleChunk
 from vrl.generation.protocols import ChunkResult
 from vrl.generation.types import GenerationRequest
+from vrl.runtime_errors import TerminalRuntimeError
 
 
 class StaleSlotDiscard(Exception):
@@ -128,6 +129,29 @@ class ChunkExecutionResult:
 
 
 @dataclass(frozen=True, slots=True)
+class PipelinedRequestProgress:
+    """Cross-concurrency-group progress for one pipelined request."""
+
+    request_id: str
+    completed_chunks: int
+    total_chunks: int
+
+    def __post_init__(self) -> None:
+        if not self.request_id:
+            raise ValueError("pipelined progress request_id must be non-empty")
+        if self.total_chunks < 1:
+            raise ValueError("pipelined progress total_chunks must be >= 1")
+        if not 0 <= self.completed_chunks <= self.total_chunks:
+            raise ValueError(
+                "pipelined progress completed_chunks must be between 0 and total_chunks",
+            )
+
+
+class PipelinedProgressError(TerminalRuntimeError):
+    """The worker's pipelined progress stream violated its wire contract."""
+
+
+@dataclass(frozen=True, slots=True)
 class PipelinedRequestOutOfMemory:
     """Typed worker response that asks the driver to retry through chunk admission.
 
@@ -148,7 +172,9 @@ __all__ = [
     "ChunkPlacementStrategy",
     "DistributedWorkerHandle",
     "ParkingBackend",
+    "PipelinedProgressError",
     "PipelinedRequestOutOfMemory",
+    "PipelinedRequestProgress",
     "StaleSlotDiscard",
     "WorkerMemoryParkingSnapshot",
 ]

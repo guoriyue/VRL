@@ -9,6 +9,12 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
 
+from vrl.ray.operation_deadline import (
+    RayCallDeadline,
+    cancel_ray_refs,
+    validate_ray_timeout,
+)
+
 
 @dataclass(frozen=True, slots=True)
 class RayActorJob:
@@ -33,6 +39,7 @@ async def run_actor_jobs(
     jobs: list[RayActorJob],
     *,
     max_inflight_per_actor: int = 1,
+    generation_stall_timeout_s: float,
     worker_methods: Mapping[str, Any] | None = None,
     schedule: list[dict[str, Any]] | None = None,
 ) -> list[tuple[int, Any]]:
@@ -47,6 +54,10 @@ async def run_actor_jobs(
 
     if max_inflight_per_actor < 1:
         raise ValueError("max_inflight_per_actor must be >= 1")
+    generation_stall_timeout_s = validate_ray_timeout(
+        generation_stall_timeout_s,
+        name="generation_stall_timeout_s",
+    )
     if not jobs:
         return []
     unbound = [job for job in jobs if job.worker_id is None]
@@ -66,6 +77,7 @@ async def run_actor_jobs(
     result_pairs: list[tuple[int, Any]] = []
     pool_started = time.perf_counter()
     submit_time_by_ref: dict[Any, float] = {}
+    deadline_by_ref: dict[Any, RayCallDeadline] = {}
 
     def _dispatch_worker_for(job: RayActorJob) -> tuple[str, Any] | None:
         """Resolve (worker_id, method); None when no slot is free."""
@@ -100,6 +112,11 @@ async def run_actor_jobs(
                 ref_to_job[ref] = (job.job_index, worker_id)
                 inflight_by_worker[worker_id] += 1
                 submit_time_by_ref[ref] = time.perf_counter()
+                deadline_by_ref[ref] = RayCallDeadline(
+                    "rollout.generation.chunk",
+                    generation_stall_timeout_s,
+                    context=f"worker_id={worker_id}, job_index={job.job_index}",
+                )
                 new_refs.append(ref)
                 made_progress = True
         return new_refs
@@ -119,20 +136,36 @@ async def run_actor_jobs(
 
     # Fail-fast on worker error: a raising waiter propagates immediately and
     # in-flight refs on other actors are abandoned (not cancelled) — their
-    # results are dropped when the caller tears the group down. The finally
-    # block cancels the leftover waiters so no "Task was destroyed but it is
-    # pending" warning leaks; it does not cancel the underlying Ray work.
+    # results are dropped when the caller tears the group down. A deadline is
+    # different: all submitted refs receive best-effort cancellation before the
+    # runtime force-kills its fleet. The finally block always collects asyncio
+    # wrappers so no pending-task warning leaks.
     _spawn(_submit_ready())
     try:
         while waiters:
+            wait_timeout_s = min(deadline_by_ref[ref].remaining_s() for ref in waiters.values())
             done, _ = await asyncio.wait(
                 waiters,
+                timeout=wait_timeout_s,
                 return_when=asyncio.FIRST_COMPLETED,
             )
+            if not done:
+                expired_ref = min(
+                    waiters.values(),
+                    key=lambda ref: deadline_by_ref[ref].expires_at,
+                )
+                error = deadline_by_ref[expired_ref].timeout_error()
+                cancel_ray_refs(
+                    None,
+                    waiters.values(),
+                    root_error=error,
+                )
+                raise error
             for task in done:
                 waiters.pop(task, None)
                 ref, result = task.result()
                 job_index, worker_id = ref_to_job.pop(ref)
+                deadline_by_ref.pop(ref)
                 inflight_by_worker[worker_id] -= 1
                 result_pairs.append((job_index, result))
                 if schedule is not None:
@@ -147,6 +180,9 @@ async def run_actor_jobs(
                         },
                     )
             _spawn(_submit_ready())
+    except asyncio.CancelledError as error:
+        cancel_ray_refs(None, waiters.values(), root_error=error)
+        raise
     finally:
         for task in waiters:
             task.cancel()

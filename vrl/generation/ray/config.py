@@ -27,6 +27,8 @@ class RolloutWorkerConfig:
     health_check_interval_s: float
     health_check_timeout_s: float
     health_check_first_wait_s: float
+    worker_rpc_timeout_s: float
+    generation_stall_timeout_s: float
     # Opt-in single-worker pipelined rollout. Multi-worker execution is rejected
     # because per-worker request partitioning is not implemented.
     pipelined: bool
@@ -55,6 +57,13 @@ class RolloutWorkerConfig:
             raise ValueError("health_check_timeout_s must be finite and > 0 when enabled")
         if not math.isfinite(self.health_check_first_wait_s) or self.health_check_first_wait_s < 0:
             raise ValueError("health_check_first_wait_s must be finite and >= 0")
+        if not math.isfinite(self.worker_rpc_timeout_s) or self.worker_rpc_timeout_s <= 0:
+            raise ValueError("worker_rpc_timeout_s must be finite and > 0")
+        if (
+            not math.isfinite(self.generation_stall_timeout_s)
+            or self.generation_stall_timeout_s <= 0
+        ):
+            raise ValueError("generation_stall_timeout_s must be finite and > 0")
 
     @classmethod
     def from_public_section(cls, section: Any) -> RolloutWorkerConfig:

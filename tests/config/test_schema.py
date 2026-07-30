@@ -1187,6 +1187,8 @@ def test_rollout_keys_are_registered_not_unknown() -> None:
                 "health_check_interval_s": 45.0,
                 "health_check_timeout_s": 30.0,
                 "health_check_first_wait_s": 5.0,
+                "worker_rpc_timeout_s": 3600.0,
+                "generation_stall_timeout_s": 1200.0,
                 "chunk_placement_strategy": "dynamic",
                 "sync_trainable_state": False,
                 "pipelined": True,
@@ -1202,6 +1204,8 @@ def test_rollout_health_check_defaults_and_accepts_override() -> None:
     assert default.distributed.rollout.health_check_interval_s == 30.0
     assert default.distributed.rollout.health_check_timeout_s == 30.0
     assert default.distributed.rollout.health_check_first_wait_s == 0.0
+    assert default.distributed.rollout.worker_rpc_timeout_s == 600.0
+    assert default.distributed.rollout.generation_stall_timeout_s == 1800.0
 
     cfg = _minimal_grpo_cfg(
         distributed={
@@ -1209,6 +1213,8 @@ def test_rollout_health_check_defaults_and_accepts_override() -> None:
                 "health_check_interval_s": 12.5,
                 "health_check_timeout_s": 7.5,
                 "health_check_first_wait_s": 2.5,
+                "worker_rpc_timeout_s": 3600.0,
+                "generation_stall_timeout_s": 1200.0,
             }
         },
     )
@@ -1216,6 +1222,8 @@ def test_rollout_health_check_defaults_and_accepts_override() -> None:
     assert rollout.health_check_interval_s == 12.5
     assert rollout.health_check_timeout_s == 7.5
     assert rollout.health_check_first_wait_s == 2.5
+    assert rollout.worker_rpc_timeout_s == 3600.0
+    assert rollout.generation_stall_timeout_s == 1200.0
 
 
 def test_rollout_worker_section_mirrors_worker_runtime_config() -> None:
@@ -1227,8 +1235,8 @@ def test_rollout_worker_section_mirrors_worker_runtime_config() -> None:
 
     The two types are deliberately NOT merged (the pydantic schema is a lint-only
     boundary; the dataclass is the real runtime consumer), so this parity test is
-    the guard against drift — health_check_first_wait_s, still a live triplicated
-    field (schema default, dataclass field, runtime __init__ default), included.
+    the guard against drift. Public defaults remain only on the section; the
+    runtime dataclass has no fallback literals.
     """
     import dataclasses
 
@@ -1238,6 +1246,8 @@ def test_rollout_worker_section_mirrors_worker_runtime_config() -> None:
     config_fields = {f.name for f in dataclasses.fields(RolloutWorkerConfig)}
     assert section_fields == config_fields
     assert "health_check_first_wait_s" in section_fields
+    assert "worker_rpc_timeout_s" in section_fields
+    assert "generation_stall_timeout_s" in section_fields
 
     # RayGenerationConfig composes the worker projection (its only non-resource
     # field): "RayGenerationConfig minus resources" is exactly RolloutWorkerConfig.
@@ -1309,6 +1319,36 @@ def test_rollout_health_check_first_wait_must_be_finite_and_non_negative(
     )
 
     with pytest.raises(ValueError, match=r"health_check_first_wait_s must be finite and >= 0"):
+        parse_config(cfg)
+
+
+@pytest.mark.parametrize(
+    "timeout_s",
+    [0.0, -1.0, float("inf"), float("-inf"), float("nan")],
+)
+def test_rollout_worker_rpc_timeout_must_be_finite_and_positive(
+    timeout_s: float,
+) -> None:
+    cfg = _minimal_grpo_cfg(
+        distributed={"rollout": {"worker_rpc_timeout_s": timeout_s}},
+    )
+
+    with pytest.raises(ValueError, match=r"worker_rpc_timeout_s must be finite and > 0"):
+        parse_config(cfg)
+
+
+@pytest.mark.parametrize(
+    "timeout_s",
+    [0.0, -1.0, float("inf"), float("-inf"), float("nan")],
+)
+def test_rollout_generation_stall_timeout_must_be_finite_and_positive(
+    timeout_s: float,
+) -> None:
+    cfg = _minimal_grpo_cfg(
+        distributed={"rollout": {"generation_stall_timeout_s": timeout_s}},
+    )
+
+    with pytest.raises(ValueError, match=r"generation_stall_timeout_s must be finite and > 0"):
         parse_config(cfg)
 
 

@@ -20,6 +20,8 @@ from typing import Any
 
 import pytest
 
+import vrl.ray.actor_pool as actor_pool_module
+import vrl.ray.operation_deadline as deadline_module
 from vrl.generation.execution.chunk_placement import (
     ChunkPlacementPolicy,
     DistributedExecutionPlanner,
@@ -32,6 +34,7 @@ from vrl.generation.execution.types import (
 from vrl.generation.ray.executor import RayGenerationExecutor
 from vrl.generation.types import GenerationOutput, GenerationRequest
 from vrl.ray.actor_pool import RayActorJob, run_actor_jobs
+from vrl.ray.operation_deadline import RayOperationTimeout
 
 # Carried by the tests that actually drive `_FakeRef`/`_FakeWorker`; the planner
 # and argument-validation tests below use no double, so a module-level pytestmark
@@ -63,6 +66,12 @@ class _FakeRef:
         for _ in range(self.completion_rank):
             yield
         return self.result
+
+
+class _NeverRef:
+    def __await__(self) -> Generator[Any, None, Any]:
+        while True:
+            yield
 
 
 class _FakeWorker:
@@ -123,6 +132,7 @@ def test_bound_jobs_keep_plan_time_binding_and_order() -> None:
         run_actor_jobs(
             jobs,
             max_inflight_per_actor=1,
+            generation_stall_timeout_s=30.0,
         ),
     )
 
@@ -146,6 +156,7 @@ def test_pull_dispatch_lets_fast_worker_take_more_chunks() -> None:
         run_actor_jobs(
             jobs,
             max_inflight_per_actor=1,
+            generation_stall_timeout_s=30.0,
             worker_methods={"w0": fast.remote, "w1": slow.remote},
         ),
     )
@@ -176,6 +187,7 @@ def test_lpt_priority_orders_submission() -> None:
         run_actor_jobs(
             jobs,
             max_inflight_per_actor=1,
+            generation_stall_timeout_s=30.0,
             worker_methods={"w0": worker.remote},
         ),
     )
@@ -190,7 +202,7 @@ def test_unbound_jobs_without_worker_methods_fail_loudly() -> None:
     jobs = [RayActorJob(job_index=0, worker_id=None, remote_method=None, payload="x")]
 
     with pytest.raises(ValueError, match="worker_methods"):
-        asyncio.run(run_actor_jobs(jobs))
+        asyncio.run(run_actor_jobs(jobs, generation_stall_timeout_s=30.0))
 
 
 @_CONTROLLED_CLOCK
@@ -207,6 +219,7 @@ def test_schedule_telemetry_rows_are_emitted() -> None:
         run_actor_jobs(
             jobs,
             max_inflight_per_actor=1,
+            generation_stall_timeout_s=30.0,
             schedule=schedule,
         ),
     )
@@ -216,6 +229,144 @@ def test_schedule_telemetry_rows_are_emitted() -> None:
         assert row["worker_id"] == "w0"
         assert row["queue_wait_s"] >= 0.0
         assert row["execution_s"] >= 0.0
+
+
+@pytest.mark.asyncio
+async def test_actor_pool_timeout_discards_completed_partial_result(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class _Deadline:
+        def __init__(self, operation: str, timeout_s: float, context: str | None = None) -> None:
+            del operation, timeout_s
+            self.context = context
+            self.expires_at = 0.0 if "worker_id=w1" in str(context) else 1.0
+            self._remaining_calls = 0
+
+        def remaining_s(self) -> float:
+            self._remaining_calls += 1
+            if "worker_id=w1" in str(self.context) and self._remaining_calls > 1:
+                return 0.0
+            return 30.0
+
+        def timeout_error(self) -> RayOperationTimeout:
+            return RayOperationTimeout(
+                "rollout.generation.chunk",
+                30.0,
+                context=self.context,
+            )
+
+    cancelled: list[Any] = []
+
+    class _Ray:
+        @staticmethod
+        def cancel(ref: Any, *, force: bool) -> None:
+            assert force is False
+            cancelled.append(ref)
+
+    fast = _FakeWorker("w0", speed_rank_base=0)
+    never_ref = _NeverRef()
+    monkeypatch.setattr(actor_pool_module, "RayCallDeadline", _Deadline)
+    monkeypatch.setattr(deadline_module, "require_ray", lambda: _Ray)
+    jobs = [
+        RayActorJob(
+            job_index=0,
+            worker_id="w0",
+            remote_method=fast.remote,
+            payload="complete-first",
+        ),
+        RayActorJob(
+            job_index=1,
+            worker_id="w1",
+            remote_method=lambda _payload: never_ref,
+            payload="never",
+        ),
+    ]
+
+    with pytest.raises(RayOperationTimeout, match="worker_id=w1"):
+        await run_actor_jobs(
+            jobs,
+            generation_stall_timeout_s=30.0,
+        )
+
+    assert fast.received == ["complete-first"]
+    assert cancelled == [never_ref]
+
+
+@pytest.mark.asyncio
+async def test_queued_job_gets_its_deadline_only_when_submitted(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    real_deadline = actor_pool_module.RayCallDeadline
+    deadlines: list[Any] = []
+    deadlines_seen_at_submit: list[int] = []
+
+    def recording_deadline(*args: Any, **kwargs: Any) -> Any:
+        deadline = real_deadline(*args, **kwargs)
+        deadlines.append(deadline)
+        return deadline
+
+    class _Worker:
+        def remote(self, payload: str) -> _FakeRef:
+            deadlines_seen_at_submit.append(len(deadlines))
+            return _FakeRef(payload, completion_rank=1)
+
+    monkeypatch.setattr(actor_pool_module, "RayCallDeadline", recording_deadline)
+    worker = _Worker()
+    jobs = [
+        RayActorJob(
+            job_index=index,
+            worker_id="w0",
+            remote_method=worker.remote,
+            payload=f"job-{index}",
+        )
+        for index in range(2)
+    ]
+
+    results = await run_actor_jobs(
+        jobs,
+        max_inflight_per_actor=1,
+        generation_stall_timeout_s=30.0,
+    )
+
+    assert results == [(0, "job-0"), (1, "job-1")]
+    assert deadlines_seen_at_submit == [0, 1]
+    assert len(deadlines) == 2
+
+
+@pytest.mark.asyncio
+async def test_actor_pool_caller_cancellation_cancels_submitted_refs(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    never_ref = _NeverRef()
+    cancelled: list[Any] = []
+
+    class _Ray:
+        @staticmethod
+        def cancel(ref: Any, *, force: bool) -> None:
+            assert force is False
+            cancelled.append(ref)
+
+    monkeypatch.setattr(deadline_module, "require_ray", lambda: _Ray)
+    task = asyncio.create_task(
+        run_actor_jobs(
+            [
+                RayActorJob(
+                    job_index=0,
+                    worker_id="w0",
+                    remote_method=lambda _payload: never_ref,
+                    payload="never",
+                ),
+            ],
+            generation_stall_timeout_s=30.0,
+        ),
+    )
+    await asyncio.sleep(0)
+
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    assert cancelled == [never_ref]
 
 
 # ------------------------------------------------------------------ planner
@@ -340,6 +491,7 @@ def _executor(strategy: str, actors: list[_FakeActor]) -> RayGenerationExecutor:
         ),
         workers,
         _ListGatherer(),
+        generation_stall_timeout_s=30.0,
     )
 
 

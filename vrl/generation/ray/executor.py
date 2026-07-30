@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from dataclasses import replace
 from typing import Any
@@ -15,12 +16,19 @@ from vrl.generation.execution.types import (
     ChunkExecutionEnvelope,
     ChunkExecutionResult,
     DistributedWorkerHandle,
+    PipelinedProgressError,
     PipelinedRequestOutOfMemory,
+    PipelinedRequestProgress,
     StaleSlotDiscard,
 )
 from vrl.generation.protocols import ChunkGatherer, ChunkResult
 from vrl.generation.types import GenerationOutput, GenerationRequest
 from vrl.ray.actor_pool import RayActorJob, run_actor_jobs
+from vrl.ray.operation_deadline import (
+    RayCallDeadline,
+    cancel_ray_refs,
+    validate_ray_timeout,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -35,6 +43,7 @@ class RayGenerationExecutor:
         gatherer: ChunkGatherer,
         *,
         max_inflight_chunks_per_worker: int = 1,
+        generation_stall_timeout_s: float,
         pipelined: bool = False,
     ) -> None:
         if not workers:
@@ -51,11 +60,28 @@ class RayGenerationExecutor:
         self.workers = list(workers)
         self.gatherer = gatherer
         self.max_inflight_chunks_per_worker = int(max_inflight_chunks_per_worker)
+        self.generation_stall_timeout_s = validate_ray_timeout(
+            generation_stall_timeout_s,
+            name="generation_stall_timeout_s",
+        )
         # Config validation rejects multi-worker use; this constructor repeats the
         # guard for callers that construct executors directly.
         self.pipelined = bool(pipelined)
+        # A synchronous single-worker actor cannot execute two pipelined requests
+        # concurrently. Queue them on the driver so a later request does not spend
+        # its stall budget waiting behind an earlier, legitimately long request.
+        self._pipelined_request_lock = asyncio.Lock() if self.pipelined else None
 
     async def execute(self, request: GenerationRequest) -> GenerationOutput:
+        """Execute with single-flight admission for the pipelined worker."""
+
+        lock = self._pipelined_request_lock
+        if lock is None:
+            return await self._execute(request)
+        async with lock:
+            return await self._execute(request)
+
+    async def _execute(self, request: GenerationRequest) -> GenerationOutput:
         import time
 
         from vrl.utils.profiling import profile_range
@@ -140,6 +166,7 @@ class RayGenerationExecutor:
                 await run_actor_jobs(
                     remote_jobs,
                     max_inflight_per_actor=self.max_inflight_chunks_per_worker,
+                    generation_stall_timeout_s=self.generation_stall_timeout_s,
                     worker_methods=worker_methods,
                     schedule=schedule_rows if runtime_debug_on else None,
                 ),
@@ -299,7 +326,19 @@ class RayGenerationExecutor:
         call = actor.execute_request_pipelined
         remote = getattr(call, "remote", None)
         if callable(remote):
-            result = await remote(request, engine_plan, sample_rows)
+            progress = getattr(actor, "pipelined_progress", None)
+            progress_remote = getattr(progress, "remote", None)
+            if not callable(progress_remote):
+                raise PipelinedProgressError(
+                    "pipelined Ray generation requires worker progress reporting",
+                )
+            result = await self._await_pipelined_result(
+                result_ref=remote(request, engine_plan, sample_rows),
+                progress_remote=progress_remote,
+                worker_id=worker.worker_id,
+                request_id=request.request_id,
+                total_chunks=len(engine_plan.chunks),
+            )
         else:
             result = call(request, engine_plan, sample_rows)
         if not isinstance(result, (GenerationOutput, PipelinedRequestOutOfMemory)):
@@ -320,6 +359,111 @@ class RayGenerationExecutor:
                 f"{result.worker_id!r} != {worker.worker_id!r}",
             )
         return result
+
+    async def _await_pipelined_result(
+        self,
+        *,
+        result_ref: Any,
+        progress_remote: Any,
+        worker_id: str,
+        request_id: str,
+        total_chunks: int,
+    ) -> Any:
+        """Reset one stall deadline only when the worker completes a new chunk."""
+
+        context = f"worker_id={worker_id}, request_id={request_id}"
+        deadline = RayCallDeadline(
+            "rollout.generation.pipelined",
+            self.generation_stall_timeout_s,
+            context=context,
+        )
+        result_task = asyncio.ensure_future(result_ref)
+        progress_task: asyncio.Future[Any] | None = None
+        progress_ref: Any | None = None
+        completed_chunks = 0
+        try:
+            while True:
+                remaining_s = deadline.remaining_s()
+                done, _ = await asyncio.wait(
+                    {result_task},
+                    timeout=min(1.0, remaining_s / 4),
+                )
+                if done:
+                    return result_task.result()
+                if deadline.remaining_s() <= 0:
+                    raise deadline.timeout_error()
+
+                progress_ref = progress_remote(request_id)
+                progress_task = asyncio.ensure_future(progress_ref)
+                done, _ = await asyncio.wait(
+                    {result_task, progress_task},
+                    timeout=deadline.remaining_s(),
+                    return_when=asyncio.FIRST_COMPLETED,
+                )
+                if not done:
+                    raise deadline.timeout_error()
+                if result_task in done:
+                    result = result_task.result()
+                    if not progress_task.done():
+                        failures = cancel_ray_refs(
+                            None,
+                            [progress_ref],
+                            root_error=None,
+                        )
+                        if failures:
+                            logger.warning(
+                                "pipelined progress cancellation failed after "
+                                "result completion: %r",
+                                failures[0],
+                            )
+                    return result
+
+                snapshot = progress_task.result()
+                progress_task = None
+                progress_ref = None
+                if snapshot is None:
+                    continue
+                if not isinstance(snapshot, PipelinedRequestProgress):
+                    raise PipelinedProgressError(
+                        f"pipelined worker returned invalid progress {type(snapshot).__name__}",
+                    )
+                if snapshot.request_id != request_id:
+                    raise PipelinedProgressError(
+                        "pipelined progress request_id mismatch: "
+                        f"{snapshot.request_id!r} != {request_id!r}",
+                    )
+                if snapshot.total_chunks != total_chunks:
+                    raise PipelinedProgressError(
+                        "pipelined progress total_chunks mismatch: "
+                        f"{snapshot.total_chunks} != {total_chunks}",
+                    )
+                if snapshot.completed_chunks < completed_chunks:
+                    raise PipelinedProgressError(
+                        "pipelined progress regressed: "
+                        f"{snapshot.completed_chunks} < {completed_chunks}",
+                    )
+                if snapshot.completed_chunks > completed_chunks:
+                    completed_chunks = snapshot.completed_chunks
+                    deadline = RayCallDeadline(
+                        "rollout.generation.pipelined",
+                        self.generation_stall_timeout_s,
+                        context=context,
+                    )
+        except BaseException as error:
+            refs = [result_ref]
+            if progress_ref is not None:
+                refs.append(progress_ref)
+            cancel_ray_refs(None, refs, root_error=error)
+            raise
+        finally:
+            if progress_task is not None and not progress_task.done():
+                progress_task.cancel()
+            if not result_task.done():
+                result_task.cancel()
+            await asyncio.gather(
+                *(task for task in (result_task, progress_task) if task is not None),
+                return_exceptions=True,
+            )
 
     async def _degrade_oom_chunks(
         self,
@@ -399,6 +543,7 @@ class RayGenerationExecutor:
                 pairs = await run_actor_jobs(
                     retry_jobs,
                     max_inflight_per_actor=self.max_inflight_chunks_per_worker,
+                    generation_stall_timeout_s=self.generation_stall_timeout_s,
                 )
                 pending.extend(result for _, result in pairs)
             pending.extend(call(envelope) for call, envelope in local_calls)

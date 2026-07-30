@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import time
 from typing import Any
 
@@ -12,6 +13,7 @@ import vrl.generation.ray.weight_sync as weight_sync_module
 from vrl.generation.execution.types import DistributedWorkerHandle
 from vrl.generation.ray.weight_sync import RayGenerationWeightSync
 from vrl.generation.ray.worker import RayGenerationWorker
+from vrl.ray.operation_deadline import RayOperationTimeout
 
 # Carried by the two tests that drive `_FakeRay`. They are kept, not converted:
 # `put_calls == [{"w": 1}]` is the only assertion anywhere that pins ONE put
@@ -61,6 +63,14 @@ class _FakeObjectRef:
         return _resolve().__await__()
 
 
+class _NeverObjectRef:
+    def __await__(self):
+        async def _wait_forever() -> None:
+            await asyncio.Event().wait()
+
+        return _wait_forever().__await__()
+
+
 class _RemoteWorker:
     def __init__(self, installed_version: Any) -> None:
         self.update_weights = _RemoteMethod(installed_version)
@@ -92,6 +102,7 @@ async def test_local_update_return_is_the_commit_ack() -> None:
     actor = _LocalWorker(installed_version=3)
     sync = RayGenerationWeightSync(
         [DistributedWorkerHandle(worker_id="rollout-0", actor=actor)],
+        worker_rpc_timeout_s=30.0,
     )
 
     result = await sync.push_to_rollout_workers({"w": 1}, policy_version=3)
@@ -109,6 +120,7 @@ async def test_local_update_rejects_wrong_installed_version() -> None:
                 actor=_LocalWorker(installed_version=2),
             ),
         ],
+        worker_rpc_timeout_s=30.0,
     )
 
     with pytest.raises(RuntimeError, match=r"rollout-0.*version 2.*expected 3"):
@@ -129,6 +141,7 @@ async def test_remote_update_results_are_verified_without_second_ack_rpc(
             DistributedWorkerHandle(worker_id="rollout-0", actor=first),
             DistributedWorkerHandle(worker_id="rollout-1", actor=second),
         ],
+        worker_rpc_timeout_s=30.0,
     )
 
     await sync.push_to_rollout_workers({"w": 1}, policy_version=4)
@@ -157,10 +170,57 @@ async def test_remote_update_rejects_partial_wrong_version(
                 actor=_RemoteWorker(installed_version=4),
             ),
         ],
+        worker_rpc_timeout_s=30.0,
     )
 
     with pytest.raises(RuntimeError, match=r"rollout-1.*version 4.*expected 5"):
         await sync.push_to_rollout_workers({"w": 1}, policy_version=5)
+
+
+@_OBJECT_STORE_LEDGER
+@pytest.mark.asyncio
+async def test_remote_update_timeout_rejects_partial_ack_and_cancels_every_ref(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    completed_ref = _FakeObjectRef(7)
+    stalled_ref = _NeverObjectRef()
+
+    class _Method:
+        def __init__(self, ref: Any) -> None:
+            self.ref = ref
+
+        def remote(self, _state_ref: Any, _policy_version: int) -> Any:
+            return self.ref
+
+    class _Ray(_FakeRay):
+        def __init__(self) -> None:
+            super().__init__()
+            self.cancelled: list[tuple[Any, bool]] = []
+
+        def cancel(self, ref: Any, *, force: bool) -> None:
+            self.cancelled.append((ref, force))
+
+    ray = _Ray()
+    monkeypatch.setattr(weight_sync_module, "require_ray", lambda: ray)
+    sync = RayGenerationWeightSync(
+        [
+            DistributedWorkerHandle(
+                worker_id="rollout-0",
+                actor=type("_Worker", (), {"update_weights": _Method(completed_ref)})(),
+            ),
+            DistributedWorkerHandle(
+                worker_id="rollout-1",
+                actor=type("_Worker", (), {"update_weights": _Method(stalled_ref)})(),
+            ),
+        ],
+        worker_rpc_timeout_s=0.01,
+    )
+
+    with pytest.raises(RayOperationTimeout, match=r"rollout\.weight_sync"):
+        await sync.push_to_rollout_workers({"w": 1}, policy_version=7)
+
+    assert (stalled_ref, False) in ray.cancelled
+    assert all(force is False for _ref, force in ray.cancelled)
 
 
 # ------------------------------------------------------- real cluster (real Ray)
@@ -216,7 +276,7 @@ async def test_real_ray_weight_sync_derefs_one_shared_put(local_ray) -> None:
 
     handles = _install_fleet(local_ray, (0, 0.0), (0, 0.0))
     try:
-        sync = RayGenerationWeightSync(handles)
+        sync = RayGenerationWeightSync(handles, worker_rpc_timeout_s=30.0)
 
         # Fixed tensor, no RNG: the sum below is the payload's identity.
         await sync.push_to_rollout_workers({"w": torch.arange(6)}, policy_version=4)
@@ -247,7 +307,7 @@ async def test_real_ray_weight_sync_attributes_a_wrong_ack_by_submission_order(
     # acks one version short and completes first.
     handles = _install_fleet(local_ray, (0, 0.5), (-1, 0.0))
     try:
-        sync = RayGenerationWeightSync(handles)
+        sync = RayGenerationWeightSync(handles, worker_rpc_timeout_s=30.0)
 
         with pytest.raises(RuntimeError, match=r"rollout-1.*version 4.*expected 5"):
             await sync.push_to_rollout_workers({"w": torch.arange(6)}, policy_version=5)

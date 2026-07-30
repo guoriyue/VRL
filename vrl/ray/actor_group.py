@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from vrl.ray.dependencies import require_ray
+from vrl.ray.operation_deadline import get_ray_refs, validate_ray_timeout
 from vrl.ray.placement import actor_scheduling_strategy
 from vrl.ray.resource_cleanup import kill_actors, kill_and_retain
 
@@ -36,6 +37,7 @@ class RayActorGroup:
         worker_ids: Sequence[str],
         num_cpus: float,
         num_gpus: float,
+        worker_rpc_timeout_s: float,
         placement_group: Any | None = None,
         bundle_indices: Sequence[int] | None = None,
         startup_method: str | None = None,
@@ -47,6 +49,10 @@ class RayActorGroup:
             raise ValueError("worker_configs and worker_ids must have the same length")
         if bundle_indices is not None and len(bundle_indices) != len(worker_ids):
             raise ValueError("bundle_indices and worker_ids must have the same length")
+        worker_rpc_timeout_s = validate_ray_timeout(
+            worker_rpc_timeout_s,
+            name="worker_rpc_timeout_s",
+        )
 
         ray = require_ray()
         remote_options: dict[str, Any] = {
@@ -74,10 +80,22 @@ class RayActorGroup:
 
             if startup_method:
                 startup_refs = [getattr(actor, startup_method).remote() for actor in actors]
-                ray.get(startup_refs)
+                get_ray_refs(
+                    ray,
+                    startup_refs,
+                    operation="rollout.startup.load_policy",
+                    timeout_s=worker_rpc_timeout_s,
+                    context=f"workers={len(actors)}",
+                )
 
             metadata_refs = [actor.worker_metadata.remote() for actor in actors]
-            metadata = ray.get(metadata_refs)
+            metadata = get_ray_refs(
+                ray,
+                metadata_refs,
+                operation="rollout.startup.worker_metadata",
+                timeout_s=worker_rpc_timeout_s,
+                context=f"workers={len(actors)}",
+            )
             handles = [
                 RayActorHandle(
                     worker_id=worker_id,

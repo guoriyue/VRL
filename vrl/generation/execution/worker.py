@@ -518,6 +518,8 @@ class GenerationWorkerCore:
         request: Any,
         engine_plan: Any,
         sample_rows: Any,
+        *,
+        progress_callback: Callable[[int], None] | None = None,
     ) -> GenerationOutput | PipelinedRequestOutOfMemory:
         """Run ALL of a request's chunks through the executor's software pipeline
         (``forward_plan_pipelined``) on THIS worker, so chunk N+1's denoise overlaps
@@ -567,7 +569,14 @@ class GenerationWorkerCore:
                 "for per-request pipelined execution",
             )
         try:
-            return forward_plan_pipelined(request, sample_rows, engine_plan)
+            if progress_callback is None:
+                return forward_plan_pipelined(request, sample_rows, engine_plan)
+            return forward_plan_pipelined(
+                request,
+                sample_rows,
+                engine_plan,
+                progress_callback=progress_callback,
+            )
         except RuntimeError as error:
             self._memory_parking.recover_after_execution_error(model, error)
             if not is_cuda_out_of_memory(error):

@@ -1,0 +1,387 @@
+"""Pipelined generation progress and single-flight deadline tests."""
+
+from __future__ import annotations
+
+import asyncio
+import threading
+from types import SimpleNamespace
+from typing import Any
+
+import pytest
+
+import vrl.ray.operation_deadline as deadline_module
+from vrl.generation.execution.types import (
+    DistributedWorkerHandle,
+    PipelinedProgressError,
+    PipelinedRequestProgress,
+)
+from vrl.generation.ray.executor import RayGenerationExecutor
+from vrl.generation.ray.worker import RayGenerationWorker
+from vrl.ray.operation_deadline import RayOperationTimeout
+
+
+class _ResolvedRef:
+    def __init__(self, value: Any) -> None:
+        self.value = value
+
+    def __await__(self):
+        async def resolve() -> Any:
+            return self.value
+
+        return resolve().__await__()
+
+
+class _GatedRef:
+    def __init__(self, event: asyncio.Event, value: Any) -> None:
+        self.event = event
+        self.value = value
+
+    def __await__(self):
+        async def resolve() -> Any:
+            await self.event.wait()
+            return self.value
+
+        return resolve().__await__()
+
+
+def _executor(*, timeout_s: float = 1.0) -> RayGenerationExecutor:
+    return RayGenerationExecutor(
+        planner=object(),
+        workers=[DistributedWorkerHandle(worker_id="w0", actor=object())],
+        gatherer=object(),
+        generation_stall_timeout_s=timeout_s,
+        pipelined=True,
+    )
+
+
+def test_ray_worker_reports_only_the_active_pipelined_request() -> None:
+    worker = object.__new__(RayGenerationWorker)
+    worker._pipelined_progress_lock = threading.Lock()
+    worker._pipelined_progress = None
+    observed: list[PipelinedRequestProgress | None] = []
+
+    class _Core:
+        def execute_request_pipelined(
+            self,
+            request: Any,
+            engine_plan: Any,
+            sample_rows: Any,
+            *,
+            progress_callback: Any,
+        ) -> str:
+            del engine_plan, sample_rows
+            observed.append(worker.pipelined_progress(request.request_id))
+            progress_callback(1)
+            observed.append(worker.pipelined_progress(request.request_id))
+            progress_callback(2)
+            return "complete"
+
+    worker.core = _Core()
+    request = SimpleNamespace(request_id="req-progress")
+    plan = SimpleNamespace(chunks=("c0", "c1"))
+
+    result = worker.execute_request_pipelined(request, plan, [])
+
+    assert result == "complete"
+    assert [snapshot.completed_chunks for snapshot in observed if snapshot is not None] == [0, 1]
+    assert all(snapshot.total_chunks == 2 for snapshot in observed if snapshot is not None)
+    assert worker.pipelined_progress("req-progress") is None
+    assert worker.pipelined_progress("another-request") is None
+
+
+@pytest.mark.asyncio
+async def test_remote_pipelined_worker_requires_progress_endpoint() -> None:
+    executor = _executor()
+
+    class _RemoteMethod:
+        @staticmethod
+        def remote(*_args: Any) -> None:
+            raise AssertionError("request must not start without progress endpoint")
+
+    executor.workers[0] = DistributedWorkerHandle(
+        worker_id="w0",
+        actor=SimpleNamespace(execute_request_pipelined=_RemoteMethod()),
+    )
+
+    with pytest.raises(PipelinedProgressError, match="requires worker progress"):
+        await executor._execute_request_pipelined(
+            SimpleNamespace(request_id="req-missing-progress"),
+            SimpleNamespace(chunks=("c0", "c1")),
+            [],
+        )
+
+
+@pytest.mark.asyncio
+async def test_pipelined_progress_resets_the_stall_deadline() -> None:
+    executor = _executor(timeout_s=0.05)
+    result_ready = asyncio.Event()
+    result_ref = _GatedRef(result_ready, "complete")
+    progress_calls = 0
+
+    def progress_remote(request_id: str) -> _ResolvedRef:
+        nonlocal progress_calls
+        progress_calls += 1
+        if progress_calls == 2:
+            result_ready.set()
+        return _ResolvedRef(
+            PipelinedRequestProgress(
+                request_id=request_id,
+                completed_chunks=min(progress_calls, 2),
+                total_chunks=2,
+            ),
+        )
+
+    result = await executor._await_pipelined_result(
+        result_ref=result_ref,
+        progress_remote=progress_remote,
+        worker_id="w0",
+        request_id="req-progress",
+        total_chunks=2,
+    )
+
+    assert result == "complete"
+    assert progress_calls == 2
+
+
+@pytest.mark.asyncio
+async def test_pipelined_stall_cancels_the_result_ref(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    executor = _executor(timeout_s=0.03)
+    result_ref = _GatedRef(asyncio.Event(), "never")
+    cancelled: list[Any] = []
+
+    class _Ray:
+        @staticmethod
+        def cancel(ref: Any, *, force: bool) -> None:
+            assert force is False
+            cancelled.append(ref)
+
+    monkeypatch.setattr(deadline_module, "require_ray", lambda: _Ray)
+
+    def progress_remote(request_id: str) -> _ResolvedRef:
+        return _ResolvedRef(
+            PipelinedRequestProgress(
+                request_id=request_id,
+                completed_chunks=0,
+                total_chunks=2,
+            ),
+        )
+
+    with pytest.raises(RayOperationTimeout, match=r"rollout\.generation\.pipelined"):
+        await executor._await_pipelined_result(
+            result_ref=result_ref,
+            progress_remote=progress_remote,
+            worker_id="w0",
+            request_id="req-stalled",
+            total_chunks=2,
+        )
+
+    assert result_ref in cancelled
+
+
+@pytest.mark.asyncio
+async def test_pipelined_progress_rpc_stall_cancels_result_and_progress(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    executor = _executor(timeout_s=0.04)
+    result_ref = _GatedRef(asyncio.Event(), "never")
+    progress_ref = _GatedRef(asyncio.Event(), "never")
+    cancelled: list[Any] = []
+
+    class _Ray:
+        @staticmethod
+        def cancel(ref: Any, *, force: bool) -> None:
+            assert force is False
+            cancelled.append(ref)
+
+    monkeypatch.setattr(deadline_module, "require_ray", lambda: _Ray)
+
+    with pytest.raises(RayOperationTimeout, match=r"rollout\.generation\.pipelined"):
+        await executor._await_pipelined_result(
+            result_ref=result_ref,
+            progress_remote=lambda _request_id: progress_ref,
+            worker_id="w0",
+            request_id="req-progress-stalled",
+            total_chunks=2,
+        )
+
+    assert result_ref in cancelled
+    assert progress_ref in cancelled
+
+
+@pytest.mark.asyncio
+async def test_pipelined_caller_cancellation_cancels_active_refs(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    executor = _executor(timeout_s=0.1)
+    result_ref = _GatedRef(asyncio.Event(), "never")
+    progress_ref = _GatedRef(asyncio.Event(), "never")
+    progress_called = asyncio.Event()
+    cancelled: list[Any] = []
+
+    class _Ray:
+        @staticmethod
+        def cancel(ref: Any, *, force: bool) -> None:
+            assert force is False
+            cancelled.append(ref)
+
+    monkeypatch.setattr(deadline_module, "require_ray", lambda: _Ray)
+
+    def progress_remote(_request_id: str) -> _GatedRef:
+        progress_called.set()
+        return progress_ref
+
+    task = asyncio.create_task(
+        executor._await_pipelined_result(
+            result_ref=result_ref,
+            progress_remote=progress_remote,
+            worker_id="w0",
+            request_id="req-cancelled",
+            total_chunks=2,
+        ),
+    )
+    await progress_called.wait()
+    task.cancel()
+
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    assert result_ref in cancelled
+    assert progress_ref in cancelled
+
+
+@pytest.mark.asyncio
+async def test_pipelined_result_cancels_a_losing_progress_rpc(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    executor = _executor(timeout_s=0.1)
+    result_ready = asyncio.Event()
+    result_ref = _GatedRef(result_ready, "complete")
+    progress_ref = _GatedRef(asyncio.Event(), "never")
+    cancelled: list[Any] = []
+
+    class _Ray:
+        @staticmethod
+        def cancel(ref: Any, *, force: bool) -> None:
+            assert force is False
+            cancelled.append(ref)
+
+    monkeypatch.setattr(deadline_module, "require_ray", lambda: _Ray)
+
+    def progress_remote(_request_id: str) -> _GatedRef:
+        result_ready.set()
+        return progress_ref
+
+    result = await executor._await_pipelined_result(
+        result_ref=result_ref,
+        progress_remote=progress_remote,
+        worker_id="w0",
+        request_id="req-result-wins",
+        total_chunks=2,
+    )
+
+    assert result == "complete"
+    assert cancelled == [progress_ref]
+
+
+@pytest.mark.parametrize(
+    ("snapshots", "message"),
+    [
+        ([object()], "invalid progress"),
+        (
+            [
+                PipelinedRequestProgress(
+                    request_id="wrong-request",
+                    completed_chunks=0,
+                    total_chunks=2,
+                ),
+            ],
+            "request_id mismatch",
+        ),
+        (
+            [
+                PipelinedRequestProgress(
+                    request_id="req-protocol",
+                    completed_chunks=0,
+                    total_chunks=3,
+                ),
+            ],
+            "total_chunks mismatch",
+        ),
+        (
+            [
+                PipelinedRequestProgress(
+                    request_id="req-protocol",
+                    completed_chunks=1,
+                    total_chunks=2,
+                ),
+                PipelinedRequestProgress(
+                    request_id="req-protocol",
+                    completed_chunks=0,
+                    total_chunks=2,
+                ),
+            ],
+            "progress regressed",
+        ),
+    ],
+)
+@pytest.mark.asyncio
+async def test_pipelined_progress_protocol_failure_is_terminal_and_cancels_result(
+    monkeypatch: pytest.MonkeyPatch,
+    snapshots: list[Any],
+    message: str,
+) -> None:
+    executor = _executor(timeout_s=0.1)
+    result_ref = _GatedRef(asyncio.Event(), "never")
+    remaining = list(snapshots)
+    cancelled: list[Any] = []
+
+    class _Ray:
+        @staticmethod
+        def cancel(ref: Any, *, force: bool) -> None:
+            assert force is False
+            cancelled.append(ref)
+
+    monkeypatch.setattr(deadline_module, "require_ray", lambda: _Ray)
+
+    def progress_remote(_request_id: str) -> _ResolvedRef:
+        snapshot = remaining.pop(0) if remaining else snapshots[-1]
+        return _ResolvedRef(snapshot)
+
+    with pytest.raises(PipelinedProgressError, match=message):
+        await executor._await_pipelined_result(
+            result_ref=result_ref,
+            progress_remote=progress_remote,
+            worker_id="w0",
+            request_id="req-protocol",
+            total_chunks=2,
+        )
+
+    assert result_ref in cancelled
+
+
+@pytest.mark.asyncio
+async def test_pipelined_executor_queues_requests_before_starting_deadline() -> None:
+    executor = _executor()
+    first_can_finish = asyncio.Event()
+    first_entered = asyncio.Event()
+    entered: list[str] = []
+
+    async def execute_unlocked(request: Any) -> str:
+        entered.append(request.request_id)
+        if request.request_id == "first":
+            first_entered.set()
+            await first_can_finish.wait()
+        return request.request_id
+
+    executor._execute = execute_unlocked
+    first = asyncio.create_task(executor.execute(SimpleNamespace(request_id="first")))
+    await first_entered.wait()
+    second = asyncio.create_task(executor.execute(SimpleNamespace(request_id="second")))
+    await asyncio.sleep(0)
+
+    assert entered == ["first"]
+    first_can_finish.set()
+    assert await asyncio.gather(first, second) == ["first", "second"]
+    assert entered == ["first", "second"]

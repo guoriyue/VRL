@@ -66,6 +66,8 @@ def _worker_config(**overrides: Any) -> RolloutWorkerConfig:
         "health_check_interval_s": 30.0,
         "health_check_timeout_s": 30.0,
         "health_check_first_wait_s": 0.0,
+        "worker_rpc_timeout_s": 30.0,
+        "generation_stall_timeout_s": 30.0,
         "pipelined": False,
         "chunk_placement_strategy": "round_robin",
         "sync_trainable_state": False,

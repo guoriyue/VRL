@@ -1,11 +1,10 @@
 """Background liveness monitoring for Ray generation workers.
 
-The training driver has no in-band bound on worker RPCs: a wedged worker would
-otherwise keep the current attempt alive forever, and the repository supervisor
-only starts a fresh attempt once the child process exits. This monitor is that
-missing detector. It probes every owned worker on its own OS thread and, when a
-worker stops answering, kills the fleet so the blocked driver call fails and the
-attempt unwinds into the existing terminal path.
+Operation deadlines bound active business RPCs but do not prove actor-process
+reachability during idle windows. This complementary monitor probes every owned
+worker on its own OS thread and, when a worker stops answering, retains the
+failure and kills the fleet so an active or subsequent foreground operation
+enters the existing terminal path.
 
 Why a thread and not an asyncio task: the trainer's event loop is blocked for
 the whole of each forward/backward step (it yields only between timesteps), so a
@@ -35,9 +34,10 @@ _STOP_JOIN_GRACE_S = 5.0
 class RolloutWorkerHealthMonitor:
     """Probe owned rollout workers and terminalize the runtime when one hangs.
 
-    Probing is paused while workers are parked in host RAM: an offloaded worker
-    is intentionally unresponsive, so checking it would report a false death.
-    The rollout schedule owns those transitions and drives pause/resume.
+    The rollout schedule pauses probing across parking transitions and parked
+    intervals because they are explicitly outside the active serving SLA. This
+    is a lifecycle policy, not a claim that the lightweight health method cannot
+    technically answer while model state is offloaded.
     """
 
     def __init__(
@@ -147,12 +147,12 @@ class RolloutWorkerHealthMonitor:
                 return
 
     def _terminalize(self, ray: Any, worker_id: str, error: BaseException) -> None:
-        """Close admission and destroy the fleet so blocked driver calls fail."""
+        """Close admission and destroy actors so active/next foreground work fails."""
 
         failure = RolloutWorkerUnreachable(worker_id, self._timeout_s, error)
         logger.error(
             "rollout worker %s failed its liveness probe after %.0fs; "
-            "killing the fleet so the training attempt fails closed",
+            "killing the fleet so active or subsequent runtime work fails closed",
             worker_id,
             self._timeout_s,
             exc_info=error,

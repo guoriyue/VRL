@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import Any
 
 
@@ -41,6 +42,8 @@ def forward_chunks_pipelined(
     executor: Any,
     request: Any,
     chunks: Any,
+    *,
+    progress_callback: Callable[[int], None] | None = None,
 ) -> list:
     """In-process software pipeline over a request's chunks: while chunk N+1's
     PRODUCE (encode->prepare->denoise->decode, GPU compute on the default stream)
@@ -91,6 +94,8 @@ def forward_chunks_pipelined(
 
             prev_result = executor.forward_chunk_plan(request, chunk)
             prev_idx = idx
+            if progress_callback is not None:
+                progress_callback(idx + 1)
             if cuda:
                 prev_done = torch.cuda.Event()
                 prev_done.record()  # default stream: this chunk's produce is enqueued

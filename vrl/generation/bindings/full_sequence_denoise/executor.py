@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -273,6 +274,8 @@ class DiffusionChunkExecutorBase(ChunkExecutorBase):
         request: GenerationRequest,
         sample_rows: list[GenerationSampleRow],
         plan: Any,
+        *,
+        progress_callback: Callable[[int], None] | None = None,
     ) -> GenerationOutput:
         """In-process software-pipelined variant of forward_plan: chunk N+1's
         produce (encode->prepare->denoise->decode, GPU compute on the default
@@ -290,7 +293,12 @@ class DiffusionChunkExecutorBase(ChunkExecutorBase):
 
         from vrl.generation.execution.pipeline import forward_chunks_pipelined
 
-        chunks = forward_chunks_pipelined(self, request, plan.chunks)
+        chunks = forward_chunks_pipelined(
+            self,
+            request,
+            plan.chunks,
+            progress_callback=progress_callback,
+        )
         return self.gather_chunks(request, sample_rows, chunks)
 
     def forward_chunk_plan(

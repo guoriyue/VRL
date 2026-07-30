@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import threading
 from typing import Any
 
 import ray
@@ -10,6 +11,7 @@ from vrl.generation.execution.types import (
     ChunkExecutionEnvelope,
     ChunkExecutionResult,
     PipelinedRequestOutOfMemory,
+    PipelinedRequestProgress,
     WorkerMemoryParkingSnapshot,
 )
 from vrl.generation.execution.worker import GenerationWorkerCore
@@ -17,9 +19,10 @@ from vrl.generation.ray.launch_inputs import RayGenerationLaunchInputs
 from vrl.generation.types import GenerationOutput
 from vrl.ray.dependencies import current_gpu_ids, current_node_ip
 
-# Ray binds a method to a concurrency group by name across two separate APIs --
+# Ray binds methods to a concurrency group by name across two separate APIs --
 # @ray.method here and ray.remote(concurrency_groups=...) at actor creation --
-# so the name is shared; the group's thread count belongs to the creation site.
+# so health/progress adapters share this protocol name; the group's thread
+# count belongs to the creation site.
 HEALTH_CONCURRENCY_GROUP = "health"
 
 
@@ -42,6 +45,8 @@ class RayGenerationWorker:
             launch_inputs.gatherer,
             metadata_provider=self._ray_metadata,
         )
+        self._pipelined_progress_lock = threading.Lock()
+        self._pipelined_progress: PipelinedRequestProgress | None = None
 
     @ray.method(concurrency_group=HEALTH_CONCURRENCY_GROUP)
     def health(self) -> str:
@@ -101,7 +106,62 @@ class RayGenerationWorker:
         """Per-request software-pipelined execution (single-worker stage-overlap
         path); returns a gathered output or typed OOM retry. See
         GenerationWorkerCore.execute_request_pipelined."""
-        return self.core.execute_request_pipelined(request, engine_plan, sample_rows)
+        request_id = str(request.request_id)
+        total_chunks = len(engine_plan.chunks)
+        with self._pipelined_progress_lock:
+            if self._pipelined_progress is not None:
+                raise RuntimeError(
+                    "pipelined worker received overlapping requests "
+                    f"{self._pipelined_progress.request_id!r} and {request_id!r}",
+                )
+            self._pipelined_progress = PipelinedRequestProgress(
+                request_id=request_id,
+                completed_chunks=0,
+                total_chunks=total_chunks,
+            )
+
+        def record_progress(completed_chunks: int) -> None:
+            with self._pipelined_progress_lock:
+                current = self._pipelined_progress
+                if current is None or current.request_id != request_id:
+                    raise RuntimeError(
+                        f"pipelined progress lost active request {request_id!r}",
+                    )
+                if completed_chunks != current.completed_chunks + 1:
+                    raise RuntimeError(
+                        "pipelined progress must advance one chunk at a time "
+                        f"(request_id={request_id!r}, previous="
+                        f"{current.completed_chunks}, actual={completed_chunks})",
+                    )
+                self._pipelined_progress = PipelinedRequestProgress(
+                    request_id=request_id,
+                    completed_chunks=completed_chunks,
+                    total_chunks=total_chunks,
+                )
+
+        try:
+            return self.core.execute_request_pipelined(
+                request,
+                engine_plan,
+                sample_rows,
+                progress_callback=record_progress,
+            )
+        finally:
+            with self._pipelined_progress_lock:
+                self._pipelined_progress = None
+
+    @ray.method(concurrency_group=HEALTH_CONCURRENCY_GROUP)
+    def pipelined_progress(
+        self,
+        request_id: str,
+    ) -> PipelinedRequestProgress | None:
+        """Report strict chunk progress without joining the busy default group."""
+
+        with self._pipelined_progress_lock:
+            progress = self._pipelined_progress
+            if progress is None or progress.request_id != request_id:
+                return None
+            return progress
 
     def _ray_metadata(self) -> dict[str, Any]:
         try:

@@ -95,6 +95,7 @@ def _executor(ray: Any, strategy: str) -> tuple[RayGenerationExecutor, list[Any]
         DistributedExecutionPlanner(policy=ChunkPlacementPolicy(strategy=strategy)),
         workers,
         _ListGatherer(),
+        generation_stall_timeout_s=30.0,
     )
     return executor, actors
 

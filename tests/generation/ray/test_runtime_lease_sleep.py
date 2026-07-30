@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, ClassVar
 
 import pytest
 from omegaconf import OmegaConf
@@ -25,6 +25,7 @@ from vrl.generation.ray.runtime import (
     RayGenerationRuntime,
     _PolicySnapshot,
 )
+from vrl.ray.operation_deadline import RayOperationTimeout
 from vrl.ray.resources import resolve_distributed_resources
 from vrl.trainers.weight_sync import build_runtime_weight_syncer
 
@@ -90,6 +91,37 @@ class _BlockingSleepInner(_FakeInner):
         self.sleep_started.set()
         await self.finish_sleep.wait()
         await super().sleep_workers()
+
+
+class _TimeoutWeightSync:
+    def __init__(self, error: RayOperationTimeout) -> None:
+        self.error = error
+
+    async def push_to_rollout_workers(self, _state_ref: Any, _version: int) -> None:
+        raise self.error
+
+
+class _ReleaseActor:
+    def __init__(self) -> None:
+        self.release_calls = 0
+        self.release_policy = SimpleNamespace(remote=self._release)
+
+    def _release(self) -> object:
+        self.release_calls += 1
+        return object()
+
+
+def _timeout_inner(
+    error: RayOperationTimeout,
+) -> tuple[RayGenerationRuntime, _ReleaseActor]:
+    actor = _ReleaseActor()
+    runtime = RayGenerationRuntime(
+        SimpleNamespace(),
+        weight_sync=_TimeoutWeightSync(error),
+        owned_workers=[DistributedWorkerHandle(worker_id="w0", actor=actor)],
+    )
+    runtime.current_policy_version = 1
+    return runtime, actor
 
 
 def _ray_config(
@@ -500,6 +532,43 @@ async def test_active_update_failure_preserves_desired_policy_and_terminates() -
 
 
 @pytest.mark.asyncio
+async def test_active_on_demand_timeout_force_kills_the_inner_owner(
+    monkeypatch,
+) -> None:
+    import vrl.generation.ray.runtime as runtime_module
+
+    outer = _on_demand_runtime()
+    state = outer._on_demand
+    assert state is not None
+    _set_desired_policy(outer, "W1", 1)
+    timeout = RayOperationTimeout("rollout.weight_sync", 1.0)
+    inner, actor = _timeout_inner(timeout)
+    state.inner_runtime = inner
+    state.active_policy_version = 1
+
+    class _Ray:
+        killed: ClassVar[list[object]] = []
+
+        @classmethod
+        def kill(cls, target: object, *, no_restart: bool) -> None:
+            assert no_restart is True
+            cls.killed.append(target)
+
+    monkeypatch.setattr(runtime_module, "require_ray", lambda: _Ray)
+
+    with pytest.raises(RayOperationTimeout) as caught:
+        await outer.update_weights("W2", 2)
+
+    assert caught.value is timeout
+    assert outer.current_policy_version == 1
+    assert inner.current_policy_version == 1
+    assert outer.lifecycle.phase is RuntimePhase.TERMINATED
+    assert inner.lifecycle.phase is RuntimePhase.TERMINATED
+    assert actor.release_calls == 0
+    assert _Ray.killed == [actor]
+
+
+@pytest.mark.asyncio
 async def test_update_cleanup_failure_retains_inner_for_retry() -> None:
     runtime = _on_demand_runtime()
     state = runtime._on_demand
@@ -798,6 +867,49 @@ async def test_activation_restore_failure_cleans_candidate_and_terminates(monkey
     assert state.inner_runtime is None
     assert runtime.lifecycle.failure is restore_error
     assert runtime.lifecycle.phase is RuntimePhase.TERMINATED
+
+
+@pytest.mark.asyncio
+async def test_cold_restore_timeout_force_kills_unpublished_candidate(
+    monkeypatch,
+) -> None:
+    import vrl.generation.ray.launcher as launcher_module
+    import vrl.generation.ray.runtime as runtime_module
+
+    outer = _on_demand_runtime()
+    state = outer._on_demand
+    assert state is not None
+    _set_desired_policy(outer, "W2", 2)
+    timeout = RayOperationTimeout("rollout.weight_sync", 1.0)
+    candidate, actor = _timeout_inner(timeout)
+
+    class _Launcher:
+        async def launch_async(self, *_args, **_kwargs):
+            return candidate
+
+    class _Ray:
+        killed: ClassVar[list[object]] = []
+
+        @classmethod
+        def kill(cls, target: object, *, no_restart: bool) -> None:
+            assert no_restart is True
+            cls.killed.append(target)
+
+    monkeypatch.setattr(launcher_module, "RayGenerationLauncher", _Launcher)
+    monkeypatch.setattr(runtime_module, "require_ray", lambda: _Ray)
+
+    with pytest.raises(RayOperationTimeout) as caught:
+        await outer.activate()
+
+    assert caught.value is timeout
+    assert state.inner_runtime is None
+    assert state.active_policy_version is None
+    assert outer.current_policy_version == 2
+    assert candidate.current_policy_version == 1
+    assert outer.lifecycle.phase is RuntimePhase.TERMINATED
+    assert candidate.lifecycle.phase is RuntimePhase.TERMINATED
+    assert actor.release_calls == 0
+    assert _Ray.killed == [actor]
 
 
 @pytest.mark.asyncio

@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
-import asyncio
 from typing import Any, Protocol
 
 from vrl.generation.execution.types import DistributedWorkerHandle
 from vrl.ray.dependencies import require_ray
+from vrl.ray.operation_deadline import await_ray_refs, validate_ray_timeout
 
 
 class GenerationWeightSync(Protocol):
@@ -22,8 +22,17 @@ class GenerationWeightSync(Protocol):
 class RayGenerationWeightSync(GenerationWeightSync):
     """Call ``update_weights`` on every Ray generation worker."""
 
-    def __init__(self, workers: list[DistributedWorkerHandle]) -> None:
+    def __init__(
+        self,
+        workers: list[DistributedWorkerHandle],
+        *,
+        worker_rpc_timeout_s: float,
+    ) -> None:
         self.workers = list(workers)
+        self.worker_rpc_timeout_s = validate_ray_timeout(
+            worker_rpc_timeout_s,
+            name="worker_rpc_timeout_s",
+        )
 
     async def push_to_rollout_workers(
         self,
@@ -61,7 +70,13 @@ class RayGenerationWeightSync(GenerationWeightSync):
         # Ray ObjectRefs are asyncio-awaitable. Waiting on them directly keeps
         # the ACK barrier owned by this event loop; cancelling owner shutdown
         # cannot leave a detached ``to_thread(ray.get)`` blocked indefinitely.
-        installed_versions = await asyncio.gather(*update_refs)
+        installed_versions = await await_ray_refs(
+            update_refs,
+            operation="rollout.weight_sync",
+            timeout_s=self.worker_rpc_timeout_s,
+            context=f"workers={len(remote_workers)}, policy_version={policy_version}",
+            ray=ray,
+        )
         for (worker, _update), installed in zip(
             remote_workers,
             installed_versions,

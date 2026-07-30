@@ -304,7 +304,7 @@ def _probe_worker(worker_id: str, answer: int, calls: list[str]) -> Any:
     """A plain-callable probe, which is a real production shape, not a fake one:
     ``runtime.py`` branches on ``getattr(probe, "remote", None)`` and supports a
     local callable deliberately. So this covers the local branch honestly -- what
-    it cannot reach is the ``.remote()`` + ``ray.get(refs, timeout=600)`` fan-out
+    it cannot reach is the ``.remote()`` + typed async deadline fan-out
     production takes with real actors (see the real_cover label below)."""
 
     def probe(request: Any, *, max_samples: int) -> dict[str, Any]:

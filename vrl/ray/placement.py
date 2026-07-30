@@ -34,6 +34,7 @@ from vrl.ray.dependencies import (
     inspect_cluster,
     require_ray,
 )
+from vrl.ray.operation_deadline import get_ray_refs
 from vrl.ray.resource_cleanup import kill_actors, remove_placement_group
 from vrl.ray.resources import (
     BundleLayout,
@@ -450,7 +451,13 @@ class GlobalRayPlacementOwner:
                     ),
                 ).remote()
                 actors.append(actor)
-            results = ray.get([actor.node_and_gpus.remote() for actor in actors])
+            results = get_ray_refs(
+                ray,
+                [actor.node_and_gpus.remote() for actor in actors],
+                operation="placement.gpu_metadata_probe",
+                timeout_s=_PLACEMENT_READY_TIMEOUT_S,
+                context=f"bundles={gpu_bundles}",
+            )
         except BaseException as error:
             actor_failures = kill_actors(ray, actors)
             if actor_failures:

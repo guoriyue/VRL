@@ -21,8 +21,10 @@ from vrl.generation.ray.lifecycle_fsm import RuntimeLifecycle, RuntimePhase
 from vrl.generation.ray.weight_sync import GenerationWeightSync
 from vrl.generation.types import GenerationOutput, GenerationRequest
 from vrl.ray.dependencies import require_ray
+from vrl.ray.operation_deadline import await_ray_refs
 from vrl.ray.placement import RolePlacement
 from vrl.ray.resource_cleanup import kill_and_retain
+from vrl.runtime_errors import TerminalRuntimeError
 
 logger = logging.getLogger(__name__)
 
@@ -78,9 +80,9 @@ class RayGenerationRuntime(GenerationRuntime):
         self.weight_sync = weight_sync
         self._owned_workers = list(owned_workers or [])
         self._colocated = bool(colocated)
-        # Owned workers have no in-band RPC bound; this background probe is the
-        # only detector that turns a wedged worker into a failed attempt the
-        # supervisor can resume from.
+        # Operation deadlines bound active business calls; this complementary
+        # monitor covers process death between calls and independently verifies
+        # that the actor's health concurrency group remains reachable.
         self._health_monitor = RolloutWorkerHealthMonitor(
             self,
             interval_s=health_check_interval_s,
@@ -93,6 +95,8 @@ class RayGenerationRuntime(GenerationRuntime):
         self.lifecycle = RuntimeLifecycle()
         self._offload_task: asyncio.Task[None] | None = None
         self._shutdown_task: asyncio.Task[None] | None = None
+        self._release_wait_task: asyncio.Task[Any] | None = None
+        self._force_shutdown = False
         self.current_policy_version: int | None = None
         # Set True by the launcher when every resident worker retains versioned
         # trainable-state slots, which lets the continuous schedule skip the drain
@@ -202,22 +206,33 @@ class RayGenerationRuntime(GenerationRuntime):
 
     async def generate(self, request: GenerationRequest) -> GenerationOutput:
         self.lifecycle.require_running("generate")
-        runtime = self._active_runtime()
-        if request.sampling.get("samples_per_chunk") == "auto":
-            # Resolve before delegation so every worker receives an integer. The
-            # facade caches this run-level verdict across offload/onload cycles.
-            resolved = await self._resolve_probed_samples_per_chunk(runtime, request)
-            request = replace(
-                request,
-                sampling={**dict(request.sampling), "samples_per_chunk": resolved},
-            )
-        if runtime is not self:
-            return await runtime.generate(request)
-        if self.executor is None:
-            raise RuntimeError("RayGenerationRuntime has no active executor")
-        if request.policy_version is None and self.current_policy_version is not None:
-            request = replace(request, policy_version=self.current_policy_version)
-        return await self.executor.execute(request)
+        try:
+            runtime = self._active_runtime()
+            if request.sampling.get("samples_per_chunk") == "auto":
+                # Resolve before delegation so every worker receives an integer. The
+                # facade caches this run-level verdict across offload/onload cycles.
+                resolved = await self._resolve_probed_samples_per_chunk(runtime, request)
+                request = replace(
+                    request,
+                    sampling={**dict(request.sampling), "samples_per_chunk": resolved},
+                )
+            if runtime is not self:
+                output = await runtime.generate(request)
+                self.lifecycle.require_running("complete generation")
+                return output
+            if self.executor is None:
+                raise RuntimeError("RayGenerationRuntime has no active executor")
+            if request.policy_version is None and self.current_policy_version is not None:
+                request = replace(request, policy_version=self.current_policy_version)
+            output = await self.executor.execute(request)
+            self.lifecycle.require_running("complete generation")
+            return output
+        except TerminalRuntimeError as error:
+            # Cancellation cannot reliably interrupt synchronous actor code. Close
+            # admission and destroy the fleet before any partial request result can
+            # escape this runtime.
+            await self._terminalize_after_failure(error)
+            raise
 
     async def _resolve_probed_samples_per_chunk(
         self,
@@ -260,7 +275,13 @@ class RayGenerationRuntime(GenerationRuntime):
         if refs:
             ray = require_ray()
             local_results.extend(
-                await asyncio.to_thread(ray.get, refs, timeout=600),
+                await await_ray_refs(
+                    refs,
+                    operation="rollout.generation.chunk_size_probe",
+                    timeout_s=executor.generation_stall_timeout_s,
+                    context=f"workers={len(refs)}, request_id={request.request_id}",
+                    ray=ray,
+                ),
             )
         resolved = min(int(result["samples_per_chunk"]) for result in local_results)
         for result in local_results:
@@ -323,7 +344,10 @@ class RayGenerationRuntime(GenerationRuntime):
         if state is not None:
             inner_runtime = state.inner_runtime
             if inner_runtime is not None and not state.workers_offloaded:
-                await inner_runtime._install_policy(policy)
+                await inner_runtime.update_weights(
+                    policy.state_ref,
+                    policy.policy_version,
+                )
                 state.active_policy_version = policy.policy_version
             state.desired_policy = policy
             self.current_policy_version = policy.policy_version
@@ -347,7 +371,33 @@ class RayGenerationRuntime(GenerationRuntime):
     ) -> None:
         """Close admission and preserve the operation error across cleanup."""
 
+        # Publish the operation root before upgrading an existing graceful
+        # shutdown. Cancellation of its release barrier must never win the
+        # first-failure slot over the terminal error that required the upgrade.
         self.lifecycle.fail(error)
+        if isinstance(error, TerminalRuntimeError):
+            self._force_shutdown = True
+            # A terminal distributed operation proves that graceful RPC progress
+            # cannot be trusted. Cancel runtime-owned local control tasks so an
+            # existing shutdown join upgrades immediately to forceful teardown.
+            state = self._on_demand
+            control_tasks = [self._offload_task]
+            if state is not None:
+                control_tasks.append(state.activation_task)
+            current = asyncio.current_task()
+            for task in control_tasks:
+                if task is not None and task is not current and not task.done():
+                    task.cancel()
+            # A concurrent ordinary shutdown may already be waiting on a
+            # release_policy RPC. Cancel only that local barrier so the shared
+            # shutdown task continues into actor destruction for every waiter.
+            release_wait_task = self._release_wait_task
+            if (
+                release_wait_task is not None
+                and release_wait_task is not current
+                and not release_wait_task.done()
+            ):
+                release_wait_task.cancel()
         try:
             if join_control_tasks:
                 await self.shutdown()
@@ -520,16 +570,32 @@ class RayGenerationRuntime(GenerationRuntime):
             "runtime shutdown: killing %d owned worker actor(s)",
             len(doomed),
         )
-        release_refs: list[Any] = []
-        for worker in self._owned_workers:
-            actor = worker.actor
-            if actor is None:
-                continue
-            with contextlib.suppress(Exception):
-                release_refs.append(actor.release_policy.remote())
-        if release_refs:
-            with contextlib.suppress(Exception):
-                await asyncio.to_thread(ray.get, release_refs, timeout=60)
+        # A timed-out business call may still occupy the actor's default
+        # concurrency group. Waiting for release_policy on that same group would
+        # add another 60 seconds before the only reliable action: ray.kill.
+        if self.lifecycle.failure is None and not self._force_shutdown:
+            release_refs: list[Any] = []
+            for worker in self._owned_workers:
+                actor = worker.actor
+                if actor is None:
+                    continue
+                with contextlib.suppress(Exception):
+                    release_refs.append(actor.release_policy.remote())
+            if release_refs:
+                release_wait_task = asyncio.create_task(
+                    asyncio.to_thread(ray.get, release_refs, timeout=60),
+                )
+                self._release_wait_task = release_wait_task
+                try:
+                    await release_wait_task
+                except asyncio.CancelledError:
+                    if not self._force_shutdown:
+                        raise
+                except Exception:
+                    pass
+                finally:
+                    if self._release_wait_task is release_wait_task:
+                        self._release_wait_task = None
         surviving, worker_failures = kill_and_retain(
             ray,
             self._owned_workers,
@@ -552,8 +618,8 @@ class RayGenerationRuntime(GenerationRuntime):
         weights leave the GPU. Failures are not suppressed: a worker that fails to
         offload would otherwise hold the GPU a colocated trainer is about to use.
         """
-        # A parked worker is intentionally unresponsive; probing it would read
-        # as a death and kill a healthy fleet.
+        # Parking transitions and parked intervals are outside the active
+        # serving SLA, so lifecycle policy pauses monitoring across them.
         self._health_monitor.pause()
         if not self._owned_workers:
             return ()
@@ -637,7 +703,10 @@ class RayGenerationRuntime(GenerationRuntime):
                 state.workers_offloaded = False
                 desired = state.desired_policy
                 if desired is not None and desired.policy_version != state.active_policy_version:
-                    await inner_runtime._install_policy(desired)
+                    await inner_runtime.update_weights(
+                        desired.state_ref,
+                        desired.policy_version,
+                    )
                     state.active_policy_version = desired.policy_version
                 return inner_runtime
             if state.inner_runtime is not None:
@@ -654,7 +723,10 @@ class RayGenerationRuntime(GenerationRuntime):
                 desired = state.desired_policy
                 active_policy_version = candidate.current_policy_version
                 if desired is not None:
-                    await candidate._install_policy(desired)
+                    await candidate.update_weights(
+                        desired.state_ref,
+                        desired.policy_version,
+                    )
                     active_policy_version = desired.policy_version
             except BaseException as restore_error:
                 # A candidate is not published until restore succeeds;

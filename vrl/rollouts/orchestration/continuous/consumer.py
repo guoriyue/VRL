@@ -26,6 +26,7 @@ from vrl.rollouts.orchestration.types import (
     build_rollout_iteration,
 )
 from vrl.rollouts.stats import RolloutStats
+from vrl.runtime_errors import TerminalRuntimeError, find_error_cause
 
 
 class ContinuousRolloutConsumer:
@@ -122,6 +123,14 @@ class ContinuousRolloutConsumer:
         if producer_state is None:
             return
         if producer_state.fatal_error is not None:
+            if (
+                find_error_cause(
+                    producer_state.fatal_error,
+                    TerminalRuntimeError,
+                )
+                is not None
+            ):
+                raise producer_state.fatal_error
             raise RuntimeError(
                 "continuous rollout producer control loop failed",
             ) from producer_state.fatal_error

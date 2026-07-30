@@ -514,6 +514,33 @@ def test_train_keeps_single_process_verdict_name(tmp_path) -> None:
     assert not list(out.glob("run_verdict.rank-*.json"))
 
 
+def test_train_verdict_uses_cleanup_wrapper_root_class(tmp_path) -> None:
+    from vrl.ray.operation_deadline import RayOperationTimeout
+    from vrl.rollouts.orchestration.prompt_collection import (
+        PromptCollectionCleanupError,
+    )
+    from vrl.rollouts.orchestration.strict_on_policy import RolloutPhaseCleanupError
+    from vrl.scripts import train
+
+    root = RayOperationTimeout("rollout.generation.chunk", 1.0)
+    collection = PromptCollectionCleanupError(
+        root,
+        [RuntimeError("reward cleanup failed")],
+    )
+    wrapped = RolloutPhaseCleanupError(
+        collection,
+        [RuntimeError("offload cleanup failed")],
+    )
+    out = tmp_path / "run"
+
+    train.write_run_verdict(str(out), error=wrapped, environ={})
+
+    verdict = json.loads((out / "run_verdict.json").read_text())
+    assert verdict["error_class"] == "RayOperationTimeout"
+    assert "offload cleanup failed" in verdict["error_message"]
+    assert "RayOperationTimeout" in verdict["error_message"]
+
+
 def test_distributed_success_requires_every_rank_verdict(tmp_path) -> None:
     from vrl.scripts import train
 

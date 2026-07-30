@@ -36,6 +36,7 @@ from vrl.rollouts.orchestration.continuous.types import (
 from vrl.rollouts.orchestration.prompt_collection import collect_prompt_batches
 from vrl.rollouts.orchestration.rollout_runtime import RolloutRuntimeCoordinator
 from vrl.rollouts.stats import RolloutStats
+from vrl.runtime_errors import TerminalRuntimeError, find_error_cause
 
 _CPU = torch.device("cpu")
 _OBSERVABILITY_LOG_INTERVAL_S = 30.0
@@ -290,6 +291,14 @@ class ContinuousRolloutProducer:
             self.state.error_count += 1
             self.state.last_error = repr(error)
             self.state.fatal_error = error
+            if find_error_cause(error, TerminalRuntimeError) is not None:
+                siblings = list(self._inflight)
+                for task in siblings:
+                    task.cancel()
+                if siblings:
+                    await asyncio.gather(*siblings, return_exceptions=True)
+                self._inflight.clear()
+                self.state.inflight_count = 0
             logger.error(
                 "continuous rollout producer control loop failed",
                 exc_info=(type(error), error, error.__traceback__),
@@ -381,6 +390,8 @@ class ContinuousRolloutProducer:
                 ) from exc
             except Exception as exc:
                 self.state.last_error = repr(exc)
+                if find_error_cause(exc, TerminalRuntimeError) is not None:
+                    raise
                 self.state.error_count += 1
                 # Surface immediately: a persistent generation/reward failure
                 # would otherwise stay invisible until a periodic tick, and the

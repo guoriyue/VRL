@@ -14,6 +14,7 @@ import pytest
 from omegaconf import OmegaConf
 
 from vrl.ray import resource_cleanup
+from vrl.ray.operation_deadline import RayOperationTimeout
 from vrl.ray.placement import GlobalRayPlacementOwner
 from vrl.ray.resources import (
     build_bundle_layout,
@@ -31,6 +32,15 @@ _REAL_RAY_PLACEMENT = pytest.mark.real_cover(
         "demand, and what these tests assert is that the handle survives that failure for a "
         "later retry; the same create/probe/shutdown path against a real cluster is the "
         "slow_test twin below"
+    ),
+)
+_REAL_RAY_PROBE_TIMEOUT = pytest.mark.real_cover(
+    "tests/ray/test_global_placement.py"
+    "::test_owner_reserves_trainer_gpu_and_binds_roles_on_simulated_gpus",
+    why=(
+        "a live cluster cannot deterministically stall only the metadata probe; "
+        "the real twin drives the same probe actors and placement-group boundary, "
+        "while this test injects timeout and records cancellation/cleanup"
     ),
 )
 
@@ -554,6 +564,100 @@ def test_probe_partial_actor_construction_cleans_created_handles(monkeypatch) ->
         owner._probe_gpu_bundles(_Ray(), object())
 
     assert killed == [first_actor]
+
+
+@_REAL_RAY_PROBE_TIMEOUT
+def test_probe_timeout_cancels_refs_kills_actors_and_removes_placement(
+    monkeypatch,
+) -> None:
+    owner = _owner(
+        {
+            "visible_devices": [0, 1],
+            "trainer": {"devices": [0]},
+            "rollout": {"devices": [1], "gpus_per_worker": 1},
+        },
+    )
+    placement_group = type("_PlacementGroup", (), {"ready": lambda self: object()})()
+    refs: list[object] = []
+    actors: list[object] = []
+    cancelled: list[tuple[object, bool]] = []
+    killed: list[object] = []
+    removed: list[object] = []
+
+    class _GetTimeoutError(TimeoutError):
+        pass
+
+    class _RemoteCall:
+        def __init__(self, ref):
+            self.ref = ref
+
+        def remote(self):
+            return self.ref
+
+    class _ProbeHandle:
+        def __init__(self):
+            ref = object()
+            refs.append(ref)
+            self.node_and_gpus = _RemoteCall(ref)
+
+    class _RemoteProbe:
+        def options(self, **_kwargs):
+            return self
+
+        def remote(self):
+            actor = _ProbeHandle()
+            actors.append(actor)
+            return actor
+
+    class _Ray:
+        exceptions = type("_Exceptions", (), {"GetTimeoutError": _GetTimeoutError})
+
+        def __init__(self):
+            self.get_calls = 0
+
+        def get(self, _refs, *, timeout):
+            assert timeout > 0
+            self.get_calls += 1
+            if self.get_calls == 1:
+                return None
+            raise _GetTimeoutError("probe stalled")
+
+        @staticmethod
+        def remote(**_kwargs):
+            return lambda _actor_cls: _RemoteProbe()
+
+        @staticmethod
+        def cancel(ref, *, force):
+            cancelled.append((ref, force))
+
+    ray = _Ray()
+    monkeypatch.setattr("vrl.ray.placement.require_ray", lambda: ray)
+    monkeypatch.setattr(
+        "vrl.ray.placement._create_raw_placement_group",
+        lambda *_args, **_kwargs: placement_group,
+    )
+    monkeypatch.setattr(
+        "vrl.ray.placement.actor_scheduling_strategy",
+        lambda *_args, **_kwargs: object(),
+    )
+    monkeypatch.setattr(
+        "vrl.ray.placement.kill_actors",
+        lambda _ray, candidates: killed.extend(candidates) or [],
+    )
+    monkeypatch.setattr(
+        "vrl.ray.placement.remove_placement_group",
+        lambda pg: removed.append(pg),
+    )
+
+    with pytest.raises(RayOperationTimeout, match=r"placement\.gpu_metadata_probe"):
+        owner.create()
+
+    assert ray.get_calls == 2
+    assert cancelled == [(ref, False) for ref in refs]
+    assert killed == actors
+    assert removed == [placement_group]
+    assert owner._placement_group is None
+    assert owner._placement_ready is False
 
 
 # ----------------------------------------------- simulated multi-GPU (real Ray)

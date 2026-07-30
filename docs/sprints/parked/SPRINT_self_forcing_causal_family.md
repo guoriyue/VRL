@@ -8,9 +8,9 @@ primitives, trainable-state installer, and fake-adapter contract in the
 it does not wait for Self-Forcing to close provider production conformance. The
 completed [worker process-health sprint](../done/SPRINT_rollout_worker_liveness.md)
 covers actor-process reachability only. Its dedicated health concurrency group
-can respond while a default-group business call is busy or hung, so the
-configured blocking-call deadline remains an unfinished, independent F3
-integration gate.
+can respond while a default-group business call is busy or hung; the completed
+[Ray rollout operation deadline sprint](../done/SPRINT_ray_rollout_operation_deadlines.md)
+provides the independent F3 business-call gate.
 
 ## 0. 结论先行
 

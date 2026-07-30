@@ -7,7 +7,7 @@ import contextlib
 from collections.abc import Iterator
 from dataclasses import FrozenInstanceError, dataclass
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, ClassVar
 from unittest.mock import patch
 
 import pytest
@@ -26,8 +26,10 @@ from vrl.generation.ray.launcher import (
     RayGenerationLauncher,
     _all_workers_support_versioned_slots,
 )
+from vrl.generation.ray.lifecycle_fsm import RuntimePhase
 from vrl.generation.ray.runtime import RayGenerationRuntime
 from vrl.generation.types import GenerationRequest
+from vrl.ray.operation_deadline import RayOperationTimeout
 from vrl.ray.placement import GlobalRayPlacementOwner, RolePlacement
 from vrl.ray.resources import resolve_distributed_resources
 
@@ -55,6 +57,7 @@ class _Bundle:
 
 
 _TEST_MODEL_IDENTITY = {"schema": "test"}
+_TEST_RPC_TIMEOUT_S = 30.0
 
 
 def test_launch_contract_rejects_unknown_fields_at_typed_boundary() -> None:
@@ -327,6 +330,7 @@ def test_runtime_capability_is_and_over_all_workers(local_ray) -> None:
                 local_ray,
                 handles,
                 weight_sync=weight_sync,
+                worker_rpc_timeout_s=_TEST_RPC_TIMEOUT_S,
             )
             is True
         )
@@ -336,6 +340,7 @@ def test_runtime_capability_is_and_over_all_workers(local_ray) -> None:
                 local_ray,
                 handles,
                 weight_sync=weight_sync,
+                worker_rpc_timeout_s=_TEST_RPC_TIMEOUT_S,
             )
             is False
         )
@@ -351,6 +356,7 @@ def test_runtime_capability_false_without_weight_sync_or_workers(local_ray) -> N
                 local_ray,
                 handles,
                 weight_sync=None,
+                worker_rpc_timeout_s=_TEST_RPC_TIMEOUT_S,
             )
             is False
         )
@@ -359,6 +365,7 @@ def test_runtime_capability_false_without_weight_sync_or_workers(local_ray) -> N
             local_ray,
             [],
             weight_sync=object(),
+            worker_rpc_timeout_s=_TEST_RPC_TIMEOUT_S,
         )
         is False
     )
@@ -375,6 +382,7 @@ def test_runtime_capability_false_when_a_worker_query_raises(local_ray) -> None:
                 local_ray,
                 handles,
                 weight_sync=object(),
+                worker_rpc_timeout_s=_TEST_RPC_TIMEOUT_S,
             )
             is False
         )
@@ -462,17 +470,23 @@ def test_worker_defaults_and_explicit_override_project_from_public_schema() -> N
     default = _ray_config(_cfg()).worker
     assert default.cpus_per_worker == 1.0
     assert default.max_inflight_chunks_per_worker == 1
+    assert default.worker_rpc_timeout_s == 600.0
+    assert default.generation_stall_timeout_s == 1800.0
     assert default.pipelined is False
     assert default.sync_trainable_state is True
 
     cfg = _cfg()
     cfg.distributed.rollout.cpus_per_worker = 2.5
     cfg.distributed.rollout.max_inflight_chunks_per_worker = 3
+    cfg.distributed.rollout.worker_rpc_timeout_s = 3600.0
+    cfg.distributed.rollout.generation_stall_timeout_s = 1200.0
     cfg.distributed.rollout.sync_trainable_state = False
     override = _ray_config(cfg).worker
 
     assert override.cpus_per_worker == 2.5
     assert override.max_inflight_chunks_per_worker == 3
+    assert override.worker_rpc_timeout_s == 3600.0
+    assert override.generation_stall_timeout_s == 1200.0
     assert override.sync_trainable_state is False
 
 
@@ -498,6 +512,8 @@ def test_base_rollout_presets_pin_only_the_cpu_override(preset_name: str) -> Non
     )
     assert config.worker.cpus_per_worker == 4.0
     assert config.worker.max_inflight_chunks_per_worker == 1
+    assert config.worker.worker_rpc_timeout_s == 600.0
+    assert config.worker.generation_stall_timeout_s == 1800.0
     assert config.worker.chunk_placement_strategy == "round_robin"
     assert config.worker.sync_trainable_state is True
 
@@ -582,7 +598,9 @@ def test_placement_and_launcher_consume_the_same_worker_snapshot(monkeypatch) ->
     )
 
     assert launch_kwargs["num_cpus"] == owner.rollout_worker.cpus_per_worker == 2.5
+    assert launch_kwargs["worker_rpc_timeout_s"] == config.worker.worker_rpc_timeout_s
     assert runtime.executor.max_inflight_chunks_per_worker == 1
+    assert runtime.executor.generation_stall_timeout_s == config.worker.generation_stall_timeout_s
 
 
 def test_health_check_settings_default_and_project_overrides() -> None:
@@ -620,6 +638,34 @@ def test_ray_generation_config_rejects_negative_health_check_first_wait() -> Non
     cfg.distributed.rollout.health_check_first_wait_s = -1.0
 
     with pytest.raises(ValueError, match="health_check_first_wait_s must be finite and >= 0"):
+        _ray_config(cfg)
+
+
+@pytest.mark.parametrize(
+    "timeout_s",
+    [0.0, -1.0, float("inf"), float("-inf"), float("nan")],
+)
+def test_ray_generation_config_rejects_invalid_worker_rpc_timeout(
+    timeout_s: float,
+) -> None:
+    cfg = _cfg()
+    cfg.distributed.rollout.worker_rpc_timeout_s = timeout_s
+
+    with pytest.raises(ValueError, match="worker_rpc_timeout_s must be finite and > 0"):
+        _ray_config(cfg)
+
+
+@pytest.mark.parametrize(
+    "timeout_s",
+    [0.0, -1.0, float("inf"), float("-inf"), float("nan")],
+)
+def test_ray_generation_config_rejects_invalid_generation_stall_timeout(
+    timeout_s: float,
+) -> None:
+    cfg = _cfg()
+    cfg.distributed.rollout.generation_stall_timeout_s = timeout_s
+
+    with pytest.raises(ValueError, match="generation_stall_timeout_s must be finite and > 0"):
         _ray_config(cfg)
 
 
@@ -1014,6 +1060,59 @@ def _auto_chunk_request() -> GenerationRequest:
     )
 
 
+@pytest.mark.asyncio
+async def test_remote_chunk_size_probe_timeout_is_terminal_and_cancels_refs(
+    monkeypatch,
+) -> None:
+    import vrl.generation.ray.runtime as runtime_module
+
+    class _NeverRef:
+        def __await__(self):
+            async def wait_forever() -> None:
+                await asyncio.Event().wait()
+
+            return wait_forever().__await__()
+
+    ref = _NeverRef()
+
+    class _RemoteProbe:
+        @staticmethod
+        def remote(_request: Any, *, max_samples: int) -> _NeverRef:
+            assert max_samples == 10
+            return ref
+
+    class _Executor:
+        generation_stall_timeout_s = 0.01
+        workers: ClassVar[list[DistributedWorkerHandle]] = [
+            DistributedWorkerHandle(
+                worker_id="w0",
+                actor=SimpleNamespace(probe_chunk_size=_RemoteProbe()),
+            ),
+        ]
+
+        async def execute(self, _request: Any) -> None:
+            raise AssertionError("timed-out probe must not enter generation")
+
+    class _Ray:
+        cancelled: ClassVar[list[tuple[Any, bool]]] = []
+
+        @classmethod
+        def cancel(cls, value: Any, *, force: bool) -> None:
+            cls.cancelled.append((value, force))
+
+    runtime = RayGenerationRuntime(_Executor())
+    monkeypatch.setattr(runtime_module, "require_ray", lambda: _Ray)
+
+    with pytest.raises(
+        RayOperationTimeout,
+        match=r"rollout\.generation\.chunk_size_probe",
+    ):
+        await runtime.generate(_auto_chunk_request())
+
+    assert _Ray.cancelled == [(ref, False)]
+    assert runtime.lifecycle.phase is RuntimePhase.TERMINATED
+
+
 class _Arrivals:
     """Counts probe arrivals across actor processes so concurrency is observable."""
 
@@ -1073,7 +1172,7 @@ def test_real_ray_probe_fan_out_resolves_auto_once_across_the_fleet(local_ray) -
     ``RayGenerationRuntime._resolve_probed_samples_per_chunk`` branches on whether
     ``probe_chunk_size`` has a ``.remote``; every in-process test takes the plain
     callable branch, so the fan-out that production actually runs -- N remote
-    probes dispatched together, then one ``ray.get(refs, timeout=600)`` -- had no
+    probes dispatched together, then one typed async deadline barrier -- had no
     coverage at all. The barrier inside ``_ProbeWorker`` is what makes
     "concurrently" checkable: an implementation that moved the ``ray.get`` inside
     the dispatch loop would deadlock on it instead of passing.
@@ -1086,6 +1185,7 @@ def test_real_ray_probe_fan_out_resolves_auto_once_across_the_fleet(local_ray) -
 
     class _Executor:
         def __init__(self) -> None:
+            self.generation_stall_timeout_s = 30.0
             self.workers = [
                 DistributedWorkerHandle(worker_id=f"w{index}", actor=actor)
                 for index, actor in enumerate(actors)

@@ -4,8 +4,9 @@ Status: **DONE (2026-07-18)**. The contract and its regression coverage are
 implemented. Process-reachability monitoring and supervisor handoff after an
 unreachable probe were subsequently completed by the
 [worker process-health sprint](SPRINT_rollout_worker_liveness.md). That monitor
-does not bound business RPCs; the configured blocking-call deadline remains an
-unfinished independent gate.
+does not bound business RPCs; the later
+[Ray rollout operation deadline sprint](SPRINT_ray_rollout_operation_deadlines.md)
+completed that independent gate.
 
 ## Decision
 
@@ -54,15 +55,17 @@ removed. The canonical contract uses `offload()` and
 The terminal admission state has only:
 
 ```text
-OPEN -> CLOSING -> CLOSED
+RUNNING -> SHUTTING_DOWN -> TERMINATED
 ```
 
 There is no runtime-level `QUIESCING`, `OperationTicket`, active-operation map, or
 waiter map. Activate and offload share one ordered transition task, while shutdown
-uses one shared cleanup task. Worker policy install shares the same transition lock,
-so it cannot overlap sleep/wake. On-demand launch attaches a
-`RayGenerationWorkerFleet`, not a second runtime; the fleet reports monitor failures
-to the facade's one terminal state and never owns public close completion.
+uses one shared cleanup task. Worker policy install cannot overlap an in-flight
+activation. The implementation was subsequently consolidated: on-demand launch
+attaches an inner `RayGenerationRuntime`, and that inner runtime directly owns its
+executor, weight sync, actors, monitor, parking, and teardown. There is no
+`RayGenerationWorkerFleet` or second public lifecycle owner; the outer facade
+mirrors policy intent and exposes one collector-facing terminal boundary.
 
 On-demand policy state distinguishes:
 

@@ -5,7 +5,9 @@
 Status: **parked**. Under the program's strict ordering, the trigger is completion
 of the SGLang Qwen-Image S4 pilot; this sprint cannot unpark with only the first
 FlashDreams binding. Every provider must also pass the shared configured
-blocking-call deadline gate, which remains unfinished. The completed
+blocking-call deadline gate, now implemented by the
+[Ray rollout operation deadline sprint](../done/SPRINT_ray_rollout_operation_deadlines.md).
+The completed
 [worker process-health sprint](../done/SPRINT_rollout_worker_liveness.md) covers
 actor-process reachability only: its health concurrency group can respond while
 the default group is busy or hung, so it cannot replace a business-call deadline.

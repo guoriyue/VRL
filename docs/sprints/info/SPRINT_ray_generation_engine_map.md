@@ -1,38 +1,36 @@
-# INFO: Ray generation engine — current ownership and call chains
+# INFO：Ray generation engine 当前 ownership 与调用链
 
-状态：**verified against source（2026-07-22）**。本文只描述当前生产路径；已删除的
-release-per-collect、`_RuntimeLease`、physical stage adapter 与带 `stage` 参数的旧调用链
-不再作为 dormant capability 记录。
+状态：**verified against source（2026-07-30）**。
 
-目的：说明 wm-infra 的 native generation engine 真正拥有哪一层、哪些薄边界必须保留，
-以及为什么外部 execution provider 应接在 engine 下面而不是替换 trainer-facing control
-plane。
+本文只描述当前生产路径。已删除的 `_RuntimeLease`、`RayGenerationWorkerFleet`、
+physical-stage adapter、release-per-collect 和带 `stage` 参数的旧调用链不再作为 dormant
+capability 保留。
 
-## 1. 一张图
+## 1. Ownership 图
 
 ```text
-Rollout schedule                          driver: admission + drain owner
-  -> GenerationRuntime                    collector-facing transport contract
-     -> RayGenerationRuntime              activation/offload/shutdown + policy facade
-        -> RayGenerationWorkerFleet        actor/monitor/sync/teardown owner
-           -> RayGenerationExecutor        driver-side chunk plan/dispatch/gather
-              -> RayGenerationWorker       thin Ray actor adapter
-                 -> GenerationWorkerCore   model build/version/sleep/forward ownership
-                    -> GenerationChunkExecutor
-                       -> diffusion or AR family executor
-                          -> RuntimeModel / upstream transformer and kernels
+Rollout schedule                         admission + normal drain owner
+  -> GenerationRuntime                   collector-facing protocol
+     -> RayGenerationRuntime             activation/offload/terminal + actor owner
+        -> RayGenerationExecutor         driver plan/dispatch/OOM/gather
+           -> RayGenerationWorker        thin Ray actor adapter
+              -> GenerationWorkerCore    build/version/parking/forward owner
+                 -> GenerationChunkExecutor
+                    -> diffusion or AR family executor
+                       -> RuntimeModel / upstream transformer and kernels
 ```
 
-进程边界：schedule/runtime/executor 位于 driver；Ray worker、worker core、family executor
-和 model 位于 actor。它们不能为了减少层数而合并。
+driver 侧包含 schedule、runtime 和 executor。actor 侧包含 Ray worker、worker core、family
+executor 和 model。`RayGenerationRuntime` 直接拥有 resident actor handles、health monitor
+和 optional weight sync；仓库里没有独立 `WorkerFleet` owner。
 
-ownership 边界：wm-infra 原生拥有中间的 lifecycle、policy version、chunk、trajectory 与
-replay 语义；diffusion transformer/block/kernel 仍大量来自 Diffusers/PyTorch。两者同时
-成立，不应把“native control plane”误写成“全栈 native model forward”。
+wm-infra 原生拥有 lifecycle、policy version、chunk、trajectory 与 replay 语义。底层
+transformer/block/kernel 仍可来自 Diffusers、PyTorch 或未来 provider；“native control
+plane”不等于“全栈 native model forward”。
 
 ## 2. Public runtime contract
 
-`GenerationRuntime` 当前只要求：
+`GenerationRuntime` 声明：
 
 ```text
 current_policy_version
@@ -44,19 +42,21 @@ shutdown()
 is_colocated()
 ```
 
-它不声明 `release()`，也不把 `update_weights()` 强塞给所有 runtime。训练侧通过
-`build_runtime_weight_syncer` 检查具体 runtime 是否同时暴露 `supports_weight_sync` 与
-`update_weights`，再构造独立的 weight-sync control path。
+weight sync 不是所有 runtime 的公共必选方法。训练侧通过
+`build_runtime_weight_syncer` 检查 concrete runtime 的 `supports_weight_sync` 和
+`update_weights`，再构造独立 control path。
 
-schedule 是 admission/drain 的唯一 owner：strict schedule 在 collect 前 activate，等待
-collect 本身就是 drain，最后 offload；continuous schedule 在不能 non-draining sync 时暂停
-producer 并 drain。runtime 不拥有 public `QUIESCING` 或 `RECOVERING` phase，其 terminal
-state 只有 `OPEN -> CLOSING -> CLOSED`。该 state 只表示 terminal admission，不表示
-activation 或 GPU residency。
+schedule 是 pause/admission/drain 的唯一 owner。runtime 的 `RuntimeLifecycle` 只表达：
 
-## 3. Launch call chain
+```text
+RUNNING -> SHUTTING_DOWN -> TERMINATED
+```
 
-### 3.1 Composition
+它不表达 normal drain、GPU residency 或 speculative recovery。
+
+## 3. Composition 与 launch
+
+### 3.1 Source of truth
 
 ```text
 online recipe
@@ -65,6 +65,7 @@ online recipe
   -> GenerationRuntimeLaunchContract(
        family,
        primitive model_build/executor_kwargs,
+       expected_model_identity,
        policy_version,
        profiler config,
        sleep_offload,
@@ -73,121 +74,128 @@ online recipe
   -> RayGenerationLaunchInputs(contract, entry.new_gatherer())
 ```
 
-`GenerationRuntimeLaunchContract` 不携带 live model、pipeline、callable 或 executor class；它
-只允许 primitive/list/tuple/dict，并验证 pickle。`executor_cls` 与 rollout builder 的唯一
-source 是 worker 重新查到的 `ModelFamilyEntry`。
-
-当前工作树在 `RayGenerationLauncher.launch_from_cfg` 内反向 import
-`vrl.rollouts.orchestration.types.RolloutScheduleMode` 来派生 `versioned_weight_sync`，违反
-generation boundary test。active native-engine program 已把修复列为 Sprint 0 gate：由中立
-composition boundary 解析 schedule-derived bool，再把 primitive fact 传入 generation，不能
-让 generation 解释 trainer/rollout enum。
+`GenerationRuntimeLaunchContract` 不携带 live model、pipeline、callable 或 executor class。
+family registry 是 model builder、executor class、gatherer 和 static capability 的唯一
+taxonomy source。launch contract 最终只携带 primitive `versioned_weight_sync` fact，
+但当前 `RayGenerationLauncher.launch_from_cfg` 仍直接读取
+`trainer.rollout_orchestration.schedule_mode` 并比较字符串 `"continuous"`。它虽然没有
+import rollout/trainer enum，仍属于 generation composition 读取 trainer config 的
+layering leak；native generation engine Sprint 0 必须把这个 primitive fact 从更高层
+composition boundary 传入，不能把现状写成已经解决。
 
 ### 3.2 Resident launch
 
 ```text
-RayGenerationLauncher.launch(config, launch_inputs, placement)
+RayGenerationLauncher.launch(...)
   -> RayActorGroup.launch(
-       worker_cls=RayGenerationWorker,
        startup_method="load_policy",
+       worker_rpc_timeout_s=...,
      )
+  -> validate worker metadata / GPU assignment
   -> DistributedWorkerHandle[]
   -> RayGenerationExecutor(
-       DistributedExecutionPlanner(ChunkPlacementPolicy),
+       planner,
        workers,
-       ChunkGatherer,
+       registry-owned gatherer,
+       generation_stall_timeout_s=...,
      )
-  -> optional RayGenerationWeightSync(workers)
-  -> RayGenerationWorkerFleet(executor, weight_sync, owned_workers)
-  -> RayGenerationRuntime(fleet)
+  -> optional RayGenerationWeightSync(
+       workers,
+       worker_rpc_timeout_s=...,
+     )
+  -> RayGenerationRuntime(
+       executor,
+       weight_sync,
+       owned_workers,
+       health settings,
+     )
+  -> query all-worker version-slot capability
+  -> start health monitor
 ```
 
-actor startup 内部：
-
-```text
-RayGenerationWorker.load_policy()
-  -> GenerationWorkerCore.load_policy()
-     -> get_model_family_entry(contract.family)
-     -> entry.build_rollout(ModelBuild)
-     -> import entry.executor_cls
-     -> executor_cls(runtime_model, executor_kwargs)
-```
-
-worker 构造完成后，launcher 查询每个 worker 是否真的支持 versioned trainable-state slots；
-只有全体支持时，runtime 才发布 `supports_non_draining_weight_sync=True`。
+startup load、metadata 和 capability 各自有 fresh control-plane deadline。任一步失败，
+launcher 清理 candidate actors；placement group 仍由 `GlobalRayPlacementOwner` 管理。
 
 ### 3.3 On-demand launch
 
-`with_on_demand_activation` 不提前创建 actors，而是保存：
+`with_on_demand_activation` 先保存：
 
 ```text
 _OnDemandRuntimeState(
   config,
   launch_inputs,
   placement,
+  inner_runtime,
+  activation_task,
   desired_policy,
   active_policy_version,
   workers_offloaded,
 )
 ```
 
-第一次 `activate()` 通过 runtime-owned transition task 调用
-`launch_worker_fleet_async`；后续 activate 唤醒同一个 offloaded fleet，并在返回前安装
-`desired_policy`。activate/offload 按调用顺序共用一个 task chain，同类并发调用
-single-flight；policy install 再与 sleep/wake 共用同一 transition lock，因此三者不能操作
-同一批 workers。caller cancellation 不取消 runtime-owned transition。
+第一次 `activate()` 通过 single-flight `activation_task` 调用
+`RayGenerationLauncher.launch_async`，得到一个真正拥有 workers 的 inner
+`RayGenerationRuntime`。后续 activation 唤醒同一个 parked inner runtime。
 
-launcher 构造的 candidate 是 `RayGenerationWorkerFleet`，不是第二个
-`RayGenerationRuntime`。candidate 在 restore 期间已由 facade 持有，但 generate 会被未完成
-的 transition 拒绝；restore 后的 final `require_open()` 通过，activate 才能成功返回。monitor
-通过 callback 写入 facade 唯一的 `RuntimeTerminalState`；若它在 candidate promotion 窗口
-失败，activation 会 teardown candidate 并失败，而不是发布一个 terminal 已关闭的 runtime。
+desired policy restore 通过 inner runtime 的 public `update_weights` failure boundary，
+不能直接绕过 owner 调 private installer。这样 active inner 和未发布 cold candidate 在
+weight ACK timeout 时都先 force-kill 自己拥有的 actors，outer facade 再关闭自己的
+admission。
 
-## 4. Generate call chain
+## 4. Generation 调用链
 
 ```text
-schedule activates runtime
 collector -> runtime.generate(request)
-  -> require OPEN + require active on-demand worker fleet
+  -> require RUNNING
+  -> select resident self or active on-demand inner runtime
   -> resolve samples_per_chunk="auto" once when requested
-  -> stamp current_policy_version when request has none
+  -> stamp current policy version when absent
   -> RayGenerationExecutor.execute(request)
-     -> build_sample_rows(request)
-     -> DistributedExecutionPlanner.plan_with_engine(request, workers)
-        -> EnginePlan(SampleChunk...)
-        -> DeviceAssignment(..., estimated_cost)
-     -> single-worker optional per-request pipelined path
-        OR per-chunk RayActorJob -> run_actor_jobs
+     -> build_sample_rows
+     -> DistributedExecutionPlanner.plan_with_engine
+     -> optional single-worker pipelined request
+        OR SampleChunk -> RayActorJob -> run_actor_jobs
      -> correlate request/chunk results
      -> stale-slot whole-request discard
      -> OOM chunk split/retry
-     -> request/result policy-version check
-     -> ChunkGatherer.gather_chunks(...)
+     -> policy-version validation
+     -> registry-owned ChunkGatherer.gather_chunks
      -> GenerationOutput
+  -> terminal completion gate
 ```
+
+`samples_per_chunk="auto"` 的 remote fleet probe 使用 generation stall timeout 和 typed
+ObjectRef cancellation；失败不会留下 RUNNING runtime 供 continuous producer 重试。
+
+### Standard / dynamic chunks
+
+每个 `.remote()` 后立即创建独立 `RayCallDeadline`。本地 pending job 在真正 submission
+前不计时；submitted ref 的预算包含 Ray mailbox 排队时间。其他 worker 的完成不会延长
+hung ref。任一 timeout 丢弃整个 request 已完成的 partial chunks。
+
+### Pipelined request
+
+single-worker pipeline 在 driver 侧 single-flight。worker 通过 health concurrency group
+发布 `PipelinedRequestProgress`；只有 `completed_chunks` 严格增长才重置 stall deadline。
+health success 本身不算业务进度。错误 type/request ID/total/regression 是 terminal wire
+protocol failure。
 
 worker path：
 
 ```text
 RayGenerationWorker.execute_chunk(envelope)
   -> GenerationWorkerCore.execute_chunk(envelope)
-     -> load_policy()
-     -> check/activate request.policy_version slot
-     -> executor.forward_chunk_plan(request, chunk)
-     -> move output tensors to CPU
-     -> ChunkExecutionResult
+     -> load/activate request policy slot
+     -> family executor.forward_chunk_plan(request, chunk)
+     -> typed ChunkExecutionResult
 ```
 
-`forward_chunk_plan` 当前只有 `(request, chunk)`，没有 `stage` 参数。diffusion canonical
-顺序是 prompt encode → latent prepare → denoise trajectory → VAE decode；AR discrete path
-是 prepare/prefill → per-request `ARDecodeLoop` → VQ decode → typed token trajectory。
+diffusion canonical 顺序是 prompt encode → latent prepare → denoise trajectory → VAE decode；
+AR path 是 prepare/prefill → request decode loop → VQ decode → typed token trajectory。
 
-OOM 时 sample chunk 有序二分；gather 再验证 prompt-major 完整覆盖。任一 stale slot 污染整条
-request 时抛 `StaleSlotDiscard`，不会拼出 partial mixed-policy group。
+## 5. Weight、parking 与 shutdown
 
-## 5. Weight, offload, and shutdown
-
-### Weight update
+### Weight transaction
 
 ```text
 trainer weight syncer
@@ -197,87 +205,94 @@ trainer weight syncer
            -> GenerationWorkerCore.update_weights
 ```
 
-Strict updates overwrite in place after draining; the continuous LoRA path may
-retain the slots required by older requests. ACKs still return integer policy
-versions. The completed
-[worker process-health sprint](../done/SPRINT_rollout_worker_liveness.md) probes a
-separate health concurrency group; it does not watch or bound this ACK barrier.
-The health group can answer while the default group is busy or hung, so a
-configured blocking-call deadline for weight-update ACKs remains incomplete.
-Schema/digest strengthening is not a native-provider gate; a provider that
-needs payload identity must validate it in its installer contract.
+所有 remote workers 共享一次 `ray.put(state_ref)`。只有全部 ACK 返回并通过 expected
+integer version 校验后，runtime 才推进 `current_policy_version`。timeout 或 bad ACK
+不会 publish candidate version。
 
-### Offload and shutdown
+### Parking
 
-schedule 必须先 drain，再调用 `offload()`。on-demand runtime 用 `workers_offloaded` 幂等地
-sleep actors，下一次 activate wake；resident runtime 的 offload 是 no-op。terminal
-`shutdown()` 使用 shared task，先 join ordered transition 并等待 policy-install lock，再让
-fleet release policy、kill owned actors、join monitor；cleanup 失败时 fleet 保留失败 handles，
-runtime 也保留 fleet 引用供下一次 shutdown 重试。
+schedule 必须先 drain，再调用 `offload()`。on-demand inner runtime 进入 sleep/host-memory
+parking，下一次 activate wake；resident runtime 的 facade offload 是 no-op。health monitor
+在 sleep 前 pause，wake 成功后 resume，并重新应用 first-wait grace。
 
-## 6. Class roster and keep/delete verdict
+### Terminal shutdown
 
-| Class/boundary | Current responsibility | Verdict |
+`shutdown()` 使用 shared task，join runtime-owned activation/offload task，然后清理真实
+owner。普通 shutdown 可先发 `release_policy`；terminal distributed error 设置 force
+mode，取消已在等待 release 的 local barrier task、跳过新 graceful RPC，并直接
+`ray.kill(no_restart=True)`。
+
+失败 kill 保留 actor handle，供下一次 shutdown retry。timeout root 不会被 cleanup error
+替换。
+
+## 6. Reliability 边界
+
+| Boundary | Current implementation |
+|---|---|
+| process reachability | dedicated health concurrency group + background monitor |
+| control-plane business calls | `worker_rpc_timeout_s` absolute barrier |
+| generation progress | per-ref / strict pipelined progress `generation_stall_timeout_s` |
+| partial result safety | whole-request rejection + actor fleet destruction |
+| supervisor handoff | terminal error -> verdict -> bounded restart policy; permitted retry resumes checkpoint |
+| in-process recovery | deliberately absent |
+| driver/GCS/raylet watchdog | not implemented |
+
+health 与 deadline 缺一不可。一个可达 actor 的 default group 仍可挂住；一个 operation
+deadline 也看不到 requests 之间的 idle process death。
+
+## 7. Class roster
+
+| Boundary | Responsibility | Verdict |
 |---|---|---|
-| `GenerationRuntime` | collector/public transport + explicit lifecycle | keep thin: public protocol boundary |
-| `RayGenerationRuntime` | one terminal state, ordered activation/offload, policy intent, public shutdown | keep: collector-facing lifecycle owner |
-| `RayGenerationWorkerFleet` | executor/sync/actor inventory/monitor/parking/teardown | keep: real Ray resource-ownership boundary |
-| `RayGenerationExecutor` | driver chunk plan/dispatch/OOM/version/gather; no model | keep: driver scheduler |
-| `RayGenerationWorker` | Ray actor methods + node/GPU metadata delegation | keep thin: framework adapter |
-| `GenerationWorkerCore` | Ray-independent build/version slots/memory parking/forward | keep: testable process core |
-| `GenerationChunkExecutor` | family `forward_chunk_plan` + gather shape | keep thin: cross-family protocol |
-| `ChunkGatherer` | pure driver-side assembly without model ownership | keep thin: transport boundary |
-| diffusion/AR base executors | shared per-family production skeletons | keep: cross-family consistency |
-| `GenerationRuntimeLaunchContract` | serializable worker construction payload | keep: process/pickle boundary |
-| `ModelFamilyEntry` / `FAMILY_REGISTRY` | one family taxonomy and build/executor dispatch source | keep: deliberately isolated registry |
+| `GenerationRuntime` | collector-facing lifecycle protocol | keep thin: public API |
+| `RayGenerationRuntime` | lifecycle, on-demand facade, actor ownership, health, teardown | keep: real resource owner |
+| `RayGenerationExecutor` | plan, dispatch, OOM, correlation, gather | keep: driver scheduler |
+| `RayGenerationWorker` | Ray methods and concurrency-group adapters | keep thin: framework boundary |
+| `GenerationWorkerCore` | Ray-independent build/version/parking/forward | keep: process core |
+| `GenerationChunkExecutor` | family forward/gather shape | keep thin: cross-family protocol |
+| `ChunkGatherer` | pure driver-side assembly | keep thin: transport boundary |
+| `RayActorGroup` | actor construction/startup/metadata | keep: shared Ray adapter |
+| `RayGenerationWeightSync` | all-worker transactional ACK | keep: protocol boundary |
+| `GenerationRuntimeLaunchContract` | primitive pickle payload | keep: process boundary |
+| `ModelFamilyEntry` / `FAMILY_REGISTRY` | family taxonomy and factories | keep: isolated registry |
 
-`RayGenerationExecutor` 与 `GenerationChunkExecutor` 都叫 Executor，但分别位于 driver
-scheduler 与 actor model-contract 两侧。命名有认知成本，不是死抽象；不要为了少一个名字
-删除其中任一层。
-
-single-worker `forward_plan_pipelined`/`execute_request_pipelined` 继续是 optional
-diffusion capability，通过明确 guard/getattr 读取。它不属于所有 AR family 的共同协议，不能
-为了“接口完整”给 AR 添加无行为空实现。
-
-## 7. Current limitations, completed gates, and decision
-
-| Limitation | Current evidence | Owner |
-|---|---|---|
-| worker process reachability | an out-of-band health concurrency group detects an unreachable actor process and kills the owned fleet | completed worker process-health sprint |
-| bounded business RPCs | health may answer while the default concurrency group is busy or hung; startup, capability, generation, and weight-update waits have no shared configured blocking-call deadline | unfinished independent provider-promotion gate |
-| no in-process actor recovery | failed attempts rebuild the runtime only after process exit | accepted boundary: supervisor checkpoint resume |
-| version-only ACK | transaction validates the committed integer version | current native contract; stronger provider-local identity only when required |
-| no provider selector | one `executor_cls` per family; no provider provenance in launch contract | native-engine N2 + provider/conformance sprints |
-| no cross-request forward sharing | EnginePlan and AR decode scheduler are per request | parked step-scheduler sprint |
-| no native diffusion blocks | backbone calls upstream transformer | parked native-transformer sprint |
-| dense diffusion trajectory capacity | full step×latent observations/actions preallocated | parked paged-trajectory sprint, video-profile gated |
-
-这些事实支持的结论是：保留 wm-infra 作为 RL truth/lifecycle owner，把 native、FlashDreams
-和 SGLang 作为其下方不同粒度的 execution implementations。它不证明 native 是最快的
-serving engine，也不支持为了“全栈自研”立即重写 transformer/kernel。
+`RayGenerationExecutor` 与 `GenerationChunkExecutor` 都叫 executor，但分别处在 driver
+scheduler 和 actor family contract 两侧。不要为了少一个名字 flatten 任一层。
 
 ## 8. Architecture hygiene
 
-- `GenerationRuntime`、`GenerationChunkExecutor`、`ChunkGatherer`、Ray actor adapter 与
-  family builders 都提供真实 public/process/framework/cross-family boundary，保持薄层。
-- `FAMILY_REGISTRY` 与 `GENERIC_DIFFUSION_EXECUTOR` 是 taxonomy/import protocol；trajectory
-  role/metric 常量是 schema boundary，均可保持 ALL_CAPS。
-- 不维护重复 `SUPPORTED_PROVIDERS`/model capability 大表；future provider cases 从 typed
-  binding 与真实实现派生。
-- `GenerationRequest.priority` 当前无行为消费者，应删除；活的 `RayActorJob.priority` 来自
-  `DeviceAssignment.estimated_cost`，二者不能混为一谈。
-- 不复活已删除 physical-stage package，不把 provider private scheduler 提升为 wm public API，
-  不为 LOC reduction flatten 上述协议。
+### Keep
+
+- `HEALTH_CONCURRENCY_GROUP`：health/pipelined-progress decorators 与 actor creation
+  共用的 protocol name；
+- `_PLACEMENT_READY_TIMEOUT_S`：placement scheduling boundary；
+- registry taxonomy constants：单一隔离的 family source of truth；
+- optional `forward_plan_pipelined` seam：真实 single-worker capability，不给 AR family
+  增加无行为 stub。
+
+### Do not add
+
+- `WorkerFleetManager`、`DeadlineManager` 或 `RecoveryHandler`；
+- duplicated provider/model capability tables；
+- ALL_CAPS operation-name/timeout taxonomy；
+- family-specific lifecycle or timeout fields；
+- 为 LOC reduction flatten public/process/framework adapters。
 
 ## References
 
 - `vrl/generation/protocols.py`
 - `vrl/generation/launch_contract.py`
-- `vrl/generation/ray/{launcher,runtime,executor,worker,weight_sync}.py`
-- `vrl/generation/execution/{planner,chunk_placement,worker}.py`
-- `vrl/generation/{diffusion,ar}/executor.py`
+- `vrl/generation/ray/config.py`
+- `vrl/generation/ray/launcher.py`
+- `vrl/generation/ray/runtime.py`
+- `vrl/generation/ray/executor.py`
+- `vrl/generation/ray/worker.py`
+- `vrl/generation/ray/weight_sync.py`
+- `vrl/generation/execution/worker.py`
 - `vrl/families/registry.py`
+- `vrl/ray/actor_group.py`
 - `vrl/ray/actor_pool.py`
-- `docs/sprints/SPRINT_native_generation_engine_program.md`
+- `vrl/ray/operation_deadline.py`
 - `docs/sprints/done/SPRINT_explicit_rollout_activation.md`
 - `docs/sprints/done/SPRINT_rollout_worker_liveness.md`
+- `docs/sprints/done/SPRINT_ray_rollout_operation_deadlines.md`

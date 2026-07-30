@@ -320,9 +320,14 @@ def write_run_verdict(
     from pathlib import Path
 
     if error is not None:
+        from vrl.runtime_errors import deepest_error_cause
+
+        root_error = deepest_error_cause(error)
         verdict = {
             "verdict": "failed",
-            "error_class": type(error).__name__,
+            # Cleanup wrappers keep the complete outer message, while restart
+            # policy keys on the stable operation root that actually failed.
+            "error_class": type(root_error).__name__,
             "error_message": str(error)[:2000],
         }
     elif received_signal is not None:

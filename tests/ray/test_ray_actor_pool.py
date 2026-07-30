@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 import asyncio
+import threading
+import time
 
 import pytest
 
 from vrl.ray.actor_group import RayActorGroup
 from vrl.ray.actor_pool import RayActorJob, run_actor_jobs
+from vrl.ray.operation_deadline import RayOperationTimeout
 from vrl.ray.placement import validate_actor_gpu_ids
 
 # The two real-Ray tests here share the package cluster (tests/ray/conftest.py);
@@ -43,6 +46,7 @@ def test_ray_actor_group_launch_lifecycle(local_ray) -> None:
             worker_ids=["w0", "w1"],
             num_cpus=0.5,
             num_gpus=0.0,
+            worker_rpc_timeout_s=30.0,
             startup_method="startup",
         )
 
@@ -98,6 +102,7 @@ def test_run_actor_jobs_awaits_real_object_refs(local_ray) -> None:
             run_actor_jobs(
                 bound,
                 max_inflight_per_actor=1,
+                generation_stall_timeout_s=30.0,
             ),
         )
         assert [index for index, _ in pairs] == [0, 1, 2, 3]
@@ -116,6 +121,7 @@ def test_run_actor_jobs_awaits_real_object_refs(local_ray) -> None:
             run_actor_jobs(
                 unbound,
                 max_inflight_per_actor=1,
+                generation_stall_timeout_s=30.0,
                 worker_methods={"w0": w0.execute.remote, "w1": w1.execute.remote},
             ),
         )
@@ -128,6 +134,74 @@ def test_run_actor_jobs_awaits_real_object_refs(local_ray) -> None:
         # scheduling against a fleet they did not create.
         for actor in (w0, w1):
             ray.kill(actor, no_restart=True)
+
+
+@pytest.mark.asyncio
+async def test_hung_business_call_times_out_while_health_group_responds(local_ray) -> None:
+    """A live health thread cannot disguise a stalled default-group call."""
+
+    ray = local_ray
+    health_group = "test_health"
+
+    class _HungWorker:
+        def __init__(self) -> None:
+            self._business_started = threading.Event()
+
+        def block(self, _payload: None) -> None:
+            self._business_started.set()
+            threading.Event().wait()
+
+        @ray.method(concurrency_group=health_group)
+        def health(self) -> bool:
+            return self._business_started.is_set()
+
+    actor_cls = ray.remote(
+        num_cpus=0,
+        concurrency_groups={health_group: 1},
+    )(_HungWorker)
+    actor = actor_cls.remote()
+    started_at = time.monotonic()
+    task = asyncio.create_task(
+        run_actor_jobs(
+            [
+                RayActorJob(
+                    job_index=0,
+                    worker_id="w0",
+                    remote_method=actor.block.remote,
+                    payload=None,
+                ),
+            ],
+            generation_stall_timeout_s=1.0,
+        ),
+    )
+    try:
+        business_started = False
+        while not business_started:
+            business_started = await asyncio.to_thread(
+                ray.get,
+                actor.health.remote(),
+                timeout=1.0,
+            )
+            if not business_started:
+                await asyncio.sleep(0.01)
+
+        with pytest.raises(RayOperationTimeout, match=r"rollout\.generation\.chunk"):
+            await task
+
+        assert time.monotonic() - started_at < 3.0
+        assert (
+            await asyncio.to_thread(
+                ray.get,
+                actor.health.remote(),
+                timeout=1.0,
+            )
+            is True
+        )
+    finally:
+        if not task.done():
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+        ray.kill(actor, no_restart=True)
 
 
 def test_validate_actor_gpu_ids_rejects_unexpected_assignment() -> None:

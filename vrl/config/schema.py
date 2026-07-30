@@ -746,11 +746,20 @@ class RolloutWorkerSection(ConfigBase):
     cpus_per_worker: float = 1.0
     max_inflight_chunks_per_worker: int = 1
     # Background liveness probing of rollout workers. interval <= 0 disables it;
-    # a worker that stops answering kills the fleet so the training attempt
-    # fails closed and the supervisor resumes from the latest checkpoint.
+    # a worker that stops answering kills the owned actors so active or subsequent
+    # foreground work fails closed. A failed verdict then enters the supervisor's
+    # bounded restart policy.
     health_check_interval_s: float = 30.0
     health_check_timeout_s: float = 30.0
     health_check_first_wait_s: float = 0.0
+    # Opaque control-plane calls expose no useful progress. Bound startup,
+    # metadata, capability, and weight acknowledgements independently.
+    worker_rpc_timeout_s: float = 600.0
+    # Generation has a separate stall budget: a completed chunk is real progress,
+    # and the pipelined path reports the same progress from its worker. Thirty
+    # minutes covers the measured 733-second Cosmos chunk without turning a stuck
+    # metadata or weight call into a two-hour outage.
+    generation_stall_timeout_s: float = 1800.0
     chunk_placement_strategy: ChunkPlacementStrategy = "round_robin"
     sync_trainable_state: bool = True
     # Opt-in single-worker pipelined rollout. Config resolution rejects multiple
@@ -774,6 +783,17 @@ class RolloutWorkerSection(ConfigBase):
         if not math.isfinite(self.health_check_first_wait_s) or self.health_check_first_wait_s < 0:
             raise ValueError(
                 "distributed.rollout.health_check_first_wait_s must be finite and >= 0",
+            )
+        if not math.isfinite(self.worker_rpc_timeout_s) or self.worker_rpc_timeout_s <= 0:
+            raise ValueError(
+                "distributed.rollout.worker_rpc_timeout_s must be finite and > 0",
+            )
+        if (
+            not math.isfinite(self.generation_stall_timeout_s)
+            or self.generation_stall_timeout_s <= 0
+        ):
+            raise ValueError(
+                "distributed.rollout.generation_stall_timeout_s must be finite and > 0",
             )
         return self
 

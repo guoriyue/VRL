@@ -5,15 +5,21 @@ from __future__ import annotations
 import asyncio
 import threading
 from types import SimpleNamespace
+from typing import ClassVar
 
 import pytest
 
+from vrl.generation.execution.types import (
+    DistributedWorkerHandle,
+    PipelinedProgressError,
+)
 from vrl.generation.ray.lifecycle_fsm import (
     RuntimeLifecycle,
     RuntimeLifecycleError,
     RuntimePhase,
 )
 from vrl.generation.ray.runtime import RayGenerationRuntime
+from vrl.ray.operation_deadline import RayOperationTimeout
 
 
 def _resident_runtime() -> RayGenerationRuntime:
@@ -237,6 +243,290 @@ async def test_existing_failure_survives_successful_cleanup() -> None:
     with pytest.raises(RuntimeLifecycleError) as rejected:
         await runtime.generate(_request())
     assert rejected.value.__cause__ is root
+
+
+@pytest.mark.asyncio
+async def test_generation_timeout_force_kills_without_release_rpc(monkeypatch) -> None:
+    import vrl.generation.ray.runtime as runtime_module
+
+    timeout = RayOperationTimeout("rollout.generation.chunk", 1.0)
+
+    class _Executor:
+        async def execute(self, _request) -> None:
+            raise timeout
+
+    class _Release:
+        calls = 0
+
+        @classmethod
+        def remote(cls) -> None:
+            cls.calls += 1
+
+    class _Actor:
+        release_policy = _Release()
+
+    class _Ray:
+        killed: ClassVar[list[object]] = []
+
+        @classmethod
+        def kill(cls, actor: object, *, no_restart: bool) -> None:
+            assert no_restart is True
+            cls.killed.append(actor)
+
+    actor = _Actor()
+    runtime = RayGenerationRuntime(
+        _Executor(),
+        owned_workers=[DistributedWorkerHandle(worker_id="w0", actor=actor)],
+    )
+    monkeypatch.setattr(runtime_module, "require_ray", lambda: _Ray)
+
+    with pytest.raises(RayOperationTimeout) as caught:
+        await runtime.generate(_request())
+
+    assert caught.value is timeout
+    assert runtime.lifecycle.failure is timeout
+    assert runtime.lifecycle.phase is RuntimePhase.TERMINATED
+    assert runtime._owned_workers == []
+    assert _Release.calls == 0
+    assert _Ray.killed == [actor]
+
+
+@pytest.mark.asyncio
+async def test_timeout_preserves_root_when_force_cleanup_also_fails() -> None:
+    timeout = RayOperationTimeout("rollout.generation.chunk", 1.0)
+    cleanup_error = RuntimeError("actor kill failed")
+
+    class _Executor:
+        async def execute(self, _request) -> None:
+            raise timeout
+
+    runtime = RayGenerationRuntime(_Executor())
+
+    async def fail_cleanup() -> None:
+        raise cleanup_error
+
+    runtime._teardown_owned_resources = fail_cleanup
+
+    with pytest.raises(RayOperationTimeout) as caught:
+        await runtime.generate(_request())
+
+    assert caught.value is timeout
+    assert runtime.lifecycle.failure is timeout
+    assert runtime.lifecycle.phase is RuntimePhase.SHUTTING_DOWN
+    assert any("actor kill failed" in note for note in timeout.__notes__)
+
+
+@pytest.mark.asyncio
+async def test_terminal_progress_protocol_error_closes_runtime() -> None:
+    error = PipelinedProgressError("progress request_id mismatch")
+
+    class _Executor:
+        async def execute(self, _request) -> None:
+            raise error
+
+    runtime = RayGenerationRuntime(_Executor())
+
+    with pytest.raises(PipelinedProgressError) as caught:
+        await runtime.generate(_request())
+
+    assert caught.value is error
+    assert runtime._force_shutdown is True
+    assert runtime.lifecycle.failure is error
+    assert runtime.lifecycle.phase is RuntimePhase.TERMINATED
+
+
+@pytest.mark.asyncio
+async def test_weight_ack_timeout_keeps_previous_version_and_force_kills(
+    monkeypatch,
+) -> None:
+    import vrl.generation.ray.runtime as runtime_module
+
+    timeout = RayOperationTimeout("rollout.weight_sync", 1.0)
+
+    class _WeightSync:
+        async def push_to_rollout_workers(self, _state_ref, _policy_version) -> None:
+            raise timeout
+
+    class _Release:
+        calls = 0
+
+        @classmethod
+        def remote(cls) -> None:
+            cls.calls += 1
+
+    class _Actor:
+        release_policy = _Release()
+
+    class _Ray:
+        killed: ClassVar[list[object]] = []
+
+        @classmethod
+        def kill(cls, actor: object, *, no_restart: bool) -> None:
+            assert no_restart is True
+            cls.killed.append(actor)
+
+    actor = _Actor()
+    runtime = RayGenerationRuntime(
+        SimpleNamespace(),
+        weight_sync=_WeightSync(),
+        owned_workers=[DistributedWorkerHandle(worker_id="w0", actor=actor)],
+    )
+    runtime.current_policy_version = 6
+    monkeypatch.setattr(runtime_module, "require_ray", lambda: _Ray)
+
+    with pytest.raises(RayOperationTimeout) as caught:
+        await runtime.update_weights(object(), policy_version=7)
+
+    assert caught.value is timeout
+    assert runtime.current_policy_version == 6
+    assert runtime.lifecycle.failure is timeout
+    assert runtime.lifecycle.phase is RuntimePhase.TERMINATED
+    assert _Release.calls == 0
+    assert _Ray.killed == [actor]
+
+
+@pytest.mark.asyncio
+async def test_later_timeout_upgrades_ordinary_failure_to_force_cleanup(monkeypatch) -> None:
+    import vrl.generation.ray.runtime as runtime_module
+
+    class _Release:
+        calls = 0
+
+        @classmethod
+        def remote(cls) -> None:
+            cls.calls += 1
+
+    class _Actor:
+        release_policy = _Release()
+
+    class _Ray:
+        killed: ClassVar[list[object]] = []
+
+        @classmethod
+        def kill(cls, actor: object, *, no_restart: bool) -> None:
+            del no_restart
+            cls.killed.append(actor)
+
+    actor = _Actor()
+    runtime = RayGenerationRuntime(
+        SimpleNamespace(),
+        owned_workers=[DistributedWorkerHandle(worker_id="w0", actor=actor)],
+    )
+    ordinary = RuntimeError("health failed first")
+    runtime.lifecycle.fail(ordinary)
+    timeout = RayOperationTimeout("rollout.generation.chunk", 1.0)
+    monkeypatch.setattr(runtime_module, "require_ray", lambda: _Ray)
+
+    await runtime._terminalize_after_failure(timeout)
+
+    assert runtime.lifecycle.failure is ordinary
+    assert runtime.lifecycle.phase is RuntimePhase.TERMINATED
+    assert runtime._force_shutdown is True
+    assert _Release.calls == 0
+    assert _Ray.killed == [actor]
+
+
+@pytest.mark.asyncio
+async def test_timeout_interrupts_an_already_waiting_release_barrier(monkeypatch) -> None:
+    import vrl.generation.ray.runtime as runtime_module
+
+    release_entered = threading.Event()
+    finish_release = threading.Event()
+
+    class _Release:
+        calls = 0
+
+        @classmethod
+        def remote(cls) -> object:
+            cls.calls += 1
+            return object()
+
+    class _Actor:
+        release_policy = _Release()
+
+    class _Ray:
+        killed: ClassVar[list[object]] = []
+
+        @staticmethod
+        def get(_refs, *, timeout: float) -> None:
+            assert timeout == 60
+            release_entered.set()
+            finish_release.wait()
+
+        @classmethod
+        def kill(cls, actor: object, *, no_restart: bool) -> None:
+            assert no_restart is True
+            cls.killed.append(actor)
+
+    actor = _Actor()
+    runtime = RayGenerationRuntime(
+        SimpleNamespace(),
+        owned_workers=[DistributedWorkerHandle(worker_id="w0", actor=actor)],
+    )
+    monkeypatch.setattr(runtime_module, "require_ray", lambda: _Ray)
+    graceful_shutdown = asyncio.create_task(runtime.shutdown())
+    assert await asyncio.to_thread(release_entered.wait, 1.0)
+
+    timeout = RayOperationTimeout("rollout.generation.chunk", 1.0)
+    try:
+        await asyncio.wait_for(
+            runtime._terminalize_after_failure(timeout),
+            timeout=1.0,
+        )
+    finally:
+        finish_release.set()
+        shutdown_results = await asyncio.gather(
+            graceful_shutdown,
+            return_exceptions=True,
+        )
+
+    assert shutdown_results == [None]
+    assert runtime.lifecycle.failure is timeout
+    assert runtime.lifecycle.phase is RuntimePhase.TERMINATED
+    assert runtime._release_wait_task is None
+    assert _Release.calls == 1
+    assert _Ray.killed == [actor]
+
+
+@pytest.mark.asyncio
+async def test_timeout_prevents_sibling_generation_from_returning_output() -> None:
+    timeout = RayOperationTimeout("rollout.generation.chunk", 1.0)
+    timeout_entered = asyncio.Event()
+    sibling_entered = asyncio.Event()
+    fail_timeout = asyncio.Event()
+    finish_sibling = asyncio.Event()
+
+    class _Executor:
+        async def execute(self, request) -> str:
+            if request.request_id == "timeout":
+                timeout_entered.set()
+                await fail_timeout.wait()
+                raise timeout
+            sibling_entered.set()
+            await finish_sibling.wait()
+            return "must-not-escape"
+
+    runtime = RayGenerationRuntime(_Executor())
+    timeout_request = SimpleNamespace(
+        request_id="timeout",
+        sampling={},
+        policy_version=None,
+    )
+    sibling_request = SimpleNamespace(
+        request_id="sibling",
+        sampling={},
+        policy_version=None,
+    )
+    timeout_task = asyncio.create_task(runtime.generate(timeout_request))
+    sibling_task = asyncio.create_task(runtime.generate(sibling_request))
+    await asyncio.gather(timeout_entered.wait(), sibling_entered.wait())
+
+    fail_timeout.set()
+    with pytest.raises(RayOperationTimeout):
+        await timeout_task
+    finish_sibling.set()
+    with pytest.raises(RuntimeLifecycleError, match="complete generation"):
+        await sibling_task
 
 
 @pytest.mark.asyncio

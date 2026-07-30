@@ -984,12 +984,12 @@ node/GPU identity 校验 placement。“先启动再由 schedule 猜”不算完
 ### 应保持不变
 
 - `RayLifecyclePlan`：topology -> role lease / phase handoff 的 typed source of truth；
-- `RayGenerationRuntime.activate/offload/update_weights/shutdown`：runtime protocol boundary；
-- `RayGenerationWorkerFleet`：executor/sync/actor/monitor/parking/teardown 的资源 ownership boundary；
+- `RayGenerationRuntime.activate/offload/update_weights/shutdown`：runtime protocol boundary，并直接
+  拥有 executor/sync/actor/monitor/parking/teardown；
 - `GenerationRuntime.is_colocated()` 与 coordinator adapter：continuous 的 unconditional runtime
   safety backstop；它们不参与 schedule selection；
 - desired vs active policy snapshot：sleeping worker 的事务性 coalescing；
-- terminal `terminal_state.py`：shutdown admission、首个 failure、terminal phase；
+- `generation/ray/lifecycle_fsm.py`：shutdown admission、首个 failure、terminal phase；
 - bounded in-flight/ready/byte budgets、staleness scheduler、versioned slots；
 - `RayGenerationLaunchInputs`：lazy launch 所需的 typed input boundary；
 - family runtime/executor adapters：跨 family 一致性与 grep boundary；

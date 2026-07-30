@@ -59,6 +59,20 @@ def test_every_chunk_produced_exactly_once() -> None:
     assert len(out) == len(chunks)
 
 
+def test_progress_advances_once_after_each_successful_chunk() -> None:
+    progress: list[int] = []
+
+    output = forward_chunks_pipelined(
+        _executor(lambda chunk: ("result", chunk)),
+        "req",
+        ["c0", "c1", "c2"],
+        progress_callback=progress.append,
+    )
+
+    assert output == [("result", "c0"), ("result", "c1"), ("result", "c2")]
+    assert progress == [1, 2, 3]
+
+
 def test_single_chunk_still_produces_and_tears_down() -> None:
     out = forward_chunks_pipelined(
         _executor(lambda chunk: ("p", chunk)),

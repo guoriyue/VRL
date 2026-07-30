@@ -4,8 +4,10 @@
 
 Status: **parked**. Its trigger requires FlashDreams/Self-Forcing to prove that
 native `GenerationChunkExecutor + trajectory` can carry the first external
-provider, and the independent configured blocking-call deadline gate must pass.
-That deadline gate remains unfinished. The completed
+provider. The independent configured blocking-call deadline gate is complete
+under the
+[Ray rollout operation deadline sprint](../done/SPRINT_ray_rollout_operation_deadlines.md).
+The completed
 [worker process-health sprint](../done/SPRINT_rollout_worker_liveness.md) proves
 actor-process reachability only, not progress in default-group provider calls.
 Under the program ordering, this remains the second external implementation.

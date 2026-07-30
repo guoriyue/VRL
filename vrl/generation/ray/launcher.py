@@ -24,6 +24,7 @@ from vrl.generation.ray.worker import HEALTH_CONCURRENCY_GROUP, RayGenerationWor
 from vrl.models.dtypes import dtype_to_wire_name
 from vrl.ray.actor_group import RayActorGroup
 from vrl.ray.dependencies import current_node_ip, require_ray
+from vrl.ray.operation_deadline import RayOperationTimeout, get_ray_refs
 from vrl.ray.placement import RolePlacement, validate_actor_gpu_ids
 from vrl.utils.config import cfg_path, plain_mapping, to_builtin_deep
 
@@ -100,6 +101,7 @@ class RayGenerationLauncher:
                 worker_ids=worker_ids,
                 num_cpus=worker.cpus_per_worker,
                 num_gpus=rollout_config.resources.rollout_gpus_per_worker,
+                worker_rpc_timeout_s=worker.worker_rpc_timeout_s,
                 placement_group=placement_group,
                 bundle_indices=bundle_indices,
                 startup_method="load_policy",
@@ -137,9 +139,17 @@ class RayGenerationLauncher:
                 workers,
                 chunk_gatherer,
                 max_inflight_chunks_per_worker=worker.max_inflight_chunks_per_worker,
+                generation_stall_timeout_s=worker.generation_stall_timeout_s,
                 pipelined=worker.pipelined,
             )
-            weight_sync = RayGenerationWeightSync(workers) if worker.sync_trainable_state else None
+            weight_sync = (
+                RayGenerationWeightSync(
+                    workers,
+                    worker_rpc_timeout_s=worker.worker_rpc_timeout_s,
+                )
+                if worker.sync_trainable_state
+                else None
+            )
             runtime = RayGenerationRuntime(
                 executor,
                 weight_sync=weight_sync,
@@ -158,6 +168,7 @@ class RayGenerationLauncher:
                 ray,
                 workers,
                 weight_sync=weight_sync,
+                worker_rpc_timeout_s=worker.worker_rpc_timeout_s,
             )
             runtime.start_health_monitoring()
             return runtime
@@ -384,6 +395,7 @@ def _all_workers_support_versioned_slots(
     workers: list[DistributedWorkerHandle],
     *,
     weight_sync: Any | None,
+    worker_rpc_timeout_s: float,
 ) -> bool:
     """Return whether every worker supports versioned trainable-state slots.
 
@@ -399,9 +411,15 @@ def _all_workers_support_versioned_slots(
     if not actors or len(actors) != len(workers):
         return False
     try:
-        results = ray.get(
+        results = get_ray_refs(
+            ray,
             [actor.supports_versioned_trainable_state.remote() for actor in actors],
+            operation="rollout.startup.versioned_slots",
+            timeout_s=worker_rpc_timeout_s,
+            context=f"workers={len(actors)}",
         )
+    except RayOperationTimeout:
+        raise
     except Exception:
         return False
     return bool(results) and all(bool(result) for result in results)

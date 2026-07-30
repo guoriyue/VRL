@@ -103,7 +103,7 @@ only incident records found.
 - Stop and join a continuous rollout producer before closing its collector,
   runtime, or placement group.
 - Terminal shutdown of a sleep-eligible generation lease must terminate its
-  actor-owning worker fleet; `offload()` remains the reversible sleep/wake operation.
+  actor set; `offload()` remains the reversible sleep/wake operation.
 - DDP/FSDP strategies destroy their training process group after Ray resources
   are released.
 
@@ -132,8 +132,8 @@ The implementation is complete when CPU-only tests prove all of the following:
 - `SIGINT` and `SIGTERM` unwind async cleanup and exit as 130 and 143; synchronous
   trainer entrypoints retain their existing signal behavior.
 - Continuous schedule shutdown joins its producer, and sleep-eligible terminal
-  shutdown cleans its worker fleet exactly once; the fleet has no public terminal
-  state.
+  shutdown cleans its actor set exactly once; that actor set is not an independent
+  lifecycle owner, and `RuntimeLifecycle` belongs to `RayGenerationRuntime`.
 - DDP/FSDP strategy shutdown reaches the process-group teardown boundary.
 - Cleanup continues after one component fails; the first cleanup error raises
   only when there is no earlier run error.

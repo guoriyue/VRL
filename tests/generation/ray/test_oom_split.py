@@ -164,6 +164,7 @@ def _executor(
         planner=_StaticPlanner(chunks=chunks),
         workers=handles,
         gatherer=_CoverageGatherer(),
+        generation_stall_timeout_s=30.0,
     )
     return executor, handles
 
@@ -320,6 +321,7 @@ async def test_stale_slot_routes_to_graceful_discard_not_failure() -> None:
         planner=_StaticPlanner(chunks=[chunk]),
         workers=handles,
         gatherer=_CoverageGatherer(),
+        generation_stall_timeout_s=30.0,
     )
 
     with pytest.raises(StaleSlotDiscard, match="policy_version=7"):
@@ -402,6 +404,7 @@ def _routing_executor(chunks, workers, *, pipelined):
         planner=_StaticPlanner(chunks=chunks),
         workers=handles,
         gatherer=_CoverageGatherer(),
+        generation_stall_timeout_s=30.0,
         pipelined=pipelined,
     )
 

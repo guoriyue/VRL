@@ -36,10 +36,19 @@ class _Executor:
         self.error = error
         self.calls: list[tuple] = []
 
-    def forward_plan_pipelined(self, request, sample_rows, plan):
+    def forward_plan_pipelined(
+        self,
+        request,
+        sample_rows,
+        plan,
+        *,
+        progress_callback=None,
+    ):
         self.calls.append((request, sample_rows, plan))
         if self.error is not None:
             raise self.error
+        if progress_callback is not None:
+            progress_callback(1)
         return "GATHERED_OUTPUT"
 
 
@@ -77,6 +86,26 @@ def test_slot_mode_with_live_slot_activates_and_runs() -> None:
     assert out == "GATHERED_OUTPUT"
     assert model.activated == [7]  # served from the REQUEST's version slot, not 9
     assert len(ex.calls) == 1
+
+
+def test_worker_core_forwards_pipelined_progress_callback() -> None:
+    progress: list[int] = []
+    core = _core(
+        executor=_Executor(_Model(set())),
+        uses_slots=False,
+        policy_version=5,
+    )
+
+    output = GenerationWorkerCore.execute_request_pipelined(
+        core,
+        _request(5),
+        "plan",
+        "rows",
+        progress_callback=progress.append,
+    )
+
+    assert output == "GATHERED_OUTPUT"
+    assert progress == [1]
 
 
 def test_slot_mode_with_evicted_slot_raises_stale_discard_and_does_not_run() -> None:
