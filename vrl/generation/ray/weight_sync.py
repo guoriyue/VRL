@@ -20,7 +20,7 @@ class GenerationWeightSync(Protocol):
     ) -> None: ...
 
 
-class RayGenerationWeightSync(GenerationWeightSync):
+class RayGenerationWeightSync:
     """Call ``update_weights`` on every Ray generation worker."""
 
     def __init__(
