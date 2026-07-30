@@ -85,7 +85,7 @@ transformer / kernel / provider scheduling   mostly upstream or parked
 |---|---|---|
 | RL trajectory | `generation/steps/denoise/loop.py` 产出 observations/actions/log-probs；binding 与 `trajectory/builders.py` 构造 trainer-facing trajectory，validator 检查 role 与 axis | 这是 trainer-facing source of truth，不是 inference-only artifact wrapper |
 | Policy freshness | worker 按 request version 激活 slot；slot 被逐出时 `RayGenerationExecutor` 丢弃整条 request | mixed-policy partial result fail closed |
-| GPU/runtime lifecycle | schedule 排序 phase handoff；`_OnDemandRayGenerationRuntime` 直接拥有 activation/offload tasks、inner runtime 与 desired/active policy state；`RayGenerationRuntime` 只拥有 resident executor/weight sync/actors/monitor/teardown | shared-GPU phase owner 与 resident resource owner 已分开；当前不存在独立 WorkerFleet、shared runtime manager 或统一 transition lock |
+| GPU/runtime lifecycle | schedule 排序 phase handoff；`_OnDemandRayGenerationRuntime` 直接拥有 activation/offload tasks、inner runtime 与 pending payload / accepted target / active version state；`RayGenerationRuntime` 只拥有 resident executor/weight sync/actors/monitor/teardown | shared-GPU phase owner 与 resident resource owner 已分开；当前不存在独立 WorkerFleet、shared runtime manager 或统一 transition lock |
 | Rollout worker process reachability | a background probe watches a dedicated health concurrency group out of band | an unreachable process kills the owned actors so active/next foreground work fails closed；failed verdict 之后 supervisor 才执行 bounded restart policy，获准 retry 时从最新 complete checkpoint 恢复 |
 | Full-sequence denoise + token-autoregressive | denoise step 自有 SDE loop；token-autoregressive composition 自有 token scheduler/cache row routing；两者汇入同一 `GenerationOutput`/trajectory | 一个顶层 engine 可以保留两种不同数学执行形态 |
 | RL group integrity | sample chunk OOM 时有序二分，gather 再检查完整覆盖 | OOM 不会静默少样本、重复样本或重排 GRPO group |
@@ -205,7 +205,8 @@ training recipe；provider-specific smoke 不依赖第二个 provider 已完成�
 - worker 只从 serializable launch contract 构造 executor；
 - request 在进入 execution 前已有确定的 policy version；
 - 一条 trajectory 不跨 policy version；
-- partial weight update 不会把 desired/active version 标成成功；
+- partial weight update 不会推进 active version；inactive staged target 与 worker-ACK
+  version 保持可区分；
 - provider failure 关闭 admission，并由 native runtime 完成清理；
 - rollout output 在进入 trainer 前已经是 native trajectory schema。
 

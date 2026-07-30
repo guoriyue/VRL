@@ -27,16 +27,17 @@ full denoising trajectory instead of using token-level retract/resume.
 ## Runtime contract
 
 ```text
-activate()       launch or wake workers, then install pending_policy
+activate()       launch or wake workers, then complete a pending policy install
 generate()       require an explicitly active runtime
-update_weights() install immediately when active, otherwise stage pending_policy
+update_weights() install immediately when active, otherwise stage an install
 offload()        park already-idle workers; never drain generation itself
 shutdown()       join activation/offload tasks and tear down owned resources
 ```
 
 `release()` and `with_release_after_collect()` compatibility facades have been
-removed. The canonical contract uses `offload()` and
-`with_on_demand_activation()` only.
+removed. The canonical lifecycle contract uses `activate()` and `offload()`;
+`RayGenerationLauncher.create_runtime()` selects the resident or on-demand
+implementation from the resolved topology.
 
 ## Ownership
 
@@ -59,25 +60,31 @@ RUNNING -> SHUTTING_DOWN -> TERMINATED
 ```
 
 There is no runtime-level `QUIESCING`, `OperationTicket`, active-operation map, or
-waiter map. Activate and offload share one ordered transition task, while shutdown
-uses one shared cleanup task. Worker policy install cannot overlap an in-flight
-activation. The implementation was subsequently consolidated: on-demand launch
-attaches an inner `RayGenerationRuntime`, and that inner runtime directly owns its
-executor, weight sync, actors, monitor, parking, and teardown. There is no
+waiter map. Activate and offload each use a single-flight task; offload explicitly
+waits for an in-flight activation, while shutdown uses one shared cleanup task.
+Worker policy install cannot overlap an in-flight activation. The implementation
+was subsequently consolidated: on-demand launch attaches an inner
+`RayGenerationRuntime`, and that inner runtime directly owns its executor, weight
+sync, actors, monitor, parking, and teardown. There is no
 `RayGenerationWorkerFleet` or second public lifecycle owner; the outer facade
 retains only an unacknowledged policy install and exposes one collector-facing
 terminal boundary.
 
 On-demand policy state distinguishes:
 
-- `pending_policy`: latest complete trainer snapshot not yet acknowledged by workers;
-- `active_policy_version`: version acknowledged by the active worker set.
+- `current_policy_version`: latest target accepted by the facade, including a staged
+  target that inactive workers have not acknowledged yet;
+- `_pending_policy`: full trainer snapshot retained only until a worker fleet
+  acknowledges that target;
+- `_active_policy_version`: version acknowledged by the active worker fleet.
 
-The public version advances only after required worker acknowledgements when the
-workers are active. Successful active, cold, and wake installs release the full CPU
-payload immediately; parking keeps the installed model, so only version scalars need
-to survive. A partial update failure preserves the previous published version, closes
-admission, and destroys the unknown worker state through terminal cleanup.
+An inactive update advances the accepted target and stages its payload without
+claiming that workers are active on that version. An active update advances both
+version facts only after every required worker acknowledgement. Successful active,
+cold, and wake installs release the full CPU payload immediately; parking keeps the
+installed model, so only version scalars need to survive. A partial update failure
+does not publish a new active version, closes admission, and destroys the unknown
+worker state through terminal cleanup.
 
 ## Non-goals
 

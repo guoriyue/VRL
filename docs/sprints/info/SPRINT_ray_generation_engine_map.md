@@ -28,8 +28,9 @@ driver 侧包含 schedule、runtime 和 executor。actor 侧包含 Ray worker、
 executor 和 model。`RayGenerationRuntime` 只拥有 resident actor handles、executor、
 health monitor、optional weight sync 与 teardown；package-private
 `_OnDemandRayGenerationRuntime` 只拥有 phase-boundary activation/offload、inner runtime
-和 desired/active policy state。两者都结构化满足 `GenerationRuntime`，仓库里没有独立
-`WorkerFleet` 或 shared runtime base/manager owner。
+和 pending payload / accepted target / active version state。两者都结构化满足
+`GenerationRuntime`，仓库里没有独立 `WorkerFleet` 或 shared runtime base/manager
+owner。
 
 wm-infra 原生拥有 lifecycle、policy version、chunk、trajectory 与 replay 语义。底层
 transformer/block/kernel 仍可来自 Diffusers、PyTorch 或未来 provider；“native control
@@ -140,7 +141,8 @@ launcher 清理 candidate actors；placement group 仍由 `GlobalRayPlacementOwn
 config / launch_inputs / placement
 inner_runtime
 activation_task / offload_task / shutdown_task
-pending_policy / active_policy_version
+current_policy_version / _active_policy_version
+_pending_policy
 workers_offloaded
 ```
 
@@ -156,7 +158,7 @@ pending policy install 通过 inner runtime 的 public `update_weights` failure 
 weight ACK timeout 时都先 force-kill 自己拥有的 actors，outer facade 再关闭自己的
 admission。完整 CPU state 只在 cold/offloaded worker 尚未 ACK 时由 facade 暂存；active、
 cold 或 wake install 成功后立即清空 payload，版本事实由
-`current_policy_version / active_policy_version` 单独保存。
+`current_policy_version / _active_policy_version` 单独保存。
 
 ## 4. Generation 调用链
 
@@ -241,11 +243,13 @@ trainer weight syncer
               -> GenerationWorkerCore.update_weights
 ```
 
-所有 remote workers 共享一次 `ray.put(state_ref)`。只有全部 ACK 返回并通过 expected
-integer version 校验后，resident runtime 才推进 `current_policy_version`，on-demand
-facade 才推进 accepted/active version 并释放已 ACK 的 CPU payload。timeout 或 bad ACK
-不会 publish candidate version；terminal cleanup 也不会保留已无恢复消费者的 pending
-payload。
+所有 remote workers 共享一次 `ray.put(state_ref)`。resident runtime 与 active
+on-demand update 都只在全部 ACK 返回并通过 expected integer version 校验后推进已安装
+版本。cold/parked on-demand update 没有可 ACK 的 active fleet：facade 立即把
+`current_policy_version` 推进为最新 accepted target、暂存 `_pending_policy`，同时保持
+`_active_policy_version` 不变。下一次 `activate()` 安装并收到 ACK 后才推进 active
+version，并释放 CPU payload。timeout 或 bad ACK 不会 publish candidate active version；
+terminal cleanup 也不会保留已无恢复消费者的 pending payload。
 
 ### Parking
 
@@ -291,7 +295,7 @@ deadline 也看不到 requests 之间的 idle process death。
 | Boundary | Responsibility | Verdict |
 |---|---|---|
 | `GenerationRuntime` | collector-facing lifecycle protocol | keep thin: public API |
-| `_OnDemandRayGenerationRuntime` | activation/offload tasks, inner runtime, pending/active policy state | keep private: shared-GPU phase owner |
+| `_OnDemandRayGenerationRuntime` | activation/offload tasks, inner runtime, accepted/pending/active policy state | keep private: shared-GPU phase owner |
 | `RayGenerationRuntime` | resident actors, executor, weight sync, health, teardown | keep: real resource owner |
 | `RayGenerationExecutor` | plan, dispatch, OOM, correlation, gather | keep: driver scheduler |
 | `RayGenerationWorker` | Ray methods and concurrency-group adapters | keep thin: framework boundary |
