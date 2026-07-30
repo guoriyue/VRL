@@ -341,10 +341,10 @@ class _OnDemandRayGenerationRuntime:
         """Join facade cleanup and restore roots hidden by ``asyncio.shield``."""
 
         if self.lifecycle.phase is RuntimePhase.SHUTTING_DOWN:
-            root_failure = self.lifecycle.failure
             try:
                 await self.shutdown()
             except asyncio.CancelledError as cleanup_error:
+                root_failure = self.lifecycle.failure
                 current = asyncio.current_task()
                 if current is not None and current.cancelling():
                     # shutdown() shields its shared cleanup task. Preserve caller
@@ -367,10 +367,24 @@ class _OnDemandRayGenerationRuntime:
                     "generation terminal cleanup retry was also cancelled",
                 )
             except BaseException as cleanup_error:
+                root_failure = self.lifecycle.failure
+                current = asyncio.current_task()
+                if (
+                    isinstance(error, asyncio.CancelledError)
+                    and current is not None
+                    and current.cancelling()
+                ):
+                    # The operation root may be published while this waiter joins
+                    # an already-running graceful shutdown. Preserve the caller's
+                    # cancellation using the latest lifecycle state, not a snapshot
+                    # from before the cleanup await.
+                    error.__cause__ = root_failure or cleanup_error
+                    if root_failure is None or root_failure is cleanup_error:
+                        return
                 # A control operation that already published a stable root keeps
-                # that identity across repeated cleanup failures. With no prior
+                # that identity across repeated cleanup failures. With no stable
                 # root, cleanup itself is the first material failure and escapes.
-                if root_failure is None:
+                if root_failure is None or root_failure is cleanup_error:
                     raise
                 logger.error(
                     "on-demand generation cleanup retry failed after control error %r",
