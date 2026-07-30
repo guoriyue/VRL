@@ -14,9 +14,10 @@ import pytest
 from omegaconf import OmegaConf
 
 from vrl.generation.launch_contract import GenerationRuntimeLaunchContract
-from vrl.generation.protocols import PolicyVersionProvider
+from vrl.generation.protocols import GenerationRuntime, PolicyVersionProvider
 from vrl.generation.ray.config import RayGenerationConfig
 from vrl.generation.ray.launch_inputs import RayGenerationLaunchInputs
+from vrl.generation.ray.on_demand_runtime import _OnDemandRayGenerationRuntime
 from vrl.generation.ray.runtime import RayGenerationRuntime
 from vrl.ray.placement import RolePlacement
 from vrl.ray.resources import resolve_distributed_resources
@@ -31,7 +32,7 @@ class _Gatherer:
 def _on_demand_runtime(
     *,
     colocated: bool = False,
-) -> RayGenerationRuntime:
+) -> _OnDemandRayGenerationRuntime:
     rollout = (
         {
             "gpu_pool": "trainer",
@@ -77,7 +78,7 @@ def _on_demand_runtime(
         cfg,
         resources=resolve_distributed_resources(cfg),
     )
-    return RayGenerationRuntime.with_on_demand_activation(
+    return _OnDemandRayGenerationRuntime(
         config,
         RayGenerationLaunchInputs(
             launch_contract=GenerationRuntimeLaunchContract(
@@ -129,6 +130,13 @@ def test_runtimes_satisfy_policy_version_provider() -> None:
     on_demand = _on_demand_runtime()
     assert isinstance(persistent, PolicyVersionProvider)
     assert isinstance(on_demand, PolicyVersionProvider)
+
+
+def test_concrete_runtimes_satisfy_generation_runtime_structurally() -> None:
+    persistent = RayGenerationRuntime(executor=object())
+    on_demand = _on_demand_runtime()
+    assert isinstance(persistent, GenerationRuntime)
+    assert isinstance(on_demand, GenerationRuntime)
 
 
 def test_runtimes_expose_explicit_activation_and_offload() -> None:

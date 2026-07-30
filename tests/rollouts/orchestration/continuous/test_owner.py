@@ -362,7 +362,7 @@ async def test_real_runtime_cleanup_failure_does_not_replace_ack_root() -> None:
 
     collector = _OwnerCollector()
     runtime = RayGenerationRuntime(
-        executor=None,
+        executor=object(),
         weight_sync=_AckMismatchSync(),
     )
     runtime.current_policy_version = 1
@@ -440,7 +440,7 @@ async def test_health_failure_after_weight_ack_never_resumes_owner_admission() -
 
     collector = _OwnerCollector()
     runtime = RayGenerationRuntime(
-        executor=None,
+        executor=object(),
         weight_sync=_HealthRaceSync(),
     )
     runtime.current_policy_version = 1

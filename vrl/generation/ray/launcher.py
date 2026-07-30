@@ -17,6 +17,7 @@ from vrl.generation.protocols import GenerationRuntime
 from vrl.generation.ray.config import RayGenerationConfig
 from vrl.generation.ray.executor import RayGenerationExecutor
 from vrl.generation.ray.launch_inputs import RayGenerationLaunchInputs
+from vrl.generation.ray.on_demand_runtime import _OnDemandRayGenerationRuntime
 from vrl.generation.ray.runtime import RayGenerationRuntime
 from vrl.generation.ray.weight_sync import RayGenerationWeightSync
 from vrl.generation.ray.worker import HEALTH_CONCURRENCY_GROUP, RayGenerationWorker
@@ -220,7 +221,7 @@ class RayGenerationLauncher:
         resources = config.resources
         rollout_on_demand = resources.lifecycle.rollout.mode == "on_demand"
         if rollout_on_demand:
-            return RayGenerationRuntime.with_on_demand_activation(
+            return _OnDemandRayGenerationRuntime(
                 config,
                 launch_inputs,
                 placement=placement,

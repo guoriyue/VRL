@@ -11,18 +11,25 @@ capability 保留。
 ```text
 Rollout schedule                         admission + normal drain owner
   -> GenerationRuntime                   collector-facing protocol
-     -> RayGenerationRuntime             activation/offload/terminal + actor owner
-        -> RayGenerationExecutor         driver plan/dispatch/OOM/gather
-           -> RayGenerationWorker        thin Ray actor adapter
-              -> GenerationWorkerCore    build/version/parking/forward owner
-                 -> GenerationChunkExecutor
-                    -> diffusion or AR family executor
-                       -> RuntimeModel / upstream transformer and kernels
+     -> resident topology:
+        RayGenerationRuntime             actor/executor/health/teardown owner
+     -> on-demand topology:
+        _OnDemandRayGenerationRuntime    activation/offload/policy phase owner
+          -> RayGenerationRuntime         inner actor/executor/health/teardown owner
+     -> RayGenerationExecutor             driver plan/dispatch/OOM/gather
+        -> RayGenerationWorker            thin Ray actor adapter
+           -> GenerationWorkerCore        build/version/parking/forward owner
+              -> GenerationChunkExecutor
+                 -> diffusion or AR family executor
+                    -> RuntimeModel / upstream transformer and kernels
 ```
 
 driver 侧包含 schedule、runtime 和 executor。actor 侧包含 Ray worker、worker core、family
-executor 和 model。`RayGenerationRuntime` 直接拥有 resident actor handles、health monitor
-和 optional weight sync；仓库里没有独立 `WorkerFleet` owner。
+executor 和 model。`RayGenerationRuntime` 只拥有 resident actor handles、executor、
+health monitor、optional weight sync 与 teardown；package-private
+`_OnDemandRayGenerationRuntime` 只拥有 phase-boundary activation/offload、inner runtime
+和 desired/active policy state。两者都结构化满足 `GenerationRuntime`，仓库里没有独立
+`WorkerFleet` 或 shared runtime base/manager owner。
 
 wm-infra 原生拥有 lifecycle、policy version、chunk、trajectory 与 replay 语义。底层
 transformer/block/kernel 仍可来自 Diffusers、PyTorch 或未来 provider；“native control
@@ -83,7 +90,8 @@ taxonomy source。launch contract 最终只携带 primitive `versioned_weight_sy
 这个 fact 由 `vrl/run.py` 从已解析的 typed trainer schedule、generation config 与
 rollout build 一次派生。`RayGenerationLauncher.create_runtime` 只消费 typed
 `RayGenerationConfig`、`RayGenerationLaunchInputs` 与 placement，不读取 trainer/model
-YAML；旧 `launch_from_cfg` layering leak 已删除。
+YAML，并按 resolved `resources.lifecycle.rollout.mode` 选择 resident runtime 或
+on-demand facade；旧 `launch_from_cfg` layering leak 已删除。
 
 ### 3.2 Resident launch
 
@@ -123,20 +131,19 @@ launcher 清理 candidate actors；placement group 仍由 `GlobalRayPlacementOwn
 
 ### 3.3 On-demand launch
 
-`with_on_demand_activation` 先保存：
+`RayGenerationLauncher.create_runtime(...)` 在 resolved rollout lifecycle 为
+`on_demand` 时直接构造 package-private `_OnDemandRayGenerationRuntime`。facade 自己持有：
 
 ```text
-_OnDemandRuntimeState(
-  config,
-  launch_inputs,
-  placement,
-  inner_runtime,
-  activation_task,
-  desired_policy,
-  active_policy_version,
-  workers_offloaded,
-)
+config / launch_inputs / placement
+inner_runtime
+activation_task / offload_task / shutdown_task
+desired_policy / active_policy_version
+workers_offloaded
 ```
+
+旧 `_OnDemandRuntimeState` 间接状态袋与 `RayGenerationRuntime.with_on_demand_activation`
+构造分支均已删除。resident lifecycle 不再包含 `_on_demand` mode branch。
 
 第一次 `activate()` 通过 single-flight `activation_task` 调用
 `RayGenerationLauncher.launch_async`，得到一个真正拥有 workers 的 inner
@@ -152,10 +159,11 @@ admission。
 ```text
 collector -> runtime.generate(request)
   -> require RUNNING
-  -> select resident self or active on-demand inner runtime
-  -> resolve samples_per_chunk="auto" once when requested
-  -> stamp current policy version when absent
-  -> RayGenerationExecutor.execute(request)
+  -> on-demand facade requires an active inner runtime, then delegates
+  -> resident RayGenerationRuntime:
+     -> resolve samples_per_chunk="auto" once when requested
+     -> stamp current policy version when absent
+     -> RayGenerationExecutor.execute(request)
      -> build_sample_rows
      -> DistributedExecutionPlanner.plan_with_engine
      -> optional single-worker pipelined request -> RayActorDispatcher.run_one
@@ -221,28 +229,33 @@ AR path 是 prepare/prefill → request decode loop → VQ decode → typed toke
 
 ```text
 trainer weight syncer
-  -> RayGenerationRuntime.update_weights(state_ref, policy_version)
-     -> RayGenerationWeightSync.push_to_rollout_workers
-        -> worker.update_weights
-           -> GenerationWorkerCore.update_weights
+  -> selected runtime.update_weights(state_ref, policy_version)
+     -> on-demand facade stages desired policy or updates its active inner runtime
+     -> resident RayGenerationRuntime
+        -> RayGenerationWeightSync.push_to_rollout_workers
+           -> worker.update_weights
+              -> GenerationWorkerCore.update_weights
 ```
 
 所有 remote workers 共享一次 `ray.put(state_ref)`。只有全部 ACK 返回并通过 expected
-integer version 校验后，runtime 才推进 `current_policy_version`。timeout 或 bad ACK
-不会 publish candidate version。
+integer version 校验后，resident runtime 才推进 `current_policy_version`，on-demand
+facade 才同步推进 desired/active version。timeout 或 bad ACK 不会 publish candidate
+version。
 
 ### Parking
 
-schedule 必须先 drain，再调用 `offload()`。on-demand inner runtime 进入 sleep/host-memory
-parking，下一次 activate wake；resident runtime 的 facade offload 是 no-op。health monitor
-在 sleep 前 pause，wake 成功后 resume，并重新应用 first-wait grace。
+schedule 必须先 drain，再调用 `offload()`。on-demand facade 调用 inner resident runtime
+的 `sleep_workers()` 进入 host-memory parking，下一次 `activate()` 再
+`wake_workers()`；resident runtime 的 `offload()` 是 protocol-required no-op。health
+monitor 在 sleep 前 pause，wake 成功后 resume，并重新应用 first-wait grace。
 
 ### Terminal shutdown
 
-`shutdown()` 使用 shared task，join runtime-owned activation/offload task，然后清理真实
-owner。普通 shutdown 可先发 `release_policy`；terminal distributed error 设置 force
-mode，取消已在等待 release 的 local barrier task、跳过新 graceful RPC，并直接
-`ray.kill(no_restart=True)`。
+两个 concrete runtime 都用 shared shutdown task。on-demand facade 先 join 自己拥有的
+activation/offload task，再调用 inner resident runtime 的 `shutdown()`；resident runtime
+只停止 health monitor 并清理自己拥有的 actors。普通 resident shutdown 可先发
+`release_policy`；terminal distributed error 设置 force mode，取消已在等待 release 的
+local barrier task、跳过新 graceful RPC，并直接 `ray.kill(no_restart=True)`。
 
 失败 kill 保留 actor handle，供下一次 shutdown retry。timeout root 不会被 cleanup error
 替换。
@@ -267,7 +280,8 @@ deadline 也看不到 requests 之间的 idle process death。
 | Boundary | Responsibility | Verdict |
 |---|---|---|
 | `GenerationRuntime` | collector-facing lifecycle protocol | keep thin: public API |
-| `RayGenerationRuntime` | lifecycle, on-demand facade, actor ownership, health, teardown | keep: real resource owner |
+| `_OnDemandRayGenerationRuntime` | activation/offload tasks, inner runtime, desired/active policy state | keep private: shared-GPU phase owner |
+| `RayGenerationRuntime` | resident actors, executor, weight sync, health, teardown | keep: real resource owner |
 | `RayGenerationExecutor` | plan, dispatch, OOM, correlation, gather | keep: driver scheduler |
 | `RayGenerationWorker` | Ray methods and concurrency-group adapters | keep thin: framework boundary |
 | `GenerationWorkerCore` | Ray-independent build/version/parking/forward | keep: process core |
@@ -280,6 +294,10 @@ deadline 也看不到 requests 之间的 idle process death。
 
 `RayGenerationExecutor` 与 `GenerationChunkExecutor` 都叫 executor，但分别处在 driver
 scheduler 和 actor family contract 两侧。不要为了少一个名字 flatten 任一层。
+
+resident `activate()` 与 `offload()` 当前只验证 admission 或执行 no-op，但不能删除：
+它们是 `GenerationRuntime` 跨 resident/on-demand topology 的统一 public shape。用同一
+协议让 schedule 不需要按 topology 分叉，比省掉两个薄方法更重要。
 
 ## 8. Architecture hygiene
 
@@ -295,10 +313,23 @@ scheduler 和 actor family contract 两侧。不要为了少一个名字 flatten
 ### Do not add
 
 - `WorkerFleetManager`、`DeadlineManager` 或 `RecoveryHandler`；
+- shared runtime base、lifecycle manager 或通用 runtime util；两个 concrete runtime
+  结构化满足同一 protocol，各自只拥有自己的 lifecycle/resource；
 - duplicated provider/model capability tables；
 - ALL_CAPS operation-name/timeout taxonomy；
 - family-specific lifecycle or timeout fields；
 - 为 LOC reduction flatten public/process/framework adapters。
+
+### 非目标
+
+- 不重命名或合并 `RayGenerationWorker`、`GenerationWorkerCore`、
+  `RayGenerationExecutor`、`RolloutRuntimeCoordinator`；这些名字分别标识 Ray adapter、
+  process core、driver scheduler 和 rollout schedule owner，边界不同；
+- 不删除 deprecated `run_actor_jobs`；它保留旧 public signature、logical concurrency、
+  telemetry 与 actor exception passthrough，是显式兼容契约。生产 runtime 继续使用
+  fleet-owned `RayActorDispatcher`；
+- 不把 resident 的薄 `activate()` / `offload()` 展开进 schedule，也不要求 schedule
+  识别 concrete runtime 类型。
 
 ## References
 
@@ -306,6 +337,7 @@ scheduler 和 actor family contract 两侧。不要为了少一个名字 flatten
 - `vrl/generation/launch_contract.py`
 - `vrl/generation/ray/config.py`
 - `vrl/generation/ray/launcher.py`
+- `vrl/generation/ray/on_demand_runtime.py`
 - `vrl/generation/ray/runtime.py`
 - `vrl/generation/ray/executor.py`
 - `vrl/generation/ray/worker.py`

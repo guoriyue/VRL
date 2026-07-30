@@ -991,9 +991,9 @@ def test_create_runtime_launches_resident_topology() -> None:
             autospec=True,
             return_value=expected_runtime,
         ) as launch,
-        patch.object(
-            RayGenerationRuntime,
-            "with_on_demand_activation",
+        patch(
+            "vrl.generation.ray.launcher._OnDemandRayGenerationRuntime",
+            autospec=True,
         ) as on_demand,
     ):
         runtime = launcher.create_runtime(
@@ -1051,9 +1051,9 @@ def test_create_runtime_defers_on_demand_topology_launch() -> None:
             "launch",
             autospec=True,
         ) as launch,
-        patch.object(
-            RayGenerationRuntime,
-            "with_on_demand_activation",
+        patch(
+            "vrl.generation.ray.launcher._OnDemandRayGenerationRuntime",
+            autospec=True,
             return_value=expected_runtime,
         ) as on_demand,
     ):

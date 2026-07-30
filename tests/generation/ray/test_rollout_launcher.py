@@ -13,6 +13,7 @@ from vrl.generation.launch_contract import GenerationRuntimeLaunchContract
 from vrl.generation.protocols import ChunkResult
 from vrl.generation.ray.config import RayGenerationConfig, RolloutWorkerConfig
 from vrl.generation.ray.launch_inputs import RayGenerationLaunchInputs
+from vrl.generation.ray.on_demand_runtime import _OnDemandRayGenerationRuntime
 from vrl.generation.ray.runtime import RayGenerationRuntime
 from vrl.generation.types import GenerationOutput, GenerationRequest, GenerationSampleRow
 
@@ -213,7 +214,7 @@ def test_phase_handoff_keeps_actor_and_owner_placement(local_ray) -> None:
             ),
         ),
     )
-    runtime = RayGenerationRuntime.with_on_demand_activation(
+    runtime = _OnDemandRayGenerationRuntime(
         RayGenerationConfig(
             resources=on_demand_resources,
             worker=owner.rollout_worker,
@@ -224,19 +225,17 @@ def test_phase_handoff_keeps_actor_and_owner_placement(local_ray) -> None:
     try:
         # Explicit activation launches workers; offload parks them in place.
         asyncio.run(runtime.activate())
-        assert runtime._on_demand is not None
-        inner = runtime._on_demand.inner_runtime
+        inner = runtime._inner_runtime
         assert inner is not None
         assert not hasattr(inner, "_placement_group")  # inner never owns the PG
         first_actor = inner.executor.workers[0].actor
         asyncio.run(runtime.offload())
-        assert runtime._on_demand is not None
-        assert runtime._on_demand.inner_runtime is inner
-        assert runtime._on_demand.workers_offloaded is True
+        assert runtime._inner_runtime is inner
+        assert runtime._workers_offloaded is True
         # The owner's placement group is untouched and activation wakes in place.
         assert owner._placement_group is not None
         asyncio.run(runtime.activate())
-        reacquired = runtime._on_demand.inner_runtime
+        reacquired = runtime._inner_runtime
         assert reacquired is not None
         assert [w.worker_id for w in reacquired.executor.workers] == ["rollout-0"]
         assert reacquired is inner

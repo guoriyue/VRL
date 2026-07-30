@@ -1,72 +1,31 @@
-"""Runtime facade for Ray-distributed generation."""
+"""Resident actor owner for Ray-distributed generation."""
 
 from __future__ import annotations
 
 import asyncio
 import contextlib
 import logging
-from dataclasses import dataclass, replace
+from dataclasses import replace
 from typing import Any
 
 from vrl.generation.execution.types import (
     DistributedWorkerHandle,
     WorkerMemoryParkingSnapshot,
 )
-from vrl.generation.protocols import GenerationRuntime
-from vrl.generation.ray.config import RayGenerationConfig
 from vrl.generation.ray.executor import RayGenerationExecutor
 from vrl.generation.ray.health_monitor import RolloutWorkerHealthMonitor
-from vrl.generation.ray.launch_inputs import RayGenerationLaunchInputs
-from vrl.generation.ray.lifecycle_fsm import (
-    RuntimeLifecycle,
-    RuntimeLifecycleError,
-    RuntimePhase,
-)
+from vrl.generation.ray.lifecycle_fsm import RuntimeLifecycle, RuntimePhase
 from vrl.generation.ray.weight_sync import GenerationWeightSync
 from vrl.generation.types import GenerationOutput, GenerationRequest
 from vrl.ray.dependencies import require_ray
-from vrl.ray.placement import RolePlacement
 from vrl.ray.resource_cleanup import kill_and_retain
 from vrl.runtime_errors import TerminalRuntimeError, find_error_cause
 
 logger = logging.getLogger(__name__)
 
 
-@dataclass(frozen=True, slots=True)
-class _PolicySnapshot:
-    """Latest complete trainer state desired by the rollout workers."""
-
-    state_ref: Any
-    policy_version: int
-
-
-@dataclass(slots=True)
-class _OnDemandRuntimeState:
-    """Explicit rollout activation state across shared-GPU phase handoffs.
-
-    The schedule activates this runtime before generation and offloads it after
-    generation.  The first activation launches workers; later activations wake the
-    same workers.  ``activation_task`` provides single-flight launch/wake, while
-    ``desired_policy`` records weights published while workers are offloaded.
-    """
-
-    config: RayGenerationConfig
-    launch_inputs: RayGenerationLaunchInputs
-    placement: RolePlacement
-    inner_runtime: RayGenerationRuntime | None = None
-    activation_task: asyncio.Task[RayGenerationRuntime] | None = None
-    desired_policy: _PolicySnapshot | None = None
-    active_policy_version: int | None = None
-    workers_offloaded: bool = False
-
-
-class RayGenerationRuntime(GenerationRuntime):
-    """Collector-facing Ray generation runtime.
-
-    Resident workers remain GPU-active on dedicated GPUs. Shared-GPU workers
-    launch lazily, remain alive across phase handoffs, and park their model in
-    host RAM while the trainer or in-process reward uses the physical GPU.
-    """
+class RayGenerationRuntime:
+    """Own resident Ray workers, dispatch, health monitoring, and teardown."""
 
     def __init__(
         self,
@@ -79,6 +38,8 @@ class RayGenerationRuntime(GenerationRuntime):
         health_check_timeout_s: float = 30.0,
         health_check_first_wait_s: float = 0.0,
     ) -> None:
+        if executor is None:
+            raise ValueError("resident Ray generation requires an executor")
         self.executor = executor
         self.weight_sync = weight_sync
         executor_dispatcher = getattr(executor, "actor_dispatcher", None)
@@ -102,11 +63,9 @@ class RayGenerationRuntime(GenerationRuntime):
             timeout_s=health_check_timeout_s,
             first_wait_s=health_check_first_wait_s,
         )
-        self._on_demand: _OnDemandRuntimeState | None = None
         # Rollout schedules own pause/drain. The runtime lifecycle only closes
         # terminal admission and records the first cleanup-worthy failure.
         self.lifecycle = RuntimeLifecycle()
-        self._offload_task: asyncio.Task[None] | None = None
         self._shutdown_task: asyncio.Task[None] | None = None
         self._release_wait_task: asyncio.Task[Any] | None = None
         self._force_shutdown = False
@@ -122,66 +81,16 @@ class RayGenerationRuntime(GenerationRuntime):
         self._probed_samples_per_chunk: int | None = None
         self._samples_per_chunk_probe_lock = asyncio.Lock()
 
-    @classmethod
-    def with_on_demand_activation(
-        cls,
-        config: RayGenerationConfig,
-        launch_inputs: RayGenerationLaunchInputs,
-        *,
-        placement: RolePlacement,
-    ) -> RayGenerationRuntime:
-        """Build a runtime explicitly activated/offloaded by its schedule."""
-        resources = config.resources
-        if resources.lifecycle.rollout.mode != "on_demand":
-            raise ValueError(
-                "with_on_demand_activation requires a resolved on-demand rollout lifecycle plan",
-            )
-        contract = launch_inputs.launch_contract
-        sleep_contract = contract
-        if resources.rollout_gpus_per_worker > 0:
-            sleep_contract = replace(
-                contract,
-                sleep_offload=True,
-            )
-
-        runtime = cls(executor=None)
-        runtime._on_demand = _OnDemandRuntimeState(
-            config=config,
-            # GPU workers pool their model in CuMemAllocator so offload/activate
-            # release and restore physical pages. CPU-only worker tests keep the
-            # ordinary allocator because there is no CUDA memory to pool.
-            launch_inputs=replace(
-                launch_inputs,
-                launch_contract=sleep_contract,
-            ),
-            placement=placement,
-        )
-        runtime.current_policy_version = contract.policy_version
-        return runtime
-
     @property
     def requires_driver_model_offload(self) -> bool:
-        """Whether an on-demand rollout must vacate the trainer's physical GPU."""
+        """Resident workers never require a phase-boundary trainer offload."""
 
-        state = self._on_demand
-        return bool(
-            state is not None
-            and state.config.resources.colocated
-            and state.config.resources.rollout_gpus_per_worker > 0
-        )
+        return False
 
     @property
     def supports_weight_sync(self) -> bool:
-        """Whether trainer weight pushes have a configured worker consumer.
+        """Whether trainer weight pushes have a resident worker consumer."""
 
-        An on-demand runtime has no inner ``GenerationWeightSync`` before first
-        use, so capability cannot be inferred from the current handle. Derive it
-        from the normalized launch config; resident runtimes use their live syncer.
-        """
-
-        state = self._on_demand
-        if state is not None:
-            return bool(state.config.worker.sync_trainable_state)
         return self.weight_sync is not None
 
     def start_health_monitoring(self) -> None:
@@ -191,51 +100,13 @@ class RayGenerationRuntime(GenerationRuntime):
             self._health_monitor.resume()
 
     async def activate(self) -> None:
-        """Launch or wake on-demand workers and install the desired policy.
-
-        Schedules call this before admitting generation. Resident runtimes are
-        already active, so activation is a no-op for them.
-        """
+        """Validate admission; resident workers are already active."""
 
         self.lifecycle.require_running("activate")
-        state = self._on_demand
-        if state is None:
-            return None
-        task = state.activation_task
-        if task is not None and task.done():
-            self._activation_finished(state, task)
-            task = None
-        if task is None:
-            task = asyncio.create_task(self._activate_once(state))
-            state.activation_task = task
-            task.add_done_callback(lambda done: self._activation_finished(state, done))
-        try:
-            await asyncio.shield(task)
-        except asyncio.CancelledError as error:
-            if self.lifecycle.phase is RuntimePhase.SHUTTING_DOWN:
-                await self.shutdown()
-            failure = self.lifecycle.failure
-            if failure is not None:
-                # asyncio.shield creates a new CancelledError when its inner
-                # task is cancelled, so restore the terminal identity published
-                # by that task. A caller-only cancellation while RUNNING keeps
-                # the ordinary no-cause cancellation surface.
-                error.__cause__ = failure
-            raise
-        except BaseException:
-            if self.lifecycle.phase is RuntimePhase.SHUTTING_DOWN:
-                await self.shutdown()
-            raise
-        return None
 
     async def generate(self, request: GenerationRequest) -> GenerationOutput:
         self.lifecycle.require_running("generate")
         try:
-            runtime = self._active_runtime()
-            if runtime is not self:
-                output = await runtime.generate(request)
-                self.lifecycle.require_running("complete generation")
-                return output
             if request.sampling.get("samples_per_chunk") == "auto":
                 # Resolve at the actor-owning runtime so a failed probe enters the
                 # same terminal boundary as every other submitted generation RPC.
@@ -244,8 +115,6 @@ class RayGenerationRuntime(GenerationRuntime):
                     request,
                     sampling={**dict(request.sampling), "samples_per_chunk": resolved},
                 )
-            if self.executor is None:
-                raise RuntimeError("RayGenerationRuntime has no active executor")
             if request.policy_version is None and self.current_policy_version is not None:
                 request = replace(request, policy_version=self.current_policy_version)
             output = await self.executor.execute(request)
@@ -280,11 +149,8 @@ class RayGenerationRuntime(GenerationRuntime):
         """Run the startup chunk-size probe once and cache the verdict.
 
         vLLM shape (EngineCore init -> determine_available_memory): sizing runs
-        inside the same activation, before the first real request, user does
-        nothing. Here "startup" is the first generate() after activate() because
-        on-demand workers only exist after explicit activation. Every
-        worker is probed concurrently (seconds each, homogeneous cards give
-        equal answers); the fleet answer is the min.
+        before the first real request without a separate user command. Every
+        worker is probed concurrently; the fleet answer is the minimum.
         """
 
         if self._probed_samples_per_chunk is not None:
@@ -296,13 +162,8 @@ class RayGenerationRuntime(GenerationRuntime):
             if self._probed_samples_per_chunk is not None:
                 return self._probed_samples_per_chunk
             self.lifecycle.require_running("probe generation chunk size")
-            executor = self.executor
-            if executor is None:
-                raise RuntimeError(
-                    "samples_per_chunk: auto requires an active generation executor",
-                )
             max_samples = max(1, int(request.samples_per_prompt))
-            local_results = await executor.probe_chunk_sizes(
+            local_results = await self.executor.probe_chunk_sizes(
                 request,
                 max_samples=max_samples,
             )
@@ -331,36 +192,24 @@ class RayGenerationRuntime(GenerationRuntime):
             return resolved
 
     def is_colocated(self) -> bool:
-        state = self._on_demand
-        if state is not None:
-            return bool(state.config.resources.colocated)
         return self._colocated
 
     async def update_weights(self, state_ref: Any, policy_version: int) -> None:
-        # Contract/precondition failures do not make installed worker state
-        # unknown and therefore must not enter terminal quarantine. In
-        # particular, shutdown cannot join an activation task whose caller is
-        # still waiting for this validation to return before releasing it.
+        # Contract failures do not make installed worker state unknown and
+        # therefore must not enter terminal quarantine.
         self.lifecycle.require_running("update_weights")
-        state = self._on_demand
-        if state is not None:
-            if not state.config.worker.sync_trainable_state:
-                raise RuntimeError(
-                    "RayGenerationRuntime has no generation weight sync",
-                )
-            activation = state.activation_task
-            if activation is not None and not activation.done():
-                raise RuntimeError(
-                    "update_weights requires rollout activation to be idle; "
-                    "the rollout schedule must pause/drain before syncing",
-                )
-        elif self.weight_sync is None:
+        weight_sync = self.weight_sync
+        if weight_sync is None:
             raise RuntimeError("RayGenerationRuntime has no GenerationWeightSync")
 
         try:
-            await self._install_policy(
-                _PolicySnapshot(state_ref=state_ref, policy_version=int(policy_version)),
+            resolved_policy_version = int(policy_version)
+            await weight_sync.push_to_rollout_workers(
+                state_ref,
+                resolved_policy_version,
             )
+            with self.lifecycle.publication_guard("publish policy version"):
+                self.current_policy_version = resolved_policy_version
         except asyncio.CancelledError as error:
             if (
                 find_error_cause(error, TerminalRuntimeError) is not None
@@ -375,60 +224,15 @@ class RayGenerationRuntime(GenerationRuntime):
                 raise
             raise failure from failure.__cause__
 
-    async def _install_policy(self, policy: _PolicySnapshot) -> None:
-        self.lifecycle.require_running("update_weights")
-        state = self._on_demand
-        if state is not None:
-            inner_runtime = state.inner_runtime
-            if inner_runtime is not None and not state.workers_offloaded:
-                await inner_runtime.update_weights(
-                    policy.state_ref,
-                    policy.policy_version,
-                )
-                with (
-                    inner_runtime.lifecycle.publication_guard(
-                        "publish outer policy version",
-                    ),
-                    self.lifecycle.publication_guard("publish policy version"),
-                ):
-                    state.active_policy_version = policy.policy_version
-                    state.desired_policy = policy
-                    self.current_policy_version = policy.policy_version
-                return
-            with self.lifecycle.publication_guard("publish policy version"):
-                state.desired_policy = policy
-                self.current_policy_version = policy.policy_version
-            return
-
-        if self.weight_sync is None:
-            # Internal activation only reaches this boundary after a launcher
-            # contract mismatch; public calls reject it before quarantine.
-            raise RuntimeError("RayGenerationRuntime has no GenerationWeightSync")
-        await self.weight_sync.push_to_rollout_workers(
-            policy.state_ref,
-            policy.policy_version,
-        )
-        with self.lifecycle.publication_guard("publish policy version"):
-            self.current_policy_version = policy.policy_version
-
     async def _terminalize_after_failure(
         self,
         error: BaseException,
-        *,
-        join_control_tasks: bool = True,
     ) -> BaseException:
         """Close admission and return the stable first failure after cleanup."""
 
         failure = self._publish_failure(error)
         try:
-            if join_control_tasks:
-                await self.shutdown()
-            else:
-                # A runtime-owned control task cannot await shutdown(): the
-                # shutdown task joins that same control task. It already owns
-                # its completion, so tear down resources directly.
-                await self._teardown_owned_resources()
-                self.lifecycle.finish_shutdown()
+            await self.shutdown()
         except BaseException as cleanup_error:
             # The failed install/ACK is the transaction's root cause. Cleanup is
             # retryable by the schedule owner, so it must never replace that
@@ -458,19 +262,9 @@ class RayGenerationRuntime(GenerationRuntime):
         if terminal_error is not None or terminal_failure is not None:
             self._force_shutdown = True
             # A terminal distributed operation proves that graceful RPC progress
-            # cannot be trusted. Cancel runtime-owned local control tasks so an
-            # existing shutdown join upgrades immediately to forceful teardown.
-            state = self._on_demand
-            control_tasks = [self._offload_task]
-            if state is not None:
-                control_tasks.append(state.activation_task)
+            # cannot be trusted. Cancel a runtime-owned graceful release barrier
+            # so an existing shutdown upgrades immediately to forceful teardown.
             current = asyncio.current_task()
-            for task in control_tasks:
-                if task is not None and task is not current and not task.done():
-                    task.cancel()
-            # A concurrent ordinary shutdown may already be waiting on a
-            # release_policy RPC. Cancel only that local barrier so the shared
-            # shutdown task continues into actor destruction for every waiter.
             release_wait_task = self._release_wait_task
             if (
                 release_wait_task is not None
@@ -481,77 +275,7 @@ class RayGenerationRuntime(GenerationRuntime):
         return failure
 
     async def offload(self) -> None:
-        """Park explicitly idle on-demand workers between GPU phases.
-
-        The actors and owner-managed placement bundle stay alive; their model
-        weights move to host RAM so the trainer or in-process reward can use the
-        physical GPU. The schedule must drain generation before this call; the
-        next activate() wakes workers and restores the desired policy.
-        Resident runtimes remain a no-op here and keep serving until shutdown().
-        """
-        state = self._on_demand
-        if state is None or (state.inner_runtime is None and state.activation_task is None):
-            return None
-        if self.lifecycle.phase is RuntimePhase.TERMINATED:
-            return None
-        if self.lifecycle.phase is RuntimePhase.SHUTTING_DOWN:
-            await self.shutdown()
-            return None
-        activation = state.activation_task
-        if activation is not None and not activation.done():
-            # A cancelled activate() waiter does not cancel its shielded
-            # launch/wake task. Join that one runtime-owned task so a schedule's
-            # finally block can still park workers without reviving a generic
-            # operation barrier.
-            try:
-                await asyncio.shield(activation)
-            except BaseException:
-                if self.lifecycle.phase is RuntimePhase.SHUTTING_DOWN:
-                    await self.shutdown()
-                raise
-            if self.lifecycle.phase is RuntimePhase.SHUTTING_DOWN:
-                await self.shutdown()
-                return None
-        task = self._offload_task
-        if task is not None and task.done():
-            self._offload_finished(task)
-            task = None
-        if task is None:
-            task = asyncio.create_task(self._offload_once(state))
-            self._offload_task = task
-            task.add_done_callback(self._offload_finished)
-        try:
-            await asyncio.shield(task)
-        except BaseException:
-            # Caller cancellation does not cancel the shared task. A real worker
-            # failure closes admission inside _offload_once and triggers cleanup.
-            if self.lifecycle.phase is RuntimePhase.SHUTTING_DOWN:
-                await self.shutdown()
-            raise
-        if self.lifecycle.phase is RuntimePhase.SHUTTING_DOWN:
-            await self.shutdown()
-        return None
-
-    def _offload_finished(self, task: asyncio.Task[None]) -> None:
-        if self._offload_task is task:
-            self._offload_task = None
-        if not task.cancelled():
-            task.exception()  # retrieve failures even if every waiter was cancelled
-
-    async def _offload_once(self, state: _OnDemandRuntimeState) -> None:
-        try:
-            if self.lifecycle.phase is not RuntimePhase.RUNNING:
-                return None
-            inner_runtime = state.inner_runtime
-            if inner_runtime is None:
-                return None
-            if not state.workers_offloaded:
-                await inner_runtime.sleep_workers()
-                state.workers_offloaded = True
-            return None
-        except BaseException as error:
-            self.lifecycle.fail(error)
-            raise
+        """Keep resident workers active until terminal shutdown."""
 
     async def shutdown(self) -> None:
         """Close admission and tear down owned resources exactly once.
@@ -560,7 +284,7 @@ class RayGenerationRuntime(GenerationRuntime):
         cancelling cleanup for every caller. A failed cleanup remains
         SHUTTING_DOWN and clears the task so a later shutdown call can retry
         owned resources. The schedule stops and joins generation before calling
-        shutdown; this method only joins runtime-owned activation/offload tasks.
+        shutdown.
         """
 
         if self.lifecycle.phase is RuntimePhase.TERMINATED:
@@ -584,13 +308,6 @@ class RayGenerationRuntime(GenerationRuntime):
             task.exception()  # retrieve failures even if every waiter was cancelled
 
     async def _shutdown_once(self) -> None:
-        await self._join_control_tasks()
-        if self.lifecycle.phase is RuntimePhase.TERMINATED:
-            # A runtime-owned activation may have started direct teardown before
-            # this shared shutdown task existed. Joining it transfers the
-            # completed terminal state; running teardown again would create a
-            # second cleanup owner and a spurious double-finish failure.
-            return
         try:
             await self._teardown_owned_resources()
         except BaseException as error:
@@ -601,34 +318,11 @@ class RayGenerationRuntime(GenerationRuntime):
             raise
         self.lifecycle.finish_shutdown()
 
-    async def _join_control_tasks(self) -> None:
-        """Join launch/wake and offload work owned below the schedule boundary."""
-
-        state = self._on_demand
-        tasks = [self._offload_task]
-        if state is not None:
-            tasks.append(state.activation_task)
-        current = asyncio.current_task()
-        pending = [task for task in tasks if task is not None and task is not current]
-        if pending:
-            await asyncio.gather(*pending, return_exceptions=True)
-
     async def _teardown_owned_resources(self) -> None:
         # stop() joins the monitor thread for a bounded probe interval. Keep
         # that synchronous lifecycle operation off the runtime event loop so
         # concurrent shutdown/terminal waiters can continue making progress.
         await asyncio.to_thread(self._health_monitor.stop)
-        state = self._on_demand
-        if state is not None:
-            # Terminal shutdown is not a phase handoff: parked actors must be
-            # destroyed instead of retained after the facade becomes unreachable.
-            inner_runtime = state.inner_runtime
-            if inner_runtime is not None:
-                await inner_runtime.shutdown()
-            state.inner_runtime = None
-            state.workers_offloaded = False
-            state.active_policy_version = None
-            return None
         if not self._owned_workers:
             return None
         ray = require_ray()
@@ -735,126 +429,6 @@ class RayGenerationRuntime(GenerationRuntime):
             await asyncio.wait_for(asyncio.gather(*refs), timeout=120)
         self._health_monitor.resume()
         return None
-
-    def _active_runtime(self) -> RayGenerationRuntime:
-        state = self._on_demand
-        if state is None:
-            return self
-        if state.inner_runtime is None or state.workers_offloaded:
-            raise RuntimeError(
-                "generate requires an active rollout runtime; "
-                "the rollout schedule must await activate() first",
-            )
-        return state.inner_runtime
-
-    def _activation_finished(
-        self,
-        state: _OnDemandRuntimeState,
-        task: asyncio.Task[RayGenerationRuntime],
-    ) -> None:
-        if state.activation_task is task:
-            state.activation_task = None
-        if not task.cancelled():
-            task.exception()  # retrieve failures even if every waiter was cancelled
-
-    async def _activate_once(
-        self,
-        state: _OnDemandRuntimeState,
-    ) -> RayGenerationRuntime:
-        try:
-            if state.inner_runtime is not None and state.workers_offloaded:
-                inner_runtime = state.inner_runtime
-                await inner_runtime.wake_workers()
-                # Record physical truth before applying weights so terminal
-                # cleanup treats a failed restore as an awake runtime.
-                state.workers_offloaded = False
-                desired = state.desired_policy
-                if desired is not None and desired.policy_version != state.active_policy_version:
-                    await inner_runtime.update_weights(
-                        desired.state_ref,
-                        desired.policy_version,
-                    )
-                    with (
-                        inner_runtime.lifecycle.publication_guard(
-                            "publish restored policy version",
-                        ),
-                        self.lifecycle.publication_guard(
-                            "publish restored policy version",
-                        ),
-                    ):
-                        state.active_policy_version = desired.policy_version
-                return inner_runtime
-            if state.inner_runtime is not None:
-                return state.inner_runtime
-
-            from vrl.generation.ray.launcher import RayGenerationLauncher
-
-            candidate = await RayGenerationLauncher().launch_async(
-                state.config,
-                state.launch_inputs,
-                placement=state.placement,
-            )
-            try:
-                desired = state.desired_policy
-                active_policy_version = candidate.current_policy_version
-                if desired is not None:
-                    await candidate.update_weights(
-                        desired.state_ref,
-                        desired.policy_version,
-                    )
-                    active_policy_version = desired.policy_version
-                with (
-                    candidate.lifecycle.publication_guard("publish activated runtime"),
-                    self.lifecycle.publication_guard("publish activated runtime"),
-                ):
-                    state.active_policy_version = active_policy_version
-                    state.inner_runtime = candidate
-            except BaseException as restore_error:
-                # A candidate is not published until restore succeeds;
-                # clean it here so a failed cold activation cannot leak actors.
-                try:
-                    await candidate.shutdown()
-                except BaseException as cleanup_error:
-                    # Retain ownership when candidate cleanup itself fails. The
-                    # terminal shutdown retry path can now reach the handles.
-                    state.inner_runtime = candidate
-                    state.workers_offloaded = False
-                    logger.error(
-                        "candidate cleanup failed after restore error %r",
-                        restore_error,
-                        exc_info=cleanup_error,
-                    )
-                raise
-            return candidate
-        except BaseException as error:
-            if (
-                isinstance(error, RuntimeLifecycleError)
-                and error.lifecycle is self.lifecycle
-                and error.phase is not RuntimePhase.RUNNING
-                and error.__cause__ is None
-            ):
-                # Graceful shutdown may close admission while an unpublished
-                # candidate finishes launching. The candidate was cleaned by
-                # the inner ownership boundary above; this is not a runtime
-                # failure and must not manufacture one.
-                raise
-            shutdown_task = self._shutdown_task
-            if shutdown_task is not None and not shutdown_task.done():
-                # The shared shutdown task is already joining this activation.
-                # Publish/upgrade the failure here, then let that one owner tear
-                # down resources and finish the lifecycle after we exit.
-                failure = self._publish_failure(error)
-            else:
-                failure = await self._terminalize_after_failure(
-                    error,
-                    join_control_tasks=False,
-                )
-            if isinstance(error, asyncio.CancelledError):
-                error.__cause__ = failure
-                raise
-            if failure is error:
-                raise
-            raise failure from failure.__cause__
 
 
 __all__ = ["RayGenerationRuntime"]

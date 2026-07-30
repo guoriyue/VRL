@@ -39,7 +39,7 @@ Diffusers-backed forward 误写成“没有自研 engine”。
 
 | 边界 | 已有事实 | 本 program 的处理 |
 |---|---|---|
-| Runtime | `GenerationRuntime` 定义 activate/generate/offload/shutdown 和 policy version | 保留为唯一 collector-facing runtime |
+| Runtime | `GenerationRuntime` 定义统一 collector shape；`RayGenerationLauncher.create_runtime` 按 resolved lifecycle 返回 resident `RayGenerationRuntime` 或 package-private `_OnDemandRayGenerationRuntime` | 保持 structural protocol；不建 shared runtime base/manager |
 | Distributed launch | `GenerationRuntimeLaunchContract` 只传 primitive config 与 import path，拒绝 live tensor/module/pipeline | 继续作为 worker 构造与进程隔离边界 |
 | Worker | `GenerationWorkerCore` 构造 family executor、安装版本化权重、执行 chunk、sleep/wake 与故障清理 | 外部 provider 必须进入此生命周期，不能另起旁路服务 |
 | Full-sequence × denoise | `bindings/full_sequence_denoise.DiffusionChunkExecutorBase` 组合 prompt/prepare、共享 denoise loop、trajectory、decode 与 gather | native path 是语义 oracle；provider 只能从明确的 family-executor boundary 接入 |
@@ -85,7 +85,7 @@ transformer / kernel / provider scheduling   mostly upstream or parked
 |---|---|---|
 | RL trajectory | `generation/steps/denoise/loop.py` 产出 observations/actions/log-probs；binding 与 `trajectory/builders.py` 构造 trainer-facing trajectory，validator 检查 role 与 axis | 这是 trainer-facing source of truth，不是 inference-only artifact wrapper |
 | Policy freshness | worker 按 request version 激活 slot；slot 被逐出时 `RayGenerationExecutor` 丢弃整条 request | mixed-policy partial result fail closed |
-| GPU/runtime lifecycle | `GenerationRuntime` 暴露 activate/generate/offload/shutdown；schedule 排序 phase handoff；`RayGenerationRuntime` 直接拥有 executor/weight sync/actors/monitor/teardown，并拒绝 weight install 与 activation 重叠 | shared-GPU handoff 与 terminal ownership 是 engine 行为；当前不存在独立 WorkerFleet 或统一 transition lock |
+| GPU/runtime lifecycle | schedule 排序 phase handoff；`_OnDemandRayGenerationRuntime` 直接拥有 activation/offload tasks、inner runtime 与 desired/active policy state；`RayGenerationRuntime` 只拥有 resident executor/weight sync/actors/monitor/teardown | shared-GPU phase owner 与 resident resource owner 已分开；当前不存在独立 WorkerFleet、shared runtime manager 或统一 transition lock |
 | Rollout worker process reachability | a background probe watches a dedicated health concurrency group out of band | an unreachable process kills the owned actors so active/next foreground work fails closed；failed verdict 之后 supervisor 才执行 bounded restart policy，获准 retry 时从最新 complete checkpoint 恢复 |
 | Full-sequence denoise + token-autoregressive | denoise step 自有 SDE loop；token-autoregressive composition 自有 token scheduler/cache row routing；两者汇入同一 `GenerationOutput`/trajectory | 一个顶层 engine 可以保留两种不同数学执行形态 |
 | RL group integrity | sample chunk OOM 时有序二分，gather 再检查完整覆盖 | OOM 不会静默少样本、重复样本或重排 GRPO group |
@@ -142,7 +142,8 @@ gate is now complete.
      import rollout/trainer 类型。`vrl/run.py::resolve_ray_generation_launch_inputs`
      已从 typed trainer schedule 一次派生 primitive `versioned_weight_sync`；
      `RayGenerationLauncher` 只消费 typed launch inputs 与 topology，不再读取 trainer
-     config；
+     config；`create_runtime` 按 resolved lifecycle 选择 package-private on-demand facade
+     或直接 launch resident runtime；
    - 删除 `GenerationRequest.priority`。全仓生产审计显示它只有赋值，没有 scheduling
      consumer；活的 `RayActorJob.priority` 来自 `assignment.estimated_cost`，是不同概念。
      未来 cross-request scheduler 若真正消费 request admission priority，再以 typed、可测试
@@ -199,6 +200,8 @@ training recipe；provider-specific smoke 不依赖第二个 provider 已完成�
 为以下不变量建立一处测试来源：
 
 - collector 只依赖 `GenerationRuntime`；
+- resident `RayGenerationRuntime` 与 `_OnDemandRayGenerationRuntime` 分别结构化满足该
+  protocol；前者不持有 on-demand mode state，后者不直接拥有 Ray actors；
 - worker 只从 serializable launch contract 构造 executor；
 - request 在进入 execution 前已有确定的 policy version；
 - 一条 trajectory 不跨 policy version；
@@ -293,6 +296,9 @@ upstream + 可重复应用变更”，但不复制长期膨胀的单文件 patch
 ### 保持不变
 
 - `GenerationRuntime` 保持薄，因为它是 collector/public transport boundary。
+- resident `RayGenerationRuntime.activate()` / `offload()` 即使只做 admission validation
+  或 no-op 也保留；它们维持 resident/on-demand topology 的统一 protocol shape，避免
+  schedule 识别 concrete runtime。
 - `GenerationChunkExecutor` 保持薄，因为它是 family execution 与 distributed gather
   的协议边界。
 - `GenerationRuntimeLaunchContract` 保持独立，因为 pickle/process boundary 必须拒绝
@@ -316,6 +322,15 @@ upstream + 可重复应用变更”，但不复制长期膨胀的单文件 patch
 ### 非目标
 
 - 不重写 trainer、reward、trajectory 或 Ray runtime 来迎合外部 API。
+- 不重新合并 resident 与 on-demand ownership；旧 `_OnDemandRuntimeState` 与
+  `RayGenerationRuntime.with_on_demand_activation` 不恢复，也不引入 shared base、
+  lifecycle manager 或通用 runtime util。
+- 不重命名或合并 `RayGenerationWorker`、`GenerationWorkerCore`、
+  `RayGenerationExecutor`、`RolloutRuntimeCoordinator`；它们分别保留 framework
+  adapter、process core、driver scheduler 与 rollout schedule owner 的可检索边界。
+- 不删除 deprecated `run_actor_jobs` 兼容契约；它继续钉住旧 public signature、logical
+  concurrency、telemetry 与 actor exception passthrough，生产 runtime 仍使用
+  fleet-owned `RayActorDispatcher`。
 - 不做第二套 token-autoregressive rollout engine；该 binding 继续走 native engine，vLLM 只可作为明确的 attention
   kernel/backend 边界。
 - 不提前解 park native transformer executor、cross-request `StepScheduler`、physical
@@ -355,7 +370,9 @@ upstream + 可重复应用变更”，但不复制长期膨胀的单文件 patch
 - `vrl/generation/protocols.py`
 - `vrl/generation/launch_contract.py`
 - `vrl/generation/execution/worker.py`
-- `vrl/generation/ray/`
+- `vrl/generation/ray/launcher.py`
+- `vrl/generation/ray/on_demand_runtime.py`
+- `vrl/generation/ray/runtime.py`
 - `vrl/generation/bindings/full_sequence_denoise/executor.py`
 - `vrl/generation/bindings/token_autoregressive/executor.py`
 - `vrl/generation/steps/denoise/loop.py`
