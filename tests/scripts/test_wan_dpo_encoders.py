@@ -14,29 +14,37 @@ from types import SimpleNamespace
 
 import torch
 
+from tests.models.steps.denoise.fixtures import build_tiny_wan_vae
 from vrl.scripts.families.wan_2_1.train_dpo import _build_encoders
 
 
-class _FakeVAE:
-    def __init__(self, raw_latents: torch.Tensor) -> None:
-        self._raw_latents = raw_latents
-        self.dtype = torch.float32
-        self.config = SimpleNamespace(
-            z_dim=raw_latents.shape[1],
-            latents_mean=[0.5, -0.25],
-            latents_std=[2.0, 4.0],
-        )
+def _wan_vae_with_fixed_raw(raw_latents: torch.Tensor) -> object:
+    """A real ``AutoencoderKLWan`` whose ``encode`` returns a known raw latent.
 
-    def encode(self, x: torch.Tensor) -> SimpleNamespace:
-        raw = self._raw_latents
-        return SimpleNamespace(latent_dist=SimpleNamespace(sample=lambda: raw))
+    The config half must be real: production reads ``vae.config.latents_mean`` /
+    ``latents_std`` / ``z_dim`` off the genuine diffusers config, so a
+    self-declared namespace could not catch an upstream rename of any of them.
+    The encode half stays controlled on purpose — the assertion is that
+    ``encode_pixels`` computes ``(raw - mean) / std``, which needs a raw value the
+    test knows exactly, not one a random-init encoder happens to produce.
+    """
+
+    vae = build_tiny_wan_vae(z_dim=raw_latents.shape[1])
+    vae.register_to_config(
+        latents_mean=[0.5, -0.25],
+        latents_std=[2.0, 4.0],
+    )
+    vae.encode = lambda _x: SimpleNamespace(  # type: ignore[method-assign]
+        latent_dist=SimpleNamespace(sample=lambda: raw_latents),
+    )
+    return vae
 
 
 def test_encode_pixels_normalizes_inverse_of_decode() -> None:
     raw = torch.tensor(
         [[[[[3.0]]], [[[7.0]]]], [[[[-1.0]]], [[[0.5]]]]],
     )  # [B=2, z_dim=2, T=1, H=1, W=1]
-    vae = _FakeVAE(raw)
+    vae = _wan_vae_with_fixed_raw(raw)
     pipeline = SimpleNamespace(vae=vae)
     encode_pixels, _ = _build_encoders(
         pipeline,

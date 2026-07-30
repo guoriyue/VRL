@@ -7,6 +7,7 @@ from typing import Any
 import pytest
 import torch
 
+from tests.models.steps.denoise.fixtures import build_tiny_autoencoder_kl
 from vrl.config.precision import RolePrecision
 from vrl.models.interfaces.generation_memory import (
     GenerationMemoryPolicy,
@@ -19,29 +20,40 @@ from vrl.models.steps.denoise.common.vae_decode_memory import (
 )
 
 
-class _FakeVAE:
-    def __init__(self) -> None:
-        self.calls: list[str] = []
+def test_configure_vae_decode_memory_flips_the_real_vae_state() -> None:
+    """The knobs must land on state diffusers actually keeps, not on method names.
 
-    def enable_tiling(self) -> None:
-        self.calls.append("enable_tiling")
+    A double that records ``enable_tiling``/``enable_slicing`` proves we called two
+    names; it cannot prove diffusers still HAS those names or that they flip
+    anything. A real ``AutoencoderKL`` (2.9 ms, 4,367 params) proves both, and a
+    renamed upstream method reddens here instead of passing forever.
+    """
 
-    def enable_slicing(self) -> None:
-        self.calls.append("enable_slicing")
+    vae = build_tiny_autoencoder_kl()
+    assert (vae.use_tiling, vae.use_slicing) == (False, False)
+
+    configure_vae_decode_memory(vae, VaeDecodeMemory(tiling=True, slicing=True), owner="test VAE")
+
+    assert (vae.use_tiling, vae.use_slicing) == (True, True)
 
 
-def test_configure_vae_decode_memory_calls_declared_methods() -> None:
-    """Checks configure VAE decode calls declared methods."""
-    vae = _FakeVAE()
-    mem = VaeDecodeMemory(tiling=True, slicing=True)
+def test_configure_vae_decode_memory_leaves_unrequested_knobs_alone() -> None:
+    """A knob the config declines must stay off, not ride along with its sibling.
 
-    configure_vae_decode_memory(vae, mem, owner="test VAE")
+    Every other case here requests tiling, so nothing pinned the negative arm: a
+    production change to ``if mem.tiling`` that always enabled it passed the whole
+    file. Found by mutating that branch and watching this file stay green.
+    """
 
-    assert vae.calls == ["enable_tiling", "enable_slicing"]
+    vae = build_tiny_autoencoder_kl()
+
+    configure_vae_decode_memory(vae, VaeDecodeMemory(tiling=False, slicing=True), owner="test VAE")
+
+    assert (vae.use_tiling, vae.use_slicing) == (False, True)
 
 
 def test_configure_vae_decode_memory_raises_on_missing_method() -> None:
-    """Checks configure VAE decode raises on missing method."""
+    """A target that cannot honour a requested knob fails loud rather than silently."""
     mem = VaeDecodeMemory(tiling=True)
     with pytest.raises(TypeError, match="does not support requested enable_tiling"):
         configure_vae_decode_memory(object(), mem, owner="test VAE")
@@ -160,7 +172,7 @@ def _direct_rollout_build(
 
 def test_apply_generation_memory_policy_from_resolved_policy() -> None:
     """Policy resolves the model's vae_decode target and applies knobs."""
-    vae = _FakeVAE()
+    vae = build_tiny_autoencoder_kl()
 
     apply_generation_memory_policy(
         _FakeModel(vae),
@@ -170,12 +182,13 @@ def test_apply_generation_memory_policy_from_resolved_policy() -> None:
         owner="test VAE",
     )
 
-    assert vae.calls == ["enable_tiling"]
+    assert (vae.use_tiling, vae.use_slicing) == (True, False)
 
 
 def test_apply_generation_memory_policy_has_no_python_defaults() -> None:
-    """Checks the policy applies nothing when config carries nothing."""
-    vae = _FakeVAE()
+    """No config means no knob: a default applied here would be invisible in YAML."""
+
+    vae = build_tiny_autoencoder_kl()
 
     apply_generation_memory_policy(
         _FakeModel(vae),
@@ -183,7 +196,7 @@ def test_apply_generation_memory_policy_has_no_python_defaults() -> None:
         owner="test VAE",
     )
 
-    assert vae.calls == []
+    assert (vae.use_tiling, vae.use_slicing) == (False, False)
 
 
 def test_apply_generation_memory_policy_raises_on_missing_target_method() -> None:
@@ -209,11 +222,11 @@ def test_wan_runtime_bundle_applies_model_build_memory_policy(
     family: str,
     model_class_name: str,
 ) -> None:
-    """Checks the Wan runtime applies its model-build memory policy."""
+    """The Wan runtime must carry model-build memory knobs all the way to the VAE."""
 
     class _FakeModel:
         def __init__(self) -> None:
-            self.vae = _FakeVAE()
+            self.vae = build_tiny_autoencoder_kl()
             self.trainable_modules: dict[str, Any] = {}
             self.adapter_roots: dict[str, Any] = {}
             self.scheduler = object()
@@ -257,7 +270,7 @@ def test_wan_runtime_bundle_applies_model_build_memory_policy(
         ),
     )
 
-    assert bundle.model.vae.calls == ["enable_tiling", "enable_slicing"]
+    assert (bundle.model.vae.use_tiling, bundle.model.vae.use_slicing) == (True, True)
 
 
 @pytest.mark.parametrize(
@@ -304,12 +317,12 @@ def test_full_generation_runtime_bundles_apply_model_build_memory_policy(
     model_class_name: str,
     build_family: str,
 ) -> None:
-    """Checks full-generation runtime bundles apply VAE memory policy."""
+    """A full-generation bundle must apply the resolved VAE knobs during build."""
     loaded_builds: list[ModelBuild] = []
 
     class _FakeModel:
         def __init__(self) -> None:
-            self.vae = _FakeVAE()
+            self.vae = build_tiny_autoencoder_kl()
             self.trainable_modules: dict[str, Any] = {}
             self.adapter_roots: dict[str, Any] = {}
             self.scheduler = object()
@@ -368,7 +381,7 @@ def test_full_generation_runtime_bundles_apply_model_build_memory_policy(
         ),
     )
 
-    assert bundle.model.vae.calls == ["enable_tiling"]
+    assert (bundle.model.vae.use_tiling, bundle.model.vae.use_slicing) == (True, False)
     assert loaded_builds
     if build_family == "sana":
         assert loaded_builds[-1].parameter_dtype is torch.float16
@@ -579,8 +592,8 @@ def test_unconfigured_future_target_does_not_change_current_policy() -> None:
 
     class _TwoTargetModel:
         def __init__(self) -> None:
-            self.vae = _FakeVAE()
-            self.encoder = _FakeVAE()
+            self.vae = build_tiny_autoencoder_kl()
+            self.encoder = build_tiny_autoencoder_kl()
 
         def generation_memory_targets(self) -> dict[str, object]:
             return {"vae_decode": self.vae, "image_encoder": self.encoder}
@@ -594,5 +607,5 @@ def test_unconfigured_future_target_does_not_change_current_policy() -> None:
         owner="test",
     )
 
-    assert model.vae.calls == ["enable_tiling"]
-    assert model.encoder.calls == []
+    assert (model.vae.use_tiling, model.vae.use_slicing) == (True, False)
+    assert (model.encoder.use_tiling, model.encoder.use_slicing) == (False, False)

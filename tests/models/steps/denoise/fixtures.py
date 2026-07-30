@@ -413,3 +413,56 @@ def stamp_model_precision(model: Any) -> None:
         float32_precision="ieee",
         outer_autocast=False,
     )
+
+
+def build_tiny_autoencoder_kl(
+    *,
+    seed: int = 0,
+    downsamples: int = 1,
+    latent_channels: int = 4,
+) -> Any:
+    """A real tiny ``AutoencoderKL`` on CPU, random-init from a seed.
+
+    ``downsamples`` is the number of 2x spatial steps, so the decode geometry a
+    test asserts on is COMPUTED by diffusers (latent HxW * 2**downsamples) rather
+    than declared by the fixture — a hand-written decoder can agree with a wrong
+    expectation forever. ``downsamples=3`` is the NextStep tokenizer's f8
+    geometry; the f2 default is enough for flag and state tests.
+    """
+
+    from diffusers import AutoencoderKL
+
+    torch.manual_seed(seed)
+    blocks = downsamples + 1
+    return AutoencoderKL(
+        in_channels=3,
+        out_channels=3,
+        down_block_types=("DownEncoderBlock2D",) * blocks,
+        up_block_types=("UpDecoderBlock2D",) * blocks,
+        block_out_channels=(4,) * blocks,
+        layers_per_block=1,
+        latent_channels=latent_channels,
+        norm_num_groups=2,
+        sample_size=32,
+    )
+
+
+def build_tiny_wan_vae(*, seed: int = 0, z_dim: int = 4) -> Any:
+    """A real tiny ``AutoencoderKLWan`` on CPU, random-init from a seed.
+
+    Wan's VAE carries ``z_dim`` / ``latents_mean`` / ``latents_std`` as genuine
+    diffusers config fields, which is the point: production reads them off
+    ``vae.config``, so a double that re-declares them cannot catch a rename.
+    """
+
+    from diffusers import AutoencoderKLWan
+
+    torch.manual_seed(seed)
+    return AutoencoderKLWan(
+        base_dim=4,
+        z_dim=z_dim,
+        dim_mult=[1, 1],
+        num_res_blocks=1,
+        latents_mean=[0.0] * z_dim,
+        latents_std=[1.0] * z_dim,
+    )
