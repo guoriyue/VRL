@@ -18,9 +18,10 @@ Opt-in test lanes live here:
 
 ``--real-cover-report`` prints the ``real_cover`` register: every test that
 labels a double it cannot make real in-process, the real counterpart it names,
-and the lane that counterpart lives in. The lane is the payload — a ``gpu``
-counterpart can still be skipped on this very machine — so the register never
-claims "covered", only "covered over there".
+and any lane markers on that counterpart. Lane markers are report-only metadata:
+an empty lane is valid for a counterpart in the default suite, while an opt-in
+counterpart can still skip on a matching host. The mandatory ``why=`` carries
+the realness argument, so the register never infers coverage from a marker.
 """
 
 from __future__ import annotations
@@ -58,7 +59,7 @@ def pytest_addoption(parser):
         "--real-cover-report",
         action="store_true",
         default=False,
-        help="print the real_cover register: labelled double -> real counterpart + its lane",
+        help="print the real_cover register: labelled double -> counterpart + lane metadata",
     )
     preview = parser.getgroup("rollout preview")
     preview.addoption(
@@ -108,7 +109,7 @@ def pytest_collection_modifyitems(config, items):
 
 
 def pytest_terminal_summary(terminalreporter, exitstatus, config):
-    """Print the real_cover register, resolving each target's lane on disk."""
+    """Print the real_cover register with each target's lane metadata."""
 
     del exitstatus
     register = config.stash.get(_REAL_COVER_REGISTER, None)

@@ -174,7 +174,7 @@ def test_build_prompt_rows_allows_hand_focus_without_full_body(tmp_path: Path) -
         "that reaches the live site is neither reproducible nor free, and what is asserted "
         "here is the selection (which post ids get a request), not the transfer"
     ),
-    tracked_in="docs/sprints/planned/SPRINT_tier-policy-and-real-cover-labels.md",
+    tracked_in="docs/sprints/done/SPRINT_tier-policy-and-real-cover-labels.md",
 )
 def test_download_danbooru_images_downloads_only_positive_selection(tmp_path: Path) -> None:
     """Only score-passing posts get a fetch, and only their files land on disk."""

@@ -8,14 +8,16 @@ vLLM-equipped GPU lane exists" while that twin sat 1090 lines below it). So this
 module is the single parser behind both consumers:
 
 - ``tests/architecture/test_real_cover_labels.py`` fails the suite when a label
-  names a target that does not exist or does not live in a real lane;
+  names a target that does not exist, omits its reason, or leaves a tracked gap
+  without an on-disk owner;
 - ``--real-cover-report`` (``tests/conftest.py``) prints the register with each
-  target's lane.
+  target's lane metadata.
 
-The label records where the real counterpart **lives**, never that it **ran**: a
-``gpu`` counterpart can still be skipped on a machine that has a GPU (vLLM/torch
-ABI mismatch, missing fp8 ``_scaled_mm``), which is exactly why the register
-prints the lane instead of claiming "covered".
+Lane metadata neither proves that a counterpart is real nor that it ran: a
+double can carry a ``gpu`` marker, a genuine counterpart can run in the default
+lane, and an opt-in target can still skip on a matching host. The mandatory
+``why=`` records the argument a reviewer must assess; the register reports lane
+metadata without turning it into validation.
 
 The scan skips exactly one file — this one, whose docstring names the marker.
 Everything else that spells ``pytest.mark.real_cover`` must yield a parsed label
@@ -38,12 +40,10 @@ REPO_ROOT = _SELF.parents[1]
 MARKER = "real_cover"
 _MARKER_SPELLING = f"pytest.mark.{MARKER}"
 
-# A "real lane" actually runs the thing the double stands in for: real CUDA
-# (`gpu`), real weights end to end (`e2e`), a real process group (`distributed`),
-# or a real cluster / heavy runtime (`slow_test`). The other registered markers
-# (`rollout_preview`, `optional`, `real_cover` itself) select opt-in *inputs*
-# rather than a lane that proves a mechanism, so they cannot discharge a label.
-# test_real_cover_labels.py asserts every name here is a registered marker.
+# These lane markers are useful report categories for expensive or
+# environment-specific counterparts. They are metadata, not evidence of
+# realness; a default-suite counterpart deliberately resolves to no lane.
+# test_real_cover_labels.py asserts every reported name is a registered marker.
 REAL_LANES = frozenset({"distributed", "e2e", "gpu", "slow_test"})
 
 _LABEL_KWARGS = frozenset({"why", "tracked_in"})
@@ -149,9 +149,8 @@ def resolve_target(target: str, root: Path = REPO_ROOT) -> ResolvedTarget:
     # test_ddp.py runs a real gloo process group on every PR, and marking it
     # `distributed` to satisfy a lane check would move it behind --distributed and
     # lose that coverage. Nor was the marker ever proof of realness — a double can
-    # wear @pytest.mark.gpu. So the resolver only reports lanes; the guard decides
-    # what a label owes given them, and requires `why=` when there is no lane to
-    # point at.
+    # wear @pytest.mark.gpu. So the resolver only reports lanes; the guard
+    # requires every label to supply `why=` regardless of the reported lane.
     return ResolvedTarget(lanes=tuple(sorted(marks & REAL_LANES)))
 
 

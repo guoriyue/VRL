@@ -37,7 +37,7 @@ _NVTX_DEPTH_IS_UNOBSERVABLE = pytest.mark.real_cover(
         "The real CUDA emission is driven by vrl/scripts/perf/profile_smoke.py under nsys "
         "on a GPU box, which is a script, not a test"
     ),
-    tracked_in="docs/sprints/planned/SPRINT_tier-policy-and-real-cover-labels.md",
+    tracked_in="docs/sprints/done/SPRINT_tier-policy-and-real-cover-labels.md",
 )
 
 

@@ -2,7 +2,7 @@
 
 状态：**done（P1 + P2 已落地 main，594cba3，2026-06-12，G1-G4 全过；2026-06-17 归档至 done/）**；P3（per-family
 model config）/ P4（schema 派生或退役）作为未来扩展未启动（deferred，非本次交付门）。本 sprint 触发了
-`SPRINT_config_unknown_key_warning.md` §2 预留的重启条件之二（"正在系统性
+`docs/sprints/done/SPRINT_config_unknown_key_warning.md` §2 预留的重启条件之二（"正在系统性
 补全 schema 字段——为了类型化本身"），是该 parked follow-up 的正式继任。
 
 > **2026-07-13 后续更正：**下文把 `reward_view` 判为活 config 消费链的结论已经失效。
@@ -221,4 +221,4 @@ G4  全量回归：tests/config + trainers + scripts + rollouts。
 - `configs/base/trainer.yaml`（第三份默认值副本 + 既有 `???` 标记）
 - `vrl/config/loading.py`（loader 端 `???` 执法，2026-06-12）
 - `docs/sprints/reading/vllm.md` §12（pydantic dataclass 生成 CLI 的先例）
-- `docs/sprints/SPRINT_config_unknown_key_warning.md` §2（被触发的重启条件）
+- `docs/sprints/done/SPRINT_config_unknown_key_warning.md` §2（被触发的重启条件）

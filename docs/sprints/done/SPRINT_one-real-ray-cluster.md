@@ -1,3 +1,6 @@
+> **执行状态（2026-07-30）：DONE。** 共享真 Ray 集群及本轨转换已由 commit
+> `337b8d31` 落地。本文以下内容保留为执行前审计、原型数据与施工计划快照。
+
 # SPRINT: 轨道二 — 一个真 Ray 集群，以及它买得起的真 Ray 转换（净省 ~17s）
 
 状态：**planned**。轨道顺序 2 / 6（tier-policy 地基之后，三条更贵的转换轨道之前）。风险：**medium**。
@@ -9,7 +12,7 @@
 > **一个 contextmanager + 两个薄壳**（function-scoped `local_ray`、package-scoped
 > `local_ray_pkg`），然后把省下来的集群花在**单独做都不划算**的真 Ray 转换上。
 >
-> tier 判据见 `docs/sprints/planned/SPRINT_tier-policy-and-real-cover-labels.md`（轨道一）。
+> tier 判据见 `docs/sprints/done/SPRINT_tier-policy-and-real-cover-labels.md`（轨道一）。
 > 本文不复述判据，只在需要时引用。
 
 ---
@@ -879,7 +882,7 @@ cross_node 走显式计数）。`tests/ray/test_resources.py:559`
 CRD-06 那一类的判决在本区同样适用：**你没法“不拥有”一张 GPU**，也没法按需制造一次
 600 秒的 PG ready 超时。以下替身**留着**，但按 tier 政策**必须被标注**——
 **标注机制（marker 注册 + AST 守卫 + `--real-cover-report`）属于轨道一，本轨道只使用，
-不重新定义**（见 `docs/sprints/planned/SPRINT_tier-policy-and-real-cover-labels.md` §3）。
+不重新定义**（见 `docs/sprints/done/SPRINT_tier-policy-and-real-cover-labels.md` §3）。
 
 - **`tests/ray/test_global_placement.py:384-434` / `:437-484`｜保留 + `real_cover`。**
   阻塞行具体：`vrl/ray/placement.py:48` 的 `_PLACEMENT_READY_TIMEOUT_S = 600.0`，
@@ -1094,7 +1097,7 @@ HONEST GAPS 表也认领了 `test_chunk_dispatch.py` 与 Ray 清理注入的标�
 
 ## References
 
-- 判据与机制：`docs/sprints/planned/SPRINT_tier-policy-and-real-cover-labels.md`（轨道一：
+- 判据与机制：`docs/sprints/done/SPRINT_tier-policy-and-real-cover-labels.md`（轨道一：
   marker 注册、AST 守卫、`--real-cover-report`、车道地图）
 - 同系列：`SPRINT_zero-cost-real-object-swaps.md`（轨道三）、
   `SPRINT_tiny-real-diffusers-fixtures.md`、`SPRINT_reward-tiny-real-and-optional-lanes.md`、

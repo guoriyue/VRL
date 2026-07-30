@@ -1,3 +1,7 @@
+> **执行状态（2026-07-30）：DONE。** 本轨零成本真实对象替换已由 commit
+> `744cfda0` 落地。本文以下内容保留为执行前审计与施工计划快照；其中
+> `real_cover` 的命名目标现在允许位于 default lane，当前契约以轨道一执行状态为准。
+
 # SPRINT: 轨道三 — 进程里已经造得出来的东西，别再手搓
 
 状态：**planned**。Order 3 of 6（tier-policy 基线 sprint 之后，两条更贵的转换轨道之前）。Risk: low。
@@ -8,7 +12,8 @@
 > 127.0.0.1:0 上的真 aiohttp `RewardService`、真实验预设。不需要 tiny 模型、不需要新车道、
 > 不需要下载、不需要网络。
 >
-> 判据见 [[SPRINT_test_tiers]]（tier policy 基线）。本文只在需要时链接，不复述。
+> 判据见 `docs/sprints/done/SPRINT_tier-policy-and-real-cover-labels.md`
+> （tier policy 基线）。本文只在需要时链接，不复述。
 
 ---
 
@@ -929,7 +934,8 @@ PR **A/B/C 加起来 +7 ms**，可以只凭成本接受。**PR D 的 +0.35 s 必
 
 ## 参考
 
-- Tier policy 基线：`docs/sprints/planned/SPRINT_test_tiers.md`（本轨的判据来源）
+- Tier policy 基线：`docs/sprints/done/SPRINT_tier-policy-and-real-cover-labels.md`
+  （本轨的判据来源）
 - 前一轮审计：`docs/sprints/done/SPRINT_test_suite_tiny_real_and_fake_audit.md`（commit `84584d23`）
   —— 本文对 `RW-13` 的 keep 裁定**明确改判**为「已转真」（§2.2 tier 再裁定）
 - 格式范本：`docs/sprints/done/SPRINT_homeless_function_placement.md`、

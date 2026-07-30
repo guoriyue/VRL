@@ -44,7 +44,7 @@ _EXACT_BYTES_NEED_A_FIXED_CARD = pytest.mark.real_cover(
         "and its current load; a real GPU would turn a deterministic arithmetic assertion "
         "into an unreproducible approximation"
     ),
-    tracked_in="docs/sprints/planned/SPRINT_tier-policy-and-real-cover-labels.md",
+    tracked_in="docs/sprints/done/SPRINT_tier-policy-and-real-cover-labels.md",
 )
 
 

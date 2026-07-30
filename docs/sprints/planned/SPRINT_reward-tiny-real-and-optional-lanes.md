@@ -1,7 +1,9 @@
 # SPRINT: reward 侧 tiny-real 仓库，以及 optional 车道的第一批真成员（planned）
 
 状态：**planned / CPU-only（两个 opt-in 测试需要 `--optional`，一个需要 `--extra reward`）**。
-基线：main @ `812cc3cf`。分层判据见 [[SPRINT_test_tiers]]（Tier Policy：T1 / T2 / T2-PIPE / T3）。
+基线：main @ `812cc3cf`。分层判据见
+`docs/sprints/done/SPRINT_tier-policy-and-real-cover-labels.md`
+（Tier Policy：T1 / T2 / T2-PIPE / T3）。
 前身：[[SPRINT_test_suite_tiny_real_and_fake_audit]]（done, `84584d23`）——本 sprint **推翻**它对 kling `_Fake*` 的 KEEP 裁定，理由见 §6.1。
 
 > 本文所有数字都是本机实测（`.venv/bin/python -m pytest -p no:randomly`，`/usr/bin/time`），不是估算。凡与任务简报口径不一致的，§7 逐条列出。
@@ -472,13 +474,19 @@ PaddleOCR 在可选 `[ocr]` extra 里、默认环境没装（实测 ModuleNotFou
 
 ### 4.6 机制层面的非目标：本 sprint **不**引入 `real_cover` marker
 
+> **现状修正（2026-07-30）：** 轨道一已经注册 `real_cover` 并落地 AST 守卫。
+> 以下文字保留的是本计划写作时的基线；实际施工时应直接使用当前 marker 契约，
+> 不再等待 `SPRINT_test_tiers`。
+
 `grep -rn "real_cover" tests/ vrl/ docs/ pyproject.toml` **零命中**，而 `pyproject.toml:203` 开着 `--strict-markers`——直接贴上去是**收集期 ERROR**，不是警告。
 
 本 sprint 因此**不依赖尚未落地的 marker**，改用两样已经存在的东西：
 1. `@pytest.mark.optional`（`tests/conftest.py:81-85`，marker 已在 `pyproject.toml:210` 注册）；
 2. 模块 docstring 里的散文缺口声明（`tests/rewards/functions/test_ocr.py:27-29` 已有先例）。
 
-§5 的清单就是这批缺口的登记册。如果 [[SPRINT_test_tiers]] 之后落地了 `real_cover` + AST meta-test，本文即 `tracked_in=` 的目标，届时把 §5 逐条转成 marker 是一次机械改写。**这样本 sprint 可以独立 merge 而不炸 `--strict-markers`。**
+§5 的清单就是这批缺口的登记册。如果轨道一之后落地了 `real_cover` + AST meta-test，本文即
+`tracked_in=` 的目标，届时把 §5 逐条转成 marker 是一次机械改写。**这样本 sprint 可以独立
+merge 而不炸 `--strict-markers`。**
 
 ---
 

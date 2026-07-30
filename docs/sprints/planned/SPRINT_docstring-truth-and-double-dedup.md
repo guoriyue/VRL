@@ -540,6 +540,10 @@ _video_to_cthw = video_to_cthw
 
 **B. 环境模拟（T3-ENV），本轨不碰、也不给它们贴标签：**
 
+> **现状修正（2026-07-30）：** 轨道一已经注册 `real_cover` 并落地 AST 守卫。
+> 以下段落保留的是本计划写作时的基线；实际施工若触及这些替身，应使用当前 marker
+> 契约，而不是继续依赖散文缺口。
+
 本轨是 0 运行时的清扫轨，**不引入 `real_cover` marker**。实测 `pyproject.toml:203` 有 `addopts = ["--strict-config", "--strict-markers"]`，而 `:204-211` 的 markers 列表里没有 `real_cover`——现在贴等于**整个文件收集期硬报错**，不是良性注解。marker 注册与「诚实缺口登记册」属于 foundation/infra 轨的范围，本轨不依赖它、也不制造对它的依赖。
 
 具体地，以下几类在本轨**明确保持原样**，理由是它们模拟的是无法按需制造的条件，而不是可以构造的对象：
@@ -652,3 +656,4 @@ grep -rn 'collect_scored\|_video_to_cthw\|_generate_one_video' vrl/ tests/ --inc
 - RW-11 依据：`vrl/config/schema.py:55-61`、`vrl/config/presets/reward/kling_video_reward.yaml:24-31`、`tests/rewards/kling_video_reward/test_function.py:70,163-165`
 - 陈旧引用：`docs/sprints/done/SPRINT_test_suite_tiny_real_and_fake_audit.md:274,282,704`；`tests/conftest.py:64-69`（归 infra 轨）
 - 配置：`pyproject.toml:203-211`（`--strict-markers` + 已注册 marker 清单，`real_cover` 不在其中）
+- 当前 marker 契约：`docs/sprints/done/SPRINT_tier-policy-and-real-cover-labels.md`

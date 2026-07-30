@@ -22,8 +22,8 @@ T2  两个不变式 pin 测试（tests/algorithms/test_diffusion_nft.py，
 
 lr=0 logprob parity gate 只覆盖 ratio 类算法（GRPO/PPO）。NFT 不算 logprob
 ratio，对它失明——predict2.5 当时跑 NFT，所以即使有 sigma 域级别的 bug 也
-不会被 parity 抓到。这是已定性的检查空窗（见
-`SPRINT_predict2_logprob_parity.md` 的方法论讨论）。
+不会被 parity 抓到。这是已定性的检查空窗；原一次性 parity sprint 已删除，取证长期
+归档在 `docs/sprints/info/SPRINT_cross_model_smoke.md` §2 与 commit `c66bf116`。
 
 ## 1. NFT 在 lr=0 时必须成立什么（推导自 vrl/algorithms/diffusion_nft.py）
 
@@ -55,7 +55,7 @@ I3（域守卫，必须做——潜伏炸弹）:
   diffusion_nft.py:143-144 的 timestep 归一化是启发式：
       if (t > 1.0).any(): t = t / 1000.0
   它假设 timestep 网格 ≤ 1000。predict2 的 FlowMatch timesteps 高达
-  80000（EDM 域，见 SPRINT_predict2_logprob_parity.md）——若未来有人把
+  80000（EDM 域，见 `docs/sprints/info/SPRINT_cross_model_smoke.md` §2）——若未来有人把
   NFT 接到 predict2 类家族上，t/1000 = 80，xt = (1−t)x0 + t·noise 直接
   出域，无声产出垃圾——与 sigma 域事故同构。
   修法：归一化后 assert t ∈ [0,1]，越界大声报错。
@@ -81,4 +81,4 @@ T3  trainer debug.first_step 的 NFT 记录：uses_evaluator=False 分支目前
 
 - `vrl/algorithms/diffusion_nft.py:142-203`（三路前向与损失结构）
 - `vrl/trainers/online/trainer.py:555`（uses_evaluator gate，T3 挂点）
-- `docs/sprints/SPRINT_predict2_logprob_parity.md`（方法论与域事故先例）
+- `docs/sprints/info/SPRINT_cross_model_smoke.md` §2（方法论与域事故长期归档）

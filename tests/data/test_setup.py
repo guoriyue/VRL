@@ -130,7 +130,7 @@ def test_video_world_bridge_rows_match_cosmos_consumer(
         "the per-episode fps override, and never decodes the written video — real encoding "
         "would add seconds and zero coverage"
     ),
-    tracked_in="docs/sprints/planned/SPRINT_tier-policy-and-real-cover-labels.md",
+    tracked_in="docs/sprints/done/SPRINT_tier-policy-and-real-cover-labels.md",
 )
 def test_video_world_targets_rows_include_real_source_target_clip(tmp_path: Path) -> None:
     """Target rows carry reference + target artifacts, and per-episode fps wins over CLI fps."""
@@ -196,7 +196,7 @@ def test_video_world_targets_rows_include_real_source_target_clip(tmp_path: Path
         "test that reaches the live site is neither reproducible nor free, and what is "
         "asserted here is the setup.main CLI wiring above it"
     ),
-    tracked_in="docs/sprints/planned/SPRINT_tier-policy-and-real-cover-labels.md",
+    tracked_in="docs/sprints/done/SPRINT_tier-policy-and-real-cover-labels.md",
 )
 def test_anime_positives_prepares_both_manifests_end_to_end(monkeypatch, tmp_path: Path) -> None:
     """The CLI writes both the positives and hand-crop manifests in one pass."""

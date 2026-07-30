@@ -1354,7 +1354,7 @@ def test_fsdp_colocate_resolves_per_rank_local_single_gpu() -> None:
         "cuda:<local_rank> from the real device count and the cuda:0 assertion breaks on any "
         "host with more than one visible GPU"
     ),
-    tracked_in="docs/sprints/planned/SPRINT_tier-policy-and-real-cover-labels.md",
+    tracked_in="docs/sprints/done/SPRINT_tier-policy-and-real-cover-labels.md",
 )
 @pytest.mark.parametrize("rank", range(4))
 def test_fsdp_4x_l4_rank_mask_resolves_one_logical_gpu(cuda_devices, rank: int) -> None:

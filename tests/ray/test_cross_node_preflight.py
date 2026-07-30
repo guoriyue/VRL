@@ -23,7 +23,7 @@ _MULTI_NODE_TOPOLOGY = pytest.mark.real_cover(
         "reaches the cluster through the injected ray module, so there is nowhere for a real "
         "counterpart to live; tests/e2e/test_real_checkpoint_rl.py is single-node only"
     ),
-    tracked_in="docs/sprints/planned/SPRINT_one-real-ray-cluster.md",
+    tracked_in="docs/sprints/done/SPRINT_one-real-ray-cluster.md",
 )
 
 

@@ -1,3 +1,8 @@
+> **执行状态（2026-07-30）：DONE。** 核心机制已由 commit `9d85af35`
+> 落地。本文以下内容保留为执行前审计与计划快照，其中“命名目标必须属于 real lane”
+> 的要求后来被 commit `744cfda0` 取代：只要目标存在且 `why` 说明替身与真实覆盖的差距，
+> 命名的 default-lane 目标同样有效。
+
 # SPRINT: tier 政策、`real_cover` 缺口标注机制与车道可见性（轨道一 / 地基）
 
 状态：**planned**。轨道顺序 1 / 6。风险：低。
@@ -134,7 +139,7 @@ def test_real_cumem_one_shot_scope_sleep_wake_in_subprocess() -> None:
 @pytest.mark.real_cover(
     None,
     why="torch reports the host GPU count; a 4-GPU topology cannot be manufactured in-process",
-    tracked_in="docs/sprints/planned/SPRINT_tier-policy-and-real-cover-labels.md",
+    tracked_in="docs/sprints/done/SPRINT_tier-policy-and-real-cover-labels.md",
 )
 ```
 
@@ -209,7 +214,7 @@ real_cover register  (double -> real counterpart / tracked gap)
   tests/ray/test_resources.py::test_fsdp_4x_l4_rank_mask_resolves_one_logical_gpu
       -> NO REAL COUNTERPART   [lane: -]
       why: torch reports the host GPU count; a 4-GPU topology cannot be manufactured in-process
-      tracked_in: docs/sprints/planned/SPRINT_tier-policy-and-real-cover-labels.md
+      tracked_in: docs/sprints/done/SPRINT_tier-policy-and-real-cover-labels.md
 ```
 
 **为什么不是 docstring 约定：** 没有消费者，会腐烂（§0 已给出仓库内的实例）。

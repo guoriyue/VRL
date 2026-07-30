@@ -36,7 +36,7 @@ _SNAPSHOTS_AND_GENERATION_NEED_THE_REAL_WEIGHTS = pytest.mark.real_cover(
         "and generating the image grid from them needs a CUDA device; there is no SANA case in "
         "tests/e2e, so this repo has no lane where either runs for real"
     ),
-    tracked_in="docs/sprints/planned/SPRINT_zero-cost-real-object-swaps.md",
+    tracked_in="docs/sprints/done/SPRINT_zero-cost-real-object-swaps.md",
 )
 
 
