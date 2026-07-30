@@ -158,8 +158,8 @@ class RolloutWorkerHealthMonitor:
             self._timeout_s,
             exc_info=error,
         )
-        # Only synchronous work from this thread. lifecycle.fail is a plain
-        # attribute write; the async shutdown path belongs to whoever observes
+        # Only synchronous work from this thread. lifecycle.fail atomically
+        # closes admission; the async shutdown path belongs to whoever observes
         # the RayActorError that killing the actors raises in the driver.
         with_lifecycle = getattr(self._runtime, "lifecycle", None)
         if with_lifecycle is not None:
@@ -183,6 +183,7 @@ class RolloutWorkerUnreachable(TerminalRuntimeError):
             f"rollout worker {worker_id!r} did not answer a liveness probe "
             f"within {self.timeout_s:g}s: {cause!r}",
         )
+        self.__cause__ = cause
 
 
 __all__ = ["RolloutWorkerHealthMonitor", "RolloutWorkerUnreachable"]

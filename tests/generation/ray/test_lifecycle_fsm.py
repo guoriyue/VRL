@@ -10,6 +10,7 @@ from typing import ClassVar
 import pytest
 
 from vrl.generation.execution.types import DistributedWorkerHandle
+from vrl.generation.ray.health_monitor import RolloutWorkerUnreachable
 from vrl.generation.ray.lifecycle_fsm import (
     RuntimeLifecycle,
     RuntimeLifecycleError,
@@ -17,7 +18,9 @@ from vrl.generation.ray.lifecycle_fsm import (
 )
 from vrl.generation.ray.pipeline_protocol import PipelinedProgressError
 from vrl.generation.ray.runtime import RayGenerationRuntime
+from vrl.ray.actor_pool import RayActorCallError
 from vrl.ray.operation_deadline import RayOperationCancelled, RayOperationTimeout
+from vrl.runtime_errors import failure_identity_cause
 
 
 def _resident_runtime() -> RayGenerationRuntime:
@@ -75,6 +78,34 @@ def test_failure_preserves_first_root_cause() -> None:
     with pytest.raises(RuntimeLifecycleError) as caught:
         lifecycle.require_running("generate")
     assert caught.value.__cause__ is root
+
+
+def test_concurrent_failure_publishers_share_one_first_root_cause() -> None:
+    lifecycle = RuntimeLifecycle()
+    errors = [RuntimeError(f"failure-{index}") for index in range(8)]
+    start = threading.Barrier(len(errors))
+    retained: list[BaseException | None] = [None] * len(errors)
+
+    def publish(index: int) -> None:
+        start.wait()
+        retained[index] = lifecycle.fail(errors[index])
+
+    threads = [threading.Thread(target=publish, args=(index,)) for index in range(len(errors))]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=1)
+
+    assert all(not thread.is_alive() for thread in threads)
+    assert lifecycle.failure in errors
+    assert all(error is lifecycle.failure for error in retained)
+    assert (
+        sum(
+            error is retained_error for error, retained_error in zip(errors, retained, strict=True)
+        )
+        == 1
+    )
+    assert lifecycle.phase is RuntimePhase.SHUTTING_DOWN
 
 
 def test_terminated_runtime_fail_fasts_public_operations() -> None:
@@ -408,6 +439,64 @@ async def test_terminal_progress_protocol_error_closes_runtime() -> None:
 
 
 @pytest.mark.asyncio
+async def test_active_health_failure_escapes_as_the_first_failure_identity() -> None:
+    probe_timeout = TimeoutError("health probe timed out")
+    health_failure = RolloutWorkerUnreachable("wedged", 0.5, probe_timeout)
+    actor_error = RayActorCallError(
+        "rollout.generation.chunk",
+        worker_id="healthy-killed-with-fleet",
+        job_index=0,
+    )
+    actor_error.__cause__ = RuntimeError("actor died after fleet kill")
+    runtime: RayGenerationRuntime
+
+    class _Executor:
+        async def execute(self, _request) -> None:
+            runtime.lifecycle.fail(health_failure)
+            raise actor_error
+
+    runtime = RayGenerationRuntime(_Executor())
+
+    with pytest.raises(RolloutWorkerUnreachable) as caught:
+        await runtime.generate(_request())
+
+    assert caught.value is health_failure
+    assert caught.value.__cause__ is probe_timeout
+    assert runtime.lifecycle.failure is health_failure
+    assert runtime.lifecycle.phase is RuntimePhase.TERMINATED
+    # write_run_verdict uses this exact selector for its error_class.
+    assert failure_identity_cause(caught.value) is health_failure
+
+
+@pytest.mark.asyncio
+async def test_active_health_failure_keeps_cancelled_surface_with_first_cause() -> None:
+    health_failure = RolloutWorkerUnreachable(
+        "wedged",
+        0.5,
+        TimeoutError("health probe timed out"),
+    )
+    cancellation = asyncio.CancelledError()
+    cancellation.__cause__ = RayOperationCancelled("rollout.generation.chunk")
+    runtime: RayGenerationRuntime
+
+    class _Executor:
+        async def execute(self, _request) -> None:
+            runtime.lifecycle.fail(health_failure)
+            raise cancellation
+
+    runtime = RayGenerationRuntime(_Executor())
+
+    with pytest.raises(asyncio.CancelledError) as caught:
+        await runtime.generate(_request())
+
+    assert caught.value is cancellation
+    assert caught.value.__cause__ is health_failure
+    assert failure_identity_cause(caught.value) is health_failure
+    assert runtime.lifecycle.failure is health_failure
+    assert runtime.lifecycle.phase is RuntimePhase.TERMINATED
+
+
+@pytest.mark.asyncio
 async def test_weight_ack_timeout_keeps_previous_version_and_force_kills(
     monkeypatch,
 ) -> None:
@@ -455,6 +544,38 @@ async def test_weight_ack_timeout_keeps_previous_version_and_force_kills(
     assert runtime.lifecycle.phase is RuntimePhase.TERMINATED
     assert _Release.calls == 0
     assert _Ray.killed == [actor]
+
+
+@pytest.mark.asyncio
+async def test_health_failure_after_weight_ack_blocks_version_publication() -> None:
+    health_failure = RolloutWorkerUnreachable(
+        "rollout-1",
+        0.5,
+        TimeoutError("health probe timed out"),
+    )
+    runtime: RayGenerationRuntime
+
+    class _WeightSync:
+        async def push_to_rollout_workers(
+            self,
+            _state_ref,
+            _policy_version,
+        ) -> None:
+            # The remote ACK transaction completed, but the independent health
+            # thread closed admission before the driver could publish its version.
+            runtime.lifecycle.fail(health_failure)
+
+    runtime = RayGenerationRuntime(SimpleNamespace(), weight_sync=_WeightSync())
+    runtime.current_policy_version = 6
+
+    with pytest.raises(RolloutWorkerUnreachable) as caught:
+        await runtime.update_weights(object(), policy_version=7)
+
+    assert caught.value is health_failure
+    assert runtime.current_policy_version == 6
+    assert runtime.lifecycle.failure is health_failure
+    assert runtime.lifecycle.phase is RuntimePhase.TERMINATED
+    assert failure_identity_cause(caught.value) is health_failure
 
 
 @pytest.mark.asyncio
@@ -597,8 +718,9 @@ async def test_timeout_prevents_sibling_generation_from_returning_output() -> No
     with pytest.raises(RayOperationTimeout):
         await timeout_task
     finish_sibling.set()
-    with pytest.raises(RuntimeLifecycleError, match="complete generation"):
+    with pytest.raises(RayOperationTimeout) as sibling:
         await sibling_task
+    assert sibling.value is timeout
 
 
 @pytest.mark.asyncio

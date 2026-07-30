@@ -17,7 +17,11 @@ from vrl.generation.ray.config import RayGenerationConfig
 from vrl.generation.ray.executor import RayGenerationExecutor
 from vrl.generation.ray.health_monitor import RolloutWorkerHealthMonitor
 from vrl.generation.ray.launch_inputs import RayGenerationLaunchInputs
-from vrl.generation.ray.lifecycle_fsm import RuntimeLifecycle, RuntimePhase
+from vrl.generation.ray.lifecycle_fsm import (
+    RuntimeLifecycle,
+    RuntimeLifecycleError,
+    RuntimePhase,
+)
 from vrl.generation.ray.weight_sync import GenerationWeightSync
 from vrl.generation.types import GenerationOutput, GenerationRequest
 from vrl.ray.dependencies import require_ray
@@ -237,8 +241,12 @@ class RayGenerationRuntime(GenerationRuntime):
             self.lifecycle.require_running("complete generation")
             return output
         except asyncio.CancelledError as error:
-            if find_error_cause(error, TerminalRuntimeError) is not None:
-                await self._terminalize_after_failure(error)
+            if (
+                find_error_cause(error, TerminalRuntimeError) is not None
+                or self.lifecycle.failure is not None
+            ):
+                failure = await self._terminalize_after_failure(error)
+                error.__cause__ = failure
             raise
         except BaseException as error:
             if find_error_cause(error, TerminalRuntimeError) is None:
@@ -246,8 +254,10 @@ class RayGenerationRuntime(GenerationRuntime):
             # Cancellation cannot reliably interrupt synchronous actor code. Close
             # admission and destroy the fleet before any partial request result can
             # escape this runtime.
-            await self._terminalize_after_failure(error)
-            raise
+            failure = await self._terminalize_after_failure(error)
+            if failure is error:
+                raise
+            raise failure from failure.__cause__
 
     async def _resolve_probed_samples_per_chunk(
         self,
@@ -338,12 +348,18 @@ class RayGenerationRuntime(GenerationRuntime):
                 _PolicySnapshot(state_ref=state_ref, policy_version=int(policy_version)),
             )
         except asyncio.CancelledError as error:
-            if find_error_cause(error, TerminalRuntimeError) is not None:
-                await self._terminalize_after_failure(error)
+            if (
+                find_error_cause(error, TerminalRuntimeError) is not None
+                or self.lifecycle.failure is not None
+            ):
+                failure = await self._terminalize_after_failure(error)
+                error.__cause__ = failure
             raise
         except BaseException as error:
-            await self._terminalize_after_failure(error)
-            raise
+            failure = await self._terminalize_after_failure(error)
+            if failure is error:
+                raise
+            raise failure from failure.__cause__
 
     async def _install_policy(self, policy: _PolicySnapshot) -> None:
         self.lifecycle.require_running("update_weights")
@@ -355,9 +371,19 @@ class RayGenerationRuntime(GenerationRuntime):
                     policy.state_ref,
                     policy.policy_version,
                 )
-                state.active_policy_version = policy.policy_version
-            state.desired_policy = policy
-            self.current_policy_version = policy.policy_version
+                with (
+                    inner_runtime.lifecycle.publication_guard(
+                        "publish outer policy version",
+                    ),
+                    self.lifecycle.publication_guard("publish policy version"),
+                ):
+                    state.active_policy_version = policy.policy_version
+                    state.desired_policy = policy
+                    self.current_policy_version = policy.policy_version
+                return
+            with self.lifecycle.publication_guard("publish policy version"):
+                state.desired_policy = policy
+                self.current_policy_version = policy.policy_version
             return
 
         if self.weight_sync is None:
@@ -368,23 +394,25 @@ class RayGenerationRuntime(GenerationRuntime):
             policy.state_ref,
             policy.policy_version,
         )
-        self.current_policy_version = policy.policy_version
+        with self.lifecycle.publication_guard("publish policy version"):
+            self.current_policy_version = policy.policy_version
 
     async def _terminalize_after_failure(
         self,
         error: BaseException,
         *,
         join_control_tasks: bool = True,
-    ) -> None:
-        """Close admission and preserve the operation error across cleanup."""
+    ) -> BaseException:
+        """Close admission and return the stable first failure after cleanup."""
 
         # Publish the operation root before upgrading an existing graceful
         # shutdown. Cancellation of its release barrier must never win the
         # first-failure slot over the terminal error that required the upgrade.
         terminal_error = find_error_cause(error, TerminalRuntimeError)
-        failure = terminal_error if terminal_error is not None else error
-        self.lifecycle.fail(failure)
-        if terminal_error is not None:
+        proposed_failure = terminal_error if terminal_error is not None else error
+        failure = self.lifecycle.fail(proposed_failure)
+        terminal_failure = find_error_cause(failure, TerminalRuntimeError)
+        if terminal_error is not None or terminal_failure is not None:
             self._force_shutdown = True
             # A terminal distributed operation proves that graceful RPC progress
             # cannot be trusted. Cancel runtime-owned local control tasks so an
@@ -430,6 +458,7 @@ class RayGenerationRuntime(GenerationRuntime):
                 ),
             )
             failure.add_note(f"generation terminal cleanup also failed: {cleanup_error!r}")
+        return failure
 
     async def offload(self) -> None:
         """Park explicitly idle on-demand workers between GPU phases.
@@ -716,7 +745,15 @@ class RayGenerationRuntime(GenerationRuntime):
                         desired.state_ref,
                         desired.policy_version,
                     )
-                    state.active_policy_version = desired.policy_version
+                    with (
+                        inner_runtime.lifecycle.publication_guard(
+                            "publish restored policy version",
+                        ),
+                        self.lifecycle.publication_guard(
+                            "publish restored policy version",
+                        ),
+                    ):
+                        state.active_policy_version = desired.policy_version
                 return inner_runtime
             if state.inner_runtime is not None:
                 return state.inner_runtime
@@ -737,6 +774,12 @@ class RayGenerationRuntime(GenerationRuntime):
                         desired.policy_version,
                     )
                     active_policy_version = desired.policy_version
+                with (
+                    candidate.lifecycle.publication_guard("publish activated runtime"),
+                    self.lifecycle.publication_guard("publish activated runtime"),
+                ):
+                    state.active_policy_version = active_policy_version
+                    state.inner_runtime = candidate
             except BaseException as restore_error:
                 # A candidate is not published until restore succeeds;
                 # clean it here so a failed cold activation cannot leak actors.
@@ -753,12 +796,21 @@ class RayGenerationRuntime(GenerationRuntime):
                         exc_info=cleanup_error,
                     )
                 raise
-            state.active_policy_version = active_policy_version
-            state.inner_runtime = candidate
             return candidate
         except BaseException as error:
-            self.lifecycle.fail(error)
-            raise
+            if isinstance(error, RuntimeLifecycleError) and self.lifecycle.failure is None:
+                # Graceful shutdown may close admission while an unpublished
+                # candidate finishes launching. The candidate was cleaned by
+                # the inner ownership boundary above; this is not a runtime
+                # failure and must not manufacture one.
+                raise
+            failure = self.lifecycle.fail(error)
+            if isinstance(error, asyncio.CancelledError):
+                error.__cause__ = failure
+                raise
+            if failure is error:
+                raise
+            raise failure from failure.__cause__
 
 
 __all__ = ["RayGenerationRuntime"]

@@ -11,6 +11,8 @@ import pytest
 import torch
 
 from tests.rollouts.orchestration.continuous._helpers import _wait_until, owner_snapshot
+from vrl.generation.ray.health_monitor import RolloutWorkerUnreachable
+from vrl.generation.ray.lifecycle_fsm import RuntimePhase
 from vrl.generation.ray.runtime import RayGenerationRuntime
 from vrl.rollouts.batch import RolloutBatch
 from vrl.rollouts.orchestration.continuous.owner import ContinuousRolloutOwner
@@ -412,6 +414,77 @@ async def test_real_runtime_cleanup_failure_does_not_replace_ack_root() -> None:
     assert "worker install ACK mismatch" in str(failed.terminal_error)
     assert "runtime cleanup failed" not in str(failed.terminal_error)
     assert cleanup_calls == 2
+
+    await owner.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_health_failure_after_weight_ack_never_resumes_owner_admission() -> None:
+    """A post-ACK health race is a failed commit, never a published version."""
+
+    health_failure = RolloutWorkerUnreachable(
+        "rollout-1",
+        0.5,
+        TimeoutError("health probe timed out"),
+    )
+    runtime: RayGenerationRuntime
+
+    class _HealthRaceSync:
+        async def push_to_rollout_workers(
+            self,
+            state_ref: Any,
+            policy_version: int,
+        ) -> None:
+            del state_ref, policy_version
+            runtime.lifecycle.fail(health_failure)
+
+    collector = _OwnerCollector()
+    runtime = RayGenerationRuntime(
+        executor=None,
+        weight_sync=_HealthRaceSync(),
+    )
+    runtime.current_policy_version = 1
+
+    class _RuntimeLifecycle(_OwnerLifecycle):
+        async def push_prepared_weights(
+            self,
+            prepared: Any,
+            stats: RolloutStats,
+        ) -> int:
+            del stats
+            version = int(runtime.current_policy_version or 0) + 1
+            await runtime.update_weights(prepared, version)
+            return version
+
+        def current_policy_version(self) -> int:
+            return int(runtime.current_policy_version or 0)
+
+        async def shutdown_collector_runtime(self) -> None:
+            await runtime.shutdown()
+            await self.collector.shutdown()
+
+    owner = _owner(_RuntimeLifecycle(collector))
+    await owner.next_iteration(
+        ["p0"],
+        group_size=1,
+        runtime_debug=False,
+        initial_weights=None,
+    )
+
+    with pytest.raises(RolloutWorkerUnreachable) as caught:
+        await owner.commit_weights({"w": 1})
+
+    failed = await owner_snapshot(owner)
+    assert caught.value is health_failure
+    assert failed.producer_state is None
+    assert failed.terminal_error == repr(health_failure)
+    assert runtime.current_policy_version == 1
+    assert runtime.lifecycle.phase is RuntimePhase.TERMINATED
+    assert collector.shutdown_calls == 1
+
+    with pytest.raises(RuntimeError, match="owner has failed") as rejected:
+        await owner.commit_weights({"w": 2})
+    assert rejected.value.__cause__ is health_failure
 
     await owner.shutdown()
 

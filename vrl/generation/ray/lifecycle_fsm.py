@@ -8,7 +8,9 @@ TERMINATED.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+import threading
+from collections.abc import Iterator
+from contextlib import contextmanager
 from enum import Enum
 
 
@@ -30,41 +32,77 @@ class RuntimeLifecycleError(RuntimeError):
         self.phase = phase
 
 
-@dataclass
 class RuntimeLifecycle:
     """Fail-fast terminal lifecycle; schedules own pause/drain barriers."""
 
-    phase: RuntimePhase = RuntimePhase.RUNNING
-    failure: BaseException | None = None
+    def __init__(self) -> None:
+        self._phase = RuntimePhase.RUNNING
+        self._failure: BaseException | None = None
+        # Health probing publishes failures from an OS thread while runtime
+        # operations transition on the trainer's event-loop thread. The lock is
+        # also the linearization boundary for policy-version publication.
+        self._lock = threading.Lock()
+
+    @property
+    def phase(self) -> RuntimePhase:
+        with self._lock:
+            return self._phase
+
+    @property
+    def failure(self) -> BaseException | None:
+        with self._lock:
+            return self._failure
 
     def require_running(self, operation: str) -> None:
-        if self.phase is RuntimePhase.RUNNING:
-            return
-        error = RuntimeLifecycleError(operation, self.phase)
-        if self.failure is not None:
-            raise error from self.failure
-        raise error
+        with self._lock:
+            self._require_running_locked(operation)
 
-    def fail(self, error: BaseException) -> None:
-        """Close admission and retain the first failure as the root cause."""
+    @contextmanager
+    def publication_guard(self, operation: str) -> Iterator[None]:
+        """Atomically publish local state only while terminal admission is open.
 
-        if self.phase is RuntimePhase.TERMINATED:
-            return
-        self.failure = self.failure or error
-        self.phase = RuntimePhase.SHUTTING_DOWN
+        The guarded body must contain only non-blocking assignments. Holding the
+        lifecycle lock across an await would prevent the health-monitor thread
+        from closing admission.
+        """
+
+        with self._lock:
+            self._require_running_locked(operation)
+            yield
+
+    def fail(self, error: BaseException) -> BaseException:
+        """Close admission and return the first failure retained as root cause."""
+
+        with self._lock:
+            if self._phase is RuntimePhase.TERMINATED:
+                return self._failure or error
+            if self._failure is None:
+                self._failure = error
+            self._phase = RuntimePhase.SHUTTING_DOWN
+            return self._failure
 
     def begin_shutdown(self) -> None:
         """Idempotently close admission before the shared shutdown task starts."""
 
-        if self.phase is RuntimePhase.RUNNING:
-            self.phase = RuntimePhase.SHUTTING_DOWN
+        with self._lock:
+            if self._phase is RuntimePhase.RUNNING:
+                self._phase = RuntimePhase.SHUTTING_DOWN
 
     def finish_shutdown(self) -> None:
         """Publish successful terminal cleanup."""
 
-        if self.phase is not RuntimePhase.SHUTTING_DOWN:
-            raise RuntimeLifecycleError("finish shutdown", self.phase)
-        self.phase = RuntimePhase.TERMINATED
+        with self._lock:
+            if self._phase is not RuntimePhase.SHUTTING_DOWN:
+                raise RuntimeLifecycleError("finish shutdown", self._phase)
+            self._phase = RuntimePhase.TERMINATED
+
+    def _require_running_locked(self, operation: str) -> None:
+        if self._phase is RuntimePhase.RUNNING:
+            return
+        error = RuntimeLifecycleError(operation, self._phase)
+        if self._failure is not None:
+            raise error from self._failure
+        raise error
 
 
 __all__ = [

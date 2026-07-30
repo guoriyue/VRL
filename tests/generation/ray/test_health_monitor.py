@@ -15,7 +15,11 @@ from vrl.generation.ray.health_monitor import (
     RolloutWorkerUnreachable,
 )
 from vrl.generation.ray.lifecycle_fsm import RuntimeLifecycle, RuntimePhase
-from vrl.runtime_errors import TerminalRuntimeError
+from vrl.runtime_errors import (
+    TerminalRuntimeError,
+    failure_identity_cause,
+    find_error_cause,
+)
 
 # Carried by every test that drives `_FakeRay`. The double is the Ray wire, not
 # the monitor: scripting a probe's answer is how pause/stop/skip behaviour stays
@@ -153,7 +157,8 @@ def test_unresponsive_worker_fails_the_runtime_and_kills_the_fleet(
     """
 
     healthy = _Actor("rollout-0")
-    wedged = _Actor(TimeoutError("ray.get timed out"))
+    probe_timeout = TimeoutError("ray.get timed out")
+    wedged = _Actor(probe_timeout)
     actors = [healthy, wedged]
     runtime = _runtime(*actors)
     ray = _FakeRay(actors)
@@ -168,6 +173,9 @@ def test_unresponsive_worker_fails_the_runtime_and_kills_the_fleet(
     assert isinstance(failure, TerminalRuntimeError)
     assert failure.worker_id == "rollout-1"
     assert failure.timeout_s == 0.5
+    assert failure.__cause__ is probe_timeout
+    assert find_error_cause(failure, TimeoutError) is probe_timeout
+    assert failure_identity_cause(failure) is failure
     # Production's kill_actors did this, in fleet order, with no_restart=True --
     # a restarting actor would answer the next probe and hide the failure.
     assert ray.killed == [(healthy, True), (wedged, True)]

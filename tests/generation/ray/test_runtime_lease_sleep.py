@@ -16,6 +16,7 @@ from vrl.generation.execution.types import (
 from vrl.generation.launch_contract import GenerationRuntimeLaunchContract
 from vrl.generation.ray.config import RayGenerationConfig
 from vrl.generation.ray.executor import RayGenerationExecutor
+from vrl.generation.ray.health_monitor import RolloutWorkerUnreachable
 from vrl.generation.ray.launch_inputs import RayGenerationLaunchInputs
 from vrl.generation.ray.lifecycle_fsm import (
     RuntimeLifecycle,
@@ -26,9 +27,10 @@ from vrl.generation.ray.runtime import (
     RayGenerationRuntime,
     _PolicySnapshot,
 )
-from vrl.ray.actor_pool import RayActorDispatcher
+from vrl.ray.actor_pool import RayActorCallError, RayActorDispatcher
 from vrl.ray.operation_deadline import RayOperationCancelled, RayOperationTimeout
 from vrl.ray.resources import resolve_distributed_resources
+from vrl.runtime_errors import failure_identity_cause
 from vrl.trainers.weight_sync import build_runtime_weight_syncer
 
 
@@ -539,6 +541,84 @@ async def test_active_update_failure_preserves_desired_policy_and_terminates() -
     assert runtime.lifecycle.phase is RuntimePhase.TERMINATED
     assert state.inner_runtime is None
     assert inner.calls == ["shutdown"]
+
+
+@pytest.mark.asyncio
+async def test_active_update_health_race_does_not_publish_outer_version() -> None:
+    outer = _on_demand_runtime()
+    state = outer._on_demand
+    assert state is not None
+    _set_desired_policy(outer, "W1", 1)
+    state.active_policy_version = 1
+    health_failure = RolloutWorkerUnreachable(
+        "rollout-1",
+        0.5,
+        TimeoutError("health probe timed out"),
+    )
+
+    class _HealthRaceInner(_FakeInner):
+        async def update_weights(self, state_ref: Any, version: int) -> None:
+            await super().update_weights(state_ref, version)
+            self.lifecycle.fail(health_failure)
+
+    inner = _HealthRaceInner()
+    inner.current_policy_version = 1
+    state.inner_runtime = inner
+
+    with pytest.raises(RolloutWorkerUnreachable) as caught:
+        await outer.update_weights("W2", 2)
+
+    assert caught.value is health_failure
+    assert state.desired_policy == _PolicySnapshot("W1", 1)
+    assert outer.current_policy_version == 1
+    assert state.active_policy_version is None
+    assert state.inner_runtime is None
+    assert inner.current_policy_version == 2
+    assert inner.calls == [("update", "W2", 2), "shutdown"]
+    assert outer.lifecycle.failure is health_failure
+    assert outer.lifecycle.phase is RuntimePhase.TERMINATED
+
+
+@pytest.mark.asyncio
+async def test_on_demand_active_health_race_propagates_inner_first_failure() -> None:
+    outer = _on_demand_runtime()
+    state = outer._on_demand
+    assert state is not None
+    health_failure = RolloutWorkerUnreachable(
+        "wedged",
+        0.5,
+        TimeoutError("health probe timed out"),
+    )
+    actor_error = RayActorCallError(
+        "rollout.generation.chunk",
+        worker_id="healthy-killed-with-fleet",
+        job_index=0,
+    )
+    inner: RayGenerationRuntime
+
+    class _Executor:
+        async def execute(self, _request: Any) -> None:
+            inner.lifecycle.fail(health_failure)
+            raise actor_error
+
+    inner = RayGenerationRuntime(_Executor())
+    state.inner_runtime = inner
+    request = SimpleNamespace(
+        request_id="health-race",
+        sampling={},
+        policy_version=None,
+    )
+
+    with pytest.raises(RolloutWorkerUnreachable) as caught:
+        await outer.generate(request)
+
+    assert caught.value is health_failure
+    assert failure_identity_cause(caught.value) is health_failure
+    assert inner.lifecycle.failure is health_failure
+    assert outer.lifecycle.failure is health_failure
+    assert inner.lifecycle.phase is RuntimePhase.TERMINATED
+    assert outer.lifecycle.phase is RuntimePhase.TERMINATED
+    assert state.inner_runtime is None
 
 
 @pytest.mark.asyncio
