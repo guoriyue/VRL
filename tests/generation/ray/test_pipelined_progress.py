@@ -88,7 +88,6 @@ async def _await_pipelined_through_dispatcher(
         return await executor._await_pipelined_result(
             result_ref=ref,
             progress_remote=progress_remote,
-            worker_id="w0",
             request_id=request_id,
             total_chunks=total_chunks,
             initial_deadline=initial_deadline,
@@ -271,6 +270,52 @@ async def test_pipelined_progress_resets_the_stall_deadline() -> None:
 
     assert result == "complete"
     assert progress_calls == 2
+
+
+@pytest.mark.asyncio
+async def test_pipelined_progress_reset_preserves_initial_deadline_identity(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    executor = _executor(timeout_s=1.0)
+    result_ref = _GatedRef(asyncio.Event(), "never")
+    progress_calls = 0
+
+    class _Ray:
+        @staticmethod
+        def cancel(_ref: Any, *, force: bool) -> None:
+            assert force is False
+
+    monkeypatch.setattr(deadline_module, "require_ray", lambda: _Ray)
+
+    def progress_remote(request_id: str) -> _ResolvedRef:
+        nonlocal progress_calls
+        progress_calls += 1
+        return _ResolvedRef(
+            PipelinedRequestProgress(
+                request_id=request_id,
+                completed_chunks=1,
+                total_chunks=2,
+            ),
+        )
+
+    initial = RayCallDeadline(
+        "custom.pipeline.operation",
+        0.02,
+        context="custom-deadline-context",
+    )
+    with pytest.raises(RayOperationTimeout) as caught:
+        await executor._await_pipelined_result(
+            result_ref=result_ref,
+            progress_remote=progress_remote,
+            request_id="req-identity",
+            total_chunks=2,
+            initial_deadline=initial,
+        )
+
+    assert progress_calls >= 2
+    assert caught.value.operation == initial.operation
+    assert caught.value.timeout_s == initial.timeout_s
+    assert caught.value.context == initial.context
 
 
 @pytest.mark.asyncio

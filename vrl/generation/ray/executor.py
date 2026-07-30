@@ -408,7 +408,6 @@ class RayGenerationExecutor:
                     return await self._await_pipelined_result(
                         result_ref=result_ref,
                         progress_remote=progress_remote,
-                        worker_id=worker.worker_id,
                         request_id=request.request_id,
                         total_chunks=len(engine_plan.chunks),
                         initial_deadline=initial_deadline,
@@ -462,14 +461,12 @@ class RayGenerationExecutor:
         *,
         result_ref: Any,
         progress_remote: Any,
-        worker_id: str,
         request_id: str,
         total_chunks: int,
         initial_deadline: RayCallDeadline,
     ) -> Any:
         """Reset one stall deadline only when the worker completes a new chunk."""
 
-        context = f"worker_id={worker_id}, request_id={request_id}"
         deadline = initial_deadline
         result_task = asyncio.ensure_future(result_ref)
         progress_task: asyncio.Future[Any] | None = None
@@ -538,11 +535,7 @@ class RayGenerationExecutor:
                     )
                 if snapshot.completed_chunks > completed_chunks:
                     completed_chunks = snapshot.completed_chunks
-                    deadline = RayCallDeadline(
-                        "rollout.generation.pipelined",
-                        self.generation_stall_timeout_s,
-                        context=context,
-                    )
+                    deadline = replace(initial_deadline)
         except asyncio.CancelledError as cancellation:
             if progress_ref is not None:
                 cancel_ray_refs(None, [progress_ref], root_error=cancellation)

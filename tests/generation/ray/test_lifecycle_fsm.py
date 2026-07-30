@@ -174,6 +174,29 @@ async def test_concurrent_shutdown_callers_share_cleanup() -> None:
 
 
 @pytest.mark.asyncio
+async def test_shutdown_joins_health_monitor_without_blocking_event_loop() -> None:
+    runtime = _resident_runtime()
+    loop = asyncio.get_running_loop()
+    loop_thread = threading.get_ident()
+    loop_progressed = threading.Event()
+    stop_threads: list[int] = []
+
+    def blocking_stop() -> None:
+        stop_threads.append(threading.get_ident())
+        loop.call_soon_threadsafe(loop_progressed.set)
+        if not loop_progressed.wait(timeout=0.1):
+            raise RuntimeError("event loop could not run while health monitor stopped")
+
+    runtime._health_monitor.stop = blocking_stop
+
+    await runtime.shutdown()
+
+    assert loop_progressed.is_set()
+    assert stop_threads and stop_threads[0] != loop_thread
+    assert runtime.lifecycle.phase is RuntimePhase.TERMINATED
+
+
+@pytest.mark.asyncio
 async def test_cancelled_shutdown_waiter_does_not_cancel_cleanup() -> None:
     teardown_started = asyncio.Event()
     finish_teardown = asyncio.Event()

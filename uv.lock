@@ -11460,7 +11460,7 @@ requires-dist = [
     { name = "bitsandbytes", marker = "extra == 'optim8bit'", specifier = ">=0.43.0" },
     { name = "datasets", marker = "extra == 'data'", specifier = ">=2.18.0" },
     { name = "decord", marker = "extra == 'reward'", specifier = ">=0.6.0" },
-    { name = "diffusers", marker = "extra == 'cosmos'", specifier = ">=0.37.1,<0.40" },
+    { name = "diffusers", marker = "extra == 'cosmos'", specifier = ">=0.39.0,<0.40" },
     { name = "easydict", marker = "extra == 'cosmos'", specifier = ">=1.13" },
     { name = "einops", specifier = ">=0.7.0" },
     { name = "ftfy", marker = "extra == 'cosmos'", specifier = ">=6.2.0" },

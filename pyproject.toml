@@ -40,7 +40,8 @@ test = [
 
 [project.optional-dependencies]
 cosmos = [
-    "diffusers>=0.37.1,<0.40",
+    # Cosmos3OmniPipeline first ships in Diffusers 0.39.
+    "diffusers>=0.39.0,<0.40",
     # GLM-Image first ships in Transformers 5.13; tiny-real CPU parity tests
     # exercise the upstream implementation rather than a local stand-in.
     "transformers>=5.13.0,<6",

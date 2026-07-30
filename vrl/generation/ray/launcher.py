@@ -14,7 +14,7 @@ from vrl.generation.execution import (
     DistributedWorkerHandle,
 )
 from vrl.generation.launch_contract import GenerationRuntimeLaunchContract
-from vrl.generation.protocols import ChunkGatherer, GenerationRuntime
+from vrl.generation.protocols import GenerationRuntime
 from vrl.generation.ray.config import RayGenerationConfig
 from vrl.generation.ray.executor import RayGenerationExecutor
 from vrl.generation.ray.launch_inputs import RayGenerationLaunchInputs
@@ -25,7 +25,7 @@ from vrl.models.dtypes import dtype_to_wire_name
 from vrl.ray.actor_group import RayActorGroup
 from vrl.ray.actor_pool import RayActorDispatcher
 from vrl.ray.dependencies import current_node_ip, require_ray
-from vrl.ray.operation_deadline import RayOperationTimeout, get_ray_refs
+from vrl.ray.operation_deadline import get_ray_refs
 from vrl.ray.placement import RolePlacement, validate_actor_gpu_ids
 from vrl.utils.config import cfg_path, plain_mapping, to_builtin_deep
 
@@ -74,7 +74,7 @@ class RayGenerationLauncher:
         rollout_config = config
         worker = rollout_config.worker
         contract = launch_inputs.launch_contract
-        chunk_gatherer = _require_chunk_gatherer(launch_inputs.gatherer)
+        chunk_gatherer = launch_inputs.gatherer
 
         bundle_indices = list(placement.bundle_indices)
         if worker.pipelined and len(bundle_indices) != 1:
@@ -350,21 +350,6 @@ def build_executor_kwargs(entry: Any, cfg: Any) -> dict[str, Any]:
     return kwargs
 
 
-def _require_chunk_gatherer(gatherer: Any) -> ChunkGatherer:
-    """Require the collector-facing chunk-gatherer protocol.
-
-    ``gatherer`` is ``Any`` because the registry builds it from an unvalidated
-    dotted-string import; this is the boundary that turns it into a protocol.
-    """
-
-    gather_chunks = getattr(gatherer, "gather_chunks", None)
-    if not callable(gather_chunks):
-        raise TypeError(
-            f"{type(gatherer).__name__} does not implement gather_chunks(...)",
-        )
-    return gatherer
-
-
 def _validate_worker_gpu_ids(
     config: RayGenerationConfig,
     metadata: list[Mapping[str, Any]],
@@ -407,8 +392,9 @@ def _all_workers_support_versioned_slots(
 
     Non-draining weight sync needs slots on all workers because a chunk stamped
     with an older policy version can be placed on any worker. A missing weight
-    syncer, an empty worker set, or any failed capability query keeps the safe
-    draining barrier.
+    syncer or an empty worker set keeps the safe draining barrier. A query
+    failure means the candidate fleet is broken, not merely unsupported, and
+    therefore propagates to launcher-owned actor cleanup.
     """
 
     if weight_sync is None:
@@ -416,18 +402,13 @@ def _all_workers_support_versioned_slots(
     actors = [worker.actor for worker in workers if worker.actor is not None]
     if not actors or len(actors) != len(workers):
         return False
-    try:
-        results = get_ray_refs(
-            ray,
-            [actor.supports_versioned_trainable_state.remote() for actor in actors],
-            operation="rollout.startup.versioned_slots",
-            timeout_s=worker_rpc_timeout_s,
-            context=f"workers={len(actors)}",
-        )
-    except RayOperationTimeout:
-        raise
-    except Exception:
-        return False
+    results = get_ray_refs(
+        ray,
+        [actor.supports_versioned_trainable_state.remote() for actor in actors],
+        operation="rollout.startup.versioned_slots",
+        timeout_s=worker_rpc_timeout_s,
+        context=f"workers={len(actors)}",
+    )
     return bool(results) and all(bool(result) for result in results)
 
 

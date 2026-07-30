@@ -57,14 +57,15 @@ AutoencoderKLCosmos / KLHunyuanVideo / KLMochi / KLQwenImage  同上
 **只有 cosmos3 一条依赖它。§2–§6 的所有条目都可以在不做这一步的情况下独立落地。**
 
 ```bash
-uv lock --upgrade-package diffusers      # 0.38.0 -> 0.39.0
+uv lock
 uv sync
 ```
 
 复核结论（全部实测，不是推断）：
 
-- `pyproject.toml:43` 是 `"diffusers>=0.37.1,<0.40"`，0.39.0 落在区间内，**pyproject 无需改动**。
-- `uv.lock:1828` 当前钉 `version = "0.38.0"`。
+- `pyproject.toml:43` 现为 `"diffusers>=0.39.0,<0.40"`；不能只依赖 lock 偶然选中
+  0.39，因为 clean resolve 必须同样满足 Cosmos3 的生产 import floor。
+- `uv.lock:1828` 当前钉 `version = "0.39.0"`，project metadata 也记录相同下限。
 - 0.39.0 的 wheel 里确实有 cosmos3：
   ```
   diffusers/models/transformers/transformer_cosmos3.py
@@ -73,7 +74,7 @@ uv sync
   ```
   而 0.38.0 里 `[n for n in dir(diffusers) if 'Cosmos' in n]` 没有任何 `Cosmos3*`——这就是
   `vrl/models/families/cosmos/cosmos3/model.py:88` 那句 `from diffusers import Cosmos3OmniPipeline`
-  今天必须写在函数体内（懒加载）的原因，也是这个家族测不动的**唯一**阻塞行。
+  写在函数体内是因为 `cosmos` 是 optional extra，而不是因为 API 仍只存在于 git-main。
 - **回归风险实测**：把 0.39.0 解压后用 `PYTHONPATH` 覆盖跑 `pytest tests/models tests/scripts
   tests/generation`（即全部会碰 diffusers 的目录），得到 **1708 passed / 3 skipped**，与 0.38.0
   基线的 **1708 passed / 3 skipped** 逐项一致。

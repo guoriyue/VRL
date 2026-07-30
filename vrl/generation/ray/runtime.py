@@ -614,7 +614,10 @@ class RayGenerationRuntime(GenerationRuntime):
             await asyncio.gather(*pending, return_exceptions=True)
 
     async def _teardown_owned_resources(self) -> None:
-        self._health_monitor.stop()
+        # stop() joins the monitor thread for a bounded probe interval. Keep
+        # that synchronous lifecycle operation off the runtime event loop so
+        # concurrent shutdown/terminal waiters can continue making progress.
+        await asyncio.to_thread(self._health_monitor.stop)
         state = self._on_demand
         if state is not None:
             # Terminal shutdown is not a phase handoff: parked actors must be

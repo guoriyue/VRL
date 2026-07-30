@@ -374,19 +374,17 @@ def test_runtime_capability_false_without_weight_sync_or_workers(local_ray) -> N
 
 
 @pytest.mark.slow_test
-def test_runtime_capability_false_when_a_worker_query_raises(local_ray) -> None:
-    """A failed capability query (real ray.get raising RayTaskError) must fall
-    back to the safe draining barrier, not crash the launch or optimistically
-    assume support."""
-    with _slot_handles(local_ray, True, None) as handles:
-        assert (
-            _all_workers_support_versioned_slots(
-                local_ray,
-                handles,
-                weight_sync=object(),
-                worker_rpc_timeout_s=_TEST_RPC_TIMEOUT_S,
-            )
-            is False
+def test_runtime_capability_worker_query_failure_propagates(local_ray) -> None:
+    """A failed capability RPC means the candidate worker is broken."""
+    with (
+        _slot_handles(local_ray, True, None) as handles,
+        pytest.raises(local_ray.exceptions.RayTaskError, match="actor dead"),
+    ):
+        _all_workers_support_versioned_slots(
+            local_ray,
+            handles,
+            weight_sync=object(),
+            worker_rpc_timeout_s=_TEST_RPC_TIMEOUT_S,
         )
 
 
@@ -396,6 +394,24 @@ def test_launcher_capability_failure_kills_candidate_actor_group(
     import vrl.generation.ray.launcher as launcher_module
 
     query_error = RuntimeError("versioned-slot capability query failed")
+    capability_ref = object()
+
+    class _CapabilityMethod:
+        @staticmethod
+        def remote() -> object:
+            return capability_ref
+
+    class _GetTimeoutError(TimeoutError):
+        pass
+
+    class _RayApi:
+        exceptions = SimpleNamespace(GetTimeoutError=_GetTimeoutError)
+
+        @staticmethod
+        def get(refs: list[object], *, timeout: float) -> None:
+            assert refs == [capability_ref]
+            assert timeout > 0
+            raise query_error
 
     class _ActorGroup:
         def __init__(self) -> None:
@@ -404,7 +420,9 @@ def test_launcher_capability_failure_kills_candidate_actor_group(
                     worker_id="rollout-0",
                     node_ip="node",
                     gpu_ids=(),
-                    actor=object(),
+                    actor=SimpleNamespace(
+                        supports_versioned_trainable_state=_CapabilityMethod(),
+                    ),
                 ),
             ]
             self.shutdown_calls = 0
@@ -413,21 +431,13 @@ def test_launcher_capability_failure_kills_candidate_actor_group(
             self.shutdown_calls += 1
 
     actor_group = _ActorGroup()
-    monkeypatch.setattr(launcher_module, "require_ray", lambda: object())
+    monkeypatch.setattr(launcher_module, "require_ray", lambda: _RayApi)
     monkeypatch.setattr(
         launcher_module.RayActorGroup,
         "launch",
         staticmethod(lambda **_kwargs: actor_group),
     )
 
-    def _failing_query(*_args: Any, **_kwargs: Any) -> bool:
-        raise query_error
-
-    monkeypatch.setattr(
-        launcher_module,
-        "_all_workers_support_versioned_slots",
-        _failing_query,
-    )
     cfg = _launch_cfg()
     config = _ray_config(cfg)
     entry = get_model_family_entry("sd3_5")

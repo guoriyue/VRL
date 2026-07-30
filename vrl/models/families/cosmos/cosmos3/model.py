@@ -1,11 +1,11 @@
 """Cosmos3 Omni vision generator — diffusers-backed model for flow-matching GRPO RL.
 
-Wraps diffusers ``Cosmos3OmniPipeline`` (git-main+). Cosmos3 is an omni MoT
+Wraps the ``Cosmos3OmniPipeline`` released in diffusers 0.39. Cosmos3 is an omni MoT
 (Mixture-of-Transformers): one ``Cosmos3OmniTransformer`` carries a Qwen3-VL
 causal reasoner stream + a bidirectional diffusion generation stream. We train
 ONLY the vision-generation stream as an RL policy; sound/action towers are off.
 
-Two design facts that drive this file (verified against diffusers@main source):
+Two design facts that drive this file (verified against diffusers 0.39 source):
 
 1. **Strictly batch=1.** ``Cosmos3OmniPipeline`` packs one sample at a time
    (``vision_tokens=[one [1,C,T,H,W] latent]``; all packed-static index tensors
@@ -84,7 +84,7 @@ class Cosmos3Model(CosmosReplayForward, LoraModelMixin, DiffusersPipelineModelBa
     # ---- properties (mirror predict2_5) ----
     @classmethod
     def from_build(cls, build: ModelBuild) -> Cosmos3Model:
-        # Lazy: diffusers@main (Cosmos3 classes) must not be imported at module load.
+        # Lazy: the optional cosmos extra must not be imported at module load.
         from diffusers import Cosmos3OmniPipeline
 
         kwargs: dict[str, Any] = {
