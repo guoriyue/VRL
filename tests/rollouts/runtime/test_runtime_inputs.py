@@ -21,6 +21,7 @@ from vrl.families.registry import (
 )
 from vrl.generation.bindings.full_sequence_denoise import DiffusionChunkGatherer
 from vrl.generation.bindings.token_autoregressive.executor import ARDiscreteChunkGatherer
+from vrl.generation.launch_contract import GenerationRuntimeLaunchContract
 from vrl.generation.protocols import GenerationChunkExecutor
 from vrl.generation.ray import RayGenerationLauncher, RayGenerationLaunchInputs
 from vrl.generation.ray.config import RayGenerationConfig
@@ -86,6 +87,42 @@ def _capture_launch_inputs(
 
     assert captured == [result]
     return captured[0], expected_model_identity
+
+
+@pytest.mark.parametrize(
+    ("family", "entry"),
+    FAMILY_REGISTRY.items(),
+    ids=FAMILY_REGISTRY,
+)
+def test_every_registry_entry_has_pickle_safe_ray_launch_inputs(
+    family: str,
+    entry: ModelFamilyEntry,
+) -> None:
+    """Every registry binding, including entries without presets, crosses Ray."""
+    inputs = RayGenerationLaunchInputs(
+        launch_contract=GenerationRuntimeLaunchContract(
+            family=family,
+            model_build={"device": "cpu"},
+            expected_model_identity={"model_path": f"registry://{family}"},
+            executor_kwargs={"registry_family": family},
+            policy_version=7,
+            torch_profiler={"enabled": False},
+            sleep_offload=True,
+            versioned_weight_sync=True,
+        ),
+        gatherer=entry.new_gatherer(),
+    )
+
+    restored = pickle.loads(pickle.dumps(inputs))
+
+    assert isinstance(restored, RayGenerationLaunchInputs)
+    assert restored.launch_contract == inputs.launch_contract
+    assert (
+        f"{type(restored.gatherer).__module__}:{type(restored.gatherer).__qualname__}"
+        == entry.gatherer_cls
+    )
+    assert callable(restored.gatherer.gather_chunks)
+    assert not isinstance(restored.gatherer, GenerationChunkExecutor)
 
 
 @pytest.mark.parametrize(
