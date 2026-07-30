@@ -21,7 +21,7 @@ Ray rollout 现在同时有两条互补的 liveness 边界：
 
 ```python
 worker_rpc_timeout_s: float = 600.0
-generation_stall_timeout_s: float = 1800.0
+generation_stall_timeout_s: float = 3600.0
 ```
 
 `RolloutWorkerConfig` 只是无默认值的 frozen projection。两个边界都拒绝零、负数、
@@ -30,12 +30,13 @@ NaN 和正负 infinity。
 不能用同一个 timeout 表达两种 SLA：
 
 - startup metadata、capability 和 weight ACK 没有可信的中间进度，使用 600 秒绝对预算；
-- generation 已有真实 chunk 进度，使用 1800 秒 stall 预算。
+- generation 已有真实 chunk 进度，使用 3600 秒 stall 预算。
 
-仓库记录过 733 秒的 Cosmos chunk、1719.6 秒的单次 request，以及约 98 分钟的顺序
-8-sample generation。600 秒 whole-request deadline 会误杀合法任务；另一方面，让 metadata
-或 weight ACK 等两小时才失败也不合理。1800 秒覆盖当前最长单 chunk/request 记录，而长
-sequence 只要持续产生 chunk 进度就不会被误判。
+仓库记录过 733 秒的 Cosmos opaque chunk、1719.6 秒的 16-chunk request、约 98 分钟的
+顺序 8-sample generation，以及 512p shape 约 30 分钟的 cold compile。600 秒
+whole-request deadline 会误杀合法任务；1719.6 秒和 98 分钟不是单个 opaque wait，会随
+chunk progress 重置。3600 秒为“30 分钟 compile + 733 秒首 chunk”保留余量，而 metadata
+和 weight ACK 仍由独立 600 秒 control budget fail closed。
 
 证据：
 
@@ -55,7 +56,7 @@ sequence 只要持续产生 chunk 进度就不会被误判。
 | policy load | `worker_rpc_timeout_s` | fresh startup phase |
 | worker metadata | `worker_rpc_timeout_s` | fresh startup phase |
 | version-slot capability | `worker_rpc_timeout_s` | fresh capability barrier |
-| automatic chunk-size probe | `generation_stall_timeout_s` | one opaque probe barrier |
+| automatic chunk-size probe | `generation_stall_timeout_s` | single-flight, one deadline per admitted worker probe |
 | standard/dynamic chunk RPC | `generation_stall_timeout_s` | one deadline per submitted ref |
 | OOM split child RPC | `generation_stall_timeout_s` | fresh deadline when the child is submitted |
 | pipelined generation | `generation_stall_timeout_s` | reset only after completed chunk count grows |
@@ -63,17 +64,26 @@ sequence 只要持续产生 chunk 进度就不会被误判。
 
 ### Standard and dynamic dispatch
 
-`run_actor_jobs` starts a `RayCallDeadline` immediately after each `.remote()` submission.
-A locally queued job does not consume budget before submission. Once submitted, the deadline
-includes Ray actor-mailbox starvation as well as execution time; it is not an “actor method body
-started” clock.
+Executor-owned `RayActorDispatcher` gives each synchronous actor one real slot across concurrent
+driver requests. It starts a `RayCallDeadline` immediately before each `.remote()` submission.
+A job waiting for dispatcher admission does not consume budget and is not pre-queued in the actor
+mailbox. Once admitted, the deadline includes driver serialization, Ray transport, and execution
+time; it is not an “actor method body started” clock.
 
 One worker completing work never extends another worker's deadline. When any ref expires, all
 results accumulated for that request are discarded, outstanding refs receive best-effort
 `ray.cancel(force=False)`, and the runtime destroys the fleet.
 
-Across concurrent driver calls, Ray's actor mailbox remains the scheduling source of truth.
-There is deliberately no second mutable “active deadline” registry on the executor or runtime.
+The dispatcher is the single owner of cross-request admission and submitted-ref state. A terminal
+timeout, submitted-work cancellation, or actor failure closes it first-error-wins, cancels all
+active refs, and wakes every local admission waiter with the same terminal cause. This state cannot
+be request-local: request-local pools would pre-queue concurrent calls into the same synchronous
+actor mailbox before their deadlines start.
+
+The run-level automatic chunk-size verdict has a separate runtime single-flight lock, but its
+remote probes still enter this same dispatcher. This matters when one first request uses
+`samples_per_chunk: auto` while another already carries an explicit integer: neither path can
+pre-queue behind the other without driver admission.
 
 ### Pipelined dispatch
 
@@ -86,9 +96,12 @@ success, a missing snapshot, or a repeated valid snapshot do not count as progre
 snapshot for a different request ID is a protocol violation.
 
 Invalid type, request ID, total count, or regressing progress raises
-`PipelinedProgressError`, a terminal wire-contract error. Result, progress RPC, and caller
-cancellation races all cancel the losing refs. The final gather/teardown after the last chunk must
-still finish inside the last stall window.
+`PipelinedProgressError`, a terminal wire-contract error. Cancellation before lock/dispatcher
+admission remains an ordinary caller cancellation because no actor state changed. Cancellation
+after submission raises the original `asyncio.CancelledError` from a
+`RayOperationCancelled` terminal marker, cancels losing refs, and makes the owner destroy the
+fleet. The final gather/teardown after the last chunk must still finish inside the last stall
+window.
 
 ## Failure and ownership contract
 
@@ -125,11 +138,12 @@ replace the timeout root.
 domains. `RayOperationTimeout` and `PipelinedProgressError` derive from it.
 
 Cleanup wrappers may preserve the original exception in `root_cause` or `__cause__`.
-`find_error_cause` and `deepest_error_cause` walk that chain cycle-safely:
+`find_error_cause` and `failure_identity_cause` walk that chain cycle-safely:
 
 - continuous producer detects a nested terminal error and does not retry the prompt slot;
 - continuous consumer propagates the cleanup wrapper without adding an opaque retry error;
-- verdict writing records the deepest stable error class while keeping the outer cleanup message.
+- verdict writing stops at the first domain-owned terminal class instead of exposing a dependency
+  exception stored below it, while keeping the outer cleanup message.
 
 This avoids a forbidden `vrl/ray -> vrl/generation` dependency and keeps rollout orchestration
 independent of the Ray transport type.
@@ -150,7 +164,7 @@ independent of the Ray transport type.
 以下薄边界继续保留：
 
 - `RayActorGroup`：Ray actor construction/startup adapter；
-- `run_actor_jobs`：standard/dynamic/OOM 共用 dispatch abstraction；
+- `RayActorDispatcher`：standard/dynamic/OOM 共用、跨 request 的 actor admission 与 ref owner；
 - `RayGenerationExecutor.execute`：pipelined single-flight public API facade；
 - `RayGenerationWeightSync`：all-worker transactional ACK boundary；
 - `RayGenerationRuntime`：admission、version publication 和 actor ownership boundary；
@@ -180,14 +194,18 @@ independent of the Ray transport type.
 
 一致的跨 family / framework adapter 形状比减少几行代码更有价值。本 sprint 不 flatten
 这些薄边界，也不创建 `DeadlineManager`、`ReliabilityConfig` 或 ALL_CAPS operation table。
+旧 `max_inflight_chunks_per_worker` 配置已删除：production worker 是 synchronous actor，
+实际并发槽恒为 1，保留这个始终无效的 public knob 只会制造 no-op 配置。continuous
+rollout 的 `max_inflight_groups` 是另一层真实 admission policy，保持不变。
 
 ## 验证
 
-- affected suite（19 files，含 real-Ray CPU coverage）：567 passed；
-- real-Ray CPU hung-business-call case：通过；
+- affected suite（含 generation/Ray/config/architecture 与 real-Ray CPU coverage）：
+  761 passed；
+- real-Ray CPU hung-business-call、cross-request admission 与 fleet probe cases：通过；
 - generation/rollout/Ray architecture boundary：通过；
-- full repository suite：3894 passed，25 skipped；
-- scoped Ruff（39 changed Python files）：check/format 全部通过。
+- full repository suite：3913 passed，25 skipped；
+- scoped Ruff（38 changed Python files）：check/format 全部通过。
 
 ## 参考路径
 

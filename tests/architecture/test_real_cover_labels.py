@@ -41,7 +41,7 @@ _LANE_TARGET = (
     "::test_real_cumem_one_shot_scope_sleep_wake_in_subprocess"
 )
 _MODULE_LANE_TARGET = (
-    "tests/ray/test_ray_actor_pool.py::test_run_actor_jobs_awaits_real_object_refs"
+    "tests/ray/test_ray_actor_pool.py::test_actor_dispatcher_awaits_real_object_refs"
 )
 _CPU_TARGET = "tests/nn/layers/test_paged_attention_contract.py::test_paged_attention_config_requires_identity"
 
@@ -171,7 +171,7 @@ def test_decorated_inline() -> None: ...
     }
 
 
-def test_the_resolver_refuses_targets_that_cannot_discharge_a_label() -> None:
+def test_the_resolver_rejects_missing_targets_and_reports_lane_metadata() -> None:
     """A resolver that says yes to everything would make every check above green."""
 
     assert resolve_target(_LANE_TARGET).lanes == ("gpu",)

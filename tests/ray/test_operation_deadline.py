@@ -15,6 +15,7 @@ from vrl.generation.ray.launcher import _all_workers_support_versioned_slots
 from vrl.ray.actor_group import RayActorGroup
 from vrl.ray.operation_deadline import (
     RayCallDeadline,
+    RayOperationCancelled,
     RayOperationTimeout,
     await_ray_refs,
     cancel_ray_refs,
@@ -40,6 +41,20 @@ class _RaisingRef:
             raise self.error
 
         return raise_error().__await__()
+
+
+class _CancellableNeverRef:
+    def __init__(self) -> None:
+        self.waiter_finished = False
+
+    def __await__(self):
+        async def wait_forever() -> None:
+            try:
+                await asyncio.Event().wait()
+            finally:
+                self.waiter_finished = True
+
+        return wait_forever().__await__()
 
 
 class _CancelLedger:
@@ -109,6 +124,25 @@ async def test_async_deadline_preserves_worker_raised_timeout() -> None:
 
 
 @pytest.mark.asyncio
+async def test_worker_error_cancels_and_joins_sibling_ref_waiters() -> None:
+    worker_error = ValueError("worker failed")
+    never = _CancellableNeverRef()
+    ray = _CancelLedger()
+
+    with pytest.raises(ValueError, match="worker failed") as caught:
+        await await_ray_refs(
+            [_RaisingRef(worker_error), never],
+            operation="test.async_barrier",
+            timeout_s=30.0,
+            ray=ray,
+        )
+
+    assert caught.value is worker_error
+    assert never.waiter_finished is True
+    assert len(ray.cancelled) == 2
+
+
+@pytest.mark.asyncio
 async def test_caller_cancellation_is_not_rewritten_as_deadline() -> None:
     ray = _CancelLedger()
     task = asyncio.create_task(
@@ -122,9 +156,11 @@ async def test_caller_cancellation_is_not_rewritten_as_deadline() -> None:
     await asyncio.sleep(0)
 
     task.cancel()
-    with pytest.raises(asyncio.CancelledError):
+    with pytest.raises(asyncio.CancelledError) as caught:
         await task
 
+    assert isinstance(caught.value.__cause__, RayOperationCancelled)
+    assert caught.value.__cause__.operation == "test.async_barrier"
     assert len(ray.cancelled) == 1
     assert ray.cancelled[0][1] is False
 
@@ -251,7 +287,8 @@ def test_actor_group_timeout_kills_every_candidate_actor(
             worker_ids=["w0", "w1"],
             num_cpus=0.0,
             num_gpus=0.0,
-            worker_rpc_timeout_s=0.01,
+            rpc_timeout_s=0.01,
+            operation_prefix="rollout",
             startup_method="load_policy",
         )
 
@@ -282,7 +319,8 @@ def test_actor_group_metadata_timeout_has_a_fresh_budget_and_kills_candidates(
             worker_ids=["w0", "w1"],
             num_cpus=0.0,
             num_gpus=0.0,
-            worker_rpc_timeout_s=0.01,
+            rpc_timeout_s=0.01,
+            operation_prefix="rollout",
             startup_method="load_policy",
         )
 

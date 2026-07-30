@@ -22,9 +22,13 @@ from vrl.generation.execution.chunk_placement import (
     build_chunk_memory_shadow,
 )
 from vrl.generation.execution.chunks import SampleChunk
-from vrl.generation.execution.types import ChunkExecutionEnvelope
+from vrl.generation.execution.types import (
+    ChunkExecutionEnvelope,
+    DistributedWorkerHandle,
+)
 from vrl.generation.execution.worker import GenerationWorkerCore
 from vrl.generation.launch_contract import GenerationRuntimeLaunchContract
+from vrl.generation.ray.executor import RayGenerationExecutor
 from vrl.generation.ray.runtime import RayGenerationRuntime
 from vrl.generation.types import GenerationRequest
 
@@ -300,12 +304,16 @@ def test_probe_fails_loud_when_one_sample_ooms(fake_cuda: None) -> None:
 # -- runtime auto resolution --------------------------------------------------
 
 
-def _probe_worker(worker_id: str, answer: int, calls: list[str]) -> Any:
-    """A plain-callable probe, which is a real production shape, not a fake one:
-    ``runtime.py`` branches on ``getattr(probe, "remote", None)`` and supports a
-    local callable deliberately. So this covers the local branch honestly -- what
-    it cannot reach is the ``.remote()`` + typed async deadline fan-out
-    production takes with real actors (see the real_cover label below)."""
+def _probe_worker(
+    worker_id: str,
+    answer: int,
+    calls: list[str],
+) -> DistributedWorkerHandle:
+    """Build the executor's supported local-callable worker shape.
+
+    This covers result ordering and cache reuse without pretending to exercise
+    Ray serialization or ObjectRef deadlines.
+    """
 
     def probe(request: Any, *, max_samples: int) -> dict[str, Any]:
         calls.append(worker_id)
@@ -315,17 +323,19 @@ def _probe_worker(worker_id: str, answer: int, calls: list[str]) -> Any:
             "trials": [],
         }
 
-    return SimpleNamespace(worker_id=worker_id, actor=SimpleNamespace(probe_chunk_size=probe))
+    return DistributedWorkerHandle(
+        worker_id=worker_id,
+        actor=SimpleNamespace(probe_chunk_size=probe),
+    )
 
 
 @pytest.mark.real_cover(
     "tests/generation/ray/test_runtime_config.py"
     "::test_real_ray_probe_fan_out_resolves_auto_once_across_the_fleet",
     why=(
-        "a local callable probe takes the non-remote branch of "
-        "_resolve_probed_samples_per_chunk, so this cannot exercise the remote fan-out, the "
-        "600s-bounded ray.get over its refs, or GenerationRequest surviving Ray serialization; "
-        "the slow_test twin named here drives all three on a live cluster"
+        "the executor's local-callable branch cannot exercise remote fleet fan-out, shared "
+        "actor admission, the generation-stall ObjectRef deadline, or GenerationRequest "
+        "serialization; the slow_test twin drives all four on a live cluster"
     ),
 )
 def test_runtime_resolves_auto_once_and_rewrites_requests() -> None:
@@ -335,18 +345,22 @@ def test_runtime_resolves_auto_once_and_rewrites_requests() -> None:
     calls: list[str] = []
     executed: list[Any] = []
 
-    class _Executor:
-        def __init__(self) -> None:
-            self.workers = [
-                _probe_worker("w0", 6, calls),
-                _probe_worker("w1", 4, calls),
-            ]
+    executor = RayGenerationExecutor(
+        SimpleNamespace(),
+        [
+            _probe_worker("w0", 6, calls),
+            _probe_worker("w1", 4, calls),
+        ],
+        SimpleNamespace(),
+        generation_stall_timeout_s=30.0,
+    )
 
-        async def execute(self, request: Any) -> Any:
-            executed.append(request)
-            return SimpleNamespace(request_id=request.request_id)
+    async def execute(request: Any) -> Any:
+        executed.append(request)
+        return SimpleNamespace(request_id=request.request_id)
 
-    runtime = RayGenerationRuntime(_Executor())
+    executor.execute = execute
+    runtime = RayGenerationRuntime(executor)
 
     async def go() -> None:
         await runtime.generate(_request())

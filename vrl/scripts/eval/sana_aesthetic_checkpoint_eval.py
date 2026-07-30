@@ -425,7 +425,10 @@ def _erase_meaningless_spelling(
        what keeps this a rule instead of a list of which-side-is-older patches:
        new preset keys that default to their current value stop needing an
        entry here at all.
-    2. The retired ``vrl.scripts.diffusion.train`` entrypoint took its precision
+    2. Historical resolved configs spelled the retired synchronous-actor
+       inflight knob as ``1``. That value never enabled actor concurrency, so
+       only that exact spelling is erased; any other value remains drift.
+    3. The retired ``vrl.scripts.diffusion.train`` entrypoint took its precision
        protocol from the family registry rather than YAML, so only a run from
        that entrypoint is granted the injection. The live entrypoint must spell
        precision out, and ``PrecisionConfig`` has no defaults to fall back on.
@@ -487,7 +490,12 @@ def _erase_meaningless_spelling(
         for side in (actual, canonical):
             _drop_default_key(_section(side, *path), key, default=default, resolve=resolve)
 
-    # Rule 2. Same erasure, but only a retired-entrypoint SANA fp16 run earns it.
+    # Rule 2. The synchronous worker always had one executable mailbox slot.
+    actual_rollout = _section(actual, "distributed", "rollout")
+    if actual_rollout is not None and actual_rollout.get("max_inflight_chunks_per_worker") == 1:
+        actual_rollout.pop("max_inflight_chunks_per_worker")
+
+    # Rule 3. Same erasure, but only a retired-entrypoint SANA fp16 run earns it.
     precision = _section(actual, "precision")
     canonical_precision = _section(canonical, "precision")
     if (

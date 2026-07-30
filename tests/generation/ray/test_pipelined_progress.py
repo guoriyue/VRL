@@ -9,15 +9,25 @@ from typing import Any
 
 import pytest
 
+import vrl.generation.ray.executor as executor_module
 import vrl.ray.operation_deadline as deadline_module
-from vrl.generation.execution.types import (
-    DistributedWorkerHandle,
+from vrl.generation.execution.types import DistributedWorkerHandle
+from vrl.generation.ray.executor import RayGenerationExecutor
+from vrl.generation.ray.pipeline_protocol import (
     PipelinedProgressError,
     PipelinedRequestProgress,
 )
-from vrl.generation.ray.executor import RayGenerationExecutor
 from vrl.generation.ray.worker import RayGenerationWorker
-from vrl.ray.operation_deadline import RayOperationTimeout
+from vrl.ray.operation_deadline import RayOperationCancelled, RayOperationTimeout
+
+
+@pytest.fixture(autouse=True)
+def _fast_progress_poll(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        executor_module,
+        "_PIPELINED_PROGRESS_POLL_INTERVAL_S",
+        0.001,
+    )
 
 
 class _ResolvedRef:
@@ -181,6 +191,49 @@ async def test_pipelined_stall_cancels_the_result_ref(
 
 
 @pytest.mark.asyncio
+async def test_pipelined_stall_polling_does_not_accelerate_near_deadline(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        executor_module,
+        "_PIPELINED_PROGRESS_POLL_INTERVAL_S",
+        0.02,
+    )
+    executor = _executor(timeout_s=0.11)
+    result_ref = _GatedRef(asyncio.Event(), "never")
+    progress_calls = 0
+
+    class _Ray:
+        @staticmethod
+        def cancel(_ref: Any, *, force: bool) -> None:
+            assert force is False
+
+    monkeypatch.setattr(deadline_module, "require_ray", lambda: _Ray)
+
+    def progress_remote(request_id: str) -> _ResolvedRef:
+        nonlocal progress_calls
+        progress_calls += 1
+        return _ResolvedRef(
+            PipelinedRequestProgress(
+                request_id=request_id,
+                completed_chunks=0,
+                total_chunks=2,
+            ),
+        )
+
+    with pytest.raises(RayOperationTimeout):
+        await executor._await_pipelined_result(
+            result_ref=result_ref,
+            progress_remote=progress_remote,
+            worker_id="w0",
+            request_id="req-fixed-cadence",
+            total_chunks=2,
+        )
+
+    assert 4 <= progress_calls <= 6
+
+
+@pytest.mark.asyncio
 async def test_pipelined_progress_rpc_stall_cancels_result_and_progress(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -244,9 +297,10 @@ async def test_pipelined_caller_cancellation_cancels_active_refs(
     await progress_called.wait()
     task.cancel()
 
-    with pytest.raises(asyncio.CancelledError):
+    with pytest.raises(asyncio.CancelledError) as caught:
         await task
 
+    assert isinstance(caught.value.__cause__, RayOperationCancelled)
     assert result_ref in cancelled
     assert progress_ref in cancelled
 
@@ -385,3 +439,35 @@ async def test_pipelined_executor_queues_requests_before_starting_deadline() -> 
     first_can_finish.set()
     assert await asyncio.gather(first, second) == ["first", "second"]
     assert entered == ["first", "second"]
+
+
+@pytest.mark.asyncio
+async def test_cancelling_pipelined_lock_wait_does_not_mark_submitted_work() -> None:
+    executor = _executor()
+    first_can_finish = asyncio.Event()
+    first_entered = asyncio.Event()
+    entered: list[str] = []
+
+    async def execute_unlocked(request: Any) -> str:
+        entered.append(request.request_id)
+        if request.request_id == "first":
+            first_entered.set()
+            await first_can_finish.wait()
+        return request.request_id
+
+    executor._execute = execute_unlocked
+    first = asyncio.create_task(executor.execute(SimpleNamespace(request_id="first")))
+    await first_entered.wait()
+    waiting = asyncio.create_task(executor.execute(SimpleNamespace(request_id="waiting")))
+    await asyncio.sleep(0)
+    waiting.cancel()
+
+    with pytest.raises(asyncio.CancelledError) as caught:
+        await waiting
+    assert caught.value.__cause__ is None
+    assert entered == ["first"]
+
+    first_can_finish.set()
+    assert await first == "first"
+    assert await executor.execute(SimpleNamespace(request_id="third")) == "third"
+    assert entered == ["first", "third"]

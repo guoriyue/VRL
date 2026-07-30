@@ -541,6 +541,20 @@ def test_train_verdict_uses_cleanup_wrapper_root_class(tmp_path) -> None:
     assert "RayOperationTimeout" in verdict["error_message"]
 
 
+def test_train_verdict_keeps_terminal_identity_before_dependency_cause(tmp_path) -> None:
+    from vrl.ray.operation_deadline import RayOperationTimeout
+    from vrl.scripts import train
+
+    timeout = RayOperationTimeout("rollout.startup.load_policy", 1.0)
+    timeout.__cause__ = TimeoutError("dependency-owned timeout")
+    out = tmp_path / "run"
+
+    train.write_run_verdict(str(out), error=timeout, environ={})
+
+    verdict = json.loads((out / "run_verdict.json").read_text())
+    assert verdict["error_class"] == "RayOperationTimeout"
+
+
 def test_distributed_success_requires_every_rank_verdict(tmp_path) -> None:
     from vrl.scripts import train
 

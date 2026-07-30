@@ -101,7 +101,7 @@ The separate deadline sprint adds:
 
 ```python
 worker_rpc_timeout_s: float = 600.0
-generation_stall_timeout_s: float = 1800.0
+generation_stall_timeout_s: float = 3600.0
 ```
 
 These fields do not change what a health probe means.

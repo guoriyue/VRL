@@ -9,17 +9,15 @@ from typing import ClassVar
 
 import pytest
 
-from vrl.generation.execution.types import (
-    DistributedWorkerHandle,
-    PipelinedProgressError,
-)
+from vrl.generation.execution.types import DistributedWorkerHandle
 from vrl.generation.ray.lifecycle_fsm import (
     RuntimeLifecycle,
     RuntimeLifecycleError,
     RuntimePhase,
 )
+from vrl.generation.ray.pipeline_protocol import PipelinedProgressError
 from vrl.generation.ray.runtime import RayGenerationRuntime
-from vrl.ray.operation_deadline import RayOperationTimeout
+from vrl.ray.operation_deadline import RayOperationCancelled, RayOperationTimeout
 
 
 def _resident_runtime() -> RayGenerationRuntime:
@@ -289,6 +287,80 @@ async def test_generation_timeout_force_kills_without_release_rpc(monkeypatch) -
     assert runtime._owned_workers == []
     assert _Release.calls == 0
     assert _Ray.killed == [actor]
+
+
+@pytest.mark.asyncio
+async def test_submitted_generation_cancellation_force_kills_and_stays_cancelled(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import vrl.generation.ray.runtime as runtime_module
+
+    terminal = RayOperationCancelled(
+        "rollout.generation.chunk",
+        context="submitted_refs=1",
+    )
+    cancellation = asyncio.CancelledError()
+    cancellation.__cause__ = terminal
+
+    class _Executor:
+        async def execute(self, _request) -> None:
+            raise cancellation
+
+    class _Release:
+        calls = 0
+
+        @classmethod
+        def remote(cls) -> None:
+            cls.calls += 1
+
+    class _Actor:
+        release_policy = _Release()
+
+    class _Ray:
+        killed: ClassVar[list[object]] = []
+
+        @classmethod
+        def kill(cls, actor: object, *, no_restart: bool) -> None:
+            assert no_restart is True
+            cls.killed.append(actor)
+
+    actor = _Actor()
+    runtime = RayGenerationRuntime(
+        _Executor(),
+        owned_workers=[DistributedWorkerHandle(worker_id="w0", actor=actor)],
+    )
+    monkeypatch.setattr(runtime_module, "require_ray", lambda: _Ray)
+
+    with pytest.raises(asyncio.CancelledError) as caught:
+        await runtime.generate(_request())
+
+    assert caught.value is cancellation
+    assert caught.value.__cause__ is terminal
+    assert runtime.lifecycle.failure is terminal
+    assert runtime.lifecycle.phase is RuntimePhase.TERMINATED
+    assert runtime._force_shutdown is True
+    assert _Release.calls == 0
+    assert _Ray.killed == [actor]
+
+
+@pytest.mark.asyncio
+async def test_pre_submission_generation_cancellation_keeps_runtime_running() -> None:
+    cancellation = asyncio.CancelledError()
+
+    class _Executor:
+        async def execute(self, _request) -> None:
+            raise cancellation
+
+    runtime = RayGenerationRuntime(_Executor())
+
+    with pytest.raises(asyncio.CancelledError) as caught:
+        await runtime.generate(_request())
+
+    assert caught.value is cancellation
+    assert caught.value.__cause__ is None
+    assert runtime.lifecycle.phase is RuntimePhase.RUNNING
+    assert runtime.lifecycle.failure is None
+    assert runtime._force_shutdown is False
 
 
 @pytest.mark.asyncio

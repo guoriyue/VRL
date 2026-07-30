@@ -154,7 +154,7 @@ collector -> runtime.generate(request)
      -> build_sample_rows
      -> DistributedExecutionPlanner.plan_with_engine
      -> optional single-worker pipelined request
-        OR SampleChunk -> RayActorJob -> run_actor_jobs
+        OR SampleChunk -> RayActorJob -> RayActorDispatcher.run
      -> correlate request/chunk results
      -> stale-slot whole-request discard
      -> OOM chunk split/retry
@@ -164,14 +164,19 @@ collector -> runtime.generate(request)
   -> terminal completion gate
 ```
 
-`samples_per_chunk="auto"` 的 remote fleet probe 使用 generation stall timeout 和 typed
-ObjectRef cancellation；失败不会留下 RUNNING runtime 供 continuous producer 重试。
+`samples_per_chunk="auto"` 的 remote fleet probe 使用 executor-owned dispatcher、generation
+stall timeout 和 typed ObjectRef cancellation。并发首请求先经过 runtime single-flight，
+而显式整数 chunk request 也必须经过同一个 actor slot，因此 probe 不会与 generation
+互相预塞进 synchronous actor mailbox；失败不会留下 RUNNING runtime 供 continuous
+producer 重试。
 
 ### Standard / dynamic chunks
 
-每个 `.remote()` 后立即创建独立 `RayCallDeadline`。本地 pending job 在真正 submission
-前不计时；submitted ref 的预算包含 Ray mailbox 排队时间。其他 worker 的完成不会延长
-hung ref。任一 timeout 丢弃整个 request 已完成的 partial chunks。
+executor-owned `RayActorDispatcher` 跨并发 request 维护每个 synchronous actor 的一个真实
+slot。job 先通过 driver admission，在 `.remote()` 边界前创建独立 `RayCallDeadline`；
+本地 pending job 不计时，也不会预塞进 actor mailbox。submitted ref 的预算包含 Ray
+参数序列化、transport 与执行时间。其他 worker 的完成不会延长 hung ref；任一 timeout 关闭整个
+dispatcher，丢弃 request 已完成的 partial chunks，并让 owner 销毁 actor fleet。
 
 ### Pipelined request
 

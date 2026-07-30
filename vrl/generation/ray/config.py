@@ -23,7 +23,6 @@ class RolloutWorkerConfig:
     """Frozen runtime projection of the public rollout-worker section."""
 
     cpus_per_worker: float
-    max_inflight_chunks_per_worker: int
     health_check_interval_s: float
     health_check_timeout_s: float
     health_check_first_wait_s: float
@@ -47,8 +46,6 @@ class RolloutWorkerConfig:
     def __post_init__(self) -> None:
         if not math.isfinite(self.cpus_per_worker) or self.cpus_per_worker <= 0:
             raise ValueError("cpus_per_worker must be finite and > 0")
-        if self.max_inflight_chunks_per_worker < 1:
-            raise ValueError("max_inflight_chunks_per_worker must be >= 1")
         if not math.isfinite(self.health_check_interval_s):
             raise ValueError("health_check_interval_s must be finite")
         if self.health_check_interval_s > 0 and (

@@ -11,11 +11,11 @@ from vrl.generation.execution.types import (
     ChunkExecutionEnvelope,
     ChunkExecutionResult,
     PipelinedRequestOutOfMemory,
-    PipelinedRequestProgress,
     WorkerMemoryParkingSnapshot,
 )
 from vrl.generation.execution.worker import GenerationWorkerCore
 from vrl.generation.ray.launch_inputs import RayGenerationLaunchInputs
+from vrl.generation.ray.pipeline_protocol import PipelinedRequestProgress
 from vrl.generation.types import GenerationOutput
 from vrl.ray.dependencies import current_gpu_ids, current_node_ip
 
@@ -56,7 +56,7 @@ class RayGenerationWorker:
         ``execute_chunk`` — a queued probe would measure queue depth, not
         liveness. The group is deliberately not a raw ``max_concurrency``
         bump: that would also let two chunks execute concurrently on one GPU
-        worker whenever ``max_inflight_chunks_per_worker`` exceeds one.
+        worker.
         """
 
         return self.core.worker_id

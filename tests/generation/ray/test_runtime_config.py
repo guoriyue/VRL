@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 from collections.abc import Iterator
-from dataclasses import FrozenInstanceError, dataclass
+from dataclasses import FrozenInstanceError, dataclass, replace
 from types import SimpleNamespace
 from typing import Any, ClassVar
 from unittest.mock import patch
@@ -21,6 +21,7 @@ from vrl.families.registry import ModelFamilyEntry, get_model_family_entry
 from vrl.generation.execution.types import DistributedWorkerHandle
 from vrl.generation.launch_contract import GenerationRuntimeLaunchContract
 from vrl.generation.ray.config import RayGenerationConfig
+from vrl.generation.ray.executor import RayGenerationExecutor
 from vrl.generation.ray.launch_inputs import RayGenerationLaunchInputs
 from vrl.generation.ray.launcher import (
     RayGenerationLauncher,
@@ -469,22 +470,19 @@ def test_chunk_placement_strategy_switches_from_cfg() -> None:
 def test_worker_defaults_and_explicit_override_project_from_public_schema() -> None:
     default = _ray_config(_cfg()).worker
     assert default.cpus_per_worker == 1.0
-    assert default.max_inflight_chunks_per_worker == 1
     assert default.worker_rpc_timeout_s == 600.0
-    assert default.generation_stall_timeout_s == 1800.0
+    assert default.generation_stall_timeout_s == 3600.0
     assert default.pipelined is False
     assert default.sync_trainable_state is True
 
     cfg = _cfg()
     cfg.distributed.rollout.cpus_per_worker = 2.5
-    cfg.distributed.rollout.max_inflight_chunks_per_worker = 3
     cfg.distributed.rollout.worker_rpc_timeout_s = 3600.0
     cfg.distributed.rollout.generation_stall_timeout_s = 1200.0
     cfg.distributed.rollout.sync_trainable_state = False
     override = _ray_config(cfg).worker
 
     assert override.cpus_per_worker == 2.5
-    assert override.max_inflight_chunks_per_worker == 3
     assert override.worker_rpc_timeout_s == 3600.0
     assert override.generation_stall_timeout_s == 1200.0
     assert override.sync_trainable_state is False
@@ -511,9 +509,8 @@ def test_base_rollout_presets_pin_only_the_cpu_override(preset_name: str) -> Non
         ),
     )
     assert config.worker.cpus_per_worker == 4.0
-    assert config.worker.max_inflight_chunks_per_worker == 1
     assert config.worker.worker_rpc_timeout_s == 600.0
-    assert config.worker.generation_stall_timeout_s == 1800.0
+    assert config.worker.generation_stall_timeout_s == 3600.0
     assert config.worker.chunk_placement_strategy == "round_robin"
     assert config.worker.sync_trainable_state is True
 
@@ -598,8 +595,8 @@ def test_placement_and_launcher_consume_the_same_worker_snapshot(monkeypatch) ->
     )
 
     assert launch_kwargs["num_cpus"] == owner.rollout_worker.cpus_per_worker == 2.5
-    assert launch_kwargs["worker_rpc_timeout_s"] == config.worker.worker_rpc_timeout_s
-    assert runtime.executor.max_inflight_chunks_per_worker == 1
+    assert launch_kwargs["rpc_timeout_s"] == config.worker.worker_rpc_timeout_s
+    assert launch_kwargs["operation_prefix"] == "rollout"
     assert runtime.executor.generation_stall_timeout_s == config.worker.generation_stall_timeout_s
 
 
@@ -1064,7 +1061,7 @@ def _auto_chunk_request() -> GenerationRequest:
 async def test_remote_chunk_size_probe_timeout_is_terminal_and_cancels_refs(
     monkeypatch,
 ) -> None:
-    import vrl.generation.ray.runtime as runtime_module
+    import vrl.ray.operation_deadline as deadline_module
 
     class _NeverRef:
         def __await__(self):
@@ -1081,17 +1078,21 @@ async def test_remote_chunk_size_probe_timeout_is_terminal_and_cancels_refs(
             assert max_samples == 10
             return ref
 
-    class _Executor:
-        generation_stall_timeout_s = 0.01
-        workers: ClassVar[list[DistributedWorkerHandle]] = [
-            DistributedWorkerHandle(
-                worker_id="w0",
-                actor=SimpleNamespace(probe_chunk_size=_RemoteProbe()),
-            ),
-        ]
+    worker = DistributedWorkerHandle(
+        worker_id="w0",
+        actor=SimpleNamespace(probe_chunk_size=_RemoteProbe()),
+    )
+    executor = RayGenerationExecutor(
+        SimpleNamespace(),
+        [worker],
+        SimpleNamespace(),
+        generation_stall_timeout_s=0.01,
+    )
 
-        async def execute(self, _request: Any) -> None:
-            raise AssertionError("timed-out probe must not enter generation")
+    async def execute(_request: Any) -> None:
+        raise AssertionError("timed-out probe must not enter generation")
+
+    executor.execute = execute
 
     class _Ray:
         cancelled: ClassVar[list[tuple[Any, bool]]] = []
@@ -1100,8 +1101,8 @@ async def test_remote_chunk_size_probe_timeout_is_terminal_and_cancels_refs(
         def cancel(cls, value: Any, *, force: bool) -> None:
             cls.cancelled.append((value, force))
 
-    runtime = RayGenerationRuntime(_Executor())
-    monkeypatch.setattr(runtime_module, "require_ray", lambda: _Ray)
+    runtime = RayGenerationRuntime(executor)
+    monkeypatch.setattr(deadline_module, "require_ray", lambda: _Ray)
 
     with pytest.raises(
         RayOperationTimeout,
@@ -1111,6 +1112,66 @@ async def test_remote_chunk_size_probe_timeout_is_terminal_and_cancels_refs(
 
     assert _Ray.cancelled == [(ref, False)]
     assert runtime.lifecycle.phase is RuntimePhase.TERMINATED
+
+
+@pytest.mark.asyncio
+async def test_concurrent_auto_chunk_requests_share_one_probe_before_submission() -> None:
+    gate = asyncio.Event()
+    probe_requests: list[str] = []
+    executed_requests: list[GenerationRequest] = []
+    probe_result = {
+        "samples_per_chunk": 3,
+        "budget_bytes": 1,
+        "trials": [],
+    }
+
+    class _ProbeRef:
+        def __await__(self):
+            async def wait() -> dict[str, Any]:
+                await gate.wait()
+                return probe_result
+
+            return wait().__await__()
+
+    class _RemoteProbe:
+        @staticmethod
+        def remote(request: GenerationRequest, *, max_samples: int) -> _ProbeRef:
+            assert max_samples == 10
+            probe_requests.append(request.request_id)
+            return _ProbeRef()
+
+    worker = DistributedWorkerHandle(
+        worker_id="w0",
+        actor=SimpleNamespace(probe_chunk_size=_RemoteProbe()),
+    )
+    executor = RayGenerationExecutor(
+        SimpleNamespace(),
+        [worker],
+        SimpleNamespace(),
+        generation_stall_timeout_s=30.0,
+    )
+
+    async def execute(request: GenerationRequest) -> GenerationRequest:
+        executed_requests.append(request)
+        return request
+
+    executor.execute = execute
+    runtime = RayGenerationRuntime(executor)
+    first_request = _auto_chunk_request()
+    second_request = replace(first_request, request_id="req-probe-second")
+
+    first = asyncio.create_task(runtime.generate(first_request))
+    await asyncio.sleep(0)
+    second = asyncio.create_task(runtime.generate(second_request))
+    await asyncio.sleep(0)
+
+    assert probe_requests == ["req-probe"]
+
+    gate.set()
+    assert await first == executed_requests[0]
+    assert await second == executed_requests[1]
+    assert probe_requests == ["req-probe"]
+    assert [request.sampling["samples_per_chunk"] for request in executed_requests] == [3, 3]
 
 
 class _Arrivals:
@@ -1167,15 +1228,13 @@ class _ProbeWorker:
 
 @pytest.mark.slow_test
 def test_real_ray_probe_fan_out_resolves_auto_once_across_the_fleet(local_ray) -> None:
-    """The ``.remote()`` half of the chunk-size probe, on a live cluster.
+    """The executor-owned chunk-size probe path on a live cluster.
 
-    ``RayGenerationRuntime._resolve_probed_samples_per_chunk`` branches on whether
-    ``probe_chunk_size`` has a ``.remote``; every in-process test takes the plain
-    callable branch, so the fan-out that production actually runs -- N remote
-    probes dispatched together, then one typed async deadline barrier -- had no
-    coverage at all. The barrier inside ``_ProbeWorker`` is what makes
-    "concurrently" checkable: an implementation that moved the ``ray.get`` inside
-    the dispatch loop would deadlock on it instead of passing.
+    The executor sends N remote probes through its shared actor dispatcher, so
+    generation cannot enter the same synchronous actor mailbox concurrently.
+    The barrier inside ``_ProbeWorker`` makes fleet fan-out checkable: an
+    implementation that waited on each worker inside the submission loop would
+    deadlock instead of passing.
     """
 
     arrivals = local_ray.remote(num_cpus=0)(_Arrivals).remote()
@@ -1183,19 +1242,23 @@ def test_real_ray_probe_fan_out_resolves_auto_once_across_the_fleet(local_ray) -
     actors = [actor_cls.remote(answer, arrivals, 2) for answer in (6, 4)]
     executed: list[Any] = []
 
-    class _Executor:
-        def __init__(self) -> None:
-            self.generation_stall_timeout_s = 30.0
-            self.workers = [
-                DistributedWorkerHandle(worker_id=f"w{index}", actor=actor)
-                for index, actor in enumerate(actors)
-            ]
+    workers = [
+        DistributedWorkerHandle(worker_id=f"w{index}", actor=actor)
+        for index, actor in enumerate(actors)
+    ]
+    executor = RayGenerationExecutor(
+        SimpleNamespace(),
+        workers,
+        SimpleNamespace(),
+        generation_stall_timeout_s=30.0,
+    )
 
-        async def execute(self, request: Any) -> Any:
-            executed.append(request)
-            return SimpleNamespace(request_id=request.request_id)
+    async def execute(request: Any) -> Any:
+        executed.append(request)
+        return SimpleNamespace(request_id=request.request_id)
 
-    runtime = RayGenerationRuntime(_Executor())
+    executor.execute = execute
+    runtime = RayGenerationRuntime(executor)
 
     async def go() -> None:
         await runtime.generate(_auto_chunk_request())

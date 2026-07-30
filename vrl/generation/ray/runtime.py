@@ -21,10 +21,9 @@ from vrl.generation.ray.lifecycle_fsm import RuntimeLifecycle, RuntimePhase
 from vrl.generation.ray.weight_sync import GenerationWeightSync
 from vrl.generation.types import GenerationOutput, GenerationRequest
 from vrl.ray.dependencies import require_ray
-from vrl.ray.operation_deadline import await_ray_refs
 from vrl.ray.placement import RolePlacement
 from vrl.ray.resource_cleanup import kill_and_retain
-from vrl.runtime_errors import TerminalRuntimeError
+from vrl.runtime_errors import TerminalRuntimeError, find_error_cause
 
 logger = logging.getLogger(__name__)
 
@@ -104,10 +103,10 @@ class RayGenerationRuntime(GenerationRuntime):
         # attribute (not a method) via RolloutLifecycle.supports_non_draining_weight_sync.
         self.supports_non_draining_weight_sync = False
         # Resolved by the startup chunk-size probe on the first request that
-        # carries sampling.samples_per_chunk == "auto"; a run-level constant
-        # (same shape + same phase budget), so sleep/wake and recovery relaunch
-        # never re-probe.
+        # carries sampling.samples_per_chunk == "auto". The actor-owning runtime
+        # survives sleep/wake, so that lifecycle reuses this run-level verdict.
         self._probed_samples_per_chunk: int | None = None
+        self._samples_per_chunk_probe_lock = asyncio.Lock()
 
     @classmethod
     def with_on_demand_activation(
@@ -208,18 +207,18 @@ class RayGenerationRuntime(GenerationRuntime):
         self.lifecycle.require_running("generate")
         try:
             runtime = self._active_runtime()
-            if request.sampling.get("samples_per_chunk") == "auto":
-                # Resolve before delegation so every worker receives an integer. The
-                # facade caches this run-level verdict across offload/onload cycles.
-                resolved = await self._resolve_probed_samples_per_chunk(runtime, request)
-                request = replace(
-                    request,
-                    sampling={**dict(request.sampling), "samples_per_chunk": resolved},
-                )
             if runtime is not self:
                 output = await runtime.generate(request)
                 self.lifecycle.require_running("complete generation")
                 return output
+            if request.sampling.get("samples_per_chunk") == "auto":
+                # Resolve at the actor-owning runtime so a failed probe enters the
+                # same terminal boundary as every other submitted generation RPC.
+                resolved = await self._resolve_probed_samples_per_chunk(request)
+                request = replace(
+                    request,
+                    sampling={**dict(request.sampling), "samples_per_chunk": resolved},
+                )
             if self.executor is None:
                 raise RuntimeError("RayGenerationRuntime has no active executor")
             if request.policy_version is None and self.current_policy_version is not None:
@@ -227,7 +226,13 @@ class RayGenerationRuntime(GenerationRuntime):
             output = await self.executor.execute(request)
             self.lifecycle.require_running("complete generation")
             return output
-        except TerminalRuntimeError as error:
+        except asyncio.CancelledError as error:
+            if find_error_cause(error, TerminalRuntimeError) is not None:
+                await self._terminalize_after_failure(error)
+            raise
+        except BaseException as error:
+            if find_error_cause(error, TerminalRuntimeError) is None:
+                raise
             # Cancellation cannot reliably interrupt synchronous actor code. Close
             # admission and destroy the fleet before any partial request result can
             # escape this runtime.
@@ -236,7 +241,6 @@ class RayGenerationRuntime(GenerationRuntime):
 
     async def _resolve_probed_samples_per_chunk(
         self,
-        runtime: RayGenerationRuntime,
         request: GenerationRequest,
     ) -> int:
         """Run the startup chunk-size probe once and cache the verdict.
@@ -251,57 +255,46 @@ class RayGenerationRuntime(GenerationRuntime):
 
         if self._probed_samples_per_chunk is not None:
             return self._probed_samples_per_chunk
-        executor = runtime.executor if runtime is not self else self.executor
-        workers = list(getattr(executor, "workers", []) or [])
-        if not workers:
-            raise RuntimeError(
-                "samples_per_chunk: auto found no generation workers to probe",
-            )
-        max_samples = max(1, int(request.samples_per_prompt))
-        refs = []
-        local_results: list[dict[str, Any]] = []
-        for worker in workers:
-            probe = getattr(worker.actor, "probe_chunk_size", None)
-            if probe is None:
+        # Multiple rollout groups may reach the first generation concurrently.
+        # Serialize before submission so only the owner probes its synchronous
+        # actors and local waiters do not spend a remote-operation budget.
+        async with self._samples_per_chunk_probe_lock:
+            if self._probed_samples_per_chunk is not None:
+                return self._probed_samples_per_chunk
+            self.lifecycle.require_running("probe generation chunk size")
+            executor = self.executor
+            if executor is None:
                 raise RuntimeError(
-                    f"worker {worker.worker_id!r} does not support the "
-                    "chunk-size probe required by samples_per_chunk: auto",
+                    "samples_per_chunk: auto requires an active generation executor",
                 )
-            remote = getattr(probe, "remote", None)
-            if callable(remote):
-                refs.append(remote(request, max_samples=max_samples))
-            else:
-                local_results.append(probe(request, max_samples=max_samples))
-        if refs:
-            ray = require_ray()
-            local_results.extend(
-                await await_ray_refs(
-                    refs,
-                    operation="rollout.generation.chunk_size_probe",
-                    timeout_s=executor.generation_stall_timeout_s,
-                    context=f"workers={len(refs)}, request_id={request.request_id}",
-                    ray=ray,
-                ),
+            max_samples = max(1, int(request.samples_per_prompt))
+            local_results = await executor.probe_chunk_sizes(
+                request,
+                max_samples=max_samples,
             )
-        resolved = min(int(result["samples_per_chunk"]) for result in local_results)
-        for result in local_results:
-            logger.info(
-                "chunk-size probe: n=%d (budget=%.0fMB trials=%s)",
-                int(result["samples_per_chunk"]),
-                result["budget_bytes"] / 2**20,
-                [
-                    (
-                        trial["label"],
-                        trial["n"],
-                        "OOM"
-                        if trial["oom"]
-                        else f"{trial['peak_bytes'] / 2**20:.0f}MB/{trial['wall_s']:.1f}s",
-                    )
-                    for trial in result["trials"]
-                ],
-            )
-        self._probed_samples_per_chunk = resolved
-        return resolved
+            if not local_results:
+                raise RuntimeError(
+                    "samples_per_chunk: auto found no generation workers to probe",
+                )
+            resolved = min(int(result["samples_per_chunk"]) for result in local_results)
+            for result in local_results:
+                logger.info(
+                    "chunk-size probe: n=%d (budget=%.0fMB trials=%s)",
+                    int(result["samples_per_chunk"]),
+                    result["budget_bytes"] / 2**20,
+                    [
+                        (
+                            trial["label"],
+                            trial["n"],
+                            "OOM"
+                            if trial["oom"]
+                            else f"{trial['peak_bytes'] / 2**20:.0f}MB/{trial['wall_s']:.1f}s",
+                        )
+                        for trial in result["trials"]
+                    ],
+                )
+            self._probed_samples_per_chunk = resolved
+            return resolved
 
     def is_colocated(self) -> bool:
         state = self._on_demand
@@ -374,8 +367,10 @@ class RayGenerationRuntime(GenerationRuntime):
         # Publish the operation root before upgrading an existing graceful
         # shutdown. Cancellation of its release barrier must never win the
         # first-failure slot over the terminal error that required the upgrade.
-        self.lifecycle.fail(error)
-        if isinstance(error, TerminalRuntimeError):
+        terminal_error = find_error_cause(error, TerminalRuntimeError)
+        failure = terminal_error if terminal_error is not None else error
+        self.lifecycle.fail(failure)
+        if terminal_error is not None:
             self._force_shutdown = True
             # A terminal distributed operation proves that graceful RPC progress
             # cannot be trusted. Cancel runtime-owned local control tasks so an
@@ -420,7 +415,7 @@ class RayGenerationRuntime(GenerationRuntime):
                     cleanup_error.__traceback__,
                 ),
             )
-            error.add_note(f"generation terminal cleanup also failed: {cleanup_error!r}")
+            failure.add_note(f"generation terminal cleanup also failed: {cleanup_error!r}")
 
     async def offload(self) -> None:
         """Park explicitly idle on-demand workers between GPU phases.

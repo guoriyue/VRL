@@ -32,9 +32,26 @@ class RayOperationTimeout(TimeoutError, TerminalRuntimeError):
         super().__init__(message)
 
 
+class RayOperationCancelled(TerminalRuntimeError):
+    """A caller abandoned submitted Ray work whose actor state is now unknown."""
+
+    def __init__(
+        self,
+        operation: str,
+        *,
+        context: str | None = None,
+    ) -> None:
+        self.operation = operation
+        self.context = context
+        message = f"submitted Ray operation {operation!r} was cancelled"
+        if context:
+            message = f"{message} ({context})"
+        super().__init__(message)
+
+
 @dataclass(frozen=True, slots=True)
 class RayCallDeadline:
-    """One absolute deadline starting when its Ray call is submitted."""
+    """One absolute deadline starting at the driver submission boundary."""
 
     # Protocol identity consumed by the raised terminal error.
     operation: str
@@ -151,39 +168,50 @@ async def await_ray_refs(
     if not refs:
         return []
     deadline = RayCallDeadline(operation, timeout_s, context=context)
-    barrier = asyncio.gather(*refs)
+    waiters = [asyncio.ensure_future(ref) for ref in refs]
+    barrier = asyncio.gather(*waiters)
     try:
-        done, _ = await asyncio.wait(
-            {barrier},
-            timeout=deadline.remaining_s(),
-        )
-    except asyncio.CancelledError as error:
-        barrier.cancel()
-        await asyncio.gather(barrier, return_exceptions=True)
-        cancel_ray_refs(ray, refs, root_error=error)
-        raise
-    if done:
-        # result() preserves worker-raised TimeoutError and every other remote
-        # exception instead of rewriting it as a driver deadline.
         try:
-            return barrier.result()
-        except BaseException as error:
-            cancel_ray_refs(ray, refs, root_error=error)
-            raise
+            done, _ = await asyncio.wait(
+                {barrier},
+                timeout=deadline.remaining_s(),
+            )
+        except asyncio.CancelledError as cancellation:
+            terminal = RayOperationCancelled(operation, context=context)
+            cancel_ray_refs(ray, refs, root_error=terminal)
+            raise cancellation from terminal
+        if done:
+            # result() preserves worker-raised TimeoutError and every other
+            # remote exception instead of rewriting it as a driver deadline.
+            try:
+                return barrier.result()
+            except BaseException as error:
+                cancel_ray_refs(ray, refs, root_error=error)
+                raise
 
-    barrier.cancel()
-    await asyncio.gather(barrier, return_exceptions=True)
-    error = deadline.timeout_error()
-    cancel_ray_refs(
-        ray,
-        refs,
-        root_error=error,
-    )
-    raise error
+        error = deadline.timeout_error()
+        cancel_ray_refs(
+            ray,
+            refs,
+            root_error=error,
+        )
+        raise error
+    finally:
+        # asyncio.gather does not cancel sibling waiters when one child raises.
+        # Own every ObjectRef wrapper explicitly so no failed barrier can leave
+        # a detached asyncio task pinning an ObjectRef indefinitely.
+        if not barrier.done():
+            barrier.cancel()
+        for waiter in waiters:
+            if not waiter.done():
+                waiter.cancel()
+        await asyncio.gather(*waiters, return_exceptions=True)
+        await asyncio.gather(barrier, return_exceptions=True)
 
 
 __all__ = [
     "RayCallDeadline",
+    "RayOperationCancelled",
     "RayOperationTimeout",
     "await_ray_refs",
     "cancel_ray_refs",

@@ -1183,7 +1183,6 @@ def test_rollout_keys_are_registered_not_unknown() -> None:
         distributed={
             "rollout": {
                 "cpus_per_worker": 2.0,
-                "max_inflight_chunks_per_worker": 2,
                 "health_check_interval_s": 45.0,
                 "health_check_timeout_s": 30.0,
                 "health_check_first_wait_s": 5.0,
@@ -1199,13 +1198,29 @@ def test_rollout_keys_are_registered_not_unknown() -> None:
     assert not [k for k in unknown if k.startswith("distributed.rollout")]
 
 
+def test_retired_sync_actor_inflight_knob_is_unknown() -> None:
+    from vrl.config.unknown_keys import find_unknown_keys
+
+    cfg = _minimal_grpo_cfg(
+        distributed={
+            "rollout": {
+                "max_inflight_chunks_per_worker": 2,
+            },
+        },
+    )
+
+    assert find_unknown_keys(cfg) == [
+        "distributed.rollout.max_inflight_chunks_per_worker",
+    ]
+
+
 def test_rollout_health_check_defaults_and_accepts_override() -> None:
     default = parse_config(_minimal_grpo_cfg(distributed={"rollout": {}}))
     assert default.distributed.rollout.health_check_interval_s == 30.0
     assert default.distributed.rollout.health_check_timeout_s == 30.0
     assert default.distributed.rollout.health_check_first_wait_s == 0.0
     assert default.distributed.rollout.worker_rpc_timeout_s == 600.0
-    assert default.distributed.rollout.generation_stall_timeout_s == 1800.0
+    assert default.distributed.rollout.generation_stall_timeout_s == 3600.0
 
     cfg = _minimal_grpo_cfg(
         distributed={

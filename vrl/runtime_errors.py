@@ -24,10 +24,20 @@ def find_error_cause(
     return None
 
 
-def deepest_error_cause(error: BaseException) -> BaseException:
-    """Return the deepest explicit cause without looping on malformed wrappers."""
+def failure_identity_cause(error: BaseException) -> BaseException:
+    """Choose the stable failure identity behind cleanup wrappers.
 
-    return _error_chain(error)[-1]
+    Cleanup wrappers are transparent, but a terminal runtime error is the
+    domain-owned identity and therefore stops traversal before dependency
+    implementation details stored in ``__cause__``.
+    """
+
+    chain = _error_chain(error)
+    terminal = next(
+        (candidate for candidate in chain if isinstance(candidate, TerminalRuntimeError)),
+        None,
+    )
+    return terminal if terminal is not None else chain[-1]
 
 
 def _error_chain(error: BaseException) -> tuple[BaseException, ...]:
@@ -46,6 +56,6 @@ def _error_chain(error: BaseException) -> tuple[BaseException, ...]:
 
 __all__ = [
     "TerminalRuntimeError",
-    "deepest_error_cause",
+    "failure_identity_cause",
     "find_error_cause",
 ]

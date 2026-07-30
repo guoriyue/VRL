@@ -37,7 +37,8 @@ class RayActorGroup:
         worker_ids: Sequence[str],
         num_cpus: float,
         num_gpus: float,
-        worker_rpc_timeout_s: float,
+        rpc_timeout_s: float,
+        operation_prefix: str,
         placement_group: Any | None = None,
         bundle_indices: Sequence[int] | None = None,
         startup_method: str | None = None,
@@ -49,10 +50,12 @@ class RayActorGroup:
             raise ValueError("worker_configs and worker_ids must have the same length")
         if bundle_indices is not None and len(bundle_indices) != len(worker_ids):
             raise ValueError("bundle_indices and worker_ids must have the same length")
-        worker_rpc_timeout_s = validate_ray_timeout(
-            worker_rpc_timeout_s,
-            name="worker_rpc_timeout_s",
+        rpc_timeout_s = validate_ray_timeout(
+            rpc_timeout_s,
+            name="rpc_timeout_s",
         )
+        if not operation_prefix:
+            raise ValueError("operation_prefix must not be empty")
 
         ray = require_ray()
         remote_options: dict[str, Any] = {
@@ -83,8 +86,8 @@ class RayActorGroup:
                 get_ray_refs(
                     ray,
                     startup_refs,
-                    operation="rollout.startup.load_policy",
-                    timeout_s=worker_rpc_timeout_s,
+                    operation=f"{operation_prefix}.startup.{startup_method}",
+                    timeout_s=rpc_timeout_s,
                     context=f"workers={len(actors)}",
                 )
 
@@ -92,8 +95,8 @@ class RayActorGroup:
             metadata = get_ray_refs(
                 ray,
                 metadata_refs,
-                operation="rollout.startup.worker_metadata",
-                timeout_s=worker_rpc_timeout_s,
+                operation=f"{operation_prefix}.startup.worker_metadata",
+                timeout_s=rpc_timeout_s,
                 context=f"workers={len(actors)}",
             )
             handles = [
@@ -114,7 +117,7 @@ class RayActorGroup:
             failures = kill_actors(ray, actors)
             if failures:
                 error.add_note(
-                    "rollout startup actor cleanup incomplete: "
+                    "Ray actor-group startup cleanup incomplete: "
                     f"{len(failures)} actor kill(s) failed",
                 )
             raise

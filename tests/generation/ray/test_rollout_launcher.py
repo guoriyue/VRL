@@ -62,7 +62,6 @@ def _launch_inputs() -> RayGenerationLaunchInputs:
 def _worker_config(**overrides: Any) -> RolloutWorkerConfig:
     values = {
         "cpus_per_worker": 0.5,
-        "max_inflight_chunks_per_worker": 1,
         "health_check_interval_s": 30.0,
         "health_check_timeout_s": 30.0,
         "health_check_first_wait_s": 0.0,

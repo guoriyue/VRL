@@ -744,7 +744,6 @@ class RolloutWorkerSection(ConfigBase):
     """
 
     cpus_per_worker: float = 1.0
-    max_inflight_chunks_per_worker: int = 1
     # Background liveness probing of rollout workers. interval <= 0 disables it;
     # a worker that stops answering kills the owned actors so active or subsequent
     # foreground work fails closed. A failed verdict then enters the supervisor's
@@ -756,10 +755,10 @@ class RolloutWorkerSection(ConfigBase):
     # metadata, capability, and weight acknowledgements independently.
     worker_rpc_timeout_s: float = 600.0
     # Generation has a separate stall budget: a completed chunk is real progress,
-    # and the pipelined path reports the same progress from its worker. Thirty
-    # minutes covers the measured 733-second Cosmos chunk without turning a stuck
-    # metadata or weight call into a two-hour outage.
-    generation_stall_timeout_s: float = 1800.0
+    # and the pipelined path reports the same progress from its worker. One hour
+    # covers the observed ~30-minute cold compile plus a 733-second Cosmos chunk
+    # with margin; opaque control calls retain their tighter budget above.
+    generation_stall_timeout_s: float = 3600.0
     chunk_placement_strategy: ChunkPlacementStrategy = "round_robin"
     sync_trainable_state: bool = True
     # Opt-in single-worker pipelined rollout. Config resolution rejects multiple

@@ -15,6 +15,7 @@ from vrl.generation.execution.types import (
 )
 from vrl.generation.launch_contract import GenerationRuntimeLaunchContract
 from vrl.generation.ray.config import RayGenerationConfig
+from vrl.generation.ray.executor import RayGenerationExecutor
 from vrl.generation.ray.launch_inputs import RayGenerationLaunchInputs
 from vrl.generation.ray.lifecycle_fsm import (
     RuntimeLifecycle,
@@ -25,7 +26,7 @@ from vrl.generation.ray.runtime import (
     RayGenerationRuntime,
     _PolicySnapshot,
 )
-from vrl.ray.operation_deadline import RayOperationTimeout
+from vrl.ray.operation_deadline import RayOperationCancelled, RayOperationTimeout
 from vrl.ray.resources import resolve_distributed_resources
 from vrl.trainers.weight_sync import build_runtime_weight_syncer
 
@@ -253,6 +254,14 @@ class _ResolvedRef:
             return self.value
 
         return resolve().__await__()
+
+
+class _NeverRef:
+    def __await__(self):
+        async def wait_forever() -> None:
+            await asyncio.Event().wait()
+
+        return wait_forever().__await__()
 
 
 class _RemoteResult:
@@ -564,6 +573,127 @@ async def test_active_on_demand_timeout_force_kills_the_inner_owner(
     assert inner.current_policy_version == 1
     assert outer.lifecycle.phase is RuntimePhase.TERMINATED
     assert inner.lifecycle.phase is RuntimePhase.TERMINATED
+    assert actor.release_calls == 0
+    assert _Ray.killed == [actor]
+
+
+@pytest.mark.asyncio
+async def test_on_demand_auto_probe_timeout_force_kills_the_inner_owner(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import vrl.generation.ray.runtime as runtime_module
+    import vrl.ray.operation_deadline as deadline_module
+
+    outer = _on_demand_runtime()
+    state = outer._on_demand
+    assert state is not None
+    probe_ref = _NeverRef()
+
+    class _ProbeActor(_ReleaseActor):
+        def __init__(self) -> None:
+            super().__init__()
+            self.probe_chunk_size = SimpleNamespace(
+                remote=lambda *_args, **_kwargs: probe_ref,
+            )
+
+    actor = _ProbeActor()
+    worker = DistributedWorkerHandle(worker_id="w0", actor=actor)
+    executor = RayGenerationExecutor(
+        SimpleNamespace(),
+        [worker],
+        SimpleNamespace(),
+        generation_stall_timeout_s=0.01,
+    )
+    inner = RayGenerationRuntime(
+        executor,
+        owned_workers=[worker],
+    )
+    state.inner_runtime = inner
+
+    class _Ray:
+        cancelled: ClassVar[list[Any]] = []
+        killed: ClassVar[list[Any]] = []
+
+        @classmethod
+        def cancel(cls, ref: Any, *, force: bool) -> None:
+            assert force is False
+            cls.cancelled.append(ref)
+
+        @classmethod
+        def kill(cls, target: Any, *, no_restart: bool) -> None:
+            assert no_restart is True
+            cls.killed.append(target)
+
+    monkeypatch.setattr(runtime_module, "require_ray", lambda: _Ray)
+    monkeypatch.setattr(deadline_module, "require_ray", lambda: _Ray)
+    request = SimpleNamespace(
+        request_id="req-auto-timeout",
+        samples_per_prompt=2,
+        sampling={"samples_per_chunk": "auto"},
+        policy_version=None,
+    )
+
+    with pytest.raises(RayOperationTimeout) as caught:
+        await outer.generate(request)
+
+    assert caught.value.operation == "rollout.generation.chunk_size_probe"
+    assert outer.lifecycle.phase is RuntimePhase.TERMINATED
+    assert inner.lifecycle.phase is RuntimePhase.TERMINATED
+    assert state.inner_runtime is None
+    assert actor.release_calls == 0
+    assert _Ray.cancelled == [probe_ref]
+    assert _Ray.killed == [actor]
+
+
+@pytest.mark.asyncio
+async def test_on_demand_submitted_cancellation_force_kills_the_inner_owner(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import vrl.generation.ray.runtime as runtime_module
+
+    outer = _on_demand_runtime()
+    state = outer._on_demand
+    assert state is not None
+    terminal = RayOperationCancelled("rollout.generation.pipelined")
+    cancellation = asyncio.CancelledError()
+    cancellation.__cause__ = terminal
+
+    class _Executor:
+        async def execute(self, _request: Any) -> None:
+            raise cancellation
+
+    actor = _ReleaseActor()
+    inner = RayGenerationRuntime(
+        _Executor(),
+        owned_workers=[DistributedWorkerHandle(worker_id="w0", actor=actor)],
+    )
+    state.inner_runtime = inner
+
+    class _Ray:
+        killed: ClassVar[list[Any]] = []
+
+        @classmethod
+        def kill(cls, target: Any, *, no_restart: bool) -> None:
+            assert no_restart is True
+            cls.killed.append(target)
+
+    monkeypatch.setattr(runtime_module, "require_ray", lambda: _Ray)
+    request = SimpleNamespace(
+        request_id="req-cancelled",
+        sampling={},
+        policy_version=None,
+    )
+
+    with pytest.raises(asyncio.CancelledError) as caught:
+        await outer.generate(request)
+
+    assert caught.value is cancellation
+    assert caught.value.__cause__ is terminal
+    assert outer.lifecycle.failure is terminal
+    assert inner.lifecycle.failure is terminal
+    assert outer.lifecycle.phase is RuntimePhase.TERMINATED
+    assert inner.lifecycle.phase is RuntimePhase.TERMINATED
+    assert state.inner_runtime is None
     assert actor.release_calls == 0
     assert _Ray.killed == [actor]
 

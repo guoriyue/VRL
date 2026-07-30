@@ -9,7 +9,7 @@ import time
 import pytest
 
 from vrl.ray.actor_group import RayActorGroup
-from vrl.ray.actor_pool import RayActorJob, run_actor_jobs
+from vrl.ray.actor_pool import RayActorDispatcher, RayActorJob
 from vrl.ray.operation_deadline import RayOperationTimeout
 from vrl.ray.placement import validate_actor_gpu_ids
 
@@ -46,7 +46,8 @@ def test_ray_actor_group_launch_lifecycle(local_ray) -> None:
             worker_ids=["w0", "w1"],
             num_cpus=0.5,
             num_gpus=0.0,
-            worker_rpc_timeout_s=30.0,
+            rpc_timeout_s=30.0,
+            operation_prefix="test.echo",
             startup_method="startup",
         )
 
@@ -76,7 +77,7 @@ class _PayloadWorker:
         return self.worker_id, payload * 2
 
 
-def test_run_actor_jobs_awaits_real_object_refs(local_ray) -> None:
+def test_actor_dispatcher_awaits_real_object_refs(local_ray) -> None:
     """Real-Ray twin of tests/ray/test_chunk_dispatch.py: the deterministic
     fake refs there encode the assumption that real ObjectRefs are directly
     awaitable inside the dispatch loop and resolve to the task result. Pin it
@@ -99,10 +100,10 @@ def test_run_actor_jobs_awaits_real_object_refs(local_ray) -> None:
             for i in range(4)
         ]
         pairs = asyncio.run(
-            run_actor_jobs(
+            RayActorDispatcher(("w0", "w1")).run(
                 bound,
-                max_inflight_per_actor=1,
-                generation_stall_timeout_s=30.0,
+                operation="test.actor_job",
+                call_timeout_s=30.0,
             ),
         )
         assert [index for index, _ in pairs] == [0, 1, 2, 3]
@@ -118,10 +119,10 @@ def test_run_actor_jobs_awaits_real_object_refs(local_ray) -> None:
             for i in range(4)
         ]
         pairs = asyncio.run(
-            run_actor_jobs(
+            RayActorDispatcher(("w0", "w1")).run(
                 unbound,
-                max_inflight_per_actor=1,
-                generation_stall_timeout_s=30.0,
+                operation="test.actor_job",
+                call_timeout_s=30.0,
                 worker_methods={"w0": w0.execute.remote, "w1": w1.execute.remote},
             ),
         )
@@ -160,9 +161,10 @@ async def test_hung_business_call_times_out_while_health_group_responds(local_ra
         concurrency_groups={health_group: 1},
     )(_HungWorker)
     actor = actor_cls.remote()
+    dispatcher = RayActorDispatcher(("w0",))
     started_at = time.monotonic()
     task = asyncio.create_task(
-        run_actor_jobs(
+        dispatcher.run(
             [
                 RayActorJob(
                     job_index=0,
@@ -171,7 +173,8 @@ async def test_hung_business_call_times_out_while_health_group_responds(local_ra
                     payload=None,
                 ),
             ],
-            generation_stall_timeout_s=1.0,
+            operation="rollout.generation.chunk",
+            call_timeout_s=1.0,
         ),
     )
     try:
@@ -201,6 +204,50 @@ async def test_hung_business_call_times_out_while_health_group_responds(local_ra
         if not task.done():
             task.cancel()
             await asyncio.gather(task, return_exceptions=True)
+        ray.kill(actor, no_restart=True)
+
+
+@pytest.mark.asyncio
+async def test_concurrent_calls_wait_locally_before_starting_real_ray_deadline(local_ray) -> None:
+    """Two healthy sync calls each get a full budget after real actor admission."""
+
+    ray = local_ray
+
+    class _SlowWorker:
+        @staticmethod
+        def execute(payload: str) -> str:
+            if payload != "warm":
+                time.sleep(0.6)
+            return payload
+
+    actor = ray.remote(num_cpus=0)(_SlowWorker).remote()
+    dispatcher = RayActorDispatcher(("w0",))
+    assert ray.get(actor.execute.remote("warm")) == "warm"
+
+    async def dispatch(payload: str) -> list[tuple[int, str]]:
+        return await dispatcher.run(
+            [
+                RayActorJob(
+                    job_index=0,
+                    worker_id="w0",
+                    remote_method=actor.execute.remote,
+                    payload=payload,
+                ),
+            ],
+            operation="test.sync_actor",
+            # Each warmed call finishes comfortably inside this budget, while
+            # two mailbox-queued calls would take about 1.2 seconds.
+            call_timeout_s=1.0,
+        )
+
+    try:
+        first, second = await asyncio.gather(
+            dispatch("first"),
+            dispatch("second"),
+        )
+        assert first == [(0, "first")]
+        assert second == [(0, "second")]
+    finally:
         ray.kill(actor, no_restart=True)
 
 

@@ -101,7 +101,8 @@ class RayGenerationLauncher:
                 worker_ids=worker_ids,
                 num_cpus=worker.cpus_per_worker,
                 num_gpus=rollout_config.resources.rollout_gpus_per_worker,
-                worker_rpc_timeout_s=worker.worker_rpc_timeout_s,
+                rpc_timeout_s=worker.worker_rpc_timeout_s,
+                operation_prefix="rollout",
                 placement_group=placement_group,
                 bundle_indices=bundle_indices,
                 startup_method="load_policy",
@@ -138,7 +139,6 @@ class RayGenerationLauncher:
                 ),
                 workers,
                 chunk_gatherer,
-                max_inflight_chunks_per_worker=worker.max_inflight_chunks_per_worker,
                 generation_stall_timeout_s=worker.generation_stall_timeout_s,
                 pipelined=worker.pipelined,
             )

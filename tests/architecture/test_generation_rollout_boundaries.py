@@ -383,6 +383,11 @@ def test_generation_execution_core_stays_flat_and_ray_neutral() -> None:
         "worker_core.py",
     ):
         assert not (execution_root / obsolete).exists()
+    violations = _forbidden_imports(
+        execution_root,
+        forbidden=("vrl.generation.ray", "vrl.ray"),
+    )
+    assert not violations, _format_violations(violations)
 
 
 def test_chunk_executor_base_stays_family_registry_neutral() -> None:

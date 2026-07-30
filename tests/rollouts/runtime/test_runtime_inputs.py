@@ -170,19 +170,21 @@ def test_rollout_runtime_inputs_are_serializable_and_registry_backed(
     inputs, expected_model_identity = _capture_launch_inputs(cfg, entry)
 
     assert isinstance(inputs, RayGenerationLaunchInputs)
-    assert pickle.loads(pickle.dumps(inputs.launch_contract)) == inputs.launch_contract
-    assert inputs.launch_contract.family == family
-    assert inputs.launch_contract.expected_model_identity == expected_model_identity
+    restored = pickle.loads(pickle.dumps(inputs))
+    assert isinstance(restored, RayGenerationLaunchInputs)
+    assert restored.launch_contract == inputs.launch_contract
+    assert restored.launch_contract.family == family
+    assert restored.launch_contract.expected_model_identity == expected_model_identity
     # Family identity lives once in the outer contract; worker-side executor
     # wiring comes from the registry, while this nested payload is per-run data.
-    assert "family" not in inputs.launch_contract.model_build
-    assert inputs.launch_contract.policy_version == 0
+    assert "family" not in restored.launch_contract.model_build
+    assert restored.launch_contract.policy_version == 0
     if entry.runtime_capabilities.accepts_samples_per_chunk:
-        assert inputs.launch_contract.executor_kwargs["samples_per_chunk"] == 2
+        assert restored.launch_contract.executor_kwargs["samples_per_chunk"] == 2
     else:
-        assert "samples_per_chunk" not in inputs.launch_contract.executor_kwargs
-    assert isinstance(inputs.gatherer, expected_gatherer)
-    assert not isinstance(inputs.gatherer, GenerationChunkExecutor)
+        assert "samples_per_chunk" not in restored.launch_contract.executor_kwargs
+    assert isinstance(restored.gatherer, expected_gatherer)
+    assert not isinstance(restored.gatherer, GenerationChunkExecutor)
 
 
 def test_diffusion_launch_contract_uses_resolved_config_parameter_dtype() -> None:

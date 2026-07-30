@@ -16,21 +16,28 @@ from vrl.generation.execution.types import (
     ChunkExecutionEnvelope,
     ChunkExecutionResult,
     DistributedWorkerHandle,
-    PipelinedProgressError,
     PipelinedRequestOutOfMemory,
-    PipelinedRequestProgress,
     StaleSlotDiscard,
 )
 from vrl.generation.protocols import ChunkGatherer, ChunkResult
+from vrl.generation.ray.pipeline_protocol import (
+    PipelinedProgressError,
+    PipelinedRequestProgress,
+)
 from vrl.generation.types import GenerationOutput, GenerationRequest
-from vrl.ray.actor_pool import RayActorJob, run_actor_jobs
+from vrl.ray.actor_pool import RayActorDispatcher, RayActorJob
 from vrl.ray.operation_deadline import (
     RayCallDeadline,
+    RayOperationCancelled,
     cancel_ray_refs,
     validate_ray_timeout,
 )
 
 logger = logging.getLogger(__name__)
+
+# Bounds progress-probe traffic on the shared health concurrency group. This is
+# a wire cadence, not a user-facing generation SLA.
+_PIPELINED_PROGRESS_POLL_INTERVAL_S = 1.0
 
 
 class RayGenerationExecutor:
@@ -42,14 +49,11 @@ class RayGenerationExecutor:
         workers: list[DistributedWorkerHandle],
         gatherer: ChunkGatherer,
         *,
-        max_inflight_chunks_per_worker: int = 1,
         generation_stall_timeout_s: float,
         pipelined: bool = False,
     ) -> None:
         if not workers:
             raise ValueError("RayGenerationExecutor requires at least one worker")
-        if max_inflight_chunks_per_worker < 1:
-            raise ValueError("max_inflight_chunks_per_worker must be >= 1")
         if pipelined and len(workers) != 1:
             raise ValueError(
                 "pipelined Ray generation requires exactly one rollout worker; "
@@ -59,7 +63,9 @@ class RayGenerationExecutor:
         self.planner = planner
         self.workers = list(workers)
         self.gatherer = gatherer
-        self.max_inflight_chunks_per_worker = int(max_inflight_chunks_per_worker)
+        self._actor_dispatcher = RayActorDispatcher(
+            tuple(worker.worker_id for worker in self.workers),
+        )
         self.generation_stall_timeout_s = validate_ray_timeout(
             generation_stall_timeout_s,
             name="generation_stall_timeout_s",
@@ -80,6 +86,63 @@ class RayGenerationExecutor:
             return await self._execute(request)
         async with lock:
             return await self._execute(request)
+
+    async def probe_chunk_sizes(
+        self,
+        request: GenerationRequest,
+        *,
+        max_samples: int,
+    ) -> list[dict[str, Any]]:
+        """Probe every worker through the same actor admission as generation."""
+
+        lock = self._pipelined_request_lock
+        if lock is None:
+            return await self._probe_chunk_sizes(request, max_samples=max_samples)
+        async with lock:
+            return await self._probe_chunk_sizes(request, max_samples=max_samples)
+
+    async def _probe_chunk_sizes(
+        self,
+        request: GenerationRequest,
+        *,
+        max_samples: int,
+    ) -> list[dict[str, Any]]:
+        result_pairs: list[tuple[int, dict[str, Any]]] = []
+        remote_jobs: list[RayActorJob] = []
+        for job_index, worker in enumerate(self.workers):
+            actor = worker.actor
+            if actor is None:
+                raise RuntimeError(f"worker {worker.worker_id!r} has no actor")
+            probe = getattr(actor, "probe_chunk_size", None)
+            if probe is None:
+                raise RuntimeError(
+                    f"worker {worker.worker_id!r} does not support the "
+                    "chunk-size probe required by samples_per_chunk: auto",
+                )
+            remote = getattr(probe, "remote", None)
+            if callable(remote):
+                remote_jobs.append(
+                    RayActorJob(
+                        job_index=job_index,
+                        worker_id=worker.worker_id,
+                        remote_method=remote,
+                        payload=request,
+                        keyword_args={"max_samples": max_samples},
+                    ),
+                )
+            else:
+                result_pairs.append(
+                    (job_index, probe(request, max_samples=max_samples)),
+                )
+        if remote_jobs:
+            result_pairs.extend(
+                await self._actor_dispatcher.run(
+                    remote_jobs,
+                    operation="rollout.generation.chunk_size_probe",
+                    call_timeout_s=self.generation_stall_timeout_s,
+                ),
+            )
+        return [result for _, result in sorted(result_pairs, key=lambda pair: pair[0])]
 
     async def _execute(self, request: GenerationRequest) -> GenerationOutput:
         import time
@@ -163,10 +226,10 @@ class RayGenerationExecutor:
             if any(job.worker_id is None for job in remote_jobs):
                 worker_methods = self._remote_worker_methods()
             result_pairs.extend(
-                await run_actor_jobs(
+                await self._actor_dispatcher.run(
                     remote_jobs,
-                    max_inflight_per_actor=self.max_inflight_chunks_per_worker,
-                    generation_stall_timeout_s=self.generation_stall_timeout_s,
+                    operation="rollout.generation.chunk",
+                    call_timeout_s=self.generation_stall_timeout_s,
                     worker_methods=worker_methods,
                     schedule=schedule_rows if runtime_debug_on else None,
                 ),
@@ -386,7 +449,7 @@ class RayGenerationExecutor:
                 remaining_s = deadline.remaining_s()
                 done, _ = await asyncio.wait(
                     {result_task},
-                    timeout=min(1.0, remaining_s / 4),
+                    timeout=min(_PIPELINED_PROGRESS_POLL_INTERVAL_S, remaining_s),
                 )
                 if done:
                     return result_task.result()
@@ -449,6 +512,16 @@ class RayGenerationExecutor:
                         self.generation_stall_timeout_s,
                         context=context,
                     )
+        except asyncio.CancelledError as cancellation:
+            terminal = RayOperationCancelled(
+                "rollout.generation.pipelined",
+                context=context,
+            )
+            refs = [result_ref]
+            if progress_ref is not None:
+                refs.append(progress_ref)
+            cancel_ray_refs(None, refs, root_error=terminal)
+            raise cancellation from terminal
         except BaseException as error:
             refs = [result_ref]
             if progress_ref is not None:
@@ -477,9 +550,9 @@ class RayGenerationExecutor:
         The retry lives on the driver so vrl/ray stays chunk-agnostic, and the
         gatherer reassembles by (prompt_index, sample_start) metadata, so the
         extra child results need no positional bookkeeping. Children rebind to
-        the worker that OOMed: with max_inflight 1 the two halves run
-        sequentially there instead of landing concurrently on the GPU that
-        just proved too full.
+        the worker that OOMed: the executor-owned dispatcher exposes one real
+        slot per synchronous actor, so the two halves run sequentially instead
+        of landing concurrently on the GPU that just proved too full.
         """
 
         final: list[ChunkExecutionResult] = []
@@ -540,10 +613,10 @@ class RayGenerationExecutor:
                         local_calls.append((execute_chunk, child_envelope))
             pending = []
             if retry_jobs:
-                pairs = await run_actor_jobs(
+                pairs = await self._actor_dispatcher.run(
                     retry_jobs,
-                    max_inflight_per_actor=self.max_inflight_chunks_per_worker,
-                    generation_stall_timeout_s=self.generation_stall_timeout_s,
+                    operation="rollout.generation.chunk",
+                    call_timeout_s=self.generation_stall_timeout_s,
                 )
                 pending.extend(result for _, result in pairs)
             pending.extend(call(envelope) for call, envelope in local_calls)
