@@ -19,8 +19,8 @@
 | trajectory / math dead code | 完成；2 条由行为测试救回 | `6ed86b60`, `7f3b8d61`, `c6ef0027`, `2c3a5c76`, `ca601d45`, `6cebd279`, `cd6beea5` |
 | layering audit | 11 条完成；1 条门禁拆出 | `456f7069`, `b54d4205`, `7a4f2b5f` |
 
-唯一仍需执行的分层项是
-[[SPRINT_generation_models_interface_floor]]；它已从历史大文档中拆成独立、可验证的 planned sprint。
+最后一项分层门禁 [[SPRINT_generation_models_interface_floor]] 已完成；generation 现在只能静态
+import models 的 interfaces、loader、dtypes 与 checkpoint_identity 公共边界。
 
 ## 2. 撤销与现场变化
 

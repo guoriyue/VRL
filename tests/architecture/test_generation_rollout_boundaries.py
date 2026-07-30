@@ -8,6 +8,12 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 VRL_ROOT = ROOT / "vrl"
+_GENERATION_MODEL_IMPORT_FLOOR = (
+    "vrl.models.checkpoint_identity",
+    "vrl.models.dtypes",
+    "vrl.models.interfaces",
+    "vrl.models.loader",
+)
 
 
 def test_generation_layer_does_not_import_rollout_or_training_layers() -> None:
@@ -22,6 +28,54 @@ def test_generation_layer_does_not_import_rollout_or_training_layers() -> None:
         ),
     )
     assert not violations, _format_violations(violations)
+
+
+def test_generation_model_imports_stay_on_public_floor() -> None:
+    """Generation may use model contracts, not family or step implementations."""
+    violations: list[tuple[Path, str]] = []
+    for path in _python_files(VRL_ROOT / "generation"):
+        for target in _imports(path):
+            if _is_generation_model_import_violation(target):
+                violations.append((path.relative_to(ROOT), target))
+    assert not violations, _format_violations(violations)
+
+
+def test_import_scanner_preserves_from_import_targets(tmp_path: Path) -> None:
+    """Imported aliases must remain visible to architecture boundary checks."""
+    path = tmp_path / "vrl" / "generation" / "execution" / "probe.py"
+    path.parent.mkdir(parents=True)
+    path.write_text(
+        """
+import vrl.models.loader as model_loader
+from vrl import models
+from vrl.models import checkpoint_identity, families
+from vrl.models.interfaces import RuntimeModel
+from vrl.models.interfaces_bad import RuntimeModel as BadRuntimeModel
+from ...models import steps
+
+def lazy_import():
+    from vrl.models.interfaces.runtime import ModelBuild
+""",
+        encoding="utf-8",
+    )
+
+    targets = set(_imports(path, root=tmp_path))
+    assert targets == {
+        "vrl.models",
+        "vrl.models.checkpoint_identity",
+        "vrl.models.families",
+        "vrl.models.interfaces.RuntimeModel",
+        "vrl.models.interfaces_bad.RuntimeModel",
+        "vrl.models.interfaces.runtime.ModelBuild",
+        "vrl.models.loader",
+        "vrl.models.steps",
+    }
+    assert {target for target in targets if _is_generation_model_import_violation(target)} == {
+        "vrl.models",
+        "vrl.models.families",
+        "vrl.models.interfaces_bad.RuntimeModel",
+        "vrl.models.steps",
+    }
 
 
 def test_ray_working_dir_keeps_pinned_chunk_runtime_inputs() -> None:
@@ -360,19 +414,40 @@ def _forbidden_imports(
         if any(_is_relative_to(rel, prefix) for prefix in allow_path_prefixes):
             continue
         for module in _imports(path):
-            if any(module == item or module.startswith(f"{item}.") for item in forbidden):
+            if any(_is_module_or_child(module, item) for item in forbidden):
                 violations.append((rel, module))
     return violations
 
 
-def _imports(path: Path) -> Iterable[str]:
+def _imports(path: Path, *, root: Path = ROOT) -> Iterable[str]:
     tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+    package_parts = path.relative_to(root).with_suffix("").parts[:-1]
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
             for alias in node.names:
                 yield alias.name
-        elif isinstance(node, ast.ImportFrom) and node.module:
-            yield node.module
+        elif isinstance(node, ast.ImportFrom):
+            if node.level:
+                parent_count = len(package_parts) - node.level + 1
+                if parent_count < 0:
+                    raise ValueError(f"{path}: relative import escapes its package")
+                base_parts = package_parts[:parent_count]
+                if node.module:
+                    base_parts += tuple(node.module.split("."))
+                base = ".".join(base_parts)
+            else:
+                base = node.module or ""
+
+            # Preserve the imported name so ``from vrl import models`` cannot
+            # bypass a boundary that watches ``vrl.models``.
+            for alias in node.names:
+                if alias.name == "*":
+                    if base:
+                        yield base
+                elif base:
+                    yield f"{base}.{alias.name}"
+                else:
+                    yield alias.name
 
 
 def _python_files(root: Path) -> Iterable[Path]:
@@ -403,6 +478,16 @@ def _is_relative_to(path: Path, prefix: Path) -> bool:
     except ValueError:
         return False
     return True
+
+
+def _is_module_or_child(module: str, parent: str) -> bool:
+    return module == parent or module.startswith(f"{parent}.")
+
+
+def _is_generation_model_import_violation(target: str) -> bool:
+    return _is_module_or_child(target, "vrl.models") and not any(
+        _is_module_or_child(target, allowed) for allowed in _GENERATION_MODEL_IMPORT_FLOOR
+    )
 
 
 def _format_violations(violations: list[tuple[Path, str]]) -> str:

@@ -1,6 +1,6 @@
 # SPRINT: 分层审计——dataclass/arg 归属层与各层必要性（done）
 
-状态：**DONE（2026-07-24）**。11 个可执行 finding 由 `b54d4205` 与 `7a4f2b5f` 落地；唯一残余的 generation→models interface-floor gate 已拆到 [[SPRINT_generation_models_interface_floor]]。
+状态：**DONE（2026-07-24；2026-07-30 门禁收口）**。11 个可执行 finding 由 `b54d4205` 与 `7a4f2b5f` 落地；generation→models interface floor 已由 [[SPRINT_generation_models_interface_floor]] 机械固化。
 
 > **历史审计，禁止照 §1 对当前 HEAD 执行。** 例如 `unwrap_compile_and_ddp` 已迁到 `vrl/models/weight_utils.py`，原提议位置 `vrl/models/utils.py` 后来也已删除。下文保留的是对 `7c748532` 的执行前证据。
 
