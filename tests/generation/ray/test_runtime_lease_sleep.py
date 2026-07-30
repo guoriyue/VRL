@@ -1071,6 +1071,54 @@ async def test_shutdown_joins_activation_after_waiter_cancellation(monkeypatch) 
 
 
 @pytest.mark.asyncio
+async def test_external_terminal_shutdown_is_the_only_activation_cleanup_owner(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runtime = _on_demand_runtime()
+    state = runtime._on_demand
+    assert state is not None
+    _set_desired_policy(runtime, "W", 4)
+    candidate = _BlockingRestoreInner()
+    timeout = RayOperationTimeout("rollout.generation.chunk", 0.5)
+    finish_calls = 0
+    finish_shutdown = runtime.lifecycle.finish_shutdown
+
+    def count_finish_shutdown() -> None:
+        nonlocal finish_calls
+        finish_calls += 1
+        finish_shutdown()
+
+    runtime.lifecycle.finish_shutdown = count_finish_shutdown
+
+    class _Launcher:
+        async def launch_async(self, *args, **kwargs):
+            del args, kwargs
+            return candidate
+
+    import vrl.generation.ray.launcher as launcher_module
+
+    monkeypatch.setattr(launcher_module, "RayGenerationLauncher", _Launcher)
+    activation = asyncio.create_task(runtime.activate())
+    await asyncio.wait_for(candidate.restore_started.wait(), timeout=1)
+
+    terminalize = asyncio.create_task(runtime._terminalize_after_failure(timeout))
+    await asyncio.sleep(0)
+    shutdown_waiter = asyncio.create_task(runtime.shutdown())
+
+    assert await asyncio.wait_for(terminalize, timeout=1) is timeout
+    await asyncio.wait_for(shutdown_waiter, timeout=1)
+    with pytest.raises(asyncio.CancelledError):
+        await activation
+
+    assert candidate.calls == ["shutdown"]
+    assert finish_calls == 1
+    assert runtime.lifecycle.failure is timeout
+    assert runtime.lifecycle.phase is RuntimePhase.TERMINATED
+    assert state.inner_runtime is None
+    assert not any("cleanup also failed" in note for note in getattr(timeout, "__notes__", ()))
+
+
+@pytest.mark.asyncio
 async def test_shutdown_joins_offload_before_teardown() -> None:
     runtime = _on_demand_runtime()
     state = runtime._on_demand
@@ -1175,16 +1223,29 @@ async def test_cold_candidate_health_failure_terminalizes_outer_before_publicati
     outer = _on_demand_runtime()
     state = outer._on_demand
     assert state is not None
+    _set_desired_policy(outer, "W2", 2)
     health_failure = RolloutWorkerUnreachable(
         "rollout-0",
         0.5,
         TimeoutError("health probe timed out"),
     )
-    candidate = RayGenerationRuntime(SimpleNamespace())
-    candidate.lifecycle.fail(health_failure)
+    launch_calls = 0
+
+    class _ColdHealthRaceCandidate(_FakeInner):
+        async def update_weights(self, state_ref: Any, version: int) -> None:
+            await super().update_weights(state_ref, version)
+            self.lifecycle.fail(health_failure)
+
+        async def shutdown(self) -> None:
+            await super().shutdown()
+            self.lifecycle.finish_shutdown()
+
+    candidate = _ColdHealthRaceCandidate()
 
     class _Launcher:
         async def launch_async(self, *_args: Any, **_kwargs: Any):
+            nonlocal launch_calls
+            launch_calls += 1
             return candidate
 
     monkeypatch.setattr(launcher_module, "RayGenerationLauncher", _Launcher)
@@ -1193,14 +1254,17 @@ async def test_cold_candidate_health_failure_terminalizes_outer_before_publicati
         await outer.activate()
 
     assert caught.value is health_failure
+    assert candidate.calls == [("update", "W2", 2), "shutdown"]
     assert candidate.lifecycle.phase is RuntimePhase.TERMINATED
     assert outer.lifecycle.failure is health_failure
     assert outer.lifecycle.phase is RuntimePhase.TERMINATED
+    assert state.desired_policy == _PolicySnapshot("W2", 2)
     assert state.inner_runtime is None
     assert state.active_policy_version is None
     with pytest.raises(RuntimeLifecycleError, match="terminated") as retry:
         await outer.activate()
     assert retry.value.__cause__ is health_failure
+    assert launch_calls == 1
 
 
 @pytest.mark.asyncio

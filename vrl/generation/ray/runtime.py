@@ -408,6 +408,35 @@ class RayGenerationRuntime(GenerationRuntime):
     ) -> BaseException:
         """Close admission and return the stable first failure after cleanup."""
 
+        failure = self._publish_failure(error)
+        try:
+            if join_control_tasks:
+                await self.shutdown()
+            else:
+                # A runtime-owned control task cannot await shutdown(): the
+                # shutdown task joins that same control task. It already owns
+                # its completion, so tear down resources directly.
+                await self._teardown_owned_resources()
+                self.lifecycle.finish_shutdown()
+        except BaseException as cleanup_error:
+            # The failed install/ACK is the transaction's root cause. Cleanup is
+            # retryable by the schedule owner, so it must never replace that
+            # first failure at the trainer boundary.
+            logger.error(
+                "generation terminal cleanup failed after operation error %r",
+                error,
+                exc_info=(
+                    type(cleanup_error),
+                    cleanup_error,
+                    cleanup_error.__traceback__,
+                ),
+            )
+            failure.add_note(f"generation terminal cleanup also failed: {cleanup_error!r}")
+        return failure
+
+    def _publish_failure(self, error: BaseException) -> BaseException:
+        """Publish the first failure and synchronously upgrade terminal cleanup."""
+
         # Publish the operation root before upgrading an existing graceful
         # shutdown. Cancellation of its release barrier must never win the
         # first-failure slot over the terminal error that required the upgrade.
@@ -438,29 +467,6 @@ class RayGenerationRuntime(GenerationRuntime):
                 and not release_wait_task.done()
             ):
                 release_wait_task.cancel()
-        try:
-            if join_control_tasks:
-                await self.shutdown()
-            else:
-                # A runtime-owned control task cannot await shutdown(): the
-                # shutdown task joins that same control task. It already owns
-                # its completion, so tear down resources directly.
-                await self._teardown_owned_resources()
-                self.lifecycle.finish_shutdown()
-        except BaseException as cleanup_error:
-            # The failed install/ACK is the transaction's root cause. Cleanup is
-            # retryable by the schedule owner, so it must never replace that
-            # first failure at the trainer boundary.
-            logger.error(
-                "generation terminal cleanup failed after operation error %r",
-                error,
-                exc_info=(
-                    type(cleanup_error),
-                    cleanup_error,
-                    cleanup_error.__traceback__,
-                ),
-            )
-            failure.add_note(f"generation terminal cleanup also failed: {cleanup_error!r}")
         return failure
 
     async def offload(self) -> None:
@@ -812,10 +818,17 @@ class RayGenerationRuntime(GenerationRuntime):
                 # the inner ownership boundary above; this is not a runtime
                 # failure and must not manufacture one.
                 raise
-            failure = await self._terminalize_after_failure(
-                error,
-                join_control_tasks=False,
-            )
+            shutdown_task = self._shutdown_task
+            if shutdown_task is not None and not shutdown_task.done():
+                # The shared shutdown task is already joining this activation.
+                # Publish/upgrade the failure here, then let that one owner tear
+                # down resources and finish the lifecycle after we exit.
+                failure = self._publish_failure(error)
+            else:
+                failure = await self._terminalize_after_failure(
+                    error,
+                    join_control_tasks=False,
+                )
             if isinstance(error, asyncio.CancelledError):
                 error.__cause__ = failure
                 raise
