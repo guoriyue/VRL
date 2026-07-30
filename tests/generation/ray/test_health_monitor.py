@@ -15,6 +15,7 @@ from vrl.generation.ray.health_monitor import (
     RolloutWorkerUnreachable,
 )
 from vrl.generation.ray.lifecycle_fsm import RuntimeLifecycle, RuntimePhase
+from vrl.runtime_errors import TerminalRuntimeError
 
 # Carried by every test that drives `_FakeRay`. The double is the Ray wire, not
 # the monitor: scripting a probe's answer is how pause/stop/skip behaviour stays
@@ -164,6 +165,7 @@ def test_unresponsive_worker_fails_the_runtime_and_kills_the_fleet(
     assert runtime.lifecycle.phase is RuntimePhase.SHUTTING_DOWN
     failure = runtime.lifecycle.failure
     assert isinstance(failure, RolloutWorkerUnreachable)
+    assert isinstance(failure, TerminalRuntimeError)
     assert failure.worker_id == "rollout-1"
     assert failure.timeout_s == 0.5
     # Production's kill_actors did this, in fleet order, with no_restart=True --

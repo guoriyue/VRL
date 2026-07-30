@@ -23,6 +23,8 @@ import pytest
 import torch
 
 from tests.rollouts.orchestration.continuous._helpers import _wait_until
+from vrl.generation.ray.health_monitor import RolloutWorkerUnreachable
+from vrl.generation.ray.lifecycle_fsm import RuntimeLifecycle
 from vrl.ray.operation_deadline import RayOperationTimeout
 from vrl.rollouts.batch import RolloutBatch
 from vrl.rollouts.orchestration.continuous.consumer import ContinuousRolloutConsumer
@@ -298,6 +300,63 @@ async def test_terminal_generation_error_is_not_retried_or_wrapped() -> None:
         assert caught.value is error
         assert producer.state.fatal_error is error
         assert producer.state.submitted_count == 1
+        assert producer.state.inflight_count == 0
+        assert queue.size() == 0
+    finally:
+        await producer.stop()
+
+
+@pytest.mark.asyncio
+async def test_idle_health_failure_makes_next_collect_fatal_without_slot_retry() -> None:
+    """A monitor failure between requests must poison the next slot immediately."""
+
+    lifecycle = RuntimeLifecycle()
+    health_failure = RolloutWorkerUnreachable(
+        "rollout-0",
+        1.0,
+        TimeoutError("health probe timed out"),
+    )
+    lifecycle.fail(health_failure)
+
+    class _ClosedRuntimeCollector(_GatedCollector):
+        def __init__(self) -> None:
+            super().__init__()
+            self.attempts = 0
+
+        async def collect_unscored(
+            self,
+            prompts: list[str],
+            **kwargs: Any,
+        ) -> _Unscored:
+            del prompts, kwargs
+            self.attempts += 1
+            lifecycle.require_running("generate")
+            raise AssertionError("closed runtime accepted generation")
+
+    collector = _ClosedRuntimeCollector()
+    queue = ContinuousRolloutQueue(max_items=4)
+    producer = _producer(collector, queue)
+
+    await producer.start()
+    try:
+        await _wait_until(lambda: producer.state.fatal_error is not None)
+        consumer = _consumer(queue, max_stale=0)
+
+        with pytest.raises(RuntimeError, match="generate rejected") as caught:
+            await consumer.drain_for_iteration(
+                rollout_id=0,
+                min_groups=1,
+                current_version=1,
+                mode=RolloutScheduleMode.CONTINUOUS,
+                wait_timeout_s=60.0,
+                poll_interval_s=0.001,
+                producer_state=producer.state,
+            )
+
+        assert caught.value.__cause__ is health_failure
+        assert collector.attempts == 1
+        assert producer.state.submitted_count == 1
+        assert producer.state.error_count == 1
         assert producer.state.inflight_count == 0
         assert queue.size() == 0
     finally:

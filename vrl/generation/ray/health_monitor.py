@@ -23,6 +23,7 @@ from typing import Any
 from vrl.generation.execution.types import DistributedWorkerHandle
 from vrl.ray.dependencies import require_ray
 from vrl.ray.resource_cleanup import kill_actors
+from vrl.runtime_errors import TerminalRuntimeError
 
 logger = logging.getLogger(__name__)
 
@@ -172,7 +173,7 @@ class RolloutWorkerHealthMonitor:
             kill_actors(ray, actors)
 
 
-class RolloutWorkerUnreachable(RuntimeError):
+class RolloutWorkerUnreachable(TerminalRuntimeError):
     """A rollout worker stopped answering its liveness probe."""
 
     def __init__(self, worker_id: str, timeout_s: float, cause: BaseException) -> None:
