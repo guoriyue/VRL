@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+import gc
+import weakref
 from types import SimpleNamespace
 from typing import Any, ClassVar
 
@@ -103,6 +105,19 @@ class _BlockingSleepInner(_FakeInner):
         self.sleep_started.set()
         await self.finish_sleep.wait()
         await super().sleep_workers()
+
+
+class _NonRetainingInner(_FakeInner):
+    """Acknowledge policy installs without keeping the test payload alive."""
+
+    async def update_weights(self, state_ref: Any, version: int) -> None:
+        del state_ref
+        self.calls.append(("update", version))
+        self.current_policy_version = version
+
+
+class _PolicyPayload:
+    pass
 
 
 class _TimeoutWeightSync:
@@ -230,7 +245,7 @@ def _on_demand_runtime(
     )
 
 
-async def _set_desired_policy(
+async def _stage_pending_policy(
     runtime: _OnDemandRayGenerationRuntime,
     state_ref: Any,
     policy_version: int,
@@ -238,15 +253,26 @@ async def _set_desired_policy(
     await runtime.update_weights(state_ref, policy_version)
 
 
-def _assert_desired_policy(
+def _assert_pending_policy(
     runtime: _OnDemandRayGenerationRuntime,
     state_ref: Any,
     policy_version: int,
 ) -> None:
-    policy = runtime._desired_policy
+    policy = runtime._pending_policy
     assert policy is not None
     assert policy.state_ref == state_ref
     assert policy.policy_version == policy_version
+
+
+def _attach_active_inner(
+    runtime: _OnDemandRayGenerationRuntime,
+    inner: _FakeInner,
+    policy_version: int,
+) -> None:
+    runtime._inner_runtime = inner
+    runtime._active_policy_version = policy_version
+    runtime.current_policy_version = policy_version
+    inner.current_policy_version = policy_version
 
 
 def _parking_snapshot(
@@ -590,11 +616,12 @@ async def test_cold_weights_are_staged_then_applied_during_activation() -> None:
     runtime._launcher = _Launcher()
     await runtime.update_weights("W2", 2)
 
-    _assert_desired_policy(runtime, "W2", 2)
+    _assert_pending_policy(runtime, "W2", 2)
     assert runtime._inner_runtime is None
     await runtime.activate()
     assert runtime._inner_runtime is candidate
     assert runtime._active_policy_version == 2
+    assert runtime._pending_policy is None
     assert candidate.calls == [("update", "W2", 2)]
 
 
@@ -602,21 +629,21 @@ async def test_cold_weights_are_staged_then_applied_during_activation() -> None:
 async def test_offload_keeps_workers_and_activation_wakes_latest_policy() -> None:
     runtime = _on_demand_runtime()
     inner = _FakeInner()
-    runtime._inner_runtime = inner
-    runtime._active_policy_version = 1
+    _attach_active_inner(runtime, inner, 1)
 
     await runtime.offload()
     await runtime.update_weights("W2", 2)
 
     assert runtime._inner_runtime is inner
     assert runtime._workers_offloaded is True
-    _assert_desired_policy(runtime, "W2", 2)
+    _assert_pending_policy(runtime, "W2", 2)
     assert inner.calls == ["sleep"]
 
     await runtime.activate()
     assert runtime._inner_runtime is inner
     assert runtime._workers_offloaded is False
     assert runtime._active_policy_version == 2
+    assert runtime._pending_policy is None
     assert inner.calls == ["sleep", "wake", ("update", "W2", 2)]
 
 
@@ -624,42 +651,120 @@ async def test_offload_keeps_workers_and_activation_wakes_latest_policy() -> Non
 async def test_activation_does_not_reinstall_an_already_active_policy() -> None:
     runtime = _on_demand_runtime()
     inner = _FakeInner()
-    runtime._inner_runtime = inner
+    _attach_active_inner(runtime, inner, 2)
     runtime._workers_offloaded = True
-    runtime._active_policy_version = 2
-    await _set_desired_policy(runtime, "W2", 2)
+    await _stage_pending_policy(runtime, "W2", 2)
 
     await runtime.activate()
 
     assert inner.calls == ["wake"]
     assert runtime._active_policy_version == 2
+    assert runtime._pending_policy is None
 
 
 @pytest.mark.asyncio
 async def test_active_update_publishes_only_after_inner_ack() -> None:
     runtime = _on_demand_runtime()
-    await _set_desired_policy(runtime, "W1", 1)
     inner = _BlockingRestoreInner()
-    runtime._inner_runtime = inner
-    runtime._active_policy_version = 1
+    _attach_active_inner(runtime, inner, 1)
 
     update = asyncio.create_task(runtime.update_weights("W2", 2))
     await asyncio.wait_for(inner.restore_started.wait(), timeout=1)
-    _assert_desired_policy(runtime, "W1", 1)
+    assert runtime._pending_policy is None
     assert runtime._active_policy_version == 1
     assert runtime.current_policy_version == 1
 
     inner.finish_restore.set()
     await asyncio.wait_for(update, timeout=1)
-    _assert_desired_policy(runtime, "W2", 2)
+    assert runtime._pending_policy is None
     assert runtime._active_policy_version == 2
     assert runtime.current_policy_version == 2
 
 
 @pytest.mark.asyncio
-async def test_active_update_failure_preserves_desired_policy_and_terminates() -> None:
+async def test_active_update_releases_acknowledged_payload() -> None:
     runtime = _on_demand_runtime()
-    await _set_desired_policy(runtime, "W1", 1)
+    inner = _NonRetainingInner()
+    _attach_active_inner(runtime, inner, 1)
+    payload = _PolicyPayload()
+    payload_ref = weakref.ref(payload)
+
+    await runtime.update_weights(payload, 2)
+    del payload
+    gc.collect()
+
+    assert payload_ref() is None
+    assert runtime._pending_policy is None
+    assert runtime._active_policy_version == 2
+
+
+@pytest.mark.asyncio
+async def test_cold_activation_releases_staged_payload_after_ack() -> None:
+    runtime = _on_demand_runtime()
+    candidate = _NonRetainingInner()
+
+    class _Launcher:
+        async def launch_async(self, *args, **kwargs):
+            del args, kwargs
+            return candidate
+
+    runtime._launcher = _Launcher()
+    payload = _PolicyPayload()
+    payload_ref = weakref.ref(payload)
+    await runtime.update_weights(payload, 2)
+    del payload
+    gc.collect()
+    assert payload_ref() is not None
+
+    await runtime.activate()
+    gc.collect()
+
+    assert payload_ref() is None
+    assert runtime._pending_policy is None
+    assert runtime._active_policy_version == 2
+
+
+@pytest.mark.asyncio
+async def test_wake_releases_staged_payload_after_ack() -> None:
+    runtime = _on_demand_runtime()
+    inner = _NonRetainingInner()
+    _attach_active_inner(runtime, inner, 1)
+    runtime._workers_offloaded = True
+    payload = _PolicyPayload()
+    payload_ref = weakref.ref(payload)
+    await runtime.update_weights(payload, 2)
+    del payload
+    gc.collect()
+    assert payload_ref() is not None
+
+    await runtime.activate()
+    gc.collect()
+
+    assert payload_ref() is None
+    assert runtime._pending_policy is None
+    assert runtime._active_policy_version == 2
+
+
+@pytest.mark.asyncio
+async def test_shutdown_releases_uninstalled_payload() -> None:
+    runtime = _on_demand_runtime()
+    payload = _PolicyPayload()
+    payload_ref = weakref.ref(payload)
+    await runtime.update_weights(payload, 2)
+    del payload
+    gc.collect()
+    assert payload_ref() is not None
+
+    await runtime.shutdown()
+    gc.collect()
+
+    assert payload_ref() is None
+    assert runtime._pending_policy is None
+
+
+@pytest.mark.asyncio
+async def test_active_update_failure_preserves_installed_version_and_terminates() -> None:
+    runtime = _on_demand_runtime()
     update_error = RuntimeError("worker update failed")
 
     class _FailingInner(_FakeInner):
@@ -668,13 +773,13 @@ async def test_active_update_failure_preserves_desired_policy_and_terminates() -
             raise update_error
 
     inner = _FailingInner()
-    runtime._inner_runtime = inner
+    _attach_active_inner(runtime, inner, 1)
 
     with pytest.raises(RuntimeError, match="worker update failed") as caught:
         await runtime.update_weights("W2", 2)
 
     assert caught.value is update_error
-    _assert_desired_policy(runtime, "W1", 1)
+    assert runtime._pending_policy is None
     assert runtime.current_policy_version == 1
     assert runtime.lifecycle.failure is update_error
     assert runtime.lifecycle.phase is RuntimePhase.TERMINATED
@@ -685,8 +790,6 @@ async def test_active_update_failure_preserves_desired_policy_and_terminates() -
 @pytest.mark.asyncio
 async def test_active_update_health_race_does_not_publish_outer_version() -> None:
     runtime = _on_demand_runtime()
-    await _set_desired_policy(runtime, "W1", 1)
-    runtime._active_policy_version = 1
     health_failure = RolloutWorkerUnreachable(
         "rollout-1",
         0.5,
@@ -699,14 +802,13 @@ async def test_active_update_health_race_does_not_publish_outer_version() -> Non
             self.lifecycle.fail(health_failure)
 
     inner = _HealthRaceInner()
-    inner.current_policy_version = 1
-    runtime._inner_runtime = inner
+    _attach_active_inner(runtime, inner, 1)
 
     with pytest.raises(RolloutWorkerUnreachable) as caught:
         await runtime.update_weights("W2", 2)
 
     assert caught.value is health_failure
-    _assert_desired_policy(runtime, "W1", 1)
+    assert runtime._pending_policy is None
     assert runtime.current_policy_version == 1
     assert runtime._active_policy_version is None
     assert runtime._inner_runtime is None
@@ -719,7 +821,7 @@ async def test_active_update_health_race_does_not_publish_outer_version() -> Non
 @pytest.mark.asyncio
 async def test_wake_health_race_terminalizes_outer_before_active_publication() -> None:
     runtime = _on_demand_runtime()
-    await _set_desired_policy(runtime, "W2", 2)
+    await _stage_pending_policy(runtime, "W2", 2)
     runtime._active_policy_version = 1
     runtime._workers_offloaded = True
     health_failure = RolloutWorkerUnreachable(
@@ -803,7 +905,7 @@ async def test_active_on_demand_timeout_force_kills_the_inner_owner(
     import vrl.generation.ray.runtime as runtime_module
 
     runtime = _on_demand_runtime()
-    await _set_desired_policy(runtime, "W1", 1)
+    await _stage_pending_policy(runtime, "W1", 1)
     timeout = RayOperationTimeout("rollout.weight_sync", 1.0)
     inner, actor = _timeout_inner(timeout)
     runtime._inner_runtime = inner
@@ -952,7 +1054,7 @@ async def test_on_demand_submitted_cancellation_force_kills_the_inner_owner(
 @pytest.mark.asyncio
 async def test_update_cleanup_failure_retains_inner_for_retry() -> None:
     runtime = _on_demand_runtime()
-    await _set_desired_policy(runtime, "W1", 1)
+    await _stage_pending_policy(runtime, "W1", 1)
     update_error = RuntimeError("worker update failed")
     cleanup_error = RuntimeError("worker cleanup failed")
 
@@ -1082,7 +1184,7 @@ async def test_terminal_failure_cancels_offload_with_stable_root() -> None:
 @pytest.mark.asyncio
 async def test_terminal_failure_cancels_offload_waiting_for_activation_with_stable_root() -> None:
     runtime = _on_demand_runtime()
-    await _set_desired_policy(runtime, "W", 3)
+    await _stage_pending_policy(runtime, "W", 3)
     candidate = _BlockingRestoreInner()
     timeout = RayOperationTimeout("rollout.generation.activation", 0.5)
 
@@ -1194,7 +1296,7 @@ async def test_offload_cleanup_failure_retains_inner_for_shutdown_retry() -> Non
 @pytest.mark.asyncio
 async def test_concurrent_cold_activation_launches_and_restores_once() -> None:
     runtime = _on_demand_runtime()
-    await _set_desired_policy(runtime, "W", 3)
+    await _stage_pending_policy(runtime, "W", 3)
     candidate = _BlockingRestoreInner()
     launch_calls = 0
 
@@ -1229,7 +1331,7 @@ async def test_concurrent_activation_wakes_and_restores_once() -> None:
     inner = _BlockingRestoreInner()
     runtime._inner_runtime = inner
     runtime._workers_offloaded = True
-    await _set_desired_policy(runtime, "W", 3)
+    await _stage_pending_policy(runtime, "W", 3)
 
     first = asyncio.create_task(runtime.activate())
     await asyncio.wait_for(inner.restore_started.wait(), timeout=1)
@@ -1248,7 +1350,7 @@ async def test_concurrent_activation_wakes_and_restores_once() -> None:
 @pytest.mark.asyncio
 async def test_update_rejects_activation_overlap_while_offload_joins_it() -> None:
     runtime = _on_demand_runtime()
-    await _set_desired_policy(runtime, "W1", 1)
+    await _stage_pending_policy(runtime, "W1", 1)
     candidate = _BlockingRestoreInner()
 
     class _Launcher:
@@ -1265,7 +1367,7 @@ async def test_update_rejects_activation_overlap_while_offload_joins_it() -> Non
     offload = asyncio.create_task(runtime.offload())
     await asyncio.sleep(0)
     assert not offload.done()
-    _assert_desired_policy(runtime, "W1", 1)
+    _assert_pending_policy(runtime, "W1", 1)
 
     candidate.finish_restore.set()
     await asyncio.wait_for(asyncio.gather(activation, offload), timeout=1)
@@ -1276,7 +1378,7 @@ async def test_update_rejects_activation_overlap_while_offload_joins_it() -> Non
 @pytest.mark.asyncio
 async def test_shutdown_joins_activation_after_waiter_cancellation() -> None:
     runtime = _on_demand_runtime()
-    await _set_desired_policy(runtime, "W", 4)
+    await _stage_pending_policy(runtime, "W", 4)
     candidate = _BlockingRestoreInner()
 
     class _Launcher:
@@ -1307,7 +1409,7 @@ async def test_shutdown_joins_activation_after_waiter_cancellation() -> None:
 @pytest.mark.asyncio
 async def test_external_terminal_shutdown_is_the_only_activation_cleanup_owner() -> None:
     runtime = _on_demand_runtime()
-    await _set_desired_policy(runtime, "W", 4)
+    await _stage_pending_policy(runtime, "W", 4)
     candidate = _BlockingRestoreInner()
     timeout = RayOperationTimeout("rollout.generation.chunk", 0.5)
     finish_calls = 0
@@ -1350,7 +1452,7 @@ async def test_external_terminal_shutdown_is_the_only_activation_cleanup_owner()
 @pytest.mark.asyncio
 async def test_late_shutdown_joins_activation_owned_terminal_cleanup() -> None:
     runtime = _on_demand_runtime()
-    await _set_desired_policy(runtime, "W2", 2)
+    await _stage_pending_policy(runtime, "W2", 2)
     runtime._active_policy_version = 1
     runtime._workers_offloaded = True
     health_failure = RolloutWorkerUnreachable(
@@ -1434,7 +1536,7 @@ async def test_shutdown_joins_offload_before_teardown() -> None:
 @pytest.mark.asyncio
 async def test_activation_restore_failure_cleans_candidate_and_terminates() -> None:
     runtime = _on_demand_runtime()
-    await _set_desired_policy(runtime, "W", 3)
+    await _stage_pending_policy(runtime, "W", 3)
     restore_error = RuntimeError("restore failed")
 
     class _Candidate(_FakeInner):
@@ -1467,7 +1569,7 @@ async def test_cold_restore_timeout_force_kills_unpublished_candidate(
     import vrl.generation.ray.runtime as runtime_module
 
     runtime = _on_demand_runtime()
-    await _set_desired_policy(runtime, "W2", 2)
+    await _stage_pending_policy(runtime, "W2", 2)
     timeout = RayOperationTimeout("rollout.weight_sync", 1.0)
     candidate, actor = _timeout_inner(timeout)
 
@@ -1503,7 +1605,7 @@ async def test_cold_restore_timeout_force_kills_unpublished_candidate(
 @pytest.mark.asyncio
 async def test_cold_candidate_health_failure_terminalizes_outer_before_publication() -> None:
     runtime = _on_demand_runtime()
-    await _set_desired_policy(runtime, "W2", 2)
+    await _stage_pending_policy(runtime, "W2", 2)
     health_failure = RolloutWorkerUnreachable(
         "rollout-0",
         0.5,
@@ -1538,7 +1640,7 @@ async def test_cold_candidate_health_failure_terminalizes_outer_before_publicati
     assert candidate.lifecycle.phase is RuntimePhase.TERMINATED
     assert runtime.lifecycle.failure is health_failure
     assert runtime.lifecycle.phase is RuntimePhase.TERMINATED
-    _assert_desired_policy(runtime, "W2", 2)
+    assert runtime._pending_policy is None
     assert runtime._inner_runtime is None
     assert runtime._active_policy_version is None
     with pytest.raises(RuntimeLifecycleError, match="terminated") as retry:

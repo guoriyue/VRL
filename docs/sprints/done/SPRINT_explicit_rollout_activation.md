@@ -27,9 +27,9 @@ full denoising trajectory instead of using token-level retract/resume.
 ## Runtime contract
 
 ```text
-activate()       launch or wake workers, then install desired_policy
+activate()       launch or wake workers, then install pending_policy
 generate()       require an explicitly active runtime
-update_weights() install immediately when active, otherwise stage desired_policy
+update_weights() install immediately when active, otherwise stage pending_policy
 offload()        park already-idle workers; never drain generation itself
 shutdown()       join activation/offload tasks and tear down owned resources
 ```
@@ -65,16 +65,19 @@ activation. The implementation was subsequently consolidated: on-demand launch
 attaches an inner `RayGenerationRuntime`, and that inner runtime directly owns its
 executor, weight sync, actors, monitor, parking, and teardown. There is no
 `RayGenerationWorkerFleet` or second public lifecycle owner; the outer facade
-mirrors policy intent and exposes one collector-facing terminal boundary.
+retains only an unacknowledged policy install and exposes one collector-facing
+terminal boundary.
 
 On-demand policy state distinguishes:
 
-- `desired_policy`: latest complete trainer snapshot accepted by the facade;
+- `pending_policy`: latest complete trainer snapshot not yet acknowledged by workers;
 - `active_policy_version`: version acknowledged by the active worker set.
 
-The desired version advances only after required worker acknowledgements when the
-workers are active. A partial update failure preserves the previous desired snapshot,
-closes admission, and destroys the unknown worker state through terminal cleanup.
+The public version advances only after required worker acknowledgements when the
+workers are active. Successful active, cold, and wake installs release the full CPU
+payload immediately; parking keeps the installed model, so only version scalars need
+to survive. A partial update failure preserves the previous published version, closes
+admission, and destroys the unknown worker state through terminal cleanup.
 
 ## Non-goals
 

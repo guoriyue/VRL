@@ -499,21 +499,21 @@ trainer、复用 training placement group，或要求 continuous owner 增加 ev
 ```text
 trainer active, rollout parked
     -> park complete trainer-owned GPU state
-    -> activate/wake rollout and install desired policy
+    -> activate/wake rollout and install pending policy
     -> generate (and shared reward phase if configured)
     -> drain admitted generation
     -> park complete rollout-owned GPU state
     -> restore trainer-owned GPU state
     -> backward / optimizer step
-    -> stage desired policy for next wake
+    -> stage pending policy install for next wake
 ```
 
 关键不变量：
 
 - trainer restore 之前 rollout 必须已经完整 park；
 - rollout wake 之前 trainer 必须已经完整 park；
-- `update_weights` 在 rollout parked 时只推进 `desired_policy`；
-- next wake 先安装 desired version，再允许 generate；
+- `update_weights` 在 rollout parked 时只保留尚未 ACK 的 `pending_policy`；
+- next wake 先安装 pending version、释放 CPU payload，再允许 generate；
 - actors/processes 可以长驻；除已声明、经上限验证的 CUDA context/library residual 外，
   role-owned GPU physical pages 不能跨 phase 偷留；
 - normal handoff 不 kill actors，不重建 placement group。
@@ -743,7 +743,7 @@ inline fixed eval 新建 callback。现有 `ensure_initial_weights()` 仍必须�
 - CuMem 路径覆盖 build-time 与 generation-time 长寿命 allocation；
 - CPU fallback 必须逐 family 验证 model + frozen components + backend caches；未验证 family
   fail-fast，不静默降级；
-- wake 后先恢复 memory，再安装缺失的 desired policy version；
+- wake 后先恢复 memory，再安装缺失的 pending policy version；
 - sleep/wake failure 关闭 admission 并 quarantine，不能把未知显存状态交给 trainer；
 - host-memory telemetry 纳入 phase metrics，防止 GPU OOM 被换成 pinned/host OOM。
 
@@ -853,7 +853,7 @@ trainer.park
 < rollout.offload
 < trainer.restore
 < backward
-< desired_policy(vN+1)
+< pending_policy(vN+1)
 ```
 
 - `samples_per_chunk:auto` 按当前 rollout phase 的容量探测，不再接收通用 role cap，也不存在

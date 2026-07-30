@@ -26,8 +26,8 @@ logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True, slots=True)
-class _PolicySnapshot:
-    """Latest complete trainer state desired by the rollout workers."""
+class _PendingPolicyInstall:
+    """Trainer state retained only until one worker fleet acknowledges it."""
 
     state_ref: Any
     policy_version: int
@@ -71,7 +71,7 @@ class _OnDemandRayGenerationRuntime:
         self._activation_task: asyncio.Task[RayGenerationRuntime] | None = None
         self._offload_task: asyncio.Task[None] | None = None
         self._shutdown_task: asyncio.Task[None] | None = None
-        self._desired_policy: _PolicySnapshot | None = None
+        self._pending_policy: _PendingPolicyInstall | None = None
         self._active_policy_version: int | None = None
         self._workers_offloaded = False
         self.lifecycle = RuntimeLifecycle()
@@ -95,7 +95,7 @@ class _OnDemandRayGenerationRuntime:
         return bool(self._config.worker.sync_trainable_state)
 
     async def activate(self) -> None:
-        """Launch or wake workers and install the latest desired policy."""
+        """Launch or wake workers and complete any pending policy install."""
 
         self.lifecycle.require_running("activate")
         task = self._activation_task
@@ -108,18 +108,8 @@ class _OnDemandRayGenerationRuntime:
             task.add_done_callback(self._activation_finished)
         try:
             await asyncio.shield(task)
-        except asyncio.CancelledError as error:
-            if self.lifecycle.phase is RuntimePhase.SHUTTING_DOWN:
-                await self.shutdown()
-            failure = self.lifecycle.failure
-            if failure is not None:
-                # asyncio.shield creates a new CancelledError when its inner task
-                # is cancelled, so restore the stable terminal identity.
-                error.__cause__ = failure
-            raise
-        except BaseException:
-            if self.lifecycle.phase is RuntimePhase.SHUTTING_DOWN:
-                await self.shutdown()
+        except BaseException as error:
+            await self._finish_control_wait_failure(error)
             raise
 
     async def generate(self, request: GenerationRequest) -> GenerationOutput:
@@ -163,7 +153,7 @@ class _OnDemandRayGenerationRuntime:
                 "the rollout schedule must pause/drain before syncing",
             )
 
-        policy = _PolicySnapshot(
+        policy = _PendingPolicyInstall(
             state_ref=state_ref,
             policy_version=int(policy_version),
         )
@@ -181,11 +171,11 @@ class _OnDemandRayGenerationRuntime:
                     self.lifecycle.publication_guard("publish policy version"),
                 ):
                     self._active_policy_version = policy.policy_version
-                    self._desired_policy = policy
+                    self._pending_policy = None
                     self.current_policy_version = policy.policy_version
                 return
             with self.lifecycle.publication_guard("publish policy version"):
-                self._desired_policy = policy
+                self._pending_policy = policy
                 self.current_policy_version = policy.policy_version
         except asyncio.CancelledError as error:
             if (
@@ -210,12 +200,15 @@ class _OnDemandRayGenerationRuntime:
         """Close admission and return the stable first failure after cleanup."""
 
         failure = self._publish_failure(error)
+        # Terminal admission has no retry path, so retaining a staged full-model
+        # CPU snapshot cannot contribute to recovery.
+        self._pending_policy = None
         try:
             if join_control_tasks:
                 await self.shutdown()
             else:
-                # An activation task cannot await shutdown because shutdown joins
-                # that same task. The activation owner tears down directly.
+                # A control task cannot await shutdown because shutdown joins that
+                # same task. The control-task owner tears down directly.
                 await self._teardown_inner_runtime()
                 self.lifecycle.finish_shutdown()
         except BaseException as cleanup_error:
@@ -259,18 +252,8 @@ class _OnDemandRayGenerationRuntime:
         if activation is not None and not activation.done():
             try:
                 await asyncio.shield(activation)
-            except asyncio.CancelledError as error:
-                if self.lifecycle.phase is RuntimePhase.SHUTTING_DOWN:
-                    await self.shutdown()
-                failure = self.lifecycle.failure
-                if failure is not None:
-                    # shield creates a waiter-local cancellation, so recover the
-                    # stable root published by the cancelled activation owner.
-                    error.__cause__ = failure
-                raise
-            except BaseException:
-                if self.lifecycle.phase is RuntimePhase.SHUTTING_DOWN:
-                    await self.shutdown()
+            except BaseException as error:
+                await self._finish_control_wait_failure(error)
                 raise
             if self.lifecycle.phase is RuntimePhase.SHUTTING_DOWN:
                 await self.shutdown()
@@ -285,17 +268,8 @@ class _OnDemandRayGenerationRuntime:
             task.add_done_callback(self._offload_finished)
         try:
             await asyncio.shield(task)
-        except asyncio.CancelledError as error:
-            if self.lifecycle.phase is RuntimePhase.SHUTTING_DOWN:
-                await self.shutdown()
-            failure = self.lifecycle.failure
-            if failure is not None:
-                # shield does not retain the inner task's cancellation cause.
-                error.__cause__ = failure
-            raise
-        except BaseException:
-            if self.lifecycle.phase is RuntimePhase.SHUTTING_DOWN:
-                await self.shutdown()
+        except BaseException as error:
+            await self._finish_control_wait_failure(error)
             raise
         if self.lifecycle.phase is RuntimePhase.SHUTTING_DOWN:
             await self.shutdown()
@@ -337,10 +311,23 @@ class _OnDemandRayGenerationRuntime:
             task = None
         if task is None:
             self.lifecycle.begin_shutdown()
+            # No operation can consume a staged install after admission closes.
+            # Release what may be a full CPU model snapshot before cleanup waits.
+            self._pending_policy = None
             task = asyncio.create_task(self._shutdown_once())
             self._shutdown_task = task
             task.add_done_callback(self._shutdown_finished)
         await asyncio.shield(task)
+
+    async def _finish_control_wait_failure(self, error: BaseException) -> None:
+        """Join facade cleanup and restore roots hidden by ``asyncio.shield``."""
+
+        if self.lifecycle.phase is RuntimePhase.SHUTTING_DOWN:
+            await self.shutdown()
+        if isinstance(error, asyncio.CancelledError):
+            failure = self.lifecycle.failure
+            if failure is not None:
+                error.__cause__ = failure
 
     def _shutdown_finished(self, task: asyncio.Task[None]) -> None:
         if self._shutdown_task is task:
@@ -410,15 +397,15 @@ class _OnDemandRayGenerationRuntime:
                     # Record physical truth before restoring weights so cleanup
                     # treats a failed restore as an awake runtime.
                     self._workers_offloaded = False
-                    desired = self._desired_policy
-                    if (
-                        desired is not None
-                        and desired.policy_version != self._active_policy_version
+                    pending = self._pending_policy
+                    if pending is not None and (
+                        pending.policy_version != self._active_policy_version
                     ):
                         await inner_runtime.update_weights(
-                            desired.state_ref,
-                            desired.policy_version,
+                            pending.state_ref,
+                            pending.policy_version,
                         )
+                    if pending is not None:
                         with (
                             inner_runtime.lifecycle.publication_guard(
                                 "publish restored policy version",
@@ -427,7 +414,8 @@ class _OnDemandRayGenerationRuntime:
                                 "publish restored policy version",
                             ),
                         ):
-                            self._active_policy_version = desired.policy_version
+                            self._active_policy_version = pending.policy_version
+                            self._pending_policy = None
                 return inner_runtime
 
             candidate = await self._launcher.launch_async(
@@ -436,19 +424,20 @@ class _OnDemandRayGenerationRuntime:
                 placement=self._placement,
             )
             try:
-                desired = self._desired_policy
+                pending = self._pending_policy
                 active_policy_version = candidate.current_policy_version
-                if desired is not None:
+                if pending is not None:
                     await candidate.update_weights(
-                        desired.state_ref,
-                        desired.policy_version,
+                        pending.state_ref,
+                        pending.policy_version,
                     )
-                    active_policy_version = desired.policy_version
+                    active_policy_version = pending.policy_version
                 with (
                     candidate.lifecycle.publication_guard("publish activated runtime"),
                     self.lifecycle.publication_guard("publish activated runtime"),
                 ):
                     self._active_policy_version = active_policy_version
+                    self._pending_policy = None
                     self._inner_runtime = candidate
             except BaseException as restore_error:
                 try:
