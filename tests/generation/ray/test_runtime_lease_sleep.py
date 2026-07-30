@@ -456,7 +456,7 @@ async def test_runtime_requires_every_worker_parking_rpc_to_succeed(
 
 
 @pytest.mark.asyncio
-async def test_worker_sleep_timeout_force_kills_without_graceful_release(
+async def test_worker_sleep_remote_error_force_kills_without_graceful_release(
     cleanup_ray: _CleanupRay,
 ) -> None:
     timeout = TimeoutError("worker sleep timed out")
@@ -474,7 +474,7 @@ async def test_worker_sleep_timeout_force_kills_without_graceful_release(
 
 
 @pytest.mark.asyncio
-async def test_worker_wake_timeout_force_kills_without_graceful_release(
+async def test_worker_wake_remote_error_force_kills_without_graceful_release(
     cleanup_ray: _CleanupRay,
 ) -> None:
     timeout = TimeoutError("worker wake timed out")
@@ -493,6 +493,42 @@ async def test_worker_wake_timeout_force_kills_without_graceful_release(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("method_name", "remote_name"),
+    [
+        ("sleep_workers", "sleep"),
+        ("wake_workers", "wake"),
+    ],
+)
+async def test_worker_parking_deadline_force_kills_without_graceful_release(
+    monkeypatch: pytest.MonkeyPatch,
+    cleanup_ray: _CleanupRay,
+    method_name: str,
+    remote_name: str,
+) -> None:
+    import vrl.generation.ray.runtime as runtime_module
+
+    runtime = _parking_runtime(_parking_snapshot())
+    actor = runtime._owned_workers[0].actor
+    setattr(actor, remote_name, SimpleNamespace(remote=lambda: _NeverRef()))
+    real_wait_for = asyncio.wait_for
+
+    async def expire_at_test_deadline(awaitable: Any, *, timeout: float) -> Any:
+        assert timeout == 120
+        return await real_wait_for(awaitable, timeout=0.01)
+
+    monkeypatch.setattr(runtime_module.asyncio, "wait_for", expire_at_test_deadline)
+
+    with pytest.raises(TimeoutError) as caught:
+        await getattr(runtime, method_name)()
+
+    assert runtime.lifecycle.failure is caught.value
+    assert runtime.lifecycle.phase is RuntimePhase.TERMINATED
+    assert actor.release_policy.calls == 0
+    assert cleanup_ray.killed == [actor]
+
+
+@pytest.mark.asyncio
 async def test_cancelled_worker_sleep_force_kills_unknown_parking_state(
     cleanup_ray: _CleanupRay,
 ) -> None:
@@ -505,6 +541,42 @@ async def test_cancelled_worker_sleep_force_kills_unknown_parking_state(
     parking.cancel()
     with pytest.raises(asyncio.CancelledError) as caught:
         await parking
+
+    assert runtime.lifecycle.failure is caught.value
+    assert runtime.lifecycle.phase is RuntimePhase.TERMINATED
+    assert actor.release_policy.calls == 0
+    assert cleanup_ray.killed == [actor]
+
+
+@pytest.mark.asyncio
+async def test_cancelled_worker_wake_force_kills_unknown_parking_state(
+    cleanup_ray: _CleanupRay,
+) -> None:
+    runtime = _parking_runtime(_parking_snapshot())
+    actor = runtime._owned_workers[0].actor
+    actor.wake = SimpleNamespace(remote=lambda: _NeverRef())
+    waking = asyncio.create_task(runtime.wake_workers())
+    await asyncio.sleep(0)
+
+    waking.cancel()
+    with pytest.raises(asyncio.CancelledError) as caught:
+        await waking
+
+    assert runtime.lifecycle.failure is caught.value
+    assert runtime.lifecycle.phase is RuntimePhase.TERMINATED
+    assert actor.release_policy.calls == 0
+    assert cleanup_ray.killed == [actor]
+
+
+@pytest.mark.asyncio
+async def test_runtime_rejects_invalid_worker_parking_report_type(
+    cleanup_ray: _CleanupRay,
+) -> None:
+    runtime = _parking_runtime({"worker_id": "rollout-0"})
+    actor = runtime._owned_workers[0].actor
+
+    with pytest.raises(TypeError, match="invalid memory-parking report") as caught:
+        await runtime.sleep_workers()
 
     assert runtime.lifecycle.failure is caught.value
     assert runtime.lifecycle.phase is RuntimePhase.TERMINATED
@@ -1327,6 +1399,45 @@ async def test_offload_cleanup_failure_retries_without_replacing_root() -> None:
 
     await runtime.shutdown()
     assert inner.shutdown_calls == 2
+
+
+@pytest.mark.asyncio
+async def test_repeated_offload_cleanup_failure_preserves_root_for_later_retry() -> None:
+    runtime = _on_demand_runtime()
+    offload_error = RuntimeError("sleep failed")
+    cleanup_error = RuntimeError("worker cleanup keeps failing")
+
+    class _FailingInner(_FakeInner):
+        shutdown_calls = 0
+
+        async def sleep_workers(self) -> None:
+            raise offload_error
+
+        async def shutdown(self) -> None:
+            self.shutdown_calls += 1
+            if self.shutdown_calls <= 2:
+                raise cleanup_error
+            self.calls.append("shutdown")
+
+    inner = _FailingInner()
+    runtime._inner_runtime = inner
+
+    with pytest.raises(RuntimeError, match="sleep failed") as caught:
+        await runtime.offload()
+
+    assert caught.value is offload_error
+    assert runtime.lifecycle.failure is offload_error
+    assert runtime.lifecycle.phase is RuntimePhase.SHUTTING_DOWN
+    assert runtime._inner_runtime is inner
+    assert inner.shutdown_calls == 2
+    notes = getattr(offload_error, "__notes__", ())
+    assert any("cleanup also failed" in note for note in notes)
+    assert any("cleanup retry also failed" in note for note in notes)
+
+    await runtime.shutdown()
+    assert inner.shutdown_calls == 3
+    assert runtime._inner_runtime is None
+    assert runtime.lifecycle.phase is RuntimePhase.TERMINATED
 
 
 @pytest.mark.asyncio

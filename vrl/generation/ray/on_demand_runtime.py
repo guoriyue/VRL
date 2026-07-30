@@ -115,7 +115,13 @@ class _OnDemandRayGenerationRuntime:
     async def generate(self, request: GenerationRequest) -> GenerationOutput:
         self.lifecycle.require_running("generate")
         try:
-            output = await self._require_active_inner().generate(request)
+            inner_runtime = self._inner_runtime
+            if inner_runtime is None or self._workers_offloaded:
+                raise RuntimeError(
+                    "generate requires an active rollout runtime; "
+                    "the rollout schedule must await activate() first",
+                )
+            output = await inner_runtime.generate(request)
             self.lifecycle.require_running("complete generation")
             return output
         except asyncio.CancelledError as error:
@@ -141,6 +147,8 @@ class _OnDemandRayGenerationRuntime:
         return bool(self._config.resources.colocated)
 
     async def update_weights(self, state_ref: Any, policy_version: int) -> None:
+        """Install on active workers or stage the accepted target while inactive."""
+
         # Validate before entering terminal quarantine: a rejected overlapping
         # call has not made installed worker state unknown.
         self.lifecycle.require_running("update_weights")
@@ -333,7 +341,27 @@ class _OnDemandRayGenerationRuntime:
         """Join facade cleanup and restore roots hidden by ``asyncio.shield``."""
 
         if self.lifecycle.phase is RuntimePhase.SHUTTING_DOWN:
-            await self.shutdown()
+            root_failure = self.lifecycle.failure
+            try:
+                await self.shutdown()
+            except BaseException as cleanup_error:
+                # A control operation that already published a stable root keeps
+                # that identity across repeated cleanup failures. With no prior
+                # root, cleanup itself is the first material failure and escapes.
+                if root_failure is None:
+                    raise
+                logger.error(
+                    "on-demand generation cleanup retry failed after control error %r",
+                    error,
+                    exc_info=(
+                        type(cleanup_error),
+                        cleanup_error,
+                        cleanup_error.__traceback__,
+                    ),
+                )
+                root_failure.add_note(
+                    f"generation terminal cleanup retry also failed: {cleanup_error!r}",
+                )
         if isinstance(error, asyncio.CancelledError):
             failure = self.lifecycle.failure
             if failure is not None:
@@ -378,15 +406,6 @@ class _OnDemandRayGenerationRuntime:
         self._inner_runtime = None
         self._workers_offloaded = False
         self._active_policy_version = None
-
-    def _require_active_inner(self) -> RayGenerationRuntime:
-        inner_runtime = self._inner_runtime
-        if inner_runtime is None or self._workers_offloaded:
-            raise RuntimeError(
-                "generate requires an active rollout runtime; "
-                "the rollout schedule must await activate() first",
-            )
-        return inner_runtime
 
     def _activation_finished(
         self,
