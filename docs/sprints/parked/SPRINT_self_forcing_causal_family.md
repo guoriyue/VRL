@@ -2,7 +2,7 @@
 
 日期：2026-07-13
 
-Status: **parked**. Its trigger remains completion of the F0-F3 generic
+Status: **parked / rebaselined 2026-07-30**. Its trigger remains completion of the F0-F3 generic
 primitives, trainable-state installer, and fake-adapter contract in the
 [FlashDreams execution provider](../planned/SPRINT_flashdreams_execution_provider.md);
 it does not wait for Self-Forcing to close provider production conformance. The
@@ -11,6 +11,11 @@ covers actor-process reachability only. Its dedicated health concurrency group
 can respond while a default-group business call is busy or hung; the completed
 [Ray rollout operation deadline sprint](../done/SPRINT_ray_rollout_operation_deadlines.md)
 provides the independent F3 business-call gate.
+
+The CausVid family landed after the original plan. It is now the in-repository
+prior art for re-noise likelihood, chunk-autoregressive transport, trajectory
+axes, and trajectory-grouped replay. This sprint must reuse those contracts; it
+only adds semantics that are genuinely unique to Self-Forcing and FlashDreams.
 
 ## 0. 结论先行
 
@@ -27,7 +32,20 @@ terminal clean，没有后继随机节点。不能把 4 次 forward 写成 4 个
 
 ## 1. 顺序 KILL gates
 
-### P0 — RENOISE likelihood 数学门（CPU）
+### P0 — Self-Forcing 4-forward / 3-transition recipe 门（CPU）
+
+共享 Gaussian re-noise 数学已经落地，不能再造第二份实现：
+
+- `vrl/math/denoise/renoise.py:renoise_step_with_logprob` 同时拥有 rollout sampling 与
+  replay scoring；
+- `tests/math/denoise/test_renoise.py` 已覆盖 sample/replay equality、prediction gradient、
+  dtype/shape 与非法 sigma；
+- `vrl/models/families/causvid/runner.py` 和
+  `vrl/models/families/causvid/model.py` 已分别消费它完成 rollout 与 grouped replay。
+
+P0 的剩余工作是验证 **Self-Forcing 自己的 4/3 recipe、warped timestep 与 cache
+finalization**，不是新增 `renoise` math module。CausVid 的发布配方是 3-forward /
+2-transition，只能证明共享 seam，不可替代本 family gate。
 
 对 forward `i = 0, 1, 2`：
 
@@ -96,12 +114,25 @@ FlashDreams raw module/config；禁止通过 rollout worker、HTTP 或子进程�
 真权重门使用 Self-Forcing 1.3B checkpoint，生成可人工查看的 mp4，记录峰值显存；只看
 邻帧差统计不算通过。
 
-### P2 — Causal cache replay 门
+### P2 — Self-Forcing functional cache 与 streaming replay 门
 
-现有 trainer 按 timestep 独立调用 `replay_forward()`。如果每个 `(temporal_chunk,
-transition)` 都从 chunk 0 重建 prefix，完整 update 是
-`O(num_temporal_chunks^2 * num_flow_steps)`，不可接受。`replay_samples_per_chunk` 只切
-sample batch，不能解决 temporal history 重建。
+CausVid 已经落下通用边界，Self-Forcing 必须直接复用：
+
+- `vrl/generation/bindings/chunk_autoregressive_denoise/` 拥有外层
+  `SampleChunk` transport、typed result 与 gatherer；
+- `vrl/trajectory/builders.py:build_chunk_autoregressive_denoise_trajectory` 已拥有
+  `[sample, temporal_chunk, denoise_transition]` 三轴、terminal latent 与 replay refs；
+- `vrl/rollouts/evaluators/denoise/chunk_autoregressive_logprob.py` 已提供
+  `replay_granularity="trajectory"` 的共享 evaluator，trainer 也已消费该 granularity；
+- `vrl/models/families/causvid/{runner,model}.py` 已证明 rollout 的 stochastic transition
+  与独立 cache-finalization forward 可以映射到上述契约。
+
+所以本 sprint **不新增第二个 `GroupedTrajectoryEvaluator`、第二套 trajectory builder 或
+第二份 chunk gatherer**。真正未解决的是 Self-Forcing 的 FlashDreams cache 语义与训练
+内存边界。CausVid replay 目前用 `kv_cache=None` 重算完整 clean prefix，正文明确是
+`O(num_temporal_chunks^2)` 的 correctness-first 实现；它是 API prior art，不是
+Self-Forcing 的性能答案。`replay_samples_per_chunk` 只切 sample batch，也不能解决
+temporal history 重建。
 
 现有 FlashDreams `BlockKVCache.update()` 会原地覆盖同一 physical slot：
 
@@ -142,14 +173,14 @@ for each temporal chunk k, in order:
 看到与 rollout 相同的 prefix。
 
 prefix 每个 temporal chunk 只构建/commit 一次，目标复杂度是
-`O(num_temporal_chunks * num_flow_steps)`，graph memory 也只保留一个 temporal chunk。
-trainer 增加按 capability dispatch 的窄 `GroupedTrajectoryEvaluator` session：每次返回一个
-temporal chunk 的三个 signals，loss 按整条 trajectory 的
-`num_temporal_chunks * 3` 归一化并立即 backward；其他 evaluator 继续走现有逐 timestep
-loop，禁止按 family name 分支。`SelfForcingReplayModel` 暴露 family-specific functional
-cache/replay method，不把它塞进共享 `ReplayModel`。这个薄协议边界是必要的，因为它改变
-replay 迭代单位并拥有 causal cache 生命周期；在第二个 family 出现相同语义前，不扩成
-通用 temporal-engine framework。
+`O(num_temporal_chunks * num_flow_steps)`。现有 trajectory evaluator 一次取得整条
+`[B,C,S]` signal，可以作为 correctness baseline；但它不会让 trainer 在每个 temporal
+chunk 后立即 backward，因此也不自动保证单-chunk graph memory。若 1.3B 的实测表明整条
+functional graph 超预算，新增的是一个**按 capability dispatch 的 streaming replay
+protocol**：`SelfForcingReplayModel` 逐 chunk 交付三个 signals 与 cache commit 边界，
+trainer 按整条 trajectory 的 `num_temporal_chunks * 3` 归一化并立即 backward。它不能按
+family name 分支，也不能复制现有 evaluator 的 signal-building 逻辑；没有显存证据时不先
+造通用 temporal-engine framework。
 
 P2 的首个 KILL test 是 tiny Wan block 的两条 cache path parity：同一 prefix/current input
 下 functional replay 与 in-place inference 输出相等；连续 4 个 denoise forward、独立
@@ -168,39 +199,47 @@ trainable grad 非零。每个 chunk 还要逐 tensor 比较 functional path 与
 
 ```text
 sample
-temporal_chunk       kind=custom
-renoise_transition   kind=denoise_step, length=3
+temporal_chunk       kind=temporal_chunk
+denoise_transition   kind=denoise_transition, length=3
 ```
 
 trainable segment 中保存：
 
-- `observations[sample, temporal_chunk, renoise_transition]`：`noisy_i`；
+- `observations[sample, temporal_chunk, denoise_transition]`：`noisy_i`；
 - `actions[...]`：`noisy_{i+1}`；
 - `old_log_prob[...]` 与 trainable mask；
-- `autoregressive_indices[temporal_chunk]`：rollout 实际传给 provider 的 index，grouped replay
-  调 `cache.start/finalize`；continuation rollout 不假设从 0 开始，因此不能只从 axis length
-  猜值；
-- `flow_step_indices[renoise_transition]`：明确 action 由 forward 0/1/2 参数化；
-- `prediction_timesteps[temporal_chunk, renoise_transition]`：实际 warped timestep；
-- `transition_sigmas[...]`：实际 `sigma_{i+1}`；
-- `cache_context_timesteps[temporal_chunk]`：实际 finalization context timestep；首版验证
-  全为 0，grouped replay 的独立 `finalize_kv_cache` forward 消费；
-- `chunk_clean_latents[sample, temporal_chunk, ...]`：rollout executor 直接保存
+- `autoregressive_indices[sample, temporal_chunk]`：rollout 实际传给 provider 的 index，
+  grouped replay 调 `cache.start/finalize`；continuation rollout 不假设从 0 开始，因此不能
+  只从 axis length 猜值；
+- `timesteps[sample, temporal_chunk, denoise_transition]`：网络实际收到的 warped
+  timestep，沿用 shared builder 的 canonical tensor name；
+- `next_sigmas[sample, temporal_chunk, denoise_transition]`：实际 `sigma_{i+1}`；
+- `cache_context_timesteps[sample, temporal_chunk]`：实际 finalization context timestep；
+  首版验证全为 0，grouped replay 的独立 `finalize_kv_cache` forward 消费；
+- `finalized_chunk_latents[sample, temporal_chunk, ...]`：rollout executor 直接保存
   `finish_denoising` 返回、decode 前的 terminal clean；grouped replay 用它验证 terminal
   forward 并推进下一 chunk cache。
 
-`ReplayInput.tensor_refs` 明确引用这些 tensor；resolver 读取整个 segment，不使用错误的
-`replay_tensor_dict(axis="denoise")` 伪切片。若某处确实按轴切片，必须同时传
-`axis` 和 `axis_index`。
+shared trajectory builder 已把 canonical tensors 与可识别的 sample-aligned
+`replay_tensors` 写入 `ReplayInput.tensor_refs`；Self-Forcing 只补
+`autoregressive_indices`、`next_sigmas` 与 `cache_context_timesteps` 这些确有 replay
+消费者的事实。两个 chunk-level runtime facts 在写入前 sample-expand 为 `[B,C]`，以符合
+现有 `_chunk_replay_axes`；如果它们本应 batch-invariant，producer 和 replay 都验证各行
+一致，而不是悄悄丢掉 `[C]` tensor。resolver 读取整个 denoise segment；不再增加平行
+field-name 表，也不从 config 二次推导已记录的 runtime facts。
 
 KV cache、provider session、Ray handle 不进入 trajectory。最后 deterministic forward
-只产出 `chunk_clean_latents`，不塞假 action，也不在首版增加 auxiliary objective。
+只产出 `finalized_chunk_latents`，不塞假 action，也不在首版增加 auxiliary objective。
 
 ## 3. Execution path
 
-新增 family-specific `SelfForcingChunkExecutor`，复用 native 外层 request planning、
-`SampleChunk` OOM split、gather、launch contract 与 policy-version discipline，但**不直接
-复用** `DiffusionChunkExecutorBase` 的单一连续 denoise 主循环。
+新增 family-specific `SelfForcingChunkExecutor`，继承现有
+`ChunkAutoregressiveDenoiseExecutorBase`，并复用
+`ChunkAutoregressiveDenoiseGatherer`、native request planning、`SampleChunk` OOM split、
+launch contract 与 policy-version discipline。family model 的
+`generate_chunk_autoregressive` 拥有 temporal state machine；它不经过
+`DiffusionChunkExecutorBase` 的 full-sequence denoise loop。这与 CausVid 的跨 family
+shape 保持一致，同时让 FlashDreams cache lifecycle 留在真正 owner。
 
 一个 native `SampleChunk` 内部执行 temporal state machine：
 
@@ -211,24 +250,26 @@ for each temporal AR chunk:
   start_denoising
   4 flow forwards / 3 recorded renoise transitions
   finish_denoising
-  finalize before the next temporal chunk
+  finalize exactly once, before the next temporal chunk if one follows
     (extra finalize_kv_cache forward on terminal clean, then cache.finalize)
 assemble clean chunks
 decode one video
 ```
 
-同一 `FinalState` 至多 finalize 一次；进入下一 temporal chunk 前必须 finalize；最后一个
-chunk 若不会再被读取可以不 finalize，保持上游 public lifecycle 语义。验收统计
+每个 `generate` 产出的 `FinalState` 必须恰好 finalize 一次，包括最后一个 temporal
+chunk。最后一份 committed cache 可能不再被后续 chunk 读取，但 pinned Self-Forcing runner
+仍调用该 lifecycle，且 replay 的 committed-cache parity gate 也覆盖它。验收统计
 `start/finish/finalize` 次数、fresh-noise seed、cache index 与 assembled frame layout。
 
 ## 4. 实施产物
 
-- `vrl/models/diffusion/self_forcing/`：family model/replay facade、FlashDreams adapter、
-  custom executor；不复制 WanDiT、scheduler 或 BlockKVCache。
-- `vrl/math/diffusion/`：renoise sample/logprob math 与 CPU gradient tests。
-- family registry entry + FlashDreams provider binding：选择 custom executor 与 grouped
-  evaluator/replay builder；recipe 必须显式选择 FlashDreams，不能伪造 native fallback，
-  也不新增平行 `SUPPORTED_MODELS` 表。
+- `vrl/models/families/self_forcing/`：family model/replay facade、FlashDreams adapter、
+  runner 与 custom executor；不复制 WanDiT、scheduler 或 BlockKVCache。
+- 复用 `vrl/math/denoise/renoise.py`，只在
+  `tests/models/families/self_forcing/` 增加 4/3 recipe、cache 与 replay contract 测试。
+- `vrl/families/registry.py` 增加唯一 family/provider binding，选择
+  `chunk_autoregressive` executor/gatherer 与现有 grouped evaluator；recipe 必须显式选择
+  FlashDreams，不能伪造 native fallback，也不新增平行 `SUPPORTED_MODELS` 表。
 - 一个最小 DROID-overfit 风格配方：4 个固定 prompt、BLOCK/motion guard、现有
   Kling/VideoScore2 reward；只有 P0–P2 全绿后才进入训练 smoke。
 
@@ -236,16 +277,20 @@ chunk 若不会再被读取可以不 finalize，保持上游 public lifecycle �
 
 ### 应改变
 
-- 新增 causal temporal executor 与 grouped replay，因为现有 single-denoise/per-step replay
-  无法表达 cache 状态机且会产生二次复杂度。
+- 新增 Self-Forcing family runner/executor 与 functional cache replay；通用 causal
+  executor、gatherer、trajectory builder 和 grouped evaluator 已存在，直接复用。
 - 在 FlashDreams fork 新增 trainer-only functional cache；inference 的 in-place cache 保持。
 - 分离 checkpoint normalization、post-load normalization、trainable-name mapping 与
   runtime installer；validation 由 raw module/schema 派生。
-- trajectory 增加三个行为消费轴和 `chunk_clean_latents` producer/consumer contract。
+- 在现有三轴 trajectory 上只增加有 replay 消费者的 Self-Forcing runtime facts，并复用
+  `finalized_chunk_latents` producer/consumer contract。
 
 ### 保持不变
 
 - native `GenerationRuntime`、Ray worker、policy version、trajectory 与 trainer ownership。
+- `ChunkAutoregressiveDenoiseExecutorBase`、gatherer、trajectory builder、
+  `ChunkAutoregressiveDenoiseLogProbEvaluator` 与 trainer 的 trajectory granularity；
+  它们是已被 CausVid 证明的跨 family protocol boundary。
 - FlashDreams public `generate/finalize` facade 与 transformer `predict_flow`；它们分别是
   public cache lifecycle 和跨 family execution hook。
 - wm-infra adapter 与 family executor 即使薄也保留：前者是跨仓协议边界，后者拥有
@@ -259,6 +304,8 @@ chunk 若不会再被读取可以不 finalize，保持上游 public lifecycle �
 
 - 不嵌入 FlashDreams WebRTC/serving control plane；不建第二个 runtime。
 - 不 vendor 平行 WanDiT/BlockKVCache/scheduler。
+- 不复制 `renoise_step_with_logprob`、chunk-autoregressive gatherer、trajectory builder 或
+  grouped evaluator；CausVid 的现有实现是 prior art。
 - 不做 OmniDreams/LingBot；不做蒸馏训练。
 - 首版不启用 CUDA graph rollout；后续只有 hot-update parity 与性能数据支持时再开。
 - 不做 full-parameter fallback 或 terminal auxiliary objective；它们需要各自的新证据与门。
@@ -270,7 +317,10 @@ chunk 若不会再被读取可以不 finalize，保持上游 public lifecycle �
 - [ ] actual warped timestep 和 transition sigma 来自同一 resolved recipe 并写入 trajectory。
 - [ ] LoRA trainable state 在 compile 前构造，trainer/rollout key-schema/digest 一致。
 - [ ] `SelfForcingChunkExecutor` 正确区分 native sample chunk 与 temporal chunk。
-- [ ] grouped replay 为线性复杂度，覆盖 filling、首次 rolling update 与 steady state。
+- [ ] functional-cache replay 的 compute 为
+  `O(num_temporal_chunks * num_flow_steps)`，覆盖 filling、首次 rolling update 与 steady
+  state；只有真机证明整条 functional graph 超预算时，才增加按 chunk backward 的
+  streaming protocol 并验证单-chunk graph memory。
 - [ ] functional cache 与 public generate+finalize 后的 committed cache parity 通过，
   anomaly-mode backward 无 version-counter error。
 - [ ] old/fresh log-prob 在真权重上过 drift guard，terminal clean round-trip 通过。
@@ -286,11 +336,18 @@ mock 冒充通过。
 - `docs/sprints/SPRINT_native_generation_engine_program.md`
 - `docs/sprints/planned/SPRINT_flashdreams_execution_provider.md`
 - `docs/sprints/done/SPRINT_rollout_worker_liveness.md`
+- `vrl/models/families/causvid/runner.py`
+- `vrl/models/families/causvid/model.py`
+- `tests/models/families/causvid/test_replay_and_loading.py`
+- `vrl/math/denoise/renoise.py`
+- `tests/math/denoise/test_renoise.py`
 - `vrl/generation/execution/chunks.py`
-- `vrl/generation/diffusion/executor.py`
+- `vrl/generation/bindings/chunk_autoregressive_denoise/executor.py`
+- `vrl/generation/bindings/chunk_autoregressive_denoise/gather.py`
+- `vrl/trajectory/builders.py`
 - `vrl/trajectory/resolver.py`
 - `vrl/trainers/online/trainer.py`
-- `vrl/rollouts/evaluators/diffusion/sde_logprob.py`
+- `vrl/rollouts/evaluators/denoise/chunk_autoregressive_logprob.py`
 - `/home/mingfeiguo/Desktop/flashdreams/flashdreams/flashdreams/infra/diffusion/model/base.py`
 - `/home/mingfeiguo/Desktop/flashdreams/flashdreams/flashdreams/core/attention/kvcache.py`
 - `/home/mingfeiguo/Desktop/flashdreams/flashdreams/flashdreams/infra/diffusion/scheduler/fm.py`

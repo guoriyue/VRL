@@ -290,7 +290,8 @@ trainers 却被 models 向上 import、byte 级相同的 `IMAGE_SUFFIXES` 仍抄
 
 ## 7. References
 
-- 仍需做（§1）：`vrl/trainers/weight_sync.py:150`、`vrl/models/utils.py:38,64,183,257`、
+- 历史执行前引用（§1；均已完成，路径保留为旧基线证据）：
+  `vrl/trainers/weight_sync.py:150`、`vrl/models/utils.py:38,64,183,257`、
   `vrl/utils/stats.py:38,206`、`vrl/rollouts/evaluators/types.py:10,32,84`、
   `vrl/algorithms/trajectory.py:9`、`vrl/algorithms/grpo/multisegment.py:17`、
   `vrl/trainers/activation_checkpointing.py:87`、`vrl/families/registry.py:157,346-350`、

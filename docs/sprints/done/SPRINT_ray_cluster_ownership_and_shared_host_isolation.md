@@ -162,7 +162,7 @@ What should stay unchanged:
   are real process and protocol boundaries, not thin files to flatten.
 - Placement-group ownership, cross-node placement preflight, actor GPU
   validation, OOM splitting, and trainer-handoff sleep/wake remain intact.
-- `vrl/ray/lifecycle.py` remains a thin framework adapter. Its separation keeps
+- `vrl/ray/resource_cleanup.py` remains a thin framework adapter. Its separation keeps
   Ray imports and handle cleanup behind one protocol boundary; error semantics
   may be made truthful without flattening it into recipe code.
 - Ray's upstream `RAY_PROCESSES` table remains a legitimate ALL_CAPS protocol
@@ -199,7 +199,7 @@ What should stay unchanged:
 
 - Recipe ownership boundary: `vrl/scripts/common/online.py`
 - Fake-Ray ownership tests: `tests/scripts/test_online_ray_cluster.py`
-- Cleanup adapter: `vrl/ray/lifecycle.py`
+- Cleanup adapter: `vrl/ray/resource_cleanup.py`
 - Cooperative signal boundary: `vrl/scripts/train.py`
 - Rollout schedule shutdown: `vrl/rollouts/orchestration/{schedule.py,continuous/schedule.py}`
 - Distributed strategy shutdown: `vrl/trainers/strategy.py`

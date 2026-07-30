@@ -165,8 +165,9 @@ operation exceeds deadline or progress protocol breaks
   -> skip new release_policy RPCs
   -> ray.kill every owned actor with no_restart=True
   -> preserve the terminal operation error as root cause
-  -> stop continuous admission and retry
+  -> stop continuous admission (no prompt-slot retry)
   -> write failed run verdict
+  -> supervisor may restart the whole attempt within its bounded policy
 ```
 
 `ray.cancel` is not the correctness mechanism. A running synchronous actor method may ignore

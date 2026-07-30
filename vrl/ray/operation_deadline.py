@@ -50,7 +50,12 @@ class RayOperationCancelled(TerminalRuntimeError):
 
 @dataclass(frozen=True, slots=True)
 class RayCallDeadline:
-    """One absolute deadline starting at the driver submission boundary."""
+    """One absolute deadline starting when this object is constructed.
+
+    Callers that own Ray submission construct it immediately before ``.remote()``
+    when submission time belongs inside the operation budget. Helpers receiving
+    existing refs can only bound the waits they own.
+    """
 
     # Protocol identity consumed by the raised terminal error.
     operation: str

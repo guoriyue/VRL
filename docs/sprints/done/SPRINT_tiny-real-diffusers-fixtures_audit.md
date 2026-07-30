@@ -5,7 +5,8 @@
 
 # SPRINT: tiny-real diffusers 对象与依赖它们的家族转换
 
-状态：**planned**。Order 4 of 6，risk **medium**（依赖一次 lock 升级 + 删两处生产 guard + 删一个测试文件）。
+原计划状态：**planned（已由文件首部审计归档状态取代）**。Order 4 of 6，risk
+**medium**（依赖一次 lock 升级 + 删两处生产 guard + 删一个测试文件）。
 
 > **一句话**：仓库已经把 `tests/models/steps/denoise/fixtures.py` 当成 tiny-real 的黄金标准（12 个
 > `build_tiny_*` transformer builder，seeded、config-init、不下载、CPU）。本轨道把同一套机械扩到

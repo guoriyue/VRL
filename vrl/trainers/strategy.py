@@ -4,10 +4,10 @@ The trainer drives the GRPO loop; *how* a step executes on the hardware —
 backward, grad clipping, and checkpoint-state export/load — goes through a
 ``Strategy`` so the trainer never hard-codes single-process vs FSDP2.
 
-This readiness sprint ships only ``SingleProcessStrategy`` (current behavior
-moved behind the protocol, byte-for-byte). The FSDP2 strategy — DTensor-aware
-clip and full-state export, a real ``barrier`` — lands in
-``SPRINT_multi_gpu_training.md`` and slots in here without touching the trainer.
+``SingleProcessStrategy``, ``DDPStrategy``, and the DTensor-aware
+``FSDPStrategy`` share this boundary. Concrete strategies own wrapping,
+collectives, state parking, checkpoint/rollout export, and shutdown without
+teaching the trainer which distributed mechanism is active.
 """
 
 from __future__ import annotations

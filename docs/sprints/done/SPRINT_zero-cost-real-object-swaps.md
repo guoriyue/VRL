@@ -4,7 +4,8 @@
 
 # SPRINT: 轨道三 — 进程里已经造得出来的东西，别再手搓
 
-状态：**planned**。Order 3 of 6（tier-policy 基线 sprint 之后，两条更贵的转换轨道之前）。Risk: low。
+原计划状态：**planned（已由文件首部 DONE 执行状态取代）**。Order 3 of 6
+（tier-policy 基线 sprint 之后，两条更贵的转换轨道之前）。Risk: low。
 
 > **归并轴是 tier，不是目录。** 这一轨收的全部是「真对象在当前进程里已经免费可构造」的替身：真
 > `RootConfig`、真 torch DCP、真 CPU `GradScaler`、真 `torch.compile`、真

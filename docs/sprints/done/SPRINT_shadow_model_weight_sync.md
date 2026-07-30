@@ -3,10 +3,10 @@
 状态：**P0 + P1 + P2 全部完成 —— P2 多卡真机验证通过（2026-06-19）**。P0/P1 实现 + CPU 测试（2026-06-18）；P2 运行时启用 + executor stale-slot 路由 + CPU 测试（2026-06-19）；P2 多卡真机验证通过（2026-06-19，见 §11「P2 多卡验证结果」）。
 
 > **更新（2026-06-18，P0/P1 落地）：**
-> - **设计偏差（比 §3 的 PEFT 多 adapter 方案更简单、更低风险）**：slot 不用 PEFT 命名 adapter（要 key 重映射、易撞 NFT 的 `default`/`previous`、2× VRAM），而用 **state-dict 快照 slot**。`TrainableStateSlots`（`vrl/models/utils.py`）只存「版本→flat trainable payload dict」（host RAM，≈0 额外 VRAM）；`activate` 复用已有且测试过的 `load_trainable_state(slot[v])` 把那版参数 copy 进 live 模型，并用 `_active_slot_version` 跳过同版本重载。对所有 diffusion family 通用（含 wan 多 transformer），零 PEFT key 重映射风险。代价：切版本时一次 H2D copy（LoRA 很小；§8 的 CUDA-stream overlap 仍是后续优化）。
+> - **设计偏差（比 §3 的 PEFT 多 adapter 方案更简单、更低风险）**：slot 不用 PEFT 命名 adapter（要 key 重映射、易撞 NFT 的 `default`/`previous`、2× VRAM），而用 **state-dict 快照 slot**。`TrainableStateSlots`（`vrl/models/weight_utils.py`）只存「版本→flat trainable payload dict」（host RAM，≈0 额外 VRAM）；`activate` 复用已有且测试过的 `load_trainable_state(slot[v])` 把那版参数 copy 进 live 模型，并用 `_active_slot_version` 跳过同版本重载。对所有 diffusion family 通用（含 wan 多 transformer），零 PEFT key 重映射风险。代价：切版本时一次 H2D copy（LoRA 很小；§8 的 CUDA-stream overlap 仍是后续优化）。
 > - **P0（已实现）**：`DiffusionModelBase` 加 `supports_versioned_trainable_state=True` + `install_trainable_state`/`activate_trainable_state`/`has_trainable_state`（getattr-dispatch，不入硬 `RuntimeModel` 契约，AR family 自动 fallback）。`ChunkExecutionResult.stale_slot` 区分 evict 与真错误。`GenerationWorkerCore.update_weights` 在支持时安装 slot 不覆盖旧版；`execute_chunk` 按 `request.policy_version` 激活 slot、success 返回 request version（过 executor 断言）、缺 slot 返回 typed stale-slot。worker 暴露 `supports_versioned_trainable_state()`（+ Ray actor forwarder）。
 > - **P1（机制已实现，默认 OFF）**：`RolloutLifecycle.supports_non_draining_weight_sync()`（getattr-default-False）；`after_train_step` 在支持时跳过 `drain_inflight`，并发 `continuous.weight_sync_barrier_mode`（0=draining/1=non-draining）metric（已进 metrics.csv）。
-> - **CPU 测试**：`tests/models/test_utils.py`（slot store）、`test_model_base.py`（install/activate/retain 旧版/skip-if-active）、`tests/generation/execution/test_worker_versioned_slots.py`（install 不覆盖、缺 slot stale-slot、激活 request 版本、plain-model 仍走 mismatch）、`test_schedule.py`（draining mode=0、non-draining 不等 in-flight + mode=1）。全套 366 passed。
+> - **CPU 测试**：`tests/models/test_weight_utils.py`（slot store）、`tests/models/steps/denoise/common/test_model_base.py`（install/activate/retain 旧版/skip-if-active）、`tests/generation/execution/test_worker_versioned_slots.py`（install 不覆盖、缺 slot stale-slot、激活 request 版本、plain-model 仍走 mismatch）、`tests/rollouts/orchestration/continuous/test_schedule.py`（draining mode=0、non-draining 不等 in-flight + mode=1）。全套 366 passed。
 > - **P2 运行时启用 + stale-slot 路由（已实现 + CPU 测试，2026-06-19）**：
 >   - **runtime capability 派生**：`RayGenerationLauncher.launch` 通过 `_all_workers_support_versioned_slots(ray, workers, weight_sync=...)` 把 `runtime.supports_non_draining_weight_sync` **派生为所有 worker `supports_versioned_trainable_state()` 的 AND**（worker core + `RayGenerationWorker` actor forwarder 已暴露）。`weight_sync is None`（sync 关闭）/ 无 worker / 任一 query 明确返回 False → False → 安全回退 draining barrier；query RPC 抛错表示 candidate fleet 已坏，必须上抛并由 launcher 清理 actors，不能伪装成“不支持”。`RayGenerationRuntime.__init__` 与 lease 模式默认 False，保持默认行为不变。
 >   - **executor stale-slot graceful discard**：新增 typed `StaleSlotDiscard`（`vrl/generation/execution/types.py`，**不是** `RuntimeError` 子类）。`RayGenerationExecutor.execute` 在 OOM-degrade（对非 OOM error 硬 raise）与 version assert **之前**检测 `ChunkExecutionResult.stale_slot`，raise `StaleSlotDiscard`（一个 evicted chunk 即丢整个 request，绝不拼混版本输出）。`ContinuousRolloutProducer._harvest_done` 捕获该类型 → `discarded_stale_count += 1`（不进 `error_count`、不触发 fail-fast），与 receipt-time staleness gate 同一 discard 语义。
@@ -410,7 +410,8 @@ continuous.stale_policy_versions
 
 注：reward=0 是 128×128/4 步 debug 配置的预期（验编排机制、非学习；图太小 OCR reward 恒 0）。
 
-**附带修复的预存 bug**：`vrl/rollouts/orchestration/lifecycle.py` `_collector_runtime()` 原只 catch
+**附带修复的预存 bug**：当前位于
+`vrl/rollouts/orchestration/rollout_runtime.py` 的 `_collector_runtime()` 原只 catch
 `AttributeError`，但 collector 的 `runtime` property 在 `set_runtime()` 前抛 **`RuntimeError`**
 （cross-node/continuous 启动期会在 runtime attach 前查 policy version）——没被 catch → 没 fallback 到
 weight_syncer 就崩。已改为 catch `(AttributeError, RuntimeError)` 优雅返回 None。这是 cross-node

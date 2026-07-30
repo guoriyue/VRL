@@ -246,7 +246,7 @@ def disable_adapter_on(module: Any) -> contextlib.AbstractContextManager[None]:
     LoRA via ``PeftAdapterMixin.add_adapter`` and expose ONLY the plural pair, so
     checking the singular method alone silently failed to disable the adapter —
     the reference forward (e.g. the diffusion GRPO KL term in
-    ``evaluators/diffusion/sde_logprob.py``) then ran with the policy adapter
+    ``rollouts/evaluators/denoise/sde_logprob.py``) then ran with the policy adapter
     still on. A module exposing neither surface is genuinely adapter-less and
     returns a null context.
     """

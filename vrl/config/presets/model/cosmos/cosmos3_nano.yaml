@@ -2,7 +2,7 @@
 # Strictly batch=1: Cosmos3OmniPipeline packs one sample at a time, so the chunk
 # executor pins samples_per_chunk=1 (runtime.py). 16B => single-card LoRA smoke
 # only; a trustworthy curve needs multi-GPU FSDP2.
-# REQUIRES diffusers with Cosmos3OmniPipeline (git-main+, not 0.37.1).
+# Requires diffusers>=0.39.0 with the released Cosmos3OmniPipeline.
 model:
   family: cosmos3
   path: nvidia/Cosmos3-Nano

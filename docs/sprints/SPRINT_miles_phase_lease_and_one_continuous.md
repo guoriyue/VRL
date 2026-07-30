@@ -1174,6 +1174,7 @@ merge gate。整个 umbrella 只有两组 gate 都有对应硬件证据时才标
 - `vrl/rollouts/collector/core.py:95-108,120-170,229-242`
 - `tests/ray/test_resources.py:1121-1153`
 - `tests/rollouts/orchestration/continuous/test_schedule.py:325-359,470-542`
-- `tests/generation/pipeline/test_pipeline_contracts.py:25-66`
+- `tests/generation/execution/test_chunks_pipelined.py`
+- `tests/generation/execution/test_execute_request_pipelined.py`
 - `tests/config/test_load_all_experiments.py:332-355`
 - `docs/sprints/done/SPRINT_remove_inline_fixed_eval.md`
