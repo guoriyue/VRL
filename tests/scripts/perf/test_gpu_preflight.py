@@ -26,7 +26,7 @@ def test_cpu_path_is_graceful_not_crash() -> None:
         assert measured_bf16_peak_tflops() == 0.0
 
 
-@pytest.mark.skipif(not _HAS_CUDA, reason="needs a CUDA GPU")
+@pytest.mark.gpu
 def test_measured_peak_is_a_sane_bf16_denominator() -> None:
     """The whole point: the measured bf16 peak is the REAL achievable rate, which for
     any current GPU is well below the fp8/sparse 'AI TOPS' headline. Guards against ever
@@ -39,7 +39,7 @@ def test_measured_peak_is_a_sane_bf16_denominator() -> None:
     assert 10.0 < peak < 5000.0
 
 
-@pytest.mark.skipif(not _HAS_CUDA, reason="needs a CUDA GPU")
+@pytest.mark.gpu
 def test_arch_match_and_sdpa_measured() -> None:
     report = run_gpu_preflight(force=True)
     assert report.available is True

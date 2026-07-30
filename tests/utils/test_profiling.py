@@ -1,8 +1,8 @@
 """Contract + smoke tests for the trustworthy profiling API.
 
 P0/P1 prove the API contract without a GPU; P2 runs a real CPU torch trace and
-asserts the trace/summary/manifest trust triad. The CUDA path is exercised by
-``vrl/scripts/perf/profile_smoke.py`` on a GPU box.
+asserts the trace/summary/manifest trust triad. The nvtx tests carry a
+``real_cover`` label for the CUDA emission no in-process test can observe.
 """
 
 from __future__ import annotations
@@ -26,6 +26,20 @@ from vrl.utils.profiling import (
 CPU = torch.profiler.ProfilerActivity.CPU
 CUDA = torch.profiler.ProfilerActivity.CUDA
 
+# The three push/pop pairing tests below share one blocker, so the label is a
+# module constant instead of the same string three times.
+_NVTX_DEPTH_IS_UNOBSERVABLE = pytest.mark.real_cover(
+    None,
+    why=(
+        "nvtx range depth is unobservable from inside the process: with no profiler "
+        "attached torch.cuda.nvtx.range_push/range_pop both return -2 even when CUDA is "
+        "available, so counting the calls is the only way to assert push/pop stay paired. "
+        "The real CUDA emission is driven by vrl/scripts/perf/profile_smoke.py under nsys "
+        "on a GPU box, which is a script, not a test"
+    ),
+    tracked_in="docs/sprints/planned/SPRINT_tier-policy-and-real-cover-labels.md",
+)
+
 
 # ---------------------------------------------------------------------------
 # P0 — API contract, no GPU required
@@ -38,30 +52,45 @@ def test_profile_range_is_transparent_to_return_value() -> None:
     assert result == 2
 
 
+@_NVTX_DEPTH_IS_UNOBSERVABLE
 def test_profile_range_no_nvtx_when_disabled(monkeypatch: pytest.MonkeyPatch) -> None:
     calls = {"push": 0, "pop": 0}
-    monkeypatch.setattr(torch.cuda.nvtx, "range_push", lambda name: calls.__setitem__("push", calls["push"] + 1))
-    monkeypatch.setattr(torch.cuda.nvtx, "range_pop", lambda: calls.__setitem__("pop", calls["pop"] + 1))
+    monkeypatch.setattr(
+        torch.cuda.nvtx, "range_push", lambda name: calls.__setitem__("push", calls["push"] + 1)
+    )
+    monkeypatch.setattr(
+        torch.cuda.nvtx, "range_pop", lambda: calls.__setitem__("pop", calls["pop"] + 1)
+    )
     monkeypatch.delenv("VRL_PROFILE", raising=False)
     with profile_range("test.no_nvtx", emit_nvtx=False):
         pass
     assert calls == {"push": 0, "pop": 0}
 
 
+@_NVTX_DEPTH_IS_UNOBSERVABLE
 def test_profile_range_pops_nvtx_on_exception(monkeypatch: pytest.MonkeyPatch) -> None:
     calls = {"push": 0, "pop": 0}
-    monkeypatch.setattr(torch.cuda.nvtx, "range_push", lambda name: calls.__setitem__("push", calls["push"] + 1))
-    monkeypatch.setattr(torch.cuda.nvtx, "range_pop", lambda: calls.__setitem__("pop", calls["pop"] + 1))
+    monkeypatch.setattr(
+        torch.cuda.nvtx, "range_push", lambda name: calls.__setitem__("push", calls["push"] + 1)
+    )
+    monkeypatch.setattr(
+        torch.cuda.nvtx, "range_pop", lambda: calls.__setitem__("pop", calls["pop"] + 1)
+    )
     with pytest.raises(ValueError), profile_range("test.boom", emit_nvtx=True):
         raise ValueError("boom")
     # push and pop must be strictly paired even when the body raises.
     assert calls == {"push": 1, "pop": 1}
 
 
+@_NVTX_DEPTH_IS_UNOBSERVABLE
 def test_profile_range_nvtx_follows_env(monkeypatch: pytest.MonkeyPatch) -> None:
     calls = {"push": 0, "pop": 0}
-    monkeypatch.setattr(torch.cuda.nvtx, "range_push", lambda name: calls.__setitem__("push", calls["push"] + 1))
-    monkeypatch.setattr(torch.cuda.nvtx, "range_pop", lambda: calls.__setitem__("pop", calls["pop"] + 1))
+    monkeypatch.setattr(
+        torch.cuda.nvtx, "range_push", lambda name: calls.__setitem__("push", calls["push"] + 1)
+    )
+    monkeypatch.setattr(
+        torch.cuda.nvtx, "range_pop", lambda: calls.__setitem__("pop", calls["pop"] + 1)
+    )
     monkeypatch.setenv("VRL_PROFILE", "1")
     with profile_range("test.env_nvtx"):  # emit_nvtx defaults to env signal
         pass
@@ -128,16 +157,21 @@ def test_resolve_deduplicates_requested() -> None:
     assert resolved.requested == ("cpu", "cuda")
 
 
-def test_capture_fails_fast_on_missing_activity(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_capture_fails_fast_on_missing_activity(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     # Force a CPU-only machine view so requesting cuda is genuinely unsupported.
     monkeypatch.setattr(torch.profiler, "supported_activities", lambda: {CPU})
     cfg = TorchProfilerConfig(enabled=True, activities=("cuda",))
-    with pytest.raises(RuntimeError, match="unsupported activities"), capture_torch_trace(
-        cfg,
-        output_dir=str(tmp_path),
-        step=0,
-        device="cpu",
-        worker_name="t",
+    with (
+        pytest.raises(RuntimeError, match="unsupported activities"),
+        capture_torch_trace(
+            cfg,
+            output_dir=str(tmp_path),
+            step=0,
+            device="cpu",
+            worker_name="t",
+        ),
     ):
         pass
 

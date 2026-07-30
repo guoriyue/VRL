@@ -15,15 +15,22 @@ Opt-in test lanes live here:
 - ``optional``: skipped unless ``--optional`` is passed (verbatim vLLM behavior).
 - ``rollout_preview``: test-owned few-shot preview; it skips unless an exact
   experiment config and fresh output directory are supplied on the command line.
+
+``--real-cover-report`` prints the ``real_cover`` register: every test that
+labels a double it cannot make real in-process, the real counterpart it names,
+and the lane that counterpart lives in. The lane is the payload — a ``gpu``
+counterpart can still be skipped on this very machine — so the register never
+claims "covered", only "covered over there".
 """
 
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 
 import pytest
 
-from tests import ci_envs
+from tests import ci_envs, real_cover
 
 try:  # torch may be importable without a usable CUDA device
     import torch
@@ -33,6 +40,9 @@ except Exception:  # pragma: no cover - torch import/driver failure
     _HAS_CUDA = False
 
 
+_REAL_COVER_REGISTER = pytest.StashKey[list[tuple[str, pytest.Mark]]]()
+
+
 def pytest_addoption(parser):
     parser.addoption("--optional", action="store_true", default=False, help="run optional test")
     parser.addoption(
@@ -40,6 +50,12 @@ def pytest_addoption(parser):
         action="store_true",
         default=False,
         help="run distributed test",
+    )
+    parser.addoption(
+        "--real-cover-report",
+        action="store_true",
+        default=False,
+        help="print the real_cover register: labelled double -> real counterpart + its lane",
     )
     preview = parser.getgroup("rollout preview")
     preview.addoption(
@@ -61,12 +77,11 @@ def pytest_collection_modifyitems(config, items):
         for item in items:
             if "gpu" in item.keywords:
                 item.add_marker(skip_gpu)
-    # NOTE: the `distributed` and `optional` gating branches below are reserved
-    # vLLM-parity lanes (commit "vLLM-style marker gating") with no current
-    # members — `@pytest.mark.distributed`/`@pytest.mark.optional` is unused
-    # repo-wide. Keep them: they preserve structural parity with vLLM's marker
-    # scaffold and are the opt-in points for future real multi-node/optional
-    # suites. Do not delete as dead code.
+    # NOTE: the `optional` branch below is a reserved vLLM-parity lane (commit
+    # "vLLM-style marker gating") with no current members — `@pytest.mark.optional`
+    # is unused repo-wide. Keep it: it preserves structural parity with vLLM's
+    # marker scaffold and is the opt-in point for future optional suites. Do not
+    # delete as dead code.
     #
     # Distributed tests need an explicit lane; slow local Ray tests should use
     # slow_test instead of distributed.
@@ -83,6 +98,33 @@ def pytest_collection_modifyitems(config, items):
         for item in items:
             if "optional" in item.keywords:
                 item.add_marker(skip_optional)
+    if config.getoption("--real-cover-report"):
+        config.stash[_REAL_COVER_REGISTER] = [
+            (item.nodeid, mark) for item in items for mark in item.iter_markers(real_cover.MARKER)
+        ]
+
+
+def pytest_terminal_summary(terminalreporter, exitstatus, config):
+    """Print the real_cover register, resolving each target's lane on disk."""
+
+    del exitstatus
+    register = config.stash.get(_REAL_COVER_REGISTER, None)
+    if register is None:
+        return
+    write = terminalreporter.write_line
+    write("")
+    # Counts collected tests, not label call sites: one module-level label or one
+    # reused constant covers many tests, and the register lists them per test.
+    write(f"real_cover register  ({len(register)} labelled tests: double -> counterpart / gap)")
+    for nodeid, mark in sorted(register):
+        target = mark.args[0] if mark.args else None
+        lane = real_cover.resolve_target(target).lane_label if target else "-"
+        write(f"  {nodeid}")
+        write(f"      -> {target or 'NO REAL COUNTERPART'}   [lane: {lane}]")
+        if mark.kwargs.get("why"):
+            write(f"      why: {mark.kwargs['why']}")
+        if mark.kwargs.get("tracked_in"):
+            write(f"      tracked_in: {mark.kwargs['tracked_in']}")
 
 
 @pytest.fixture()
@@ -117,6 +159,26 @@ def local_ray():
     finally:
         ray.shutdown()
         ray_constants.RAY_ENABLE_UV_RUN_RUNTIME_ENV = previous_uv_hook
+
+
+@pytest.fixture()
+def cuda_devices(monkeypatch) -> Callable[[int], None]:
+    """Pin the host GPU topology at the torch layer for the length of one test.
+
+    Patch torch, never our own resolvers: replacing
+    ``vrl.ray.resources._auto_visible_cuda_devices`` with a lambda made the
+    asserted device tuple a value the test itself wrote, leaving the wrapper's
+    ``is_available`` short circuit, ``int()`` coercion and exception fallback
+    unexecuted. Pinning ``torch.cuda`` runs the real wrapper on a topology this
+    single-GPU host does not have.
+    """
+
+    def pin(count: int) -> None:
+        torch = pytest.importorskip("torch")
+        monkeypatch.setattr(torch.cuda, "is_available", lambda: count > 0)
+        monkeypatch.setattr(torch.cuda, "device_count", lambda: count)
+
+    return pin
 
 
 @pytest.fixture(autouse=True)

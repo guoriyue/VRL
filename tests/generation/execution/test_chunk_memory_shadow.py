@@ -30,6 +30,19 @@ from vrl.generation.types import GenerationRequest
 
 GB = 1024**3
 
+# Carried by every `fake_cuda` consumer: they assert exact byte arithmetic, and
+# real hardware cannot pin the inputs to it (see the fixture's docstring below).
+_EXACT_BYTES_NEED_A_FIXED_CARD = pytest.mark.real_cover(
+    None,
+    why=(
+        "the probe's budget arithmetic is asserted to the byte (a 10GB + 2GB*n peak model, "
+        "non_torch = (32-24) - 8 = 0), and torch.cuda.mem_get_info varies with the machine "
+        "and its current load; a real GPU would turn a deterministic arithmetic assertion "
+        "into an unreproducible approximation"
+    ),
+    tracked_in="docs/sprints/planned/SPRINT_tier-policy-and-real-cover-labels.md",
+)
+
 
 def _reading(
     *,
@@ -194,6 +207,7 @@ def fake_cuda(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(torch.cuda, "empty_cache", lambda: None)
 
 
+@_EXACT_BYTES_NEED_A_FIXED_CARD
 def test_probe_fits_confirms_and_truncates_steps(fake_cuda: None) -> None:
     executor = _ProbeExecutor()
     core = _probe_core(executor)
@@ -219,6 +233,7 @@ def test_probe_fits_confirms_and_truncates_steps(fake_cuda: None) -> None:
     assert set(executor.executed_steps) == {2}
 
 
+@_EXACT_BYTES_NEED_A_FIXED_CARD
 def test_probe_knee_refuses_growth_without_throughput_gain(fake_cuda: None) -> None:
     core = _probe_core(_ProbeExecutor())
 
@@ -233,6 +248,7 @@ def test_probe_knee_refuses_growth_without_throughput_gain(fake_cuda: None) -> N
     assert result["samples_per_chunk"] == 4
 
 
+@_EXACT_BYTES_NEED_A_FIXED_CARD
 def test_probe_bisects_when_confirm_ooms(fake_cuda: None) -> None:
     core = _probe_core(_ProbeExecutor(oom_limit=6))
 
@@ -248,6 +264,7 @@ def test_probe_bisects_when_confirm_ooms(fake_cuda: None) -> None:
     assert any(t["oom"] for t in result["trials"])
 
 
+@_EXACT_BYTES_NEED_A_FIXED_CARD
 def test_probe_budgets_against_whole_phase_gpu(fake_cuda: None) -> None:
     core = _probe_core(_ProbeExecutor())
 
@@ -273,6 +290,7 @@ def test_probe_requires_cuda_and_single_sample_fit(
         core.probe_chunk_size(_request(), max_samples=4)
 
 
+@_EXACT_BYTES_NEED_A_FIXED_CARD
 def test_probe_fails_loud_when_one_sample_ooms(fake_cuda: None) -> None:
     core = _probe_core(_ProbeExecutor(oom_limit=0))
     with pytest.raises(RuntimeError, match="single sample does not fit"):

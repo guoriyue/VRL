@@ -434,7 +434,6 @@ def test_sleep_offload_rejects_injected_model() -> None:
 
 
 @pytest.mark.gpu
-@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is unavailable")
 @pytest.mark.skipif(
     os.environ.get("WM_RUN_REAL_MODEL_TESTS") != "1",
     reason="set WM_RUN_REAL_MODEL_TESTS=1 for cached real-model gates",

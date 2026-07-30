@@ -5,11 +5,8 @@ runtime, no slow markers. They pin the Track A contract:
 round_robin keeps plan-time binding bit-for-bit; dynamic binds at dispatch
 time (pull + LPT) and never changes gather order.
 
-The fakes here control event-loop completion ORDER, which real Ray cannot make
-deterministic — they are a controlled clock, not a Ray protocol fake. The
-protocol assumption they encode (real ObjectRefs await directly and resolve to
-the task result) is pinned against a live cluster by the real-Ray twin
-tests/ray/test_ray_actor_pool.py::test_run_actor_jobs_awaits_real_object_refs.
+The fakes are a controlled clock, not a Ray protocol fake; the ``real_cover``
+labels below name the live-cluster twin that pins the protocol assumption.
 """
 
 from __future__ import annotations
@@ -32,6 +29,18 @@ from vrl.generation.execution.types import (
 from vrl.generation.ray.executor import RayGenerationExecutor
 from vrl.generation.types import GenerationOutput, GenerationRequest
 from vrl.ray.actor_pool import RayActorJob, run_actor_jobs
+
+# Carried by the tests that actually drive `_FakeRef`/`_FakeWorker`; the planner
+# and argument-validation tests below use no double, so a module-level pytestmark
+# would over-claim on their behalf.
+_CONTROLLED_CLOCK = pytest.mark.real_cover(
+    "tests/ray/test_ray_actor_pool.py::test_run_actor_jobs_awaits_real_object_refs",
+    why=(
+        "the fake refs control event-loop completion ORDER, which a real Ray cluster cannot "
+        "make deterministic; the protocol assumption they encode — a real ObjectRef awaits "
+        "directly and resolves to the task result — is pinned against a live cluster there"
+    ),
+)
 
 
 class _FakeRef:
@@ -92,6 +101,7 @@ def _workers(count: int) -> list[DistributedWorkerHandle]:
 # ---------------------------------------------------------------- actor pool
 
 
+@_CONTROLLED_CLOCK
 def test_bound_jobs_keep_plan_time_binding_and_order() -> None:
     """Checks the static path is unchanged: binding and order preserved."""
     fast = _FakeWorker("w0", speed_rank_base=0)
@@ -119,6 +129,7 @@ def test_bound_jobs_keep_plan_time_binding_and_order() -> None:
     assert slow.received == ["chunk-1", "chunk-3"]
 
 
+@_CONTROLLED_CLOCK
 def test_pull_dispatch_lets_fast_worker_take_more_chunks() -> None:
     """Checks unbound jobs flow to whichever worker frees up first."""
     fast = _FakeWorker("w0", speed_rank_base=0)
@@ -142,6 +153,7 @@ def test_pull_dispatch_lets_fast_worker_take_more_chunks() -> None:
     assert slow.received == ["chunk-1"]
 
 
+@_CONTROLLED_CLOCK
 def test_lpt_priority_orders_submission() -> None:
     """Checks higher-priority (more expensive) chunks are submitted first."""
     worker = _FakeWorker("w0", speed_rank_base=0)
@@ -178,6 +190,7 @@ def test_unbound_jobs_without_worker_methods_fail_loudly() -> None:
         asyncio.run(run_actor_jobs(jobs))
 
 
+@_CONTROLLED_CLOCK
 def test_schedule_telemetry_rows_are_emitted() -> None:
     """Checks the dispatch loop emits one telemetry row per job."""
     worker = _FakeWorker("w0", speed_rank_base=0)
@@ -312,6 +325,7 @@ def _executor(strategy: str, actors: list[_FakeActor]) -> RayGenerationExecutor:
     )
 
 
+@_CONTROLLED_CLOCK
 @pytest.mark.asyncio
 async def test_executor_round_robin_dispatches_per_plan_binding() -> None:
     """Checks config strategy round_robin reaches the actual dispatch."""
@@ -333,6 +347,7 @@ async def test_executor_round_robin_dispatches_per_plan_binding() -> None:
         assert row["estimated_cost"] == row["sample_count"] * request.sampling["num_steps"]
 
 
+@_CONTROLLED_CLOCK
 @pytest.mark.asyncio
 async def test_executor_dynamic_dispatches_by_pull() -> None:
     """Checks config strategy dynamic actually changes worker placement."""
@@ -360,6 +375,7 @@ async def test_executor_dynamic_dispatches_by_pull() -> None:
     ]
 
 
+@_CONTROLLED_CLOCK
 @pytest.mark.asyncio
 async def test_executor_runtime_debug_exposes_chunk_schedule() -> None:
     """Checks runtime_debug surfaces per-chunk placement telemetry."""

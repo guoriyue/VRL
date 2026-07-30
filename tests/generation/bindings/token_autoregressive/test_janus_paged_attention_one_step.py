@@ -39,6 +39,18 @@ _DEFAULT_CACHE_DTYPE = (
 HIDDEN = 8
 TEXT_VOCAB = 32
 
+# Module level: every test here drives `_RecordingPagedBackend`, and a helper
+# class cannot carry a function decorator.
+pytestmark = pytest.mark.real_cover(
+    "tests/generation/bindings/token_autoregressive/test_janus_vllm_paged_attention_backend.py"
+    "::test_janus_vllm_paged_attention_matches_hf_llama_one_step",
+    why=(
+        "the recording backend returns fixed hidden states so the runner's prefill/step "
+        "sequencing is assertable on CPU; a real backend needs CUDA plus vLLM's worker "
+        "internals, and the gpu-lane test checks its output against HF Llama instead"
+    ),
+)
+
 
 @dataclass(frozen=True, slots=True)
 class _PagedState:

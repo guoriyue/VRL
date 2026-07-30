@@ -22,6 +22,19 @@ from vrl.models.families.nextstep_1.runner import (
 _BATCH_SIZE = 2
 _HIDDEN_SIZE = 2
 
+# Carried per test rather than by a module pytestmark: the two NextStep1ARState
+# tests below build no backend at all, so a file-wide label would claim a double
+# on their behalf.
+_RECORDING_BACKEND_STANDS_IN = pytest.mark.real_cover(
+    "tests/generation/bindings/token_autoregressive/test_nextstep_vllm_paged_attention_backend.py"
+    "::test_nextstep_vllm_paged_attention_matches_hf_qwen_one_step",
+    why=(
+        "the recording backend returns hidden + 0.125 so advance counts and rollout/replay "
+        "logprob parity are assertable on CPU; a real backend needs CUDA plus vLLM's worker "
+        "internals, and the gpu-lane test checks its output against HF Qwen instead"
+    ),
+)
+
 
 @dataclass(frozen=True, slots=True)
 class _SequenceState:
@@ -156,6 +169,7 @@ def test_state_requires_cond_paged_state() -> None:
         )
 
 
+@_RECORDING_BACKEND_STANDS_IN
 def test_init_preserves_real_no_cfg_branch() -> None:
     token_count = 2
     model = _RolloutModel(token_count)
@@ -176,6 +190,7 @@ def test_init_preserves_real_no_cfg_branch() -> None:
     assert set(init.row_lanes) == {"c_cond", "cond_attn"}
 
 
+@_RECORDING_BACKEND_STANDS_IN
 def test_checkpoint_token_dim_overwrite_drives_runner_allocations() -> None:
     config = NextStep1Config(
         use_lora=False,
@@ -202,6 +217,7 @@ def test_checkpoint_token_dim_overwrite_drives_runner_allocations() -> None:
     assert init.state.saved_noise.shape == (1, 3, _HIDDEN_SIZE)
 
 
+@_RECORDING_BACKEND_STANDS_IN
 @pytest.mark.parametrize(
     ("token_count", "expected_advance_count"),
     [(1, 0), (2, 1), (3, 2)],
@@ -215,6 +231,7 @@ def test_rollout_advances_attention_only_between_tokens(
     assert len(backend.step_requests) == expected_advance_count
 
 
+@_RECORDING_BACKEND_STANDS_IN
 @pytest.mark.parametrize(
     ("token_count", "expected_advance_count"),
     [(1, 0), (2, 1), (3, 2)],
@@ -237,6 +254,7 @@ def test_replay_advances_each_cfg_branch_only_between_tokens(
     assert replay.step_branches == ["cond", "uncond"] * expected_advance_count
 
 
+@_RECORDING_BACKEND_STANDS_IN
 def test_skipping_final_advance_preserves_rollout_replay_logprob_parity() -> None:
     result, _backend, model, conditioning = _run_rollout(token_count=3)
     tokens, saved_noise, rollout_logprobs = result

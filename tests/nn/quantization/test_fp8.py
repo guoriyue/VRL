@@ -31,6 +31,10 @@ def _fp8_capable() -> bool:
         return False
 
 
+# These coexist with `@pytest.mark.gpu` on every numeric test below, and must:
+# the lane marker only knows whether CUDA exists (tests/conftest.py), while these
+# probes know whether the card can actually run fp8 `_scaled_mm`. Folding them into
+# the marker would turn a skip into a real failure on, say, an A100.
 requires_fp8 = pytest.mark.skipif(not _fp8_capable(), reason="needs CUDA fp8 _scaled_mm")
 
 
@@ -205,6 +209,7 @@ def test_fp8_is_the_module_scheme_identity() -> None:
 # --- numeric: per-GEMM and end-to-end drift (GPU) ----------------------------
 
 
+@pytest.mark.gpu
 @requires_vllm_fp8
 def test_blockwise_recipe_matches_bf16_via_vllm():
     """blockwise reuses vLLM's triton block kernel (not hand-rolled); 128-aligned."""
@@ -224,6 +229,7 @@ def test_blockwise_falls_back_to_rowwise_on_unaligned_dims():
     assert fp8.recipe == "rowwise"
 
 
+@pytest.mark.gpu
 @requires_fp8
 @pytest.mark.parametrize("recipe", ["rowwise", "tensorwise"])
 def test_fp8_linear_matches_bf16_within_tolerance(recipe):
@@ -237,6 +243,7 @@ def test_fp8_linear_matches_bf16_within_tolerance(recipe):
     assert got.shape == ref.shape and got.dtype == ref.dtype
 
 
+@pytest.mark.gpu
 @requires_fp8
 def test_fp8_linear_exposes_master_weight_and_requantizes_on_sync():
     """Full-finetune weight-sync loads the bf16 `weight` key; the fp8 cache must
@@ -284,6 +291,7 @@ def test_master_free_fp8_survives_adapter_only_weight_sync():
     assert torch.equal(policy.lora, update)
 
 
+@pytest.mark.gpu
 @requires_fp8
 def test_fp8_cache_survives_cpu_to_cuda_dtype_move() -> None:
     """A model-level dtype move rebuilds rather than casts the FP8 cache."""
@@ -295,6 +303,7 @@ def test_fp8_cache_survives_cpu_to_cuda_dtype_move() -> None:
     assert fp8(torch.randn(16, 128, device="cuda", dtype=torch.bfloat16)).shape == (16, 128)
 
 
+@pytest.mark.gpu
 @requires_fp8
 def test_master_free_fp8_cache_moves_without_dtype_cast() -> None:
     fp8 = Fp8Linear(nn.Linear(128, 128, bias=False).to(torch.bfloat16))
@@ -306,6 +315,7 @@ def test_master_free_fp8_cache_moves_without_dtype_cast() -> None:
     assert fp8(torch.randn(16, 128, device="cuda", dtype=torch.bfloat16)).shape == (16, 128)
 
 
+@pytest.mark.gpu
 @requires_fp8
 def test_fp8_linear_handles_fp32_activations():
     """DiT adaLN / pooled-projection paths feed fp32 activations, and rowwise
@@ -320,6 +330,7 @@ def test_fp8_linear_handles_fp32_activations():
     assert torch.isfinite(out).all()
 
 
+@pytest.mark.gpu
 @requires_fp8
 def test_fp8_linear_preserves_leading_dims_and_bias():
     torch.manual_seed(0)
@@ -573,6 +584,7 @@ def test_resolve_model_build_derives_fp8_from_precision_rollout():
     assert plain_build.precision.dtype == "bf16"
 
 
+@pytest.mark.gpu
 @requires_fp8
 def test_end_to_end_dit_stack_drift_is_bounded(capsys):
     """The accuracy gate: a 24-block DiT swapped to fp8 tracks its bf16 twin.

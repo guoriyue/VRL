@@ -1,7 +1,8 @@
 """End-to-end equivalence: DiffusionChunkExecutorBase.forward_plan_pipelined produces the
 SAME gathered output as the serial forward_plan, on a real EnginePlan with real
 tensors through the real stage chain + gather. This is the executor-level
-correctness run (the mechanism's bit-exactness is in test_chunks_pipelined_cuda)."""
+correctness run; the ``real_cover`` label names the gpu-lane twin that owns the
+mechanism's bit-exactness."""
 
 from __future__ import annotations
 
@@ -92,6 +93,14 @@ def _plan(request, sample_rows):
     return build_engine_plan(request)
 
 
+@pytest.mark.real_cover(
+    "tests/generation/execution/test_chunks_pipelined_cuda.py",
+    why=(
+        "the device falls back to CPU when CUDA is absent, and on CPU the pipelining "
+        "mechanism this test wraps — the cross-stream Event and the async D2H copy on the "
+        "side stream — does not execute at all; the gpu-lane file drives both for real"
+    ),
+)
 def test_forward_plan_pipelined_matches_serial_forward_plan() -> None:
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     ex = _RealStageExecutor(device)

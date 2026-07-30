@@ -97,6 +97,16 @@ def test_iter_jrdb_clips_rejects_overlapping_stride(tmp_path: Path) -> None:
         )
 
 
+@pytest.mark.real_cover(
+    None,
+    why=(
+        "imageio + imageio-ffmpeg are declared dependencies, so real mp4 encoding would work "
+        "here; it is skipped because this test asserts the manifests, the report and the "
+        "artifact validation, and never decodes the written video — real encoding would add "
+        "seconds per clip and zero coverage"
+    ),
+    tracked_in="docs/sprints/planned/SPRINT_tier-policy-and-real-cover-labels.md",
+)
 def test_jrdb_targets_command_writes_manifests_report_and_validates(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

@@ -4,6 +4,8 @@ import json
 import tarfile
 from pathlib import Path
 
+import pytest
+
 from vrl.scripts.data import danbooru
 from vrl.scripts.data.danbooru import (
     build_danbooru_safety_prompt_rows,
@@ -165,8 +167,17 @@ def test_build_prompt_rows_allows_hand_focus_without_full_body(tmp_path: Path) -
     assert rows[0]["metadata"]["framing"] == "upper body"
 
 
+@pytest.mark.real_cover(
+    None,
+    why=(
+        "the injected fetch stands in for an HTTP GET against danbooru.donmai.us; a test "
+        "that reaches the live site is neither reproducible nor free, and what is asserted "
+        "here is the selection (which post ids get a request), not the transfer"
+    ),
+    tracked_in="docs/sprints/planned/SPRINT_tier-policy-and-real-cover-labels.md",
+)
 def test_download_danbooru_images_downloads_only_positive_selection(tmp_path: Path) -> None:
-    """Checks download Danbooru images downloads only positive selection."""
+    """Only score-passing posts get a fetch, and only their files land on disk."""
     metadata = tmp_path / "posts.jsonl"
     rows = [
         {

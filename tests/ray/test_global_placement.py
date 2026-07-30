@@ -18,6 +18,20 @@ from vrl.ray.resources import (
     resolve_distributed_resources,
 )
 
+# The retry tests below all inject the same class of Ray failure for the same
+# reason, so the label is a module constant rather than the same string three
+# times (the `requires_fp8` precedent in tests/nn/quantization/test_fp8.py).
+_REAL_RAY_PLACEMENT = pytest.mark.real_cover(
+    "tests/ray/test_global_placement.py"
+    "::test_owner_reserves_trainer_gpu_and_binds_roles_on_simulated_gpus",
+    why=(
+        "a live Ray cluster cannot be told to fail remove_placement_group or pg.ready() on "
+        "demand, and what these tests assert is that the handle survives that failure for a "
+        "later retry; the same create/probe/shutdown path against a real cluster is the "
+        "slow_test twin below"
+    ),
+)
+
 
 def _resolve(resources: dict):
     # Release scheduling is derived from topology, so only the resources block is
@@ -352,6 +366,7 @@ def test_placement_owner_consumes_exact_rollout_cpu_capability() -> None:
     assert owner._bundle_requirements() == [{"CPU": 2.5}]
 
 
+@_REAL_RAY_PLACEMENT
 def test_shutdown_retries_same_placement_group_after_remove_failure(monkeypatch) -> None:
     owner = _owner(
         {
@@ -381,6 +396,7 @@ def test_shutdown_retries_same_placement_group_after_remove_failure(monkeypatch)
     assert owner._placement_group is None
 
 
+@_REAL_RAY_PLACEMENT
 def test_create_failure_retains_placement_for_cleanup_retry(monkeypatch) -> None:
     owner = _owner(
         {
@@ -434,6 +450,7 @@ def test_create_failure_retains_placement_for_cleanup_retry(monkeypatch) -> None
     assert owner._placement_group is None
 
 
+@_REAL_RAY_PLACEMENT
 def test_ready_failure_retains_exact_placement_for_shutdown_retry(monkeypatch) -> None:
     owner = _owner(
         {
@@ -607,8 +624,6 @@ def test_probe_actor_kill_failure_is_a_create_failure(monkeypatch) -> None:
 # exercise the owner's real multi-bundle placement: probe actors only call
 # ray.get_gpu_ids() (logical ids), never real CUDA. This validates the part that
 # matters most -- trainer-GPU reservation and role->GPU binding under a live PG.
-
-pytestmark_slow = pytest.mark.slow_test
 
 
 @pytest.mark.slow_test

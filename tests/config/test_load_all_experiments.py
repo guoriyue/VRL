@@ -483,11 +483,11 @@ def test_sd35_continuous_4gpu_acceptance_resolves_disjoint_resident_topology() -
 
 
 def test_cosmos_predict2_overfit_fsdp_4x_l4_resolves_rank_local_topology(
-    monkeypatch,
+    cuda_devices,
 ) -> None:
     """The four-L4 recipe keeps one colocated rollout and CPU reward per rank."""
 
-    monkeypatch.setattr("vrl.ray.resources._auto_visible_cuda_devices", lambda: (0,))
+    cuda_devices(1)
     name = "experiment/cosmos_predict2/online_grpo_droid_overfit_validation_fsdp_4x_l4"
     cfg = load_config(name)
     parent = load_config("experiment/cosmos_predict2/online_grpo_droid_overfit_validation")
@@ -530,11 +530,11 @@ def test_cosmos_predict2_overfit_fsdp_4x_l4_resolves_rank_local_topology(
 
 
 def test_cosmos_predict2_full_curve_fsdp_4x_l4_preserves_training_semantics(
-    monkeypatch,
+    cuda_devices,
 ) -> None:
     """The durable full-DROID run changes topology without changing its curve."""
 
-    monkeypatch.setattr("vrl.ray.resources._auto_visible_cuda_devices", lambda: (0,))
+    cuda_devices(1)
     name = "experiment/cosmos_predict2/online_grpo_droid_lora_480p_curve_fsdp_4x_l4"
     cfg = load_config(name)
     parent = load_config("experiment/cosmos_predict2/online_grpo_droid_lora_480p_curve")
@@ -647,11 +647,11 @@ def test_wan_robotics_continuous_resolves_balanced_four_l4_topology() -> None:
 
 
 def test_wan_droid_fullparam_fsdp_3x_l4_preserves_launch_contract(
-    monkeypatch,
+    cuda_devices,
 ) -> None:
     """The long run keeps full-param training and rank-local rollout semantics."""
 
-    monkeypatch.setattr("vrl.ray.resources._auto_visible_cuda_devices", lambda: (0,))
+    cuda_devices(1)
     cfg = load_config(
         "experiment/wan_2_1/online_grpo_droid_fullparam_fsdp_3x_l4",
     )
@@ -710,17 +710,10 @@ def test_wan_droid_fullparam_fsdp_3x_l4_preserves_launch_contract(
     assert reward.inference.expected_model == "robotics-video-reward-v1"
 
 
-@pytest.mark.parametrize("physical_device", [0, 1])
-def test_wan_droid_fullparam_fsdp_4x_l4_uses_symmetric_reward_handoffs(
-    monkeypatch,
-    physical_device,
-) -> None:
+def test_wan_droid_fullparam_fsdp_4x_l4_uses_symmetric_reward_handoffs(cuda_devices) -> None:
     """All four ranks time-share local rollout and the complete robotics reward."""
 
-    monkeypatch.setattr(
-        "vrl.ray.resources._auto_visible_cuda_devices",
-        lambda: (physical_device,),
-    )
+    cuda_devices(1)
     cfg = load_config(
         "experiment/wan_2_1/online_grpo_droid_fullparam_fsdp_4x_l4",
     )
@@ -736,7 +729,7 @@ def test_wan_droid_fullparam_fsdp_4x_l4_uses_symmetric_reward_handoffs(
     assert cfg.model.use_lora is False
     assert cfg.distributed.training.strategy == "fsdp"
     assert cfg.distributed.training.gpus_per_node == 4
-    assert resources.trainer_devices == resources.rollout_devices == (physical_device,)
+    assert resources.trainer_devices == resources.rollout_devices == (0,)
     assert resources.reward_devices == ()
     assert resources.reward_uses_trainer_device is True
     assert resources.reward_torch_device(trainer_device="cuda:0") == "cuda:0"
@@ -765,6 +758,27 @@ def test_wan_droid_fullparam_fsdp_4x_l4_uses_symmetric_reward_handoffs(
     assert trainer.batch_plan.host_memory_budget_fraction == pytest.approx(0.98)
     assert trainer.ppo_epochs == 1
     assert cfg.trainer.save_freq == 5
+
+
+def test_masked_physical_ordinal_comes_from_the_config_knob_not_the_auto_path() -> None:
+    """A non-zero rank-local ordinal is unreachable through the auto path.
+
+    ``_auto_visible_cuda_devices`` returns ``tuple(range(n))``, so ``(1,)`` can
+    never come out of it at any device count. The launcher writes the selected
+    physical ordinal into ``visible_devices`` before resource resolution
+    (tests/scripts/test_online_entrypoint.py), and that is the path this pins —
+    the real ``_parse_devices`` / dedupe branches, on this recipe.
+    """
+
+    cfg = load_config("experiment/wan_2_1/online_grpo_droid_fullparam_fsdp_4x_l4")
+    OmegaConf.update(cfg, "distributed.resources.visible_devices", [1], force_add=True)
+    validate_training_config(cfg)
+
+    resources = resolve_distributed_resources(cfg)
+
+    assert resources.visible_devices == (1,)
+    assert resources.trainer_devices == resources.rollout_devices == (1,)
+    assert resources.colocated is True
 
 
 def test_algorithm_config_dispatches_representative_kinds() -> None:
@@ -1055,10 +1069,10 @@ def test_wan_i2v_production_validation_accepts_source_backed_data(tmp_path: Path
     validate_training_config(cfg)
 
 
-def test_wan_i2v_fsdp_2x_l4_resolves_bounded_shared_topology(monkeypatch) -> None:
+def test_wan_i2v_fsdp_2x_l4_resolves_bounded_shared_topology(cuda_devices) -> None:
     """The real-weight I2V gate shards replay and sequentially offloads rollout."""
 
-    monkeypatch.setattr("vrl.ray.resources._auto_visible_cuda_devices", lambda: (0,))
+    cuda_devices(1)
     cfg = load_config("experiment/wan_2_1/online_grpo_i2v_fsdp_2x_l4")
     validate_training_config(cfg)
     built = build_configs(cfg)

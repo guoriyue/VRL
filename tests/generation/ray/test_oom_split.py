@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 import pytest
+import torch
 
 from vrl.generation.execution.chunk_placement import (
     DeviceAssignment,
@@ -23,7 +24,23 @@ from vrl.generation.execution.types import (
 from vrl.generation.ray.executor import RayGenerationExecutor, _is_oom_error
 from vrl.generation.types import GenerationOutput, GenerationRequest
 
-_OOM_MESSAGE = "CUDA out of memory. Tried to allocate 4.00 GiB"
+# torch's allocator wire format, pinned against the real allocator by
+# test_oom_matcher_accepts_the_real_torch_allocator_message below.
+_OOM_PREFIX = "CUDA out of memory. Tried to allocate "
+_OOM_MESSAGE = f"{_OOM_PREFIX}4.00 GiB"
+
+# `_CapacityWorker` stands in for a Ray worker, not for torch; only the message
+# FORMAT it hand-copies needs the gpu-lane twin, so the two tests that depend on
+# that format carry the label and the rest do not.
+_OOM_WIRE_FORMAT = pytest.mark.real_cover(
+    "tests/generation/ray/test_oom_split.py"
+    "::test_oom_matcher_accepts_the_real_torch_allocator_message",
+    why=(
+        "a Ray worker that OOMs on exactly the chunk sizes these tests need cannot be "
+        "produced in-process, so the worker itself stays a fake; what it hand-copies from "
+        "torch is the allocator message format, and the gpu-lane twin pins that"
+    ),
+)
 
 
 def _key(start: int, count: int) -> str:
@@ -151,6 +168,22 @@ def _executor(
     return executor, handles
 
 
+@pytest.mark.gpu
+def test_oom_matcher_accepts_the_real_torch_allocator_message() -> None:
+    """`_OOM_MESSAGE` is only an honest fixture while torch still emits that prefix."""
+
+    with pytest.raises(torch.OutOfMemoryError) as caught:
+        torch.empty(1024**4, dtype=torch.float32, device="cuda")
+
+    real = str(caught.value)
+    assert real.startswith(_OOM_PREFIX), real
+    # The production matcher is a substring test on "out of memory"; assert it
+    # against the real message, not only against our own fixture.
+    assert _is_oom_error(real) is True
+    assert _is_oom_error(_OOM_MESSAGE) is True
+
+
+@_OOM_WIRE_FORMAT
 @pytest.mark.asyncio
 async def test_oom_chunk_splits_until_it_fits() -> None:
     """An 8-sample chunk on a 2-sample worker degrades to four 2-sample chunks."""
@@ -174,6 +207,7 @@ async def test_oom_chunk_splits_until_it_fits() -> None:
     assert all(row["worker_id"] == "w0" for row in splits)
 
 
+@_OOM_WIRE_FORMAT
 @pytest.mark.asyncio
 async def test_single_sample_oom_still_raises() -> None:
     """A chunk that OOMs at one sample is a hard failure, not an infinite loop."""

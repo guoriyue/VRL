@@ -166,12 +166,10 @@ class TestOnlineTrainerResumeState:
         assert compatible.prepared is True
         assert trainer.model.weight.dtype is torch.float16
 
+    @pytest.mark.gpu
     def test_fp16_cuda_state_dict_round_trips_grad_scaler(self) -> None:
         """CUDA fp16 training must save and restore GradScaler state."""
         import torch
-
-        if not torch.cuda.is_available():
-            pytest.skip("CUDA is required for fp16 GradScaler")
 
         source = _make_resume_trainer(device="cuda", train_precision="fp16")
         assert source._grad_scaler is not None
@@ -191,11 +189,8 @@ class TestOnlineTrainerResumeState:
         assert restored._grad_scaler is not None
         assert restored._grad_scaler.state_dict()["scale"] == state["grad_scaler"]["scale"]
 
+    @pytest.mark.gpu
     def test_strict_resume_rejects_nonzero_fp16_checkpoint_without_scaler(self) -> None:
-        import torch
-
-        if not torch.cuda.is_available():
-            pytest.skip("CUDA is required for fp16 GradScaler")
         trainer = _make_resume_trainer(device="cuda", train_precision="fp16")
 
         with pytest.raises(ValueError, match="missing GradScaler state"):

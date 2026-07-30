@@ -1346,12 +1346,21 @@ def test_fsdp_colocate_resolves_per_rank_local_single_gpu() -> None:
     assert resolved.cross_node is False  # per-rank-local: no shared Ray cluster
 
 
+@pytest.mark.real_cover(
+    None,
+    why=(
+        "torch reports the host's own GPU count, so a fixed rank-local topology cannot be "
+        "manufactured in-process: unpinned, resolve_training_context hands back "
+        "cuda:<local_rank> from the real device count and the cuda:0 assertion breaks on any "
+        "host with more than one visible GPU"
+    ),
+    tracked_in="docs/sprints/planned/SPRINT_tier-policy-and-real-cover-labels.md",
+)
 @pytest.mark.parametrize("rank", range(4))
-def test_fsdp_4x_l4_rank_mask_resolves_one_logical_gpu(monkeypatch, rank: int) -> None:
+def test_fsdp_4x_l4_rank_mask_resolves_one_logical_gpu(cuda_devices, rank: int) -> None:
     """Resource ownership stays physical while Torch uses rank-local cuda:0."""
 
-    monkeypatch.setattr(torch.cuda, "is_available", lambda: True)
-    monkeypatch.setattr(torch.cuda, "device_count", lambda: 1)
+    cuda_devices(1)
     cfg = OmegaConf.create(
         {
             "distributed": {

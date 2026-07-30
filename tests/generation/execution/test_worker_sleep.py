@@ -106,8 +106,10 @@ class _FakeCuMem:
     Kept as a fake on purpose: the real allocator needs vLLM installed plus a
     CUDA context (virtual-memory paging), neither available in the CPU lane.
     The allocator-missing branch is tested for real via
-    test_sleep_offload_requires_cumem; a memory-effect twin belongs in a
-    vLLM-equipped GPU lane when one exists.
+    test_sleep_offload_requires_cumem, and the memory-effect twin is
+    test_real_cumem_one_shot_scope_sleep_wake_in_subprocess in the gpu lane
+    below — the ``real_cover`` labels on the tests that use this class point at
+    it, so the pointer is machine-checked instead of prose.
     """
 
     def __init__(self) -> None:
@@ -133,6 +135,21 @@ class _FakeCuMem:
         self.wake_calls.append(tags)
         if self.wake_error is not None:
             raise self.wake_error
+
+
+# Only the two tests that read `_FakeCuMem`'s call log as a stand-in for a real
+# memory effect carry this. The other consumers assert quarantine, idempotency
+# and pool-tag bookkeeping — contracts of our own FSM, where the recorded call
+# IS the assertion rather than a proxy for freed bytes.
+_MEMORY_EFFECT_NEEDS_A_REAL_ALLOCATOR = pytest.mark.real_cover(
+    "tests/generation/execution/test_worker_sleep.py"
+    "::test_real_cumem_one_shot_scope_sleep_wake_in_subprocess",
+    why=(
+        "vLLM's CuMemAllocator needs a CUDA context to page virtual memory, so the CPU lane "
+        "can only see that sleep/wake were called, never that the bytes came back; the twin "
+        "in the gpu lane below measures the residual against a pre-pool baseline"
+    ),
+)
 
 
 def _core(
@@ -584,6 +601,7 @@ def test_wake_after_eviction_rebuilds_via_load_policy() -> None:
 # -- cumem-backed offload -----------------------------------------------------
 
 
+@_MEMORY_EFFECT_NEEDS_A_REAL_ALLOCATOR
 def test_cumem_sleep_wake_uses_allocator_not_module_moves(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1036,7 +1054,6 @@ def test_cpu_offload_bounds_lazy_cuda_runtime_residual(
 
 
 @pytest.mark.gpu
-@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is unavailable")
 def test_cuda_model_parking_returns_to_preload_process_baseline(monkeypatch) -> None:
     import vrl.generation.execution.memory_parking as parking_module
     from vrl.utils.cuda_memory import release_cuda_memory_for_parking
@@ -1168,6 +1185,7 @@ def test_cumem_parking_release_then_reload_claims_a_fresh_pool(
     assert fake.wake_calls == [[tag], [tag]]
 
 
+@_MEMORY_EFFECT_NEEDS_A_REAL_ALLOCATOR
 def test_release_policy_wakes_and_closes_cumem_pool(monkeypatch) -> None:
     import vrl.generation.execution.memory_parking as parking_module
 
@@ -1189,7 +1207,6 @@ def test_release_policy_wakes_and_closes_cumem_pool(monkeypatch) -> None:
 
 
 @pytest.mark.gpu
-@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is unavailable")
 def test_real_cumem_one_shot_scope_sleep_wake_in_subprocess() -> None:
     """One real scope round-trips; a second scope is blocked before C++ abort."""
 

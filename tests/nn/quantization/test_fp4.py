@@ -19,7 +19,11 @@ from vrl.nn.quantization.formats import (
     NVFP4_K_ALIGNMENT,
     NVFP4_N_ALIGNMENT,
 )
-from vrl.nn.quantization.fp4 import quantize_nvfp4, to_blocked_scale_layout
+from vrl.nn.quantization.fp4 import (
+    nvfp4_available,
+    quantize_nvfp4,
+    to_blocked_scale_layout,
+)
 
 
 def _nvfp4_capable() -> bool:
@@ -42,6 +46,10 @@ def _nvfp4_capable() -> bool:
         return False
 
 
+# This coexists with `@pytest.mark.gpu` on every kernel test below, and must: the
+# lane marker only knows whether CUDA exists (tests/conftest.py), while this probe
+# knows whether the card can actually run packed-NVFP4 `_scaled_mm`. Folding them
+# into the marker would turn a skip into a real failure on pre-Blackwell hardware.
 requires_nvfp4 = pytest.mark.skipif(
     not _nvfp4_capable(),
     reason="needs CUDA NVFP4 _scaled_mm",
@@ -142,6 +150,35 @@ def test_blocked_scale_layout_shape_and_origin() -> None:
     flat = to_blocked_scale_layout(scales)
     assert flat.shape == (128 * 8,)
     assert float(flat.float()[0]) == float(scales.float()[0, 0])
+
+
+# --- the hardware gate --------------------------------------------------------
+#
+# `nvfp4_available` decides whether vrl/models/loader.py takes the NVFP4 loading
+# path, and every other reference to it in tests/ is a monkeypatch. These two are
+# the only places the gate itself is asserted.
+
+
+def test_nvfp4_gate_rejects_non_cuda_devices() -> None:
+    """Packed NVFP4 is a cuBLAS scaled-mm path; no non-cuda device can satisfy it."""
+
+    assert nvfp4_available("cpu") is False
+    assert nvfp4_available("meta") is False
+
+
+@pytest.mark.gpu
+def test_nvfp4_gate_matches_the_hardware_it_claims_to_describe() -> None:
+    """The >=SM10 capability check must agree with an actual packed-NVFP4 _scaled_mm.
+
+    Deliberately NOT decorated with ``requires_nvfp4``: that skipif *is* the
+    empirical probe, so gating on it would skip exactly the interesting case where
+    the gate claims support the kernel cannot deliver, leaving a tautology.
+    """
+
+    assert nvfp4_available() is _nvfp4_capable()
+    # On a machine where the gate says True, this proves the `target.type != "cuda"`
+    # branch is what rejects cpu — not an incidental "no CUDA at all" result.
+    assert nvfp4_available("cpu") is False
 
 
 # --- module ownership (CPU) ---------------------------------------------------
@@ -340,6 +377,7 @@ def test_resolve_model_build_derives_nvfp4_from_nested_precision() -> None:
 # --- GPU parity and compile ---------------------------------------------------
 
 
+@pytest.mark.gpu
 @requires_nvfp4
 def test_fused_cuda_quantizer_matches_cpu_reference_bytes() -> None:
     torch.manual_seed(0)
@@ -377,6 +415,7 @@ def test_fused_cuda_quantizer_matches_cpu_reference_bytes() -> None:
         torch.testing.assert_close(gpu_tensor_scale.cpu(), cpu_tensor_scale, rtol=0, atol=0)
 
 
+@pytest.mark.gpu
 @requires_nvfp4
 def test_linear_matches_dequantized_reference() -> None:
     torch.manual_seed(0)
@@ -403,6 +442,7 @@ def test_linear_matches_dequantized_reference() -> None:
     assert relative_error < 5e-3
 
 
+@pytest.mark.gpu
 @requires_nvfp4
 def test_linear_preserves_leading_dims_and_dtype() -> None:
     quantized = Fp4Linear(nn.Linear(128, 256, bias=False).cuda().to(torch.bfloat16))
@@ -412,6 +452,7 @@ def test_linear_preserves_leading_dims_and_dtype() -> None:
     assert output.dtype == torch.float32
 
 
+@pytest.mark.gpu
 @requires_nvfp4
 def test_master_free_forward_still_runs() -> None:
     quantized = Fp4Linear(nn.Linear(128, 128, bias=False).cuda().to(torch.bfloat16))
@@ -420,6 +461,7 @@ def test_master_free_forward_still_runs() -> None:
     assert output.shape == (16, 128)
 
 
+@pytest.mark.gpu
 @requires_nvfp4
 def test_cache_survives_cpu_to_cuda_dtype_move() -> None:
     quantized = Fp4Linear(nn.Linear(64, 32, bias=False).to(torch.bfloat16))
@@ -433,6 +475,7 @@ def test_cache_survives_cpu_to_cuda_dtype_move() -> None:
     )
 
 
+@pytest.mark.gpu
 @requires_nvfp4
 def test_master_free_cache_moves_without_dtype_cast() -> None:
     quantized = Fp4Linear(nn.Linear(64, 32, bias=False).to(torch.bfloat16))
@@ -444,6 +487,7 @@ def test_master_free_cache_moves_without_dtype_cast() -> None:
     assert quantized.weight_tensor_scale.dtype is torch.float32
 
 
+@pytest.mark.gpu
 @requires_nvfp4
 def test_production_shape_torch_compile() -> None:
     quantized = Fp4Linear(nn.Linear(1024, 1024, bias=False).cuda().to(torch.bfloat16))
@@ -453,6 +497,7 @@ def test_production_shape_torch_compile() -> None:
     assert output.dtype is torch.bfloat16
 
 
+@pytest.mark.gpu
 @requires_nvfp4
 def test_compiled_linear_requantizes_after_weight_sync() -> None:
     torch.manual_seed(0)

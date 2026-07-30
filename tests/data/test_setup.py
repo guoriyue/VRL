@@ -122,8 +122,18 @@ def test_video_world_bridge_rows_match_cosmos_consumer(
     assert Path(examples[0].reference_image).exists()
 
 
+@pytest.mark.real_cover(
+    None,
+    why=(
+        "imageio + imageio-ffmpeg are declared dependencies, so real mp4 encoding would "
+        "work here; it is skipped because this test asserts clip splitting, row paths and "
+        "the per-episode fps override, and never decodes the written video — real encoding "
+        "would add seconds and zero coverage"
+    ),
+    tracked_in="docs/sprints/planned/SPRINT_tier-policy-and-real-cover-labels.md",
+)
 def test_video_world_targets_rows_include_real_source_target_clip(tmp_path: Path) -> None:
-    """Checks public LeRobot target rows include reference and target artifacts."""
+    """Target rows carry reference + target artifacts, and per-episode fps wins over CLI fps."""
     data_root = tmp_path / "external"
     reference_dir = data_root / "video_world" / "references"
     target_dir = data_root / "video_world" / "targets"
@@ -146,9 +156,15 @@ def test_video_world_targets_rows_include_real_source_target_clip(tmp_path: Path
         },
     ]
 
-    def fake_video_writer(path: Path, frames: list[Image.Image], fps: float) -> None:
+    # Record the encoder call instead of writing a formatted string and reading it
+    # back: the invariant under test is that the per-episode source_fps=15.0 beats
+    # the CLI fps=10.0, and an argument list states that directly.
+    writes: list[tuple[Path, int, float]] = []
+
+    def record_video_write(path: Path, frames: list[Image.Image], fps: float) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_bytes(f"fake-video frames={len(frames)} fps={fps}".encode())
+        path.touch()
+        writes.append((path, len(frames), fps))
 
     rows = video_world.build_target_video_world_rows(
         episodes,
@@ -157,13 +173,14 @@ def test_video_world_targets_rows_include_real_source_target_clip(tmp_path: Path
         data_root=data_root,
         source="droid",
         fps=10.0,
-        video_writer=fake_video_writer,
+        video_writer=record_video_write,
     )
 
     assert rows[0]["reference_image"].startswith("video_world/references/")
     assert rows[0]["target_video"].startswith("video_world/targets/")
     assert (data_root / rows[0]["reference_image"]).exists()
-    assert (data_root / rows[0]["target_video"]).read_text(encoding="utf-8").endswith("fps=15.0")
+    assert (data_root / rows[0]["target_video"]).exists()
+    assert writes == [(data_root / rows[0]["target_video"], 2, 15.0)]
     assert rows[0]["task_type"] == "video2world"
     assert rows[0]["metadata"]["source"] == "droid"
     assert rows[0]["metadata"]["source_repo"] == "lerobot/droid_100"
@@ -172,8 +189,17 @@ def test_video_world_targets_rows_include_real_source_target_clip(tmp_path: Path
 # NOTE: the bare ``download_danbooru_images`` selection path is owned by
 # ``test_danbooru.py::test_download_danbooru_images_downloads_only_positive_selection``.
 # This module only covers the ``setup.main`` CLI wiring that sits on top of it.
+@pytest.mark.real_cover(
+    None,
+    why=(
+        "the patched _http_download stands in for an HTTP GET against danbooru.donmai.us; a "
+        "test that reaches the live site is neither reproducible nor free, and what is "
+        "asserted here is the setup.main CLI wiring above it"
+    ),
+    tracked_in="docs/sprints/planned/SPRINT_tier-policy-and-real-cover-labels.md",
+)
 def test_anime_positives_prepares_both_manifests_end_to_end(monkeypatch, tmp_path: Path) -> None:
-    """Checks anime positives prepares both manifests end-to-end."""
+    """The CLI writes both the positives and hand-crop manifests in one pass."""
     metadata = tmp_path / "posts.jsonl"
     rows = [
         {
