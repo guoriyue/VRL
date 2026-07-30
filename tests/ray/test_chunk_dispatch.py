@@ -237,6 +237,33 @@ def test_unbound_jobs_without_worker_methods_fail_loudly() -> None:
         )
 
 
+@pytest.mark.asyncio
+async def test_actor_pool_validates_every_worker_before_first_submission() -> None:
+    submitted: list[str] = []
+
+    def submit(payload: str) -> _FakeRef:
+        submitted.append(payload)
+        return _FakeRef(payload, completion_rank=1)
+
+    dispatcher = RayActorDispatcher(("w0",))
+    with pytest.raises(ValueError, match="unknown Ray actor worker"):
+        await dispatcher.run(
+            [
+                RayActorJob(0, "w0", submit, "would-leak"),
+                RayActorJob(1, "unknown", submit, "invalid"),
+            ],
+            operation="test.prevalidate",
+            call_timeout_s=30.0,
+        )
+
+    assert submitted == []
+    assert await dispatcher.run(
+        [RayActorJob(0, "w0", submit, "still-open")],
+        operation="test.after_prevalidate",
+        call_timeout_s=30.0,
+    ) == [(0, "still-open")]
+
+
 @_CONTROLLED_CLOCK
 def test_schedule_telemetry_rows_are_emitted() -> None:
     """Checks the dispatch loop emits one telemetry row per job."""
@@ -662,6 +689,50 @@ async def test_actor_pool_caller_cancellation_cancels_submitted_refs(
     assert cancelled == [never_ref]
 
 
+@_CONTROLLED_CLOCK
+@pytest.mark.parametrize("failure_mode", ["raise", "non-awaitable"])
+@pytest.mark.asyncio
+async def test_run_one_waiter_factory_failure_cancels_ref_and_closes_dispatcher(
+    monkeypatch: pytest.MonkeyPatch,
+    failure_mode: str,
+) -> None:
+    ref = _NeverRef()
+    cancelled: list[Any] = []
+
+    class _Ray:
+        @staticmethod
+        def cancel(value: Any, *, force: bool) -> None:
+            assert force is False
+            cancelled.append(value)
+
+    def invalid_waiter(_ref: Any, _deadline: Any) -> Any:
+        if failure_mode == "raise":
+            raise ValueError("waiter construction failed")
+        return object()
+
+    monkeypatch.setattr(deadline_module, "require_ray", lambda: _Ray)
+    dispatcher = RayActorDispatcher(("w0",))
+
+    with pytest.raises(RayActorCallError) as caught:
+        await dispatcher.run_one(
+            RayActorJob(0, "w0", lambda _payload: ref, None),
+            operation="test.custom_wait",
+            call_timeout_s=30.0,
+            await_result=invalid_waiter,
+        )
+
+    expected_cause = ValueError if failure_mode == "raise" else TypeError
+    assert isinstance(caught.value.__cause__, expected_cause)
+    assert cancelled == [ref]
+    with pytest.raises(RuntimeError) as closed:
+        await dispatcher.run(
+            [],
+            operation="test.after_custom_wait_failure",
+            call_timeout_s=30.0,
+        )
+    assert closed.value.__cause__ is caught.value
+
+
 # ------------------------------------------------------------------ planner
 
 
@@ -784,6 +855,9 @@ def _executor(strategy: str, actors: list[_FakeActor]) -> RayGenerationExecutor:
         ),
         workers,
         _ListGatherer(),
+        actor_dispatcher=RayActorDispatcher(
+            tuple(worker.worker_id for worker in workers),
+        ),
         generation_stall_timeout_s=30.0,
     )
 

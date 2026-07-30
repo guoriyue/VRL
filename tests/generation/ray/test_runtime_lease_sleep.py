@@ -26,6 +26,7 @@ from vrl.generation.ray.runtime import (
     RayGenerationRuntime,
     _PolicySnapshot,
 )
+from vrl.ray.actor_pool import RayActorDispatcher
 from vrl.ray.operation_deadline import RayOperationCancelled, RayOperationTimeout
 from vrl.ray.resources import resolve_distributed_resources
 from vrl.trainers.weight_sync import build_runtime_weight_syncer
@@ -602,6 +603,7 @@ async def test_on_demand_auto_probe_timeout_force_kills_the_inner_owner(
         SimpleNamespace(),
         [worker],
         SimpleNamespace(),
+        actor_dispatcher=RayActorDispatcher(("w0",)),
         generation_stall_timeout_s=0.01,
     )
     inner = RayGenerationRuntime(

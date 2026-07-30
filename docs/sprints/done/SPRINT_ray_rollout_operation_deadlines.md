@@ -60,15 +60,22 @@ chunk progress 重置。3600 秒为“30 分钟 compile + 733 秒首 chunk”保
 | standard/dynamic chunk RPC | `generation_stall_timeout_s` | one deadline per submitted ref |
 | OOM split child RPC | `generation_stall_timeout_s` | fresh deadline when the child is submitted |
 | pipelined generation | `generation_stall_timeout_s` | reset only after completed chunk count grows |
-| weight-update ACK barrier | `worker_rpc_timeout_s` | one all-worker transaction |
+| weight-update ACK barrier | `worker_rpc_timeout_s` | one deadline per admitted worker call; all-worker transaction |
 
-### Standard and dynamic dispatch
+### Fleet-wide default-group admission
 
-Executor-owned `RayActorDispatcher` gives each synchronous actor one real slot across concurrent
-driver requests. It starts a `RayCallDeadline` immediately before each `.remote()` submission.
-A job waiting for dispatcher admission does not consume budget and is not pre-queued in the actor
-mailbox. Once admitted, the deadline includes driver serialization, Ray transport, and execution
-time; it is not an “actor method body started” clock.
+The launcher creates one fleet-owned `RayActorDispatcher` and injects that exact instance into
+generation and weight sync. It gives each synchronous actor one real default-group slot across
+standard/dynamic chunks, OOM retries, chunk-size probes, pipelined requests, and weight updates.
+It starts a `RayCallDeadline` immediately before each `.remote()` submission. A job waiting for
+dispatcher admission does not consume budget and is not pre-queued in the actor mailbox. Once
+admitted, the deadline includes driver serialization, Ray transport, and execution time; it is
+not an “actor method body started” clock.
+
+Admission is FIFO per compatible worker across concurrent callers. A request with more pending
+chunks cannot synchronously reclaim a slot ahead of a waiting weight update; unrelated workers
+remain independently usable. This bounds non-draining sync admission without adding a privileged
+weight-sync concurrency group.
 
 One worker completing work never extends another worker's deadline. When any ref expires, all
 results accumulated for that request are discarded, outstanding refs receive best-effort
@@ -85,10 +92,23 @@ remote probes still enter this same dispatcher. This matters when one first requ
 `samples_per_chunk: auto` while another already carries an explicit integer: neither path can
 pre-queue behind the other without driver admission.
 
+Non-draining weight sync skips the higher-level prompt drain only. It does not make a synchronous
+actor execute generation and `update_weights` concurrently. An update waits locally for any
+already-admitted generation call, then receives its full ACK deadline when it gets the next real
+actor slot. The old request remains safe through versioned trainable-state slots.
+
+Health and `pipelined_progress` calls deliberately bypass this dispatcher: both use the dedicated
+health concurrency group. Making a progress query wait for the default slot occupied by the
+pipelined request it observes would deadlock.
+
 ### Pipelined dispatch
 
 Single-worker pipelining uses a driver-side request lock. A later request waits before creating its
 stall deadline, because the synchronous worker cannot execute two default-group requests at once.
+After that request-level lock, `RayActorDispatcher.run_one` obtains the fleet slot and creates the
+initial deadline immediately before submission. Its protocol-specific waiter may replace that
+deadline only after verified chunk progress; the dispatcher remains the sole owner of the main
+result ObjectRef and fleet terminal state.
 
 The worker publishes an immutable `PipelinedRequestProgress` snapshot through the existing health
 concurrency group. Only a strict increase in `completed_chunks` resets the stall deadline. Health
@@ -102,6 +122,10 @@ after submission raises the original `asyncio.CancelledError` from a
 `RayOperationCancelled` terminal marker, cancels losing refs, and makes the owner destroy the
 fleet. The final gather/teardown after the last chunk must still finish inside the last stall
 window.
+
+For a multi-worker transaction, “after submission” includes the case where one worker has already
+completed while another job is still waiting for admission. Cancelling there must fail closed:
+the driver cannot publish a policy version after only a subset of workers installed it.
 
 ## Failure and ownership contract
 
@@ -154,7 +178,8 @@ independent of the Ray transport type.
 - 新增共享 Ray monotonic deadline、typed timeout、sync/async wait 和 cancellation adapter。
 - 为 placement probe、startup、capability、chunk-size probe、generation 和 weight sync 接入
   owner-local deadline。
-- 为 pipelined worker 增加严格 chunk progress 协议和 single-flight admission。
+- 为 pipelined worker 增加严格 chunk progress 协议、request single-flight 和 fleet admission。
+- 让 generation、probe、pipelined request 与 weight sync 共用唯一 fleet dispatcher。
 - 为 timeout 增加 force shutdown upgrade、on-demand inner ownership 和 completion gate。
 - 让 continuous orchestration 和 verdict 保留 nested terminal root cause。
 - 新增 deterministic CPU 和 real-Ray CPU 回归。
@@ -164,7 +189,7 @@ independent of the Ray transport type.
 以下薄边界继续保留：
 
 - `RayActorGroup`：Ray actor construction/startup adapter；
-- `RayActorDispatcher`：standard/dynamic/OOM 共用、跨 request 的 actor admission 与 ref owner；
+- `RayActorDispatcher`：fleet 级 default-group admission 与 submitted-ref owner；
 - `RayGenerationExecutor.execute`：pipelined single-flight public API facade；
 - `RayGenerationWeightSync`：all-worker transactional ACK boundary；
 - `RayGenerationRuntime`：admission、version publication 和 actor ownership boundary；

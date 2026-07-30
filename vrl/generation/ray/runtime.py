@@ -77,6 +77,16 @@ class RayGenerationRuntime(GenerationRuntime):
     ) -> None:
         self.executor = executor
         self.weight_sync = weight_sync
+        executor_dispatcher = getattr(executor, "actor_dispatcher", None)
+        weight_sync_dispatcher = getattr(weight_sync, "actor_dispatcher", None)
+        if (
+            executor_dispatcher is not None
+            and weight_sync_dispatcher is not None
+            and executor_dispatcher is not weight_sync_dispatcher
+        ):
+            raise ValueError(
+                "Ray generation and weight sync must share one actor dispatcher",
+            )
         self._owned_workers = list(owned_workers or [])
         self._colocated = bool(colocated)
         # Operation deadlines bound active business calls; this complementary
@@ -327,6 +337,10 @@ class RayGenerationRuntime(GenerationRuntime):
             await self._install_policy(
                 _PolicySnapshot(state_ref=state_ref, policy_version=int(policy_version)),
             )
+        except asyncio.CancelledError as error:
+            if find_error_cause(error, TerminalRuntimeError) is not None:
+                await self._terminalize_after_failure(error)
+            raise
         except BaseException as error:
             await self._terminalize_after_failure(error)
             raise

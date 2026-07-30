@@ -31,6 +31,7 @@ from vrl.generation.launch_contract import GenerationRuntimeLaunchContract
 from vrl.generation.ray.executor import RayGenerationExecutor
 from vrl.generation.ray.runtime import RayGenerationRuntime
 from vrl.generation.types import GenerationRequest
+from vrl.ray.actor_pool import RayActorDispatcher
 
 GB = 1024**3
 
@@ -345,13 +346,15 @@ def test_runtime_resolves_auto_once_and_rewrites_requests() -> None:
     calls: list[str] = []
     executed: list[Any] = []
 
+    workers = [
+        _probe_worker("w0", 6, calls),
+        _probe_worker("w1", 4, calls),
+    ]
     executor = RayGenerationExecutor(
         SimpleNamespace(),
-        [
-            _probe_worker("w0", 6, calls),
-            _probe_worker("w1", 4, calls),
-        ],
+        workers,
         SimpleNamespace(),
+        actor_dispatcher=RayActorDispatcher(("w0", "w1")),
         generation_stall_timeout_s=30.0,
     )
 

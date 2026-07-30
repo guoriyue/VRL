@@ -23,6 +23,7 @@ from vrl.generation.ray.weight_sync import RayGenerationWeightSync
 from vrl.generation.ray.worker import HEALTH_CONCURRENCY_GROUP, RayGenerationWorker
 from vrl.models.dtypes import dtype_to_wire_name
 from vrl.ray.actor_group import RayActorGroup
+from vrl.ray.actor_pool import RayActorDispatcher
 from vrl.ray.dependencies import current_node_ip, require_ray
 from vrl.ray.operation_deadline import RayOperationTimeout, get_ray_refs
 from vrl.ray.placement import RolePlacement, validate_actor_gpu_ids
@@ -130,6 +131,9 @@ class RayGenerationLauncher:
                 )
                 for handle in actor_group.handles
             ]
+            actor_dispatcher = RayActorDispatcher(
+                tuple(worker.worker_id for worker in workers),
+            )
 
             executor = RayGenerationExecutor(
                 DistributedExecutionPlanner(
@@ -139,12 +143,14 @@ class RayGenerationLauncher:
                 ),
                 workers,
                 chunk_gatherer,
+                actor_dispatcher=actor_dispatcher,
                 generation_stall_timeout_s=worker.generation_stall_timeout_s,
                 pipelined=worker.pipelined,
             )
             weight_sync = (
                 RayGenerationWeightSync(
                     workers,
+                    actor_dispatcher=actor_dispatcher,
                     worker_rpc_timeout_s=worker.worker_rpc_timeout_s,
                 )
                 if worker.sync_trainable_state

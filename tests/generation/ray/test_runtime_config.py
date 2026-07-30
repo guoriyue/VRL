@@ -30,6 +30,7 @@ from vrl.generation.ray.launcher import (
 from vrl.generation.ray.lifecycle_fsm import RuntimePhase
 from vrl.generation.ray.runtime import RayGenerationRuntime
 from vrl.generation.types import GenerationRequest
+from vrl.ray.actor_pool import RayActorDispatcher
 from vrl.ray.operation_deadline import RayOperationTimeout
 from vrl.ray.placement import GlobalRayPlacementOwner, RolePlacement
 from vrl.ray.resources import resolve_distributed_resources
@@ -537,7 +538,7 @@ def test_placement_and_launcher_consume_the_same_worker_snapshot(monkeypatch) ->
     cfg.distributed.rollout = {
         "cpus_per_worker": 2.5,
         "health_check_interval_s": 0.0,
-        "sync_trainable_state": False,
+        "sync_trainable_state": True,
     }
     config = _ray_config(cfg)
     owner = GlobalRayPlacementOwner(config.resources, config.worker)
@@ -598,6 +599,18 @@ def test_placement_and_launcher_consume_the_same_worker_snapshot(monkeypatch) ->
     assert launch_kwargs["rpc_timeout_s"] == config.worker.worker_rpc_timeout_s
     assert launch_kwargs["operation_prefix"] == "rollout"
     assert runtime.executor.generation_stall_timeout_s == config.worker.generation_stall_timeout_s
+    assert runtime.weight_sync is not None
+    assert runtime.executor.actor_dispatcher is runtime.weight_sync.actor_dispatcher
+
+
+def test_runtime_rejects_split_actor_admission_owners() -> None:
+    with pytest.raises(ValueError, match="share one actor dispatcher"):
+        RayGenerationRuntime(
+            SimpleNamespace(actor_dispatcher=RayActorDispatcher(("rollout-0",))),
+            weight_sync=SimpleNamespace(
+                actor_dispatcher=RayActorDispatcher(("rollout-0",)),
+            ),
+        )
 
 
 def test_health_check_settings_default_and_project_overrides() -> None:
@@ -1086,6 +1099,7 @@ async def test_remote_chunk_size_probe_timeout_is_terminal_and_cancels_refs(
         SimpleNamespace(),
         [worker],
         SimpleNamespace(),
+        actor_dispatcher=RayActorDispatcher(("w0",)),
         generation_stall_timeout_s=0.01,
     )
 
@@ -1148,6 +1162,7 @@ async def test_concurrent_auto_chunk_requests_share_one_probe_before_submission(
         SimpleNamespace(),
         [worker],
         SimpleNamespace(),
+        actor_dispatcher=RayActorDispatcher(("w0",)),
         generation_stall_timeout_s=30.0,
     )
 
@@ -1250,6 +1265,7 @@ def test_real_ray_probe_fan_out_resolves_auto_once_across_the_fleet(local_ray) -
         SimpleNamespace(),
         workers,
         SimpleNamespace(),
+        actor_dispatcher=RayActorDispatcher(tuple(worker.worker_id for worker in workers)),
         generation_stall_timeout_s=30.0,
     )
 

@@ -23,6 +23,7 @@ from vrl.generation.execution.types import (
 )
 from vrl.generation.ray.executor import RayGenerationExecutor, _is_oom_error
 from vrl.generation.types import GenerationOutput, GenerationRequest
+from vrl.ray.actor_pool import RayActorDispatcher
 
 # torch's allocator wire format, pinned against the real allocator by
 # test_oom_matcher_accepts_the_real_torch_allocator_message below.
@@ -164,6 +165,9 @@ def _executor(
         planner=_StaticPlanner(chunks=chunks),
         workers=handles,
         gatherer=_CoverageGatherer(),
+        actor_dispatcher=RayActorDispatcher(
+            tuple(handle.worker_id for handle in handles),
+        ),
         generation_stall_timeout_s=30.0,
     )
     return executor, handles
@@ -321,6 +325,7 @@ async def test_stale_slot_routes_to_graceful_discard_not_failure() -> None:
         planner=_StaticPlanner(chunks=[chunk]),
         workers=handles,
         gatherer=_CoverageGatherer(),
+        actor_dispatcher=RayActorDispatcher(("w0",)),
         generation_stall_timeout_s=30.0,
     )
 
@@ -404,6 +409,9 @@ def _routing_executor(chunks, workers, *, pipelined):
         planner=_StaticPlanner(chunks=chunks),
         workers=handles,
         gatherer=_CoverageGatherer(),
+        actor_dispatcher=RayActorDispatcher(
+            tuple(handle.worker_id for handle in handles),
+        ),
         generation_stall_timeout_s=30.0,
         pipelined=pipelined,
     )

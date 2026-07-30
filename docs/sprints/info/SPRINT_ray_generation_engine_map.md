@@ -93,14 +93,17 @@ RayGenerationLauncher.launch(...)
      )
   -> validate worker metadata / GPU assignment
   -> DistributedWorkerHandle[]
+  -> one fleet-owned RayActorDispatcher(workers)
   -> RayGenerationExecutor(
        planner,
        workers,
        registry-owned gatherer,
+       actor_dispatcher,
        generation_stall_timeout_s=...,
      )
   -> optional RayGenerationWeightSync(
        workers,
+       same actor_dispatcher,
        worker_rpc_timeout_s=...,
      )
   -> RayGenerationRuntime(
@@ -153,7 +156,7 @@ collector -> runtime.generate(request)
   -> RayGenerationExecutor.execute(request)
      -> build_sample_rows
      -> DistributedExecutionPlanner.plan_with_engine
-     -> optional single-worker pipelined request
+     -> optional single-worker pipelined request -> RayActorDispatcher.run_one
         OR SampleChunk -> RayActorJob -> RayActorDispatcher.run
      -> correlate request/chunk results
      -> stale-slot whole-request discard
@@ -164,7 +167,7 @@ collector -> runtime.generate(request)
   -> terminal completion gate
 ```
 
-`samples_per_chunk="auto"` 的 remote fleet probe 使用 executor-owned dispatcher、generation
+`samples_per_chunk="auto"` 的 remote fleet probe 使用 fleet-owned dispatcher、generation
 stall timeout 和 typed ObjectRef cancellation。并发首请求先经过 runtime single-flight，
 而显式整数 chunk request 也必须经过同一个 actor slot，因此 probe 不会与 generation
 互相预塞进 synchronous actor mailbox；失败不会留下 RUNNING runtime 供 continuous
@@ -172,18 +175,28 @@ producer 重试。
 
 ### Standard / dynamic chunks
 
-executor-owned `RayActorDispatcher` 跨并发 request 维护每个 synchronous actor 的一个真实
-slot。job 先通过 driver admission，在 `.remote()` 边界前创建独立 `RayCallDeadline`；
+launcher-owned `RayActorDispatcher` 跨 generation、probe、pipelined request、weight sync
+和并发 request 维护每个 synchronous actor 的一个真实 default-group slot。job 先通过
+driver admission，在 `.remote()` 边界前创建独立 `RayCallDeadline`；
 本地 pending job 不计时，也不会预塞进 actor mailbox。submitted ref 的预算包含 Ray
 参数序列化、transport 与执行时间。其他 worker 的完成不会延长 hung ref；任一 timeout 关闭整个
 dispatcher，丢弃 request 已完成的 partial chunks，并让 owner 销毁 actor fleet。
+兼容同一 worker 的 concurrent callers 按 FIFO handoff；已有 request 的 pending chunks
+不能在 release 后同步抢回 slot，而不同 worker 仍可独立 admission。
+
+non-draining weight sync 只跳过上层 prompt drain；它仍在同一 dispatcher 里等待已有
+generation 释放 actor slot，随后才开始完整 ACK deadline。health 和
+`pipelined_progress` 保持在专用 health concurrency group，不进入 default-slot admission。
+multi-worker update 一旦任一 job 已提交，caller cancellation 就是 terminal；即使该 job
+已完成而另一 worker 仍在等 admission，也不能把 partial install 当作普通本地取消。
 
 ### Pipelined request
 
 single-worker pipeline 在 driver 侧 single-flight。worker 通过 health concurrency group
 发布 `PipelinedRequestProgress`；只有 `completed_chunks` 严格增长才重置 stall deadline。
-health success 本身不算业务进度。错误 type/request ID/total/regression 是 terminal wire
-protocol failure。
+request lock 之后仍需通过 shared dispatcher；`run_one` 在真实 slot admission 后、提交前
+创建初始 deadline，并持有 main result ref。health success 本身不算业务进度。错误
+type/request ID/total/regression 是 terminal wire protocol failure。
 
 worker path：
 

@@ -32,6 +32,7 @@ from vrl.generation.execution.types import (
 )
 from vrl.generation.ray.executor import RayGenerationExecutor
 from vrl.generation.types import GenerationOutput, GenerationRequest
+from vrl.ray.actor_pool import RayActorDispatcher
 
 pytestmark = pytest.mark.slow_test
 
@@ -95,6 +96,7 @@ def _executor(ray: Any, strategy: str) -> tuple[RayGenerationExecutor, list[Any]
         DistributedExecutionPlanner(policy=ChunkPlacementPolicy(strategy=strategy)),
         workers,
         _ListGatherer(),
+        actor_dispatcher=RayActorDispatcher(("w0", "w1")),
         generation_stall_timeout_s=30.0,
     )
     return executor, actors

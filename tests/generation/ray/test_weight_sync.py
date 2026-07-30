@@ -4,16 +4,22 @@ from __future__ import annotations
 
 import asyncio
 import time
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
 import torch
 
 import vrl.generation.ray.weight_sync as weight_sync_module
+import vrl.ray.actor_pool as actor_pool_module
+import vrl.ray.operation_deadline as deadline_module
 from vrl.generation.execution.types import DistributedWorkerHandle
+from vrl.generation.ray.lifecycle_fsm import RuntimePhase
+from vrl.generation.ray.runtime import RayGenerationRuntime
 from vrl.generation.ray.weight_sync import RayGenerationWeightSync
 from vrl.generation.ray.worker import RayGenerationWorker
-from vrl.ray.operation_deadline import RayOperationTimeout
+from vrl.ray.actor_pool import RayActorDispatcher, RayActorJob
+from vrl.ray.operation_deadline import RayOperationCancelled, RayOperationTimeout
 
 # Carried by the two tests that drive `_FakeRay`. They are kept, not converted:
 # `put_calls == [{"w": 1}]` is the only assertion anywhere that pins ONE put
@@ -71,6 +77,19 @@ class _NeverObjectRef:
         return _wait_forever().__await__()
 
 
+class _GatedObjectRef:
+    def __init__(self, gate: asyncio.Event, value: Any) -> None:
+        self.gate = gate
+        self.value = value
+
+    def __await__(self):
+        async def _wait() -> Any:
+            await self.gate.wait()
+            return self.value
+
+        return _wait().__await__()
+
+
 class _RemoteWorker:
     def __init__(self, installed_version: Any) -> None:
         self.update_weights = _RemoteMethod(installed_version)
@@ -102,6 +121,7 @@ async def test_local_update_return_is_the_commit_ack() -> None:
     actor = _LocalWorker(installed_version=3)
     sync = RayGenerationWeightSync(
         [DistributedWorkerHandle(worker_id="rollout-0", actor=actor)],
+        actor_dispatcher=RayActorDispatcher(("rollout-0",)),
         worker_rpc_timeout_s=30.0,
     )
 
@@ -120,6 +140,7 @@ async def test_local_update_rejects_wrong_installed_version() -> None:
                 actor=_LocalWorker(installed_version=2),
             ),
         ],
+        actor_dispatcher=RayActorDispatcher(("rollout-0",)),
         worker_rpc_timeout_s=30.0,
     )
 
@@ -141,6 +162,7 @@ async def test_remote_update_results_are_verified_without_second_ack_rpc(
             DistributedWorkerHandle(worker_id="rollout-0", actor=first),
             DistributedWorkerHandle(worker_id="rollout-1", actor=second),
         ],
+        actor_dispatcher=RayActorDispatcher(("rollout-0", "rollout-1")),
         worker_rpc_timeout_s=30.0,
     )
 
@@ -170,6 +192,7 @@ async def test_remote_update_rejects_partial_wrong_version(
                 actor=_RemoteWorker(installed_version=4),
             ),
         ],
+        actor_dispatcher=RayActorDispatcher(("rollout-0", "rollout-1")),
         worker_rpc_timeout_s=30.0,
     )
 
@@ -189,7 +212,8 @@ async def test_remote_update_timeout_rejects_partial_ack_and_cancels_every_ref(
         def __init__(self, ref: Any) -> None:
             self.ref = ref
 
-        def remote(self, _state_ref: Any, _policy_version: int) -> Any:
+        def remote(self, _state_ref: Any, policy_version: int) -> Any:
+            del policy_version
             return self.ref
 
     class _Ray(_FakeRay):
@@ -202,6 +226,7 @@ async def test_remote_update_timeout_rejects_partial_ack_and_cancels_every_ref(
 
     ray = _Ray()
     monkeypatch.setattr(weight_sync_module, "require_ray", lambda: ray)
+    monkeypatch.setattr(deadline_module, "require_ray", lambda: ray)
     sync = RayGenerationWeightSync(
         [
             DistributedWorkerHandle(
@@ -213,6 +238,7 @@ async def test_remote_update_timeout_rejects_partial_ack_and_cancels_every_ref(
                 actor=type("_Worker", (), {"update_weights": _Method(stalled_ref)})(),
             ),
         ],
+        actor_dispatcher=RayActorDispatcher(("rollout-0", "rollout-1")),
         worker_rpc_timeout_s=0.01,
     )
 
@@ -221,6 +247,287 @@ async def test_remote_update_timeout_rejects_partial_ack_and_cancels_every_ref(
 
     assert (stalled_ref, False) in ray.cancelled
     assert all(force is False for _ref, force in ray.cancelled)
+
+
+@pytest.mark.asyncio
+async def test_weight_sync_gets_a_full_deadline_after_shared_worker_admission(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A healthy generation call may outlive the weight ACK timeout."""
+
+    gate = asyncio.Event()
+    generation_submitted = asyncio.Event()
+    deadlines: list[tuple[str, float]] = []
+    real_deadline = actor_pool_module.RayCallDeadline
+
+    def recording_deadline(operation: str, timeout_s: float, **kwargs: Any) -> Any:
+        deadlines.append((operation, timeout_s))
+        return real_deadline(operation, timeout_s, **kwargs)
+
+    def submit_generation(_payload: Any) -> _GatedObjectRef:
+        generation_submitted.set()
+        return _GatedObjectRef(gate, "generated")
+
+    ray = _FakeRay()
+    monkeypatch.setattr(weight_sync_module, "require_ray", lambda: ray)
+    monkeypatch.setattr(actor_pool_module, "RayCallDeadline", recording_deadline)
+    dispatcher = RayActorDispatcher(("rollout-0",))
+    generation = asyncio.create_task(
+        dispatcher.run(
+            [
+                RayActorJob(
+                    job_index=0,
+                    worker_id="rollout-0",
+                    remote_method=submit_generation,
+                    payload=None,
+                ),
+            ],
+            operation="rollout.generation.chunk",
+            call_timeout_s=30.0,
+        ),
+    )
+    await generation_submitted.wait()
+
+    actor = _RemoteWorker(installed_version=3)
+    sync = RayGenerationWeightSync(
+        [DistributedWorkerHandle(worker_id="rollout-0", actor=actor)],
+        actor_dispatcher=dispatcher,
+        worker_rpc_timeout_s=0.01,
+    )
+    update = asyncio.create_task(
+        sync.push_to_rollout_workers({"w": 1}, policy_version=3),
+    )
+    await asyncio.sleep(0.03)
+
+    assert not update.done()
+    assert actor.update_weights.calls == []
+    assert deadlines == [("rollout.generation.chunk", 30.0)]
+
+    gate.set()
+    assert await generation == [(0, "generated")]
+    await update
+    assert actor.update_weights.calls == [(("state", {"w": 1}), 3)]
+    assert deadlines == [
+        ("rollout.generation.chunk", 30.0),
+        ("rollout.weight_sync", 0.01),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_waiting_weight_sync_gets_fair_handoff_before_pending_chunks(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    gate = asyncio.Event()
+    first_submitted = asyncio.Event()
+    submissions: list[str] = []
+
+    def submit_generation(payload: str) -> Any:
+        submissions.append(payload)
+        if payload == "generation-0":
+            first_submitted.set()
+            return _GatedObjectRef(gate, payload)
+        return _FakeObjectRef(payload)
+
+    class _UpdateMethod:
+        @staticmethod
+        def remote(_state_ref: Any, policy_version: int) -> _FakeObjectRef:
+            submissions.append("weight")
+            return _FakeObjectRef(policy_version)
+
+    ray = _FakeRay()
+    monkeypatch.setattr(weight_sync_module, "require_ray", lambda: ray)
+    dispatcher = RayActorDispatcher(("rollout-0",))
+    generation = asyncio.create_task(
+        dispatcher.run(
+            [
+                RayActorJob(
+                    job_index=index,
+                    worker_id="rollout-0",
+                    remote_method=submit_generation,
+                    payload=f"generation-{index}",
+                )
+                for index in range(3)
+            ],
+            operation="rollout.generation.chunk",
+            call_timeout_s=30.0,
+        ),
+    )
+    await first_submitted.wait()
+
+    actor = SimpleNamespace(update_weights=_UpdateMethod())
+    sync = RayGenerationWeightSync(
+        [DistributedWorkerHandle(worker_id="rollout-0", actor=actor)],
+        actor_dispatcher=dispatcher,
+        worker_rpc_timeout_s=30.0,
+    )
+    update = asyncio.create_task(
+        sync.push_to_rollout_workers({"w": 1}, policy_version=3),
+    )
+    await asyncio.sleep(0)
+
+    gate.set()
+    await update
+    assert await generation == [
+        (0, "generation-0"),
+        (1, "generation-1"),
+        (2, "generation-2"),
+    ]
+    assert submissions == [
+        "generation-0",
+        "weight",
+        "generation-1",
+        "generation-2",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_cancelling_weight_sync_before_submission_keeps_runtime_running(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    gate = asyncio.Event()
+    generation_submitted = asyncio.Event()
+
+    def submit_generation(_payload: Any) -> _GatedObjectRef:
+        generation_submitted.set()
+        return _GatedObjectRef(gate, "generated")
+
+    ray = _FakeRay()
+    monkeypatch.setattr(weight_sync_module, "require_ray", lambda: ray)
+    dispatcher = RayActorDispatcher(("rollout-0",))
+    generation = asyncio.create_task(
+        dispatcher.run(
+            [RayActorJob(0, "rollout-0", submit_generation, None)],
+            operation="rollout.generation.chunk",
+            call_timeout_s=30.0,
+        ),
+    )
+    await generation_submitted.wait()
+
+    actor = _RemoteWorker(installed_version=4)
+    sync = RayGenerationWeightSync(
+        [DistributedWorkerHandle(worker_id="rollout-0", actor=actor)],
+        actor_dispatcher=dispatcher,
+        worker_rpc_timeout_s=30.0,
+    )
+    runtime = RayGenerationRuntime(
+        SimpleNamespace(actor_dispatcher=dispatcher),
+        weight_sync=sync,
+    )
+    waiting = asyncio.create_task(
+        runtime.update_weights({"w": 1}, policy_version=4),
+    )
+    await asyncio.sleep(0)
+    waiting.cancel()
+
+    with pytest.raises(asyncio.CancelledError) as caught:
+        await waiting
+    assert caught.value.__cause__ is None
+    assert runtime.lifecycle.phase is RuntimePhase.RUNNING
+    assert actor.update_weights.calls == []
+
+    gate.set()
+    assert await generation == [(0, "generated")]
+    await runtime.update_weights({"w": 2}, policy_version=4)
+    assert runtime.current_policy_version == 4
+
+
+@pytest.mark.asyncio
+async def test_cancelling_partially_completed_weight_sync_terminalizes_runtime(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    busy_gate = asyncio.Event()
+    busy_submitted = asyncio.Event()
+    w0_completed = asyncio.Event()
+    cancelled_refs: list[Any] = []
+
+    class _CompletedRef:
+        def __await__(self):
+            async def _resolve() -> int:
+                w0_completed.set()
+                return 2
+
+            return _resolve().__await__()
+
+    completed_ref = _CompletedRef()
+    busy_ref = _GatedObjectRef(busy_gate, "generated")
+
+    def occupy_w1(_payload: Any) -> _GatedObjectRef:
+        busy_submitted.set()
+        return busy_ref
+
+    class _UpdateMethod:
+        def __init__(self, ref: Any) -> None:
+            self.ref = ref
+            self.calls: list[int] = []
+
+        def remote(self, _state_ref: Any, policy_version: int) -> Any:
+            self.calls.append(policy_version)
+            return self.ref
+
+    class _Ray(_FakeRay):
+        @staticmethod
+        def cancel(ref: Any, *, force: bool) -> None:
+            assert force is False
+            cancelled_refs.append(ref)
+
+    ray = _Ray()
+    monkeypatch.setattr(weight_sync_module, "require_ray", lambda: ray)
+    monkeypatch.setattr(deadline_module, "require_ray", lambda: ray)
+    dispatcher = RayActorDispatcher(("w0", "w1"))
+    generation = asyncio.create_task(
+        dispatcher.run(
+            [RayActorJob(0, "w1", occupy_w1, None)],
+            operation="rollout.generation.chunk",
+            call_timeout_s=30.0,
+        ),
+    )
+    await busy_submitted.wait()
+
+    w0_update = _UpdateMethod(completed_ref)
+    w1_update = _UpdateMethod(_FakeObjectRef(2))
+    sync = RayGenerationWeightSync(
+        [
+            DistributedWorkerHandle(
+                worker_id="w0",
+                actor=SimpleNamespace(update_weights=w0_update),
+            ),
+            DistributedWorkerHandle(
+                worker_id="w1",
+                actor=SimpleNamespace(update_weights=w1_update),
+            ),
+        ],
+        actor_dispatcher=dispatcher,
+        worker_rpc_timeout_s=30.0,
+    )
+    runtime = RayGenerationRuntime(
+        SimpleNamespace(actor_dispatcher=dispatcher),
+        weight_sync=sync,
+    )
+    runtime.current_policy_version = 1
+    update = asyncio.create_task(
+        runtime.update_weights({"w": 2}, policy_version=2),
+    )
+    await w0_completed.wait()
+    for _ in range(20):
+        if completed_ref not in dispatcher._active_refs:
+            break
+        await asyncio.sleep(0)
+    assert completed_ref not in dispatcher._active_refs
+    assert w0_update.calls == [2]
+    assert w1_update.calls == []
+
+    update.cancel()
+    with pytest.raises(asyncio.CancelledError) as caught:
+        await update
+
+    assert isinstance(caught.value.__cause__, RayOperationCancelled)
+    assert runtime.lifecycle.phase is RuntimePhase.TERMINATED
+    assert runtime.current_policy_version == 1
+    assert busy_ref in cancelled_refs
+    assert completed_ref not in cancelled_refs
+
+    generation.cancel()
+    await asyncio.gather(generation, return_exceptions=True)
 
 
 # ------------------------------------------------------- real cluster (real Ray)
@@ -243,6 +550,10 @@ class _InstallWorker:
         if self._stall_s:
             time.sleep(self._stall_s)
         return policy_version + self._ack_offset
+
+    def hold_default_slot(self, stall_s: float) -> str:
+        time.sleep(stall_s)
+        return "generated"
 
     def installed_sum(self) -> float:
         return float(self._installed["w"].sum())
@@ -276,7 +587,13 @@ async def test_real_ray_weight_sync_derefs_one_shared_put(local_ray) -> None:
 
     handles = _install_fleet(local_ray, (0, 0.0), (0, 0.0))
     try:
-        sync = RayGenerationWeightSync(handles, worker_rpc_timeout_s=30.0)
+        sync = RayGenerationWeightSync(
+            handles,
+            actor_dispatcher=RayActorDispatcher(
+                tuple(handle.worker_id for handle in handles),
+            ),
+            worker_rpc_timeout_s=30.0,
+        )
 
         # Fixed tensor, no RNG: the sum below is the payload's identity.
         await sync.push_to_rollout_workers({"w": torch.arange(6)}, policy_version=4)
@@ -307,10 +624,59 @@ async def test_real_ray_weight_sync_attributes_a_wrong_ack_by_submission_order(
     # acks one version short and completes first.
     handles = _install_fleet(local_ray, (0, 0.5), (-1, 0.0))
     try:
-        sync = RayGenerationWeightSync(handles, worker_rpc_timeout_s=30.0)
+        sync = RayGenerationWeightSync(
+            handles,
+            actor_dispatcher=RayActorDispatcher(
+                tuple(handle.worker_id for handle in handles),
+            ),
+            worker_rpc_timeout_s=30.0,
+        )
 
         with pytest.raises(RuntimeError, match=r"rollout-1.*version 4.*expected 5"):
             await sync.push_to_rollout_workers({"w": torch.arange(6)}, policy_version=5)
     finally:
+        for handle in handles:
+            local_ray.kill(handle.actor, no_restart=True)
+
+
+@pytest.mark.slow_test
+@pytest.mark.asyncio
+async def test_real_ray_weight_sync_deadline_excludes_generation_admission_wait(
+    local_ray,
+) -> None:
+    """A real synchronous actor cannot pre-queue weight sync behind generation."""
+
+    handles = _install_fleet(local_ray, (0, 0.0))
+    dispatcher = RayActorDispatcher(("rollout-0",))
+    submitted = asyncio.Event()
+
+    def submit_generation(stall_s: float) -> Any:
+        submitted.set()
+        return handles[0].actor.hold_default_slot.remote(stall_s)
+
+    generation = asyncio.create_task(
+        dispatcher.run(
+            [RayActorJob(0, "rollout-0", submit_generation, 0.6)],
+            operation="rollout.generation.chunk",
+            call_timeout_s=10.0,
+        ),
+    )
+    try:
+        await submitted.wait()
+        sync = RayGenerationWeightSync(
+            handles,
+            actor_dispatcher=dispatcher,
+            worker_rpc_timeout_s=0.3,
+        )
+        started = time.monotonic()
+        await sync.push_to_rollout_workers({"w": torch.arange(3)}, policy_version=8)
+        elapsed = time.monotonic() - started
+
+        assert elapsed > 0.3
+        assert await generation == [(0, "generated")]
+    finally:
+        if not generation.done():
+            generation.cancel()
+            await asyncio.gather(generation, return_exceptions=True)
         for handle in handles:
             local_ray.kill(handle.actor, no_restart=True)

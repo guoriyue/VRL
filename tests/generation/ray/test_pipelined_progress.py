@@ -10,15 +10,24 @@ from typing import Any
 import pytest
 
 import vrl.generation.ray.executor as executor_module
+import vrl.ray.actor_pool as actor_pool_module
 import vrl.ray.operation_deadline as deadline_module
-from vrl.generation.execution.types import DistributedWorkerHandle
+from vrl.generation.execution.types import (
+    DistributedWorkerHandle,
+    PipelinedRequestOutOfMemory,
+)
 from vrl.generation.ray.executor import RayGenerationExecutor
 from vrl.generation.ray.pipeline_protocol import (
     PipelinedProgressError,
     PipelinedRequestProgress,
 )
 from vrl.generation.ray.worker import RayGenerationWorker
-from vrl.ray.operation_deadline import RayOperationCancelled, RayOperationTimeout
+from vrl.ray.actor_pool import RayActorDispatcher, RayActorJob
+from vrl.ray.operation_deadline import (
+    RayCallDeadline,
+    RayOperationCancelled,
+    RayOperationTimeout,
+)
 
 
 @pytest.fixture(autouse=True)
@@ -59,8 +68,42 @@ def _executor(*, timeout_s: float = 1.0) -> RayGenerationExecutor:
         planner=object(),
         workers=[DistributedWorkerHandle(worker_id="w0", actor=object())],
         gatherer=object(),
+        actor_dispatcher=RayActorDispatcher(("w0",)),
         generation_stall_timeout_s=timeout_s,
         pipelined=True,
+    )
+
+
+async def _await_pipelined_through_dispatcher(
+    executor: RayGenerationExecutor,
+    *,
+    result_ref: Any,
+    progress_remote: Any,
+    request_id: str,
+    total_chunks: int,
+) -> Any:
+    """Exercise the progress waiter under its production ObjectRef owner."""
+
+    async def await_result(ref: Any, initial_deadline: RayCallDeadline) -> Any:
+        return await executor._await_pipelined_result(
+            result_ref=ref,
+            progress_remote=progress_remote,
+            worker_id="w0",
+            request_id=request_id,
+            total_chunks=total_chunks,
+            initial_deadline=initial_deadline,
+        )
+
+    return await executor.actor_dispatcher.run_one(
+        RayActorJob(
+            job_index=0,
+            worker_id="w0",
+            remote_method=lambda _payload: result_ref,
+            payload=None,
+        ),
+        operation="rollout.generation.pipelined",
+        call_timeout_s=executor.generation_stall_timeout_s,
+        await_result=await_result,
     )
 
 
@@ -122,6 +165,83 @@ async def test_remote_pipelined_worker_requires_progress_endpoint() -> None:
 
 
 @pytest.mark.asyncio
+async def test_pipelined_submission_gets_deadline_only_after_fleet_admission(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    executor = _executor(timeout_s=0.01)
+    gate = asyncio.Event()
+    first_submitted = asyncio.Event()
+    pipeline_calls: list[str] = []
+    deadlines: list[str] = []
+    real_deadline = actor_pool_module.RayCallDeadline
+
+    def recording_deadline(operation: str, *args: Any, **kwargs: Any) -> Any:
+        deadlines.append(operation)
+        return real_deadline(operation, *args, **kwargs)
+
+    def submit_first(_payload: Any) -> _GatedRef:
+        first_submitted.set()
+        return _GatedRef(gate, "first")
+
+    class _PipelineMethod:
+        @staticmethod
+        def remote(request: Any, **_kwargs: Any) -> _ResolvedRef:
+            pipeline_calls.append(request.request_id)
+            return _ResolvedRef(
+                PipelinedRequestOutOfMemory(
+                    request_id=request.request_id,
+                    worker_id="w0",
+                    error="expected fallback",
+                ),
+            )
+
+    class _ProgressMethod:
+        @staticmethod
+        def remote(_request_id: str) -> _ResolvedRef:
+            raise AssertionError("an immediately resolved pipeline needs no progress RPC")
+
+    monkeypatch.setattr(actor_pool_module, "RayCallDeadline", recording_deadline)
+    executor.workers[0] = DistributedWorkerHandle(
+        worker_id="w0",
+        actor=SimpleNamespace(
+            execute_request_pipelined=_PipelineMethod(),
+            pipelined_progress=_ProgressMethod(),
+        ),
+    )
+    first = asyncio.create_task(
+        executor.actor_dispatcher.run(
+            [RayActorJob(0, "w0", submit_first, None)],
+            operation="rollout.generation.chunk",
+            call_timeout_s=30.0,
+        ),
+    )
+    await first_submitted.wait()
+
+    pipelined = asyncio.create_task(
+        executor._execute_request_pipelined(
+            SimpleNamespace(request_id="req-admission"),
+            SimpleNamespace(chunks=("c0", "c1")),
+            [],
+        ),
+    )
+    await asyncio.sleep(0.03)
+
+    assert not pipelined.done()
+    assert pipeline_calls == []
+    assert deadlines == ["rollout.generation.chunk"]
+
+    gate.set()
+    assert await first == [(0, "first")]
+    result = await pipelined
+    assert isinstance(result, PipelinedRequestOutOfMemory)
+    assert pipeline_calls == ["req-admission"]
+    assert deadlines == [
+        "rollout.generation.chunk",
+        "rollout.generation.pipelined",
+    ]
+
+
+@pytest.mark.asyncio
 async def test_pipelined_progress_resets_the_stall_deadline() -> None:
     executor = _executor(timeout_s=0.05)
     result_ready = asyncio.Event()
@@ -141,10 +261,10 @@ async def test_pipelined_progress_resets_the_stall_deadline() -> None:
             ),
         )
 
-    result = await executor._await_pipelined_result(
+    result = await _await_pipelined_through_dispatcher(
+        executor,
         result_ref=result_ref,
         progress_remote=progress_remote,
-        worker_id="w0",
         request_id="req-progress",
         total_chunks=2,
     )
@@ -179,10 +299,10 @@ async def test_pipelined_stall_cancels_the_result_ref(
         )
 
     with pytest.raises(RayOperationTimeout, match=r"rollout\.generation\.pipelined"):
-        await executor._await_pipelined_result(
+        await _await_pipelined_through_dispatcher(
+            executor,
             result_ref=result_ref,
             progress_remote=progress_remote,
-            worker_id="w0",
             request_id="req-stalled",
             total_chunks=2,
         )
@@ -222,10 +342,10 @@ async def test_pipelined_stall_polling_does_not_accelerate_near_deadline(
         )
 
     with pytest.raises(RayOperationTimeout):
-        await executor._await_pipelined_result(
+        await _await_pipelined_through_dispatcher(
+            executor,
             result_ref=result_ref,
             progress_remote=progress_remote,
-            worker_id="w0",
             request_id="req-fixed-cadence",
             total_chunks=2,
         )
@@ -251,10 +371,10 @@ async def test_pipelined_progress_rpc_stall_cancels_result_and_progress(
     monkeypatch.setattr(deadline_module, "require_ray", lambda: _Ray)
 
     with pytest.raises(RayOperationTimeout, match=r"rollout\.generation\.pipelined"):
-        await executor._await_pipelined_result(
+        await _await_pipelined_through_dispatcher(
+            executor,
             result_ref=result_ref,
             progress_remote=lambda _request_id: progress_ref,
-            worker_id="w0",
             request_id="req-progress-stalled",
             total_chunks=2,
         )
@@ -286,10 +406,10 @@ async def test_pipelined_caller_cancellation_cancels_active_refs(
         return progress_ref
 
     task = asyncio.create_task(
-        executor._await_pipelined_result(
+        _await_pipelined_through_dispatcher(
+            executor,
             result_ref=result_ref,
             progress_remote=progress_remote,
-            worker_id="w0",
             request_id="req-cancelled",
             total_chunks=2,
         ),
@@ -327,10 +447,10 @@ async def test_pipelined_result_cancels_a_losing_progress_rpc(
         result_ready.set()
         return progress_ref
 
-    result = await executor._await_pipelined_result(
+    result = await _await_pipelined_through_dispatcher(
+        executor,
         result_ref=result_ref,
         progress_remote=progress_remote,
-        worker_id="w0",
         request_id="req-result-wins",
         total_chunks=2,
     )
@@ -404,10 +524,10 @@ async def test_pipelined_progress_protocol_failure_is_terminal_and_cancels_resul
         return _ResolvedRef(snapshot)
 
     with pytest.raises(PipelinedProgressError, match=message):
-        await executor._await_pipelined_result(
+        await _await_pipelined_through_dispatcher(
+            executor,
             result_ref=result_ref,
             progress_remote=progress_remote,
-            worker_id="w0",
             request_id="req-protocol",
             total_chunks=2,
         )

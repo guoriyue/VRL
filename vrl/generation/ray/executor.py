@@ -28,7 +28,6 @@ from vrl.generation.types import GenerationOutput, GenerationRequest
 from vrl.ray.actor_pool import RayActorDispatcher, RayActorJob
 from vrl.ray.operation_deadline import (
     RayCallDeadline,
-    RayOperationCancelled,
     cancel_ray_refs,
     validate_ray_timeout,
 )
@@ -49,6 +48,7 @@ class RayGenerationExecutor:
         workers: list[DistributedWorkerHandle],
         gatherer: ChunkGatherer,
         *,
+        actor_dispatcher: RayActorDispatcher,
         generation_stall_timeout_s: float,
         pipelined: bool = False,
     ) -> None:
@@ -63,9 +63,13 @@ class RayGenerationExecutor:
         self.planner = planner
         self.workers = list(workers)
         self.gatherer = gatherer
-        self._actor_dispatcher = RayActorDispatcher(
-            tuple(worker.worker_id for worker in self.workers),
-        )
+        expected_worker_ids = tuple(worker.worker_id for worker in self.workers)
+        if actor_dispatcher.worker_ids != expected_worker_ids:
+            raise ValueError(
+                "RayGenerationExecutor actor dispatcher does not own its worker fleet: "
+                f"{actor_dispatcher.worker_ids} != {expected_worker_ids}",
+            )
+        self.actor_dispatcher = actor_dispatcher
         self.generation_stall_timeout_s = validate_ray_timeout(
             generation_stall_timeout_s,
             name="generation_stall_timeout_s",
@@ -136,7 +140,7 @@ class RayGenerationExecutor:
                 )
         if remote_jobs:
             result_pairs.extend(
-                await self._actor_dispatcher.run(
+                await self.actor_dispatcher.run(
                     remote_jobs,
                     operation="rollout.generation.chunk_size_probe",
                     call_timeout_s=self.generation_stall_timeout_s,
@@ -226,7 +230,7 @@ class RayGenerationExecutor:
             if any(job.worker_id is None for job in remote_jobs):
                 worker_methods = self._remote_worker_methods()
             result_pairs.extend(
-                await self._actor_dispatcher.run(
+                await self.actor_dispatcher.run(
                     remote_jobs,
                     operation="rollout.generation.chunk",
                     call_timeout_s=self.generation_stall_timeout_s,
@@ -395,15 +399,45 @@ class RayGenerationExecutor:
                 raise PipelinedProgressError(
                     "pipelined Ray generation requires worker progress reporting",
                 )
-            result = await self._await_pipelined_result(
-                result_ref=remote(request, engine_plan, sample_rows),
-                progress_remote=progress_remote,
-                worker_id=worker.worker_id,
-                request_id=request.request_id,
-                total_chunks=len(engine_plan.chunks),
+
+            async def await_pipelined_result(
+                result_ref: Any,
+                initial_deadline: RayCallDeadline,
+            ) -> Any:
+                try:
+                    return await self._await_pipelined_result(
+                        result_ref=result_ref,
+                        progress_remote=progress_remote,
+                        worker_id=worker.worker_id,
+                        request_id=request.request_id,
+                        total_chunks=len(engine_plan.chunks),
+                        initial_deadline=initial_deadline,
+                    )
+                except StaleSlotDiscard as error:
+                    # A stale version is a known, graceful business outcome. Let
+                    # the fleet dispatcher release the actor slot before the
+                    # public executor re-raises the typed discard.
+                    return error
+
+            result = await self.actor_dispatcher.run_one(
+                RayActorJob(
+                    job_index=0,
+                    worker_id=worker.worker_id,
+                    remote_method=remote,
+                    payload=request,
+                    keyword_args={
+                        "engine_plan": engine_plan,
+                        "sample_rows": sample_rows,
+                    },
+                ),
+                operation="rollout.generation.pipelined",
+                call_timeout_s=self.generation_stall_timeout_s,
+                await_result=await_pipelined_result,
             )
         else:
             result = call(request, engine_plan, sample_rows)
+        if isinstance(result, StaleSlotDiscard):
+            raise result
         if not isinstance(result, (GenerationOutput, PipelinedRequestOutOfMemory)):
             raise TypeError(
                 f"pipelined generation worker returned unsupported result {type(result).__name__}",
@@ -431,15 +465,12 @@ class RayGenerationExecutor:
         worker_id: str,
         request_id: str,
         total_chunks: int,
+        initial_deadline: RayCallDeadline,
     ) -> Any:
         """Reset one stall deadline only when the worker completes a new chunk."""
 
         context = f"worker_id={worker_id}, request_id={request_id}"
-        deadline = RayCallDeadline(
-            "rollout.generation.pipelined",
-            self.generation_stall_timeout_s,
-            context=context,
-        )
+        deadline = initial_deadline
         result_task = asyncio.ensure_future(result_ref)
         progress_task: asyncio.Future[Any] | None = None
         progress_ref: Any | None = None
@@ -513,20 +544,12 @@ class RayGenerationExecutor:
                         context=context,
                     )
         except asyncio.CancelledError as cancellation:
-            terminal = RayOperationCancelled(
-                "rollout.generation.pipelined",
-                context=context,
-            )
-            refs = [result_ref]
             if progress_ref is not None:
-                refs.append(progress_ref)
-            cancel_ray_refs(None, refs, root_error=terminal)
-            raise cancellation from terminal
+                cancel_ray_refs(None, [progress_ref], root_error=cancellation)
+            raise
         except BaseException as error:
-            refs = [result_ref]
             if progress_ref is not None:
-                refs.append(progress_ref)
-            cancel_ray_refs(None, refs, root_error=error)
+                cancel_ray_refs(None, [progress_ref], root_error=error)
             raise
         finally:
             if progress_task is not None and not progress_task.done():
@@ -550,7 +573,7 @@ class RayGenerationExecutor:
         The retry lives on the driver so vrl/ray stays chunk-agnostic, and the
         gatherer reassembles by (prompt_index, sample_start) metadata, so the
         extra child results need no positional bookkeeping. Children rebind to
-        the worker that OOMed: the executor-owned dispatcher exposes one real
+        the worker that OOMed: the fleet-owned dispatcher exposes one real
         slot per synchronous actor, so the two halves run sequentially instead
         of landing concurrently on the GPU that just proved too full.
         """
@@ -613,7 +636,7 @@ class RayGenerationExecutor:
                         local_calls.append((execute_chunk, child_envelope))
             pending = []
             if retry_jobs:
-                pairs = await self._actor_dispatcher.run(
+                pairs = await self.actor_dispatcher.run(
                     retry_jobs,
                     operation="rollout.generation.chunk",
                     call_timeout_s=self.generation_stall_timeout_s,

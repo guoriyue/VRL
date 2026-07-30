@@ -5,8 +5,9 @@ from __future__ import annotations
 from typing import Any, Protocol
 
 from vrl.generation.execution.types import DistributedWorkerHandle
+from vrl.ray.actor_pool import RayActorDispatcher, RayActorJob
 from vrl.ray.dependencies import require_ray
-from vrl.ray.operation_deadline import await_ray_refs, validate_ray_timeout
+from vrl.ray.operation_deadline import validate_ray_timeout
 
 
 class GenerationWeightSync(Protocol):
@@ -26,9 +27,17 @@ class RayGenerationWeightSync(GenerationWeightSync):
         self,
         workers: list[DistributedWorkerHandle],
         *,
+        actor_dispatcher: RayActorDispatcher,
         worker_rpc_timeout_s: float,
     ) -> None:
         self.workers = list(workers)
+        expected_worker_ids = tuple(worker.worker_id for worker in self.workers)
+        if actor_dispatcher.worker_ids != expected_worker_ids:
+            raise ValueError(
+                "RayGenerationWeightSync actor dispatcher does not own its worker fleet: "
+                f"{actor_dispatcher.worker_ids} != {expected_worker_ids}",
+            )
+        self.actor_dispatcher = actor_dispatcher
         self.worker_rpc_timeout_s = validate_ray_timeout(
             worker_rpc_timeout_s,
             name="worker_rpc_timeout_s",
@@ -63,23 +72,24 @@ class RayGenerationWeightSync(GenerationWeightSync):
         # linearly in worker count for identical data. Ray auto-dereferences
         # the ref into the real dict before the worker method runs.
         shared_state = ray.put(state_ref)
-        update_refs = [
-            update_remote(shared_state, policy_version)
-            for _worker, update_remote in remote_workers
+        remote_jobs = [
+            RayActorJob(
+                job_index=job_index,
+                worker_id=worker.worker_id,
+                remote_method=remote,
+                payload=shared_state,
+                keyword_args={"policy_version": policy_version},
+            )
+            for job_index, (worker, remote) in enumerate(remote_workers)
         ]
-        # Ray ObjectRefs are asyncio-awaitable. Waiting on them directly keeps
-        # the ACK barrier owned by this event loop; cancelling owner shutdown
-        # cannot leave a detached ``to_thread(ray.get)`` blocked indefinitely.
-        installed_versions = await await_ray_refs(
-            update_refs,
+        installed_pairs = await self.actor_dispatcher.run(
+            remote_jobs,
             operation="rollout.weight_sync",
-            timeout_s=self.worker_rpc_timeout_s,
-            context=f"workers={len(remote_workers)}, policy_version={policy_version}",
-            ray=ray,
+            call_timeout_s=self.worker_rpc_timeout_s,
         )
-        for (worker, _update), installed in zip(
+        for (worker, _remote), (_job_index, installed) in zip(
             remote_workers,
-            installed_versions,
+            installed_pairs,
             strict=True,
         ):
             worker.require_installed_policy_version(installed, policy_version)

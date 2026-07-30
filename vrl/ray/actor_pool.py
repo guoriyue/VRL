@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import time
 from collections import deque
-from collections.abc import Mapping
+from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -39,6 +39,14 @@ class RayActorJob:
     keyword_args: Mapping[str, Any] = field(default_factory=dict)
 
 
+@dataclass(frozen=True, slots=True)
+class _AdmissionWaiter:
+    """One caller waiting fairly for any compatible actor slot."""
+
+    token: object
+    candidates: tuple[str, ...]
+
+
 class RayActorCallError(TerminalRuntimeError):
     """An actor call failed outside the worker's typed result protocol."""
 
@@ -55,10 +63,10 @@ class RayActorCallError(TerminalRuntimeError):
 class RayActorDispatcher:
     """Map concurrent driver jobs onto one real slot per synchronous actor.
 
-    The dispatcher belongs to the executor, not to one request. Keeping its
-    admission state across ``run`` calls prevents concurrent requests from
-    pre-queueing calls in a synchronous actor mailbox before their own
-    operation deadline starts.
+    The dispatcher belongs to the actor fleet, not to one request or operation.
+    Keeping its admission state across generation and weight-sync calls prevents
+    either caller from pre-queueing work in a synchronous actor mailbox before
+    its own operation deadline starts.
     """
 
     def __init__(self, worker_ids: list[str] | tuple[str, ...]) -> None:
@@ -72,6 +80,13 @@ class RayActorDispatcher:
         self._changed = asyncio.Event()
         self._terminal_error: TerminalRuntimeError | None = None
         self._active_refs: dict[Any, str] = {}
+        self._admission_waiters: deque[_AdmissionWaiter] = deque()
+
+    @property
+    def worker_ids(self) -> tuple[str, ...]:
+        """Return the fleet identity whose default-group slots are owned here."""
+
+        return self._worker_ids
 
     async def run(
         self,
@@ -99,6 +114,27 @@ class RayActorDispatcher:
                 f"{len(unbound)} job(s) have no worker binding; pull-based "
                 "dispatch requires worker_methods",
             )
+        bound_worker_ids = tuple(job.worker_id for job in jobs if job.worker_id is not None)
+        self._validate_workers(bound_worker_ids)
+        invalid_bound_methods = [
+            job.job_index
+            for job in jobs
+            if job.worker_id is not None and not callable(job.remote_method)
+        ]
+        if invalid_bound_methods:
+            raise ValueError(
+                f"bound Ray actor jobs require callable remote methods: {invalid_bound_methods}",
+            )
+        if worker_methods is not None:
+            self._validate_workers(tuple(worker_methods))
+            invalid_worker_methods = [
+                worker_id for worker_id, method in worker_methods.items() if not callable(method)
+            ]
+            if invalid_worker_methods:
+                raise ValueError(
+                    "pull-based Ray actor dispatch requires callable worker methods: "
+                    f"{invalid_worker_methods}",
+                )
 
         # Stable sort: equal priorities (the static path always submits 0.0)
         # preserve caller order bit-for-bit.
@@ -108,15 +144,20 @@ class RayActorDispatcher:
         pool_started = time.perf_counter()
         submit_time_by_ref: dict[Any, float] = {}
         deadline_by_ref: dict[Any, RayCallDeadline] = {}
+        admission_token = object()
+        submitted_count = 0
 
         def dispatch_worker_for(job: RayActorJob) -> tuple[str, Any] | None:
             if job.worker_id is not None:
-                worker_id = self._try_acquire((job.worker_id,))
+                worker_id = self._try_acquire(
+                    (job.worker_id,),
+                    token=admission_token,
+                )
                 if worker_id is None:
                     return None
                 return worker_id, job.remote_method
             candidates = tuple((worker_methods or {}).keys())
-            worker_id = self._try_acquire(candidates)
+            worker_id = self._try_acquire(candidates, token=admission_token)
             if worker_id is None:
                 return None
             return worker_id, worker_methods[worker_id]  # type: ignore[index]
@@ -124,6 +165,7 @@ class RayActorDispatcher:
         def submit_ready() -> list[Any]:
             """Submit every job with a real free worker slot."""
 
+            nonlocal submitted_count
             new_refs: list[Any] = []
             made_progress = True
             while pending and made_progress:
@@ -144,7 +186,7 @@ class RayActorDispatcher:
                         ref = method(job.payload, **job.keyword_args)
                     except BaseException as cause:
                         self._release(worker_id)
-                        if not ref_to_job:
+                        if submitted_count == 0:
                             raise
                         error = RayActorCallError(
                             operation,
@@ -172,6 +214,7 @@ class RayActorDispatcher:
                             self._require_open()
                         raise error from cause
                     ref_to_job[ref] = (job.job_index, worker_id)
+                    submitted_count += 1
                     if schedule is not None:
                         submit_time_by_ref[ref] = time.perf_counter()
                     deadline_by_ref[ref] = deadline
@@ -195,9 +238,22 @@ class RayActorDispatcher:
             while waiters or pending:
                 spawn(submit_ready())
                 if pending and admission_waiter is None:
-                    admission_waiter = asyncio.create_task(
-                        self._wait_for_available(self._pending_workers(pending, worker_methods)),
+                    candidates = self._pending_workers(pending, worker_methods)
+                    active_workers = {worker_id for _job_index, worker_id in ref_to_job.values()}
+                    candidates = tuple(
+                        worker_id for worker_id in candidates if worker_id not in active_workers
                     )
+                    if candidates:
+                        self._queue_admission_waiter(
+                            candidates,
+                            token=admission_token,
+                        )
+                        admission_waiter = asyncio.create_task(
+                            self._wait_for_available(
+                                candidates,
+                                token=admission_token,
+                            ),
+                        )
 
                 waiting: set[asyncio.Future[Any] | asyncio.Task[None]] = set(waiters)
                 if admission_waiter is not None:
@@ -262,7 +318,6 @@ class RayActorDispatcher:
                         )
             self._require_open()
         except asyncio.CancelledError as cancellation:
-            unresolved = {task: ref for task, ref in waiters.items() if not task.done()}
             first_failure: tuple[int, str, BaseException] | None = None
             for task, ref in waiters.items():
                 if not task.done():
@@ -288,10 +343,10 @@ class RayActorDispatcher:
                 proposed.__cause__ = failure
                 terminal, doomed = self._close(proposed)
                 cancel_ray_refs(None, doomed, root_error=terminal)
-            elif terminal is None and unresolved:
+            elif terminal is None and submitted_count:
                 proposed = RayOperationCancelled(
                     operation,
-                    context=f"submitted_refs={len(unresolved)}",
+                    context=(f"submitted_jobs={submitted_count}, pending_jobs={len(pending)}"),
                 )
                 terminal, doomed = self._close(proposed)
                 cancel_ray_refs(None, doomed, root_error=terminal)
@@ -299,6 +354,7 @@ class RayActorDispatcher:
                 raise cancellation from terminal
             raise
         finally:
+            self._remove_admission_waiter(admission_token)
             if admission_waiter is not None:
                 admission_waiter.cancel()
             for task in waiters:
@@ -311,13 +367,171 @@ class RayActorDispatcher:
 
         return sorted(result_pairs, key=lambda pair: pair[0])
 
-    def _try_acquire(self, candidates: tuple[str, ...]) -> str | None:
+    async def run_one(
+        self,
+        job: RayActorJob,
+        *,
+        operation: str,
+        call_timeout_s: float,
+        await_result: Callable[[Any, RayCallDeadline], Awaitable[Any]],
+    ) -> Any:
+        """Run one bound job whose waiter owns a progress-aware deadline.
+
+        ``run`` owns ordinary fixed-deadline calls. This seam keeps the same
+        fleet admission and terminal state while allowing a protocol-specific
+        waiter to replace its deadline only after verified progress.
+        """
+
+        if not operation:
+            raise ValueError("Ray actor operation must not be empty")
+        call_timeout_s = validate_ray_timeout(
+            call_timeout_s,
+            name="call_timeout_s",
+        )
+        if job.worker_id is None or job.remote_method is None:
+            raise ValueError("run_one requires a bound worker and remote method")
+        if not callable(job.remote_method):
+            raise ValueError("run_one requires a callable remote method")
+        if not callable(await_result):
+            raise ValueError("run_one requires a callable result waiter")
+        self._require_open()
+        worker_id = job.worker_id
+        admission_token = object()
+        while self._try_acquire((worker_id,), token=admission_token) is None:
+            self._queue_admission_waiter(
+                (worker_id,),
+                token=admission_token,
+            )
+            await self._wait_for_available(
+                (worker_id,),
+                token=admission_token,
+            )
+
+        # Start the initial budget immediately before submission, after local
+        # admission. It therefore includes serialization, transport, and actor
+        # execution, but not legitimate waiting behind an earlier fleet call.
+        deadline = RayCallDeadline(
+            operation,
+            call_timeout_s,
+            context=f"worker_id={worker_id}, job_index={job.job_index}",
+        )
+        try:
+            ref = job.remote_method(job.payload, **job.keyword_args)
+        except BaseException:
+            self._release(worker_id)
+            raise
+        try:
+            self._register(ref, worker_id)
+        except BaseException as cause:
+            error = RayActorCallError(
+                operation,
+                worker_id=worker_id,
+                job_index=job.job_index,
+            )
+            terminal, doomed = self._close(error)
+            if ref not in doomed:
+                doomed = (*doomed, ref)
+            cancel_ray_refs(None, doomed, root_error=terminal)
+            if terminal is not error:
+                self._require_open()
+            raise error from cause
+
+        async def wait_for_result() -> Any:
+            return await await_result(ref, deadline)
+
+        waiter = asyncio.create_task(wait_for_result())
+        try:
+            result = await asyncio.shield(waiter)
+        except asyncio.CancelledError as cancellation:
+            if waiter.done():
+                try:
+                    waiter.result()
+                except asyncio.CancelledError as cause:
+                    proposed = RayOperationCancelled(
+                        operation,
+                        context=f"worker_id={worker_id}, job_index={job.job_index}",
+                    )
+                    nested = cause.__cause__
+                    if isinstance(nested, TerminalRuntimeError):
+                        proposed = nested
+                    terminal, doomed = self._close(proposed)
+                    cancel_ray_refs(None, doomed, root_error=terminal)
+                    raise cancellation from terminal
+                except BaseException as cause:
+                    proposed = (
+                        cause
+                        if isinstance(cause, TerminalRuntimeError)
+                        else RayActorCallError(
+                            operation,
+                            worker_id=worker_id,
+                            job_index=job.job_index,
+                        )
+                    )
+                    if proposed is not cause:
+                        proposed.__cause__ = cause
+                    terminal, doomed = self._close(proposed)
+                    cancel_ray_refs(None, doomed, root_error=terminal)
+                    raise cancellation from terminal
+                else:
+                    # The actor completed before cancellation won the driver
+                    # race. Its state is known, so release the physical slot and
+                    # propagate an ordinary caller cancellation.
+                    self._finish(ref, worker_id)
+                    terminal = self._terminal_error
+                    if terminal is not None:
+                        raise cancellation from terminal
+                    raise
+
+            proposed = RayOperationCancelled(
+                operation,
+                context=f"worker_id={worker_id}, job_index={job.job_index}",
+            )
+            terminal, doomed = self._close(proposed)
+            cancel_ray_refs(None, doomed, root_error=terminal)
+            raise cancellation from terminal
+        except BaseException as cause:
+            error = (
+                cause
+                if isinstance(cause, TerminalRuntimeError)
+                else RayActorCallError(
+                    operation,
+                    worker_id=worker_id,
+                    job_index=job.job_index,
+                )
+            )
+            terminal, doomed = self._close(error)
+            cancel_ray_refs(None, doomed, root_error=terminal)
+            if terminal is not error:
+                self._require_open()
+            if error is cause:
+                raise
+            raise error from cause
+        else:
+            self._finish(ref, worker_id)
+            self._require_open()
+            return result
+        finally:
+            if not waiter.done():
+                waiter.cancel()
+            await asyncio.gather(waiter, return_exceptions=True)
+
+    def _try_acquire(
+        self,
+        candidates: tuple[str, ...],
+        *,
+        token: object,
+    ) -> str | None:
         self._require_open()
         self._validate_workers(candidates)
         for worker_id in candidates:
-            if worker_id in self._available:
-                self._available.remove(worker_id)
-                return worker_id
+            if worker_id not in self._available:
+                continue
+            first_waiter = self._first_waiter_for(worker_id)
+            if first_waiter is not None and first_waiter.token is not token:
+                continue
+            self._remove_admission_waiter(token)
+            self._available.remove(worker_id)
+            return worker_id
         return None
 
     def _register(self, ref: Any, worker_id: str) -> None:
@@ -348,6 +562,7 @@ class RayActorDispatcher:
             self._available.clear()
             doomed = tuple(self._active_refs)
             self._active_refs.clear()
+            self._admission_waiters.clear()
             self._changed.set()
             return error, doomed
         return self._terminal_error, ()
@@ -358,17 +573,65 @@ class RayActorDispatcher:
                 "Ray actor dispatcher is terminally closed"
             ) from self._terminal_error
 
-    async def _wait_for_available(self, candidates: tuple[str, ...]) -> None:
+    async def _wait_for_available(
+        self,
+        candidates: tuple[str, ...],
+        *,
+        token: object,
+    ) -> None:
         self._validate_workers(candidates)
-        while True:
-            self._require_open()
-            if any(worker_id in self._available for worker_id in candidates):
-                return
-            self._changed.clear()
-            self._require_open()
-            if any(worker_id in self._available for worker_id in candidates):
+        try:
+            while True:
+                self._require_open()
+                if self._can_acquire(candidates, token=token):
+                    return
+                self._changed.clear()
+                self._require_open()
+                if self._can_acquire(candidates, token=token):
+                    continue
+                await self._changed.wait()
+        except BaseException:
+            self._remove_admission_waiter(token)
+            raise
+
+    def _queue_admission_waiter(
+        self,
+        candidates: tuple[str, ...],
+        *,
+        token: object,
+    ) -> None:
+        if any(waiter.token is token for waiter in self._admission_waiters):
+            return
+        self._admission_waiters.append(
+            _AdmissionWaiter(token=token, candidates=candidates),
+        )
+
+    def _can_acquire(
+        self,
+        candidates: tuple[str, ...],
+        *,
+        token: object,
+    ) -> bool:
+        for worker_id in candidates:
+            if worker_id not in self._available:
                 continue
-            await self._changed.wait()
+            first_waiter = self._first_waiter_for(worker_id)
+            if first_waiter is None or first_waiter.token is token:
+                return True
+        return False
+
+    def _first_waiter_for(self, worker_id: str) -> _AdmissionWaiter | None:
+        return next(
+            (waiter for waiter in self._admission_waiters if worker_id in waiter.candidates),
+            None,
+        )
+
+    def _remove_admission_waiter(self, token: object) -> None:
+        for waiter in self._admission_waiters:
+            if waiter.token is token:
+                self._admission_waiters.remove(waiter)
+                self._changed.set()
+                return
 
     def _pending_workers(
         self,
