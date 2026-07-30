@@ -710,16 +710,15 @@ async def run_actor_jobs(
     jobs: list[RayActorJob],
     *,
     max_inflight_per_actor: int = 1,
-    generation_stall_timeout_s: float,
     worker_methods: Mapping[str, Any] | None = None,
     schedule: list[dict[str, Any]] | None = None,
 ) -> list[tuple[int, Any]]:
-    """Compatibility facade for the former one-shot actor-job dispatcher.
+    """Run actor jobs through the deprecated one-shot compatibility contract.
 
-    New code must keep one ``RayActorDispatcher`` with the actor fleet so
-    concurrent operations share admission state. This facade preserves the
-    historical one-call API while routing its supported synchronous-actor
-    contract through that implementation.
+    This preserves the former public API, including configurable logical
+    concurrency and direct actor-exception propagation. New production code
+    must instead keep one ``RayActorDispatcher`` with the actor fleet so
+    concurrent operations share physical-slot admission and deadlines.
     """
 
     warnings.warn(
@@ -728,38 +727,102 @@ async def run_actor_jobs(
         DeprecationWarning,
         stacklevel=2,
     )
-    if max_inflight_per_actor != 1:
-        raise ValueError(
-            "run_actor_jobs compatibility requires max_inflight_per_actor=1; "
-            "synchronous Ray actors have one real default-group slot",
-        )
-    generation_stall_timeout_s = validate_ray_timeout(
-        generation_stall_timeout_s,
-        name="generation_stall_timeout_s",
-    )
+    if max_inflight_per_actor < 1:
+        raise ValueError("max_inflight_per_actor must be >= 1")
     if not jobs:
         return []
-
-    worker_ids = tuple(
-        dict.fromkeys(
-            [
-                *(job.worker_id for job in jobs if job.worker_id is not None),
-                *(worker_methods or {}),
-            ],
-        ),
-    )
-    if not worker_ids:
+    unbound = [job for job in jobs if job.worker_id is None]
+    if unbound and not worker_methods:
         raise ValueError(
-            f"{len(jobs)} job(s) have no worker binding; pull-based "
+            f"{len(unbound)} job(s) have no worker binding; pull-based "
             "dispatch requires worker_methods",
         )
-    return await RayActorDispatcher(worker_ids).run(
-        jobs,
-        operation="rollout.generation.chunk",
-        call_timeout_s=generation_stall_timeout_s,
-        worker_methods=worker_methods,
-        schedule=schedule,
-    )
+
+    pending = deque(sorted(jobs, key=lambda job: -job.priority))
+    inflight_by_worker = {job.worker_id: 0 for job in jobs if job.worker_id is not None}
+    for worker_id in worker_methods or ():
+        inflight_by_worker.setdefault(worker_id, 0)
+    ref_to_job: dict[Any, tuple[int, str]] = {}
+    result_pairs: list[tuple[int, Any]] = []
+    pool_started = time.perf_counter()
+    submit_time_by_ref: dict[Any, float] = {}
+
+    def dispatch_worker_for(job: RayActorJob) -> tuple[str, Any] | None:
+        if job.worker_id is not None:
+            if inflight_by_worker[job.worker_id] >= max_inflight_per_actor:
+                return None
+            return job.worker_id, job.remote_method
+        free = [
+            (count, worker_id)
+            for worker_id, count in inflight_by_worker.items()
+            if count < max_inflight_per_actor and worker_id in (worker_methods or {})
+        ]
+        if not free:
+            return None
+        _, worker_id = min(free)
+        return worker_id, worker_methods[worker_id]  # type: ignore[index]
+
+    def submit_ready() -> list[Any]:
+        new_refs: list[Any] = []
+        made_progress = True
+        while pending and made_progress:
+            made_progress = False
+            for _ in range(len(pending)):
+                job = pending.popleft()
+                dispatch = dispatch_worker_for(job)
+                if dispatch is None:
+                    pending.append(job)
+                    continue
+                worker_id, method = dispatch
+                ref = method(job.payload, **job.keyword_args)
+                ref_to_job[ref] = (job.job_index, worker_id)
+                inflight_by_worker[worker_id] += 1
+                submit_time_by_ref[ref] = time.perf_counter()
+                new_refs.append(ref)
+                made_progress = True
+        return new_refs
+
+    async def await_ref(ref: Any) -> tuple[Any, Any]:
+        return ref, await ref
+
+    waiters: dict[asyncio.Future[tuple[Any, Any]], Any] = {}
+
+    def spawn(refs: list[Any]) -> None:
+        for ref in refs:
+            waiters[asyncio.ensure_future(await_ref(ref))] = ref
+
+    spawn(submit_ready())
+    try:
+        while waiters:
+            done, _ = await asyncio.wait(
+                waiters,
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+            for task in done:
+                waiters.pop(task, None)
+                ref, result = task.result()
+                job_index, worker_id = ref_to_job.pop(ref)
+                inflight_by_worker[worker_id] -= 1
+                result_pairs.append((job_index, result))
+                if schedule is not None:
+                    submitted = submit_time_by_ref.pop(ref)
+                    finished = time.perf_counter()
+                    schedule.append(
+                        {
+                            "job_index": job_index,
+                            "worker_id": worker_id,
+                            "queue_wait_s": submitted - pool_started,
+                            "execution_s": finished - submitted,
+                        },
+                    )
+            spawn(submit_ready())
+    finally:
+        for task in waiters:
+            task.cancel()
+        if waiters:
+            await asyncio.gather(*waiters, return_exceptions=True)
+
+    return sorted(result_pairs, key=lambda pair: pair[0])
 
 
 __all__ = [

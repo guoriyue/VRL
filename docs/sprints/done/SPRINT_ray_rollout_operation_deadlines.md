@@ -211,8 +211,6 @@ independent of the Ray transport type.
 
 - `RayActorGroup`：Ray actor construction/startup adapter；
 - `RayActorDispatcher`：fleet 级 default-group admission 与 submitted-ref owner；
-- `run_actor_jobs`：deprecated public API facade；旧的一次调用入口继续可导入，但内部委托
-  给 `RayActorDispatcher`，新代码必须让 dispatcher 跟随 fleet 生命周期；
 - `RayGenerationExecutor.execute`：pipelined single-flight public API facade；
 - `RayGenerationWeightSync`：all-worker transactional ACK boundary；
 - `RayGenerationRuntime`：admission、version publication 和 actor ownership boundary；
@@ -242,6 +240,9 @@ independent of the Ray transport type.
 
 一致的跨 family / framework adapter 形状比减少几行代码更有价值。本 sprint 不 flatten
 这些薄边界，也不创建 `DeadlineManager`、`ReliabilityConfig` 或 ALL_CAPS operation table。
+Deprecated public `run_actor_jobs` 保留旧的一次性调度、logical concurrency 和异常透传
+契约，只用于兼容已发布 API；仓内 production 是零调用。它不伪装成新的 deadline-safe
+路径，新代码必须持有 fleet-owned `RayActorDispatcher`。
 旧 `max_inflight_chunks_per_worker` 配置已删除：production worker 是 synchronous actor，
 实际并发槽恒为 1，保留这个始终无效的 public knob 只会制造 no-op 配置。continuous
 rollout 的 `max_inflight_groups` 是另一层真实 admission policy，保持不变。

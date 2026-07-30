@@ -694,7 +694,7 @@ async def test_cancelling_middle_admission_waiter_preserves_identity_fifo() -> N
 
 
 @_CONTROLLED_CLOCK
-def test_run_actor_jobs_compatibility_facade_uses_dispatcher() -> None:
+def test_run_actor_jobs_preserves_deprecated_public_signature() -> None:
     worker = _FakeWorker("w0", speed_rank_base=0)
     jobs = [
         RayActorJob(
@@ -710,7 +710,6 @@ def test_run_actor_jobs_compatibility_facade_uses_dispatcher() -> None:
         pairs = asyncio.run(
             run_actor_jobs(
                 jobs,
-                generation_stall_timeout_s=30.0,
             ),
         )
 
@@ -718,6 +717,63 @@ def test_run_actor_jobs_compatibility_facade_uses_dispatcher() -> None:
         (0, ("w0", "chunk-0")),
         (1, ("w0", "chunk-1")),
     ]
+
+
+def test_run_actor_jobs_preserves_empty_call_and_logical_concurrency() -> None:
+    with pytest.warns(DeprecationWarning, match="RayActorDispatcher"):
+        assert asyncio.run(run_actor_jobs([])) == []
+
+    gates = [asyncio.Event(), asyncio.Event()]
+    submitted: list[str] = []
+
+    def remote(payload: str) -> _GatedRef:
+        submitted.append(payload)
+        return _GatedRef(gates[len(submitted) - 1], payload)
+
+    async def run_concurrently() -> list[tuple[int, Any]]:
+        with pytest.warns(DeprecationWarning, match="RayActorDispatcher"):
+            task = asyncio.create_task(
+                run_actor_jobs(
+                    [
+                        RayActorJob(0, "w0", remote, "first"),
+                        RayActorJob(1, "w0", remote, "second"),
+                    ],
+                    max_inflight_per_actor=2,
+                ),
+            )
+            for _ in range(20):
+                if len(submitted) == 2:
+                    break
+                await asyncio.sleep(0)
+            assert submitted == ["first", "second"]
+            gates[0].set()
+            gates[1].set()
+            return await task
+
+    assert asyncio.run(run_concurrently()) == [(0, "first"), (1, "second")]
+
+
+def test_run_actor_jobs_preserves_actor_exception_type() -> None:
+    actor_error = ValueError("actor failed")
+
+    class _ErrorRef:
+        def __await__(self):
+            async def fail() -> Any:
+                raise actor_error
+
+            return fail().__await__()
+
+    with (
+        pytest.warns(DeprecationWarning, match="RayActorDispatcher"),
+        pytest.raises(ValueError, match="actor failed") as caught,
+    ):
+        asyncio.run(
+            run_actor_jobs(
+                [RayActorJob(0, "w0", lambda _payload: _ErrorRef(), None)],
+            ),
+        )
+
+    assert caught.value is actor_error
 
 
 @pytest.mark.asyncio
