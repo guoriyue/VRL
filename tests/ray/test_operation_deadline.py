@@ -2,59 +2,22 @@
 
 from __future__ import annotations
 
-import asyncio
 from types import SimpleNamespace
 from typing import Any
 
 import pytest
 
 import vrl.ray.actor_group as actor_group_module
-import vrl.ray.operation_deadline as deadline_module
 from vrl.generation.execution.types import DistributedWorkerHandle
 from vrl.generation.ray.launcher import _all_workers_support_versioned_slots
 from vrl.ray.actor_group import RayActorGroup
 from vrl.ray.operation_deadline import (
     RayCallDeadline,
-    RayOperationCancelled,
     RayOperationTimeout,
-    await_ray_refs,
     cancel_ray_refs,
     get_ray_refs,
     validate_ray_timeout,
 )
-
-
-class _NeverRef:
-    def __await__(self):
-        async def wait_forever() -> None:
-            await asyncio.Event().wait()
-
-        return wait_forever().__await__()
-
-
-class _RaisingRef:
-    def __init__(self, error: BaseException) -> None:
-        self.error = error
-
-    def __await__(self):
-        async def raise_error() -> None:
-            raise self.error
-
-        return raise_error().__await__()
-
-
-class _CancellableNeverRef:
-    def __init__(self) -> None:
-        self.waiter_finished = False
-
-    def __await__(self):
-        async def wait_forever() -> None:
-            try:
-                await asyncio.Event().wait()
-            finally:
-                self.waiter_finished = True
-
-        return wait_forever().__await__()
 
 
 class _CancelLedger:
@@ -74,95 +37,6 @@ def test_ray_deadline_rejects_invalid_timeout(timeout_s: float) -> None:
         validate_ray_timeout(timeout_s)
     with pytest.raises(ValueError, match="timeout_s must be finite and > 0"):
         RayCallDeadline("test.operation", timeout_s)
-
-
-@pytest.mark.asyncio
-async def test_async_deadline_cancels_refs_and_raises_typed_error(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    ray = _CancelLedger()
-    refs = [_NeverRef(), _NeverRef()]
-    ticks = iter((100.0, 102.0))
-    monkeypatch.setattr(
-        deadline_module.time,
-        "monotonic",
-        lambda: next(ticks, 102.0),
-    )
-
-    with pytest.raises(RayOperationTimeout) as caught:
-        await await_ray_refs(
-            refs,
-            operation="test.async_barrier",
-            timeout_s=1.0,
-            context="request_id=req-0",
-            ray=ray,
-        )
-
-    assert caught.value.operation == "test.async_barrier"
-    assert caught.value.timeout_s == 1.0
-    assert caught.value.context == "request_id=req-0"
-    assert ray.cancelled == [(refs[0], False), (refs[1], False)]
-
-
-@pytest.mark.asyncio
-async def test_async_deadline_preserves_worker_raised_timeout() -> None:
-    worker_error = TimeoutError("worker-owned timeout")
-    ray = _CancelLedger()
-
-    with pytest.raises(TimeoutError, match="worker-owned timeout") as caught:
-        await await_ray_refs(
-            [_RaisingRef(worker_error)],
-            operation="test.async_barrier",
-            timeout_s=1.0,
-            ray=ray,
-        )
-
-    assert caught.value is worker_error
-    assert not isinstance(caught.value, RayOperationTimeout)
-    assert len(ray.cancelled) == 1
-    assert ray.cancelled[0][1] is False
-
-
-@pytest.mark.asyncio
-async def test_worker_error_cancels_and_joins_sibling_ref_waiters() -> None:
-    worker_error = ValueError("worker failed")
-    never = _CancellableNeverRef()
-    ray = _CancelLedger()
-
-    with pytest.raises(ValueError, match="worker failed") as caught:
-        await await_ray_refs(
-            [_RaisingRef(worker_error), never],
-            operation="test.async_barrier",
-            timeout_s=30.0,
-            ray=ray,
-        )
-
-    assert caught.value is worker_error
-    assert never.waiter_finished is True
-    assert len(ray.cancelled) == 2
-
-
-@pytest.mark.asyncio
-async def test_caller_cancellation_is_not_rewritten_as_deadline() -> None:
-    ray = _CancelLedger()
-    task = asyncio.create_task(
-        await_ray_refs(
-            [_NeverRef()],
-            operation="test.async_barrier",
-            timeout_s=30.0,
-            ray=ray,
-        ),
-    )
-    await asyncio.sleep(0)
-
-    task.cancel()
-    with pytest.raises(asyncio.CancelledError) as caught:
-        await task
-
-    assert isinstance(caught.value.__cause__, RayOperationCancelled)
-    assert caught.value.__cause__.operation == "test.async_barrier"
-    assert len(ray.cancelled) == 1
-    assert ray.cancelled[0][1] is False
 
 
 class _GetTimeoutError(TimeoutError):

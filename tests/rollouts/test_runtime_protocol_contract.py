@@ -8,6 +8,7 @@ tests pin the contract: every production implementation must answer.
 from __future__ import annotations
 
 from types import SimpleNamespace
+from typing import Any
 
 import pytest
 from omegaconf import OmegaConf
@@ -20,6 +21,11 @@ from vrl.generation.ray.runtime import RayGenerationRuntime
 from vrl.ray.placement import RolePlacement
 from vrl.ray.resources import resolve_distributed_resources
 from vrl.trainers.weight_sync import RayRuntimeWeightSyncer, WeightSyncer
+
+
+class _Gatherer:
+    def gather_chunks(self, *_args: Any) -> Any:
+        raise AssertionError("protocol fixture must not gather chunks")
 
 
 def _on_demand_runtime(
@@ -79,7 +85,7 @@ def _on_demand_runtime(
                 model_build={},
                 expected_model_identity={"schema": "test"},
             ),
-            gatherer=object(),
+            gatherer=_Gatherer(),
         ),
         placement=RolePlacement(
             placement_group=object(),

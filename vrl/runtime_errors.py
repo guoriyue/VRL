@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import TypeVar
 
 
-class TerminalRuntimeError(Exception):
+class TerminalRuntimeError(RuntimeError):
     """A failure after which the owning runtime must reject further work."""
 
 

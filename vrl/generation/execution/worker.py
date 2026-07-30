@@ -51,7 +51,9 @@ class GenerationWorkerCore:
                 f"got {type(launch_contract).__name__}",
             )
         self.launch_contract = launch_contract
-        if not isinstance(gatherer, ChunkGatherer):
+        if not isinstance(gatherer, ChunkGatherer) or not callable(
+            getattr(gatherer, "gather_chunks", None),
+        ):
             raise TypeError(
                 f"gatherer must implement ChunkGatherer, got {type(gatherer).__name__}",
             )

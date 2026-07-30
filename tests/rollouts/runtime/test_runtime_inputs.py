@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import pickle
+import threading
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import patch
@@ -32,6 +33,63 @@ from vrl.models.families.nextstep_1.runtime import NextStep1ChunkGatherer
 from vrl.ray.placement import RolePlacement
 from vrl.ray.resources import resolve_distributed_resources
 from vrl.rollouts.collector.config import RolloutCollectorConfig
+
+
+class _TestGatherer:
+    def gather_chunks(self, *_args: Any) -> Any:
+        raise AssertionError("test gatherer must not execute")
+
+
+class _UnpickleableGatherer(_TestGatherer):
+    def __init__(self) -> None:
+        self.lock = threading.Lock()
+
+
+def test_ray_launch_inputs_reject_invalid_contract_type() -> None:
+    with pytest.raises(TypeError, match="launch_contract must be"):
+        RayGenerationLaunchInputs(
+            launch_contract=object(),
+            gatherer=_TestGatherer(),
+        )
+
+
+def test_ray_launch_inputs_reject_invalid_gatherer_protocol() -> None:
+    with pytest.raises(TypeError, match="gatherer must implement ChunkGatherer"):
+        RayGenerationLaunchInputs(
+            launch_contract=GenerationRuntimeLaunchContract(
+                family="test",
+                model_build={},
+                expected_model_identity={"schema": "test"},
+            ),
+            gatherer=object(),
+        )
+
+
+def test_ray_launch_inputs_reject_non_callable_gatherer_method() -> None:
+    with pytest.raises(
+        TypeError,
+        match="gatherer must implement ChunkGatherer, got SimpleNamespace",
+    ):
+        RayGenerationLaunchInputs(
+            launch_contract=GenerationRuntimeLaunchContract(
+                family="test",
+                model_build={},
+                expected_model_identity={"schema": "test"},
+            ),
+            gatherer=SimpleNamespace(gather_chunks=object()),
+        )
+
+
+def test_ray_launch_inputs_reject_unpickleable_gatherer_state() -> None:
+    with pytest.raises(TypeError, match="must be pickle-serializable"):
+        RayGenerationLaunchInputs(
+            launch_contract=GenerationRuntimeLaunchContract(
+                family="test",
+                model_build={},
+                expected_model_identity={"schema": "test"},
+            ),
+            gatherer=_UnpickleableGatherer(),
+        )
 
 
 def _capture_launch_inputs(

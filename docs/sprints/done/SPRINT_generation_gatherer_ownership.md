@@ -21,8 +21,10 @@ neutral base 通过字符串 family identity 反向寻找 owner。
    `RayGenerationLaunchInputs` 保存唯一显式构造的 gatherer。
 2. launcher 把同一个 typed launch input 交给 Ray worker；Ray 的 actor serialization 为每个
    worker 复制该无状态对象，但不会重新解释 family identity。
-3. `GenerationWorkerCore` 验证 `ChunkGatherer` protocol，并把 gatherer 作为 executor constructor
-   kwarg 注入。
+3. `RayGenerationLaunchInputs` 在 driver composition boundary 验证 launch contract、
+   `ChunkGatherer` protocol、方法可调用性与整包 pickle；`GenerationWorkerCore` 在独立 worker
+   process boundary 保留同样的 type/protocol 复验，再把 gatherer 作为 executor constructor
+   kwarg 注入。两层验证对应两个可独立构造的真实边界，不是重复 helper。
 4. `ChunkExecutorBase` 只保存并调用注入对象，不再 import `vrl.families`。没有 gatherer 的
    executor 仍可执行单个 `forward_chunk_plan()`；一旦调用 request-level `gather_chunks()`，
    会 fail loud。

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import math
 import time
 from collections.abc import Iterable, Sequence
@@ -155,65 +154,10 @@ def get_ray_refs(
         raise error from cause
 
 
-async def await_ray_refs(
-    refs: Sequence[Any],
-    *,
-    operation: str,
-    timeout_s: float,
-    context: str | None = None,
-    ray: Any | None = None,
-) -> list[Any]:
-    """Bound an asyncio Ray-ref barrier without rewriting task exceptions."""
-
-    if not refs:
-        return []
-    deadline = RayCallDeadline(operation, timeout_s, context=context)
-    waiters = [asyncio.ensure_future(ref) for ref in refs]
-    barrier = asyncio.gather(*waiters)
-    try:
-        try:
-            done, _ = await asyncio.wait(
-                {barrier},
-                timeout=deadline.remaining_s(),
-            )
-        except asyncio.CancelledError as cancellation:
-            terminal = RayOperationCancelled(operation, context=context)
-            cancel_ray_refs(ray, refs, root_error=terminal)
-            raise cancellation from terminal
-        if done:
-            # result() preserves worker-raised TimeoutError and every other
-            # remote exception instead of rewriting it as a driver deadline.
-            try:
-                return barrier.result()
-            except BaseException as error:
-                cancel_ray_refs(ray, refs, root_error=error)
-                raise
-
-        error = deadline.timeout_error()
-        cancel_ray_refs(
-            ray,
-            refs,
-            root_error=error,
-        )
-        raise error
-    finally:
-        # asyncio.gather does not cancel sibling waiters when one child raises.
-        # Own every ObjectRef wrapper explicitly so no failed barrier can leave
-        # a detached asyncio task pinning an ObjectRef indefinitely.
-        if not barrier.done():
-            barrier.cancel()
-        for waiter in waiters:
-            if not waiter.done():
-                waiter.cancel()
-        await asyncio.gather(*waiters, return_exceptions=True)
-        await asyncio.gather(barrier, return_exceptions=True)
-
-
 __all__ = [
     "RayCallDeadline",
     "RayOperationCancelled",
     "RayOperationTimeout",
-    "await_ray_refs",
     "cancel_ray_refs",
     "get_ray_refs",
     "validate_ray_timeout",

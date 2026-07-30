@@ -34,6 +34,11 @@ from vrl.runtime_errors import failure_identity_cause
 from vrl.trainers.weight_sync import build_runtime_weight_syncer
 
 
+class _Gatherer:
+    def gather_chunks(self, *_args: Any) -> Any:
+        raise AssertionError("runtime lifecycle fixture must not gather chunks")
+
+
 class _FakeInner:
     """Record ordered worker operations without requiring a Ray cluster."""
 
@@ -214,7 +219,7 @@ def _on_demand_runtime(
         config,
         RayGenerationLaunchInputs(
             launch_contract=_launch_contract(),
-            gatherer=SimpleNamespace(),
+            gatherer=_Gatherer(),
         ),
         placement=SimpleNamespace(),
     )
@@ -407,7 +412,7 @@ def test_on_demand_factory_requires_on_demand_plan() -> None:
             config,
             RayGenerationLaunchInputs(
                 launch_contract=_launch_contract(),
-                gatherer=SimpleNamespace(),
+                gatherer=_Gatherer(),
             ),
             placement=SimpleNamespace(),
         )

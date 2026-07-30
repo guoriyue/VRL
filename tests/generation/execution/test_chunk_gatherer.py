@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -14,6 +15,8 @@ from vrl.generation.bindings.full_sequence_denoise import (
 )
 from vrl.generation.execution.executor_base import ChunkExecutorBase
 from vrl.generation.execution.ids import build_sample_rows
+from vrl.generation.execution.worker import GenerationWorkerCore
+from vrl.generation.launch_contract import GenerationRuntimeLaunchContract
 from vrl.generation.protocols import ChunkGatherer
 from vrl.generation.types import GenerationOutput, GenerationRequest
 
@@ -73,6 +76,33 @@ def test_chunk_gatherer_accepts_pure_object_without_forward_chunk_plan() -> None
     output = gatherer.gather_chunks(request, sample_rows, ["chunk"])
 
     assert output.output == ["chunk"]
+
+
+def test_worker_core_rejects_invalid_launch_contract_at_process_boundary() -> None:
+    with pytest.raises(
+        TypeError,
+        match="launch_contract must be a GenerationRuntimeLaunchContract, got object",
+    ):
+        GenerationWorkerCore("worker-0", object(), _PureGatherer())
+
+
+@pytest.mark.parametrize(
+    "gatherer",
+    [object(), SimpleNamespace(gather_chunks=object())],
+)
+def test_worker_core_rejects_invalid_gatherer_at_process_boundary(
+    gatherer: Any,
+) -> None:
+    with pytest.raises(TypeError, match="gatherer must implement ChunkGatherer"):
+        GenerationWorkerCore(
+            "worker-0",
+            GenerationRuntimeLaunchContract(
+                family="test",
+                model_build={},
+                expected_model_identity={"schema": "test"},
+            ),
+            gatherer,
+        )
 
 
 def test_diffusion_chunk_gatherer_gathers_without_model_object() -> None:
