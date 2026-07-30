@@ -468,6 +468,14 @@ class RayGenerationExecutor:
         """Reset one stall deadline only when the worker completes a new chunk."""
 
         deadline = initial_deadline
+        # Reserve at least half of even a very short stall budget for the first
+        # progress RPC. The one-second constant remains the steady-state traffic
+        # ceiling; this derived cadence is fixed for the request, so polling does
+        # not accelerate into a busy loop as a deadline approaches.
+        progress_poll_interval_s = min(
+            _PIPELINED_PROGRESS_POLL_INTERVAL_S,
+            initial_deadline.timeout_s / 2,
+        )
         result_task = asyncio.ensure_future(result_ref)
         progress_task: asyncio.Future[Any] | None = None
         progress_ref: Any | None = None
@@ -477,7 +485,7 @@ class RayGenerationExecutor:
                 remaining_s = deadline.remaining_s()
                 done, _ = await asyncio.wait(
                     {result_task},
-                    timeout=min(_PIPELINED_PROGRESS_POLL_INTERVAL_S, remaining_s),
+                    timeout=min(progress_poll_interval_s, remaining_s),
                 )
                 if done:
                     return result_task.result()

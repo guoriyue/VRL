@@ -32,15 +32,6 @@ from vrl.ray.operation_deadline import (
 )
 
 
-@pytest.fixture(autouse=True)
-def _fast_progress_poll(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(
-        executor_module,
-        "_PIPELINED_PROGRESS_POLL_INTERVAL_S",
-        0.001,
-    )
-
-
 class _ResolvedRef:
     def __init__(self, value: Any) -> None:
         self.value = value
@@ -365,6 +356,39 @@ async def test_pipelined_progress_resets_the_stall_deadline() -> None:
         result_ref=result_ref,
         progress_remote=progress_remote,
         request_id="req-progress",
+        total_chunks=2,
+    )
+
+    assert result == "complete"
+    assert progress_calls == 2
+
+
+@pytest.mark.asyncio
+async def test_short_stall_budget_queries_progress_before_initial_expiry() -> None:
+    assert executor_module._PIPELINED_PROGRESS_POLL_INTERVAL_S == 1.0
+    executor = _executor(timeout_s=0.02)
+    result_ready = asyncio.Event()
+    result_ref = _GatedRef(result_ready, "complete")
+    progress_calls = 0
+
+    def progress_remote(request_id: str) -> _ResolvedRef:
+        nonlocal progress_calls
+        progress_calls += 1
+        if progress_calls == 2:
+            result_ready.set()
+        return _ResolvedRef(
+            PipelinedRequestProgress(
+                request_id=request_id,
+                completed_chunks=min(progress_calls, 2),
+                total_chunks=2,
+            ),
+        )
+
+    result = await _await_pipelined_through_dispatcher(
+        executor,
+        result_ref=result_ref,
+        progress_remote=progress_remote,
+        request_id="req-short-budget",
         total_chunks=2,
     )
 
