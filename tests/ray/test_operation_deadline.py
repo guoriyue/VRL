@@ -18,6 +18,7 @@ from vrl.ray.operation_deadline import (
     get_ray_refs,
     validate_ray_timeout,
 )
+from vrl.runtime_errors import TerminalRuntimeError
 
 
 class _CancelLedger:
@@ -41,6 +42,11 @@ def test_ray_deadline_rejects_invalid_timeout(timeout_s: float) -> None:
 
 class _GetTimeoutError(TimeoutError):
     pass
+
+
+def test_ray_operation_timeout_is_a_terminal_domain_error() -> None:
+    assert issubclass(RayOperationTimeout, TerminalRuntimeError)
+    assert not issubclass(RayOperationTimeout, TimeoutError)
 
 
 class _SyncTimeoutRay(_CancelLedger):

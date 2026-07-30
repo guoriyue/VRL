@@ -12,7 +12,7 @@ from vrl.ray.dependencies import require_ray
 from vrl.runtime_errors import TerminalRuntimeError
 
 
-class RayOperationTimeout(TimeoutError, TerminalRuntimeError):
+class RayOperationTimeout(TerminalRuntimeError):
     """A driver-side Ray call exceeded its configured wall-clock budget."""
 
     def __init__(

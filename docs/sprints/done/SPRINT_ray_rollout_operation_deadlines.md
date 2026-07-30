@@ -15,6 +15,11 @@ Ray rollout 现在同时有两条互补的 liveness 边界：
 `run_verdict.json` 记录失败，supervisor 再执行 bounded restart policy；获准 retry
 时才从最新 complete checkpoint 恢复。
 
+`RayOperationTimeout` 是 VRL 拥有的 terminal domain error，只继承
+`TerminalRuntimeError`。Ray 的 dependency-owned `GetTimeoutError` 保留在
+`__cause__` 中供诊断；它不应通过跨 `OSError`/`RuntimeError` 分支的多重继承伪装成
+通用 `TimeoutError`。
+
 ## 为什么是两个配置字段
 
 公共 source of truth 位于 `RolloutWorkerSection`：
