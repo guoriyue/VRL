@@ -89,7 +89,10 @@ class RayGenerationLauncher:
         expected_gpu_ids = placement.expected_gpu_ids
 
         worker_ids = [f"rollout-{logical_idx}" for logical_idx in range(len(bundle_indices))]
-        worker_configs = [contract for _ in bundle_indices]
+        # The same registry-owned gatherer serves the driver executor and the
+        # single-worker pipelined path. Ray serializes it to each actor; workers
+        # never re-resolve family identity from the neutral execution layer.
+        worker_configs = [launch_inputs for _ in bundle_indices]
         try:
             actor_group = RayActorGroup.launch(
                 worker_cls=RayGenerationWorker,

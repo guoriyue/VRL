@@ -35,8 +35,9 @@ class _ChunkExecutor:
     family = "unit"
     task = "t2i"
 
-    def __init__(self, model: _RuntimeModel) -> None:
+    def __init__(self, model: _RuntimeModel, *, gatherer: Any | None = None) -> None:
         self.model = model
+        self.gatherer = gatherer
 
     def forward_chunk_plan(self, *args: Any, **kwargs: Any) -> Any:
         raise NotImplementedError
@@ -114,6 +115,7 @@ def _worker(
             identities[0],
             generation_memory=generation_memory,
         ),
+        _ChunkExecutor(_RuntimeModel()),
     )
 
 

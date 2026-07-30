@@ -13,6 +13,7 @@ import torch
 from vrl.config.precision import RolePrecision
 from vrl.generation.launch_contract import GenerationRuntimeLaunchContract
 from vrl.generation.protocols import ChunkResult
+from vrl.generation.ray.launch_inputs import RayGenerationLaunchInputs
 from vrl.generation.ray.worker import RayGenerationWorker
 from vrl.generation.types import GenerationOutput, GenerationRequest, GenerationSampleRow
 from vrl.models.interfaces import (
@@ -36,18 +37,7 @@ class _TinyRuntimeModel:
         self.loaded_state = dict(state_dict)
 
 
-class _TinyChunkExecutor:
-    build_count = 0
-    family = "janus_pro"
-    task = "ar_t2i"
-
-    def __init__(self, model: _TinyRuntimeModel) -> None:
-        type(self).build_count += 1
-        self.model = model
-
-    def forward_chunk_plan(self, *args: Any, **kwargs: Any) -> ChunkResult:
-        raise NotImplementedError("Ray worker idempotency test never executes chunks")
-
+class _TinyGatherer:
     def gather_chunks(
         self,
         request: GenerationRequest,
@@ -61,6 +51,34 @@ class _TinyChunkExecutor:
             sample_rows=list(sample_rows),
             output=list(chunks),
         )
+
+
+class _TinyChunkExecutor:
+    build_count = 0
+    family = "janus_pro"
+    task = "ar_t2i"
+
+    def __init__(
+        self,
+        model: _TinyRuntimeModel,
+        *,
+        gatherer: Any | None = None,
+    ) -> None:
+        type(self).build_count += 1
+        self.model = model
+        self.gatherer = gatherer
+
+    def forward_chunk_plan(self, *args: Any, **kwargs: Any) -> ChunkResult:
+        raise NotImplementedError("Ray worker idempotency test never executes chunks")
+
+    def gather_chunks(
+        self,
+        request: GenerationRequest,
+        sample_rows: Sequence[GenerationSampleRow],
+        chunks: Sequence[ChunkResult],
+    ) -> GenerationOutput:
+        assert self.gatherer is not None
+        return self.gatherer.gather_chunks(request, sample_rows, chunks)
 
 
 def build_tiny_runtime_bundle(build: ModelBuild) -> RuntimeBundle:
@@ -132,13 +150,21 @@ def _launch_contract() -> GenerationRuntimeLaunchContract:
     )
 
 
+def _launch_inputs() -> RayGenerationLaunchInputs:
+    return RayGenerationLaunchInputs(
+        launch_contract=_launch_contract(),
+        gatherer=_TinyGatherer(),
+    )
+
+
 def test_ray_generation_worker_load_policy_is_idempotent(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Checks Ray generation worker load policy is idempotent."""
     _install_tiny_family(monkeypatch)
     _TinyChunkExecutor.build_count = 0
-    worker = RayGenerationWorker("rollout-0", _launch_contract())
+    launch_inputs = _launch_inputs()
+    worker = RayGenerationWorker("rollout-0", launch_inputs)
 
     worker.load_policy()
     first_executor = worker.core.executor
@@ -146,6 +172,7 @@ def test_ray_generation_worker_load_policy_is_idempotent(
 
     assert _TinyChunkExecutor.build_count == 1
     assert worker.core.executor is first_executor
+    assert first_executor.gatherer is launch_inputs.gatherer
 
 
 def test_ray_generation_worker_rebuilds_executor_after_release(
@@ -156,7 +183,7 @@ def test_ray_generation_worker_rebuilds_executor_after_release(
     """Checks Ray generation worker rebuilds executor after release."""
     _install_tiny_family(monkeypatch)
     _TinyChunkExecutor.build_count = 0
-    worker = RayGenerationWorker("rollout-0", _launch_contract())
+    worker = RayGenerationWorker("rollout-0", _launch_inputs())
 
     worker.load_policy()
     first_executor = worker.core.executor

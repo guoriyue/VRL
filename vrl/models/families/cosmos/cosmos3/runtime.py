@@ -23,6 +23,7 @@ from vrl.generation.bindings.full_sequence_denoise import (
     DiffusionSamplingParams,
 )
 from vrl.generation.execution.chunks import SampleChunk
+from vrl.generation.protocols import ChunkGatherer
 from vrl.generation.types import GenerationRequest, VideoGenerationRequest
 from vrl.models.interfaces.runtime import ModelBuild, RuntimeBundle
 from vrl.utils.logging import init_logger
@@ -59,9 +60,15 @@ class Cosmos3ChunkExecutor(DiffusionChunkExecutorBase):
     default_num_frames: int = 93
     default_fps: int | None = 24
 
-    def __init__(self, model: Any, *, samples_per_chunk: int | None = None) -> None:
+    def __init__(
+        self,
+        model: Any,
+        *,
+        gatherer: ChunkGatherer | None = None,
+        samples_per_chunk: int | None = None,
+    ) -> None:
         del samples_per_chunk  # cosmos3 is strictly batch=1 (pipeline constraint)
-        super().__init__(model)
+        super().__init__(model, gatherer=gatherer)
 
     def encode_prompt_for_chunk(
         self,

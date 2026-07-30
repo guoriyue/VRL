@@ -7,6 +7,7 @@ from typing import Any
 from vrl.generation.bindings.chunk_autoregressive_denoise import (
     ChunkAutoregressiveDenoiseExecutorBase,
 )
+from vrl.generation.protocols import ChunkGatherer
 from vrl.models.interfaces.runtime import ModelBuild, RuntimeBundle
 
 
@@ -17,11 +18,17 @@ class Magi1ChunkExecutor(ChunkAutoregressiveDenoiseExecutorBase):
     task = "t2v"
     default_samples_per_chunk = 1
 
-    def __init__(self, model: Any, *, samples_per_chunk: int = 1) -> None:
+    def __init__(
+        self,
+        model: Any,
+        *,
+        gatherer: ChunkGatherer | None = None,
+        samples_per_chunk: int = 1,
+    ) -> None:
         # The official pipeline accepts one prompt/sample and owns one process.
         if int(samples_per_chunk) != 1:
             raise ValueError("MAGI-1 requires samples_per_chunk=1")
-        super().__init__(model)
+        super().__init__(model, gatherer=gatherer)
 
 
 def build_magi_1_runtime_bundle(build: ModelBuild) -> RuntimeBundle:

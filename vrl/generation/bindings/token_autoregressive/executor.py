@@ -11,6 +11,7 @@ import torch
 from vrl.generation.bindings.token_autoregressive.layout import ARRequestLayout, right_pad
 from vrl.generation.execution.chunks import SampleChunk
 from vrl.generation.execution.executor_base import ChunkExecutorBase
+from vrl.generation.protocols import ChunkGatherer
 from vrl.generation.types import (
     GenerationOutput,
     GenerationRequest,
@@ -48,7 +49,13 @@ class ARChunkExecutorBase(ChunkExecutorBase):
     # explicit backend request is rejected instead of silently ignored.
     _native_runner_reason: str | None = None
 
-    def __init__(self, model: Any) -> None:
+    def __init__(
+        self,
+        model: Any,
+        *,
+        gatherer: ChunkGatherer | None = None,
+    ) -> None:
+        super().__init__(gatherer=gatherer)
         self.model = model
 
     @property

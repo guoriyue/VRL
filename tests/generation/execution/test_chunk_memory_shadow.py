@@ -179,7 +179,7 @@ def _probe_core(executor: Any) -> GenerationWorkerCore:
         expected_model_identity={"schema": "test"},
         policy_version=1,
     )
-    core = GenerationWorkerCore("rollout-0", contract)
+    core = GenerationWorkerCore("rollout-0", contract, executor)
     core.executor = executor
     return core
 
@@ -394,8 +394,9 @@ def test_worker_forwards_chunk_memory_without_runtime_debug() -> None:
         expected_model_identity={"schema": "test"},
         policy_version=1,
     )
-    core = GenerationWorkerCore("rollout-0", contract)
-    core.executor = _MemoryExecutor()
+    executor = _MemoryExecutor()
+    core = GenerationWorkerCore("rollout-0", contract, executor)
+    core.executor = executor
     request = GenerationRequest(
         request_id="req-1",
         family="sd3_5",

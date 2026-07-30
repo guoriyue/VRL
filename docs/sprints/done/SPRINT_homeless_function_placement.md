@@ -42,13 +42,14 @@ config lint + 全量 fast 子集）。最终：3691 passed / 0 failed（起始�
    `Evaluator`、`Strategy` 是 consumer-facing structural contracts。concrete class 不应为了
    声明符合接口而继承它们，更不应靠 mixin 排在 `Protocol` 前面来压过 `...` stub。
    implementation base 应自行实现完整行为，或使用 ABC abstract method fail loud。
-   `Strategy` / `Evaluator` 部分已在 `52916de5` 落地；`ChunkExecutorBase` 尚待同样整改。
+   `Strategy` / `Evaluator` 部分已在 `52916de5` 落地；`ChunkExecutorBase` 已由
+   [[SPRINT_generation_gatherer_ownership]] 改为 structural conformance。
 2. **一个 construction site 不等于在底层做 registry lookup。**
    `ChunkExecutorBase.gather_chunks` 从 neutral execution 层反向读取 family registry，
    而 composition root 已经拥有 `ModelFamilyEntry` 和 gatherer。正确后续是由 composition
-   root 显式绑定或注入，保留独立 `ChunkGatherer` contract。此项仍是 outstanding，不属于
-   本文 `done` 状态所声称已修复的内容；它应与 Ray deadline 相关编辑串行落地，避免同时修改
-   generation execution/launcher 路径。
+   root 显式绑定或注入，保留独立 `ChunkGatherer` contract。此项已由
+   [[SPRINT_generation_gatherer_ownership]] 收口；gatherer 现在由 composition root
+   构造并经 typed launch input 注入。
 3. **closed dict bag 的原整改只完成了一半，现已补齐。** item 10 落地后 AR attention
    仍通过 `ARAttentionConfig.extra["backend_label"]` / `["cache_dtype"]` 传递封闭键，
    `ARAttentionPrefillInput.metadata` 也只有一个生产键。`ead3e4d0` 随后把它们改成 typed

@@ -14,7 +14,11 @@ from vrl.generation.execution.types import (
     WorkerMemoryParkingSnapshot,
 )
 from vrl.generation.launch_contract import GenerationRuntimeLaunchContract
-from vrl.generation.protocols import DiffusionStagedChunkExecutor, GenerationChunkExecutor
+from vrl.generation.protocols import (
+    ChunkGatherer,
+    DiffusionStagedChunkExecutor,
+    GenerationChunkExecutor,
+)
 from vrl.generation.types import GenerationOutput
 from vrl.models.interfaces import require_runtime_model
 from vrl.utils.config import import_from_path
@@ -36,6 +40,7 @@ class GenerationWorkerCore:
         self,
         worker_id: str,
         launch_contract: GenerationRuntimeLaunchContract,
+        gatherer: ChunkGatherer,
         *,
         metadata_provider: Callable[[], Mapping[str, Any]] | None = None,
     ) -> None:
@@ -46,6 +51,11 @@ class GenerationWorkerCore:
                 f"got {type(launch_contract).__name__}",
             )
         self.launch_contract = launch_contract
+        if not isinstance(gatherer, ChunkGatherer):
+            raise TypeError(
+                f"gatherer must implement ChunkGatherer, got {type(gatherer).__name__}",
+            )
+        self.gatherer = gatherer
         from vrl.families.registry import get_model_family_entry
 
         self.family_entry = get_model_family_entry(launch_contract.family)
@@ -678,6 +688,7 @@ class GenerationWorkerCore:
 
         assert_rollout_quantization_applied(model, build)
         executor_kwargs = dict(launch_contract.executor_kwargs)
+        executor_kwargs["gatherer"] = self.gatherer
         from vrl.families.registry import GENERIC_FULL_SEQUENCE_DENOISE_EXECUTOR
 
         executor_cls = import_from_path(self.family_entry.executor_cls)

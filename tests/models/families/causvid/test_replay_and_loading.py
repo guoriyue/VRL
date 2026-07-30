@@ -14,6 +14,9 @@ from typing import Any
 import pytest
 import torch
 
+from vrl.generation.bindings.chunk_autoregressive_denoise import (
+    ChunkAutoregressiveDenoiseGatherer,
+)
 from vrl.generation.execution.ids import build_sample_rows
 from vrl.generation.types import GenerationRequest
 from vrl.models.families.causvid.model import (
@@ -639,7 +642,10 @@ def test_generation_executor_builds_trainable_chunk_trajectory() -> None:
         geometry=REPLAY_GEOMETRY,
         schedule=OFFICIAL_CAUSVID_SCHEDULE,
     )
-    executor = CausVidChunkExecutor(model)
+    executor = CausVidChunkExecutor(
+        model,
+        gatherer=ChunkAutoregressiveDenoiseGatherer(),
+    )
     request = GenerationRequest(
         request_id="causvid-test",
         family="causvid",

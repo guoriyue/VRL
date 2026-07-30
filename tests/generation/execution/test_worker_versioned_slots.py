@@ -100,8 +100,9 @@ def _core(
         policy_version=1,
         versioned_weight_sync=versioned_weight_sync,
     )
-    core = GenerationWorkerCore("rollout-0", contract)
-    core.executor = _Executor(model)  # bypass load_policy() build
+    executor = _Executor(model)
+    core = GenerationWorkerCore("rollout-0", contract, executor)
+    core.executor = executor  # bypass load_policy() build
     return core
 
 

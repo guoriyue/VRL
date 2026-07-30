@@ -15,7 +15,10 @@ from vrl.models.families.janus_pro import JANUS_R1_SEGMENTS
 from vrl.models.families.janus_pro.model import (
     JanusProModel,
 )
-from vrl.models.families.janus_pro.runtime import JanusProR1ChunkExecutor
+from vrl.models.families.janus_pro.runtime import (
+    JanusProR1ChunkExecutor,
+    JanusProR1ChunkGatherer,
+)
 from vrl.models.interfaces import ReplayRequest, ReplayResult
 from vrl.rollouts.batch import RolloutBatch
 from vrl.trajectory import TrajectoryResolver, build_ar_multisegment_trajectory
@@ -435,7 +438,10 @@ def test_r1_executor_forward_emits_canonical_family_and_segment_schema(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Checks R1 executor forward emits canonical family and segment schema."""
-    executor = JanusProR1ChunkExecutor(_ExecutorModel())
+    executor = JanusProR1ChunkExecutor(
+        _ExecutorModel(),
+        gatherer=JanusProR1ChunkGatherer(),
+    )
     scheduler_batch_sizes: list[int | None] = []
     monkeypatch.setattr(
         executor,

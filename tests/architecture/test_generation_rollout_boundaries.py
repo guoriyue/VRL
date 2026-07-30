@@ -385,6 +385,17 @@ def test_generation_execution_core_stays_flat_and_ray_neutral() -> None:
         assert not (execution_root / obsolete).exists()
 
 
+def test_chunk_executor_base_stays_family_registry_neutral() -> None:
+    """The composition root injects gatherers; the shared base never re-resolves them."""
+    path = VRL_ROOT / "generation" / "execution" / "executor_base.py"
+    violations = [
+        (path.relative_to(ROOT), target)
+        for target in _imports(path)
+        if _is_module_or_child(target, "vrl.families")
+    ]
+    assert not violations, _format_violations(violations)
+
+
 def test_new_runtime_code_does_not_import_engine_compat_paths() -> None:
     """Checks new runtime code does not import engine compat paths."""
     violations = []

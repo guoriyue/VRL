@@ -6,7 +6,7 @@ from collections.abc import Sequence
 from typing import Any
 
 from vrl.generation.execution.chunks import run_sample_chunks_with_oom_retry
-from vrl.generation.protocols import ChunkResult, GenerationChunkExecutor
+from vrl.generation.protocols import ChunkGatherer, ChunkResult
 from vrl.generation.types import (
     GenerationOutput,
     GenerationRequest,
@@ -14,7 +14,7 @@ from vrl.generation.types import (
 )
 
 
-class ChunkExecutorBase(GenerationChunkExecutor):
+class ChunkExecutorBase:
     """Drive a planned request through the family chunk step and gather it.
 
     The three binding bases (full-sequence denoise, chunk-autoregressive
@@ -24,17 +24,18 @@ class ChunkExecutorBase(GenerationChunkExecutor):
     - ``forward_plan`` is the in-process twin of the Ray dispatch — the same
       ``forward_chunk_plan`` calls with the same OOM-split retry, then the same
       gather — so a local run cannot drift from production.
-    - ``gather_chunks`` resolves the gatherer through the family registry,
-      which is where the executor -> gatherer binding is already declared
-      (``ModelFamilyEntry.gatherer_cls``, also read by the Ray launcher). One
-      binding, one construction site: an executor cannot pair itself with a
-      gatherer the registry does not know about.
+    - ``gather_chunks`` delegates to the gatherer injected by the composition
+      root that already owns the family registry entry. The neutral execution
+      layer never looks family identity up again.
 
     Families own ``forward_chunk_plan``; overriding ``gather_chunks`` is only
     for payloads that never reach the registry (test doubles).
     """
 
     family: str
+
+    def __init__(self, *, gatherer: ChunkGatherer | None = None) -> None:
+        self._gatherer = gatherer
 
     def forward_plan(
         self,
@@ -54,12 +55,12 @@ class ChunkExecutorBase(GenerationChunkExecutor):
         sample_rows: Sequence[GenerationSampleRow],
         chunks: Sequence[ChunkResult],
     ) -> GenerationOutput:
-        # Lazy: the registry pulls the config schema, and this package stays
-        # importable from the neutral execution layer.
-        from vrl.families.registry import get_model_family_entry
-
-        gatherer = get_model_family_entry(self.family).new_gatherer()
-        return gatherer.gather_chunks(request, sample_rows, chunks)
+        if self._gatherer is None:
+            raise RuntimeError(
+                f"{type(self).__name__} requires an injected chunk gatherer "
+                "for request-level execution",
+            )
+        return self._gatherer.gather_chunks(request, sample_rows, chunks)
 
 
 __all__ = ["ChunkExecutorBase"]

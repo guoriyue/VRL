@@ -15,6 +15,7 @@ from vrl.generation.bindings.full_sequence_denoise.layout import (
 from vrl.generation.execution.chunks import SampleChunk
 from vrl.generation.execution.executor_base import ChunkExecutorBase
 from vrl.generation.execution.planner import build_engine_plan
+from vrl.generation.protocols import ChunkGatherer
 from vrl.generation.steps.denoise.config import DenoiseLoopConfig
 from vrl.generation.steps.denoise.loop import (
     DenoiseLoopResult,
@@ -178,11 +179,18 @@ class DiffusionChunkExecutorBase(ChunkExecutorBase):
     default_max_sequence_length: int | None = None
     sde_type: str = "flow_grpo"
 
-    def __init__(self, model: Any, *, samples_per_chunk: int | None = None) -> None:
+    def __init__(
+        self,
+        model: Any,
+        *,
+        gatherer: ChunkGatherer | None = None,
+        samples_per_chunk: int | None = None,
+    ) -> None:
         # Keyword-only and optional: the worker constructs executors by dotted
         # string (``executor_cls(model, **executor_kwargs)``) and only injects
         # samples_per_chunk for families whose registry entry declares
         # ``accepts_samples_per_chunk``. Unset keeps the class default.
+        super().__init__(gatherer=gatherer)
         self.model = model
         if samples_per_chunk is not None:
             self.default_samples_per_chunk = max(1, int(samples_per_chunk))
@@ -671,13 +679,18 @@ class DiffusionChunkExecutor(DiffusionChunkExecutorBase):
         *,
         family: str,
         task: str,
+        gatherer: ChunkGatherer | None = None,
         num_frames: int = 1,
         max_sequence_length: int | None = None,
         fps: int | None = None,
         chunk_passthrough_keys: tuple[str, ...] = (),
         samples_per_chunk: int = 8,
     ) -> None:
-        super().__init__(model, samples_per_chunk=samples_per_chunk)
+        super().__init__(
+            model,
+            gatherer=gatherer,
+            samples_per_chunk=samples_per_chunk,
+        )
         self.family = family
         self.task = task
         self.default_num_frames = int(num_frames)

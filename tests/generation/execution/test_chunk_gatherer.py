@@ -5,12 +5,14 @@ from __future__ import annotations
 from collections.abc import Sequence
 from typing import Any
 
+import pytest
 import torch
 
 from vrl.generation.bindings.full_sequence_denoise import (
     DiffusionChunkGatherer,
     DiffusionChunkResult,
 )
+from vrl.generation.execution.executor_base import ChunkExecutorBase
 from vrl.generation.execution.ids import build_sample_rows
 from vrl.generation.protocols import ChunkGatherer
 from vrl.generation.types import GenerationOutput, GenerationRequest
@@ -30,6 +32,33 @@ class _PureGatherer:
             sample_rows=list(sample_rows),
             output=list(chunks),
         )
+
+
+class _Executor(ChunkExecutorBase):
+    family = "sd3_5"
+    task = "t2i"
+
+    def forward_chunk_plan(self, *args: Any, **kwargs: Any) -> Any:
+        raise NotImplementedError
+
+
+def test_chunk_executor_uses_injected_gatherer() -> None:
+    request = _request()
+    sample_rows = build_sample_rows(request)
+    gatherer = _PureGatherer()
+    executor = _Executor(gatherer=gatherer)
+
+    output = executor.gather_chunks(request, sample_rows, ["chunk"])
+
+    assert output.output == ["chunk"]
+    assert executor._gatherer is gatherer
+
+
+def test_chunk_executor_rejects_request_execution_without_gatherer() -> None:
+    request = _request()
+
+    with pytest.raises(RuntimeError, match="requires an injected chunk gatherer"):
+        _Executor().gather_chunks(request, build_sample_rows(request), ["chunk"])
 
 
 def test_chunk_gatherer_accepts_pure_object_without_forward_chunk_plan() -> None:

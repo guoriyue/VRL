@@ -744,7 +744,7 @@ def _build_executor(
     cfg: Any,
 ) -> Any:
     executor_cls = import_from_path(entry.executor_cls)
-    kwargs: dict[str, Any] = {}
+    kwargs: dict[str, Any] = {"gatherer": entry.new_gatherer()}
     signature = inspect.signature(executor_cls)
     if "samples_per_chunk" in signature.parameters:
         kwargs["samples_per_chunk"] = int(cfg.rollout.samples_per_chunk)

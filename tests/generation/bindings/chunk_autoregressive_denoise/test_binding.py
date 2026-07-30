@@ -123,7 +123,10 @@ def test_generic_executor_delegates_temporal_generation_to_model() -> None:
     request = _request()
     sample_rows = build_sample_rows(request)
     model = _FakeChunkModel()
-    executor = _GenericChunkExecutor(model)
+    executor = _GenericChunkExecutor(
+        model,
+        gatherer=ChunkAutoregressiveDenoiseGatherer(),
+    )
 
     plan = executor.plan(request)
     output = executor.forward_plan(request, sample_rows, plan)

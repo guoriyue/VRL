@@ -134,6 +134,7 @@ def generate_rollout_preview(
     assert_rollout_quantization_applied(model, build)
 
     executor_kwargs = build_executor_kwargs(entry, root)
+    executor_kwargs["gatherer"] = entry.new_gatherer()
     if entry.executor_cls == GENERIC_FULL_SEQUENCE_DENOISE_EXECUTOR:
         executor_kwargs.update(family=entry.family, task=entry.task)
     executor_cls = import_from_path(entry.executor_cls)

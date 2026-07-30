@@ -13,7 +13,7 @@ from vrl.generation.execution.types import (
     WorkerMemoryParkingSnapshot,
 )
 from vrl.generation.execution.worker import GenerationWorkerCore
-from vrl.generation.launch_contract import GenerationRuntimeLaunchContract
+from vrl.generation.ray.launch_inputs import RayGenerationLaunchInputs
 from vrl.generation.types import GenerationOutput
 from vrl.ray.dependencies import current_gpu_ids, current_node_ip
 
@@ -29,11 +29,17 @@ class RayGenerationWorker:
     def __init__(
         self,
         worker_id: str,
-        launch_contract: GenerationRuntimeLaunchContract,
+        launch_inputs: RayGenerationLaunchInputs,
     ) -> None:
+        if not isinstance(launch_inputs, RayGenerationLaunchInputs):
+            raise TypeError(
+                "launch_inputs must be RayGenerationLaunchInputs, "
+                f"got {type(launch_inputs).__name__}",
+            )
         self.core = GenerationWorkerCore(
             worker_id,
-            launch_contract,
+            launch_inputs.launch_contract,
+            launch_inputs.gatherer,
             metadata_provider=self._ray_metadata,
         )
 

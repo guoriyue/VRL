@@ -74,8 +74,14 @@ def _worker_setup_hook(repo_root: str) -> Any:
             family = "janus_pro"
             task = "ar_t2i"
 
-            def __init__(self, model: TinyRuntimeModel) -> None:
+            def __init__(
+                self,
+                model: TinyRuntimeModel,
+                *,
+                gatherer: Any | None = None,
+            ) -> None:
                 self.model = model
+                self.gatherer = gatherer
 
             def forward_chunk_plan(self, *args: Any, **kwargs: Any) -> Any:
                 raise NotImplementedError(
