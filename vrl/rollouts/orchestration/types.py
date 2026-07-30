@@ -10,14 +10,16 @@ from vrl.rollouts.batch import RolloutBatch
 from vrl.rollouts.stats import RolloutStats
 
 
-class RolloutScheduleMode(str, Enum):
+# Keep the exported modes' historical ``str(member)`` representation; metadata
+# and config boundaries serialize ``.value`` explicitly.
+class RolloutScheduleMode(str, Enum):  # noqa: UP042
     """Supported RL rollout schedule modes."""
 
     STRICT_ON_POLICY = "strict_on_policy"
     CONTINUOUS = "continuous"
 
 
-class RewardCollectionMode(str, Enum):
+class RewardCollectionMode(str, Enum):  # noqa: UP042
     """How prompt collection interleaves group generation and reward scoring.
 
     Production picks between ``BATCHED_SERIAL`` and ``PER_GROUP_STREAMING`` from

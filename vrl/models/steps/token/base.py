@@ -24,7 +24,7 @@ from __future__ import annotations
 import contextlib
 from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Any, ClassVar, TypeVar
+from typing import Any, ClassVar, Self
 
 import torch
 import torch.nn as nn
@@ -40,10 +40,6 @@ from vrl.models.interfaces.replay import (
 )
 from vrl.models.peft_adapter import disable_adapter_on, peel_peft
 from vrl.models.weight_utils import load_weights_into
-
-# ``typing.Self`` is 3.11+; this project floors at 3.10, so the classmethod
-# constructor below keeps the pre-Self idiom to stay precise for subclasses.
-ReplayCoreT = TypeVar("ReplayCoreT", bound="ARReplayCore")
 
 
 class ARModelBase(nn.Module):
@@ -224,14 +220,14 @@ class ARReplayCore(nn.Module):
 
     @classmethod
     def from_pretrained(
-        cls: type[ReplayCoreT],
+        cls,
         model_path: str,
         *,
         device: Any,
         dtype: Any,
         revision: str | None = None,
         trust_remote_code: bool = False,
-    ) -> ReplayCoreT:
+    ) -> Self:
         """Config-init this core and strict-load its checkpoint weights.
 
         The shared replay-loader shape across every AR family: ``AutoConfig``

@@ -301,7 +301,7 @@ class HttpRewardRuntime:
             raise
         except RemoteRewardServiceError:
             raise
-        except (aiohttp.ClientError, asyncio.TimeoutError) as error:
+        except (aiohttp.ClientError, TimeoutError) as error:
             raise RemoteRewardServiceError(
                 RewardServiceErrorCode.TRANSPORT_ERROR.value,
                 f"reward service request failed: {type(error).__name__}: {error}",

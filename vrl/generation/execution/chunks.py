@@ -4,15 +4,12 @@ from __future__ import annotations
 
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, TypeVar
+from typing import TYPE_CHECKING, Any
 
 from vrl.utils.cuda_memory import empty_cuda_cache, is_cuda_out_of_memory
 
 if TYPE_CHECKING:
     from vrl.generation.types import GenerationRequest, GenerationSampleRow
-
-T = TypeVar("T")
-TChunk = TypeVar("TChunk")
 
 
 def validate_chunk_range(
@@ -58,7 +55,7 @@ def _require_rows(name: str, value: Any, count: int) -> None:
         raise ValueError(f"chunk {name} has {actual} rows, expected {count}")
 
 
-def ordered_covering_chunks(
+def ordered_covering_chunks[TChunk](
     request: GenerationRequest,
     sample_rows: Sequence[GenerationSampleRow],
     chunks: Sequence[TChunk],
@@ -187,7 +184,7 @@ def build_prompt_chunks(
     return tuple(chunks)
 
 
-def run_sample_chunks_with_oom_retry(
+def run_sample_chunks_with_oom_retry[T](
     chunks: Sequence[SampleChunk],
     run_one: Callable[[SampleChunk], T],
 ) -> list[T]:

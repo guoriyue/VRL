@@ -83,7 +83,9 @@ class ChunkProduceFence:
         return self.event is None or self.event.query()
 
 
-ChunkCompletionCallback: TypeAlias = Callable[[ChunkProduceFence], None]
+# Keep the exported alias as its historical runtime value; a ``type`` statement
+# would replace it with a TypeAliasType and needlessly change public introspection.
+ChunkCompletionCallback: TypeAlias = Callable[[ChunkProduceFence], None]  # noqa: UP040
 
 
 @dataclass(frozen=True, slots=True)

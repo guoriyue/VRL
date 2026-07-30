@@ -2,20 +2,15 @@
 
 from __future__ import annotations
 
-from typing import TypeVar
-
 
 class TerminalRuntimeError(RuntimeError):
     """A failure after which the owning runtime must reject further work."""
 
 
-_ErrorT = TypeVar("_ErrorT", bound=BaseException)
-
-
-def find_error_cause(
+def find_error_cause[ErrorT: BaseException](
     error: BaseException,
-    error_type: type[_ErrorT],
-) -> _ErrorT | None:
+    error_type: type[ErrorT],
+) -> ErrorT | None:
     """Find the first matching error along explicit cleanup-wrapper causes."""
 
     for candidate in _error_chain(error):

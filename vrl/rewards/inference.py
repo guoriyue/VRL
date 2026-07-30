@@ -25,15 +25,11 @@ def sha256_file(path: str | Path) -> str:
 
     The artifact writer (vrl.rewards.artifacts) and the reward service's wire
     validator must hash identically or shared-filesystem integrity checks fail;
-    this is the one implementation both sides use. Chunked read instead of
-    ``hashlib.file_digest`` because requires-python is 3.10.
+    this is the one implementation both sides use.
     """
 
-    digest = hashlib.sha256()
     with Path(path).open("rb") as handle:
-        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
+        return hashlib.file_digest(handle, "sha256").hexdigest()
 
 
 @dataclass(frozen=True, slots=True)

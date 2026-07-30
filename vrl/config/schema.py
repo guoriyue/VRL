@@ -13,7 +13,7 @@ import functools
 import math
 from collections.abc import Mapping
 from dataclasses import fields as dataclass_fields
-from typing import Annotated, Any, ClassVar, Literal, TypeVar, get_args, get_type_hints
+from typing import Annotated, Any, ClassVar, Literal, get_args, get_type_hints
 
 from omegaconf import DictConfig, OmegaConf
 from omegaconf.errors import MissingMandatoryValue
@@ -380,15 +380,12 @@ def _model_section_block_for_unknown_keys(mapping: Mapping[str, Any]) -> ConfigB
     return _model_section_block(section_cls)
 
 
-_SectionT = TypeVar("_SectionT", bound=ConfigBase)
-
-
-def _revalidate_section(
-    section_cls: type[_SectionT],
+def _revalidate_section[SectionT: ConfigBase](
+    section_cls: type[SectionT],
     payload: Any,
     *,
     section: str,
-) -> _SectionT:
+) -> SectionT:
     """Validate a bare section payload and re-anchor errors to its YAML path.
 
     The selected family class validates the bare ``model``/``sampling`` payload;

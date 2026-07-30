@@ -12,7 +12,7 @@ from collections import Counter, defaultdict
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, TypeVar
+from typing import Any
 
 import yaml
 
@@ -1240,14 +1240,11 @@ def _interleave_bucket_rows(
     return out
 
 
-_GroupKey = TypeVar("_GroupKey")
-
-
-def _proportional_group_counts(
-    group_sizes: Mapping[_GroupKey, int],
+def _proportional_group_counts[GroupKey](
+    group_sizes: Mapping[GroupKey, int],
     *,
     limit: int,
-) -> dict[_GroupKey, int]:
+) -> dict[GroupKey, int]:
     total = sum(group_sizes.values())
     if total <= 0 or limit <= 0:
         return {key: 0 for key in group_sizes}

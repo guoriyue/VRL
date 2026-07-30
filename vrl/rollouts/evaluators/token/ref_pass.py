@@ -10,20 +10,17 @@ deliberately do not share this helper.
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import TypeVar
 
 import torch
 
 from vrl.models.interfaces import ReplayModel
 
-_T = TypeVar("_T")
 
-
-def ref_forward(
+def ref_forward[T](
     model: ReplayModel,
     ref_model: ReplayModel | None,
-    run: Callable[[ReplayModel], _T],
-) -> _T:
+    run: Callable[[ReplayModel], T],
+) -> T:
     """Run ``run`` under the reference-model convention and return its result.
 
     Uses the distinct frozen ``ref_model`` when provided; otherwise reuses

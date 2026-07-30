@@ -7,7 +7,7 @@ name = "visual-rl"
 version = "0.1.0"
 description = "Visual generation RL infrastructure across model families, policy steps, and generation regimes"
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.12"
 license = "Apache-2.0"
 dependencies = [
     "torch>=2.5.0",          # CausVid requires torch.nn.attention.flex_attention
@@ -167,7 +167,7 @@ include = ["vrl*"]
 
 # ── Ruff ─────────────────────────────────────────────────────────
 [tool.ruff]
-target-version = "py310"
+target-version = "py312"
 line-length = 99
 # Vendored upstream code (VideoPhy/VideoCon) is not held to our lint rules.
 extend-exclude = ["third_party"]

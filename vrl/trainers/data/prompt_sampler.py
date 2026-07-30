@@ -12,7 +12,9 @@ if TYPE_CHECKING:
     import torch
 
 
-class PromptSamplingStrategy(str, Enum):
+# Keep the public strategy's historical ``str(member)`` representation; config
+# validation reads and reports ``.value`` explicitly.
+class PromptSamplingStrategy(str, Enum):  # noqa: UP042
     """Supported prompt batch selection strategies."""
 
     RANDOM_WITHOUT_REPLACEMENT = "random_without_replacement"

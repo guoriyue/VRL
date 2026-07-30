@@ -15,7 +15,7 @@ import logging
 import threading
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from typing import Any, TypeVar
+from typing import Any
 
 from vrl.rollouts.orchestration.continuous.consumer import ContinuousRolloutConsumer
 from vrl.rollouts.orchestration.continuous.producer import ContinuousRolloutProducer
@@ -36,8 +36,6 @@ logger = logging.getLogger(__name__)
 _MB = 1024 * 1024
 _OWNER_START_TIMEOUT_S = 10.0
 _OWNER_STOP_TIMEOUT_S = 30.0
-
-_T = TypeVar("_T")
 
 
 @dataclass(frozen=True, slots=True)
@@ -271,7 +269,7 @@ class _ContinuousOwnerRuntime:
         async with self._command_lock:
             await self._run_terminal_cleanup()
 
-    async def _run_command(self, operation: Callable[[], Awaitable[_T]]) -> _T:
+    async def _run_command[T](self, operation: Callable[[], Awaitable[T]]) -> T:
         task = asyncio.current_task()
         if task is None:  # pragma: no cover - asyncio always creates a task here
             raise RuntimeError("continuous owner command has no asyncio task")
@@ -612,7 +610,7 @@ class ContinuousRolloutOwner:
             self._stopped.set()
 
 
-async def _await_owner_future(future: concurrent.futures.Future[_T]) -> _T:
+async def _await_owner_future[T](future: concurrent.futures.Future[T]) -> T:
     # asyncio.wrap_future normally propagates waiter cancellation into the
     # concurrent future.  Shielding preserves owner state transitions and
     # terminal cleanup when the trainer-side waiter is cancelled.

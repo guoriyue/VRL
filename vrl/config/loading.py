@@ -5,11 +5,10 @@ from __future__ import annotations
 from importlib.resources import files
 from importlib.resources.abc import Traversable
 from pathlib import Path, PurePosixPath
-from typing import TypeAlias
 
 from omegaconf import DictConfig, ListConfig, OmegaConf
 
-ConfigSource: TypeAlias = Path | Traversable
+type ConfigSource = Path | Traversable
 
 _BUNDLED_CONFIGS = files("vrl.config.presets")
 

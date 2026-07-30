@@ -18,7 +18,9 @@ SHARED_FILESYSTEM_ARTIFACT_TRANSPORT = "shared_filesystem_paths"
 GENERATION_OVERLAP_SAFE_CAPABILITY = "generation_overlap_safe"
 
 
-class RewardServiceErrorCode(str, Enum):
+# Keep the exported enum's historical ``str(member)`` representation; the wire
+# contract serializes ``.value`` explicitly and does not need StrEnum semantics.
+class RewardServiceErrorCode(str, Enum):  # noqa: UP042
     """Stable machine-readable failures returned by the service."""
 
     BAD_REQUEST = "bad_request"
