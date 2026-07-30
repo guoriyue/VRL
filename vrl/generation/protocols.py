@@ -38,11 +38,13 @@ class ChunkGatherer(Protocol):
 
 @runtime_checkable
 class PolicyVersionProvider(Protocol):
-    """Anything that can report the policy version its weights correspond to.
+    """Anything that can report its latest policy target accepted for generation.
 
     Orchestration asks providers (collector runtime, weight syncer) for the
     version through this contract instead of reaching into their internals.
-    ``None`` means "I do not track a version".
+    An active runtime reports installed worker weights. An inactive on-demand
+    runtime may report a staged target before worker acknowledgement; ``activate``
+    remains its readiness barrier. ``None`` means "I do not track a version".
     """
 
     current_policy_version: int | None

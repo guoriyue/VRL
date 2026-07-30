@@ -261,8 +261,9 @@ sleep/wake 的 remote failure、120 秒 timeout、result-validation failure 或 
 cancellation 都由 resident owner 先关闭 admission 并 force-kill actors；on-demand facade
 从异常链保留 inner 的首个 terminal root。重复 `activate()` 也先调用 inner
 `activate()` admission gate，不能把已被 health monitor 判死的 resident runtime 误报为
-active。offload control task 自己拥有失败清理；即使所有 public waiter 已取消，被
-shield 的 task 后续失败也会 teardown inner runtime，而不是停在 `SHUTTING_DOWN`。
+active。offload control task 自己发起失败清理，即使所有 public waiter 已取消也不会放弃
+inner ownership。清理成功时进入 `TERMINATED`；若连续 teardown 失败，则保留 inner、
+首个 operation root 与 `SHUTTING_DOWN`，由后续显式 `shutdown()` 继续重试。
 
 ### Terminal shutdown
 
