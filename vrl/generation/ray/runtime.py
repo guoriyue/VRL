@@ -211,6 +211,17 @@ class RayGenerationRuntime(GenerationRuntime):
             task.add_done_callback(lambda done: self._activation_finished(state, done))
         try:
             await asyncio.shield(task)
+        except asyncio.CancelledError as error:
+            if self.lifecycle.phase is RuntimePhase.SHUTTING_DOWN:
+                await self.shutdown()
+            failure = self.lifecycle.failure
+            if failure is not None:
+                # asyncio.shield creates a new CancelledError when its inner
+                # task is cancelled, so restore the terminal identity published
+                # by that task. A caller-only cancellation while RUNNING keeps
+                # the ordinary no-cause cancellation surface.
+                error.__cause__ = failure
+            raise
         except BaseException:
             if self.lifecycle.phase is RuntimePhase.SHUTTING_DOWN:
                 await self.shutdown()
@@ -574,6 +585,12 @@ class RayGenerationRuntime(GenerationRuntime):
 
     async def _shutdown_once(self) -> None:
         await self._join_control_tasks()
+        if self.lifecycle.phase is RuntimePhase.TERMINATED:
+            # A runtime-owned activation may have started direct teardown before
+            # this shared shutdown task existed. Joining it transfers the
+            # completed terminal state; running teardown again would create a
+            # second cleanup owner and a spurious double-finish failure.
+            return
         try:
             await self._teardown_owned_resources()
         except BaseException as error:

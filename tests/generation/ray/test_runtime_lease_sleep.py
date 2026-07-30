@@ -1055,8 +1055,9 @@ async def test_shutdown_joins_activation_after_waiter_cancellation(monkeypatch) 
     waiter = asyncio.create_task(runtime.activate())
     await asyncio.wait_for(candidate.restore_started.wait(), timeout=1)
     waiter.cancel()
-    with pytest.raises(asyncio.CancelledError):
+    with pytest.raises(asyncio.CancelledError) as cancelled:
         await waiter
+    assert cancelled.value.__cause__ is None
 
     shutdown = asyncio.create_task(runtime.shutdown())
     await asyncio.sleep(0)
@@ -1107,15 +1108,84 @@ async def test_external_terminal_shutdown_is_the_only_activation_cleanup_owner(
 
     assert await asyncio.wait_for(terminalize, timeout=1) is timeout
     await asyncio.wait_for(shutdown_waiter, timeout=1)
-    with pytest.raises(asyncio.CancelledError):
+    with pytest.raises(asyncio.CancelledError) as cancelled:
         await activation
 
+    assert cancelled.value.__cause__ is timeout
     assert candidate.calls == ["shutdown"]
     assert finish_calls == 1
     assert runtime.lifecycle.failure is timeout
     assert runtime.lifecycle.phase is RuntimePhase.TERMINATED
     assert state.inner_runtime is None
     assert not any("cleanup also failed" in note for note in getattr(timeout, "__notes__", ()))
+
+
+@pytest.mark.asyncio
+async def test_late_shutdown_joins_activation_owned_terminal_cleanup() -> None:
+    outer = _on_demand_runtime()
+    state = outer._on_demand
+    assert state is not None
+    _set_desired_policy(outer, "W2", 2)
+    state.active_policy_version = 1
+    state.workers_offloaded = True
+    health_failure = RolloutWorkerUnreachable(
+        "rollout-1",
+        0.5,
+        TimeoutError("health probe timed out"),
+    )
+    finish_calls = 0
+    finish_outer_shutdown = outer.lifecycle.finish_shutdown
+
+    def count_finish_shutdown() -> None:
+        nonlocal finish_calls
+        finish_calls += 1
+        finish_outer_shutdown()
+
+    outer.lifecycle.finish_shutdown = count_finish_shutdown
+
+    class _BlockingShutdownInner(_FakeInner):
+        def __init__(self) -> None:
+            super().__init__()
+            self.shutdown_started = asyncio.Event()
+            self.finish_shutdown = asyncio.Event()
+
+        async def update_weights(self, state_ref: Any, version: int) -> None:
+            await super().update_weights(state_ref, version)
+            self.lifecycle.fail(health_failure)
+
+        async def shutdown(self) -> None:
+            self.calls.append("shutdown")
+            self.shutdown_started.set()
+            await self.finish_shutdown.wait()
+            self.lifecycle.finish_shutdown()
+
+    inner = _BlockingShutdownInner()
+    inner.current_policy_version = 1
+    state.inner_runtime = inner
+
+    activation = asyncio.create_task(outer.activate())
+    await asyncio.wait_for(inner.shutdown_started.wait(), timeout=1)
+    shutdown_waiters = [
+        asyncio.create_task(outer.shutdown()),
+        asyncio.create_task(outer.shutdown()),
+    ]
+    await asyncio.sleep(0)
+    assert all(not waiter.done() for waiter in shutdown_waiters)
+
+    inner.finish_shutdown.set()
+    with pytest.raises(RolloutWorkerUnreachable) as caught:
+        await activation
+    await asyncio.wait_for(asyncio.gather(*shutdown_waiters), timeout=1)
+
+    assert caught.value is health_failure
+    assert inner.calls == ["wake", ("update", "W2", 2), "shutdown"]
+    assert finish_calls == 1
+    assert outer.lifecycle.failure is health_failure
+    assert outer.lifecycle.phase is RuntimePhase.TERMINATED
+    assert state.inner_runtime is None
+    assert not any(
+        "cleanup also failed" in note for note in getattr(health_failure, "__notes__", ())
+    )
 
 
 @pytest.mark.asyncio
