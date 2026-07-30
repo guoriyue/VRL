@@ -8,6 +8,7 @@ import pytest
 import torch
 from omegaconf import OmegaConf
 
+from tests.conftest import real_local_ray
 from vrl import run as resolved_run
 from vrl.algorithms.grpo.continuous import GRPOConfig
 from vrl.config.precision import RolePrecision
@@ -22,26 +23,23 @@ from vrl.trainers.online.config import OnlineBatchPlan
 ray = pytest.importorskip("ray")
 
 
-@pytest.fixture(scope="module", autouse=True)
-def _module_ray_teardown():
-    """Leave the shared cluster up between tests, close it when the module ends."""
-    yield
-    ray.shutdown()
-
-
-@pytest.fixture()
+@pytest.fixture(scope="module")
 def preinitialized_ray():
     """Shared real local Ray cluster. The recipe sees an is_initialized()
     driver, takes the embedding-caller ownership branch, and must leave the
-    cluster running — asserted per-test via ray.is_initialized()."""
-    if not ray.is_initialized():
-        ray.init(
-            address="local",
-            num_cpus=2,
-            include_dashboard=False,
-            log_to_driver=False,
-        )
-    yield ray
+    cluster running — asserted per-test via ray.is_initialized().
+
+    Module-scoped through the one cluster owner in tests/conftest.py: the
+    hand-rolled version was function-scoped but only initialized when no cluster
+    was up, and a separate autouse module fixture did the closing — module scope
+    says the same thing in one place. Going through ``real_local_ray`` is also
+    what restores ``RAY_ENABLE_UV_RUN_RUNTIME_ENV``: this fixture never flipped
+    it and was only surviving under ``uv run`` because
+    tests/generation/ray/test_rollout_launcher.py leaked it process-wide.
+    """
+
+    with real_local_ray() as started:
+        yield started
 
 
 class _FakeModel:

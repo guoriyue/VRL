@@ -2,7 +2,8 @@
 
 The bundle-plan tests are pure (no Ray): they pin how a resolved resource plan
 collapses to placement-group bundles for each supported GPU topology. The owner
-tests use real Ray on whatever GPUs/CPUs the host exposes.
+tests at the bottom run against the package's shared real cluster
+(``tests/ray/conftest.py``), which offers 8 CPUs and 4 logical GPUs.
 """
 
 from __future__ import annotations
@@ -12,6 +13,7 @@ from dataclasses import dataclass
 import pytest
 from omegaconf import OmegaConf
 
+from vrl.ray import resource_cleanup
 from vrl.ray.placement import GlobalRayPlacementOwner
 from vrl.ray.resources import (
     build_bundle_layout,
@@ -501,7 +503,19 @@ def test_ready_failure_retains_exact_placement_for_shutdown_retry(monkeypatch) -
     assert owner._placement_group is None
 
 
+@pytest.mark.real_cover(
+    "tests/ray/test_global_placement.py::test_probe_actor_kill_failure_is_a_create_failure",
+    why=(
+        "a live cluster cannot be told to fail the SECOND probe actor's construction while the "
+        "first succeeds, and the partially-built fleet is exactly what this asserts gets killed; "
+        "the real probe-create-then-kill path against a real placement group is the slow_test "
+        "twin named here"
+    ),
+)
 def test_probe_partial_actor_construction_cleans_created_handles(monkeypatch) -> None:
+    """Probe fan-out is all-or-nothing: when actor 2 of 2 fails to construct,
+    actor 1 must be killed rather than left holding a bundle."""
+
     owner = _owner(
         {
             "visible_devices": [0, 1],
@@ -542,96 +556,20 @@ def test_probe_partial_actor_construction_cleans_created_handles(monkeypatch) ->
     assert killed == [first_actor]
 
 
-def test_probe_actor_kill_failure_is_a_create_failure(monkeypatch) -> None:
-    owner = _owner(
-        {
-            "visible_devices": [0],
-            "trainer": {"num_gpus": 0},
-            "rollout": {"devices": [0], "gpus_per_worker": 1},
-        },
-    )
-
-    class _Method:
-        def __init__(self, value):
-            self.value = value
-
-        def remote(self):
-            return self.value
-
-    class _Actor:
-        def __init__(self):
-            self.node_and_gpus = _Method("probe-ref")
-
-    actor = _Actor()
-
-    class _PlacementGroup:
-        @staticmethod
-        def ready():
-            return "ready-ref"
-
-    placement_group = _PlacementGroup()
-
-    class _RemoteProbe:
-        def options(self, **_kwargs):
-            return self
-
-        @staticmethod
-        def remote():
-            return actor
-
-    class _Ray:
-        @staticmethod
-        def remote(**_kwargs):
-            return lambda _actor_cls: _RemoteProbe()
-
-        @staticmethod
-        def get(refs, **_kwargs):
-            # Readiness is awaited on the bare ref; the probe fans out over a list.
-            if refs == "ready-ref":
-                return None
-            assert refs == ["probe-ref"]
-            return [("node", (0,))]
-
-    cleanup_error = RuntimeError("probe kill failed")
-    remove_calls: list[object] = []
-    monkeypatch.setattr("vrl.ray.placement.actor_scheduling_strategy", lambda *_a, **_k: object())
-    monkeypatch.setattr("vrl.ray.placement.require_ray", lambda: _Ray())
-    monkeypatch.setattr(
-        "vrl.ray.placement._create_raw_placement_group",
-        lambda *_args, **_kwargs: placement_group,
-    )
-    monkeypatch.setattr(
-        "vrl.ray.placement.kill_actors",
-        lambda _ray, actors: [(actors[0], cleanup_error)],
-    )
-    monkeypatch.setattr(
-        "vrl.ray.placement.remove_placement_group",
-        lambda pg: remove_calls.append(pg),
-    )
-
-    with pytest.raises(RuntimeError, match="probe actor cleanup incomplete") as caught:
-        owner.create()
-
-    assert caught.value.__cause__ is cleanup_error
-    assert remove_calls == [placement_group]
-    assert owner._placement_group is None
-    assert owner._placement_ready is False
-
-
 # ----------------------------------------------- simulated multi-GPU (real Ray)
 #
 # Ray's num_gpus is logical accounting, so a single-physical-GPU host can still
 # exercise the owner's real multi-bundle placement: probe actors only call
-# ray.get_gpu_ids() (logical ids), never real CUDA. This validates the part that
-# matters most -- trainer-GPU reservation and role->GPU binding under a live PG.
+# ray.get_gpu_ids() (logical ids), never real CUDA. That is why the shared cluster
+# can offer 4 GPUs on this host at all -- see real_local_ray in tests/conftest.py.
+# This validates the part that matters most -- trainer-GPU reservation and
+# role->GPU binding under a live PG.
 
 
 @pytest.mark.slow_test
-def test_owner_reserves_trainer_gpu_and_binds_roles_on_simulated_gpus() -> None:
+def test_owner_reserves_trainer_gpu_and_binds_roles_on_simulated_gpus(local_ray) -> None:
     """3-GPU dedicated plan: trainer GPU stays empty, rollout/reward bind right."""
-    ray = pytest.importorskip("ray")
-    ray.shutdown()
-    ray.init(num_cpus=8, num_gpus=4, ignore_reinit_error=True, log_to_driver=False)
+    ray = local_ray
     owner = GlobalRayPlacementOwner(
         _resolve(
             {
@@ -656,16 +594,14 @@ def test_owner_reserves_trainer_gpu_and_binds_roles_on_simulated_gpus() -> None:
         used = set(rollout.bundle_indices) | set(reward_bundles)
         assert trainer_bundle not in used
     finally:
+        # The cluster is shared: release the bundles, never the cluster.
         owner.shutdown()
-        ray.shutdown()
 
 
 @pytest.mark.slow_test
-def test_owner_shares_one_bundle_for_rollout_and_reward_on_simulated_gpus() -> None:
+def test_owner_shares_one_bundle_for_rollout_and_reward_on_simulated_gpus(local_ray) -> None:
     """Shared reward time-multiplexes the rollout GPU: one bundle, both roles."""
-    ray = pytest.importorskip("ray")
-    ray.shutdown()
-    ray.init(num_cpus=8, num_gpus=4, ignore_reinit_error=True, log_to_driver=False)
+    ray = local_ray
     owner = GlobalRayPlacementOwner(
         _resolve(
             {
@@ -689,5 +625,45 @@ def test_owner_shares_one_bundle_for_rollout_and_reward_on_simulated_gpus() -> N
         probed = owner._probe_gpu_bundles(ray, owner._placement_group)
         assert probed[rollout.bundle_indices[0]] == 1
     finally:
+        # The cluster is shared: release the bundles, never the cluster.
         owner.shutdown()
-        ray.shutdown()
+
+
+@pytest.mark.slow_test
+def test_probe_actor_kill_failure_is_a_create_failure(local_ray, monkeypatch) -> None:
+    """A probe actor that cannot be killed fails create(), removes the placement
+    group anyway, and releases ownership.
+
+    Only the kill OUTCOME is injected -- a healthy cluster will not fail a
+    ``ray.kill`` on demand. Everything else on the asserted path is real: a real
+    placement group, a real ``_ProbeActor`` scheduled into a real bundle, a real
+    ``pg.ready()``, and the real ``remove_placement_group``. That is also why the
+    old ``remove_calls == [placement_group]`` assertion is gone -- real removal
+    keeps no ledger, and ``_placement_group is None`` is the same invariant read
+    off production state instead of off a double.
+    """
+
+    del local_ray  # the owner reaches Ray through require_ray(); the cluster is the fixture
+    owner = _owner(
+        {
+            "visible_devices": [0],
+            "trainer": {"num_gpus": 0},
+            "rollout": {"devices": [0], "gpus_per_worker": 1},
+        },
+    )
+    cleanup_error = RuntimeError("probe kill failed")
+
+    def failing_kill(ray, actors):
+        # Kill them for real first, then report the failure: an abandoned probe
+        # actor would hold a bundle of the shared cluster for the rest of the run.
+        resource_cleanup.kill_actors(ray, actors)
+        return [(actors[0], cleanup_error)]
+
+    monkeypatch.setattr("vrl.ray.placement.kill_actors", failing_kill)
+
+    with pytest.raises(RuntimeError, match="probe actor cleanup incomplete") as caught:
+        owner.create()
+
+    assert caught.value.__cause__ is cleanup_error
+    assert owner._placement_group is None
+    assert owner._placement_ready is False

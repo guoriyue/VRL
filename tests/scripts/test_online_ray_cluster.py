@@ -18,6 +18,7 @@ import sys
 
 import pytest
 
+from tests.conftest import ray_uv_hook_disabled
 from vrl.scripts.common import online
 
 ray = pytest.importorskip("ray")
@@ -25,10 +26,21 @@ ray = pytest.importorskip("ray")
 
 @pytest.fixture()
 def isolated_ray():
-    """Real ray with no driver connection before or after the test."""
+    """Real ray with no driver connection before or after the test.
+
+    Deliberately NOT ``real_local_ray``: the contract here is the opposite one.
+    The code under test (``online._RayClusterSession.connect``) must do its own
+    ``ray.init``, so folding this into the shared cluster fixture would erase the
+    very thing being asserted. What it does share is the uv-hook switch — the
+    production ``ray.init`` it drives needs the hook off for the same reason, and
+    this fixture used to get that for free from a leak in
+    tests/generation/ray/test_rollout_launcher.py.
+    """
+
     ray.shutdown()
-    yield ray
-    ray.shutdown()
+    with ray_uv_hook_disabled():
+        yield ray
+        ray.shutdown()
 
 
 @pytest.mark.slow_test

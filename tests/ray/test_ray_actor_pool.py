@@ -2,19 +2,18 @@
 
 from __future__ import annotations
 
-try:
-    import pytest
-except ModuleNotFoundError:  # Ray workers import this module for test actors.
-    pytest = None
-
 import asyncio
+
+import pytest
 
 from vrl.ray.actor_group import RayActorGroup
 from vrl.ray.actor_pool import RayActorJob, run_actor_jobs
 from vrl.ray.placement import validate_actor_gpu_ids
 
-# Every test here spins up Ray (~seconds each) — slow by nature, run nightly not per-PR.
-pytestmark = pytest.mark.slow_test if pytest is not None else ()
+# The two real-Ray tests here share the package cluster (tests/ray/conftest.py);
+# the five validate_actor_gpu_ids tests below are pure, but stay in the nightly
+# lane with them so this module has one lane instead of two.
+pytestmark = pytest.mark.slow_test
 
 
 class _EchoWorker:
@@ -32,15 +31,12 @@ class _EchoWorker:
         return self.worker_id, payload + int(self.config["offset"])
 
 
-def test_ray_actor_group_launch_lifecycle() -> None:
-    """Checks Ray actor group launch wiring, worker configs, metadata, and shutdown."""
-    ray = pytest.importorskip("ray")
-    ray.shutdown()
+def test_ray_actor_group_launch_lifecycle(local_ray) -> None:
+    """Launch really places two actors, hands back their own metadata, routes
+    per-worker config into them, and shutdown drops every handle."""
+    ray = local_ray
     group = None
     try:
-        ray.init(
-            ignore_reinit_error=True, include_dashboard=False, num_cpus=2, log_to_driver=False
-        )
         group = RayActorGroup.launch(
             worker_cls=_EchoWorker,
             worker_configs=[{"offset": 10}, {"offset": 20}],
@@ -63,9 +59,9 @@ def test_ray_actor_group_launch_lifecycle() -> None:
         group.shutdown()
         assert group.handles == []
     finally:
+        # The cluster is shared: this test owns its actors, not the cluster.
         if group is not None:
             group.shutdown()
-        ray.shutdown()
 
 
 class _PayloadWorker:
@@ -76,7 +72,7 @@ class _PayloadWorker:
         return self.worker_id, payload * 2
 
 
-def test_run_actor_jobs_awaits_real_object_refs() -> None:
+def test_run_actor_jobs_awaits_real_object_refs(local_ray) -> None:
     """Real-Ray twin of tests/ray/test_chunk_dispatch.py: the deterministic
     fake refs there encode the assumption that real ObjectRefs are directly
     awaitable inside the dispatch loop and resolve to the task result. Pin it
@@ -84,16 +80,11 @@ def test_run_actor_jobs_awaits_real_object_refs() -> None:
     (placement distribution is scheduling-dependent, so only totals and gather
     order are asserted here; the distribution contract stays deterministic in
     the fake-ref tests)."""
-    ray = pytest.importorskip("ray")
-    ray.shutdown()
+    ray = local_ray
+    actor_cls = ray.remote(num_cpus=0)(_PayloadWorker)
+    w0 = actor_cls.remote("w0")
+    w1 = actor_cls.remote("w1")
     try:
-        ray.init(
-            ignore_reinit_error=True, include_dashboard=False, num_cpus=2, log_to_driver=False
-        )
-        actor_cls = ray.remote(num_cpus=0)(_PayloadWorker)
-        w0 = actor_cls.remote("w0")
-        w1 = actor_cls.remote("w1")
-
         bound = [
             RayActorJob(
                 job_index=i,
@@ -133,11 +124,15 @@ def test_run_actor_jobs_awaits_real_object_refs() -> None:
         assert sorted(payload for _, payload in results) == [0, 2, 4, 6]
         assert {worker for worker, _ in results} <= {"w0", "w1"}
     finally:
-        ray.shutdown()
+        # The cluster is shared: leaving these two alive would have later tests
+        # scheduling against a fleet they did not create.
+        for actor in (w0, w1):
+            ray.kill(actor, no_restart=True)
 
 
 def test_validate_actor_gpu_ids_rejects_unexpected_assignment() -> None:
-    """Checks validate actor GPU IDs rejects unexpected assignment."""
+    """Single-node: a worker holding a GPU outside the resolved device set is a
+    hard error -- that GPU belongs to another role."""
     with pytest.raises(RuntimeError, match="outside resolved reward devices"):
         validate_actor_gpu_ids(
             [{"worker_id": "reward-0", "gpu_ids": [2]}],
@@ -147,7 +142,8 @@ def test_validate_actor_gpu_ids_rejects_unexpected_assignment() -> None:
 
 
 def test_validate_actor_gpu_ids_cross_node_accepts_remote_local_zero() -> None:
-    """Checks validate actor GPU IDs cross-node accepts remote local zero."""
+    """Cross-node: every remote node has its own ordinal space, so two workers
+    both reporting local GPU 0 on different nodes is correct, not a collision."""
     result = validate_actor_gpu_ids(
         [
             {"worker_id": "generation-0", "node_ip": "10.0.0.2", "gpu_ids": [0]},
@@ -163,7 +159,8 @@ def test_validate_actor_gpu_ids_cross_node_accepts_remote_local_zero() -> None:
 
 
 def test_validate_actor_gpu_ids_cross_node_rejects_driver_node() -> None:
-    """Checks validate actor GPU IDs cross-node rejects driver node."""
+    """Cross-node drops the placement-group trainer reservation, so a rollout
+    worker that landed on the head node would sit on the trainer's GPU."""
     with pytest.raises(RuntimeError, match="driver/head node"):
         validate_actor_gpu_ids(
             [{"worker_id": "generation-0", "node_ip": "10.0.0.1", "gpu_ids": [0]}],
@@ -175,7 +172,8 @@ def test_validate_actor_gpu_ids_cross_node_rejects_driver_node() -> None:
 
 
 def test_validate_actor_gpu_ids_cross_node_rejects_shared_gpu() -> None:
-    """Checks validate actor GPU IDs cross-node rejects shared GPU."""
+    """Cross-node uniqueness is per ``(node_ip, gpu_id)``: the same local ordinal
+    twice on ONE node means two workers time-share a physical GPU."""
     with pytest.raises(RuntimeError, match="share GPU"):
         validate_actor_gpu_ids(
             [
@@ -190,7 +188,8 @@ def test_validate_actor_gpu_ids_cross_node_rejects_shared_gpu() -> None:
 
 
 def test_validate_actor_gpu_ids_cross_node_requires_gpu() -> None:
-    """Checks validate actor GPU IDs cross-node requires GPU."""
+    """A rollout worker with no GPU at all fails closed instead of silently
+    running the model on CPU."""
     with pytest.raises(RuntimeError, match="no assigned GPU ids"):
         validate_actor_gpu_ids(
             [{"worker_id": "generation-0", "node_ip": "10.0.0.2", "gpu_ids": []}],

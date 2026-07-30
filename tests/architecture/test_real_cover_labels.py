@@ -162,12 +162,36 @@ def test_the_resolver_refuses_targets_that_cannot_discharge_a_label() -> None:
     """A resolver that says yes to everything would make every check above green."""
 
     assert resolve_target(_LANE_TARGET).lanes == ("gpu",)
-    # The lane comes from `pytestmark = pytest.mark.slow_test if pytest is not None
-    # else ()`, so resolution has to see through the conditional expression.
+    # This one's lane comes from a module-level `pytestmark`, not a decorator, so
+    # resolution has to add module marks to the named test's own.
     assert resolve_target(_MODULE_LANE_TARGET).lanes == ("slow_test",)
     assert "no such file" in (resolve_target("tests/not_a_file.py::test_x").problem or "")
     assert "defines no" in (resolve_target(f"{_LANE_TARGET}_typo").problem or "")
     assert "no real-lane marker" in (resolve_target(_CPU_TARGET).problem or "")
+
+
+def test_the_resolver_sees_a_lane_through_a_conditional_pytestmark(tmp_path) -> None:
+    """``pytestmark = <mark> if cond else ()`` still applies the mark at runtime.
+
+    ``_mark_names`` walks the assignment expression precisely so an ``IfExp``
+    cannot hide a lane. That used to be asserted against two real files that
+    spelled their ``pytestmark`` that way; both were rewritten to a plain
+    assignment once they stopped needing the guard, which would have left the
+    resolver's ``IfExp`` handling with no test at all. A synthetic file keeps the
+    behaviour pinned without holding an unrelated module's style hostage.
+    """
+
+    module = tmp_path / "tests" / "test_conditional_pytestmark.py"
+    module.parent.mkdir(parents=True)
+    module.write_text(
+        "import pytest\n\n"
+        "pytestmark = pytest.mark.slow_test if pytest is not None else ()\n\n\n"
+        "def test_in_the_lane() -> None: ...\n",
+        encoding="utf-8",
+    )
+
+    target = "tests/test_conditional_pytestmark.py::test_in_the_lane"
+    assert resolve_target(target, tmp_path).lanes == ("slow_test",)
 
 
 @pytest.mark.parametrize(

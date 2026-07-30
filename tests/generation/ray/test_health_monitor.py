@@ -16,6 +16,21 @@ from vrl.generation.ray.health_monitor import (
 )
 from vrl.generation.ray.lifecycle_fsm import RuntimeLifecycle, RuntimePhase
 
+# Carried by every test that drives `_FakeRay`. The double is the Ray wire, not
+# the monitor: scripting a probe's answer is how pause/stop/skip behaviour stays
+# in the default lane at zero cost. The wire itself -- a real ray.get deadline
+# expiring against a really blocked actor, and the RayActorError that killing the
+# fleet raises in the driver -- is pinned by the real-cluster twin named here.
+_SCRIPTED_RAY_WIRE = pytest.mark.real_cover(
+    "tests/generation/ray/test_health_monitor.py"
+    "::test_real_wedged_worker_times_out_and_the_fleet_really_dies",
+    why=(
+        "an in-process fake cannot block a real actor process, let a real ray.get(timeout=) "
+        "expire, or make a healthy actor's pending call raise RayActorError once the fleet is "
+        "killed; those three are what the slow_test twin runs for real"
+    ),
+)
+
 
 class _ProbeRef:
     """A probe ObjectRef that carries the answer its actor is scripted to give."""
@@ -54,7 +69,9 @@ class _FakeRay:
         return ref.behaviour
 
     def kill(self, actor: Any, *, no_restart: bool = False) -> None:
-        self.killed.append(actor)
+        # Recorded, not defaulted: production's kill_actors runs for real against
+        # this fake, so a caller that forgot no_restart=True would show up here.
+        self.killed.append((actor, no_restart))
 
 
 def _runtime(*actors: _Actor) -> Any:
@@ -74,13 +91,16 @@ def _monitor(runtime: Any, **kwargs: Any) -> RolloutWorkerHealthMonitor:
 
 
 def _install_ray(monkeypatch: pytest.MonkeyPatch, ray: _FakeRay) -> None:
+    """Swap the Ray module for the scripted one -- and nothing else.
+
+    Production's ``kill_actors`` runs for real here: ``_FakeRay.kill`` already
+    accepts the ``no_restart=`` keyword it passes, so ``ray.killed`` records what
+    the shipped cleanup loop did rather than what a lambda in this file did.
+    """
+
     monkeypatch.setattr(
         "vrl.generation.ray.health_monitor.require_ray",
         lambda: ray,
-    )
-    monkeypatch.setattr(
-        "vrl.generation.ray.health_monitor.kill_actors",
-        lambda _ray, actors: [ray.kill(actor) for actor in actors] and [],
     )
 
 
@@ -92,15 +112,21 @@ def _drive_probe(monitor: RolloutWorkerHealthMonitor, actors: list[_Actor]) -> N
 
 
 def test_interval_zero_disables_the_monitor() -> None:
+    """interval_s=0 is the off switch, and it must not leave a thread behind."""
+
     monitor = _monitor(_runtime(_Actor()), interval_s=0.0)
 
     assert monitor.start() is False
     assert monitor._thread is None
 
 
+@_SCRIPTED_RAY_WIRE
 def test_healthy_workers_are_probed_within_the_configured_timeout(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """Every owned worker is probed once, and the configured timeout is the one
+    handed to ray.get -- an unbounded get would wedge the monitor with the fleet."""
+
     actors = [_Actor("rollout-0"), _Actor("rollout-1")]
     runtime = _runtime(*actors)
     ray = _FakeRay(actors)
@@ -115,6 +141,7 @@ def test_healthy_workers_are_probed_within_the_configured_timeout(
     assert runtime.lifecycle.phase is RuntimePhase.RUNNING
 
 
+@_SCRIPTED_RAY_WIRE
 def test_unresponsive_worker_fails_the_runtime_and_kills_the_fleet(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -139,9 +166,12 @@ def test_unresponsive_worker_fails_the_runtime_and_kills_the_fleet(
     assert isinstance(failure, RolloutWorkerUnreachable)
     assert failure.worker_id == "rollout-1"
     assert failure.timeout_s == 0.5
-    assert ray.killed == [healthy, wedged]
+    # Production's kill_actors did this, in fleet order, with no_restart=True --
+    # a restarting actor would answer the next probe and hide the failure.
+    assert ray.killed == [(healthy, True), (wedged, True)]
 
 
+@_SCRIPTED_RAY_WIRE
 def test_probing_stops_after_the_first_unreachable_worker(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -160,6 +190,7 @@ def test_probing_stops_after_the_first_unreachable_worker(
     assert trailing.health.calls == 0
 
 
+@_SCRIPTED_RAY_WIRE
 def test_paused_monitor_does_not_probe_parked_workers(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -182,7 +213,7 @@ def test_paused_monitor_does_not_probe_parked_workers(
     assert runtime.lifecycle.phase is RuntimePhase.RUNNING
 
 
-def test_resume_rearms_the_grace_period(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_resume_rearms_the_grace_period() -> None:
     """A worker woken from host RAM needs time to restore before answering."""
 
     monitor = _monitor(_runtime(_Actor()), first_wait_s=5.0)
@@ -193,7 +224,11 @@ def test_resume_rearms_the_grace_period(monkeypatch: pytest.MonkeyPatch) -> None
     assert monitor._needs_first_wait is True
 
 
+@_SCRIPTED_RAY_WIRE
 def test_stop_joins_the_thread(monkeypatch: pytest.MonkeyPatch) -> None:
+    """stop() is a real join, not a flag: a surviving daemon thread would keep
+    probing a fleet the caller already tore down."""
+
     actors = [_Actor("rollout-0")]
     ray = _FakeRay(actors)
     _install_ray(monkeypatch, ray)
@@ -209,6 +244,7 @@ def test_stop_joins_the_thread(monkeypatch: pytest.MonkeyPatch) -> None:
     )
 
 
+@_SCRIPTED_RAY_WIRE
 def test_workers_without_a_health_method_are_skipped(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -226,3 +262,74 @@ def test_workers_without_a_health_method_are_skipped(
 
     assert ray.killed == []
     assert runtime.lifecycle.phase is RuntimePhase.RUNNING
+
+
+# ------------------------------------------------------- real cluster (real Ray)
+
+
+class _HealthyWorker:
+    """Real Ray actor that answers its probe while a long driver call is in flight.
+
+    ``generate()`` is the long call in production, and it is the thing the monitor
+    exists to unblock, so the test needs one outstanding. Two concurrency slots
+    keep ``health`` answerable while ``generate`` sits there, which is exactly how
+    the real worker behaves (its probe is served off the actor's asyncio loop).
+    """
+
+    def health(self) -> str:
+        return "ok"
+
+    def generate(self) -> str:
+        time.sleep(300)
+        return "never"
+
+
+class _WedgedWorker:
+    """Real Ray actor whose probe never returns inside the driver's timeout."""
+
+    def health(self) -> str:
+        time.sleep(300)
+        return "never"
+
+
+@pytest.mark.slow_test
+def test_real_wedged_worker_times_out_and_the_fleet_really_dies(local_ray) -> None:
+    """The whole mechanism on a live cluster: a real ``ray.get`` deadline expires
+    against a genuinely blocked actor process, and the kill that follows unblocks
+    the driver's outstanding call to the HEALTHY worker.
+
+    That last part is the invariant the production module docstring states, and
+    nothing in-process can show it: the attempt unwinds because the driver's
+    pending Ray call starts raising ``RayActorError``, not because the wedged
+    worker was singled out. Asserting it on a *pending* ref is also the only
+    race-free way to assert it -- ``ray.kill`` is asynchronous, so a call
+    submitted after the kill can still be answered by a not-yet-dead actor.
+    """
+
+    healthy = local_ray.remote(num_cpus=0, max_concurrency=2)(_HealthyWorker).remote()
+    handles = [
+        DistributedWorkerHandle(worker_id="rollout-0", actor=healthy),
+        DistributedWorkerHandle(
+            worker_id="rollout-1",
+            actor=local_ray.remote(num_cpus=0)(_WedgedWorker).remote(),
+        ),
+    ]
+    runtime = SimpleNamespace(_owned_workers=handles, lifecycle=RuntimeLifecycle())
+    monitor = _monitor(runtime, timeout_s=0.5)
+
+    # The driver call the monitor has to rescue: 300s of work on a healthy worker.
+    blocked_driver_call = healthy.generate.remote()
+
+    started = time.monotonic()
+    monitor._run_probes()
+    elapsed = time.monotonic() - started
+
+    # Without this, an actor that raised something else immediately would leave
+    # the test just as green and "the timeout expired" would be unverifiable.
+    assert elapsed >= 0.5
+    assert runtime.lifecycle.phase is RuntimePhase.SHUTTING_DOWN
+    failure = runtime.lifecycle.failure
+    assert isinstance(failure, RolloutWorkerUnreachable)
+    assert failure.worker_id == "rollout-1"
+    with pytest.raises(local_ray.exceptions.RayActorError):
+        local_ray.get(blocked_driver_call)

@@ -359,3 +359,6 @@ def test_shutdown_kills_only_owned_actor(local_ray) -> None:
     with pytest.raises(local_ray.exceptions.RayActorError):
         local_ray.get(actor.release_policy.remote())
     assert local_ray.get(bystander.release_policy.remote()) == "released"
+    # The cluster is shared: the bystander survived on purpose, so this test has
+    # to retire it itself.
+    local_ray.kill(bystander, no_restart=True)

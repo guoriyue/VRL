@@ -301,6 +301,12 @@ def test_probe_fails_loud_when_one_sample_ooms(fake_cuda: None) -> None:
 
 
 def _probe_worker(worker_id: str, answer: int, calls: list[str]) -> Any:
+    """A plain-callable probe, which is a real production shape, not a fake one:
+    ``runtime.py`` branches on ``getattr(probe, "remote", None)`` and supports a
+    local callable deliberately. So this covers the local branch honestly -- what
+    it cannot reach is the ``.remote()`` + ``ray.get(refs, timeout=600)`` fan-out
+    production takes with real actors (see the real_cover label below)."""
+
     def probe(request: Any, *, max_samples: int) -> dict[str, Any]:
         calls.append(worker_id)
         return {
@@ -312,7 +318,20 @@ def _probe_worker(worker_id: str, answer: int, calls: list[str]) -> Any:
     return SimpleNamespace(worker_id=worker_id, actor=SimpleNamespace(probe_chunk_size=probe))
 
 
+@pytest.mark.real_cover(
+    "tests/generation/ray/test_runtime_config.py"
+    "::test_real_ray_probe_fan_out_resolves_auto_once_across_the_fleet",
+    why=(
+        "a local callable probe takes the non-remote branch of "
+        "_resolve_probed_samples_per_chunk, so this cannot exercise the remote fan-out, the "
+        "600s-bounded ray.get over its refs, or GenerationRequest surviving Ray serialization; "
+        "the slow_test twin named here drives all three on a live cluster"
+    ),
+)
 def test_runtime_resolves_auto_once_and_rewrites_requests() -> None:
+    """Fleet answer is the min across workers, resolved once and reused: the
+    second request is rewritten from the cache without a second probe."""
+
     calls: list[str] = []
     executed: list[Any] = []
 

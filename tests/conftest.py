@@ -25,8 +25,11 @@ claims "covered", only "covered over there".
 
 from __future__ import annotations
 
+import contextlib
 import logging
-from collections.abc import Callable
+import os
+from collections.abc import Callable, Iterator
+from typing import Any
 
 import pytest
 
@@ -127,38 +130,100 @@ def pytest_terminal_summary(terminalreporter, exitstatus, config):
             write(f"      tracked_in: {mark.kwargs['tracked_in']}")
 
 
-@pytest.fixture()
-def local_ray():
-    """Real local Ray cluster (small, CPU-only) for real-Ray unit tests.
+@contextlib.contextmanager
+def ray_uv_hook_disabled() -> Iterator[None]:
+    """The only place in ``tests/`` that touches ``RAY_ENABLE_UV_RUN_RUNTIME_ENV``.
+
+    Ray's uv hook packages the entire current working directory and launches
+    workers through a newly resolved project environment. That is useful for a
+    remote cluster, but it is wrong for a local test cluster: actors lose the
+    driver's dev dependencies (including pytest) and a small unit test uploads
+    hundreds of MiB. Under ``uv run`` — how CI invokes pytest, see
+    ``.github/workflows/ci.yml`` — the workers then fail to start at all.
+
+    ``_skip_env_hook=True`` does NOT cover that path: ``ray/_private/worker.py``
+    returns from the uv branch before ``_skip_env_hook`` is ever read, so
+    flipping this module-level flag is the only switch.
+
+    Restoring it is just as load-bearing as flipping it. The flag is process
+    global, so a fixture that sets it False and walks away silently repairs every
+    later ``ray.init()`` in the run — which is how a suite passes in collection
+    order and fails when a directory runs alone. Keeping the flip in one
+    contextmanager is what makes "every flip has a paired restore" checkable by
+    reading a single function.
+    """
+
+    from ray._private import ray_constants
+
+    previous = ray_constants.RAY_ENABLE_UV_RUN_RUNTIME_ENV
+    ray_constants.RAY_ENABLE_UV_RUN_RUNTIME_ENV = False
+    try:
+        yield
+    finally:
+        ray_constants.RAY_ENABLE_UV_RUN_RUNTIME_ENV = previous
+
+
+@contextlib.contextmanager
+def real_local_ray(**init_kwargs: Any) -> Iterator[Any]:
+    """The one owner of a real local Ray cluster for tests. Small, CPU-only.
+
+    Every real-Ray test that wants a cluster handed to it goes through here,
+    either via the ``local_ray`` fixture below or via a package-scoped override
+    that shares one cluster across a whole directory.
 
     ``address="local"`` always starts a fresh cluster, so an operator cluster
     already running on the host is never hijacked; teardown disconnects and
     stops only the processes this driver spawned (never ``ray stop``).
+
+    ``num_gpus`` is logical accounting -- probe actors only call
+    ``ray.get_gpu_ids()``, never CUDA -- but raylet startup refuses more logical
+    GPUs than an explicitly emptied ``CUDA_VISIBLE_DEVICES`` enumerates. So that
+    variable is dropped across ``ray.init()`` only and restored immediately: the
+    driver keeps whatever GPU visibility the operator chose, and the cluster
+    still gets its four logical bundles.
+
+    Two rules for tests that share a cluster, because a shared cluster has no
+    per-test actor namespace and no per-test ``cluster_resources()`` snapshot:
+
+    1. Kill the actors you create (``ray.kill(actor, no_restart=True)``, or the
+       owning ``group.shutdown()`` / ``owner.shutdown()``). Leftovers leave a
+       nondeterministic number of ``SchedulingCancelled`` errors in later tests.
+    2. Do not write a test that needs a clean actor namespace or an exact
+       ``cluster_resources()`` value. Those fail *silently* on a shared cluster
+       instead of reddening.
     """
+
     ray = pytest.importorskip("ray")
-    from ray._private import ray_constants
 
     ray.shutdown()
-    # Ray's uv hook packages the entire current working directory and launches
-    # workers through a newly resolved project environment. That is useful for a
-    # remote cluster, but it breaks this local fixture's contract: test actors then
-    # lose the driver's dev dependencies (including pytest) and a small unit test
-    # uploads hundreds of MiB. A local cluster must inherit the already-active test
-    # interpreter instead.
-    previous_uv_hook = ray_constants.RAY_ENABLE_UV_RUN_RUNTIME_ENV
-    ray_constants.RAY_ENABLE_UV_RUN_RUNTIME_ENV = False
-    try:
-        ray.init(
-            address="local",
-            num_cpus=2,
-            include_dashboard=False,
-            log_to_driver=False,
-            _skip_env_hook=True,
-        )
+    with ray_uv_hook_disabled():
+        try:
+            previous_cuda_devices = os.environ.pop("CUDA_VISIBLE_DEVICES", None)
+            try:
+                ray.init(
+                    address="local",
+                    num_cpus=8,
+                    num_gpus=4,
+                    include_dashboard=False,
+                    log_to_driver=False,
+                    _skip_env_hook=True,
+                    **init_kwargs,
+                )
+            finally:
+                if previous_cuda_devices is not None:
+                    os.environ["CUDA_VISIBLE_DEVICES"] = previous_cuda_devices
+            yield ray
+        finally:
+            ray.shutdown()
+
+
+@pytest.fixture()
+def local_ray() -> Iterator[Any]:
+    """One cluster for one test. ``tests/ray/`` and ``tests/generation/ray/``
+    override this with a package-scoped shell so a whole directory shares one."""
+
+    with real_local_ray() as ray:
         yield ray
-    finally:
-        ray.shutdown()
-        ray_constants.RAY_ENABLE_UV_RUN_RUNTIME_ENV = previous_uv_hook
 
 
 @pytest.fixture()

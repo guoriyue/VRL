@@ -5,8 +5,11 @@ runtime, no slow markers. They pin the Track A contract:
 round_robin keeps plan-time binding bit-for-bit; dynamic binds at dispatch
 time (pull + LPT) and never changes gather order.
 
-The fakes are a controlled clock, not a Ray protocol fake; the ``real_cover``
-labels below name the live-cluster twin that pins the protocol assumption.
+The fakes are a controlled clock, not a Ray protocol fake, and the ``real_cover``
+labels below name what covers each half for real: the dispatch loop's ObjectRef
+handling by ``test_ray_actor_pool.py``, and the executor's whole
+envelope-over-the-wire-to-result crossing by the real-cluster twins in
+``tests/ray/test_real_chunk_execution.py``.
 """
 
 from __future__ import annotations
@@ -264,6 +267,21 @@ def test_placement_policy_rejects_unknown_strategy() -> None:
 # ----------------------------------------------------- executor end to end
 
 
+# Carried by the three `execute` tests. Their fake actor is called in-process, so
+# no envelope is ever pickled: a field that became unserializable (a lambda, an
+# open handle, a torch device reference) would pass here and break on production's
+# first chunk. That crossing is what the twins named here run for real; the
+# completion ORDER these tests pin is what a real cluster cannot give.
+_CONTROLLED_CLOCK_OVER_A_REAL_WIRE = pytest.mark.real_cover(
+    "tests/ray/test_real_chunk_execution.py",
+    why=(
+        "a real cluster cannot make chunk completion order deterministic, which is the whole "
+        "point of the fake refs; the envelope -> pickle -> actor -> ChunkExecutionResult crossing "
+        "they therefore skip is pinned against a live cluster by both twins in the named file"
+    ),
+)
+
+
 class _FakeActor:
     """Fake Ray actor: execute_chunk.remote returns a real chunk result."""
 
@@ -325,7 +343,7 @@ def _executor(strategy: str, actors: list[_FakeActor]) -> RayGenerationExecutor:
     )
 
 
-@_CONTROLLED_CLOCK
+@_CONTROLLED_CLOCK_OVER_A_REAL_WIRE
 @pytest.mark.asyncio
 async def test_executor_round_robin_dispatches_per_plan_binding() -> None:
     """Checks config strategy round_robin reaches the actual dispatch."""
@@ -347,7 +365,7 @@ async def test_executor_round_robin_dispatches_per_plan_binding() -> None:
         assert row["estimated_cost"] == row["sample_count"] * request.sampling["num_steps"]
 
 
-@_CONTROLLED_CLOCK
+@_CONTROLLED_CLOCK_OVER_A_REAL_WIRE
 @pytest.mark.asyncio
 async def test_executor_dynamic_dispatches_by_pull() -> None:
     """Checks config strategy dynamic actually changes worker placement."""
@@ -375,7 +393,7 @@ async def test_executor_dynamic_dispatches_by_pull() -> None:
     ]
 
 
-@_CONTROLLED_CLOCK
+@_CONTROLLED_CLOCK_OVER_A_REAL_WIRE
 @pytest.mark.asyncio
 async def test_executor_runtime_debug_exposes_chunk_schedule() -> None:
     """Checks runtime_debug surfaces per-chunk placement telemetry."""

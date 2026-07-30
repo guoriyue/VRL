@@ -5,13 +5,9 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Sequence
 from dataclasses import replace
-from pathlib import Path
 from typing import Any
 
-try:
-    import pytest
-except ModuleNotFoundError:  # Ray workers import this module for tiny builders.
-    pytest = None
+import pytest
 
 from vrl.generation.launch_contract import GenerationRuntimeLaunchContract
 from vrl.generation.protocols import ChunkResult
@@ -20,8 +16,8 @@ from vrl.generation.ray.launch_inputs import RayGenerationLaunchInputs
 from vrl.generation.ray.runtime import RayGenerationRuntime
 from vrl.generation.types import GenerationOutput, GenerationRequest, GenerationSampleRow
 
-# Every test here spins up Ray (~seconds each) — slow by nature, run nightly not per-PR.
-pytestmark = pytest.mark.slow_test if pytest is not None else ()
+# These build real Ray workers on the package cluster — slow by nature, nightly.
+pytestmark = pytest.mark.slow_test
 
 
 class _Gatherer:
@@ -38,102 +34,6 @@ class _Gatherer:
             sample_rows=list(sample_rows),
             output=list(chunks),
         )
-
-
-def _worker_setup_hook(repo_root: str) -> Any:
-    """Return a by-value hook that installs a tiny canonical family in workers."""
-
-    def install() -> None:
-        import contextlib
-        import sys
-        from dataclasses import replace
-
-        # Ray workers do not inherit pytest's cwd-based import path. Put this
-        # checkout first so the actor cannot accidentally load another editable
-        # VRL checkout from the developer environment.
-        sys.path.insert(0, repo_root)
-
-        import vrl.families.registry as registry
-        import vrl.models.checkpoint_identity as checkpoint_identity
-        from vrl.models.interfaces import RuntimeBundle
-
-        class TinyRuntimeModel:
-            device = "cpu"
-
-            def to(self, device: Any) -> TinyRuntimeModel:
-                self.device = str(device)
-                return self
-
-            def replay_forward(self, batch: Any, timestep_idx: int = 0, **kwargs: Any) -> Any:
-                raise NotImplementedError("Ray launcher test never calls replay_forward")
-
-            def disable_adapter(self) -> contextlib.AbstractContextManager[None]:
-                return contextlib.nullcontext()
-
-            def load_trainable_state(self, state_dict: dict[str, Any]) -> None:
-                self.loaded_state = dict(state_dict)
-
-        class TinyChunkExecutor:
-            family = "janus_pro"
-            task = "ar_t2i"
-
-            def __init__(self, model: TinyRuntimeModel) -> None:
-                self.model = model
-
-            def forward_chunk_plan(self, *args: Any, **kwargs: Any) -> Any:
-                raise NotImplementedError(
-                    "Ray launcher test only verifies worker construction",
-                )
-
-            def gather_chunks(self, *args: Any, **kwargs: Any) -> Any:
-                raise NotImplementedError(
-                    "Ray launcher test only verifies worker construction",
-                )
-
-        def build_tiny_rollout(_entry: Any, build: Any) -> RuntimeBundle:
-            assert str(build.device) == "cpu"
-            return RuntimeBundle(
-                model=TinyRuntimeModel(),
-                trainable_modules={},
-                scheduler=None,
-                raw_handle=None,
-                precision=build.precision,
-                loads_full_generation_modules=True,
-            )
-
-        # The hook executes before worker imports the launch contract. Publishing
-        # the test executor on an importable production module lets canonical
-        # registry dispatch stay intact without any compatibility fields.
-        registry._RayLauncherTestExecutor = TinyChunkExecutor
-        entry = registry.FAMILY_REGISTRY["janus_pro"]
-        registry.FAMILY_REGISTRY["janus_pro"] = replace(
-            entry,
-            executor_cls="vrl.families.registry:_RayLauncherTestExecutor",
-        )
-        registry.ModelFamilyEntry.build_rollout = build_tiny_rollout
-        checkpoint_identity.resolve_checkpoint_model_identity = lambda _build: {"schema": "test"}
-
-    return install
-
-
-def _init_ray(ray: Any) -> None:
-    from ray._private import ray_constants
-
-    ray.shutdown()
-    repo_root = str(Path(__file__).resolve().parents[3])
-    # Same local-cluster contract as the shared conftest fixture: Ray's uv hook
-    # would package the whole checkout and re-resolve a project environment
-    # without the driver's dev dependencies, so workers could not unpickle the
-    # pytest-module-defined setup hook (ModuleNotFoundError: _pytest).
-    ray_constants.RAY_ENABLE_UV_RUN_RUNTIME_ENV = False
-    ray.init(
-        ignore_reinit_error=True,
-        include_dashboard=False,
-        num_cpus=2,
-        log_to_driver=False,
-        runtime_env={"worker_process_setup_hook": _worker_setup_hook(repo_root)},
-        _skip_env_hook=True,
-    )
 
 
 def _launch_inputs() -> RayGenerationLaunchInputs:
@@ -174,12 +74,11 @@ def _worker_config(**overrides: Any) -> RolloutWorkerConfig:
     return RolloutWorkerConfig(**values)
 
 
-def test_ray_generation_launcher_builds_worker_runtime_with_embedded_ray() -> None:
+def test_ray_generation_launcher_builds_worker_runtime_with_embedded_ray(local_ray) -> None:
     """Launcher builds real workers into the owner's placement group."""
-    ray = pytest.importorskip("ray")
+    ray = local_ray
     import vrl.generation.ray.launcher as launcher_mod
 
-    _init_ray(ray)
     worker = _worker_config(chunk_placement_strategy="dynamic")
     owner = _cpu_rollout_owner(ray, worker=worker)
     runtime: RayGenerationRuntime | None = None
@@ -208,10 +107,11 @@ def test_ray_generation_launcher_builds_worker_runtime_with_embedded_ray() -> No
         assert metadata["worker_id"] == "rollout-0"
         assert metadata["policy_version"] == 7
     finally:
+        # The cluster is shared with the rest of this package: release the
+        # workers and the placement group, never the cluster.
         if runtime is not None:
             asyncio.run(runtime.shutdown())
         owner.shutdown()
-        ray.shutdown()
 
 
 def _cpu_rollout_owner(
@@ -245,13 +145,11 @@ def _cpu_rollout_owner(
     return owner
 
 
-def test_owner_placement_runtime_does_not_own_placement_group() -> None:
+def test_owner_placement_runtime_does_not_own_placement_group(local_ray) -> None:
     """Persistent runtime built on owner placement must not own/remove the PG."""
-    ray = pytest.importorskip("ray")
     import vrl.generation.ray.launcher as launcher_mod
 
-    _init_ray(ray)
-    owner = _cpu_rollout_owner(ray)
+    owner = _cpu_rollout_owner(local_ray)
     runtime: RayGenerationRuntime | None = None
     try:
         runtime = launcher_mod.RayGenerationLauncher(init_ray=False).launch(
@@ -276,16 +174,13 @@ def test_owner_placement_runtime_does_not_own_placement_group() -> None:
         if runtime is not None:
             asyncio.run(runtime.shutdown())
         owner.shutdown()
-        ray.shutdown()
 
 
-def test_launcher_uses_resolved_colocation_protocol_signal() -> None:
+def test_launcher_uses_resolved_colocation_protocol_signal(local_ray) -> None:
     """Launcher derives the runtime colocation signal from resolved topology."""
-    ray = pytest.importorskip("ray")
     import vrl.generation.ray.launcher as launcher_mod
 
-    _init_ray(ray)
-    owner = _cpu_rollout_owner(ray)
+    owner = _cpu_rollout_owner(local_ray)
     runtime: RayGenerationRuntime | None = None
     try:
         runtime = launcher_mod.RayGenerationLauncher(init_ray=False).launch(
@@ -302,15 +197,11 @@ def test_launcher_uses_resolved_colocation_protocol_signal() -> None:
         if runtime is not None:
             asyncio.run(runtime.shutdown())
         owner.shutdown()
-        ray.shutdown()
 
 
-def test_phase_handoff_keeps_actor_and_owner_placement() -> None:
+def test_phase_handoff_keeps_actor_and_owner_placement(local_ray) -> None:
     """A shared-GPU handoff parks its actor without dropping the owner PG."""
-    ray = pytest.importorskip("ray")
-
-    _init_ray(ray)
-    owner = _cpu_rollout_owner(ray)
+    owner = _cpu_rollout_owner(local_ray)
     on_demand_resources = replace(
         owner.resources,
         lifecycle=replace(
@@ -352,4 +243,3 @@ def test_phase_handoff_keeps_actor_and_owner_placement() -> None:
     finally:
         asyncio.run(runtime.shutdown())
         owner.shutdown()
-        ray.shutdown()
