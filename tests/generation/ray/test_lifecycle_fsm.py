@@ -58,8 +58,9 @@ def test_terminal_lifecycle_closes_admission_and_finishes_once() -> None:
     lifecycle.begin_shutdown()
     lifecycle.begin_shutdown()
     assert lifecycle.phase is RuntimePhase.SHUTTING_DOWN
-    with pytest.raises(RuntimeLifecycleError, match="shutting down"):
+    with pytest.raises(RuntimeLifecycleError, match="shutting down") as rejected:
         lifecycle.require_running("generate")
+    assert rejected.value.lifecycle is lifecycle
 
     lifecycle.finish_shutdown()
     assert lifecycle.phase is RuntimePhase.TERMINATED
@@ -466,6 +467,32 @@ async def test_active_health_failure_escapes_as_the_first_failure_identity() -> 
     assert runtime.lifecycle.phase is RuntimePhase.TERMINATED
     # write_run_verdict uses this exact selector for its error_class.
     assert failure_identity_cause(caught.value) is health_failure
+
+
+@pytest.mark.asyncio
+async def test_active_health_failure_wins_over_a_later_ordinary_error() -> None:
+    health_failure = RolloutWorkerUnreachable(
+        "wedged",
+        0.5,
+        TimeoutError("health probe timed out"),
+    )
+    later_error = RuntimeError("chunk correlation failed after fleet kill")
+    runtime: RayGenerationRuntime
+
+    class _Executor:
+        async def execute(self, _request) -> None:
+            runtime.lifecycle.fail(health_failure)
+            raise later_error
+
+    runtime = RayGenerationRuntime(_Executor())
+
+    with pytest.raises(RolloutWorkerUnreachable) as caught:
+        await runtime.generate(_request())
+
+    assert caught.value is health_failure
+    assert failure_identity_cause(caught.value) is health_failure
+    assert runtime.lifecycle.failure is health_failure
+    assert runtime.lifecycle.phase is RuntimePhase.TERMINATED
 
 
 @pytest.mark.asyncio

@@ -580,6 +580,48 @@ async def test_active_update_health_race_does_not_publish_outer_version() -> Non
 
 
 @pytest.mark.asyncio
+async def test_wake_health_race_terminalizes_outer_before_active_publication() -> None:
+    outer = _on_demand_runtime()
+    state = outer._on_demand
+    assert state is not None
+    _set_desired_policy(outer, "W2", 2)
+    state.active_policy_version = 1
+    state.workers_offloaded = True
+    health_failure = RolloutWorkerUnreachable(
+        "rollout-1",
+        0.5,
+        TimeoutError("health probe timed out"),
+    )
+
+    class _WakeHealthRaceInner(_FakeInner):
+        async def update_weights(self, state_ref: Any, version: int) -> None:
+            await super().update_weights(state_ref, version)
+            self.lifecycle.fail(health_failure)
+
+        async def shutdown(self) -> None:
+            await super().shutdown()
+            self.lifecycle.finish_shutdown()
+
+    inner = _WakeHealthRaceInner()
+    inner.current_policy_version = 1
+    state.inner_runtime = inner
+
+    with pytest.raises(RolloutWorkerUnreachable) as caught:
+        await outer.activate()
+
+    assert caught.value is health_failure
+    assert inner.calls == ["wake", ("update", "W2", 2), "shutdown"]
+    assert inner.lifecycle.phase is RuntimePhase.TERMINATED
+    assert outer.lifecycle.failure is health_failure
+    assert outer.lifecycle.phase is RuntimePhase.TERMINATED
+    assert state.inner_runtime is None
+    assert state.active_policy_version is None
+    with pytest.raises(RuntimeLifecycleError, match="terminated") as retry:
+        await outer.activate()
+    assert retry.value.__cause__ is health_failure
+
+
+@pytest.mark.asyncio
 async def test_on_demand_active_health_race_propagates_inner_first_failure() -> None:
     outer = _on_demand_runtime()
     state = outer._on_demand
@@ -1122,6 +1164,43 @@ async def test_cold_restore_timeout_force_kills_unpublished_candidate(
     assert candidate.lifecycle.phase is RuntimePhase.TERMINATED
     assert actor.release_calls == 0
     assert _Ray.killed == [actor]
+
+
+@pytest.mark.asyncio
+async def test_cold_candidate_health_failure_terminalizes_outer_before_publication(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import vrl.generation.ray.launcher as launcher_module
+
+    outer = _on_demand_runtime()
+    state = outer._on_demand
+    assert state is not None
+    health_failure = RolloutWorkerUnreachable(
+        "rollout-0",
+        0.5,
+        TimeoutError("health probe timed out"),
+    )
+    candidate = RayGenerationRuntime(SimpleNamespace())
+    candidate.lifecycle.fail(health_failure)
+
+    class _Launcher:
+        async def launch_async(self, *_args: Any, **_kwargs: Any):
+            return candidate
+
+    monkeypatch.setattr(launcher_module, "RayGenerationLauncher", _Launcher)
+
+    with pytest.raises(RolloutWorkerUnreachable) as caught:
+        await outer.activate()
+
+    assert caught.value is health_failure
+    assert candidate.lifecycle.phase is RuntimePhase.TERMINATED
+    assert outer.lifecycle.failure is health_failure
+    assert outer.lifecycle.phase is RuntimePhase.TERMINATED
+    assert state.inner_runtime is None
+    assert state.active_policy_version is None
+    with pytest.raises(RuntimeLifecycleError, match="terminated") as retry:
+        await outer.activate()
+    assert retry.value.__cause__ is health_failure
 
 
 @pytest.mark.asyncio

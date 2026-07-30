@@ -249,11 +249,14 @@ class RayGenerationRuntime(GenerationRuntime):
                 error.__cause__ = failure
             raise
         except BaseException as error:
-            if find_error_cause(error, TerminalRuntimeError) is None:
+            if (
+                find_error_cause(error, TerminalRuntimeError) is None
+                and self.lifecycle.failure is None
+            ):
                 raise
-            # Cancellation cannot reliably interrupt synchronous actor code. Close
-            # admission and destroy the fleet before any partial request result can
-            # escape this runtime.
+            # A terminal operation error or an earlier health failure makes all
+            # results from the fleet untrustworthy. Close admission and destroy
+            # the actors before a later local processing error can replace it.
             failure = await self._terminalize_after_failure(error)
             if failure is error:
                 raise
@@ -798,13 +801,21 @@ class RayGenerationRuntime(GenerationRuntime):
                 raise
             return candidate
         except BaseException as error:
-            if isinstance(error, RuntimeLifecycleError) and self.lifecycle.failure is None:
+            if (
+                isinstance(error, RuntimeLifecycleError)
+                and error.lifecycle is self.lifecycle
+                and error.phase is not RuntimePhase.RUNNING
+                and error.__cause__ is None
+            ):
                 # Graceful shutdown may close admission while an unpublished
                 # candidate finishes launching. The candidate was cleaned by
                 # the inner ownership boundary above; this is not a runtime
                 # failure and must not manufacture one.
                 raise
-            failure = self.lifecycle.fail(error)
+            failure = await self._terminalize_after_failure(
+                error,
+                join_control_tasks=False,
+            )
             if isinstance(error, asyncio.CancelledError):
                 error.__cause__ = failure
                 raise

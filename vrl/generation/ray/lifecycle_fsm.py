@@ -25,11 +25,20 @@ class RuntimePhase(Enum):
 class RuntimeLifecycleError(RuntimeError):
     """A public runtime operation was invoked after admission closed."""
 
-    def __init__(self, operation: str, phase: RuntimePhase) -> None:
+    def __init__(
+        self,
+        operation: str,
+        phase: RuntimePhase,
+        *,
+        lifecycle: RuntimeLifecycle,
+    ) -> None:
         phase_name = phase.value.replace("_", " ")
         super().__init__(f"{operation} rejected: rollout runtime is {phase_name}")
         self.operation = operation
         self.phase = phase
+        # Two nested runtimes can reject the same operation. The source keeps
+        # cleanup ownership explicit without inferring it from an error string.
+        self.lifecycle = lifecycle
 
 
 class RuntimeLifecycle:
@@ -93,13 +102,17 @@ class RuntimeLifecycle:
 
         with self._lock:
             if self._phase is not RuntimePhase.SHUTTING_DOWN:
-                raise RuntimeLifecycleError("finish shutdown", self._phase)
+                raise RuntimeLifecycleError(
+                    "finish shutdown",
+                    self._phase,
+                    lifecycle=self,
+                )
             self._phase = RuntimePhase.TERMINATED
 
     def _require_running_locked(self, operation: str) -> None:
         if self._phase is RuntimePhase.RUNNING:
             return
-        error = RuntimeLifecycleError(operation, self._phase)
+        error = RuntimeLifecycleError(operation, self._phase, lifecycle=self)
         if self._failure is not None:
             raise error from self._failure
         raise error
