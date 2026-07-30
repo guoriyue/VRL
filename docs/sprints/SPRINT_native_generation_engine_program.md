@@ -139,10 +139,10 @@ gate is now complete.
    denoise step 调用。共同边界先保持现有 `GenerationChunkExecutor` + native trajectory。
 5. 当前 contract hygiene 必须在 provider integration 前清零：
    - `tests/architecture/test_generation_rollout_boundaries.py` 全绿；generation 不得反向
-     import rollout/trainer 类型。该反向 import 已修复；当前剩余问题是
-     `ray/launcher.py` 再次读取 schedule 字符串并比较 `"continuous"`。应由中立
-     composition boundary 解析 schedule-derived fact，再把 primitive
-     `versioned_weight_sync` 传入 generation；不能保留第二处 schedule 解释；
+     import rollout/trainer 类型。`vrl/run.py::resolve_ray_generation_launch_inputs`
+     已从 typed trainer schedule 一次派生 primitive `versioned_weight_sync`；
+     `RayGenerationLauncher` 只消费 typed launch inputs 与 topology，不再读取 trainer
+     config；
    - 删除 `GenerationRequest.priority`。全仓生产审计显示它只有赋值，没有 scheduling
      consumer；活的 `RayActorJob.priority` 来自 `assignment.estimated_cost`，是不同概念。
      未来 cross-request scheduler 若真正消费 request admission priority，再以 typed、可测试

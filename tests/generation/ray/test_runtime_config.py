@@ -14,6 +14,7 @@ import pytest
 import torch
 from omegaconf import OmegaConf
 
+from vrl.config.builders import BuiltConfigs
 from vrl.config.loading import bundled_config_resource
 from vrl.config.precision import resolve_precision_policy
 from vrl.config.schema import parse_config
@@ -34,6 +35,14 @@ from vrl.ray.actor_pool import RayActorDispatcher
 from vrl.ray.operation_deadline import RayOperationTimeout
 from vrl.ray.placement import GlobalRayPlacementOwner, RolePlacement
 from vrl.ray.resources import resolve_distributed_resources
+from vrl.rollouts.collector.config import RolloutCollectorConfig
+from vrl.run import (
+    OnlineRunConfig,
+    ResolvedModel,
+    ResolvedOnlineRun,
+    resolve_ray_generation_launch_inputs,
+)
+from vrl.trainers.checkpointing import TrainingResumeConfig
 
 
 class _CudaPolicy:
@@ -238,50 +247,63 @@ def _launch_cfg(
 def _capture_launch_inputs(
     cfg: Any,
     entry: ModelFamilyEntry,
+    *,
+    rollout_model_identity: dict[str, Any] | None = None,
 ) -> RayGenerationLaunchInputs:
-    """Intercept the public launch boundary without starting Ray actors."""
+    """Resolve the public Ray worker boundary without starting actors."""
 
-    captured: list[RayGenerationLaunchInputs] = []
     config = _ray_config(cfg)
     root = parse_config(cfg)
     precision = resolve_precision_policy(root)
-
-    def capture_launch(
-        _launcher: RayGenerationLauncher,
-        resolved_config: RayGenerationConfig,
-        launch_inputs: RayGenerationLaunchInputs,
-        *,
-        placement: RolePlacement,
-    ) -> RayGenerationLaunchInputs:
-        assert isinstance(placement, RolePlacement)
-        assert resolved_config is config
-        captured.append(launch_inputs)
-        return launch_inputs
+    schedule_mode = str(
+        OmegaConf.select(
+            cfg,
+            "trainer.rollout_orchestration.schedule_mode",
+            default="strict_on_policy",
+        ),
+    )
+    run = ResolvedOnlineRun(
+        built=BuiltConfigs(
+            root=root,
+            algorithm=None,
+            precision=precision,
+            trainer=SimpleNamespace(
+                rollout_orchestration=SimpleNamespace(schedule_mode=schedule_mode),
+            ),
+            reward=None,
+            resume=TrainingResumeConfig(),
+        ),
+        family=entry,
+        resources=config.resources,
+        device=torch.device("cpu"),
+        run=OnlineRunConfig(total_epochs=0),
+        generation=config,
+        collector=RolloutCollectorConfig(),
+    )
+    replay_model = ResolvedModel(
+        entry=entry,
+        build=entry.resolve_model_build(
+            root,
+            torch.device("cpu"),
+            precision=precision,
+            for_rollout=False,
+        ),
+        identity=_TEST_MODEL_IDENTITY,
+    )
 
     with (
-        patch.object(RayGenerationLauncher, "launch", new=capture_launch),
         patch(
             "vrl.models.checkpoint_identity.resolve_checkpoint_model_identity",
-            return_value=_TEST_MODEL_IDENTITY,
+            return_value=rollout_model_identity or _TEST_MODEL_IDENTITY,
         ) as resolve_identity,
     ):
-        result = RayGenerationLauncher(init_ray=False).launch_from_cfg(
-            root,
-            precision=precision,
-            config=config,
-            entry=entry,
-            driver_bundle=_Bundle(model=_CpuPolicy(), trainable_modules={}),
-            expected_model_identity=_TEST_MODEL_IDENTITY,
-            placement=RolePlacement(
-                placement_group=object(),
-                bundle_indices=(),
-                expected_gpu_ids=(),
-            ),
+        result = resolve_ray_generation_launch_inputs(
+            run,
+            replay_model=replay_model,
         )
 
-    assert captured == [result]
     resolve_identity.assert_called_once()
-    return captured[0]
+    return result
 
 
 class _SlotWorker:
@@ -760,7 +782,7 @@ def test_sync_trainable_state_defaults_on_for_from_cfg() -> None:
     assert _ray_config(cfg).worker.sync_trainable_state is False
 
 
-def test_launch_from_cfg_projects_model_compile_and_precision() -> None:
+def test_generation_launch_inputs_project_model_compile_and_precision() -> None:
     """The public launch path projects model config and dtype wire values once."""
     launch_inputs = _capture_launch_inputs(
         _launch_cfg(
@@ -793,7 +815,7 @@ def test_launch_from_cfg_projects_model_compile_and_precision() -> None:
     }
 
 
-def test_launch_from_cfg_projects_resolved_generation_memory() -> None:
+def test_generation_launch_inputs_project_resolved_generation_memory() -> None:
     """The launch contract carries typed memory values, not raw model config."""
     cfg = _launch_cfg()
     cfg.model.memory = {
@@ -818,7 +840,7 @@ def test_launch_from_cfg_projects_resolved_generation_memory() -> None:
     assert "memory" not in model_build["model_config"]
 
 
-def test_launch_from_cfg_projects_wan_offload_to_rollout_contract(monkeypatch) -> None:
+def test_generation_launch_inputs_project_wan_offload_to_rollout_contract(monkeypatch) -> None:
     from diffusers import DiffusionPipeline
 
     monkeypatch.setattr(
@@ -841,47 +863,21 @@ def test_launch_from_cfg_projects_wan_offload_to_rollout_contract(monkeypatch) -
     assert "offload_mode" not in model_build["model_config"]
 
 
-def test_launch_from_cfg_rejects_rollout_identity_mismatch_before_ray_launch() -> None:
+def test_generation_launch_inputs_reject_rollout_identity_mismatch() -> None:
     cfg = _launch_cfg()
-    root = parse_config(cfg)
-    precision = resolve_precision_policy(root)
-    launched = False
 
-    def fail_if_launched(*args: Any, **kwargs: Any) -> None:
-        del args, kwargs
-        nonlocal launched
-        launched = True
-        raise AssertionError("Ray launch must not run after driver identity mismatch")
-
-    with (
-        patch.object(RayGenerationLauncher, "launch", new=fail_if_launched),
-        patch(
-            "vrl.models.checkpoint_identity.resolve_checkpoint_model_identity",
-            return_value={"schema": "different"},
-        ),
-        pytest.raises(
-            ValueError,
-            match="rollout model identity does not match the driver replay model identity",
-        ),
+    with pytest.raises(
+        ValueError,
+        match="rollout model identity does not match the driver replay model identity",
     ):
-        RayGenerationLauncher(init_ray=False).launch_from_cfg(
-            root,
-            precision=precision,
-            config=_ray_config(cfg),
-            entry=get_model_family_entry("sd3_5"),
-            driver_bundle=_Bundle(model=_CpuPolicy(), trainable_modules={}),
-            expected_model_identity=_TEST_MODEL_IDENTITY,
-            placement=RolePlacement(
-                placement_group=object(),
-                bundle_indices=(),
-                expected_gpu_ids=(),
-            ),
+        _capture_launch_inputs(
+            cfg,
+            get_model_family_entry("sd3_5"),
+            rollout_model_identity={"schema": "different"},
         )
 
-    assert launched is False
 
-
-def test_launch_from_cfg_preserves_disabled_model_compile_config() -> None:
+def test_generation_launch_inputs_preserve_disabled_model_compile_config() -> None:
     """Checks disabled model.torch_compile is preserved as ordinary model config."""
     launch_inputs = _capture_launch_inputs(
         _launch_cfg(),
@@ -898,7 +894,7 @@ def test_launch_from_cfg_preserves_disabled_model_compile_config() -> None:
     }
 
 
-def test_launch_from_cfg_derives_versioned_sync_from_schedule() -> None:
+def test_generation_launch_inputs_derive_versioned_sync_from_schedule() -> None:
     strict = _capture_launch_inputs(
         _launch_cfg(),
         get_model_family_entry("sd3_5"),
@@ -927,7 +923,7 @@ def test_launch_from_cfg_derives_versioned_sync_from_schedule() -> None:
     assert continuous_lora.launch_contract.versioned_weight_sync is True
 
 
-def test_launch_from_cfg_threads_resolved_base_weight_sync() -> None:
+def test_generation_launch_inputs_thread_resolved_base_weight_sync() -> None:
     """The rollout lifecycle, not model YAML, owns master-weight retention."""
     cfg = _launch_cfg()
     cfg.distributed.rollout = {"sync_trainable_state": False}
@@ -941,7 +937,7 @@ def test_launch_from_cfg_threads_resolved_base_weight_sync() -> None:
     assert rollout["base_weight_sync"] is False
 
 
-def test_launch_from_cfg_marks_lora_as_adapter_only_sync() -> None:
+def test_generation_launch_inputs_mark_lora_as_adapter_only_sync() -> None:
     """LoRA sync never needs retained base-precision masters on the rollout."""
     cfg = _launch_cfg()
     cfg.model.use_lora = True
@@ -955,7 +951,7 @@ def test_launch_from_cfg_marks_lora_as_adapter_only_sync() -> None:
     assert rollout["base_weight_sync"] is False
 
 
-def test_launch_from_cfg_rejects_model_compile_for_ar_family() -> None:
+def test_generation_launch_inputs_reject_model_compile_for_ar_family() -> None:
     """Checks model.torch_compile fails fast on rollout families that cannot compile."""
     cfg = _launch_cfg(
         model_torch_compile={
@@ -964,23 +960,116 @@ def test_launch_from_cfg_rejects_model_compile_for_ar_family() -> None:
         },
     )
     cfg.model.family = "janus_pro"
-    root = parse_config(cfg)
-    precision = resolve_precision_policy(root)
 
     with pytest.raises(ValueError, match="does not support torch compile"):
-        RayGenerationLauncher(init_ray=False).launch_from_cfg(
-            root,
-            precision=precision,
-            config=_ray_config(cfg),
-            entry=get_model_family_entry("janus_pro"),
-            driver_bundle=_Bundle(model=_CpuPolicy(), trainable_modules={}),
+        _capture_launch_inputs(cfg, get_model_family_entry("janus_pro"))
+
+
+def test_create_runtime_launches_resident_topology() -> None:
+    config = _ray_config(_launch_cfg())
+    entry = get_model_family_entry("sd3_5")
+    launch_inputs = RayGenerationLaunchInputs(
+        launch_contract=GenerationRuntimeLaunchContract(
+            family=entry.family,
+            model_build={},
             expected_model_identity=_TEST_MODEL_IDENTITY,
-            placement=RolePlacement(
-                placement_group=object(),
-                bundle_indices=(),
-                expected_gpu_ids=(),
-            ),
+        ),
+        gatherer=entry.new_gatherer(),
+    )
+    placement = RolePlacement(
+        placement_group=object(),
+        bundle_indices=(),
+        expected_gpu_ids=(),
+    )
+    launcher = RayGenerationLauncher(init_ray=False)
+    expected_runtime = object()
+
+    with (
+        patch.object(
+            RayGenerationLauncher,
+            "launch",
+            autospec=True,
+            return_value=expected_runtime,
+        ) as launch,
+        patch.object(
+            RayGenerationRuntime,
+            "with_on_demand_activation",
+        ) as on_demand,
+    ):
+        runtime = launcher.create_runtime(
+            config,
+            launch_inputs,
+            placement=placement,
         )
+
+    assert runtime is expected_runtime
+    launch.assert_called_once_with(
+        launcher,
+        config,
+        launch_inputs,
+        placement=placement,
+    )
+    on_demand.assert_not_called()
+
+
+def test_create_runtime_defers_on_demand_topology_launch() -> None:
+    resident_config = _ray_config(_launch_cfg())
+    resources = replace(
+        resident_config.resources,
+        lifecycle=replace(
+            resident_config.resources.lifecycle,
+            rollout=replace(
+                resident_config.resources.lifecycle.rollout,
+                mode="on_demand",
+            ),
+        ),
+    )
+    config = RayGenerationConfig(
+        resources=resources,
+        worker=resident_config.worker,
+    )
+    entry = get_model_family_entry("sd3_5")
+    launch_inputs = RayGenerationLaunchInputs(
+        launch_contract=GenerationRuntimeLaunchContract(
+            family=entry.family,
+            model_build={},
+            expected_model_identity=_TEST_MODEL_IDENTITY,
+        ),
+        gatherer=entry.new_gatherer(),
+    )
+    placement = RolePlacement(
+        placement_group=object(),
+        bundle_indices=(),
+        expected_gpu_ids=(),
+    )
+    launcher = RayGenerationLauncher(init_ray=False)
+    expected_runtime = object()
+
+    with (
+        patch.object(
+            RayGenerationLauncher,
+            "launch",
+            autospec=True,
+        ) as launch,
+        patch.object(
+            RayGenerationRuntime,
+            "with_on_demand_activation",
+            return_value=expected_runtime,
+        ) as on_demand,
+    ):
+        runtime = launcher.create_runtime(
+            config,
+            launch_inputs,
+            placement=placement,
+        )
+
+    assert runtime is expected_runtime
+    launch.assert_not_called()
+    on_demand.assert_called_once_with(
+        config,
+        launch_inputs,
+        placement=placement,
+    )
 
 
 def test_launcher_default_ray_init_is_owned_local() -> None:

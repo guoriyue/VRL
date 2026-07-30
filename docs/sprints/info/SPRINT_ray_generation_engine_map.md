@@ -60,8 +60,11 @@ RUNNING -> SHUTTING_DOWN -> TERMINATED
 
 ```text
 online recipe
-  -> ModelFamilyEntry.resolve_model_build(...)
-  -> RayGenerationConfig.from_cfg(...)
+  -> resolve_online_run(...)
+  -> resolve_model(..., for_rollout=False)
+  -> resolve_ray_generation_launch_inputs(resolved_run, replay_model)
+     -> ModelFamilyEntry.resolve_model_build(..., for_rollout=True)
+     -> ModelFamilyEntry.resolve_executor_kwargs(...)
   -> GenerationRuntimeLaunchContract(
        family,
        primitive model_build/executor_kwargs,
@@ -77,11 +80,10 @@ online recipe
 `GenerationRuntimeLaunchContract` 不携带 live model、pipeline、callable 或 executor class。
 family registry 是 model builder、executor class、gatherer 和 static capability 的唯一
 taxonomy source。launch contract 最终只携带 primitive `versioned_weight_sync` fact，
-但当前 `RayGenerationLauncher.launch_from_cfg` 仍直接读取
-`trainer.rollout_orchestration.schedule_mode` 并比较字符串 `"continuous"`。它虽然没有
-import rollout/trainer enum，仍属于 generation composition 读取 trainer config 的
-layering leak；native generation engine Sprint 0 必须把这个 primitive fact 从更高层
-composition boundary 传入，不能把现状写成已经解决。
+这个 fact 由 `vrl/run.py` 从已解析的 typed trainer schedule、generation config 与
+rollout build 一次派生。`RayGenerationLauncher.create_runtime` 只消费 typed
+`RayGenerationConfig`、`RayGenerationLaunchInputs` 与 placement，不读取 trainer/model
+YAML；旧 `launch_from_cfg` layering leak 已删除。
 
 ### 3.2 Resident launch
 

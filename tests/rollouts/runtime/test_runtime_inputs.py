@@ -6,13 +6,11 @@ import pickle
 import threading
 from types import SimpleNamespace
 from typing import Any
-from unittest.mock import patch
 
 import pytest
 from omegaconf import OmegaConf
 
 from vrl.config.loading import load_config
-from vrl.config.precision import resolve_precision_policy
 from vrl.config.schema import parse_config
 from vrl.families.registry import (
     FAMILY_REGISTRY,
@@ -24,15 +22,15 @@ from vrl.generation.bindings.full_sequence_denoise import DiffusionChunkGatherer
 from vrl.generation.bindings.token_autoregressive.executor import ARDiscreteChunkGatherer
 from vrl.generation.launch_contract import GenerationRuntimeLaunchContract
 from vrl.generation.protocols import GenerationChunkExecutor
-from vrl.generation.ray import RayGenerationLauncher, RayGenerationLaunchInputs
-from vrl.generation.ray.config import RayGenerationConfig
-from vrl.generation.ray.launcher import build_executor_kwargs
-from vrl.models.checkpoint_identity import resolve_checkpoint_model_identity
+from vrl.generation.ray import RayGenerationLaunchInputs
 from vrl.models.families.janus_pro.runtime import JanusProR1ChunkGatherer
 from vrl.models.families.nextstep_1.runtime import NextStep1ChunkGatherer
-from vrl.ray.placement import RolePlacement
-from vrl.ray.resources import resolve_distributed_resources
 from vrl.rollouts.collector.config import RolloutCollectorConfig
+from vrl.run import (
+    resolve_model,
+    resolve_online_run,
+    resolve_ray_generation_launch_inputs,
+)
 
 
 class _TestGatherer:
@@ -96,55 +94,22 @@ def _capture_launch_inputs(
     cfg: Any,
     entry: ModelFamilyEntry,
 ) -> tuple[RayGenerationLaunchInputs, dict[str, Any]]:
-    """Intercept the public launch boundary without starting Ray actors."""
+    """Resolve the production launch payload without starting Ray actors."""
 
-    captured: list[RayGenerationLaunchInputs] = []
-    root = parse_config(cfg)
-    precision = resolve_precision_policy(root)
-    config = RayGenerationConfig.from_cfg(
-        root,
-        resources=resolve_distributed_resources(cfg),
+    run = resolve_online_run(cfg)
+    assert run.family is entry
+    replay_model = resolve_model(
+        entry,
+        run.built.root,
+        run.device,
+        precision=run.built.precision,
+        for_rollout=False,
     )
-    runtime_device = "cuda" if config.resources.rollout_gpus_per_worker > 0 else "cpu"
-    identity_build = entry.resolve_model_build(
-        root,
-        runtime_device,
-        precision=precision,
+    result = resolve_ray_generation_launch_inputs(
+        run,
+        replay_model=replay_model,
     )
-    expected_model_identity = resolve_checkpoint_model_identity(identity_build)
-
-    def capture_launch(
-        _launcher: RayGenerationLauncher,
-        resolved_config: RayGenerationConfig,
-        launch_inputs: RayGenerationLaunchInputs,
-        *,
-        placement: RolePlacement,
-    ) -> RayGenerationLaunchInputs:
-        assert isinstance(placement, RolePlacement)
-        assert resolved_config is config
-        captured.append(launch_inputs)
-        return launch_inputs
-
-    with patch.object(RayGenerationLauncher, "launch", new=capture_launch):
-        result = RayGenerationLauncher(init_ray=False).launch_from_cfg(
-            root,
-            precision=precision,
-            config=config,
-            entry=entry,
-            driver_bundle=SimpleNamespace(
-                model=SimpleNamespace(device="cpu"),
-                trainable_modules={},
-            ),
-            expected_model_identity=expected_model_identity,
-            placement=RolePlacement(
-                placement_group=object(),
-                bundle_indices=(),
-                expected_gpu_ids=(),
-            ),
-        )
-
-    assert captured == [result]
-    return captured[0], expected_model_identity
+    return result, replay_model.identity
 
 
 @pytest.mark.parametrize(
@@ -436,6 +401,7 @@ def test_model_torch_compile_applies_to_all_diffusion_rollout_families(
             "distributed.resources.rollout.num_workers=1",
             "distributed.resources.reward.num_gpus=0",
             "distributed.resources.reward.gpus_per_worker=0",
+            "actor.gradient_checkpointing=off",
             "model.torch_compile.enable=true",
             "model.torch_compile.mode=default",
         ],
@@ -498,7 +464,7 @@ def test_generic_executor_kwargs_project_the_complete_model_block() -> None:
         ),
     )
 
-    assert build_executor_kwargs(get_model_family_entry("flux"), cfg) == {
+    assert get_model_family_entry("flux").resolve_executor_kwargs(cfg) == {
         "samples_per_chunk": 3,
         "num_frames": 17,
         "max_sequence_length": 256,
@@ -518,16 +484,18 @@ def test_generic_executor_kwargs_project_the_complete_model_block() -> None:
 def test_custom_executors_reject_model_executor_instead_of_silently_dropping_it(
     family: str,
 ) -> None:
-    cfg = OmegaConf.create(
-        {
-            "model": {
-                "executor": {"max_sequence_length": 123},
-            },
-        },
-    )
-
     with pytest.raises(ValueError, match=r"does not support model\.executor"):
-        build_executor_kwargs(get_model_family_entry(family), cfg)
+        parse_config(
+            OmegaConf.create(
+                {
+                    "model": {
+                        "family": family,
+                        "path": "unit-test",
+                        "executor": {"max_sequence_length": 123},
+                    },
+                },
+            ),
+        )
 
 
 @pytest.mark.parametrize(
@@ -541,28 +509,34 @@ def test_custom_executors_reject_model_executor_instead_of_silently_dropping_it(
 def test_executor_projection_defensively_rejects_unsupported_memory(
     family: str,
 ) -> None:
-    cfg = OmegaConf.create(
-        {
-            "model": {
-                "memory": {"vae_decode": {"tiling": False}},
-            },
-        },
-    )
-
     with pytest.raises(ValueError, match=r"does not support model\.memory"):
-        build_executor_kwargs(get_model_family_entry(family), cfg)
+        parse_config(
+            OmegaConf.create(
+                {
+                    "model": {
+                        "family": family,
+                        "path": "unit-test",
+                        "memory": {"vae_decode": {"tiling": False}},
+                    },
+                },
+            ),
+        )
 
 
 def test_custom_executor_keeps_independent_supported_memory_config() -> None:
-    cfg = OmegaConf.create(
-        {
-            "model": {
-                "memory": {"vae_decode": {"tiling": True}},
+    cfg = parse_config(
+        OmegaConf.create(
+            {
+                "model": {
+                    "family": "wan_2_1_i2v",
+                    "path": "unit-test",
+                    "memory": {"vae_decode": {"tiling": True}},
+                },
+                "rollout": {"samples_per_chunk": 2},
             },
-            "rollout": {"samples_per_chunk": 2},
-        },
+        ),
     )
 
-    assert build_executor_kwargs(get_model_family_entry("wan_2_1_i2v"), cfg) == {
+    assert get_model_family_entry("wan_2_1_i2v").resolve_executor_kwargs(cfg) == {
         "samples_per_chunk": 2,
     }

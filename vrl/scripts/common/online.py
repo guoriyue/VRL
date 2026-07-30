@@ -31,7 +31,12 @@ from vrl.rollouts.orchestration import (
     validate_rollout_schedule_topology,
 )
 from vrl.rollouts.stats import RolloutStats
-from vrl.run import materialize, resolve_model, resolve_online_run
+from vrl.run import (
+    materialize,
+    resolve_model,
+    resolve_online_run,
+    resolve_ray_generation_launch_inputs,
+)
 from vrl.scripts.common.factory import (
     build_algorithm_and_evaluator,
     build_reward,
@@ -883,15 +888,16 @@ async def run_online_recipe(
             lifecycle=resources.lifecycle,
         )
         generation_launcher = RayGenerationLauncher()
+        generation_config.validate_driver_state(driver_bundle=bundle)
+        generation_launch_inputs = resolve_ray_generation_launch_inputs(
+            resolved,
+            replay_model=resolved_model,
+        )
         log_host_memory("before_rollout_backend_build", log=logger)
         collector.set_runtime(
-            generation_launcher.launch_from_cfg(
-                built.root,
-                precision=built.precision,
-                config=generation_config,
-                entry=family_entry,
-                driver_bundle=bundle,
-                expected_model_identity=model_identity,
+            generation_launcher.create_runtime(
+                generation_config,
+                generation_launch_inputs,
                 placement=placement_owner.rollout_placement,
             ),
         )

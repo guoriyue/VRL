@@ -234,6 +234,42 @@ class ModelFamilyEntry:
                 f"section(s): {', '.join(unsupported_memory)}",
             )
 
+    def resolve_executor_kwargs(self, root: RootConfig) -> dict[str, Any]:
+        """Project validated config into this family's executor constructor."""
+
+        from vrl.config.schema import RootConfig
+        from vrl.utils.config import cfg_path, plain_mapping
+
+        if not isinstance(root, RootConfig):
+            raise TypeError(
+                "root must be a validated RootConfig; raw DictConfig/Mapping "
+                f"inputs are not accepted (got {type(root).__name__})",
+            )
+        executor_config = cfg_path(root, "model.executor", None)
+        self.validate_model_runtime_sections(
+            executor_config=executor_config,
+            memory_config=cfg_path(root, "model.memory", None),
+        )
+
+        kwargs: dict[str, Any] = {}
+        if self.runtime_capabilities.accepts_samples_per_chunk:
+            samples_per_chunk = cfg_path(root, "rollout.samples_per_chunk", None)
+            # ``auto`` belongs to the request and is resolved by the Ray runtime
+            # before dispatch, not by a fixed executor constructor.
+            if samples_per_chunk is not None and samples_per_chunk != "auto":
+                kwargs["samples_per_chunk"] = int(samples_per_chunk)
+        if (
+            self.executor_cls == GENERIC_FULL_SEQUENCE_DENOISE_EXECUTOR
+            and executor_config is not None
+        ):
+            kwargs.update(
+                plain_mapping(
+                    executor_config,
+                    field_name="model.executor",
+                ),
+            )
+        return kwargs
+
     def resolve_model_build(
         self,
         root: RootConfig,

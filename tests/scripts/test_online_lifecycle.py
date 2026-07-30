@@ -14,6 +14,8 @@ from vrl.algorithms.grpo.continuous import GRPOConfig
 from vrl.config.precision import PrecisionPolicy, RolePrecision
 from vrl.config.schema import RootConfig
 from vrl.families.semantics import PolicySemantics
+from vrl.generation.launch_contract import GenerationRuntimeLaunchContract
+from vrl.generation.ray.launch_inputs import RayGenerationLaunchInputs
 from vrl.models import checkpoint_identity
 from vrl.models.interfaces import ReplayResult
 from vrl.scripts.common import online
@@ -130,14 +132,27 @@ class _FakeLauncher:
     def __init__(self, state: dict[str, Any]) -> None:
         self._state = state
 
-    def launch_from_cfg(self, *args: Any, **kwargs: Any) -> _FakeRuntime:
-        del args
-        self._state["launcher_worker"] = kwargs["config"].worker
-        self._state["launcher_model_identity"] = kwargs["expected_model_identity"]
+    def create_runtime(
+        self,
+        config: Any,
+        launch_inputs: RayGenerationLaunchInputs,
+        *,
+        placement: Any,
+    ) -> _FakeRuntime:
+        del placement
+        self._state["launcher_worker"] = config.worker
+        self._state["launcher_model_identity"] = (
+            launch_inputs.launch_contract.expected_model_identity
+        )
         self._state["launches"] += 1
         if self._state.get("launch_raises"):
             raise RuntimeError("launch boom")
         return _FakeRuntime(self._state)
+
+
+class _FakeGatherer:
+    def gather_chunks(self, *_args: Any) -> Any:
+        raise AssertionError("lifecycle test gatherer must not execute")
 
 
 class _FakePlacementOwner:
@@ -318,6 +333,7 @@ def _install_common_fakes(
     collector = _FakeCollector(state, reward)
     resources = SimpleNamespace(
         cross_node=False,
+        colocated=False,
         rollout_num_workers=1,
         rollout_gpus_per_worker=0,
         trainer_torch_device="cpu",
@@ -455,6 +471,19 @@ def _install_common_fakes(
         online,
         "build_rollout_collector",
         lambda *args, **kwargs: collector,
+    )
+    launch_inputs = RayGenerationLaunchInputs(
+        launch_contract=GenerationRuntimeLaunchContract(
+            family="sd3_5",
+            model_build={},
+            expected_model_identity=model_identity,
+        ),
+        gatherer=_FakeGatherer(),
+    )
+    monkeypatch.setattr(
+        online,
+        "resolve_ray_generation_launch_inputs",
+        lambda run, *, replay_model: launch_inputs,
     )
     monkeypatch.setattr(online, "RayGenerationLauncher", lambda: _FakeLauncher(state))
     monkeypatch.setattr(
