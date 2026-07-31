@@ -16,6 +16,7 @@ import vrl.ray.operation_deadline as deadline_module
 from vrl.generation.execution.types import DistributedWorkerHandle
 from vrl.generation.ray.lifecycle_fsm import RuntimePhase
 from vrl.generation.ray.runtime import RayGenerationRuntime
+from vrl.generation.ray.session import RayGenerationSession
 from vrl.generation.ray.weight_sync import RayGenerationWeightSync
 from vrl.generation.ray.worker import RayGenerationWorker
 from vrl.ray.actor_pool import RayActorDispatcher, RayActorJob
@@ -36,6 +37,16 @@ _OBJECT_STORE_LEDGER = pytest.mark.real_cover(
         "auto-deref across a process boundary, which is what the slow_test twin does"
     ),
 )
+
+
+def _runtime(
+    executor: Any,
+    *,
+    weight_sync: Any | None = None,
+) -> RayGenerationRuntime:
+    return RayGenerationRuntime(
+        session=RayGenerationSession(executor, weight_sync, []),
+    )
 
 
 class _LocalWorker:
@@ -145,7 +156,7 @@ async def test_invalid_policy_version_does_not_terminalize_resident_runtime() ->
             self.calls.append((state_ref, policy_version))
 
     sync = _RecordingSync()
-    runtime = RayGenerationRuntime(SimpleNamespace(), weight_sync=sync)
+    runtime = _runtime(SimpleNamespace(), weight_sync=sync)
     runtime.current_policy_version = 3
 
     with pytest.raises(TypeError):
@@ -435,7 +446,7 @@ async def test_cancelling_weight_sync_before_submission_keeps_runtime_running(
         actor_dispatcher=dispatcher,
         worker_rpc_timeout_s=30.0,
     )
-    runtime = RayGenerationRuntime(
+    runtime = _runtime(
         SimpleNamespace(actor_dispatcher=dispatcher),
         weight_sync=sync,
     )
@@ -482,7 +493,7 @@ async def test_completed_weight_sync_wins_cancellation_and_publishes_version(
         actor_dispatcher=dispatcher,
         worker_rpc_timeout_s=30.0,
     )
-    runtime = RayGenerationRuntime(
+    runtime = _runtime(
         SimpleNamespace(actor_dispatcher=dispatcher),
         weight_sync=sync,
     )
@@ -527,7 +538,7 @@ async def test_completed_weight_sync_cancellation_still_validates_wrong_ack(
         actor_dispatcher=dispatcher,
         worker_rpc_timeout_s=30.0,
     )
-    runtime = RayGenerationRuntime(
+    runtime = _runtime(
         SimpleNamespace(actor_dispatcher=dispatcher),
         weight_sync=sync,
     )
@@ -617,7 +628,7 @@ async def test_cancelling_partially_completed_weight_sync_terminalizes_runtime(
         actor_dispatcher=dispatcher,
         worker_rpc_timeout_s=30.0,
     )
-    runtime = RayGenerationRuntime(
+    runtime = _runtime(
         SimpleNamespace(actor_dispatcher=dispatcher),
         weight_sync=sync,
     )

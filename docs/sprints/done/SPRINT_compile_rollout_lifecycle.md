@@ -6,8 +6,9 @@
 > 本文保留 2026-06-17 的 compile 测量结果作为历史证据，但其 colocated-persistent 产品前提已
 > 删除。当前 shared trainer/rollout GPU 只允许 on-demand phase lease；role
 > `memory_fraction` 与 resident shared lifecycle 不再是可实施方案。Split-GPU resident compile
-> 结论仍有效。The current on-demand runtime keeps actors alive and parks/wakes
-> model memory; references below to rebuilding workers, `with_release_after_collect`,
+> 结论仍有效。The current `RayGenerationRuntime` keeps one
+> `RayGenerationSession` alive and parks/wakes model memory; references below to
+> rebuilding workers, `with_release_after_collect`,
 > flat lifecycle mirrors, and `vrl/models/model_build.py` describe the superseded
 > implementation rather than the current code.
 >
@@ -252,22 +253,24 @@ resident 拿全额稳态加速;release-after-collect 的每周期重编译也因
 **生命周期(主轴)**
 - `vrl/ray/resources.py:303-312, 324-336` — resident/on-demand 拓扑派生 + RayLifecyclePlan
 - `vrl/ray/resources.py:1101-1138` — 新公有面 `colocate_with_trainer`;`:1141-1179` 旧 key hard-fail
-- `vrl/generation/ray/launcher.py:185-201` — `rollout.mode=="on_demand"` → `with_release_after_collect`
-- `vrl/generation/ray/runtime.py:63-89` — `with_release_after_collect`;`:168-187` — `_ensure_runtime` 重建
+- `vrl/generation/ray/launcher.py:RayGenerationLauncher.create_runtime` —
+  `rollout.mode=="on_demand"` 注入 deferred `RayGenerationSession` factory
+- `vrl/generation/ray/runtime.py:RayGenerationRuntime.activate` — 首次 activation
+  创建 session，后续 activation 唤醒同一个 parked session
 - `vrl/generation/ray/config.py:40-42`(内部字段)、`:115-121`(从 resources 填)、`:65-72`(互斥校验)
 - `vrl/generation/execution/worker.py:51-65` `load_policy`;`:253-278` `_build_executor`(重建+重编触发)
 
 **Predict2.5 compile 接线**
 - `configs/model/diffusion/cosmos/predict2_5_2b.yaml:29-31` — `torch_compile.enable: false`
-- `vrl/rollouts/families/registry.py:RolloutFamilyEntry.resolve_model_build` —
+- `vrl/families/registry.py:ModelFamilyEntry.resolve_model_build` —
   project the model block once for replay or rollout
 - `vrl/models/interfaces/runtime.py:112-117` — `ModelBuild.torch_compile`（enable 门控）
 - `vrl/models/diffusion/cosmos/predict2_5/runtime.py:77-78` — 调 `torch_compile_transformer`
 - `vrl/models/diffusion/cosmos/predict2_5/model.py:245-246` — `torch.compile(pipeline.transformer, mode=mode, fullgraph=False)`
 - `vrl/models/interfaces/runtime.py:123-128` — `ModelBuild.torch_compile` reads the single `model.torch_compile` source
-- `vrl/generation/ray/launcher.py` — `model.torch_compile.enable` unsupported-family fail-fast gate
-- `vrl/generation/ray/launcher.py:RayGenerationLauncher.launch_from_cfg` —
-  compile support derives from the registry entry's diffusion collector kind;
+- `vrl/run.py:ResolvedOnlineRun.ray_launch_inputs` —
+  `model.torch_compile.enable` unsupported-family fail-fast gate; compile support derives from
+  the registry entry's typed runtime capability;
   no second capability table exists
 
 **测量**

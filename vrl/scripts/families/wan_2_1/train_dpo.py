@@ -104,30 +104,21 @@ def wan_forward(
 def train_wan_2_1_dpo(cfg: DictConfig) -> None:
     """Run Wan-family Diffusion-DPO training driven by a merged YAML config."""
 
-    from vrl.config.builders import build_configs, build_offline_dpo_trainer_config
-    from vrl.families.names import normalize_model_family
+    from vrl.config.builders import build_offline_dpo_trainer_config
+    from vrl.run import resolve_model, resolve_run
 
-    built = build_configs(cfg)
-    configured_family = None if built.root.model is None else built.root.model.family
-    family = normalize_model_family(str(configured_family or ""))
-    if family != "wan_2_1":
-        raise ValueError(
-            "Wan Diffusion-DPO requires model.family='wan_2_1' "
-            f"(alias 'wan' is accepted); got {configured_family!r}",
-        )
-
-    from vrl.run import materialize, resolve_model, resolve_run
-
-    # Shared resolution seam: family entry, distributed resources, and the
-    # trainer device all come from one composer. The wan-only guard above must
-    # stay ahead of it so a non-Wan config fails with the DPO-specific error
-    # before any registry or resource resolution runs; resolve_run re-runs the
-    # (pure, idempotent) config build internally.
     resolved = resolve_run(cfg)
     built = resolved.built
     family_entry = resolved.family
     resources = resolved.resources
     device = resolved.device
+    configured_family = None if built.root.model is None else built.root.model.family
+    family = family_entry.family
+    if family != "wan_2_1":
+        raise ValueError(
+            "Wan Diffusion-DPO requires model.family='wan_2_1' "
+            f"(alias 'wan' is accepted); got {configured_family!r}",
+        )
 
     from torch.utils.data import DataLoader
 
@@ -192,7 +183,7 @@ def train_wan_2_1_dpo(cfg: DictConfig) -> None:
         expected_model_identity=model_identity,
         strict=resume_config.strict,
     )
-    bundle = materialize(resolved_model, context="Wan DPO bundle construction")
+    bundle = resolved_model.materialize(context="Wan DPO bundle construction")
     wan_model = bundle.model
     pipeline = bundle.raw_handle
 

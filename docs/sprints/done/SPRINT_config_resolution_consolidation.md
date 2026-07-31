@@ -43,7 +43,8 @@
 
 > **P8（追加，2026-07-24）：模型物化座——已落地 `2095b003`（附带修真 bug `44cfaa1d`）。** 第二条
 > 被手抄 12 处的链：`resolve_model_build → checkpoint identity → build_rollout/replay → identity
-> 复查`。`vrl/run.py` 增加 `ResolvedModel` + `resolve_model`（便宜投影段）与 `materialize`
+> 复查`。`vrl/run.py` 增加 `ResolvedModel` + `resolve_model`（便宜投影段）与
+> `ResolvedModel.materialize`
 > （bundle + 复查段，`context` 保住各站点逐字报错措辞）；两段拆分是因为 online 的 checkpoint
 > preflight 恰在两段之间（lifecycle 测试 pin 次序）。已接座：online、wan DPO、两个 sana eval。
 > **有据保留 inline**：从不算 identity 的站点（perf/generation/denoise/anima/wan_i2v——接座会新增

@@ -5,10 +5,11 @@ from __future__ import annotations
 import asyncio
 import threading
 from types import SimpleNamespace
-from typing import ClassVar
+from typing import Any, ClassVar
 
 import pytest
 
+import vrl.generation.ray.session as session_module
 from vrl.generation.execution.types import DistributedWorkerHandle
 from vrl.generation.ray.health_monitor import RolloutWorkerUnreachable
 from vrl.generation.ray.lifecycle_fsm import (
@@ -18,13 +19,25 @@ from vrl.generation.ray.lifecycle_fsm import (
 )
 from vrl.generation.ray.pipeline_protocol import PipelinedProgressError
 from vrl.generation.ray.runtime import RayGenerationRuntime
+from vrl.generation.ray.session import RayGenerationSession
 from vrl.ray.actor_pool import RayActorCallError
 from vrl.ray.operation_deadline import RayOperationCancelled, RayOperationTimeout
 from vrl.runtime_errors import failure_identity_cause
 
 
-def _resident_runtime() -> RayGenerationRuntime:
-    return RayGenerationRuntime(executor=SimpleNamespace())
+def _runtime(
+    executor: Any | None = None,
+    *,
+    weight_sync: Any | None = None,
+    owned_workers: list[DistributedWorkerHandle] | None = None,
+) -> RayGenerationRuntime:
+    return RayGenerationRuntime(
+        session=RayGenerationSession(
+            executor=SimpleNamespace() if executor is None else executor,
+            weight_sync=weight_sync,
+            owned_workers=list(owned_workers or []),
+        ),
+    )
 
 
 def _request() -> SimpleNamespace:
@@ -36,11 +49,38 @@ def _request() -> SimpleNamespace:
 
 
 def test_resident_runtime_tracks_only_worker_ownership() -> None:
-    runtime = _resident_runtime()
+    runtime = _runtime()
 
     assert runtime._owned_workers == []
     assert not hasattr(runtime, "_owned_actors")
     assert not hasattr(runtime, "_placement_group")
+
+
+def test_deferred_runtime_requires_explicit_weight_sync_capability() -> None:
+    async def launch_session() -> RayGenerationSession:
+        return RayGenerationSession(SimpleNamespace(), None, [])
+
+    with pytest.raises(ValueError, match="explicit weight-sync capability"):
+        RayGenerationRuntime(
+            session=None,
+            session_factory=launch_session,
+        )
+
+
+def test_resident_runtime_rejects_weight_sync_capability_mismatch() -> None:
+    with pytest.raises(ValueError, match="does not match its launched session"):
+        RayGenerationRuntime(
+            session=RayGenerationSession(SimpleNamespace(), None, []),
+            supports_weight_sync=True,
+        )
+
+
+def test_colocated_runtime_requires_deferred_session_factory() -> None:
+    with pytest.raises(ValueError, match="requires a deferred session factory"):
+        RayGenerationRuntime(
+            session=RayGenerationSession(SimpleNamespace(), None, []),
+            colocated=True,
+        )
 
 
 async def _wait_for_shutdown_idle(runtime: RayGenerationRuntime) -> None:
@@ -58,9 +98,8 @@ def test_terminal_lifecycle_closes_admission_and_finishes_once() -> None:
     lifecycle.begin_shutdown()
     lifecycle.begin_shutdown()
     assert lifecycle.phase is RuntimePhase.SHUTTING_DOWN
-    with pytest.raises(RuntimeLifecycleError, match="shutting down") as rejected:
+    with pytest.raises(RuntimeLifecycleError, match="shutting down"):
         lifecycle.require_running("generate")
-    assert rejected.value.lifecycle is lifecycle
 
     lifecycle.finish_shutdown()
     assert lifecycle.phase is RuntimePhase.TERMINATED
@@ -110,7 +149,7 @@ def test_concurrent_failure_publishers_share_one_first_root_cause() -> None:
 
 
 def test_terminated_runtime_fail_fasts_public_operations() -> None:
-    runtime = _resident_runtime()
+    runtime = _runtime()
     asyncio.run(runtime.shutdown())
     assert runtime.lifecycle.phase is RuntimePhase.TERMINATED
     asyncio.run(runtime.shutdown())
@@ -126,13 +165,13 @@ def test_terminated_runtime_fail_fasts_public_operations() -> None:
 async def test_shutdown_closes_new_admission_before_cleanup_yields() -> None:
     teardown_started = asyncio.Event()
     finish_teardown = asyncio.Event()
-    runtime = _resident_runtime()
+    runtime = _runtime()
 
     async def teardown() -> None:
         teardown_started.set()
         await finish_teardown.wait()
 
-    runtime._teardown_owned_resources = teardown
+    runtime._teardown_session = teardown
     shutdown = asyncio.create_task(runtime.shutdown())
     await asyncio.wait_for(teardown_started.wait(), timeout=1)
 
@@ -150,7 +189,7 @@ async def test_concurrent_shutdown_callers_share_cleanup() -> None:
     teardown_started = asyncio.Event()
     finish_teardown = asyncio.Event()
     teardown_calls = 0
-    runtime = _resident_runtime()
+    runtime = _runtime()
 
     async def teardown() -> None:
         nonlocal teardown_calls
@@ -158,7 +197,7 @@ async def test_concurrent_shutdown_callers_share_cleanup() -> None:
         teardown_started.set()
         await finish_teardown.wait()
 
-    runtime._teardown_owned_resources = teardown
+    runtime._teardown_session = teardown
     first = asyncio.create_task(runtime.shutdown())
     await asyncio.wait_for(teardown_started.wait(), timeout=1)
     second = asyncio.create_task(runtime.shutdown())
@@ -175,7 +214,7 @@ async def test_concurrent_shutdown_callers_share_cleanup() -> None:
 
 @pytest.mark.asyncio
 async def test_shutdown_joins_health_monitor_without_blocking_event_loop() -> None:
-    runtime = _resident_runtime()
+    runtime = _runtime()
     loop = asyncio.get_running_loop()
     loop_thread = threading.get_ident()
     loop_progressed = threading.Event()
@@ -200,13 +239,13 @@ async def test_shutdown_joins_health_monitor_without_blocking_event_loop() -> No
 async def test_cancelled_shutdown_waiter_does_not_cancel_cleanup() -> None:
     teardown_started = asyncio.Event()
     finish_teardown = asyncio.Event()
-    runtime = _resident_runtime()
+    runtime = _runtime()
 
     async def teardown() -> None:
         teardown_started.set()
         await finish_teardown.wait()
 
-    runtime._teardown_owned_resources = teardown
+    runtime._teardown_session = teardown
     cancelled_waiter = asyncio.create_task(runtime.shutdown())
     await asyncio.wait_for(teardown_started.wait(), timeout=1)
     surviving_waiter = asyncio.create_task(runtime.shutdown())
@@ -225,7 +264,7 @@ async def test_cleanup_failure_after_waiter_cancellation_can_be_retried() -> Non
     teardown_started = asyncio.Event()
     fail_first_teardown = asyncio.Event()
     cleanup_calls = 0
-    runtime = _resident_runtime()
+    runtime = _runtime()
 
     async def teardown() -> None:
         nonlocal cleanup_calls
@@ -235,7 +274,7 @@ async def test_cleanup_failure_after_waiter_cancellation_can_be_retried() -> Non
             await fail_first_teardown.wait()
             raise RuntimeError("first cleanup failed")
 
-    runtime._teardown_owned_resources = teardown
+    runtime._teardown_session = teardown
     cancelled_waiter = asyncio.create_task(runtime.shutdown())
     await asyncio.wait_for(teardown_started.wait(), timeout=1)
     cancelled_waiter.cancel()
@@ -254,7 +293,7 @@ async def test_cleanup_failure_after_waiter_cancellation_can_be_retried() -> Non
 async def test_cleanup_failure_can_be_retried_without_reporting_terminated() -> None:
     cleanup_error = RuntimeError("cleanup failed")
     cleanup_calls = 0
-    runtime = _resident_runtime()
+    runtime = _runtime()
 
     async def teardown() -> None:
         nonlocal cleanup_calls
@@ -262,7 +301,7 @@ async def test_cleanup_failure_can_be_retried_without_reporting_terminated() -> 
         if cleanup_calls == 1:
             raise cleanup_error
 
-    runtime._teardown_owned_resources = teardown
+    runtime._teardown_session = teardown
     with pytest.raises(RuntimeError, match="cleanup failed") as caught:
         await runtime.shutdown()
     assert caught.value is cleanup_error
@@ -280,7 +319,7 @@ async def test_cleanup_failure_can_be_retried_without_reporting_terminated() -> 
 @pytest.mark.asyncio
 async def test_existing_failure_survives_successful_cleanup() -> None:
     root = RuntimeError("actor died")
-    runtime = _resident_runtime()
+    runtime = _runtime()
     runtime.lifecycle.fail(root)
     cleanup_calls = 0
 
@@ -288,7 +327,7 @@ async def test_existing_failure_survives_successful_cleanup() -> None:
         nonlocal cleanup_calls
         cleanup_calls += 1
 
-    runtime._teardown_owned_resources = teardown
+    runtime._teardown_session = teardown
     await runtime.shutdown()
     assert cleanup_calls == 1
     assert runtime.lifecycle.phase is RuntimePhase.TERMINATED
@@ -300,8 +339,6 @@ async def test_existing_failure_survives_successful_cleanup() -> None:
 
 @pytest.mark.asyncio
 async def test_generation_timeout_force_kills_without_release_rpc(monkeypatch) -> None:
-    import vrl.generation.ray.runtime as runtime_module
-
     timeout = RayOperationTimeout("rollout.generation.chunk", 1.0)
 
     class _Executor:
@@ -327,11 +364,11 @@ async def test_generation_timeout_force_kills_without_release_rpc(monkeypatch) -
             cls.killed.append(actor)
 
     actor = _Actor()
-    runtime = RayGenerationRuntime(
+    runtime = _runtime(
         _Executor(),
         owned_workers=[DistributedWorkerHandle(worker_id="w0", actor=actor)],
     )
-    monkeypatch.setattr(runtime_module, "require_ray", lambda: _Ray)
+    monkeypatch.setattr(session_module, "require_ray", lambda: _Ray)
 
     with pytest.raises(RayOperationTimeout) as caught:
         await runtime.generate(_request())
@@ -348,8 +385,6 @@ async def test_generation_timeout_force_kills_without_release_rpc(monkeypatch) -
 async def test_submitted_generation_cancellation_force_kills_and_stays_cancelled(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    import vrl.generation.ray.runtime as runtime_module
-
     terminal = RayOperationCancelled(
         "rollout.generation.chunk",
         context="submitted_refs=1",
@@ -380,11 +415,11 @@ async def test_submitted_generation_cancellation_force_kills_and_stays_cancelled
             cls.killed.append(actor)
 
     actor = _Actor()
-    runtime = RayGenerationRuntime(
+    runtime = _runtime(
         _Executor(),
         owned_workers=[DistributedWorkerHandle(worker_id="w0", actor=actor)],
     )
-    monkeypatch.setattr(runtime_module, "require_ray", lambda: _Ray)
+    monkeypatch.setattr(session_module, "require_ray", lambda: _Ray)
 
     with pytest.raises(asyncio.CancelledError) as caught:
         await runtime.generate(_request())
@@ -406,7 +441,7 @@ async def test_pre_submission_generation_cancellation_keeps_runtime_running() ->
         async def execute(self, _request) -> None:
             raise cancellation
 
-    runtime = RayGenerationRuntime(_Executor())
+    runtime = _runtime(_Executor())
 
     with pytest.raises(asyncio.CancelledError) as caught:
         await runtime.generate(_request())
@@ -427,12 +462,12 @@ async def test_timeout_preserves_root_when_force_cleanup_also_fails() -> None:
         async def execute(self, _request) -> None:
             raise timeout
 
-    runtime = RayGenerationRuntime(_Executor())
+    runtime = _runtime(_Executor())
 
     async def fail_cleanup() -> None:
         raise cleanup_error
 
-    runtime._teardown_owned_resources = fail_cleanup
+    runtime._teardown_session = fail_cleanup
 
     with pytest.raises(RayOperationTimeout) as caught:
         await runtime.generate(_request())
@@ -451,7 +486,7 @@ async def test_terminal_progress_protocol_error_closes_runtime() -> None:
         async def execute(self, _request) -> None:
             raise error
 
-    runtime = RayGenerationRuntime(_Executor())
+    runtime = _runtime(_Executor())
 
     with pytest.raises(PipelinedProgressError) as caught:
         await runtime.generate(_request())
@@ -479,7 +514,7 @@ async def test_active_health_failure_escapes_as_the_first_failure_identity() -> 
             runtime.lifecycle.fail(health_failure)
             raise actor_error
 
-    runtime = RayGenerationRuntime(_Executor())
+    runtime = _runtime(_Executor())
 
     with pytest.raises(RolloutWorkerUnreachable) as caught:
         await runtime.generate(_request())
@@ -507,7 +542,7 @@ async def test_active_health_failure_wins_over_a_later_ordinary_error() -> None:
             runtime.lifecycle.fail(health_failure)
             raise later_error
 
-    runtime = RayGenerationRuntime(_Executor())
+    runtime = _runtime(_Executor())
 
     with pytest.raises(RolloutWorkerUnreachable) as caught:
         await runtime.generate(_request())
@@ -534,7 +569,7 @@ async def test_active_health_failure_keeps_cancelled_surface_with_first_cause() 
             runtime.lifecycle.fail(health_failure)
             raise cancellation
 
-    runtime = RayGenerationRuntime(_Executor())
+    runtime = _runtime(_Executor())
 
     with pytest.raises(asyncio.CancelledError) as caught:
         await runtime.generate(_request())
@@ -550,8 +585,6 @@ async def test_active_health_failure_keeps_cancelled_surface_with_first_cause() 
 async def test_weight_ack_timeout_keeps_previous_version_and_force_kills(
     monkeypatch,
 ) -> None:
-    import vrl.generation.ray.runtime as runtime_module
-
     timeout = RayOperationTimeout("rollout.weight_sync", 1.0)
 
     class _WeightSync:
@@ -577,13 +610,13 @@ async def test_weight_ack_timeout_keeps_previous_version_and_force_kills(
             cls.killed.append(actor)
 
     actor = _Actor()
-    runtime = RayGenerationRuntime(
+    runtime = _runtime(
         SimpleNamespace(),
         weight_sync=_WeightSync(),
         owned_workers=[DistributedWorkerHandle(worker_id="w0", actor=actor)],
     )
     runtime.current_policy_version = 6
-    monkeypatch.setattr(runtime_module, "require_ray", lambda: _Ray)
+    monkeypatch.setattr(session_module, "require_ray", lambda: _Ray)
 
     with pytest.raises(RayOperationTimeout) as caught:
         await runtime.update_weights(object(), policy_version=7)
@@ -615,7 +648,7 @@ async def test_health_failure_after_weight_ack_blocks_version_publication() -> N
             # thread closed admission before the driver could publish its version.
             runtime.lifecycle.fail(health_failure)
 
-    runtime = RayGenerationRuntime(SimpleNamespace(), weight_sync=_WeightSync())
+    runtime = _runtime(SimpleNamespace(), weight_sync=_WeightSync())
     runtime.current_policy_version = 6
 
     with pytest.raises(RolloutWorkerUnreachable) as caught:
@@ -630,8 +663,6 @@ async def test_health_failure_after_weight_ack_blocks_version_publication() -> N
 
 @pytest.mark.asyncio
 async def test_later_timeout_upgrades_ordinary_failure_to_force_cleanup(monkeypatch) -> None:
-    import vrl.generation.ray.runtime as runtime_module
-
     class _Release:
         calls = 0
 
@@ -651,14 +682,14 @@ async def test_later_timeout_upgrades_ordinary_failure_to_force_cleanup(monkeypa
             cls.killed.append(actor)
 
     actor = _Actor()
-    runtime = RayGenerationRuntime(
+    runtime = _runtime(
         SimpleNamespace(),
         owned_workers=[DistributedWorkerHandle(worker_id="w0", actor=actor)],
     )
     ordinary = RuntimeError("health failed first")
     runtime.lifecycle.fail(ordinary)
     timeout = RayOperationTimeout("rollout.generation.chunk", 1.0)
-    monkeypatch.setattr(runtime_module, "require_ray", lambda: _Ray)
+    monkeypatch.setattr(session_module, "require_ray", lambda: _Ray)
 
     await runtime._terminalize_after_failure(timeout)
 
@@ -671,8 +702,6 @@ async def test_later_timeout_upgrades_ordinary_failure_to_force_cleanup(monkeypa
 
 @pytest.mark.asyncio
 async def test_timeout_interrupts_an_already_waiting_release_barrier(monkeypatch) -> None:
-    import vrl.generation.ray.runtime as runtime_module
-
     release_entered = threading.Event()
     finish_release = threading.Event()
 
@@ -702,11 +731,13 @@ async def test_timeout_interrupts_an_already_waiting_release_barrier(monkeypatch
             cls.killed.append(actor)
 
     actor = _Actor()
-    runtime = RayGenerationRuntime(
+    runtime = _runtime(
         SimpleNamespace(),
         owned_workers=[DistributedWorkerHandle(worker_id="w0", actor=actor)],
     )
-    monkeypatch.setattr(runtime_module, "require_ray", lambda: _Ray)
+    session = runtime._session
+    assert session is not None
+    monkeypatch.setattr(session_module, "require_ray", lambda: _Ray)
     graceful_shutdown = asyncio.create_task(runtime.shutdown())
     assert await asyncio.to_thread(release_entered.wait, 1.0)
 
@@ -726,7 +757,7 @@ async def test_timeout_interrupts_an_already_waiting_release_barrier(monkeypatch
     assert shutdown_results == [None]
     assert runtime.lifecycle.failure is timeout
     assert runtime.lifecycle.phase is RuntimePhase.TERMINATED
-    assert runtime._release_wait_task is None
+    assert session._release_wait_task is None
     assert _Release.calls == 1
     assert _Ray.killed == [actor]
 
@@ -749,7 +780,7 @@ async def test_timeout_prevents_sibling_generation_from_returning_output() -> No
             await finish_sibling.wait()
             return "must-not-escape"
 
-    runtime = RayGenerationRuntime(_Executor())
+    runtime = _runtime(_Executor())
     timeout_request = SimpleNamespace(
         request_id="timeout",
         sampling={},
@@ -777,13 +808,13 @@ async def test_timeout_prevents_sibling_generation_from_returning_output() -> No
 async def test_cleanup_error_chains_existing_root_without_replacing_it() -> None:
     root = RuntimeError("actor died")
     cleanup_error = RuntimeError("cleanup failed")
-    runtime = _resident_runtime()
+    runtime = _runtime()
     runtime.lifecycle.fail(root)
 
     async def teardown() -> None:
         raise cleanup_error
 
-    runtime._teardown_owned_resources = teardown
+    runtime._teardown_session = teardown
     with pytest.raises(RuntimeError, match="cleanup failed") as caught:
         await runtime.shutdown()
     assert caught.value is cleanup_error
@@ -811,13 +842,11 @@ async def test_actor_cleanup_failure_retains_owned_handle_for_retry(monkeypatch)
             if cls.kill_calls == 1:
                 raise RuntimeError("kill transport failed")
 
-    import vrl.generation.ray.runtime as runtime_module
-
-    monkeypatch.setattr(runtime_module, "require_ray", lambda: _RayApi)
+    monkeypatch.setattr(session_module, "require_ray", lambda: _RayApi)
     actor = _Actor()
-    worker = SimpleNamespace(actor=actor, worker_id="w0")
-    runtime = RayGenerationRuntime(
-        executor=SimpleNamespace(),
+    worker = DistributedWorkerHandle(worker_id="w0", actor=actor)
+    runtime = _runtime(
+        SimpleNamespace(),
         owned_workers=[worker],
     )
 
@@ -855,16 +884,20 @@ async def test_async_launcher_initializes_on_caller_then_loads_off_loop(monkeypa
 
     launcher = launcher_module.RayGenerationLauncher()
 
-    def launch(*args, **kwargs):
+    def launch_session(*args, **kwargs):
         del args, kwargs
         launch_threads.append(threading.get_ident())
-        return "runtime"
+        return "session"
 
     monkeypatch.setattr(launcher_module, "require_ray", lambda: _RayApi)
-    monkeypatch.setattr(launcher_module.RayGenerationLauncher, "launch", launch)
-    result = await launcher.launch_async(None, None, placement=None)
+    monkeypatch.setattr(
+        launcher_module.RayGenerationLauncher,
+        "_launch_session",
+        launch_session,
+    )
+    result = await launcher._launch_session_async(None, None, placement=None)
 
-    assert result == "runtime"
+    assert result == "session"
     assert init_threads == [caller_thread]
     assert len(launch_threads) == 1
     assert launch_threads[0] != caller_thread
@@ -882,9 +915,9 @@ def test_shutdown_kills_only_owned_actor(local_ray) -> None:
     actor_cls = local_ray.remote(num_cpus=0)(_ReleaseWorker)
     actor = actor_cls.remote()
     bystander = actor_cls.remote()
-    worker = SimpleNamespace(actor=actor, worker_id="w0")
-    runtime = RayGenerationRuntime(
-        executor=SimpleNamespace(),
+    worker = DistributedWorkerHandle(worker_id="w0", actor=actor)
+    runtime = _runtime(
+        SimpleNamespace(),
         owned_workers=[worker],
     )
 

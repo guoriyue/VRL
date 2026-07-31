@@ -234,26 +234,24 @@ class ModelFamilyEntry:
                 f"section(s): {', '.join(unsupported_memory)}",
             )
 
-    def resolve_executor_kwargs(self, root: RootConfig) -> dict[str, Any]:
-        """Project validated config into this family's executor constructor."""
+    def executor_kwargs(self, root: RootConfig) -> dict[str, Any]:
+        """Return this family's executor arguments from a validated root."""
 
         from vrl.config.schema import RootConfig
-        from vrl.utils.config import cfg_path, plain_mapping
+        from vrl.utils.config import plain_mapping
 
         if not isinstance(root, RootConfig):
             raise TypeError(
                 "root must be a validated RootConfig; raw DictConfig/Mapping "
                 f"inputs are not accepted (got {type(root).__name__})",
             )
-        executor_config = cfg_path(root, "model.executor", None)
-        self.validate_model_runtime_sections(
-            executor_config=executor_config,
-            memory_config=cfg_path(root, "model.memory", None),
-        )
+        if root.model is None:
+            raise ValueError("validated root is missing model configuration")
+        executor_config = root.model.executor
 
         kwargs: dict[str, Any] = {}
         if self.runtime_capabilities.accepts_samples_per_chunk:
-            samples_per_chunk = cfg_path(root, "rollout.samples_per_chunk", None)
+            samples_per_chunk = None if root.rollout is None else root.rollout.samples_per_chunk
             # ``auto`` belongs to the request and is resolved by the Ray runtime
             # before dispatch, not by a fixed executor constructor.
             if samples_per_chunk is not None and samples_per_chunk != "auto":

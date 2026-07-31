@@ -127,7 +127,7 @@ composition seam shared by online and offline entrypoints: `resolve_run` /
 `resolve_online_run` construct `ResolvedRun` / `ResolvedOnlineRun`, and every field is read
 by non-logging runtime control flow in `vrl/scripts/common/online.py` or
 `vrl/scripts/families/wan_2_1/train_dpo.py`. Keeping resolution beside model
-`resolve_model` / `materialize` avoids a script-only helper bag without turning the pure
+`resolve_model` / `ResolvedModel.materialize` avoids a script-only helper bag without turning the pure
 resolution chain into a stateful manager.
 
 **ALL_CAPS review:** retained constants in these families name real boundaries: environment

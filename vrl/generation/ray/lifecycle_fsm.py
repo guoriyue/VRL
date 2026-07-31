@@ -29,16 +29,11 @@ class RuntimeLifecycleError(RuntimeError):
         self,
         operation: str,
         phase: RuntimePhase,
-        *,
-        lifecycle: RuntimeLifecycle,
     ) -> None:
         phase_name = phase.value.replace("_", " ")
         super().__init__(f"{operation} rejected: rollout runtime is {phase_name}")
         self.operation = operation
         self.phase = phase
-        # Two nested runtimes can reject the same operation. The source keeps
-        # cleanup ownership explicit without inferring it from an error string.
-        self.lifecycle = lifecycle
 
 
 class RuntimeLifecycle:
@@ -105,14 +100,13 @@ class RuntimeLifecycle:
                 raise RuntimeLifecycleError(
                     "finish shutdown",
                     self._phase,
-                    lifecycle=self,
                 )
             self._phase = RuntimePhase.TERMINATED
 
     def _require_running_locked(self, operation: str) -> None:
         if self._phase is RuntimePhase.RUNNING:
             return
-        error = RuntimeLifecycleError(operation, self._phase, lifecycle=self)
+        error = RuntimeLifecycleError(operation, self._phase)
         if self._failure is not None:
             raise error from self._failure
         raise error

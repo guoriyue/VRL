@@ -14,7 +14,6 @@ from vrl.generation.protocols import ChunkResult
 from vrl.generation.ray.config import RayGenerationConfig, RolloutWorkerConfig
 from vrl.generation.ray.launch_inputs import RayGenerationLaunchInputs
 from vrl.generation.ray.launcher import RayGenerationLauncher
-from vrl.generation.ray.on_demand_runtime import _OnDemandRayGenerationRuntime
 from vrl.generation.ray.runtime import RayGenerationRuntime
 from vrl.generation.types import GenerationOutput, GenerationRequest, GenerationSampleRow
 
@@ -86,7 +85,7 @@ def test_ray_generation_launcher_builds_worker_runtime_with_embedded_ray(local_r
     owner = _cpu_rollout_owner(ray, worker=worker)
     runtime: RayGenerationRuntime | None = None
     try:
-        runtime = launcher_mod.RayGenerationLauncher(init_ray=False).launch(
+        runtime = launcher_mod.RayGenerationLauncher(init_ray=False).create_runtime(
             RayGenerationConfig(
                 resources=owner.resources,
                 worker=worker,
@@ -97,13 +96,15 @@ def test_ray_generation_launcher_builds_worker_runtime_with_embedded_ray(local_r
 
         assert isinstance(runtime, RayGenerationRuntime)
         assert runtime.current_policy_version == 7
-        assert runtime.weight_sync is None
+        session = runtime._session
+        assert session is not None
+        assert session.weight_sync is None
         # Launcher uses the owner's group; it does not own/remove it.
         assert not hasattr(runtime, "_placement_group")
         # Config-selected placement strategy must reach the live planner.
-        assert runtime.executor.planner.policy.strategy == "dynamic"
+        assert session.executor.planner.policy.strategy == "dynamic"
 
-        workers = runtime.executor.workers
+        workers = session.executor.workers
         assert [worker.worker_id for worker in workers] == ["rollout-0"]
         assert workers[0].actor is not None
         metadata = ray.get(workers[0].actor.worker_metadata.remote())
@@ -155,7 +156,7 @@ def test_owner_placement_runtime_does_not_own_placement_group(local_ray) -> None
     owner = _cpu_rollout_owner(local_ray)
     runtime: RayGenerationRuntime | None = None
     try:
-        runtime = launcher_mod.RayGenerationLauncher(init_ray=False).launch(
+        runtime = launcher_mod.RayGenerationLauncher(init_ray=False).create_runtime(
             RayGenerationConfig(
                 resources=owner.resources,
                 worker=owner.rollout_worker,
@@ -167,7 +168,9 @@ def test_owner_placement_runtime_does_not_own_placement_group(local_ray) -> None
         # Runtime owns its workers but not the owner-managed placement group.
         assert not hasattr(runtime, "_placement_group")
         assert not hasattr(runtime, "_owned_actors")
-        assert [w.worker_id for w in runtime.executor.workers] == ["rollout-0"]
+        session = runtime._session
+        assert session is not None
+        assert [w.worker_id for w in session.executor.workers] == ["rollout-0"]
 
         # Tearing down the runtime kills workers but leaves the owner's PG alive.
         asyncio.run(runtime.shutdown())
@@ -186,7 +189,7 @@ def test_launcher_uses_resolved_colocation_protocol_signal(local_ray) -> None:
     owner = _cpu_rollout_owner(local_ray)
     runtime: RayGenerationRuntime | None = None
     try:
-        runtime = launcher_mod.RayGenerationLauncher(init_ray=False).launch(
+        runtime = launcher_mod.RayGenerationLauncher(init_ray=False).create_runtime(
             RayGenerationConfig(
                 resources=owner.resources,
                 worker=owner.rollout_worker,
@@ -215,32 +218,31 @@ def test_phase_handoff_keeps_actor_and_owner_placement(local_ray) -> None:
             ),
         ),
     )
-    runtime = _OnDemandRayGenerationRuntime(
+    runtime = RayGenerationLauncher(init_ray=False).create_runtime(
         RayGenerationConfig(
             resources=on_demand_resources,
             worker=owner.rollout_worker,
         ),
         _launch_inputs(),
-        launcher=RayGenerationLauncher(init_ray=False),
         placement=owner.rollout_placement,
     )
     try:
         # Explicit activation launches workers; offload parks them in place.
         asyncio.run(runtime.activate())
-        inner = runtime._inner_runtime
-        assert inner is not None
-        assert not hasattr(inner, "_placement_group")  # inner never owns the PG
-        first_actor = inner.executor.workers[0].actor
+        session = runtime._session
+        assert session is not None
+        assert not hasattr(session, "_placement_group")  # session never owns the PG
+        first_actor = session.executor.workers[0].actor
         asyncio.run(runtime.offload())
-        assert runtime._inner_runtime is inner
-        assert runtime._workers_offloaded is True
+        assert runtime._session is session
+        assert runtime._session_parked is True
         # The owner's placement group is untouched and activation wakes in place.
         assert owner._placement_group is not None
         asyncio.run(runtime.activate())
-        reacquired = runtime._inner_runtime
+        reacquired = runtime._session
         assert reacquired is not None
         assert [w.worker_id for w in reacquired.executor.workers] == ["rollout-0"]
-        assert reacquired is inner
+        assert reacquired is session
         assert reacquired.executor.workers[0].actor is first_actor
     finally:
         asyncio.run(runtime.shutdown())

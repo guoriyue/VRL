@@ -132,7 +132,7 @@ def generate_rollout_preview(
     model = require_runtime_model(bundle.model, owner="RuntimeBundle.model")
     assert_rollout_quantization_applied(model, build)
 
-    executor_kwargs = entry.resolve_executor_kwargs(root)
+    executor_kwargs = entry.executor_kwargs(root)
     executor_kwargs["gatherer"] = entry.new_gatherer()
     if entry.executor_cls == GENERIC_FULL_SEQUENCE_DENOISE_EXECUTOR:
         executor_kwargs.update(family=entry.family, task=entry.task)

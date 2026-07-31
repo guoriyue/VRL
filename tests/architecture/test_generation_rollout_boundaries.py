@@ -339,12 +339,35 @@ def test_generation_ray_adapter_stays_lean() -> None:
         "config.py",
         "executor.py",
         "launcher.py",
-        "on_demand_runtime.py",
         "runtime.py",
+        "session.py",
         "weight_sync.py",
         "worker.py",
     }
     assert required <= _module_filenames(ray_root)
+    assert not (ray_root / "on_demand_runtime.py").exists()
+    runtime_path = ray_root / "runtime.py"
+    session_path = ray_root / "session.py"
+    runtime_imports = set(_imports(runtime_path))
+    session_imports = set(_imports(session_path))
+    assert "vrl.generation.ray.session.RayGenerationSession" in runtime_imports
+    assert not any(
+        _is_module_or_child(target, "vrl.generation.ray.lifecycle_fsm")
+        or _is_module_or_child(target, "vrl.generation.protocols")
+        for target in session_imports
+    )
+    session_tree = ast.parse(session_path.read_text(encoding="utf-8"))
+    session_class = next(
+        node
+        for node in session_tree.body
+        if isinstance(node, ast.ClassDef) and node.name == "RayGenerationSession"
+    )
+    session_methods = {
+        node.name
+        for node in session_class.body
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+    }
+    assert not {"activate", "generate", "offload", "shutdown"} & session_methods
     for speculative_stage_adapter in ("pipeline_runner.py", "stage_worker.py"):
         assert not (ray_root / speculative_stage_adapter).exists()
     assert not (VRL_ROOT / "generation" / "pipeline").exists()
@@ -352,8 +375,8 @@ def test_generation_ray_adapter_stays_lean() -> None:
         ray_root / "config.py",
         ray_root / "executor.py",
         ray_root / "launcher.py",
-        ray_root / "on_demand_runtime.py",
         ray_root / "runtime.py",
+        ray_root / "session.py",
         ray_root / "worker.py",
         ray_root / "weight_sync.py",
     )

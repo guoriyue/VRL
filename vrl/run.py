@@ -9,13 +9,14 @@ aggregate -- never re-wire the chain inline.
 
 Model materialization is the same story: the hand-wired chain
 ``resolve_model_build`` -> ``resolve_checkpoint_model_identity`` -> bundle
-build -> identity recheck lives here as ``resolve_model`` + ``materialize``.
+build -> identity recheck lives here as ``resolve_model`` +
+``ResolvedModel.materialize``.
 The two stages are deliberately separate: the online recipe runs its
 checkpoint-compatibility preflight between identity resolution and heavy
 bundle construction, so the seam must not fuse them.
 
 Ray worker composition follows the same ownership rule:
-``resolve_ray_generation_launch_inputs`` projects one resolved online run plus
+``ResolvedOnlineRun.ray_launch_inputs`` projects one resolved online run plus
 its replay-model identity into a typed, serializable launch payload. The Ray
 launcher consumes that payload and topology only; it never reinterprets trainer
 schedule or model YAML.
@@ -56,7 +57,7 @@ from vrl.models.interfaces import ModelBuild, RuntimeBundle
 from vrl.ray import resources as ray_resources
 from vrl.ray.resources import ResolvedDistributedResources
 from vrl.rollouts.collector.config import RolloutCollectorConfig
-from vrl.utils.config import cfg_path, require_exact_int, to_builtin_deep
+from vrl.utils.config import require_exact_int
 
 
 @dataclass(frozen=True, slots=True)
@@ -104,12 +105,102 @@ class ResolvedOnlineRun(ResolvedRun):
     generation: RayGenerationConfig
     collector: RolloutCollectorConfig
 
+    def ray_launch_inputs(
+        self,
+        replay_model: ResolvedModel,
+    ) -> RayGenerationLaunchInputs:
+        """Build the serializable Ray worker contract for this online run."""
+
+        if not isinstance(replay_model, ResolvedModel):
+            raise TypeError(
+                f"replay_model must be a ResolvedModel, got {type(replay_model).__name__}",
+            )
+        if replay_model.entry.family != self.family.family:
+            raise ValueError(
+                "replay model family does not match the resolved online run: "
+                f"{replay_model.entry.family!r} != {self.family.family!r}",
+            )
+        replay_model.build.require_replay()
+        trainer = self.built.trainer
+        if trainer is None:
+            raise ValueError("online generation launch requires a trainer config")
+
+        generation = self.generation
+        runtime_device = torch.device(
+            "cuda" if generation.resources.rollout_gpus_per_worker > 0 else "cpu",
+        )
+        build = self.family.resolve_model_build(
+            self.built.root,
+            runtime_device,
+            precision=self.built.precision,
+        )
+        if build.rollout is not None:
+            build.rollout = replace(
+                build.rollout,
+                # Full-finetune sync replaces base parameters; LoRA sync only sends
+                # adapters, so only the former needs retained base-weight masters.
+                base_weight_sync=(generation.worker.sync_trainable_state and not build.use_lora),
+            )
+        if (
+            build.torch_compile is not None
+            and not self.family.runtime_capabilities.supports_torch_compile
+        ):
+            raise ValueError(
+                f"{self.family.family} does not support torch compile but "
+                "model.torch_compile.enable is set",
+            )
+
+        rollout_model_identity = checkpoint_identity.resolve_checkpoint_model_identity(build)
+        if rollout_model_identity != replay_model.identity:
+            raise ValueError(
+                "rollout model identity does not match the driver replay model "
+                "identity before Ray worker launch: "
+                f"replay={replay_model.identity!r}, rollout={rollout_model_identity!r}",
+            )
+
+        model_build_payload = asdict(build)
+        # Family is the top-level launch identity and is restored worker-side.
+        model_build_payload.pop("family", None)
+        model_build_payload["device"] = str(model_build_payload["device"])
+        model_build_payload["parameter_dtype"] = dtype_to_wire_name(
+            model_build_payload["parameter_dtype"],
+        )
+        rollout = model_build_payload.get("rollout")
+        if rollout is not None:
+            rollout["prompt_encoder_dtype"] = dtype_to_wire_name(
+                rollout["prompt_encoder_dtype"],
+            )
+            # Absence is the wire representation of the universal no-offload
+            # default. Only a selected residency mode needs to cross Ray.
+            if rollout.get("pipeline_offload_mode") == "none":
+                rollout.pop("pipeline_offload_mode")
+
+        profiler = generation.torch_profiler
+        return RayGenerationLaunchInputs(
+            launch_contract=GenerationRuntimeLaunchContract(
+                family=self.family.family,
+                model_build=model_build_payload,
+                expected_model_identity=replay_model.identity,
+                executor_kwargs=self.family.executor_kwargs(self.built.root),
+                policy_version=0,
+                torch_profiler={} if profiler is None else asdict(profiler),
+                # The typed trainer schedule is the source of truth for whether a
+                # worker may retain an older LoRA slot across non-draining sync.
+                versioned_weight_sync=(
+                    generation.worker.sync_trainable_state
+                    and trainer.rollout_orchestration.schedule_mode == "continuous"
+                    and build.use_lora
+                ),
+            ),
+            gatherer=self.family.new_gatherer(),
+        )
+
 
 def _model_family(built: BuiltConfigs) -> ModelFamilyEntry:
     """Registry entry for the configured model family (canonical name)."""
 
     if built.root.model is None:
-        raise ValueError("online recipe requires model configuration")
+        raise ValueError("training run requires model configuration")
     return registry.get_model_family_entry(
         normalize_model_family(str(built.root.model.family)),
     )
@@ -174,6 +265,21 @@ class ResolvedModel:
     build: ModelBuild
     identity: dict[str, Any]
 
+    def materialize(self, *, context: str) -> RuntimeBundle:
+        """Build the resolved role and re-verify its checkpoint identity."""
+
+        if self.build.rollout is None:
+            bundle = self.entry.build_replay(self.build)
+        else:
+            bundle = self.entry.build_rollout(self.build)
+        loaded_identity = checkpoint_identity.resolve_checkpoint_model_identity(self.build)
+        if loaded_identity != self.identity:
+            raise RuntimeError(
+                f"model checkpoint source changed during {context}; "
+                f"before={self.identity!r}, after={loaded_identity!r}",
+            )
+        return bundle
+
 
 def resolve_model(
     entry: ModelFamilyEntry,
@@ -202,148 +308,12 @@ def resolve_model(
     return ResolvedModel(entry=entry, build=build, identity=identity)
 
 
-def materialize(
-    resolved: ResolvedModel,
-    *,
-    replay: bool = False,
-    context: str,
-) -> RuntimeBundle:
-    """Build the heavy runtime bundle, then re-verify checkpoint identity.
-
-    ``context`` names the construction step in the mismatch error (for example
-    ``"replay bundle construction"``). Each call site's historical wording is
-    pinned by its tests, so the caller owns the fragment.
-    """
-
-    entry = resolved.entry
-    bundle = entry.build_replay(resolved.build) if replay else entry.build_rollout(resolved.build)
-    loaded_identity = checkpoint_identity.resolve_checkpoint_model_identity(resolved.build)
-    if loaded_identity != resolved.identity:
-        raise RuntimeError(
-            f"model checkpoint source changed during {context}; "
-            f"before={resolved.identity!r}, after={loaded_identity!r}",
-        )
-    return bundle
-
-
-def resolve_ray_generation_launch_inputs(
-    run: ResolvedOnlineRun,
-    *,
-    replay_model: ResolvedModel,
-) -> RayGenerationLaunchInputs:
-    """Resolve validated run state into the serializable Ray worker contract."""
-
-    if not isinstance(run, ResolvedOnlineRun):
-        raise TypeError(
-            f"run must be a ResolvedOnlineRun, got {type(run).__name__}",
-        )
-    if not isinstance(replay_model, ResolvedModel):
-        raise TypeError(
-            f"replay_model must be a ResolvedModel, got {type(replay_model).__name__}",
-        )
-    if replay_model.entry.family != run.family.family:
-        raise ValueError(
-            "replay model family does not match the resolved online run: "
-            f"{replay_model.entry.family!r} != {run.family.family!r}",
-        )
-    replay_model.build.require_replay()
-    trainer = run.built.trainer
-    if trainer is None:
-        raise ValueError("online generation launch requires a trainer config")
-
-    generation = run.generation
-    runtime_device = torch.device(
-        "cuda" if generation.resources.rollout_gpus_per_worker > 0 else "cpu",
-    )
-    build = run.family.resolve_model_build(
-        run.built.root,
-        runtime_device,
-        precision=run.built.precision,
-    )
-    if build.rollout is not None:
-        build.rollout = replace(
-            build.rollout,
-            # Full-finetune sync replaces base parameters; LoRA sync only sends
-            # adapters, so only the former needs retained base-weight masters.
-            base_weight_sync=(generation.worker.sync_trainable_state and not build.use_lora),
-        )
-    if (
-        build.torch_compile is not None
-        and not run.family.runtime_capabilities.supports_torch_compile
-    ):
-        raise ValueError(
-            f"{run.family.family} does not support torch compile but "
-            "model.torch_compile.enable is set",
-        )
-
-    rollout_model_identity = checkpoint_identity.resolve_checkpoint_model_identity(build)
-    if rollout_model_identity != replay_model.identity:
-        raise ValueError(
-            "rollout model identity does not match the driver replay model "
-            "identity before Ray worker launch: "
-            f"replay={replay_model.identity!r}, rollout={rollout_model_identity!r}",
-        )
-
-    return RayGenerationLaunchInputs(
-        launch_contract=GenerationRuntimeLaunchContract(
-            family=run.family.family,
-            model_build=_model_build_payload(build),
-            expected_model_identity=replay_model.identity,
-            executor_kwargs=run.family.resolve_executor_kwargs(run.built.root),
-            policy_version=0,
-            torch_profiler=_runtime_profiler(run.built.root),
-            # The typed trainer schedule is the source of truth for whether a
-            # worker may retain an older LoRA slot across non-draining sync.
-            versioned_weight_sync=(
-                generation.worker.sync_trainable_state
-                and trainer.rollout_orchestration.schedule_mode == "continuous"
-                and build.use_lora
-            ),
-        ),
-        gatherer=run.family.new_gatherer(),
-    )
-
-
-def _model_build_payload(build: ModelBuild) -> dict[str, Any]:
-    payload = asdict(build)
-    # Family is the launch contract identity and is restored worker-side. Do not
-    # serialize it again inside the nested model-build payload.
-    payload.pop("family", None)
-    payload["device"] = str(payload["device"])
-    payload["parameter_dtype"] = dtype_to_wire_name(payload["parameter_dtype"])
-    rollout = payload.get("rollout")
-    if rollout is not None:
-        rollout["prompt_encoder_dtype"] = dtype_to_wire_name(
-            rollout["prompt_encoder_dtype"],
-        )
-        # Absence is the wire representation of the universal no-offload
-        # default. Only a selected pipeline residency mode needs to cross Ray.
-        if rollout.get("pipeline_offload_mode") == "none":
-            rollout.pop("pipeline_offload_mode")
-    return payload
-
-
-def _runtime_profiler(root: RootConfig) -> dict[str, Any]:
-    profiler_cfg = cfg_path(root, "rollout.torch_profiler", None)
-    if profiler_cfg is None:
-        return {}
-    profiler = to_builtin_deep(profiler_cfg)
-    if not isinstance(profiler, dict):
-        return {}
-    # trainer.output_dir is required by the public config, so the worker payload
-    # needs no independent path fallback.
-    profiler["output_dir"] = str(cfg_path(root, "trainer.output_dir"))
-    return profiler
-
-
 __all__ = [
     "OnlineRunConfig",
     "ResolvedModel",
     "ResolvedOnlineRun",
     "ResolvedRun",
-    "materialize",
     "resolve_model",
     "resolve_online_run",
-    "resolve_ray_generation_launch_inputs",
     "resolve_run",
 ]

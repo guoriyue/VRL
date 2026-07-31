@@ -14,6 +14,7 @@ from tests.rollouts.orchestration.continuous._helpers import _wait_until, owner_
 from vrl.generation.ray.health_monitor import RolloutWorkerUnreachable
 from vrl.generation.ray.lifecycle_fsm import RuntimePhase
 from vrl.generation.ray.runtime import RayGenerationRuntime
+from vrl.generation.ray.session import RayGenerationSession
 from vrl.rollouts.batch import RolloutBatch
 from vrl.rollouts.orchestration.continuous.owner import ContinuousRolloutOwner
 from vrl.rollouts.orchestration.continuous.types import ContinuousRolloutSettings
@@ -25,6 +26,16 @@ def _batch(prompts: list[str], group_size: int) -> RolloutBatch:
     return RolloutBatch(
         rewards=torch.arange(batch_size, dtype=torch.float32),
         group_ids=torch.arange(len(prompts)).repeat_interleave(group_size),
+    )
+
+
+def _runtime(weight_sync: Any) -> RayGenerationRuntime:
+    return RayGenerationRuntime(
+        session=RayGenerationSession(
+            executor=object(),
+            weight_sync=weight_sync,
+            owned_workers=[],
+        ),
     )
 
 
@@ -361,10 +372,7 @@ async def test_real_runtime_cleanup_failure_does_not_replace_ack_root() -> None:
             raise RuntimeError("worker install ACK mismatch")
 
     collector = _OwnerCollector()
-    runtime = RayGenerationRuntime(
-        executor=object(),
-        weight_sync=_AckMismatchSync(),
-    )
+    runtime = _runtime(_AckMismatchSync())
     runtime.current_policy_version = 1
     cleanup_calls = 0
 
@@ -374,7 +382,7 @@ async def test_real_runtime_cleanup_failure_does_not_replace_ack_root() -> None:
         if cleanup_calls == 1:
             raise RuntimeError("runtime cleanup failed")
 
-    runtime._teardown_owned_resources = teardown
+    runtime._teardown_session = teardown
 
     class _RuntimeLifecycle(_OwnerLifecycle):
         async def push_prepared_weights(
@@ -439,10 +447,7 @@ async def test_health_failure_after_weight_ack_never_resumes_owner_admission() -
             runtime.lifecycle.fail(health_failure)
 
     collector = _OwnerCollector()
-    runtime = RayGenerationRuntime(
-        executor=object(),
-        weight_sync=_HealthRaceSync(),
-    )
+    runtime = _runtime(_HealthRaceSync())
     runtime.current_policy_version = 1
 
     class _RuntimeLifecycle(_OwnerLifecycle):

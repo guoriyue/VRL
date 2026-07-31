@@ -33,8 +33,8 @@ def kill_and_retain(
 ) -> tuple[list[Any], list[tuple[Any, Exception]]]:
     """Kill each item's actor and retain only the items whose kill FAILED.
 
-    The two Ray lifecycle owners (``RayActorGroup.shutdown`` and the generation
-    runtime shutdown) both own lifecycle truth: they drop handles for actors that
+    The two Ray resource owners (``RayActorGroup.shutdown`` and the generation
+    session) both own cleanup truth: they drop handles for actors that
     died and keep the ones they could not kill so cleanup is not falsely reported
     complete. ``get_actor`` maps one owned item to its Ray actor handle (or
     ``None`` when already released). Returns ``(surviving, failures)`` where

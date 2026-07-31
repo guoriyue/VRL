@@ -8,93 +8,40 @@ tests pin the contract: every production implementation must answer.
 from __future__ import annotations
 
 from types import SimpleNamespace
-from typing import Any
 
 import pytest
-from omegaconf import OmegaConf
 
-from vrl.generation.launch_contract import GenerationRuntimeLaunchContract
 from vrl.generation.protocols import GenerationRuntime, PolicyVersionProvider
-from vrl.generation.ray.config import RayGenerationConfig
-from vrl.generation.ray.launch_inputs import RayGenerationLaunchInputs
-from vrl.generation.ray.launcher import RayGenerationLauncher
-from vrl.generation.ray.on_demand_runtime import _OnDemandRayGenerationRuntime
 from vrl.generation.ray.runtime import RayGenerationRuntime
-from vrl.ray.placement import RolePlacement
-from vrl.ray.resources import resolve_distributed_resources
+from vrl.generation.ray.session import RayGenerationSession
 from vrl.trainers.weight_sync import RayRuntimeWeightSyncer, WeightSyncer
 
 
-class _Gatherer:
-    def gather_chunks(self, *_args: Any) -> Any:
-        raise AssertionError("protocol fixture must not gather chunks")
-
-
-def _on_demand_runtime(
+def _runtime(
     *,
+    deferred: bool = False,
     colocated: bool = False,
-) -> _OnDemandRayGenerationRuntime:
-    rollout = (
-        {
-            "gpu_pool": "trainer",
-            "num_gpus": 1,
-            "gpus_per_worker": 1,
-            "num_workers": 1,
-        }
-        if colocated
-        else {
-            "devices": [1],
-            "num_gpus": 1,
-            "gpus_per_worker": 1,
-            "num_workers": 1,
-        }
+) -> RayGenerationRuntime:
+    session = RayGenerationSession(
+        executor=object(),
+        weight_sync=None,
+        owned_workers=[],
     )
-    reward = (
-        None
-        if colocated
-        else {
-            "devices": [1],
-            "num_gpus": 1,
-            "gpus_per_worker": 1,
-            "num_workers": 1,
-            "gpu_pool": "rollout",
-        }
-    )
-    resources = {
-        "visible_devices": [0] if colocated else [0, 1],
-        "trainer": {"devices": [0]},
-        "rollout": rollout,
-    }
-    if reward is not None:
-        resources["reward"] = reward
-    cfg = OmegaConf.create(
-        {
-            "distributed": {
-                "resources": resources,
-                "rollout": {},
-            },
-        },
-    )
-    config = RayGenerationConfig.from_cfg(
-        cfg,
-        resources=resolve_distributed_resources(cfg),
-    )
-    return _OnDemandRayGenerationRuntime(
-        config,
-        RayGenerationLaunchInputs(
-            launch_contract=GenerationRuntimeLaunchContract(
-                family="sd3_5",
-                model_build={},
-                expected_model_identity={"schema": "test"},
-            ),
-            gatherer=_Gatherer(),
-        ),
-        launcher=RayGenerationLauncher(init_ray=False),
-        placement=RolePlacement(
-            placement_group=object(),
-            bundle_indices=(),
-            expected_gpu_ids=(),
-        ),
+
+    if deferred:
+
+        async def create_session() -> RayGenerationSession:
+            return session
+
+        return RayGenerationRuntime(
+            session=None,
+            session_factory=create_session,
+            supports_weight_sync=False,
+            colocated=colocated,
+        )
+    return RayGenerationRuntime(
+        session=session,
+        colocated=colocated,
     )
 
 
@@ -108,7 +55,7 @@ def _on_demand_runtime(
 # is_colocated
 # --------------------------------------------------------------------------
 def test_persistent_runtime_is_not_colocated() -> None:
-    runtime = RayGenerationRuntime(executor=object())
+    runtime = _runtime()
     assert runtime.is_colocated() is False
 
 
@@ -119,8 +66,8 @@ def test_persistent_runtime_is_not_colocated() -> None:
         (False, False),
     ],
 )
-def test_on_demand_runtime_colocation(colocated, expected) -> None:
-    runtime = _on_demand_runtime(colocated=colocated)
+def test_deferred_runtime_colocation(colocated, expected) -> None:
+    runtime = _runtime(deferred=True, colocated=colocated)
     assert runtime.is_colocated() is expected
 
 
@@ -128,21 +75,21 @@ def test_on_demand_runtime_colocation(colocated, expected) -> None:
 # PolicyVersionProvider
 # --------------------------------------------------------------------------
 def test_runtimes_satisfy_policy_version_provider() -> None:
-    persistent = RayGenerationRuntime(executor=object())
-    on_demand = _on_demand_runtime()
+    persistent = _runtime()
+    deferred = _runtime(deferred=True)
     assert isinstance(persistent, PolicyVersionProvider)
-    assert isinstance(on_demand, PolicyVersionProvider)
+    assert isinstance(deferred, PolicyVersionProvider)
 
 
 def test_concrete_runtimes_satisfy_generation_runtime_structurally() -> None:
-    persistent = RayGenerationRuntime(executor=object())
-    on_demand = _on_demand_runtime()
+    persistent = _runtime()
+    deferred = _runtime(deferred=True)
     assert isinstance(persistent, GenerationRuntime)
-    assert isinstance(on_demand, GenerationRuntime)
+    assert isinstance(deferred, GenerationRuntime)
 
 
 def test_runtimes_expose_explicit_activation_and_offload() -> None:
-    runtime = _on_demand_runtime()
+    runtime = _runtime(deferred=True)
     assert callable(runtime.activate)
     assert callable(runtime.offload)
 

@@ -11,8 +11,10 @@ completed that independent gate.
 ## Decision
 
 The rollout schedule is the single owner of admission and drain barriers. The
-generation runtime owns Ray resources, explicit activation/offload, transactional
-weight installation, and terminal teardown.
+generation runtime owns the lifetime of Ray resources, explicit
+activation/offload, transactional weight installation, and terminal teardown.
+`RayGenerationSession` retains the concrete executor, weight syncer, and actor
+handles for one launched fleet.
 
 This follows the control-plane shape used by SGLang/Miles without adopting their
 LLM-specific engine stack:
@@ -36,8 +38,9 @@ shutdown()       join activation/offload tasks and tear down owned resources
 
 `release()` and `with_release_after_collect()` compatibility facades have been
 removed. The canonical lifecycle contract uses `activate()` and `offload()`;
-`RayGenerationLauncher.create_runtime()` selects the resident or on-demand
-implementation from the resolved topology.
+`RayGenerationLauncher.create_runtime()` always returns the single
+`RayGenerationRuntime` implementation. Dedicated-GPU topology gives it an eager
+`RayGenerationSession`; shared-GPU topology gives it a deferred session factory.
 
 ## Ownership
 
@@ -63,20 +66,20 @@ There is no runtime-level `QUIESCING`, `OperationTicket`, active-operation map, 
 waiter map. Activate and offload each use a single-flight task; offload explicitly
 waits for an in-flight activation, while shutdown uses one shared cleanup task.
 Worker policy install cannot overlap an in-flight activation. The implementation
-was subsequently consolidated: on-demand launch attaches an inner
-`RayGenerationRuntime`, and that inner runtime directly owns its executor, weight
-sync, actors, monitor, parking, and teardown. There is no
-`RayGenerationWorkerFleet` or second public lifecycle owner; the outer facade
-retains only an unacknowledged policy install and exposes one collector-facing
-terminal boundary.
+was subsequently consolidated again: `RayGenerationRuntime` is the only
+collector-facing runtime and the only `RuntimeLifecycle` owner.
+`RayGenerationSession` retains one launched executor, weight syncer, and actor
+fleet, and implements sleep/wake/close resource operations without implementing
+`GenerationRuntime` or owning lifecycle state. There is no nested runtime,
+`RayGenerationWorkerFleet`, or second terminal boundary.
 
 On-demand policy state distinguishes:
 
-- `current_policy_version`: latest target accepted by the facade, including a staged
+- `current_policy_version`: latest target accepted by the runtime, including a staged
   target that inactive workers have not acknowledged yet;
-- `_pending_policy`: full trainer snapshot retained only until a worker fleet
+- `_pending_install`: full trainer snapshot retained only until a worker fleet
   acknowledges that target;
-- `_active_policy_version`: version acknowledged by the active worker fleet.
+- `_installed_policy_version`: version acknowledged by the active worker fleet.
 
 An inactive update advances the accepted target and stages its payload without
 claiming that workers are active on that version. An active update advances both

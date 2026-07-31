@@ -143,6 +143,8 @@ def test_offline_dpo_builds_its_full_model_through_the_family_registry(
         pass
 
     class _Entry:
+        family = "wan_2_1"
+
         def resolve_model_build(
             self,
             root: object,
@@ -201,31 +203,16 @@ def test_offline_dpo_rejects_non_t2v_wan_family_before_runtime_side_effects(
         del cfg.sampling.num_frames
     calls: list[str] = []
 
-    import vrl.families.registry as registry
-    import vrl.ray.resources as ray_resources
     import vrl.trainers.checkpointing as checkpointing
 
-    def _unexpected(name: str):
-        def fail(*_args: object, **_kwargs: object) -> object:
-            calls.append(name)
-            raise AssertionError(f"{name} must not run before the Wan DPO family guard")
-
-        return fail
+    def unexpected_checkpoint(*_args: object, **_kwargs: object) -> object:
+        calls.append("checkpoint")
+        raise AssertionError("checkpoint loading must not run before the Wan DPO family guard")
 
     monkeypatch.setattr(
         checkpointing,
         "load_training_checkpoint_for_resume",
-        _unexpected("checkpoint"),
-    )
-    monkeypatch.setattr(
-        ray_resources,
-        "resolve_distributed_resources",
-        _unexpected("resources"),
-    )
-    monkeypatch.setattr(
-        registry,
-        "get_model_family_entry",
-        _unexpected("registry"),
+        unexpected_checkpoint,
     )
 
     with pytest.raises(
@@ -282,8 +269,10 @@ def test_offline_dpo_uses_shared_gradient_checkpointing_policy(
     bundle.model = model
 
     class _Entry:
+        family = "wan_2_1"
+
         def resolve_model_build(self, *args: object, **kwargs: object) -> object:
-            return object()
+            return SimpleNamespace(rollout=object())
 
         def build_rollout(self, build: object) -> _Bundle:
             return bundle

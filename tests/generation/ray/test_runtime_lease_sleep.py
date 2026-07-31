@@ -9,53 +9,34 @@ from types import SimpleNamespace
 from typing import Any, ClassVar
 
 import pytest
-from omegaconf import OmegaConf
 
 from vrl.generation.execution.types import (
     DistributedWorkerHandle,
     WorkerMemoryParkingSnapshot,
 )
-from vrl.generation.launch_contract import GenerationRuntimeLaunchContract
-from vrl.generation.ray.config import RayGenerationConfig
 from vrl.generation.ray.executor import RayGenerationExecutor
 from vrl.generation.ray.health_monitor import RolloutWorkerUnreachable
-from vrl.generation.ray.launch_inputs import RayGenerationLaunchInputs
-from vrl.generation.ray.lifecycle_fsm import (
-    RuntimeLifecycle,
-    RuntimeLifecycleError,
-    RuntimePhase,
-)
-from vrl.generation.ray.on_demand_runtime import _OnDemandRayGenerationRuntime
+from vrl.generation.ray.lifecycle_fsm import RuntimeLifecycleError, RuntimePhase
 from vrl.generation.ray.runtime import RayGenerationRuntime
+from vrl.generation.ray.session import RayGenerationSession
+from vrl.generation.types import GenerationRequest
 from vrl.ray.actor_pool import RayActorCallError, RayActorDispatcher
 from vrl.ray.operation_deadline import RayOperationCancelled, RayOperationTimeout
-from vrl.ray.resources import resolve_distributed_resources
 from vrl.runtime_errors import failure_identity_cause
 from vrl.trainers.weight_sync import build_runtime_weight_syncer
 
 
-class _Gatherer:
-    def gather_chunks(self, *_args: Any) -> Any:
-        raise AssertionError("runtime lifecycle fixture must not gather chunks")
-
-
-class _UnexpectedLauncher:
-    async def launch_async(self, *_args: Any, **_kwargs: Any) -> Any:
-        raise AssertionError("test did not configure a cold runtime launch")
-
-
-class _FakeInner:
-    """Record ordered worker operations without requiring a Ray cluster."""
+class _FakeSession:
+    """Record ordered session operations without requiring a Ray cluster."""
 
     def __init__(self) -> None:
         self.calls: list[Any] = []
         self.current_policy_version: int | None = 0
-        self._owned_workers: list[Any] = []
+        self.workers: list[Any] = []
         self.executor = SimpleNamespace(workers=[])
-        self.lifecycle = RuntimeLifecycle()
-
-    async def activate(self) -> None:
-        self.lifecycle.require_running("activate")
+        self.weight_sync = object()
+        self.supports_non_draining_weight_sync = False
+        self.force_close_calls = 0
 
     async def sleep_workers(self) -> None:
         self.calls.append("sleep")
@@ -66,12 +47,20 @@ class _FakeInner:
     async def shutdown(self) -> None:
         self.calls.append("shutdown")
 
+    async def close(self, *, force: bool) -> None:
+        if force:
+            self.force_close()
+        await self.shutdown()
+
+    def force_close(self) -> None:
+        self.force_close_calls += 1
+
     async def update_weights(self, state_ref: Any, version: int) -> None:
         self.calls.append(("update", state_ref, version))
         self.current_policy_version = version
 
 
-class _BlockingRestoreInner(_FakeInner):
+class _BlockingRestoreSession(_FakeSession):
     def __init__(self) -> None:
         super().__init__()
         self.restore_started = asyncio.Event()
@@ -83,19 +72,7 @@ class _BlockingRestoreInner(_FakeInner):
         await super().update_weights(state_ref, version)
 
 
-class _BlockingWakeInner(_FakeInner):
-    def __init__(self) -> None:
-        super().__init__()
-        self.wake_started = asyncio.Event()
-        self.finish_wake = asyncio.Event()
-
-    async def wake_workers(self) -> None:
-        self.calls.append("wake")
-        self.wake_started.set()
-        await self.finish_wake.wait()
-
-
-class _BlockingSleepInner(_FakeInner):
+class _BlockingSleepSession(_FakeSession):
     def __init__(self) -> None:
         super().__init__()
         self.sleep_started = asyncio.Event()
@@ -107,7 +84,19 @@ class _BlockingSleepInner(_FakeInner):
         await super().sleep_workers()
 
 
-class _NonRetainingInner(_FakeInner):
+class _BlockingWakeSession(_FakeSession):
+    def __init__(self) -> None:
+        super().__init__()
+        self.wake_started = asyncio.Event()
+        self.finish_wake = asyncio.Event()
+
+    async def wake_workers(self) -> None:
+        self.wake_started.set()
+        await self.finish_wake.wait()
+        await super().wake_workers()
+
+
+class _NonRetainingSession(_FakeSession):
     """Acknowledge policy installs without keeping the test payload alive."""
 
     async def update_weights(self, state_ref: Any, version: int) -> None:
@@ -138,141 +127,64 @@ class _ReleaseActor:
         return object()
 
 
-def _timeout_inner(
+def _timeout_session(
     error: RayOperationTimeout,
-) -> tuple[RayGenerationRuntime, _ReleaseActor]:
+) -> tuple[RayGenerationSession, _ReleaseActor]:
     actor = _ReleaseActor()
-    runtime = RayGenerationRuntime(
+    session = RayGenerationSession(
         SimpleNamespace(),
-        weight_sync=_TimeoutWeightSync(error),
-        owned_workers=[DistributedWorkerHandle(worker_id="w0", actor=actor)],
+        _TimeoutWeightSync(error),
+        [DistributedWorkerHandle(worker_id="w0", actor=actor)],
     )
-    runtime.current_policy_version = 1
-    return runtime, actor
-
-
-def _ray_config(
-    *,
-    sync_trainable_state: bool = True,
-    topology: str = "trainer_shared",
-) -> RayGenerationConfig:
-    if topology == "trainer_shared":
-        visible_devices = [0]
-        rollout = {
-            "gpu_pool": "trainer",
-            "num_gpus": 1,
-            "gpus_per_worker": 1,
-            "num_workers": 1,
-        }
-        reward = None
-    elif topology == "reward_shared":
-        visible_devices = [0, 1]
-        rollout = {
-            "devices": [1],
-            "num_gpus": 1,
-            "gpus_per_worker": 1,
-            "num_workers": 1,
-        }
-        reward = {
-            "devices": [1],
-            "num_gpus": 1,
-            "gpus_per_worker": 1,
-            "num_workers": 1,
-            "gpu_pool": "rollout",
-        }
-    elif topology == "resident":
-        visible_devices = [0, 1]
-        rollout = {
-            "devices": [1],
-            "num_gpus": 1,
-            "gpus_per_worker": 1,
-            "num_workers": 1,
-        }
-        reward = None
-    else:  # pragma: no cover - test fixture guard
-        raise ValueError(f"unknown topology: {topology}")
-
-    resources = {
-        "visible_devices": visible_devices,
-        "trainer": {"devices": [0]},
-        "rollout": rollout,
-    }
-    if reward is not None:
-        resources["reward"] = reward
-    cfg = OmegaConf.create(
-        {
-            "distributed": {
-                "resources": resources,
-                "rollout": {
-                    "sync_trainable_state": sync_trainable_state,
-                },
-            },
-        },
-    )
-    return RayGenerationConfig.from_cfg(
-        cfg,
-        resources=resolve_distributed_resources(cfg),
-    )
-
-
-def _launch_contract(*, policy_version: int = 0) -> GenerationRuntimeLaunchContract:
-    return GenerationRuntimeLaunchContract(
-        family="sd3_5",
-        model_build={},
-        expected_model_identity={"schema": "test"},
-        policy_version=policy_version,
-    )
+    return session, actor
 
 
 def _on_demand_runtime(
     *,
     sync_trainable_state: bool = True,
     colocated: bool = True,
-    launcher: Any | None = None,
-) -> _OnDemandRayGenerationRuntime:
-    config = _ray_config(
-        sync_trainable_state=sync_trainable_state,
-        topology="trainer_shared" if colocated else "reward_shared",
+) -> RayGenerationRuntime:
+    async def unexpected_session() -> RayGenerationSession:
+        raise AssertionError("test did not configure a cold session")
+
+    runtime = RayGenerationRuntime(
+        session=None,
+        session_factory=unexpected_session,
+        initial_policy_version=0,
+        supports_weight_sync=sync_trainable_state,
+        colocated=colocated,
     )
-    return _OnDemandRayGenerationRuntime(
-        config,
-        RayGenerationLaunchInputs(
-            launch_contract=_launch_contract(),
-            gatherer=_Gatherer(),
-        ),
-        launcher=launcher if launcher is not None else _UnexpectedLauncher(),
-        placement=SimpleNamespace(),
-    )
+    return runtime
 
 
-async def _stage_pending_policy(
-    runtime: _OnDemandRayGenerationRuntime,
+async def _stage_pending_install(
+    runtime: RayGenerationRuntime,
     state_ref: Any,
     policy_version: int,
 ) -> None:
     await runtime.update_weights(state_ref, policy_version)
 
 
-def _assert_pending_policy(
-    runtime: _OnDemandRayGenerationRuntime,
+def _assert_pending_install(
+    runtime: RayGenerationRuntime,
     state_ref: Any,
     policy_version: int,
 ) -> None:
-    policy = runtime._pending_policy
+    policy = runtime._pending_install
     assert policy is not None
     assert policy.state_ref == state_ref
     assert policy.policy_version == policy_version
 
 
-def _attach_active_inner(
-    runtime: _OnDemandRayGenerationRuntime,
-    inner: _FakeInner,
+def _attach_active_session(
+    runtime: RayGenerationRuntime,
+    session: _FakeSession,
     policy_version: int,
 ) -> None:
-    runtime._inner_runtime = inner
-    runtime._active_policy_version = policy_version
+    runtime._session = session
+    runtime._installed_policy_version = policy_version
     runtime.current_policy_version = policy_version
-    inner.current_policy_version = policy_version
+    session.current_policy_version = policy_version
 
 
 def _parking_snapshot(
@@ -343,10 +255,10 @@ class _CleanupRay:
 
 @pytest.fixture
 def cleanup_ray(monkeypatch: pytest.MonkeyPatch) -> _CleanupRay:
-    import vrl.generation.ray.runtime as runtime_module
+    import vrl.generation.ray.session as session_module
 
     ray = _CleanupRay()
-    monkeypatch.setattr(runtime_module, "require_ray", lambda: ray)
+    monkeypatch.setattr(session_module, "require_ray", lambda: ray)
     return ray
 
 
@@ -358,46 +270,41 @@ def _parking_runtime(*reports: Any) -> RayGenerationRuntime:
         )
         for index, report in enumerate(reports)
     ]
-    return RayGenerationRuntime(
-        SimpleNamespace(),
-        owned_workers=workers,
-    )
+    runtime = _on_demand_runtime()
+    runtime._session = RayGenerationSession(SimpleNamespace(), None, workers)
+    return runtime
 
 
-def _failed_parking_runtime(
-    failure: BaseException,
-) -> tuple[RayGenerationRuntime, _ParkingActor]:
+def _failed_parking_session() -> tuple[RayGenerationSession, _ParkingActor]:
     actor = _ParkingActor(_parking_snapshot())
-    runtime = RayGenerationRuntime(
+    session = RayGenerationSession(
         SimpleNamespace(),
-        owned_workers=[
+        None,
+        [
             DistributedWorkerHandle(
                 worker_id="rollout-0",
                 actor=actor,
             ),
         ],
     )
-    runtime.lifecycle.fail(failure)
-    return runtime, actor
+    return session, actor
 
 
 @pytest.mark.asyncio
-async def test_runtime_validates_complete_worker_parking_evidence() -> None:
+async def test_offload_accepts_complete_worker_parking_evidence() -> None:
     runtime = _parking_runtime(
         _parking_snapshot("rollout-0"),
         _parking_snapshot("rollout-1"),
     )
 
-    snapshots = await runtime.sleep_workers()
+    await runtime.offload()
 
-    assert tuple(snapshot.worker_id for snapshot in snapshots) == (
-        "rollout-0",
-        "rollout-1",
-    )
+    assert runtime._session_parked is True
+    assert [worker.actor.sleep.calls for worker in runtime._owned_workers] == [1, 1]
 
 
 @pytest.mark.asyncio
-async def test_runtime_rejects_mismatched_worker_parking_evidence(
+async def test_offload_rejects_mismatched_worker_parking_evidence(
     cleanup_ray: _CleanupRay,
 ) -> None:
     runtime = _parking_runtime(_parking_snapshot("another-worker"))
@@ -407,7 +314,7 @@ async def test_runtime_rejects_mismatched_worker_parking_evidence(
         RuntimeError,
         match="mismatched worker memory-parking report",
     ) as caught:
-        await runtime.sleep_workers()
+        await runtime.offload()
 
     assert runtime.lifecycle.failure is caught.value
     assert runtime.lifecycle.phase is RuntimePhase.TERMINATED
@@ -416,7 +323,7 @@ async def test_runtime_rejects_mismatched_worker_parking_evidence(
 
 
 @pytest.mark.asyncio
-async def test_runtime_rejects_worker_gpu_residual(
+async def test_offload_rejects_worker_gpu_residual(
     cleanup_ray: _CleanupRay,
 ) -> None:
     runtime = _parking_runtime(_parking_snapshot(residual_bytes=1))
@@ -426,7 +333,7 @@ async def test_runtime_rejects_worker_gpu_residual(
         RuntimeError,
         match="incomplete cpu_offload memory parking",
     ) as caught:
-        await runtime.sleep_workers()
+        await runtime.offload()
 
     assert runtime.lifecycle.failure is caught.value
     assert runtime.lifecycle.phase is RuntimePhase.TERMINATED
@@ -435,7 +342,7 @@ async def test_runtime_rejects_worker_gpu_residual(
 
 
 @pytest.mark.asyncio
-async def test_runtime_requires_every_worker_parking_rpc_to_succeed(
+async def test_offload_requires_every_worker_parking_rpc_to_succeed(
     cleanup_ray: _CleanupRay,
 ) -> None:
     sleep_error = RuntimeError("worker sleep failed")
@@ -446,7 +353,7 @@ async def test_runtime_requires_every_worker_parking_rpc_to_succeed(
     actors = [worker.actor for worker in runtime._owned_workers]
 
     with pytest.raises(RuntimeError, match="worker sleep failed") as caught:
-        await runtime.sleep_workers()
+        await runtime.offload()
 
     assert caught.value is sleep_error
     assert runtime.lifecycle.failure is sleep_error
@@ -464,7 +371,7 @@ async def test_worker_sleep_remote_error_force_kills_without_graceful_release(
     actor = runtime._owned_workers[0].actor
 
     with pytest.raises(TimeoutError, match="worker sleep timed out") as caught:
-        await runtime.sleep_workers()
+        await runtime.offload()
 
     assert caught.value is timeout
     assert runtime.lifecycle.failure is timeout
@@ -481,9 +388,10 @@ async def test_worker_wake_remote_error_force_kills_without_graceful_release(
     runtime = _parking_runtime(_parking_snapshot())
     actor = runtime._owned_workers[0].actor
     actor.wake = _RemoteResult(timeout)
+    runtime._session_parked = True
 
     with pytest.raises(TimeoutError, match="worker wake timed out") as caught:
-        await runtime.wake_workers()
+        await runtime.activate()
 
     assert caught.value is timeout
     assert runtime.lifecycle.failure is timeout
@@ -494,10 +402,10 @@ async def test_worker_wake_remote_error_force_kills_without_graceful_release(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    ("method_name", "remote_name"),
+    ("method_name", "remote_name", "workers_offloaded"),
     [
-        ("sleep_workers", "sleep"),
-        ("wake_workers", "wake"),
+        ("offload", "sleep", False),
+        ("activate", "wake", True),
     ],
 )
 async def test_worker_parking_deadline_force_kills_without_graceful_release(
@@ -505,19 +413,21 @@ async def test_worker_parking_deadline_force_kills_without_graceful_release(
     cleanup_ray: _CleanupRay,
     method_name: str,
     remote_name: str,
+    workers_offloaded: bool,
 ) -> None:
-    import vrl.generation.ray.runtime as runtime_module
+    import vrl.generation.ray.session as session_module
 
     runtime = _parking_runtime(_parking_snapshot())
     actor = runtime._owned_workers[0].actor
     setattr(actor, remote_name, SimpleNamespace(remote=lambda: _NeverRef()))
+    runtime._session_parked = workers_offloaded
     real_wait_for = asyncio.wait_for
 
     async def expire_at_test_deadline(awaitable: Any, *, timeout: float) -> Any:
         assert timeout == 120
         return await real_wait_for(awaitable, timeout=0.01)
 
-    monkeypatch.setattr(runtime_module.asyncio, "wait_for", expire_at_test_deadline)
+    monkeypatch.setattr(session_module.asyncio, "wait_for", expire_at_test_deadline)
 
     with pytest.raises(TimeoutError) as caught:
         await getattr(runtime, method_name)()
@@ -529,101 +439,19 @@ async def test_worker_parking_deadline_force_kills_without_graceful_release(
 
 
 @pytest.mark.asyncio
-async def test_cancelled_worker_sleep_force_kills_unknown_parking_state(
-    cleanup_ray: _CleanupRay,
-) -> None:
-    runtime = _parking_runtime(_parking_snapshot())
-    actor = runtime._owned_workers[0].actor
-    actor.sleep = SimpleNamespace(remote=lambda: _NeverRef())
-    parking = asyncio.create_task(runtime.sleep_workers())
-    await asyncio.sleep(0)
-
-    parking.cancel()
-    with pytest.raises(asyncio.CancelledError) as caught:
-        await parking
-
-    assert runtime.lifecycle.failure is caught.value
-    assert runtime.lifecycle.phase is RuntimePhase.TERMINATED
-    assert actor.release_policy.calls == 0
-    assert cleanup_ray.killed == [actor]
-
-
-@pytest.mark.asyncio
-async def test_cancelled_worker_wake_force_kills_unknown_parking_state(
-    cleanup_ray: _CleanupRay,
-) -> None:
-    runtime = _parking_runtime(_parking_snapshot())
-    actor = runtime._owned_workers[0].actor
-    actor.wake = SimpleNamespace(remote=lambda: _NeverRef())
-    waking = asyncio.create_task(runtime.wake_workers())
-    await asyncio.sleep(0)
-
-    waking.cancel()
-    with pytest.raises(asyncio.CancelledError) as caught:
-        await waking
-
-    assert runtime.lifecycle.failure is caught.value
-    assert runtime.lifecycle.phase is RuntimePhase.TERMINATED
-    assert actor.release_policy.calls == 0
-    assert cleanup_ray.killed == [actor]
-
-
-@pytest.mark.asyncio
-async def test_runtime_rejects_invalid_worker_parking_report_type(
+async def test_offload_rejects_invalid_worker_parking_report_type(
     cleanup_ray: _CleanupRay,
 ) -> None:
     runtime = _parking_runtime({"worker_id": "rollout-0"})
     actor = runtime._owned_workers[0].actor
 
     with pytest.raises(TypeError, match="invalid memory-parking report") as caught:
-        await runtime.sleep_workers()
+        await runtime.offload()
 
     assert runtime.lifecycle.failure is caught.value
     assert runtime.lifecycle.phase is RuntimePhase.TERMINATED
     assert actor.release_policy.calls == 0
     assert cleanup_ray.killed == [actor]
-
-
-@pytest.mark.asyncio
-async def test_runtime_rejects_missing_worker_actor_before_parking() -> None:
-    runtime = RayGenerationRuntime(
-        SimpleNamespace(),
-        owned_workers=[DistributedWorkerHandle(worker_id="rollout-0")],
-    )
-
-    with pytest.raises(RuntimeError, match="generation workers have no actor"):
-        await runtime.sleep_workers()
-
-    assert runtime.lifecycle.failure is None
-    assert runtime.lifecycle.phase is RuntimePhase.RUNNING
-
-
-@pytest.mark.asyncio
-async def test_runtime_rejects_duplicate_worker_ids_before_parking() -> None:
-    runtime = RayGenerationRuntime(
-        SimpleNamespace(),
-        owned_workers=[
-            DistributedWorkerHandle(
-                worker_id="rollout-0",
-                actor=_ParkingActor(_parking_snapshot("rollout-0")),
-            ),
-            DistributedWorkerHandle(
-                worker_id="rollout-0",
-                actor=_ParkingActor(_parking_snapshot("rollout-0")),
-            ),
-        ],
-    )
-
-    with pytest.raises(RuntimeError, match="duplicate generation worker ids"):
-        await runtime.sleep_workers()
-
-    assert runtime.lifecycle.failure is None
-    assert runtime.lifecycle.phase is RuntimePhase.RUNNING
-
-
-def test_on_demand_factory_stamps_contract_for_cumem_offload() -> None:
-    runtime = _on_demand_runtime()
-    assert runtime._launch_inputs.launch_contract.sleep_offload is True
 
 
 def test_on_demand_weight_sync_capability_does_not_require_active_workers() -> None:
@@ -636,6 +464,26 @@ def test_on_demand_weight_sync_capability_does_not_require_active_workers() -> N
     assert build_runtime_weight_syncer(disabled) is None
 
 
+@pytest.mark.asyncio
+async def test_deferred_activation_rejects_candidate_capability_mismatch() -> None:
+    runtime = _on_demand_runtime(sync_trainable_state=True)
+    candidate = _FakeSession()
+    candidate.weight_sync = None
+
+    async def launch_session() -> _FakeSession:
+        return candidate
+
+    runtime._session_factory = launch_session
+    with pytest.raises(RuntimeError, match="different weight-sync capability") as caught:
+        await runtime.activate()
+
+    assert runtime.lifecycle.failure is caught.value
+    assert runtime.lifecycle.phase is RuntimePhase.TERMINATED
+    assert runtime._session is None
+    assert candidate.force_close_calls == 1
+    assert candidate.calls == ["shutdown"]
+
+
 def test_driver_model_offload_is_derived_from_actual_gpu_overlap() -> None:
     shared_gpu = _on_demand_runtime(colocated=True)
     separate_gpu = _on_demand_runtime(colocated=False)
@@ -644,22 +492,57 @@ def test_driver_model_offload_is_derived_from_actual_gpu_overlap() -> None:
     assert separate_gpu.requires_driver_model_offload is False
 
 
-def test_on_demand_factory_requires_on_demand_plan() -> None:
-    config = _ray_config(
-        sync_trainable_state=False,
-        topology="resident",
-    )
+@pytest.mark.asyncio
+async def test_runtime_orders_health_monitor_around_session_parking() -> None:
+    runtime = _on_demand_runtime()
+    events: list[Any] = []
 
-    with pytest.raises(ValueError, match="resolved on-demand"):
-        _OnDemandRayGenerationRuntime(
-            config,
-            RayGenerationLaunchInputs(
-                launch_contract=_launch_contract(),
-                gatherer=_Gatherer(),
-            ),
-            launcher=_UnexpectedLauncher(),
-            placement=SimpleNamespace(),
-        )
+    class _OrderedSession(_FakeSession):
+        async def sleep_workers(self) -> None:
+            events.append("sleep")
+            await super().sleep_workers()
+
+        async def wake_workers(self) -> None:
+            events.append("wake")
+            await super().wake_workers()
+
+        async def update_weights(self, state_ref: Any, version: int) -> None:
+            events.append(("update", state_ref, version))
+            await super().update_weights(state_ref, version)
+
+    session = _OrderedSession()
+    runtime._session = session
+    runtime._session_parked = True
+    await _stage_pending_install(runtime, "W1", 1)
+    runtime._health_monitor.resume = lambda: events.append("resume")
+
+    await runtime.activate()
+
+    assert events == ["wake", ("update", "W1", 1), "resume"]
+    runtime._health_monitor.pause = lambda: events.append("pause")
+
+    await runtime.offload()
+
+    assert events[-2:] == ["pause", "sleep"]
+
+
+@pytest.mark.asyncio
+async def test_deferred_runtime_starts_health_monitoring_paused() -> None:
+    async def launch_session() -> RayGenerationSession:
+        raise AssertionError("paused monitor must not launch a session")
+
+    runtime = RayGenerationRuntime(
+        session=None,
+        session_factory=launch_session,
+        supports_weight_sync=False,
+        health_check_interval_s=0.01,
+    )
+    runtime.start_health_monitoring()
+    try:
+        assert runtime._health_monitor._paused.is_set()
+        await asyncio.sleep(0.02)
+    finally:
+        await runtime.shutdown()
 
 
 @pytest.mark.asyncio
@@ -678,86 +561,85 @@ async def test_generate_requires_explicit_activation() -> None:
 @pytest.mark.asyncio
 async def test_cold_weights_are_staged_then_applied_during_activation() -> None:
     runtime = _on_demand_runtime()
-    candidate = _FakeInner()
+    candidate = _FakeSession()
 
-    class _Launcher:
-        async def launch_async(self, *args, **kwargs):
-            del args, kwargs
+    class _Factory:
+        async def launch_session(self):
             return candidate
 
-    runtime._launcher = _Launcher()
+    runtime._session_factory = _Factory().launch_session
     await runtime.update_weights("W2", 2)
 
-    _assert_pending_policy(runtime, "W2", 2)
-    assert runtime._inner_runtime is None
+    _assert_pending_install(runtime, "W2", 2)
+    assert runtime._session is None
     await runtime.activate()
-    assert runtime._inner_runtime is candidate
-    assert runtime._active_policy_version == 2
-    assert runtime._pending_policy is None
+    assert runtime._session is candidate
+    assert runtime._installed_policy_version == 2
+    assert runtime._pending_install is None
     assert candidate.calls == [("update", "W2", 2)]
 
 
 @pytest.mark.asyncio
 async def test_offload_keeps_workers_and_activation_wakes_latest_policy() -> None:
     runtime = _on_demand_runtime()
-    inner = _FakeInner()
-    _attach_active_inner(runtime, inner, 1)
+    inner = _FakeSession()
+    _attach_active_session(runtime, inner, 1)
 
     await runtime.offload()
     await runtime.update_weights("W2", 2)
 
-    assert runtime._inner_runtime is inner
-    assert runtime._workers_offloaded is True
-    _assert_pending_policy(runtime, "W2", 2)
+    assert runtime._session is inner
+    assert runtime._session_parked is True
+    _assert_pending_install(runtime, "W2", 2)
     assert inner.calls == ["sleep"]
 
     await runtime.activate()
-    assert runtime._inner_runtime is inner
-    assert runtime._workers_offloaded is False
-    assert runtime._active_policy_version == 2
-    assert runtime._pending_policy is None
+    assert runtime._session is inner
+    assert runtime._session_parked is False
+    assert runtime._installed_policy_version == 2
+    assert runtime._pending_install is None
     assert inner.calls == ["sleep", "wake", ("update", "W2", 2)]
 
 
 @pytest.mark.asyncio
 async def test_activation_does_not_reinstall_an_already_active_policy() -> None:
     runtime = _on_demand_runtime()
-    inner = _FakeInner()
-    _attach_active_inner(runtime, inner, 2)
-    runtime._workers_offloaded = True
-    await _stage_pending_policy(runtime, "W2", 2)
+    inner = _FakeSession()
+    _attach_active_session(runtime, inner, 2)
+    runtime._session_parked = True
+    await _stage_pending_install(runtime, "W2", 2)
 
     await runtime.activate()
 
     assert inner.calls == ["wake"]
-    assert runtime._active_policy_version == 2
-    assert runtime._pending_policy is None
+    assert runtime._installed_policy_version == 2
+    assert runtime._pending_install is None
 
 
 @pytest.mark.asyncio
-async def test_active_update_publishes_only_after_inner_ack() -> None:
+async def test_active_update_publishes_only_after_session_ack() -> None:
     runtime = _on_demand_runtime()
-    inner = _BlockingRestoreInner()
-    _attach_active_inner(runtime, inner, 1)
+    inner = _BlockingRestoreSession()
+    _attach_active_session(runtime, inner, 1)
 
     update = asyncio.create_task(runtime.update_weights("W2", 2))
     await asyncio.wait_for(inner.restore_started.wait(), timeout=1)
-    assert runtime._pending_policy is None
-    assert runtime._active_policy_version == 1
+    assert runtime._pending_install is None
+    assert runtime._installed_policy_version == 1
     assert runtime.current_policy_version == 1
 
     inner.finish_restore.set()
     await asyncio.wait_for(update, timeout=1)
-    assert runtime._pending_policy is None
-    assert runtime._active_policy_version == 2
+    assert runtime._pending_install is None
+    assert runtime._installed_policy_version == 2
     assert runtime.current_policy_version == 2
 
 
 @pytest.mark.asyncio
 async def test_active_update_releases_acknowledged_payload() -> None:
     runtime = _on_demand_runtime()
-    inner = _NonRetainingInner()
-    _attach_active_inner(runtime, inner, 1)
+    inner = _NonRetainingSession()
+    _attach_active_session(runtime, inner, 1)
     payload = _PolicyPayload()
     payload_ref = weakref.ref(payload)
 
@@ -766,21 +648,20 @@ async def test_active_update_releases_acknowledged_payload() -> None:
     gc.collect()
 
     assert payload_ref() is None
-    assert runtime._pending_policy is None
-    assert runtime._active_policy_version == 2
+    assert runtime._pending_install is None
+    assert runtime._installed_policy_version == 2
 
 
 @pytest.mark.asyncio
 async def test_cold_activation_releases_staged_payload_after_ack() -> None:
     runtime = _on_demand_runtime()
-    candidate = _NonRetainingInner()
+    candidate = _NonRetainingSession()
 
-    class _Launcher:
-        async def launch_async(self, *args, **kwargs):
-            del args, kwargs
+    class _Factory:
+        async def launch_session(self):
             return candidate
 
-    runtime._launcher = _Launcher()
+    runtime._session_factory = _Factory().launch_session
     payload = _PolicyPayload()
     payload_ref = weakref.ref(payload)
     await runtime.update_weights(payload, 2)
@@ -792,16 +673,16 @@ async def test_cold_activation_releases_staged_payload_after_ack() -> None:
     gc.collect()
 
     assert payload_ref() is None
-    assert runtime._pending_policy is None
-    assert runtime._active_policy_version == 2
+    assert runtime._pending_install is None
+    assert runtime._installed_policy_version == 2
 
 
 @pytest.mark.asyncio
 async def test_wake_releases_staged_payload_after_ack() -> None:
     runtime = _on_demand_runtime()
-    inner = _NonRetainingInner()
-    _attach_active_inner(runtime, inner, 1)
-    runtime._workers_offloaded = True
+    inner = _NonRetainingSession()
+    _attach_active_session(runtime, inner, 1)
+    runtime._session_parked = True
     payload = _PolicyPayload()
     payload_ref = weakref.ref(payload)
     await runtime.update_weights(payload, 2)
@@ -813,8 +694,8 @@ async def test_wake_releases_staged_payload_after_ack() -> None:
     gc.collect()
 
     assert payload_ref() is None
-    assert runtime._pending_policy is None
-    assert runtime._active_policy_version == 2
+    assert runtime._pending_install is None
+    assert runtime._installed_policy_version == 2
 
 
 @pytest.mark.asyncio
@@ -831,7 +712,7 @@ async def test_shutdown_releases_uninstalled_payload() -> None:
     gc.collect()
 
     assert payload_ref() is None
-    assert runtime._pending_policy is None
+    assert runtime._pending_install is None
 
 
 @pytest.mark.asyncio
@@ -839,23 +720,23 @@ async def test_active_update_failure_preserves_installed_version_and_terminates(
     runtime = _on_demand_runtime()
     update_error = RuntimeError("worker update failed")
 
-    class _FailingInner(_FakeInner):
+    class _FailingSession(_FakeSession):
         async def update_weights(self, state_ref: Any, version: int) -> None:
             del state_ref, version
             raise update_error
 
-    inner = _FailingInner()
-    _attach_active_inner(runtime, inner, 1)
+    inner = _FailingSession()
+    _attach_active_session(runtime, inner, 1)
 
     with pytest.raises(RuntimeError, match="worker update failed") as caught:
         await runtime.update_weights("W2", 2)
 
     assert caught.value is update_error
-    assert runtime._pending_policy is None
+    assert runtime._pending_install is None
     assert runtime.current_policy_version == 1
     assert runtime.lifecycle.failure is update_error
     assert runtime.lifecycle.phase is RuntimePhase.TERMINATED
-    assert runtime._inner_runtime is None
+    assert runtime._session is None
     assert inner.calls == ["shutdown"]
 
 
@@ -868,22 +749,22 @@ async def test_active_update_health_race_does_not_publish_outer_version() -> Non
         TimeoutError("health probe timed out"),
     )
 
-    class _HealthRaceInner(_FakeInner):
+    class _HealthRaceSession(_FakeSession):
         async def update_weights(self, state_ref: Any, version: int) -> None:
             await super().update_weights(state_ref, version)
-            self.lifecycle.fail(health_failure)
+            runtime.lifecycle.fail(health_failure)
 
-    inner = _HealthRaceInner()
-    _attach_active_inner(runtime, inner, 1)
+    inner = _HealthRaceSession()
+    _attach_active_session(runtime, inner, 1)
 
     with pytest.raises(RolloutWorkerUnreachable) as caught:
         await runtime.update_weights("W2", 2)
 
     assert caught.value is health_failure
-    assert runtime._pending_policy is None
+    assert runtime._pending_install is None
     assert runtime.current_policy_version == 1
-    assert runtime._active_policy_version is None
-    assert runtime._inner_runtime is None
+    assert runtime._installed_policy_version is None
+    assert runtime._session is None
     assert inner.current_policy_version == 2
     assert inner.calls == [("update", "W2", 2), "shutdown"]
     assert runtime.lifecycle.failure is health_failure
@@ -893,45 +774,40 @@ async def test_active_update_health_race_does_not_publish_outer_version() -> Non
 @pytest.mark.asyncio
 async def test_wake_health_race_terminalizes_outer_before_active_publication() -> None:
     runtime = _on_demand_runtime()
-    await _stage_pending_policy(runtime, "W2", 2)
-    runtime._active_policy_version = 1
-    runtime._workers_offloaded = True
+    await _stage_pending_install(runtime, "W2", 2)
+    runtime._installed_policy_version = 1
+    runtime._session_parked = True
     health_failure = RolloutWorkerUnreachable(
         "rollout-1",
         0.5,
         TimeoutError("health probe timed out"),
     )
 
-    class _WakeHealthRaceInner(_FakeInner):
+    class _WakeHealthRaceSession(_FakeSession):
         async def update_weights(self, state_ref: Any, version: int) -> None:
             await super().update_weights(state_ref, version)
-            self.lifecycle.fail(health_failure)
+            runtime.lifecycle.fail(health_failure)
 
-        async def shutdown(self) -> None:
-            await super().shutdown()
-            self.lifecycle.finish_shutdown()
-
-    inner = _WakeHealthRaceInner()
+    inner = _WakeHealthRaceSession()
     inner.current_policy_version = 1
-    runtime._inner_runtime = inner
+    runtime._session = inner
 
     with pytest.raises(RolloutWorkerUnreachable) as caught:
         await runtime.activate()
 
     assert caught.value is health_failure
     assert inner.calls == ["wake", ("update", "W2", 2), "shutdown"]
-    assert inner.lifecycle.phase is RuntimePhase.TERMINATED
     assert runtime.lifecycle.failure is health_failure
     assert runtime.lifecycle.phase is RuntimePhase.TERMINATED
-    assert runtime._inner_runtime is None
-    assert runtime._active_policy_version is None
+    assert runtime._session is None
+    assert runtime._installed_policy_version is None
     with pytest.raises(RuntimeLifecycleError, match="terminated") as retry:
         await runtime.activate()
     assert retry.value.__cause__ is health_failure
 
 
 @pytest.mark.asyncio
-async def test_on_demand_active_health_race_propagates_inner_first_failure() -> None:
+async def test_active_health_race_propagates_session_first_failure() -> None:
     runtime = _on_demand_runtime()
     health_failure = RolloutWorkerUnreachable(
         "wedged",
@@ -943,15 +819,14 @@ async def test_on_demand_active_health_race_propagates_inner_first_failure() -> 
         worker_id="healthy-killed-with-fleet",
         job_index=0,
     )
-    inner: RayGenerationRuntime
 
     class _Executor:
         async def execute(self, _request: Any) -> None:
-            inner.lifecycle.fail(health_failure)
+            runtime.lifecycle.fail(health_failure)
             raise actor_error
 
-    inner = RayGenerationRuntime(_Executor())
-    runtime._inner_runtime = inner
+    runtime._session = RayGenerationSession(_Executor(), None, [])
+    runtime.current_policy_version = None
     request = SimpleNamespace(
         request_id="health-race",
         sampling={},
@@ -963,25 +838,23 @@ async def test_on_demand_active_health_race_propagates_inner_first_failure() -> 
 
     assert caught.value is health_failure
     assert failure_identity_cause(caught.value) is health_failure
-    assert inner.lifecycle.failure is health_failure
     assert runtime.lifecycle.failure is health_failure
-    assert inner.lifecycle.phase is RuntimePhase.TERMINATED
     assert runtime.lifecycle.phase is RuntimePhase.TERMINATED
-    assert runtime._inner_runtime is None
+    assert runtime._session is None
 
 
 @pytest.mark.asyncio
-async def test_active_on_demand_timeout_force_kills_the_inner_owner(
+async def test_active_timeout_force_kills_the_session_owner(
     monkeypatch,
 ) -> None:
-    import vrl.generation.ray.runtime as runtime_module
+    import vrl.generation.ray.session as session_module
 
     runtime = _on_demand_runtime()
-    await _stage_pending_policy(runtime, "W1", 1)
+    await _stage_pending_install(runtime, "W1", 1)
     timeout = RayOperationTimeout("rollout.weight_sync", 1.0)
-    inner, actor = _timeout_inner(timeout)
-    runtime._inner_runtime = inner
-    runtime._active_policy_version = 1
+    session, actor = _timeout_session(timeout)
+    runtime._session = session
+    runtime._installed_policy_version = 1
 
     class _Ray:
         killed: ClassVar[list[object]] = []
@@ -991,25 +864,23 @@ async def test_active_on_demand_timeout_force_kills_the_inner_owner(
             assert no_restart is True
             cls.killed.append(target)
 
-    monkeypatch.setattr(runtime_module, "require_ray", lambda: _Ray)
+    monkeypatch.setattr(session_module, "require_ray", lambda: _Ray)
 
     with pytest.raises(RayOperationTimeout) as caught:
         await runtime.update_weights("W2", 2)
 
     assert caught.value is timeout
     assert runtime.current_policy_version == 1
-    assert inner.current_policy_version == 1
     assert runtime.lifecycle.phase is RuntimePhase.TERMINATED
-    assert inner.lifecycle.phase is RuntimePhase.TERMINATED
     assert actor.release_calls == 0
     assert _Ray.killed == [actor]
 
 
 @pytest.mark.asyncio
-async def test_on_demand_auto_probe_timeout_force_kills_the_inner_owner(
+async def test_auto_probe_timeout_force_kills_the_session_owner(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    import vrl.generation.ray.runtime as runtime_module
+    import vrl.generation.ray.session as session_module
     import vrl.ray.operation_deadline as deadline_module
 
     runtime = _on_demand_runtime()
@@ -1031,11 +902,12 @@ async def test_on_demand_auto_probe_timeout_force_kills_the_inner_owner(
         actor_dispatcher=RayActorDispatcher(("w0",)),
         generation_stall_timeout_s=0.01,
     )
-    inner = RayGenerationRuntime(
+    session = RayGenerationSession(
         executor,
-        owned_workers=[worker],
+        None,
+        [worker],
     )
-    runtime._inner_runtime = inner
+    runtime._session = session
 
     class _Ray:
         cancelled: ClassVar[list[Any]] = []
@@ -1051,10 +923,13 @@ async def test_on_demand_auto_probe_timeout_force_kills_the_inner_owner(
             assert no_restart is True
             cls.killed.append(target)
 
-    monkeypatch.setattr(runtime_module, "require_ray", lambda: _Ray)
+    monkeypatch.setattr(session_module, "require_ray", lambda: _Ray)
     monkeypatch.setattr(deadline_module, "require_ray", lambda: _Ray)
-    request = SimpleNamespace(
+    request = GenerationRequest(
         request_id="req-auto-timeout",
+        family="sd3_5",
+        task="text_to_image",
+        inputs=["prompt"],
         samples_per_prompt=2,
         sampling={"samples_per_chunk": "auto"},
         policy_version=None,
@@ -1065,18 +940,17 @@ async def test_on_demand_auto_probe_timeout_force_kills_the_inner_owner(
 
     assert caught.value.operation == "rollout.generation.chunk_size_probe"
     assert runtime.lifecycle.phase is RuntimePhase.TERMINATED
-    assert inner.lifecycle.phase is RuntimePhase.TERMINATED
-    assert runtime._inner_runtime is None
+    assert runtime._session is None
     assert actor.release_calls == 0
     assert _Ray.cancelled == [probe_ref]
     assert _Ray.killed == [actor]
 
 
 @pytest.mark.asyncio
-async def test_on_demand_submitted_cancellation_force_kills_the_inner_owner(
+async def test_submitted_cancellation_force_kills_the_session_owner(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    import vrl.generation.ray.runtime as runtime_module
+    import vrl.generation.ray.session as session_module
 
     runtime = _on_demand_runtime()
     terminal = RayOperationCancelled("rollout.generation.pipelined")
@@ -1088,11 +962,13 @@ async def test_on_demand_submitted_cancellation_force_kills_the_inner_owner(
             raise cancellation
 
     actor = _ReleaseActor()
-    inner = RayGenerationRuntime(
+    session = RayGenerationSession(
         _Executor(),
-        owned_workers=[DistributedWorkerHandle(worker_id="w0", actor=actor)],
+        None,
+        [DistributedWorkerHandle(worker_id="w0", actor=actor)],
     )
-    runtime._inner_runtime = inner
+    runtime._session = session
+    runtime.current_policy_version = None
 
     class _Ray:
         killed: ClassVar[list[Any]] = []
@@ -1102,7 +978,7 @@ async def test_on_demand_submitted_cancellation_force_kills_the_inner_owner(
             assert no_restart is True
             cls.killed.append(target)
 
-    monkeypatch.setattr(runtime_module, "require_ray", lambda: _Ray)
+    monkeypatch.setattr(session_module, "require_ray", lambda: _Ray)
     request = SimpleNamespace(
         request_id="req-cancelled",
         sampling={},
@@ -1115,22 +991,20 @@ async def test_on_demand_submitted_cancellation_force_kills_the_inner_owner(
     assert caught.value is cancellation
     assert caught.value.__cause__ is terminal
     assert runtime.lifecycle.failure is terminal
-    assert inner.lifecycle.failure is terminal
     assert runtime.lifecycle.phase is RuntimePhase.TERMINATED
-    assert inner.lifecycle.phase is RuntimePhase.TERMINATED
-    assert runtime._inner_runtime is None
+    assert runtime._session is None
     assert actor.release_calls == 0
     assert _Ray.killed == [actor]
 
 
 @pytest.mark.asyncio
-async def test_update_cleanup_failure_retains_inner_for_retry() -> None:
+async def test_update_cleanup_failure_retains_session_for_retry() -> None:
     runtime = _on_demand_runtime()
-    await _stage_pending_policy(runtime, "W1", 1)
+    await _stage_pending_install(runtime, "W1", 1)
     update_error = RuntimeError("worker update failed")
     cleanup_error = RuntimeError("worker cleanup failed")
 
-    class _FailingInner(_FakeInner):
+    class _FailingSession(_FakeSession):
         shutdown_calls = 0
 
         async def update_weights(self, state_ref: Any, version: int) -> None:
@@ -1143,19 +1017,19 @@ async def test_update_cleanup_failure_retains_inner_for_retry() -> None:
                 raise cleanup_error
             self.calls.append("shutdown")
 
-    inner = _FailingInner()
-    runtime._inner_runtime = inner
+    inner = _FailingSession()
+    runtime._session = inner
 
     with pytest.raises(RuntimeError, match="worker update failed") as caught:
         await runtime.update_weights("W2", 2)
     assert caught.value is update_error
     assert runtime.lifecycle.failure is update_error
     assert runtime.lifecycle.phase is RuntimePhase.SHUTTING_DOWN
-    assert runtime._inner_runtime is inner
+    assert runtime._session is inner
 
     await runtime.shutdown()
     assert inner.shutdown_calls == 2
-    assert runtime._inner_runtime is None
+    assert runtime._session is None
     assert runtime.lifecycle.phase is RuntimePhase.TERMINATED
 
 
@@ -1168,19 +1042,18 @@ async def test_health_failure_before_offload_preserves_root_and_force_kills(
         0.5,
         TimeoutError("health probe timed out"),
     )
-    inner, actor = _failed_parking_runtime(health_failure)
+    session, actor = _failed_parking_session()
     runtime = _on_demand_runtime()
-    runtime._inner_runtime = inner
+    runtime._session = session
+    runtime.lifecycle.fail(health_failure)
 
     with pytest.raises(RolloutWorkerUnreachable) as caught:
         await runtime.offload()
 
     assert caught.value is health_failure
-    assert inner.lifecycle.failure is health_failure
-    assert inner.lifecycle.phase is RuntimePhase.TERMINATED
     assert runtime.lifecycle.failure is health_failure
     assert runtime.lifecycle.phase is RuntimePhase.TERMINATED
-    assert runtime._inner_runtime is None
+    assert runtime._session is None
     assert actor.release_policy.calls == 0
     assert cleanup_ray.killed == [actor]
 
@@ -1194,19 +1067,18 @@ async def test_health_failure_before_reactivation_preserves_root_and_force_kills
         0.5,
         TimeoutError("health probe timed out"),
     )
-    inner, actor = _failed_parking_runtime(health_failure)
+    session, actor = _failed_parking_session()
     runtime = _on_demand_runtime()
-    runtime._inner_runtime = inner
+    runtime._session = session
+    runtime.lifecycle.fail(health_failure)
 
     with pytest.raises(RolloutWorkerUnreachable) as caught:
         await runtime.activate()
 
     assert caught.value is health_failure
-    assert inner.lifecycle.failure is health_failure
-    assert inner.lifecycle.phase is RuntimePhase.TERMINATED
     assert runtime.lifecycle.failure is health_failure
     assert runtime.lifecycle.phase is RuntimePhase.TERMINATED
-    assert runtime._inner_runtime is None
+    assert runtime._session is None
     assert actor.release_policy.calls == 0
     assert cleanup_ray.killed == [actor]
 
@@ -1214,28 +1086,107 @@ async def test_health_failure_before_reactivation_preserves_root_and_force_kills
 @pytest.mark.asyncio
 async def test_offload_is_single_flight_and_idempotent() -> None:
     runtime = _on_demand_runtime()
-    inner = _BlockingSleepInner()
-    runtime._inner_runtime = inner
+    session = _BlockingSleepSession()
+    runtime._session = session
 
     first = asyncio.create_task(runtime.offload())
-    await asyncio.wait_for(inner.sleep_started.wait(), timeout=1)
+    await asyncio.wait_for(session.sleep_started.wait(), timeout=1)
     second = asyncio.create_task(runtime.offload())
     await asyncio.sleep(0)
     assert not first.done()
     assert not second.done()
 
-    inner.finish_sleep.set()
+    session.finish_sleep.set()
     await asyncio.wait_for(asyncio.gather(first, second), timeout=1)
     await runtime.offload()
-    assert inner.calls == ["sleep"]
-    assert runtime._workers_offloaded is True
+    assert session.calls == ["sleep"]
+    assert runtime._session_parked is True
+
+
+@pytest.mark.asyncio
+async def test_activation_waits_for_in_flight_offload_before_waking() -> None:
+    runtime = _on_demand_runtime()
+    session = _BlockingSleepSession()
+    runtime._session = session
+
+    offload = asyncio.create_task(runtime.offload())
+    await asyncio.wait_for(session.sleep_started.wait(), timeout=1)
+    activation = asyncio.create_task(runtime.activate())
+    await asyncio.sleep(0)
+
+    assert not activation.done()
+    assert session.calls == []
+
+    session.finish_sleep.set()
+    await asyncio.wait_for(asyncio.gather(offload, activation), timeout=1)
+
+    assert session.calls == ["sleep", "wake"]
+    assert runtime._session_parked is False
+
+
+@pytest.mark.asyncio
+async def test_generate_rejects_in_flight_offload() -> None:
+    runtime = _on_demand_runtime()
+    session = _BlockingSleepSession()
+    runtime._session = session
+    offload = asyncio.create_task(runtime.offload())
+    await asyncio.wait_for(session.sleep_started.wait(), timeout=1)
+
+    request = SimpleNamespace(
+        request_id="offload-race",
+        sampling={},
+        policy_version=None,
+    )
+    with pytest.raises(RuntimeError, match="offload to be idle"):
+        await runtime.generate(request)
+
+    session.finish_sleep.set()
+    await asyncio.wait_for(offload, timeout=1)
+
+
+@pytest.mark.asyncio
+async def test_generate_rejects_in_flight_activation() -> None:
+    runtime = _on_demand_runtime()
+    session = _BlockingRestoreSession()
+    runtime._session = session
+    runtime._session_parked = True
+    await _stage_pending_install(runtime, "W2", 2)
+
+    activation = asyncio.create_task(runtime.activate())
+    await asyncio.wait_for(session.restore_started.wait(), timeout=1)
+    request = SimpleNamespace(
+        request_id="activation-race",
+        sampling={},
+        policy_version=None,
+    )
+
+    with pytest.raises(RuntimeError, match="activation to complete"):
+        await runtime.generate(request)
+
+    session.finish_restore.set()
+    await asyncio.wait_for(activation, timeout=1)
+
+
+@pytest.mark.asyncio
+async def test_weight_update_rejects_in_flight_offload() -> None:
+    runtime = _on_demand_runtime()
+    session = _BlockingSleepSession()
+    runtime._session = session
+    offload = asyncio.create_task(runtime.offload())
+    await asyncio.wait_for(session.sleep_started.wait(), timeout=1)
+
+    with pytest.raises(RuntimeError, match="offload to be idle"):
+        await runtime.update_weights("W2", 2)
+
+    session.finish_sleep.set()
+    await asyncio.wait_for(offload, timeout=1)
 
 
 @pytest.mark.asyncio
 async def test_terminal_failure_cancels_offload_with_stable_root() -> None:
     runtime = _on_demand_runtime()
-    inner = _BlockingSleepInner()
-    runtime._inner_runtime = inner
+    inner = _BlockingSleepSession()
+    runtime._session = inner
     timeout = RayOperationTimeout("rollout.generation.sleep", 0.5)
 
     offload = asyncio.create_task(runtime.offload())
@@ -1254,42 +1205,10 @@ async def test_terminal_failure_cancels_offload_with_stable_root() -> None:
 
 
 @pytest.mark.asyncio
-async def test_terminal_failure_cancels_offload_waiting_for_activation_with_stable_root() -> None:
-    runtime = _on_demand_runtime()
-    await _stage_pending_policy(runtime, "W", 3)
-    candidate = _BlockingRestoreInner()
-    timeout = RayOperationTimeout("rollout.generation.activation", 0.5)
-
-    class _Launcher:
-        async def launch_async(self, *args, **kwargs):
-            del args, kwargs
-            return candidate
-
-    runtime._launcher = _Launcher()
-    activation = asyncio.create_task(runtime.activate())
-    await asyncio.wait_for(candidate.restore_started.wait(), timeout=1)
-    offload = asyncio.create_task(runtime.offload())
-    await asyncio.sleep(0)
-    terminalize = asyncio.create_task(runtime._terminalize_after_failure(timeout))
-
-    with pytest.raises(asyncio.CancelledError) as caught:
-        await offload
-    with pytest.raises(asyncio.CancelledError):
-        await activation
-    assert await asyncio.wait_for(terminalize, timeout=1) is timeout
-
-    assert caught.value.__cause__ is timeout
-    assert failure_identity_cause(caught.value) is timeout
-    assert candidate.calls == ["shutdown"]
-    assert runtime.lifecycle.failure is timeout
-    assert runtime.lifecycle.phase is RuntimePhase.TERMINATED
-
-
-@pytest.mark.asyncio
 async def test_waiter_cancellation_does_not_cancel_offload_or_forge_root() -> None:
     runtime = _on_demand_runtime()
-    inner = _BlockingSleepInner()
-    runtime._inner_runtime = inner
+    inner = _BlockingSleepSession()
+    runtime._session = inner
 
     waiter = asyncio.create_task(runtime.offload())
     await asyncio.wait_for(inner.sleep_started.wait(), timeout=1)
@@ -1305,7 +1224,7 @@ async def test_waiter_cancellation_does_not_cancel_offload_or_forge_root() -> No
     inner.finish_sleep.set()
     await asyncio.wait_for(runtime.offload(), timeout=1)
     assert inner.calls == ["sleep"]
-    assert runtime._workers_offloaded is True
+    assert runtime._session_parked is True
     assert runtime.lifecycle.phase is RuntimePhase.RUNNING
 
 
@@ -1314,7 +1233,7 @@ async def test_offload_task_cleans_up_failure_after_waiter_cancellation() -> Non
     runtime = _on_demand_runtime()
     offload_error = RuntimeError("late sleep failure")
 
-    class _LateFailingInner(_FakeInner):
+    class _LateFailingSession(_FakeSession):
         def __init__(self) -> None:
             super().__init__()
             self.sleep_started = asyncio.Event()
@@ -1325,8 +1244,8 @@ async def test_offload_task_cleans_up_failure_after_waiter_cancellation() -> Non
             await self.finish_sleep.wait()
             raise offload_error
 
-    inner = _LateFailingInner()
-    runtime._inner_runtime = inner
+    inner = _LateFailingSession()
+    runtime._session = inner
     waiter = asyncio.create_task(runtime.offload())
     await asyncio.wait_for(inner.sleep_started.wait(), timeout=1)
     control_task = runtime._offload_task
@@ -1341,7 +1260,7 @@ async def test_offload_task_cleans_up_failure_after_waiter_cancellation() -> Non
 
     assert caught.value is offload_error
     assert inner.calls == ["shutdown"]
-    assert runtime._inner_runtime is None
+    assert runtime._session is None
     assert runtime.lifecycle.failure is offload_error
     assert runtime.lifecycle.phase is RuntimePhase.TERMINATED
 
@@ -1351,19 +1270,19 @@ async def test_offload_failure_runs_terminal_cleanup() -> None:
     runtime = _on_demand_runtime()
     offload_error = RuntimeError("sleep failed")
 
-    class _FailingInner(_FakeInner):
+    class _FailingSession(_FakeSession):
         async def sleep_workers(self) -> None:
             raise offload_error
 
-    inner = _FailingInner()
-    runtime._inner_runtime = inner
+    inner = _FailingSession()
+    runtime._session = inner
 
     with pytest.raises(RuntimeError, match="sleep failed") as caught:
         await runtime.offload()
     assert caught.value is offload_error
     assert runtime.lifecycle.failure is offload_error
     assert runtime.lifecycle.phase is RuntimePhase.TERMINATED
-    assert runtime._inner_runtime is None
+    assert runtime._session is None
     assert inner.calls == ["shutdown"]
 
 
@@ -1373,7 +1292,7 @@ async def test_offload_cleanup_failure_retries_without_replacing_root() -> None:
     offload_error = RuntimeError("sleep failed")
     cleanup_error = RuntimeError("worker cleanup failed")
 
-    class _FailingInner(_FakeInner):
+    class _FailingSession(_FakeSession):
         shutdown_calls = 0
 
         async def sleep_workers(self) -> None:
@@ -1385,8 +1304,8 @@ async def test_offload_cleanup_failure_retries_without_replacing_root() -> None:
                 raise cleanup_error
             self.calls.append("shutdown")
 
-    inner = _FailingInner()
-    runtime._inner_runtime = inner
+    inner = _FailingSession()
+    runtime._session = inner
 
     with pytest.raises(RuntimeError, match="sleep failed") as caught:
         await runtime.offload()
@@ -1394,7 +1313,7 @@ async def test_offload_cleanup_failure_retries_without_replacing_root() -> None:
     assert any("worker cleanup failed" in note for note in getattr(offload_error, "__notes__", ()))
     assert runtime.lifecycle.failure is offload_error
     assert runtime.lifecycle.phase is RuntimePhase.TERMINATED
-    assert runtime._inner_runtime is None
+    assert runtime._session is None
     assert inner.shutdown_calls == 2
 
     await runtime.shutdown()
@@ -1407,7 +1326,7 @@ async def test_repeated_offload_cleanup_failure_preserves_root_for_later_retry()
     offload_error = RuntimeError("sleep failed")
     cleanup_error = RuntimeError("worker cleanup keeps failing")
 
-    class _FailingInner(_FakeInner):
+    class _FailingSession(_FakeSession):
         shutdown_calls = 0
 
         async def sleep_workers(self) -> None:
@@ -1419,8 +1338,8 @@ async def test_repeated_offload_cleanup_failure_preserves_root_for_later_retry()
                 raise cleanup_error
             self.calls.append("shutdown")
 
-    inner = _FailingInner()
-    runtime._inner_runtime = inner
+    inner = _FailingSession()
+    runtime._session = inner
 
     with pytest.raises(RuntimeError, match="sleep failed") as caught:
         await runtime.offload()
@@ -1428,7 +1347,7 @@ async def test_repeated_offload_cleanup_failure_preserves_root_for_later_retry()
     assert caught.value is offload_error
     assert runtime.lifecycle.failure is offload_error
     assert runtime.lifecycle.phase is RuntimePhase.SHUTTING_DOWN
-    assert runtime._inner_runtime is inner
+    assert runtime._session is inner
     assert inner.shutdown_calls == 2
     notes = getattr(offload_error, "__notes__", ())
     assert any("cleanup also failed" in note for note in notes)
@@ -1436,7 +1355,7 @@ async def test_repeated_offload_cleanup_failure_preserves_root_for_later_retry()
 
     await runtime.shutdown()
     assert inner.shutdown_calls == 3
-    assert runtime._inner_runtime is None
+    assert runtime._session is None
     assert runtime.lifecycle.phase is RuntimePhase.TERMINATED
 
 
@@ -1446,7 +1365,7 @@ async def test_waiter_cancellation_during_cleanup_retry_preserves_root_cause() -
     offload_error = RuntimeError("sleep failed")
     cleanup_error = RuntimeError("first cleanup failed")
 
-    class _BlockingRetryInner(_FakeInner):
+    class _BlockingRetrySession(_FakeSession):
         shutdown_calls = 0
 
         def __init__(self) -> None:
@@ -1465,8 +1384,8 @@ async def test_waiter_cancellation_during_cleanup_retry_preserves_root_cause() -
             await self.finish_retry.wait()
             self.calls.append("shutdown")
 
-    inner = _BlockingRetryInner()
-    runtime._inner_runtime = inner
+    inner = _BlockingRetrySession()
+    runtime._session = inner
     waiter = asyncio.create_task(runtime.offload())
     await asyncio.wait_for(inner.retry_started.wait(), timeout=1)
 
@@ -1478,12 +1397,12 @@ async def test_waiter_cancellation_during_cleanup_retry_preserves_root_cause() -
     assert failure_identity_cause(caught.value) is offload_error
     assert runtime.lifecycle.failure is offload_error
     assert runtime.lifecycle.phase is RuntimePhase.SHUTTING_DOWN
-    assert runtime._inner_runtime is inner
+    assert runtime._session is inner
 
     inner.finish_retry.set()
     await asyncio.wait_for(runtime.shutdown(), timeout=1)
     assert inner.shutdown_calls == 2
-    assert runtime._inner_runtime is None
+    assert runtime._session is None
     assert runtime.lifecycle.phase is RuntimePhase.TERMINATED
 
 
@@ -1493,7 +1412,7 @@ async def test_waiter_cancellation_uses_root_published_during_graceful_shutdown(
     offload_error = RuntimeError("late offload failure")
     cleanup_error = RuntimeError("graceful cleanup failed")
 
-    class _LateFailingInner(_FakeInner):
+    class _LateFailingSession(_FakeSession):
         shutdown_calls = 0
 
         def __init__(self) -> None:
@@ -1512,8 +1431,8 @@ async def test_waiter_cancellation_uses_root_published_during_graceful_shutdown(
                 raise cleanup_error
             self.calls.append("shutdown")
 
-    inner = _LateFailingInner()
-    runtime._inner_runtime = inner
+    inner = _LateFailingSession()
+    runtime._session = inner
     waiter = asyncio.create_task(runtime.offload())
     await asyncio.wait_for(inner.sleep_started.wait(), timeout=1)
     graceful_shutdown = asyncio.create_task(runtime.shutdown())
@@ -1537,57 +1456,56 @@ async def test_waiter_cancellation_uses_root_published_during_graceful_shutdown(
     assert failure_identity_cause(caught.value) is offload_error
     assert runtime.lifecycle.failure is offload_error
     assert runtime.lifecycle.phase is RuntimePhase.SHUTTING_DOWN
-    assert runtime._inner_runtime is inner
+    assert runtime._session is inner
 
     await runtime.shutdown()
     assert inner.shutdown_calls == 2
-    assert runtime._inner_runtime is None
+    assert runtime._session is None
     assert runtime.lifecycle.phase is RuntimePhase.TERMINATED
 
 
 @pytest.mark.asyncio
 async def test_concurrent_cold_activation_launches_and_restores_once() -> None:
     runtime = _on_demand_runtime()
-    await _stage_pending_policy(runtime, "W", 3)
-    candidate = _BlockingRestoreInner()
+    await _stage_pending_install(runtime, "W", 3)
+    candidate = _BlockingRestoreSession()
     launch_calls = 0
 
-    class _Launcher:
-        async def launch_async(self, *args, **kwargs):
+    class _Factory:
+        async def launch_session(self):
             nonlocal launch_calls
-            del args, kwargs
             launch_calls += 1
             return candidate
 
-    runtime._launcher = _Launcher()
+    runtime._session_factory = _Factory().launch_session
     first = asyncio.create_task(runtime.activate())
     await asyncio.wait_for(candidate.restore_started.wait(), timeout=1)
     second = asyncio.create_task(runtime.activate())
     await asyncio.sleep(0)
 
     assert launch_calls == 1
-    assert runtime._inner_runtime is None
+    assert runtime._session is None
     assert not first.done()
     assert not second.done()
 
     candidate.finish_restore.set()
     await asyncio.wait_for(asyncio.gather(first, second), timeout=1)
-    assert runtime._inner_runtime is candidate
-    assert runtime._active_policy_version == 3
+    assert runtime._session is candidate
+    assert runtime._installed_policy_version == 3
     assert candidate.calls == [("update", "W", 3)]
 
 
 @pytest.mark.asyncio
 async def test_concurrent_activation_wakes_and_restores_once() -> None:
     runtime = _on_demand_runtime()
-    inner = _BlockingRestoreInner()
-    runtime._inner_runtime = inner
-    runtime._workers_offloaded = True
-    await _stage_pending_policy(runtime, "W", 3)
+    inner = _BlockingRestoreSession()
+    runtime._session = inner
+    runtime._session_parked = True
+    await _stage_pending_install(runtime, "W", 3)
 
     first = asyncio.create_task(runtime.activate())
     await asyncio.wait_for(inner.restore_started.wait(), timeout=1)
-    assert runtime._workers_offloaded is False
+    assert runtime._session_parked is False
     assert runtime._activation_task is not None
     second = asyncio.create_task(runtime.activate())
     await asyncio.sleep(0)
@@ -1600,17 +1518,46 @@ async def test_concurrent_activation_wakes_and_restores_once() -> None:
 
 
 @pytest.mark.asyncio
+async def test_activation_waiter_cancellation_does_not_cancel_parked_wake() -> None:
+    runtime = _on_demand_runtime()
+    session = _BlockingWakeSession()
+    _attach_active_session(runtime, session, 0)
+    runtime._session_parked = True
+    await _stage_pending_install(runtime, "W1", 1)
+
+    first_waiter = asyncio.create_task(runtime.activate())
+    await asyncio.wait_for(session.wake_started.wait(), timeout=1)
+    first_waiter.cancel()
+    with pytest.raises(asyncio.CancelledError) as cancelled:
+        await first_waiter
+
+    assert cancelled.value.__cause__ is None
+    assert runtime.lifecycle.phase is RuntimePhase.RUNNING
+    assert runtime.lifecycle.failure is None
+    assert session.force_close_calls == 0
+    second_waiter = asyncio.create_task(runtime.activate())
+    await asyncio.sleep(0)
+    assert not second_waiter.done()
+
+    session.finish_wake.set()
+    await asyncio.wait_for(second_waiter, timeout=1)
+
+    assert session.calls == ["wake", ("update", "W1", 1)]
+    assert runtime._installed_policy_version == 1
+    assert runtime._pending_install is None
+
+
+@pytest.mark.asyncio
 async def test_update_rejects_activation_overlap_while_offload_joins_it() -> None:
     runtime = _on_demand_runtime()
-    await _stage_pending_policy(runtime, "W1", 1)
-    candidate = _BlockingRestoreInner()
+    await _stage_pending_install(runtime, "W1", 1)
+    candidate = _BlockingRestoreSession()
 
-    class _Launcher:
-        async def launch_async(self, *args, **kwargs):
-            del args, kwargs
+    class _Factory:
+        async def launch_session(self):
             return candidate
 
-    runtime._launcher = _Launcher()
+    runtime._session_factory = _Factory().launch_session
     activation = asyncio.create_task(runtime.activate())
     await asyncio.wait_for(candidate.restore_started.wait(), timeout=1)
 
@@ -1619,26 +1566,25 @@ async def test_update_rejects_activation_overlap_while_offload_joins_it() -> Non
     offload = asyncio.create_task(runtime.offload())
     await asyncio.sleep(0)
     assert not offload.done()
-    _assert_pending_policy(runtime, "W1", 1)
+    _assert_pending_install(runtime, "W1", 1)
 
     candidate.finish_restore.set()
     await asyncio.wait_for(asyncio.gather(activation, offload), timeout=1)
     assert candidate.calls == [("update", "W1", 1), "sleep"]
-    assert runtime._workers_offloaded is True
+    assert runtime._session_parked is True
 
 
 @pytest.mark.asyncio
 async def test_shutdown_joins_activation_after_waiter_cancellation() -> None:
     runtime = _on_demand_runtime()
-    await _stage_pending_policy(runtime, "W", 4)
-    candidate = _BlockingRestoreInner()
+    await _stage_pending_install(runtime, "W", 4)
+    candidate = _BlockingRestoreSession()
 
-    class _Launcher:
-        async def launch_async(self, *args, **kwargs):
-            del args, kwargs
+    class _Factory:
+        async def launch_session(self):
             return candidate
 
-    runtime._launcher = _Launcher()
+    runtime._session_factory = _Factory().launch_session
     waiter = asyncio.create_task(runtime.activate())
     await asyncio.wait_for(candidate.restore_started.wait(), timeout=1)
     waiter.cancel()
@@ -1654,59 +1600,16 @@ async def test_shutdown_joins_activation_after_waiter_cancellation() -> None:
     candidate.finish_restore.set()
     await asyncio.wait_for(shutdown, timeout=1)
     assert candidate.calls == [("update", "W", 4), "shutdown"]
-    assert runtime._inner_runtime is None
+    assert runtime._session is None
     assert runtime.lifecycle.phase is RuntimePhase.TERMINATED
-
-
-@pytest.mark.asyncio
-async def test_external_terminal_shutdown_is_the_only_activation_cleanup_owner() -> None:
-    runtime = _on_demand_runtime()
-    await _stage_pending_policy(runtime, "W", 4)
-    candidate = _BlockingRestoreInner()
-    timeout = RayOperationTimeout("rollout.generation.chunk", 0.5)
-    finish_calls = 0
-    finish_shutdown = runtime.lifecycle.finish_shutdown
-
-    def count_finish_shutdown() -> None:
-        nonlocal finish_calls
-        finish_calls += 1
-        finish_shutdown()
-
-    runtime.lifecycle.finish_shutdown = count_finish_shutdown
-
-    class _Launcher:
-        async def launch_async(self, *args, **kwargs):
-            del args, kwargs
-            return candidate
-
-    runtime._launcher = _Launcher()
-    activation = asyncio.create_task(runtime.activate())
-    await asyncio.wait_for(candidate.restore_started.wait(), timeout=1)
-
-    terminalize = asyncio.create_task(runtime._terminalize_after_failure(timeout))
-    await asyncio.sleep(0)
-    shutdown_waiter = asyncio.create_task(runtime.shutdown())
-
-    assert await asyncio.wait_for(terminalize, timeout=1) is timeout
-    await asyncio.wait_for(shutdown_waiter, timeout=1)
-    with pytest.raises(asyncio.CancelledError) as cancelled:
-        await activation
-
-    assert cancelled.value.__cause__ is timeout
-    assert candidate.calls == ["shutdown"]
-    assert finish_calls == 1
-    assert runtime.lifecycle.failure is timeout
-    assert runtime.lifecycle.phase is RuntimePhase.TERMINATED
-    assert runtime._inner_runtime is None
-    assert not any("cleanup also failed" in note for note in getattr(timeout, "__notes__", ()))
 
 
 @pytest.mark.asyncio
 async def test_late_shutdown_joins_activation_owned_terminal_cleanup() -> None:
     runtime = _on_demand_runtime()
-    await _stage_pending_policy(runtime, "W2", 2)
-    runtime._active_policy_version = 1
-    runtime._workers_offloaded = True
+    await _stage_pending_install(runtime, "W2", 2)
+    runtime._installed_policy_version = 1
+    runtime._session_parked = True
     health_failure = RolloutWorkerUnreachable(
         "rollout-1",
         0.5,
@@ -1722,7 +1625,7 @@ async def test_late_shutdown_joins_activation_owned_terminal_cleanup() -> None:
 
     runtime.lifecycle.finish_shutdown = count_finish_shutdown
 
-    class _BlockingShutdownInner(_FakeInner):
+    class _BlockingShutdownSession(_FakeSession):
         def __init__(self) -> None:
             super().__init__()
             self.shutdown_started = asyncio.Event()
@@ -1730,17 +1633,16 @@ async def test_late_shutdown_joins_activation_owned_terminal_cleanup() -> None:
 
         async def update_weights(self, state_ref: Any, version: int) -> None:
             await super().update_weights(state_ref, version)
-            self.lifecycle.fail(health_failure)
+            runtime.lifecycle.fail(health_failure)
 
         async def shutdown(self) -> None:
             self.calls.append("shutdown")
             self.shutdown_started.set()
             await self.finish_shutdown.wait()
-            self.lifecycle.finish_shutdown()
 
-    inner = _BlockingShutdownInner()
+    inner = _BlockingShutdownSession()
     inner.current_policy_version = 1
-    runtime._inner_runtime = inner
+    runtime._session = inner
 
     activation = asyncio.create_task(runtime.activate())
     await asyncio.wait_for(inner.shutdown_started.wait(), timeout=1)
@@ -1761,7 +1663,7 @@ async def test_late_shutdown_joins_activation_owned_terminal_cleanup() -> None:
     assert finish_calls == 1
     assert runtime.lifecycle.failure is health_failure
     assert runtime.lifecycle.phase is RuntimePhase.TERMINATED
-    assert runtime._inner_runtime is None
+    assert runtime._session is None
     assert not any(
         "cleanup also failed" in note for note in getattr(health_failure, "__notes__", ())
     )
@@ -1770,8 +1672,8 @@ async def test_late_shutdown_joins_activation_owned_terminal_cleanup() -> None:
 @pytest.mark.asyncio
 async def test_shutdown_joins_offload_before_teardown() -> None:
     runtime = _on_demand_runtime()
-    inner = _BlockingSleepInner()
-    runtime._inner_runtime = inner
+    inner = _BlockingSleepSession()
+    runtime._session = inner
 
     offload = asyncio.create_task(runtime.offload())
     await asyncio.wait_for(inner.sleep_started.wait(), timeout=1)
@@ -1788,28 +1690,27 @@ async def test_shutdown_joins_offload_before_teardown() -> None:
 @pytest.mark.asyncio
 async def test_activation_restore_failure_cleans_candidate_and_terminates() -> None:
     runtime = _on_demand_runtime()
-    await _stage_pending_policy(runtime, "W", 3)
+    await _stage_pending_install(runtime, "W", 3)
     restore_error = RuntimeError("restore failed")
 
-    class _Candidate(_FakeInner):
+    class _Candidate(_FakeSession):
         async def update_weights(self, state_ref: Any, version: int) -> None:
             del state_ref, version
             raise restore_error
 
     candidate = _Candidate()
 
-    class _Launcher:
-        async def launch_async(self, *args, **kwargs):
-            del args, kwargs
+    class _Factory:
+        async def launch_session(self):
             return candidate
 
-    runtime._launcher = _Launcher()
+    runtime._session_factory = _Factory().launch_session
     with pytest.raises(RuntimeError, match="restore failed") as caught:
         await runtime.activate()
 
     assert caught.value is restore_error
     assert candidate.calls == ["shutdown"]
-    assert runtime._inner_runtime is None
+    assert runtime._session is None
     assert runtime.lifecycle.failure is restore_error
     assert runtime.lifecycle.phase is RuntimePhase.TERMINATED
 
@@ -1818,15 +1719,15 @@ async def test_activation_restore_failure_cleans_candidate_and_terminates() -> N
 async def test_cold_restore_timeout_force_kills_unpublished_candidate(
     monkeypatch,
 ) -> None:
-    import vrl.generation.ray.runtime as runtime_module
+    import vrl.generation.ray.session as session_module
 
     runtime = _on_demand_runtime()
-    await _stage_pending_policy(runtime, "W2", 2)
+    await _stage_pending_install(runtime, "W2", 2)
     timeout = RayOperationTimeout("rollout.weight_sync", 1.0)
-    candidate, actor = _timeout_inner(timeout)
+    candidate, actor = _timeout_session(timeout)
 
-    class _Launcher:
-        async def launch_async(self, *_args, **_kwargs):
+    class _Factory:
+        async def launch_session(self):
             return candidate
 
     class _Ray:
@@ -1837,19 +1738,17 @@ async def test_cold_restore_timeout_force_kills_unpublished_candidate(
             assert no_restart is True
             cls.killed.append(target)
 
-    runtime._launcher = _Launcher()
-    monkeypatch.setattr(runtime_module, "require_ray", lambda: _Ray)
+    runtime._session_factory = _Factory().launch_session
+    monkeypatch.setattr(session_module, "require_ray", lambda: _Ray)
 
     with pytest.raises(RayOperationTimeout) as caught:
         await runtime.activate()
 
     assert caught.value is timeout
-    assert runtime._inner_runtime is None
-    assert runtime._active_policy_version is None
+    assert runtime._session is None
+    assert runtime._installed_policy_version is None
     assert runtime.current_policy_version == 2
-    assert candidate.current_policy_version == 1
     assert runtime.lifecycle.phase is RuntimePhase.TERMINATED
-    assert candidate.lifecycle.phase is RuntimePhase.TERMINATED
     assert actor.release_calls == 0
     assert _Ray.killed == [actor]
 
@@ -1857,7 +1756,7 @@ async def test_cold_restore_timeout_force_kills_unpublished_candidate(
 @pytest.mark.asyncio
 async def test_cold_candidate_health_failure_terminalizes_outer_before_publication() -> None:
     runtime = _on_demand_runtime()
-    await _stage_pending_policy(runtime, "W2", 2)
+    await _stage_pending_install(runtime, "W2", 2)
     health_failure = RolloutWorkerUnreachable(
         "rollout-0",
         0.5,
@@ -1865,36 +1764,31 @@ async def test_cold_candidate_health_failure_terminalizes_outer_before_publicati
     )
     launch_calls = 0
 
-    class _ColdHealthRaceCandidate(_FakeInner):
+    class _ColdHealthRaceCandidate(_FakeSession):
         async def update_weights(self, state_ref: Any, version: int) -> None:
             await super().update_weights(state_ref, version)
-            self.lifecycle.fail(health_failure)
-
-        async def shutdown(self) -> None:
-            await super().shutdown()
-            self.lifecycle.finish_shutdown()
+            runtime.lifecycle.fail(health_failure)
 
     candidate = _ColdHealthRaceCandidate()
 
-    class _Launcher:
-        async def launch_async(self, *_args: Any, **_kwargs: Any):
+    class _Factory:
+        async def launch_session(self):
             nonlocal launch_calls
             launch_calls += 1
             return candidate
 
-    runtime._launcher = _Launcher()
+    runtime._session_factory = _Factory().launch_session
 
     with pytest.raises(RolloutWorkerUnreachable) as caught:
         await runtime.activate()
 
     assert caught.value is health_failure
     assert candidate.calls == [("update", "W2", 2), "shutdown"]
-    assert candidate.lifecycle.phase is RuntimePhase.TERMINATED
     assert runtime.lifecycle.failure is health_failure
     assert runtime.lifecycle.phase is RuntimePhase.TERMINATED
-    assert runtime._pending_policy is None
-    assert runtime._inner_runtime is None
-    assert runtime._active_policy_version is None
+    assert runtime._pending_install is None
+    assert runtime._session is None
+    assert runtime._installed_policy_version is None
     with pytest.raises(RuntimeLifecycleError, match="terminated") as retry:
         await runtime.activate()
     assert retry.value.__cause__ is health_failure
@@ -1906,18 +1800,17 @@ async def test_activation_launch_failure_terminalizes_without_publishing_candida
     runtime = _on_demand_runtime()
     launch_error = RuntimeError("rollout worker startup failed")
 
-    class _Launcher:
-        async def launch_async(self, *args: Any, **kwargs: Any) -> Any:
-            del args, kwargs
+    class _Factory:
+        async def launch_session(self):
             raise launch_error
 
-    runtime._launcher = _Launcher()
+    runtime._session_factory = _Factory().launch_session
 
     with pytest.raises(RuntimeError, match="rollout worker startup failed") as caught:
         await runtime.activate()
 
     assert caught.value is launch_error
-    assert runtime._inner_runtime is None
+    assert runtime._session is None
     assert runtime.lifecycle.failure is launch_error
     assert runtime.lifecycle.phase is RuntimePhase.TERMINATED
 
@@ -1925,16 +1818,16 @@ async def test_activation_launch_failure_terminalizes_without_publishing_candida
 @pytest.mark.asyncio
 async def test_on_demand_shutdown_is_idempotent_for_offloaded_workers() -> None:
     runtime = _on_demand_runtime()
-    runtime._workers_offloaded = True
-    inner = _FakeInner()
-    runtime._inner_runtime = inner
+    runtime._session_parked = True
+    inner = _FakeSession()
+    runtime._session = inner
 
     await runtime.shutdown()
     await runtime.shutdown()
 
     assert inner.calls == ["shutdown"]
-    assert runtime._inner_runtime is None
-    assert runtime._workers_offloaded is False
+    assert runtime._session is None
+    assert runtime._session_parked is False
     assert runtime.lifecycle.phase is RuntimePhase.TERMINATED
 
 

@@ -32,10 +32,8 @@ from vrl.rollouts.orchestration import (
 )
 from vrl.rollouts.stats import RolloutStats
 from vrl.run import (
-    materialize,
     resolve_model,
     resolve_online_run,
-    resolve_ray_generation_launch_inputs,
 )
 from vrl.scripts.common.factory import (
     build_algorithm_and_evaluator,
@@ -830,7 +828,7 @@ async def run_online_recipe(
     resume_dir = resume_checkpoint.checkpoint_dir if resume_checkpoint is not None else None
 
     log_host_memory("before_trainer_bundle_build", log=logger)
-    bundle = materialize(resolved_model, replay=True, context="replay bundle construction")
+    bundle = resolved_model.materialize(context="replay bundle construction")
     log_host_memory("after_trainer_bundle_build", log=logger)
     if family_entry.policy_semantics.step_kind == "denoise":
         enable_transformer_gradient_checkpointing(bundle, built.root)
@@ -889,10 +887,7 @@ async def run_online_recipe(
         )
         generation_launcher = RayGenerationLauncher()
         generation_config.validate_driver_state(driver_bundle=bundle)
-        generation_launch_inputs = resolve_ray_generation_launch_inputs(
-            resolved,
-            replay_model=resolved_model,
-        )
+        generation_launch_inputs = resolved.ray_launch_inputs(resolved_model)
         log_host_memory("before_rollout_backend_build", log=logger)
         collector.set_runtime(
             generation_launcher.create_runtime(

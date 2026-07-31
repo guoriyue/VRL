@@ -6,6 +6,11 @@ mapping、rollout/reward owner-managed placement、online recipe cleanup 已落�
 `docs/sprints/done/SPRINT_reward_service.md`；多 GPU 吞吐测量归
 `docs/sprints/parked/SPRINT_video_rollout_stage_overlap.md`。
 
+> Runtime follow-up（2026-07-30）：当前只有一个 `RayGenerationRuntime` lifecycle
+> owner。它 eager 持有或 deferred 创建一个无 lifecycle 的 `RayGenerationSession`；
+> 下文 `release-after-collect` / `Releasable` 用词只记录本 sprint 落地时的旧 runtime
+> 形状，不是当前 API。placement group 的 run-level ownership 决策保持不变。
+
 ## Closeout 状态（2026-06-14）
 
 已完成：
@@ -14,9 +19,9 @@ mapping、rollout/reward owner-managed placement、online recipe cleanup 已落�
   run-level owner 创建、probe、持有并关闭唯一 placement group。
 - `vrl/ray/resources.py` 的 `BundleLayout` 是 role bundle plan 的 source of truth；
   旧的 reward offset / resource plan 冗余字段已删除。
-- `vrl/generation/ray/launcher.py` 与 `RayGenerationRuntime` 的
-  release-after-collect 模式接收 owner-managed placement；`release_memory()` 只释放
-  rollout actors，不移除 owner PG。
+- `vrl/generation/ray/launcher.py` 的 `create_runtime` 接收 owner-managed
+  `RolePlacement`；private session launch 只创建 rollout actors，runtime/session
+  parking 或 close 都不移除 owner PG。
 - `vrl/ray/runtime.py` / `vrl/rewards/ray/runtime.py` 接收 reward role placement；
   reward runtime release 只释放 reward actors，不移除 owner PG。
 - `vrl/scripts/common/online.py` 在 run 开始创建 owner，并在 `finally` 中按
@@ -25,8 +30,8 @@ mapping、rollout/reward owner-managed placement、online recipe cleanup 已落�
 - `tests/scripts/test_online_lifecycle.py` 覆盖 run-level 生命周期：正常结束、owner create
   失败、rollout launch 失败、reward/collector 构建失败、final checkpoint 失败、cleanup
   失败不覆盖训练异常。
-- `tests/generation/ray/test_rollout_launcher.py` 已覆盖 release-after-collect runtime
-  release 不删除 owner-managed PG。
+- `tests/generation/ray/test_rollout_launcher.py` 已覆盖 deferred runtime 的
+  session launch/cleanup 不删除 owner-managed PG。
 
 剩余项 / 转出：
 
@@ -50,7 +55,7 @@ placement group。
 ```text
 rollout:
   online.py
-    -> RayGenerationLauncher.launch_from_cfg(...)
+    -> legacy generation launcher
        -> create_generation_placement_group(...)
 
 reward:
@@ -69,8 +74,8 @@ reward:
 online.py
   -> resolve distributed resources once
   -> create GlobalRayPlacementOwner once
-  -> pass rollout bundle indices to RayGenerationLauncher
-  -> pass reward bundle indices to RayRewardRuntime / RayActorMethodRuntime
+  -> pass rollout RolePlacement to RayGenerationLauncher
+  -> pass reward RolePlacement to RayRewardRuntime / RayActorMethodRuntime
   -> shutdown one placement owner at run end
 ```
 
@@ -228,19 +233,19 @@ cross-node no trainer reservation
 
 ### P2. Owner-managed placement for rollout
 
-让 `RayGenerationLauncher.launch(...)` 接收 owner-managed placement：
+让 generation launcher 接收 owner-managed placement；当前 API 是
+`RayGenerationLauncher.create_runtime(..., placement=...)`，实际 actor construction
+由 private session launch 消费同一个 placement：
 
 ```text
-placement_group
-bundle_indices
-owned_by_launcher: false
+placement: RolePlacement
 ```
 
 要求：
 
 ```text
-persistent runtime keeps old behavior
-Releasable runtime releases workers/model but not the owner-managed PG
+eager runtime keeps the launched session
+deferred runtime parks or closes its session but not the owner-managed PG
 launcher error path only kills workers it created
 launcher does not remove the owner-managed PG
 ```
@@ -403,8 +408,9 @@ role bundle mapping is the new source of truth.
 Keep:
 
 ```text
-RayGenerationLauncher: rollout actor launch boundary
-RayGenerationRuntime: collector-facing runtime boundary, including resident and release-after-collect lifecycles
+RayGenerationLauncher: create one runtime and launch its eager/deferred actor session
+RayGenerationRuntime: sole collector-facing lifecycle and phase owner
+RayGenerationSession: launched executor/weight-sync/actor resource boundary without lifecycle
 RayRewardRuntime: reward transport boundary
 RayActorMethodRuntime: generic actor-method adapter
 RayActorGroup: actor launch facade
@@ -441,7 +447,7 @@ reward execution:
 
 verification:
   - keep run-level lifecycle tests green
-  - keep release-after-collect runtime release from deleting owner PG
+  - keep deferred runtime session parking/close from deleting owner PG
 ```
 
 ## 10. References
@@ -449,6 +455,7 @@ verification:
 - `vrl/scripts/common/online.py`
 - `vrl/generation/ray/launcher.py`
 - `vrl/generation/ray/runtime.py`
+- `vrl/generation/ray/session.py`
 - `vrl/rewards/ray/runtime.py`
 - `vrl/ray/runtime.py`
 - `vrl/ray/placement.py`

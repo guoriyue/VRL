@@ -29,7 +29,6 @@ from vrl.rollouts.collector.config import RolloutCollectorConfig
 from vrl.run import (
     resolve_model,
     resolve_online_run,
-    resolve_ray_generation_launch_inputs,
 )
 
 
@@ -105,10 +104,7 @@ def _capture_launch_inputs(
         precision=run.built.precision,
         for_rollout=False,
     )
-    result = resolve_ray_generation_launch_inputs(
-        run,
-        replay_model=replay_model,
-    )
+    result = run.ray_launch_inputs(replay_model)
     return result, replay_model.identity
 
 
@@ -245,6 +241,35 @@ def test_rollout_runtime_inputs_are_serializable_and_registry_backed(
         assert "samples_per_chunk" not in restored.launch_contract.executor_kwargs
     assert isinstance(restored.gatherer, expected_gatherer)
     assert not isinstance(restored.gatherer, GenerationChunkExecutor)
+
+
+def test_rollout_profiler_is_resolved_before_launch_contract_serialization() -> None:
+    cfg = load_config(
+        "experiment/sd3_5/online_grpo_ocr",
+        overrides=[
+            "distributed.resources.visible_devices=[]",
+            "distributed.resources.trainer.num_gpus=0",
+            "distributed.resources.rollout.num_gpus=0",
+            "distributed.resources.rollout.gpus_per_worker=0",
+            "distributed.resources.rollout.num_workers=1",
+            "distributed.resources.reward.num_gpus=0",
+            "distributed.resources.reward.gpus_per_worker=0",
+        ],
+    )
+    cfg.rollout.torch_profiler = {
+        "enabled": True,
+        "activities": ["cuda"],
+    }
+
+    inputs, _ = _capture_launch_inputs(
+        cfg,
+        get_model_family_entry("sd3_5"),
+    )
+
+    profiler = inputs.launch_contract.torch_profiler
+    assert profiler["enabled"] is True
+    assert profiler["activities"] == ("cuda",)
+    assert profiler["output_dir"] == str(cfg.trainer.output_dir)
 
 
 def test_diffusion_launch_contract_uses_resolved_config_parameter_dtype() -> None:
@@ -464,7 +489,7 @@ def test_generic_executor_kwargs_project_the_complete_model_block() -> None:
         ),
     )
 
-    assert get_model_family_entry("flux").resolve_executor_kwargs(cfg) == {
+    assert get_model_family_entry("flux").executor_kwargs(cfg) == {
         "samples_per_chunk": 3,
         "num_frames": 17,
         "max_sequence_length": 256,
@@ -537,6 +562,6 @@ def test_custom_executor_keeps_independent_supported_memory_config() -> None:
         ),
     )
 
-    assert get_model_family_entry("wan_2_1_i2v").resolve_executor_kwargs(cfg) == {
+    assert get_model_family_entry("wan_2_1_i2v").executor_kwargs(cfg) == {
         "samples_per_chunk": 2,
     }

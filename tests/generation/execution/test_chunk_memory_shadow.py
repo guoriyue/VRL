@@ -30,6 +30,7 @@ from vrl.generation.execution.worker import GenerationWorkerCore
 from vrl.generation.launch_contract import GenerationRuntimeLaunchContract
 from vrl.generation.ray.executor import RayGenerationExecutor
 from vrl.generation.ray.runtime import RayGenerationRuntime
+from vrl.generation.ray.session import RayGenerationSession
 from vrl.generation.types import GenerationRequest
 from vrl.ray.actor_pool import RayActorDispatcher
 
@@ -47,6 +48,12 @@ _EXACT_BYTES_NEED_A_FIXED_CARD = pytest.mark.real_cover(
     ),
     tracked_in="docs/sprints/done/SPRINT_tier-policy-and-real-cover-labels.md",
 )
+
+
+def _runtime(executor: RayGenerationExecutor) -> RayGenerationRuntime:
+    return RayGenerationRuntime(
+        session=RayGenerationSession(executor, None, []),
+    )
 
 
 def _reading(
@@ -363,7 +370,7 @@ def test_runtime_resolves_auto_once_and_rewrites_requests() -> None:
         return SimpleNamespace(request_id=request.request_id)
 
     executor.execute = execute
-    runtime = RayGenerationRuntime(executor)
+    runtime = _runtime(executor)
 
     async def go() -> None:
         await runtime.generate(_request())

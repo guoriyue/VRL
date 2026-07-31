@@ -79,6 +79,57 @@ class _FakeRay:
         self.killed.append((actor, no_restart))
 
 
+class _BlockingFailureRay(_FakeRay):
+    """Hold one probe until a lifecycle transition has completed."""
+
+    def __init__(self, actors: list[_Actor]) -> None:
+        super().__init__(actors)
+        self.probe_started = threading.Event()
+        self.release_probe = threading.Event()
+
+    def get(self, ref: _ProbeRef, timeout: float | None = None) -> Any:
+        self.get_timeouts.append(float(timeout))
+        self.probe_started.set()
+        if not self.release_probe.wait(timeout=1):
+            raise AssertionError("test did not release the blocked health probe")
+        if isinstance(ref.behaviour, BaseException):
+            raise ref.behaviour
+        return ref.behaviour
+
+
+class _ControlledStopEvent:
+    """Expose two first-wait windows without sleeping in the test."""
+
+    def __init__(self, *, grace_timeout: float) -> None:
+        self._event = threading.Event()
+        self._grace_timeout = grace_timeout
+        self._lock = threading.Lock()
+        self._grace_calls = 0
+        self.grace_started = (threading.Event(), threading.Event())
+        self.release_grace = (threading.Event(), threading.Event())
+
+    def clear(self) -> None:
+        self._event.clear()
+
+    def is_set(self) -> bool:
+        return self._event.is_set()
+
+    def set(self) -> None:
+        self._event.set()
+
+    def wait(self, timeout: float | None = None) -> bool:
+        if timeout == self._grace_timeout:
+            with self._lock:
+                index = self._grace_calls
+                self._grace_calls += 1
+            if index < len(self.grace_started):
+                self.grace_started[index].set()
+                if not self.release_grace[index].wait(timeout=1):
+                    raise AssertionError("test did not release the health grace period")
+                return self._event.is_set()
+        return self._event.wait(timeout=timeout)
+
+
 def _runtime(*actors: _Actor) -> Any:
     return SimpleNamespace(
         _owned_workers=[
@@ -113,7 +164,7 @@ def _drive_probe(monitor: RolloutWorkerHealthMonitor, actors: list[_Actor]) -> N
     """Run one probe pass synchronously instead of racing the monitor thread."""
 
     del actors  # named at call sites to show which fleet is under test
-    monitor._run_probes()
+    monitor._run_probes(resume_epoch=monitor._resume_epoch)
 
 
 def test_interval_zero_disables_the_monitor() -> None:
@@ -223,15 +274,116 @@ def test_paused_monitor_does_not_probe_parked_workers(
     assert runtime.lifecycle.phase is RuntimePhase.RUNNING
 
 
-def test_resume_rearms_the_grace_period() -> None:
-    """A worker woken from host RAM needs time to restore before answering."""
+@_SCRIPTED_RAY_WIRE
+def test_pause_ignores_an_in_flight_probe_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    actor = _Actor(TimeoutError("late timeout"))
+    runtime = _runtime(actor)
+    ray = _BlockingFailureRay([actor])
+    _install_ray(monkeypatch, ray)
+    monitor = _monitor(runtime)
+    probe_thread = threading.Thread(
+        target=monitor._run_probes,
+        kwargs={"resume_epoch": monitor._resume_epoch},
+    )
+    probe_thread.start()
+    assert ray.probe_started.wait(timeout=1)
 
-    monitor = _monitor(_runtime(_Actor()), first_wait_s=5.0)
-    monitor._needs_first_wait = False
+    monitor.pause()
+    ray.release_probe.set()
+    probe_thread.join(timeout=1)
 
+    assert not probe_thread.is_alive()
+    assert runtime.lifecycle.phase is RuntimePhase.RUNNING
+    assert ray.killed == []
+
+
+@_SCRIPTED_RAY_WIRE
+def test_new_resume_ignores_a_probe_from_the_previous_active_epoch(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    actor = _Actor(TimeoutError("stale timeout"))
+    runtime = _runtime(actor)
+    ray = _BlockingFailureRay([actor])
+    _install_ray(monkeypatch, ray)
+    monitor = _monitor(runtime)
     monitor.resume()
+    probe_epoch = monitor._resume_epoch
+    probe_thread = threading.Thread(
+        target=monitor._run_probes,
+        kwargs={"resume_epoch": probe_epoch},
+    )
+    probe_thread.start()
+    assert ray.probe_started.wait(timeout=1)
 
-    assert monitor._needs_first_wait is True
+    monitor.pause()
+    monitor.resume()
+    ray.release_probe.set()
+    probe_thread.join(timeout=1)
+
+    assert not probe_thread.is_alive()
+    assert monitor._resume_epoch != probe_epoch
+    assert runtime.lifecycle.phase is RuntimePhase.RUNNING
+    assert ray.killed == []
+
+
+@_SCRIPTED_RAY_WIRE
+def test_stop_ignores_an_in_flight_probe_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    actor = _Actor(TimeoutError("late timeout"))
+    runtime = _runtime(actor)
+    ray = _BlockingFailureRay([actor])
+    _install_ray(monkeypatch, ray)
+    monitor = _monitor(runtime)
+
+    assert monitor.start() is True
+    monitor.resume()
+    assert ray.probe_started.wait(timeout=1)
+    stop_thread = threading.Thread(target=monitor.stop)
+    stop_thread.start()
+    assert monitor._stop.wait(timeout=1)
+    ray.release_probe.set()
+    stop_thread.join(timeout=1)
+
+    assert not stop_thread.is_alive()
+    assert monitor._thread is None
+    assert runtime.lifecycle.phase is RuntimePhase.RUNNING
+    assert ray.killed == []
+
+
+@_SCRIPTED_RAY_WIRE
+def test_resume_during_first_wait_restarts_the_complete_grace_period(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A newer wake cannot consume an older activation's partial grace."""
+
+    actor = _Actor("rollout-0")
+    ray = _FakeRay([actor])
+    _install_ray(monkeypatch, ray)
+    monitor = _monitor(_runtime(actor), first_wait_s=5.0)
+    controlled_stop = _ControlledStopEvent(grace_timeout=5.0)
+    monitor._stop = controlled_stop
+
+    assert monitor.start() is True
+    monitor.resume()
+    assert controlled_stop.grace_started[0].wait(timeout=1)
+    monitor.pause()
+    monitor.resume()
+    controlled_stop.release_grace[0].set()
+    assert controlled_stop.grace_started[1].wait(timeout=1)
+
+    assert actor.health.calls == 0
+    stop_thread = threading.Thread(target=monitor.stop)
+    stop_thread.start()
+    assert controlled_stop.wait(timeout=1)
+    controlled_stop.release_grace[1].set()
+    stop_thread.join(timeout=1)
+
+    assert not stop_thread.is_alive()
+    assert actor.health.calls == 0
+    assert monitor._thread is None
 
 
 @_SCRIPTED_RAY_WIRE
@@ -268,7 +420,7 @@ def test_workers_without_a_health_method_are_skipped(
     _install_ray(monkeypatch, ray)
     monitor = _monitor(runtime)
 
-    monitor._run_probes()
+    monitor._run_probes(resume_epoch=monitor._resume_epoch)
 
     assert ray.killed == []
     assert runtime.lifecycle.phase is RuntimePhase.RUNNING
@@ -297,6 +449,9 @@ class _HealthyWorker:
 class _WedgedWorker:
     """Real Ray actor whose probe never returns inside the driver's timeout."""
 
+    def ready(self) -> str:
+        return "ready"
+
     def health(self) -> str:
         time.sleep(300)
         return "never"
@@ -317,11 +472,16 @@ def test_real_wedged_worker_times_out_and_the_fleet_really_dies(local_ray) -> No
     """
 
     healthy = local_ray.remote(num_cpus=0, max_concurrency=2)(_HealthyWorker).remote()
+    wedged = local_ray.remote(num_cpus=0)(_WedgedWorker).remote()
+    assert local_ray.get(
+        [healthy.health.remote(), wedged.ready.remote()],
+        timeout=5,
+    ) == ["ok", "ready"]
     handles = [
         DistributedWorkerHandle(worker_id="rollout-0", actor=healthy),
         DistributedWorkerHandle(
             worker_id="rollout-1",
-            actor=local_ray.remote(num_cpus=0)(_WedgedWorker).remote(),
+            actor=wedged,
         ),
     ]
     runtime = SimpleNamespace(_owned_workers=handles, lifecycle=RuntimeLifecycle())
@@ -331,7 +491,7 @@ def test_real_wedged_worker_times_out_and_the_fleet_really_dies(local_ray) -> No
     blocked_driver_call = healthy.generate.remote()
 
     started = time.monotonic()
-    monitor._run_probes()
+    monitor._run_probes(resume_epoch=monitor._resume_epoch)
     elapsed = time.monotonic() - started
 
     # Without this, an actor that raised something else immediately would leave

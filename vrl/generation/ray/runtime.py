@@ -1,123 +1,224 @@
-"""Resident actor owner for Ray-distributed generation."""
+"""Collector-facing lifecycle for Ray-distributed generation."""
 
 from __future__ import annotations
 
 import asyncio
-import contextlib
 import logging
-from dataclasses import replace
+from collections.abc import Awaitable, Callable
+from dataclasses import dataclass, replace
 from typing import Any
 
-from vrl.generation.execution.types import (
-    DistributedWorkerHandle,
-    WorkerMemoryParkingSnapshot,
-)
-from vrl.generation.ray.executor import RayGenerationExecutor
+from vrl.generation.execution.types import DistributedWorkerHandle
 from vrl.generation.ray.health_monitor import RolloutWorkerHealthMonitor
-from vrl.generation.ray.lifecycle_fsm import RuntimeLifecycle, RuntimePhase
-from vrl.generation.ray.weight_sync import GenerationWeightSync
+from vrl.generation.ray.lifecycle_fsm import (
+    RuntimeLifecycle,
+    RuntimeLifecycleError,
+    RuntimePhase,
+)
+from vrl.generation.ray.session import RayGenerationSession
 from vrl.generation.types import GenerationOutput, GenerationRequest
-from vrl.ray.dependencies import require_ray
-from vrl.ray.resource_cleanup import kill_and_retain
 from vrl.runtime_errors import TerminalRuntimeError, find_error_cause
 
 logger = logging.getLogger(__name__)
 
+_RaySessionFactory = Callable[[], Awaitable[RayGenerationSession]]
+
+
+@dataclass(frozen=True, slots=True)
+class _PendingPolicyInstall:
+    """Trainer state retained only until one worker fleet acknowledges it."""
+
+    state_ref: Any
+    policy_version: int
+
 
 class RayGenerationRuntime:
-    """Own resident Ray workers, dispatch, health monitoring, and teardown."""
+    """Own one Ray generation lifecycle and its optional live actor session.
+
+    Dedicated-GPU runtimes start with a session. Shared-GPU runtimes receive a
+    factory and create that session only after the rollout schedule has parked
+    trainer state. Both shapes use this one admission, failure, and shutdown
+    owner; ``RayGenerationSession`` never implements the public runtime protocol.
+    """
 
     def __init__(
         self,
-        executor: RayGenerationExecutor,
         *,
-        weight_sync: GenerationWeightSync | None = None,
-        owned_workers: list[DistributedWorkerHandle] | None = None,
+        session: RayGenerationSession | None,
+        session_factory: _RaySessionFactory | None = None,
+        initial_policy_version: int | None = None,
+        supports_weight_sync: bool | None = None,
         colocated: bool = False,
         health_check_interval_s: float = 0.0,
         health_check_timeout_s: float = 30.0,
         health_check_first_wait_s: float = 0.0,
     ) -> None:
-        if executor is None:
-            raise ValueError("resident Ray generation requires an executor")
-        self.executor = executor
-        self.weight_sync = weight_sync
-        executor_dispatcher = getattr(executor, "actor_dispatcher", None)
-        weight_sync_dispatcher = getattr(weight_sync, "actor_dispatcher", None)
-        if (
-            executor_dispatcher is not None
-            and weight_sync_dispatcher is not None
-            and executor_dispatcher is not weight_sync_dispatcher
-        ):
+        if session is None and session_factory is None:
             raise ValueError(
-                "Ray generation and weight sync must share one actor dispatcher",
+                "Ray generation requires a live session or a deferred session factory",
             )
-        self._owned_workers = list(owned_workers or [])
+        if session is not None and session_factory is not None:
+            raise ValueError(
+                "Ray generation cannot start with both a session and a deferred factory",
+            )
+        if colocated and session_factory is None:
+            raise ValueError(
+                "colocated Ray generation requires a deferred session factory",
+            )
+
+        self._session = session
+        self._session_factory = session_factory
         self._colocated = bool(colocated)
-        # Operation deadlines bound active business calls; this complementary
-        # monitor covers process death between calls and independently verifies
-        # that the actor's health concurrency group remains reachable.
+        if session is None:
+            if supports_weight_sync is None:
+                raise ValueError(
+                    "deferred Ray generation requires an explicit weight-sync capability",
+                )
+        else:
+            session_supports_weight_sync = session.weight_sync is not None
+            if supports_weight_sync is None:
+                supports_weight_sync = session_supports_weight_sync
+            elif bool(supports_weight_sync) != session_supports_weight_sync:
+                raise ValueError(
+                    "Ray generation runtime weight-sync capability does not match "
+                    "its launched session",
+                )
+        self._supports_weight_sync = bool(supports_weight_sync)
+
+        self.lifecycle = RuntimeLifecycle()
+        # Accepted targets stamp new requests immediately; installed tracks the
+        # live fleet ACK, while pending retains the payload until that ACK exists.
+        self.current_policy_version = initial_policy_version
+        self._installed_policy_version = initial_policy_version if session is not None else None
+        self._pending_install: _PendingPolicyInstall | None = None
+        self._session_parked = False
+
+        self._activation_task: asyncio.Task[RayGenerationSession] | None = None
+        self._offload_task: asyncio.Task[None] | None = None
+        self._shutdown_task: asyncio.Task[None] | None = None
+        self._force_shutdown = False
+
+        self.supports_non_draining_weight_sync = bool(
+            session and session.supports_non_draining_weight_sync
+        )
+        self._probed_samples_per_chunk: int | None = None
+        self._samples_per_chunk_probe_lock = asyncio.Lock()
         self._health_monitor = RolloutWorkerHealthMonitor(
             self,
             interval_s=health_check_interval_s,
             timeout_s=health_check_timeout_s,
             first_wait_s=health_check_first_wait_s,
         )
-        # Rollout schedules own pause/drain. The runtime lifecycle only closes
-        # terminal admission and records the first cleanup-worthy failure.
-        self.lifecycle = RuntimeLifecycle()
-        self._shutdown_task: asyncio.Task[None] | None = None
-        self._release_wait_task: asyncio.Task[Any] | None = None
-        self._force_shutdown = False
-        self.current_policy_version: int | None = None
-        # Set True by the launcher when every resident worker retains versioned
-        # trainable-state slots, which lets the continuous schedule skip the drain
-        # bubble. Default False keeps the safe draining barrier. Read as a plain
-        # attribute (not a method) via RolloutLifecycle.supports_non_draining_weight_sync.
-        self.supports_non_draining_weight_sync = False
-        # Resolved by the startup chunk-size probe on the first request that
-        # carries sampling.samples_per_chunk == "auto". The actor-owning runtime
-        # survives sleep/wake, so that lifecycle reuses this run-level verdict.
-        self._probed_samples_per_chunk: int | None = None
-        self._samples_per_chunk_probe_lock = asyncio.Lock()
+
+    @property
+    def _owned_workers(self) -> list[DistributedWorkerHandle]:
+        """Fleet view consumed by the health-monitor framework adapter."""
+
+        session = self._session
+        return [] if session is None else session.workers
 
     @property
     def requires_driver_model_offload(self) -> bool:
-        """Resident workers never require a phase-boundary trainer offload."""
-
-        return False
+        return self._colocated
 
     @property
     def supports_weight_sync(self) -> bool:
-        """Whether trainer weight pushes have a resident worker consumer."""
-
-        return self.weight_sync is not None
+        return self._supports_weight_sync
 
     def start_health_monitoring(self) -> None:
-        """Begin probing this runtime's own workers. Idempotent and opt-in."""
+        """Begin probing active workers. Idempotent and opt-in."""
 
-        if self._health_monitor.start():
+        self._health_monitor.start()
+        if self._session is not None and not self._session_parked:
             self._health_monitor.resume()
 
-    async def activate(self) -> None:
-        """Validate admission; resident workers are already active."""
+    def is_colocated(self) -> bool:
+        return self._colocated
 
-        self.lifecycle.require_running("activate")
+    async def _admit_operation(self, operation: str) -> None:
+        """Reject closed admission and finish cleanup after monitor failures."""
+
+        try:
+            self.lifecycle.require_running(operation)
+        except RuntimeLifecycleError:
+            failure = self.lifecycle.failure
+            if failure is None or self.lifecycle.phase is RuntimePhase.TERMINATED:
+                raise
+        else:
+            return
+        stable_failure = await self._terminalize_after_failure(
+            failure,
+            force_shutdown=True,
+        )
+        raise stable_failure
+
+    async def activate(self) -> None:
+        """Make a deferred or parked worker session ready for generation."""
+
+        await self._admit_operation("activate")
+        if self._session_factory is None:
+            return
+        offload = self._offload_task
+        if offload is not None and offload.done():
+            self._offload_finished(offload)
+            offload = None
+        if offload is not None:
+            try:
+                await asyncio.shield(offload)
+            except BaseException as error:
+                await self._finish_control_wait_failure(error)
+                raise
+            await self._admit_operation("activate")
+        task = self._activation_task
+        if task is not None and task.done():
+            self._activation_finished(task)
+            task = None
+        if task is None:
+            task = asyncio.create_task(self._activate_once())
+            self._activation_task = task
+            task.add_done_callback(self._activation_finished)
+        try:
+            await asyncio.shield(task)
+        except BaseException as error:
+            await self._finish_control_wait_failure(error)
+            raise
 
     async def generate(self, request: GenerationRequest) -> GenerationOutput:
-        self.lifecycle.require_running("generate")
+        await self._admit_operation("generate")
+        activation = self._activation_task
+        if activation is not None and not activation.done():
+            raise RuntimeError(
+                "generate requires rollout activation to complete; "
+                "the rollout schedule must await activate() before collection",
+            )
+        offload = self._offload_task
+        if offload is not None and not offload.done():
+            raise RuntimeError(
+                "generate requires rollout offload to be idle; "
+                "the rollout schedule must drain before the GPU handoff",
+            )
         try:
+            session = self._session
+            if session is None or self._session_parked:
+                raise RuntimeError(
+                    "generate requires an active rollout runtime; "
+                    "the rollout schedule must await activate() first",
+                )
             if request.sampling.get("samples_per_chunk") == "auto":
-                # Resolve at the actor-owning runtime so a failed probe enters the
-                # same terminal boundary as every other submitted generation RPC.
-                resolved = await self._resolve_probed_samples_per_chunk(request)
+                resolved = await self._resolve_probed_samples_per_chunk(
+                    session,
+                    request,
+                )
                 request = replace(
                     request,
                     sampling={**dict(request.sampling), "samples_per_chunk": resolved},
                 )
             if request.policy_version is None and self.current_policy_version is not None:
-                request = replace(request, policy_version=self.current_policy_version)
-            output = await self.executor.execute(request)
+                request = replace(
+                    request,
+                    policy_version=self.current_policy_version,
+                )
+            output = await session.executor.execute(request)
             self.lifecycle.require_running("complete generation")
             return output
         except asyncio.CancelledError as error:
@@ -134,9 +235,6 @@ class RayGenerationRuntime:
                 and self.lifecycle.failure is None
             ):
                 raise
-            # A terminal operation error or an earlier health failure makes all
-            # results from the fleet untrustworthy. Close admission and destroy
-            # the actors before a later local processing error can replace it.
             failure = await self._terminalize_after_failure(error)
             if failure is error:
                 raise
@@ -144,26 +242,19 @@ class RayGenerationRuntime:
 
     async def _resolve_probed_samples_per_chunk(
         self,
+        session: RayGenerationSession,
         request: GenerationRequest,
     ) -> int:
-        """Run the startup chunk-size probe once and cache the verdict.
-
-        vLLM shape (EngineCore init -> determine_available_memory): sizing runs
-        before the first real request without a separate user command. Every
-        worker is probed concurrently; the fleet answer is the minimum.
-        """
+        """Run the startup chunk-size probe once and cache the fleet verdict."""
 
         if self._probed_samples_per_chunk is not None:
             return self._probed_samples_per_chunk
-        # Multiple rollout groups may reach the first generation concurrently.
-        # Serialize before submission so only the owner probes its synchronous
-        # actors and local waiters do not spend a remote-operation budget.
         async with self._samples_per_chunk_probe_lock:
             if self._probed_samples_per_chunk is not None:
                 return self._probed_samples_per_chunk
             self.lifecycle.require_running("probe generation chunk size")
             max_samples = max(1, int(request.samples_per_prompt))
-            local_results = await self.executor.probe_chunk_sizes(
+            local_results = await session.executor.probe_chunk_sizes(
                 request,
                 max_samples=max_samples,
             )
@@ -191,25 +282,44 @@ class RayGenerationRuntime:
             self._probed_samples_per_chunk = resolved
             return resolved
 
-    def is_colocated(self) -> bool:
-        return self._colocated
-
     async def update_weights(self, state_ref: Any, policy_version: int) -> None:
-        # Contract failures do not make installed worker state unknown and
-        # therefore must not enter terminal quarantine.
-        self.lifecycle.require_running("update_weights")
-        weight_sync = self.weight_sync
-        if weight_sync is None:
-            raise RuntimeError("RayGenerationRuntime has no GenerationWeightSync")
-        resolved_policy_version = int(policy_version)
+        """Install on active workers or stage the accepted target while inactive."""
 
-        try:
-            await weight_sync.push_to_rollout_workers(
-                state_ref,
-                resolved_policy_version,
+        await self._admit_operation("update_weights")
+        if not self._supports_weight_sync:
+            raise RuntimeError("Ray generation has no weight sync")
+        activation = self._activation_task
+        if activation is not None and not activation.done():
+            raise RuntimeError(
+                "update_weights requires rollout activation to be idle; "
+                "the rollout schedule must pause/drain before syncing",
             )
+        offload = self._offload_task
+        if offload is not None and not offload.done():
+            raise RuntimeError(
+                "update_weights requires rollout offload to be idle; "
+                "the rollout schedule must await the GPU handoff before syncing",
+            )
+
+        policy = _PendingPolicyInstall(
+            state_ref=state_ref,
+            policy_version=int(policy_version),
+        )
+        try:
+            session = self._session
+            if session is not None and not self._session_parked:
+                await session.update_weights(
+                    policy.state_ref,
+                    policy.policy_version,
+                )
+                with self.lifecycle.publication_guard("publish policy version"):
+                    self._installed_policy_version = policy.policy_version
+                    self._pending_install = None
+                    self.current_policy_version = policy.policy_version
+                return
             with self.lifecycle.publication_guard("publish policy version"):
-                self.current_policy_version = resolved_policy_version
+                self._pending_install = policy
+                self.current_policy_version = policy.policy_version
         except asyncio.CancelledError as error:
             if (
                 find_error_cause(error, TerminalRuntimeError) is not None
@@ -224,21 +334,118 @@ class RayGenerationRuntime:
                 raise
             raise failure from failure.__cause__
 
+    async def offload(self) -> None:
+        """Park a deferred runtime's idle worker session at a GPU handoff."""
+
+        if self._session_factory is None:
+            return
+        if self._session is None and self._activation_task is None:
+            return
+        if self.lifecycle.phase is RuntimePhase.TERMINATED:
+            return
+        if self.lifecycle.phase is RuntimePhase.SHUTTING_DOWN:
+            if self.lifecycle.failure is not None:
+                await self._admit_operation("offload")
+            await self.shutdown()
+            return
+        activation = self._activation_task
+        if activation is not None and not activation.done():
+            try:
+                await asyncio.shield(activation)
+            except BaseException as error:
+                await self._finish_control_wait_failure(error)
+                raise
+            if self.lifecycle.phase is RuntimePhase.SHUTTING_DOWN:
+                if self.lifecycle.failure is not None:
+                    await self._admit_operation("offload")
+                await self.shutdown()
+                return
+        task = self._offload_task
+        if task is not None and task.done():
+            self._offload_finished(task)
+            task = None
+        if task is None:
+            task = asyncio.create_task(self._offload_once())
+            self._offload_task = task
+            task.add_done_callback(self._offload_finished)
+        try:
+            await asyncio.shield(task)
+        except BaseException as error:
+            await self._finish_control_wait_failure(error)
+            raise
+        if self.lifecycle.phase is RuntimePhase.SHUTTING_DOWN:
+            if self.lifecycle.failure is not None:
+                await self._admit_operation("offload")
+            await self.shutdown()
+
+    async def _offload_once(self) -> None:
+        try:
+            if self.lifecycle.phase is not RuntimePhase.RUNNING:
+                return
+            session = self._session
+            if session is None or self._session_parked:
+                return
+            self._health_monitor.pause()
+            await session.sleep_workers()
+            if self.lifecycle.failure is not None:
+                self.lifecycle.require_running("complete worker sleep")
+            self._session_parked = True
+        except BaseException as error:
+            shutdown_task = self._shutdown_task
+            if shutdown_task is not None and not shutdown_task.done():
+                failure = self._publish_failure(error, force_shutdown=True)
+            else:
+                failure = await self._terminalize_after_failure(
+                    error,
+                    join_control_tasks=False,
+                    force_shutdown=True,
+                )
+            if isinstance(error, asyncio.CancelledError):
+                if failure is not error:
+                    error.__cause__ = failure
+                raise
+            if failure is error:
+                raise
+            raise failure from failure.__cause__
+
+    async def shutdown(self) -> None:
+        """Close admission and release the one owned actor session."""
+
+        if self.lifecycle.phase is RuntimePhase.TERMINATED:
+            return
+        task = self._shutdown_task
+        if task is not None and task.done():
+            self._shutdown_finished(task)
+            task = None
+        if task is None:
+            self.lifecycle.begin_shutdown()
+            self._pending_install = None
+            task = asyncio.create_task(self._shutdown_once())
+            self._shutdown_task = task
+            task.add_done_callback(self._shutdown_finished)
+        await asyncio.shield(task)
+
     async def _terminalize_after_failure(
         self,
         error: BaseException,
         *,
+        join_control_tasks: bool = True,
         force_shutdown: bool = False,
     ) -> BaseException:
         """Close admission and return the stable first failure after cleanup."""
 
-        failure = self._publish_failure(error, force_shutdown=force_shutdown)
+        failure = self._publish_failure(
+            error,
+            force_shutdown=force_shutdown,
+        )
+        self._pending_install = None
         try:
-            await self.shutdown()
+            if join_control_tasks:
+                await self.shutdown()
+            else:
+                await self._teardown_session()
+                self.lifecycle.finish_shutdown()
         except BaseException as cleanup_error:
-            # The failed install/ACK is the transaction's root cause. Cleanup is
-            # retryable by the schedule owner, so it must never replace that
-            # first failure at the trainer boundary.
             logger.error(
                 "generation terminal cleanup failed after operation error %r",
                 error,
@@ -257,66 +464,208 @@ class RayGenerationRuntime:
         *,
         force_shutdown: bool = False,
     ) -> BaseException:
-        """Publish the first failure and synchronously upgrade terminal cleanup."""
+        """Publish the first failure and upgrade the owned session to force-close."""
 
-        # Publish the operation root before upgrading an existing graceful
-        # shutdown. Cancellation of its release barrier must never win the
-        # first-failure slot over the terminal error that required the upgrade.
         terminal_error = find_error_cause(error, TerminalRuntimeError)
         proposed_failure = terminal_error if terminal_error is not None else error
         failure = self.lifecycle.fail(proposed_failure)
         terminal_failure = find_error_cause(failure, TerminalRuntimeError)
         if force_shutdown or terminal_error is not None or terminal_failure is not None:
             self._force_shutdown = True
-            # A terminal or state-uncertain distributed operation proves that
-            # graceful RPC progress cannot be trusted. Cancel a runtime-owned
-            # release barrier so shutdown upgrades immediately to forceful teardown.
+            session = self._session
+            if session is not None:
+                session.force_close()
             current = asyncio.current_task()
-            release_wait_task = self._release_wait_task
+            activation = self._activation_task
             if (
-                release_wait_task is not None
-                and release_wait_task is not current
-                and not release_wait_task.done()
+                activation is not None
+                and activation is not current
+                and not activation.done()
+                and self._session is not None
             ):
-                release_wait_task.cancel()
+                activation.cancel()
+            offload = self._offload_task
+            if offload is not None and offload is not current and not offload.done():
+                offload.cancel()
         return failure
 
-    async def offload(self) -> None:
-        """Keep resident workers active until terminal shutdown."""
+    async def _finish_control_wait_failure(self, error: BaseException) -> None:
+        """Join shared cleanup and restore roots hidden by ``asyncio.shield``."""
 
-    async def shutdown(self) -> None:
-        """Close admission and tear down owned resources exactly once.
+        if self.lifecycle.phase is RuntimePhase.SHUTTING_DOWN:
+            try:
+                await self.shutdown()
+            except asyncio.CancelledError as cleanup_error:
+                root_failure = self.lifecycle.failure
+                current = asyncio.current_task()
+                if current is not None and current.cancelling():
+                    if root_failure is not None:
+                        cleanup_error.__cause__ = root_failure
+                    raise
+                if root_failure is None:
+                    raise
+                logger.error(
+                    "generation cleanup retry was cancelled after control error %r",
+                    error,
+                    exc_info=(
+                        type(cleanup_error),
+                        cleanup_error,
+                        cleanup_error.__traceback__,
+                    ),
+                )
+                root_failure.add_note(
+                    "generation terminal cleanup retry was also cancelled",
+                )
+            except BaseException as cleanup_error:
+                root_failure = self.lifecycle.failure
+                current = asyncio.current_task()
+                if (
+                    isinstance(error, asyncio.CancelledError)
+                    and current is not None
+                    and current.cancelling()
+                ):
+                    error.__cause__ = root_failure or cleanup_error
+                    if root_failure is None or root_failure is cleanup_error:
+                        return
+                if root_failure is None or root_failure is cleanup_error:
+                    raise
+                logger.error(
+                    "generation cleanup retry failed after control error %r",
+                    error,
+                    exc_info=(
+                        type(cleanup_error),
+                        cleanup_error,
+                        cleanup_error.__traceback__,
+                    ),
+                )
+                root_failure.add_note(
+                    f"generation terminal cleanup retry also failed: {cleanup_error!r}",
+                )
+        if isinstance(error, asyncio.CancelledError):
+            failure = self.lifecycle.failure
+            if failure is not None:
+                error.__cause__ = failure
 
-        Shielding the shared task keeps cancellation of one caller from
-        cancelling cleanup for every caller. A failed cleanup remains
-        SHUTTING_DOWN and clears the task so a later shutdown call can retry
-        owned resources. The schedule stops and joins generation before calling
-        shutdown.
-        """
+    def _activation_finished(
+        self,
+        task: asyncio.Task[RayGenerationSession],
+    ) -> None:
+        if self._activation_task is task:
+            self._activation_task = None
+        if not task.cancelled():
+            task.exception()
 
-        if self.lifecycle.phase is RuntimePhase.TERMINATED:
-            return None
-        task = self._shutdown_task
-        if task is not None and task.done():
-            self._shutdown_finished(task)
-            task = None
-        if task is None:
-            self.lifecycle.begin_shutdown()
-            task = asyncio.create_task(self._shutdown_once())
-            self._shutdown_task = task
-            task.add_done_callback(self._shutdown_finished)
-        await asyncio.shield(task)
-        return None
+    def _offload_finished(self, task: asyncio.Task[None]) -> None:
+        if self._offload_task is task:
+            self._offload_task = None
+        if not task.cancelled():
+            task.exception()
 
     def _shutdown_finished(self, task: asyncio.Task[None]) -> None:
         if self._shutdown_task is task:
             self._shutdown_task = None
         if not task.cancelled():
-            task.exception()  # retrieve failures even if every waiter was cancelled
+            task.exception()
+
+    async def _activate_once(self) -> RayGenerationSession:
+        candidate: RayGenerationSession | None = None
+        force_shutdown = False
+        try:
+            session = self._session
+            if session is not None:
+                if self._session_parked:
+                    force_shutdown = True
+                    await session.wake_workers()
+                    self._session_parked = False
+                    force_shutdown = False
+                    if self.lifecycle.failure is not None:
+                        self.lifecycle.require_running("complete worker wake")
+                    pending = self._pending_install
+                    if pending is not None and (
+                        pending.policy_version != self._installed_policy_version
+                    ):
+                        await session.update_weights(
+                            pending.state_ref,
+                            pending.policy_version,
+                        )
+                    if pending is not None:
+                        with self.lifecycle.publication_guard(
+                            "publish restored policy version",
+                        ):
+                            self._installed_policy_version = pending.policy_version
+                            self._pending_install = None
+                self._health_monitor.resume()
+                return session
+
+            factory = self._session_factory
+            if factory is None:
+                raise RuntimeError("deferred Ray generation has no session factory")
+            candidate = await factory()
+            if (candidate.weight_sync is not None) != self._supports_weight_sync:
+                raise RuntimeError(
+                    "deferred Ray generation session reported a different "
+                    "weight-sync capability than its runtime",
+                )
+            pending = self._pending_install
+            active_policy_version = self.current_policy_version
+            if pending is not None:
+                await candidate.update_weights(
+                    pending.state_ref,
+                    pending.policy_version,
+                )
+                active_policy_version = pending.policy_version
+            with self.lifecycle.publication_guard("publish activated session"):
+                self._installed_policy_version = active_policy_version
+                self._pending_install = None
+                self._session = candidate
+            self._health_monitor.resume()
+            return candidate
+        except BaseException as error:
+            if candidate is not None and self._session is not candidate:
+                try:
+                    await candidate.close(force=True)
+                except BaseException as cleanup_error:
+                    self._session = candidate
+                    logger.error(
+                        "candidate session cleanup failed after activation error %r",
+                        error,
+                        exc_info=cleanup_error,
+                    )
+            if (
+                isinstance(error, RuntimeLifecycleError)
+                and error.phase is not RuntimePhase.RUNNING
+                and error.__cause__ is None
+            ):
+                raise
+            shutdown_task = self._shutdown_task
+            if shutdown_task is not None and not shutdown_task.done():
+                failure = self._publish_failure(error)
+            else:
+                failure = await self._terminalize_after_failure(
+                    error,
+                    join_control_tasks=False,
+                    force_shutdown=force_shutdown,
+                )
+            if isinstance(error, asyncio.CancelledError):
+                error.__cause__ = failure
+                raise
+            if failure is error:
+                raise
+            raise failure from failure.__cause__
 
     async def _shutdown_once(self) -> None:
+        current = asyncio.current_task()
+        pending = [
+            task
+            for task in (self._activation_task, self._offload_task)
+            if task is not None and task is not current
+        ]
+        if pending:
+            await asyncio.gather(*pending, return_exceptions=True)
+        if self.lifecycle.phase is RuntimePhase.TERMINATED:
+            return
         try:
-            await self._teardown_owned_resources()
+            await self._teardown_session()
         except BaseException as error:
             root_failure = self.lifecycle.failure
             self.lifecycle.fail(error)
@@ -325,157 +674,16 @@ class RayGenerationRuntime:
             raise
         self.lifecycle.finish_shutdown()
 
-    async def _teardown_owned_resources(self) -> None:
-        # stop() joins the monitor thread for a bounded probe interval. Keep
-        # that synchronous lifecycle operation off the runtime event loop so
-        # concurrent shutdown/terminal waiters can continue making progress.
+    async def _teardown_session(self) -> None:
         await asyncio.to_thread(self._health_monitor.stop)
-        if not self._owned_workers:
-            return None
-        ray = require_ray()
-        doomed = [worker.actor for worker in self._owned_workers if worker.actor is not None]
-        logger.info(
-            "runtime shutdown: killing %d owned worker actor(s)",
-            len(doomed),
-        )
-        # A timed-out business call may still occupy the actor's default
-        # concurrency group. Waiting for release_policy on that same group would
-        # add another 60 seconds before the only reliable action: ray.kill.
-        if self.lifecycle.failure is None and not self._force_shutdown:
-            release_refs: list[Any] = []
-            for worker in self._owned_workers:
-                actor = worker.actor
-                if actor is None:
-                    continue
-                with contextlib.suppress(Exception):
-                    release_refs.append(actor.release_policy.remote())
-            if release_refs:
-                release_wait_task = asyncio.create_task(
-                    asyncio.to_thread(ray.get, release_refs, timeout=60),
-                )
-                self._release_wait_task = release_wait_task
-                try:
-                    await release_wait_task
-                except asyncio.CancelledError:
-                    if not self._force_shutdown:
-                        raise
-                except Exception:
-                    pass
-                finally:
-                    if self._release_wait_task is release_wait_task:
-                        self._release_wait_task = None
-        surviving, worker_failures = kill_and_retain(
-            ray,
-            self._owned_workers,
-            lambda worker: worker.actor,
-        )
-        self._owned_workers[:] = surviving
-
-        failures = [error for _, error in worker_failures]
-        if failures:
-            raise RuntimeError(
-                "Ray runtime cleanup incomplete: "
-                f"{len(worker_failures)} worker actor kill(s) failed",
-            ) from failures[0]
-        return None
-
-    def _require_parking_workers(self) -> tuple[DistributedWorkerHandle, ...]:
-        """Return the complete, uniquely identified fleet used by sleep/wake."""
-
-        missing_actor_ids = tuple(
-            worker.worker_id for worker in self._owned_workers if worker.actor is None
-        )
-        if missing_actor_ids:
-            raise RuntimeError(
-                f"generation workers have no actor: {missing_actor_ids}",
+        session = self._session
+        if session is not None:
+            await session.close(
+                force=self._force_shutdown or self.lifecycle.failure is not None,
             )
-        active_workers = tuple(
-            worker for worker in self._owned_workers if worker.actor is not None
-        )
-        worker_ids = tuple(worker.worker_id for worker in active_workers)
-        if len(set(worker_ids)) != len(worker_ids):
-            raise RuntimeError(f"duplicate generation worker ids: {worker_ids}")
-        return active_workers
-
-    async def sleep_workers(self) -> tuple[WorkerMemoryParkingSnapshot, ...]:
-        """Offload every owned worker's model to host RAM, freeing the GPU.
-
-        The workers stay alive (process + placement bundle retained); only their
-        weights leave the GPU. Failures are not suppressed: a worker that fails to
-        offload would otherwise hold the GPU a colocated trainer is about to use.
-        """
-        self.lifecycle.require_running("sleep workers")
-        active_workers = self._require_parking_workers()
-        if not active_workers:
-            return ()
-        # Parking transitions and parked intervals are outside the active
-        # serving SLA, so lifecycle policy pauses monitoring across them.
-        self._health_monitor.pause()
-        try:
-            refs = [worker.actor.sleep.remote() for worker in active_workers]
-            values = await asyncio.wait_for(asyncio.gather(*refs), timeout=120)
-            snapshots: list[WorkerMemoryParkingSnapshot] = []
-            for worker, value in zip(active_workers, values, strict=True):
-                if not isinstance(value, WorkerMemoryParkingSnapshot):
-                    raise TypeError(
-                        f"worker {worker.worker_id!r} returned invalid memory-parking "
-                        f"report {type(value).__name__}",
-                    )
-                if value.worker_id != worker.worker_id:
-                    raise RuntimeError(
-                        "mismatched worker memory-parking report: "
-                        f"expected={worker.worker_id!r} actual={value.worker_id!r}",
-                    )
-                value.validate()
-                snapshots.append(value)
-            self.lifecycle.require_running("complete worker sleep")
-            return tuple(snapshots)
-        except asyncio.CancelledError as error:
-            failure = await self._terminalize_after_failure(
-                error,
-                force_shutdown=True,
-            )
-            if failure is not error:
-                error.__cause__ = failure
-            raise
-        except BaseException as error:
-            failure = await self._terminalize_after_failure(
-                error,
-                force_shutdown=True,
-            )
-            if failure is error:
-                raise
-            raise failure from failure.__cause__
-
-    async def wake_workers(self) -> None:
-        """Restore every owned worker's model from host RAM back onto its GPU."""
-        self.lifecycle.require_running("wake workers")
-        active_workers = self._require_parking_workers()
-        if not active_workers:
-            self._health_monitor.resume()
-            return None
-        try:
-            refs = [worker.actor.wake.remote() for worker in active_workers]
-            await asyncio.wait_for(asyncio.gather(*refs), timeout=120)
-            self.lifecycle.require_running("complete worker wake")
-            self._health_monitor.resume()
-            return None
-        except asyncio.CancelledError as error:
-            failure = await self._terminalize_after_failure(
-                error,
-                force_shutdown=True,
-            )
-            if failure is not error:
-                error.__cause__ = failure
-            raise
-        except BaseException as error:
-            failure = await self._terminalize_after_failure(
-                error,
-                force_shutdown=True,
-            )
-            if failure is error:
-                raise
-            raise failure from failure.__cause__
+        self._session = None
+        self._session_parked = False
+        self._installed_policy_version = None
 
 
 __all__ = ["RayGenerationRuntime"]

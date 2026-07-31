@@ -18,12 +18,15 @@ from __future__ import annotations
 
 import logging
 import threading
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from vrl.generation.execution.types import DistributedWorkerHandle
 from vrl.ray.dependencies import require_ray
 from vrl.ray.resource_cleanup import kill_actors
 from vrl.runtime_errors import TerminalRuntimeError
+
+if TYPE_CHECKING:
+    from vrl.generation.ray.runtime import RayGenerationRuntime
 
 logger = logging.getLogger(__name__)
 
@@ -43,7 +46,7 @@ class RolloutWorkerHealthMonitor:
 
     def __init__(
         self,
-        runtime: Any,
+        runtime: RayGenerationRuntime,
         *,
         interval_s: float,
         timeout_s: float,
@@ -56,7 +59,9 @@ class RolloutWorkerHealthMonitor:
         self._thread: threading.Thread | None = None
         self._stop = threading.Event()
         self._paused = threading.Event()
-        self._needs_first_wait = True
+        self._transition_lock = threading.Lock()
+        self._resume_epoch = 0
+        self._completed_grace_epoch = -1
 
     def start(self) -> bool:
         """Start probing. Returns False when monitoring is disabled or running."""
@@ -81,49 +86,57 @@ class RolloutWorkerHealthMonitor:
         thread = self._thread
         if thread is None:
             return
-        self._stop.set()
-        # Clear the pause gate too, so a paused thread can observe the stop.
-        self._paused.clear()
+        with self._transition_lock:
+            self._stop.set()
+            # Clear the pause gate too, so a paused thread can observe the stop.
+            self._paused.clear()
         thread.join(timeout=self._timeout_s + self._interval_s + _STOP_JOIN_GRACE_S)
         if thread.is_alive():
             logger.warning("rollout health monitor thread did not exit; abandoning it")
         self._thread = None
 
     def pause(self) -> None:
-        self._paused.set()
+        with self._transition_lock:
+            self._paused.set()
 
     def resume(self) -> None:
         # Re-arm the grace period on every resume: workers woken from host RAM
         # need time to restore before they can answer a probe.
-        self._needs_first_wait = True
-        self._paused.clear()
+        with self._transition_lock:
+            self._resume_epoch += 1
+            self._paused.clear()
 
     def _loop(self) -> None:
         while not self._stop.is_set():
-            if self._paused.is_set():
+            with self._transition_lock:
+                paused = self._paused.is_set()
+                resume_epoch = self._resume_epoch
+                needs_grace = self._completed_grace_epoch != resume_epoch
+            if paused:
                 self._stop.wait(timeout=0.5)
                 continue
-            if self._needs_first_wait:
+            if needs_grace:
                 if self._first_wait_s > 0 and self._stop.wait(timeout=self._first_wait_s):
                     return
-                if self._paused.is_set():
-                    # Paused during the grace period: keep it armed for the
-                    # next resume rather than probing a still-parked fleet.
-                    continue
-                self._needs_first_wait = False
-            self._run_probes()
+                with self._transition_lock:
+                    if (
+                        self._stop.is_set()
+                        or self._paused.is_set()
+                        or self._resume_epoch != resume_epoch
+                    ):
+                        # A new resume owns a complete grace period; never let an
+                        # older wait consume or shorten it.
+                        continue
+                    self._completed_grace_epoch = resume_epoch
+            self._run_probes(resume_epoch=resume_epoch)
             self._stop.wait(timeout=self._interval_s)
 
     def _owned_workers(self) -> list[DistributedWorkerHandle]:
-        """Read the fleet this runtime owns. Only worker-owning runtimes probe.
-
-        The on-demand facade never enables monitoring — it owns no actors; its
-        inner runtime, built by the launcher, carries the live monitor.
-        """
+        """Read the active session fleet through the runtime adapter."""
 
         return [worker for worker in self._runtime._owned_workers if worker.actor is not None]
 
-    def _run_probes(self) -> None:
+    def _run_probes(self, *, resume_epoch: int) -> None:
         workers = self._owned_workers()
         if not workers:
             return
@@ -133,8 +146,13 @@ class RolloutWorkerHealthMonitor:
             logger.debug("rollout health probe skipped: Ray unavailable", exc_info=True)
             return
         for worker in workers:
-            if self._stop.is_set() or self._paused.is_set():
-                return
+            with self._transition_lock:
+                if (
+                    self._stop.is_set()
+                    or self._paused.is_set()
+                    or self._resume_epoch != resume_epoch
+                ):
+                    return
             probe = getattr(worker.actor, "health", None)
             remote = getattr(probe, "remote", None)
             if not callable(remote):
@@ -144,13 +162,36 @@ class RolloutWorkerHealthMonitor:
                 # actor process must not also wedge its own monitor.
                 ray.get(remote(), timeout=self._timeout_s)
             except BaseException as error:
-                self._terminalize(ray, worker.worker_id, error)
+                self._terminalize(
+                    ray,
+                    worker.worker_id,
+                    error,
+                    resume_epoch=resume_epoch,
+                )
                 return
 
-    def _terminalize(self, ray: Any, worker_id: str, error: BaseException) -> None:
+    def _terminalize(
+        self,
+        ray: Any,
+        worker_id: str,
+        error: BaseException,
+        *,
+        resume_epoch: int,
+    ) -> None:
         """Close admission and destroy actors so active/next foreground work fails."""
 
         failure = RolloutWorkerUnreachable(worker_id, self._timeout_s, error)
+        # A probe submitted before pause/stop may return late. Publish the
+        # failure under the same lock as those transitions, but never hold that
+        # lock across logging or Ray control-plane calls.
+        with self._transition_lock:
+            if self._stop.is_set() or self._paused.is_set() or self._resume_epoch != resume_epoch:
+                return
+            try:
+                self._runtime.lifecycle.fail(failure)
+            except BaseException:
+                logger.debug("lifecycle.fail rejected the probe failure", exc_info=True)
+            self._paused.set()
         logger.error(
             "rollout worker %s failed its liveness probe after %.0fs; "
             "killing the fleet so active or subsequent runtime work fails closed",
@@ -161,13 +202,6 @@ class RolloutWorkerHealthMonitor:
         # Only synchronous work from this thread. lifecycle.fail atomically
         # closes admission; the async shutdown path belongs to whoever observes
         # the RayActorError that killing the actors raises in the driver.
-        with_lifecycle = getattr(self._runtime, "lifecycle", None)
-        if with_lifecycle is not None:
-            try:
-                with_lifecycle.fail(failure)
-            except BaseException:
-                logger.debug("lifecycle.fail rejected the probe failure", exc_info=True)
-        self._paused.set()
         actors = [worker.actor for worker in self._owned_workers()]
         if actors:
             kill_actors(ray, actors)

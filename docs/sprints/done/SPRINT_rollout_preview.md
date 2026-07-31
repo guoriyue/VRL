@@ -78,8 +78,8 @@ The small functions that remain have concrete boundaries:
 - `build_preview_request` adapts a typed training example to the production
   request protocol;
 - `write_preview_image` enforces the one-output media/identity boundary;
-- `build_executor_kwargs` is shared with the Ray launcher so executor config is
-  not reimplemented in tests.
+- registry-owned `ModelFamilyEntry.executor_kwargs(root)` projects executor
+  config for both the Ray launcher path and preview tests, so neither reimplements it.
 
 Keeping the registry and executor shapes uniform across image families is more
 valuable than reducing a few lines. Video support, checkpoint restore, reward

@@ -5,7 +5,8 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections.abc import Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
+from functools import partial
 from typing import Any
 
 from vrl.generation.execution import (
@@ -13,12 +14,11 @@ from vrl.generation.execution import (
     DistributedExecutionPlanner,
     DistributedWorkerHandle,
 )
-from vrl.generation.protocols import GenerationRuntime
 from vrl.generation.ray.config import RayGenerationConfig
 from vrl.generation.ray.executor import RayGenerationExecutor
 from vrl.generation.ray.launch_inputs import RayGenerationLaunchInputs
-from vrl.generation.ray.on_demand_runtime import _OnDemandRayGenerationRuntime
 from vrl.generation.ray.runtime import RayGenerationRuntime
+from vrl.generation.ray.session import RayGenerationSession
 from vrl.generation.ray.weight_sync import RayGenerationWeightSync
 from vrl.generation.ray.worker import HEALTH_CONCURRENCY_GROUP, RayGenerationWorker
 from vrl.ray.actor_group import RayActorGroup
@@ -28,22 +28,6 @@ from vrl.ray.operation_deadline import get_ray_refs
 from vrl.ray.placement import RolePlacement, validate_actor_gpu_ids
 
 logger = logging.getLogger(__name__)
-
-
-def _validate_runtime_inputs(
-    config: RayGenerationConfig,
-    launch_inputs: RayGenerationLaunchInputs,
-) -> None:
-    """Keep resident and on-demand factory branches on one typed boundary."""
-
-    if not isinstance(config, RayGenerationConfig):
-        raise TypeError(
-            f"config must be a RayGenerationConfig, got {type(config).__name__}",
-        )
-    if not isinstance(launch_inputs, RayGenerationLaunchInputs):
-        raise TypeError(
-            f"launch_inputs must be RayGenerationLaunchInputs, got {type(launch_inputs).__name__}",
-        )
 
 
 @dataclass(slots=True)
@@ -57,14 +41,14 @@ class RayGenerationLauncher:
         default_factory=lambda: {"address": "local"},
     )
 
-    def launch(
+    def _launch_session(
         self,
         config: RayGenerationConfig,
         launch_inputs: RayGenerationLaunchInputs,
         *,
         placement: RolePlacement,
-    ) -> RayGenerationRuntime:
-        """Launch rollout workers and return a collector-facing runtime.
+    ) -> RayGenerationSession:
+        """Launch one actor fleet after its GPU owner has yielded.
 
         Workers are scheduled into a run-level placement group owned by a
         ``GlobalRayPlacementOwner``. The launcher uses the rollout role's bundles,
@@ -72,10 +56,8 @@ class RayGenerationLauncher:
         the group; the owner does that once at run shutdown.
         """
 
-        _validate_runtime_inputs(config, launch_inputs)
         rollout_config = config
         worker = rollout_config.worker
-        contract = launch_inputs.launch_contract
         chunk_gatherer = launch_inputs.gatherer
 
         bundle_indices = list(placement.bundle_indices)
@@ -158,28 +140,18 @@ class RayGenerationLauncher:
                 if worker.sync_trainable_state
                 else None
             )
-            runtime = RayGenerationRuntime(
-                executor,
-                weight_sync=weight_sync,
-                owned_workers=workers,
-                colocated=rollout_config.resources.colocated,
-                health_check_interval_s=worker.health_check_interval_s,
-                health_check_timeout_s=worker.health_check_timeout_s,
-                health_check_first_wait_s=worker.health_check_first_wait_s,
-            )
-            if contract.policy_version is not None:
-                runtime.current_policy_version = contract.policy_version
-            # Non-draining weight sync is safe only when EVERY worker retains
-            # versioned trainable-state slots (a chunk stamped v1 may land on any
-            # worker). Query the AND before publishing the runtime candidate.
-            runtime.supports_non_draining_weight_sync = _all_workers_support_versioned_slots(
+            supports_non_draining_weight_sync = _all_workers_support_versioned_slots(
                 ray,
                 workers,
                 weight_sync=weight_sync,
                 worker_rpc_timeout_s=worker.worker_rpc_timeout_s,
             )
-            runtime.start_health_monitoring()
-            return runtime
+            return RayGenerationSession(
+                executor,
+                weight_sync=weight_sync,
+                owned_workers=workers,
+                supports_non_draining_weight_sync=supports_non_draining_weight_sync,
+            )
         except BaseException as error:
             if "actor_group" in locals():
                 try:
@@ -192,14 +164,14 @@ class RayGenerationLauncher:
             # to the GlobalRayPlacementOwner.
             raise
 
-    async def launch_async(
+    async def _launch_session_async(
         self,
         config: RayGenerationConfig,
         launch_inputs: RayGenerationLaunchInputs,
         *,
         placement: RolePlacement,
-    ) -> RayGenerationRuntime:
-        """Launch without blocking the runtime's lifecycle event loop.
+    ) -> RayGenerationSession:
+        """Launch a session without blocking the runtime's lifecycle event loop.
 
         Ray initialization stays on the caller thread because it owns process
         signal setup. Once connected, actor startup and policy load can run in
@@ -211,7 +183,7 @@ class RayGenerationLauncher:
         if self.init_ray and not ray.is_initialized():
             ray.init(**self.ray_init_kwargs)
         return await asyncio.to_thread(
-            self.launch,
+            self._launch_session,
             config,
             launch_inputs,
             placement=placement,
@@ -223,24 +195,69 @@ class RayGenerationLauncher:
         launch_inputs: RayGenerationLaunchInputs,
         *,
         placement: RolePlacement,
-    ) -> GenerationRuntime:
-        """Create the runtime selected by the topology-derived lifecycle plan."""
+    ) -> RayGenerationRuntime:
+        """Create the sole Ray runtime with eager or deferred session ownership."""
 
-        _validate_runtime_inputs(config, launch_inputs)
+        if not isinstance(config, RayGenerationConfig):
+            raise TypeError(
+                f"config must be a RayGenerationConfig, got {type(config).__name__}",
+            )
+        if not isinstance(launch_inputs, RayGenerationLaunchInputs):
+            raise TypeError(
+                "launch_inputs must be RayGenerationLaunchInputs, "
+                f"got {type(launch_inputs).__name__}",
+            )
         resources = config.resources
-        rollout_on_demand = resources.lifecycle.rollout.mode == "on_demand"
-        if rollout_on_demand:
-            return _OnDemandRayGenerationRuntime(
+        worker = config.worker
+        deferred = resources.lifecycle.rollout.mode == "on_demand"
+        if deferred and resources.rollout_gpus_per_worker > 0:
+            launch_inputs = replace(
+                launch_inputs,
+                launch_contract=replace(
+                    launch_inputs.launch_contract,
+                    sleep_offload=True,
+                ),
+            )
+
+        session = None
+        session_factory = None
+        if deferred:
+            session_factory = partial(
+                self._launch_session_async,
                 config,
                 launch_inputs,
-                launcher=self,
                 placement=placement,
             )
-        return self.launch(
-            config,
-            launch_inputs,
-            placement=placement,
-        )
+        else:
+            session = self._launch_session(
+                config,
+                launch_inputs,
+                placement=placement,
+            )
+
+        try:
+            runtime = RayGenerationRuntime(
+                session=session,
+                session_factory=session_factory,
+                initial_policy_version=launch_inputs.launch_contract.policy_version,
+                supports_weight_sync=worker.sync_trainable_state,
+                colocated=resources.colocated,
+                health_check_interval_s=worker.health_check_interval_s,
+                health_check_timeout_s=worker.health_check_timeout_s,
+                health_check_first_wait_s=worker.health_check_first_wait_s,
+            )
+            runtime.start_health_monitoring()
+            return runtime
+        except BaseException as error:
+            if session is not None:
+                session.force_close()
+                try:
+                    session.kill_workers()
+                except BaseException as cleanup_error:
+                    error.add_note(
+                        f"resident rollout startup cleanup also failed: {cleanup_error!r}",
+                    )
+            raise
 
 
 def _validate_worker_gpu_ids(

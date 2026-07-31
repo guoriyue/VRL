@@ -175,9 +175,10 @@ best-effort cancellation. Correctness comes from rejecting results and killing t
 fleet.
 
 Startup and placement failures are cleaned by the owner that created the candidate resources.
-An active on-demand facade delegates weight restore through the inner runtime's public
-`update_weights` boundary, so the actual worker owner receives the terminal error and force-kills
-its actors. The same rule applies to a cold activation candidate before publication.
+The sole `RayGenerationRuntime` delegates weight restore to the active or candidate
+`RayGenerationSession`; any terminal error returns to that one lifecycle owner, which marks the
+session force-close and kills its actors. The same rule applies to a cold activation candidate
+before publication. The session owns resource operations, not a second failure boundary.
 
 A timeout arriving after graceful shutdown entered its 60-second release wait cancels only that
 local release-barrier task. The shared shutdown task then continues into force teardown for every

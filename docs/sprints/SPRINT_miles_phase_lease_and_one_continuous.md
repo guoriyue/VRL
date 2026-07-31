@@ -48,9 +48,10 @@
 - CuMem model-building scope 变成 one-shot，score/generate 不再重入；terminal close 显式释放 vLLM
   retained MemPool。shared reward shutdown 做 physical residual gate，dedicated CUDA reward 也无条件
   GC/empty-cache，避免长驻 driver 在下一次 recipe 中保留 allocator pages。
-- on-demand generation facade 只在 cold/parked worker 尚未 ACK 时持有 `_pending_policy`
-  payload；`current_policy_version` 表示 accepted target，`_active_policy_version` 表示已安装
-  version。active/cold/wake ACK 或 terminal shutdown 后立即释放完整 CPU payload。
+- deferred `RayGenerationRuntime` 只在 cold/parked worker 尚未 ACK 时持有
+  `_pending_install` payload；`current_policy_version` 表示 accepted target，
+  `_installed_policy_version` 表示已安装 version。active/cold/wake ACK 或 terminal shutdown
+  后立即释放完整 CPU payload；不存在独立 on-demand facade 或第二套 lifecycle。
 
 本机一次性硬件证据（RTX 5090）：
 

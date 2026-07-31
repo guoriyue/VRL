@@ -5,15 +5,16 @@ from __future__ import annotations
 import math
 import os
 from collections.abc import Iterable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any
 
 from vrl.generation.execution.types import ChunkPlacementStrategy
 from vrl.ray.resources import (
     ResolvedDistributedResources,
 )
-from vrl.utils.config import cfg_get, to_builtin_deep
+from vrl.utils.config import cfg_get, plain_mapping, to_builtin_deep
 from vrl.utils.logging import init_logger
+from vrl.utils.profiling import TorchProfilerConfig
 
 logger = init_logger(__name__)
 
@@ -79,11 +80,20 @@ class RayGenerationConfig:
 
     resources: ResolvedDistributedResources
     worker: RolloutWorkerConfig
+    torch_profiler: TorchProfilerConfig | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.worker, RolloutWorkerConfig):
             raise TypeError(
                 f"worker must be a RolloutWorkerConfig, got {type(self.worker).__name__}",
+            )
+        if self.torch_profiler is not None and not isinstance(
+            self.torch_profiler,
+            TorchProfilerConfig,
+        ):
+            raise TypeError(
+                "torch_profiler must be a TorchProfilerConfig or None, "
+                f"got {type(self.torch_profiler).__name__}",
             )
         if self.resources.rollout_num_workers < 1:
             raise ValueError("distributed.resources.rollout.num_workers must be >= 1")
@@ -107,10 +117,28 @@ class RayGenerationConfig:
         """Build Ray execution settings using the run's resolved resources."""
         distributed = cfg_get(cfg, "distributed", {})
         rollout = cfg_get(distributed, "rollout", {})
+        public_rollout = cfg_get(cfg, "rollout", {})
+        profiler_section = cfg_get(public_rollout, "torch_profiler", None)
+        if profiler_section is None:
+            torch_profiler = None
+        elif isinstance(profiler_section, TorchProfilerConfig):
+            torch_profiler = replace(profiler_section)
+        else:
+            torch_profiler = TorchProfilerConfig(
+                **plain_mapping(
+                    profiler_section,
+                    field_name="rollout.torch_profiler",
+                ),
+            )
+        if torch_profiler is not None:
+            output_dir = cfg_get(cfg_get(cfg, "trainer", {}), "output_dir", None)
+            if output_dir is not None:
+                torch_profiler.output_dir = str(output_dir)
 
         return cls(
             resources=resources,
             worker=RolloutWorkerConfig.from_public_section(rollout),
+            torch_profiler=torch_profiler,
         )
 
     def validate_driver_state(

@@ -7,6 +7,14 @@ reward 现在只支持 in-process `execution="inline"`，Ray reward pool 已删�
 也明确按 inline reward 派生 handoff。因此本 sprint 没有剩余交付，以下章节保留为实现过程
 与测量记录，不再作为待办清单。
 
+> **Runtime follow-up（2026-07-30）：** 下文“实现状态”与 §0–§1 保留 6 月当时的
+> 缺陷分析和 API 名称，只用于解释 sleep/wake 决策的来源。`_RuntimeLease`、
+> `with_release_after_collect`、`runtime._with_sleep_offload` 和
+> `RayGenerationLauncher.launch` 均已删除。当前路径是 topology 派生
+> `rollout.mode="on_demand"`，`RayGenerationLauncher.create_runtime()` 创建唯一
+> `RayGenerationRuntime`，runtime 的 `activate()/offload()` 驱动
+> `RayGenerationSession.wake_workers()/sleep_workers()`；不得按历史段落恢复 lease facade。
+
 ## 实现状态（2026-06-20）
 
 **✅ 缺陷 B（in-process driver-offload，sprint 指定"先做、风险最低"）已落地：**
@@ -16,7 +24,7 @@ reward 现在只支持 in-process `execution="inline"`，Ray reward pool 已删�
 - 测试：`tests/models/diffusion/test_frozen_offload.py`（派生集合排除 transformer/非 module；只搬冻结；无 pipeline no-op）+ `tests/rollouts/orchestration/test_driver_frozen_offload.py`（offload/restore 调用 + AR 无 hook 不崩）。`tests/models/diffusion` + `tests/rollouts/orchestration` 共 172 passed。
 - 验收口径：本机无 GPU，§3 的 nvidia-smi/逐 bit/计时探针留作 GPU 跑测；CPU 侧用「记录 `.to` 目标」的 fake 证明搬运范围正确（冻结组件被搬、transformer 不被本 hook 重复搬）。
 
-**✅ 缺陷 A（lease 模式 kill→sleep）——colocated-trainer 这一类已落地（2026-06-29）：** 复核 §1.D 后发现"未定的 actor 生命周期架构"其实窄得多（见下方更新），于是把 colocated-trainer timeshare 这一类的 kill 改成了 sleep/wake：
+**✅ 缺陷 A（历史 lease 模式 kill→sleep）——colocated-trainer 这一类已落地（2026-06-29）：** 复核 §1.D 后发现"未定的 actor 生命周期架构"其实窄得多（见下方更新），于是把 colocated-trainer timeshare 这一类的 kill 改成了 sleep/wake。这里的 `_RuntimeLease` / `with_release_after_collect` 是当时实现名，当前等价行为由唯一 runtime + session 承担：
 - `GenerationWorkerCore.sleep()/wake()`（`vrl/generation/execution/worker.py`）：level-1 offload——保住 executor，把 model（transformer 经 `nn.Module.to` + 冻结组件经**缺陷 B 的 `move_frozen_components`**）搬 CPU、`release_cuda_memory`；wake 从 host RAM 搬回**捕获到的原 GPU**，不重读磁盘。executor 被硬释放过则 `load_policy` 兜底重建。`RayGenerationWorker` 暴露 `sleep/wake` 透传（`vrl/generation/ray/worker.py`）。
 - lease FSM（`vrl/generation/ray/runtime.py`）：`_RuntimeLease` 加 `sleep_eligible`/`asleep`；`release()` 对 sleep-eligible 租约调 `sleep_workers()`、保活 `state.runtime`，否则照旧 `shutdown()`（teardown）；`_ensure_runtime()` 见到"睡着"就 `wake_workers()` 并**重放 `last_state`**（与冷启动后 `update_weights(last_state)` 同一刷新契约）；`update_weights` 在睡眠期只记 `last_state` 不下推到 CPU 上的 worker。
 - sleep-eligibility 派生（内联在 `with_release_after_collect` 里，不单拆函数）：仅当 `handoff.release_rollout_before_train and not release_rollout_before_reward` —— 纯 trainer 让位才 sleep；reward 要 bundle 一律 teardown；无 resolved topology 的手搓 config 默认 teardown。
@@ -61,7 +69,7 @@ sprint，不能复活本文的旧 bundle 假设。
 
 ## 1. 已核实（verified） vs 未验证（未验证）
 
-### A. lease / release-after-collect 模式：**discard + 冷重载（已核实）**
+### A. 历史 lease / release-after-collect 模式：**discard + 冷重载（当时已核实，现已修复）**
 
 逐跳链路（每一跳都本轮读过）：
 
@@ -77,14 +85,21 @@ sprint，不能复活本文的旧 bundle 假设。
 4. worker 的 `release_policy()` 把整个 executor 丢弃并释放 CUDA：
    > `self.executor = None; release_cuda_memory(gc_collect=True, ipc_collect=True)`
    （`vrl/generation/execution/worker.py:75-76`）—— executor 持有 family model，model 持有 VAE+text-encoder，全部随之销毁。
-5. 下个周期 `generate()` → `_ensure_runtime()` 发现 `state.runtime is None`，重新 `RayGenerationLauncher().launch(...)`（`vrl/generation/ray/runtime.py:178-187`）→ worker `load_policy()` → `_build_executor()` → `build_runtime_bundle(build)`（`vrl/generation/execution/worker.py:68,336`）。
+5. （历史实现，相关 API 已删除）下个周期 `generate()` 经旧 `_ensure_runtime()` 冷建
+   worker，再走 `load_policy()` → `_build_executor()` → `build_runtime_bundle(build)`；
+   当前实现由唯一 `RayGenerationRuntime.activate()` 延迟创建或唤醒
+   `RayGenerationSession`，不得恢复旧 `RayGenerationLauncher.launch(...)` 路径。
 6. SD3.5 的构建是整盘从磁盘加载并冻结：
    > `pipeline = StableDiffusion3Pipeline.from_pretrained(build.model_name_or_path, **load_kwargs)` … `pipeline.vae.requires_grad_(False)` … 三个 `enc.requires_grad_(False)`
    （`vrl/models/diffusion/sd3_5/model.py:131-144`）。
 
 **判定：lease 模式确实是 discard + cold reload。** 冻结组件（VAE、text_encoder/2/3）每周期被销毁后从磁盘重载，而它们从不进入 weight-sync（worker 只 `install/load_trainable_state` 可训练权重，`vrl/generation/execution/worker.py:90-102`），所以这部分重载是纯开销，可被 offload-and-restore 完全省掉。
 
-> 命名说明：MEMORY/提示里的 `ReleasableRayGenerationRuntime` 在当前代码中即 `RayGenerationRuntime.with_release_after_collect(...)` 这一 lease 工厂（`vrl/generation/ray/runtime.py:67-95`），由 topology 派生的 `resources.lifecycle.rollout.mode == "on_demand"` 触发（`vrl/generation/ray/launcher.py:202-213`）。kill+relaunch 即上面第 3/5 步。
+> 历史命名说明：当时 MEMORY/提示里的 `ReleasableRayGenerationRuntime` 对应
+> `RayGenerationRuntime.with_release_after_collect(...)` lease 工厂。该工厂已经删除；当前由
+> topology 派生的 `resources.lifecycle.rollout.mode == "on_demand"` 选择 deferred
+> `RayGenerationRuntime`，session 在 handoff 时 sleep/wake，而不是恢复历史 kill+relaunch
+> 路径。
 
 ### B. 单卡 colocated 的 driver-offload 模式：冻结组件**根本没被 offload（已核实，独立第二个缺陷）**
 

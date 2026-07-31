@@ -58,7 +58,7 @@ def test_matching_identity_gates_model_and_threads_restore_and_saves(
         next_step=0,
         rng_state={},
     )
-    build = object()
+    build = SimpleNamespace(rollout=object())
     transformer = object()
     events: list[str] = []
 
@@ -76,6 +76,8 @@ def test_matching_identity_gates_model_and_threads_restore_and_saves(
     )
 
     class _Entry:
+        family = "wan_2_1"
+
         def resolve_model_build(self, *args: object, **kwargs: object) -> object:
             del args, kwargs
             events.append("resolve_build")
@@ -187,11 +189,13 @@ def test_identity_mismatch_stops_before_model_and_dataset(
 ) -> None:
     cfg = load_config("experiment/wan_2_1/offline_dpo_pickapic")
     checkpoint = object()
-    build = object()
+    build = SimpleNamespace(rollout=object())
     identity = {"schema": "test"}
     events: list[str] = []
 
     class _Entry:
+        family = "wan_2_1"
+
         def resolve_model_build(self, *args: object, **kwargs: object) -> object:
             del args, kwargs
             events.append("resolve_build")
@@ -252,11 +256,13 @@ def test_source_change_during_model_load_stops_before_dataset(
 ) -> None:
     cfg = load_config("experiment/wan_2_1/offline_dpo_pickapic")
     checkpoint = object()
-    build = object()
+    build = SimpleNamespace(rollout=object())
     identities = iter(({"source": "before"}, {"source": "after"}))
     events: list[str] = []
 
     class _Entry:
+        family = "wan_2_1"
+
         def resolve_model_build(self, *args: object, **kwargs: object) -> object:
             del args, kwargs
             events.append("resolve_build")

@@ -28,8 +28,9 @@ from vrl.generation.ray.launcher import (
     RayGenerationLauncher,
     _all_workers_support_versioned_slots,
 )
-from vrl.generation.ray.lifecycle_fsm import RuntimeLifecycle, RuntimePhase
+from vrl.generation.ray.lifecycle_fsm import RuntimePhase
 from vrl.generation.ray.runtime import RayGenerationRuntime
+from vrl.generation.ray.session import RayGenerationSession
 from vrl.generation.types import GenerationRequest
 from vrl.ray.actor_pool import RayActorDispatcher
 from vrl.ray.operation_deadline import RayOperationTimeout
@@ -40,7 +41,6 @@ from vrl.run import (
     OnlineRunConfig,
     ResolvedModel,
     ResolvedOnlineRun,
-    resolve_ray_generation_launch_inputs,
 )
 from vrl.trainers.checkpointing import TrainingResumeConfig
 
@@ -69,6 +69,21 @@ class _Bundle:
 
 _TEST_MODEL_IDENTITY = {"schema": "test"}
 _TEST_RPC_TIMEOUT_S = 30.0
+
+
+def _runtime(
+    executor: Any,
+    *,
+    weight_sync: Any | None = None,
+    workers: list[DistributedWorkerHandle] | None = None,
+) -> RayGenerationRuntime:
+    return RayGenerationRuntime(
+        session=RayGenerationSession(
+            executor,
+            weight_sync,
+            list(workers or []),
+        ),
+    )
 
 
 def test_launch_contract_rejects_unknown_fields_at_typed_boundary() -> None:
@@ -297,10 +312,7 @@ def _capture_launch_inputs(
             return_value=rollout_model_identity or _TEST_MODEL_IDENTITY,
         ) as resolve_identity,
     ):
-        result = resolve_ray_generation_launch_inputs(
-            run,
-            replay_model=replay_model,
-        )
+        result = run.ray_launch_inputs(replay_model)
 
     resolve_identity.assert_called_once()
     return result
@@ -473,7 +485,7 @@ def test_launcher_capability_failure_kills_candidate_actor_group(
     )
 
     with pytest.raises(RuntimeError, match="capability query failed") as caught:
-        RayGenerationLauncher(init_ray=False).launch(
+        RayGenerationLauncher(init_ray=False)._launch_session(
             config,
             inputs,
             placement=RolePlacement(
@@ -610,7 +622,7 @@ def test_placement_and_launcher_consume_the_same_worker_snapshot(monkeypatch) ->
         lambda *_args, **_kwargs: False,
     )
     entry = get_model_family_entry("sd3_5")
-    runtime = RayGenerationLauncher(init_ray=False).launch(
+    session = RayGenerationLauncher(init_ray=False)._launch_session(
         config,
         RayGenerationLaunchInputs(
             launch_contract=GenerationRuntimeLaunchContract(
@@ -630,18 +642,19 @@ def test_placement_and_launcher_consume_the_same_worker_snapshot(monkeypatch) ->
     assert launch_kwargs["num_cpus"] == owner.rollout_worker.cpus_per_worker == 2.5
     assert launch_kwargs["rpc_timeout_s"] == config.worker.worker_rpc_timeout_s
     assert launch_kwargs["operation_prefix"] == "rollout"
-    assert runtime.executor.generation_stall_timeout_s == config.worker.generation_stall_timeout_s
-    assert runtime.weight_sync is not None
-    assert runtime.executor.actor_dispatcher is runtime.weight_sync.actor_dispatcher
+    assert session.executor.generation_stall_timeout_s == config.worker.generation_stall_timeout_s
+    assert session.weight_sync is not None
+    assert session.executor.actor_dispatcher is session.weight_sync.actor_dispatcher
 
 
 def test_runtime_rejects_split_actor_admission_owners() -> None:
     with pytest.raises(ValueError, match="share one actor dispatcher"):
-        RayGenerationRuntime(
+        RayGenerationSession(
             SimpleNamespace(actor_dispatcher=RayActorDispatcher(("rollout-0",))),
-            weight_sync=SimpleNamespace(
+            SimpleNamespace(
                 actor_dispatcher=RayActorDispatcher(("rollout-0",)),
             ),
+            [],
         )
 
 
@@ -764,7 +777,7 @@ def test_pipelined_rejects_multiple_placement_bundles_before_ray_start(
     )
 
     with pytest.raises(ValueError, match="exactly one rollout placement bundle"):
-        RayGenerationLauncher(init_ray=False).launch(
+        RayGenerationLauncher(init_ray=False)._launch_session(
             config,
             launch_inputs,
             placement=placement,
@@ -1005,37 +1018,76 @@ def _runtime_factory_inputs(
     )
 
 
+class _FactorySession:
+    def __init__(self) -> None:
+        self.workers: list[Any] = []
+        self.weight_sync = object()
+        self.supports_non_draining_weight_sync = False
+        self.close = AsyncMock()
+        self.force_close_calls = 0
+        self.kill_workers_calls = 0
+
+    def force_close(self) -> None:
+        self.force_close_calls += 1
+
+    def kill_workers(self) -> None:
+        self.kill_workers_calls += 1
+
+
 def test_create_runtime_launches_resident_topology() -> None:
     config, launch_inputs, placement = _runtime_factory_inputs()
     launcher = RayGenerationLauncher(init_ray=False)
-    expected_runtime = object()
+    expected_session = _FactorySession()
 
-    with (
-        patch.object(
-            RayGenerationLauncher,
-            "launch",
-            autospec=True,
-            return_value=expected_runtime,
-        ) as launch,
-        patch(
-            "vrl.generation.ray.launcher._OnDemandRayGenerationRuntime",
-            autospec=True,
-        ) as on_demand,
-    ):
+    with patch.object(
+        RayGenerationLauncher,
+        "_launch_session",
+        autospec=True,
+        return_value=expected_session,
+    ) as launch:
         runtime = launcher.create_runtime(
             config,
             launch_inputs,
             placement=placement,
         )
 
-    assert runtime is expected_runtime
+    assert runtime._session is expected_session
+    assert runtime._session_factory is None
     launch.assert_called_once_with(
         launcher,
         config,
         launch_inputs,
         placement=placement,
     )
-    on_demand.assert_not_called()
+    asyncio.run(runtime.shutdown())
+
+
+def test_create_runtime_kills_resident_session_when_monitor_start_fails() -> None:
+    config, launch_inputs, placement = _runtime_factory_inputs()
+    launcher = RayGenerationLauncher(init_ray=False)
+    expected_session = _FactorySession()
+
+    with (
+        patch.object(
+            RayGenerationLauncher,
+            "_launch_session",
+            autospec=True,
+            return_value=expected_session,
+        ),
+        patch(
+            "vrl.generation.ray.health_monitor.RolloutWorkerHealthMonitor.start",
+            side_effect=RuntimeError("thread start failed"),
+        ),
+        pytest.raises(RuntimeError, match="thread start failed"),
+    ):
+        launcher.create_runtime(
+            config,
+            launch_inputs,
+            placement=placement,
+        )
+
+    assert expected_session.force_close_calls == 1
+    assert expected_session.kill_workers_calls == 1
 
 
 def test_create_runtime_defers_on_demand_topology_launch() -> None:
@@ -1043,34 +1095,22 @@ def test_create_runtime_defers_on_demand_topology_launch() -> None:
         rollout_mode="on_demand",
     )
     launcher = RayGenerationLauncher(init_ray=False)
-    expected_runtime = object()
 
-    with (
-        patch.object(
-            RayGenerationLauncher,
-            "launch",
-            autospec=True,
-        ) as launch,
-        patch(
-            "vrl.generation.ray.launcher._OnDemandRayGenerationRuntime",
-            autospec=True,
-            return_value=expected_runtime,
-        ) as on_demand,
-    ):
+    with patch.object(
+        RayGenerationLauncher,
+        "_launch_session",
+        autospec=True,
+    ) as launch:
         runtime = launcher.create_runtime(
             config,
             launch_inputs,
             placement=placement,
         )
 
-    assert runtime is expected_runtime
+    assert runtime._session is None
+    assert runtime._session_factory is not None
     launch.assert_not_called()
-    on_demand.assert_called_once_with(
-        config,
-        launch_inputs,
-        launcher=launcher,
-        placement=placement,
-    )
+    asyncio.run(runtime.shutdown())
 
 
 @pytest.mark.asyncio
@@ -1078,39 +1118,47 @@ async def test_deferred_activation_reuses_factory_launcher() -> None:
     config, launch_inputs, placement = _runtime_factory_inputs(
         rollout_mode="on_demand",
     )
+    config = replace(
+        config,
+        resources=replace(
+            config.resources,
+            rollout_gpus_per_worker=1.0,
+        ),
+    )
+    expected_launch_inputs = replace(
+        launch_inputs,
+        launch_contract=replace(
+            launch_inputs.launch_contract,
+            sleep_offload=True,
+        ),
+    )
     launcher = RayGenerationLauncher(
         init_ray=False,
         ray_init_kwargs={"address": "auto"},
     )
-    candidate = SimpleNamespace(
-        current_policy_version=0,
-        lifecycle=RuntimeLifecycle(),
-        shutdown=AsyncMock(),
-    )
-
-    runtime = launcher.create_runtime(
-        config,
-        launch_inputs,
-        placement=placement,
-    )
-    assert runtime._launcher is launcher
+    candidate = _FactorySession()
 
     with patch.object(
         RayGenerationLauncher,
-        "launch_async",
+        "_launch_session_async",
         autospec=True,
         return_value=candidate,
     ) as launch_async:
+        runtime = launcher.create_runtime(
+            config,
+            launch_inputs,
+            placement=placement,
+        )
         await runtime.activate()
 
     launch_async.assert_awaited_once_with(
         launcher,
         config,
-        runtime._launch_inputs,
+        expected_launch_inputs,
         placement=placement,
     )
     await runtime.shutdown()
-    candidate.shutdown.assert_awaited_once_with()
+    candidate.close.assert_awaited_once_with(force=False)
 
 
 @pytest.mark.parametrize("rollout_mode", ["resident", "on_demand"])
@@ -1285,7 +1333,7 @@ async def test_remote_chunk_size_probe_timeout_is_terminal_and_cancels_refs(
         def cancel(cls, value: Any, *, force: bool) -> None:
             cls.cancelled.append((value, force))
 
-    runtime = RayGenerationRuntime(executor)
+    runtime = _runtime(executor)
     monkeypatch.setattr(deadline_module, "require_ray", lambda: _Ray)
 
     with pytest.raises(
@@ -1341,7 +1389,7 @@ async def test_concurrent_auto_chunk_requests_share_one_probe_before_submission(
         return request
 
     executor.execute = execute
-    runtime = RayGenerationRuntime(executor)
+    runtime = _runtime(executor)
     first_request = _auto_chunk_request()
     second_request = replace(first_request, request_id="req-probe-second")
 
@@ -1444,7 +1492,7 @@ def test_real_ray_probe_fan_out_resolves_auto_once_across_the_fleet(local_ray) -
         return SimpleNamespace(request_id=request.request_id)
 
     executor.execute = execute
-    runtime = RayGenerationRuntime(executor)
+    runtime = _runtime(executor)
 
     async def go() -> None:
         await runtime.generate(_auto_chunk_request())

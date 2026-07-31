@@ -278,7 +278,7 @@ class _FakeFamilyEntry:
     ) -> Any:
         del root, device, precision, kwargs
         self._state["model_builds"] += 1
-        build = SimpleNamespace(family=self.family)
+        build = SimpleNamespace(family=self.family, rollout=None)
         self._state["resolved_build"] = build
         return build
 
@@ -421,7 +421,8 @@ def _install_common_fakes(
             (checkpoint, family, expected_model_identity, strict),
         )
 
-    # resolve_model/materialize live in vrl.run and reach the identity resolver
+    # resolve_model/ResolvedModel.materialize live in vrl.run and reach the
+    # identity resolver.
     # through its source module, so the stub targets the owner as well.
     monkeypatch.setattr(
         checkpoint_identity,
@@ -481,9 +482,9 @@ def _install_common_fakes(
         gatherer=_FakeGatherer(),
     )
     monkeypatch.setattr(
-        online,
-        "resolve_ray_generation_launch_inputs",
-        lambda run, *, replay_model: launch_inputs,
+        resolved_run.ResolvedOnlineRun,
+        "ray_launch_inputs",
+        lambda _run, _replay_model: launch_inputs,
     )
     monkeypatch.setattr(online, "RayGenerationLauncher", lambda: _FakeLauncher(state))
     monkeypatch.setattr(
