@@ -758,7 +758,7 @@ def test_wan_fsdp_replay_build_defers_full_gpu_move_until_sharding(
 
     from vrl.config.precision import resolve_precision_policy
     from vrl.config.schema import parse_config
-    from vrl.families.registry import get_model_family_entry
+    from vrl.models.families.registry import get_model_family_entry
     from vrl.models.steps.denoise import build as denoise_build
 
     class _TrackingWanTransformer(_ToyTransformer):

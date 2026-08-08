@@ -538,7 +538,7 @@ merge 而不炸 `--strict-markers`。**
 | 32K 参数的 Qwen2-VL Kling reward model | **31,824** | ✓ |
 | RAFT moving/static ≈ 38x；下载 ~20 MB；35 ms/pair | **54x**（本机纹理）；**4.0 MB**；**~13-17 ms/pair @128px** | 阈值（`static < 0.002`、`moving > 20 * static`）余量更大；128 px 相关金字塔下限属实 |
 | `pyproject:114` 的 `--no-deps` 漏了 vLLM 声明的 cbor2 | 漏的是 **48 个**非-extra 依赖；到 `block_table` 的链先撞 `cbor2` 再撞 `gguf`（且 `gguf` 不能桩掉） | 「补进 extra」不是一行改动；本 sprint 只交付门控修复，依赖清单是后续项 |
-| 工作树在 `vrl/rewards/`、`vrl/families/registry.py`、`pyproject.toml` 有未提交编辑 | 本次读取时**这三处全部干净**；HEAD 已从 `12f35438` 前进到 `812cc3cf`；当前脏文件是 `tests/generation/execution/test_execute_request_pipelined.py`、`tests/models/families/flux/test_diffusion_nft_interface.py` + 一个未跟踪的 `test_zzscratch_probe_real.py` | 与本 sprint 零重叠。但 `pyproject.toml` 是共享面（§2.8 若要补 vLLM 依赖会碰它），落地前先 `git status` 复核 |
+| 工作树在 `vrl/rewards/`、`vrl/models/families/registry.py`、`pyproject.toml` 有未提交编辑 | 本次读取时**这三处全部干净**；HEAD 已从 `12f35438` 前进到 `812cc3cf`；当前脏文件是 `tests/generation/execution/test_execute_request_pipelined.py`、`tests/models/families/flux/test_diffusion_nft_interface.py` + 一个未跟踪的 `test_zzscratch_probe_real.py` | 与本 sprint 零重叠。但 `pyproject.toml` 是共享面（§2.8 若要补 vLLM 依赖会碰它），落地前先 `git status` 复核 |
 
 ---
 

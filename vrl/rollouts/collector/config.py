@@ -12,7 +12,7 @@ from vrl.config.schema import (
     generation_request_rollout_fields,
     sampling_section_class_for_family,
 )
-from vrl.families.registry import FAMILY_REGISTRY
+from vrl.models.families.registry import FAMILY_REGISTRY
 from vrl.trajectory import (
     TrajectoryStoragePolicy,
     trajectory_storage_policy_from_cfg,

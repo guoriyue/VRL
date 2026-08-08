@@ -62,7 +62,7 @@ def test_sana_yaml_resolves_native_forward_precision() -> None:
     from vrl.config.builders import build_configs
     from vrl.config.loading import load_config
     from vrl.config.precision import RolePrecision
-    from vrl.families.registry import get_model_family_entry
+    from vrl.models.families.registry import get_model_family_entry
 
     cfg = load_config("experiment/sana/online_grpo_aesthetic")
     built = build_configs(cfg)

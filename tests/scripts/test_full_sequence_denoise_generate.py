@@ -5,7 +5,7 @@ import sys
 import pytest
 import torch
 
-from vrl.families.registry import get_model_family_entry
+from vrl.models.families.registry import get_model_family_entry
 from vrl.scripts.generation import full_sequence_denoise as generate
 
 

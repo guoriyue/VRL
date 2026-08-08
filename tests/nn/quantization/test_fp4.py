@@ -343,7 +343,7 @@ def test_resolve_model_build_derives_nvfp4_from_nested_precision() -> None:
 
     from vrl.config.precision import resolve_precision_policy
     from vrl.config.schema import parse_config
-    from vrl.families.registry import get_model_family_entry
+    from vrl.models.families.registry import get_model_family_entry
 
     cfg = OmegaConf.create(
         {

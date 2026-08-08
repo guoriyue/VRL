@@ -6,7 +6,7 @@ from typing import Any
 import pytest
 
 from vrl.config.precision import RolePrecision
-from vrl.families.registry import TokenFamilyBuild, get_model_family_entry
+from vrl.models.families.registry import TokenFamilyBuild, get_model_family_entry
 from vrl.models.interfaces.runtime import ModelBuild, RolloutBuildOptions
 from vrl.utils.config import import_from_path
 

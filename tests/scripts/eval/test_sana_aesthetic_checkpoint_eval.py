@@ -996,7 +996,7 @@ def test_generation_uses_fresh_base_before_reading_fullparam_checkpoints(
     monkeypatch,
     tmp_path,
 ) -> None:
-    import vrl.families.registry as model_families
+    import vrl.models.families.registry as model_families
     import vrl.utils.media as media
 
     events: list[str] = []
@@ -1138,7 +1138,7 @@ def test_generate_images_rejects_materialized_source_drift_before_generation(
     monkeypatch,
     tmp_path,
 ) -> None:
-    import vrl.families.registry as model_families
+    import vrl.models.families.registry as model_families
 
     build = object()
     built = False

@@ -366,7 +366,7 @@ shape。用同一协议让 schedule 不需要按 topology 分叉，比省掉两�
 - `vrl/generation/ray/worker.py`
 - `vrl/generation/ray/weight_sync.py`
 - `vrl/generation/execution/worker.py`
-- `vrl/families/registry.py`
+- `vrl/models/families/registry.py`
 - `vrl/ray/actor_group.py`
 - `vrl/ray/actor_pool.py`
 - `vrl/ray/operation_deadline.py`

@@ -164,7 +164,7 @@ def build_family_runtime_bundle(
     selects the same canonical entry rather than recreating registry data.
     """
 
-    from vrl.families.registry import DenoiseFamilyBuild, get_model_family_entry
+    from vrl.models.families.registry import DenoiseFamilyBuild, get_model_family_entry
     from vrl.utils.config import import_from_path
 
     if entry is None:
@@ -191,7 +191,7 @@ def build_family_replay_runtime_bundle(
 ) -> RuntimeBundle:
     """Build replay through a family's declarative diffusion recipe."""
 
-    from vrl.families.registry import DenoiseFamilyBuild
+    from vrl.models.families.registry import DenoiseFamilyBuild
     from vrl.utils.config import import_from_path
 
     build.require_replay()

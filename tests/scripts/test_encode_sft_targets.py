@@ -80,7 +80,7 @@ def test_entrypoint_rejects_malformed_model_before_registry_model_build(
     monkeypatch,
     tmp_path,
 ) -> None:
-    import vrl.families.registry as family_registry
+    import vrl.models.families.registry as family_registry
     from vrl.config import loading as config_loading
 
     monkeypatch.setattr(

@@ -31,7 +31,7 @@ LoRA-only 起步 + VAE tiling，和 `encode_prompt` 走 Qwen2.5-VL 文本编码�
 
 ## 2. 落地：要动的文件
 
-1. **Registry 一条目**（`vrl/families/registry.py`，照 sd3_5 第 132-143 行）：
+1. **Registry 一条目**（`vrl/models/families/registry.py`，照 sd3_5 第 132-143 行）：
    ```python
    register_rollout_family(_diffusion_entry(
        family="qwen_image", task="t2i", aliases=(),
@@ -79,5 +79,5 @@ LoRA-only 起步 + VAE tiling，和 `encode_prompt` 走 Qwen2.5-VL 文本编码�
 
 - diffusers QwenImagePipeline：https://huggingface.co/docs/diffusers/api/pipelines/qwenimage
 - Qwen-Image：https://huggingface.co/Qwen/Qwen-Image
-- 接入面证据：`vrl/families/registry.py:92-143`、`vrl/models/diffusion/base.py:41-96`、
+- 接入面证据：`vrl/models/families/registry.py:92-143`、`vrl/models/diffusion/base.py:41-96`、
   `vrl/models/diffusion/sd3_5/{model,runner,runtime}.py`、`configs/model/diffusion/sd3_5/medium.yaml`

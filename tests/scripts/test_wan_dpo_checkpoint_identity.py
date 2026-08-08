@@ -7,8 +7,8 @@ from types import SimpleNamespace
 import pytest
 import torch.utils.data
 
-import vrl.families.registry as registry
 import vrl.models.checkpoint_identity as checkpoint_identity
+import vrl.models.families.registry as registry
 import vrl.ray.resources as ray_resources
 import vrl.trainers.activation_checkpointing as activation_checkpointing
 import vrl.trainers.checkpointing as checkpointing

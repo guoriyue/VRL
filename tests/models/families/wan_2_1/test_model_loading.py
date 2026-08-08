@@ -150,7 +150,7 @@ def test_wan_resolver_projects_pipeline_offload_to_rollout_only(family: str, mon
     from diffusers import DiffusionPipeline
     from omegaconf import OmegaConf
 
-    from vrl.families.registry import get_model_family_entry
+    from vrl.models.families.registry import get_model_family_entry
 
     monkeypatch.setattr(
         DiffusionPipeline,
@@ -695,7 +695,7 @@ def test_wan_model_build_normalization_is_shared_by_replay_and_rollout(
 
     from vrl.config.precision import resolve_precision_policy
     from vrl.config.schema import parse_config
-    from vrl.families.registry import get_model_family_entry
+    from vrl.models.families.registry import get_model_family_entry
 
     revision = "a" * 40
     calls: list[dict[str, Any]] = []

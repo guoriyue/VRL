@@ -465,7 +465,7 @@ docstring 说的是一条真不变量，断言检查的是**两个虚构的名�
    ```
    并被 `tests/models/steps/denoise/common/test_vae_decode_memory.py:97-102` 的 `pytest.raises(ValueError, match=r"must not carry model\.memory")` 直接覆盖。
 
-**唯一的真解析点**在 `vrl/families/registry.py:317-337`（`model_memory.model_fields_set` → `GenerationMemoryPolicy`），而它的三条不变量已被 `tests/rollouts/runtime/test_family_registry.py` 逐条覆盖：
+**唯一的真解析点**在 `vrl/models/families/registry.py:317-337`（`model_memory.model_fields_set` → `GenerationMemoryPolicy`），而它的三条不变量已被 `tests/rollouts/runtime/test_family_registry.py` 逐条覆盖：
 
 ```python
 :108  assert build.generation_memory == GenerationMemoryPolicy(
@@ -651,8 +651,8 @@ grep -rn 'collect_scored\|_video_to_cthw\|_generate_one_video' vrl/ tests/ --inc
 - trainers 替身：`tests/trainers/test_fsdp.py:87,96,112,128,145,150`、`tests/trainers/test_ddp.py:54,63,75,91,112,117`、`tests/trainers/test_fsdp_fp32_master.py:20,47,169`、`tests/trainers/test_fsdp_gather_distributed.py:39,50,63`；既有同构范本 `tests/trainers/_state_dict_helpers.py`
 - `_free_port` 六处：`tests/scripts/test_online_metrics.py:27`、`tests/trainers/test_wan_fsdp_distributed.py:58`、`tests/trainers/test_fsdp_fp32_master.py:169`、`tests/trainers/test_fsdp_gather_distributed.py:63`、`tests/trainers/online/test_skip_backward_agreement_distributed.py:56`、`tests/utils/test_model_diagnostics.py:43`
 - launch contract 四处：`tests/generation/execution/test_execute_request_pipelined.py:47`（**in-flight**）、`tests/generation/execution/test_chunk_memory_shadow.py:163,354`、`tests/generation/ray/test_runtime_lease_sleep.py:160`；另两处 `tests/generation/execution/test_worker_versioned_slots.py:96`、`test_worker_sleep.py:149`
-- 派生源：`vrl/families/registry.py`（`FAMILY_REGISTRY` / `policy_semantics.generation_regime`）、`tests/models/interfaces/__init__.py`（既有派生 fixture）、`tests/models/interfaces/test_replay_model_contract.py:143,161-183,197,206,224`
-- 删除项证据：`tests/architecture/test_memory_policy_boundaries.py:52-60`（+ `vrl/models/interfaces/runtime.py:206-209`、`vrl/families/registry.py:317-337`、`tests/rollouts/runtime/test_family_registry.py:49,108,123,124`、`tests/models/steps/denoise/common/test_vae_decode_memory.py:97-102`）；`tests/rollouts/collector/_collect.py`（+ 活的 `tests/rollouts/collector/_helpers.py:12`、commit `f2600071`）；`vrl/scripts/eval/cosmos_predict25_kling_eval.py:377,390,411-416`（+ `vrl/scripts/eval/denoise_video_generation.py:13,25,81,97`、`tests/scripts/test_cosmos_predict25_kling_eval.py:41-73`、同名兄弟 `vrl/scripts/eval/wan_robotics_checkpoint_eval.py:597`）
+- 派生源：`vrl/models/families/registry.py`（`FAMILY_REGISTRY` / `policy_semantics.generation_regime`）、`tests/models/interfaces/__init__.py`（既有派生 fixture）、`tests/models/interfaces/test_replay_model_contract.py:143,161-183,197,206,224`
+- 删除项证据：`tests/architecture/test_memory_policy_boundaries.py:52-60`（+ `vrl/models/interfaces/runtime.py:206-209`、`vrl/models/families/registry.py:317-337`、`tests/rollouts/runtime/test_family_registry.py:49,108,123,124`、`tests/models/steps/denoise/common/test_vae_decode_memory.py:97-102`）；`tests/rollouts/collector/_collect.py`（+ 活的 `tests/rollouts/collector/_helpers.py:12`、commit `f2600071`）；`vrl/scripts/eval/cosmos_predict25_kling_eval.py:377,390,411-416`（+ `vrl/scripts/eval/denoise_video_generation.py:13,25,81,97`、`tests/scripts/test_cosmos_predict25_kling_eval.py:41-73`、同名兄弟 `vrl/scripts/eval/wan_robotics_checkpoint_eval.py:597`）
 - RW-11 依据：`vrl/config/schema.py:55-61`、`vrl/config/presets/reward/kling_video_reward.yaml:24-31`、`tests/rewards/kling_video_reward/test_function.py:70,163-165`
 - 陈旧引用：`docs/sprints/done/SPRINT_test_suite_tiny_real_and_fake_audit.md:274,282,704`；`tests/conftest.py:64-69`（归 infra 轨）
 - 配置：`pyproject.toml:203-211`（`--strict-markers` + 已注册 marker 清单，`real_cover` 不在其中）

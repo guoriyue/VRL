@@ -50,8 +50,8 @@ def _worker_setup_hook(repo_root: str) -> Any:
         # VRL checkout from the developer environment.
         sys.path.insert(0, repo_root)
 
-        import vrl.families.registry as registry
         import vrl.models.checkpoint_identity as checkpoint_identity
+        import vrl.models.families.registry as registry
         from vrl.models.interfaces import RuntimeBundle
 
         class TinyRuntimeModel:
@@ -111,7 +111,7 @@ def _worker_setup_hook(repo_root: str) -> Any:
         entry = registry.FAMILY_REGISTRY["janus_pro"]
         registry.FAMILY_REGISTRY["janus_pro"] = replace(
             entry,
-            executor_cls="vrl.families.registry:_RayLauncherTestExecutor",
+            executor_cls="vrl.models.families.registry:_RayLauncherTestExecutor",
         )
         registry.ModelFamilyEntry.build_rollout = build_tiny_rollout
         checkpoint_identity.resolve_checkpoint_model_identity = lambda _build: {"schema": "test"}

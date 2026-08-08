@@ -11,11 +11,11 @@ from enum import Enum
 from typing import TYPE_CHECKING, Any, Literal
 
 from vrl.config.model_schema import MODEL_MEMORY_SECTIONS
-from vrl.families.names import (
+from vrl.models.families.names import (
     normalize_model_family,
     validate_model_family_aliases,
 )
-from vrl.families.semantics import PolicySemantics, Task, TrajectoryLayout
+from vrl.models.families.semantics import PolicySemantics, Task, TrajectoryLayout
 
 if TYPE_CHECKING:
     from vrl.config.precision import PrecisionPolicy

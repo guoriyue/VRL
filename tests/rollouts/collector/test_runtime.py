@@ -10,13 +10,13 @@ import torch
 from omegaconf import OmegaConf
 
 from tests.rollouts.collector._helpers import collect_scored
-from vrl.families.registry import get_model_family_entry
 from vrl.generation import (
     GenerationInput,
     GenerationOutput,
     GenerationRequest,
     GenerationSampleRow,
 )
+from vrl.models.families.registry import get_model_family_entry
 from vrl.ray.resources import ActorLeasePolicy, PhaseHandoffPolicy, RayLifecyclePlan
 from vrl.rewards.base import RewardBatchReport, RewardCleanupError
 from vrl.rewards.inference import RewardMemoryReleaseProof
@@ -1016,7 +1016,7 @@ def test_nonlatent_gaussian_keeps_autoregressive_packing() -> None:
 
 def test_collector_forwards_reference_metadata_to_request() -> None:
     """Checks collector forwards reference metadata to request."""
-    from vrl.families.registry import get_model_family_entry
+    from vrl.models.families.registry import get_model_family_entry
     from vrl.rollouts.collector.config import RolloutCollectorConfig
     from vrl.rollouts.collector.requests import GenerationRequestBuilder
 
@@ -1036,7 +1036,7 @@ def test_collector_forwards_reference_metadata_to_request() -> None:
 
 def test_collector_forwards_target_metadata_to_request() -> None:
     """Checks collector forwards target artifact metadata to rewards."""
-    from vrl.families.registry import get_model_family_entry
+    from vrl.models.families.registry import get_model_family_entry
     from vrl.rollouts.collector.config import RolloutCollectorConfig
     from vrl.rollouts.collector.requests import GenerationRequestBuilder
 

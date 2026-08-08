@@ -45,14 +45,14 @@ from vrl.config import builders
 from vrl.config.builders import BuiltConfigs
 from vrl.config.precision import PrecisionPolicy
 from vrl.config.schema import RootConfig
-from vrl.families import registry
-from vrl.families.names import normalize_model_family
-from vrl.families.registry import ModelFamilyEntry
 from vrl.generation.launch_contract import GenerationRuntimeLaunchContract
 from vrl.generation.ray.config import RayGenerationConfig
 from vrl.generation.ray.launch_inputs import RayGenerationLaunchInputs
 from vrl.models import checkpoint_identity
 from vrl.models.dtypes import dtype_to_wire_name
+from vrl.models.families import registry
+from vrl.models.families.names import normalize_model_family
+from vrl.models.families.registry import ModelFamilyEntry
 from vrl.models.interfaces import ModelBuild, RuntimeBundle
 from vrl.ray import resources as ray_resources
 from vrl.ray.resources import ResolvedDistributedResources

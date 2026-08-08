@@ -7,7 +7,7 @@ RL actions determines `PolicySemantics`.
 
 ## Typed policy semantics
 
-`vrl.families.semantics.PolicySemantics` records four typed facts:
+`vrl.models.families.semantics.PolicySemantics` records four typed facts:
 
 | Field | Values | Meaning |
 |---|---|---|
@@ -89,7 +89,11 @@ ownership questions; `PolicySemantics` answers classification questions:
 
 ```text
 vrl/models/
-  families/<family>/          checkpoint-, backbone-, and replay-specific code
+  families/
+    registry.py               canonical family wiring and lazy build descriptors
+    names.py                  canonical names and external aliases
+    semantics.py              task and trainable-policy taxonomy
+    <family>/                 checkpoint-, backbone-, and replay-specific code
   steps/{denoise,token}/      shared model contracts, builders, and step helpers
 
 vrl/generation/
@@ -129,6 +133,10 @@ model protocol, lazy import, tensor adapter, or state machine. Binding
 `__init__.py` facades and gatherers stay because registry import paths and the
 driver/worker handoff are protocol boundaries. Cross-family consistency here is
 more valuable than reducing a few lines.
+
+The three package-root family modules remain import-light even though they are
+co-located with the implementations. Config and generation may import the
+registry; they must not import a concrete `<family>` package at module scope.
 
 `FAMILY_REGISTRY` remains a deliberately isolated taxonomy/config table, and
 `GENERIC_FULL_SEQUENCE_DENOISE_EXECUTOR` remains an import-path protocol value

@@ -10,7 +10,6 @@ import pytest
 
 from vrl.config.model_schema import LoraSection, ModelSection
 from vrl.config.precision import RolePrecision
-from vrl.families.registry import FAMILY_REGISTRY, TokenFamilyBuild, get_model_family_entry
 from vrl.models.checkpoint_identity import (
     MODEL_IDENTITY_SCHEMA,
     LocalCheckpointContent,
@@ -18,6 +17,7 @@ from vrl.models.checkpoint_identity import (
     resolve_checkpoint_model_identity,
     validate_checkpoint_identity_schema,
 )
+from vrl.models.families.registry import FAMILY_REGISTRY, TokenFamilyBuild, get_model_family_entry
 from vrl.models.interfaces.runtime import ModelBuild
 from vrl.utils.config import import_from_path
 

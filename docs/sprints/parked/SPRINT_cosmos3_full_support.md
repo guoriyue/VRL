@@ -124,7 +124,7 @@ audio/action = 非目标
 - `runtime.py`：`Cosmos3ChunkExecutor` 复用
   `vrl/generation/bindings/full_sequence_denoise/`，并因 pipeline 契约固定 batch=1；
   `build_cosmos3_replay_runtime_bundle` 构造 trainer replay runtime。
-- `vrl/families/registry.py` 是 family/executor/replay builder 的唯一 binding；
+- `vrl/models/families/registry.py` 是 family/executor/replay builder 的唯一 binding；
   `vrl/config/presets/model/cosmos/cosmos3_nano.yaml` 是当前唯一 Cosmos3 model preset，
   必须保留，不能在 preset sweep 中当作孤儿删除。
 - **复用**：`DiffusionModelBase`、`vrl/generation/steps/denoise/loop.py`、
@@ -159,7 +159,7 @@ audio / action 塔不做；action 走 `SPRINT_physical_ai_model_support.md` 的 
 | MR | 路径 | 复用/参考 |
 |---|---|---|
 | dependency | `pyproject.toml` / `uv.lock`（✅ 已完成） | diffusers 0.39 public release |
-| MR1/MR2 | `vrl/models/families/cosmos/cosmos3/`、`vrl/families/registry.py`、`vrl/config/presets/model/cosmos/cosmos3_nano.yaml` | `vrl/models/families/cosmos/predict2/`、diffusers `Cosmos3OmniPipeline` |
+| MR1/MR2 | `vrl/models/families/cosmos/cosmos3/`、`vrl/models/families/registry.py`、`vrl/config/presets/model/cosmos/cosmos3_nano.yaml` | `vrl/models/families/cosmos/predict2/`、diffusers `Cosmos3OmniPipeline` |
 | MR3 | `vrl/config/presets/experiment/cosmos3/online_grpo_t2v.yaml`、现有 train entry | `vrl/math/denoise/flow_matching.py`、`vrl/generation/steps/denoise/loop.py`、`vrl/rollouts/evaluators/denoise/sde_logprob.py` |
 | MR4 | experiment config | data-factory `video_world_v2w` |
 
@@ -189,7 +189,7 @@ audio / action 塔不做；action 走 `SPRINT_physical_ai_model_support.md` 的 
 - 本仓库复用：`vrl/math/denoise/flow_matching.py`、
   `vrl/generation/steps/denoise/loop.py`、
   `vrl/rollouts/evaluators/denoise/sde_logprob.py`、
-  `vrl/models/families/cosmos/predict2/`、`vrl/families/registry.py`
+  `vrl/models/families/cosmos/predict2/`、`vrl/models/families/registry.py`
 - 探针：`vrl/scripts/eval/cosmos3_nano_generator_probe.py`
 - 承接/下游：`docs/sprints/done/SPRINT_physical_ai_model_support.md`、
   `docs/sprints/done/SPRINT_cosmos_robotic_data_factory_domain_rl.md`（reward + 数据）、

@@ -56,7 +56,7 @@ AR 本轮没有 external provider。把 AR 放进 matrix 是为了证明 externa
 
 ### 不在 scope
 
-- 不把所有 23 个 registry entry 都跑成真实模型矩阵；
+- 不把所有 25 个 registry entry 都跑成真实模型矩阵；
 - 不用一个 shared seed 强求不同 engine bitwise identical output；
 - 不比较 trainer algorithm 优劣或 reward curve；
 - 不做 native transformer layer parity；该工作仍属于 parked native-executor sprint；

@@ -59,7 +59,7 @@ class GenerationWorkerCore:
                 f"gatherer must implement ChunkGatherer, got {type(gatherer).__name__}",
             )
         self.gatherer = gatherer
-        from vrl.families.registry import get_model_family_entry
+        from vrl.models.families.registry import get_model_family_entry
 
         self.family_entry = get_model_family_entry(launch_contract.family)
         self.executor: GenerationChunkExecutor | None = None
@@ -701,7 +701,7 @@ class GenerationWorkerCore:
         assert_rollout_quantization_applied(model, build)
         executor_kwargs = dict(launch_contract.executor_kwargs)
         executor_kwargs["gatherer"] = self.gatherer
-        from vrl.families.registry import GENERIC_FULL_SEQUENCE_DENOISE_EXECUTOR
+        from vrl.models.families.registry import GENERIC_FULL_SEQUENCE_DENOISE_EXECUTOR
 
         executor_cls = import_from_path(self.family_entry.executor_cls)
         if self.family_entry.executor_cls == GENERIC_FULL_SEQUENCE_DENOISE_EXECUTOR:

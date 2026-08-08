@@ -78,7 +78,7 @@ def build_token_family_bundle(
         raise ValueError(
             f"token build family {build.family!r} does not match entry {entry.family!r}",
         )
-    from vrl.families.registry import TokenFamilyBuild
+    from vrl.models.families.registry import TokenFamilyBuild
 
     recipe = entry.family_build
     if not isinstance(recipe, TokenFamilyBuild):

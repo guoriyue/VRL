@@ -12,6 +12,9 @@ steps, generation composition, and concrete bindings under
 `vrl/generation/{steps,composition,bindings}/`. Do not add new `models/ar`,
 `models/diffusion`, `generation/ar`, or `generation/diffusion` paths.
 
+The `vrl/models/families/` package root owns the import-light registry, names,
+and policy semantics; its `<family>/` subdirectories own concrete implementations.
+
 Every registry entry classifies the trainable policy with `PolicySemantics`:
 generation regime (`full_sequence`, `token_autoregressive`, or
 `chunk_autoregressive`), policy step (`denoise` or `token`), action distribution,
@@ -75,7 +78,7 @@ Do not add algorithm code for a model family.
 
 ## 3. Register a descriptor-driven full-sequence denoise family
 
-Add one `_full_sequence_denoise_entry` in `vrl/families/registry.py`:
+Add one `_full_sequence_denoise_entry` in `vrl/models/families/registry.py`:
 
 ```python
 _register_model_family(
@@ -98,7 +101,7 @@ when replay must load a scheduler other than the shared flow-match scheduler.
 Set `requires_lora=True` only when the model implementation genuinely rejects
 full-parameter training.
 
-External aliases live only in `vrl/families/names.py`. Add one there when
+External aliases live only in `vrl/models/families/names.py`. Add one there when
 an existing public spelling must remain accepted; do not copy aliases onto the
 runtime entry.
 

@@ -13,8 +13,8 @@ import torch
 if TYPE_CHECKING:
     from vrl.ray.resources import RayLifecyclePlan
 
-from vrl.families.registry import ModelFamilyEntry
 from vrl.generation import GenerationOutput, GenerationRuntime
+from vrl.models.families.registry import ModelFamilyEntry
 from vrl.rewards.base import RewardCleanupError
 from vrl.rollouts.batch import RolloutBatch
 from vrl.rollouts.collector.batch_builder import (

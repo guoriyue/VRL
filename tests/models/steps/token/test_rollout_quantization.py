@@ -22,7 +22,7 @@ def _build_emu3_bundle(
 ):
     """Exercise the production registry build with a test-owned tiny model."""
 
-    from vrl.families.registry import get_model_family_entry
+    from vrl.models.families.registry import get_model_family_entry
     from vrl.utils import config as config_utils
 
     entry = get_model_family_entry("emu3")

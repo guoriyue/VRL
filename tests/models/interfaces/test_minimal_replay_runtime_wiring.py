@@ -113,7 +113,7 @@ def test_model_build_resolver_projects_nvfp4_over_the_rollout_base_dtype() -> No
 
     from vrl.config.precision import resolve_precision_policy
     from vrl.config.schema import parse_config
-    from vrl.families.registry import get_model_family_entry
+    from vrl.models.families.registry import get_model_family_entry
 
     cfg = OmegaConf.create(
         {
@@ -162,7 +162,7 @@ def test_full_generation_build_with_training_role_excludes_rollout_quantization(
 
     from vrl.config.precision import resolve_precision_policy
     from vrl.config.schema import parse_config
-    from vrl.families.registry import get_model_family_entry
+    from vrl.models.families.registry import get_model_family_entry
 
     monkeypatch.setattr(
         "diffusers.DiffusionPipeline.load_config",
@@ -314,7 +314,7 @@ def test_registry_descriptor_replay_builder_returns_minimal_bundle(
     ``DenoiseFamilyBuild`` recipe drives the generic builder, keyed by
     ``build.family``. Behavioral contract matches the per-family builders above.
     """
-    from vrl.families.registry import get_model_family_entry
+    from vrl.models.families.registry import get_model_family_entry
     from vrl.models.steps.denoise import build as _shared_build
 
     loaded_builds: list[ModelBuild] = []
@@ -367,7 +367,7 @@ def test_wan_replay_builder_uses_wan_pipeline_scheduler_class(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """The wan descriptor's scheduler_classname drives the generic replay loader."""
-    from vrl.families.registry import get_model_family_entry
+    from vrl.models.families.registry import get_model_family_entry
     from vrl.models.steps.denoise import build as _shared_build
 
     scheduler_classes: list[str] = []
@@ -395,7 +395,7 @@ def test_wan_i2v_replay_builder_uses_i2v_replay_model(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """The i2v registry entry's replay_cls selects the I2V replay model."""
-    from vrl.families.registry import get_model_family_entry
+    from vrl.models.families.registry import get_model_family_entry
     from vrl.models.families.wan_2_1.model import WanI2VReplayModel
     from vrl.models.steps.denoise import build as _shared_build
 
@@ -423,7 +423,7 @@ def test_wan_dual_stage_replay_builder_loads_low_noise_transformer(
 ) -> None:
     """Wan 2.2 dual-stage: prepare_replay late-loads transformer_2 and trains it."""
     import vrl.models.loader as _loader
-    from vrl.families.registry import get_model_family_entry
+    from vrl.models.families.registry import get_model_family_entry
     from vrl.models.steps.denoise import build as _shared_build
 
     loaded_subfolders: list[str] = []
@@ -470,8 +470,8 @@ def test_cosmos_predict25_replay_builder_keeps_diffusion_nft_surface(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Checks Cosmos predict25 replay builder keeps diffusion NFT surface."""
-    from vrl.families.registry import get_model_family_entry
     from vrl.models.families.cosmos.predict2_5 import model as predict25_model
+    from vrl.models.families.registry import get_model_family_entry
     from vrl.models.steps.denoise import build as _shared_build
 
     # predict2_5 is a registry-descriptor family: the generic replay builder
@@ -550,7 +550,7 @@ def test_anima_empty_prompts_are_replaced_before_tokenization() -> None:
 def test_anima_model_build_uses_explicit_local_paths() -> None:
     """Checks the Anima model build uses explicit local paths."""
     from vrl.config.loading import load_config
-    from vrl.families.registry import get_model_family_entry
+    from vrl.models.families.registry import get_model_family_entry
 
     cfg = load_config(
         "experiment/anima_preview3/online_grpo_aesthetic",
@@ -594,7 +594,7 @@ def test_anima_artifact_resolution_fails_loud_when_hub_fetch_fails(
 ) -> None:
     """Hub-fetch failure surfaces the config knob, not a raw download error."""
     from vrl.config.loading import load_config
-    from vrl.families.registry import get_model_family_entry
+    from vrl.models.families.registry import get_model_family_entry
 
     cfg = load_config(
         "experiment/anima_preview3/online_grpo_aesthetic",
@@ -686,7 +686,7 @@ def test_ar_replay_builders_return_minimal_bundles(
     use_lora: bool,
 ) -> None:
     """Checks AR replay builders return minimal bundles."""
-    from vrl.families.registry import get_model_family_entry
+    from vrl.models.families.registry import get_model_family_entry
 
     model_module = __import__(model_module_path, fromlist=[model_attr])
     monkeypatch.setattr(model_module, model_attr, _TinyRuntimeModel)
@@ -725,7 +725,7 @@ def test_ar_rollout_builders_follow_registry_descriptors(
     model_module_path: str,
     model_attr: str,
 ) -> None:
-    from vrl.families.registry import get_model_family_entry
+    from vrl.models.families.registry import get_model_family_entry
 
     model_module = __import__(model_module_path, fromlist=[model_attr])
     monkeypatch.setattr(model_module, model_attr, _TinyRuntimeModel)

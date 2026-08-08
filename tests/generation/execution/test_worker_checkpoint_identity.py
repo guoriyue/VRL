@@ -8,8 +8,8 @@ from typing import Any
 
 import pytest
 
-import vrl.families.registry as registry
 import vrl.models.checkpoint_identity as checkpoint_identity
+import vrl.models.families.registry as registry
 from vrl.generation.execution.worker import GenerationWorkerCore
 from vrl.generation.launch_contract import GenerationRuntimeLaunchContract
 from vrl.models.interfaces.generation_memory import (
@@ -51,7 +51,7 @@ class _FamilyEntry:
     task = "t2i"
     executor_cls = "tests.generation.execution.test_worker_checkpoint_identity:_ChunkExecutor"
 
-    from vrl.families.registry import GenerationRuntimeCapabilities as _Caps
+    from vrl.models.families.registry import GenerationRuntimeCapabilities as _Caps
 
     runtime_capabilities = _Caps()
 

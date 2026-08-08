@@ -23,10 +23,10 @@ from vrl.config.builders import build_configs
 from vrl.config.loading import load_config
 from vrl.config.precision import PrecisionPolicy
 from vrl.config.schema import RootConfig
-from vrl.families.registry import ModelFamilyEntry, get_model_family_entry
 from vrl.generation import GenerationOutput, GenerationRequest, build_sample_rows
 from vrl.generation.execution.planner import build_engine_plan
 from vrl.models.dtypes import resolve_torch_dtype
+from vrl.models.families.registry import ModelFamilyEntry, get_model_family_entry
 from vrl.ray.resources import resolve_distributed_resources
 from vrl.rollouts.collector import build_rollout_collector
 from vrl.rollouts.collector.config import RolloutCollectorConfig

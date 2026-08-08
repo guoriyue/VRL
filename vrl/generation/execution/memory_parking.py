@@ -22,8 +22,8 @@ from vrl.utils.cuda_memory import (
 from vrl.utils.logging import init_logger
 
 if TYPE_CHECKING:
-    from vrl.families.registry import GenerationParkingProfile
     from vrl.generation.protocols import GenerationChunkExecutor
+    from vrl.models.families.registry import GenerationParkingProfile
 
 logger = init_logger(__name__)
 
@@ -82,7 +82,7 @@ class WorkerMemoryParking:
             raise TypeError(
                 "worker memory parking requires a GenerationRuntimeLaunchContract",
             )
-        from vrl.families.registry import (
+        from vrl.models.families.registry import (
             GenerationParkingProfile,
             get_model_family_entry,
         )
@@ -151,7 +151,7 @@ class WorkerMemoryParking:
         self._phase = _ParkingPhase.ACTIVE
         self._failure_reason = None
 
-        from vrl.families.registry import GenerationParkingProfile
+        from vrl.models.families.registry import GenerationParkingProfile
 
         if not (state.required and state.profile is GenerationParkingProfile.CUMEM):
             executor = build_executor()

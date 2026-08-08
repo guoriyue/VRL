@@ -11,7 +11,6 @@ from omegaconf import OmegaConf
 
 from vrl.config.precision import resolve_precision_policy
 from vrl.config.schema import parse_config
-from vrl.families.registry import get_model_family_entry
 from vrl.generation import GenerationRequest
 from vrl.generation.bindings.token_autoregressive import ARRequestLayout
 from vrl.generation.execution.chunks import SampleChunk
@@ -37,6 +36,7 @@ from vrl.models.families.nextstep_1.runtime import (
     NextStep1ChunkGatherer,
     nextstep_config_from_build,
 )
+from vrl.models.families.registry import get_model_family_entry
 
 
 def _build_cfg(*, use_lora: bool, freeze_vae: bool):

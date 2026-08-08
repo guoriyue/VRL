@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from vrl.families.registry import get_model_family_entry
+from vrl.models.families.registry import get_model_family_entry
 from vrl.rollouts.collector.config import RolloutCollectorConfig
 from vrl.rollouts.collector.requests import GenerationRequestBuilder
 from vrl.trainers.data import load_prompt_manifest

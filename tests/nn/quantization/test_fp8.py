@@ -531,7 +531,7 @@ def test_resolve_model_build_derives_fp8_from_precision_rollout():
 
     from vrl.config.precision import resolve_precision_policy
     from vrl.config.schema import parse_config
-    from vrl.families.registry import get_model_family_entry
+    from vrl.models.families.registry import get_model_family_entry
 
     fp8_cfg = OmegaConf.create(
         {

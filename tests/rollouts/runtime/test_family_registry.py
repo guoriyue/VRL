@@ -16,11 +16,11 @@ from vrl.config.loading import load_config
 from vrl.config.precision import resolve_precision_policy
 from vrl.config.sampling_schema import SamplingSection
 from vrl.config.schema import parse_config
-from vrl.families.names import (
+from vrl.models.families.names import (
     _FAMILY_BY_ALIAS,
     normalize_model_family,
 )
-from vrl.families.registry import (
+from vrl.models.families.registry import (
     FAMILY_REGISTRY,
     SHARED_MODEL_SECTION_CLS,
     DenoiseFamilyBuild,
@@ -28,7 +28,7 @@ from vrl.families.registry import (
     TokenFamilyBuild,
     get_model_family_entry,
 )
-from vrl.families.semantics import GenerationRegime, PolicySemantics
+from vrl.models.families.semantics import GenerationRegime, PolicySemantics
 from vrl.models.interfaces.generation_memory import (
     GenerationMemoryPolicy,
     VaeDecodeMemory,
@@ -299,8 +299,8 @@ def test_family_name_import_does_not_load_runtime_registry() -> None:
             sys.executable,
             "-c",
             (
-                "import sys; import vrl.families.names; "
-                "assert 'vrl.families.registry' not in sys.modules"
+                "import sys; import vrl.models.families.names; "
+                "assert 'vrl.models.families.registry' not in sys.modules"
             ),
         ],
         check=False,
@@ -472,7 +472,7 @@ def test_model_section_imports_do_not_load_model_runtimes() -> None:
                 "from vrl.config.model_schema import "
                 "LoraSection, ModelExecutorSection, ModelMemorySection, "
                 "TorchCompileSection, VaeDecodeMemorySection; "
-                "from vrl.families.registry import FAMILY_REGISTRY; "
+                "from vrl.models.families.registry import FAMILY_REGISTRY; "
                 "from vrl.utils.config import import_from_path; "
                 "sections = [import_from_path(entry.model_section_cls) "
                 "for entry in FAMILY_REGISTRY.values()]; "
@@ -516,7 +516,7 @@ def test_token_runtime_config_imports_do_not_load_model_runtimes() -> None:
             "-c",
             (
                 "import sys; "
-                "from vrl.families.registry import get_model_family_entry; "
+                "from vrl.models.families.registry import get_model_family_entry; "
                 "from vrl.utils.config import import_from_path; "
                 "emu_entry = get_model_family_entry('emu3'); "
                 "glm_entry = get_model_family_entry('glm_image'); "

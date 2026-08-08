@@ -308,7 +308,7 @@ def test_prompt_encoder_axis_in_model_build(prompt_encoder, expected):
     """Prompt-encoder precision reaches the runtime as a real torch dtype."""
     # sd3_5 is a registry-descriptor family: its build comes from the generic
     # resolver (family resolved from cfg.model.family).
-    from vrl.families.registry import get_model_family_entry
+    from vrl.models.families.registry import get_model_family_entry
 
     block = _plain_policy("fp32")
     block["rollout"]["prompt_encoders"] = {"dtype": prompt_encoder}
@@ -326,7 +326,7 @@ def test_prompt_encoder_axis_in_model_build(prompt_encoder, expected):
 
 def test_family_parameter_dtype_is_derived_from_runtime_role() -> None:
     """Replay follows train while rollout follows the plain rollout precision."""
-    from vrl.families.registry import get_model_family_entry
+    from vrl.models.families.registry import get_model_family_entry
 
     cfg = _with_precision(
         "sd3_5/online_grpo_ocr",
@@ -356,7 +356,7 @@ def test_family_parameter_dtype_is_derived_from_runtime_role() -> None:
 
 def test_direct_tool_parameter_dtype_override_is_explicit() -> None:
     """Non-production tools may override storage dtype only through a named argument."""
-    from vrl.families.registry import get_model_family_entry
+    from vrl.models.families.registry import get_model_family_entry
 
     cfg = _with_precision("sd3_5/online_grpo_ocr", _plain_policy("bf16"))
     built = build_configs(cfg)

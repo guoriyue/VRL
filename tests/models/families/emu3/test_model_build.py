@@ -10,13 +10,13 @@ from omegaconf import OmegaConf
 
 from vrl.config.precision import RolePrecision, resolve_precision_policy
 from vrl.config.schema import parse_config
-from vrl.families.registry import get_model_family_entry
 from vrl.generation import GenerationRequest
 from vrl.generation.execution.chunks import SampleChunk
 from vrl.models.families.emu3.config import Emu3Config
 from vrl.models.families.emu3.model import Emu3Config as ModelEmu3Config
 from vrl.models.families.emu3.runner import Emu3TokenRunner
 from vrl.models.families.emu3.runtime import Emu3ChunkExecutor, emu3_config_from_build
+from vrl.models.families.registry import get_model_family_entry
 
 
 @pytest.mark.parametrize("use_lora", [True, False])

@@ -1,1 +1,1 @@
-"""Model interfaces and family implementations."""
+"""Model interfaces, family registry, and family implementations."""

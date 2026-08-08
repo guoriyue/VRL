@@ -41,8 +41,10 @@ chunk-autoregressive video/world-model policy 的 RL 训练，在这里**一份 
 
 1. **去噪轨迹 rollout 编排** — `vrl/rollouts/orchestration/continuous/`（producer/queue/consumer + staleness）+ `vrl/generation/steps/denoise/loop.py`（逐步去噪、每步产出 `log_prob/prev_sample_mean/std_dev_t`）+ `vrl/generation/bindings/full_sequence_denoise/`（request/trajectory/decode）+ `vrl/trainers/weight_sync.py`（version-stamped 权重同步）。多步轨迹捕获 + 每步 replay 重算 old_log_prob，是 token-autoregressive rollout 没有的形状。
 2. **统一模型族契约** — `vrl/models/interfaces/replay.py`（`RuntimeModel.replay_forward`）+
-   `vrl/families/registry.py`。registry 当前有 **23 个 canonical entry（17 个
-   full-sequence denoise + 6 个 token-autoregressive，含任务变体）**，都藏在同一个 replay 契约后面。
+   `vrl/models/families/registry.py`。registry 当前有 **25 个 canonical entry（17 个
+   full-sequence denoise + 2 个 chunk-autoregressive denoise + 6 个
+   token-autoregressive，含任务变体）**；24 个支持 replay，MAGI-1 明确为
+   generation-only。
    family code 统一落 `vrl/models/families/<family>/`，标准 denoise 接入是 **model
    module + descriptor entry + bundled presets + contract tests**，trainer/algorithm 零改动。
 3. **denoise 专属 RL 数学** — `vrl/algorithms/grpo/continuous.py` + `diffusion_nft.py` + `vrl/math/denoise/flow_matching.py`。Flow-DPPO 的隐空间非对称 KL 信赖域、DiffusionNFT 的 likelihood-free 严格 on-policy、连续 log-prob 上的 TIS/RS 精度漂移校正——这些和类别 RL **数学上不兼容**，不是换 config 能搬的。
@@ -57,7 +59,7 @@ gap audit 给的清单我**重排过**(独立判断,见 §0):去掉了"建 vLLM 
 |---|---|---|
 | **P0 信任** | **只有一条 validated reference 曲线** | SD3.5-OCR 已证明一条路径，但还不足以证明 video full-sequence denoise 与 token-autoregressive image 两种 policy profile。采用仍被“reward 是否真的能涨”阻塞。 |
 | **P0 上手** | **quickstart 尚未做到轻量可复现** | README 已有首个 SD3.5-OCR job 和预期信号，但仍需要真实权重、OCR 依赖和 GPU；离 clone 后快速验证完整 RL 闭环仍有距离。 |
-| **P0 广度** | **23 个 registry entry 只有 1 个 validated family** | 每个 validated profile 都会扩大可信覆盖，但不要陷入逐 entry 跑曲线的跑步机——先钉 3 条（image full-sequence denoise / video full-sequence denoise / token-autoregressive image）作为信任锚。 |
+| **P0 广度** | **25 个 registry entry 只有 1 个 validated family** | 每个 validated profile 都会扩大可信覆盖，但不要陷入逐 entry 跑曲线的跑步机——先钉 3 条（image full-sequence denoise / video full-sequence denoise / token-autoregressive image）作为信任锚。 |
 | **P1 正确性** | 持续硬化 replay/log-prob 契约 + E2E 不在 CI | 这是护城河本身。convergence 回归现在 CI 看不见(GPU 训练不在 PR CI)。 |
 | **P1 上手** | 依赖仍按功能拆分，重型 accelerator 需隔离 | README 已有用例矩阵，uv lock 也声明了真实不兼容组合；下一步是减少核心安装体积和进一步收敛 extra 命名。 |
 | **P1 广度** | 加新模型族仍缺可执行模板 | 已有 `docs/ADDING_A_MODEL_FAMILY.md`，但还缺一套由 CI 验证、可直接复制的最小 family skeleton。 |

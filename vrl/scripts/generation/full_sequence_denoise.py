@@ -144,9 +144,9 @@ def main() -> None:
 
     import torch
 
-    from vrl.families.registry import get_model_family_entry
     from vrl.generation.types import VideoGenerationRequest
     from vrl.math.denoise.flow_matching import sde_step_with_logprob
+    from vrl.models.families.registry import get_model_family_entry
 
     entry = get_model_family_entry(args.family)
     family = entry.family

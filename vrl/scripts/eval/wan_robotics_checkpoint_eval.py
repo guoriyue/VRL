@@ -29,7 +29,7 @@ from vrl import run
 from vrl.config.loading import load_config
 from vrl.config.precision import resolve_precision_policy
 from vrl.config.schema import parse_config
-from vrl.families.registry import get_model_family_entry
+from vrl.models.families.registry import get_model_family_entry
 from vrl.rewards.inference import (
     RewardInferenceArtifact,
     RewardInferenceRequest,

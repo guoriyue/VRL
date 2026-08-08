@@ -18,7 +18,7 @@ from vrl.config.builders import build_configs, build_reward_config
 from vrl.config.loading import load_config
 from vrl.config.precision import RolePrecision
 from vrl.config.schema import parse_config
-from vrl.families.registry import get_model_family_entry
+from vrl.models.families.registry import get_model_family_entry
 from vrl.ray.resources import resolve_distributed_resources
 from vrl.rollouts.collector.config import RolloutCollectorConfig
 from vrl.run import OnlineRunConfig

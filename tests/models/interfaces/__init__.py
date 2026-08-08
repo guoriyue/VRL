@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from vrl.families.registry import FAMILY_REGISTRY, DenoiseFamilyBuild, TokenFamilyBuild
+from vrl.models.families.registry import FAMILY_REGISTRY, DenoiseFamilyBuild, TokenFamilyBuild
 from vrl.utils.config import import_from_path
 
 # Custom replay construction is the only place the registry cannot derive the

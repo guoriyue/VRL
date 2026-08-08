@@ -1,1 +1,1 @@
-"""Family-specific model implementations, independent of policy taxonomy."""
+"""Model-family registry and implementations with a lightweight package import."""

@@ -167,7 +167,7 @@ def main(argv: list[str] | None = None) -> None:
     if identity_root.model is None:
         raise ValueError("SANA checkpoint evaluation requires model configuration")
     identity_precision = resolve_precision_policy(identity_root)
-    from vrl.families.registry import get_model_family_entry
+    from vrl.models.families.registry import get_model_family_entry
     from vrl.run import resolve_model
 
     identity_entry = get_model_family_entry(str(identity_root.model.family))
@@ -964,7 +964,7 @@ def _generate_images(
     device: Any,
     expected_model_identity: dict[str, Any],
 ) -> list[GeneratedImage]:
-    from vrl.families.registry import get_model_family_entry
+    from vrl.models.families.registry import get_model_family_entry
     from vrl.run import resolve_model
     from vrl.utils.media import write_png
 

@@ -163,7 +163,7 @@ def test_offline_dpo_builds_its_full_model_through_the_family_registry(
             )
             raise _ReachedRegistryBoundary
 
-    import vrl.families.registry as registry
+    import vrl.models.families.registry as registry
     import vrl.ray.resources as ray_resources
 
     def _entry_for(family: str) -> _Entry:
@@ -277,8 +277,8 @@ def test_offline_dpo_uses_shared_gradient_checkpointing_policy(
         def build_rollout(self, build: object) -> _Bundle:
             return bundle
 
-    import vrl.families.registry as registry
     import vrl.models.checkpoint_identity as checkpoint_identity
+    import vrl.models.families.registry as registry
     import vrl.ray.resources as ray_resources
 
     monkeypatch.setattr(registry, "get_model_family_entry", lambda _family: _Entry())

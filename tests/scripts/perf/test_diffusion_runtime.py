@@ -25,7 +25,7 @@ def test_build_runtime_hands_the_resolved_build_to_the_family_rollout_builder(
     precision)`` objects, and ``build_rollout`` must receive exactly what the
     resolver returned — the function adds no projection of its own.
     """
-    import vrl.families.registry as families
+    import vrl.models.families.registry as families
 
     root = parse_config(
         OmegaConf.create(

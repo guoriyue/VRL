@@ -643,7 +643,7 @@ def resolve_checkpoint_model_identity(
 ) -> dict[str, Any]:
     """Resolve one path-independent identity from a validated ``ModelBuild``."""
 
-    from vrl.families.registry import TokenFamilyBuild, get_model_family_entry
+    from vrl.models.families.registry import TokenFamilyBuild, get_model_family_entry
     from vrl.utils.config import import_from_path
 
     entry = get_model_family_entry(str(build.family))

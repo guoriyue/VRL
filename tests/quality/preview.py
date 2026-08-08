@@ -78,12 +78,12 @@ def generate_rollout_preview(
         raise RuntimeError("rollout preview requires a CUDA GPU")
 
     from vrl.config.validation import validate_training_config
-    from vrl.families.registry import (
+    from vrl.generation.execution.ids import build_sample_rows
+    from vrl.models.dtypes import dtype_to_wire_name
+    from vrl.models.families.registry import (
         GENERIC_FULL_SEQUENCE_DENOISE_EXECUTOR,
         get_model_family_entry,
     )
-    from vrl.generation.execution.ids import build_sample_rows
-    from vrl.models.dtypes import dtype_to_wire_name
     from vrl.models.interfaces.replay import require_runtime_model
     from vrl.models.loader import assert_rollout_quantization_applied
     from vrl.rollouts.collector.config import RolloutCollectorConfig

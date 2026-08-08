@@ -8,12 +8,12 @@ import torch
 import torch.nn as nn
 
 from tests.models.steps.token.fixtures import build_stub_janus_model
-from vrl.families.registry import get_model_family_entry
 from vrl.generation import GenerationRequest, GenerationSampleRow
 from vrl.models.families.janus_pro.model import (
     JANUS_IMAGE_VOCAB_SIZE,
     JanusProModel,
 )
+from vrl.models.families.registry import get_model_family_entry
 from vrl.models.interfaces import ReplayResult
 from vrl.rollouts.batch import RolloutBatch
 from vrl.rollouts.collector import build_rollout_collector

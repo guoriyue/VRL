@@ -16,9 +16,9 @@ from PIL import Image
 from vrl.config.loading import load_config
 from vrl.config.precision import PrecisionPolicy, resolve_precision_policy
 from vrl.config.schema import RootConfig, parse_config
-from vrl.families.registry import get_model_family_entry
 from vrl.generation.types import VideoGenerationRequest
 from vrl.models.dtypes import resolve_torch_dtype
+from vrl.models.families.registry import get_model_family_entry
 from vrl.scripts.eval._device import resolve_eval_device
 from vrl.trainers.data import load_prompt_manifest
 from vrl.utils.media import to_pil_image

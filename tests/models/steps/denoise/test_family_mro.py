@@ -19,7 +19,7 @@ from typing import Any
 
 import pytest
 
-from vrl.families.registry import FAMILY_REGISTRY, DenoiseFamilyBuild
+from vrl.models.families.registry import FAMILY_REGISTRY, DenoiseFamilyBuild
 from vrl.models.steps.denoise import DiffusionModelBase
 from vrl.models.steps.denoise.base import DiffusersPipelineModelBase
 from vrl.utils.config import import_from_path

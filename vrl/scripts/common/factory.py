@@ -7,8 +7,8 @@ from typing import Any
 
 from vrl.algorithms.base import Algorithm
 from vrl.config.builders import BuiltConfigs
-from vrl.families.registry import ModelFamilyEntry
 from vrl.models.dtypes import resolve_torch_dtype
+from vrl.models.families.registry import ModelFamilyEntry
 from vrl.ray.resources import ResolvedDistributedResources, require_reward_device
 
 

@@ -6,9 +6,9 @@ import uuid
 from collections.abc import Mapping
 from typing import Any, NamedTuple
 
-from vrl.families.registry import ModelFamilyEntry
-from vrl.families.semantics import task_type_for
 from vrl.generation import GenerationInput, GenerationRequest
+from vrl.models.families.registry import ModelFamilyEntry
+from vrl.models.families.semantics import task_type_for
 from vrl.rollouts.collector.config import RolloutCollectorConfig
 
 

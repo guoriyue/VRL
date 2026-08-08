@@ -6,8 +6,8 @@ from typing import Any
 
 import torch
 
-from vrl.families.semantics import task_modality
 from vrl.generation.types import GenerationRequest, GenerationSampleRow
+from vrl.models.families.semantics import task_modality
 from vrl.trajectory.types import (
     ReplayInput,
     TrajectoryAxis,
@@ -795,7 +795,7 @@ def _serializable_value(value: Any) -> Any:
 
 
 def _reward_modality_for_task(task: str) -> str:
-    # Video-task set is owned by vrl.families.semantics (single source), so a
+    # Video-task set is owned by vrl.models.families.semantics (single source), so a
     # new video token can't silently fall through to the "image" default here.
     return task_modality(task)
 

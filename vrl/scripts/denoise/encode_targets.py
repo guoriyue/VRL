@@ -145,7 +145,7 @@ def main(argv: list[str] | None = None) -> None:
     from vrl.config.loading import load_config
     from vrl.config.precision import resolve_precision_policy
     from vrl.config.schema import parse_config
-    from vrl.families.registry import (
+    from vrl.models.families.registry import (
         get_model_family_entry,
     )
     from vrl.trainers.data import load_prompt_examples_from_config

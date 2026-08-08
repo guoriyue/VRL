@@ -247,7 +247,7 @@ def test_wan_runtime_bundle_applies_model_build_memory_policy(
 
     # Wan is a descriptor family: its registry entry resolves the shared builder
     # and model class, so the test follows the same boundary as production.
-    from vrl.families.registry import get_model_family_entry
+    from vrl.models.families.registry import get_model_family_entry
     from vrl.models.families.wan_2_1 import model as _wan_model
 
     monkeypatch.setattr(_wan_model, model_class_name, _FakeModel)
@@ -351,7 +351,7 @@ def test_full_generation_runtime_bundles_apply_model_build_memory_policy(
     model_module = importlib.import_module(model_module_name)
     monkeypatch.setattr(model_module, model_class_name, _FakeModel)
 
-    from vrl.families.registry import get_model_family_entry
+    from vrl.models.families.registry import get_model_family_entry
 
     bundle = get_model_family_entry(build_family).build_rollout(
         ModelBuild(
@@ -448,7 +448,7 @@ def test_targetless_in_process_runtime_rejects_direct_model_build_memory(
 ) -> None:
     """The runtime policy protects callers that bypass typed config validation."""
 
-    from vrl.families.registry import get_model_family_entry
+    from vrl.models.families.registry import get_model_family_entry
 
     model_module = importlib.import_module(model_module_name)
     monkeypatch.setattr(model_module, model_class_name, _TargetlessRuntimeModel)
@@ -485,7 +485,7 @@ def test_targetless_in_process_runtime_rejects_direct_model_build_memory(
 def test_non_vae_runtime_families_keep_memory_at_the_registered_boundary(
     family: str,
 ) -> None:
-    from vrl.families.registry import get_model_family_entry
+    from vrl.models.families.registry import get_model_family_entry
 
     entry = get_model_family_entry(family)
     entry.validate_model_runtime_sections(
@@ -536,7 +536,7 @@ def test_runtime_builders_apply_generation_memory_policy() -> None:
     import importlib
     from pathlib import Path
 
-    from vrl.families.registry import FAMILY_REGISTRY, DenoiseFamilyBuild
+    from vrl.models.families.registry import FAMILY_REGISTRY, DenoiseFamilyBuild
 
     # The shared denoise-step builder must own the policy call.
     shared = Path("vrl/models/steps/denoise/build.py").read_text()

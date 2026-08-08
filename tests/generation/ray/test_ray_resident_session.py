@@ -102,8 +102,8 @@ def _build_tiny_rollout(_entry: Any, build: ModelBuild) -> RuntimeBundle:
 
 
 def _install_tiny_family(monkeypatch: pytest.MonkeyPatch) -> None:
-    import vrl.families.registry as registry
     import vrl.models.checkpoint_identity as checkpoint_identity
+    import vrl.models.families.registry as registry
 
     entry = registry.FAMILY_REGISTRY["janus_pro"]
     monkeypatch.setitem(

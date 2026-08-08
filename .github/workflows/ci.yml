@@ -208,7 +208,7 @@ jobs:
 
           import vrl
           from vrl.config.loading import list_bundled_configs, load_config
-          from vrl.families.registry import FAMILY_REGISTRY
+          from vrl.models.families.registry import FAMILY_REGISTRY
 
           install_root = Path("wheel-site").resolve()
           module_path = Path(vrl.__file__).resolve()

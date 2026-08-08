@@ -3,8 +3,8 @@ from __future__ import annotations
 import torch
 
 from vrl.config.loading import load_config
-from vrl.families.registry import get_model_family_entry
 from vrl.generation import GenerationOutput, GenerationRequest, GenerationSampleRow
+from vrl.models.families.registry import get_model_family_entry
 from vrl.rollouts.collector import build_rollout_collector
 from vrl.rollouts.collector.batch_builder import (
     RolloutBatchBuildContext,

@@ -24,9 +24,9 @@ def test_sana_training_path_matches_native_flow_euler_at_every_step() -> None:
     from vrl.config.loading import load_config
     from vrl.config.precision import resolve_precision_policy
     from vrl.config.schema import parse_config
-    from vrl.families.registry import get_model_family_entry
     from vrl.generation.types import VideoGenerationRequest
     from vrl.math.denoise.flow_matching import sde_step_with_logprob
+    from vrl.models.families.registry import get_model_family_entry
 
     cfg = load_config("experiment/sana/online_grpo_aesthetic")
     repo_id = str(cfg.model.path)

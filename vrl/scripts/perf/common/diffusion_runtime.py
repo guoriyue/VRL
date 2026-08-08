@@ -28,7 +28,7 @@ def build_runtime(
 ) -> RuntimeBundle:
     """Build a registered diffusion rollout runtime from its resolved config."""
 
-    from vrl.families.registry import (
+    from vrl.models.families.registry import (
         get_model_family_entry,
     )
 

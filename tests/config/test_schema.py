@@ -32,13 +32,6 @@ from vrl.config.schema import (
     RootConfig,
     parse_config,
 )
-from vrl.families.names import _FAMILY_BY_ALIAS
-from vrl.families.registry import (
-    FAMILY_REGISTRY,
-    GENERIC_FULL_SEQUENCE_DENOISE_EXECUTOR,
-    SHARED_MODEL_SECTION_CLS,
-    get_model_family_entry,
-)
 from vrl.models.families.causvid.config import CausVidModelSection
 from vrl.models.families.cosmos.anima.config import CosmosAnimaModelSection
 from vrl.models.families.cosmos.predict2_5.config import (
@@ -49,7 +42,14 @@ from vrl.models.families.flux.config import FluxModelSection
 from vrl.models.families.janus_pro.config import JanusProModelSection
 from vrl.models.families.llamagen.config import LlamaGenModelSection
 from vrl.models.families.magi_1.config import Magi1ModelSection
+from vrl.models.families.names import _FAMILY_BY_ALIAS
 from vrl.models.families.nextstep_1.config import NextStep1ModelSection
+from vrl.models.families.registry import (
+    FAMILY_REGISTRY,
+    GENERIC_FULL_SEQUENCE_DENOISE_EXECUTOR,
+    SHARED_MODEL_SECTION_CLS,
+    get_model_family_entry,
+)
 from vrl.models.families.wan_2_1.config import WanModelSection
 from vrl.models.interfaces.generation_memory import (
     GenerationMemoryPolicy,
@@ -1255,7 +1255,7 @@ def test_rollout_worker_section_mirrors_worker_runtime_config() -> None:
     """
     import dataclasses
 
-    from vrl.generation.ray.config import RayGenerationConfig, RolloutWorkerConfig
+    from vrl.generation.ray.config import RolloutWorkerConfig
 
     section_fields = set(RolloutWorkerSection.model_fields)
     config_fields = {f.name for f in dataclasses.fields(RolloutWorkerConfig)}
@@ -1263,10 +1263,6 @@ def test_rollout_worker_section_mirrors_worker_runtime_config() -> None:
     assert "health_check_first_wait_s" in section_fields
     assert "worker_rpc_timeout_s" in section_fields
     assert "generation_stall_timeout_s" in section_fields
-
-    # RayGenerationConfig composes the worker projection (its only non-resource
-    # field): "RayGenerationConfig minus resources" is exactly RolloutWorkerConfig.
-    assert {f.name for f in dataclasses.fields(RayGenerationConfig)} == {"resources", "worker"}
 
     # Per-field default parity: the section's declared defaults must survive the
     # projection unchanged (from_public_section adds no fallbacks or overrides), so

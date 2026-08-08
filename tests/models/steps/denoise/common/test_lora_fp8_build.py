@@ -66,7 +66,7 @@ def _build_sd35_rollout(
 ) -> Any:
     """Build through the production registry while replacing checkpoint I/O."""
 
-    from vrl.families.registry import get_model_family_entry
+    from vrl.models.families.registry import get_model_family_entry
     from vrl.models.families.sd3_5 import model as sd35_model
 
     monkeypatch.setattr(sd35_model, "SD3_5Model", model_cls)
@@ -129,7 +129,7 @@ def test_fp8_config_replay_build_does_not_defer_device_move(monkeypatch) -> None
 
     from vrl.config.precision import resolve_precision_policy
     from vrl.config.schema import parse_config
-    from vrl.families.registry import get_model_family_entry
+    from vrl.models.families.registry import get_model_family_entry
 
     events: list[str] = []
     fake_peft = ModuleType("peft")

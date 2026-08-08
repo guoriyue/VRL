@@ -35,9 +35,9 @@ from vrl.config.precision import PrecisionConfig
 from vrl.config.reward_inference import parse_reward_inference_config
 from vrl.config.sampling_schema import SamplingSection
 from vrl.config.unknown_keys import OPEN, ConfigBlock
-from vrl.families.names import normalize_model_family
-from vrl.families.registry import FAMILY_REGISTRY, get_model_family_entry
 from vrl.generation.execution.types import ChunkPlacementStrategy
+from vrl.models.families.names import normalize_model_family
+from vrl.models.families.registry import FAMILY_REGISTRY, get_model_family_entry
 from vrl.ray.resources import (
     RewardResourceConfig,
     RoleResourceConfig,

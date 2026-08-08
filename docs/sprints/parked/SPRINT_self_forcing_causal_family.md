@@ -267,7 +267,7 @@ chunk。最后一份 committed cache 可能不再被后续 chunk 读取，但 pi
   runner 与 custom executor；不复制 WanDiT、scheduler 或 BlockKVCache。
 - 复用 `vrl/math/denoise/renoise.py`，只在
   `tests/models/families/self_forcing/` 增加 4/3 recipe、cache 与 replay contract 测试。
-- `vrl/families/registry.py` 增加唯一 family/provider binding，选择
+- `vrl/models/families/registry.py` 增加唯一 family/provider binding，选择
   `chunk_autoregressive` executor/gatherer 与现有 grouped evaluator；recipe 必须显式选择
   FlashDreams，不能伪造 native fallback，也不新增平行 `SUPPORTED_MODELS` 表。
 - 一个最小 DROID-overfit 风格配方：4 个固定 prompt、BLOCK/motion guard、现有

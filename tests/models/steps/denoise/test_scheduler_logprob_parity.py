@@ -33,9 +33,9 @@ import pytest
 import torch
 
 from vrl.config.loading import list_bundled_configs, load_config
-from vrl.families.names import normalize_model_family
-from vrl.families.registry import FAMILY_REGISTRY
 from vrl.math.denoise.flow_matching import sde_step_with_logprob
+from vrl.models.families.names import normalize_model_family
+from vrl.models.families.registry import FAMILY_REGISTRY
 
 _NUM_STEPS = 10
 _BATCH = 2

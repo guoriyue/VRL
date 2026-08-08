@@ -18,7 +18,6 @@ from vrl.config.builders import BuiltConfigs
 from vrl.config.loading import bundled_config_resource
 from vrl.config.precision import resolve_precision_policy
 from vrl.config.schema import parse_config
-from vrl.families.registry import ModelFamilyEntry, get_model_family_entry
 from vrl.generation.execution.types import DistributedWorkerHandle
 from vrl.generation.launch_contract import GenerationRuntimeLaunchContract
 from vrl.generation.ray.config import RayGenerationConfig
@@ -32,6 +31,7 @@ from vrl.generation.ray.lifecycle_fsm import RuntimePhase
 from vrl.generation.ray.runtime import RayGenerationRuntime
 from vrl.generation.ray.session import RayGenerationSession
 from vrl.generation.types import GenerationRequest
+from vrl.models.families.registry import ModelFamilyEntry, get_model_family_entry
 from vrl.ray.actor_pool import RayActorDispatcher
 from vrl.ray.operation_deadline import RayOperationTimeout
 from vrl.ray.placement import GlobalRayPlacementOwner, RolePlacement

@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import pytest
 
-from vrl.families.registry import get_model_family_entry
 from vrl.generation import GenerationInput
+from vrl.models.families.registry import get_model_family_entry
 from vrl.rollouts.collector.config import RolloutCollectorConfig
 from vrl.rollouts.collector.requests import GenerationRequestBuilder
 from vrl.trajectory import TrajectoryStoragePolicy

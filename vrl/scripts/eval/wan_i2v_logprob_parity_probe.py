@@ -74,8 +74,8 @@ def main() -> None:
 
     from vrl.config.precision import resolve_precision_policy
     from vrl.config.schema import parse_config
-    from vrl.families.registry import get_model_family_entry
     from vrl.generation.types import VideoGenerationRequest
+    from vrl.models.families.registry import get_model_family_entry
 
     out_dir = Path(args.out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)

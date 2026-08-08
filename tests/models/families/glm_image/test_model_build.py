@@ -10,7 +10,6 @@ from omegaconf import OmegaConf
 
 from vrl.config.precision import resolve_precision_policy
 from vrl.config.schema import parse_config
-from vrl.families.registry import get_model_family_entry
 from vrl.generation.execution.chunks import SampleChunk
 from vrl.generation.types import GenerationRequest
 from vrl.models.families.glm_image.config import GlmImageConfig
@@ -20,6 +19,7 @@ from vrl.models.families.glm_image.runtime import (
     GlmImageChunkExecutor,
     glm_image_config_from_build,
 )
+from vrl.models.families.registry import get_model_family_entry
 
 
 @pytest.mark.parametrize("decode_offload_ar", [True, False])

@@ -9,7 +9,7 @@ import torch
 from omegaconf import OmegaConf
 from PIL import Image
 
-import vrl.families.registry as model_families
+import vrl.models.families.registry as model_families
 from vrl.config.precision import RolePrecision
 from vrl.models import checkpoint_identity
 from vrl.models.interfaces.runtime import ModelBuild

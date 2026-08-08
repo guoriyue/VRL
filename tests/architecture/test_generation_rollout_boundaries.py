@@ -11,6 +11,7 @@ VRL_ROOT = ROOT / "vrl"
 _GENERATION_MODEL_IMPORT_FLOOR = (
     "vrl.models.checkpoint_identity",
     "vrl.models.dtypes",
+    "vrl.models.families.registry",
     "vrl.models.interfaces",
     "vrl.models.loader",
 )
@@ -31,7 +32,7 @@ def test_generation_layer_does_not_import_rollout_or_training_layers() -> None:
 
 
 def test_generation_model_imports_stay_on_public_floor() -> None:
-    """Generation may use model contracts, not family or step implementations."""
+    """Generation may use model contracts and the registry, not family implementations."""
     violations: list[tuple[Path, str]] = []
     for path in _python_files(VRL_ROOT / "generation"):
         for target in _imports(path):
@@ -49,6 +50,7 @@ def test_import_scanner_preserves_from_import_targets(tmp_path: Path) -> None:
 import vrl.models.loader as model_loader
 from vrl import models
 from vrl.models import checkpoint_identity, families
+from vrl.models.families import registry as family_registry
 from vrl.models.interfaces import RuntimeModel
 from vrl.models.interfaces_bad import RuntimeModel as BadRuntimeModel
 from ...models import steps
@@ -64,6 +66,7 @@ def lazy_import():
         "vrl.models",
         "vrl.models.checkpoint_identity",
         "vrl.models.families",
+        "vrl.models.families.registry",
         "vrl.models.interfaces.RuntimeModel",
         "vrl.models.interfaces_bad.RuntimeModel",
         "vrl.models.interfaces.runtime.ModelBuild",
@@ -174,20 +177,28 @@ def test_trajectory_layer_stays_family_neutral() -> None:
     assert not violations, _format_violations(violations)
 
 
-def test_families_registry_stays_import_light() -> None:
-    """vrl/families is a neutral registry that must stay importable during config
-    parse without paying torch: every MODULE-LEVEL import must be stdlib, a sibling
-    ``vrl.families.*`` module, or the torch-free ``vrl.config`` schema layer
-    (``registry.py`` reads ``MODEL_MEMORY_SECTIONS`` from it as the capability
-    source of truth). Edges into vrl.models / vrl.trainers / vrl.generation /
-    vrl.utils are deliberately function-level lazy and must stay that way.
+def test_model_family_registry_stays_import_light() -> None:
+    """The model-family registry must stay importable during config parsing.
+
+    Every module-level import must be stdlib, one of the three lightweight
+    registry modules, or the torch-free ``vrl.config`` schema layer. Edges into
+    concrete family implementations, trainers, generation, and utils remain
+    function-level lazy so config parsing does not pay for the runtime stack.
 
     Walk ``tree.body`` only — NOT ``ast.walk`` — so the intentional function-level
     lazy imports (e.g. registry.py's gradient-checkpointing resolver) are not swept
     in and false-failed. This turns the lazy-import convention into a mechanical gate.
     """
+    registry_modules = (
+        VRL_ROOT / "models" / "families" / "names.py",
+        VRL_ROOT / "models" / "families" / "registry.py",
+        VRL_ROOT / "models" / "families" / "semantics.py",
+    )
+    allowed_registry_imports = frozenset(
+        f"vrl.models.families.{path.stem}" for path in registry_modules
+    )
     violations: list[tuple[Path, str]] = []
-    for path in _python_files(VRL_ROOT / "families"):
+    for path in registry_modules:
         tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
         for node in tree.body:  # module-level statements only
             if isinstance(node, ast.Import):
@@ -199,7 +210,7 @@ def test_families_registry_stays_import_light() -> None:
             for module in modules:
                 if not module.startswith("vrl."):
                     continue  # stdlib / third-party import-light deps are unrestricted
-                if module == "vrl.families" or module.startswith("vrl.families."):
+                if module in allowed_registry_imports:
                     continue
                 if module == "vrl.config" or module.startswith("vrl.config."):
                     continue  # torch-free config-schema layer (capability SoT)
@@ -212,6 +223,7 @@ def test_removed_boundary_packages_stay_removed() -> None:
     assert not (VRL_ROOT / "distributed").exists()
     assert not (VRL_ROOT / "runtime").exists()
     assert not (VRL_ROOT / "generation" / "runtime").exists()
+    assert not (VRL_ROOT / "families").exists()
     assert not (VRL_ROOT / "rollouts" / "families").exists()
     assert not (VRL_ROOT / "rollouts" / "family_names.py").exists()
 
@@ -421,7 +433,7 @@ def test_chunk_executor_base_stays_family_registry_neutral() -> None:
     violations = [
         (path.relative_to(ROOT), target)
         for target in _imports(path)
-        if _is_module_or_child(target, "vrl.families")
+        if _is_module_or_child(target, "vrl.models.families.registry")
     ]
     assert not violations, _format_violations(violations)
 
