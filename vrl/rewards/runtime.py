@@ -1,7 +1,8 @@
-"""Reward inference runtime wiring and in-process transport."""
+"""Reward runtime implementations and inference transport wiring."""
 
 from __future__ import annotations
 
+import asyncio
 import importlib
 import traceback
 from collections.abc import Mapping
@@ -11,6 +12,7 @@ from vrl.config.reward_inference import (
     RewardInferenceConfig,
     parse_reward_inference_config,
 )
+from vrl.rewards.base import RewardCleanupError, RewardFunction
 from vrl.rewards.inference import (
     RewardInferenceRequest,
     RewardInferenceResult,
@@ -19,11 +21,160 @@ from vrl.rewards.inference import (
     score_artifacts_with_model,
     validate_reward_parking_residual,
 )
+from vrl.rewards.types import RewardOutput, RewardRequest
 from vrl.utils.cuda_memory import (
     CumemPool,
     gpu_used_bytes,
     release_cuda_memory_for_parking,
 )
+
+
+class RewardFunctionRuntime:
+    """Expose a reward function through the collector-facing runtime contract."""
+
+    def __init__(self, reward_function: RewardFunction | None) -> None:
+        if reward_function is not None and not isinstance(reward_function, RewardFunction):
+            raise TypeError("reward_function must be a RewardFunction or None")
+        self._reward_function = reward_function
+        self._operation_lock = asyncio.Lock()
+        self._shutdown_started = False
+        self._shutdown_complete = False
+
+    @property
+    def scoring_is_nonblocking(self) -> bool:
+        """Whether scoring yields while every configured component executes."""
+
+        reward_function = self._reward_function
+        return bool(reward_function is not None and reward_function.scoring_is_nonblocking)
+
+    @property
+    def external_accelerator_isolation_verified(self) -> bool:
+        """Whether out-of-plan reward accelerator work is isolated."""
+
+        reward_function = self._reward_function
+        return bool(
+            reward_function is None or reward_function.external_accelerator_isolation_verified
+        )
+
+    async def preflight(self) -> None:
+        """Validate the wrapped reward function before scoring begins."""
+
+        async with self._operation_lock:
+            self._require_active()
+            reward_function = self._reward_function
+            if reward_function is not None:
+                await reward_function.preflight()
+
+    async def score(
+        self,
+        request: RewardRequest,
+        *,
+        require_memory_release: bool = False,
+    ) -> RewardOutput:
+        """Score one request while serializing function and memory ownership."""
+
+        async with self._operation_lock:
+            self._require_active()
+            reward_function = self._reward_function
+            output: RewardOutput | None = None
+            operation_error: BaseException | None = None
+            try:
+                if reward_function is None:
+                    output = RewardOutput(
+                        request_id=request.request_id,
+                        sample_ids=tuple(sample.sample_id for sample in request.samples),
+                        scores=(0.0,) * len(request.samples),
+                    )
+                else:
+                    report = await reward_function.score_batch_report(list(request.samples))
+                    output = RewardOutput(
+                        request_id=request.request_id,
+                        sample_ids=tuple(sample.sample_id for sample in request.samples),
+                        scores=tuple(report.scores),
+                        components={
+                            str(name): tuple(values) for name, values in report.components.items()
+                        },
+                        timing_ms=dict(report.timing_ms),
+                    )
+                output.validate(request)
+            except BaseException as error:
+                operation_error = error
+
+            parking_error: BaseException | None = None
+            if require_memory_release:
+                try:
+                    await self._park_memory_locked(required=True)
+                except BaseException as error:
+                    parking_error = error
+            if operation_error is not None and parking_error is not None:
+                raise RewardCleanupError(
+                    "reward scoring and memory parking both failed",
+                    [operation_error, parking_error],
+                )
+            if operation_error is not None:
+                raise operation_error
+            if parking_error is not None:
+                raise parking_error
+            assert output is not None
+            return output
+
+    async def park_memory(
+        self,
+        *,
+        required: bool,
+    ) -> tuple[RewardMemoryReleaseProof, ...]:
+        """Actively park reward owners and validate their fresh proofs."""
+
+        async with self._operation_lock:
+            self._require_active()
+            return await self._park_memory_locked(required=required)
+
+    async def _park_memory_locked(
+        self,
+        *,
+        required: bool,
+    ) -> tuple[RewardMemoryReleaseProof, ...]:
+        reward_function = self._reward_function
+        if reward_function is None:
+            if required:
+                raise RuntimeError(
+                    "shared reward topology requires a reward memory release proof, "
+                    "but no reward function is configured",
+                )
+            return ()
+        proofs = tuple(await reward_function.park_memory())
+        if required and not proofs:
+            raise RuntimeError("reward function returned an empty memory release proof")
+        for proof in proofs:
+            if not isinstance(proof, RewardMemoryReleaseProof):
+                raise TypeError(
+                    "reward function park_memory() must return RewardMemoryReleaseProof values",
+                )
+            if not isinstance(proof.request_id, str):
+                raise TypeError("reward memory release proof request_id must be a str")
+            if not proof.request_id:
+                raise ValueError("reward memory release proof request_id must be non-empty")
+            # Component-owned inference request IDs are intentionally distinct
+            # from the outer RewardRequest ID. Validate proof integrity here;
+            # RewardFunction validates component/request correlation at its seam.
+            proof.validate(request_id=proof.request_id)
+        return proofs
+
+    async def shutdown(self) -> None:
+        """Release the wrapped function exactly once after successful teardown."""
+
+        async with self._operation_lock:
+            if self._shutdown_complete:
+                return
+            self._shutdown_started = True
+            reward_function = self._reward_function
+            if reward_function is not None:
+                await reward_function.shutdown()
+            self._shutdown_complete = True
+
+    def _require_active(self) -> None:
+        if self._shutdown_started:
+            raise RuntimeError("reward runtime is shut down or shutting down")
 
 
 def _build_prepared_model_in_pool(
@@ -47,7 +198,7 @@ def _build_prepared_model_in_pool(
         return model
 
 
-class InProcessRewardRuntime:
+class InProcessRewardInferenceRuntime:
     """``RewardInferenceRuntime`` that runs a ``RewardModel`` in this process.
 
     ``worker_config.sleep_offload`` opts a heavyweight model into the same
@@ -141,7 +292,7 @@ class InProcessRewardRuntime:
             factory_path = str(self._worker_config.get("model_factory", "")).strip()
             if not factory_path:
                 raise ValueError(
-                    "InProcessRewardRuntime requires worker_config.model_factory "
+                    "InProcessRewardInferenceRuntime requires worker_config.model_factory "
                     "(import path to a RewardModel factory) or an explicit model",
                 )
             module_path, attr = factory_path.split(":", 1)
@@ -247,7 +398,7 @@ class InProcessRewardRuntime:
         )
 
 
-def build_reward_runtime(
+def build_reward_inference_runtime(
     worker_config: Mapping[str, Any] | None = None,
     *,
     inference: Mapping[str, Any] | RewardInferenceConfig | None = None,
@@ -265,18 +416,19 @@ def build_reward_runtime(
         context="reward inference",
     )
     if deployment.kind == "in_process":
-        return InProcessRewardRuntime(cfg)
+        return InProcessRewardInferenceRuntime(cfg)
     if cfg:
         raise ValueError(
             "HTTP reward runtime cannot consume local worker_config; model and "
             "device configuration belong to the external service",
         )
-    from vrl.rewards.service.client import HttpRewardRuntime
+    from vrl.rewards.service.client import HttpRewardInferenceRuntime
 
-    return HttpRewardRuntime(deployment)
+    return HttpRewardInferenceRuntime(deployment)
 
 
 __all__ = [
-    "InProcessRewardRuntime",
-    "build_reward_runtime",
+    "InProcessRewardInferenceRuntime",
+    "RewardFunctionRuntime",
+    "build_reward_inference_runtime",
 ]

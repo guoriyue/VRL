@@ -1,6 +1,6 @@
 """Kling VideoReward entry point for world-model RL.
 
-``KlingVideoReward`` writes each rollout's media to disk and scores it through
+``KlingVideoReward`` writes each sample's media to disk and scores it through
 the configured in-process or HTTP runtime. ``DiskArtifactRewardFunction`` is the
 transport capability boundary; this file only pins the Kling video-reward model
 factory and its defaults.

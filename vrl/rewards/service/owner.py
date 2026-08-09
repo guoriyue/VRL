@@ -18,7 +18,7 @@ if TYPE_CHECKING:
     )
 
 
-class RewardRuntimeOwner:
+class RewardInferenceRuntimeOwner:
     """Run every runtime operation on one dedicated event-loop thread."""
 
     def __init__(self, runtime: RewardInferenceRuntime) -> None:
@@ -125,4 +125,4 @@ class RewardRuntimeOwner:
             self._loop.close()
 
 
-__all__ = ["RewardRuntimeOwner"]
+__all__ = ["RewardInferenceRuntimeOwner"]

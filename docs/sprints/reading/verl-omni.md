@@ -87,9 +87,9 @@ output.reward_score = result["reward_score"]
 
 Overlap is only enabled when reward has its own GPU pool (`ray_diffusion_trainer.py:670` `enable_agent_reward_loop = not use_rm or reward_model.enable_resource_pool`); the trainer then skips its colocated reward path because `rm_scores` already arrived (`ray_diffusion_trainer.py:1000`). Policy update still waits for the full scored batch (`docs/algo/async_reward.md:51`).
 
-**vrl today** — reward is on the serial critical path. `StrictOnPolicyRolloutSchedule.next_iteration` does `collect → release_rollout_runtime_memory` (`vrl/rollouts/orchestration/strict_on_policy.py:49-59`), and `collect_prompt_batches` scores all groups in one reward call *after* the rollout release — its own docstring admits "Shared single-GPU reward runs therefore pay the rollout release and the reward [exposed]" (`vrl/rollouts/orchestration/prompt_collection.py:24-26`). vrl does already have the pool seam: `vrl/rewards/runtime.py:63-83` (`execution: Literal["inline","pool"]` → `InProcessRewardRuntime` vs `RayRewardRuntime`).
+**vrl today (post-reading update)** — the old Ray reward pool described by the original note was deleted. Rollout collectors now call the public `RewardRuntime.score(RewardRequest) -> RewardOutput` boundary. Model-backed components use either `InProcessRewardInferenceRuntime` or `HttpRewardInferenceRuntime`; overlap is admitted only when the runtime reports nonblocking execution and verified accelerator isolation. Shared-GPU in-process rewards deliberately remain serial.
 
-**Borrow.** vrl has the reward pool but not the *streaming overlap*. The cheap win is to score each group the moment it finishes inside the collect loop (one task per group, `compute_score.remote`) when `execution="pool"`, instead of one batched reward call after release. This is exactly the conclusion vrl's own GPU-placement note reached ("async reward gated on reward disjoint from rollout") — verl-omni validates it and shows the per-sample-task mechanism. Honest caveat: the reward-loop worker/manager lives in **upstream verl**; vrl would reimplement the streaming inside its existing `RayRewardRuntime`, not import it.
+**Borrow verdict updated.** The useful idea is the capability-gated overlap, not restoring a `RayRewardRuntime` pool. The current runtime boundary carries those capabilities without coupling rollout orchestration to a particular transport.
 
 ### 3.2 Make the rollout output schema algorithm-shaped, carrying the trajectory
 
@@ -142,7 +142,7 @@ verl-omni's DiffusionNFT computes the negative branch algebraically — `implici
 
 ## Suggested priority order
 
-1. **Per-sample streaming reward to the `pool` runtime** (§3.1) — directly closes the "reward fully exposed on serial critical path" pain point, reuses vrl's existing `execution="pool"` seam, on-policy boundary unchanged. Highest leverage, lowest risk.
+1. **Capability-gated reward overlap** (§3.1) — incorporated through the public `RewardRuntime`; do not restore the removed Ray reward pool.
 2. **Extend `logprob_mismatch.py` with RS rejection + bypass-vs-recompute** (§3.3) — directly serves the active `fp8-rollout-precision-tis` branch; vrl already owns the TIS + drift-metrics half.
 3. **Verify then fix frozen-encoder/VAE preservation on release** (§3.5) — a correctness trap if the per-cycle release discards non-trainable components; cheap once verified.
 4. **Algorithm-shaped rollout payload + loss-validates-its-inputs contract** (§3.2, §3.6 tail) — structural tidiness that pays off as more algorithms land; not urgent.

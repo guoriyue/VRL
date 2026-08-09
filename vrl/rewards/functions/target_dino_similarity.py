@@ -6,7 +6,7 @@ from typing import Any
 
 from vrl.rewards.base import RewardFunction, resolve_reward_component_device
 from vrl.rewards.models.target_dino_similarity import TargetDinoSimilarityModel
-from vrl.rewards.runtime import InProcessRewardRuntime
+from vrl.rewards.runtime import InProcessRewardInferenceRuntime
 
 
 class TargetDinoSimilarityReward(RewardFunction):
@@ -30,9 +30,9 @@ class TargetDinoSimilarityReward(RewardFunction):
         super().__init__(
             reward_name=reward_name,
             score_key=score_key,
-            runtime=InProcessRewardRuntime(model=model),
-            artifact_builder=lambda rollouts: RewardFunction.build_inmemory_artifacts(
-                rollouts,
+            runtime=InProcessRewardInferenceRuntime(model=model),
+            artifact_builder=lambda samples: RewardFunction.build_inmemory_artifacts(
+                samples,
                 media_type="video",
             ),
         )

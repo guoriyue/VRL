@@ -20,12 +20,12 @@ from vrl.rollouts.stats import RolloutStats
 class _RaisingCollector:
     """Collector whose generation always raises, like a mid-rollout crash."""
 
-    requires_runtime_offload_before_reward = True
+    requires_generation_offload_before_reward = True
     requires_driver_model_offload_for_reward = False
     supports_reward_generation_overlap = False
 
     def __init__(self) -> None:
-        self.runtime = None
+        self.generation_runtime = None
 
     async def collect_unscored(self, *_args: object, **_kwargs: object) -> object:
         raise RuntimeError("collect blew up")
@@ -180,7 +180,7 @@ class _OkCollector:
     """Collector that returns no batches (empty prompt list path)."""
 
     def __init__(self) -> None:
-        self.runtime = None
+        self.generation_runtime = None
 
     async def collect_unscored(
         self, *_args: object, **_kwargs: object

@@ -10,7 +10,7 @@ import torch
 
 from vrl.rewards.functions.kling_video_reward import KlingVideoReward
 from vrl.rewards.inference import RewardInferenceResult
-from vrl.rewards.types import RewardRollout
+from vrl.rewards.types import RewardSample
 
 
 class _VersionedRuntime:
@@ -41,8 +41,8 @@ class _VersionedRuntime:
         return None
 
 
-def _rollout() -> RewardRollout:
-    return RewardRollout(
+def _sample() -> RewardSample:
+    return RewardSample(
         prompt="prompt",
         output=torch.ones(1, 2, 2, 2),
         source_request_id="request-v",
@@ -65,7 +65,7 @@ async def test_video_reward_debug_records_versions_and_latency(tmp_path: Path) -
         runtime=_VersionedRuntime(),
     )
 
-    report = await reward.score_batch_report([_rollout()])
+    report = await reward.score_batch_report([_sample()])
 
     assert report.scores == pytest.approx([4.0])
     request_rows = [

@@ -9,8 +9,9 @@ separate hardware-triggered task in
 
 VRL supports two reward inference deployments:
 
-- `InProcessRewardRuntime` is the default for local and single-GPU training.
-- `HttpRewardRuntime` calls an operator-owned service over async HTTP.
+- `InProcessRewardInferenceRuntime` is the default inference transport for local
+  and single-GPU training.
+- `HttpRewardInferenceRuntime` calls an operator-owned service over async HTTP.
 
 Transport and accelerator placement are independent axes:
 
@@ -284,9 +285,10 @@ accelerator.
 Keep these thin boundaries:
 
 - `RewardInferenceRuntime`: transport-neutral inference protocol.
-- `InProcessRewardRuntime` and `HttpRewardRuntime`: execution adapters with
-  deliberately different scheduling capabilities.
-- `vrl/rewards/service/__init__.py`: optional-dependency lazy public facade.
+- `InProcessRewardInferenceRuntime` and `HttpRewardInferenceRuntime`: inference
+  adapters with deliberately different scheduling capabilities.
+- `vrl/rewards/service/__init__.py`: empty package import boundary that avoids
+  eagerly importing the server before `python -m vrl.rewards.service.server`.
 - `wire.py`: versioned protocol adapter.
 - `owner.py`: synchronous model thread/event-loop ownership.
 - `DiskArtifactRewardFunction`: artifact capability visible before registry

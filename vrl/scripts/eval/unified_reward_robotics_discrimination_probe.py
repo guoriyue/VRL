@@ -466,9 +466,9 @@ async def _main_async(args: argparse.Namespace) -> dict[str, Any]:
         raise ValueError("robotics reward gate needs at least two manifest rows")
     clips = _load_anchors(examples, data_root=data_root)
 
-    from vrl.rewards.service.client import HttpRewardRuntime
+    from vrl.rewards.service.client import HttpRewardInferenceRuntime
 
-    scorer = HttpRewardRuntime(
+    scorer = HttpRewardInferenceRuntime(
         args.endpoint,
         expected_model=args.expected_model,
     )

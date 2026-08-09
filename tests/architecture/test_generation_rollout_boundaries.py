@@ -31,6 +31,19 @@ def test_generation_layer_does_not_import_rollout_or_training_layers() -> None:
     assert not violations, _format_violations(violations)
 
 
+def test_rewards_layer_does_not_import_generation_rollout_or_training_layers() -> None:
+    """Rewards stay independently reusable below rollout orchestration."""
+    violations = _forbidden_imports(
+        VRL_ROOT / "rewards",
+        forbidden=(
+            "vrl.generation",
+            "vrl.rollouts",
+            "vrl.trainers",
+        ),
+    )
+    assert not violations, _format_violations(violations)
+
+
 def test_generation_model_imports_stay_on_public_floor() -> None:
     """Generation may use model contracts and the registry, not family implementations."""
     violations: list[tuple[Path, str]] = []
@@ -280,7 +293,7 @@ def test_reward_scoring_is_in_process() -> None:
     """Rewards score in-process; the removed Ray pool transport must stay gone.
 
     The pool (actor pool + release_after_call kill/reload + resident parking)
-    was replaced by InProcessRewardRuntime sleep/wake offload. Guard against it
+    was replaced by InProcessRewardInferenceRuntime sleep/wake offload. Guard against it
     creeping back as a directory, and keep the in-process runtime generic (no
     model-specific code in the shared transport).
     """
@@ -331,10 +344,12 @@ def test_reward_function_implementations_live_under_functions() -> None:
         "artifacts.py",
         "base.py",
         "inference.py",
+        "protocols.py",
         "runtime.py",
         "types.py",
     }
     assert required_root <= _module_filenames(rewards_root)
+    assert not (VRL_ROOT / "rollouts" / "collector" / "rewards.py").exists()
 
     functions = _module_filenames(rewards_root / "functions")
     assert _registered_reward_modules() <= functions

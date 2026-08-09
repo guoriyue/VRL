@@ -237,7 +237,7 @@ def _validate_image_to_video_manifest(
 
     # Shares the {source_repo, source_frame_index, decode_method, conditioning}
     # provenance sub-vocabulary with
-    # vrl/trainers/data/artifacts.py SOURCE_BACKED_VIDEO_WORLD_METADATA_FIELDS —
+    # vrl/utils/artifacts.py SOURCE_BACKED_VIDEO_WORLD_METADATA_FIELDS —
     # keep in sync. This is a separate schema (Image2Video manifest rows use
     # source_video_url, not source_video), so the two are not unified.
     required_metadata = {
@@ -297,7 +297,7 @@ def _validate_image_to_video_source_report(
     payload = json.loads(path.read_text(encoding="utf-8"))
     # Report-level (dataset-wide) schema — distinct from the per-row provenance
     # vocabulary in _validate_image_to_video_manifest and
-    # vrl/trainers/data/artifacts.py SOURCE_BACKED_VIDEO_WORLD_METADATA_FIELDS.
+    # vrl/utils/artifacts.py SOURCE_BACKED_VIDEO_WORLD_METADATA_FIELDS.
     # Do NOT fold this into those: these keys describe the whole source dump
     # (source_csv, train_rows, reference_dir), not a single manifest row.
     required_keys = {

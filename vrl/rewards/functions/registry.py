@@ -14,8 +14,8 @@ from vrl.config.reward_inference import (
 )
 from vrl.rewards.base import RewardBatchReport, RewardCleanupError, RewardFunction
 from vrl.rewards.inference import RewardMemoryReleaseProof
-from vrl.rewards.runtime import build_reward_runtime
-from vrl.rewards.types import RewardRollout
+from vrl.rewards.runtime import build_reward_inference_runtime
+from vrl.rewards.types import RewardSample
 
 # Registry of reward function factories.
 # Each factory takes (device,) and returns a RewardFunction instance.
@@ -78,7 +78,7 @@ class MultiReward(RewardFunction):
             {"ocr": 1.0, "aesthetic": 0.3},
             device="cuda",
         )
-        report = await reward_fn.score_batch_report([rollout])
+        report = await reward_fn.score_batch_report([sample])
         # report.scores     -> weighted totals
         # report.components -> {"ocr": [0.87], "aesthetic": [5.2]}
     """
@@ -214,7 +214,7 @@ class MultiReward(RewardFunction):
                         "standalone reward service",
                     )
                 component_device = "cpu"
-                extra["runtime"] = build_reward_runtime(inference=inference)
+                extra["runtime"] = build_reward_inference_runtime(inference=inference)
             else:
                 component_device = reward_cls.resolve_execution_device(
                     device=device,
@@ -250,22 +250,22 @@ class MultiReward(RewardFunction):
             )
         return cls(triples)
 
-    async def score(self, rollout: RewardRollout) -> float:
-        return (await self.score_batch_report([rollout])).scores[0]
+    async def score(self, sample: RewardSample) -> float:
+        return (await self.score_batch_report([sample])).scores[0]
 
-    async def score_batch(self, rollouts: list[RewardRollout]) -> list[float]:
-        return (await self.score_batch_report(rollouts)).scores
+    async def score_batch(self, samples: list[RewardSample]) -> list[float]:
+        return (await self.score_batch_report(samples)).scores
 
-    async def score_batch_report(self, rollouts: list[RewardRollout]) -> RewardBatchReport:
+    async def score_batch_report(self, samples: list[RewardSample]) -> RewardBatchReport:
         """Return weighted totals plus per-component observations from one call."""
 
-        totals = [0.0] * len(rollouts)
+        totals = [0.0] * len(samples)
         components: dict[str, list[float]] = {}
         timing_ms: dict[str, float] = {}
         operation_error: BaseException | None = None
         try:
             for name, weight, fn in self.rewards:
-                report = await fn.score_batch_report(rollouts)
+                report = await fn.score_batch_report(samples)
                 components[name] = list(report.scores)
                 for key, value in report.timing_ms.items():
                     timing_ms[str(key)] = timing_ms.get(str(key), 0.0) + float(value)

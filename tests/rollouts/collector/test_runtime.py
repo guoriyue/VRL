@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from dataclasses import fields
 from typing import Any
 
 import pytest
@@ -18,7 +17,8 @@ from vrl.generation import (
 )
 from vrl.models.families.registry import get_model_family_entry
 from vrl.ray.resources import ActorLeasePolicy, PhaseHandoffPolicy, RayLifecyclePlan
-from vrl.rewards.base import RewardBatchReport, RewardCleanupError
+from vrl.rewards import RewardOutput, RewardRequest
+from vrl.rewards.base import RewardCleanupError
 from vrl.rewards.inference import RewardMemoryReleaseProof
 from vrl.rollouts.collector.batch_builder import (
     RolloutBatchBuildContext,
@@ -27,11 +27,6 @@ from vrl.rollouts.collector.batch_builder import (
 from vrl.rollouts.collector.config import RolloutCollectorConfig
 from vrl.rollouts.collector.core import RolloutCollector
 from vrl.rollouts.collector.requests import CollectorRequest, GenerationRequestBuilder
-from vrl.rollouts.collector.rewards import (
-    RewardScoreBatch,
-    RewardScorer,
-    RewardScoringInput,
-)
 from vrl.rollouts.orchestration.prompt_collection import collect_prompt_batches
 from vrl.rollouts.stats import RolloutStats
 from vrl.trajectory import (
@@ -44,6 +39,9 @@ from vrl.trajectory import (
 
 
 class _RequestBuilder:
+    def __init__(self) -> None:
+        self._request_index = 0
+
     def build(
         self,
         inputs: list[Any],
@@ -54,8 +52,10 @@ class _RequestBuilder:
         runtime_debug: bool = False,
         policy_version: int | None = None,
     ) -> CollectorRequest:
+        request_id = f"unit-request-{self._request_index}"
+        self._request_index += 1
         request = GenerationRequest(
-            request_id="unit-request",
+            request_id=request_id,
             family="unit",
             task="collect",
             inputs=list(inputs),
@@ -66,7 +66,7 @@ class _RequestBuilder:
         )
         return CollectorRequest(
             request=request,
-            metadata={"collector": "metadata"},
+            metadata={"collector": "metadata", **dict(metadata or {})},
         )
 
 
@@ -129,7 +129,7 @@ class _Runtime:
         return False
 
 
-class _RewardScorer:
+class _RewardRuntime:
     def __init__(
         self,
         runtime: _Runtime | None = None,
@@ -139,14 +139,16 @@ class _RewardScorer:
         external_accelerator_isolation_verified: bool = False,
     ) -> None:
         self.calls: list[dict[str, Any]] = []
-        self.runtime = runtime
+        self.generation_runtime = runtime
         self.fail_park = fail_park
-        self.reward_fn = self
         self.scoring_is_nonblocking = scoring_is_nonblocking
         self.external_accelerator_isolation_verified = external_accelerator_isolation_verified
         self.shutdown_failures = 0
         self.shutdown_calls = 0
         self.last_memory_release_proofs: tuple[RewardMemoryReleaseProof, ...] = ()
+
+    async def preflight(self) -> None:
+        return None
 
     async def shutdown(self) -> None:
         self.shutdown_calls += 1
@@ -155,31 +157,29 @@ class _RewardScorer:
 
     async def score(
         self,
-        request: RewardScoringInput,
-    ) -> torch.Tensor:
-        if self.runtime is not None:
-            self.runtime.events.append("score")
-        self.calls.append(
-            {
-                "outputs": request.outputs,
-                "prompts": [row.prompt for row in request.sample_rows],
-                "metadata": request.metadata,
-                "device": request.device,
-            },
-        )
-        return torch.arange(request.batch_size, dtype=torch.float32)
-
-    async def score_many(
-        self,
-        requests: list[RewardScoringInput],
+        request: RewardRequest,
         *,
         require_memory_release: bool = False,
-    ) -> RewardScoreBatch:
-        scores = [await self.score(request) for request in requests]
+    ) -> RewardOutput:
+        if self.generation_runtime is not None:
+            self.generation_runtime.events.append("score")
+        self.calls.append(
+            {
+                "request_id": request.request_id,
+                "outputs": [sample.output for sample in request.samples],
+                "prompts": [sample.prompt for sample in request.samples],
+                "metadata": [sample.metadata for sample in request.samples],
+                "sample_ids": [sample.sample_id for sample in request.samples],
+            },
+        )
         self.last_memory_release_proofs = ()
         if require_memory_release:
             await self.park_memory(required=True)
-        return RewardScoreBatch(scores=scores, components={}, timing_ms={})
+        return RewardOutput(
+            request_id=request.request_id,
+            sample_ids=tuple(sample.sample_id for sample in request.samples),
+            scores=tuple(float(index) for index in range(len(request.samples))),
+        )
 
     async def park_memory(
         self,
@@ -187,8 +187,8 @@ class _RewardScorer:
         required: bool,
     ) -> tuple[RewardMemoryReleaseProof, ...]:
         assert required is True
-        if self.runtime is not None:
-            self.runtime.events.append("reward_park")
+        if self.generation_runtime is not None:
+            self.generation_runtime.events.append("reward_park")
         if self.fail_park:
             raise RuntimeError("reward park failed")
         self.last_memory_release_proofs = (
@@ -199,15 +199,15 @@ class _RewardScorer:
 
 def _collector(
     *,
-    runtime: _Runtime | None = None,
-    reward_scorer: _RewardScorer | None = None,
+    generation_runtime: _Runtime | None = None,
+    reward_runtime: _RewardRuntime | None = None,
     lifecycle: RayLifecyclePlan | None = None,
 ) -> RolloutCollector:
     return RolloutCollector(
         config=RolloutCollectorConfig(),
         request_builder=_RequestBuilder(),
-        reward_scorer=reward_scorer or _RewardScorer(),
-        runtime=runtime,
+        reward_runtime=reward_runtime or _RewardRuntime(),
+        generation_runtime=generation_runtime,
         lifecycle=lifecycle,
     )
 
@@ -228,36 +228,52 @@ def test_collector_rejects_incomplete_runtime_control_protocol() -> None:
             raise NotImplementedError
 
     with pytest.raises(TypeError, match="complete GenerationRuntime protocol"):
-        _collector(runtime=_GenerateOnlyRuntime())  # type: ignore[arg-type]
+        _collector(generation_runtime=_GenerateOnlyRuntime())  # type: ignore[arg-type]
+
+
+def test_collector_rejects_incomplete_reward_runtime_protocol() -> None:
+    class _ScoreOnlyRewardRuntime:
+        async def score(self, request: RewardRequest) -> RewardOutput:
+            raise NotImplementedError
+
+    with pytest.raises(TypeError, match="complete RewardRuntime protocol"):
+        RolloutCollector(
+            config=RolloutCollectorConfig(),
+            request_builder=_RequestBuilder(),
+            reward_runtime=_ScoreOnlyRewardRuntime(),  # type: ignore[arg-type]
+        )
 
 
 @pytest.mark.asyncio
 async def test_collector_shutdown_retries_in_safe_runtime_then_reward_order() -> None:
     runtime = _Runtime(shutdown_failures=1)
-    reward_scorer = _RewardScorer()
-    reward_scorer.shutdown_failures = 1
-    collector = _collector(runtime=runtime, reward_scorer=reward_scorer)
+    reward_runtime = _RewardRuntime()
+    reward_runtime.shutdown_failures = 1
+    collector = _collector(
+        generation_runtime=runtime,
+        reward_runtime=reward_runtime,
+    )
 
     with pytest.raises(RuntimeError, match="runtime shutdown failed"):
         await collector.shutdown()
     assert runtime.shutdown_calls == 1
-    assert reward_scorer.shutdown_calls == 0
-    assert collector._runtime is runtime
+    assert reward_runtime.shutdown_calls == 0
+    assert collector._generation_runtime is runtime
     assert collector._reward_shutdown_complete is False
 
     with pytest.raises(RuntimeError, match="reward shutdown failed"):
         await collector.shutdown()
     assert runtime.shutdown_calls == 2
-    assert reward_scorer.shutdown_calls == 1
-    assert collector._runtime is None
+    assert reward_runtime.shutdown_calls == 1
+    assert collector._generation_runtime is None
     assert collector._reward_shutdown_complete is False
 
     await collector.shutdown()
     await collector.shutdown()
 
     assert runtime.shutdown_calls == 2
-    assert reward_scorer.shutdown_calls == 2
-    assert collector._runtime is None
+    assert reward_runtime.shutdown_calls == 2
+    assert collector._generation_runtime is None
     assert collector._reward_shutdown_complete is True
 
 
@@ -266,10 +282,10 @@ def test_collector_routes_request_through_runtime_reward_and_trajectory_batch() 
     import asyncio
 
     runtime = _Runtime()
-    reward_scorer = _RewardScorer()
+    reward_runtime = _RewardRuntime()
     collector = _collector(
-        runtime=runtime,
-        reward_scorer=reward_scorer,
+        generation_runtime=runtime,
+        reward_runtime=reward_runtime,
     )
 
     batch = asyncio.run(
@@ -288,9 +304,11 @@ def test_collector_routes_request_through_runtime_reward_and_trajectory_batch() 
     assert request.samples_per_prompt == 2
     assert request.sampling == {"seed": 5}
     assert request.policy_version == 7
-    assert reward_scorer.calls[0]["metadata"] == {"collector": "metadata"}
-    assert reward_scorer.calls[0]["prompts"] == ["p0", "p0", "p1", "p1"]
-    assert reward_scorer.calls[0]["outputs"].shape == (4, 3, 2, 2)
+    assert all(
+        metadata["collector"] == "metadata" for metadata in reward_runtime.calls[0]["metadata"]
+    )
+    assert reward_runtime.calls[0]["prompts"] == ["p0", "p0", "p1", "p1"]
+    assert torch.stack(reward_runtime.calls[0]["outputs"]).shape == (4, 3, 2, 2)
     assert runtime.events == ["generate"]
     assert batch.rewards.tolist() == [0.0, 1.0, 2.0, 3.0]
     assert batch.context == {"collector": "test"}
@@ -332,7 +350,10 @@ async def test_profiled_collector_builds_cpu_batch_without_trainer_cuda_sync(
         raise AssertionError("collector touched the trainer CUDA device")
 
     monkeypatch.setattr(torch.cuda, "synchronize", reject_trainer_sync)
-    collector = _collector(runtime=_Runtime(), reward_scorer=_RewardScorer())
+    collector = _collector(
+        generation_runtime=_Runtime(),
+        reward_runtime=_RewardRuntime(),
+    )
 
     batch = await collect_scored(collector, ["p0"], group_size=1)
 
@@ -345,7 +366,7 @@ def test_collector_offloads_runtime_memory_before_reward_scoring() -> None:
     import asyncio
 
     runtime = _Runtime()
-    reward_scorer = _RewardScorer(runtime)
+    reward_runtime = _RewardRuntime(runtime)
     # Shared reward GPU: the lifecycle plan (not the runtime) tells the collector
     # to park rollout GPU memory before the in-process reward model scores.
     lifecycle = RayLifecyclePlan(
@@ -359,13 +380,13 @@ def test_collector_offloads_runtime_memory_before_reward_scoring() -> None:
         ),
     )
     collector = _collector(
-        runtime=runtime,
-        reward_scorer=reward_scorer,
+        generation_runtime=runtime,
+        reward_runtime=reward_runtime,
         lifecycle=lifecycle,
     )
 
     asyncio.run(collect_scored(collector, ["p0"], group_size=1))
-    asyncio.run(collector.offload_runtime_memory())
+    asyncio.run(collector.offload_generation_runtime_memory())
 
     assert runtime.events == [
         "generate",
@@ -383,7 +404,7 @@ def test_collector_does_not_offload_runtime_before_independent_reward() -> None:
     import asyncio
 
     runtime = _Runtime()
-    reward_scorer = _RewardScorer(runtime)
+    reward_runtime = _RewardRuntime(runtime)
     # Dedicated reward GPU: the plan keeps both roles resident, so the collector
     # never releases before reward.
     lifecycle = RayLifecyclePlan(
@@ -397,8 +418,8 @@ def test_collector_does_not_offload_runtime_before_independent_reward() -> None:
         ),
     )
     collector = _collector(
-        runtime=runtime,
-        reward_scorer=reward_scorer,
+        generation_runtime=runtime,
+        reward_runtime=reward_runtime,
         lifecycle=lifecycle,
     )
 
@@ -439,7 +460,7 @@ def test_collector_derives_reward_generation_overlap_from_topology_and_scorer(
         ),
     )
     collector = _collector(
-        reward_scorer=_RewardScorer(
+        reward_runtime=_RewardRuntime(
             scoring_is_nonblocking=scorer_supports_overlap,
             external_accelerator_isolation_verified=scorer_supports_overlap,
         ),
@@ -451,30 +472,35 @@ def test_collector_derives_reward_generation_overlap_from_topology_and_scorer(
 
 
 def test_collector_keeps_continuous_admission_for_no_reward() -> None:
-    collector = _collector(reward_scorer=RewardScorer(None))
+    collector = _collector(
+        reward_runtime=_RewardRuntime(
+            scoring_is_nonblocking=False,
+            external_accelerator_isolation_verified=True,
+        ),
+    )
 
     assert collector.supports_reward_generation_overlap is False
     assert collector.supports_continuous_reward_execution is True
 
 
 def test_collector_separates_nonblocking_scoring_from_accelerator_isolation() -> None:
-    scorer = _RewardScorer()
-    scorer.scoring_is_nonblocking = True
-    scorer.external_accelerator_isolation_verified = False
-    collector = _collector(reward_scorer=scorer)
+    runtime = _RewardRuntime()
+    runtime.scoring_is_nonblocking = True
+    runtime.external_accelerator_isolation_verified = False
+    collector = _collector(reward_runtime=runtime)
 
     assert collector.supports_reward_generation_overlap is False
     assert collector.supports_continuous_reward_execution is False
 
-    scorer.external_accelerator_isolation_verified = True
+    runtime.external_accelerator_isolation_verified = True
 
     assert collector.supports_reward_generation_overlap is True
     assert collector.supports_continuous_reward_execution is True
 
 
 def test_dedicated_local_reward_allows_concurrent_collects_without_streaming() -> None:
-    scorer = _RewardScorer(external_accelerator_isolation_verified=True)
-    collector = _collector(reward_scorer=scorer)
+    runtime = _RewardRuntime(external_accelerator_isolation_verified=True)
+    collector = _collector(reward_runtime=runtime)
 
     assert collector.supports_reward_generation_overlap is False
     assert collector.supports_continuous_reward_execution is True
@@ -484,15 +510,15 @@ def test_collector_blocks_trainer_handoff_when_reward_release_proof_fails() -> N
     """A failed reward park remains terminal even after rollout itself parks."""
     import asyncio
 
-    class _FailingRewardScorer(_RewardScorer):
-        async def score_many(
+    class _FailingRewardRuntime(_RewardRuntime):
+        async def score(
             self,
-            requests: list[RewardScoringInput],
+            request: RewardRequest,
             *,
             require_memory_release: bool = False,
-        ) -> RewardScoreBatch:
-            await super().score_many(
-                requests,
+        ) -> RewardOutput:
+            await super().score(
+                request,
                 require_memory_release=False,
             )
             assert require_memory_release is True
@@ -510,15 +536,15 @@ def test_collector_blocks_trainer_handoff_when_reward_release_proof_fails() -> N
         ),
     )
     collector = _collector(
-        runtime=runtime,
-        reward_scorer=_FailingRewardScorer(runtime, fail_park=True),
+        generation_runtime=runtime,
+        reward_runtime=_FailingRewardRuntime(runtime, fail_park=True),
         lifecycle=lifecycle,
     )
 
     with pytest.raises(RuntimeError, match="reward park failed"):
         asyncio.run(collect_scored(collector, ["p0"], group_size=1))
     with pytest.raises(RuntimeError, match="reward park failed"):
-        asyncio.run(collector.offload_runtime_memory())
+        asyncio.run(collector.offload_generation_runtime_memory())
 
     assert runtime.events == [
         "generate",
@@ -533,7 +559,7 @@ def test_collector_phase_final_gate_retries_reward_parking() -> None:
     """The final rollout offload retries a transient reward park failure."""
     import asyncio
 
-    class _FlakyRewardScorer(_RewardScorer):
+    class _FlakyRewardRuntime(_RewardRuntime):
         def __init__(self, runtime: _Runtime) -> None:
             super().__init__(runtime)
             self.park_attempts = 0
@@ -544,14 +570,14 @@ def test_collector_phase_final_gate_retries_reward_parking() -> None:
             required: bool,
         ) -> tuple[RewardMemoryReleaseProof, ...]:
             self.park_attempts += 1
-            if self.runtime is not None:
-                self.runtime.events.append("reward_park")
+            if self.generation_runtime is not None:
+                self.generation_runtime.events.append("reward_park")
             if self.park_attempts == 1:
                 raise RuntimeError("transient reward park failure")
             return await super().park_memory(required=required)
 
     runtime = _Runtime()
-    scorer = _FlakyRewardScorer(runtime)
+    reward_runtime = _FlakyRewardRuntime(runtime)
     lifecycle = RayLifecyclePlan(
         rollout=ActorLeasePolicy(mode="on_demand"),
         reward=ActorLeasePolicy(mode="on_demand"),
@@ -562,15 +588,19 @@ def test_collector_phase_final_gate_retries_reward_parking() -> None:
             release_reward_after_score=True,
         ),
     )
-    collector = _collector(runtime=runtime, reward_scorer=scorer, lifecycle=lifecycle)
+    collector = _collector(
+        generation_runtime=runtime,
+        reward_runtime=reward_runtime,
+        lifecycle=lifecycle,
+    )
 
     with pytest.raises(RuntimeError, match="transient reward park failure"):
         asyncio.run(collect_scored(collector, ["p0"], group_size=1))
 
-    asyncio.run(collector.offload_runtime_memory())
+    asyncio.run(collector.offload_generation_runtime_memory())
 
-    assert scorer.park_attempts == 2
-    assert scorer.last_memory_release_proofs[0].released is True
+    assert reward_runtime.park_attempts == 2
+    assert reward_runtime.last_memory_release_proofs[0].released is True
 
 
 @pytest.mark.parametrize("reward_park_fails", [False, True])
@@ -581,7 +611,7 @@ def test_collector_attempts_reward_park_after_rollout_offload_failure(
     import asyncio
 
     runtime = _Runtime(fail_offload=True)
-    scorer = _RewardScorer(runtime, fail_park=reward_park_fails)
+    reward_runtime = _RewardRuntime(runtime, fail_park=reward_park_fails)
     lifecycle = RayLifecyclePlan(
         rollout=ActorLeasePolicy(mode="on_demand"),
         reward=ActorLeasePolicy(mode="on_demand"),
@@ -592,16 +622,20 @@ def test_collector_attempts_reward_park_after_rollout_offload_failure(
             release_reward_after_score=True,
         ),
     )
-    collector = _collector(runtime=runtime, reward_scorer=scorer, lifecycle=lifecycle)
+    collector = _collector(
+        generation_runtime=runtime,
+        reward_runtime=reward_runtime,
+        lifecycle=lifecycle,
+    )
     collector._reward_phase_started = True
 
     if reward_park_fails:
         with pytest.raises(RewardCleanupError) as error:
-            asyncio.run(collector.offload_runtime_memory())
+            asyncio.run(collector.offload_generation_runtime_memory())
         assert len(error.value.errors) == 2
     else:
         with pytest.raises(RuntimeError, match="rollout offload failed"):
-            asyncio.run(collector.offload_runtime_memory())
+            asyncio.run(collector.offload_generation_runtime_memory())
 
     assert runtime.events == ["offload", "reward_park"]
 
@@ -627,153 +661,144 @@ def _reward_sample_rows(
     ]
 
 
-def test_reward_scoring_input_rejects_sample_row_output_mismatch() -> None:
-    with pytest.raises(ValueError, match="sample-row/output batch mismatch"):
-        RewardScoringInput(
-            outputs=torch.ones(2, 3),
-            source_request_id="request-0",
-            sample_rows=_reward_sample_rows("request-0", ["p0"]),
-            metadata={},
-            device="cpu",
-        )
-
-
-def test_reward_scoring_input_derives_batch_size_and_prompt_rows() -> None:
-    request = RewardScoringInput(
-        outputs=torch.ones(2, 3),
-        source_request_id="request-0",
-        sample_rows=_reward_sample_rows("request-0", ["p0", "p1"]),
-        metadata={},
-        device="cpu",
-    )
-
-    assert request.batch_size == 2
-    assert [row.prompt for row in request.sample_rows] == ["p0", "p1"]
-    assert {field.name for field in fields(request)}.isdisjoint(
-        {"prompts", "expected_count", "batch_size"},
-    )
-
-
-def test_reward_scoring_input_rejects_mismatched_row_request_id() -> None:
-    rows = _reward_sample_rows("request-0", ["p0"])
-    rows[0].metadata["request_id"] = "different-request"
-
-    with pytest.raises(ValueError, match="source request/sample-row mismatch"):
-        RewardScoringInput(
-            outputs=torch.ones(1, 3),
-            source_request_id="request-0",
-            sample_rows=rows,
-            metadata={},
-            device="cpu",
-        )
-
-
-def test_reward_scorer_score_many_uses_one_call_and_splits_per_group() -> None:
-    """Checks score_many merges groups into one score_batch with per-group metadata."""
+def _reward_sample_builder(
+    request_id: str,
+    prompts: list[str],
+    *,
+    outputs: torch.Tensor | None = None,
+    metadata: dict[str, Any] | None = None,
+) -> TrajectoryRolloutBatchBuilder:
     import asyncio
 
-    class _CountingReward:
-        def __init__(self) -> None:
-            self.score_batch_calls: list[list[Any]] = []
+    request = GenerationRequest(
+        request_id=request_id,
+        family="unit",
+        task="collect",
+        inputs=prompts,
+        samples_per_prompt=1,
+    )
+    output = asyncio.run(_Runtime().generate(request))
+    output.sample_rows = _reward_sample_rows(request_id, prompts)
+    if outputs is not None:
+        output.output = outputs
+    return TrajectoryRolloutBatchBuilder(
+        output,
+        RolloutBatchBuildContext(metadata=dict(metadata or {}), device="cpu"),
+    )
 
-        async def score_batch(self, rollouts: list[Any]) -> list[float]:
-            self.score_batch_calls.append(list(rollouts))
-            return [float(i) for i in range(len(rollouts))]
 
-    reward_fn = _CountingReward()
-    scorer = RewardScorer(reward_fn)
-    requests = [
-        RewardScoringInput(
-            outputs=torch.ones(2, 3),
-            source_request_id="request-0",
-            sample_rows=_reward_sample_rows("request-0", ["g0-a", "g0-b"]),
-            metadata={"target_text": "group-0"},
-            device="cpu",
-        ),
-        RewardScoringInput(
-            outputs=torch.ones(3, 3),
-            source_request_id="request-1",
-            sample_rows=_reward_sample_rows(
-                "request-1",
-                ["g1-a", "g1-b", "g1-c"],
-                policy_version=5,
-            ),
-            metadata={"target_text": "group-1"},
-            device="cpu",
-        ),
-    ]
+def test_reward_samples_reject_sample_row_output_mismatch() -> None:
+    builder = _reward_sample_builder(
+        "request-0",
+        ["p0"],
+        outputs=torch.ones(2, 3),
+    )
 
-    rewards = asyncio.run(scorer.score_many(requests)).scores
+    with pytest.raises(ValueError, match="sample-row/output batch mismatch"):
+        builder.reward_samples()
 
-    # One reward call for both groups — this is what keeps one actor
-    # lifecycle per epoch for release_after_score rewards.
-    assert len(reward_fn.score_batch_calls) == 1
-    rollouts = reward_fn.score_batch_calls[0]
-    assert [r.prompt for r in rollouts] == [
-        "g0-a",
-        "g0-b",
-        "g1-a",
-        "g1-b",
-        "g1-c",
-    ]
-    assert [r.metadata["target_text"] for r in rollouts] == [
-        "group-0",
-        "group-0",
-        "group-1",
-        "group-1",
-        "group-1",
-    ]
-    assert [r.source_request_id for r in rollouts] == [
+
+def test_reward_samples_preserve_prompt_lineage_and_metadata() -> None:
+    samples = _reward_sample_builder(
+        "request-0",
+        ["p0", "p1"],
+        outputs=torch.ones(2, 3),
+        metadata={"target_text": "caption"},
+    ).reward_samples()
+
+    assert [sample.prompt for sample in samples] == ["p0", "p1"]
+    assert [sample.source_request_id for sample in samples] == [
         "request-0",
         "request-0",
-        "request-1",
-        "request-1",
-        "request-1",
     ]
-    assert [r.sample_id for r in rollouts] == [
+    assert [sample.sample_id for sample in samples] == [
         "request-0:sample:0",
         "request-0:sample:1",
-        "request-1:sample:0",
-        "request-1:sample:1",
-        "request-1:sample:2",
     ]
-    assert [r.group_id for r in rollouts] == [
-        "request-0:group:0",
-        "request-0:group:1",
-        "request-1:group:0",
-        "request-1:group:1",
-        "request-1:group:2",
-    ]
-    assert [r.trajectory_id for r in rollouts] == [
-        "request-0:trajectory:0",
-        "request-0:trajectory:1",
-        "request-1:trajectory:0",
-        "request-1:trajectory:1",
-        "request-1:trajectory:2",
-    ]
-    assert [r.policy_version for r in rollouts] == [4, 4, 5, 5, 5]
-    # Scores split back by group size, in order.
-    assert rewards[0].tolist() == [0.0, 1.0]
-    assert rewards[1].tolist() == [2.0, 3.0, 4.0]
+    assert all(sample.metadata["target_text"] == "caption" for sample in samples)
+    assert not any(
+        hasattr(sample, name)
+        for sample in samples
+        for name in ("device", "batch_size", "expected_count")
+    )
 
-    assert asyncio.run(scorer.score_many([])).scores == []
+
+def test_reward_samples_reject_mismatched_row_request_id() -> None:
+    builder = _reward_sample_builder("request-0", ["p0"])
+    builder.output.sample_rows[0].metadata["request_id"] = "different-request"
+    with pytest.raises(ValueError, match="source request/sample-row mismatch"):
+        builder.reward_samples()
+
+
+def test_collector_uses_one_reward_request_and_splits_scores_per_group() -> None:
+    """One reward request preserves every group's metadata and lineage."""
+    import asyncio
+
+    reward_runtime = _RewardRuntime()
+    collector = _collector(
+        generation_runtime=_Runtime(),
+        reward_runtime=reward_runtime,
+    )
+
+    async def _collect_groups():
+        first = await collector.collect_unscored(
+            ["g0"],
+            group_size=2,
+            metadata={"target_text": "group-0"},
+            policy_version=4,
+        )
+        second = await collector.collect_unscored(
+            ["g1"],
+            group_size=3,
+            metadata={"target_text": "group-1"},
+            policy_version=5,
+        )
+        return await collector.score_rollouts([first, second])
+
+    first, second = asyncio.run(_collect_groups())
+
+    assert len(reward_runtime.calls) == 1
+    call = reward_runtime.calls[0]
+    assert call["prompts"] == ["g0", "g0", "g1", "g1", "g1"]
+    assert [metadata["target_text"] for metadata in call["metadata"]] == [
+        "group-0",
+        "group-0",
+        "group-1",
+        "group-1",
+        "group-1",
+    ]
+    assert len(set(call["sample_ids"])) == 5
+    assert first.rewards.tolist() == [0.0, 1.0]
+    assert second.rewards.tolist() == [2.0, 3.0, 4.0]
 
 
 def test_collector_attaches_components_to_their_exact_rollout_groups() -> None:
     """Prefetched reward observations travel with the batch they describe."""
     import asyncio
 
-    class _ComponentReward:
-        async def score_batch_report(self, rollouts):
-            scores = [float(index) for index in range(len(rollouts))]
-            return RewardBatchReport(
-                scores=scores,
-                components={"observer": [value + 10.0 for value in scores]},
+    class _ComponentRewardRuntime(_RewardRuntime):
+        async def score(
+            self,
+            request: RewardRequest,
+            *,
+            require_memory_release: bool = False,
+        ) -> RewardOutput:
+            output = await super().score(
+                request,
+                require_memory_release=require_memory_release,
+            )
+            return RewardOutput(
+                request_id=output.request_id,
+                sample_ids=output.sample_ids,
+                scores=output.scores,
+                components={
+                    "observer": tuple(value + 10.0 for value in output.scores),
+                },
             )
 
     collector = _collector(
-        runtime=_Runtime(),
-        reward_scorer=RewardScorer(_ComponentReward()),
+        generation_runtime=_Runtime(),
+        reward_runtime=_ComponentRewardRuntime(),
     )
 
     async def _collect_two_groups():
@@ -795,14 +820,23 @@ def test_collect_prompt_batches_folds_reward_timing_into_stats() -> None:
     """Checks reward runtime timing reaches RolloutStats."""
     import asyncio
 
-    class _TimedReward:
+    class _TimedRewardRuntime(_RewardRuntime):
         def __init__(self) -> None:
+            super().__init__()
             self.batch_sizes: list[int] = []
 
-        async def score_batch_report(self, rollouts: list[Any]) -> RewardBatchReport:
-            self.batch_sizes.append(len(rollouts))
-            return RewardBatchReport(
-                scores=[float(index + 1) for index in range(len(rollouts))],
+        async def score(
+            self,
+            request: RewardRequest,
+            *,
+            require_memory_release: bool = False,
+        ) -> RewardOutput:
+            del require_memory_release
+            self.batch_sizes.append(len(request.samples))
+            return RewardOutput(
+                request_id=request.request_id,
+                sample_ids=tuple(sample.sample_id for sample in request.samples),
+                scores=tuple(float(index + 1) for index in range(len(request.samples))),
                 timing_ms={
                     "latency_ms": 12.0,
                     "queue_wait_ms": 3.0,
@@ -811,12 +845,12 @@ def test_collect_prompt_batches_folds_reward_timing_into_stats() -> None:
                 },
             )
 
-    reward_fn = _TimedReward()
+    reward_runtime = _TimedRewardRuntime()
     collector = RolloutCollector(
         config=RolloutCollectorConfig(),
         request_builder=_RequestBuilder(),
-        reward_scorer=RewardScorer(reward_fn),
-        runtime=_Runtime(),
+        reward_runtime=reward_runtime,
+        generation_runtime=_Runtime(),
     )
     stats = RolloutStats()
 
@@ -831,7 +865,7 @@ def test_collect_prompt_batches_folds_reward_timing_into_stats() -> None:
         ),
     )
 
-    assert reward_fn.batch_sizes == [2]
+    assert reward_runtime.batch_sizes == [2]
     assert len(batches) == 1
     assert batches[0].rewards.tolist() == [1.0, 2.0]
     assert stats.as_phase_dict()["reward.latency_s"] == 0.012
@@ -1068,7 +1102,7 @@ def _sample_rows(request: GenerationRequest) -> list[GenerationSampleRow]:
     rows: list[GenerationSampleRow] = []
     for prompt_index, prompt in enumerate(request.prompts):
         for sample_index in range(request.samples_per_prompt):
-            sample_id = f"p{prompt_index}_s{sample_index}"
+            sample_id = f"{request.request_id}:prompt:{prompt_index}:sample:{sample_index}"
             rows.append(
                 GenerationSampleRow(
                     prompt_index=prompt_index,
@@ -1145,7 +1179,10 @@ def test_collect_phase_timings_are_per_call_not_shared(
     import asyncio
 
     monkeypatch.setenv("VRL_PROFILE", "1")
-    collector = _collector(runtime=_Runtime(), reward_scorer=_RewardScorer())
+    collector = _collector(
+        generation_runtime=_Runtime(),
+        reward_runtime=_RewardRuntime(),
+    )
 
     async def _run() -> tuple[Any, Any]:
         first = await collector.collect_unscored(["p0"], group_size=1)

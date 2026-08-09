@@ -20,11 +20,13 @@ from vrl.config.precision import RolePrecision
 from vrl.config.schema import parse_config
 from vrl.models.families.registry import get_model_family_entry
 from vrl.ray.resources import resolve_distributed_resources
+from vrl.rewards import RewardRuntime
 from vrl.rollouts.collector.config import RolloutCollectorConfig
 from vrl.run import OnlineRunConfig
 from vrl.scripts.common.factory import (
     build_algorithm_and_evaluator,
-    build_reward,
+    build_reward_function,
+    build_reward_runtime,
     validate_reward_memory_parking,
 )
 
@@ -231,7 +233,7 @@ def test_sana_aesthetic_keeps_cpu_observation_only_pickscore() -> None:
     cfg.distributed.resources.visible_devices = [0]
     built = build_configs(cfg)
 
-    reward = build_reward(
+    reward = build_reward_function(
         built=built,
         resources=resolve_distributed_resources(cfg),
         device="cuda:0",
@@ -357,7 +359,7 @@ def test_sana_fullparam_long_is_fresh_and_pins_reward_revisions() -> None:
     assert cfg.reward.kwargs.pickscore.model_revision == (
         "a4e4367c6dfa7288a00c550414478f865b875800"
     )
-    reward = build_reward(
+    reward = build_reward_function(
         built=built,
         resources=resolve_distributed_resources(cfg),
         device="cuda:0",
@@ -473,7 +475,7 @@ def test_reward_factory_passes_the_selected_local_device(monkeypatch) -> None:
 
     monkeypatch.setattr(MultiReward, "from_dict", classmethod(fake_from_dict))
 
-    reward = build_reward(
+    reward = build_reward_function(
         built=_built_reward({"fake": 1.0}, {"fake": {"marker": True}}),
         resources=None,
         device="cuda:2",
@@ -539,7 +541,7 @@ def test_http_reward_accepts_torchrun_rank_local_device(monkeypatch) -> None:
         },
     )
 
-    build_reward(
+    build_reward_function(
         built=_built_reward(
             {"unified_reward_video": 1.0},
             {
@@ -562,7 +564,7 @@ def test_http_reward_accepts_torchrun_rank_local_device(monkeypatch) -> None:
 def test_reward_factory_rejects_an_all_zero_objective() -> None:
     """Checks observation-only components cannot replace the training objective."""
     with pytest.raises(ValueError, match="At least one reward component"):
-        build_reward(
+        build_reward_function(
             built=_built_reward({"pickscore": 0.0}, {}),
             resources=None,
             device="cpu",
@@ -604,7 +606,7 @@ def test_shared_reward_capability_fails_before_component_construction(monkeypatc
     cfg = _shared_reward_cfg("geneval")
 
     with pytest.raises(ValueError, match="geneval"):
-        build_reward(
+        build_reward_function(
             built=_built_reward({"geneval": 1.0}, {"geneval": {}}),
             resources=resolve_distributed_resources(cfg),
             device="cuda:0",
@@ -655,9 +657,19 @@ def test_reward_build_consumes_resolved_inference(
         unexpected_reparse,
     )
 
-    reward = build_reward(built=built, resources=None, device="cpu")
+    reward = build_reward_function(built=built, resources=None, device="cpu")
 
     assert [name for name, _, _ in reward.rewards] == ["ocr"]
+
+
+def test_reward_runtime_factory_exposes_the_public_runtime_protocol() -> None:
+    runtime = build_reward_runtime(
+        built=_built_reward({"ocr": 1.0}, {}),
+        resources=None,
+        device="cpu",
+    )
+
+    assert isinstance(runtime, RewardRuntime)
 
 
 def test_shared_reward_topology_automatically_enables_parking(monkeypatch) -> None:
@@ -687,7 +699,7 @@ def test_shared_reward_topology_automatically_enables_parking(monkeypatch) -> No
     monkeypatch.setattr(MultiReward, "from_dict", classmethod(fake_from_dict))
     cfg = _shared_reward_cfg("aesthetic")
 
-    reward = build_reward(
+    reward = build_reward_function(
         built=_built_reward({"aesthetic": 1.0}, {"aesthetic": {}}),
         resources=resolve_distributed_resources(cfg),
         device="cuda:0",
@@ -727,7 +739,7 @@ def test_shared_reward_accepts_rank_local_cuda_after_physical_placement(
     cfg.distributed.resources.trainer.devices = [2]
     cfg.distributed.resources.rollout.devices = [2]
 
-    reward = build_reward(
+    reward = build_reward_function(
         built=_built_reward({"aesthetic": 1.0}, {"aesthetic": {}}),
         resources=resolve_distributed_resources(cfg),
         device="cuda:0",
@@ -765,7 +777,7 @@ def test_factory_rejects_driver_device_outside_reward_resource_topology() -> Non
     cfg = _shared_reward_cfg("aesthetic")
 
     with pytest.raises(ValueError, match="execution-device source of truth"):
-        build_reward(
+        build_reward_function(
             built=_built_reward({"aesthetic": 1.0}, {"aesthetic": {}}),
             resources=resolve_distributed_resources(cfg),
             device="cpu",
@@ -790,7 +802,7 @@ def test_factory_rejects_driver_device_outside_reward_resource_topology() -> Non
         },
     )
     with pytest.raises(ValueError, match="execution-device source of truth"):
-        build_reward(
+        build_reward_function(
             built=_built_reward({"ocr": 1.0}, {"ocr": {}}),
             resources=resolve_distributed_resources(cpu_cfg),
             device="cuda:0",

@@ -5,6 +5,7 @@ import torch
 from vrl.config.loading import load_config
 from vrl.generation import GenerationOutput, GenerationRequest, GenerationSampleRow
 from vrl.models.families.registry import get_model_family_entry
+from vrl.rewards.runtime import RewardFunctionRuntime
 from vrl.rollouts.collector import build_rollout_collector
 from vrl.rollouts.collector.batch_builder import (
     RolloutBatchBuildContext,
@@ -87,7 +88,7 @@ def test_r1_collector_uses_r1_task_request_and_trajectory_batch() -> None:
     )
     collector = build_rollout_collector(
         get_model_family_entry("janus_pro_r1"),
-        reward_fn=None,
+        reward_runtime=RewardFunctionRuntime(None),
         config=rollout_config,
     )
     plan = collector.request_builder.build(["draw text"], 2)

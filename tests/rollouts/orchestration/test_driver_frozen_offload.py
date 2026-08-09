@@ -49,15 +49,15 @@ def _coordinator(model: _FakeDriverModel) -> RolloutRuntimeCoordinator:
 
     class _CollectorControl:
         def __init__(self, runtime: Any) -> None:
-            self.runtime = runtime
-            self.requires_runtime_offload_before_reward = False
+            self.generation_runtime = runtime
+            self.requires_generation_offload_before_reward = False
             self.requires_driver_model_offload_for_reward = False
             self.supports_reward_generation_overlap = False
 
-        async def activate_runtime(self) -> None:
+        async def activate_generation_runtime(self) -> None:
             return None
 
-        async def offload_runtime_memory(self) -> None:
+        async def offload_generation_runtime_memory(self) -> None:
             return None
 
         async def shutdown(self) -> None:

@@ -1,6 +1,6 @@
 """GenEval reward (model-backed over the in-process transport).
 
-Scores rollouts against structured GenEval prompt metadata. The actual
+Scores samples against structured GenEval prompt metadata. The actual
 image/object scoring is delegated to an import-path callable (or an injected
 ``scorer``), keeping the training stack independent from the GenEval repo
 layout while preserving the exact prompt metadata the evaluator needs.
@@ -14,12 +14,12 @@ from typing import Any
 from vrl.rewards.base import RewardFunction
 from vrl.rewards.inference import RewardInferenceArtifact
 from vrl.rewards.models.geneval import GenEvalRewardModel, _OutputBox
-from vrl.rewards.runtime import InProcessRewardRuntime
-from vrl.rewards.types import RewardRollout
+from vrl.rewards.runtime import InProcessRewardInferenceRuntime
+from vrl.rewards.types import RewardSample
 
 
 class GenEvalReward(RewardFunction):
-    """Score rollouts against GenEval prompt metadata.
+    """Score samples against GenEval prompt metadata.
 
     The built-in mode delegates actual image/object scoring to an import-path
     callable. This keeps the training stack independent from the GenEval repo
@@ -52,7 +52,7 @@ class GenEvalReward(RewardFunction):
         super().__init__(
             reward_name="geneval",
             score_key="geneval",
-            runtime=InProcessRewardRuntime(model=model),
+            runtime=InProcessRewardInferenceRuntime(model=model),
             artifact_builder=self._build_artifacts,
             debug_dir=debug_dir,
             request_prefix="geneval",
@@ -61,35 +61,35 @@ class GenEvalReward(RewardFunction):
 
     def _build_artifacts(
         self,
-        rollouts: list[RewardRollout],
+        samples: list[RewardSample],
     ) -> list[RewardInferenceArtifact]:
         artifacts: list[RewardInferenceArtifact] = []
-        for rollout in rollouts:
-            rollout_metadata = dict(rollout.metadata or {})
-            geneval = self._extract_geneval_metadata(rollout)
+        for sample in samples:
+            sample_metadata = dict(sample.metadata or {})
+            geneval = self._extract_geneval_metadata(sample)
             artifacts.append(
                 RewardInferenceArtifact(
-                    artifact_id=(f"{rollout.source_request_id}:{rollout.sample_id}:geneval"),
+                    artifact_id=(f"{sample.source_request_id}:{sample.sample_id}:geneval"),
                     path="",
                     media_type="image",
-                    media=_OutputBox(rollout.output),
-                    prompt=str(rollout.prompt),
-                    source_request_id=rollout.source_request_id,
-                    sample_id=rollout.sample_id,
-                    group_id=rollout.group_id,
-                    trajectory_id=rollout.trajectory_id,
-                    policy_version=rollout.policy_version,
+                    media=_OutputBox(sample.output),
+                    prompt=str(sample.prompt),
+                    source_request_id=sample.source_request_id,
+                    sample_id=sample.sample_id,
+                    group_id=sample.group_id,
+                    trajectory_id=sample.trajectory_id,
+                    policy_version=sample.policy_version,
                     metadata={
                         "geneval": geneval,
-                        "rollout_metadata": rollout_metadata,
+                        "rollout_metadata": sample_metadata,
                     },
                 ),
             )
         return artifacts
 
     @staticmethod
-    def _extract_geneval_metadata(rollout: RewardRollout) -> dict[str, Any]:
-        metadata = dict(rollout.metadata)
+    def _extract_geneval_metadata(sample: RewardSample) -> dict[str, Any]:
+        metadata = dict(sample.metadata)
         geneval = metadata.get("geneval")
         if isinstance(geneval, dict):
             return geneval
@@ -108,7 +108,7 @@ class GenEvalReward(RewardFunction):
                     if key in manifest_row
                 }
 
-        raise ValueError("GenEvalReward requires metadata.geneval on each rollout")
+        raise ValueError("GenEvalReward requires metadata.geneval on each sample")
 
 
 __all__ = ["GenEvalReward"]

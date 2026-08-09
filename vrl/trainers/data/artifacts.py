@@ -10,6 +10,7 @@ from typing import Any
 from vrl.trainers.data.prompts import PromptExample, load_prompt_manifest
 from vrl.utils.artifacts import (
     IMAGE_SUFFIXES,
+    SOURCE_BACKED_VIDEO_WORLD_METADATA_FIELDS,
     ArtifactManifestError,
     coerce_data_root,
     resolve_artifact_path,
@@ -18,22 +19,6 @@ from vrl.utils.artifacts import (
 # Derived from PromptExample fields tagged metadata={'artifact': True} — single source of truth.
 DEFAULT_ARTIFACT_FIELDS = tuple(
     f.name for f in fields(PromptExample) if f.metadata.get("artifact")
-)
-# Shares the {source_repo, source_frame_index, decode_method, conditioning}
-# provenance sub-vocabulary with the Image2Video manifest check in
-# vrl/config/validation.py:_validate_image_to_video_manifest — keep in sync.
-# Tuple order is load-bearing: required_metadata_fields is iterated in order and
-# the first missing field is named in the error (tested in
-# tests/data/test_video_world_manifests.py), so it is NOT auto-derived.
-SOURCE_BACKED_VIDEO_WORLD_METADATA_FIELDS = (
-    "source",
-    "source_repo",
-    "source_split",
-    "source_episode",
-    "source_video",
-    "source_frame_index",
-    "decode_method",
-    "conditioning",
 )
 
 

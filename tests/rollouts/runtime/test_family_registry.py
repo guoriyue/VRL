@@ -33,6 +33,7 @@ from vrl.models.interfaces.generation_memory import (
     GenerationMemoryPolicy,
     VaeDecodeMemory,
 )
+from vrl.rewards.runtime import RewardFunctionRuntime
 from vrl.rollouts.collector import build_rollout_collector
 from vrl.rollouts.collector.config import RolloutCollectorConfig
 from vrl.rollouts.collector.requests import GenerationRequestBuilder
@@ -795,7 +796,7 @@ def test_all_registry_entries_build_collectors_from_the_same_entry() -> None:
     for entry in FAMILY_REGISTRY.values():
         collector = build_rollout_collector(
             entry,
-            reward_fn=None,
+            reward_runtime=RewardFunctionRuntime(None),
             config=RolloutCollectorConfig(
                 request_sampling={"samples_per_chunk": 1},
             ),

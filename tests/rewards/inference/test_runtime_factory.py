@@ -14,7 +14,7 @@ from vrl.rewards.inference import (
     RewardInferenceArtifact,
     RewardInferenceRequest,
 )
-from vrl.rewards.runtime import InProcessRewardRuntime
+from vrl.rewards.runtime import InProcessRewardInferenceRuntime
 
 
 class _FakeRewardModel:
@@ -29,7 +29,7 @@ class _FakeRewardModel:
 
 
 def build_fake_reward_model(worker_config) -> _FakeRewardModel:
-    """Module-level factory so InProcessRewardRuntime can import it by path."""
+    """Module-level factory so the in-process runtime can import it by path."""
     return _FakeRewardModel(worker_config)
 
 
@@ -37,7 +37,9 @@ def test_runtime_requires_model_factory() -> None:
     """Checks the runtime rejects a worker config without a model factory."""
     import asyncio
 
-    runtime = InProcessRewardRuntime({"reward_model_name": "KlingTeam/VideoReward@main"})
+    runtime = InProcessRewardInferenceRuntime(
+        {"reward_model_name": "KlingTeam/VideoReward@main"},
+    )
     request = RewardInferenceRequest(
         request_id="req",
         artifacts=(
@@ -53,7 +55,7 @@ def test_runtime_requires_model_factory() -> None:
 def test_model_backed_reward_builds_in_process_runtime_directly() -> None:
     reward = PickScoreReward(device="cpu")
 
-    assert isinstance(reward.runtime, InProcessRewardRuntime)
+    assert isinstance(reward.runtime, InProcessRewardInferenceRuntime)
     assert reward.runtime._worker_config["model_factory"] == (
         "vrl.rewards.models.pickscore:pickscore_reward_model"
     )
@@ -68,7 +70,7 @@ def test_video_reward_derives_internal_model_factory_from_reward_name(tmp_path) 
         worker_config={"model_path": "", "dtype": "bfloat16"},
     )
 
-    assert isinstance(reward.runtime, InProcessRewardRuntime)
+    assert isinstance(reward.runtime, InProcessRewardInferenceRuntime)
     assert reward.runtime._worker_config == {
         "model_path": "",
         "dtype": "bfloat16",
@@ -86,7 +88,7 @@ def test_composite_disk_reward_injects_factory_without_model_repository(tmp_path
         worker_config={"reward_model_version": "robotics-video-reward-v1"},
     )
 
-    assert isinstance(reward.runtime, InProcessRewardRuntime)
+    assert isinstance(reward.runtime, InProcessRewardInferenceRuntime)
     assert reward.runtime._worker_config["model_factory"] == (
         "vrl.rewards.models.robotics_video_reward:RoboticsVideoRewardModel"
     )
@@ -95,7 +97,7 @@ def test_composite_disk_reward_injects_factory_without_model_repository(tmp_path
 @pytest.mark.asyncio
 async def test_runtime_loads_reward_model_via_factory() -> None:
     """Checks the runtime loads the reward model via the configured factory."""
-    runtime = InProcessRewardRuntime(
+    runtime = InProcessRewardInferenceRuntime(
         {
             "model_factory": (
                 "tests.rewards.inference.test_runtime_factory:build_fake_reward_model"

@@ -469,7 +469,7 @@ PaddleOCR 在可选 `[ocr]` extra 里、默认环境没装（实测 ModuleNotFou
 
 ### 4.5 不在本轨道范围内的 reward 侧替身
 
-- `tests/rewards/service/test_service.py:91-105` 的 `_FakeRuntime`：假的是**打分模型**不是**线**（该文件起真 aiohttp server、走真 127.0.0.1、真 subprocess CLI + SIGTERM，实测 29 tests / 0.35 s）。真 `InProcessRewardRuntime` 另有真覆盖。属于另一条轨道。
+- `tests/rewards/service/test_service.py:91-105` 的 `_FakeRuntime`：假的是**打分模型**不是**线**（该文件起真 aiohttp server、走真 127.0.0.1、真 subprocess CLI + SIGTERM，实测 29 tests / 0.35 s）。真 `InProcessRewardInferenceRuntime` 另有真覆盖。属于另一条轨道。
 - `tests/rewards/inference/test_in_process_runtime.py` 的 `_FakeCumemAllocator` 一族：涉及 vLLM CuMemAllocator 的进程级残留会计，另有独立裁定，本 sprint 不碰。
 
 ### 4.6 机制层面的非目标：本 sprint **不**引入 `real_cover` marker

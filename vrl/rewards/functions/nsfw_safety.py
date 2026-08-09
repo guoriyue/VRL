@@ -6,11 +6,11 @@ from typing import Any
 
 from vrl.rewards.base import RewardFunction
 from vrl.rewards.models.nsfw_safety import NSFWSafetyRewardModel
-from vrl.rewards.runtime import InProcessRewardRuntime
+from vrl.rewards.runtime import InProcessRewardInferenceRuntime
 
 
 class NSFWSafetyReward(RewardFunction):
-    """Non-positive NSFW penalty; aggregates per-rollout via the model's batch hook."""
+    """Non-positive NSFW penalty; aggregates per-sample via the model's batch hook."""
 
     device_config_key = "classifier_device"
 
@@ -24,9 +24,9 @@ class NSFWSafetyReward(RewardFunction):
         super().__init__(
             reward_name="nsfw_safety",
             score_key="nsfw_safety",
-            runtime=InProcessRewardRuntime(model=model),
-            artifact_builder=lambda rollouts: RewardFunction.build_inmemory_artifacts(
-                rollouts,
+            runtime=InProcessRewardInferenceRuntime(model=model),
+            artifact_builder=lambda samples: RewardFunction.build_inmemory_artifacts(
+                samples,
                 media_type="image",
             ),
         )

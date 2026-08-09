@@ -7,25 +7,26 @@ from typing import Any, Protocol, runtime_checkable
 
 import torch
 
+from vrl.generation import GenerationRuntime
 from vrl.rollouts.stats import RolloutStats
 
 
 @runtime_checkable
 class RolloutCollectorControl(Protocol):
-    """Runtime controls a schedule must own for a complete phase handoff."""
+    """Generation-runtime controls required for a complete phase handoff."""
 
     @property
-    def runtime(self) -> Any: ...
+    def generation_runtime(self) -> GenerationRuntime: ...
 
     @property
-    def requires_runtime_offload_before_reward(self) -> bool: ...
+    def requires_generation_offload_before_reward(self) -> bool: ...
 
     @property
     def requires_driver_model_offload_for_reward(self) -> bool: ...
 
-    async def activate_runtime(self) -> None: ...
+    async def activate_generation_runtime(self) -> None: ...
 
-    async def offload_runtime_memory(self) -> None: ...
+    async def offload_generation_runtime_memory(self) -> None: ...
 
     async def shutdown(self) -> None: ...
 
@@ -46,9 +47,9 @@ class RolloutRuntimeCoordinator:
     ) -> None:
         if not isinstance(collector, RolloutCollectorControl):
             raise TypeError(
-                "rollout collector must implement activate_runtime(), "
-                "offload_runtime_memory(), shutdown(), runtime, and reward "
-                "handoff capabilities",
+                "rollout collector must implement activate_generation_runtime(), "
+                "offload_generation_runtime_memory(), shutdown(), "
+                "generation_runtime, and reward handoff capabilities",
             )
         self.collector = collector
         self.strategy = strategy
@@ -118,7 +119,7 @@ class RolloutRuntimeCoordinator:
         return self._runtime_policy_version(default=self._last_policy_version)
 
     def requires_driver_model_offload(self) -> bool:
-        runtime = self._collector_runtime()
+        runtime = self._collector_generation_runtime()
         if runtime is None:
             return False
         return bool(runtime.requires_driver_model_offload)
@@ -138,7 +139,7 @@ class RolloutRuntimeCoordinator:
     def runtime_is_colocated(self) -> bool:
         # Ask the runtime (GenerationRuntime protocol) instead of probing its
         # config internals.
-        runtime = self._collector_runtime()
+        runtime = self._collector_generation_runtime()
         if runtime is None:
             return False
         return bool(runtime.is_colocated())
@@ -148,7 +149,7 @@ class RolloutRuntimeCoordinator:
         # slots, so the weight-sync barrier can skip draining in-flight generation
         # (old requests keep their slot). getattr-with-default keeps any runtime
         # that does not advertise the capability on the safe draining barrier.
-        runtime = self._collector_runtime()
+        runtime = self._collector_generation_runtime()
         return bool(getattr(runtime, "supports_non_draining_weight_sync", False))
 
     def validate_training_state_parking(self) -> None:
@@ -169,37 +170,37 @@ class RolloutRuntimeCoordinator:
             self.strategy.restore_training_state(self.training_state_getter())
 
     async def activate_rollout_runtime(self, stats: RolloutStats) -> None:
-        with stats.phase("rollout.activate_runtime_s"):
-            await self.collector.activate_runtime()
+        with stats.phase("rollout.activate_generation_runtime_s"):
+            await self.collector.activate_generation_runtime()
 
     async def offload_rollout_runtime_memory(self, stats: RolloutStats) -> None:
-        with stats.phase("rollout.offload_runtime_s"):
-            await self.collector.offload_runtime_memory()
+        with stats.phase("rollout.offload_generation_runtime_s"):
+            await self.collector.offload_generation_runtime_memory()
 
     async def shutdown_collector_runtime(self) -> None:
         """Release the collector/runtime on the schedule's owning event loop."""
 
         await self.collector.shutdown()
 
-    def requires_runtime_offload_before_reward(self) -> bool:
-        return bool(self.collector.requires_runtime_offload_before_reward)
+    def requires_generation_offload_before_reward(self) -> bool:
+        return bool(self.collector.requires_generation_offload_before_reward)
 
-    def _collector_runtime(self) -> Any | None:
-        # The collector's `runtime` property raises RuntimeError before
-        # set_runtime() has run (the cross-node/continuous path queries the
-        # policy version during setup, before the runtime is attached), and
-        # AttributeError if the collector type exposes no runtime at all. Both
-        # mean "no collector-runtime provider yet" — fall through to the weight
-        # syncer rather than crashing.
+    def _collector_generation_runtime(self) -> GenerationRuntime | None:
+        # The collector's `generation_runtime` property raises RuntimeError before
+        # set_generation_runtime() has run (the cross-node/continuous path queries
+        # the policy version during setup, before the runtime is attached), and
+        # AttributeError if the collector type exposes no generation runtime at
+        # all. Both mean "no collector-runtime provider yet" — fall through to
+        # the weight syncer rather than crashing.
         try:
-            return self.collector.runtime
+            return self.collector.generation_runtime
         except (AttributeError, RuntimeError):
             return None
 
     def _runtime_policy_version(self, *, default: int | None) -> int | None:
-        # Ask each PolicyVersionProvider (collector runtime, then weight syncer)
-        # through the protocol instead of probing their internal structure.
-        for provider in (self._collector_runtime(), self.weight_syncer):
+        # Ask each PolicyVersionProvider (collector generation runtime, then
+        # weight syncer) through the protocol instead of probing internals.
+        for provider in (self._collector_generation_runtime(), self.weight_syncer):
             if provider is None:
                 continue
             value = provider.current_policy_version

@@ -12,7 +12,7 @@ from omegaconf import OmegaConf
 from vrl.config.validation import validate_reward_config
 from vrl.rewards.functions.kling_video_reward import KlingVideoReward
 from vrl.rewards.inference import RewardInferenceResult
-from vrl.rewards.types import RewardRollout
+from vrl.rewards.types import RewardSample
 
 
 class _FakeRuntime:
@@ -55,8 +55,8 @@ class _EmptyRuntime:
         return None
 
 
-def _rollout(output: torch.Tensor, *, policy_version: int = 3) -> RewardRollout:
-    return RewardRollout(
+def _sample(output: torch.Tensor, *, policy_version: int = 3) -> RewardSample:
+    return RewardSample(
         prompt="prompt",
         output=output,
         source_request_id="request-a",
@@ -105,7 +105,7 @@ async def test_video_reward_materializes_artifacts_and_returns_runtime_scores(
         runtime=runtime,
     )
 
-    report = await reward.score_batch_report([_rollout(torch.ones(1, 2, 2, 2))])
+    report = await reward.score_batch_report([_sample(torch.ones(1, 2, 2, 2))])
 
     assert report.scores == pytest.approx([1.5])
     assert len(runtime.requests) == 1
@@ -138,7 +138,7 @@ async def test_video_reward_rejects_missing_runtime_results(tmp_path: Path) -> N
     )
 
     with pytest.raises(RuntimeError, match="result/artifact mismatch"):
-        await reward.score_batch([_rollout(torch.ones(1, 2, 2, 2))])
+        await reward.score_batch([_sample(torch.ones(1, 2, 2, 2))])
     assert not list((tmp_path / "artifacts").glob("*.pt"))
 
 
@@ -155,7 +155,7 @@ async def test_video_reward_releases_artifacts_after_success_by_default(
         runtime=runtime,
     )
 
-    await reward.score_batch([_rollout(torch.ones(1, 2, 2, 2))])
+    await reward.score_batch([_sample(torch.ones(1, 2, 2, 2))])
 
     assert not Path(runtime.requests[0].artifacts[0].path).exists()
 

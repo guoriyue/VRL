@@ -16,9 +16,8 @@ from vrl.rewards.inference import (
     RewardInferenceArtifact,
     sha256_file,
 )
-from vrl.rewards.types import RewardRollout
-from vrl.trainers.data.artifacts import (
-    DEFAULT_ARTIFACT_FIELDS,
+from vrl.rewards.types import RewardSample
+from vrl.utils.artifacts import (
     SOURCE_BACKED_VIDEO_WORLD_METADATA_FIELDS,
 )
 from vrl.utils.media import write_mp4
@@ -28,6 +27,19 @@ from vrl.utils.media import write_mp4
 # tensor = torch.save .pt). media_type (image/video) is a separate axis.
 ArtifactFormat = Literal["tensor", "mp4"]
 ARTIFACT_FORMATS = frozenset(get_args(ArtifactFormat))
+
+# Reward-inference artifact wire allow-list. This is intentionally not derived
+# from PromptExample: list-valued manifest references do not cross this scalar
+# boundary, while rollout task/source provenance does. Each schema therefore
+# keeps its own explicit contract instead of coupling rewards to trainer data.
+_REWARD_ARTIFACT_PROVENANCE_FIELDS = (
+    "task_type",
+    "reference_image",
+    "reference_video",
+    "target_image",
+    "target_video",
+    *SOURCE_BACKED_VIDEO_WORLD_METADATA_FIELDS,
+)
 
 
 class VideoRewardArtifactStore:
@@ -57,11 +69,11 @@ class VideoRewardArtifactStore:
         self._owned_paths: set[Path] = set()
         self.root.mkdir(parents=True, exist_ok=True)
 
-    def materialize(self, rollouts: list[RewardRollout]) -> list[RewardInferenceArtifact]:
+    def materialize(self, samples: list[RewardSample]) -> list[RewardInferenceArtifact]:
         artifacts: list[RewardInferenceArtifact] = []
         try:
-            for rollout in rollouts:
-                artifacts.append(self._write_one(rollout))
+            for sample in samples:
+                artifacts.append(self._write_one(sample))
         except BaseException:
             self.release(artifacts)
             raise
@@ -95,18 +107,18 @@ class VideoRewardArtifactStore:
             if artifact.path:
                 self._owned_paths.discard(Path(artifact.path))
 
-    def _write_one(self, rollout: RewardRollout) -> RewardInferenceArtifact:
-        output = rollout.output
+    def _write_one(self, sample: RewardSample) -> RewardInferenceArtifact:
+        output = sample.output
         if not isinstance(output, torch.Tensor):
             raise TypeError(
-                "video reward artifact materialization requires tensor rollout output",
+                "video reward artifact materialization requires tensor sample output",
             )
         tensor = output.detach().cpu()
         _validate_media_shape(tensor, self.media_type)
 
-        metadata = dict(rollout.metadata or {})
+        metadata = dict(sample.metadata or {})
         materialization_id = uuid.uuid4().hex
-        artifact_id = f"{rollout.source_request_id}:{rollout.sample_id}:{materialization_id}"
+        artifact_id = f"{sample.source_request_id}:{sample.sample_id}:{materialization_id}"
         fps = _fps(metadata)
         suffix = "mp4" if self.artifact_format == "mp4" else "pt"
         path = (self.root / f"{materialization_id}.{suffix}").resolve()
@@ -121,12 +133,12 @@ class VideoRewardArtifactStore:
                 artifact_id=artifact_id,
                 path=str(path),
                 media_type=self.media_type,
-                prompt=str(rollout.prompt),
-                source_request_id=rollout.source_request_id,
-                sample_id=rollout.sample_id,
-                group_id=rollout.group_id,
-                trajectory_id=rollout.trajectory_id,
-                policy_version=rollout.policy_version,
+                prompt=str(sample.prompt),
+                source_request_id=sample.source_request_id,
+                sample_id=sample.sample_id,
+                group_id=sample.group_id,
+                trajectory_id=sample.trajectory_id,
+                policy_version=sample.policy_version,
                 size_bytes=size_bytes,
                 sha256=sha256_file(path),
                 metadata={
@@ -171,17 +183,9 @@ def _fps(metadata: dict[str, Any]) -> float:
 
 
 def _artifact_provenance(metadata: dict[str, Any]) -> dict[str, Any]:
-    # task_type is store-local (stamped by the collector, not a manifest field);
-    # the rest derives from the manifest vocabulary. "references" is excluded on
-    # purpose: it is list-valued and incompatible with the scalar filter below.
-    keys = (
-        "task_type",
-        *(f for f in DEFAULT_ARTIFACT_FIELDS if f != "references"),
-        *SOURCE_BACKED_VIDEO_WORLD_METADATA_FIELDS,
-    )
     return {
         key: metadata[key]
-        for key in keys
+        for key in _REWARD_ARTIFACT_PROVENANCE_FIELDS
         if key in metadata and metadata[key] is not None and str(metadata[key]).strip()
     }
 

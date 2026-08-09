@@ -12,7 +12,7 @@ from vrl.config.validation import validate_reward_config
 from vrl.rewards.functions.unified_reward_video import UnifiedRewardVideoReward
 from vrl.rewards.inference import RewardInferenceResult
 from vrl.rewards.models.unified_reward_video import _load_rubric, _parse_axis_scores
-from vrl.rewards.types import RewardRollout
+from vrl.rewards.types import RewardSample
 
 _FAKE_SCORES = {"alignment": 4.0, "physics": 2.0, "style": 3.0, "overall": 3.0}
 
@@ -46,8 +46,8 @@ class _FakeRuntime:
         return None
 
 
-def _rollout() -> RewardRollout:
-    return RewardRollout(
+def _sample() -> RewardSample:
+    return RewardSample(
         prompt="a spinning dancer",
         output=torch.ones(1, 2, 2, 2),
         source_request_id="request-0",
@@ -125,7 +125,7 @@ async def test_facade_selects_physics_and_fails_fast(tmp_path: Path) -> None:
         artifact_dir=str(tmp_path / "a"),
         runtime=_FakeRuntime(),
     )
-    assert await reward.score_batch([_rollout()]) == pytest.approx([2.0])
+    assert await reward.score_batch([_sample()]) == pytest.approx([2.0])
 
     bad = UnifiedRewardVideoReward(
         reward_name="unified_reward_video",
@@ -135,7 +135,7 @@ async def test_facade_selects_physics_and_fails_fast(tmp_path: Path) -> None:
         runtime=_FakeRuntime(),
     )
     with pytest.raises(KeyError, match="missing score keys"):
-        await bad.score_batch([_rollout()])
+        await bad.score_batch([_sample()])
 
 
 def test_config_validates() -> None:

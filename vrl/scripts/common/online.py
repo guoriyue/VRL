@@ -24,7 +24,7 @@ from vrl.ray.resources import (
     ResolvedDistributedResources,
     format_distributed_resource_plan,
 )
-from vrl.rewards.base import RewardFunction
+from vrl.rewards import RewardRuntime
 from vrl.rollouts.collector import RolloutCollector, build_rollout_collector
 from vrl.rollouts.orchestration import (
     RolloutSchedule,
@@ -37,7 +37,7 @@ from vrl.run import (
 )
 from vrl.scripts.common.factory import (
     build_algorithm_and_evaluator,
-    build_reward,
+    build_reward_runtime,
     validate_reward_memory_parking,
 )
 from vrl.trainers.activation_checkpointing import (
@@ -190,7 +190,7 @@ class _OnlineRecipeLifecycle:
     placement_owner: GlobalRayPlacementOwner
     strategy: Strategy
     ray_session: _RayClusterSession | None = None
-    reward_fn: RewardFunction | None = None
+    reward_runtime: RewardRuntime | None = None
     collector: RolloutCollector | None = None
     rollout_schedule: RolloutSchedule | None = None
     _shutdown_errors: list[tuple[str, Exception]] = field(
@@ -226,8 +226,8 @@ class _OnlineRecipeLifecycle:
             )
         else:
             pipeline_released = await self._shutdown_one(
-                "reward_fn",
-                self.reward_fn,
+                "reward_runtime",
+                self.reward_runtime,
             )
 
         await self._shutdown_one("placement_owner", self.placement_owner)
@@ -864,7 +864,7 @@ async def run_online_recipe(
             cross_node_preflight(ray, resources)
         placement_owner.create()
         collector_config = resolved.collector
-        reward_fn = lifecycle.reward_fn = build_reward(
+        reward_runtime = lifecycle.reward_runtime = build_reward_runtime(
             built=built,
             resources=resources,
             device=reward_device,
@@ -878,10 +878,10 @@ async def run_online_recipe(
         # An unreachable or wrong-identity external reward service must fail
         # here, before the expensive rollout backend launch — not after the
         # first generation batch reaches scoring.
-        await reward_fn.preflight()
+        await reward_runtime.preflight()
         collector = lifecycle.collector = build_rollout_collector(
             family_entry,
-            reward_fn=reward_fn,
+            reward_runtime=reward_runtime,
             config=collector_config,
             lifecycle=resources.lifecycle,
         )
@@ -889,7 +889,7 @@ async def run_online_recipe(
         generation_config.validate_driver_state(driver_bundle=bundle)
         generation_launch_inputs = resolved.ray_launch_inputs(resolved_model)
         log_host_memory("before_rollout_backend_build", log=logger)
-        collector.set_runtime(
+        collector.set_generation_runtime(
             generation_launcher.create_runtime(
                 generation_config,
                 generation_launch_inputs,
@@ -915,7 +915,7 @@ async def run_online_recipe(
             model=model,
             ref_model=ref_model,
             weight_syncer=build_runtime_weight_syncer(
-                collector.runtime,
+                collector.generation_runtime,
                 initial_policy_version=resume_step,
             ),
             # Rollout weight sync re-reads live trainable state on every push, so

@@ -39,22 +39,22 @@ class _FakePaddleOCR:
         return [[(None, (text, 1.0))]]
 
 
-def _make_ocr_rollout(
+def _make_ocr_sample(
     target_text: str,
     video_tensor=None,
     *,
     sample_id: str = "sample-0",
 ):
-    """Build a minimal RewardRollout with target_text metadata and a video tensor."""
+    """Build a minimal RewardSample with target_text metadata and a video tensor."""
     import torch
 
-    from vrl.rewards.types import RewardRollout
+    from vrl.rewards.types import RewardSample
 
     if video_tensor is None:
         # Black frames — no OCR text expected
         video_tensor = torch.zeros(3, 8, 64, 64)
 
-    return RewardRollout(
+    return RewardSample(
         prompt="test",
         output=video_tensor,
         source_request_id="request-0",
@@ -74,11 +74,11 @@ async def test_ocr_reward_paddleocr_core_scoring_behaviors() -> None:
 
     reward = OCRReward(device="cpu")
 
-    assert await reward.score(_make_ocr_rollout("")) == pytest.approx(0.0)
-    assert await reward.score(_make_ocr_rollout("HELLO")) <= 0.5
+    assert await reward.score(_make_ocr_sample("")) == pytest.approx(0.0)
+    assert await reward.score(_make_ocr_sample("HELLO")) <= 0.5
 
     scores = await reward.score_batch(
-        [_make_ocr_rollout("A"), _make_ocr_rollout("B", sample_id="sample-1")],
+        [_make_ocr_sample("A"), _make_ocr_sample("B", sample_id="sample-1")],
     )
     assert len(scores) == 2
 
@@ -90,12 +90,12 @@ async def test_image_ocr_substring_match_gets_full_credit() -> None:
 
     reward = OCRReward(device="cpu")
     reward._engine = _FakePaddleOCR(["Cafe Free WiFi Open"])
-    rollout = _make_ocr_rollout(
+    sample = _make_ocr_sample(
         "Free WiFi",
         video_tensor=torch.zeros(3, 64, 64),
     )
 
-    score = await reward.score(rollout)
+    score = await reward.score(sample)
 
     assert score == pytest.approx(1.0)
 
@@ -107,11 +107,11 @@ async def test_video_ocr_keeps_flow_grpo_video_edit_distance_behavior() -> None:
 
     reward = OCRReward(device="cpu")
     reward._engine = _FakePaddleOCR(["Free WiFiX", "Free WiFiX"])
-    rollout = _make_ocr_rollout(
+    sample = _make_ocr_sample(
         "Free WiFi",
         video_tensor=torch.zeros(3, 8, 64, 64),
     )
 
-    score = await reward.score(rollout)
+    score = await reward.score(sample)
 
     assert 0.0 < score < 1.0

@@ -48,7 +48,7 @@ GRPO 梯度 = `Σ A_i ∇log π`,`A_i` = 组内 reward 中心化。old_log_prob 
 
 ## 6. 关键文件
 
-- reward:`vrl/rewards/runtime.py:InProcessRewardRuntime`、`vrl/rewards/functions/kling_video_reward.py`、`vrl/rewards/models/kling_video_reward.py`
+- reward:`vrl/rewards/runtime.py:InProcessRewardInferenceRuntime`、`vrl/rewards/functions/kling_video_reward.py`、`vrl/rewards/models/kling_video_reward.py`
 - VAE:各家 `vrl/models/families/<family>/` 的 decode 路径
 - FP4 kernel 先例:`vrl/nn/quantization/fp8.py`（fp8 swap 机制,FP4 同构扩展)
 - 排序 parity:`vrl/algorithms/advantages.py:group_relative_advantages`

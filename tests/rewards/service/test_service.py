@@ -25,8 +25,8 @@ from vrl.rewards.inference import (
     RewardInferenceRequest,
     RewardInferenceResult,
 )
-from vrl.rewards.runtime import build_reward_runtime
-from vrl.rewards.service.client import HttpRewardRuntime
+from vrl.rewards.runtime import build_reward_inference_runtime
+from vrl.rewards.service.client import HttpRewardInferenceRuntime
 from vrl.rewards.service.protocol import (
     GENERATION_OVERLAP_SAFE_CAPABILITY,
     SHARED_FILESYSTEM_ARTIFACT_TRANSPORT,
@@ -121,7 +121,7 @@ async def _running_service(
     )
     await service.start()
     host, port = service.address
-    client = HttpRewardRuntime(
+    client = HttpRewardInferenceRuntime(
         RewardInferenceConfig(
             kind="http",
             endpoint=f"http://{host}:{port}",
@@ -290,7 +290,7 @@ async def test_expected_model_mismatch_fails_before_scoring(tmp_path) -> None:
     )
     await service.start()
     host, port = service.address
-    client = HttpRewardRuntime(
+    client = HttpRewardInferenceRuntime(
         RewardInferenceConfig(
             kind="http",
             endpoint=f"http://{host}:{port}",
@@ -313,7 +313,7 @@ async def test_ensure_ready_fails_fast_when_service_is_unreachable() -> None:
     with socket.socket() as listener:
         listener.bind(("127.0.0.1", 0))
         _, unbound_port = listener.getsockname()
-    client = HttpRewardRuntime(f"http://127.0.0.1:{unbound_port}")
+    client = HttpRewardInferenceRuntime(f"http://127.0.0.1:{unbound_port}")
     try:
         with pytest.raises(RemoteRewardServiceError) as caught:
             await client.ensure_ready()
@@ -336,7 +336,7 @@ async def test_ensure_ready_fails_fast_on_identity_mismatch(tmp_path) -> None:
     )
     await service.start()
     host, port = service.address
-    client = HttpRewardRuntime(
+    client = HttpRewardInferenceRuntime(
         RewardInferenceConfig(
             kind="http",
             endpoint=f"http://{host}:{port}",
@@ -358,7 +358,10 @@ async def test_ensure_ready_fails_fast_on_identity_mismatch(tmp_path) -> None:
 async def test_client_rejects_unknown_artifact_transport_before_scoring(tmp_path) -> None:
     artifact_file = tmp_path / "a0.mp4"
     artifact_file.write_bytes(b"x")
-    client = HttpRewardRuntime("http://127.0.0.1:1", expected_model="unit-model")
+    client = HttpRewardInferenceRuntime(
+        "http://127.0.0.1:1",
+        expected_model="unit-model",
+    )
 
     async def incompatible_info() -> RewardServiceInfo:
         return RewardServiceInfo(
@@ -692,7 +695,7 @@ async def test_ambiguous_score_transport_failure_requires_artifact_retention(
 ) -> None:
     artifact_file = tmp_path / "a0.mp4"
     artifact_file.write_bytes(b"x")
-    client = HttpRewardRuntime("http://127.0.0.1:8300")
+    client = HttpRewardInferenceRuntime("http://127.0.0.1:8300")
     client._identity_checked = True
 
     async def fail_request(*args, **kwargs):
@@ -730,7 +733,7 @@ def test_invalid_concurrency_does_not_start_runtime_owner(tmp_path, monkeypatch)
             owner_started = True
 
     monkeypatch.setattr(
-        "vrl.rewards.service.server.RewardRuntimeOwner",
+        "vrl.rewards.service.server.RewardInferenceRuntimeOwner",
         _UnexpectedOwner,
     )
 
@@ -865,7 +868,7 @@ async def test_service_shutdown_cancels_work_and_shuts_runtime_exactly_once(tmp_
     )
     await service.start()
     host, port = service.address
-    client = HttpRewardRuntime(f"http://{host}:{port}")
+    client = HttpRewardInferenceRuntime(f"http://{host}:{port}")
     scoring = asyncio.create_task(client.score_batch(_request(str(artifact_file))))
     assert await asyncio.to_thread(runtime.started.wait, 2)
 
@@ -880,8 +883,8 @@ async def test_service_shutdown_cancels_work_and_shuts_runtime_exactly_once(tmp_
     assert runtime.shutdown_calls == 1
 
 
-def test_build_reward_runtime_accepts_typed_http_config() -> None:
-    runtime = build_reward_runtime(
+def test_build_reward_inference_runtime_accepts_typed_http_config() -> None:
+    runtime = build_reward_inference_runtime(
         {},
         inference=RewardInferenceConfig(
             kind="http",
@@ -890,7 +893,7 @@ def test_build_reward_runtime_accepts_typed_http_config() -> None:
             expected_model="unit-model",
         ),
     )
-    assert isinstance(runtime, HttpRewardRuntime)
+    assert isinstance(runtime, HttpRewardInferenceRuntime)
     assert runtime.scoring_is_nonblocking is True
     assert runtime.external_accelerator_isolation_verified is False
 

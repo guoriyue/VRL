@@ -94,10 +94,10 @@ class ContinuousRolloutSchedule:
                 "continuous rollout cannot score rewards on the trainer GPU while "
                 "backward overlaps; use a CPU/dedicated reward or strict_on_policy",
             )
-        if self.lifecycle.requires_runtime_offload_before_reward():
+        if self.lifecycle.requires_generation_offload_before_reward():
             raise RuntimeError(
                 "continuous rollout requires reward scoring that does not offload "
-                "the rollout runtime mid-iteration; use a dedicated reward GPU "
+                "the generation runtime mid-iteration; use a dedicated reward GPU "
                 "or strict_on_policy scheduling",
             )
         if not getattr(

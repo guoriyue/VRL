@@ -15,6 +15,7 @@ from vrl.models.families.janus_pro.model import (
 )
 from vrl.models.families.registry import get_model_family_entry
 from vrl.models.interfaces import ReplayResult
+from vrl.rewards.runtime import RewardFunctionRuntime
 from vrl.rollouts.batch import RolloutBatch
 from vrl.rollouts.collector import build_rollout_collector
 from vrl.rollouts.collector.config import RolloutCollectorConfig
@@ -118,7 +119,7 @@ def test_janus_collector_has_no_forward_step() -> None:
     """Collectors expose collect(); train-time replay lives on the model."""
     collector = build_rollout_collector(
         get_model_family_entry("janus_pro"),
-        reward_fn=None,
+        reward_runtime=RewardFunctionRuntime(None),
         config=RolloutCollectorConfig(
             request_sampling={
                 "guidance_scale": 5.0,

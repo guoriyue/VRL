@@ -11,8 +11,8 @@ from vrl.rewards.base import (
     RewardFunction,
 )
 from vrl.rewards.models.base import TorchRewardModel
-from vrl.rewards.runtime import InProcessRewardRuntime
-from vrl.rewards.types import RewardRollout
+from vrl.rewards.runtime import InProcessRewardInferenceRuntime
+from vrl.rewards.types import RewardSample
 
 
 class _FakeTorchReward(TorchRewardModel):
@@ -26,13 +26,13 @@ class _FakeTorchReward(TorchRewardModel):
         return {"fake": float(media.float().mean().item())}
 
 
-def _rollout(
+def _sample(
     output: torch.Tensor,
     *,
     sample_id: str = "sample-0",
     policy_version: int = 2,
-) -> RewardRollout:
-    return RewardRollout(
+) -> RewardSample:
+    return RewardSample(
         prompt="p",
         output=output,
         source_request_id="request-0",
@@ -47,9 +47,11 @@ def _reward_function_in_process() -> RewardFunction:
     return RewardFunction(
         reward_name="fake",
         score_key="fake",
-        runtime=InProcessRewardRuntime(model=_FakeTorchReward({"device": "cpu"})),
-        artifact_builder=lambda rollouts: RewardFunction.build_inmemory_artifacts(
-            rollouts,
+        runtime=InProcessRewardInferenceRuntime(
+            model=_FakeTorchReward({"device": "cpu"}),
+        ),
+        artifact_builder=lambda samples: RewardFunction.build_inmemory_artifacts(
+            samples,
             media_type="image",
         ),
     )
@@ -61,8 +63,8 @@ async def test_reward_function_in_process_scores_without_disk() -> None:
     reward = _reward_function_in_process()
     report = await reward.score_batch_report(
         [
-            _rollout(torch.full((1, 3, 2, 2), 0.5)),
-            _rollout(torch.ones(1, 3, 2, 2), sample_id="sample-1"),
+            _sample(torch.full((1, 3, 2, 2), 0.5)),
+            _sample(torch.ones(1, 3, 2, 2), sample_id="sample-1"),
         ],
     )
 
@@ -74,7 +76,7 @@ async def test_reward_function_in_process_scores_without_disk() -> None:
 async def test_reward_function_in_process_single_score() -> None:
     """Checks a single in-process reward score."""
     reward = _reward_function_in_process()
-    assert await reward.score(_rollout(torch.zeros(1, 3, 2, 2))) == pytest.approx(0.0)
+    assert await reward.score(_sample(torch.zeros(1, 3, 2, 2))) == pytest.approx(0.0)
 
 
 def test_pickscore_reward_model_constructs_lazily() -> None:
@@ -151,7 +153,7 @@ async def test_reward_reports_operation_and_artifact_cleanup_failures() -> None:
     )
 
     with pytest.raises(RewardCleanupError) as error:
-        await reward.score(_rollout(torch.zeros(1, 3, 2, 2)))
+        await reward.score(_sample(torch.zeros(1, 3, 2, 2)))
 
     assert [str(item) for item in error.value.errors] == [
         "score failed",
@@ -192,7 +194,7 @@ async def test_reward_retains_artifacts_when_remote_state_is_ambiguous() -> None
     )
 
     with pytest.raises(RuntimeError, match="remote state unknown"):
-        await reward.score(_rollout(torch.zeros(1, 3, 2, 2)))
+        await reward.score(_sample(torch.zeros(1, 3, 2, 2)))
 
     assert retained is True
     assert finalized is False

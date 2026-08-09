@@ -33,9 +33,12 @@ def _batch(prompts: list[str], group_size: int):
 def test_runtime_coordinator_rejects_incomplete_collector_control_protocol() -> None:
     from vrl.rollouts.orchestration.rollout_runtime import RolloutRuntimeCoordinator
 
-    with pytest.raises(TypeError, match=r"activate_runtime\(\).*offload_runtime_memory"):
+    with pytest.raises(
+        TypeError,
+        match=r"activate_generation_runtime\(\).*offload_generation_runtime_memory",
+    ):
         RolloutRuntimeCoordinator(
-            collector=SimpleNamespace(runtime=_Runtime()),
+            collector=SimpleNamespace(generation_runtime=_Runtime()),
             strategy=SimpleNamespace(),
             training_state_getter=lambda: object(),
             weight_syncer=None,
@@ -49,12 +52,12 @@ def test_runtime_coordinator_requires_reward_handoff_capabilities() -> None:
     from vrl.rollouts.orchestration.rollout_runtime import RolloutRuntimeCoordinator
 
     class _MissingRewardCapabilities:
-        runtime = _Runtime()
+        generation_runtime = _Runtime()
 
-        async def activate_runtime(self) -> None:
+        async def activate_generation_runtime(self) -> None:
             return None
 
-        async def offload_runtime_memory(self) -> None:
+        async def offload_generation_runtime_memory(self) -> None:
             return None
 
         async def shutdown(self) -> None:
@@ -103,8 +106,8 @@ class _Syncer:
 
 class _Collector:
     def __init__(self, runtime: _Runtime) -> None:
-        self.runtime = runtime
-        self.requires_runtime_offload_before_reward = False
+        self.generation_runtime = runtime
+        self.requires_generation_offload_before_reward = False
         self.requires_driver_model_offload_for_reward = False
         self.supports_reward_generation_overlap = False
         self.calls: list[dict[str, Any]] = []
@@ -119,10 +122,10 @@ class _Collector:
     async def score_rollouts(self, pendings):
         return list(pendings)
 
-    async def activate_runtime(self) -> None:
+    async def activate_generation_runtime(self) -> None:
         self.activation_calls += 1
 
-    async def offload_runtime_memory(self) -> None:
+    async def offload_generation_runtime_memory(self) -> None:
         self.offload_calls += 1
 
     async def shutdown(self) -> None:
@@ -227,7 +230,7 @@ class _FailingPhaseCollector(_Collector):
         self.fail_collect = fail_collect
         self.fail_offload = fail_offload
 
-    async def activate_runtime(self) -> None:
+    async def activate_generation_runtime(self) -> None:
         self.events.append("rollout.activate")
 
     async def collect_unscored(self, prompts, **kwargs):
@@ -236,7 +239,7 @@ class _FailingPhaseCollector(_Collector):
             raise RuntimeError("collect failed")
         return await super().collect_unscored(prompts, **kwargs)
 
-    async def offload_runtime_memory(self) -> None:
+    async def offload_generation_runtime_memory(self) -> None:
         self.events.append("rollout.offload")
         if self.fail_offload:
             raise RuntimeError("offload failed")

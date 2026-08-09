@@ -10,15 +10,15 @@ from vrl.rewards.functions.registry import (
     MultiReward,
     validate_reward_memory_parking_components,
 )
-from vrl.rewards.runtime import InProcessRewardRuntime
-from vrl.rewards.service.client import HttpRewardRuntime
+from vrl.rewards.runtime import InProcessRewardInferenceRuntime
+from vrl.rewards.service.client import HttpRewardInferenceRuntime
 from vrl.rewards.service.server import RewardService
-from vrl.rewards.types import RewardRollout
+from vrl.rewards.types import RewardSample
 from vrl.utils.cuda_memory import CUDA_RUNTIME_RESIDUAL_BYTES_LIMIT
 
 
-def _make_rollout(prompt: str) -> RewardRollout:
-    return RewardRollout(
+def _make_sample(prompt: str) -> RewardSample:
+    return RewardSample(
         prompt=prompt,
         output=None,
         source_request_id="request-0",
@@ -33,12 +33,12 @@ class _QueuedBatchReward(RewardFunction):
         super().__init__()
         self.batches = list(batches)
 
-    async def score(self, rollout: RewardRollout) -> float:
+    async def score(self, sample: RewardSample) -> float:
         return self.batches.pop(0)[0]
 
-    async def score_batch(self, rollouts: list[RewardRollout]) -> list[float]:
+    async def score_batch(self, samples: list[RewardSample]) -> list[float]:
         scores = self.batches.pop(0)
-        assert len(scores) == len(rollouts)
+        assert len(scores) == len(samples)
         return scores
 
 
@@ -48,8 +48,8 @@ class _TimedBatchReward(RewardFunction):
         self.scores = list(scores)
         self.timing_ms = dict(timing_ms)
 
-    async def score_batch_report(self, rollouts: list[RewardRollout]) -> RewardBatchReport:
-        assert len(rollouts) == len(self.scores)
+    async def score_batch_report(self, samples: list[RewardSample]) -> RewardBatchReport:
+        assert len(samples) == len(self.scores)
         return RewardBatchReport(
             scores=list(self.scores),
             timing_ms=dict(self.timing_ms),
@@ -57,7 +57,7 @@ class _TimedBatchReward(RewardFunction):
 
 
 @pytest.mark.asyncio
-async def test_multi_reward_preserves_typed_rollout_lineage_for_every_component() -> None:
+async def test_multi_reward_preserves_typed_sample_lineage_for_every_component() -> None:
     seen: dict[str, list[tuple[str, str, str, str]]] = {}
 
     class _CaptureReward(RewardFunction):
@@ -67,18 +67,18 @@ async def test_multi_reward_preserves_typed_rollout_lineage_for_every_component(
 
         async def score_batch_report(
             self,
-            rollouts: list[RewardRollout],
+            samples: list[RewardSample],
         ) -> RewardBatchReport:
             seen[self.name] = [
                 (
-                    rollout.source_request_id,
-                    rollout.sample_id,
-                    rollout.group_id,
-                    rollout.trajectory_id,
+                    sample.source_request_id,
+                    sample.sample_id,
+                    sample.group_id,
+                    sample.trajectory_id,
                 )
-                for rollout in rollouts
+                for sample in samples
             ]
-            return RewardBatchReport(scores=[1.0] * len(rollouts))
+            return RewardBatchReport(scores=[1.0] * len(samples))
 
     reward = MultiReward(
         [
@@ -86,9 +86,9 @@ async def test_multi_reward_preserves_typed_rollout_lineage_for_every_component(
             ("second", 1.0, _CaptureReward("second")),
         ],
     )
-    rollouts = [_make_rollout("a"), _make_rollout("b")]
+    samples = [_make_sample("a"), _make_sample("b")]
 
-    await reward.score_batch_report(rollouts)
+    await reward.score_batch_report(samples)
 
     expected = [
         ("request-0", "sample-a", "group-0", "trajectory-a"),
@@ -108,10 +108,10 @@ async def test_multi_reward_returns_components_for_each_scoring_call() -> None:
     )
 
     first = await reward.score_batch_report(
-        [_make_rollout("a"), _make_rollout("b")],
+        [_make_sample("a"), _make_sample("b")],
     )
     second = await reward.score_batch_report(
-        [_make_rollout("c")],
+        [_make_sample("c")],
     )
 
     assert first.scores == pytest.approx([0.6, 1.2])
@@ -135,7 +135,7 @@ async def test_zero_weight_component_is_scored_without_changing_total() -> None:
     )
 
     report = await reward.score_batch_report(
-        [_make_rollout("a"), _make_rollout("b")],
+        [_make_sample("a"), _make_sample("b")],
     )
 
     assert report.scores == pytest.approx([2.0, 3.0])
@@ -176,7 +176,7 @@ async def test_multi_reward_aggregates_inference_observations() -> None:
         ],
     )
 
-    report = await reward.score_batch_report([_make_rollout("a"), _make_rollout("b")])
+    report = await reward.score_batch_report([_make_sample("a"), _make_sample("b")])
 
     assert report.scores == pytest.approx([2.1, 4.2])
     assert report.timing_ms == pytest.approx(
@@ -200,11 +200,11 @@ async def test_multi_reward_parks_every_child_after_score_failure() -> None:
             self.name = name
             self.fail_score = fail_score
 
-        async def score_batch(self, rollouts: list[RewardRollout]) -> list[float]:
+        async def score_batch(self, samples: list[RewardSample]) -> list[float]:
             events.append(f"score:{self.name}")
             if self.fail_score:
                 raise RuntimeError(f"score failed:{self.name}")
-            return [1.0] * len(rollouts)
+            return [1.0] * len(samples)
 
         async def park_memory(self):
             events.append(f"park:{self.name}")
@@ -218,7 +218,7 @@ async def test_multi_reward_parks_every_child_after_score_failure() -> None:
     )
 
     with pytest.raises(RuntimeError, match="score failed:first"):
-        await reward.score_batch([_make_rollout("a")])
+        await reward.score_batch([_make_sample("a")])
 
     assert events == ["score:first", "park:first", "park:second"]
 
@@ -316,8 +316,8 @@ def test_factory_parking_policy_distinguishes_cpu_and_dedicated_rewards() -> Non
 
     cpu_runtime = cpu_reward.rewards[0][2].runtime
     dedicated_runtime = dedicated_reward.rewards[0][2].runtime
-    assert isinstance(cpu_runtime, InProcessRewardRuntime)
-    assert isinstance(dedicated_runtime, InProcessRewardRuntime)
+    assert isinstance(cpu_runtime, InProcessRewardInferenceRuntime)
+    assert isinstance(dedicated_runtime, InProcessRewardInferenceRuntime)
     assert cpu_runtime.requires_memory_parking is False
     assert dedicated_runtime.requires_memory_parking is False
 
@@ -411,7 +411,7 @@ def test_gpu_resource_allows_component_cpu_downgrade() -> None:
 
     runtimes = {name: fn.runtime for name, _, fn in reward.rewards}
     runtime = runtimes["kling_video_reward"]
-    assert isinstance(runtime, InProcessRewardRuntime)
+    assert isinstance(runtime, InProcessRewardInferenceRuntime)
     assert runtime._worker_config["device"] == "cpu"
     assert runtime.requires_memory_parking is False
     assert runtimes["aesthetic"].requires_memory_parking is True
@@ -456,7 +456,7 @@ def test_http_disk_reward_builds_transport_without_local_model_config(tmp_path) 
 
     component = reward.rewards[0][2]
     assert component.artifact_transport == "disk"
-    assert isinstance(component.runtime, HttpRewardRuntime)
+    assert isinstance(component.runtime, HttpRewardInferenceRuntime)
     assert component.scoring_is_nonblocking is True
     assert component.external_accelerator_isolation_verified is False
     assert reward.scoring_is_nonblocking is True
@@ -532,8 +532,8 @@ async def test_preflight_reaches_every_remote_runtime_and_skips_local_ones(tmp_p
     await service.start()
     host, port = service.address
 
-    def _client() -> HttpRewardRuntime:
-        return HttpRewardRuntime(
+    def _client() -> HttpRewardInferenceRuntime:
+        return HttpRewardInferenceRuntime(
             RewardInferenceConfig(
                 kind="http",
                 endpoint=f"http://{host}:{port}",
@@ -546,8 +546,11 @@ async def test_preflight_reaches_every_remote_runtime_and_skips_local_ones(tmp_p
     remote_b = RewardFunction(reward_name="b", runtime=_client())
     # A real in-process runtime is the "skips local ones" half: it has no
     # ensure_ready at all, so preflight's duck-type dispatch must step over it.
-    local = RewardFunction(reward_name="c", runtime=InProcessRewardRuntime({}))
-    assert not hasattr(InProcessRewardRuntime, "ensure_ready")
+    local = RewardFunction(
+        reward_name="c",
+        runtime=InProcessRewardInferenceRuntime({}),
+    )
+    assert not hasattr(InProcessRewardInferenceRuntime, "ensure_ready")
     reward = MultiReward([("a", 1.0, remote_a), ("b", 1.0, remote_b), ("c", 1.0, local)])
     try:
         assert remote_a.external_accelerator_isolation_verified is False

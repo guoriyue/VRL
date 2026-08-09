@@ -362,25 +362,24 @@ session mechanism was replaced and deleted the same evening):
 
 All prompt groups score through ONE reward call per epoch. Rollout prompts and
 metadata are already per-sample at the rollout/artifact level (each
-RewardRollout carries its own prompt + group metadata), so merging groups
+RewardSample carries its own prompt + group metadata), so merging groups
 needs no wire-format change — `release_after_score` then yields exactly one
 actor lifecycle per epoch with its original semantics, no lifecycle flagging
 anywhere.
 
 ```text
-vrl/rollouts/collector/rewards.py       RewardScorer.score_many(requests) —
-                                        build rollouts across groups, one
-                                        score_batch call, split scores back by
-                                        group size; score() delegates to it
+vrl/rewards/runtime.py                  RewardFunctionRuntime.score(request) —
+                                        one function-level score_batch_report
+                                        call over ordered RewardSamples
 vrl/rollouts/collector/core.py          collect_unscored() (generate only) +
                                         score_rollouts() (release rollout once,
-                                        score all groups via score_many, build
+                                        score all groups via one RewardRequest,
                                         batches); UnscoredRollout carries groups
 vrl/rollouts/orchestration/prompt_collection.py
                                         generate all groups first, then one
                                         collector.score_rollouts(...) call
 tests/rollouts/orchestration/test_prompt_collection.py  order + remap pins
-tests/rollouts/collector/test_runtime.py                score_many merge pin
+tests/rollouts/collector/test_runtime.py                RewardRequest merge pin
 ```
 
 Side benefits over the keep_alive variant: MultiReward components each load
@@ -404,10 +403,12 @@ The seam already exists — scoring and batch building are separate steps inside
 `collect()` (`vrl/rollouts/collector/core.py:146-155`):
 
 ```python
-rewards = await self.reward_scorer.score(
-    batch_builder.reward_scoring_input(collector_request.metadata),
+reward_request = RewardRequest(
+    request_id=reward_request_id,
+    samples=tuple(sample for builder in builders for sample in builder.reward_samples()),
 )
-batch = batch_builder.build(rewards)
+reward_output = await self.reward_runtime.score(reward_request)
+batch = builder.build(group_rewards)
 ```
 
 Change shape:
@@ -556,4 +557,3 @@ outputs/cosmos25_nft_240p_bs6_reward_retry_20260609_202313/reward_debug/kling_vi
 outputs/cosmos25_nft_240p_bs6_reward_retry_20260609_202313/reward_debug/kling_video_reward_results.jsonl
 outputs/cosmos25_nft_240p_bs6_reward_retry_20260609_202313/reward_artifacts/manifest.jsonl
 ```
-

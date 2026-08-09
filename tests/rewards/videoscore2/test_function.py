@@ -11,7 +11,7 @@ from omegaconf import OmegaConf
 from vrl.config.validation import validate_reward_config
 from vrl.rewards.functions.videoscore2 import VideoScore2Reward
 from vrl.rewards.inference import RewardInferenceResult
-from vrl.rewards.types import RewardRollout
+from vrl.rewards.types import RewardSample
 
 _FAKE_SCORES = {
     "visual_quality": 4.0,
@@ -54,8 +54,8 @@ class _FakeRuntime:
         return None
 
 
-def _rollout(output: torch.Tensor, *, policy_version: int = 7) -> RewardRollout:
-    return RewardRollout(
+def _sample(output: torch.Tensor, *, policy_version: int = 7) -> RewardSample:
+    return RewardSample(
         prompt="a dancer spins, skirt billowing",
         output=output,
         source_request_id="request-a",
@@ -85,7 +85,7 @@ def _build_reward(tmp_path: Path, *, score_key: str = "physical_common_sense", *
 async def test_materializes_artifacts_and_selects_score_key(tmp_path: Path) -> None:
     """Default score_key picks physical_common_sense and debug logs the public keys."""
     reward = _build_reward(tmp_path)
-    scores = await reward.score_batch([_rollout(torch.ones(1, 2, 2, 2))])
+    scores = await reward.score_batch([_sample(torch.ones(1, 2, 2, 2))])
 
     assert scores == pytest.approx([3.25])
     request = reward.runtime.requests[0]
@@ -104,7 +104,7 @@ async def test_materializes_artifacts_and_selects_score_key(tmp_path: Path) -> N
 async def test_alternate_score_key_selects_visual_quality(tmp_path: Path) -> None:
     """A different score_key selects the matching public axis."""
     reward = _build_reward(tmp_path, score_key="visual_quality")
-    scores = await reward.score_batch([_rollout(torch.ones(1, 2, 2, 2))])
+    scores = await reward.score_batch([_sample(torch.ones(1, 2, 2, 2))])
     assert scores == pytest.approx([4.0])
 
 
@@ -113,7 +113,7 @@ async def test_missing_score_key_fails_fast(tmp_path: Path) -> None:
     """An unknown score_key raises rather than silently scoring zero."""
     reward = _build_reward(tmp_path, score_key="not_a_real_axis")
     with pytest.raises(KeyError, match="missing score keys"):
-        await reward.score_batch([_rollout(torch.ones(1, 2, 2, 2))])
+        await reward.score_batch([_sample(torch.ones(1, 2, 2, 2))])
 
 
 def test_config_accepts_videoscore2() -> None:

@@ -28,11 +28,12 @@ from vrl.generation.execution.planner import build_engine_plan
 from vrl.models.dtypes import resolve_torch_dtype
 from vrl.models.families.registry import ModelFamilyEntry, get_model_family_entry
 from vrl.ray.resources import resolve_distributed_resources
+from vrl.rewards.runtime import RewardFunctionRuntime
 from vrl.rollouts.collector import build_rollout_collector
 from vrl.rollouts.collector.config import RolloutCollectorConfig
 from vrl.scripts.common.factory import (
     build_algorithm_and_evaluator,
-    build_reward,
+    build_reward_function,
 )
 from vrl.trainers.online import OnlineTrainer
 from vrl.utils.config import import_from_path
@@ -480,7 +481,7 @@ class _DirectExecutorGenerationRuntime:
 class _SyntheticDiffusionReplayCollector:
     """Collector that exercises replay training without full generation assets."""
 
-    requires_runtime_offload_before_reward = False
+    requires_generation_offload_before_reward = False
     requires_driver_model_offload_for_reward = False
 
     def __init__(
@@ -495,7 +496,7 @@ class _SyntheticDiffusionReplayCollector:
         self.case = case
         self.cfg = cfg
         self.device = device
-        self.runtime = _StaticPolicyRuntime()
+        self.generation_runtime = _StaticPolicyRuntime()
 
     async def collect_unscored(self, prompts: list[str], **kwargs: Any) -> Any:
         return _synthetic_diffusion_replay_batch(
@@ -511,10 +512,10 @@ class _SyntheticDiffusionReplayCollector:
     async def score_rollouts(self, pendings: Any) -> Any:
         return list(pendings)
 
-    async def activate_runtime(self) -> None:
+    async def activate_generation_runtime(self) -> None:
         return None
 
-    async def offload_runtime_memory(self) -> None:
+    async def offload_generation_runtime_memory(self) -> None:
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
 
@@ -594,7 +595,7 @@ def test_real_checkpoint_online_rl_updates_trainable_weights(
         else:
             executor = _build_executor(entry, bundle.model, cfg)
             reward_fn = (
-                build_reward(
+                build_reward_function(
                     built=built,
                     resources=resolve_distributed_resources(cfg),
                     device=str(device),
@@ -604,9 +605,9 @@ def test_real_checkpoint_online_rl_updates_trainable_weights(
             )
             collector = build_rollout_collector(
                 entry,
-                reward_fn=reward_fn,
+                reward_runtime=RewardFunctionRuntime(reward_fn),
                 config=collector_config,
-                runtime=_DirectExecutorGenerationRuntime(executor),
+                generation_runtime=_DirectExecutorGenerationRuntime(executor),
             )
         pair = build_algorithm_and_evaluator(
             family_entry=entry,

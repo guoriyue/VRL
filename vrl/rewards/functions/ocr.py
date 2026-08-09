@@ -1,7 +1,7 @@
 """OCR reward function, behavior mirrors flow_grpo OCR scorers.
 
 Scores generated image/video outputs by how well OCR-detected text matches a
-target string provided in rollout metadata. Single-image SD3 rewards mirror
+target string provided in sample metadata. Single-image SD3 rewards mirror
 ``OcrScorer``; video/multi-frame rewards mirror ``OcrScorer_video_or_image``.
 
 This is a thin ``RewardFunction`` wrapper over ``OCRRewardModel`` driven by the
@@ -20,7 +20,7 @@ from typing import Any
 
 from vrl.rewards.base import RewardFunction
 from vrl.rewards.models.ocr import OCRRewardModel
-from vrl.rewards.runtime import InProcessRewardRuntime
+from vrl.rewards.runtime import InProcessRewardInferenceRuntime
 
 
 class OCRReward(RewardFunction):
@@ -47,9 +47,9 @@ class OCRReward(RewardFunction):
         super().__init__(
             reward_name="ocr",
             score_key="ocr",
-            runtime=InProcessRewardRuntime(model=model),
-            artifact_builder=lambda rollouts: RewardFunction.build_inmemory_artifacts(
-                rollouts,
+            runtime=InProcessRewardInferenceRuntime(model=model),
+            artifact_builder=lambda samples: RewardFunction.build_inmemory_artifacts(
+                samples,
                 media_type="image",
             ),
         )

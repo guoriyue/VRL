@@ -1,4 +1,4 @@
-"""RewardFunction base class for async rollout scoring."""
+"""RewardFunction base class for async generated-sample scoring."""
 
 from __future__ import annotations
 
@@ -21,13 +21,13 @@ from vrl.rewards.inference import (
     RewardMemoryParkingRuntime,
     RewardMemoryReleaseProof,
 )
-from vrl.rewards.types import RewardRollout
+from vrl.rewards.types import RewardSample
 from vrl.utils.cuda_memory import CUDA_RUNTIME_RESIDUAL_BYTES_LIMIT
 from vrl.utils.logging import init_logger
 
 logger = init_logger(__name__)
 
-ArtifactBuilder = Callable[[list[RewardRollout]], list[RewardInferenceArtifact]]
+ArtifactBuilder = Callable[[list[RewardSample]], list[RewardInferenceArtifact]]
 # Runs once after scoring reaches a terminal state: either deletes the call's
 # materializations or transfers their ownership to the debug/output dir.
 ArtifactFinalizer = Callable[[list[RewardInferenceArtifact]], None]
@@ -94,7 +94,7 @@ class RewardCleanupError(RuntimeError):
 
 
 class RewardFunction:
-    """Base class for rollout rewards.
+    """Base class for generated-sample rewards.
 
     Subclasses can either override ``score`` / ``score_batch`` directly, or pass
     an inference runtime plus artifact builder to reuse the standard model-backed
@@ -134,27 +134,27 @@ class RewardFunction:
 
     @staticmethod
     def build_inmemory_artifacts(
-        rollouts: list[RewardRollout],
+        samples: list[RewardSample],
         *,
         media_type: MediaType = "image",
     ) -> list[RewardInferenceArtifact]:
         """Build reward artifacts that carry media in-memory (no disk write)."""
 
         artifacts: list[RewardInferenceArtifact] = []
-        for rollout in rollouts:
-            metadata = dict(rollout.metadata or {})
+        for sample in samples:
+            metadata = dict(sample.metadata or {})
             artifacts.append(
                 RewardInferenceArtifact(
-                    artifact_id=(f"{rollout.source_request_id}:{rollout.sample_id}:in-memory"),
+                    artifact_id=(f"{sample.source_request_id}:{sample.sample_id}:in-memory"),
                     path="",
                     media_type=media_type,
-                    media=rollout.output,
-                    prompt=str(rollout.prompt),
-                    source_request_id=rollout.source_request_id,
-                    sample_id=rollout.sample_id,
-                    group_id=rollout.group_id,
-                    trajectory_id=rollout.trajectory_id,
-                    policy_version=rollout.policy_version,
+                    media=sample.output,
+                    prompt=str(sample.prompt),
+                    source_request_id=sample.source_request_id,
+                    sample_id=sample.sample_id,
+                    group_id=sample.group_id,
+                    trajectory_id=sample.trajectory_id,
+                    policy_version=sample.policy_version,
                     metadata=metadata,
                 ),
             )
@@ -238,23 +238,23 @@ class RewardFunction:
         proof.validate(request_id=request_id)
         return (proof,)
 
-    async def score(self, rollout: RewardRollout) -> float:
-        """Score a single rollout."""
+    async def score(self, sample: RewardSample) -> float:
+        """Score a single generated sample."""
         if self._uses_inference_runtime():
-            return (await self.score_batch([rollout]))[0]
+            return (await self.score_batch([sample]))[0]
         raise NotImplementedError(f"{type(self).__name__}.score is not implemented")
 
-    async def score_batch(self, rollouts: list[RewardRollout]) -> list[float]:
-        """Score a batch of rollouts (default: sequential)."""
+    async def score_batch(self, samples: list[RewardSample]) -> list[float]:
+        """Score a batch of generated samples (default: sequential)."""
         if self._uses_inference_runtime():
-            return (await self._score_with_inference_runtime(rollouts)).scores
-        return [await self.score(r) for r in rollouts]
+            return (await self._score_with_inference_runtime(samples)).scores
+        return [await self.score(sample) for sample in samples]
 
-    async def score_batch_report(self, rollouts: list[RewardRollout]) -> RewardBatchReport:
+    async def score_batch_report(self, samples: list[RewardSample]) -> RewardBatchReport:
         """Score a batch and return the observations from this exact call."""
         if self._uses_inference_runtime():
-            return await self._score_with_inference_runtime(rollouts)
-        return RewardBatchReport(scores=await self.score_batch(rollouts))
+            return await self._score_with_inference_runtime(samples)
+        return RewardBatchReport(scores=await self.score_batch(samples))
 
     async def shutdown(self) -> None:
         if self.runtime is not None:
@@ -273,17 +273,17 @@ class RewardFunction:
     ) -> None:
         """Initialize a RewardFunction backed by a RewardModel factory."""
 
-        from vrl.rewards.runtime import build_reward_runtime
+        from vrl.rewards.runtime import build_reward_inference_runtime
 
         RewardFunction.__init__(
             self,
             reward_name=reward_name,
             score_key=score_key,
-            runtime=build_reward_runtime(
+            runtime=build_reward_inference_runtime(
                 {**dict(worker_config), "model_factory": str(model_factory)},
             ),
-            artifact_builder=lambda rollouts: RewardFunction.build_inmemory_artifacts(
-                rollouts,
+            artifact_builder=lambda samples: RewardFunction.build_inmemory_artifacts(
+                samples,
                 media_type="image",
             ),
         )
@@ -328,7 +328,7 @@ class RewardFunction:
         """
 
         from vrl.rewards.artifacts import VideoRewardArtifactStore
-        from vrl.rewards.runtime import build_reward_runtime
+        from vrl.rewards.runtime import build_reward_inference_runtime
 
         self.media_type = str(media_type)
         self.artifact_store = VideoRewardArtifactStore(
@@ -380,7 +380,7 @@ class RewardFunction:
                 worker_cfg["memory_parking_residual_bytes_limit"] = int(
                     memory_parking_residual_bytes_limit,
                 )
-            runtime = build_reward_runtime(worker_cfg)
+            runtime = build_reward_inference_runtime(worker_cfg)
 
         RewardFunction.__init__(
             self,
@@ -400,9 +400,9 @@ class RewardFunction:
 
     async def _score_with_inference_runtime(
         self,
-        rollouts: list[RewardRollout],
+        samples: list[RewardSample],
     ) -> RewardBatchReport:
-        if not rollouts:
+        if not samples:
             return RewardBatchReport(scores=[])
 
         runtime = self.runtime
@@ -412,24 +412,24 @@ class RewardFunction:
 
         total_started = time.perf_counter()
         materialize_started = time.perf_counter()
-        artifacts = artifact_builder(rollouts)
+        artifacts = artifact_builder(samples)
         materialization_ms = (time.perf_counter() - materialize_started) * 1000.0
         operation_error: BaseException | None = None
         report: RewardBatchReport | None = None
         try:
-            if len(artifacts) != len(rollouts):
+            if len(artifacts) != len(samples):
                 raise ValueError(
                     "reward artifact builder returned wrong number of artifacts: "
-                    f"artifacts={len(artifacts)}, rollouts={len(rollouts)}",
+                    f"artifacts={len(artifacts)}, samples={len(samples)}",
                 )
             correlated_artifacts: list[RewardInferenceArtifact] = []
-            for artifact, rollout in zip(artifacts, rollouts, strict=True):
+            for artifact, sample in zip(artifacts, samples, strict=True):
                 expected_lineage = {
-                    "source_request_id": rollout.source_request_id,
-                    "sample_id": rollout.sample_id,
-                    "group_id": rollout.group_id,
-                    "trajectory_id": rollout.trajectory_id,
-                    "policy_version": rollout.policy_version,
+                    "source_request_id": sample.source_request_id,
+                    "sample_id": sample.sample_id,
+                    "group_id": sample.group_id,
+                    "trajectory_id": sample.trajectory_id,
+                    "policy_version": sample.policy_version,
                 }
                 for field_name, expected in expected_lineage.items():
                     actual = getattr(artifact, field_name)

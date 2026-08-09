@@ -81,23 +81,23 @@ class _FakeCollector:
     def __init__(self, state: dict[str, Any], reward: _FakeReward) -> None:
         self._state = state
         self._reward = reward
-        self._runtime: Any | None = None
+        self._generation_runtime: Any | None = None
         self._runtime_shutdown_complete = False
         self._reward_shutdown_complete = False
 
-    def set_runtime(self, runtime: Any) -> None:
-        self._runtime = runtime
-        self._state["collector_set_runtime"] += 1
+    def set_generation_runtime(self, runtime: Any) -> None:
+        self._generation_runtime = runtime
+        self._state["collector_set_generation_runtime"] += 1
 
     @property
-    def runtime(self) -> Any:
-        return self._runtime
+    def generation_runtime(self) -> Any:
+        return self._generation_runtime
 
     async def shutdown(self) -> None:
         self._state["collector_shutdowns"] += 1
         self._state["shutdown_order"].append("collector")
         if not self._runtime_shutdown_complete:
-            shutdown = getattr(self._runtime, "shutdown", None)
+            shutdown = getattr(self._generation_runtime, "shutdown", None)
             if shutdown is not None:
                 await shutdown()
             self._runtime_shutdown_complete = True
@@ -206,7 +206,7 @@ class _FakeTrainer:
 
 def _state() -> dict[str, Any]:
     return {
-        "collector_set_runtime": 0,
+        "collector_set_generation_runtime": 0,
         "collector_shutdowns": 0,
         "runtime_shutdowns": 0,
         "schedule_shutdowns": 0,
@@ -462,7 +462,7 @@ def _install_common_fakes(
         "from_cfg",
         staticmethod(lambda cfg: object()),
     )
-    monkeypatch.setattr(online, "build_reward", lambda *args, **kwargs: reward)
+    monkeypatch.setattr(online, "build_reward_runtime", lambda *args, **kwargs: reward)
     monkeypatch.setattr(
         online,
         "build_algorithm_and_evaluator",
@@ -612,7 +612,7 @@ async def test_checkpoint_source_change_stops_after_model_before_ray_or_reward(
     )
     monkeypatch.setattr(
         online,
-        "build_reward",
+        "build_reward_runtime",
         lambda *_args, **_kwargs: (_ for _ in ()).throw(
             AssertionError("reward must not build after checkpoint source changes"),
         ),
@@ -992,7 +992,7 @@ async def test_run_online_recipe_shutdowns_owner_after_component_build_failure(
     if failure == "reward":
         monkeypatch.setattr(
             online,
-            "build_reward",
+            "build_reward_runtime",
             lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("reward build boom")),
         )
         message = "reward build boom"
@@ -1106,7 +1106,7 @@ async def test_terminal_schedule_is_the_only_collector_shutdown_owner() -> None:
         strategy=_Strategy(),
         rollout_schedule=_Schedule(),
         collector=collector,
-        reward_fn=_StandaloneReward(),
+        reward_runtime=_StandaloneReward(),
     )
     await lifecycle.shutdown(run_error=None)
 

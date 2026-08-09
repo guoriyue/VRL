@@ -15,11 +15,11 @@
 > resident-reward Ray parking 被 revert 后，本轮把整个 **Ray reward actor pool 删掉了**
 > （`vrl/rewards/ray/`、`vrl/ray/runtime.py` 的 `RayActorMethodRuntime`+`release_after_call`、
 > resources/factory 的 pool 计数与 kwargs 注入）。替代：所有 reward **进程内打分**
-> （`InProcessRewardRuntime`），重型 reward 用 `reward.kwargs.<name>.sleep_offload=true` 借
+> （`InProcessRewardInferenceRuntime`），重型 reward 用 `reward.kwargs.<name>.sleep_offload=true` 借
 > rollout lease 的 sleep/wake 语义在打分间隙 park 到 CPU（kling 已开，实测 ~1.6s/score
 > steady vs 旧 pool 的 ~8s/步 actor 重载）。**2026-07-02 定稿：reward 侧 cumem-only + 共享 `CumemPool` 类**——
 > sleep_offload 的 naive `.to()` 回退已删（vLLM 视为必装，不可用 fail-loud）；cumem 语义
-> 收进 `vrl/utils/cuda_memory.py::CumemPool`（rollout worker 与 InProcessRewardRuntime 共用；
+> 收进 `vrl/utils/cuda_memory.py::CumemPool`（rollout worker 与 InProcessRewardInferenceRuntime 共用；
 > rollout 固定 tag="weights"，reward 每 runtime 独立 tag——单例 allocator 按 tag 睡醒，
 > 共享 tag 会让 wake A 拖回 B）。**真机 profile（14GB=Kling 规模，5090，真实代码路径）：
 > cumem 稳态 wake+score+sleep=0.71s/cycle vs naive .to() 4.42s = 6.2x；碎片压力下 6.3x；
@@ -123,7 +123,9 @@ video rollout 的 GPU 在 denoise 时满载,但在 **reward 打分 / CPU 数学 
 ## 2. 当前串行点（代码证据）
 
 - **reward barrier**:`vrl/rollouts/collector/core.py:222` `release_rollout_before_reward`——现在 rollout 模型先 release(offload),再打分。reward 期间 GPU 空(denoise 不在跑)。
-- **reward scorer**:`vrl/rollouts/collector/rewards.py:RewardScorer`、`vrl/rewards/runtime.py:InProcessRewardRuntime`(Kling 本地视频 reward model)。
+- **reward boundary**：collector 现在调用 `vrl/rewards/protocols.py:RewardRuntime`；
+  `vrl/rewards/runtime.py:RewardFunctionRuntime` 适配 reward function，Kling 的本地模型执行在
+  `InProcessRewardInferenceRuntime`。旧 collector-side scoring adapter 已删除。
 - **stage 计时**:`vrl/generation/diffusion/executor.py:154,478` `stage_durations` + `record_function`——P0 归因用。
 - **CPU 数学**:`vrl/math/diffusion/flow_matching.py:sde_step_with_logprob`(math fp32,denoise 循环内每步调)。
 
@@ -192,7 +194,8 @@ video rollout 的 GPU 在 denoise 时满载,但在 **reward 打分 / CPU 数学 
 ## 6. 关键文件
 
 - `vrl/rollouts/collector/core.py:222`（reward barrier `release_rollout_before_reward`）
-- `vrl/rollouts/collector/rewards.py:RewardScorer`、`vrl/rewards/runtime.py:InProcessRewardRuntime`
+- `vrl/rewards/protocols.py:RewardRuntime`、
+  `vrl/rewards/runtime.py:RewardFunctionRuntime` / `InProcessRewardInferenceRuntime`
 - `vrl/generation/diffusion/executor.py:154,478`（`stage_durations` / P0 归因）
 - `vrl/math/diffusion/flow_matching.py:sde_step_with_logprob`（CPU 数学）
 - 实测依据:[[SPRINT_approximate_single_gpu_perf.md]] §2、记忆 `project_rollout_bound_class_probe`

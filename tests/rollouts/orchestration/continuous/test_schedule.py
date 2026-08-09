@@ -86,8 +86,8 @@ class _FailingPostTrainSyncer(_Syncer):
 
 class _Collector:
     def __init__(self, runtime: _Runtime) -> None:
-        self.runtime = runtime
-        self.requires_runtime_offload_before_reward = False
+        self.generation_runtime = runtime
+        self.requires_generation_offload_before_reward = False
         self.requires_driver_model_offload_for_reward = False
         self.supports_reward_generation_overlap = False
         self.supports_continuous_reward_execution = True
@@ -105,10 +105,10 @@ class _Collector:
     async def score_rollouts(self, pendings: Any) -> list[RolloutBatch]:
         return list(pendings)
 
-    async def activate_runtime(self) -> None:
+    async def activate_generation_runtime(self) -> None:
         self.activation_calls += 1
 
-    async def offload_runtime_memory(self) -> None:
+    async def offload_generation_runtime_memory(self) -> None:
         self.offload_calls += 1
 
     async def shutdown(self) -> None:
@@ -511,7 +511,7 @@ def test_rejects_colocated_runtime() -> None:
 def test_rejects_mid_iteration_reward_offload() -> None:
     runtime = _Runtime()
     collector = _Collector(runtime)
-    collector.requires_runtime_offload_before_reward = True
+    collector.requires_generation_offload_before_reward = True
     with pytest.raises(RuntimeError, match=r"does not offload.*mid-iteration"):
         _build(_continuous_config(), collector, _Syncer(runtime))
 

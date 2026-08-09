@@ -8,8 +8,8 @@ from typing import Any
 import torch
 
 from vrl.generation import GenerationOutput
+from vrl.rewards import RewardSample
 from vrl.rollouts.batch import RolloutBatch
-from vrl.rollouts.collector.rewards import RewardScoringInput
 from vrl.trajectory import (
     RewardView,
     TrajectoryBatch,
@@ -53,15 +53,41 @@ class TrajectoryRolloutBatchBuilder:
         )
         self.output.trajectory = self.trajectory
 
-    def reward_scoring_input(self) -> RewardScoringInput:
+    def reward_samples(self) -> tuple[RewardSample, ...]:
+        """Build reward-owned samples from this generation output."""
+
         reward_outputs = self.reward_outputs()
-        return RewardScoringInput(
-            outputs=reward_outputs,
-            source_request_id=self.output.request_id,
-            sample_rows=tuple(self.output.sample_rows),
-            metadata=dict(self.context.metadata),
-            device=self._infer_device(reward_outputs),
-        )
+        batch_size = self._batch_size(reward_outputs)
+        if len(self.output.sample_rows) != batch_size:
+            raise ValueError(
+                "reward sample-row/output batch mismatch: "
+                f"sample_rows={len(self.output.sample_rows)}, outputs={batch_size}",
+            )
+        samples: list[RewardSample] = []
+        for index, row in enumerate(self.output.sample_rows):
+            row_request_id = row.metadata.get("request_id")
+            if row_request_id is not None and row_request_id != self.output.request_id:
+                raise ValueError(
+                    "reward source request/sample-row mismatch: "
+                    f"index={index}, source_request_id={self.output.request_id!r}, "
+                    f"row.request_id={row_request_id!r}",
+                )
+            metadata = dict(self.context.metadata)
+            metadata.update(row.metadata)
+            policy_version = row.metadata.get("policy_version")
+            samples.append(
+                RewardSample(
+                    prompt=row.prompt,
+                    output=reward_outputs[index],
+                    source_request_id=self.output.request_id,
+                    sample_id=row.sample_id,
+                    group_id=row.group_id,
+                    trajectory_id=row.trajectory_id,
+                    policy_version=(None if policy_version is None else int(policy_version)),
+                    metadata=metadata,
+                ),
+            )
+        return tuple(samples)
 
     def reward_outputs(self) -> Any:
         """Return the selected artifact normalized to [0, 1] per the reward view's range."""
@@ -221,13 +247,17 @@ class TrajectoryRolloutBatchBuilder:
             segment.distribution == "categorical" for segment in trainable
         )
 
-    def _infer_device(self, value: Any) -> Any:
-        if self.context.device is not None:
-            return self.context.device
-        device = getattr(value, "device", None)
-        if device is not None:
-            return device
-        return "cpu"
+    @staticmethod
+    def _batch_size(value: Any) -> int:
+        shape = getattr(value, "shape", None)
+        if shape is not None:
+            if len(shape) == 0:
+                raise ValueError("reward outputs must have a batch dimension")
+            return int(shape[0])
+        try:
+            return len(value)
+        except TypeError as exc:
+            raise TypeError("reward outputs must expose shape[0] or len()") from exc
 
     @staticmethod
     def _require_output_trajectory(output: GenerationOutput) -> TrajectoryBatch:

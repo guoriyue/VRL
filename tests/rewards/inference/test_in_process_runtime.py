@@ -11,7 +11,7 @@ import torch
 
 from vrl.rewards.inference import RewardInferenceArtifact, RewardInferenceRequest
 from vrl.rewards.models.base import TorchRewardModel
-from vrl.rewards.runtime import InProcessRewardRuntime
+from vrl.rewards.runtime import InProcessRewardInferenceRuntime
 from vrl.utils.cuda_memory import CUDA_RUNTIME_RESIDUAL_BYTES_LIMIT
 
 
@@ -48,7 +48,7 @@ def _make_request(score_key: str = "overall") -> RewardInferenceRequest:
 @pytest.mark.asyncio
 async def test_in_process_runtime_scores_without_disk_or_ray() -> None:
     """Checks in-process scoring without disk or Ray."""
-    runtime = InProcessRewardRuntime(model=_SumMediaModel())
+    runtime = InProcessRewardInferenceRuntime(model=_SumMediaModel())
     results = await runtime.score_batch(_make_request())
 
     assert runtime.scoring_is_nonblocking is False
@@ -63,7 +63,7 @@ async def test_in_process_runtime_scores_without_disk_or_ray() -> None:
 @pytest.mark.asyncio
 async def test_in_process_runtime_composite_score_key_sums_components() -> None:
     """Checks that in-process scoring sums composite score components."""
-    runtime = InProcessRewardRuntime(model=_SumMediaModel())
+    runtime = InProcessRewardInferenceRuntime(model=_SumMediaModel())
     results = await runtime.score_batch(_make_request(score_key="overall+extra"))
 
     assert results[0].selected_score == pytest.approx(4.0)  # 3.0 + 1.0
@@ -73,7 +73,7 @@ async def test_in_process_runtime_composite_score_key_sums_components() -> None:
 @pytest.mark.asyncio
 async def test_in_process_runtime_empty_request_returns_empty() -> None:
     """Checks that an empty in-process request returns no results."""
-    runtime = InProcessRewardRuntime(model=_SumMediaModel())
+    runtime = InProcessRewardInferenceRuntime(model=_SumMediaModel())
     request = RewardInferenceRequest(
         request_id="req-empty",
         artifacts=(),
@@ -194,7 +194,7 @@ async def test_sleep_offload_uses_cumem_pool(monkeypatch) -> None:
 
     allocator = _FakeCumemAllocator()
     monkeypatch.setattr(cuda_memory_mod, "_cumem_allocator", lambda: allocator)
-    runtime = InProcessRewardRuntime(
+    runtime = InProcessRewardInferenceRuntime(
         {
             "sleep_offload": True,
             "model_factory": f"{__name__}:_immovable_factory",
@@ -225,7 +225,7 @@ async def test_sleep_offload_materializes_lazy_model_inside_cumem_pool(monkeypat
 
     allocator = _FakeCumemAllocator()
     monkeypatch.setattr(cuda_memory_mod, "_cumem_allocator", lambda: allocator)
-    runtime = InProcessRewardRuntime(
+    runtime = InProcessRewardInferenceRuntime(
         {
             "sleep_offload": True,
             "model_factory": f"{__name__}:_lazy_torch_factory",
@@ -247,7 +247,7 @@ async def test_dedicated_runtime_keeps_lazy_model_outside_cumem_pool(monkeypatch
 
     allocator = _FakeCumemAllocator()
     monkeypatch.setattr(cuda_memory_mod, "_cumem_allocator", lambda: allocator)
-    runtime = InProcessRewardRuntime(
+    runtime = InProcessRewardInferenceRuntime(
         {"model_factory": f"{__name__}:_lazy_torch_factory"},
     )
 
@@ -265,7 +265,7 @@ async def test_failed_pooled_preparation_rolls_back_before_retry(monkeypatch) ->
 
     allocator = _FakeCumemAllocator()
     monkeypatch.setattr(cuda_memory_mod, "_cumem_allocator", lambda: allocator)
-    runtime = InProcessRewardRuntime(
+    runtime = InProcessRewardInferenceRuntime(
         {
             "sleep_offload": True,
             "model_factory": f"{__name__}:_failing_prepare_factory",
@@ -301,7 +301,7 @@ async def test_reward_parking_bounds_cuda_runtime_residual(
 
     allocator = _FakeCumemAllocator()
     monkeypatch.setattr(cuda_memory_mod, "_cumem_allocator", lambda: allocator)
-    runtime = InProcessRewardRuntime(
+    runtime = InProcessRewardInferenceRuntime(
         {
             "device": "cuda:0",
             "sleep_offload": True,
@@ -345,7 +345,7 @@ async def test_reward_memory_parking_retries_after_sleep_failure(monkeypatch) ->
 
     allocator = _FlakyAllocator()
     monkeypatch.setattr(cuda_memory_mod, "_cumem_allocator", lambda: allocator)
-    runtime = InProcessRewardRuntime(
+    runtime = InProcessRewardInferenceRuntime(
         {
             "sleep_offload": True,
             "model_factory": f"{__name__}:_immovable_factory",
@@ -373,7 +373,7 @@ async def test_dedicated_reward_runtime_stays_resident(monkeypatch) -> None:
 
     allocator = _FakeCumemAllocator()
     monkeypatch.setattr(cuda_memory_mod, "_cumem_allocator", lambda: allocator)
-    runtime = InProcessRewardRuntime(
+    runtime = InProcessRewardInferenceRuntime(
         {"model_factory": f"{__name__}:_immovable_factory"},
     )
 
@@ -407,7 +407,7 @@ async def test_sleep_offload_requires_cumem(monkeypatch) -> None:
     import vrl.utils.cuda_memory as cuda_memory_mod
 
     monkeypatch.setattr(cuda_memory_mod, "_cumem_allocator", lambda: None)
-    runtime = InProcessRewardRuntime(
+    runtime = InProcessRewardInferenceRuntime(
         {
             "device": "cuda:0",
             "sleep_offload": True,
@@ -430,7 +430,7 @@ async def test_sleep_offload_requires_cumem(monkeypatch) -> None:
 def test_sleep_offload_rejects_injected_model() -> None:
     """An injected model cannot supply the required pre-load GPU baseline."""
     with pytest.raises(ValueError, match="model_factory"):
-        InProcessRewardRuntime({"sleep_offload": True}, model=object())
+        InProcessRewardInferenceRuntime({"sleep_offload": True}, model=object())
 
 
 @pytest.mark.gpu
@@ -441,7 +441,7 @@ def test_sleep_offload_rejects_injected_model() -> None:
 @pytest.mark.asyncio
 async def test_real_aesthetic_score_parks_stably_across_two_cycles() -> None:
     """A real CLIP forward may retain runtime code, never its 1.64 GiB model pool."""
-    runtime = InProcessRewardRuntime(
+    runtime = InProcessRewardInferenceRuntime(
         {
             "device": "cuda:0",
             "dtype": "float32",

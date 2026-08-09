@@ -18,7 +18,7 @@ from typing import TYPE_CHECKING, Any
 from aiohttp import web
 
 from vrl.rewards.inference import sha256_file, validate_reward_results
-from vrl.rewards.service.owner import RewardRuntimeOwner
+from vrl.rewards.service.owner import RewardInferenceRuntimeOwner
 from vrl.rewards.service.protocol import (
     GENERATION_OVERLAP_SAFE_CAPABILITY,
     RewardServiceErrorCode,
@@ -229,7 +229,7 @@ class RewardService:
         # Start the owner thread only after every fallible configuration and
         # aiohttp setup step has completed, so constructor errors cannot leak a
         # runtime thread that the caller never receives a handle to shut down.
-        self._owner = RewardRuntimeOwner(runtime)
+        self._owner = RewardInferenceRuntimeOwner(runtime)
 
     @property
     def address(self) -> tuple[str, int]:
@@ -656,7 +656,7 @@ class RewardService:
 def _load_service(config_path: Path) -> RewardService:
     from omegaconf import OmegaConf
 
-    from vrl.rewards.runtime import InProcessRewardRuntime
+    from vrl.rewards.runtime import InProcessRewardInferenceRuntime
 
     raw = OmegaConf.to_container(OmegaConf.load(config_path), resolve=True)
     if not isinstance(raw, Mapping):
@@ -675,7 +675,7 @@ def _load_service(config_path: Path) -> RewardService:
     configured_device = str(worker_config.get("device", "")).strip().lower()
     runs_on_cpu = configured_device == "cpu" or configured_device.startswith("cpu:")
     return RewardService(
-        InProcessRewardRuntime(worker_config),
+        InProcessRewardInferenceRuntime(worker_config),
         artifact_roots=roots,
         host=str(cfg.host),
         port=int(cfg.port),

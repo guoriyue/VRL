@@ -16,10 +16,8 @@ from typing import Any
 
 from vrl.rewards.inference import sha256_file
 from vrl.scripts.data.common import emit, write_jsonl, write_report
-from vrl.trainers.data.artifacts import (
-    SOURCE_BACKED_VIDEO_WORLD_METADATA_FIELDS,
-    validate_artifact_manifest_pair,
-)
+from vrl.trainers.data.artifacts import validate_artifact_manifest_pair
+from vrl.utils.artifacts import SOURCE_BACKED_VIDEO_WORLD_METADATA_FIELDS
 
 
 def derive_text_video_rows(rows: Iterable[Mapping[str, Any]]) -> list[dict[str, Any]]:

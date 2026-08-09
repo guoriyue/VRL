@@ -4,11 +4,11 @@ import pytest
 
 from vrl.rewards.functions.geneval import GenEvalReward
 from vrl.rewards.functions.registry import MultiReward
-from vrl.rewards.types import RewardRollout
+from vrl.rewards.types import RewardSample
 
 
-def _rollout(metadata: dict) -> RewardRollout:
-    return RewardRollout(
+def _sample(metadata: dict) -> RewardSample:
+    return RewardSample(
         prompt="a photo of a yellow bus",
         output=None,
         source_request_id="request-0",
@@ -30,7 +30,7 @@ async def test_geneval_reward_uses_injected_scorer_metadata() -> None:
 
     reward = GenEvalReward(device="cpu", scorer=scorer)
     score = await reward.score(
-        _rollout(
+        _sample(
             {
                 "geneval": {
                     "tag": "colors",
@@ -53,7 +53,7 @@ async def test_geneval_reward_reads_manifest_row_metadata() -> None:
 
     reward = GenEvalReward(device="cpu", scorer=scorer)
     score = await reward.score(
-        _rollout(
+        _sample(
             {
                 "manifest_row": {
                     "metadata": {
@@ -74,7 +74,7 @@ async def test_geneval_reward_reads_manifest_row_metadata() -> None:
 async def test_geneval_reward_requires_metadata() -> None:
     """Checks GenEval reward requires metadata."""
     with pytest.raises(ValueError, match=r"metadata\.geneval"):
-        GenEvalReward._extract_geneval_metadata(_rollout({}))
+        GenEvalReward._extract_geneval_metadata(_sample({}))
 
 
 @pytest.mark.asyncio
@@ -110,7 +110,7 @@ async def test_geneval_reward_registered_in_multi_reward() -> None:
 
     scores = await reward.score_batch(
         [
-            _rollout(
+            _sample(
                 {
                     "geneval": {
                         "tag": "colors",

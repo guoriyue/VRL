@@ -54,7 +54,7 @@ class _Unscored:
 class _GatedCollector:
     """Collector whose generation/reward phases block on explicit gates."""
 
-    requires_runtime_offload_before_reward = False
+    requires_generation_offload_before_reward = False
     requires_driver_model_offload_for_reward = False
     supports_reward_generation_overlap = False
 
@@ -137,7 +137,7 @@ def _producer(
 class _FiniteCollector:
     """Records prompt-batch inputs and optionally fails one attempt per prompt."""
 
-    requires_runtime_offload_before_reward = False
+    requires_generation_offload_before_reward = False
     requires_driver_model_offload_for_reward = False
     supports_reward_generation_overlap = False
 

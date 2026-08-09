@@ -10,6 +10,8 @@ from vrl.config.builders import BuiltConfigs
 from vrl.models.dtypes import resolve_torch_dtype
 from vrl.models.families.registry import ModelFamilyEntry
 from vrl.ray.resources import ResolvedDistributedResources, require_reward_device
+from vrl.rewards import RewardRuntime
+from vrl.rewards.base import RewardFunction
 
 
 @dataclass(frozen=True, slots=True)
@@ -20,12 +22,12 @@ class AlgorithmEvaluatorPair:
     evaluator: Any | None
 
 
-def build_reward(
+def build_reward_function(
     *,
     built: BuiltConfigs,
     resources: ResolvedDistributedResources | None,
     device: str = "cuda",
-) -> Any:
+) -> RewardFunction:
     """Build the online reward function from the shared config loader output.
 
     In-process GPU ownership decides parking: a shared reward is automatically
@@ -66,6 +68,25 @@ def build_reward(
         reward_kwargs=reward.kwargs,
         memory_parking_required=memory_parking_required,
         inference_configs=reward.inference_configs,
+    )
+
+
+def build_reward_runtime(
+    *,
+    built: BuiltConfigs,
+    resources: ResolvedDistributedResources | None,
+    device: str = "cuda",
+) -> RewardRuntime:
+    """Build the collector-facing runtime around the configured reward function."""
+
+    from vrl.rewards.runtime import RewardFunctionRuntime
+
+    return RewardFunctionRuntime(
+        build_reward_function(
+            built=built,
+            resources=resources,
+            device=device,
+        ),
     )
 
 
@@ -282,6 +303,7 @@ def build_algorithm_and_evaluator(
 __all__ = [
     "AlgorithmEvaluatorPair",
     "build_algorithm_and_evaluator",
-    "build_reward",
+    "build_reward_function",
+    "build_reward_runtime",
     "validate_reward_memory_parking",
 ]

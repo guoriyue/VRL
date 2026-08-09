@@ -8,11 +8,11 @@ from PIL import Image
 
 from vrl.rewards.functions.nsfw_safety import NSFWSafetyReward
 from vrl.rewards.models.nsfw_safety import NSFWSafetyRewardModel
-from vrl.rewards.types import RewardRollout
+from vrl.rewards.types import RewardSample
 
 
-def _rollout(output: object, *, sample_id: str = "sample-0") -> RewardRollout:
-    return RewardRollout(
+def _sample(output: object, *, sample_id: str = "sample-0") -> RewardSample:
+    return RewardSample(
         prompt="anime portrait",
         output=output,
         source_request_id="request-0",
@@ -35,7 +35,7 @@ async def test_nsfw_safety_reward_only_penalizes_scores_above_threshold() -> Non
     image = Image.new("RGB", (8, 8), color=(128, 128, 128))
 
     scores = await reward.score_batch(
-        [_rollout(image), _rollout(image, sample_id="sample-1")],
+        [_sample(image), _sample(image, sample_id="sample-1")],
     )
 
     assert scores[0] == pytest.approx(0.0)
@@ -55,7 +55,7 @@ async def test_nsfw_safety_reward_uses_max_probability_for_image_batches() -> No
     )
     output = torch.rand(2, 3, 8, 8)
 
-    score = await reward.score(_rollout(output))
+    score = await reward.score(_sample(output))
 
     assert score == pytest.approx(-0.8)
 

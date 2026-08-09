@@ -10,11 +10,11 @@ import pytest
 import torch
 
 from vrl.rewards.artifacts import VideoRewardArtifactStore
-from vrl.rewards.types import RewardRollout
+from vrl.rewards.types import RewardSample
 
 
-def _rollout(output: torch.Tensor) -> RewardRollout:
-    return RewardRollout(
+def _sample(output: torch.Tensor) -> RewardSample:
+    return RewardSample(
         prompt="prompt",
         output=output,
         source_request_id="request-x",
@@ -37,7 +37,7 @@ def test_video_artifact_store_writes_tensor_and_manifest(tmp_path: Path) -> None
     """Checks video artifact store writes tensor and manifest."""
     store = VideoRewardArtifactStore(tmp_path, media_type="video")
 
-    artifacts = store.materialize([_rollout(torch.ones(1, 2, 2, 2))])
+    artifacts = store.materialize([_sample(torch.ones(1, 2, 2, 2))])
 
     assert len(artifacts) == 1
     artifact = artifacts[0]
@@ -63,7 +63,7 @@ def test_video_artifact_store_writes_mp4_for_reward_models(tmp_path: Path) -> No
     """Checks video artifact store writes mp4 for reward models."""
     store = VideoRewardArtifactStore(tmp_path, media_type="video", artifact_format="mp4")
 
-    artifacts = store.materialize([_rollout(torch.ones(3, 2, 4, 4))])
+    artifacts = store.materialize([_sample(torch.ones(3, 2, 4, 4))])
 
     artifact = artifacts[0]
     assert artifact.path.endswith(".mp4")
@@ -86,7 +86,7 @@ def test_video_artifact_store_rejects_bad_shape(tmp_path: Path) -> None:
     store = VideoRewardArtifactStore(tmp_path, media_type="video")
 
     with pytest.raises(ValueError, match="video reward artifact expects"):
-        store.materialize([_rollout(torch.ones(2, 2))])
+        store.materialize([_sample(torch.ones(2, 2))])
 
 
 def test_video_artifact_store_rejects_unknown_artifact_format(tmp_path: Path) -> None:
@@ -100,8 +100,8 @@ def test_video_artifact_store_never_overwrites_and_releases_owned_paths(
     tmp_path: Path,
 ) -> None:
     store = VideoRewardArtifactStore(tmp_path, media_type="video")
-    first = store.materialize([_rollout(torch.zeros(1, 2, 2, 2))])
-    second = store.materialize([_rollout(torch.ones(1, 2, 2, 2))])
+    first = store.materialize([_sample(torch.zeros(1, 2, 2, 2))])
+    second = store.materialize([_sample(torch.ones(1, 2, 2, 2))])
 
     assert first[0].artifact_id != second[0].artifact_id
     assert first[0].path != second[0].path
