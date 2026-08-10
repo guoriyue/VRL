@@ -30,11 +30,10 @@ from vrl.rollouts.batch import RolloutBatch
 from vrl.rollouts.orchestration.continuous.consumer import ContinuousRolloutConsumer
 from vrl.rollouts.orchestration.continuous.producer import ContinuousRolloutProducer
 from vrl.rollouts.orchestration.continuous.queue import ContinuousRolloutQueue
-from vrl.rollouts.orchestration.continuous.scheduler import RolloutScheduler
 from vrl.rollouts.orchestration.continuous.staleness import StalenessPolicy
 from vrl.rollouts.orchestration.continuous.types import ContinuousRolloutItem
 from vrl.rollouts.orchestration.prompt_collection import PromptCollectionCleanupError
-from vrl.rollouts.orchestration.types import RolloutScheduleMode
+from vrl.rollouts.orchestration.types import RewardCollectionMode
 from vrl.rollouts.stats import RolloutStats
 
 
@@ -114,15 +113,11 @@ def _producer(
     fail_fast_errors: int = 3,
 ) -> ContinuousRolloutProducer:
     prompt_list = ["p0"] if prompts is None else list(prompts)
-    scheduler = RolloutScheduler(
-        staleness=StalenessPolicy(max_stale_policy_versions=max_stale),
-        max_inflight_groups=max_inflight,
-        max_bytes=queue.max_bytes,
-    )
     producer = ContinuousRolloutProducer(
         lifecycle=lifecycle or _Lifecycle(collector),
         queue=queue,
-        scheduler=scheduler,
+        staleness=StalenessPolicy(max_stale_policy_versions=max_stale),
+        max_inflight_groups=max_inflight,
         poll_interval_s=poll_interval_s,
         fail_fast_errors=fail_fast_errors,
     )
@@ -178,6 +173,32 @@ class _FiniteCollector:
 
     async def score_rollouts(self, pendings: list[_Unscored]) -> list[RolloutBatch]:
         return [pending.batch for pending in pendings]
+
+
+@pytest.mark.asyncio
+async def test_collect_group_uses_one_batched_serial_reward_call(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict[str, Any] = {}
+
+    async def _collect_prompt_batches(**kwargs: Any) -> list[RolloutBatch]:
+        captured.update(kwargs)
+        return [_batch("p0")]
+
+    monkeypatch.setattr(
+        "vrl.rollouts.orchestration.continuous.producer.collect_prompt_batches",
+        _collect_prompt_batches,
+    )
+    producer = _producer(
+        _FiniteCollector(),
+        ContinuousRolloutQueue(max_items=1),
+    )
+    prompt_batch = producer._active_batch
+    assert prompt_batch is not None
+
+    await producer._collect_group(prompt_batch=prompt_batch, slot=0)
+
+    assert captured["reward_mode"] is RewardCollectionMode.BATCHED_SERIAL
 
 
 # ------------------------------------------------------------- ready queue
@@ -250,10 +271,8 @@ async def test_control_loop_failure_reaches_consumer_without_timeout() -> None:
 
         with pytest.raises(RuntimeError, match="producer control loop failed") as caught:
             await consumer.drain_for_iteration(
-                rollout_id=0,
                 min_groups=1,
                 current_version=1,
-                mode=RolloutScheduleMode.CONTINUOUS,
                 wait_timeout_s=60.0,
                 poll_interval_s=0.001,
                 producer_state=producer.state,
@@ -288,10 +307,8 @@ async def test_terminal_generation_error_is_not_retried_or_wrapped() -> None:
 
         with pytest.raises(RayOperationTimeout) as caught:
             await consumer.drain_for_iteration(
-                rollout_id=0,
                 min_groups=1,
                 current_version=1,
-                mode=RolloutScheduleMode.CONTINUOUS,
                 wait_timeout_s=60.0,
                 poll_interval_s=0.001,
                 producer_state=producer.state,
@@ -300,7 +317,7 @@ async def test_terminal_generation_error_is_not_retried_or_wrapped() -> None:
         assert caught.value is error
         assert producer.state.fatal_error is error
         assert producer.state.submitted_count == 1
-        assert producer.state.inflight_count == 0
+        assert producer.inflight_count == 0
         assert queue.size() == 0
     finally:
         await producer.stop()
@@ -344,10 +361,8 @@ async def test_idle_health_failure_makes_next_collect_fatal_without_slot_retry()
 
         with pytest.raises(RuntimeError, match="generate rejected") as caught:
             await consumer.drain_for_iteration(
-                rollout_id=0,
                 min_groups=1,
                 current_version=1,
-                mode=RolloutScheduleMode.CONTINUOUS,
                 wait_timeout_s=60.0,
                 poll_interval_s=0.001,
                 producer_state=producer.state,
@@ -357,7 +372,7 @@ async def test_idle_health_failure_makes_next_collect_fatal_without_slot_retry()
         assert collector.attempts == 1
         assert producer.state.submitted_count == 1
         assert producer.state.error_count == 1
-        assert producer.state.inflight_count == 0
+        assert producer.inflight_count == 0
         assert queue.size() == 0
     finally:
         await producer.stop()
@@ -390,10 +405,8 @@ async def test_cleanup_wrapper_around_terminal_error_is_not_retried() -> None:
 
         with pytest.raises(PromptCollectionCleanupError) as caught:
             await consumer.drain_for_iteration(
-                rollout_id=0,
                 min_groups=1,
                 current_version=1,
-                mode=RolloutScheduleMode.CONTINUOUS,
                 wait_timeout_s=60.0,
                 poll_interval_s=0.001,
                 producer_state=producer.state,
@@ -403,7 +416,7 @@ async def test_cleanup_wrapper_around_terminal_error_is_not_retried() -> None:
         assert caught.value.root_cause is timeout
         assert producer.state.fatal_error is wrapped
         assert producer.state.submitted_count == 1
-        assert producer.state.inflight_count == 0
+        assert producer.inflight_count == 0
         assert queue.size() == 0
     finally:
         await producer.stop()
@@ -434,7 +447,7 @@ async def test_finite_prompt_batch_completes_each_slot_once_then_idles() -> None
         producer.resume_admission()
         await asyncio.sleep(0.02)
         assert collector.attempts == {"p0": 1, "p1": 1, "p2": 1}
-        assert producer.state.inflight_count == 0
+        assert producer.inflight_count == 0
     finally:
         await producer.stop()
 
@@ -513,7 +526,7 @@ async def test_prompt_batch_rejects_replacing_unconsumed_ready_work() -> None:
 
 
 @pytest.mark.asyncio
-async def test_finite_prompt_batch_fails_when_queue_hard_cap_evicts_a_slot() -> None:
+async def test_finite_prompt_batch_fails_before_mutation_at_queue_byte_limit() -> None:
     collector = _FiniteCollector()
     queue = ContinuousRolloutQueue(max_items=2, max_bytes=1)
     producer = _producer(
@@ -525,8 +538,9 @@ async def test_finite_prompt_batch_fails_when_queue_hard_cap_evicts_a_slot() -> 
 
     await producer.start()
     try:
-        with pytest.raises(RuntimeError, match="hard cap evicted prompt-batch"):
+        with pytest.raises(ValueError, match="exceeds its byte limit"):
             await producer.drain_prompt_batch(wait_timeout_s=5.0)
+        assert queue.size() == 0
     finally:
         await producer.stop()
 
@@ -630,7 +644,7 @@ async def test_producer_stop_does_not_wait_forever_for_cancel_suppression() -> N
     await asyncio.wait_for(producer.stop(wait_timeout_s=0.02), 1.0)
 
     assert collector.cancelled.is_set()
-    assert producer.state.inflight_count == 0
+    assert producer.inflight_count == 0
     collector.release.set()
     await asyncio.sleep(0)
 
@@ -846,12 +860,20 @@ def _item(
 
 
 def _consumer(queue: ContinuousRolloutQueue, max_stale: int) -> ContinuousRolloutConsumer:
-    scheduler = RolloutScheduler(
+    return ContinuousRolloutConsumer(
+        queue=queue,
         staleness=StalenessPolicy(max_stale_policy_versions=max_stale),
-        max_inflight_groups=1,
-        max_bytes=0,
+        fail_fast_errors=3,
     )
-    return ContinuousRolloutConsumer(queue=queue, scheduler=scheduler, fail_fast_errors=3)
+
+
+def test_producer_rejects_nonpositive_inflight_budget() -> None:
+    with pytest.raises(ValueError, match="max_inflight_groups"):
+        _producer(
+            _FiniteCollector(),
+            ContinuousRolloutQueue(max_items=1),
+            max_inflight=0,
+        )
 
 
 async def _drain(
@@ -862,10 +884,8 @@ async def _drain(
     timeout_s: float = 1.0,
 ):
     return await consumer.drain_for_iteration(
-        rollout_id=0,
         min_groups=min_groups,
         current_version=current_version,
-        mode=RolloutScheduleMode.CONTINUOUS,
         wait_timeout_s=timeout_s,
         poll_interval_s=0.001,
     )
@@ -884,9 +904,10 @@ async def test_consumer_consumes_stale_items_within_bound() -> None:
         current_version=2,
     )
 
-    assert iteration.policy_version == 1
-    assert iteration.metadata["stale_policy_versions"] == 1
-    assert iteration.metadata["consume_policy_version"] == 2
+    phases = iteration.stats.as_phase_dict()
+    assert phases["continuous.rollout_policy_version"] == 1.0
+    assert phases["continuous.stale_policy_versions"] == 1.0
+    assert phases["continuous.consume_policy_version"] == 2.0
 
 
 @pytest.mark.asyncio
@@ -906,6 +927,45 @@ async def test_consumer_rejects_a_too_stale_ready_batch() -> None:
 
 
 @pytest.mark.asyncio
+async def test_consumer_rejects_nonpositive_group_count() -> None:
+    with pytest.raises(ValueError, match="min_groups"):
+        await _drain(
+            _consumer(ContinuousRolloutQueue(max_items=1), max_stale=0),
+            min_groups=0,
+            current_version=1,
+        )
+
+
+@pytest.mark.asyncio
+async def test_consumer_rejects_duplicate_group_slots() -> None:
+    queue = ContinuousRolloutQueue(max_items=2)
+    queue.put(_item(group_key=0, version=1))
+    queue.put(_item(group_key=0, version=1))
+
+    with pytest.raises(RuntimeError, match="duplicate group slots"):
+        await _drain(_consumer(queue, max_stale=0), min_groups=2, current_version=1)
+
+
+@pytest.mark.asyncio
+async def test_consumer_rejects_mixed_policy_versions() -> None:
+    queue = ContinuousRolloutQueue(max_items=2)
+    queue.put(_item(group_key=0, version=1))
+    queue.put(_item(group_key=1, version=2))
+
+    with pytest.raises(RuntimeError, match="mixes policy versions"):
+        await _drain(_consumer(queue, max_stale=1), min_groups=2, current_version=2)
+
+
+@pytest.mark.asyncio
+async def test_consumer_rejects_future_policy_version() -> None:
+    queue = ContinuousRolloutQueue(max_items=1)
+    queue.put(_item(group_key=0, version=2))
+
+    with pytest.raises(RuntimeError, match="newer than the trainer policy"):
+        await _drain(_consumer(queue, max_stale=0), min_groups=1, current_version=1)
+
+
+@pytest.mark.asyncio
 async def test_late_reward_batch_fails_under_non_draining_max_stale_0() -> None:
     """OFF-POLICY INVARIANT, non-draining branch (max_stale=0).
 
@@ -917,17 +977,16 @@ async def test_late_reward_batch_fails_under_non_draining_max_stale_0() -> None:
     iteration, because reward is policy-independent and cannot relabel the
     stamped version to the new one.
 
-    This drives the exact machinery the non-draining owner branch uses
-    (``scheduler.validate_ready_versions`` after weight sync, then
-    ``consumer.drain_for_iteration`` -> ``scheduler.select_iteration``).
+    This drives the exact machinery the non-draining owner branch uses:
+    ``consumer.validate_ready_versions`` after weight sync, then the same
+    consumer's iteration selection during ``drain_for_iteration``.
     """
     queue = ContinuousRolloutQueue(max_items=8)
-    scheduler = RolloutScheduler(
+    consumer = ContinuousRolloutConsumer(
+        queue=queue,
         staleness=StalenessPolicy(max_stale_policy_versions=0),
-        max_inflight_groups=1,
-        max_bytes=0,
+        fail_fast_errors=3,
     )
-    consumer = ContinuousRolloutConsumer(queue=queue, scheduler=scheduler, fail_fast_errors=3)
 
     # The late-reward group: produced (and stamped) under v1, but its reward
     # only lands AFTER the trainer has bumped to v2 (the non-draining barrier
@@ -939,7 +998,7 @@ async def test_late_reward_batch_fails_under_non_draining_max_stale_0() -> None:
     # fail immediately with the fixed-version cause instead of deleting one slot
     # and waiting for a batch that can no longer complete.
     with pytest.raises(RuntimeError, match="older than the policy window"):
-        scheduler.validate_ready_versions(queue, current_version=2)
+        consumer.validate_ready_versions(current_version=2)
     assert queue.size() == 1
     with pytest.raises(RuntimeError, match="older than the policy window"):
         await _drain(consumer, min_groups=1, current_version=2)

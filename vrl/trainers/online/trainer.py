@@ -5,7 +5,6 @@ collect -> evaluate -> advantage -> loss -> backward -> step.
 
 from __future__ import annotations
 
-import asyncio
 import contextlib
 import logging
 import math
@@ -762,8 +761,8 @@ class OnlineTrainer:
             sync_state_getter=self.sync_state_getter,
             weights_initialized=lambda: self._rollout_weights_initialized,
             set_weights_initialized=self._set_rollout_weights_initialized,
-            # Default True: only likelihood-free objectives (DiffusionNFT) opt out,
-            # which makes a continuous max_stale>0 config fail fast as unsound.
+            # Likelihood-free objectives (DiffusionNFT) opt out, which makes a
+            # continuous max_stale>0 config fail fast as unsound.
             algorithm_tolerates_off_policy_staleness=(
                 self.algorithm.tolerates_off_policy_staleness
             ),
@@ -1258,7 +1257,7 @@ class OnlineTrainer:
         self._update_had_training_work = False
         self._update_optimizer.zero_grad(set_to_none=True)
 
-    async def backward_on_training_batch(
+    def backward_on_training_batch(
         self,
         batch: TrainingBatch,
         *,
@@ -1329,7 +1328,6 @@ class OnlineTrainer:
                         weight=sample_chunk.loss_weight,
                         capture_initial_replay=True,
                     )
-                await asyncio.sleep(0)
 
     async def finish_optimizer_update(
         self,
@@ -1369,7 +1367,8 @@ class OnlineTrainer:
                     trainable = [p for p in self.model.parameters() if p.requires_grad]
                     self._update_ema.step(trainable, self.state.global_step)
             self.state.global_step += 1
-            sync_stats = await self.rollout_schedule.after_train_step()
+            if stepped:
+                sync_stats = await self.rollout_schedule.after_train_step()
         else:
             initial_replay = None
             agg.grad_norms.append(0.0)
@@ -1402,11 +1401,8 @@ class OnlineTrainer:
     async def train_on_rollout_batch(self, batch: TrainingBatch) -> TrainStepMetrics:
         """Train on a collected batch — the compute half of one step.
 
-        Stays async on purpose: the per-replay ``await asyncio.sleep(0)`` in the
-        inner loop lets the continuous-rollout producer advance on the shared
-        asyncio loop between CUDA-heavy iterations. Making this synchronous would
-        change rollout interleaving, so the split keeps it awaitable. Behavior is
-        identical to the previous single method.
+        The schedule's post-update weight publication is asynchronous even though
+        replay evaluation, backward, and the optimizer step are synchronous.
         """
         from vrl.algorithms.trajectory import AlgorithmAdapter
         from vrl.rollouts.evaluators.types import SignalRequest, TrajectorySignalBatch
@@ -1706,6 +1702,7 @@ class OnlineTrainer:
                 first_step_debug_record["precision_drift_guard"] = _guard_record
 
         initial_replay = InitialReplayStats()
+        policy_updated = False
         for _ppo_epoch in range(cfg.ppo_epochs):
             # ``train_on_rollout_batch`` receives one already-collected optimizer
             # target batch. Streaming accumulation is owned by the recipe and
@@ -1755,11 +1752,6 @@ class OnlineTrainer:
                             capture_initial_replay=capture_initial_replay,
                         )
 
-                    # Continuous rollout production runs on the same asyncio
-                    # loop as training orchestration. Yield once per replay unit
-                    # so producer admit/harvest can progress.
-                    await asyncio.sleep(0)
-
             with timer.time("optim_step"):
                 if capture_initial_replay:
                     local_initial, local_weight = agg_metrics.initial_replay_snapshot()
@@ -1773,6 +1765,7 @@ class OnlineTrainer:
             # A scaler-skipped step (inf/nan grads) left the weights unchanged —
             # do not fold a non-update into EMA or the algorithm adapter.
             if _stepped:
+                policy_updated = True
                 after_optimizer_step = getattr(self.algorithm, "after_optimizer_step", None)
                 if callable(after_optimizer_step):
                     after_optimizer_step(self.model, self.state.global_step)
@@ -1797,7 +1790,8 @@ class OnlineTrainer:
         # Update state
         self.state.step += 1
 
-        step_stats.merge(await self.rollout_schedule.after_train_step())
+        if policy_updated:
+            step_stats.merge(await self.rollout_schedule.after_train_step())
         phase_times = step_stats.as_phase_dict()
         if cfg.profile and phase_times:
             self._stats_sink.record(metric_step, step_stats)

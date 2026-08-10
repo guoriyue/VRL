@@ -133,12 +133,12 @@ class _Collector:
 
 
 @pytest.mark.asyncio
-async def test_strict_schedule_collects_and_syncs_with_rollout_metadata() -> None:
-    """Checks strict schedule collects and syncs with rollout metadata."""
+async def test_strict_schedule_collects_and_syncs() -> None:
+    """Checks strict schedule collects and syncs one trainer-ready iteration."""
     import torch
     import torch.nn as nn
 
-    from vrl.rollouts.orchestration import RolloutScheduleMode, build_rollout_schedule
+    from vrl.rollouts.orchestration import build_rollout_schedule
     from vrl.trainers.strategy import SingleProcessStrategy, TrainingMemoryState
 
     runtime = _Runtime()
@@ -154,6 +154,7 @@ async def test_strict_schedule_collects_and_syncs_with_rollout_metadata() -> Non
     strategy = SingleProcessStrategy()
     schedule = build_rollout_schedule(
         _schedule_config("strict_on_policy"),
+        algorithm_tolerates_off_policy_staleness=True,
         collector=collector,
         strategy=strategy,
         training_state_getter=lambda: TrainingMemoryState(
@@ -181,18 +182,8 @@ async def test_strict_schedule_collects_and_syncs_with_rollout_metadata() -> Non
     assert collect_call["prompts"] == ["p0", "p1"]
     assert collect_call["policy_version"] == 1
     assert collect_call["runtime_debug"] is True
-    assert iteration.mode is RolloutScheduleMode.STRICT_ON_POLICY
-    assert iteration.rollout_id == 0
-    assert iteration.policy_version == 1
-    assert iteration.prompt_count == 2
-    assert iteration.sample_count == 4
-    assert iteration.metadata == {}
     assert len(iteration.batches) == 2
-    assert iteration.batches[0].context["rollout_id"] == 0
-    assert iteration.batches[0].context["rollout_policy_version"] == 1
-    assert iteration.batches[0].context["schedule_mode"] == "strict_on_policy"
-    assert iteration.batches[0].context["prompt_count"] == 2
-    assert iteration.batches[0].context["sample_count"] == 4
+    assert sum(batch.rewards.numel() for batch in iteration.batches) == 4
     assert len(syncer.calls) == 2
     assert runtime.current_policy_version == 2
     assert collector.activation_calls == 1
@@ -462,6 +453,7 @@ async def test_strict_schedule_forwards_the_configured_reward_collection_arm() -
 
     schedule = build_rollout_schedule(
         config,
+        algorithm_tolerates_off_policy_staleness=True,
         collector=collector,
         strategy=SingleProcessStrategy(),
         training_state_getter=lambda: TrainingMemoryState(
@@ -496,6 +488,7 @@ async def test_strict_schedule_defaults_to_capability_derived_arm() -> None:
     runtime = _Runtime()
     schedule = build_rollout_schedule(
         _schedule_config("strict_on_policy"),
+        algorithm_tolerates_off_policy_staleness=True,
         collector=_Collector(runtime),
         strategy=SingleProcessStrategy(),
         training_state_getter=lambda: TrainingMemoryState(

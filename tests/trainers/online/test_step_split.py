@@ -253,6 +253,37 @@ def test_streaming_all_filtered_update_does_not_advance_policy(tmp_path) -> None
     assert torch.equal(trainer.model.weight, initial_weight)
 
 
+def test_streaming_scaler_skipped_update_does_not_publish_weights(tmp_path) -> None:
+    """A skipped optimizer attempt counts but cannot publish unchanged weights."""
+    from vrl.scripts.common.online import _run_streaming_optimizer_update
+
+    trainer = _build_trainer(tmp_path)
+    trainer._clip_and_step = lambda optimizer: (0.0, False)  # type: ignore[method-assign]
+    sync_calls: list[int] = []
+
+    async def _unexpected_sync() -> RolloutStats:
+        sync_calls.append(1)
+        return RolloutStats()
+
+    trainer.rollout_schedule.after_train_step = _unexpected_sync  # type: ignore[method-assign]
+
+    asyncio.run(
+        _run_streaming_optimizer_update(
+            trainer,
+            ["p"],
+            batch_plan=OnlineBatchPlan(
+                prompts_per_batch=1,
+                n_samples_per_prompt=2,
+                gradient_accumulation_steps=1,
+            ),
+        ),
+    )
+
+    assert trainer.state.step == 1
+    assert trainer.state.global_step == 1
+    assert sync_calls == []
+
+
 def test_phase_events_use_the_metric_step(tmp_path) -> None:
     """JSON phase events and the stats sink use the same zero-based step."""
     import json

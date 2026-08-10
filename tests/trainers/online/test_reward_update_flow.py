@@ -411,7 +411,7 @@ class TestRewardUpdateFlow:
                 self.batch_refs.append(weakref.ref(batch))
                 return batch
 
-            async def backward_on_training_batch(self, batch, *, total_groups):
+            def backward_on_training_batch(self, batch, *, total_groups):
                 del batch, total_groups
 
             def _step_stats(self, iteration, timer):
@@ -466,7 +466,7 @@ class TestRewardUpdateFlow:
                 del prompts, next_prompts
                 return _Batch()
 
-            async def backward_on_training_batch(self, batch, *, total_groups):
+            def backward_on_training_batch(self, batch, *, total_groups):
                 del batch, total_groups
 
             def _step_stats(self, iteration, timer):
@@ -533,7 +533,7 @@ class TestRewardUpdateFlow:
                 self.requests.append((list(prompts), next_prompts))
                 return _Batch()
 
-            async def backward_on_training_batch(self, batch, *, total_groups):
+            def backward_on_training_batch(self, batch, *, total_groups):
                 del batch, total_groups
 
             def _step_stats(self, iteration, timer):

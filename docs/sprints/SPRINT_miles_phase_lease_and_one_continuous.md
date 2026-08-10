@@ -481,16 +481,21 @@ trainer、复用 training placement group，或要求 continuous owner 增加 ev
 生产调用方的 live rollout-only flow，必须先单独证明其 ownership，再决定是否抽共享 phase boundary；
 本 sprint 不为假想调用方预建薄抽象。
 
-### 2.5 当前 continuous 还不是唯一、可证明的 production 语义
+### 2.5 Historical gaps in continuous production semantics (resolved)
 
-当前 continuous 有三个问题：
+The following three issues describe the pre-sprint state. Production continuous
+now requires disjoint GPUs and at least one stale policy version, while
+`ContinuousRolloutOwner` drives the producer from a dedicated thread/event loop.
+Synchronous trainer backward therefore no longer depends on
+`await asyncio.sleep(0)` to yield execution:
 
 1. `require_separate_gpus:false` 允许 resident same-GPU debug，并由唯一 role-cap preset 为它
    提供显存切分；
 2. `max_stale_policy_versions=0` 时虽然数据语义等价 strict，仍启动整套 background
    producer/queue；
-3. producer 跟 trainer orchestration 共用 asyncio loop，长同步 backward 期间只能依赖
-   timestep 间的 `await asyncio.sleep(0)` 获得调度机会。
+3. The producer previously shared the trainer orchestration event loop and relied
+   on `await asyncio.sleep(0)` between timesteps during long synchronous backward
+   work. The dedicated owner removed this dependency.
 
 第三点不会停止已经发到远端 Ray worker 的 kernel，但会阻止 driver 及时 refill/harvest，
 所以“有 background task”不等于持续 producer。真正的 continuous 验收必须看 wall-clock
@@ -757,8 +762,11 @@ inline fixed eval 新建 callback。现有 `ensure_initial_weights()` 仍必须�
 
 ### P4 — 独立 continuous owner
 
-现有 `RolloutScheduler`、producer、ready queue、consumer、staleness gates 全部保留；缺的是让
-它们不依赖 trainer event loop。
+The producer, ready queue, consumer, and staleness gates remain on the owner loop.
+The old `RolloutScheduler` was deleted: the producer owns inflight admission,
+while the consumer and `StalenessPolicy` own version validation and full-batch
+selection. The dedicated owner keeps these mechanisms independent of the trainer
+event loop.
 
 首选实现是一个由 `ContinuousRolloutSchedule` 实例拥有的 dedicated thread + asyncio loop：
 

@@ -28,16 +28,16 @@ def test_counter_sums_without_entering_phase_percentage_base() -> None:
 def test_gauge_merge_retains_peak_without_summing_snapshots() -> None:
     first = RolloutStats()
     first.observe_gauge("continuous.stale_policy_versions", 1)
-    first.observe_gauge("continuous.queue_ready_groups", 4)
+    first.observe_gauge("continuous.producer_inflight", 4)
     second = RolloutStats()
     second.observe_gauge("continuous.stale_policy_versions", 0)
-    second.observe_gauge("continuous.queue_ready_groups", 3)
+    second.observe_gauge("continuous.producer_inflight", 3)
 
     first.merge(second)
 
     assert first.gauges == {
         "continuous.stale_policy_versions": 1.0,
-        "continuous.queue_ready_groups": 4.0,
+        "continuous.producer_inflight": 4.0,
     }
     assert first.as_phase_dict()["continuous.stale_policy_versions"] == 1.0
 

@@ -67,13 +67,8 @@ class _RecordingLifecycle:
         if self.fail_restore:
             raise RuntimeError("trainer restore blew up")
 
-    async def sync_weights_after_train(self, _stats: RolloutStats) -> int | None:
+    async def sync_weights_after_train(self, _stats: RolloutStats) -> None:
         self.calls.append("sync_weights_after_train")
-        return 1
-
-    @property
-    def state(self) -> object:  # pragma: no cover - not used by these tests
-        raise AttributeError
 
 
 @pytest.mark.asyncio
@@ -123,9 +118,7 @@ async def test_failed_rollout_offload_keeps_trainer_parked() -> None:
         await schedule.next_iteration(["a prompt"], group_size=2)
 
     assert str(raised.value.root_cause) == "collect blew up"
-    assert [str(error) for error in raised.value.cleanup_errors] == [
-        "rollout offload blew up",
-    ]
+    assert str(raised.value.cleanup_error) == "rollout offload blew up"
     assert raised.value.__cause__ is raised.value.root_cause
     assert "restore_training_state_after_rollout" not in lifecycle.calls
 
@@ -154,9 +147,7 @@ async def test_restore_failure_is_reported_after_successful_rollout_offload() ->
         await schedule.next_iteration(["a prompt"], group_size=2)
 
     assert str(raised.value.root_cause) == "collect blew up"
-    assert [str(error) for error in raised.value.cleanup_errors] == [
-        "trainer restore blew up",
-    ]
+    assert str(raised.value.cleanup_error) == "trainer restore blew up"
     assert lifecycle.calls.index("offload_rollout_runtime_memory") < lifecycle.calls.index(
         "restore_training_state_after_rollout"
     )

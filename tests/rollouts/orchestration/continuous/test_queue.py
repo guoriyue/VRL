@@ -1,12 +1,8 @@
-"""Tests for the bounded continuous rollout ready queue (container mechanism).
-
-Version/staleness behavior (validation and homogeneous select) lives on the
-``RolloutScheduler`` now and is covered by ``test_scheduler.py``; this file pins
-only the container: byte/count backpressure and stats.
-"""
+"""Tests for the bounded continuous rollout ready queue container."""
 
 from __future__ import annotations
 
+import pytest
 import torch
 
 from vrl.generation import GenerationRequest, GenerationSampleRow
@@ -38,6 +34,22 @@ def _item(
     )
 
 
+def test_rejects_negative_byte_limit() -> None:
+    with pytest.raises(ValueError, match="max_bytes"):
+        ContinuousRolloutQueue(max_items=1, max_bytes=-1)
+
+
+def test_item_limit_changes_only_between_prompt_batches() -> None:
+    queue = ContinuousRolloutQueue(max_items=1)
+    queue.set_item_limit(2)
+    assert queue.max_items == 2
+
+    queue.put(_item(group_key=0, version=1))
+    with pytest.raises(RuntimeError, match="only between batches"):
+        queue.set_item_limit(3)
+    assert queue.max_items == 2
+
+
 def test_snapshot_and_remove_are_pure_container_ops() -> None:
     """snapshot() reads FIFO order; remove() drops by identity and fixes bytes."""
     queue = ContinuousRolloutQueue(max_items=8)
@@ -48,29 +60,30 @@ def test_snapshot_and_remove_are_pure_container_ops() -> None:
 
     queue.remove([snap[0]])
     assert queue.size() == 1
-    assert queue.ready_bytes() == 6
+    assert queue.stats()["ready_bytes"] == 6.0
 
 
-def test_item_count_backpressure_drops_oldest() -> None:
-    """Checks item count backpressure drops oldest."""
+def test_item_count_overflow_fails_before_mutation() -> None:
     queue = ContinuousRolloutQueue(max_items=2)
     queue.put(_item(group_key=0, version=1))
     queue.put(_item(group_key=1, version=1))
-    evicted = queue.put(_item(group_key=2, version=1))
+
+    with pytest.raises(ValueError, match="item limit"):
+        queue.put(_item(group_key=2, version=1))
+
     assert queue.size() == 2
-    assert [item.group_key for item in evicted] == [0]
-    # Oldest group (slot 0) evicted.
-    remaining = {item.group_key for item in queue._items}
-    assert remaining == {1, 2}
+    assert [item.group_key for item in queue.snapshot()] == [0, 1]
 
 
-def test_byte_cap_backpressure() -> None:
-    """Checks byte cap backpressure."""
+def test_byte_overflow_fails_before_mutation() -> None:
     queue = ContinuousRolloutQueue(max_items=100, max_bytes=10)
     queue.put(_item(group_key=0, version=1, nbytes=6))
-    evicted = queue.put(_item(group_key=1, version=1, nbytes=6))
-    assert queue.ready_bytes() <= 10
-    assert [item.group_key for item in evicted] == [0]
+
+    with pytest.raises(ValueError, match="byte limit"):
+        queue.put(_item(group_key=1, version=1, nbytes=6))
+
+    assert queue.stats()["ready_bytes"] == 6.0
+    assert [item.group_key for item in queue.snapshot()] == [0]
 
 
 def test_batch_byte_estimate_counts_only_trainer_transport_tensors() -> None:
@@ -148,10 +161,10 @@ def test_stats_shape() -> None:
 
 
 def test_ready_group_count_spans_policy_versions() -> None:
-    """Queue stats count group slots; version selection belongs to the scheduler."""
+    """Queue stats count group slots; version selection belongs to the consumer."""
     queue = ContinuousRolloutQueue(max_items=8)
     queue.put(_item(group_key=0, version=1))
     queue.put(_item(group_key=0, version=2))
     queue.put(_item(group_key=1, version=2))
 
-    assert queue.distinct_group_count() == 2
+    assert queue.stats()["ready_groups"] == 2.0

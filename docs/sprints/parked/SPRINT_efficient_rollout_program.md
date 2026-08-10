@@ -172,7 +172,11 @@ rollout 是 `no_grad`（`run_denoise_steps` 在 `torch.no_grad()` 内），可�
 
 ### Lever A / C / E（降级为 cite + compose）
 
-- **A**：AEGPO(2602.06825) 扩散原生自适应分配已 5×；SuperFlow(2512.17951) 用 value-tracker 杀零优势。借其机理给 orchestration 补 per-prompt variance state（本 repo `RolloutScheduleState` 现仅 `rollout_id`），但作为工程对齐，不作 novelty。
+- **A**: AEGPO (2602.06825) reports 5x diffusion-native adaptive allocation,
+  while SuperFlow (2512.17951) uses a value tracker to eliminate zero-advantage
+  work. Apply those mechanics through dedicated typed per-prompt variance state;
+  current scheduling no longer owns a generic `RolloutScheduleState`. This is
+  engineering alignment, not a novelty claim.
 - **C**：`docs/sprints/info/SPRINT_signal_paged_rollout.md` 已归档 P0 负结果；Tree/Branch/TMPO
   也已覆盖大部分方法空间，因此不再把 shared-prefix 当独立 killer capability。若未来研究
   antithetic / K-correlated noise，应建立新的独立 proof gate，不能重开已失败的 P1–P3。
@@ -265,7 +269,9 @@ A/C: 不立项 novelty；按需 compose AEGPO/TreeGRPO 机理对齐工程
 - `vrl/trajectory/types.py`：`TrajectorySegment.trainable` / per-step `mask`（§4 三态落点）。
 - `vrl/rollouts/evaluators/types.py`：`SignalRequest` / `needs_kl_intermediates`（algorithm-declares-fields 雏形）。
 - `vrl/rollouts/orchestration/continuous/`：producer/queue/consumer/staleness + weight-sync barrier（Lever G 底座）。
-- `vrl/rollouts/orchestration/.../types.py`：`RolloutScheduleState`（仅 `rollout_id`，A 缺的 per-prompt state）。
+- `vrl/rollouts/orchestration/.../types.py`: if A is implemented, introduce
+  narrow per-prompt state; do not restore the deleted generic
+  `RolloutScheduleState` that only wrapped `rollout_id`.
 - `vrl/models/diffusion/echo/`：DMD ~8 步 flow-matching（Lever E 视频经验槽标本）。
 - `vrl/models/diffusion/{cosmos,wan_2_1}/`、`vrl/models/ar/paged_attention_helpers.py`：§6 当前视频 full-attention / 无 KV 的证据（对照因果底座）。
 

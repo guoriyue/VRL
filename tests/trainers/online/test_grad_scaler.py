@@ -1,7 +1,8 @@
 """FP16 GradScaler acceptance gates for OnlineTrainer (SPRINT_fp16_training_gradscaler).
 
 G1 enable matrix, G2 unscale-before-clip ordering, G4 skipped-step propagation
-(the scaler-skipped step must not update EMA or the algorithm adapter). G3
+(the scaler-skipped step must not update EMA, the algorithm adapter, or rollout
+weights). G3
 (checkpoint round-trip) lives in test_state_restore.py.
 """
 
@@ -328,20 +329,38 @@ def _build_trainer(tmp_path):
 def test_skipped_step_does_not_update_ema_or_adapter(tmp_path) -> None:
     trainer, algorithm, spy_ema = _build_trainer(tmp_path)
     trainer._clip_and_step = lambda optimizer: (0.0, False)  # type: ignore[method-assign]
+    real_after_train_step = trainer.rollout_schedule.after_train_step
+    sync_calls: list[int] = []
+
+    async def _record_sync():
+        sync_calls.append(1)
+        return await real_after_train_step()
+
+    trainer.rollout_schedule.after_train_step = _record_sync  # type: ignore[method-assign]
 
     asyncio.run(trainer.step(["p"]))
 
     assert algorithm.after_step_calls == []
     assert spy_ema.steps == []
+    assert sync_calls == []
     assert trainer.state.global_step == 1  # the step still counts as an iteration
 
 
 def test_applied_step_updates_ema_and_adapter(tmp_path) -> None:
     trainer, algorithm, spy_ema = _build_trainer(tmp_path)
     trainer._clip_and_step = lambda optimizer: (0.0, True)  # type: ignore[method-assign]
+    real_after_train_step = trainer.rollout_schedule.after_train_step
+    sync_calls: list[int] = []
+
+    async def _record_sync():
+        sync_calls.append(1)
+        return await real_after_train_step()
+
+    trainer.rollout_schedule.after_train_step = _record_sync  # type: ignore[method-assign]
 
     asyncio.run(trainer.step(["p"]))
 
     assert algorithm.after_step_calls  # fired
     assert spy_ema.steps  # fired
+    assert sync_calls == [1]
     assert trainer.state.global_step == 1

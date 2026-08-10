@@ -60,5 +60,4 @@ trainer:
       # multiple steps. A one-version window enables bounded overlap while
       # keeping admission tied to the latest committed policy.
       max_inflight_groups: 4
-      max_ready_groups: 16
       max_stale_policy_versions: 1

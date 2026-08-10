@@ -575,7 +575,7 @@ async def _run_streaming_optimizer_update(
                     microbatch_prompts=len(microbatch),
                     n_samples_per_prompt=batch_plan.n_samples_per_prompt,
                 )
-            await trainer.backward_on_training_batch(batch, total_groups=total_groups)
+            trainer.backward_on_training_batch(batch, total_groups=total_groups)
             # Sample-count-weighted aggregation of this microbatch's pre-filter stats
             # so the one metric row reflects ALL samples, not the last microbatch.
             weight = max(1, len(microbatch) * batch_plan.n_samples_per_prompt)

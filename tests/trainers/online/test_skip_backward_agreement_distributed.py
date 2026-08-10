@@ -326,8 +326,6 @@ def _run_replay_loop_rank(
     local_counts: list[int],
     q: mp.Queue,
 ) -> None:
-    import asyncio
-
     os.environ["MASTER_ADDR"] = "127.0.0.1"
     os.environ["MASTER_PORT"] = str(port)
     dist.init_process_group(backend="gloo", rank=rank, world_size=world_size)
@@ -405,7 +403,7 @@ def _run_replay_loop_rank(
             pre_filter_adv_mean=1.0,
             reward_components={},
         )
-        asyncio.run(trainer.backward_on_training_batch(batch, total_groups=1))
+        trainer.backward_on_training_batch(batch, total_groups=1)
         q.put(
             (
                 rank,

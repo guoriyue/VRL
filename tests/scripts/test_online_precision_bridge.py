@@ -261,7 +261,6 @@ def test_online_metrics_csv_includes_logprob_mismatch_metrics(tmp_path):
             ),
             phase_times={
                 "continuous.stale_policy_versions": 1.0,
-                "continuous.queue_ready_groups": 3.0,
                 "continuous.weight_sync_pause_s": 0.25,
                 "continuous.lookahead_requested": 1.0,
                 "continuous.producer_completed": 2.0,
@@ -294,7 +293,6 @@ def test_online_metrics_csv_includes_logprob_mismatch_metrics(tmp_path):
     assert float(values["mismatch_kl"]) == pytest.approx(-0.5)
     # Continuous-async diagnostics sourced from TrainStepMetrics.phase_times.
     assert float(values["continuous_stale_versions"]) == pytest.approx(1.0)
-    assert float(values["continuous_ready_groups"]) == pytest.approx(3.0)
     assert float(values["continuous_weight_sync_pause_s"]) == pytest.approx(0.25)
     assert float(values["continuous_lookahead_requested"]) == pytest.approx(1.0)
     assert float(values["continuous_producer_completed"]) == pytest.approx(2.0)

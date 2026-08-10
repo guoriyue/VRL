@@ -17,7 +17,7 @@ from vrl.trajectory import trajectory_tensor_bytes
 class ContinuousRolloutSettings:
     """The continuous rollout tuning that threads from config down to the runtime.
 
-    One object carries the seven settings through ``build_rollout_schedule`` ->
+    One object carries the six settings through ``build_rollout_schedule`` ->
     ``ContinuousRolloutSchedule`` -> ``ContinuousRolloutOwner`` ->
     ``_ContinuousOwnerRuntime`` so adding a knob touches one field here, not four
     repeated signatures. Deliberately has NO defaults: ``ContinuousRolloutConfig``
@@ -30,7 +30,6 @@ class ContinuousRolloutSettings:
     """
 
     max_inflight_groups: int
-    max_ready_groups: int
     max_ready_bytes_mb: int
     max_stale_policy_versions: int
     wait_timeout_s: float
@@ -49,7 +48,7 @@ def estimate_batch_bytes(batch: RolloutBatch) -> int:
     """Rough host-memory footprint of a queued ``RolloutBatch``.
 
     The trajectory owns replay tensors. Shared tensor objects are deduplicated
-    so queue backpressure does not charge the same storage twice. Arbitrary
+    so queue capacity accounting does not charge the same storage twice. Arbitrary
     nested extras stay outside this cheap heuristic.
     """
 
@@ -77,6 +76,7 @@ class ContinuousRolloutItem:
     group_key: int
     rollout_policy_version: int | None
     batch: RolloutBatch
+    # display/provenance-only: receipt age is exported as a queue health gauge.
     completed_at: float = field(default_factory=time.time)
     nbytes: int = 0
     # Per-item typed stats (collect.engine_generate / reward_score / batch_build
@@ -96,8 +96,6 @@ class ContinuousRolloutProducerState:
 
     running: bool = False
     paused_for_weight_sync: bool = False
-    # display/provenance-only: live task count included in health diagnostics.
-    inflight_count: int = 0
     # display/provenance-only: owner-loop cadence health exported as metrics.
     tick_count: int = 0
     # display/provenance-only: cumulative attempts exported as diagnostics.

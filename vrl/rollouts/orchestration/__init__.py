@@ -10,7 +10,6 @@ from vrl.rollouts.orchestration.strict_on_policy import StrictOnPolicyRolloutSch
 from vrl.rollouts.orchestration.types import (
     RolloutIteration,
     RolloutScheduleMode,
-    RolloutScheduleState,
 )
 
 __all__ = [
@@ -18,7 +17,6 @@ __all__ = [
     "RolloutIteration",
     "RolloutSchedule",
     "RolloutScheduleMode",
-    "RolloutScheduleState",
     "StrictOnPolicyRolloutSchedule",
     "build_rollout_schedule",
     "validate_rollout_schedule_topology",

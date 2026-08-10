@@ -9,34 +9,29 @@ from vrl.rollouts.orchestration.rollout_runtime import RolloutRuntimeCoordinator
 from vrl.rollouts.orchestration.types import (
     RewardCollectionMode,
     RolloutIteration,
-    RolloutScheduleMode,
-    RolloutScheduleState,
-    build_rollout_iteration,
 )
 from vrl.rollouts.stats import RolloutStats
 
 
 class RolloutPhaseCleanupError(RuntimeError):
-    """A rollout phase failed and one or more terminal cleanup steps also failed."""
+    """A rollout phase failed and its terminal cleanup also failed."""
 
     def __init__(
         self,
         root_cause: BaseException,
-        cleanup_errors: list[BaseException],
+        cleanup_error: BaseException,
     ) -> None:
         self.root_cause = root_cause
-        self.cleanup_errors = tuple(cleanup_errors)
-        cleanup = "; ".join(f"{type(error).__name__}: {error}" for error in cleanup_errors)
+        self.cleanup_error = cleanup_error
         super().__init__(
             f"rollout phase root cause: {type(root_cause).__name__}: {root_cause}; "
-            f"terminal cleanup failures: {cleanup}",
+            "terminal cleanup failure: "
+            f"{type(cleanup_error).__name__}: {cleanup_error}",
         )
 
 
 class StrictOnPolicyRolloutSchedule:
     """Collect one rollout, train it, then sync weights after training."""
-
-    mode = RolloutScheduleMode.STRICT_ON_POLICY
 
     def __init__(
         self,
@@ -49,7 +44,6 @@ class StrictOnPolicyRolloutSchedule:
         # acceptance-measurement control; prompt collection checks that it cannot
         # grant per-group execution to an incapable collector.
         self.reward_mode = reward_mode
-        self.state = RolloutScheduleState()
 
     async def next_iteration(
         self,
@@ -69,8 +63,6 @@ class StrictOnPolicyRolloutSchedule:
         # single-process parking implementation applies to it.
         self.lifecycle.validate_training_state_parking()
         await self.lifecycle.ensure_initial_weights(stats)
-        rollout_id = self.state.rollout_id
-        self.state.rollout_id += 1
         policy_version = self.lifecycle.current_policy_version()
 
         parked = self.lifecycle.park_training_state_for_rollout(stats)
@@ -91,13 +83,13 @@ class StrictOnPolicyRolloutSchedule:
         except BaseException as error:
             phase_error = error
 
-        cleanup_errors: list[BaseException] = []
+        cleanup_error: BaseException | None = None
         rollout_memory_released = False
         try:
             await self.lifecycle.offload_rollout_runtime_memory(stats)
             rollout_memory_released = True
         except BaseException as error:
-            cleanup_errors.append(error)
+            cleanup_error = error
         # Restoring the trainer is safe only after rollout memory ownership was
         # handed off successfully. If parking or its residual-memory check
         # fails, the rollout GPU state is unknown; terminal shutdown must tear
@@ -106,28 +98,20 @@ class StrictOnPolicyRolloutSchedule:
             try:
                 self.lifecycle.restore_training_state_after_rollout(stats)
             except BaseException as error:
-                cleanup_errors.append(error)
+                cleanup_error = error
 
         if phase_error is not None:
-            if cleanup_errors:
-                raise RolloutPhaseCleanupError(phase_error, cleanup_errors) from phase_error
+            if cleanup_error is not None:
+                raise RolloutPhaseCleanupError(phase_error, cleanup_error) from phase_error
             raise phase_error
-        if cleanup_errors:
-            if len(cleanup_errors) == 1:
-                raise cleanup_errors[0]
-            raise RolloutPhaseCleanupError(
-                cleanup_errors[0], cleanup_errors[1:]
-            ) from cleanup_errors[0]
+        if cleanup_error is not None:
+            raise cleanup_error
         assert batches is not None
 
-        return build_rollout_iteration(
-            rollout_id=rollout_id,
-            policy_version=policy_version,
-            mode=self.mode,
+        return RolloutIteration(
             batches=batches,
-            prompt_count=len(prompts),
             stats=stats,
-        ).annotate_batch_context()
+        )
 
     async def after_train_step(self) -> RolloutStats:
         stats = RolloutStats()

@@ -14,7 +14,7 @@ from dataclasses import dataclass
 class StalenessPolicy:
     """Bound on how far an item's policy version may trail the trainer.
 
-    A zero window remains useful for isolated scheduler/consumer invariant tests,
+    A zero window remains useful for isolated producer/consumer invariant tests,
     but production ``ContinuousRolloutConfig`` rejects it: zero-staleness runs
     use the strict-on-policy schedule.
     """

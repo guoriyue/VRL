@@ -22,14 +22,16 @@ unscored and ready queue target watermarks
 
 ## 1. Root cause / current behavior
 
-当前 `RolloutScheduler.can_admit()` 只看：
+Current producer admission checks only:
 
 ```text
 inflight_count < max_inflight_groups
-ready_bytes < max_bytes
 ```
 
-它不知道 unscored backlog、reward service time、trainer demand、batch priority 或 capacity profile。
+The ready-byte limit is a fail-fast guard requiring the finite batch to fit in
+full; it does not participate in admission. The producer does not know the
+unscored backlog, reward service time, trainer demand, batch priority, or
+capacity profile.
 固定 `max_inflight_groups=4` 在 reward 变慢时可能生成过多 unscored artifact；在 reward 变快时又
 可能不足以填满 rollout workers。
 
@@ -122,9 +124,12 @@ bounded ready residency
 - controller 是无 I/O 的 pure state transition；fake snapshots 覆盖所有 decision reasons。
 - static profile 是同一 decision schema 的固定实现，不写平行 scheduler path。
 
-### T1 — Scheduler integration
+### T1 — Runtime integration
 
-- `RolloutScheduler` 保持唯一 admission/version decision owner，内部组合 controller。
+- The producer remains the inflight-admission owner; the consumer and
+  `StalenessPolicy` remain the version-validation and full-batch-selection
+  owners. The controller may compose these boundaries but must not reintroduce
+  one scheduler that owns both decisions.
 - producer/reward pump 只执行 decision，不重新解释 queue/staleness。
 - 现有 max knobs 迁移为 capacity/default target 的单一 typed source；不保留两套同义设置。
 

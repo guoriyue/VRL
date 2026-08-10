@@ -98,7 +98,6 @@ class ContinuousRolloutConfig:
     """
 
     max_inflight_groups: int = field(default=1)
-    max_ready_groups: int = field(default=2)
     max_ready_bytes_mb: int = field(default=8192)
     max_stale_policy_versions: int = field(default=1)
     wait_timeout_s: float = field(default=300.0)
@@ -113,8 +112,6 @@ class ContinuousRolloutConfig:
     def __post_init__(self) -> None:
         if int(self.max_inflight_groups) < 1:
             raise ValueError("continuous.max_inflight_groups must be >= 1")
-        if int(self.max_ready_groups) < 1:
-            raise ValueError("continuous.max_ready_groups must be >= 1")
         if int(self.max_stale_policy_versions) < 1:
             raise ValueError("continuous.max_stale_policy_versions must be >= 1")
         if int(self.fail_fast_errors) < 0:

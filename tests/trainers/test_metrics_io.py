@@ -49,7 +49,6 @@ _EXPECTED_FIXED_COLUMNS = (
     "group_size",
     "trained_prompt_num",
     "continuous_stale_versions",
-    "continuous_ready_groups",
     "continuous_ready_groups_at_demand",
     "continuous_queue_wait_s",
     "continuous_item_age_s",
@@ -107,7 +106,6 @@ def test_online_metric_row_uses_the_same_order_and_formats_as_header() -> None:
         reward_components={"aesthetic": 40.1},
         phase_times={
             "continuous.stale_policy_versions": 28.1,
-            "continuous.queue_ready_groups": 29.1,
             "continuous.ready_groups_at_demand": 30.1,
             "continuous.queue_wait_s": 31.1,
             "continuous.item_age_s": 32.1,
@@ -157,7 +155,6 @@ def test_online_metric_row_uses_the_same_order_and_formats_as_header() -> None:
         "26.10",
         "27",
         "28.1",
-        "29.1",
         "30.1",
         "31.1000",
         "32.1000",

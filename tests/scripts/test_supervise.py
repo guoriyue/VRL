@@ -529,7 +529,7 @@ def test_train_verdict_uses_cleanup_wrapper_root_class(tmp_path) -> None:
     )
     wrapped = RolloutPhaseCleanupError(
         collection,
-        [RuntimeError("offload cleanup failed")],
+        RuntimeError("offload cleanup failed"),
     )
     out = tmp_path / "run"
 

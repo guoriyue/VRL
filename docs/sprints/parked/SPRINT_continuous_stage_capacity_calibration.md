@@ -20,7 +20,6 @@ generation inflight、unscored bytes、reward microbatch、ready bytes 范围内
 
 ```text
 max_inflight_groups
-max_ready_groups
 max_ready_bytes_mb
 reward service max_pending_requests
 ```

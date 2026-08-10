@@ -1,12 +1,10 @@
 """Bounded ready queue for completed continuous rollout items.
 
-A plain in-process FIFO container of completed prompt groups, bounded by item
-count and an approximate byte budget. It is pure *mechanism*: it holds the
-deque, tracks bytes, and enforces a hard cap as a backpressure safety net. It
-deliberately knows nothing about policy versions or staleness — the
-``RolloutScheduler`` owns every version decision (validate, select a
-homogeneous iteration) and drives this container through ``snapshot`` /
-``remove``.
+A plain in-process FIFO container of completed prompt groups, bounded by the
+active prompt-batch size and an approximate byte budget. It is pure
+*mechanism*: it holds the deque, tracks bytes, and rejects an item before
+mutation when either hard limit would be exceeded. It deliberately knows
+nothing about policy versions or staleness; the consumer owns those decisions.
 """
 
 from __future__ import annotations
@@ -27,6 +25,8 @@ class ContinuousRolloutQueue:
     ) -> None:
         if int(max_items) < 1:
             raise ValueError("ContinuousRolloutQueue.max_items must be >= 1")
+        if int(max_bytes) < 0:
+            raise ValueError("ContinuousRolloutQueue.max_bytes must be >= 0")
         self.max_items = int(max_items)
         self.max_bytes = int(max_bytes)
         self._items: deque[ContinuousRolloutItem] = deque()
@@ -37,14 +37,8 @@ class ContinuousRolloutQueue:
     def size(self) -> int:
         return len(self._items)
 
-    def ready_bytes(self) -> int:
-        return self._bytes
-
-    def distinct_group_count(self) -> int:
-        keys = {item.group_key for item in self._items}
-        return len(keys)
-
     def stats(self) -> dict[str, float]:
+        group_keys = {item.group_key for item in self._items}
         versions = {
             item.rollout_policy_version
             for item in self._items
@@ -53,7 +47,7 @@ class ContinuousRolloutQueue:
         oldest_age = max((item.age_s for item in self._items), default=0.0)
         return {
             "ready_items": float(len(self._items)),
-            "ready_groups": float(self.distinct_group_count()),
+            "ready_groups": float(len(group_keys)),
             "ready_bytes": float(self._bytes),
             "ready_versions": float(len(versions)),
             "oldest_item_age_s": float(oldest_age),
@@ -61,21 +55,46 @@ class ContinuousRolloutQueue:
 
     # -- mutation -------------------------------------------------------
 
-    def put(self, item: ContinuousRolloutItem) -> list[ContinuousRolloutItem]:
-        """Append one item and return anything evicted by the hard cap.
+    def set_item_limit(self, max_items: int) -> None:
+        """Resize the item limit between finite prompt batches."""
 
-        Admission normally prevents eviction. Returning the victims keeps the
-        container policy-free while allowing a finite prompt batch to fail
-        immediately instead of waiting forever for a slot that was already
-        completed and then silently removed.
+        next_limit = int(max_items)
+        if next_limit < 1:
+            raise ValueError("ContinuousRolloutQueue.max_items must be >= 1")
+        if self._items:
+            raise RuntimeError(
+                "continuous ready queue item limit can change only between batches "
+                f"(ready={len(self._items)})",
+            )
+        self.max_items = next_limit
+
+    def put(self, item: ContinuousRolloutItem) -> None:
+        """Append one item, failing before mutation when a hard cap is exceeded.
+
+        Every ready item belongs to the current finite prompt batch. Evicting an
+        older item would make that batch impossible to complete exactly once, so
+        overflow is a terminal capacity error rather than a replacement policy.
         """
 
+        next_size = len(self._items) + 1
+        if next_size > self.max_items:
+            raise ValueError(
+                "continuous ready queue exceeds its active prompt-batch item limit "
+                f"(ready={len(self._items)}, limit={self.max_items})",
+            )
+        item_bytes = int(item.nbytes)
+        next_bytes = self._bytes + item_bytes
+        if self.max_bytes > 0 and next_bytes > self.max_bytes:
+            raise ValueError(
+                "continuous ready queue exceeds its byte limit "
+                f"(ready_bytes={self._bytes}, item_bytes={item_bytes}, "
+                f"limit={self.max_bytes})",
+            )
         self._items.append(item)
-        self._bytes += int(item.nbytes)
-        return self._enforce_caps()
+        self._bytes = next_bytes
 
     def snapshot(self) -> list[ContinuousRolloutItem]:
-        """FIFO-ordered view of the current items for the scheduler to inspect."""
+        """FIFO-ordered view of the current items for the consumer to inspect."""
 
         return list(self._items)
 
@@ -94,23 +113,6 @@ class ContinuousRolloutQueue:
     def close(self) -> None:
         self._items.clear()
         self._bytes = 0
-
-    # -- internals ------------------------------------------------------
-
-    def _enforce_caps(self) -> list[ContinuousRolloutItem]:
-        # Items arrive in completion order, so the FIFO head is always the
-        # oldest item.
-        evicted: list[ContinuousRolloutItem] = []
-        while self._items and self._over_capacity():
-            victim = self._items.popleft()
-            self._bytes -= int(victim.nbytes)
-            evicted.append(victim)
-        return evicted
-
-    def _over_capacity(self) -> bool:
-        if len(self._items) > self.max_items:
-            return True
-        return self.max_bytes > 0 and self._bytes > self.max_bytes
 
 
 __all__ = ["ContinuousRolloutQueue"]

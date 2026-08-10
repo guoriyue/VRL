@@ -15,14 +15,12 @@ from vrl.rollouts.orchestration.continuous.owner import (
 )
 from vrl.rollouts.orchestration.continuous.types import ContinuousRolloutSettings
 from vrl.rollouts.orchestration.rollout_runtime import RolloutRuntimeCoordinator
-from vrl.rollouts.orchestration.types import RolloutIteration, RolloutScheduleMode
+from vrl.rollouts.orchestration.types import RolloutIteration
 from vrl.rollouts.stats import RolloutStats
 
 
 class ContinuousRolloutSchedule:
     """Continuously produce on disjoint GPUs through one dedicated owner loop."""
-
-    mode = RolloutScheduleMode.CONTINUOUS
 
     def __init__(
         self,
@@ -36,7 +34,6 @@ class ContinuousRolloutSchedule:
         self.lifecycle = lifecycle
         self._validate_runtime_isolation()
         self._owner = ContinuousRolloutOwner(lifecycle=lifecycle, settings=settings)
-        self._needs_initial_weights = True
 
     async def next_iteration(
         self,
@@ -46,12 +43,10 @@ class ContinuousRolloutSchedule:
         runtime_debug: bool = False,
         next_prompts: list[Any] | None = None,
     ) -> RolloutIteration:
-        initial_weights = None
-        if self._needs_initial_weights:
-            # Strategy/FSDP export and the CPU snapshot happen on the trainer
-            # thread.  Only the immutable result crosses into the owner loop.
-            initial_weights = self.lifecycle.prepare_initial_weight_sync_state()
-            self._needs_initial_weights = False
+        # Strategy/FSDP export and the CPU snapshot happen on the trainer
+        # thread. The coordinator's initialized callback is the source of truth;
+        # it returns None once the persistent runtime owns committed weights.
+        initial_weights = self.lifecycle.prepare_initial_weight_sync_state()
         return await self._owner.next_iteration(
             prompts,
             group_size=group_size,
@@ -68,7 +63,6 @@ class ContinuousRolloutSchedule:
         """Reset producer/queue state on the owner loop before a resumed rollout."""
 
         self._owner.reset()
-        self._needs_initial_weights = True
 
     async def shutdown(self) -> None:
         """Stop the owner and its collector/runtime exactly once."""

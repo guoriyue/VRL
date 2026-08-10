@@ -51,7 +51,7 @@ def build_rollout_schedule(
     sync_state_getter: Callable[[], dict[str, Any]] | None,
     weights_initialized: Callable[[], bool],
     set_weights_initialized: Callable[[bool], None],
-    algorithm_tolerates_off_policy_staleness: bool = True,
+    algorithm_tolerates_off_policy_staleness: bool,
 ) -> RolloutSchedule:
     """Build the RL rollout schedule selected by trainer config.
 
@@ -65,9 +65,7 @@ def build_rollout_schedule(
     producer/consumer.
     """
 
-    mode = RolloutScheduleMode(
-        getattr(config, "schedule_mode", RolloutScheduleMode.STRICT_ON_POLICY.value),
-    )
+    mode = RolloutScheduleMode(config.schedule_mode)
 
     lifecycle = RolloutRuntimeCoordinator(
         collector=collector,
@@ -89,7 +87,7 @@ def build_rollout_schedule(
         return _build_continuous_schedule(
             config,
             lifecycle=lifecycle,
-            algorithm_tolerates_off_policy_staleness=(algorithm_tolerates_off_policy_staleness),
+            algorithm_tolerates_off_policy_staleness=algorithm_tolerates_off_policy_staleness,
         )
     raise AssertionError(f"unreachable rollout schedule mode: {mode}")
 
@@ -102,9 +100,7 @@ def validate_rollout_schedule_topology(config: Any, resources: Any) -> None:
     but they are too late to be the primary configuration boundary.
     """
 
-    mode = RolloutScheduleMode(
-        getattr(config, "schedule_mode", RolloutScheduleMode.STRICT_ON_POLICY.value),
-    )
+    mode = RolloutScheduleMode(config.schedule_mode)
     if mode is not RolloutScheduleMode.CONTINUOUS:
         return
     if bool(resources.colocated):
@@ -132,14 +128,12 @@ def _build_continuous_schedule(
 ) -> ContinuousRolloutSchedule:
     """Translate ``rollout_orchestration.continuous`` config into the schedule.
 
-    Reads fields via ``getattr`` to keep the rollout layer free of any
-    ``vrl.trainers`` import (architecture boundary).
+    Copies resolved fields without importing the trainer-owned config type.
     """
 
     # ContinuousRolloutConfig (vrl.trainers.core.types) is the single source of
-    # these defaults; read its already-resolved fields via getattr so the rollout
-    # layer needs no vrl.trainers import (architecture boundary) and no second
-    # copy of the default values.
+    # these defaults. The rollout layer receives its already-resolved fields so it
+    # needs no vrl.trainers import and keeps no second copy of the defaults.
     cont = getattr(config, "continuous", None)
     if cont is None:
         raise RuntimeError(
@@ -152,7 +146,6 @@ def _build_continuous_schedule(
     # here without a second copy of the check.
     settings = ContinuousRolloutSettings(
         max_inflight_groups=int(cont.max_inflight_groups),
-        max_ready_groups=int(cont.max_ready_groups),
         max_ready_bytes_mb=int(cont.max_ready_bytes_mb),
         max_stale_policy_versions=int(cont.max_stale_policy_versions),
         wait_timeout_s=float(cont.wait_timeout_s),
@@ -173,10 +166,8 @@ def _build_continuous_schedule(
         )
 
     logger.info(
-        "continuous async prefetch ENABLED: max_stale_policy_versions=%d, "
-        "max_ready_groups=%d, max_inflight_groups=%d",
+        "continuous async prefetch ENABLED: max_stale_policy_versions=%d, max_inflight_groups=%d",
         settings.max_stale_policy_versions,
-        settings.max_ready_groups,
         settings.max_inflight_groups,
     )
 

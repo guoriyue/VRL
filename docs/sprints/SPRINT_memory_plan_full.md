@@ -263,7 +263,7 @@ foundation
 | SGLang | 准入前查 allocator：`available_size() >= num_tokens` 不满足先 evict 再查，仍不满足 retract 请求稍后重跑 | `sglang.md:363-374` | L2；我们 OOM 后才反应（split），无事前准入 |
 | SGLang-Omni | 字节计价批量收集：encoder 批按 `request_cost_fn` 字节成本 + `max_batch_cost`（10GiB × activation 倍率）；每 stage 显式显存契约（fraction 总和校验） | `sglang-omni.md:304-316,348` | L2（最对症）；VAE decode 微批 / denoise chunk 都该按字节切 |
 | slime | 带标签的暂停/恢复：`torch_memory_saver.pause()/resume()` 按 tag（WEIGHTS vs KV_CACHE）分级释放，权重留显存、激活让位 | `slime.md:75` | L3；当前rollout lease已采用actor保活的sleep/wake形状 |
-| cosmos-rl | 有界暂存队列 + 事件驱动释放：recv 临时张量入队、超界即 sync+free；buffer 内存被训练进度反向约束（`samples_on_the_fly`） | `cosmos-rl.md:281-283` | L1/L3；continuous queue 的字节约束**已升级为事前准入**（2026-07 复核：`RolloutScheduler.can_admit` 返回 `byte_budget_full`，producer 每次 submit 前询问；queue._enforce_caps 降级为 in-flight 落地突发的安全网，scheduler.py:137-143 注释明确二者分工） |
+| cosmos-rl | 有界暂存队列 + 事件驱动释放：recv 临时张量入队、超界即 sync+free；buffer 内存被训练进度反向约束（`samples_on_the_fly`） | `cosmos-rl.md:281-283` | L1/L3. Continuous uses a finite-batch queue: `max_ready_bytes_mb` is a fail-fast guard requiring the full batch to fit, not steady-state backpressure over releasable capacity. `ContinuousRolloutQueue.put` rejects item/byte overflow before mutation and never evicts an older item required to complete the batch; only the producer inflight limit controls concurrency. |
 
 不学：paged KV / radix cache 本体——那是"跨请求共享前缀 + 逐 token 增长"的 LLM
 serving 形状；diffusion rollout 的 latents 按 chunk 整存整取、无前缀共享，分页买不到
@@ -290,8 +290,9 @@ L2 单卡可验。L3 独立 spike，不与多卡耦合（单卡 NFT 周期就有
 不做 OOM auto-tuner 闭环（L2 成本模型 + split 安全网已覆盖，标定靠 smoke）
 不动 model.memory 的 target/policy 契约本身——它是 L0-L3 的地基
 不把 batch_size/storage/release flags 搬进 model.memory（各有其位）
-不拿 L1/L2 当 continuous queue 字节准入的修复方案——该升级**已完成**（scheduler
-  ownership 整合时落地，commit b6160292：`can_admit(..., ready_bytes)` 事前按字节拒绝
-  admit（`byte_budget_full`），queue._enforce_caps 只兜 in-flight 完成突发的残余；
-  带单测 tests/rollouts/orchestration/continuous/）。L2 的 chunk 字节准入与它无耦合
+Do not describe the continuous queue's full-batch byte guard as steady-state
+  backpressure. A successful finite batch must fit in full;
+  `ContinuousRolloutQueue.put` fails before mutation on overflow. It cannot pause
+  the producer and wait for the same batch's consumer to release capacity, and it
+  cannot evict an item. This remains independent of L2 chunk-byte admission.
 ```

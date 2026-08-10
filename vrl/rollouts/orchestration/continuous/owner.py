@@ -20,15 +20,10 @@ from typing import Any
 from vrl.rollouts.orchestration.continuous.consumer import ContinuousRolloutConsumer
 from vrl.rollouts.orchestration.continuous.producer import ContinuousRolloutProducer
 from vrl.rollouts.orchestration.continuous.queue import ContinuousRolloutQueue
-from vrl.rollouts.orchestration.continuous.scheduler import RolloutScheduler
 from vrl.rollouts.orchestration.continuous.staleness import StalenessPolicy
 from vrl.rollouts.orchestration.continuous.types import ContinuousRolloutSettings
 from vrl.rollouts.orchestration.rollout_runtime import RolloutRuntimeCoordinator
-from vrl.rollouts.orchestration.types import (
-    RolloutIteration,
-    RolloutScheduleMode,
-    RolloutScheduleState,
-)
+from vrl.rollouts.orchestration.types import RolloutIteration
 from vrl.rollouts.stats import RolloutStats
 
 logger = logging.getLogger(__name__)
@@ -76,7 +71,6 @@ class _ContinuousOwnerRuntime:
     ) -> None:
         self.lifecycle = lifecycle
         self.max_inflight_groups = int(settings.max_inflight_groups)
-        self.max_ready_groups = int(settings.max_ready_groups)
         self.max_ready_bytes = int(settings.max_ready_bytes_mb) * _MB
         self.wait_timeout_s = float(settings.wait_timeout_s)
         self.queue_poll_interval_s = float(settings.queue_poll_interval_s)
@@ -85,11 +79,9 @@ class _ContinuousOwnerRuntime:
             max_stale_policy_versions=int(settings.max_stale_policy_versions),
         )
 
-        self.state = RolloutScheduleState()
         self.queue: ContinuousRolloutQueue | None = None
         self.consumer: ContinuousRolloutConsumer | None = None
         self.producer: ContinuousRolloutProducer | None = None
-        self.scheduler: RolloutScheduler | None = None
         self._installed_prompt_batch: _InstalledPromptBatch | None = None
 
         self._command_lock = asyncio.Lock()
@@ -144,15 +136,11 @@ class _ContinuousOwnerRuntime:
                 )
             assert self.consumer is not None
             assert self.producer is not None
-            rollout_id = self.state.rollout_id
-            self.state.rollout_id += 1
             current_version = self.lifecycle.current_policy_version()
 
             iteration = await self.consumer.drain_for_iteration(
-                rollout_id=rollout_id,
                 min_groups=len(prompts),
                 current_version=current_version,
-                mode=RolloutScheduleMode.CONTINUOUS,
                 wait_timeout_s=self.wait_timeout_s,
                 poll_interval_s=self.queue_poll_interval_s,
                 producer_state=self.producer.state,
@@ -192,16 +180,12 @@ class _ContinuousOwnerRuntime:
 
         assert self.producer is not None
         assert self.queue is not None
-        if len(prompts) > self.queue.max_items:
-            raise ValueError(
-                "continuous prompt batch exceeds ready-queue item capacity: "
-                f"prompts={len(prompts)}, capacity={self.queue.max_items}",
-            )
         self.producer.set_prompt_batch(
             list(prompts),
             group_size=group_size,
             runtime_debug=runtime_debug,
         )
+        self.queue.set_item_limit(len(prompts))
         self._installed_prompt_batch = _InstalledPromptBatch(
             prompts=tuple(prompts),
             group_size=int(group_size),
@@ -227,10 +211,8 @@ class _ContinuousOwnerRuntime:
                 if not non_draining:
                     await producer.drain_prompt_batch(wait_timeout_s=self.wait_timeout_s)
                 await self.lifecycle.push_prepared_weights(prepared_weights, stats)
-                assert self.queue is not None
-                assert self.scheduler is not None
-                self.scheduler.validate_ready_versions(
-                    self.queue,
+                assert self.consumer is not None
+                self.consumer.validate_ready_versions(
                     current_version=self.lifecycle.current_policy_version(),
                 )
                 producer.resume_admission()
@@ -247,7 +229,6 @@ class _ContinuousOwnerRuntime:
 
         async def operation() -> None:
             await self._stop_pipeline()
-            self.state = RolloutScheduleState()
 
         await self._run_command(operation)
 
@@ -360,25 +341,20 @@ class _ContinuousOwnerRuntime:
         if initial_weights is not None:
             await self.lifecycle.push_prepared_weights(initial_weights, stats)
 
-        capacity = max(self.max_ready_groups, len(prompts))
         self.queue = ContinuousRolloutQueue(
-            max_items=capacity,
-            max_bytes=self.max_ready_bytes,
-        )
-        self.scheduler = RolloutScheduler(
-            staleness=self.staleness,
-            max_inflight_groups=self.max_inflight_groups,
+            max_items=len(prompts),
             max_bytes=self.max_ready_bytes,
         )
         self.consumer = ContinuousRolloutConsumer(
             queue=self.queue,
-            scheduler=self.scheduler,
+            staleness=self.staleness,
             fail_fast_errors=self.fail_fast_errors,
         )
         self.producer = ContinuousRolloutProducer(
             lifecycle=self.lifecycle,
             queue=self.queue,
-            scheduler=self.scheduler,
+            staleness=self.staleness,
+            max_inflight_groups=self.max_inflight_groups,
             poll_interval_s=self.queue_poll_interval_s,
             fail_fast_errors=self.fail_fast_errors,
         )
@@ -400,7 +376,6 @@ class _ContinuousOwnerRuntime:
         self.producer = None
         self.queue = None
         self.consumer = None
-        self.scheduler = None
         self._installed_prompt_batch = None
         if producer is not None:
             await producer.stop(wait_timeout_s=_OWNER_STOP_TIMEOUT_S)
@@ -408,39 +383,18 @@ class _ContinuousOwnerRuntime:
             queue.close()
 
     def _attach_producer_metrics(self, iteration: RolloutIteration) -> None:
-        if self.producer is None or self.queue is None:
+        if self.producer is None:
             return
         state = self.producer.state
-        queue_stats = self.queue.stats()
-        version = iteration.policy_version
-        metadata = iteration.metadata
         iteration.stats.observe_gauges(
             {
-                "continuous.producer_inflight": float(state.inflight_count),
+                "continuous.producer_inflight": float(self.producer.inflight_count),
                 "continuous.producer_tick_count": float(state.tick_count),
                 "continuous.producer_last_tick_gap_s": float(state.last_tick_gap_s),
                 "continuous.producer_max_tick_gap_s": float(state.max_tick_gap_s),
                 "continuous.producer_submitted": float(state.submitted_count),
                 "continuous.producer_completed": float(state.completed_count),
-                "continuous.queue_ready_items": queue_stats["ready_items"],
-                "continuous.queue_ready_groups": queue_stats["ready_groups"],
-                "continuous.ready_groups_at_demand": float(
-                    metadata.get("continuous_ready_groups_at_demand", 0),
-                ),
-                "continuous.queue_ready_bytes": queue_stats["ready_bytes"],
-                "continuous.item_age_s": float(
-                    metadata.get("continuous_item_age_s", 0.0),
-                ),
                 "continuous.producer_errors": float(state.error_count),
-                "continuous.consume_policy_version": float(
-                    metadata.get("consume_policy_version") or 0,
-                ),
-                "continuous.rollout_policy_version": float(
-                    0 if version is None else version,
-                ),
-                "continuous.stale_policy_versions": float(
-                    metadata.get("stale_policy_versions") or 0,
-                ),
             },
         )
 

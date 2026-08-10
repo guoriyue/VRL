@@ -28,9 +28,10 @@ ready items remain unconsumed
 `owner.next_iteration()` 也只在 consumer 取走当前完整 batch 后才安装 `next_prompts`。这保证了
 单批语义，却让 current reward tail 期间没有下一批 generation work。
 
-现有 `RolloutScheduler.select_iteration()` 假设 ready queue 全局只能有一个 policy version、
-每个 `group_key` 只出现一次、item 数必须恰好等于 `min_groups`。双 batch 后这些假设必须改为
-“按 batch identity 验证”，不能简单删除检查。
+`ContinuousRolloutConsumer._select_iteration()` currently assumes that the ready
+queue contains only one policy version globally, each `group_key` appears once,
+and the item count exactly equals `min_groups`. Supporting two batches requires
+validation by batch identity; it cannot simply delete these checks.
 
 ## 2. Goal and ownership boundary
 

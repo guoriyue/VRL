@@ -56,7 +56,6 @@ class OnlineMetricRow:
     # Strict on-policy runs leave these at zero. Continuous runs populate them
     # from TrainStepMetrics.phase_times at this IO boundary.
     continuous_stale_versions: float = _csv_field(".1f")
-    continuous_ready_groups: float = _csv_field(".1f")
     continuous_ready_groups_at_demand: float = _csv_field(".1f")
     continuous_queue_wait_s: float = _csv_field(".4f")
     continuous_item_age_s: float = _csv_field(".4f")
@@ -134,10 +133,6 @@ def build_online_metric_row(
         trained_prompt_num=metrics.trained_prompt_num,
         continuous_stale_versions=phases.get(
             "continuous.stale_policy_versions",
-            0.0,
-        ),
-        continuous_ready_groups=phases.get(
-            "continuous.queue_ready_groups",
             0.0,
         ),
         continuous_ready_groups_at_demand=phases.get(

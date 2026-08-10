@@ -171,7 +171,6 @@ def _owner(
         lifecycle=lifecycle,
         settings=ContinuousRolloutSettings(
             max_inflight_groups=max_inflight_groups,
-            max_ready_groups=4,
             max_ready_bytes_mb=8,
             max_stale_policy_versions=1,
             wait_timeout_s=5.0,
@@ -202,7 +201,7 @@ async def test_owner_cadence_survives_blocked_trainer_event_loop() -> None:
         time.sleep(0.05)
         after = await owner_snapshot(owner)
 
-        assert iteration.policy_version == 1
+        assert iteration.stats.as_phase_dict()["continuous.rollout_policy_version"] == 1.0
         assert before.producer_state is not None
         assert after.producer_state is not None
         assert after.producer_state.tick_count > before.producer_state.tick_count
@@ -228,7 +227,7 @@ async def test_owner_skips_initial_commit_for_initialized_runtime() -> None:
             initial_weights=None,
         )
 
-        assert iteration.policy_version == 7
+        assert iteration.stats.as_phase_dict()["continuous.rollout_policy_version"] == 7.0
         assert lifecycle.push_calls == []
     finally:
         await owner.shutdown()

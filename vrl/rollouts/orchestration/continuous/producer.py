@@ -27,7 +27,7 @@ from vrl.generation.execution.types import StaleSlotDiscard
 from vrl.rollouts.batch import RolloutBatch
 from vrl.rollouts.batch.ops import move_training_batch_to_device
 from vrl.rollouts.orchestration.continuous.queue import ContinuousRolloutQueue
-from vrl.rollouts.orchestration.continuous.scheduler import RolloutScheduler
+from vrl.rollouts.orchestration.continuous.staleness import StalenessPolicy
 from vrl.rollouts.orchestration.continuous.types import (
     ContinuousRolloutItem,
     ContinuousRolloutProducerState,
@@ -35,6 +35,7 @@ from vrl.rollouts.orchestration.continuous.types import (
 )
 from vrl.rollouts.orchestration.prompt_collection import collect_prompt_batches
 from vrl.rollouts.orchestration.rollout_runtime import RolloutRuntimeCoordinator
+from vrl.rollouts.orchestration.types import RewardCollectionMode
 from vrl.rollouts.stats import RolloutStats
 from vrl.runtime_errors import TerminalRuntimeError, find_error_cause
 
@@ -70,15 +71,19 @@ class ContinuousRolloutProducer:
         *,
         lifecycle: RolloutRuntimeCoordinator,
         queue: ContinuousRolloutQueue,
-        scheduler: RolloutScheduler,
+        staleness: StalenessPolicy,
+        max_inflight_groups: int,
         poll_interval_s: float,
         fail_fast_errors: int,
     ) -> None:
         self.lifecycle = lifecycle
         self.queue = queue
-        # The scheduler is the single admission/budget/staleness-decision owner;
-        # the producer only executes its verdict and runs the Ray dispatch loop.
-        self.scheduler = scheduler
+        self.staleness = staleness
+        self.max_inflight_groups = int(max_inflight_groups)
+        if self.max_inflight_groups < 1:
+            raise ValueError(
+                "ContinuousRolloutProducer.max_inflight_groups must be >= 1",
+            )
         self.poll_interval_s = float(poll_interval_s)
         self.fail_fast_errors = max(0, int(fail_fast_errors))
 
@@ -91,6 +96,12 @@ class ContinuousRolloutProducer:
         self._active_batch: _ActivePromptBatch | None = None
         self._last_tick_at: float | None = None
         self._last_observability_log_at = 0.0
+
+    @property
+    def inflight_count(self) -> int:
+        """Display-only live task count derived from its owning container."""
+
+        return len(self._inflight)
 
     # -- lifecycle ------------------------------------------------------
 
@@ -165,7 +176,6 @@ class ContinuousRolloutProducer:
             self._loop_task.cancel()
         for task in self._inflight:
             task.cancel()
-        self.state.inflight_count = 0
         tasks = set(self._inflight)
         if self._loop_task is not None:
             tasks.add(self._loop_task)
@@ -189,7 +199,6 @@ class ContinuousRolloutProducer:
             )
         self._loop_task = None
         self._inflight.clear()
-        self.state.inflight_count = 0
 
     # -- weight-sync barrier -------------------------------------------
 
@@ -298,7 +307,6 @@ class ContinuousRolloutProducer:
                 if siblings:
                     await asyncio.gather(*siblings, return_exceptions=True)
                 self._inflight.clear()
-                self.state.inflight_count = 0
             logger.error(
                 "continuous rollout producer control loop failed",
                 exc_info=(type(error), error, error.__traceback__),
@@ -315,13 +323,8 @@ class ContinuousRolloutProducer:
         if self.state.paused_for_weight_sync and not allow_paused:
             return "paused_for_weight_sync"
         while prompt_batch.pending_slots:
-            inflight = len(self._inflight)
-            decision = self.scheduler.can_admit(
-                inflight_count=inflight,
-                ready_bytes=self.queue.ready_bytes(),
-            )
-            if not decision.admit:
-                return decision.reason
+            if len(self._inflight) >= self.max_inflight_groups:
+                return "inflight_full"
             slot = prompt_batch.pending_slots.popleft()
             if slot in self._inflight.values():
                 raise RuntimeError(
@@ -338,7 +341,6 @@ class ContinuousRolloutProducer:
             ),
         )
         self._inflight[task] = slot
-        self.state.inflight_count = len(self._inflight)
         self.state.submitted_count += 1
 
     async def _collect_group(
@@ -355,6 +357,7 @@ class ContinuousRolloutProducer:
             runtime_debug=prompt_batch.runtime_debug,
             policy_version=prompt_batch.policy_version,
             stats=stats,
+            reward_mode=RewardCollectionMode.BATCHED_SERIAL,
         )
         return batches, stats
 
@@ -364,7 +367,6 @@ class ContinuousRolloutProducer:
         done = [task for task in self._inflight if task.done()]
         for task in done:
             slot = self._inflight.pop(task)
-            self.state.inflight_count = len(self._inflight)
             prompt_batch = self._active_batch
             if prompt_batch is None:
                 raise RuntimeError("continuous collect completed without an active prompt batch")
@@ -418,7 +420,6 @@ class ContinuousRolloutProducer:
                 batches=batches,
                 stats=stats,
             )
-        self.state.inflight_count = len(self._inflight)
 
     def _enqueue_result(
         self,
@@ -439,7 +440,7 @@ class ContinuousRolloutProducer:
         # consumer, which fails fast on them. A zero window is retained only for
         # isolated mechanism tests; production continuous config requires >= 1.
         current_version = self.lifecycle.current_policy_version()
-        if self.scheduler.is_stale_at_receipt(
+        if self.staleness.too_stale(
             prompt_batch.policy_version,
             current_version,
         ):
@@ -461,13 +462,7 @@ class ContinuousRolloutProducer:
             nbytes=estimate_batch_bytes(stored),
             stats=stats,
         )
-        evicted = self.queue.put(item)
-        if evicted:
-            victims = [victim.group_key for victim in evicted]
-            raise RuntimeError(
-                "continuous ready-queue hard cap evicted prompt-batch items; "
-                f"the batch cannot complete exactly once (victims={victims})",
-            )
+        self.queue.put(item)
 
     def _record_tick(self) -> None:
         now = time.monotonic()

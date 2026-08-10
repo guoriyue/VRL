@@ -52,6 +52,5 @@ trainer:
       # Four slots expose the complete finite prompt batch to the producer so
       # generation and isolated reward inference can overlap across groups.
       max_inflight_groups: 4
-      max_ready_groups: 4
       max_stale_policy_versions: 1
       wait_timeout_s: 1800

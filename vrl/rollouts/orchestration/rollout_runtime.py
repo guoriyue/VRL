@@ -65,11 +65,11 @@ class RolloutRuntimeCoordinator:
         if prepared is not None:
             await self.push_prepared_weights(prepared, stats)
 
-    async def sync_weights_after_train(self, stats: RolloutStats) -> int | None:
+    async def sync_weights_after_train(self, stats: RolloutStats) -> None:
         if self.weight_syncer is None:
-            return self.current_policy_version()
+            return
         prepared = self.prepare_weight_sync_state()
-        return await self.push_prepared_weights(prepared, stats)
+        await self.push_prepared_weights(prepared, stats)
 
     def prepare_weight_sync_state(self) -> dict[str, Any] | None:
         """Capture an immutable CPU policy snapshot on the caller's thread.
@@ -100,20 +100,22 @@ class RolloutRuntimeCoordinator:
         self,
         prepared: dict[str, Any] | None,
         stats: RolloutStats,
-    ) -> int | None:
+    ) -> None:
         """Push a prepared snapshot without reading trainer-owned state."""
 
         if self.weight_syncer is None:
-            return self.current_policy_version()
+            return
         if prepared is None:
             raise ValueError("weight sync requires a prepared state snapshot")
         with stats.phase("rollout.weight_sync_s"):
             await self.weight_syncer.push(prepared)
         self._set_weights_initialized(True)
-        self._last_policy_version = self._runtime_policy_version(
-            default=self._next_fallback_policy_version(),
+        fallback_version = (
+            1 if self._last_policy_version is None else int(self._last_policy_version) + 1
         )
-        return self._last_policy_version
+        self._last_policy_version = self._runtime_policy_version(
+            default=fallback_version,
+        )
 
     def current_policy_version(self) -> int | None:
         return self._runtime_policy_version(default=self._last_policy_version)
@@ -188,13 +190,12 @@ class RolloutRuntimeCoordinator:
     def _collector_generation_runtime(self) -> GenerationRuntime | None:
         # The collector's `generation_runtime` property raises RuntimeError before
         # set_generation_runtime() has run (the cross-node/continuous path queries
-        # the policy version during setup, before the runtime is attached), and
-        # AttributeError if the collector type exposes no generation runtime at
-        # all. Both mean "no collector-runtime provider yet" — fall through to
-        # the weight syncer rather than crashing.
+        # the policy version during setup, before the runtime is attached). This
+        # means "no collector-runtime provider yet" — fall through to the
+        # weight syncer rather than crashing.
         try:
             return self.collector.generation_runtime
-        except (AttributeError, RuntimeError):
+        except RuntimeError:
             return None
 
     def _runtime_policy_version(self, *, default: int | None) -> int | None:
@@ -207,11 +208,6 @@ class RolloutRuntimeCoordinator:
             if value is not None:
                 return int(value)
         return default
-
-    def _next_fallback_policy_version(self) -> int:
-        if self._last_policy_version is None:
-            return 1
-        return int(self._last_policy_version) + 1
 
 
 def _validate_prepared_weight_snapshot(value: Any) -> None:

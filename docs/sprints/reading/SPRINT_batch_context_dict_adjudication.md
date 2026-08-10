@@ -1,7 +1,7 @@
 # Batch context wire-shape decision: keep the plain dictionary
 
-**Date:** 2026-07-18  **Status:** DECIDED — source study and boundary record;
-no implementation work
+**Date:** 2026-07-18  **Status:** DECIDED — revalidated 2026-08-09 after
+orchestration provenance was removed from `batch.context`
 
 The args/settings audit considered replacing each denoise family's
 `export_batch_context` / `restore_eval_state` string-keyed payload with a
@@ -11,12 +11,10 @@ object.
 
 ## Decision evidence
 
-1. The generic orchestration layer merges runtime metadata into the same
-   payload. `vrl/rollouts/orchestration/types.py::RolloutIteration.annotate_batch_context`
-   combines `iteration.metadata` with `batch.context`; both strict and
-   continuous schedules consume that behavior. A family dataclass would need a
-   serialization wrapper at this boundary or would prevent generic metadata
-   from being attached.
+1. Generic orchestration deliberately does not write scheduling provenance into
+   `batch.context`: `RolloutIteration` carries only trainer-consumed batches and
+   typed stats. The remaining dictionary therefore belongs to model-family
+   sampling/replay wire data, not to a shared scheduling metadata schema.
 2. `vrl/models/steps/denoise/common/tensors.py::replay_tensor` accepts a tensor
    name at runtime and falls back to `batch_context[name]`. The key set is
    intentionally not closed at the shared layer.
@@ -31,7 +29,7 @@ The correct boundary is therefore:
 ```text
 family sampling state
     -> dict export
-    -> trajectory plus orchestration metadata
+    -> trajectory
     -> family restore
 ```
 
@@ -44,14 +42,14 @@ batch-context wire-shape decision and must remain supported.
 
 ## Revisit trigger
 
-Revisit this decision only if generic metadata stops sharing `batch.context`
-and replay lookup no longer accepts runtime-selected names. A future closed
-protocol could then justify a typed payload; the current one cannot.
+Revisit this decision if replay lookup no longer accepts runtime-selected names
+and every family payload has a closed key set. A future closed protocol could
+then justify a typed payload; the current one cannot.
 
 ## Non-goals
 
-- Do not introduce a shared-key base class or `TypedDict`; family-specific keys
-  and generic runtime metadata make either declaration incomplete.
+- Do not introduce a shared-key base class or `TypedDict`; family-specific,
+  runtime-selected keys make either declaration incomplete.
 - Do not use this decision to block typed internal sampling-state dataclasses.
   Those are family-owned objects on one side of the wire boundary.
 - Do not fold unrelated `sampling`, executor-construction, or request payload

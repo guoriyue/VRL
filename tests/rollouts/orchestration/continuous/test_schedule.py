@@ -18,7 +18,6 @@ from vrl.generation.execution.types import StaleSlotDiscard
 from vrl.rollouts.batch import RolloutBatch
 from vrl.rollouts.orchestration import (
     ContinuousRolloutSchedule,
-    RolloutScheduleMode,
     build_rollout_schedule,
 )
 from vrl.trainers.data.prompts import PromptExample
@@ -120,7 +119,6 @@ class _Collector:
 def _continuous_config(**continuous: Any) -> SimpleNamespace:
     defaults = {
         "max_inflight_groups": 1,
-        "max_ready_groups": 4,
         "max_ready_bytes_mb": 8192,
         "max_stale_policy_versions": 1,
         "wait_timeout_s": 5.0,
@@ -132,6 +130,10 @@ def _continuous_config(**continuous: Any) -> SimpleNamespace:
         schedule_mode="continuous",
         continuous=SimpleNamespace(**defaults),
     )
+
+
+def _iteration_stat(iteration: Any, name: str) -> float:
+    return iteration.stats.as_phase_dict()[name]
 
 
 def _build(
@@ -190,7 +192,6 @@ def test_factory_builds_continuous_schedule() -> None:
     runtime = _Runtime()
     schedule = _build(_continuous_config(), _Collector(runtime), _Syncer(runtime))
     assert isinstance(schedule, ContinuousRolloutSchedule)
-    assert schedule.mode is RolloutScheduleMode.CONTINUOUS
 
 
 @pytest.mark.asyncio
@@ -292,7 +293,7 @@ async def test_initialized_runtime_does_not_receive_redundant_initial_push() -> 
     try:
         iteration = await schedule.next_iteration(["p0"], group_size=1)
 
-        assert iteration.policy_version == 7
+        assert _iteration_stat(iteration, "continuous.rollout_policy_version") == 7.0
         assert runtime.current_policy_version == 7
         assert syncer.calls == []
     finally:
@@ -308,13 +309,13 @@ async def test_reset_reuses_committed_runtime_weights_without_version_bump() -> 
 
     try:
         first = await schedule.next_iteration(["p0"], group_size=1)
-        assert first.policy_version == 1
+        assert _iteration_stat(first, "continuous.rollout_policy_version") == 1.0
         assert len(syncer.calls) == 1
 
         schedule.reset()
         second = await schedule.next_iteration(["p0"], group_size=1)
 
-        assert second.policy_version == 1
+        assert _iteration_stat(second, "continuous.rollout_policy_version") == 1.0
         assert len(syncer.calls) == 1
         assert collector.shutdown_calls == 0
     finally:
@@ -369,25 +370,17 @@ async def test_continuous_drains_full_homogeneous_iteration() -> None:
         iteration = await schedule.next_iteration(["p0", "p1"], group_size=2)
 
         # Full set, one fresh policy version, distinct group ids 0..1.
-        assert iteration.mode is RolloutScheduleMode.CONTINUOUS
-        assert iteration.policy_version == 1
-        assert iteration.prompt_count == 2
-        assert iteration.sample_count == 4
-        assert set(iteration.metadata) == {
-            "consume_policy_version",
-            "stale_policy_versions",
-            "continuous_item_age_s",
-            "continuous_ready_groups_at_demand",
-        }
+        phases = iteration.stats.as_phase_dict()
+        assert phases["continuous.rollout_policy_version"] == 1.0
+        assert phases["continuous.consume_policy_version"] == 1.0
+        assert phases["continuous.stale_policy_versions"] == 0.0
+        assert phases["continuous.item_age_s"] >= 0.0
+        assert phases["continuous.ready_groups_at_demand"] >= 0.0
         assert len(iteration.batches) == 2
+        assert sum(batch.rewards.numel() for batch in iteration.batches) == 4
         group_ids = sorted(int(b.group_ids[0]) for b in iteration.batches)
         assert group_ids == [0, 1]
-        assert all(b.context["rollout_policy_version"] == 1 for b in iteration.batches)
-        assert all(b.context["schedule_mode"] == "continuous" for b in iteration.batches)
-        assert all(b.context["prompt_count"] == 2 for b in iteration.batches)
-        assert all(b.context["sample_count"] == 4 for b in iteration.batches)
-        assert all("continuous_item_age_s" in b.context for b in iteration.batches)
-        assert "continuous.queue_wait_s" in iteration.stats.as_phase_dict()
+        assert "continuous.queue_wait_s" in phases
     finally:
         await schedule.shutdown()
 
@@ -402,7 +395,7 @@ async def test_weight_sync_barrier_advances_version_and_resumes() -> None:
 
     try:
         first = await schedule.next_iteration(["p0", "p1"], group_size=2)
-        assert first.policy_version == 1
+        assert _iteration_stat(first, "continuous.rollout_policy_version") == 1.0
 
         sync_calls_before = len(syncer.calls)
         await schedule.after_train_step()
@@ -414,10 +407,9 @@ async def test_weight_sync_barrier_advances_version_and_resumes() -> None:
         assert runtime.current_policy_version == 2
 
         second = await schedule.next_iteration(["p0", "p1"], group_size=2)
-        assert second.policy_version == 2
-        assert second.rollout_id == 1
-        assert second.metadata["consume_policy_version"] == 2
-        assert second.metadata["stale_policy_versions"] == 0
+        assert _iteration_stat(second, "continuous.rollout_policy_version") == 2.0
+        assert _iteration_stat(second, "continuous.consume_policy_version") == 2.0
+        assert _iteration_stat(second, "continuous.stale_policy_versions") == 0.0
     finally:
         await schedule.shutdown()
 
@@ -457,7 +449,7 @@ async def test_draining_sync_finishes_the_active_prompt_batch_before_commit() ->
     collector = _Collector(runtime)
     syncer = _Syncer(runtime)
     schedule = _build(
-        _continuous_config(max_ready_groups=4, max_stale_policy_versions=1),
+        _continuous_config(max_stale_policy_versions=1),
         collector,
         syncer,
     )
@@ -468,33 +460,31 @@ async def test_draining_sync_finishes_the_active_prompt_batch_before_commit() ->
             group_size=2,
             next_prompts=["p2", "p3"],
         )
-        assert first.policy_version == 1
+        assert _iteration_stat(first, "continuous.rollout_policy_version") == 1.0
         await schedule.after_train_step()
         assert runtime.current_policy_version == 2
         after = await owner_snapshot(schedule._owner)
         assert after.queue_stats["ready_items"] == 2
 
         second = await schedule.next_iteration(["p2", "p3"], group_size=2)
-        assert second.policy_version == 1
-        assert second.metadata["stale_policy_versions"] == 1
+        assert _iteration_stat(second, "continuous.rollout_policy_version") == 1.0
+        assert _iteration_stat(second, "continuous.stale_policy_versions") == 1.0
     finally:
         await schedule.shutdown()
 
 
 @pytest.mark.asyncio
-async def test_queue_capacity_autosizes_to_prompt_batch() -> None:
-    # max_ready_groups (2) is smaller than the prompt batch (3); the schedule must
-    # still be able to assemble a full iteration rather than deadlock.
-    """Checks queue capacity autosizes to prompt set."""
+async def test_queue_capacity_fits_the_finite_prompt_batch() -> None:
+    """The internal queue must hold every group required by one iteration."""
     runtime = _Runtime()
     collector = _Collector(runtime)
     syncer = _Syncer(runtime)
-    schedule = _build(_continuous_config(max_ready_groups=2), collector, syncer)
+    schedule = _build(_continuous_config(), collector, syncer)
 
     try:
         iteration = await schedule.next_iteration(["a", "b", "c"], group_size=2)
-        assert iteration.prompt_count == 3
-        assert iteration.sample_count == 6
+        assert len(iteration.batches) == 3
+        assert sum(batch.rewards.numel() for batch in iteration.batches) == 6
         assert sorted(int(b.group_ids[0]) for b in iteration.batches) == [0, 1, 2]
     finally:
         await schedule.shutdown()
@@ -717,7 +707,6 @@ async def test_three_gas2_updates_consume_exact_finite_lookahead_sequence() -> N
     schedule = _build(
         _continuous_config(
             max_inflight_groups=6,
-            max_ready_groups=8,
             max_stale_policy_versions=1,
         ),
         collector,
@@ -744,8 +733,14 @@ async def test_three_gas2_updates_consume_exact_finite_lookahead_sequence() -> N
             [batch.context["fixture_prompts"][0] for batch in iteration.batches]
             for iteration in iterations
         ] == prompts
-        assert [iteration.policy_version for iteration in iterations] == [1, 1, 1, 2, 2, 3]
-        assert [iteration.metadata["consume_policy_version"] for iteration in iterations] == [
+        assert [
+            _iteration_stat(iteration, "continuous.rollout_policy_version")
+            for iteration in iterations
+        ] == [1.0, 1.0, 1.0, 2.0, 2.0, 3.0]
+        assert [
+            _iteration_stat(iteration, "continuous.consume_policy_version")
+            for iteration in iterations
+        ] == [
             1,
             1,
             2,
@@ -753,7 +748,10 @@ async def test_three_gas2_updates_consume_exact_finite_lookahead_sequence() -> N
             3,
             3,
         ]
-        assert [iteration.metadata["stale_policy_versions"] for iteration in iterations] == [
+        assert [
+            _iteration_stat(iteration, "continuous.stale_policy_versions")
+            for iteration in iterations
+        ] == [
             0,
             0,
             1,
@@ -869,7 +867,6 @@ async def test_lookahead_mismatch_fails_instead_of_training_the_wrong_prompt_bat
     schedule = _build(
         _continuous_config(
             max_stale_policy_versions=1,
-            max_ready_groups=4,
             max_inflight_groups=2,
             wait_timeout_s=1.0,
         ),

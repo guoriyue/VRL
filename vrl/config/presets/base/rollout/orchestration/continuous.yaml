@@ -11,21 +11,20 @@
 #     --config experiment/sd3_5/online_grpo_ocr \
 #     /base/distributed=ray_rollout_cross_node \
 #     /base/rollout/orchestration=continuous \
-#     trainer.rollout_orchestration.continuous.max_inflight_groups=4 \
-#     trainer.rollout_orchestration.continuous.max_ready_groups=16
+#     trainer.rollout_orchestration.continuous.max_inflight_groups=4
 #
 # This throughput profile replaces the removed one_batch_overlap mode. It keeps
 # the next request's per-prompt groups in flight and drains only homogeneous-
 # policy ready groups, so it is the overlap path for remote rollout workers
 # without generating duplicate work for the current prompt set.
 #
-# Note: max_ready_groups bounds one finite request's ready items; the schedule
-# raises the effective queue cap to fit the current microbatch if smaller.
-# max_inflight_groups controls parallel prompt-group collection inside that
-# request. Admission and weight-sync ordering are owned by the continuous
-# schedule state machine; there is no independent queue-capacity or barrier knob.
-# Queue/staleness tuning defaults (max_inflight_groups, max_ready_groups,
-# max_ready_bytes_mb, max_stale_policy_versions=1,
+# max_inflight_groups controls parallel prompt-group collection inside one
+# finite request. The ready queue always has enough item slots for that request;
+# max_ready_bytes_mb is a fail-fast memory guard rather than a throughput knob.
+# Admission and weight-sync ordering are owned by the continuous schedule state
+# machine; there is no independent queue-capacity or barrier knob.
+# Queue/staleness tuning defaults (max_inflight_groups, max_ready_bytes_mb,
+# max_stale_policy_versions=1,
 # wait_timeout_s, queue_poll_interval_s) live on ContinuousRolloutConfig in
 # vrl/trainers/core/types.py — set them via dotlist as in the recipe above.
 trainer:
