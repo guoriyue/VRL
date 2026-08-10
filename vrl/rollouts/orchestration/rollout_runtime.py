@@ -198,8 +198,8 @@ class RolloutRuntimeCoordinator:
             return None
 
     def _runtime_policy_version(self, *, default: int | None) -> int | None:
-        # Ask each PolicyVersionProvider (collector generation runtime, then
-        # weight syncer) through the protocol instead of probing internals.
+        # Ask the collector generation runtime, then the weight syncer, through
+        # the version property each concrete boundary declares.
         for provider in (self._collector_generation_runtime(), self.weight_syncer):
             if provider is None:
                 continue

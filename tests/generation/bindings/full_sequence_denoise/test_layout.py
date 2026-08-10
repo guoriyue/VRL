@@ -128,14 +128,11 @@ def test_diffusion_executor_only_projects_real_text_length(
         max_sequence_length=max_sequence_length,
     )
     params = executor.parse_sampling_params(_request({}))
-    video_request = executor.build_video_request("p0", params)
-
     assert params.base.max_sequence_length == max_sequence_length
     assert params.base.text_encode_kwargs() == {
         "guidance_scale": 4.5,
         **expected_extra,
     }
-    assert video_request.extra == expected_extra
 
 
 @pytest.mark.parametrize(
@@ -161,9 +158,6 @@ def test_custom_family_text_length_defaults_match_encoder_capability(
     params = executor.parse_sampling_params(_request({}))
 
     assert params.base.max_sequence_length == expected
-    assert executor.build_video_request("p0", params).extra == (
-        {} if expected is None else {"max_sequence_length": expected}
-    )
 
 
 def _layout() -> DiffusionRequestLayout:

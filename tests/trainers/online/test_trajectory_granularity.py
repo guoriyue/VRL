@@ -81,7 +81,6 @@ def _chunk_denoise_batch(batch_size: int = 2) -> RolloutBatch:
             group_id="0",
             sample_id=f"trainer-chunk-test:sample:{index}",
             trajectory_id=f"trainer-chunk-test:trajectory:{index}",
-            seed=None,
         )
         for index in range(batch_size)
     ]

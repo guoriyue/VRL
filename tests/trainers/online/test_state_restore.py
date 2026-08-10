@@ -278,7 +278,7 @@ class _ResumeEvaluator:
 
 
 class _Syncer:
-    current_policy_version = None  # PolicyVersionProvider: no version tracked
+    current_policy_version = None  # This fake does not track a policy version.
 
     def __init__(self) -> None:
         self.calls: list[dict] = []

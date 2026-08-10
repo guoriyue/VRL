@@ -42,7 +42,13 @@ def build_preview_request(
     ).request
 
 
-def write_preview_image(output: Any, path: Path, *, expected_prompt: str, seed: int) -> None:
+def write_preview_image(
+    output: Any,
+    path: Path,
+    *,
+    expected_request_id: str,
+    expected_prompt: str,
+) -> None:
     """Persist the sole image while checking request/output identity."""
 
     from vrl.utils.media import write_png
@@ -52,10 +58,16 @@ def write_preview_image(output: Any, path: Path, *, expected_prompt: str, seed: 
             f"production executor returned {len(output.sample_rows)} sample rows; expected 1",
         )
     row = output.sample_rows[0]
-    if row.prompt != expected_prompt or row.seed != seed:
+    row_request_id = row.metadata.get("request_id")
+    if (
+        output.request_id != expected_request_id
+        or row_request_id != expected_request_id
+        or row.prompt != expected_prompt
+    ):
         raise RuntimeError(
-            "production output changed prompt/seed identity: "
-            f"expected=({expected_prompt!r}, {seed}) actual=({row.prompt!r}, {row.seed})",
+            "production output changed request/prompt identity: "
+            f"expected=({expected_request_id!r}, {expected_prompt!r}) "
+            f"actual=({output.request_id!r}, {row_request_id!r}, {row.prompt!r})",
         )
     if len(output.output) != 1:
         raise RuntimeError(
@@ -157,8 +169,8 @@ def generate_rollout_preview(
         write_preview_image(
             output,
             target / file_name,
+            expected_request_id=request.request_id,
             expected_prompt=example.prompt,
-            seed=seed,
         )
         items.append(
             {

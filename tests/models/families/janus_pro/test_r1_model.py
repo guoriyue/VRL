@@ -119,7 +119,6 @@ def _sample_rows() -> list[GenerationSampleRow]:
             group_id="g0",
             sample_id=f"s{index}",
             trajectory_id=f"t{index}",
-            seed=None,
         )
         for index in range(2)
     ]
@@ -469,8 +468,6 @@ def test_r1_executor_forward_emits_canonical_family_and_segment_schema(
 
     out = executor.forward_plan(request, specs, executor.plan(request))
 
-    assert out.family == "janus_pro_r1"
-    assert out.task == "ar_t2i_r1"
     assert out.output.shape == (2, 3, 2, 2)
     assert scheduler_batch_sizes == [1]
     assert "segments" not in out.extra

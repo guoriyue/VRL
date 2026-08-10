@@ -51,12 +51,9 @@ def prepare_sampling_state(model, cfg):
     encode_kwargs = {
         "guidance_scale": float(sampling.guidance_scale),
     }
-    request_extra = {}
     if max_sequence_length is not None:
         encode_kwargs["max_sequence_length"] = max_sequence_length
-        request_extra["max_sequence_length"] = max_sequence_length
     request = VideoGenerationRequest(
-        prompt=_PROMPT,
         negative_prompt=None,
         width=int(sampling.width),
         height=int(sampling.height),
@@ -64,7 +61,6 @@ def prepare_sampling_state(model, cfg):
         num_steps=int(sampling.num_steps),
         guidance_scale=float(sampling.guidance_scale),
         seed=0,
-        extra=request_extra,
     )
     prompt = model.encode_prompt(
         [_PROMPT],

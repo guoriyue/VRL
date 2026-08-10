@@ -4,11 +4,15 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, cast
 
 import torch
 
 from vrl.generation.bindings.full_sequence_denoise.layout import DiffusionRequestLayout
+from vrl.generation.execution.chunks import (
+    gather_replay_tensors,
+    require_matching_chunk_context,
+)
 from vrl.generation.protocols import ChunkResult
 from vrl.generation.types import (
     GenerationOutput,
@@ -43,16 +47,13 @@ class DiffusionChunkGatherer:
         timesteps_tensor = torch.cat([chunk.timesteps for chunk in ordered_chunks], dim=0)
         kl_tensor = torch.cat([chunk.kl for chunk in ordered_chunks], dim=0)
         video = torch.cat([chunk.video for chunk in ordered_chunks], dim=0)
-        replay_tensors: dict[str, Any] = {}
-        for key in ordered_chunks[0].replay_tensors:
-            vals = [chunk.replay_tensors[key] for chunk in ordered_chunks]
-            if any(value is None for value in vals):
-                replay_tensors[key] = None
-            elif all(isinstance(value, torch.Tensor) for value in vals):
-                replay_tensors[key] = torch.cat(vals, dim=0)
-            else:
-                replay_tensors[key] = vals[0]
-        rollout_context = ordered_chunks[0].context
+        replay_tensors = gather_replay_tensors(
+            [chunk.replay_tensors for chunk in ordered_chunks],
+            sample_counts=[chunk.sample_count for chunk in ordered_chunks],
+        )
+        rollout_context = require_matching_chunk_context(
+            [chunk.context for chunk in ordered_chunks],
+        )
         if not rollout_context:
             raise ValueError("DiffusionChunkResult.context must be non-empty")
 
@@ -71,8 +72,6 @@ class DiffusionChunkGatherer:
 
         return GenerationOutput(
             request_id=request.request_id,
-            family=request.family,
-            task=request.task,
             sample_rows=rows,
             output=video,
             trajectory=trajectory,

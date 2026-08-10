@@ -187,7 +187,6 @@ def _build_batch(
             group_id="g0",
             sample_id="s0",
             trajectory_id="t0",
-            seed=0,
         )
     ]
     # Core role-triple tensors are required by the trajectory validator but

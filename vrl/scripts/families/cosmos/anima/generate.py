@@ -339,7 +339,6 @@ def _generate_images(
         guidance_scale=float(sampling["guidance_scale"]),
     )
     request = VideoGenerationRequest(
-        prompt=prompt,
         negative_prompt=negative_prompt,
         width=int(sampling["width"]),
         height=int(sampling["height"]),
@@ -347,7 +346,6 @@ def _generate_images(
         num_steps=int(sampling["num_steps"]),
         guidance_scale=float(sampling["guidance_scale"]),
         seed=int(seed),
-        extra={"max_sequence_length": int(sampling["max_sequence_length"])},
     )
     state = model.prepare_sampling(request, encoded)
     with torch.no_grad():

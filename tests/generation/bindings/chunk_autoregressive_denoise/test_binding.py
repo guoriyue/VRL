@@ -111,6 +111,22 @@ def test_generation_only_result_has_no_fabricated_policy_facts() -> None:
         builder.build(torch.ones(2))
 
 
+def test_gatherer_rejects_mismatched_chunk_context() -> None:
+    request = _request()
+    chunks = [
+        _generation_only_result(10.0, sample_start=0),
+        _generation_only_result(20.0, sample_start=1),
+    ]
+    chunks[1].context = {"model_family": "different"}
+
+    with pytest.raises(ValueError, match="chunk context at ordered index 1 does not match"):
+        ChunkAutoregressiveDenoiseGatherer().gather_chunks(
+            request,
+            build_sample_rows(request),
+            chunks,
+        )
+
+
 class _GenericChunkExecutor(ChunkAutoregressiveDenoiseExecutorBase):
     """Minimal Base subclass exercising plan/forward_plan delegation."""
 

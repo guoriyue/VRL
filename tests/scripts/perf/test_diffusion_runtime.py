@@ -127,7 +127,5 @@ def test_prepare_sampling_state_uses_only_real_sequence_length_sources(
     assert model.request is not None
     if expected is None:
         assert "max_sequence_length" not in model.encode_kwargs
-        assert "max_sequence_length" not in model.request.extra
     else:
         assert model.encode_kwargs["max_sequence_length"] == expected
-        assert model.request.extra["max_sequence_length"] == expected

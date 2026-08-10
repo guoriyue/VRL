@@ -181,7 +181,6 @@ def main() -> None:
             torch.cuda.empty_cache()
 
     request = VideoGenerationRequest(
-        prompt=args.prompt,
         negative_prompt=args.negative_prompt,
         width=args.width,
         height=args.height,

@@ -142,7 +142,6 @@ def _batch(*, ref_noise_pred: torch.Tensor | None) -> RolloutBatch:
             group_id=f"g{index}",
             sample_id=f"s{index}",
             trajectory_id=f"t{index}",
-            seed=None,
         )
         for index in range(2)
     ]

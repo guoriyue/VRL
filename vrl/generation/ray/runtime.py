@@ -98,9 +98,6 @@ class RayGenerationRuntime:
         self._shutdown_task: asyncio.Task[None] | None = None
         self._force_shutdown = False
 
-        self.supports_non_draining_weight_sync = bool(
-            session and session.supports_non_draining_weight_sync
-        )
         self._probed_samples_per_chunk: int | None = None
         self._samples_per_chunk_probe_lock = asyncio.Lock()
         self._health_monitor = RolloutWorkerHealthMonitor(
@@ -124,6 +121,13 @@ class RayGenerationRuntime:
     @property
     def supports_weight_sync(self) -> bool:
         return self._supports_weight_sync
+
+    @property
+    def supports_non_draining_weight_sync(self) -> bool:
+        """Whether the currently published session can sync without draining."""
+
+        session = self._session
+        return bool(session and session.supports_non_draining_weight_sync)
 
     def start_health_monitoring(self) -> None:
         """Begin probing active workers. Idempotent and opt-in."""

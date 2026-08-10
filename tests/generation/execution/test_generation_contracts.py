@@ -12,6 +12,7 @@ from vrl.generation import (
     GenerationSampleRow,
     build_sample_rows,
 )
+from vrl.generation.types import VideoGenerationRequest
 
 
 def _request(
@@ -96,8 +97,10 @@ def test_generation_request_rejects_removed_noop_arguments(
 
 def test_generation_payloads_exclude_removed_duplicate_fields() -> None:
     """Checks sample and output payloads retain one prompt source of truth."""
-    assert "prompt_id" not in {field.name for field in fields(GenerationSampleRow)}
+    assert {"prompt_id", "seed"}.isdisjoint(field.name for field in fields(GenerationSampleRow))
     assert "prompts" not in {field.name for field in fields(GenerationOutput)}
+    assert {"family", "task"}.isdisjoint(field.name for field in fields(GenerationOutput))
+    assert {"prompt", "extra"}.isdisjoint(field.name for field in fields(VideoGenerationRequest))
 
 
 def test_build_sample_rows_is_deterministic() -> None:
@@ -109,5 +112,4 @@ def test_build_sample_rows_is_deterministic() -> None:
         "req-1:prompt:0:sample:0",
         "req-1:prompt:0:sample:1",
     ]
-    assert [row.seed for row in rows] == [7, 8]
     assert {row.group_id for row in rows} == {"req-1:prompt:0"}

@@ -35,6 +35,7 @@ from typing import Any
 
 import torch
 
+from vrl.generation.execution.chunks import SampleAlignedValues
 from vrl.generation.types import VideoGenerationRequest
 from vrl.models.families.cosmos import CosmosReplayForward
 from vrl.models.interfaces.runtime import ModelBuild
@@ -298,8 +299,6 @@ class Cosmos3Model(CosmosReplayForward, LoraModelMixin, DiffusersPipelineModelBa
             "num_frames": state.num_frames,
             "fps": state.fps,
             "num_noisy_vision_tokens": state.num_noisy_vision_tokens,
-            "cond_input_ids": state.cond_input_ids,
-            "uncond_input_ids": state.uncond_input_ids,
         }
 
     def export_replay_tensors(self, state: Cosmos3SamplingState) -> dict[str, Any]:
@@ -309,6 +308,8 @@ class Cosmos3Model(CosmosReplayForward, LoraModelMixin, DiffusersPipelineModelBa
             "prompt_attention_mask": None,
             "pooled_prompt_embeds": None,
             "latents_clean": state.latents.detach(),
+            "cond_input_ids": SampleAlignedValues((state.cond_input_ids,)),
+            "uncond_input_ids": SampleAlignedValues((state.uncond_input_ids,)),
             "vision_condition_mask": align_replay_tensor(
                 state.vision_condition_mask,
                 state.latents.shape[0],
@@ -327,8 +328,16 @@ class Cosmos3Model(CosmosReplayForward, LoraModelMixin, DiffusersPipelineModelBa
         device = self.device
         fps = int(batch_context.get("fps", _DEFAULT_FPS))
         vision_condition_mask = replay_tensors["vision_condition_mask"]
-        cond_text = pipe._prepare_text_segment(batch_context["cond_input_ids"], device)
-        uncond_text = pipe._prepare_text_segment(batch_context["uncond_input_ids"], device)
+        cond_input_ids = _single_sample_input_ids(
+            replay_tensors["cond_input_ids"],
+            name="cond_input_ids",
+        )
+        uncond_input_ids = _single_sample_input_ids(
+            replay_tensors["uncond_input_ids"],
+            name="uncond_input_ids",
+        )
+        cond_text = pipe._prepare_text_segment(cond_input_ids, device)
+        uncond_text = pipe._prepare_text_segment(uncond_input_ids, device)
         mrope_offset = cond_text["vision_start_temporal_offset"]
         cond_idx = torch.nonzero(vision_condition_mask[:, 0, 0] > 0, as_tuple=False).flatten()
         has_img = bool(cond_idx.numel() > 0)
@@ -365,9 +374,20 @@ class Cosmos3Model(CosmosReplayForward, LoraModelMixin, DiffusersPipelineModelBa
             width=int(batch_context["width"]),
             num_frames=int(batch_context["num_frames"]),
             fps=fps,
-            cond_input_ids=list(batch_context["cond_input_ids"]),
-            uncond_input_ids=list(batch_context["uncond_input_ids"]),
+            cond_input_ids=cond_input_ids,
+            uncond_input_ids=uncond_input_ids,
         )
+
+
+def _single_sample_input_ids(value: Any, *, name: str) -> list[int]:
+    """Unwrap one ragged replay row at Cosmos3's enforced batch-one boundary."""
+
+    if not isinstance(value, (list, tuple)) or len(value) != 1:
+        raise ValueError(f"Cosmos3 replay {name} must contain exactly one sample row")
+    row = value[0]
+    if not isinstance(row, (list, tuple)):
+        raise TypeError(f"Cosmos3 replay {name} row must be a token-id sequence")
+    return [int(token_id) for token_id in row]
 
 
 class Cosmos3ReplayModel(ReplayRolloutStubs, Cosmos3Model):

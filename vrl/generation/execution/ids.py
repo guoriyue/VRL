@@ -8,8 +8,6 @@ from vrl.generation.types import GenerationRequest, GenerationSampleRow
 def build_sample_rows(request: GenerationRequest) -> list[GenerationSampleRow]:
     """Build deterministic sample rows from a generation request."""
 
-    base_seed = request.sampling.get("seed")
-    seed_int = int(base_seed) if base_seed is not None else None
     rows: list[GenerationSampleRow] = []
     for prompt_index, request_input in enumerate(request.inputs):
         prompt = request_input.prompt
@@ -43,7 +41,6 @@ def build_sample_rows(request: GenerationRequest) -> list[GenerationSampleRow]:
                     group_id=group_id,
                     sample_id=sample_id,
                     trajectory_id=sample_id,
-                    seed=None if seed_int is None else seed_int + flat_index,
                     metadata=metadata,
                 )
             )

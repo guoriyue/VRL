@@ -1,8 +1,7 @@
-"""GenerationRuntime / PolicyVersionProvider protocol contract (SOLID sub-sprint A).
+"""GenerationRuntime and weight-sync version contract tests.
 
-Orchestration asks runtimes and weight syncers questions through these
-protocols instead of probing their internal structure with getattr. These
-tests pin the contract: every production implementation must answer.
+Orchestration reads the version properties declared by each concrete boundary
+instead of probing nested runtime internals.
 """
 
 from __future__ import annotations
@@ -11,7 +10,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from vrl.generation.protocols import GenerationRuntime, PolicyVersionProvider
+from vrl.generation.protocols import GenerationRuntime
 from vrl.generation.ray.runtime import RayGenerationRuntime
 from vrl.generation.ray.session import RayGenerationSession
 from vrl.trainers.weight_sync import RayRuntimeWeightSyncer, WeightSyncer
@@ -71,16 +70,6 @@ def test_deferred_runtime_colocation(colocated, expected) -> None:
     assert runtime.is_colocated() is expected
 
 
-# --------------------------------------------------------------------------
-# PolicyVersionProvider
-# --------------------------------------------------------------------------
-def test_runtimes_satisfy_policy_version_provider() -> None:
-    persistent = _runtime()
-    deferred = _runtime(deferred=True)
-    assert isinstance(persistent, PolicyVersionProvider)
-    assert isinstance(deferred, PolicyVersionProvider)
-
-
 def test_concrete_runtimes_satisfy_generation_runtime_structurally() -> None:
     persistent = _runtime()
     deferred = _runtime(deferred=True)
@@ -103,7 +92,6 @@ def test_weight_syncer_reports_its_runtime_version() -> None:
         current_policy_version=7,
     )
     syncer = RayRuntimeWeightSyncer(runtime)
-    assert isinstance(syncer, PolicyVersionProvider)
     assert syncer.current_policy_version == 7
 
 

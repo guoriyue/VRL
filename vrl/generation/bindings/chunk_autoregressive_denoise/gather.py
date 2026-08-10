@@ -6,9 +6,12 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, cast
 
-import torch
-
-from vrl.generation.execution.chunks import ordered_covering_chunks
+from vrl.generation.execution.chunks import (
+    concatenate_sample_values,
+    gather_replay_tensors,
+    ordered_covering_chunks,
+    require_matching_chunk_context,
+)
 from vrl.generation.protocols import ChunkResult
 from vrl.generation.types import (
     GenerationOutput,
@@ -41,9 +44,9 @@ class ChunkAutoregressiveDenoiseGatherer:
             sample_rows,
             cast("Sequence[ChunkAutoregressiveDenoiseResult]", chunks),
         )
-        output = _cat_sample_values([chunk.output for chunk in ordered], name="output")
+        output = concatenate_sample_values([chunk.output for chunk in ordered], name="output")
         rows = list(sample_rows)
-        context = dict(ordered[0].context)
+        context = require_matching_chunk_context([chunk.context for chunk in ordered])
 
         if ordered[0].has_trainable_trajectory:
             trajectory = build_chunk_autoregressive_denoise_trajectory(
@@ -59,7 +62,10 @@ class ChunkAutoregressiveDenoiseGatherer:
                     ordered,
                     "finalized_chunk_latents",
                 ),
-                replay_tensors=_cat_replay_tensors(ordered),
+                replay_tensors=gather_replay_tensors(
+                    [chunk.replay_tensors for chunk in ordered],
+                    sample_counts=[chunk.sample_count for chunk in ordered],
+                ),
                 context=context,
             )
         else:
@@ -73,8 +79,6 @@ class ChunkAutoregressiveDenoiseGatherer:
 
         return GenerationOutput(
             request_id=request.request_id,
-            family=request.family,
-            task=request.task,
             sample_rows=rows,
             output=output,
             trajectory=trajectory,
@@ -143,7 +147,7 @@ def _cat_field(chunks: Sequence[Any], field_name: str) -> Any:
     values = [getattr(chunk, field_name) for chunk in chunks]
     if any(value is None for value in values):
         raise ValueError(f"trainable chunk field {field_name!r} must be present")
-    return _cat_sample_values(values, name=field_name)
+    return concatenate_sample_values(values, name=field_name)
 
 
 def _cat_optional_field(chunks: Sequence[Any], field_name: str) -> Any | None:
@@ -152,43 +156,7 @@ def _cat_optional_field(chunks: Sequence[Any], field_name: str) -> Any | None:
         return None
     if any(value is None for value in values):
         raise ValueError(f"optional chunk field {field_name!r} must be present on all results")
-    return _cat_sample_values(values, name=field_name)
-
-
-def _cat_sample_values(values: Sequence[Any], *, name: str) -> Any:
-    if not values:
-        raise ValueError(f"cannot concatenate empty field {name!r}")
-    if all(isinstance(value, torch.Tensor) for value in values):
-        return torch.cat(list(values), dim=0)
-    if all(isinstance(value, list) for value in values):
-        return [item for value in values for item in value]
-    if all(isinstance(value, tuple) for value in values):
-        return tuple(item for value in values for item in value)
-    raise TypeError(f"chunk field {name!r} must use one consistent concatenable type")
-
-
-def _cat_replay_tensors(
-    chunks: Sequence[ChunkAutoregressiveDenoiseResult],
-) -> dict[str, Any]:
-    keys = tuple(chunks[0].replay_tensors)
-    expected_keys = set(keys)
-    if any(set(chunk.replay_tensors) != expected_keys for chunk in chunks[1:]):
-        raise ValueError("replay_tensors keys must match across chunk results")
-
-    out: dict[str, Any] = {}
-    for key in keys:
-        values = [chunk.replay_tensors[key] for chunk in chunks]
-        if all(value is None for value in values):
-            out[key] = None
-        elif any(value is None for value in values):
-            raise ValueError(f"replay tensor {key!r} must be present on all results")
-        elif all(isinstance(value, (torch.Tensor, list, tuple)) for value in values):
-            out[key] = _cat_sample_values(values, name=f"replay_tensors.{key}")
-        elif all(value == values[0] for value in values[1:]):
-            out[key] = values[0]
-        else:
-            raise ValueError(f"non-batched replay value {key!r} must match across results")
-    return out
+    return concatenate_sample_values(values, name=field_name)
 
 
 __all__ = ["ChunkAutoregressiveDenoiseGatherer"]

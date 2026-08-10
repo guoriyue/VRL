@@ -65,7 +65,6 @@ def _nft_batch(*, latents_clean: torch.Tensor | None) -> RolloutBatch:
             group_id="g0",
             sample_id="s0",
             trajectory_id="t0",
-            seed=0,
         )
     ]
     replay_tensors: dict[str, torch.Tensor] = {

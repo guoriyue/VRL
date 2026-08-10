@@ -58,7 +58,6 @@ def test_sana_training_path_matches_native_flow_euler_at_every_step() -> None:
     prompt = "a red apple on a blue ceramic plate, studio photo"
     encoded = model.encode_prompt([prompt], [""], guidance_scale=4.5)
     request = VideoGenerationRequest(
-        prompt=prompt,
         negative_prompt="",
         width=512,
         height=512,

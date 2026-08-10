@@ -62,12 +62,20 @@ def test_preview_request_uses_real_prompt_overrides_and_one_sample(
 def test_preview_image_preserves_uint8_and_identity(tmp_path: Path) -> None:
     image = torch.arange(3 * 4 * 5, dtype=torch.uint8).reshape(1, 3, 4, 5)
     output = SimpleNamespace(
+        request_id="request-0",
         output=image,
-        sample_rows=[SimpleNamespace(prompt="prompt", seed=7)],
+        sample_rows=[
+            SimpleNamespace(prompt="prompt", metadata={"request_id": "request-0"}),
+        ],
     )
     path = tmp_path / "000.png"
 
-    write_preview_image(output, path, expected_prompt="prompt", seed=7)
+    write_preview_image(
+        output,
+        path,
+        expected_request_id="request-0",
+        expected_prompt="prompt",
+    )
 
     with Image.open(path) as persisted:
         actual = np.asarray(persisted.convert("RGB"))
@@ -79,10 +87,16 @@ def test_preview_image_preserves_uint8_and_identity(tmp_path: Path) -> None:
     [
         (
             SimpleNamespace(
+                request_id="request-0",
                 output=torch.zeros((1, 3, 2, 2), dtype=torch.uint8),
-                sample_rows=[SimpleNamespace(prompt="different", seed=7)],
+                sample_rows=[
+                    SimpleNamespace(
+                        prompt="different",
+                        metadata={"request_id": "request-0"},
+                    ),
+                ],
             ),
-            "changed prompt/seed identity",
+            "changed request/prompt identity",
         ),
     ],
 )
@@ -91,6 +105,6 @@ def test_preview_image_rejects_invalid_executor_output(output: object, match: st
         write_preview_image(
             output,
             Path("unused.png"),
+            expected_request_id="request-0",
             expected_prompt="prompt",
-            seed=7,
         )

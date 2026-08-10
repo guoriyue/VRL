@@ -67,7 +67,6 @@ def _batch_with_sentinel_timestep_tensors() -> tuple[RolloutBatch, list[_NoFullM
             group_id=f"g{index}",
             sample_id=f"s{index}",
             trajectory_id=f"t{index}",
-            seed=None,
         )
         for index in range(2)
     ]

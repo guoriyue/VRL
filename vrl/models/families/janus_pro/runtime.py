@@ -18,7 +18,7 @@ from vrl.generation.composition.token_autoregressive.token_loop import (
     TokenAutoregressiveLoop,
     call_with_supported_kwargs,
 )
-from vrl.generation.execution.chunks import SampleChunk
+from vrl.generation.execution.chunks import SampleChunk, require_matching_chunk_context
 from vrl.generation.types import (
     GenerationOutput,
     GenerationRequest,
@@ -370,12 +370,10 @@ class JanusProR1ChunkGatherer:
             sample_rows=list(sample_rows),
             segments=segment_extra,
             primary_segment="final_image",
-            context=dict(ordered[0].context),
+            context=require_matching_chunk_context([chunk.context for chunk in ordered]),
         )
         return GenerationOutput(
             request_id=request.request_id,
-            family=request.family,
-            task=request.task,
             sample_rows=list(sample_rows),
             output=cat["final_image"],
             trajectory=trajectory,

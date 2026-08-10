@@ -13,12 +13,18 @@ from vrl.generation.bindings.full_sequence_denoise import (
     DiffusionChunkGatherer,
     DiffusionChunkResult,
 )
+from vrl.generation.execution.chunks import (
+    SampleAlignedValues,
+    gather_replay_tensors,
+    require_matching_chunk_context,
+)
 from vrl.generation.execution.executor_base import ChunkExecutorBase
 from vrl.generation.execution.ids import build_sample_rows
 from vrl.generation.execution.worker import GenerationWorkerCore
 from vrl.generation.launch_contract import GenerationRuntimeLaunchContract
 from vrl.generation.protocols import ChunkGatherer
 from vrl.generation.types import GenerationOutput, GenerationRequest
+from vrl.models.families.cosmos.cosmos3.model import Cosmos3Model
 
 
 class _PureGatherer:
@@ -30,8 +36,6 @@ class _PureGatherer:
     ) -> GenerationOutput:
         return GenerationOutput(
             request_id=request.request_id,
-            family=request.family,
-            task=request.task,
             sample_rows=list(sample_rows),
             output=list(chunks),
         )
@@ -163,6 +167,149 @@ def test_diffusion_chunk_gatherer_keeps_rollout_context() -> None:
     assert output.trajectory is not None
     assert output.trajectory.context == context
     assert output.trajectory.segments["denoise"].reward_view == "video"
+
+
+def test_diffusion_chunk_gatherer_strictly_merges_replay_values() -> None:
+    request = _request(cfg=False)
+    chunks = _diffusion_chunks(
+        {
+            "guidance_scale": 4.5,
+            "cfg": False,
+            "model_family": "sd3_5",
+        },
+    )
+    chunks[0].replay_tensors = {
+        "prompt_embeds": torch.tensor([[1.0]]),
+        "optional": None,
+        "scheduler": "flow",
+    }
+    chunks[1].replay_tensors = {
+        "prompt_embeds": torch.tensor([[2.0]]),
+        "optional": None,
+        "scheduler": "flow",
+    }
+
+    output = DiffusionChunkGatherer().gather_chunks(
+        request,
+        build_sample_rows(request),
+        chunks,
+    )
+
+    assert output.trajectory is not None
+    prompt_embeds = output.trajectory.segments["denoise"].tensors["prompt_embeds"].value
+    assert torch.equal(prompt_embeds, torch.tensor([[1.0], [2.0]]))
+
+
+def test_replay_gather_treats_plain_sequences_as_static_values() -> None:
+    gathered = gather_replay_tensors(
+        [
+            {"schedule": [1, 2], "shape": (3, 4)},
+            {"schedule": [1, 2], "shape": (3, 4)},
+        ],
+        sample_counts=[1, 1],
+    )
+
+    assert gathered == {"schedule": [1, 2], "shape": (3, 4)}
+
+
+def test_replay_gather_concatenates_explicit_ragged_sample_rows() -> None:
+    gathered = gather_replay_tensors(
+        [
+            {"input_ids": SampleAlignedValues(([1, 2],))},
+            {"input_ids": SampleAlignedValues(([3, 4, 5],))},
+        ],
+        sample_counts=[1, 1],
+    )
+
+    assert gathered["input_ids"] == ([1, 2], [3, 4, 5])
+
+
+def test_replay_gather_validates_explicit_sample_row_count() -> None:
+    with pytest.raises(ValueError, match="must match each chunk sample_count"):
+        gather_replay_tensors(
+            [{"input_ids": SampleAlignedValues(([1], [2]))}],
+            sample_counts=[1],
+        )
+
+
+def test_cosmos3_keeps_prompt_ids_out_of_shared_chunk_context() -> None:
+    def state(input_ids: list[int]) -> SimpleNamespace:
+        return SimpleNamespace(
+            guidance_scale=7.0,
+            do_cfg=True,
+            height=64,
+            width=64,
+            num_frames=5,
+            fps=24,
+            num_noisy_vision_tokens=8,
+            cond_input_ids=input_ids,
+            uncond_input_ids=[0],
+            latents=torch.zeros(1, 1),
+            vision_condition_mask=torch.zeros(1, 1, 1),
+        )
+
+    states = [state([1, 2]), state([3, 4, 5])]
+    contexts = [Cosmos3Model.export_batch_context(object(), value) for value in states]
+    replay = [Cosmos3Model.export_replay_tensors(object(), value) for value in states]
+
+    assert require_matching_chunk_context(contexts) == contexts[0]
+    gathered = gather_replay_tensors(replay, sample_counts=[1, 1])
+    assert gathered["cond_input_ids"] == ([1, 2], [3, 4, 5])
+
+
+def test_diffusion_chunk_gatherer_rejects_mixed_none_replay_values() -> None:
+    request = _request(cfg=False)
+    chunks = _diffusion_chunks({"model_family": "sd3_5"})
+    chunks[0].replay_tensors = {"prompt_embeds": None}
+    chunks[1].replay_tensors = {"prompt_embeds": torch.ones(1, 1)}
+
+    with pytest.raises(ValueError, match="must be present on all results"):
+        DiffusionChunkGatherer().gather_chunks(
+            request,
+            build_sample_rows(request),
+            chunks,
+        )
+
+
+def test_diffusion_chunk_gatherer_rejects_mismatched_static_replay_values() -> None:
+    request = _request(cfg=False)
+    chunks = _diffusion_chunks({"model_family": "sd3_5"})
+    chunks[0].replay_tensors = {"scheduler": "flow"}
+    chunks[1].replay_tensors = {"scheduler": "ddim"}
+
+    with pytest.raises(ValueError, match="non-batched replay value 'scheduler' must match"):
+        DiffusionChunkGatherer().gather_chunks(
+            request,
+            build_sample_rows(request),
+            chunks,
+        )
+
+
+def test_diffusion_chunk_gatherer_rejects_mismatched_replay_keys() -> None:
+    request = _request(cfg=False)
+    chunks = _diffusion_chunks({"model_family": "sd3_5"})
+    chunks[0].replay_tensors = {"prompt_embeds": torch.ones(1, 1)}
+    chunks[1].replay_tensors = {"pooled_prompt_embeds": torch.ones(1, 1)}
+
+    with pytest.raises(ValueError, match="replay_tensors keys must match"):
+        DiffusionChunkGatherer().gather_chunks(
+            request,
+            build_sample_rows(request),
+            chunks,
+        )
+
+
+def test_diffusion_chunk_gatherer_rejects_mismatched_context() -> None:
+    request = _request(cfg=False)
+    chunks = _diffusion_chunks({"model_family": "sd3_5", "cfg": False})
+    chunks[1].context = {"model_family": "sd3_5", "cfg": True}
+
+    with pytest.raises(ValueError, match="chunk context at ordered index 1 does not match"):
+        DiffusionChunkGatherer().gather_chunks(
+            request,
+            build_sample_rows(request),
+            chunks,
+        )
 
 
 def _request(

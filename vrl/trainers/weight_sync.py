@@ -24,7 +24,7 @@ class WeightSyncer(ABC):
 
     @property
     def current_policy_version(self) -> int | None:
-        """Policy version of the last pushed weights (PolicyVersionProvider).
+        """Policy version of the last pushed weights.
 
         ``None`` means this syncer does not track a version. Orchestration asks
         through this property instead of reaching into syncer internals.

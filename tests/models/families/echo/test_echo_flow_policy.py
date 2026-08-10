@@ -82,7 +82,6 @@ def _build_model() -> tuple[EchoModel, _FakeEcho]:
 
 def _request(num_steps: int = 4) -> VideoGenerationRequest:
     return VideoGenerationRequest(
-        prompt="a cat",
         negative_prompt="",
         width=256,
         height=256,
@@ -91,7 +90,6 @@ def _request(num_steps: int = 4) -> VideoGenerationRequest:
         guidance_scale=1.0,
         seed=0,
         fps=24,
-        extra={},
     )
 
 

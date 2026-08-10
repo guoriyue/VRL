@@ -14,7 +14,7 @@ from vrl.generation.bindings.token_autoregressive import (
     ARSamplingParams,
 )
 from vrl.generation.composition.token_autoregressive.token_loop import TokenAutoregressiveLoop
-from vrl.generation.execution.chunks import SampleChunk
+from vrl.generation.execution.chunks import SampleChunk, require_matching_chunk_context
 from vrl.generation.types import (
     GenerationOutput,
     GenerationRequest,
@@ -143,7 +143,9 @@ class NextStep1ChunkExecutor(ARChunkExecutorBase):
         generator: torch.Generator | None = None
         if params.seed is not None:
             generator = torch.Generator(device=self.model.device)
-            generator.manual_seed(params.seed + self.layout.chunk_seed_offset(request, chunk))
+            generator.manual_seed(
+                params.seed + self.layout.chunk_seed_offset(request, chunk),
+            )
 
         sample_kwargs: dict[str, Any] = {
             "guidance_scale": guidance_scale,
@@ -248,7 +250,9 @@ class NextStep1ChunkGatherer:
             row_fields=fields,
         )
         cat = self.layout.cat_chunk_fields(ordered_ar_chunks, fields)
-        trajectory_context = dict(ordered_ar_chunks[0].context)
+        trajectory_context = require_matching_chunk_context(
+            [chunk.context for chunk in ordered_ar_chunks],
+        )
         trajectory = build_ar_continuous_trajectory(
             request=request,
             sample_rows=list(sample_rows),
@@ -265,8 +269,6 @@ class NextStep1ChunkGatherer:
 
         return GenerationOutput(
             request_id=request.request_id,
-            family=request.family,
-            task=request.task,
             sample_rows=list(sample_rows),
             output=cat["output"],
             trajectory=trajectory,

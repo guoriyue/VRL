@@ -41,7 +41,6 @@ def _sample_rows() -> list[GenerationSampleRow]:
             group_id="g0",
             sample_id=f"s{index}",
             trajectory_id=f"t{index}",
-            seed=None,
         )
         for index in range(2)
     ]

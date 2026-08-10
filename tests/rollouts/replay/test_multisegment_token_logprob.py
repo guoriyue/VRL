@@ -35,7 +35,6 @@ def _sample_rows() -> list[GenerationSampleRow]:
             group_id="g0",
             sample_id="s0",
             trajectory_id="t0",
-            seed=None,
         ),
         GenerationSampleRow(
             prompt_index=0,
@@ -44,7 +43,6 @@ def _sample_rows() -> list[GenerationSampleRow]:
             group_id="g0",
             sample_id="s1",
             trajectory_id="t1",
-            seed=None,
         ),
     ]
 

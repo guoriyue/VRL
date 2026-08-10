@@ -24,7 +24,6 @@ def _sample_rows() -> list[GenerationSampleRow]:
             group_id="g0",
             sample_id="s0",
             trajectory_id="t0",
-            seed=None,
         ),
         GenerationSampleRow(
             prompt_index=0,
@@ -33,7 +32,6 @@ def _sample_rows() -> list[GenerationSampleRow]:
             group_id="g0",
             sample_id="s1",
             trajectory_id="t1",
-            seed=None,
         ),
     ]
 
@@ -124,8 +122,6 @@ def test_r1_trajectory_batch_keeps_segments_separate() -> None:
     )
     output = GenerationOutput(
         request_id=request.request_id,
-        family=request.family,
-        task=request.task,
         sample_rows=_sample_rows(),
         output=final_images,
         trajectory=trajectory,

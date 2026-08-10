@@ -46,8 +46,6 @@ class _TinyGatherer:
     ) -> GenerationOutput:
         return GenerationOutput(
             request_id=request.request_id,
-            family=request.family,
-            task=request.task,
             sample_rows=list(sample_rows),
             output=list(chunks),
         )

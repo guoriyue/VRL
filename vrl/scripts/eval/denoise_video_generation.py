@@ -38,7 +38,6 @@ def generate_one_video(
         guidance_scale=float(sampling["guidance_scale"]),
     )
     request = VideoGenerationRequest(
-        prompt=prompt,
         width=int(sampling["width"]),
         height=int(sampling["height"]),
         frame_count=int(sampling["num_frames"]),
@@ -46,7 +45,6 @@ def generate_one_video(
         guidance_scale=float(sampling["guidance_scale"]),
         seed=int(seed),
         fps=int(sampling["fps"]),
-        extra={"max_sequence_length": int(sampling["max_sequence_length"])},
     )
     state = model.prepare_sampling(request, encoded)
     generator = torch.Generator(device=state.latents.device)

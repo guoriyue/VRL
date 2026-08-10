@@ -464,11 +464,45 @@ def test_on_demand_weight_sync_capability_does_not_require_active_workers() -> N
     assert build_runtime_weight_syncer(disabled) is None
 
 
+@pytest.mark.parametrize("supports_non_draining_weight_sync", [False, True])
+def test_resident_runtime_publishes_session_non_draining_capability(
+    supports_non_draining_weight_sync: bool,
+) -> None:
+    session = _FakeSession()
+    session.supports_non_draining_weight_sync = supports_non_draining_weight_sync
+
+    runtime = RayGenerationRuntime(session=session)
+
+    assert runtime.supports_non_draining_weight_sync is supports_non_draining_weight_sync
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("supports_non_draining_weight_sync", [False, True])
+async def test_deferred_activation_publishes_candidate_non_draining_capability(
+    supports_non_draining_weight_sync: bool,
+) -> None:
+    runtime = _on_demand_runtime()
+    candidate = _FakeSession()
+    candidate.supports_non_draining_weight_sync = supports_non_draining_weight_sync
+
+    async def launch_session() -> _FakeSession:
+        return candidate
+
+    runtime._session_factory = launch_session
+    assert runtime.supports_non_draining_weight_sync is False
+
+    await runtime.activate()
+
+    assert runtime._session is candidate
+    assert runtime.supports_non_draining_weight_sync is supports_non_draining_weight_sync
+
+
 @pytest.mark.asyncio
 async def test_deferred_activation_rejects_candidate_capability_mismatch() -> None:
     runtime = _on_demand_runtime(sync_trainable_state=True)
     candidate = _FakeSession()
     candidate.weight_sync = None
+    candidate.supports_non_draining_weight_sync = True
 
     async def launch_session() -> _FakeSession:
         return candidate
@@ -480,6 +514,7 @@ async def test_deferred_activation_rejects_candidate_capability_mismatch() -> No
     assert runtime.lifecycle.failure is caught.value
     assert runtime.lifecycle.phase is RuntimePhase.TERMINATED
     assert runtime._session is None
+    assert runtime.supports_non_draining_weight_sync is False
     assert candidate.force_close_calls == 1
     assert candidate.calls == ["shutdown"]
 
@@ -1496,6 +1531,35 @@ async def test_concurrent_cold_activation_launches_and_restores_once() -> None:
 
 
 @pytest.mark.asyncio
+async def test_cancelled_waiter_does_not_publish_candidate_capability() -> None:
+    runtime = _on_demand_runtime()
+    await _stage_pending_install(runtime, "W", 3)
+    candidate = _BlockingRestoreSession()
+    candidate.supports_non_draining_weight_sync = True
+
+    async def launch_session() -> _BlockingRestoreSession:
+        return candidate
+
+    runtime._session_factory = launch_session
+    cancelled_waiter = asyncio.create_task(runtime.activate())
+    await asyncio.wait_for(candidate.restore_started.wait(), timeout=1)
+
+    cancelled_waiter.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await cancelled_waiter
+
+    assert runtime._session is None
+    assert runtime.supports_non_draining_weight_sync is False
+
+    surviving_waiter = asyncio.create_task(runtime.activate())
+    candidate.finish_restore.set()
+    await asyncio.wait_for(surviving_waiter, timeout=1)
+
+    assert runtime._session is candidate
+    assert runtime.supports_non_draining_weight_sync is True
+
+
+@pytest.mark.asyncio
 async def test_concurrent_activation_wakes_and_restores_once() -> None:
     runtime = _on_demand_runtime()
     inner = _BlockingRestoreSession()
@@ -1770,6 +1834,7 @@ async def test_cold_candidate_health_failure_terminalizes_outer_before_publicati
             runtime.lifecycle.fail(health_failure)
 
     candidate = _ColdHealthRaceCandidate()
+    candidate.supports_non_draining_weight_sync = True
 
     class _Factory:
         async def launch_session(self):
@@ -1789,6 +1854,7 @@ async def test_cold_candidate_health_failure_terminalizes_outer_before_publicati
     assert runtime._pending_install is None
     assert runtime._session is None
     assert runtime._installed_policy_version is None
+    assert runtime.supports_non_draining_weight_sync is False
     with pytest.raises(RuntimeLifecycleError, match="terminated") as retry:
         await runtime.activate()
     assert retry.value.__cause__ is health_failure

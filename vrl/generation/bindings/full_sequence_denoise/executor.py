@@ -223,14 +223,12 @@ class DiffusionChunkExecutorBase(ChunkExecutorBase):
 
     def build_video_request(
         self,
-        prompt: str,
         params: DiffusionSamplingParams,
     ) -> VideoGenerationRequest:
         """Build the backend-agnostic model request for one prompt chunk."""
 
         base = params.base
         req_kwargs: dict[str, Any] = {
-            "prompt": prompt,
             "num_steps": base.num_steps,
             "guidance_scale": base.guidance_scale,
             "height": base.height,
@@ -244,10 +242,6 @@ class DiffusionChunkExecutorBase(ChunkExecutorBase):
         if base.seed is not None:
             req_kwargs["seed"] = base.seed
 
-        if base.max_sequence_length is not None:
-            req_kwargs["extra"] = {
-                "max_sequence_length": base.max_sequence_length,
-            }
         return VideoGenerationRequest(**req_kwargs)
 
     def build_denoise_config(
@@ -369,7 +363,7 @@ class DiffusionChunkExecutorBase(ChunkExecutorBase):
         """Build the prompt-encode payload for one chunk."""
 
         params = self.parse_sampling_params(request)
-        video_request = self.build_video_request(chunk.prompt, params)
+        video_request = self.build_video_request(params)
         return DiffusionPromptStageInput(
             generation_request=request,
             chunk=chunk,

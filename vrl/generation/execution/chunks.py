@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
@@ -10,6 +10,20 @@ from vrl.utils.cuda_memory import empty_cuda_cache, is_cuda_out_of_memory
 
 if TYPE_CHECKING:
     from vrl.generation.types import GenerationRequest, GenerationSampleRow
+
+# The generation facade reaches this module while parsing config. Tensor-only
+# helpers import torch at call time so config resolution remains torch-free.
+
+
+@dataclass(frozen=True, slots=True)
+class SampleAlignedValues:
+    """Explicit sample-axis wrapper for ragged Python replay values."""
+
+    values: tuple[Any, ...]
+
+    def __post_init__(self) -> None:
+        if not self.values:
+            raise ValueError("SampleAlignedValues.values must be non-empty")
 
 
 def validate_chunk_range(
@@ -53,6 +67,123 @@ def _require_rows(name: str, value: Any, count: int) -> None:
         raise ValueError(f"chunk {name} must have a leading batch dimension")
     if actual != count:
         raise ValueError(f"chunk {name} has {actual} rows, expected {count}")
+
+
+def concatenate_sample_values(values: Sequence[Any], *, name: str) -> Any:
+    """Concatenate one sample-aligned value from each ordered chunk."""
+
+    import torch
+
+    if not values:
+        raise ValueError(f"cannot concatenate empty field {name!r}")
+    if all(isinstance(value, torch.Tensor) for value in values):
+        return torch.cat(list(values), dim=0)
+    if all(isinstance(value, list) for value in values):
+        return [item for value in values for item in value]
+    if all(isinstance(value, tuple) for value in values):
+        return tuple(item for value in values for item in value)
+    raise TypeError(f"chunk field {name!r} must use one consistent concatenable type")
+
+
+def gather_replay_tensors(
+    replay_mappings: Sequence[Mapping[str, Any]],
+    *,
+    sample_counts: Sequence[int],
+) -> dict[str, Any]:
+    """Strictly merge sample-aligned and static replay values across chunks."""
+
+    import torch
+
+    if not replay_mappings:
+        raise ValueError("replay_mappings must be non-empty")
+    if len(sample_counts) != len(replay_mappings) or any(count < 1 for count in sample_counts):
+        raise ValueError("sample_counts must provide one positive count per replay mapping")
+    keys = tuple(replay_mappings[0])
+    expected_keys = set(keys)
+    if any(set(mapping) != expected_keys for mapping in replay_mappings[1:]):
+        raise ValueError("replay_tensors keys must match across chunk results")
+
+    gathered: dict[str, Any] = {}
+    for key in keys:
+        values = [mapping[key] for mapping in replay_mappings]
+        if all(value is None for value in values):
+            gathered[key] = None
+        elif any(value is None for value in values):
+            raise ValueError(f"replay tensor {key!r} must be present on all results")
+        elif all(isinstance(value, torch.Tensor) for value in values):
+            gathered[key] = concatenate_sample_values(
+                values,
+                name=f"replay_tensors.{key}",
+            )
+        elif all(isinstance(value, SampleAlignedValues) for value in values):
+            aligned_values = [value.values for value in values]
+            if any(
+                len(value) != sample_count
+                for value, sample_count in zip(aligned_values, sample_counts, strict=True)
+            ):
+                raise ValueError(
+                    f"sample-aligned replay value {key!r} must match each chunk sample_count",
+                )
+            gathered[key] = concatenate_sample_values(
+                aligned_values,
+                name=f"replay_tensors.{key}",
+            )
+        elif any(isinstance(value, SampleAlignedValues) for value in values):
+            raise TypeError(
+                f"replay value {key!r} must use SampleAlignedValues on all results",
+            )
+        elif all(_values_match(value, values[0]) for value in values[1:]):
+            gathered[key] = values[0]
+        else:
+            raise ValueError(f"non-batched replay value {key!r} must match across results")
+    return gathered
+
+
+def require_matching_chunk_context(
+    contexts: Sequence[Mapping[str, Any]],
+) -> dict[str, Any]:
+    """Return shared chunk context after checking every value matches."""
+
+    if not contexts:
+        raise ValueError("chunk contexts must be non-empty")
+    first = contexts[0]
+    for index, context in enumerate(contexts[1:], start=1):
+        if not _values_match(context, first):
+            raise ValueError(f"chunk context at ordered index {index} does not match")
+    return dict(first)
+
+
+def _values_match(left: Any, right: Any) -> bool:
+    """Compare nested static replay/context values without tensor truth coercion."""
+
+    import torch
+
+    if isinstance(left, torch.Tensor) or isinstance(right, torch.Tensor):
+        return (
+            isinstance(left, torch.Tensor)
+            and isinstance(right, torch.Tensor)
+            and left.dtype == right.dtype
+            and left.device == right.device
+            and torch.equal(left, right)
+        )
+    if isinstance(left, Mapping) or isinstance(right, Mapping):
+        return (
+            isinstance(left, Mapping)
+            and isinstance(right, Mapping)
+            and set(left) == set(right)
+            and all(_values_match(left[key], right[key]) for key in left)
+        )
+    if isinstance(left, (list, tuple)) or isinstance(right, (list, tuple)):
+        return (
+            type(left) is type(right)
+            and len(left) == len(right)
+            and all(_values_match(a, b) for a, b in zip(left, right, strict=True))
+        )
+    try:
+        result = left == right
+        return bool(result)
+    except (TypeError, ValueError):
+        return False
 
 
 def ordered_covering_chunks[TChunk](
@@ -209,9 +340,13 @@ def run_sample_chunks_with_oom_retry[T](
 
 
 __all__ = [
+    "SampleAlignedValues",
     "SampleChunk",
     "build_prompt_chunks",
+    "concatenate_sample_values",
+    "gather_replay_tensors",
     "ordered_covering_chunks",
+    "require_matching_chunk_context",
     "run_sample_chunks_with_oom_retry",
     "validate_chunk_range",
 ]

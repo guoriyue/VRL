@@ -337,7 +337,6 @@ class TestAdvantageAndMetrics:
                         group_id=f"group-{index // group_size}",
                         sample_id=f"sample-{index}",
                         trajectory_id=f"trajectory-{index}",
-                        seed=None,
                     )
                     for index in range(len(prompts) * group_size)
                 ]

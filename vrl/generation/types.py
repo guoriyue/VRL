@@ -31,7 +31,6 @@ class GenerationInput:
 class VideoGenerationRequest:
     """Backend-neutral parameters for one image or video generation call."""
 
-    prompt: str = ""
     negative_prompt: str = ""
     width: int = 1024
     height: int = 640
@@ -40,7 +39,6 @@ class VideoGenerationRequest:
     guidance_scale: float = 5.0
     seed: int | None = None
     fps: int = 16
-    extra: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(slots=True, init=False)
@@ -118,7 +116,6 @@ class GenerationSampleRow:
     group_id: str
     sample_id: str
     trajectory_id: str
-    seed: int | None
     metadata: dict[str, Any] = field(default_factory=dict)
 
 
@@ -131,8 +128,6 @@ class GenerationOutput:
     """
 
     request_id: str
-    family: str
-    task: str
     sample_rows: list[GenerationSampleRow]
     output: Any
     trajectory: TrajectoryBatch | None = None

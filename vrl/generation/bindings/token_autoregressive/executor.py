@@ -9,7 +9,7 @@ from typing import Any
 import torch
 
 from vrl.generation.bindings.token_autoregressive.layout import ARRequestLayout, right_pad
-from vrl.generation.execution.chunks import SampleChunk
+from vrl.generation.execution.chunks import SampleChunk, require_matching_chunk_context
 from vrl.generation.execution.executor_base import ChunkExecutorBase
 from vrl.generation.protocols import ChunkGatherer
 from vrl.generation.types import (
@@ -342,7 +342,9 @@ class ARDiscreteChunkGatherer:
             row_fields=fields,
         )
         cat = layout.cat_chunk_fields(ordered_ar_chunks, fields)
-        chunk_context = dict(ordered_ar_chunks[0].context)
+        chunk_context = require_matching_chunk_context(
+            [chunk.context for chunk in ordered_ar_chunks],
+        )
         trajectory = build_ar_discrete_trajectory(
             request=request,
             sample_rows=list(sample_rows),
@@ -358,8 +360,6 @@ class ARDiscreteChunkGatherer:
 
         return GenerationOutput(
             request_id=request.request_id,
-            family=request.family,
-            task=request.task,
             sample_rows=list(sample_rows),
             output=cat["output"],
             trajectory=trajectory,

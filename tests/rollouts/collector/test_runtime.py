@@ -108,8 +108,6 @@ class _Runtime:
         )
         return GenerationOutput(
             request_id=request.request_id,
-            family=request.family,
-            task=request.task,
             sample_rows=sample_rows,
             output=output,
             trajectory=trajectory,
@@ -654,7 +652,6 @@ def _reward_sample_rows(
             group_id=f"{request_id}:group:{index}",
             sample_id=f"{request_id}:sample:{index}",
             trajectory_id=f"{request_id}:trajectory:{index}",
-            seed=None,
             metadata={"policy_version": policy_version},
         )
         for index, prompt in enumerate(prompts)
@@ -1000,8 +997,6 @@ def test_chunk_denoise_kl_reward_sums_chunk_and_transition_axes() -> None:
     )
     output = GenerationOutput(
         request_id=request.request_id,
-        family=request.family,
-        task=request.task,
         sample_rows=sample_rows,
         output=torch.zeros(batch_size, 3, 2, 2),
         trajectory=trajectory,
@@ -1111,7 +1106,6 @@ def _sample_rows(request: GenerationRequest) -> list[GenerationSampleRow]:
                     group_id=f"g{prompt_index}",
                     sample_id=sample_id,
                     trajectory_id=f"t_{sample_id}",
-                    seed=None,
                     metadata={
                         "request_id": request.request_id,
                         "policy_version": request.policy_version,

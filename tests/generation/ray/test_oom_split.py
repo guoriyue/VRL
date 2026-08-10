@@ -130,8 +130,6 @@ class _CoverageGatherer:
     ) -> GenerationOutput:
         return GenerationOutput(
             request_id=request.request_id,
-            family=request.family,
-            task=request.task,
             sample_rows=list(sample_rows),
             output=list(chunks),
         )
@@ -396,8 +394,6 @@ class _RoutingWorker:
             )
         return GenerationOutput(
             request_id=request_id,
-            family=request.family,
-            task=request.task,
             sample_rows=list(sample_rows),
             output=[{"pipelined": True}],
         )

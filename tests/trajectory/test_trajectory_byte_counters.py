@@ -33,7 +33,6 @@ def test_byte_counter_counts_trajectory_tensor_leaves() -> None:
                 group_id="g0",
                 sample_id="s0",
                 trajectory_id="t0",
-                seed=None,
             )
         ],
         token_ids=token_ids,

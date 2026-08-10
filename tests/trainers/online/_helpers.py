@@ -117,7 +117,6 @@ def _diffusion_rollout_batch(
             group_id=str(group_id),
             sample_id=f"trainer-test:sample:{index}",
             trajectory_id=f"trainer-test:trajectory:{index}",
-            seed=None,
         )
         for index, (prompt_index, sample_index, group_id) in enumerate(row_specs)
     ]

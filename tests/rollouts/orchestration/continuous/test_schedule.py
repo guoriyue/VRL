@@ -68,7 +68,7 @@ class _Syncer:
 
     @property
     def current_policy_version(self) -> int | None:
-        # Mirrors RayRuntimeWeightSyncer's PolicyVersionProvider contract.
+        # Mirrors RayRuntimeWeightSyncer's concrete version property.
         return self.runtime.current_policy_version
 
 

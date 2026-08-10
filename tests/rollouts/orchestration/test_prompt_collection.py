@@ -45,7 +45,6 @@ def _batch_with_trajectory(prompts: list[str], group_size: int) -> RolloutBatch:
             group_id=f"group-{prompt_index}",
             sample_id=f"sample-{prompt_index}-{sample_index}",
             trajectory_id=f"trajectory-{prompt_index}-{sample_index}",
-            seed=None,
         )
         for prompt_index, prompt in enumerate(prompts)
         for sample_index in range(group_size)
