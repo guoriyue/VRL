@@ -203,6 +203,7 @@ jobs:
           cd "$RUNNER_TEMP"
           PYTHONPATH="$RUNNER_TEMP/wheel-site" \
             "$GITHUB_WORKSPACE/.venv/bin/python" - <<'PY'
+          from importlib import resources
           from importlib.metadata import distribution
           from pathlib import Path
 
@@ -213,6 +214,13 @@ jobs:
           install_root = Path("wheel-site").resolve()
           module_path = Path(vrl.__file__).resolve()
           assert module_path.is_relative_to(install_root), module_path
+
+          aesthetic_asset = resources.files("vrl.rewards.assets").joinpath(
+              "sac+logos+ava1-l14-linearMSE.pth"
+          )
+          assert aesthetic_asset.is_file(), aesthetic_asset
+          with aesthetic_asset.open("rb") as handle:
+              assert handle.read(1), aesthetic_asset
 
           config_paths = list_bundled_configs()
           stale_prefixes = (

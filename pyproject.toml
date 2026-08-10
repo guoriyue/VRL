@@ -164,6 +164,7 @@ include = ["vrl*"]
 
 [tool.setuptools.package-data]
 "vrl.config.presets" = ["**/*.yaml", "**/*.yml", "**/*.md"]
+"vrl.rewards.assets" = ["*.pth"]
 
 # ── Ruff ─────────────────────────────────────────────────────────
 [tool.ruff]
