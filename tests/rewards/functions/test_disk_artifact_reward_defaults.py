@@ -9,14 +9,25 @@ import pytest
 from vrl.rewards.functions.cosmos3_reasoner import Cosmos3ReasonerReward
 from vrl.rewards.functions.kling_video_reward import KlingVideoReward
 from vrl.rewards.functions.phymotion import PhyMotionReward
+from vrl.rewards.functions.robotics_video_reward import RoboticsVideoReward
 from vrl.rewards.functions.unified_reward_video import UnifiedRewardVideoReward
 from vrl.rewards.functions.videocon_physics import VideoConPhysicsReward
 from vrl.rewards.functions.videoscore2 import VideoScore2Reward
 
 
+class _Runtime:
+    async def score_batch(self, request):
+        return []
+
+    async def shutdown(self) -> None:
+        return None
+
+
 @pytest.mark.parametrize(
     ("reward_cls", "reward_name", "score_key"),
     [
+        (KlingVideoReward, "kling_video_reward", "overall_reward"),
+        (RoboticsVideoReward, "robotics_video_reward", "robotics_blend"),
         (Cosmos3ReasonerReward, "nvidia/Cosmos3-Nano", "task_success"),
         (VideoScore2Reward, "TIGER-Lab/VideoScore2@main", "physical_common_sense"),
         (
@@ -44,21 +55,17 @@ def test_concrete_reward_signature_owns_its_defaults(
     assert parameters["artifact_format"].default == "mp4"
 
 
-def test_kling_signature_owns_its_mp4_default() -> None:
-    parameters = inspect.signature(KlingVideoReward).parameters
+@pytest.mark.parametrize("field", ["reward_name", "score_key"])
+def test_explicit_empty_request_identity_is_rejected(tmp_path, field: str) -> None:
+    kwargs = {
+        "reward_name": "videoscore2",
+        "score_key": "physical_common_sense",
+        field: "",
+    }
 
-    assert parameters["artifact_format"].default == "mp4"
-
-
-def test_explicit_empty_values_are_not_replaced_by_truthiness_defaults(tmp_path) -> None:
-    reward = VideoScore2Reward(
-        reward_name="",
-        score_key="",
-        artifact_format="tensor",
-        artifact_dir=str(tmp_path),
-        runtime=object(),
-    )
-
-    assert reward.reward_name == ""
-    assert reward.score_key == ""
-    assert reward.artifact_store.artifact_format == "tensor"
+    with pytest.raises(ValueError, match=field):
+        VideoScore2Reward(
+            artifact_dir=str(tmp_path),
+            inference_runtime=_Runtime(),
+            **kwargs,
+        )

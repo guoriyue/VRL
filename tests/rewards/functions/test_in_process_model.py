@@ -7,12 +7,14 @@ import torch
 
 from vrl.rewards.base import (
     DiskArtifactRewardFunction,
+    InferenceRewardFunction,
     RewardCleanupError,
     RewardFunction,
 )
 from vrl.rewards.models.base import TorchRewardModel
 from vrl.rewards.runtime import InProcessRewardInferenceRuntime
 from vrl.rewards.types import RewardSample
+from vrl.utils.config import import_from_path
 
 
 class _FakeTorchReward(TorchRewardModel):
@@ -43,14 +45,14 @@ def _sample(
     )
 
 
-def _reward_function_in_process() -> RewardFunction:
-    return RewardFunction(
+def _reward_function_in_process() -> InferenceRewardFunction:
+    return InferenceRewardFunction(
         reward_name="fake",
         score_key="fake",
-        runtime=InProcessRewardInferenceRuntime(
+        inference_runtime=InProcessRewardInferenceRuntime(
             model=_FakeTorchReward({"device": "cpu"}),
         ),
-        artifact_builder=lambda samples: RewardFunction.build_inmemory_artifacts(
+        artifact_builder=lambda samples: InferenceRewardFunction.build_inmemory_artifacts(
             samples,
             media_type="image",
         ),
@@ -81,14 +83,36 @@ async def test_reward_function_in_process_single_score() -> None:
 
 def test_pickscore_reward_model_constructs_lazily() -> None:
     """Checks pickscore reward model constructs lazily."""
-    from vrl.rewards.models.pickscore import pickscore_reward_model
+    from vrl.rewards.models.pickscore import PickScoreRewardModel
 
-    model = pickscore_reward_model(
+    model = PickScoreRewardModel(
         {"device": "cpu", "model_name": "x", "processor_name": "y"},
     )
     assert model.model_name == "x"
     assert model.processor_name == "y"
     assert model._module is None  # no heavy load at construction
+
+
+@pytest.mark.parametrize(
+    ("factory_path", "expected_type"),
+    [
+        (
+            "vrl.rewards.models.aesthetic:aesthetic_reward_model",
+            "AestheticRewardModel",
+        ),
+        (
+            "vrl.rewards.models.pickscore:pickscore_reward_model",
+            "PickScoreRewardModel",
+        ),
+    ],
+)
+def test_external_reward_model_factory_paths_remain_compatible(
+    factory_path: str,
+    expected_type: str,
+) -> None:
+    model = import_from_path(factory_path)({"device": "cpu"})
+
+    assert type(model).__name__ == expected_type
 
 
 def test_lazy_reward_models_defer_module_construction(
@@ -131,6 +155,46 @@ def test_reward_artifact_transport_is_registry_visible() -> None:
     assert DiskArtifactRewardFunction.artifact_transport == "disk"
 
 
+def test_inference_reward_requires_both_runtime_and_artifact_builder() -> None:
+    class _Runtime:
+        async def score_batch(self, request):
+            return []
+
+        async def shutdown(self) -> None:
+            return None
+
+    with pytest.raises(TypeError, match="inference_runtime"):
+        InferenceRewardFunction(
+            reward_name="fake",
+            score_key="fake",
+            artifact_builder=InferenceRewardFunction.build_inmemory_artifacts,
+        )
+    with pytest.raises(TypeError, match="artifact_builder"):
+        InferenceRewardFunction(
+            reward_name="fake",
+            score_key="fake",
+            inference_runtime=_Runtime(),
+        )
+
+
+@pytest.mark.parametrize("inference_runtime", [None, object()])
+def test_inference_reward_rejects_invalid_runtime(inference_runtime: object) -> None:
+    with pytest.raises(TypeError, match="inference_runtime"):
+        InferenceRewardFunction(
+            reward_name="fake",
+            score_key="fake",
+            inference_runtime=inference_runtime,  # type: ignore[arg-type]
+            artifact_builder=InferenceRewardFunction.build_inmemory_artifacts,
+        )
+
+
+def test_inference_runtime_has_an_explicit_layer_name() -> None:
+    reward = _reward_function_in_process()
+
+    assert isinstance(reward.inference_runtime, InProcessRewardInferenceRuntime)
+    assert not hasattr(reward, "runtime")
+
+
 @pytest.mark.asyncio
 async def test_reward_reports_operation_and_artifact_cleanup_failures() -> None:
     class _FailingRuntime:
@@ -144,11 +208,11 @@ async def test_reward_reports_operation_and_artifact_cleanup_failures() -> None:
         assert artifacts
         raise OSError("cleanup failed")
 
-    reward = RewardFunction(
+    reward = InferenceRewardFunction(
         reward_name="fake",
         score_key="fake",
-        runtime=_FailingRuntime(),
-        artifact_builder=RewardFunction.build_inmemory_artifacts,
+        inference_runtime=_FailingRuntime(),
+        artifact_builder=InferenceRewardFunction.build_inmemory_artifacts,
         artifact_finalizer=fail_cleanup,
     )
 
@@ -184,11 +248,11 @@ async def test_reward_retains_artifacts_when_remote_state_is_ambiguous() -> None
         assert artifacts
         retained = True
 
-    reward = RewardFunction(
+    reward = InferenceRewardFunction(
         reward_name="fake",
         score_key="fake",
-        runtime=_AmbiguousRuntime(),
-        artifact_builder=RewardFunction.build_inmemory_artifacts,
+        inference_runtime=_AmbiguousRuntime(),
+        artifact_builder=InferenceRewardFunction.build_inmemory_artifacts,
         artifact_finalizer=finalize,
         artifact_retainer=retain,
     )

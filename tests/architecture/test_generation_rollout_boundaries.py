@@ -314,7 +314,7 @@ def test_reward_models_live_under_models() -> None:
     # Every registered reward has a model module here (registry is the source).
     assert _registered_reward_modules() <= present
     # Only scaffolding may live alongside the per-reward modules.
-    scaffolding = {"__init__.py", "base.py", "hub.py"}
+    scaffolding = {"__init__.py", "base.py", "hub.py", "media.py"}
     extras = present - _registered_reward_modules() - scaffolding
     assert not extras, f"unexpected modules under rewards/models/: {extras}"
     assert not (VRL_ROOT / "rewards" / "kling_video_reward.py").exists()

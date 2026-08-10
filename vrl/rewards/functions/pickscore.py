@@ -28,7 +28,7 @@ class PickScoreReward(CumemRewardFunction):
         self._init_reward_model(
             reward_name="pickscore",
             score_key="pickscore",
-            model_factory="vrl.rewards.models.pickscore:pickscore_reward_model",
+            model_factory="vrl.rewards.models.pickscore:PickScoreRewardModel",
             worker_config=worker_config,
         )
 

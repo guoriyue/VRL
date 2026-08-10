@@ -18,7 +18,7 @@ from vrl.rewards.functions.target_dino_similarity import TargetDinoSimilarityRew
 )
 def test_future_reward_accepts_declared_worker_config(reward_cls: type) -> None:
     reward = reward_cls(device="cpu", worker_config={"num_frames": 2})
-    assert reward.runtime is not None
+    assert reward.inference_runtime is not None
 
 
 @pytest.mark.parametrize(

@@ -87,7 +87,6 @@ class MultiReward(RewardFunction):
         self,
         rewards: list[tuple[str, float, RewardFunction]],
     ) -> None:
-        super().__init__()
         self.rewards = rewards
         # Composite teardown is retryable: remember children whose shutdown
         # already succeeded so a retry reaches only the ones that actually
@@ -184,6 +183,13 @@ class MultiReward(RewardFunction):
             # `or {}`: a bare YAML key (kwargs: <name>:) parses as None.
             extra = dict(reward_kwargs.get(name) or {})
             extra.pop("inference", None)
+            reserved_runtime_keys = sorted(set(extra) & {"inference_runtime", "runtime"})
+            if reserved_runtime_keys:
+                raise ValueError(
+                    f"reward.kwargs.{name} cannot set runtime injection keys "
+                    f"{reserved_runtime_keys}; configure reward inference through "
+                    "reward.kwargs.<name>.inference",
+                )
             inference = resolved_inference_configs[name]
             if "execution" in extra:
                 raise ValueError(
@@ -202,7 +208,6 @@ class MultiReward(RewardFunction):
                     & {
                         "device",
                         "memory_parking_residual_bytes_limit",
-                        "runtime",
                         "sleep_offload",
                         "worker_config",
                     },
@@ -214,7 +219,7 @@ class MultiReward(RewardFunction):
                         "standalone reward service",
                     )
                 component_device = "cpu"
-                extra["runtime"] = build_reward_inference_runtime(inference=inference)
+                extra["inference_runtime"] = build_reward_inference_runtime(inference=inference)
             else:
                 component_device = reward_cls.resolve_execution_device(
                     device=device,

@@ -61,7 +61,7 @@
 - reward 从 `artifact.metadata['target_actions']` 读指令动作，不读像素。
 - 注册 `registry.py`：`"idm_action_following": ActionFollowingReward`；blend 走 `MultiReward.from_dict`（§0 权重）。
 
-**(C) 共享积木（已落地，直接复用）**：帧解码 `vrl/utils/media.py`（`read_video_frames`/`sample_frames`/`align_frame_counts`/`frames_thwc_to_float`）、`decode_artifact_frames`（`vrl/rewards/base.py`）、dino + motion 两个组件 config。
+**(C) 共享积木（已落地，直接复用）**：帧解码 `vrl/utils/media.py`（`read_video_frames`/`sample_frames`/`align_frame_counts`/`frames_thwc_to_float`）、`decode_artifact_frames`（`vrl/rewards/models/media.py`）、dino + motion 两个组件 config。
 
 ## 5. 来源调查：为什么不从零也下不到能直接插的（5 源对抗式核实，2026-06-28）
 
@@ -91,7 +91,7 @@
 - 数据：`vrl/scripts/data/video_world.py:176-181,427`（emit `target_actions`）、commit d22d7d5d（plumbing）
 - reward 模板：`vrl/rewards/functions/kling_video_reward.py`（disk-artifact pool）、`vrl/rewards/models/phymotion.py`（外部进程 bridge 范式）、`vrl/rewards/functions/registry.py`
 - 判别候选 battery：`vrl/scripts/eval/unified_reward_robotics_discrimination_probe.py` 的 `build_discrimination_candidates`（判别结论由人工可视化判断）
-- 共享积木：`vrl/utils/media.py`、`vrl/rewards/base.py:decode_artifact_frames`、dino/motion 的 `{models,functions}` + config
+- 共享积木：`vrl/utils/media.py`、`vrl/rewards/models/media.py:decode_artifact_frames`、dino/motion 的 `{models,functions}` + config
 - 真机曲线接入点：[[SPRINT_cosmos_predict2_2b_trustworthy_curve]]
 
 ## 9. 参考

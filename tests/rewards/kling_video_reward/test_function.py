@@ -102,7 +102,7 @@ async def test_video_reward_materializes_artifacts_and_returns_runtime_scores(
         artifact_dir=str(tmp_path / "artifacts"),
         debug_dir=str(tmp_path / "debug"),
         retain_artifacts=True,
-        runtime=runtime,
+        inference_runtime=runtime,
     )
 
     report = await reward.score_batch_report([_sample(torch.ones(1, 2, 2, 2))])
@@ -134,7 +134,7 @@ async def test_video_reward_rejects_missing_runtime_results(tmp_path: Path) -> N
         score_key="overall_reward",
         artifact_format="tensor",  # codec-independent wiring test (no imageio dep)
         artifact_dir=str(tmp_path / "artifacts"),
-        runtime=_EmptyRuntime(),
+        inference_runtime=_EmptyRuntime(),
     )
 
     with pytest.raises(RuntimeError, match="result/artifact mismatch"):
@@ -152,7 +152,7 @@ async def test_video_reward_releases_artifacts_after_success_by_default(
         score_key="overall_reward",
         artifact_format="tensor",
         artifact_dir=str(tmp_path / "artifacts"),
-        runtime=runtime,
+        inference_runtime=runtime,
     )
 
     await reward.score_batch([_sample(torch.ones(1, 2, 2, 2))])

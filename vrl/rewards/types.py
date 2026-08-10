@@ -6,6 +6,8 @@ import math
 from dataclasses import dataclass, field
 from typing import Any
 
+from vrl.utils.config import require_exact_int
+
 
 @dataclass(slots=True)
 class RewardSample:
@@ -32,8 +34,12 @@ class RewardSample:
                 raise TypeError(f"RewardSample.{name} must be a str")
             if not value:
                 raise ValueError(f"RewardSample.{name} must be non-empty")
-        if self.policy_version is not None and int(self.policy_version) < 0:
-            raise ValueError("RewardSample.policy_version must be >= 0")
+        if self.policy_version is not None:
+            require_exact_int(
+                self.policy_version,
+                path="RewardSample.policy_version",
+                minimum=0,
+            )
 
 
 @dataclass(frozen=True, slots=True)

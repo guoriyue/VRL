@@ -25,18 +25,21 @@ from typing import Any
 
 import torch
 
-from vrl.rewards.base import decode_artifact_frames
+from vrl.rewards.inference import RewardInferenceArtifact, RewardInferenceRequest
+from vrl.rewards.models.base import LazyTorchModule
+from vrl.rewards.models.media import decode_artifact_frames
 
 
-class MotionDynamicsModel:
+class MotionDynamicsModel(LazyTorchModule):
     """Score generated-video motion magnitude with RAFT-small optical flow.
 
     Scores from decoded frames rather than ``artifact.as_media()``, so it cannot
-    use ``TorchRewardModel`` and hand-rolls the lazy-module parking contract
-    documented in ``vrl.rewards.models.base``.
+    use ``TorchRewardModel``. ``LazyTorchModule`` still supplies the shared
+    memory-pool loading lifecycle.
     """
 
     def __init__(self, worker_config: Mapping[str, Any]) -> None:
+        super().__init__()
         cfg = dict(worker_config)
         self.num_frames = max(2, int(cfg.get("num_frames", 16)))
         # RAFT needs H,W divisible by 8; 256 keeps small motions resolvable cheaply.
@@ -54,7 +57,6 @@ class MotionDynamicsModel:
         self.magnitude_scale = float(cfg.get("magnitude_scale", 50.0))
         requested = str(cfg.get("device", "")).strip()
         self.device = requested or ("cuda" if torch.cuda.is_available() else "cpu")
-        self._module: torch.nn.Module | None = None
 
     def _load_module(self) -> torch.nn.Module:
         from torchvision.models.optical_flow import Raft_Small_Weights, raft_small
@@ -65,17 +67,12 @@ class MotionDynamicsModel:
             param.requires_grad_(False)
         return model
 
-    def _module_for_inference(self) -> torch.nn.Module:
-        if self._module is None:
-            self._module = self._load_module()
-        return self._module
-
-    def prepare_for_inference(self) -> None:
-        """Materialize lazy model state inside the runtime's owning memory pool."""
-
-        self._module_for_inference()
-
-    def __call__(self, *, artifact: Any, request: Any) -> Mapping[str, float]:
+    def __call__(
+        self,
+        *,
+        artifact: RewardInferenceArtifact,
+        request: RewardInferenceRequest,
+    ) -> Mapping[str, float]:
         del request
         frames = decode_artifact_frames(artifact, self.num_frames)
         if frames.shape[0] < 2:

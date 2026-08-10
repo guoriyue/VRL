@@ -121,7 +121,7 @@ elif arr.ndim == 5:
     arr = arr[:, mid].transpose(0, 2, 3, 1)
 ```
 
-对本仓的**规范视频布局** `[B,C,T,H,W]`（`vrl/rewards/base.py::decode_artifact_frames` 的 docstring 明写「In-memory video media is channel-first `[C,T,H,W]` / `[1,C,T,H,W]`」）这行切的是**通道轴**。实测：
+对本仓的**规范视频布局** `[B,C,T,H,W]`（`vrl/rewards/models/media.py::decode_artifact_frames` 接受 channel-first `[C,T,H,W]` / `[1,C,T,H,W]`）这行切的是**通道轴**。实测：
 
 ```
 score_media(media=torch.rand(2,3,5,12,12)) -> TypeError: Cannot handle this data type: (1, 1, 5), |u1
@@ -263,7 +263,7 @@ def _build_chat_payload(video_paths, prompts, *, max_pixels, min_pixels) -> list
 
 ### 2.5 RW-06 — motion_dynamics：反静止塌缩守卫全仓零测试（→ T1 + optional 车道第一个真成员）
 
-模块 docstring 说这个 reward 的「single job」是给静止 / 模糊 / 时间均值塌缩钉一条硬地板。全仓提到 `MotionDynamicsReward` 的测试只有两条：`assert reward.runtime is not None` 和 `pytest.raises(TypeError, match="unknown_knob")`。**没有一条碰打分。**
+模块 docstring 说这个 reward 的「single job」是给静止 / 模糊 / 时间均值塌缩钉一条硬地板。全仓提到 `MotionDynamicsReward` 的测试只有两条：`assert reward.inference_runtime is not None` 和 `pytest.raises(TypeError, match="unknown_knob")`。**没有一条碰打分。**
 
 无人看守的算术：interpolate 到 `flow_size` → 映射到 [-1,1] → 沿 flow 轴 `torch.linalg.vector_norm` → 除以帧对角线 `sqrt(2)*flow_size` → `topk(k = numel * top_fraction)` → mean → `min(1.0, max(0.0, raw * magnitude_scale))`。`vrl/rewards/models/motion_dynamics.py:50-53` 的注释解释 `magnitude_scale=50` 是调出来的（DROID 运动落 ~0.37、静止 ~0.03），这个常数今天没人守。
 

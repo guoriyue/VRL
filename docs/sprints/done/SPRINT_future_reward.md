@@ -149,7 +149,7 @@ exact − 全候选最低）：
   `vrl/config/presets/reward/target_dino_similarity.yaml`。
 - RAFT motion guard：`vrl/rewards/{models,functions}/motion_dynamics.py` +
   `vrl/config/presets/reward/motion_dynamics.yaml`。
-- 共享:帧解码 helper 进 `vrl/utils/media.py`(`read_video_frames`/`sample_frames`/`align_frame_counts`/`frames_thwc_to_float`)+ `decode_artifact_frames` 进 `vrl/rewards/base.py`(没动被退役的 pixel model)。
+- 共享:帧解码 helper 进 `vrl/utils/media.py`(`read_video_frames`/`sample_frames`/`align_frame_counts`/`frames_thwc_to_float`)+ `decode_artifact_frames` 进 `vrl/rewards/models/media.py`(没动被退役的 pixel model)。
 - registry 注册 dino + motion(可复用积木);两个单 reward 组 config。**probe + 这两个组 = 真资产,任何实验按需 compose。**
 - **历史 baseline recipes**：
   `vrl/config/presets/experiment/cosmos_predict2/online_grpo_droid_target_480p.yaml` 与

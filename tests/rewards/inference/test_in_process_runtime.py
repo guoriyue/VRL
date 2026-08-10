@@ -446,7 +446,7 @@ async def test_real_aesthetic_score_parks_stably_across_two_cycles() -> None:
             "device": "cuda:0",
             "dtype": "float32",
             "model_name": "openai/clip-vit-large-patch14",
-            "model_factory": "vrl.rewards.models.aesthetic:aesthetic_reward_model",
+            "model_factory": "vrl.rewards.models.aesthetic:AestheticRewardModel",
             "sleep_offload": True,
             "memory_parking_residual_bytes_limit": CUDA_RUNTIME_RESIDUAL_BYTES_LIMIT,
         },

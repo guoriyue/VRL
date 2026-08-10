@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import torch
 
-from vrl.rewards.base import decode_artifact_frames
 from vrl.rewards.inference import RewardInferenceArtifact
+from vrl.rewards.models.media import decode_artifact_frames
 
 
 def test_inline_uint8_video_reaches_reward_as_original_normalized_pixels() -> None:

@@ -12,7 +12,11 @@ from vrl.rewards.inference import RewardMemoryReleaseProof
 from vrl.rewards.runtime import RewardFunctionRuntime
 
 
-def _sample(sample_id: str = "request-0:sample:0") -> RewardSample:
+def _sample(
+    sample_id: str = "request-0:sample:0",
+    *,
+    policy_version: int | None = None,
+) -> RewardSample:
     return RewardSample(
         prompt="prompt",
         output=object(),
@@ -20,6 +24,7 @@ def _sample(sample_id: str = "request-0:sample:0") -> RewardSample:
         sample_id=sample_id,
         group_id="request-0:prompt:0",
         trajectory_id=sample_id,
+        policy_version=policy_version,
     )
 
 
@@ -47,6 +52,26 @@ def test_reward_sample_request_and_output_require_string_ids() -> None:
             sample_ids=(7,),  # type: ignore[arg-type]
             scores=(1.0,),
         )
+
+
+@pytest.mark.parametrize("policy_version", [None, 0, 7])
+def test_reward_sample_accepts_nonnegative_integer_policy_versions(
+    policy_version: int | None,
+) -> None:
+    sample = _sample(policy_version=policy_version)
+
+    assert sample.policy_version is policy_version
+
+
+def test_reward_sample_rejects_negative_policy_version() -> None:
+    with pytest.raises(ValueError, match=r"RewardSample\.policy_version must be >= 0"):
+        _sample(policy_version=-1)
+
+
+@pytest.mark.parametrize("policy_version", [False, True, -0.5, 0.0, 1.5, "7"])
+def test_reward_sample_rejects_non_integer_policy_versions(policy_version: object) -> None:
+    with pytest.raises(ValueError, match=r"RewardSample\.policy_version must be an integer"):
+        _sample(policy_version=policy_version)  # type: ignore[arg-type]
 
 
 def test_reward_output_validates_request_identity_and_order() -> None:

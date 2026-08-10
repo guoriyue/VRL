@@ -18,12 +18,12 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any
 
-from vrl.rewards.base import RewardFunction
+from vrl.rewards.base import InferenceRewardFunction
 from vrl.rewards.models.ocr import OCRRewardModel
 from vrl.rewards.runtime import InProcessRewardInferenceRuntime
 
 
-class OCRReward(RewardFunction):
+class OCRReward(InferenceRewardFunction):
     """OCR-based text matching reward (flow_grpo-compatible).
 
     Uses ``paddleocr`` (matches flow_grpo's engine choice) to detect text in
@@ -47,8 +47,8 @@ class OCRReward(RewardFunction):
         super().__init__(
             reward_name="ocr",
             score_key="ocr",
-            runtime=InProcessRewardInferenceRuntime(model=model),
-            artifact_builder=lambda samples: RewardFunction.build_inmemory_artifacts(
+            inference_runtime=InProcessRewardInferenceRuntime(model=model),
+            artifact_builder=lambda samples: InferenceRewardFunction.build_inmemory_artifacts(
                 samples,
                 media_type="image",
             ),

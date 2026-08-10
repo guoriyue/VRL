@@ -105,6 +105,8 @@ class AestheticRewardModel(TorchRewardModel):
 
 
 def aesthetic_reward_model(worker_config: Mapping[str, Any]) -> AestheticRewardModel:
+    """Preserve the external ``worker_config.model_factory`` plugin path."""
+
     return AestheticRewardModel(worker_config)
 
 

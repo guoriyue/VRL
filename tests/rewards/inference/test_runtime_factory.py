@@ -55,9 +55,9 @@ def test_runtime_requires_model_factory() -> None:
 def test_model_backed_reward_builds_in_process_runtime_directly() -> None:
     reward = PickScoreReward(device="cpu")
 
-    assert isinstance(reward.runtime, InProcessRewardInferenceRuntime)
-    assert reward.runtime._worker_config["model_factory"] == (
-        "vrl.rewards.models.pickscore:pickscore_reward_model"
+    assert isinstance(reward.inference_runtime, InProcessRewardInferenceRuntime)
+    assert reward.inference_runtime._worker_config["model_factory"] == (
+        "vrl.rewards.models.pickscore:PickScoreRewardModel"
     )
 
 
@@ -70,8 +70,8 @@ def test_video_reward_derives_internal_model_factory_from_reward_name(tmp_path) 
         worker_config={"model_path": "", "dtype": "bfloat16"},
     )
 
-    assert isinstance(reward.runtime, InProcessRewardInferenceRuntime)
-    assert reward.runtime._worker_config == {
+    assert isinstance(reward.inference_runtime, InProcessRewardInferenceRuntime)
+    assert reward.inference_runtime._worker_config == {
         "model_path": "",
         "dtype": "bfloat16",
         "model_factory": _KLING_VIDEO_REWARD_MODEL,
@@ -88,8 +88,8 @@ def test_composite_disk_reward_injects_factory_without_model_repository(tmp_path
         worker_config={"reward_model_version": "robotics-video-reward-v1"},
     )
 
-    assert isinstance(reward.runtime, InProcessRewardInferenceRuntime)
-    assert reward.runtime._worker_config["model_factory"] == (
+    assert isinstance(reward.inference_runtime, InProcessRewardInferenceRuntime)
+    assert reward.inference_runtime._worker_config["model_factory"] == (
         "vrl.rewards.models.robotics_video_reward:RoboticsVideoRewardModel"
     )
 

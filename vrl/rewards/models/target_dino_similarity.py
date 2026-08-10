@@ -30,7 +30,9 @@ from typing import Any
 
 import torch
 
-from vrl.rewards.base import decode_artifact_frames
+from vrl.rewards.inference import RewardInferenceArtifact, RewardInferenceRequest
+from vrl.rewards.models.base import LazyTorchModule
+from vrl.rewards.models.media import decode_artifact_frames
 from vrl.utils.artifacts import default_data_root, resolve_artifact_path
 from vrl.utils.media import align_frame_counts, read_image_as_frames, read_video_frames
 
@@ -42,16 +44,16 @@ _IMAGENET_STD = (0.229, 0.224, 0.225)
 _DINO_INPUT_SIZE = 224
 
 
-class TargetDinoSimilarityModel:
+class TargetDinoSimilarityModel(LazyTorchModule):
     """Compare generated frames against target media via frozen DINOv2 embeddings.
 
     Reads the target out of ``artifact.metadata`` rather than
     ``artifact.as_media()``, so it cannot use ``TorchRewardModel`` and
-    hand-rolls the lazy-module parking contract documented in
-    ``vrl.rewards.models.base``.
+    uses ``LazyTorchModule`` for the shared memory-pool loading lifecycle.
     """
 
     def __init__(self, worker_config: Mapping[str, Any]) -> None:
+        super().__init__()
         cfg = dict(worker_config)
         self.data_root = str(cfg.get("data_root") or default_data_root())
         self.num_frames = max(1, int(cfg.get("num_frames", 16)))
@@ -68,7 +70,6 @@ class TargetDinoSimilarityModel:
         self.hub_model = str(cfg.get("dino_hub_model", "dinov2_vits14"))
         requested = str(cfg.get("device", "")).strip()
         self.device = requested or ("cuda" if torch.cuda.is_available() else "cpu")
-        self._module: torch.nn.Module | None = None
 
     def _load_module(self) -> torch.nn.Module:
         # Lazy so importing the module (e.g. for the registry) never pulls weights.
@@ -78,19 +79,14 @@ class TargetDinoSimilarityModel:
             param.requires_grad_(False)
         return model
 
-    def _module_for_inference(self) -> torch.nn.Module:
-        if self._module is None:
-            self._module = self._load_module()
-        return self._module
-
-    def prepare_for_inference(self) -> None:
-        """Materialize lazy model state inside the runtime's owning memory pool."""
-
-        self._module_for_inference()
-
-    def __call__(self, *, artifact: Any, request: Any) -> Mapping[str, float]:
+    def __call__(
+        self,
+        *,
+        artifact: RewardInferenceArtifact,
+        request: RewardInferenceRequest,
+    ) -> Mapping[str, float]:
         del request
-        metadata = dict(getattr(artifact, "metadata", {}) or {})
+        metadata = dict(artifact.metadata)
         target_video = str(metadata.get("target_video", "") or "").strip()
         target_image = str(metadata.get("target_image", "") or "").strip()
         if not target_video and not target_image:

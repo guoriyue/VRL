@@ -44,33 +44,6 @@ async def test_geneval_reward_uses_injected_scorer_metadata() -> None:
 
 
 @pytest.mark.asyncio
-async def test_geneval_reward_reads_manifest_row_metadata() -> None:
-    """Checks GenEval reward reads manifest row metadata."""
-
-    def scorer(**kwargs):
-        assert kwargs["geneval"]["tag"] == "single_object"
-        return 0.5
-
-    reward = GenEvalReward(device="cpu", scorer=scorer)
-    score = await reward.score(
-        _sample(
-            {
-                "manifest_row": {
-                    "metadata": {
-                        "geneval": {
-                            "tag": "single_object",
-                            "include": [{"class": "bench", "count": 1}],
-                        },
-                    },
-                },
-            },
-        ),
-    )
-
-    assert score == pytest.approx(0.5)
-
-
-@pytest.mark.asyncio
 async def test_geneval_reward_requires_metadata() -> None:
     """Checks GenEval reward requires metadata."""
     with pytest.raises(ValueError, match=r"metadata\.geneval"):

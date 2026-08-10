@@ -244,7 +244,7 @@ def test_sana_aesthetic_keeps_cpu_observation_only_pickscore() -> None:
         ("pickscore", 0.0),
     ]
     pickscore = reward.rewards[1][2]
-    assert pickscore.runtime._worker_config["device"] == "cpu"
+    assert pickscore.inference_runtime._worker_config["device"] == "cpu"
 
 
 def test_sana_family_defaults_to_native_fp16() -> None:
@@ -364,8 +364,8 @@ def test_sana_fullparam_long_is_fresh_and_pins_reward_revisions() -> None:
         resources=resolve_distributed_resources(cfg),
         device="cuda:0",
     )
-    aesthetic_config = reward.rewards[0][2].runtime._worker_config
-    pickscore_config = reward.rewards[1][2].runtime._worker_config
+    aesthetic_config = reward.rewards[0][2].inference_runtime._worker_config
+    pickscore_config = reward.rewards[1][2].inference_runtime._worker_config
     assert aesthetic_config["model_revision"] == ("32bd64288804d66eefd0ccbe215aa642df71cc41")
     assert pickscore_config["device"] == "cpu"
     assert pickscore_config["processor_revision"] == ("1c2b8495b28150b8a4922ee1c8edee224c284c0c")

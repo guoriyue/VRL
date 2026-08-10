@@ -94,12 +94,7 @@ class RewardCleanupError(RuntimeError):
 
 
 class RewardFunction:
-    """Base class for generated-sample rewards.
-
-    Subclasses can either override ``score`` / ``score_batch`` directly, or pass
-    an inference runtime plus artifact builder to reuse the standard model-backed
-    scoring path.
-    """
+    """Base class for pure scoring functions and reward composition."""
 
     # None is fail-closed. A specialized base class declares this capability only
     # when all model-owned CUDA state is built in the tagged runtime pool.
@@ -132,6 +127,52 @@ class RewardFunction:
             overrides=configured_devices,
         )
 
+    @property
+    def scoring_is_nonblocking(self) -> bool:
+        """Whether this scorer yields while scoring runs elsewhere."""
+
+        return False
+
+    @property
+    def external_accelerator_isolation_verified(self) -> bool:
+        """Whether out-of-plan reward accelerator work has been isolated."""
+
+        return True
+
+    async def preflight(self) -> None:
+        """Validate dependencies before scoring begins."""
+
+        return None
+
+    async def park_memory(self) -> tuple[RewardMemoryReleaseProof, ...]:
+        """Release reward-owned accelerator memory, when applicable."""
+
+        return ()
+
+    async def score(self, sample: RewardSample) -> float:
+        """Score a single generated sample."""
+
+        raise NotImplementedError(f"{type(self).__name__}.score is not implemented")
+
+    async def score_batch(self, samples: list[RewardSample]) -> list[float]:
+        """Score a batch of generated samples sequentially by default."""
+
+        return [await self.score(sample) for sample in samples]
+
+    async def score_batch_report(self, samples: list[RewardSample]) -> RewardBatchReport:
+        """Score a batch and return the observations from this exact call."""
+
+        return RewardBatchReport(scores=await self.score_batch(samples))
+
+    async def shutdown(self) -> None:
+        """Release reward-owned resources, when applicable."""
+
+        return None
+
+
+class InferenceRewardFunction(RewardFunction):
+    """Reward function backed by one inference runtime and artifact builder."""
+
     @staticmethod
     def build_inmemory_artifacts(
         samples: list[RewardSample],
@@ -163,10 +204,10 @@ class RewardFunction:
     def __init__(
         self,
         *,
-        reward_name: str = "",
-        score_key: str = "",
-        runtime: RewardInferenceRuntime | None = None,
-        artifact_builder: ArtifactBuilder | None = None,
+        reward_name: str,
+        score_key: str,
+        inference_runtime: RewardInferenceRuntime,
+        artifact_builder: ArtifactBuilder,
         artifact_finalizer: ArtifactFinalizer | None = None,
         artifact_retainer: ArtifactFinalizer | None = None,
         request_metadata: Mapping[str, Any] | None = None,
@@ -174,9 +215,24 @@ class RewardFunction:
         request_prefix: str = "reward",
         debug_basename: str = "reward",
     ) -> None:
-        self.reward_name = str(reward_name)
-        self.score_key = str(score_key)
-        self.runtime = runtime
+        normalized_reward_name = str(reward_name).strip()
+        if not normalized_reward_name:
+            raise ValueError("reward_name must be non-empty")
+        normalized_score_key = str(score_key).strip()
+        if not normalized_score_key:
+            raise ValueError("score_key must be non-empty")
+        if inference_runtime is None:
+            raise TypeError("inference_runtime must be a RewardInferenceRuntime")
+        for method_name in ("score_batch", "shutdown"):
+            if not callable(getattr(inference_runtime, method_name, None)):
+                raise TypeError(
+                    "inference_runtime must provide async score_batch() and shutdown()",
+                )
+        if not callable(artifact_builder):
+            raise TypeError("artifact_builder must be callable")
+        self.reward_name = normalized_reward_name
+        self.score_key = normalized_score_key
+        self.inference_runtime = inference_runtime
         self._artifact_builder = artifact_builder
         self._artifact_finalizer = artifact_finalizer
         self._artifact_retainer = artifact_retainer
@@ -190,19 +246,15 @@ class RewardFunction:
     def scoring_is_nonblocking(self) -> bool:
         """Whether this scorer yields while inference runs elsewhere."""
 
-        return bool(
-            self.runtime is not None and getattr(self.runtime, "scoring_is_nonblocking", False)
-        )
+        return bool(getattr(self.inference_runtime, "scoring_is_nonblocking", False))
 
     @property
     def external_accelerator_isolation_verified(self) -> bool:
         """Whether out-of-plan reward accelerator work has been isolated."""
 
-        if self.runtime is None:
-            return True
         return bool(
             getattr(
-                self.runtime,
+                self.inference_runtime,
                 "external_accelerator_isolation_verified",
                 False,
             ),
@@ -217,51 +269,44 @@ class RewardFunction:
         startup instead of after the first generation batch completes.
         """
 
-        ensure_ready = getattr(self.runtime, "ensure_ready", None)
+        ensure_ready = getattr(self.inference_runtime, "ensure_ready", None)
         if callable(ensure_ready):
             await ensure_ready()
 
     async def park_memory(self) -> tuple[RewardMemoryReleaseProof, ...]:
         """Park this reward runtime, retrying the runtime's current request."""
 
-        runtime = self.runtime
-        if not isinstance(runtime, RewardMemoryParkingRuntime):
+        inference_runtime = self.inference_runtime
+        if not isinstance(inference_runtime, RewardMemoryParkingRuntime):
             return ()
-        if not runtime.requires_memory_parking:
+        if not inference_runtime.requires_memory_parking:
             return ()
         request_id = self._last_reward_request_id
         if request_id is None:
             # This component never activated its model (for example an earlier
             # sibling failed). There is no GPU lease to release.
             return ()
-        proof = await runtime.park_memory()
+        proof = await inference_runtime.park_memory()
         proof.validate(request_id=request_id)
         return (proof,)
 
     async def score(self, sample: RewardSample) -> float:
         """Score a single generated sample."""
-        if self._uses_inference_runtime():
-            return (await self.score_batch([sample]))[0]
-        raise NotImplementedError(f"{type(self).__name__}.score is not implemented")
+
+        return (await self.score_batch([sample]))[0]
 
     async def score_batch(self, samples: list[RewardSample]) -> list[float]:
-        """Score a batch of generated samples (default: sequential)."""
-        if self._uses_inference_runtime():
-            return (await self._score_with_inference_runtime(samples)).scores
-        return [await self.score(sample) for sample in samples]
+        """Score a batch through the configured inference runtime."""
+
+        return (await self._score_with_inference_runtime(samples)).scores
 
     async def score_batch_report(self, samples: list[RewardSample]) -> RewardBatchReport:
         """Score a batch and return the observations from this exact call."""
-        if self._uses_inference_runtime():
-            return await self._score_with_inference_runtime(samples)
-        return RewardBatchReport(scores=await self.score_batch(samples))
+
+        return await self._score_with_inference_runtime(samples)
 
     async def shutdown(self) -> None:
-        if self.runtime is not None:
-            await self.runtime.shutdown()
-
-    def _uses_inference_runtime(self) -> bool:
-        return self.runtime is not None and self._artifact_builder is not None
+        await self.inference_runtime.shutdown()
 
     def _init_reward_model(
         self,
@@ -275,14 +320,14 @@ class RewardFunction:
 
         from vrl.rewards.runtime import build_reward_inference_runtime
 
-        RewardFunction.__init__(
+        InferenceRewardFunction.__init__(
             self,
             reward_name=reward_name,
             score_key=score_key,
-            runtime=build_reward_inference_runtime(
+            inference_runtime=build_reward_inference_runtime(
                 {**dict(worker_config), "model_factory": str(model_factory)},
             ),
-            artifact_builder=lambda samples: RewardFunction.build_inmemory_artifacts(
+            artifact_builder=lambda samples: InferenceRewardFunction.build_inmemory_artifacts(
                 samples,
                 media_type="image",
             ),
@@ -295,8 +340,8 @@ class RewardFunction:
         request_prefix: str,
         debug_basename: str,
         artifact_format: str,
-        reward_name: str = "",
-        score_key: str = "",
+        reward_name: str,
+        score_key: str,
         media_type: MediaType = "video",
         artifact_dir: str = "outputs/reward_artifacts",
         debug_dir: str = "",
@@ -305,13 +350,13 @@ class RewardFunction:
         memory_parking_residual_bytes_limit: int = 0,
         retain_artifacts: bool = False,
         worker_config: Mapping[str, Any] | None = None,
-        runtime: Any | None = None,
+        inference_runtime: RewardInferenceRuntime | None = None,
     ) -> None:
         """Initialize a reward whose media is materialized to disk before scoring.
 
         Sibling to :meth:`_init_reward_model`: same idea (configure ``self`` as a
         ``RewardFunction``), but the heavyweight path — media is written to disk
-        via ``VideoRewardArtifactStore`` and scored through the selected runtime,
+        via ``VideoRewardArtifactStore`` and scored through the selected inference runtime,
         instead of passed in-memory. ``sleep_offload`` releases an in-process
         model's physical GPU pages between scores while its contents stay in
         pinned host RAM (the rollout/trainer own the GPU then), mirroring the
@@ -320,9 +365,9 @@ class RewardFunction:
         are the only per-reward differences (concrete rewards set their own
         ``reward_name`` / ``score_key`` / ``artifact_format`` defaults before
         delegating); everything else is shared wiring, so no concrete reward
-        copies this body. ``runtime`` injects a ready ``RewardInferenceRuntime``
-        (tests); it wins over the factory-built one. Disk files belong to this
-        reward call and are deleted after terminal success or failure; explicit
+        copies this body. ``inference_runtime`` injects a ready
+        ``RewardInferenceRuntime`` (tests); it wins over the factory-built one.
+        Disk files belong to this reward call and are deleted after terminal success or failure; explicit
         ``retain_artifacts`` or an ambiguous remote state transfers them to the
         debug/output owner instead.
         """
@@ -337,7 +382,7 @@ class RewardFunction:
             artifact_format=str(artifact_format),
         )
 
-        if runtime is None:
+        if inference_runtime is None:
             worker_cfg = dict(worker_config or {})
             has_model_factory = bool(
                 str(worker_cfg.get("model_factory", "")).strip(),
@@ -355,8 +400,8 @@ class RewardFunction:
             model_path = str(worker_cfg.get("model_path", "")).strip()
             # YAML names the public model; the loader needs the private factory.
             if not has_model_factory:
-                # ``runtime is None`` is the in-process path: HTTP components
-                # inject their ready client runtime in MultiReward before they
+                # A missing injected inference runtime is the in-process path:
+                # HTTP components inject their ready client in MultiReward before they
                 # reach this constructor. Every local disk reward therefore
                 # needs its concrete factory even when it is a composite model
                 # rather than one Hugging Face repository.
@@ -380,13 +425,13 @@ class RewardFunction:
                 worker_cfg["memory_parking_residual_bytes_limit"] = int(
                     memory_parking_residual_bytes_limit,
                 )
-            runtime = build_reward_inference_runtime(worker_cfg)
+            inference_runtime = build_reward_inference_runtime(worker_cfg)
 
-        RewardFunction.__init__(
+        InferenceRewardFunction.__init__(
             self,
             reward_name=str(reward_name),
             score_key=str(score_key),
-            runtime=runtime,
+            inference_runtime=inference_runtime,
             artifact_builder=self.artifact_store.materialize,
             artifact_finalizer=(
                 self.artifact_store.retain if retain_artifacts else self.artifact_store.release
@@ -405,10 +450,8 @@ class RewardFunction:
         if not samples:
             return RewardBatchReport(scores=[])
 
-        runtime = self.runtime
+        inference_runtime = self.inference_runtime
         artifact_builder = self._artifact_builder
-        if runtime is None or artifact_builder is None:
-            raise RuntimeError("RewardFunction inference runtime is not configured")
 
         total_started = time.perf_counter()
         materialize_started = time.perf_counter()
@@ -466,7 +509,7 @@ class RewardFunction:
             score_error: BaseException | None = None
             raw_results: list[RewardInferenceResult] | None = None
             try:
-                raw_results = await runtime.score_batch(request)
+                raw_results = await inference_runtime.score_batch(request)
             except BaseException as error:
                 score_error = error
             park_error: BaseException | None = None
@@ -600,7 +643,7 @@ class RewardFunction:
                 handle.write(json.dumps(asdict(result), sort_keys=True) + "\n")
 
 
-class CumemRewardFunction(RewardFunction):
+class CumemRewardFunction(InferenceRewardFunction):
     """Reward whose model allocations support verified tagged-pool parking."""
 
     memory_parking: ClassVar[RewardMemoryParkingCapability] = RewardMemoryParkingCapability(
@@ -612,51 +655,6 @@ class DiskArtifactRewardFunction(CumemRewardFunction):
     """Registry-visible base for rewards that require disk materialization."""
 
     artifact_transport: ClassVar[ArtifactTransport] = "disk"
-
-
-def decode_artifact_frames(artifact: Any, num_frames: int | None = None) -> Any:
-    """Decode a reward artifact's generated media to a ``[T,H,W,3]`` float frame stack.
-
-    Shared by the frame-comparison rewards (target_dino_similarity,
-    motion_dynamics): an artifact carries either a materialized file path (the Ray
-    disk path / probe mp4) or an in-memory tensor (the inline collector path), and
-    both must yield the same ``[T,H,W,3]`` float tensor in ``[0,1]``. Lives in the
-    rewards base (not utils/media) because it depends on the artifact contract.
-
-    In-memory video media is channel-first ``[C,T,H,W]`` / ``[1,C,T,H,W]`` (the layout
-    the collector emits and ``video_tensor_to_uint8_frames`` enforces, raising loudly on
-    a wrong channel count); images are ``[C,H,W]``. The on-disk path (mp4/png) is the
-    common case in practice (the probe and the Ray pool both materialize to disk).
-    """
-
-    import torch
-
-    from vrl.utils.artifacts import IMAGE_SUFFIXES
-    from vrl.utils.media import (
-        frames_thwc_to_float,
-        image_to_uint8_hwc,
-        read_image_as_frames,
-        read_video_frames,
-        sample_frames,
-        video_tensor_to_uint8_frames,
-    )
-
-    path = str(getattr(artifact, "path", "") or "")
-    if path and not path.endswith(".pt"):
-        if Path(path).suffix.lower() in IMAGE_SUFFIXES:
-            return read_image_as_frames(path)
-        return read_video_frames(path, num_frames)
-    media = artifact.as_media()
-    if isinstance(media, torch.Tensor):
-        if media.ndim in {4, 5}:
-            frames = torch.from_numpy(video_tensor_to_uint8_frames(media))
-            return sample_frames(frames_thwc_to_float(frames), num_frames)
-        if media.ndim == 3:
-            image = torch.from_numpy(image_to_uint8_hwc(media))
-            return frames_thwc_to_float(image.unsqueeze(0))
-    raise TypeError(
-        f"reward artifact expected image/video tensor or media path, got {type(media)}",
-    )
 
 
 def _max_result_metadata_timing(
@@ -675,9 +673,9 @@ __all__ = [
     "ArtifactTransport",
     "CumemRewardFunction",
     "DiskArtifactRewardFunction",
+    "InferenceRewardFunction",
     "RewardBatchReport",
     "RewardCleanupError",
     "RewardFunction",
-    "decode_artifact_frames",
     "resolve_reward_component_device",
 ]

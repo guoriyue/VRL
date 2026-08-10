@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import importlib
 import traceback
 from collections.abc import Mapping
 from typing import Any
@@ -22,6 +21,7 @@ from vrl.rewards.inference import (
     validate_reward_parking_residual,
 )
 from vrl.rewards.types import RewardOutput, RewardRequest
+from vrl.utils.config import import_from_path
 from vrl.utils.cuda_memory import (
     CumemPool,
     gpu_used_bytes,
@@ -295,8 +295,7 @@ class InProcessRewardInferenceRuntime:
                     "InProcessRewardInferenceRuntime requires worker_config.model_factory "
                     "(import path to a RewardModel factory) or an explicit model",
                 )
-            module_path, attr = factory_path.split(":", 1)
-            factory = getattr(importlib.import_module(module_path), attr)
+            factory = import_from_path(factory_path)
             if self._sleep_offload:
                 # Claim the pool before capturing the baseline so a box without
                 # CuMem leaves no phantom baseline behind for shutdown's residual

@@ -76,7 +76,7 @@ def _build_reward(tmp_path: Path, *, score_key: str = "physical_common_sense", *
         artifact_dir=str(tmp_path / "artifacts"),
         debug_dir=str(tmp_path / "debug"),
         retain_artifacts=True,
-        runtime=_FakeRuntime(),
+        inference_runtime=_FakeRuntime(),
         **kwargs,
     )
 
@@ -88,7 +88,7 @@ async def test_materializes_artifacts_and_selects_score_key(tmp_path: Path) -> N
     scores = await reward.score_batch([_sample(torch.ones(1, 2, 2, 2))])
 
     assert scores == pytest.approx([3.25])
-    request = reward.runtime.requests[0]
+    request = reward.inference_runtime.requests[0]
     assert request.reward_name == "videoscore2"
     assert request.score_key == "physical_common_sense"
     assert request.artifacts[0].policy_version == 7

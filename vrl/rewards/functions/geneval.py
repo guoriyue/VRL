@@ -11,14 +11,14 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import Any
 
-from vrl.rewards.base import RewardFunction
+from vrl.rewards.base import InferenceRewardFunction
 from vrl.rewards.inference import RewardInferenceArtifact
 from vrl.rewards.models.geneval import GenEvalRewardModel, _OutputBox
 from vrl.rewards.runtime import InProcessRewardInferenceRuntime
 from vrl.rewards.types import RewardSample
 
 
-class GenEvalReward(RewardFunction):
+class GenEvalReward(InferenceRewardFunction):
     """Score samples against GenEval prompt metadata.
 
     The built-in mode delegates actual image/object scoring to an import-path
@@ -52,7 +52,7 @@ class GenEvalReward(RewardFunction):
         super().__init__(
             reward_name="geneval",
             score_key="geneval",
-            runtime=InProcessRewardInferenceRuntime(model=model),
+            inference_runtime=InProcessRewardInferenceRuntime(model=model),
             artifact_builder=self._build_artifacts,
             debug_dir=debug_dir,
             request_prefix="geneval",
@@ -93,20 +93,6 @@ class GenEvalReward(RewardFunction):
         geneval = metadata.get("geneval")
         if isinstance(geneval, dict):
             return geneval
-
-        manifest_row = metadata.get("manifest_row")
-        if isinstance(manifest_row, dict):
-            row_metadata = manifest_row.get("metadata")
-            if isinstance(row_metadata, dict) and isinstance(row_metadata.get("geneval"), dict):
-                return dict(row_metadata["geneval"])
-            if isinstance(manifest_row.get("geneval"), dict):
-                return dict(manifest_row["geneval"])
-            if "tag" in manifest_row and "include" in manifest_row:
-                return {
-                    key: manifest_row[key]
-                    for key in ("tag", "include", "exclude")
-                    if key in manifest_row
-                }
 
         raise ValueError("GenEvalReward requires metadata.geneval on each sample")
 

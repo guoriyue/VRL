@@ -21,6 +21,8 @@ class KlingVideoReward(DiskArtifactRewardFunction):
     def __init__(
         self,
         *,
+        reward_name: str = "kling_video_reward",
+        score_key: str = "overall_reward",
         artifact_format: str = "mp4",
         **kwargs: Any,
     ) -> None:
@@ -31,6 +33,8 @@ class KlingVideoReward(DiskArtifactRewardFunction):
             request_prefix="kling-video-reward",
             debug_basename="kling_video_reward",
             artifact_format=artifact_format,
+            reward_name=reward_name,
+            score_key=score_key,
             **kwargs,
         )
 

@@ -5,11 +5,17 @@ from __future__ import annotations
 import pytest
 
 from vrl.config.reward_inference import RewardInferenceConfig
-from vrl.rewards.base import RewardBatchReport, RewardCleanupError, RewardFunction
+from vrl.rewards.base import (
+    InferenceRewardFunction,
+    RewardBatchReport,
+    RewardCleanupError,
+    RewardFunction,
+)
 from vrl.rewards.functions.registry import (
     MultiReward,
     validate_reward_memory_parking_components,
 )
+from vrl.rewards.functions.videoscore2 import VideoScore2Reward
 from vrl.rewards.runtime import InProcessRewardInferenceRuntime
 from vrl.rewards.service.client import HttpRewardInferenceRuntime
 from vrl.rewards.service.server import RewardService
@@ -314,8 +320,8 @@ def test_factory_parking_policy_distinguishes_cpu_and_dedicated_rewards() -> Non
         memory_parking_required=False,
     )
 
-    cpu_runtime = cpu_reward.rewards[0][2].runtime
-    dedicated_runtime = dedicated_reward.rewards[0][2].runtime
+    cpu_runtime = cpu_reward.rewards[0][2].inference_runtime
+    dedicated_runtime = dedicated_reward.rewards[0][2].inference_runtime
     assert isinstance(cpu_runtime, InProcessRewardInferenceRuntime)
     assert isinstance(dedicated_runtime, InProcessRewardInferenceRuntime)
     assert cpu_runtime.requires_memory_parking is False
@@ -358,7 +364,7 @@ def test_shared_parking_allows_one_gpu_reward_with_cpu_sibling() -> None:
         memory_parking_required=True,
     )
 
-    runtimes = {name: fn.runtime for name, _, fn in reward.rewards}
+    runtimes = {name: fn.inference_runtime for name, _, fn in reward.rewards}
     functions = {name: fn for name, _, fn in reward.rewards}
     assert runtimes["aesthetic"].requires_memory_parking is True
     assert runtimes["aesthetic"]._parking_residual_bytes_limit == CUDA_RUNTIME_RESIDUAL_BYTES_LIMIT
@@ -409,7 +415,7 @@ def test_gpu_resource_allows_component_cpu_downgrade() -> None:
         memory_parking_required=True,
     )
 
-    runtimes = {name: fn.runtime for name, _, fn in reward.rewards}
+    runtimes = {name: fn.inference_runtime for name, _, fn in reward.rewards}
     runtime = runtimes["kling_video_reward"]
     assert isinstance(runtime, InProcessRewardInferenceRuntime)
     assert runtime._worker_config["device"] == "cpu"
@@ -456,7 +462,7 @@ def test_http_disk_reward_builds_transport_without_local_model_config(tmp_path) 
 
     component = reward.rewards[0][2]
     assert component.artifact_transport == "disk"
-    assert isinstance(component.runtime, HttpRewardInferenceRuntime)
+    assert isinstance(component.inference_runtime, HttpRewardInferenceRuntime)
     assert component.scoring_is_nonblocking is True
     assert component.external_accelerator_isolation_verified is False
     assert reward.scoring_is_nonblocking is True
@@ -480,6 +486,16 @@ def test_http_reward_rejects_inmemory_artifact_component() -> None:
         )
 
 
+@pytest.mark.parametrize("key", ["inference_runtime", "runtime"])
+def test_reward_config_rejects_runtime_injection_keys(key: str) -> None:
+    with pytest.raises(ValueError, match="runtime injection keys"):
+        MultiReward.from_dict(
+            {"aesthetic": 1.0},
+            device="cpu",
+            reward_kwargs={"aesthetic": {key: object()}},
+        )
+
+
 class _NeverScoredRuntime:
     """Service-side scoring runtime; preflight only ever reaches /ready and /info.
 
@@ -492,6 +508,11 @@ class _NeverScoredRuntime:
 
     async def shutdown(self) -> None:
         return None
+
+
+class _NeverScoredModel:
+    def __call__(self, *, artifact, request):
+        raise AssertionError("preflight must not score")
 
 
 @pytest.mark.real_cover(
@@ -542,13 +563,23 @@ async def test_preflight_reaches_every_remote_runtime_and_skips_local_ones(tmp_p
             ),
         )
 
-    remote_a = RewardFunction(reward_name="a", runtime=_client())
-    remote_b = RewardFunction(reward_name="b", runtime=_client())
+    remote_a = VideoScore2Reward(
+        reward_name="a",
+        inference_runtime=_client(),
+        artifact_dir=str(tmp_path / "remote-a"),
+    )
+    remote_b = VideoScore2Reward(
+        reward_name="b",
+        inference_runtime=_client(),
+        artifact_dir=str(tmp_path / "remote-b"),
+    )
     # A real in-process runtime is the "skips local ones" half: it has no
     # ensure_ready at all, so preflight's duck-type dispatch must step over it.
-    local = RewardFunction(
+    local = InferenceRewardFunction(
         reward_name="c",
-        runtime=InProcessRewardInferenceRuntime({}),
+        score_key="c",
+        inference_runtime=InProcessRewardInferenceRuntime(model=_NeverScoredModel()),
+        artifact_builder=InferenceRewardFunction.build_inmemory_artifacts,
     )
     assert not hasattr(InProcessRewardInferenceRuntime, "ensure_ready")
     reward = MultiReward([("a", 1.0, remote_a), ("b", 1.0, remote_b), ("c", 1.0, local)])
@@ -561,8 +592,8 @@ async def test_preflight_reaches_every_remote_runtime_and_skips_local_ones(tmp_p
         assert remote_a.external_accelerator_isolation_verified is True
         assert remote_b.external_accelerator_isolation_verified is True
     finally:
-        await remote_a.runtime.shutdown()
-        await remote_b.runtime.shutdown()
+        await remote_a.inference_runtime.shutdown()
+        await remote_b.inference_runtime.shutdown()
         await service.shutdown_async()
 
 

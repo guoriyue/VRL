@@ -798,13 +798,13 @@ def _build_reward_model_definitions(
         (
             "aesthetic",
             "aesthetic",
-            "vrl.rewards.models.aesthetic:aesthetic_reward_model",
+            "vrl.rewards.models.aesthetic:AestheticRewardModel",
             ("model_name", "model_revision"),
         ),
         (
             "pickscore",
             "pickscore",
-            "vrl.rewards.models.pickscore:pickscore_reward_model",
+            "vrl.rewards.models.pickscore:PickScoreRewardModel",
             ("processor_name", "processor_revision", "model_name", "model_revision"),
         ),
     ):

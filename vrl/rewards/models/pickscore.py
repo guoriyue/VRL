@@ -113,7 +113,7 @@ class PickScoreRewardModel(TorchRewardModel):
 
 
 def pickscore_reward_model(worker_config: Mapping[str, Any]) -> PickScoreRewardModel:
-    """RewardModel factory for the registry / in-process inference runtime."""
+    """Preserve the external ``worker_config.model_factory`` plugin path."""
 
     return PickScoreRewardModel(worker_config)
 

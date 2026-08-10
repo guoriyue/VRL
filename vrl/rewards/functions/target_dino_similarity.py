@@ -4,12 +4,12 @@ from __future__ import annotations
 
 from typing import Any
 
-from vrl.rewards.base import RewardFunction, resolve_reward_component_device
+from vrl.rewards.base import InferenceRewardFunction, resolve_reward_component_device
 from vrl.rewards.models.target_dino_similarity import TargetDinoSimilarityModel
 from vrl.rewards.runtime import InProcessRewardInferenceRuntime
 
 
-class TargetDinoSimilarityReward(RewardFunction):
+class TargetDinoSimilarityReward(InferenceRewardFunction):
     """Local reward comparing generated video to target media by DINOv2 cosine."""
 
     def __init__(
@@ -30,8 +30,8 @@ class TargetDinoSimilarityReward(RewardFunction):
         super().__init__(
             reward_name=reward_name,
             score_key=score_key,
-            runtime=InProcessRewardInferenceRuntime(model=model),
-            artifact_builder=lambda samples: RewardFunction.build_inmemory_artifacts(
+            inference_runtime=InProcessRewardInferenceRuntime(model=model),
+            artifact_builder=lambda samples: InferenceRewardFunction.build_inmemory_artifacts(
                 samples,
                 media_type="video",
             ),

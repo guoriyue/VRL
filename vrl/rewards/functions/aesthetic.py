@@ -26,7 +26,7 @@ class AestheticReward(CumemRewardFunction):
         self._init_reward_model(
             reward_name="aesthetic",
             score_key="aesthetic",
-            model_factory="vrl.rewards.models.aesthetic:aesthetic_reward_model",
+            model_factory="vrl.rewards.models.aesthetic:AestheticRewardModel",
             worker_config=worker_config,
         )
 

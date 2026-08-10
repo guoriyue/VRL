@@ -9,10 +9,7 @@ prompt). Media is pulled via ``artifact.as_media()``, so the same model
 scores an in-memory tensor or a materialized disk artifact (``.pt`` /
 ``.mp4`` path).
 
-CANONICAL LAZY-MODULE PARKING CONTRACT (this module is the reference; rewards
-that cannot use ``TorchRewardModel`` — see ``motion_dynamics`` and
-``target_dino_similarity``, which need the whole artifact rather than
-``as_media()`` — hand-roll the same three members):
+CANONICAL LAZY-MODULE PARKING CONTRACT (this module is the reference):
 
 - ``self._module: Any | None`` starts ``None``. Keeping the unbuilt state
   observable is deliberate: ``functools.cached_property`` would build the
@@ -76,23 +73,15 @@ class RewardModel(Protocol):
     ) -> Mapping[str, float]: ...
 
 
-class TorchRewardModel(ABC):
-    """Base class for torch reward models loaded in-process."""
+class LazyTorchModule(ABC):
+    """Opt-in lifecycle for modules built inside the inference memory pool."""
 
-    def __init__(self, worker_config: Mapping[str, Any]) -> None:
-        cfg = dict(worker_config)
-        self.worker_config = cfg
-        self.device = str(cfg.get("device", "cuda"))
-        self.dtype_str = str(cfg.get("dtype", "float32"))
+    def __init__(self) -> None:
         self._module: Any | None = None
-
-    @property
-    def dtype(self) -> Any:
-        return resolve_torch_dtype(self.dtype_str)
 
     @abstractmethod
     def _load_module(self) -> Any:
-        """Build this reward's complete CUDA state on ``self.device``."""
+        """Build this reward's complete device state."""
 
         raise NotImplementedError
 
@@ -105,6 +94,21 @@ class TorchRewardModel(ABC):
         """Materialize lazy model state inside the runtime's owning memory pool."""
 
         self._module_for_inference()
+
+
+class TorchRewardModel(LazyTorchModule):
+    """Base class for torch reward models loaded in-process."""
+
+    def __init__(self, worker_config: Mapping[str, Any]) -> None:
+        super().__init__()
+        cfg = dict(worker_config)
+        self.worker_config = cfg
+        self.device = str(cfg.get("device", "cuda"))
+        self.dtype_str = str(cfg.get("dtype", "float32"))
+
+    @property
+    def dtype(self) -> Any:
+        return resolve_torch_dtype(self.dtype_str)
 
     @abstractmethod
     def score_media(self, *, media: Any, prompt: str, request: Any) -> Mapping[str, float]:
@@ -122,6 +126,7 @@ class TorchRewardModel(ABC):
 
 
 __all__ = [
+    "LazyTorchModule",
     "RewardModel",
     "TorchRewardModel",
     "require_prompt_and_video_path",
