@@ -1,4 +1,11 @@
-"""Prompt collection helpers for rollout schedules."""
+"""Prompt collection helpers for rollout schedules.
+
+``collect_prompt_batches`` is the single collection loop shared by the strict
+schedule and the continuous producer, so per-group streaming, reward-task
+cleanup, group-id remapping, and collect-phase stats accounting exist once
+rather than per schedule. It drives a ``RolloutCollector`` but stays below the
+schedule layer: no weight sync, GPU parking, or iteration policy here.
+"""
 
 from __future__ import annotations
 
