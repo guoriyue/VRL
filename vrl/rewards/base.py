@@ -1,4 +1,16 @@
-"""RewardFunction base class for async generated-sample scoring."""
+"""RewardFunction base class for async generated-sample scoring.
+
+The plugin layer between ``RewardFunctionRuntime`` above (runtime.py) and the
+``RewardScorer`` transports below (inference.py): concrete rewards in
+vrl/rewards/functions subclass one of the bases here. The class ladder encodes
+capabilities the registry and runtime probe, not taxonomy:
+``InferenceRewardFunction`` owns the artifact-build / score / validate /
+finalize seam so every transport (including injected fakes) passes the same
+result-identity guard; ``CumemRewardFunction`` declares that all model CUDA
+state is built in the tagged pool, enabling verified memory parking;
+``DiskArtifactRewardFunction`` tells registry preflight that media must be
+materialized to disk before scoring.
+"""
 
 from __future__ import annotations
 
