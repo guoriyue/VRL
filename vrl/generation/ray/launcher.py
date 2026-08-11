@@ -9,7 +9,7 @@ from dataclasses import replace
 from functools import partial
 from typing import Any
 
-from vrl.generation.execution import DistributedExecutionPlanner
+from vrl.generation.execution.chunk_placement import DistributedExecutionPlanner
 from vrl.generation.ray.config import RayGenerationConfig
 from vrl.generation.ray.executor import RayGenerationExecutor
 from vrl.generation.ray.launch_inputs import RayGenerationLaunchInputs

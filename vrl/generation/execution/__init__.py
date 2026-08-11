@@ -1,47 +1,8 @@
-"""Engine execution planning and request batches."""
+"""Family-neutral chunk execution: planning, identity, workers, memory.
 
-from vrl.generation.execution.chunk_placement import (
-    DeviceAssignment,
-    DistributedExecutionPlanner,
-    DistributedGenerationPlan,
-)
-from vrl.generation.execution.chunks import (
-    SampleChunk,
-    build_prompt_chunks,
-    run_sample_chunks_with_oom_retry,
-)
-from vrl.generation.execution.ids import build_sample_rows
-from vrl.generation.execution.planner import (
-    EnginePlan,
-    build_engine_plan,
-)
-from vrl.generation.execution.types import (
-    ChunkExecutionEnvelope,
-    ChunkExecutionResult,
-    ChunkMemoryReading,
-    ChunkPlacementStrategy,
-    ChunkSizeProbeResult,
-    ChunkSizeProbeTrial,
-    WorkerMemoryParkingSnapshot,
-)
-from vrl.generation.execution.worker import GenerationWorkerCore
-
-__all__ = [
-    "ChunkExecutionEnvelope",
-    "ChunkExecutionResult",
-    "ChunkMemoryReading",
-    "ChunkPlacementStrategy",
-    "ChunkSizeProbeResult",
-    "ChunkSizeProbeTrial",
-    "DeviceAssignment",
-    "DistributedExecutionPlanner",
-    "DistributedGenerationPlan",
-    "EnginePlan",
-    "GenerationWorkerCore",
-    "SampleChunk",
-    "WorkerMemoryParkingSnapshot",
-    "build_engine_plan",
-    "build_prompt_chunks",
-    "build_sample_rows",
-    "run_sample_chunks_with_oom_retry",
-]
+Consumers import the concrete modules directly (``execution.chunks``,
+``execution.planner``, ``execution.types``, ...) — that is the established
+import shape across the repo, so this facade re-exports nothing. See
+``vrl/generation/protocols.py`` for the map of which boundary each module
+serves.
+"""
