@@ -1,4 +1,11 @@
-"""Pure gatherer for full-sequence denoise chunk payloads."""
+"""Pure gatherer for full-sequence denoise chunk payloads.
+
+Split from ``executor.py`` because reassembly runs driver-side, where no model
+is loaded: the gatherer crosses the Ray launch contract as a serializable
+object (see ``ChunkGatherer`` in ``vrl/generation/protocols.py``) and must not
+drag executor/model imports with it — hence the TYPE_CHECKING-only import of
+``DiffusionChunkResult``.
+"""
 
 from __future__ import annotations
 
