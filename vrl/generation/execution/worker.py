@@ -322,7 +322,7 @@ class GenerationWorkerCore:
 
         import torch
 
-        from vrl.generation.execution.chunk_placement import AffinePeakFit
+        from vrl.generation.execution.chunk_memory import AffinePeakFit
         from vrl.generation.execution.chunks import SampleChunk
 
         if not torch.cuda.is_available():

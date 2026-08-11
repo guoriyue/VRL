@@ -16,7 +16,7 @@ from typing import Any
 import pytest
 import torch
 
-from vrl.generation.execution.chunk_placement import (
+from vrl.generation.execution.chunk_memory import (
     AffinePeakFit,
     build_chunk_memory_shadow,
 )

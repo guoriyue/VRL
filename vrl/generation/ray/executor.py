@@ -15,10 +15,8 @@ import logging
 from dataclasses import replace
 from typing import Any
 
-from vrl.generation.execution.chunk_placement import (
-    DistributedExecutionPlanner,
-    build_chunk_memory_shadow,
-)
+from vrl.generation.execution.chunk_memory import build_chunk_memory_shadow
+from vrl.generation.execution.chunk_placement import DistributedExecutionPlanner
 from vrl.generation.execution.ids import build_sample_rows
 from vrl.generation.execution.planner import EnginePlan
 from vrl.generation.execution.types import (

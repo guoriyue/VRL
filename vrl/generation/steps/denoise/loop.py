@@ -7,7 +7,7 @@ from typing import Any
 
 import torch
 
-from vrl.generation.execution.chunk_placement import cuda_occupancy_snapshot
+from vrl.generation.execution.chunk_memory import cuda_occupancy_snapshot
 from vrl.generation.steps.denoise.config import DenoiseLoopConfig
 from vrl.generation.steps.denoise.teacache import TeaCacheState
 from vrl.math.denoise.flow_matching import sde_step_with_logprob
