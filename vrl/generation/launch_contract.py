@@ -1,4 +1,16 @@
-"""Serializable generation runtime launch contract."""
+"""Serializable generation runtime launch contract.
+
+The one object the driver (vrl/run.py) hands a Ray generation actor at
+construction: everything a worker process needs to rebuild the family
+executor on its own GPU. It lives apart from both runtimes because the two
+sides of that process boundary share no other runtime code — only this
+contract. Construction validates pickle-serializability and primitives-only
+content so a live driver object (callable, model, tensor) fails fast on the
+driver instead of inside actor deserialization.
+
+The reward-side twin is ``RewardWorkerLaunchContract``
+(vrl/rewards/inference.py).
+"""
 
 from __future__ import annotations
 
