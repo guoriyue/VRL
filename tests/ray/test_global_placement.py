@@ -104,7 +104,7 @@ def test_bundle_plan_shared_reward_reuses_rollout_bundle() -> None:
                 "num_gpus": 1,
                 "gpus_per_worker": 1,
                 "num_workers": 1,
-                "share_with_rollout": True,
+                "gpu_pool": "rollout",
             },
         },
     )
@@ -238,7 +238,7 @@ def test_assign_roles_shared_reward_binds_same_bundle_as_rollout() -> None:
                 "num_gpus": 1,
                 "gpus_per_worker": 1,
                 "num_workers": 1,
-                "share_with_rollout": True,
+                "gpu_pool": "rollout",
             },
         },
     )
@@ -301,7 +301,7 @@ def test_bundle_requirements_size_shared_bundle_to_max_role_cpu() -> None:
                 "num_gpus": 1,
                 "gpus_per_worker": 1,
                 "num_workers": 1,
-                "share_with_rollout": True,
+                "gpu_pool": "rollout",
             },
         },
         worker=_worker(cpus_per_worker=2.0),
@@ -337,11 +337,11 @@ def test_required_local_cluster_cpus_uses_placement_bundle_sum() -> None:
         worker=_worker(cpus_per_worker=4.0),
     )
 
+    # No CPU reward bundle: in-process CPU rewards run in the driver.
     assert owner._bundle_requirements() == [
         {"CPU": 4.0, "GPU": 1.0},
-        {"CPU": 0.5},
     ]
-    assert owner.required_local_cluster_cpus() == 5
+    assert owner.required_local_cluster_cpus() == 4
 
 
 @pytest.mark.parametrize("quantity", [0.0, -1.0, float("nan"), float("inf")])
@@ -717,7 +717,7 @@ def test_owner_shares_one_bundle_for_rollout_and_reward_on_simulated_gpus(local_
                     "num_gpus": 1,
                     "gpus_per_worker": 1,
                     "num_workers": 1,
-                    "share_with_rollout": True,
+                    "gpu_pool": "rollout",
                 },
             },
         ),

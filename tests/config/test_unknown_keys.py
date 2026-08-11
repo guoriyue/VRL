@@ -3,12 +3,11 @@
 from __future__ import annotations
 
 import dataclasses
-import logging
 
 import pytest
 from omegaconf import OmegaConf
 
-from vrl.config.unknown_keys import find_unknown_keys, warn_unknown_keys
+from vrl.config.unknown_keys import find_unknown_keys, require_no_unknown_keys
 from vrl.utils.profiling import TorchProfilerConfig
 
 
@@ -333,15 +332,11 @@ def test_chunk_autoregressive_model_keys_are_registered(
     assert find_unknown_keys(cfg) == []
 
 
-def test_warn_unknown_keys_logs_one_line(caplog) -> None:
-    cfg = OmegaConf.create({"sampling": {"num_stps": 5}})
-    with caplog.at_level(logging.WARNING):
-        unknown = warn_unknown_keys(cfg)
-    assert unknown == ["sampling.num_stps"]
-    assert any("sampling.num_stps" in r.getMessage() for r in caplog.records)
-
-
-# ── Anti-rot sweeps: the registry must track the real code and real configs ──
+def test_require_no_unknown_keys_fails_loud() -> None:
+    cfg = OmegaConf.create({"model": {"family": "sana"}, "rolout": {"n": 1}})
+    with pytest.raises(ValueError, match=r"unknown config keys.*rolout"):
+        require_no_unknown_keys(cfg)
+    require_no_unknown_keys(OmegaConf.create({"model": {"family": "sana"}}))
 
 
 def test_every_config_path_read_by_code_is_registered() -> None:

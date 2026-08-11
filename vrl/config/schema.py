@@ -39,9 +39,7 @@ from vrl.generation.execution.types import BatchPlacementStrategy
 from vrl.models.families.names import normalize_model_family
 from vrl.models.families.registry import FAMILY_REGISTRY, get_model_family_entry
 from vrl.ray.resources import (
-    RewardResourceConfig,
-    RoleResourceConfig,
-    RolloutResourceConfig,
+    DistributedResourceConfig,
 )
 from vrl.trainers.data.prompt_sampler import PromptSamplingStrategy
 from vrl.trainers.online.config import OnlineBatchPlan, TrainerConfig
@@ -831,37 +829,14 @@ class RolloutWorkerSection(ConfigBase):
 class DistributedSection(ConfigBase):
     """Key registry for distributed.*; values validated by vrl.ray.resources."""
 
-    # reader: vrl/ray/resources.py resolve_distributed_resources
-    resources: Annotated[
-        Any,
-        ConfigBlock(
-            ("visible_devices", "trainer", "rollout", "reward", "allow_overlap", "cross_node"),
-            {
-                "trainer": ConfigBlock(RoleResourceConfig),
-                "rollout": ConfigBlock(RolloutResourceConfig),
-                # gpu_pool is the field; share_with_rollout is the legacy compat
-                # key mapped to it at parse time (vrl/ray/resources.py
-                # _parse_reward_gpu_pool), so both are accepted here.
-                "reward": ConfigBlock(
-                    (
-                        *(f.name for f in dataclass_fields(RewardResourceConfig)),
-                        "share_with_rollout",
-                    ),
-                ),
-            },
-        ),
-    ] = None
+    # reader: vrl/ray/resources.py resolve_distributed_resources. Known keys
+    # derive from the consuming dataclass (nested role blocks auto-nest), so a
+    # new field never needs a hand-list update here.
+    resources: Annotated[Any, ConfigBlock(DistributedResourceConfig)] = None
     # reader: vrl/generation/ray/config.py RayGenerationConfig.from_cfg (worker
     # runtime knobs). batch_placement_strategy / sync_trainable_state Literals reject
     # bad values here at parse time. Colocation lives in resources.rollout.gpu_pool.
     rollout: RolloutWorkerSection | None = None
-    # reader: vrl/ray/resources.py reward runtime block. Ray reward actor-pool
-    # knobs were removed; reward release and CuMem parking are derived from
-    # topology rather than selected by an independent YAML lifecycle key.
-    reward: Annotated[
-        Any,
-        ConfigBlock(("cpus_per_worker",)),
-    ] = None
     # readers: vrl/trainers/distributed.py resolve_training_context (rank/device)
     # + vrl/ray/resources.py strategy-aware trainer GPU validation
     training: TrainingSection | None = None

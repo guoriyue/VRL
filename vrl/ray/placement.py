@@ -488,8 +488,6 @@ class GlobalRayPlacementOwner:
         cpus: list[float] = []
         if bundle_index in self.layout.rollout_bundle_indices:
             cpus.append(float(self.rollout_worker.cpus_per_worker))
-        if bundle_index in self.layout.reward_bundle_indices:
-            cpus.append(float(self.resources.reward_cpus_per_worker))
         if not cpus:
             return 0.001
         return max(cpus)

@@ -1390,7 +1390,9 @@ def test_removed_reward_pool_runtime_keys_are_unknown(removed_key: str) -> None:
         distributed={"reward": {"cpus_per_worker": 2.0, removed_key: "legacy"}},
     )
     unknown = find_unknown_keys(cfg)
-    assert f"distributed.reward.{removed_key}" in unknown
+    # The whole legacy distributed.reward section is unknown now; the
+    # walker reports the section root once instead of each stale key.
+    assert "distributed.reward" in unknown
     assert "distributed.reward.cpus_per_worker" not in unknown
 
 

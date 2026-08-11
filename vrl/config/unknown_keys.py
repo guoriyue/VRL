@@ -186,16 +186,20 @@ def find_unknown_keys(cfg: Any, *, section: str | None = None) -> list[str]:
     return sorted(out)
 
 
-def warn_unknown_keys(cfg: Any, *, section: str | None = None) -> list[str]:
-    """Log one warning naming every unknown key path; return the paths."""
+def require_no_unknown_keys(cfg: Any, *, section: str | None = None) -> None:
+    """Fail loud on every unknown key path in closed blocks.
+
+    One mechanism covers typos, deleted keys, and historical renames alike: a
+    typed closed block accepts exactly its fields, an OPEN block accepts
+    anything. A warning here would let a stale key silently fall back to the
+    default behavior, which is worse than failing.
+    """
 
     unknown = find_unknown_keys(cfg, section=section)
     if unknown:
-        logger.warning(
-            "unknown config keys (typo? dead? removed?): %s",
-            ", ".join(unknown),
+        raise ValueError(
+            "unknown config keys (typo? renamed? removed?): " + ", ".join(unknown),
         )
-    return unknown
 
 
-__all__ = ["OPEN", "find_unknown_keys", "warn_unknown_keys"]
+__all__ = ["OPEN", "find_unknown_keys", "require_no_unknown_keys"]

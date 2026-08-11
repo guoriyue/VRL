@@ -503,9 +503,9 @@ def test_resolve_torch_dtype_subbyte(spelling, torch_name):
     assert resolve_torch_dtype(spelling) is getattr(torch, torch_name)
 
 
-def test_legacy_actor_precision_keys_warn_via_schema(caplog):
-    """actor.mixed_precision/bf16 are plain unknown keys now: warn, still load."""
-    import logging
+def test_legacy_actor_precision_keys_fail_loud() -> None:
+    """actor.mixed_precision/bf16 are unknown keys: fail loud, never silently load."""
+    import pytest
 
     from vrl.config.loading import load_config
     from vrl.config.validation import validate_training_config
@@ -514,18 +514,10 @@ def test_legacy_actor_precision_keys_warn_via_schema(caplog):
         "experiment/sd3_5/online_grpo_ocr",
         overrides=["actor.mixed_precision=bf16"],
     )
-    with caplog.at_level(logging.WARNING):
+    with pytest.raises(ValueError, match=r"unknown config keys.*mixed_precision"):
         validate_training_config(cfg)
-    joined = " ".join(r.getMessage() for r in caplog.records)
-    assert "mixed_precision" in joined
 
 
-# Every online GRPO recipe must keep rollout/replay role precision aligned.
-# Derive the list from the experiment glob (the single source of truth in
-# test_load_all_experiments) instead of hand-maintaining it — a hand list
-# silently drops new recipes (it had already drifted, missing
-# cosmos_predict2_5/online_nft_motion_physics). "online" == every experiment
-# whose final path component is not an `offline_*` recipe.
 def _online_recipes() -> list[str]:
     return [name for name in _experiment_names() if not Path(name).name.startswith("offline_")]
 

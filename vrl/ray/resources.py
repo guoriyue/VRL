@@ -163,7 +163,6 @@ class RewardResourceConfig(WorkerRoleResourceConfig):
     role: ClassVar[str] = "reward"
 
     # Reward GPU pool source (public key: distributed.resources.reward.gpu_pool;
-    # the legacy share_with_rollout bool maps here at parse time):
     #   "auto"      derive from topology: a dedicated spare GPU when one exists,
     #               otherwise share the rollout pool.
     #   "rollout"   always share the rollout GPU pool.
@@ -182,7 +181,6 @@ class DistributedResourceConfig:
         default_factory=lambda: RewardResourceConfig(num_gpus=0, devices=[]),
     )
     allow_overlap: bool = False
-    reward_cpus_per_worker: float = 0.5
     cross_node: bool = False
 
 
@@ -251,7 +249,6 @@ class ResolvedDistributedResources:
     rollout_gpus_per_worker: float
     reward_num_workers: int
     reward_gpus_per_worker: float
-    reward_cpus_per_worker: float
     cross_node: bool
     # Named view over release decisions: lease mode per role plus the per-boundary
     # handoff. The launcher/collector/reward read this instead of re-deriving from
@@ -559,7 +556,6 @@ def resolve_distributed_resources(
         rollout_gpus_per_worker=rollout_gpus_per_worker,
         reward_num_workers=reward_num_workers,
         reward_gpus_per_worker=reward_gpus_per_worker,
-        reward_cpus_per_worker=config.reward_cpus_per_worker,
         cross_node=config.cross_node,
         lifecycle=lifecycle,
     )
@@ -655,12 +651,7 @@ def _distributed_resource_config_from_cfg(cfg: Any) -> DistributedResourceConfig
     trainer_node = cfg_get(resources, "trainer", {})
     rollout_node = cfg_get(resources, "rollout", {})
     reward_node = cfg_get(resources, "reward", _MISSING)
-    rollout_runtime = cfg_get(distributed, "rollout", {})
-    reward_runtime = cfg_get(distributed, "reward", {})
-    _reject_removed_distributed_keys(rollout_runtime, reward_runtime)
-    rollout_gpu_pool = _parse_rollout_gpu_pool(
-        rollout_node=rollout_node,
-    )
+    rollout_gpu_pool = _parse_rollout_gpu_pool(rollout_node)
 
     trainer = RoleResourceConfig(
         num_gpus=cfg_get(trainer_node, "num_gpus", "auto"),
@@ -689,9 +680,6 @@ def _distributed_resource_config_from_cfg(cfg: Any) -> DistributedResourceConfig
         rollout=rollout,
         reward=reward,
         allow_overlap=bool(cfg_get(resources, "allow_overlap", False)),
-        reward_cpus_per_worker=float(
-            cfg_get(reward_runtime, "cpus_per_worker", 0.5),
-        ),
         cross_node=bool(cfg_get(resources, "cross_node", False)),
     )
 
@@ -1063,7 +1051,9 @@ def build_bundle_layout(resolved: ResolvedDistributedResources) -> BundleLayout:
         # dedicated reward GPU appends a fresh bundle.
         reward = tuple(_gpu_bundle(gpu_id) for gpu_id in resolved.reward_devices)
     else:
-        reward = _cpu_bundles(resolved.reward_num_workers)
+        # In-process CPU rewards run in the driver; a bundle would reserve
+        # cluster capacity no actor ever enters.
+        reward = ()
 
     return BundleLayout(
         bundle_gpu_ids=tuple(bundle_gpu_ids),
@@ -1072,11 +1062,8 @@ def build_bundle_layout(resolved: ResolvedDistributedResources) -> BundleLayout:
     )
 
 
-def _parse_rollout_gpu_pool(
-    *,
-    rollout_node: Any,
-) -> str:
-    """Resolve the rollout GPU pool and reject the removed resident-share knob.
+def _parse_rollout_gpu_pool(rollout_node: Any) -> str:
+    """Resolve the rollout GPU pool.
 
     Single authoritative grammar (mirrors ``reward.gpu_pool``):
     ``distributed.resources.rollout.gpu_pool`` = ``auto|trainer|dedicated``.
@@ -1085,12 +1072,6 @@ def _parse_rollout_gpu_pool(
     """
 
     new_pool = cfg_get(rollout_node, "gpu_pool", _MISSING)
-    if cfg_get(rollout_node, "memory_fraction", _MISSING) is not _MISSING:
-        raise ValueError(
-            "distributed.resources.rollout.memory_fraction was removed: shared "
-            "trainer/rollout GPUs always use on-demand phase handoff. Remove the "
-            "key and keep gpu_pool=trainer for time-shared colocation.",
-        )
 
     pool = "auto"
     if new_pool is not _MISSING:
@@ -1104,86 +1085,18 @@ def _parse_rollout_gpu_pool(
 
 
 def _parse_reward_gpu_pool(reward_node: Any) -> str:
-    """Resolve the reward GPU-pool source from ``reward.gpu_pool`` (new) or the
-    legacy ``reward.share_with_rollout`` bool.
-
-    New configs use ``distributed.resources.reward.gpu_pool: auto|rollout|dedicated``.
-    ``share_with_rollout`` is accepted as compat input (null -> auto, true ->
-    rollout, false -> dedicated). Setting both is an error.
-    """
+    """Resolve ``distributed.resources.reward.gpu_pool``: auto|rollout|dedicated."""
 
     gpu_pool = cfg_get(reward_node, "gpu_pool", _MISSING)
-    legacy = cfg_get(reward_node, "share_with_rollout", _MISSING)
-    if gpu_pool is not _MISSING and legacy is not _MISSING:
-        raise ValueError(
-            "set either distributed.resources.reward.gpu_pool "
-            "(auto|rollout|dedicated) or the legacy share_with_rollout, not both",
-        )
-    if gpu_pool is not _MISSING:
-        value = str(to_builtin(gpu_pool)).strip().lower()
-        if value not in {"auto", "rollout", "dedicated"}:
-            raise ValueError(
-                "distributed.resources.reward.gpu_pool must be 'auto', 'rollout', "
-                f"or 'dedicated', got {gpu_pool!r}",
-            )
-        return value
-    legacy_value = legacy if legacy is not _MISSING else None
-    if legacy_value is None:
+    if gpu_pool is _MISSING:
         return "auto"
-    return "rollout" if bool(legacy_value) else "dedicated"
-
-
-def _reject_removed_distributed_keys(rollout_runtime: Any, reward_runtime: Any) -> None:
-    """Hard-fail on the public release/colocation keys removed by the config sweep.
-
-    Release scheduling is derived from GPU topology. Shared trainer/rollout GPUs
-    always hand ownership over between phases; a silent compatibility shim would
-    re-introduce the multi-knob resident surface that was removed.
-    """
-
-    if cfg_get(rollout_runtime, "release_after_collect", _MISSING) is not _MISSING:
+    value = str(to_builtin(gpu_pool)).strip().lower()
+    if value not in {"auto", "rollout", "dedicated"}:
         raise ValueError(
-            "distributed.rollout.release_after_collect was removed: rollout release is "
-            "now derived from the GPU topology (shared GPU -> release, dedicated GPU -> "
-            "resident). Remove the key; use "
-            "distributed.resources.rollout.gpu_pool=trainer for time-shared colocation.",
+            "distributed.resources.reward.gpu_pool must be 'auto', 'rollout', "
+            f"or 'dedicated', got {gpu_pool!r}",
         )
-    if cfg_get(rollout_runtime, "release_before_reward_model", _MISSING) is not _MISSING:
-        raise ValueError(
-            "distributed.rollout.release_before_reward_model was removed: it is now "
-            "derived from the GPU topology (reward sharing the rollout GPU -> release). "
-            "Remove the key.",
-        )
-    if cfg_get(rollout_runtime, "persistent_colocated_workers", _MISSING) is not _MISSING:
-        raise ValueError(
-            "distributed.rollout.persistent_colocated_workers was removed: shared "
-            "trainer/rollout GPUs always use on-demand phase handoff. Remove the key.",
-        )
-    if cfg_get(rollout_runtime, "gpu_memory_fraction", _MISSING) is not _MISSING:
-        raise ValueError(
-            "distributed.rollout.gpu_memory_fraction was removed with resident "
-            "shared-GPU colocation. Remove the key.",
-        )
-    if cfg_get(rollout_runtime, "colocate", _MISSING) is not _MISSING:
-        raise ValueError(
-            "distributed.rollout.colocate was removed: use "
-            "distributed.resources.rollout.gpu_pool=trainer for time-shared "
-            "colocation. Resident shared-GPU colocation is no longer supported.",
-        )
-    if cfg_get(reward_runtime, "release_after_score", _MISSING) is not _MISSING:
-        raise ValueError(
-            "distributed.reward.release_after_score was removed: reward release is now "
-            "derived from the GPU topology (shared / multi-reward pool -> release, "
-            "dedicated reward GPU -> resident). Remove the key.",
-        )
-    for stale_pool_key in ("placement_strategy", "max_inflight_batches"):
-        if cfg_get(reward_runtime, stale_pool_key, _MISSING) is not _MISSING:
-            raise ValueError(
-                f"distributed.reward.{stale_pool_key} was removed with the Ray reward "
-                "actor pool: rewards score in-process now. Remove the key and "
-                "select shared or dedicated ownership under "
-                "distributed.resources.reward; parking follows that topology.",
-            )
+    return value
 
 
 def _parse_devices(value: Any) -> list[int] | str:

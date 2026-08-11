@@ -81,9 +81,9 @@ def validate_reward_config(cfg: DictConfig) -> RewardConfig:
     """Validate reward component shape and model-backed reward kwargs."""
     if "reward" not in cfg:
         raise ValueError("config missing required field: reward")
-    from vrl.config.unknown_keys import warn_unknown_keys
+    from vrl.config.unknown_keys import require_no_unknown_keys
 
-    warn_unknown_keys(cfg.reward, section="reward")
+    require_no_unknown_keys(cfg.reward, section="reward")
     reward_raw = OmegaConf.to_container(cfg.reward, resolve=True, throw_on_missing=True) or {}
     try:
         return RewardConfig.model_validate(reward_raw)
@@ -332,9 +332,9 @@ def validate_training_config(cfg: DictConfig) -> tuple[RootConfig, PrecisionPoli
     derivation of ``root``, and it is returned only so the caller does not resolve
     it a second time (asserted by tests/config/test_builders.py).
     """
-    from vrl.config.unknown_keys import warn_unknown_keys
+    from vrl.config.unknown_keys import require_no_unknown_keys
 
-    warn_unknown_keys(cfg)
+    require_no_unknown_keys(cfg)
     root = parse_config(cfg)
     precision = resolve_precision_policy(root)
     # compile x grad-checkpointing is refused at trainer startup; check it here

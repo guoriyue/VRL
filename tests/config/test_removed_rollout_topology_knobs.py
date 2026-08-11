@@ -16,6 +16,6 @@ def test_require_separate_gpus_points_to_topology_derived_modes() -> None:
 
     with pytest.raises(
         ValueError,
-        match=r"require_separate_gpus was removed.*continuous requires disjoint",
+        match=r"unknown config keys.*require_separate_gpus",
     ):
         build_configs(cfg)

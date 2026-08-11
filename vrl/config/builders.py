@@ -280,27 +280,6 @@ def build_trainer_config(
 
     from vrl.trainers.online.config import OnlineBatchPlan, TrainerConfig
 
-    trainer_block = getattr(cfg, "trainer", None)
-    if trainer_block is not None and "eval" in trainer_block:
-        raise ValueError(
-            "trainer.eval was removed: online training no longer runs fixed eval. "
-            "Evaluate saved checkpoints with a script under vrl/scripts/eval; "
-            "for Cosmos Predict2.5 + Kling use "
-            "`python -m vrl.scripts.eval.cosmos_predict25_kling_eval`.",
-        )
-    orchestration_block = (
-        getattr(trainer_block, "rollout_orchestration", None)
-        if trainer_block is not None
-        else None
-    )
-    if orchestration_block is not None and "require_separate_gpus" in orchestration_block:
-        raise ValueError(
-            "trainer.rollout_orchestration.require_separate_gpus was removed: "
-            "rollout topology is derived from resolved GPU ownership. Shared GPUs "
-            "use strict_on_policy with distributed.resources.rollout.gpu_pool=trainer; "
-            "continuous requires disjoint trainer and rollout GPUs.",
-        )
-
     hints = get_type_hints(TrainerConfig)
     payload: dict[str, Any] = {}
     missing: list[str] = []
