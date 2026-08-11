@@ -1,4 +1,14 @@
-"""Shared rollout collector orchestration."""
+"""Shared rollout collector orchestration.
+
+The one place the two engine protocols meet: ``RolloutCollector`` drives
+``GenerationRuntime.generate`` and ``RewardRuntime.score`` for a prompt group
+and owns the phase seam between them — reading the topology-derived
+``RayLifecyclePlan`` (``vrl/ray/resources.py``) to decide which role must park
+its GPU before the next phase, and exposing those decisions as capabilities
+(overlap, continuous execution) instead of letting schedules re-derive them.
+Trajectory packing details live in ``batch_builder``; request construction in
+``requests``.
+"""
 
 from __future__ import annotations
 
