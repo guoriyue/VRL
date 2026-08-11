@@ -1,4 +1,19 @@
-"""Reward runtime implementations and inference transport wiring."""
+"""Reward runtime implementations and inference transport wiring.
+
+The implementation layer behind the vrl/rewards/protocols contract:
+
+- ``RewardFunctionRuntime``: the concrete ``RewardRuntime`` the collector
+  drives — the reward dual of ``RayGenerationRuntime``. It owns the lifecycle
+  FSM, the operation lock, and the score deadline so every wrapped
+  ``RewardFunction`` gets identical admission and teardown semantics.
+- ``InProcessRewardScorer``: the local ``RewardScorer`` transport (twin of the
+  remote ``HttpRewardScorer``) and the only one that owns CUDA memory parking.
+- ``build_reward_scorer``: the single transport-selection point, keyed by the
+  typed inference deployment config.
+
+This module imports the CUDA parking utilities; the contract modules
+(types/protocols/inference) deliberately stay free of them.
+"""
 
 from __future__ import annotations
 
