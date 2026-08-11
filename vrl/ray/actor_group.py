@@ -1,4 +1,14 @@
-"""Generic Ray actor group construction and lifecycle."""
+"""Generic Ray actor group construction and lifecycle.
+
+The launch half of the actor story: create homogeneous actors (optionally
+pinned into placement-group bundles), run their startup barrier, capture
+driver-visible metadata, and kill them — retaining any handle whose kill
+failed so cleanup is never falsely reported complete. Dispatching calls onto
+an already-launched fleet is the separate concern of ``vrl.ray.actor_pool``;
+keeping launch/teardown apart from admission lets the generation launcher own
+group lifetime while the executor and weight sync share one dispatcher over
+the same handles.
+"""
 
 from __future__ import annotations
 
