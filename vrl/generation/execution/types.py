@@ -9,6 +9,7 @@ from typing import Any, Literal, Protocol, TypeAlias, get_args
 from vrl.generation.execution.chunks import SampleChunk
 from vrl.generation.protocols import ChunkResult
 from vrl.generation.types import GenerationRequest
+from vrl.utils.cuda_memory import validate_parking_residual
 
 
 class StaleSlotDiscard(Exception):
@@ -92,14 +93,15 @@ class WorkerMemoryParkingSnapshot:
         for name, value in values.items():
             if value < 0:
                 raise ValueError(f"parking snapshot {name} must be >= 0")
-        allowed = self.baseline_gpu_used_bytes + self.residual_bytes_limit
-        if self.residual_gpu_used_bytes > allowed:
-            raise RuntimeError(
-                f"worker {self.worker_id!r} incomplete {self.backend} memory parking: "
-                f"loaded={self.loaded_gpu_used_bytes} residual="
-                f"{self.residual_gpu_used_bytes} baseline="
-                f"{self.baseline_gpu_used_bytes} limit={self.residual_bytes_limit}",
-            )
+        validate_parking_residual(
+            residual_bytes=self.residual_gpu_used_bytes,
+            baseline_bytes=self.baseline_gpu_used_bytes,
+            limit_bytes=self.residual_bytes_limit,
+            context=(
+                f"{self.backend} memory parking (worker {self.worker_id!r}, "
+                f"loaded={self.loaded_gpu_used_bytes})"
+            ),
+        )
 
 
 @dataclass(frozen=True, slots=True)

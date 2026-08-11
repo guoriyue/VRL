@@ -104,10 +104,4 @@ class AestheticRewardModel(TorchRewardModel):
         return {"aesthetic": float(scores.mean().item())}
 
 
-def aesthetic_reward_model(worker_config: Mapping[str, Any]) -> AestheticRewardModel:
-    """Preserve the external ``worker_config.model_factory`` plugin path."""
-
-    return AestheticRewardModel(worker_config)
-
-
-__all__ = ["AestheticRewardModel", "aesthetic_reward_model"]
+__all__ = ["AestheticRewardModel"]

@@ -93,16 +93,16 @@ def test_pickscore_reward_model_constructs_lazily() -> None:
     ("factory_path", "expected_type"),
     [
         (
-            "vrl.rewards.models.aesthetic:aesthetic_reward_model",
+            "vrl.rewards.models.aesthetic:AestheticRewardModel",
             "AestheticRewardModel",
         ),
         (
-            "vrl.rewards.models.pickscore:pickscore_reward_model",
+            "vrl.rewards.models.pickscore:PickScoreRewardModel",
             "PickScoreRewardModel",
         ),
     ],
 )
-def test_external_reward_model_factory_paths_remain_compatible(
+def test_reward_model_factory_class_paths_construct(
     factory_path: str,
     expected_type: str,
 ) -> None:
@@ -151,7 +151,7 @@ def test_reward_artifact_transport_is_registry_visible() -> None:
     assert DiskArtifactRewardFunction.artifact_transport == "disk"
 
 
-def test_inference_reward_requires_both_runtime_and_artifact_builder() -> None:
+def test_inference_reward_defaults_to_inmemory_artifact_builder() -> None:
     class _Runtime:
         async def score_batch(self, request):
             return []
@@ -165,11 +165,18 @@ def test_inference_reward_requires_both_runtime_and_artifact_builder() -> None:
             score_key="fake",
             artifact_builder=InferenceRewardFunction.build_inmemory_artifacts,
         )
+    reward = InferenceRewardFunction(
+        reward_name="fake",
+        score_key="fake",
+        inference_runtime=_Runtime(),
+    )
+    assert reward._artifact_builder is InferenceRewardFunction.build_inmemory_artifacts
     with pytest.raises(TypeError, match="artifact_builder"):
         InferenceRewardFunction(
             reward_name="fake",
             score_key="fake",
             inference_runtime=_Runtime(),
+            artifact_builder="not-callable",  # type: ignore[arg-type]
         )
 
 

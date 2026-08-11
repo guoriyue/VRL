@@ -448,26 +448,23 @@ async def test_safe_topology_without_runtime_capability_stays_batched_and_serial
 
 
 @pytest.mark.asyncio
-async def test_missing_overlap_capability_fails_closed_to_batched_scoring() -> None:
+async def test_missing_overlap_capability_fails_loud() -> None:
+    """The capability is part of the collector contract; absence is a bug, not
+    a silent downgrade to batched scoring."""
     collector = _DeferredCollector(
         rollout_reward_handoff=False,
         trainer_reward_handoff=False,
     )
     del collector.supports_reward_generation_overlap
 
-    await collect_prompt_batches(
-        collector=collector,
-        prompts=[PromptExample(prompt="p0"), PromptExample(prompt="p1")],
-        group_size=1,
-        runtime_debug=False,
-        policy_version=None,
-    )
-
-    assert collector.events == [
-        "generate:p0",
-        "generate:p1",
-        "score_rollouts:[p0;p1]",
-    ]
+    with pytest.raises(AttributeError, match="supports_reward_generation_overlap"):
+        await collect_prompt_batches(
+            collector=collector,
+            prompts=[PromptExample(prompt="p0"), PromptExample(prompt="p1")],
+            group_size=1,
+            runtime_debug=False,
+            policy_version=None,
+        )
 
 
 @pytest.mark.asyncio

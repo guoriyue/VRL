@@ -17,7 +17,6 @@ from vrl.rewards.inference import (
     RewardInferenceResult,
     RewardInferenceRuntime,
     score_artifacts_with_model,
-    validate_reward_parking_residual,
 )
 from vrl.rewards.types import RewardOutput, RewardSample
 from vrl.utils.config import import_from_path
@@ -25,7 +24,9 @@ from vrl.utils.cuda_memory import (
     CumemPool,
     gpu_used_bytes,
     release_cuda_memory_for_parking,
+    validate_parking_residual,
 )
+from vrl.utils.lifecycle import RuntimeLifecycle, RuntimePhase
 
 
 class RewardFunctionRuntime:
@@ -36,8 +37,10 @@ class RewardFunctionRuntime:
             raise TypeError("reward_function must be a RewardFunction or None")
         self._reward_function = reward_function
         self._operation_lock = asyncio.Lock()
-        self._shutdown_started = False
-        self._shutdown_complete = False
+        # Same terminal FSM as the generation runtime: RUNNING accepts work,
+        # SHUTTING_DOWN closes admission (retryable teardown), TERMINATED is
+        # published only after a successful shutdown.
+        self.lifecycle = RuntimeLifecycle(owner="reward runtime")
 
     @property
     def scoring_is_nonblocking(self) -> bool:
@@ -59,7 +62,7 @@ class RewardFunctionRuntime:
         """Validate the wrapped reward function before scoring begins."""
 
         async with self._operation_lock:
-            self._require_active()
+            self.lifecycle.require_running("preflight")
             reward_function = self._reward_function
             if reward_function is not None:
                 await reward_function.preflight()
@@ -73,7 +76,7 @@ class RewardFunctionRuntime:
         """Score ordered samples while serializing function and memory ownership."""
 
         async with self._operation_lock:
-            self._require_active()
+            self.lifecycle.require_running("score")
             normalized = tuple(samples)
             if not normalized:
                 raise ValueError("reward runtime requires at least one sample")
@@ -126,7 +129,7 @@ class RewardFunctionRuntime:
         """Actively park reward owners and enforce the configured gate."""
 
         async with self._operation_lock:
-            self._require_active()
+            self.lifecycle.require_running("park_memory")
             await self._park_memory_locked(required=required)
 
     async def _park_memory_locked(
@@ -149,20 +152,24 @@ class RewardFunctionRuntime:
             raise RuntimeError("reward function has no active memory-parking owner")
 
     async def shutdown(self) -> None:
-        """Release the wrapped function exactly once after successful teardown."""
+        """Release the wrapped function exactly once after successful teardown.
+
+        A failed teardown leaves the lifecycle SHUTTING_DOWN (admission stays
+        closed, root cause retained) and the next call retries the release.
+        """
 
         async with self._operation_lock:
-            if self._shutdown_complete:
+            if self.lifecycle.phase is RuntimePhase.TERMINATED:
                 return
-            self._shutdown_started = True
+            self.lifecycle.begin_shutdown()
             reward_function = self._reward_function
             if reward_function is not None:
-                await reward_function.shutdown()
-            self._shutdown_complete = True
-
-    def _require_active(self) -> None:
-        if self._shutdown_started:
-            raise RuntimeError("reward runtime is shut down or shutting down")
+                try:
+                    await reward_function.shutdown()
+                except BaseException as error:
+                    self.lifecycle.fail(error)
+                    raise
+            self.lifecycle.finish_shutdown()
 
 
 def _build_prepared_model_in_pool(
@@ -259,7 +266,7 @@ class InProcessRewardInferenceRuntime:
         baseline_bytes = self._preload_gpu_used_bytes
         if baseline_bytes is None:
             raise RuntimeError("reward runtime has no pre-load GPU parking baseline")
-        validate_reward_parking_residual(
+        validate_parking_residual(
             residual_bytes=self._gpu_used_bytes(),
             baseline_bytes=baseline_bytes,
             limit_bytes=self._parking_residual_bytes_limit,
@@ -353,7 +360,7 @@ class InProcessRewardInferenceRuntime:
             baseline_bytes = self._preload_gpu_used_bytes
             # A failure retains the pool/baseline so terminal cleanup can retry
             # cache release; the trainer remains parked until this succeeds.
-            validate_reward_parking_residual(
+            validate_parking_residual(
                 residual_bytes=self._gpu_used_bytes(),
                 baseline_bytes=baseline_bytes,
                 limit_bytes=self._parking_residual_bytes_limit,

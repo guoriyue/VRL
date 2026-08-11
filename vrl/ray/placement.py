@@ -155,8 +155,8 @@ def validate_actor_gpu_ids(
 
     actual: set[int] = set()
     for meta in metadata:
-        worker_id = str(_placement_meta_get(meta, "worker_id", "unknown"))
-        worker_gpu_ids = tuple(int(gpu_id) for gpu_id in _placement_meta_get(meta, "gpu_ids", ()))
+        worker_id = str(actor_meta_get(meta, "worker_id", "unknown"))
+        worker_gpu_ids = tuple(int(gpu_id) for gpu_id in actor_meta_get(meta, "gpu_ids", ()))
         if not worker_gpu_ids:
             raise RuntimeError(f"Ray {role} worker {worker_id} has no assigned GPU ids")
         outside = set(worker_gpu_ids) - expected
@@ -187,9 +187,9 @@ def _validate_cross_node_actor_gpu_ids(
     seen_pairs: set[tuple[str, int]] = set()
     gpu_ids: list[int] = []
     for meta in metadata:
-        worker_id = str(_placement_meta_get(meta, "worker_id", "unknown"))
-        node_ip = str(_placement_meta_get(meta, "node_ip", ""))
-        worker_gpu_ids = tuple(int(gpu_id) for gpu_id in _placement_meta_get(meta, "gpu_ids", ()))
+        worker_id = str(actor_meta_get(meta, "worker_id", "unknown"))
+        node_ip = str(actor_meta_get(meta, "node_ip", ""))
+        worker_gpu_ids = tuple(int(gpu_id) for gpu_id in actor_meta_get(meta, "gpu_ids", ()))
         if not worker_gpu_ids:
             raise RuntimeError(f"Ray {role} worker {worker_id} has no assigned GPU ids")
         if driver_node_ip is not None and node_ip == str(driver_node_ip):
@@ -211,7 +211,9 @@ def _validate_cross_node_actor_gpu_ids(
     return tuple(sorted(gpu_ids))
 
 
-def _placement_meta_get(meta: _ActorPlacementInput, key: str, default: Any) -> Any:
+def actor_meta_get(meta: _ActorPlacementInput, key: str, default: Any) -> Any:
+    """Read one field from actor metadata (mapping or attribute object)."""
+
     if isinstance(meta, Mapping):
         return meta.get(key, default)
     return getattr(meta, key, default)

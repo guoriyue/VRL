@@ -9,15 +9,15 @@ from dataclasses import dataclass, replace
 from typing import Any
 
 from vrl.generation.ray.health_monitor import RolloutWorkerHealthMonitor
-from vrl.generation.ray.lifecycle_fsm import (
-    RuntimeLifecycle,
-    RuntimeLifecycleError,
-    RuntimePhase,
-)
 from vrl.generation.ray.session import RayGenerationSession
 from vrl.generation.types import GenerationOutput, GenerationRequest
 from vrl.ray.actor_group import RayActorHandle
 from vrl.runtime_errors import TerminalRuntimeError, find_error_cause
+from vrl.utils.lifecycle import (
+    RuntimeLifecycle,
+    RuntimeLifecycleError,
+    RuntimePhase,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -85,7 +85,7 @@ class RayGenerationRuntime:
                 )
         self._supports_weight_sync = bool(supports_weight_sync)
 
-        self.lifecycle = RuntimeLifecycle()
+        self.lifecycle = RuntimeLifecycle(owner="rollout runtime")
         # Accepted targets stamp new requests immediately; installed tracks the
         # live fleet ACK, while pending retains the payload until that ACK exists.
         self.current_policy_version = initial_policy_version

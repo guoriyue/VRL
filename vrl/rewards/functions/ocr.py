@@ -48,9 +48,6 @@ class OCRReward(InferenceRewardFunction):
             reward_name="ocr",
             score_key="ocr",
             inference_runtime=InProcessRewardInferenceRuntime(model=model),
-            artifact_builder=lambda samples: InferenceRewardFunction.build_inmemory_artifacts(
-                samples,
-            ),
         )
 
     @property

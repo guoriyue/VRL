@@ -190,7 +190,7 @@ async def test_function_runtime_forwards_capabilities_and_retries_shutdown() -> 
     assert reward.preflight_calls == 1
     with pytest.raises(RuntimeError, match="transient shutdown failure"):
         await runtime.shutdown()
-    with pytest.raises(RuntimeError, match="shut down"):
+    with pytest.raises(RuntimeError, match="reward runtime is shutting down"):
         await runtime.score((_sample(),))
     await runtime.shutdown()
     await runtime.shutdown()

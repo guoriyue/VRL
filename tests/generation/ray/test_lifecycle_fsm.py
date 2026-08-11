@@ -11,7 +11,7 @@ import pytest
 
 import vrl.generation.ray.session as session_module
 from vrl.generation.ray.health_monitor import RolloutWorkerUnreachable
-from vrl.generation.ray.lifecycle_fsm import (
+from vrl.utils.lifecycle import (
     RuntimeLifecycle,
     RuntimeLifecycleError,
     RuntimePhase,

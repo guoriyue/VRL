@@ -164,23 +164,16 @@ def _append_images(value: Any, images: list[Any]) -> None:
             _append_images(item, images)
         return
 
-    try:
-        import torch
+    import numpy as np
+    import torch
 
-        if torch.is_tensor(value):
-            _append_array_images(value.detach().cpu().numpy(), images)
-            return
-    except ImportError:
-        pass
+    if torch.is_tensor(value):
+        _append_array_images(value.detach().cpu().numpy(), images)
+        return
 
-    try:
-        import numpy as np
-
-        if isinstance(value, np.ndarray):
-            _append_array_images(value, images)
-            return
-    except ImportError:
-        pass
+    if isinstance(value, np.ndarray):
+        _append_array_images(value, images)
+        return
 
 
 def _append_array_images(array: Any, images: list[Any]) -> None:
@@ -213,30 +206,20 @@ def _append_array_images(array: Any, images: list[Any]) -> None:
 
 
 def _pil_from_array(array: Any) -> Any | None:
+    """Convert one 3-dim image array via the shared media converter.
+
+    Returns None (skip) instead of raising for non-image shapes, because
+    ``_append_array_images`` probes heterogeneous payload trees.
+    """
+
     import numpy as np
-    from PIL import Image
+
+    from vrl.utils.media import to_pil_image
 
     arr = np.asarray(array)
-    if arr.ndim != 3:
+    if arr.ndim != 3 or (arr.shape[0] not in (1, 3, 4) and arr.shape[-1] not in (1, 3, 4)):
         return None
-    if arr.shape[0] in (1, 3, 4) and arr.shape[-1] not in (1, 3, 4):
-        arr = arr.transpose(1, 2, 0)
-    if arr.shape[-1] not in (1, 3, 4):
-        return None
-
-    if np.issubdtype(arr.dtype, np.floating):
-        arr = np.nan_to_num(arr.astype("float32"), nan=0.0, posinf=1.0, neginf=0.0)
-        if float(arr.min(initial=0.0)) < 0.0:
-            arr = (arr + 1.0) * 0.5
-        if float(arr.max(initial=0.0)) <= 1.0:
-            arr = arr * 255.0
-        arr = arr.round().clip(0, 255).astype("uint8")
-    elif arr.dtype != np.uint8:
-        arr = arr.clip(0, 255).astype("uint8")
-
-    if arr.shape[-1] == 1:
-        arr = arr[..., 0]
-    return Image.fromarray(arr).convert("RGB")
+    return to_pil_image(arr)
 
 
 def _normalize_classifier_batch(raw_results: Any, expected_count: int) -> list[Any]:

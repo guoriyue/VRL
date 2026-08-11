@@ -76,9 +76,7 @@ async def collect_prompt_batches(
     # Only its capability may enable per-group collection: the acceptance
     # override can restrict a capable collector, but cannot grant the runtime
     # isolation needed to alternate generation and scoring safely.
-    overlap_capable = bool(
-        getattr(collector, "supports_reward_generation_overlap", False),
-    )
+    overlap_capable = bool(collector.supports_reward_generation_overlap)
     if reward_mode is None:
         mode = (
             RewardCollectionMode.PER_GROUP_STREAMING

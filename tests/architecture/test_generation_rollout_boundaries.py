@@ -379,7 +379,7 @@ def test_generation_ray_adapter_stays_lean() -> None:
     session_imports = set(_imports(session_path))
     assert "vrl.generation.ray.session.RayGenerationSession" in runtime_imports
     assert not any(
-        _is_module_or_child(target, "vrl.generation.ray.lifecycle_fsm")
+        _is_module_or_child(target, "vrl.utils.lifecycle")
         or _is_module_or_child(target, "vrl.generation.protocols")
         for target in session_imports
     )

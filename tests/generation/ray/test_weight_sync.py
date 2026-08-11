@@ -13,7 +13,7 @@ import torch
 import vrl.generation.ray.weight_sync as weight_sync_module
 import vrl.ray.actor_pool as actor_pool_module
 import vrl.ray.operation_deadline as deadline_module
-from vrl.generation.ray.lifecycle_fsm import RuntimePhase
+from vrl.utils.lifecycle import RuntimePhase
 from vrl.generation.ray.runtime import RayGenerationRuntime
 from vrl.generation.ray.session import RayGenerationSession
 from vrl.generation.ray.weight_sync import RayGenerationWeightSync

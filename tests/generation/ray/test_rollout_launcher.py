@@ -123,6 +123,36 @@ def test_ray_generation_launcher_builds_worker_runtime_with_embedded_ray(local_r
         owner.shutdown()
 
 
+def test_create_runtime_rejects_missing_rollout_placement() -> None:
+    """placement=None fails fast with the config knob, not an AttributeError."""
+    from omegaconf import OmegaConf
+
+    import vrl.generation.ray.launcher as launcher_mod
+    from vrl.ray.resources import resolve_distributed_resources
+
+    resolved = resolve_distributed_resources(
+        OmegaConf.create(
+            {
+                "distributed": {
+                    "resources": {
+                        "visible_devices": [],
+                        "trainer": {"num_gpus": 0},
+                        "rollout": {"num_gpus": 0, "gpus_per_worker": 0, "num_workers": 1},
+                    },
+                    "rollout": {},
+                    "reward": {},
+                },
+            },
+        ),
+    )
+    with pytest.raises(ValueError, match="rollout placement"):
+        launcher_mod.RayGenerationLauncher(init_ray=False).create_runtime(
+            RayGenerationConfig(resources=resolved, worker=_worker_config()),
+            _launch_inputs(),
+            placement=None,
+        )
+
+
 def _cpu_rollout_owner(
     ray: Any,
     *,

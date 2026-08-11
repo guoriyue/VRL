@@ -53,6 +53,7 @@ def _coordinator(model: _FakeDriverModel) -> RolloutRuntimeCoordinator:
             self.requires_generation_offload_before_reward = False
             self.requires_driver_model_offload_for_reward = False
             self.supports_reward_generation_overlap = False
+            self.supports_continuous_reward_execution = False
 
         async def activate_generation_runtime(self) -> None:
             return None

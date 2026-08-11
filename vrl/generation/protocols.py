@@ -6,9 +6,6 @@ from collections.abc import Sequence
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
-    from vrl.generation.bindings.full_sequence_denoise.executor import (
-        DiffusionChunkResult,
-    )
     from vrl.generation.execution.chunks import SampleChunk
     from vrl.generation.types import (
         GenerationOutput,
@@ -101,7 +98,7 @@ class DiffusionChunkProbeExecutor(Protocol):
         chunk: SampleChunk,
         *,
         execute_steps: int,
-    ) -> DiffusionChunkResult: ...
+    ) -> ChunkResult: ...
 
 
 __all__ = [

@@ -12,7 +12,7 @@ import torch
 
 from tests.rollouts.orchestration.continuous._helpers import _wait_until, owner_snapshot
 from vrl.generation.ray.health_monitor import RolloutWorkerUnreachable
-from vrl.generation.ray.lifecycle_fsm import RuntimePhase
+from vrl.utils.lifecycle import RuntimePhase
 from vrl.generation.ray.runtime import RayGenerationRuntime
 from vrl.generation.ray.session import RayGenerationSession
 from vrl.rollouts.batch import RolloutBatch

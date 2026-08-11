@@ -8,7 +8,7 @@ from typing import Any
 
 from vrl.ray.dependencies import require_ray
 from vrl.ray.operation_deadline import get_ray_refs, validate_ray_timeout
-from vrl.ray.placement import actor_scheduling_strategy
+from vrl.ray.placement import actor_meta_get, actor_scheduling_strategy
 from vrl.ray.resource_cleanup import kill_actors, kill_and_retain
 
 
@@ -109,8 +109,8 @@ class RayActorGroup:
                 RayActorHandle(
                     worker_id=worker_id,
                     actor=actor,
-                    node_ip=str(_meta_get(meta, "node_ip", "unknown")),
-                    gpu_ids=tuple(int(gpu_id) for gpu_id in _meta_get(meta, "gpu_ids", ())),
+                    node_ip=str(actor_meta_get(meta, "node_ip", "unknown")),
+                    gpu_ids=tuple(int(gpu_id) for gpu_id in actor_meta_get(meta, "gpu_ids", ())),
                 )
                 for worker_id, actor, meta in zip(
                     worker_ids,
@@ -140,12 +140,6 @@ class RayActorGroup:
             raise RuntimeError(
                 f"Ray actor-group cleanup incomplete: {len(failures)} actor kill(s) failed",
             ) from failures[0][1]
-
-
-def _meta_get(meta: Any, key: str, default: Any) -> Any:
-    if isinstance(meta, Mapping):
-        return meta.get(key, default)
-    return getattr(meta, key, default)
 
 
 __all__ = ["RayActorGroup", "RayActorHandle"]

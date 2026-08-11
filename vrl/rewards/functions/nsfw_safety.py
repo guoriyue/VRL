@@ -25,9 +25,6 @@ class NSFWSafetyReward(InferenceRewardFunction):
             reward_name="nsfw_safety",
             score_key="nsfw_safety",
             inference_runtime=InProcessRewardInferenceRuntime(model=model),
-            artifact_builder=lambda samples: InferenceRewardFunction.build_inmemory_artifacts(
-                samples,
-            ),
         )
 
 

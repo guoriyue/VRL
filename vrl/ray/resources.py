@@ -759,6 +759,31 @@ def _explicit_role_gpu_count(role_config: RoleResourceConfig) -> int:
     return int(num_gpus)
 
 
+def _explicit_role_devices(
+    role_config: RoleResourceConfig,
+    *,
+    visible_devices: tuple[int, ...],
+) -> tuple[int, ...] | None:
+    """Resolve an explicitly configured ``devices`` list, or None when auto.
+
+    Shared by every role: dedupe, require a subset of the visible pool, and
+    require ``num_gpus`` (when also set) to agree with the device count.
+    """
+
+    prefix = role_config.key_prefix
+    explicit_devices = _parse_devices(role_config.devices)
+    if explicit_devices == "auto":
+        return None
+    num_gpus = _parse_num_gpus(role_config.num_gpus, field_name=f"{prefix}.num_gpus")
+    devices = tuple(_dedupe_ints(explicit_devices, field_name=f"{prefix}.devices"))
+    _validate_subset(devices, visible_devices, field_name=f"{prefix}.devices")
+    if num_gpus != "auto" and num_gpus is not None and int(num_gpus) != len(devices):
+        raise ValueError(
+            f"{prefix}.num_gpus={num_gpus} does not match len({prefix}.devices)={len(devices)}",
+        )
+    return devices
+
+
 def _resolve_role_devices(
     *,
     visible_devices: tuple[int, ...],
@@ -766,19 +791,11 @@ def _resolve_role_devices(
     default_auto_count: int,
 ) -> tuple[int, ...]:
     prefix = role_config.key_prefix
-    explicit_devices = _parse_devices(role_config.devices)
-    num_gpus = _parse_num_gpus(role_config.num_gpus, field_name=f"{prefix}.num_gpus")
-
-    if explicit_devices != "auto":
-        devices = tuple(_dedupe_ints(explicit_devices, field_name=f"{prefix}.devices"))
-        _validate_subset(devices, visible_devices, field_name=f"{prefix}.devices")
-        if num_gpus != "auto" and num_gpus is not None and int(num_gpus) != len(devices):
-            raise ValueError(
-                f"{prefix}.num_gpus={num_gpus} does not match "
-                f"len({prefix}.devices)={len(devices)}",
-            )
+    devices = _explicit_role_devices(role_config, visible_devices=visible_devices)
+    if devices is not None:
         return devices
 
+    num_gpus = _parse_num_gpus(role_config.num_gpus, field_name=f"{prefix}.num_gpus")
     count = default_auto_count if num_gpus == "auto" or num_gpus is None else int(num_gpus)
     if count < 0:
         raise ValueError(f"{prefix}.num_gpus must be >= 0")
@@ -797,26 +814,8 @@ def _resolve_rollout_devices(
     allow_overlap: bool,
 ) -> tuple[int, ...]:
     gpu_pool = rollout_config.gpu_pool
-    explicit_devices = _parse_devices(rollout_config.devices)
-    num_gpus = _parse_num_gpus(
-        rollout_config.num_gpus,
-        field_name=f"{rollout_config.key_prefix}.num_gpus",
-    )
-
-    if explicit_devices != "auto":
-        devices = tuple(
-            _dedupe_ints(explicit_devices, field_name=f"{rollout_config.key_prefix}.devices"),
-        )
-        _validate_subset(
-            devices,
-            visible_devices,
-            field_name=f"{rollout_config.key_prefix}.devices",
-        )
-        if num_gpus != "auto" and num_gpus is not None and int(num_gpus) != len(devices):
-            raise ValueError(
-                "distributed.resources.rollout.num_gpus does not match "
-                f"len(distributed.resources.rollout.devices): {num_gpus} vs {len(devices)}",
-            )
+    devices = _explicit_role_devices(rollout_config, visible_devices=visible_devices)
+    if devices is not None:
         trainer_pool = set(trainer_devices)
         if gpu_pool == "trainer" and not set(devices).issubset(trainer_pool):
             outside = sorted(set(devices) - trainer_pool)
@@ -859,54 +858,25 @@ def _resolve_rollout_devices(
     excluded = set(trainer_devices)
     pool = tuple(device for device in visible_devices if device not in excluded)
     requested = rollout_config.requested_gpu_count(available_count=len(pool))
-    return _slice_pool_with_overlap_fallback(
-        requested=requested,
-        pool=pool,
-        excluded=excluded,
-        visible_devices=visible_devices,
-        allow_overlap=allow_overlap and gpu_pool != "dedicated",
-        not_enough_pool_error=(
-            "Not enough non-overlapping rollout GPUs: "
-            f"requested={requested}, available={len(pool)}, "
-            f"trainer={list(trainer_devices)}, visible={list(visible_devices)}. "
-            "Expose more GPUs, or set distributed.resources.rollout.gpu_pool=trainer "
-            "to time-share the trainer GPU."
-        ),
-        not_enough_visible_error=(
-            "Not enough visible GPUs for rollout even with overlap allowed: "
-            f"requested={requested}, visible={list(visible_devices)}"
-        ),
-    )
-
-
-def _slice_pool_with_overlap_fallback(
-    *,
-    requested: int,
-    pool: tuple[int, ...],
-    excluded: set[int],
-    visible_devices: tuple[int, ...],
-    allow_overlap: bool,
-    not_enough_pool_error: str,
-    not_enough_visible_error: str,
-) -> tuple[int, ...]:
-    """Take ``requested`` devices from the non-overlapping ``pool``.
-
-    Shared by the rollout and reward auto-allocation paths. When the pool is
-    too small, fall back to the ``excluded`` devices (overlapping the trainer /
-    rollout) only if ``allow_overlap`` is set; otherwise raise. Callers pass the
-    role-specific error strings so each message keeps pointing at the right knob.
-    """
-
     if requested == 0:
         return ()
     if requested <= len(pool):
         return tuple(pool[:requested])
-    if not allow_overlap:
-        raise ValueError(not_enough_pool_error)
+    if not (allow_overlap and gpu_pool != "dedicated"):
+        raise ValueError(
+            "Not enough non-overlapping rollout GPUs: "
+            f"requested={requested}, available={len(pool)}, "
+            f"trainer={list(trainer_devices)}, visible={list(visible_devices)}. "
+            "Expose more GPUs, or set distributed.resources.rollout.gpu_pool=trainer "
+            "to time-share the trainer GPU.",
+        )
     fallback = tuple(device for device in visible_devices if device in excluded)
     combined = pool + fallback
     if requested > len(combined):
-        raise ValueError(not_enough_visible_error)
+        raise ValueError(
+            "Not enough visible GPUs for rollout even with overlap allowed: "
+            f"requested={requested}, visible={list(visible_devices)}",
+        )
     return tuple(combined[:requested])
 
 
@@ -918,26 +888,8 @@ def _resolve_reward_devices(
     reward_config: RewardResourceConfig,
     allow_overlap: bool,
 ) -> tuple[int, ...]:
-    explicit_devices = _parse_devices(reward_config.devices)
-    num_gpus = _parse_num_gpus(
-        reward_config.num_gpus,
-        field_name=f"{reward_config.key_prefix}.num_gpus",
-    )
-
-    if explicit_devices != "auto":
-        devices = tuple(
-            _dedupe_ints(explicit_devices, field_name=f"{reward_config.key_prefix}.devices"),
-        )
-        _validate_subset(
-            devices,
-            visible_devices,
-            field_name=f"{reward_config.key_prefix}.devices",
-        )
-        if num_gpus != "auto" and num_gpus is not None and int(num_gpus) != len(devices):
-            raise ValueError(
-                "distributed.resources.reward.num_gpus does not match "
-                f"len(distributed.resources.reward.devices): {num_gpus} vs {len(devices)}",
-            )
+    devices = _explicit_role_devices(reward_config, visible_devices=visible_devices)
+    if devices is not None:
         _validate_reward_overlap(
             devices=devices,
             trainer_devices=trainer_devices,
@@ -985,33 +937,24 @@ def _resolve_reward_devices(
         )
         return devices
 
+    # Explicit dedicated pool: a spare GPU is required. ``allow_overlap`` permits
+    # auto placement to share, but cannot weaken a declared dedicated pool.
     excluded = set(trainer_devices) | set(rollout_devices)
     pool = tuple(device for device in visible_devices if device not in excluded)
     requested = reward_config.requested_gpu_count(available_count=len(pool))
-    devices = _slice_pool_with_overlap_fallback(
-        requested=requested,
-        pool=pool,
-        excluded=excluded,
-        visible_devices=visible_devices,
-        # This branch is the explicit dedicated pool. ``allow_overlap`` permits
-        # auto placement to share, but cannot weaken a declared dedicated pool.
-        allow_overlap=False,
-        not_enough_pool_error=(
+    if requested == 0:
+        return ()
+    if requested > len(pool):
+        raise ValueError(
             "Not enough non-overlapping reward GPUs: "
             f"requested={requested}, available={len(pool)}, "
             f"trainer={list(trainer_devices)}, rollout={list(rollout_devices)}, "
             f"visible={list(visible_devices)}. Set "
             "distributed.resources.reward.gpu_pool=rollout for a shared "
             "inference pool (release is derived automatically), or expose a "
-            "separate reward GPU."
-        ),
-        not_enough_visible_error=(
-            "Not enough visible GPUs for reward even with overlap allowed: "
-            f"requested={requested}, visible={list(visible_devices)}"
-        ),
-    )
-    if not devices:
-        return ()
+            "separate reward GPU.",
+        )
+    devices = tuple(pool[:requested])
     _validate_reward_overlap(
         devices=devices,
         trainer_devices=trainer_devices,

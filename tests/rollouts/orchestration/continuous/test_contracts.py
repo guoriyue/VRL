@@ -24,7 +24,7 @@ import torch
 
 from tests.rollouts.orchestration.continuous._helpers import _wait_until
 from vrl.generation.ray.health_monitor import RolloutWorkerUnreachable
-from vrl.generation.ray.lifecycle_fsm import RuntimeLifecycle
+from vrl.utils.lifecycle import RuntimeLifecycle
 from vrl.ray.operation_deadline import RayOperationTimeout
 from vrl.rollouts.batch import RolloutBatch
 from vrl.rollouts.orchestration.continuous.consumer import ContinuousRolloutConsumer

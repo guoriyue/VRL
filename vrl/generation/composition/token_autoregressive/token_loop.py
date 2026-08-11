@@ -13,7 +13,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from vrl.generation.steps.token import TokenLoopInit, TokenStepBatch, TokenStepOutput
-from vrl.nn.layers.attention.cache_rows import ARCacheRows, ar_concat_rows, ar_split_rows
+from vrl.nn.layers.attention.cache_rows import ARCacheRows
 
 
 @dataclass(slots=True)
@@ -145,10 +145,7 @@ def call_with_supported_kwargs(fn: Any, *args: Any, **kwargs: Any) -> Any:
 
 
 __all__ = [
-    "ARCacheRows",
     "TokenAutoregressiveEnvelope",
     "TokenAutoregressiveLoop",
-    "ar_concat_rows",
-    "ar_split_rows",
     "call_with_supported_kwargs",
 ]

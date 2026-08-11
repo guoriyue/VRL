@@ -88,11 +88,7 @@ class ContinuousRolloutSchedule:
                 "the generation runtime mid-iteration; use a dedicated reward GPU "
                 "or strict_on_policy scheduling",
             )
-        if not getattr(
-            self.lifecycle.collector,
-            "supports_continuous_reward_execution",
-            False,
-        ):
+        if not self.lifecycle.collector.supports_continuous_reward_execution:
             # A single collect task still overlaps the trainer in continuous mode.
             # Limiting group concurrency therefore cannot make an external reward
             # service safe when its accelerator placement is unknown.

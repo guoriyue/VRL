@@ -112,10 +112,4 @@ class PickScoreRewardModel(TorchRewardModel):
             return float((scores.diag() / 26).mean().item())
 
 
-def pickscore_reward_model(worker_config: Mapping[str, Any]) -> PickScoreRewardModel:
-    """Preserve the external ``worker_config.model_factory`` plugin path."""
-
-    return PickScoreRewardModel(worker_config)
-
-
-__all__ = ["PickScoreRewardModel", "pickscore_reward_model"]
+__all__ = ["PickScoreRewardModel"]

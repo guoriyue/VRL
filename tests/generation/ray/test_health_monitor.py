@@ -13,7 +13,7 @@ from vrl.generation.ray.health_monitor import (
     RolloutWorkerHealthMonitor,
     RolloutWorkerUnreachable,
 )
-from vrl.generation.ray.lifecycle_fsm import RuntimeLifecycle, RuntimePhase
+from vrl.utils.lifecycle import RuntimeLifecycle, RuntimePhase
 from vrl.ray.actor_group import RayActorHandle
 from vrl.runtime_errors import (
     TerminalRuntimeError,

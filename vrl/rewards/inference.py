@@ -167,24 +167,6 @@ class RewardInferenceRuntime(Protocol):
     async def shutdown(self) -> None: ...
 
 
-def validate_reward_parking_residual(
-    *,
-    residual_bytes: int,
-    baseline_bytes: int,
-    limit_bytes: int,
-    context: str,
-) -> None:
-    """One invariant behind every reward release check: residual <= baseline + limit."""
-
-    if min(residual_bytes, baseline_bytes, limit_bytes) < 0:
-        raise ValueError(f"{context} byte counts must be >= 0")
-    if residual_bytes > baseline_bytes + limit_bytes:
-        raise RuntimeError(
-            f"incomplete {context}: residual={residual_bytes} "
-            f"baseline={baseline_bytes} limit={limit_bytes}",
-        )
-
-
 @runtime_checkable
 class RewardMemoryParkingRuntime(Protocol):
     """Runtime boundary for retryable, verifiable reward GPU parking."""
@@ -278,6 +260,5 @@ __all__ = [
     "RewardMemoryParkingRuntime",
     "score_artifacts_with_model",
     "sha256_file",
-    "validate_reward_parking_residual",
     "validate_reward_results",
 ]

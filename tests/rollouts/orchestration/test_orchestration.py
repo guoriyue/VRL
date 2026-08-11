@@ -105,6 +105,7 @@ class _Collector:
         self.requires_generation_offload_before_reward = False
         self.requires_driver_model_offload_for_reward = False
         self.supports_reward_generation_overlap = False
+        self.supports_continuous_reward_execution = False
         self.calls: list[dict[str, Any]] = []
         self.activation_calls = 0
         self.offload_calls = 0

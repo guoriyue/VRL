@@ -1,9 +1,10 @@
-"""Terminal lifecycle state for one Ray generation runtime.
+"""Terminal lifecycle state shared by the two inference engines.
 
-Rollout admission and draining belong to the rollout schedule.  This state only
-guards the terminal boundary: work is accepted while RUNNING, failures close
+Admission and draining belong to the owning schedule. This state only guards
+the terminal boundary: work is accepted while RUNNING, failures close
 admission through SHUTTING_DOWN, and successful resource teardown publishes
-TERMINATED.
+TERMINATED. Both the Ray generation runtime and the reward runtime drive this
+one FSM so terminal semantics cannot drift between the engines.
 """
 
 from __future__ import annotations
@@ -29,9 +30,11 @@ class RuntimeLifecycleError(RuntimeError):
         self,
         operation: str,
         phase: RuntimePhase,
+        *,
+        owner: str = "runtime",
     ) -> None:
         phase_name = phase.value.replace("_", " ")
-        super().__init__(f"{operation} rejected: rollout runtime is {phase_name}")
+        super().__init__(f"{operation} rejected: {owner} is {phase_name}")
         self.operation = operation
         self.phase = phase
 
@@ -39,7 +42,8 @@ class RuntimeLifecycleError(RuntimeError):
 class RuntimeLifecycle:
     """Fail-fast terminal lifecycle; schedules own pause/drain barriers."""
 
-    def __init__(self) -> None:
+    def __init__(self, *, owner: str = "runtime") -> None:
+        self._owner = owner
         self._phase = RuntimePhase.RUNNING
         self._failure: BaseException | None = None
         # Health probing publishes failures from an OS thread while runtime
@@ -100,13 +104,14 @@ class RuntimeLifecycle:
                 raise RuntimeLifecycleError(
                     "finish shutdown",
                     self._phase,
+                    owner=self._owner,
                 )
             self._phase = RuntimePhase.TERMINATED
 
     def _require_running_locked(self, operation: str) -> None:
         if self._phase is RuntimePhase.RUNNING:
             return
-        error = RuntimeLifecycleError(operation, self._phase)
+        error = RuntimeLifecycleError(operation, self._phase, owner=self._owner)
         if self._failure is not None:
             raise error from self._failure
         raise error

@@ -368,7 +368,7 @@ class GenerationWorkerCore:
                 torch.cuda.synchronize()
             except Exception as exc:  # OOM is an expected trial verdict
                 self._memory_parking.recover_after_execution_error(model, exc)
-                if "out of memory" not in str(exc).lower():
+                if not is_cuda_out_of_memory(exc):
                     raise
                 torch.cuda.synchronize()
                 torch.cuda.empty_cache()

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from vrl.rewards.base import InferenceRewardFunction, resolve_reward_component_device
+from vrl.rewards.base import InferenceRewardFunction, reward_worker_config_with_device
 from vrl.rewards.models.target_dino_similarity import TargetDinoSimilarityModel
 from vrl.rewards.runtime import InProcessRewardInferenceRuntime
 
@@ -19,21 +19,12 @@ class TargetDinoSimilarityReward(InferenceRewardFunction):
         score_key: str = "target_dino_similarity",
         worker_config: dict[str, Any] | None = None,
     ) -> None:
-        cfg = dict(worker_config or {})
-        if device:
-            configured_device = str(cfg.get("device", "")).strip()
-            cfg["device"] = resolve_reward_component_device(
-                resolved_device=str(device),
-                overrides=[("worker_config.device", configured_device)],
-            )
+        cfg = reward_worker_config_with_device(worker_config, device=str(device))
         model = TargetDinoSimilarityModel(cfg)
         super().__init__(
             reward_name=reward_name,
             score_key=score_key,
             inference_runtime=InProcessRewardInferenceRuntime(model=model),
-            artifact_builder=lambda samples: InferenceRewardFunction.build_inmemory_artifacts(
-                samples,
-            ),
         )
 
 

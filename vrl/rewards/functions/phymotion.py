@@ -3,8 +3,8 @@
 A ``DiskArtifactRewardFunction`` on the disk-artifact path whose runtime delegates to an
 external PhyMotion environment (SMPL + MuJoCo) via a configured command (see
 ``vrl.rewards.models.phymotion.PhyMotionModel``). Returns
-``kinematic_plausibility`` / ``contact_balance`` / ``dynamic_feasibility`` /
-``overall``; default ``score_key`` is ``overall``.
+``kinematic`` / ``contact`` / ``dynamic`` / ``overall``; default
+``score_key`` is ``overall``.
 
 PhyMotion is opt-in and external by design — its backend is not a VRL base
 dependency, so this reward only loads when ``worker_config.phymotion_cmd`` points

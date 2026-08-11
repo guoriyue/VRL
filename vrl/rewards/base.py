@@ -19,6 +19,7 @@ from vrl.rewards.inference import (
     RewardInferenceResult,
     RewardInferenceRuntime,
     RewardMemoryParkingRuntime,
+    validate_reward_results,
 )
 from vrl.rewards.types import RewardOutput, RewardSample
 from vrl.utils.cuda_memory import CUDA_RUNTIME_RESIDUAL_BYTES_LIMIT
@@ -66,6 +67,23 @@ def resolve_reward_component_device(
             f"resolved {resolved_device!r}. CPU resources cannot launch a CUDA reward.",
         )
     return effective
+
+
+def reward_worker_config_with_device(
+    worker_config: Mapping[str, Any] | None,
+    *,
+    device: str,
+) -> dict[str, Any]:
+    """Copy ``worker_config``, applying the resolved role device as a ceiling."""
+
+    cfg = dict(worker_config or {})
+    if device:
+        configured_device = str(cfg.get("device", "")).strip()
+        cfg["device"] = resolve_reward_component_device(
+            resolved_device=str(device),
+            overrides=[("worker_config.device", configured_device)],
+        )
+    return cfg
 
 
 class RewardCleanupError(RuntimeError):
@@ -178,7 +196,7 @@ class InferenceRewardFunction(RewardFunction):
         reward_name: str,
         score_key: str,
         inference_runtime: RewardInferenceRuntime,
-        artifact_builder: ArtifactBuilder,
+        artifact_builder: ArtifactBuilder | None = None,
         artifact_finalizer: ArtifactFinalizer | None = None,
         artifact_retainer: ArtifactFinalizer | None = None,
         debug_dir: str = "",
@@ -191,13 +209,15 @@ class InferenceRewardFunction(RewardFunction):
         normalized_score_key = str(score_key).strip()
         if not normalized_score_key:
             raise ValueError("score_key must be non-empty")
-        if inference_runtime is None:
-            raise TypeError("inference_runtime must be a RewardInferenceRuntime")
         for method_name in ("score_batch", "shutdown"):
             if not callable(getattr(inference_runtime, method_name, None)):
                 raise TypeError(
                     "inference_runtime must provide async score_batch() and shutdown()",
                 )
+        if artifact_builder is None:
+            # In-memory media is the default transport; disk rewards inject the
+            # artifact-store builder explicitly.
+            artifact_builder = InferenceRewardFunction.build_inmemory_artifacts
         if not callable(artifact_builder):
             raise TypeError("artifact_builder must be callable")
         self.reward_name = normalized_reward_name
@@ -306,9 +326,6 @@ class InferenceRewardFunction(RewardFunction):
             score_key=score_key,
             inference_runtime=build_reward_inference_runtime(
                 {**dict(worker_config), "model_factory": str(model_factory)},
-            ),
-            artifact_builder=lambda samples: InferenceRewardFunction.build_inmemory_artifacts(
-                samples,
             ),
         )
 
@@ -453,8 +470,6 @@ class InferenceRewardFunction(RewardFunction):
             # Contract enforcement lives at this seam, not inside each runtime,
             # so every runtime (including injected fakes) gets the same result
             # identity guard and request-order re-sort.
-            from vrl.rewards.inference import validate_reward_results
-
             self._inference_started = True
             raw_results = await inference_runtime.score_batch(request)
             results = validate_reward_results(request, raw_results)

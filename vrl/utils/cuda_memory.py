@@ -312,6 +312,28 @@ def release_cuda_memory_for_parking(device: str | None = None) -> None:
         torch.cuda.synchronize(target)
 
 
+def validate_parking_residual(
+    *,
+    residual_bytes: int,
+    baseline_bytes: int,
+    limit_bytes: int,
+    context: str,
+) -> None:
+    """One invariant behind every GPU-parking release check: residual <= baseline + limit.
+
+    Shared by the generation worker parking snapshot and the reward inference
+    runtime so the two engines cannot drift on what a complete release means.
+    """
+
+    if min(residual_bytes, baseline_bytes, limit_bytes) < 0:
+        raise ValueError(f"{context} byte counts must be >= 0")
+    if residual_bytes > baseline_bytes + limit_bytes:
+        raise RuntimeError(
+            f"incomplete {context}: residual={residual_bytes} "
+            f"baseline={baseline_bytes} limit={limit_bytes}",
+        )
+
+
 __all__ = [
     "CUDA_RUNTIME_RESIDUAL_BYTES_LIMIT",
     "CumemPool",
@@ -323,4 +345,5 @@ __all__ = [
     "release_cuda_memory",
     "release_cuda_memory_for_parking",
     "reset_cuda_peak",
+    "validate_parking_residual",
 ]

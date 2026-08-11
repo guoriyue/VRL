@@ -27,7 +27,7 @@ from vrl.generation.ray.launcher import (
     RayGenerationLauncher,
     _all_workers_support_versioned_slots,
 )
-from vrl.generation.ray.lifecycle_fsm import RuntimePhase
+from vrl.utils.lifecycle import RuntimePhase
 from vrl.generation.ray.runtime import RayGenerationRuntime
 from vrl.generation.ray.session import RayGenerationSession
 from vrl.generation.types import GenerationRequest

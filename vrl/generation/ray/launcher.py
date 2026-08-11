@@ -177,10 +177,20 @@ class RayGenerationLauncher:
         config: RayGenerationConfig,
         launch_inputs: RayGenerationLaunchInputs,
         *,
-        placement: RolePlacement,
+        placement: RolePlacement | None,
     ) -> RayGenerationRuntime:
         """Create the sole Ray runtime with eager or deferred session ownership."""
 
+        if placement is None:
+            # ``GlobalRayPlacementOwner.rollout_placement`` yields None when the
+            # resolved topology assigned no rollout bundles; fail with the config
+            # knob instead of an AttributeError deep inside the session launch.
+            raise ValueError(
+                "Ray generation launch requires a rollout placement, but the "
+                "run-level placement owner resolved no rollout bundles. Check "
+                "distributed.resources.rollout.* (num_gpus/devices) and that the "
+                "placement group was created before launch.",
+            )
         if not isinstance(config, RayGenerationConfig):
             raise TypeError(
                 f"config must be a RayGenerationConfig, got {type(config).__name__}",

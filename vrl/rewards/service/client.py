@@ -46,8 +46,8 @@ class HttpRewardInferenceRuntime:
         self,
         service: str | RewardInferenceConfig,
         *,
-        timeout_s: float = 1800.0,
-        expected_model: str = "",
+        timeout_s: float | None = None,
+        expected_model: str | None = None,
     ) -> None:
         from vrl.config.reward_inference import (
             RewardInferenceConfig,
@@ -59,6 +59,11 @@ class HttpRewardInferenceRuntime:
                 raise ValueError(
                     "HttpRewardInferenceRuntime requires inference.kind=http",
                 )
+            if timeout_s is not None or expected_model is not None:
+                raise ValueError(
+                    "timeout_s/expected_model are owned by the RewardInferenceConfig; "
+                    "do not also pass them as keyword arguments",
+                )
             # Validated and normalized by the config's own __post_init__.
             service_url = service.endpoint
             timeout_s = service.timeout_s
@@ -68,6 +73,8 @@ class HttpRewardInferenceRuntime:
                 str(service),
                 context="reward service endpoint",
             )
+            timeout_s = 1800.0 if timeout_s is None else timeout_s
+            expected_model = "" if expected_model is None else expected_model
         if timeout_s <= 0:
             raise ValueError("reward service timeout_s must be > 0")
 
