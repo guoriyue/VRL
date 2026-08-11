@@ -1,4 +1,15 @@
-"""Versioned JSON wire format for standalone reward scoring."""
+"""Versioned JSON wire format for standalone reward scoring.
+
+The single owner of the envelope encode/decode pair: client.py and server.py
+both import only these functions, so the two endpoints cannot drift apart.
+Field sets derive from the inference.py dataclasses via ``fields(...)``, which
+keeps those dataclasses the one schema source — adding a field changes the
+wire, and unknown keys are rejected rather than ignored. The envelope pins
+``WIRE_PROTOCOL``/``WIRE_VERSION`` so a mismatched peer fails before any
+scoring, and ``request_fingerprint`` canonicalizes a request for the server's
+idempotency check. In-memory media never crosses this boundary: remote
+scoring requires disk-materialized artifacts.
+"""
 
 from __future__ import annotations
 
