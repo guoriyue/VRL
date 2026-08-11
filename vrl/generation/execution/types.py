@@ -1,4 +1,16 @@
-"""Types for distributed generation execution."""
+"""Types for distributed generation execution.
+
+The wire vocabulary of the driver <-> Ray-worker boundary: envelopes, chunk
+results, parking snapshots, and probe verdicts are the payloads serialized
+across it, so they live apart from both the driver runtime and the worker
+core that exchange them. Two members deliberately do NOT cross the wire:
+``ChunkProduceFence`` stays in-process because CUDA events cannot ride Ray,
+and ``StaleSlotDiscard`` is raised worker-side but caught by the continuous
+rollout producer (vrl/rollouts/orchestration/continuous/producer.py) — a
+cross-package handshake that forces it into shared neutral ground. Config
+parsing imports the ``Literal`` aliases, so this module stays torch-free at
+import.
+"""
 
 from __future__ import annotations
 
