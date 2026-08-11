@@ -1,4 +1,11 @@
-"""Bounded Ray actor submit / wait / gather helpers."""
+"""Bounded Ray actor submit / wait / gather helpers.
+
+The dispatch half of the actor story — launch and teardown live in
+``vrl.ray.actor_group``. A single fleet-owned ``RayActorDispatcher`` is shared
+by the generation executor and weight sync, so concurrent operations compete
+for real per-actor slots instead of pre-queueing in synchronous actor
+mailboxes before their own deadlines start.
+"""
 
 from __future__ import annotations
 
