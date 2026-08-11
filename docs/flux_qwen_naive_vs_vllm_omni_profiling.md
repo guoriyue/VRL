@@ -132,8 +132,10 @@ CUDA_VISIBLE_DEVICES=0 HF_HUB_OFFLINE=1 \
 
 §1 的 3.3× 是"native full-loaded vs vLLM 被逼 cpu-offload"的产物。这一轮把混淆变量拿掉：换 **L40S 48GB**，
 vLLM 侧 **关掉 offload**（`--no-offload`，`flux_omni_l40s.json` 里 `"cpu_offload": false`），transformer 两边都常驻；
-再用新写的 `vrl/scripts/perf/native_denoise_probe.py` 跟 omni profiler **量同一件事**（稳态去噪 s/step、同一个
-`time.time()`、no `torch.profiler`）。原始数：`/mnt/nvme/perf/{flux,qwen,sd3}_*_l40s.json`。
+再用新写的 `vrl/scripts/perf/native_denoise_probe.py` 与 omni profiler 做配对诊断。两者共享
+prompt/shape/step 协议，但**并非同一计时范围**：native 只量稳态 denoise loop，omni 量完整
+`Omni.generate`（包含 engine/worker boundary）。因此下列数字可定位额外开销，不能作为严格的
+cross-engine latency ratio。原始数：`/mnt/nvme/perf/{flux,qwen,sd3}_*_l40s.json`。
 
 ### 7.1 一句话
 

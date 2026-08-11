@@ -96,11 +96,17 @@ def _populate_hint_for_path(path: str) -> str:
 
 
 def _manifest_setup_hints() -> tuple[tuple[str, tuple[str, ...]], ...]:
-    from vrl.scripts.data import danbooru, video_world, videophy_i2v
+    from vrl.scripts.data import (
+        danbooru,
+        derive_text_video_targets,
+        video_world,
+        videophy_i2v,
+    )
 
     return (
         *danbooru.manifest_setup_hints(),
         *videophy_i2v.manifest_setup_hints(),
+        *derive_text_video_targets.manifest_setup_hints(),
         *video_world.manifest_setup_hints(),
     )
 
@@ -130,8 +136,12 @@ def _cmd_for_experiment(args: argparse.Namespace) -> None:
     plan["experiment"] = args.experiment
     emit(plan)
     if args.run and not plan["ready"]:
-        for step in plan["steps"]:
-            _run_setup_command(str(step.get("get", "")))
+        # Paired train/eval/report paths usually share one producer. Run each
+        # canonical setup command once instead of rebuilding the same dataset
+        # for every missing output in the pre-run plan.
+        commands = dict.fromkeys(str(step.get("get", "")) for step in plan["steps"])
+        for command in commands:
+            _run_setup_command(command)
 
 
 def _run_setup_command(command: str) -> None:

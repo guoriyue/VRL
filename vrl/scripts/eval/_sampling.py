@@ -7,9 +7,9 @@ resolved training config. This is the single owner of that projection.
 The dict is intentionally untyped: it is a per-request runtime payload handed straight to
 the generation request, not a launch-time config layer object.
 
-Note: ``sana_aesthetic_checkpoint_eval._resolve_sampling`` is deliberately NOT routed
-here — it returns the frozen ``OFFICIAL_SAMPLING_PROTOCOL`` to keep reproducibility
-independent of the training SDE, and must stay separate.
+Note: ``sana_aesthetic_report.resolve_sampling`` is deliberately NOT routed here — it
+returns the frozen ``OFFICIAL_SAMPLING_PROTOCOL`` to keep reproducibility independent
+of the training SDE, and must stay separate.
 """
 
 from __future__ import annotations

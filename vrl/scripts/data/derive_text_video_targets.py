@@ -19,6 +19,50 @@ from vrl.scripts.data.common import emit, write_jsonl, write_report
 from vrl.trainers.data.artifacts import validate_artifact_manifest_pair
 from vrl.utils.artifacts import SOURCE_BACKED_VIDEO_WORLD_METADATA_FIELDS
 
+COMMAND_NAME = "derive-text-video-targets"
+
+
+def _add_arguments(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--train-manifest", type=Path, required=True)
+    parser.add_argument("--eval-manifest", type=Path, required=True)
+    parser.add_argument("--data-root", type=Path, required=True)
+    parser.add_argument("--output-dir", type=Path, required=True)
+    parser.add_argument("--name", default="droid_full_targets_t2v")
+
+
+def register(subparsers: Any) -> None:
+    """Register the derivation command with the canonical dataset setup CLI."""
+
+    parser = subparsers.add_parser(
+        COMMAND_NAME,
+        help="Derive text-only T2V manifests from target-backed Video2World rows.",
+    )
+    _add_arguments(parser)
+    parser.set_defaults(func=_cmd_derive_text_video_targets)
+
+
+def manifest_setup_hints() -> tuple[tuple[str, tuple[str, ...]], ...]:
+    """Map the canonical derived DROID manifests to their reproducible build."""
+
+    return (
+        (
+            "data/external/video_world/manifests/droid_full_targets_t2v_",
+            (
+                COMMAND_NAME,
+                "--train-manifest",
+                "data/external/video_world/manifests/droid_full_targets_train.jsonl",
+                "--eval-manifest",
+                "data/external/video_world/manifests/droid_full_targets_eval.jsonl",
+                "--data-root",
+                "data/external",
+                "--output-dir",
+                "data/external/video_world/manifests",
+                "--name",
+                "droid_full_targets_t2v",
+            ),
+        ),
+    )
+
 
 def derive_text_video_rows(rows: Iterable[Mapping[str, Any]]) -> list[dict[str, Any]]:
     """Remove first-frame inputs while preserving target and source provenance."""
@@ -66,16 +110,11 @@ def _read_jsonl(path: Path) -> list[dict[str, Any]]:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--train-manifest", type=Path, required=True)
-    parser.add_argument("--eval-manifest", type=Path, required=True)
-    parser.add_argument("--data-root", type=Path, required=True)
-    parser.add_argument("--output-dir", type=Path, required=True)
-    parser.add_argument("--name", default="droid_full_targets_t2v")
+    _add_arguments(parser)
     return parser
 
 
-def main(argv: list[str] | None = None) -> None:
-    args = build_parser().parse_args(argv)
+def _cmd_derive_text_video_targets(args: argparse.Namespace) -> None:
     train_source = args.train_manifest.expanduser().resolve()
     eval_source = args.eval_manifest.expanduser().resolve()
     data_root = args.data_root.expanduser().resolve()
@@ -118,6 +157,10 @@ def main(argv: list[str] | None = None) -> None:
     report_path = output_dir / f"{args.name}_report.json"
     write_report(report_path, report)
     emit({**report, "report": report_path.as_posix()})
+
+
+def main(argv: list[str] | None = None) -> None:
+    _cmd_derive_text_video_targets(build_parser().parse_args(argv))
 
 
 if __name__ == "__main__":

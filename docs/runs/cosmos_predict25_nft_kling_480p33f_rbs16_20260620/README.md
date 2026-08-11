@@ -102,9 +102,9 @@ DDP correctness verified: rank0 and rank1 each draw a **disjoint** 16-prompt sli
 
 **ROOT CAUSE FOUND (2026-06-20) — the trained reward target is MIS-WEIGHTED at 480p_33f, not the policy.** Two de-risk probes (run on **both** L40S in parallel), all scores deterministic (rescore gap = 0.0000, so the spreads below are real model behavior):
 
-*Probe 1* (mixed-degradation, **since retired**) — real rollout vs a heavily-degraded copy (noise + shuffle + dropped frames + an fps change): Overall did **not** drop (gap −0.24, degraded scored *higher*). Because it moved four variables at once the result could not be attributed to any one of them, which is exactly what Probe 2 was built to fix; the script was deleted so nobody re-runs the confounded version. To reproduce or extend this line of investigation, use `kling_reward_diagnosis_probe.py`.
+*Probe 1* (mixed-degradation, **since retired**) — real rollout vs a heavily-degraded copy (noise + shuffle + dropped frames + an fps change): Overall did **not** drop (gap −0.24, degraded scored *higher*). Because it moved four variables at once the result could not be attributed to any one of them, which is exactly what Probe 2 was built to fix; the script was deleted so nobody re-runs the confounded version. To reproduce or extend this line of investigation, use `kling_reward_noise_gate.py`.
 
-*Probe 2* (`kling_reward_diagnosis_probe.py`) — a clean gaussian-noise ladder (σ=0,20,40,80,160) on 32 real rollouts, isolating one axis:
+*Probe 2* (`kling_reward_noise_gate.py`) — a clean gaussian-noise ladder (σ=0,20,40,80,160) on 32 real rollouts, isolating one axis:
 
 | dim | σ=0 | σ=160 | drop (s0−s160) | reading |
 |---|---|---|---|---|
@@ -117,7 +117,7 @@ The training reward is `score_key: overall_reward` (`configs/reward/kling_video_
 **Implication & cheap fix (test before any longer run):**
 1. **Switch `score_key` `overall_reward` → `visual_quality`** — VQ is correctly signed and discriminating at 480p_33f. One-line config change, no resolution change.
 2. The MQ inversion is most likely a **too-few-frames artifact (33f)**; restoring frames toward the paper's 93f should let MQ work — but that is expensive, so try (1) first.
-3. **Re-run `kling_reward_diagnosis_probe.py` and require the *trained* key to RESPOND** (drop > +0.0339, not INVERTED) before investing GPU-days. A ≥30–50 epoch sweep on the current `overall_reward` would optimize a gameable target.
+3. **Re-run `kling_reward_noise_gate.py` and require the *trained* key to RESPOND** (drop > +0.0339, not INVERTED) before investing GPU-days. A ≥30–50 epoch sweep on the current `overall_reward` would optimize a gameable target.
 
 **Follow-up — is VQ's gradient *policy-improvable*? (2026-06-21, steps-ladder probe).** The diagnosis probe proves VQ responds to *artificial* noise; this asks the sharper question behind "we never improve regardless of reward": does VQ reward the kind of quality the policy could actually climb? Held the policy checkpoint, prompts, and seed fixed for every row, varied only denoise steps (more steps = objectively more-converged generation) via `cosmos_predict25_kling_eval --steps {8,16,32,64} --score-key visual_quality`:
 

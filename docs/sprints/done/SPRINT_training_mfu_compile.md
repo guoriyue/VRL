@@ -137,7 +137,7 @@ compile 后 batch 2 = 20.1GB  → 有头寸尝试 batch 3/4；是否 OOM/是否�
 ## 6. 验收
 
 - `compile_benchmark --family <f>`:rollout + train 两条 path 的 `max_abs_grad` / `max_rel_out` 在阈内(compile 数值忠实)——**这是开关前的安全门**。**工具边界**：`--family` 只有 sd3_5 / cosmos-predict2 / cosmos-predict2.5 / wan_2_1 四家；anima 蹭 predict2.5（同 Cosmos DiT，model yaml 注释已声明）；flux/qwen 若要开需先扩 family。
-- `backward_mfu_probe --compile` before/after:目标 recipe 分辨率下 train fwd+bwd MFU 上升、peak GB 下降(复现 §0 量级)。**工具边界**：硬编码 `StableDiffusion3Pipeline`（:57），video recipe 不能"同分辨率跑"，用 `video_dit_mfu_probe` 或短 real-run 计时替代。
+- `backward_mfu_probe --compile` before/after:目标 recipe 分辨率下 train fwd+bwd MFU 上升、peak GB 下降(复现 §0 量级)。**工具边界**：硬编码 `StableDiffusion3Pipeline`（:57），video recipe 不能"同分辨率跑"；旧 `video_dit_mfu_probe` 已退役，video 侧应使用短 real-run 计时。
 - 短 RL dry-run:reward 曲线、`ratio_abs_dev`、TIS/RS 触发率与 eager 基线一致(parity 绿的 e2e 兜底)。
 - 不开 compile 的 recipe(FSDP/ckpt-locked/validation)明确标注原因,不留"为什么这条没开"的悬念——ckpt-locked 组的原因注释已随 07-02 修雷写进各 yaml。
 - ✅ compile×ckpt 不变量已下沉 config load 层(`validate_training_config`),`test_load_all_experiments` 全量兜底。

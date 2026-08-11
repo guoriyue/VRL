@@ -1,12 +1,12 @@
 # Danbooru anime / safety tag taxonomy for in-place dataset generation.
 #
 # Single source of truth for the anime-tag vocabularies and bucket weights used
-# by vrl/scripts/data/danbooru.py. Extracted from module-level ALL_CAPS constants
+# by vrl/scripts/data/danbooru/config.py. Extracted from workflow-level ALL_CAPS data
 # so the filter / bucket vocabulary can be reviewed and tuned (e.g. by data
 # curators) without editing Python. The script loads this at import time and
 # exposes the same constant names (EXCLUDE_TAGS, POSE_TAGS, SAFETY_RISK_TAGS, ...).
 #
-# On load (see danbooru.py _load_taxonomy): list-valued *_tags / *_labels become
+# On load (see danbooru/config.py): list-valued *_tags / *_labels become
 # set or tuple to match prior runtime types; subject_tags / pose_tags /
 # default_bucket_weights stay dict. Order is preserved for readable diffs.
 

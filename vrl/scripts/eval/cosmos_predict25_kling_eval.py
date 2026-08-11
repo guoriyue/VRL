@@ -20,7 +20,7 @@ from vrl.config.schema import RootConfig, parse_config
 from vrl.models.checkpoint_identity import resolve_checkpoint_model_identity
 from vrl.models.dtypes import resolve_torch_dtype
 from vrl.models.families.registry import get_model_family_entry
-from vrl.rewards.inference import RewardInferenceArtifact, RewardInferenceRequest
+from vrl.rewards.inference import RewardInferenceArtifact
 from vrl.rewards.models.kling_video_reward import KlingVideoRewardModel
 from vrl.scripts.eval._device import resolve_eval_device
 from vrl.scripts.eval._kling_reward import resolve_kling_worker_config
@@ -28,7 +28,6 @@ from vrl.scripts.eval._sampling import resolve_eval_sampling
 from vrl.scripts.eval.denoise_video_generation import (
     generate_one_video,
     seed_for,
-    video_to_cthw,
 )
 from vrl.trainers.checkpointing import (
     load_training_checkpoint,
@@ -374,7 +373,7 @@ def _generate_checkpoint_videos(
     video_dir.mkdir(parents=True, exist_ok=True)
     for prompt_index, prompt in enumerate(prompts):
         for sample_index in range(samples_per_prompt):
-            seed = _seed_for(
+            seed = seed_for(
                 base_seed=base_seed,
                 prompt_index=prompt_index,
                 sample_index=sample_index,
@@ -387,7 +386,7 @@ def _generate_checkpoint_videos(
                 sample_index,
                 seed,
             )
-            tensor = _generate_one_video(
+            tensor = generate_one_video(
                 model,
                 prompt=prompt,
                 seed=seed,
@@ -408,14 +407,6 @@ def _generate_checkpoint_videos(
     return videos
 
 
-# Generation helpers live in the shared denoise_video_generation module (wan reuses
-# generate_one_video too). Keep the private names as aliases so the call sites above
-# and the pinned test refs (eval_script._seed_for / _video_to_cthw) keep resolving.
-_seed_for = seed_for
-_generate_one_video = generate_one_video
-_video_to_cthw = video_to_cthw
-
-
 def _score_generated_videos(
     generated: list[GeneratedVideo],
     cfg: DictConfig,
@@ -425,24 +416,21 @@ def _score_generated_videos(
     worker_config = resolve_kling_worker_config(cfg)
     logger.info("Loading Kling VideoReward for %d videos", len(generated))
     model = KlingVideoRewardModel(worker_config)
-    request = RewardInferenceRequest(
-        request_id="cosmos-predict25-controlled-eval",
-        artifacts=tuple(
-            RewardInferenceArtifact(
-                artifact_id=_artifact_id(video),
-                path=str(video.path),
-                prompt=video.prompt,
-                metadata={
-                    "checkpoint_label": video.checkpoint_label,
-                    "seed": video.seed,
-                },
-            )
-            for video in generated
-        ),
-    )
+    artifacts = [
+        RewardInferenceArtifact(
+            artifact_id=_artifact_id(video),
+            path=str(video.path),
+            prompt=video.prompt,
+            metadata={
+                "checkpoint_label": video.checkpoint_label,
+                "seed": video.seed,
+            },
+        )
+        for video in generated
+    ]
     rows: list[dict[str, Any]] = []
     try:
-        for artifact, video in zip(request.artifacts, generated, strict=True):
+        for artifact, video in zip(artifacts, generated, strict=True):
             scores = model(artifact)
             selected_keys = tuple(key.strip() for key in score_key.split("+") if key.strip())
             rows.append(

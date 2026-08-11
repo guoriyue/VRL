@@ -6,13 +6,18 @@ action-fidelity gate. The static probe alone is not executable support.
 
 ## 0. 结论先行（Phase-0 静态已跑出 = `go_prototype`）
 
-`vrl/scripts/eval/world_model_steppability_probe.py` 已实跑(无 GPU 静态部分),结论 **`go_prototype`**:
+已退役的 `world_model_steppability_probe.py` 曾完成无 GPU 静态盘点，结论
+**`go_prototype`**。静态结果保留如下；当前唯一活门是
+`vrl/scripts/eval/cosmos_predict25_frame_prefix_gate.py` 的真权重、真视频前缀张量检查；
+它不证明当前 wrapper/forward 已消费这些张量：
 
 - **接缝是现成的**:`feat/physical-ai-vla-contract` 分支已交付 typed `Env`/`Policy`/`ActionChunk`/`ActionTrajectoryBatch` 契约 + `LiberoEnv` 模板 + Ray/weight-sync/编排——全和扩散无关,可原样复用。
 - **可步进的两个零件,在你手上的 backbone 上都存在**(probe verified):
   - frame-prefix 条件槽 **存在**:`Cosmos2_5_PredictBasePipeline.prepare_latents` 已带 `video` + `num_frames_in` 参数(我们 wrapper 现在只是传 `num_frames_in=0` 没用它)。
   - action 注入接缝 **可扩展**:`DiffusionBackboneInput.extra` 是 free-form `dict`,Wan-I2V 已经用它穿 `condition`/`image_embeds`,加一个 `action` key 非破坏性。
-- **唯一封锁是 omni generator,且不需要它**:diffusers 0.37.1 没有 `Cosmos3*`/omni pipeline(与 `cosmos3_nano_generator_probe` 记录的封锁一致),只有 Cosmos 2.x。但 **Cosmos-Predict2.5 V2W / Wan-I2V 这两个 2.x backbone 就够做原型**,不必等上游。
+- **omni generator 已不再是本门的前提**：历史 Cosmos3 探针已被正式
+  `vrl/models/families/cosmos/cosmos3/` 实现取代；本 Phase 仍刻意用
+  Cosmos-Predict2.5 验证 frame-prefix seam。
 
 → 所以这不是 bandit 的换皮,是一次**刻意的 scope 扩张**;但 Phase-0 静态门已过,**真正的悬念前移到 Phase-1 的 action-fidelity**(加了 action,生成的下一帧到底听不听 action),那个要 weights。
 
@@ -69,7 +74,11 @@ action-fidelity gate. The static probe alone is not executable support.
 复用本仓 probe/sprint 文化:**干净记录 blocker 本身就是 PASS**。沿用 `SPRINT_physical_ai_model_support.md` §P4 的五道训练门(env smoke / policy eval / action-logprob 契约 / **reward variance exists** / episode artifact 有界)。
 
 - **Phase 0 —— 可步进/action-条件封锁(KILL-RISK)。已部分完成。**
-  `world_model_steppability_probe.py` 静态部分**已跑 = `go_prototype`**:frame-prefix 槽 + action seam 都在,omni generator 封锁但不需要。**剩 `--load-weights` 的 live 子检查**(用真 checkpoint 调 `prepare_latents(num_frames_in=K>0)` 喂帧前缀)待在 GPU 机上补跑。
+  历史静态盘点**已跑 = `go_prototype`**；旧多用途脚本已退役。剩余 live 门由
+  `cosmos_predict25_frame_prefix_gate.py --prefix-video ...` 独立承担：通过正式 family
+  builder 加载真 checkpoint，再把真视频尾帧送入 `prepare_latents(num_frames_in>0)`，
+  验证 upstream pipeline 能构造非空、shape-compatible 的前缀张量。wrapper/forward
+  接线仍属于 Phase 1 实现范围。
 - **Phase 1 —— 证明 1 步 action-条件的下一帧(真 KILL-RISK)。**
   给初始帧 + 一个 action → 一个**可见响应 action** 的下一 chunk(换 action → 换帧)。DIAMOND 式 n≈3 步去噪。**门:action-fidelity 非平凡**(帧不是 action-invariant)。这是整条路最大的开放问题——backbone 是为 text/reference 训的,能不能在合理预算内被教会听 action(Pandora 失败模式 = 控制信号太粗)。
 - **Phase 2 —— 短闭环 episode + reward 方差(= §P4 "reward variance exists" 门)。**
@@ -84,7 +93,9 @@ action-fidelity gate. The static probe alone is not executable support.
 
 ## 6. 验收
 
-- [ ] Phase-0 probe 的 `--load-weights` live 子检查在 GPU 机补跑,结论(frame-prefix 真接受生成帧前缀?)落本文件。
+- [ ] 在 GPU 机运行 `cosmos_predict25_frame_prefix_gate.py --prefix-video ...`，把
+  production-family pipeline 能构造 frame-prefix 张量的结论落本文件；不得外推为
+  wrapper/forward 已消费这些张量。
 - [ ] Phase-1 action-fidelity probe:换 action 换帧的定量证据(或 negative)。
 - [ ] 过门后:`WorldModelEnv` 实现 `Env` 协议,episode 跑通,reward 方差存在。
 - [ ] Target II 先行:action-following reward fn + 现有 GRPO,**不动 `OnlineTrainer` 的 bandit 路径**。
@@ -92,9 +103,9 @@ action-fidelity gate. The static probe alone is not executable support.
 
 **参考**
 - 接缝/类型:`vrl/rollouts/envs/contract.py`、`vrl/models/vla/policy.py`、`vrl/rollouts/envs/libero.py`(分支 `feat/physical-ai-vla-contract`)
-- probe:`vrl/scripts/eval/world_model_steppability_probe.py`(本 sprint 新增)
+- live gate:`vrl/scripts/eval/cosmos_predict25_frame_prefix_gate.py`
 - frame-prefix 槽:`Cosmos2_5_PredictBasePipeline.prepare_latents`(`video`/`num_frames_in`);wrapper `vrl/models/families/cosmos/predict2_5/model.py`(现传 `num_frames_in=0`)
 - action seam:`vrl/models/steps/denoise/common/backbone.py`(`DiffusionBackboneInput.extra`)、`vrl/models/families/wan_2_1/model.py`(`extra={condition,image_embeds}`)
-- omni 封锁:`vrl/scripts/eval/cosmos3_nano_generator_probe.py`(分支)
+- Cosmos3 正式 owner:`vrl/models/families/cosmos/cosmos3/`（历史探针已退役）
 - bandit trainer / 无 critic 协议:`vrl/trainers/online/trainer.py`、`vrl/algorithms/base.py`、`vrl/algorithms/grpo/multisegment.py`
 - canonical:DIAMOND(2405.12399)、DreamerV3(2301.04104)、Genie 3+SIMA 2、Vid2World(2505.14357)

@@ -51,12 +51,14 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-# Arm id -> the reward_collection_mode value it forces. Keys are the sprint's
-# A/B/C labels; values must stay in sync with RewardCollectionMode.
+from vrl.rollouts.orchestration.types import RewardCollectionMode
+
+# Arm id -> the reward_collection_mode value it forces. The A/B/C labels are the
+# benchmark protocol; values come from the production scheduling contract.
 ARMS = {
-    "A": "batched_serial",
-    "B": "per_group_serial",
-    "C": "per_group_streaming",
+    "A": RewardCollectionMode.BATCHED_SERIAL.value,
+    "B": RewardCollectionMode.PER_GROUP_SERIAL.value,
+    "C": RewardCollectionMode.PER_GROUP_STREAMING.value,
 }
 
 # Acceptance thresholds from SPRINT_reward_service.md "Performance acceptance".

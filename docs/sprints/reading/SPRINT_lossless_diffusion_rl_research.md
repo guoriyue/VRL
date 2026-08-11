@@ -2,15 +2,19 @@
 
 状态：**reading / 已验证（2026-06-26）**。性质：**deep-research 工作流产出(23 源 → 101 claims → 25 对抗验证 → 22 确认 / 3 证伪)，逐条对标我们本轮三个 probe 的实测，产出"无损杠杆清单 + 天花板判断 + 门控"，不是功能移植。**
 
+> Tool lifecycle note (2026-08-10): the one-shot perf probes named in this
+> historical report have been retired after their decisions were recorded. The
+> measurements below remain provenance, not runnable command documentation.
+
 > 问题：对 diffusion/flow-matching RL 后训练(GRPO/Flow-GRPO，SD3.5/Flux/Wan/Cosmos)，有哪些**无损(不改输出分布)**的系统/kernel 手段能省显存(装更大 batch)或省计算?
-> 实测前提(本仓库已测，RTX 5090 / SD3.5-medium 1024²)：rollout DiT **compute-bound**(ms/sample batch 1→16 全平),compile 后 **94% MFU**(69%→94%，1.37x)。证据：记忆 `project_rollout_bound_class_probe`、`project_lossless_diffusion_rl_research`、`vrl/scripts/perf/{attention_fraction,rollout_bottleneck,dit_mfu,backward_mfu}_probe.py`。
+> 实测前提(本仓库已测，RTX 5090 / SD3.5-medium 1024²)：rollout DiT **compute-bound**(ms/sample batch 1→16 全平),compile 后 **94% MFU**(69%→94%，1.37x)。证据：记忆 `project_rollout_bound_class_probe`、`project_lossless_diffusion_rl_research`；旧的 attention/batch/MFU one-shot 命令已退役，`backward_mfu_probe.py` 仍保留。
 > 相关：[[SPRINT_signal_paged_rollout]]（shared-prefix P0 已得到负结果，现为 info 档案）、[[SPRINT_training_mfu_compile]]、[[SPRINT_rl_safe_feature_cache_probe]]（近似路径的正确性门）、本轮证伪的 [[SPRINT_paged_trajectory_store]] / `SPRINT_diffusion_stepwise_batching_probe`。
 
 ## 0. 一句话（诚实的天花板 —— 二次修正：image 和 video 都在 bf16 硬件天花板上）
 
 **最终结论：image 和 video 都已接近 bf16 硬件峰值。早前"video 有 45% 头空间"是拿错峰值(419)算的,已被 GEMM 微基准证伪。**
 
-- **真实峰值**:RTX 5090 bf16 dense(fp32 累加)实测 **~232 TFLOPS**(`gemm_peak_probe`),不是 419——419 是 fp8/稀疏的 "AI TOPS" 数。消费卡 bf16 tensor 用 fp32 累加是半速。
+- **真实峰值**:RTX 5090 bf16 dense(fp32 累加)实测 **~232 TFLOPS**（已退役的 `gemm_peak_probe` 历史读数；当前标定入口是 `gpu_preflight.py`）,不是 419——419 是 fp8/稀疏的 "AI TOPS" 数。消费卡 bf16 tensor 用 fp32 累加是半速。
 - **IMAGE(SD3.5)**:compile 后 ~94%(对真实峰值)。已饱和。
 - **VIDEO(cosmos)**:按真实 232 峰值重算,40.7 TFLOP / 187ms = 218 TFLOPS = **~94% 饱和**(不是 51%)。GEMM 实测 ~232-245 TFLOPS = **就在 bf16 天花板上**,`cutlass_80` kernel 不是"旧/慢",是到顶了。
 - **结论**:bf16 上没有 GEMM 无损杠杆(已到硬件极限)。想更快只能 fp8/fp4(**有损 → 只能离 policy path**,repo 已有 fp8 rollout)。注意力也已被复核收敛：Blackwell sm_120 没有 FA-3，flash≈cuDNN，batch=4 flash attention tensor SOL 已到方阵 GEMM 的 91%。其余无损大杠杆只剩 RL pipeline(分离 rollout/train,需多卡)。
@@ -32,10 +36,10 @@
 
 ## 0.6 本机实测验证（2026-06-26 初测；2026-06-27 NCU 复核, RTX 5090）
 
-跑了三个 probe 把报告里对我们最相关的两条轴实测掉(数存 `project_lossless_diffusion_rl_research`；脚本保留用于换 GPU / PyTorch / 模型形态后重跑)。
+当时用 one-shot probes 把报告里最相关的轴实测掉（数存 `project_lossless_diffusion_rl_research`）。这些命令现已退役；换 GPU / PyTorch / 模型形态后的新问题应以当前 production runtime 建立新的测量入口。
 
 ### 验证 1：注意力占比随分辨率（→ FA-3 对我们有没有用）
-`vrl/scripts/perf/attention_fraction_probe.py`：
+已退役的 `vrl/scripts/perf/attention_fraction_probe.py` 历史结果：
 
 ```
 side   img_tok   seq     lin TFLOP  attn TFLOP  attn%   ms/fwd
@@ -49,7 +53,9 @@ side   img_tok   seq     lin TFLOP  attn TFLOP  attn%   ms/fwd
 **结论：attention 是 O(seq²),图像 ≤1024² 只占 4-13% FLOP → FA-3/注意力 kernel 升级天花板很低(linear/MLP-bound,compile 已啃)。1536²+ 升到 24-35%,video token 数更高才会 attn-dominated → 那时 FA-3 才值。** 所以无损 compute 杠杆随 seq 增长从"MLP 融合(compile,已有)"漂移到"attention(FA-3,video 才需要)"。
 
 ### 验证 2：shared-prefix 多样性保留（→ 曾被报告点名的候选）—— 负结果
-`vrl/scripts/eval/shared_prefix_divergence_probe.py`，G=6 T=28 768²，用 repo 真实 `sde_step_with_logprob`：
+该实验由现已退役的 `shared_prefix_divergence_probe.py` 完成，G=6 T=28
+768²，使用 repo 真实 `sde_step_with_logprob`。负结论与数据保留如下；方向已关闭，
+不再提供活命令：
 
 ```
             noise_level=1.0          noise_level=1.4(高噪声上界)
@@ -68,7 +74,7 @@ k    fwd_saved  retention            retention
 > caveat:这是 latent 多样性(reward variance 的代理),非 reward 本身;单 prompt / SD3.5 / 768²。但 k=4 就塌到 44% 的悬崖太陡,reward-model 版 P0 翻盘概率很低。signal-paged 已据此关闭并归档到 `info/`（见该 sprint §9 自己写的关闭条件）。
 
 ### 验证 4：CUDA graphs（→ SGLang 重投的 launch-bound 利器对我们有没有用）
-`vrl/scripts/perf/dit_mfu_probe.py --compile-mode reduce-overhead`（CUDA graphs）vs `default`（纯 inductor 融合），1024² batch4：
+已退役的 `vrl/scripts/perf/dit_mfu_probe.py` 历史结果（CUDA graphs vs 纯 inductor 融合，1024² batch4）：
 
 ```
 eager                         628.6 ms   69%
@@ -79,10 +85,10 @@ compile reduce-overhead(graph)  460.4 ms   94%   ← +0.7%,在噪声里
 **CUDA graphs 在我们 compute-bound 的 DiT 上 ≈ 零收益(460 vs 463)。** SGLang/vLLM 重投 CUDA graphs,是因为 LLM 自回归 decode 是 launch-bound(batch-1、几千小 kernel、GPU 在 kernel 间饿);compile 之后我们的 launch 泡泡已经没了,graph 没东西可回收。**这条实测把"SGLang custom 东西 = 解 launch-bound serving"这个 regime 差异钉死了。**
 
 ### 验证 3：融合 AdaLN kernel 头空间（→ image/video 都不作为当前 kernel sprint）
-`vrl/scripts/perf/dit_mfu_probe.py` 已测 SD3.5 eager 69% → compile 94%,compile 靠的就是融合那些 norm/AdaLN/elementwise 的 bandwidth-bound 算子。**所以手写融合 AdaLN 在 SD3.5 image 上只剩 ~6% 残余头空间(94→100%),不值得。** video 侧后来由 per-op + NCU 复核收敛：compile 后 NORM_ELEM 约 3.5%，主 compute kernel 已接近同机 bf16 上限，也不值得开单卡 AdaLN kernel sprint。
+已退役的 `vrl/scripts/perf/dit_mfu_probe.py` 测得 SD3.5 eager 69% → compile 94%,compile 靠的就是融合那些 norm/AdaLN/elementwise 的 bandwidth-bound 算子。**所以手写融合 AdaLN 在 SD3.5 image 上只剩 ~6% 残余头空间(94→100%),不值得。** video 侧后来由 per-op + NCU 复核收敛：compile 后 NORM_ELEM 约 3.5%，主 compute kernel 已接近同机 bf16 上限，也不值得开单卡 AdaLN kernel sprint。
 
 ### 验证 5：旧解析结果：VIDEO DiT 看似没饱和（已被验证 7/9 推翻）
-`vrl/scripts/perf/video_dit_mfu_probe.py`（合成真实 dims,扫 latent 帧数,compile A/B @ 8 帧）：
+已退役的 `vrl/scripts/perf/video_dit_mfu_probe.py` 历史结果（合成真实 dims,扫 latent 帧数,compile A/B @ 8 帧）：
 
 ```
 cosmos-predict2.5 (1.96B, d_model=2048)        wan_2_1 (14.29B, d_model=5120)
@@ -96,7 +102,7 @@ eager(8帧) MFU 42% → compile 51% (1.23x)        eager 48% → compile 56% (1.
 对比 SD3.5 image: compile 94% (1.37x)
 ```
 
-**这段是旧解析，不再作为结论。** 当时的 51% / 56% 来自 `video_dit_mfu_probe` 的解析 FLOP 估计，并且使用了错误的 vendor peak=419 分母；后续 `gemm_peak_probe` 和 NCU tensor SOL 证明主 bf16 compute kernel 已到同机有效上限。保留这张表只用于说明当时为什么启动 per-op/NCU 复核，不能再解释成"近一半 tensor-core 算力空着"。
+**这段是旧解析，不再作为结论。** 当时的 51% / 56% 来自已退役 `video_dit_mfu_probe` 的解析 FLOP 估计，并且使用了错误的 vendor peak=419 分母；后续已退役 `gemm_peak_probe` 的读数和 NCU tensor SOL 证明主 bf16 compute kernel 已到同机有效上限。保留这张表只用于说明当时为什么启动 per-op/NCU 复核，不能再解释成"近一半 tensor-core 算力空着"。
 
 旧家族差异只保留为 shape 事实:
 - **cosmos**：attention FLOP 占比随帧数升到 32-47%(16 帧近 attn-dominated)，但 Blackwell 上没有可用 FA-3，flash≈cuDNN，batch=4 NCU flash attention 已接近方阵 GEMM tensor-SOL 上限。
@@ -105,7 +111,7 @@ eager(8帧) MFU 42% → compile 51% (1.23x)        eager 48% → compile 56% (1.
 > 纠偏:合成权重对 kernel shape 有效，但解析 FLOP 估计和 peak 分母不足以判饱和。51% vs 94% 的差不是"估计误差小所以可信"，而是分母口径错。最终以验证 7/9 为准。
 
 ### 验证 6：video 头空间到底在哪（per-op 分解，修正"融合 AdaLN"猜测）
-`vrl/scripts/perf/video_op_breakdown_probe.py`（torch.profiler,cosmos 8 帧,compile 前后按 kernel 分桶）：
+已退役的 `vrl/scripts/perf/video_op_breakdown_probe.py` 历史结果（torch.profiler,cosmos 8 帧,compile 前后按 kernel 分桶）：
 
 ```
             EAGER          COMPILED
@@ -119,7 +125,7 @@ NORM_ELEM   20.5%           3.5%   ← compile 已融掉(triton_red_fused_layer_
 **修正 2(GEMM 已到 bf16 天花板,不是"用了旧 kernel"——见验证 7/9):** `cutlass_80` GEMM 实测 ~245 TFLOPS,而 GEMM 微基准测出 5090 bf16 dense 真实峰值就 ~232 TFLOPS；NCU 又确认 cosmos 主 GEMM 45.29-45.33% tensor SOL，和 8192³ 方阵 GEMM 47.48% 同区间 → **GEMM 到顶了,不是慢**。"60% 时间在 Ampere kernel = 头空间"的判断**错了**(基于错峰值 419)。注意力也被验证 8/9 关闭。落地 [[SPRINT_cosmos_video_mfu_kernels]]。
 
 ### 验证 7：5090 真实 bf16 GEMM 峰值（→ 推翻"video 有 45% 头空间"，那是错峰值算的）
-`vrl/scripts/perf/gemm_peak_probe.py`（cuBLAS bf16 dense, fp32 累加）：
+已退役的 `vrl/scripts/perf/gemm_peak_probe.py` 历史结果（cuBLAS bf16 dense, fp32 累加；当前等价标定由 `gpu_preflight.py` 提供）：
 
 ```
 4096³  162 | 8192³  214 | 12288³  232 | 16384³  231  TFLOPS  → 真实峰值 ~232
@@ -152,7 +158,7 @@ gpu_preflight GEMM peak           233 TFLOPS   -           正确 MFU 分母，�
 
 | 技术 | 收益(带 source) | 对我们 |
 |---|---|---|
-| **FlashAttention(exact)** | "same output/gradient up to numerical tolerance";显存线性于 seq-len,2K→**10x**、4K→**20x**(attention 层中间显存,非整模) | SDPA 已用 flash backend(`dit_mfu_probe` 实测 flash=True)→ 基本已吃到 |
+| **FlashAttention(exact)** | "same output/gradient up to numerical tolerance";显存线性于 seq-len,2K→**10x**、4K→**20x**(attention 层中间显存,非整模) | SDPA 已用 flash backend（已退役 `dit_mfu_probe` 的历史实测）→ 基本已吃到 |
 | **融合 AdaLN kernel(AdaptiveLoad, video DiT)** | AdaLN **自身**激活 **-61.9%**,forward kernel **3.21-3.39x**,但 backward 仅 1.28-1.51x,系统级 **+27.2%**(16 卡) | 外部结果成立，但本仓库 cosmos 侧 compile 后 NORM_ELEM 约 3.5%，端到端不构成当前杠杆 |
 | **activation checkpointing** | 标准,recompute 换显存 | 已有(grad-ckpt),实测 26.8→9.8GB;是 MFU 税(60%→41%) |
 | **ZeRO-Offload / FSDP 分片** | 单卡装 **>13B(10x)** | 多卡/大模型容量手段,非吞吐 |

@@ -215,7 +215,8 @@ Corrected conclusions:
 - Synthetic positive/negative-control results: archived in §3.1; the one-shot
   harness and its test were removed after the decision was recorded.
 - SM 级采样：`vrl/scripts/perf/gpm_sampler.py`（现由 `pyproject.toml` 的 `[perf]` extra 提供 `nvidia-ml-py`）
-- MFU 分母标定：`vrl/scripts/perf/gemm_peak_probe.py`、`vrl/scripts/perf/gpu_preflight.py`
+- MFU 分母标定：`vrl/scripts/perf/gpu_preflight.py`。旧的
+  `vrl/scripts/perf/gemm_peak_probe.py` 已退役；其历史读数保留在下列 sprint 记录中。
 - 被本 sprint 纠正的读数：`docs/sprints/info/SPRINT_cross_model_performance.md` §3
 - cosmos 单 kernel 饱和结论：`docs/sprints/done/SPRINT_cosmos_video_mfu_kernels.md` §0
 - 编排空洞（真正的靶子）：`docs/sprints/info/SPRINT_rollout_performance.md` §U0

@@ -701,7 +701,19 @@ def test_wan_droid_fullparam_fsdp_3x_l4_preserves_launch_contract(
     )
     assert cfg.data.task_type == "text_to_video"
     assert cfg.data.preprocessing.conditioning == "text_only"
-    assert str(cfg.data.sft_latents).endswith("wan_1_3b_480p_33f_bf16.pt")
+    assert cfg.data.manifest == (
+        "data/external/video_world/manifests/droid_full_targets_t2v_train.jsonl"
+    )
+    assert cfg.data.eval_manifest == (
+        "data/external/video_world/manifests/droid_full_targets_t2v_eval.jsonl"
+    )
+    assert cfg.data.source_report == (
+        "data/external/video_world/manifests/droid_full_targets_t2v_report.json"
+    )
+    assert cfg.data.artifact_data_root == "data/external"
+    assert cfg.data.sft_latents == (
+        "data/external/video_world/sft_latents/wan_1_3b_480p_33f_bf16.pt"
+    )
 
     assert cfg.reward.components == {"robotics_video_reward": 1.0}
     reward = cfg.reward.kwargs.robotics_video_reward
@@ -1132,10 +1144,10 @@ def test_unified_train_entrypoint_reads_yaml_entrypoint() -> None:
     from vrl.scripts.train import _import_callable, resolve_train_target
 
     cfg = load_config("experiment/sd3_5/online_grpo_ocr")
-    target = resolve_train_target(cfg)
+    import_path = resolve_train_target(cfg)
 
-    assert target.import_path == cfg.trainer.entrypoint
-    assert callable(_import_callable(target.import_path))
+    assert import_path == cfg.trainer.entrypoint
+    assert callable(_import_callable(import_path))
 
 
 def test_cli_overrides_reach_typed_trainer_config() -> None:

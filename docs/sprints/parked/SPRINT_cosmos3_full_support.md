@@ -102,7 +102,8 @@ audio/action = 非目标
 
 ### MR0 — 契约盘点（✅ 已完成 + run-verified）
 
-- `vrl/scripts/eval/cosmos3_nano_generator_probe.py`（已内联 model id，跑出 decision note）。
+- 历史 `cosmos3_nano_generator_probe.py` 已跑出 decision note，并在正式
+  `cosmos3` family 落地后于 2026-08-10 退役；它不是当前执行入口。
 - 实测：generator 从 config 实例化 15.17B、forward 签名读出、denoise 蓝本读出、pack 装配难点定位、diffusers 0.39 兼容性确认。见 §1.1-1.5。
 
 ### MR1 — 真实 checkpoint 加载与 T2V
@@ -190,7 +191,7 @@ audio / action 塔不做；action 走 `SPRINT_physical_ai_model_support.md` 的 
   `vrl/generation/steps/denoise/loop.py`、
   `vrl/rollouts/evaluators/denoise/sde_logprob.py`、
   `vrl/models/families/cosmos/predict2/`、`vrl/models/families/registry.py`
-- 探针：`vrl/scripts/eval/cosmos3_nano_generator_probe.py`
+- 当前 owner：`vrl/models/families/cosmos/cosmos3/`；历史探针已退役。
 - 承接/下游：`docs/sprints/done/SPRINT_physical_ai_model_support.md`、
   `docs/sprints/done/SPRINT_cosmos_robotic_data_factory_domain_rl.md`（reward + 数据）、
   `docs/sprints/done/SPRINT_multi_gpu_training.md`（16B 多卡）

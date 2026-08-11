@@ -41,18 +41,18 @@
 
 ## 3. KILL-RISK 判别探针（进训练前必过 —— 核心门）
 
-[[SPRINT_future_reward]] 的自动探针脚本已删除（决定：判别质量由**人工可视化 rollouts** 判断，不再走自动 PASS/FAIL 门）。候选 battery 生成逻辑保留在 `vrl/scripts/eval/unified_reward_robotics_discrimination_probe.py` 的 `build_discrimination_candidates`（8 候选：exact / blur / static / temporal-mean / shuffle / reverse / wrong-action / random）——用它生成候选、给 IDM 打分后由人工比对排序，参考标准：
+[[SPRINT_future_reward]] 的自动探针脚本已删除（决定：判别质量由**人工可视化 rollouts** 判断，不再走自动 PASS/FAIL 门）。候选 battery 的 domain owner 是 `vrl/rewards/evaluation/robotics_discrimination.py` 的 `build_discrimination_candidates`（9 候选：`exact` / `perceptual_blur` / `temporal_mean` / `static_frozen` / `frame_shuffle` / `reverse` / `random` / `color_blob` / `wrong_clip`）——用它生成候选、给 IDM 打分后由人工比对排序，参考标准：
 
-- **`exact ≥ 0.7`**，且 **static / blur / shuffle / reverse / wrong-action 全 ≤ 0.4**（差 >0.3，>5× 噪声地板）；
-- **`exact` 比 `wrong-action` 高 >2σ**（wrong-action 是决定性测试：运动一样真，只是指令不同）；
-- **若 static 或 blur 落在 exact 0.1 内 → IDM 在读全局外观，和 pixel-L1 一样可 hack，FAIL，回炉**。
+- **`exact ≥ 0.7`**，且 **`static_frozen` / `perceptual_blur` / `frame_shuffle` / `reverse` / `wrong_clip` 全 ≤ 0.4**（差 >0.3，>5× 噪声地板）；
+- **`exact` 比 `wrong_clip` 高 >2σ**（`wrong_clip` 是决定性测试：运动一样真，只是指令不同）；
+- **若 `static_frozen` 或 `perceptual_blur` 落在 `exact` 0.1 内 → IDM 在读全局外观，和 pixel-L1 一样可 hack，FAIL，回炉**。
 
-通用门（所有 reward 共用）：`exact` 最高且 `gap = exact − max(blur, static, temporal-mean) ≥ 0.25 × 动态范围`（pixel-L1 失败：gap_ratio≈4%）。IDM/VLM 走 reward-pool GPU（~46 clip × 32 对 = 秒级）。
+通用门（所有 reward 共用）：`exact` 最高且 `gap = exact − max(perceptual_blur, static_frozen, temporal_mean) ≥ 0.25 × 动态范围`（pixel-L1 失败：gap_ratio≈4%）。IDM/VLM 走 reward-pool GPU（~46 clip × 32 对 = 秒级）。
 
 ## 4. Repo 接线（真实路径）
 
 **(A) 数据：动作标签进 manifest（关键前置）**
-- 动作就在生成器已读的 `lerobot/droid_100` parquet 同一行。`vrl/scripts/data/video_world.py:_iter_lerobot_v21_target_clips`(~:427) 现在只取 `['episode_index','frame_index','task_index','index']`；加 `action.cartesian_position[6]` + `action.gripper_position[1]`（15Hz 同行），按 `frame_index<33` 切片，在 row builder(~:176-181) 和 `target_video` 一起 emit `metadata['target_actions']=[[7dof]*32]`。
+- 动作就在生成器已读的 `lerobot/droid_100` parquet 同一行。`vrl/scripts/data/video_world/lerobot.py:_iter_v21_target_clips_from_data_rows` 读取 `action` / `action.*` 列（15Hz 同行），按 `frame_index<33` 切片并写入 episode metadata；`vrl/scripts/data/video_world/manifests.py:build_target_video_world_rows` 将 `target_actions` 和 `target_video` 一起持久化到 manifest。
 - 动作路径已在 **commit d22d7d5d** 接好（`target_actions` plumbing 留着），需 `pyarrow`。重建命令：`vrl.scripts.data.setup video-world-targets ...`。
 
 **(B) reward：`idm_action_following`（重、GPU-pool、sprint 主体）**
@@ -75,9 +75,9 @@
 
 ## 6. 分阶段（每阶段一个 KILL-RISK 门）
 
-- **Phase 1 —— 动作标签进 manifest**：改 `video_world.py` emit `target_actions`；重建 droid manifest；验证一条记录带 32×7 动作。**（纯数据，可立即做）**
+- **Phase 1 —— 动作标签进 manifest**：现由 `video_world/lerobot.py` emit `target_actions`；重建 droid manifest；验证一条记录带 32×7 动作。**（纯数据，可立即做）**
 - **Phase 2 —— 训/取 IDM ckpt**：在 manifest 标签上监督训练 vision-only IDM（DROID 帧对→7-DOF，1 GPU 几小时）。重建训练脚本 `train_droid_idm.py`。
-- **Phase 3 —— reward + 过探针**：`action_following.py` reward → **过 §3 探针**（尤其 static/blur ≤0.4、exact>wrong-action 2σ）。过不了 = IDM 没学好，回炉。
+- **Phase 3 —— reward + 过探针**：`action_following.py` reward → **过 §3 探针**（尤其 `static_frozen`/`perceptual_blur` ≤0.4、`exact` > `wrong_clip` 2σ）。过不了 = IDM 没学好，回炉。
 - **Phase 4 —— blend 进 recipe**：把权重切到 idm(1.0)+dino(0.3)+motion(0.2)，接 [[SPRINT_cosmos_predict2_2b_trustworthy_curve]] 的真机 GRPO run；看 reward 升 + 三个 component mean 不发散（防 hack）+ EVA 警告的长 GRPO 静止塌缩用 RAFT 地板 + early-stop + held-out 探针兜住。
 
 ## 7. 诚实边界
@@ -88,9 +88,9 @@
 
 ## 8. 关键文件
 
-- 数据：`vrl/scripts/data/video_world.py:176-181,427`（emit `target_actions`）、commit d22d7d5d（plumbing）
+- 数据：`vrl/scripts/data/video_world/lerobot.py:_iter_v21_target_clips_from_data_rows` 与 `vrl/scripts/data/video_world/manifests.py:build_target_video_world_rows`（emit `target_actions`）、commit d22d7d5d（plumbing）
 - reward 模板：`vrl/rewards/functions/kling_video_reward.py`（disk-artifact pool）、`vrl/rewards/models/phymotion.py`（外部进程 bridge 范式）、`vrl/rewards/functions/registry.py`
-- 判别候选 battery：`vrl/scripts/eval/unified_reward_robotics_discrimination_probe.py` 的 `build_discrimination_candidates`（判别结论由人工可视化判断）
+- 判别候选 battery：`vrl/rewards/evaluation/robotics_discrimination.py` 的 `build_discrimination_candidates`（判别结论由人工可视化判断）
 - 共享积木：`vrl/utils/media.py`、`vrl/rewards/models/media.py:decode_artifact_frames`、dino/motion 的 `{models,functions}` + config
 - 真机曲线接入点：[[SPRINT_cosmos_predict2_2b_trustworthy_curve]]
 

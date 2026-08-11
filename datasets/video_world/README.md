@@ -15,10 +15,10 @@ frames from `data/*.parquet`, and pixels are decoded from the per-camera mp4:
 
 ```bash
 # DROID-100 (small, default, verified)
-python -m vrl.scripts.data.populate video-world-bridge --repo-id lerobot/droid_100 --limit 50
+python -m vrl.scripts.data.setup video-world-bridge --repo-id lerobot/droid_100 --limit 50
 
 # BridgeData V2 mirror
-python -m vrl.scripts.data.populate video-world-bridge \
+python -m vrl.scripts.data.setup video-world-bridge \
   --repo-id IPEC-COMMUNITY/bridge_orig_lerobot --source bridge --name bridge --limit 200
 ```
 
@@ -38,7 +38,7 @@ If you use a custom data root:
 
 ```bash
 export VRL_DATA_ROOT=/path/to/external/data
-python -m vrl.scripts.data.populate video-world-bridge --repo-id lerobot/droid_100
+python -m vrl.scripts.data.setup video-world-bridge --repo-id lerobot/droid_100
 ```
 
 Example produced row:

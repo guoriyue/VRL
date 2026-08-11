@@ -1,8 +1,9 @@
-"""Profile a diffusion model (FLUX / Qwen-Image / ...) through the real vLLM-Omni
-engine — the vLLM-Omni counterpart to ``generation_bottleneck_profile.py`` (which
-profiles this repo's naive diffusion path). Together they support the naive-vs-
-vLLM-Omni end-to-end comparison written up in
-``docs/flux_qwen_naive_vs_vllm_omni_profiling.md``.
+"""Profile end-to-end diffusion requests through the real vLLM-Omni engine.
+
+This times ``Omni.generate`` including engine and worker boundaries. The closest
+native scope is ``generation_bottleneck_profile.py --e2e``;
+``native_denoise_probe.py`` times only VRL's denoise loop and is not a direct
+cross-engine latency counterpart. All three tools share the same prompt protocol.
 
 NOT imported by any long-term code — it is a standalone CLI. It needs a Python env
 where ``import vllm_omni`` works (vllm and vllm-omni versions must match; this repo
@@ -37,7 +38,7 @@ from pathlib import Path
 
 import torch
 
-_PROMPT = "a physical scene, high quality"
+from vrl.scripts.perf.common.diffusion_benchmark import DIFFUSION_BENCHMARK_PROMPT
 
 # vLLM-Omni dtype tokens. fp8 is requested via quantization_config, not dtype, so
 # its storage dtype stays bf16 (mirrors the naive profiler's fp8 = bf16 master + swap).
@@ -115,7 +116,7 @@ def main(argv=None) -> None:
             args.height, args.width, args.steps, args.guidance, is_qwen,
         )
         for _ in range(args.warmup):
-            omni.generate(_PROMPT, params)
+            omni.generate(DIFFUSION_BENCHMARK_PROMPT, params)
         if torch.cuda.is_available():
             torch.cuda.synchronize()
             torch.cuda.reset_peak_memory_stats()
@@ -124,7 +125,7 @@ def main(argv=None) -> None:
         last_metrics = None
         for _ in range(args.iters):
             t0 = time.perf_counter()
-            outputs = omni.generate(_PROMPT, params)
+            outputs = omni.generate(DIFFUSION_BENCHMARK_PROMPT, params)
             if torch.cuda.is_available():
                 torch.cuda.synchronize()
             latencies.append((time.perf_counter() - t0) * 1000.0)

@@ -32,7 +32,6 @@ from vrl.config.schema import parse_config
 from vrl.models.families.registry import get_model_family_entry
 from vrl.rewards.inference import (
     RewardInferenceArtifact,
-    RewardInferenceRequest,
     sha256_file,
 )
 from vrl.rewards.models.robotics_video_reward import RoboticsVideoRewardModel
@@ -335,10 +334,6 @@ def score_shards(args: argparse.Namespace) -> dict[str, Any]:
         cfg,
         include_reference_targets=not bool(args.no_reference_targets),
     )
-    request = RewardInferenceRequest(
-        request_id="wan-robotics-fixed-checkpoint-eval",
-        artifacts=tuple(artifacts),
-    )
     device = resolve_eval_device(str(args.device))
     worker_config = _reward_worker_config(cfg, device=device)
     logger.info("Loading robotics reward to score %d fixed artifacts", len(artifacts))
@@ -346,9 +341,7 @@ def score_shards(args: argparse.Namespace) -> dict[str, Any]:
     scored: list[dict[str, Any]] = []
     try:
         model.prepare_for_inference()
-        for index, (artifact, row) in enumerate(
-            zip(request.artifacts, artifact_rows, strict=True),
-        ):
+        for index, (artifact, row) in enumerate(zip(artifacts, artifact_rows, strict=True)):
             scores = {key: float(value) for key, value in model(artifact).items()}
             missing = sorted(set(SCORE_KEYS) - set(scores))
             if missing or any(not math.isfinite(scores[key]) for key in SCORE_KEYS):

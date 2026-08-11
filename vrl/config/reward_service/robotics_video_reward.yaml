@@ -17,7 +17,7 @@ worker_config:
   model_factory: vrl.rewards.models.robotics_video_reward:RoboticsVideoRewardModel
   reward_model_version: KlingTeam/VideoReward@4f266001+DINOv2-vits14+RAFT-small+droid-blend-v1
   device: cuda:0
-  data_root: /home/ubuntu/VRL/outputs/wan_robotics_physics_4x_l4/cosmos_assets/droid_full_targets_staging_1000_64_20260721
+  data_root: /home/ubuntu/VRL/data/external
   weights:
     target_dino_similarity: 1.0
     motion_dynamics: 0.2

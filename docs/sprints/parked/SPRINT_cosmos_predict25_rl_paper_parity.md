@@ -107,7 +107,7 @@ rbs=1、n=3 时组内只有 3 个样本、每步只有 1 个 prompt——advanta
    - **架构裁决:预编码 latents(Option A),不走 rollout-worker 现场编码(Option B)**。
      B 让生成 worker 替训练侧编码并每个 batch 重复运送同样的 target latents——把训练关切
      耦合进 rollout wire,且同一 prompt 的 latents 每 epoch 重复付费。A = 一次性离线
-     encode(全 bundle,可借 `vrl/scripts/generation/full_sequence_denoise.py` 的家族无关加载),产出
+     encode(全 bundle,可借 `vrl/scripts/generation/full_sequence_denoise_probe.py` 的家族无关加载),产出
      (latents, embeds) shard;trainer 按 `algorithm.sft_weight>0` + `data.sft_latents`
      加载,MSE 项复用离线 DPO 已验证的构造(`_inject_noise`:flow_matching 走
      `scheduler.scale_noise`、target=noise-latents;epsilon/v-pred 走 add_noise/get_velocity

@@ -17,19 +17,16 @@ Sharded for multi-GPU: --shard i/n scores every n-th video starting at i, writes
 JSON; a separate --combine pass merges shard JSONs and prints the verdict.
 
   # GPU 0 (node A) and GPU 0 (node B) in parallel:
-  python -m vrl.scripts.eval.kling_reward_diagnosis_probe --videos DIR --shard 0/2 --out a.json
-  python -m vrl.scripts.eval.kling_reward_diagnosis_probe --videos DIR --shard 1/2 --out b.json
-  python -m vrl.scripts.eval.kling_reward_diagnosis_probe --combine a.json b.json
+  python -m vrl.scripts.eval.kling_reward_noise_gate --videos DIR --shard 0/2 --out a.json
+  python -m vrl.scripts.eval.kling_reward_noise_gate --videos DIR --shard 1/2 --out b.json
+  python -m vrl.scripts.eval.kling_reward_noise_gate --combine a.json b.json
 """
 
 from __future__ import annotations
 
-import os
-
-os.environ["FORCE_QWENVL_VIDEO_READER"] = "decord"  # torchvision lacks io.read_video
-
 import argparse
 import json
+import os
 import statistics
 import tempfile
 from pathlib import Path
@@ -40,7 +37,7 @@ import numpy as np
 _EVAL_NOISE = 0.0339
 _PROMPT = "A short video of a physical interaction between objects."
 _LEVELS = [0, 20, 40, 80, 160]  # gaussian noise sigma (0 = re-encoded original)
-_DIMS = ["VQ", "MQ", "Overall"]
+_DIMS = ["visual_quality", "motion_quality", "overall_reward"]
 
 
 def _noised(frames: np.ndarray, sigma: float, fps: float, dst: Path) -> None:
@@ -49,24 +46,43 @@ def _noised(frames: np.ndarray, sigma: float, fps: float, dst: Path) -> None:
         out = frames
     else:
         rng = np.random.default_rng(int(sigma))
-        out = np.clip(frames.astype(np.float32) + rng.normal(0, sigma, frames.shape), 0, 255).astype(
+        out = np.clip(
+            frames.astype(np.float32) + rng.normal(0, sigma, frames.shape), 0, 255
+        ).astype(
             np.uint8,
         )
     iio.imwrite(dst, out, fps=fps)
 
 
 def _run_shard(args: argparse.Namespace) -> None:
+    # qwen-vl-utils reads this during the reward model import. Keep the process
+    # mutation scoped to the scoring command so importing/combining is inert.
+    os.environ.setdefault("FORCE_QWENVL_VIDEO_READER", "decord")
+
+    from vrl.rewards.inference import RewardInferenceArtifact
     from vrl.rewards.models.kling_video_reward import KlingVideoRewardModel
 
     i, n = (int(x) for x in args.shard.split("/"))
     allv = sorted(Path(args.videos).glob("*.mp4"))
     mine = [v for k, v in enumerate(allv) if k % n == i][: args.n]
     model = KlingVideoRewardModel(
-        {"reward_model_name": "KlingTeam/VideoReward@main", "device": "cuda:0", "dtype": "bfloat16"},
+        {
+            "reward_model_name": "KlingTeam/VideoReward@main",
+            "device": "cuda:0",
+            "dtype": "bfloat16",
+        },
     )
 
     def score(path: Path) -> dict[str, float]:
-        return model._reward([str(path.resolve())], [_PROMPT], use_norm=True)[0]
+        return dict(
+            model(
+                RewardInferenceArtifact(
+                    artifact_id=path.stem,
+                    path=str(path.resolve()),
+                    prompt=_PROMPT,
+                ),
+            ),
+        )
 
     rows = []
     with tempfile.TemporaryDirectory() as tmp:
@@ -95,11 +111,11 @@ def _combine(paths: list[str]) -> None:
     print(f"combine: {len(rows)} videos x {len(_LEVELS)} noise levels\n")
 
     # determinism: max |score(level0) - repeat(level0)| across videos/dims
-    det = max(
-        abs(r["levels"]["0"][d] - r["repeat0"][d]) for r in rows for d in _DIMS
+    det = max(abs(r["levels"]["0"][d] - r["repeat0"][d]) for r in rows for d in _DIMS)
+    print(
+        f"determinism (max |rescore - score| at sigma=0) = {det:.4f}  "
+        f"({'deterministic — gaps below are real model behavior' if det < 1e-3 else 'NON-deterministic!'})\n"
     )
-    print(f"determinism (max |rescore - score| at sigma=0) = {det:.4f}  "
-          f"({'deterministic — gaps below are real model behavior' if det < 1e-3 else 'NON-deterministic!'})\n")
 
     print(f"{'noise sigma':>11} | " + " | ".join(f"{d:>8}" for d in _DIMS))
     means = {d: [] for d in _DIMS}
@@ -120,33 +136,50 @@ def _combine(paths: list[str]) -> None:
     cls = {}
     for d in _DIMS:
         drop = means[d][0] - means[d][-1]
-        cls[d] = "RESPONDS" if drop > _EVAL_NOISE else ("INVERTED" if drop < -_EVAL_NOISE else "FLAT")
-        tag = {"RESPONDS": "RESPONDS to noise (correct)",
-               "FLAT": "FLAT (blind to noise)",
-               "INVERTED": "INVERTED (noise RAISES it — gameable)"}[cls[d]]
-        print(f"  {d:8s} clean(s0)={means[d][0]:+.4f}  noisiest(s{_LEVELS[-1]})={means[d][-1]:+.4f}  "
-              f"drop={drop:+.4f}  {tag}")
+        cls[d] = (
+            "RESPONDS" if drop > _EVAL_NOISE else ("INVERTED" if drop < -_EVAL_NOISE else "FLAT")
+        )
+        tag = {
+            "RESPONDS": "RESPONDS to noise (correct)",
+            "FLAT": "FLAT (blind to noise)",
+            "INVERTED": "INVERTED (noise RAISES it — gameable)",
+        }[cls[d]]
+        print(
+            f"  {d:8s} clean(s0)={means[d][0]:+.4f}  noisiest(s{_LEVELS[-1]})={means[d][-1]:+.4f}  "
+            f"drop={drop:+.4f}  {tag}"
+        )
 
     # cross-rollout spread at clean (is there a quality gradient among real rollouts?)
-    print("\ncross-rollout spread at sigma=0 (std of real-rollout scores; vs eval noise "
-          f"{_EVAL_NOISE}):")
+    print(
+        "\ncross-rollout spread at sigma=0 (std of real-rollout scores; vs eval noise "
+        f"{_EVAL_NOISE}):"
+    )
     for d in _DIMS:
         vals = [r["levels"]["0"][d] for r in rows]
-        print(f"  {d:8s} std={statistics.pstdev(vals):.4f}  range=[{min(vals):+.3f}, {max(vals):+.3f}]")
+        print(
+            f"  {d:8s} std={statistics.pstdev(vals):.4f}  range=[{min(vals):+.3f}, {max(vals):+.3f}]"
+        )
 
     print("\nVERDICT:")
-    if cls["VQ"] == "RESPONDS" and cls.get("Overall") != "RESPONDS":
-        print("  MIS-WEIGHTED reward (not pure resolution-blindness): VQ responds correctly to noise, "
-              f"but MQ is {cls['MQ']} and Overall is {cls['Overall']} — the motion sub-score corrupts the "
-              "trained 'overall_reward' target. Switch the training score_key to a correctly-signed dim "
-              "(visual_quality) and/or restore frames toward 93f so MQ works; re-run this probe and require "
-              "the trained key to RESPOND before any longer run.")
-    elif cls["VQ"] == "FLAT" and cls["MQ"] == "FLAT":
-        print("  H1 — reward BLIND at 480p_33f: a clean noise ladder does not move VQ/MQ. "
-              "Fix resolution/rescale, not epochs.")
+    if cls["visual_quality"] == "RESPONDS" and cls["overall_reward"] != "RESPONDS":
+        print(
+            "  MIS-WEIGHTED reward (not pure resolution-blindness): VQ responds correctly to noise, "
+            f"but MQ is {cls['motion_quality']} and Overall is {cls['overall_reward']} — the motion "
+            "sub-score corrupts the "
+            "trained 'overall_reward' target. Switch the training score_key to a correctly-signed dim "
+            "(visual_quality) and/or restore frames toward 93f so MQ works; re-run this probe and require "
+            "the trained key to RESPOND before any longer run."
+        )
+    elif cls["visual_quality"] == "FLAT" and cls["motion_quality"] == "FLAT":
+        print(
+            "  H1 — reward BLIND at 480p_33f: a clean noise ladder does not move VQ/MQ. "
+            "Fix resolution/rescale, not epochs."
+        )
     else:
-        print("  Reward responds to noise on the quality dims; if training is still flat, the real "
-              "rollouts lack a quality gradient (see cross-rollout spread) — policy/reward-scaling, not resolution.")
+        print(
+            "  Reward responds to noise on the quality dims; if training is still flat, the real "
+            "rollouts lack a quality gradient (see cross-rollout spread) — policy/reward-scaling, not resolution."
+        )
 
 
 def main() -> None:

@@ -53,7 +53,9 @@ k + G * (T - k)
 
 ## 0.6 P0 实测：latent 多样性悬崖 —— 负结果，关闭（2026-06-26）
 
-跑了 P0 的 latent-diversity 版(`vrl/scripts/eval/shared_prefix_divergence_probe.py`，G=6 T=28 768²，repo 真实 `sde_step_with_logprob`）：
+P0 曾用现已退役的 `shared_prefix_divergence_probe.py` 跑 latent-diversity
+实验（G=6 T=28 768²，repo 真实 `sde_step_with_logprob`）。结论和完整数据保留如下；
+该方向已关闭，因此不再保留可执行命令：
 
 ```
             noise_level=1.0       noise_level=1.4

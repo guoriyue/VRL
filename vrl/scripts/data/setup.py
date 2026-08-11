@@ -1,16 +1,16 @@
 """Dataset setup CLI — the single entrypoint for preparing training datasets.
 
-Each dataset has its own concrete script (``pickapic.py``, ``danbooru.py``,
-``video_world.py``, ``bootstrap.py``, ``videophy_i2v.py``); this module wires
-their subcommands together and adds ``init-dirs`` for creating the empty
-artifact directories a dataset downloads into. No generic artifact-manifest
-framework lives here.
+Each dataset has its own concrete implementation (``pickapic.py``, ``danbooru/``,
+``video_world/``, ``bootstrap.py``, ``videophy_i2v.py``, and
+``derive_text_video_targets.py``); this module wires their subcommands together
+and adds ``init-dirs`` for creating the empty artifact directories a dataset
+downloads into. No generic artifact-manifest framework lives here.
 
     python -m vrl.scripts.data.setup <command>
 
 Commands: pickapic, anime-prompts, anime-safety-prompts, anime-positives,
 anime-fetch-images, videophy-i2v, video-world-bridge, video-world-targets,
-jrdb-targets, for-experiment, init-dirs.
+jrdb-targets, derive-text-video-targets, for-experiment, init-dirs.
 """
 
 from __future__ import annotations
@@ -19,7 +19,15 @@ import argparse
 import json
 from pathlib import Path
 
-from vrl.scripts.data import bootstrap, danbooru, jrdb, pickapic, video_world, videophy_i2v
+from vrl.scripts.data import (
+    bootstrap,
+    danbooru,
+    derive_text_video_targets,
+    jrdb,
+    pickapic,
+    video_world,
+    videophy_i2v,
+)
 
 # init-dirs CLI: dataset -> directories to create under the data root. This is the
 # init-dirs command's own small wiring table, not a generic artifact registry (the
@@ -83,6 +91,7 @@ def build_parser() -> argparse.ArgumentParser:
     videophy_i2v.register(subparsers)
     video_world.register(subparsers)
     jrdb.register(subparsers)
+    derive_text_video_targets.register(subparsers)
     bootstrap.register(subparsers)
     _register_init_dirs(subparsers)
     return parser

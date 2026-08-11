@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
 from typing import Any
 
 import torch
@@ -112,30 +111,3 @@ def build_synthetic_inputs(
         return model, kwargs
 
     raise ValueError(f"unknown family {family!r}")
-
-
-def build_synthetic_forward(
-    family: str,
-    *,
-    batch: int,
-    device: torch.device,
-    dtype: torch.dtype,
-    layers: int | None = None,
-    concat_padding_mask: bool = True,
-) -> tuple[nn.Module, Callable[[], Any]]:
-    """Config-init transformer plus a no-grad forward thunk."""
-
-    model, kwargs = build_synthetic_inputs(
-        family,
-        batch=batch,
-        device=device,
-        dtype=dtype,
-        layers=layers,
-        concat_padding_mask=concat_padding_mask,
-    )
-
-    def forward_fn() -> Any:
-        with torch.no_grad():
-            return model(**kwargs)
-
-    return model, forward_fn

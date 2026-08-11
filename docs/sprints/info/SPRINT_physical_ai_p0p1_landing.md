@@ -40,9 +40,9 @@ collector 拥有 episode 分组、trainer 只消费 typed trajectory），加上
 
 ### P0 — probe harness
 
-- `vrl/scripts/eval/cosmos3_nano_generator_probe.py`：用官方 Diffusers 路径盘点
-  Cosmos3-Nano generator 的 component graph / denoise tensor 契约，永远写决策
-  JSON、不因缺权重而崩。
+- `cosmos3_nano_generator_probe.py`（2026-08-10 已退役）：它完成了当时的
+  Diffusers component/denoise 契约盘点。此后正式实现已落在
+  `vrl/models/families/cosmos/cosmos3/`，旧探针不再是活入口。
 - `vrl/scripts/eval/cosmos3_nano_policy_droid_probe.py`：盘点 DROID policy 的
   action payload，并把（真实或清晰标注的合成）轨迹打包进 `ActionTrajectoryBatch`
   草稿，记录 DROID vs LIBERO/RoboTwin/BEHAVIOR 的 embodiment gap。
@@ -70,6 +70,5 @@ collector 拥有 episode 分组、trainer 只消费 typed trajectory），加上
 
 ```bash
 python -m pytest tests/rollouts/envs tests/models/test_support_matrix.py -q
-python -m vrl.scripts.eval.cosmos3_nano_generator_probe --out outputs/cosmos3_nano_probe/generator_decision.json
-python -m vrl.scripts.eval.cosmos3_nano_policy_droid_probe --out outputs/cosmos3_nano_probe/droid_decision.json
+python -m pytest tests/rollouts/runtime/test_family_registry.py tests/generation/execution/test_chunk_gatherer.py -q
 ```

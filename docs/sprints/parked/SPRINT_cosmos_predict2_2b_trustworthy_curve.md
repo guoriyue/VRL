@@ -116,5 +116,5 @@ algorithm: { clip_ratio: 1.0e-3, kl_coef: 0.0 }
 - enabler:`vrl/trainers/online/trainer.py:_create_optimizer`、`vrl/trainers/core/types.py:OptimConfig.optim_8bit`
 - full/LoRA gate:`model.use_lora`(`apply_lora` / `apply_full_finetune` 配对,本轮改名)、`vrl/models/diffusion/cosmos/predict2/runtime.py:77-89`
 - 入口:`vrl/scripts/diffusion/cosmos/train.py:train_cosmos_predict2_grpo`(`_predict2_collector_kwargs` 是 global/per_sample 分叉 + global 缺图即 raise)
-- reference 真身路径(§3.5):数据 importer `vrl/scripts/data/video_world.py`(`video-world-bridge`)、manifest `data/external/video_world/manifests/robot_{train,eval}.jsonl`(现 3+1 行,smoke)、dataset 配置 `configs/dataset/video_world_v2w.yaml`、LoRA 704p 配置 `online_grpo_v2w_reference.yaml`(待补 full-param 240p 变体)
+- reference 真身路径(§3.5):数据 importer `vrl/scripts/data/video_world/`(`video-world-bridge`)、manifest `data/external/video_world/manifests/robot_{train,eval}.jsonl`(现 3+1 行,smoke)、dataset 配置 `configs/dataset/video_world_v2w.yaml`、LoRA 704p 配置 `online_grpo_v2w_reference.yaml`(待补 full-param 240p 变体)
 - 证据:记忆 `project_first_trustworthy_curve`、`project_flux_algo_validation`、`project_fullparam_8bit_adam`、`project_cosmos_reward_run_setup`

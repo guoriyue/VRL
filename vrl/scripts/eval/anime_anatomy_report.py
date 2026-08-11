@@ -11,11 +11,11 @@ Setup (RTMW + HaMeR, first run downloads ~5.8 GB):
 
 Usage:
     # Point at a directory of anime images:
-    python -m vrl.scripts.eval.probe_anime_anatomy_report \
+    python -m vrl.scripts.eval.anime_anatomy_report \
         --images /path/to/anime/*.png
 
     # Optionally enable HaMeR:
-    python -m vrl.scripts.eval.probe_anime_anatomy_report --images *.png --hamer
+    python -m vrl.scripts.eval.anime_anatomy_report --images *.png --hamer
 
 Output:
     outputs/probes/anime_anatomy/report/report.html   <- open this in browser
@@ -60,13 +60,10 @@ from .anime_probe_common import (
     rtmw_metrics,
 )
 
-require_rtmw_modules()
 
-import cv2  # noqa: E402
-import numpy as np  # noqa: E402
+def _img_to_b64(img_bgr: object) -> str:
+    import cv2
 
-
-def _img_to_b64(img_bgr: np.ndarray) -> str:
     _, buf = cv2.imencode(".jpg", img_bgr, [cv2.IMWRITE_JPEG_QUALITY, 80])
     return base64.b64encode(buf).decode()
 
@@ -81,6 +78,8 @@ def _score_color(v: float, low: float, high: float) -> str:
 
 
 def build_report(rows: list[dict], out_dir: Path) -> Path:
+    import numpy as np
+
     html_rows = ""
     for r in rows:
         m = r["rtmw"]
@@ -185,7 +184,7 @@ def build_report(rows: list[dict], out_dir: Path) -> Path:
     return report_path
 
 
-def main() -> None:
+def main(argv: list[str] | None = None) -> None:
     ap = argparse.ArgumentParser(description="Anime anatomy probe -- RTMW [+ HaMeR]")
     ap.add_argument("--images", nargs="+", required=True, help="Images or glob")
     ap.add_argument(
@@ -199,7 +198,12 @@ def main() -> None:
     ap.add_argument("--hamer", action="store_true", help="Also run HaMeR hand mesh")
     ap.add_argument("--device", default="cuda", choices=["cuda", "cpu"])
     ap.add_argument("--backend", default="onnxruntime", choices=["onnxruntime", "openvino"])
-    args = ap.parse_args()
+    args = ap.parse_args(argv)
+
+    require_rtmw_modules()
+
+    import cv2
+    import numpy as np
 
     out_dir = Path(args.out)
     out_dir.mkdir(parents=True, exist_ok=True)

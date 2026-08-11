@@ -178,6 +178,16 @@ CUDA_VISIBLE_DEVICES="" uv run --no-sync pytest \
   tests/models/interfaces -q
 ```
 
+Then drive the registered production model and denoise math without Ray or a
+trainer. The probe fails on non-finite/collapsed output and can verify the first
+rollout-to-replay step with `--check-replay`:
+
+```bash
+python -m vrl.scripts.generation.full_sequence_denoise_probe \
+  --family my_model --path <checkpoint> --dtype bf16 \
+  --float32-precision tf32 --outer-autocast --check-replay
+```
+
 ## 6. Promotion bar
 
 A family is **Runnable** after its config, runtime, rollout, and replay contracts
@@ -205,6 +215,7 @@ status.
 - [ ] the registry-derived interface matrix and family-specific tests cover both
       rollout and replay model classes.
 - [ ] config, registry, interface, and parity tests pass.
+- [ ] the full-sequence denoise probe passes with the real checkpoint.
 - [ ] a real run clears the promotion bar before the README says **Validated**.
 
 See [`docs/NORTH_STAR.md`](NORTH_STAR.md) for why the model-family seam is a core

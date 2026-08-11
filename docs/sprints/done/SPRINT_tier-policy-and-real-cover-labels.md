@@ -673,7 +673,7 @@ def test_oom_matcher_accepts_the_real_torch_allocator_message():
 
 ## 附：单独立项，本轨道不修（已实测，比简报的描述更精确）
 
-`vrl/scripts/perf/gpu_preflight.py:96` 与 `vrl/scripts/perf/gemm_peak_probe.py:53` 直接写
+`vrl/scripts/perf/gpu_preflight.py:96` 与后来已退役的 `vrl/scripts/perf/gemm_peak_probe.py:53` 当时直接写
 legacy 的 `torch.backends.cuda.matmul.allow_tf32 = False`，而 `vrl/models/precision.py:48`
 的 `apply_float32_precision` 在 torch ≥ 2.9 上走的是新的 `fp32_precision` 字符串 API。
 `precision.py` 的 docstring 明说“The fallback keeps supported older releases on the legacy

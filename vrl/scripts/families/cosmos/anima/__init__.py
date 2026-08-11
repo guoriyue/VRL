@@ -1,1 +1,1 @@
-"""Anima family generation and evaluation scripts."""
+"""Anima family generation commands."""

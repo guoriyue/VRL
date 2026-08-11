@@ -55,30 +55,6 @@ def test_parse_checkpoint_accepts_label_and_path(tmp_path) -> None:
     assert target.path == checkpoint.resolve()
 
 
-def test_seed_formula_lays_out_a_dense_non_colliding_grid() -> None:
-    """``base_seed + prompt*samples_per_prompt + sample`` fills the grid without gaps.
-
-    Checkpoint independence is NOT asserted here: ``seed_for`` has no checkpoint
-    parameter, so at this level it is guaranteed by the signature and untestable.
-    The place it can actually break is the caller, covered by
-    ``test_seed_grid_cell_is_identical_across_checkpoints`` below.
-    """
-
-    def seed(prompt_index: int, sample_index: int) -> int:
-        return eval_script._seed_for(
-            base_seed=17,
-            prompt_index=prompt_index,
-            sample_index=sample_index,
-            samples_per_prompt=4,
-        )
-
-    grid = [
-        seed(prompt_index, sample_index) for prompt_index in range(3) for sample_index in range(4)
-    ]
-
-    assert grid == list(range(17, 29))
-
-
 @_GENERATION_AND_MP4_NEED_REAL_WEIGHTS
 def test_seed_grid_cell_is_identical_across_checkpoints(monkeypatch, tmp_path) -> None:
     """The generator must derive each seed from the (prompt, sample) cell only.
@@ -95,7 +71,7 @@ def test_seed_grid_cell_is_identical_across_checkpoints(monkeypatch, tmp_path) -
 
     monkeypatch.setattr(
         eval_script,
-        "_generate_one_video",
+        "generate_one_video",
         lambda _model, *, prompt, seed, sampling: torch.zeros(3, 1, 2, 2),
     )
     monkeypatch.setattr(
@@ -120,17 +96,6 @@ def test_seed_grid_cell_is_identical_across_checkpoints(monkeypatch, tmp_path) -
 
     assert base == trained
     assert len(set(base)) == 4  # non-degeneracy: four cells, four distinct seeds
-
-
-def test_video_to_cthw_accepts_btchw_layout() -> None:
-    """Checks decoded Cosmos video layout is normalized for mp4 writing."""
-    video = torch.zeros(1, 5, 3, 8, 8)
-    video[:, :, 0] = 1.0
-
-    out = eval_script._video_to_cthw(video)
-
-    assert tuple(out.shape) == (3, 5, 8, 8)
-    assert torch.all(out[0] == 1.0)
 
 
 def test_reward_worker_config_adds_reward_model_name_default() -> None:

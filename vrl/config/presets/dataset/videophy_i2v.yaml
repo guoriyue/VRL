@@ -1,6 +1,6 @@
 # VideoPhy I2V image-caption prompt manifest.
 # Populated from the official public VideoPhy CSV/videos:
-#   python -m vrl.scripts.data.populate videophy-i2v
+#   python -m vrl.scripts.data.setup videophy-i2v
 # Reference images are first frames decoded from source videos and live outside
 # git under data/external or VRL_DATA_ROOT.
 data:

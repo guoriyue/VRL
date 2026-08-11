@@ -23,7 +23,8 @@ hard-negative mining, or reward calibration.
 Rebuild committed prompt manifests with:
 
 ```bash
-python -m vrl.scripts.data.populate anime-prompts
+python -m vrl.scripts.data.setup anime-prompts
 ```
 
-The flat builder script lives at `vrl/scripts/data/danbooru.py`.
+The builder package lives at `vrl/scripts/data/danbooru/`; its `__init__.py`
+keeps the historical import facade while each dataset concern has one owner.

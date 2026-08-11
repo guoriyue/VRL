@@ -49,10 +49,7 @@ import torch
 import torch.nn as nn
 
 from vrl.models.dtypes import resolve_torch_dtype
-from vrl.scripts.perf.common.synthetic_diffusion import (
-    build_synthetic_forward,
-    build_synthetic_inputs,
-)
+from vrl.scripts.perf.common.synthetic_diffusion import build_synthetic_inputs
 from vrl.utils.logging import init_logger
 from vrl.utils.profiling import profile_range
 
@@ -369,7 +366,7 @@ def main() -> None:
     logger.info(
         "building synthetic %s on %s (%s), batch=%d", args.family, device, dtype, args.batch
     )
-    model, forward_fn = build_synthetic_forward(
+    model, kwargs = build_synthetic_inputs(
         args.family,
         batch=args.batch,
         device=device,
@@ -377,6 +374,11 @@ def main() -> None:
         layers=args.layers,
         concat_padding_mask=args.concat_padding_mask,
     )
+
+    def forward_fn() -> Any:
+        with torch.no_grad():
+            return model(**kwargs)
+
     if args.fuse_qkv:
         apply_qkv_fusion(model, args.family)
     bd = profile_projection_gemms(

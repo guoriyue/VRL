@@ -1,13 +1,21 @@
 # Text-only Wan view of the target-backed DROID split. The derived manifests
 # intentionally omit reference_image because Wan 1.3B T2V cannot consume it;
 # target_video remains the clean SFT target and fixed-eval reference.
+# Build the source manifests using droid_full_target_v2w.yaml, then derive this
+# text-only view with:
+#   python -m vrl.scripts.data.setup derive-text-video-targets \
+#     --train-manifest data/external/video_world/manifests/droid_full_targets_train.jsonl \
+#     --eval-manifest data/external/video_world/manifests/droid_full_targets_eval.jsonl \
+#     --data-root data/external \
+#     --output-dir data/external/video_world/manifests \
+#     --name droid_full_targets_t2v
 data:
   loader: prompt_manifest
-  manifest: outputs/wan_robotics_physics_4x_l4/cosmos_assets/droid_full_targets_staging_1000_64_20260721/video_world/manifests/droid_full_targets_t2v_train.jsonl
-  eval_manifest: outputs/wan_robotics_physics_4x_l4/cosmos_assets/droid_full_targets_staging_1000_64_20260721/video_world/manifests/droid_full_targets_t2v_eval.jsonl
-  source_report: outputs/wan_robotics_physics_4x_l4/cosmos_assets/droid_full_targets_staging_1000_64_20260721/video_world/manifests/droid_full_targets_t2v_report.json
-  artifact_data_root: outputs/wan_robotics_physics_4x_l4/cosmos_assets/droid_full_targets_staging_1000_64_20260721
-  sft_latents: outputs/wan_robotics_physics_4x_l4/cosmos_assets/droid_full_targets_staging_1000_64_20260721/video_world/sft_latents/wan_1_3b_480p_33f_bf16.pt
+  manifest: data/external/video_world/manifests/droid_full_targets_t2v_train.jsonl
+  eval_manifest: data/external/video_world/manifests/droid_full_targets_t2v_eval.jsonl
+  source_report: data/external/video_world/manifests/droid_full_targets_t2v_report.json
+  artifact_data_root: data/external
+  sft_latents: data/external/video_world/sft_latents/wan_1_3b_480p_33f_bf16.pt
   task_type: text_to_video
   preprocessing:
     format: jsonl

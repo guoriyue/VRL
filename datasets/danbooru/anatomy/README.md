@@ -12,7 +12,7 @@ Current files:
 Build the real prompt manifests from Danbooru metadata only:
 
 ```bash
-python -m vrl.scripts.data.populate anime-prompts
+python -m vrl.scripts.data.setup anime-prompts
 ```
 
 This downloads `metadata/posts.tar.gz` from `nyanko7/danbooru2023`, not the

@@ -34,7 +34,7 @@ def _read_rows(path: Path) -> list[dict[str, float]]:
 
 
 def _read_eval_rows(run_dir: Path) -> list[dict[str, float]]:
-    from vrl.scripts.eval.sana_aesthetic_checkpoint_eval import (
+    from vrl.scripts.eval.sana_aesthetic_report import (
         REPORT_RELATIVE_PATH,
         load_report_metrics,
     )

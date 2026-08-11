@@ -7,13 +7,11 @@ from typing import TYPE_CHECKING
 
 import torch
 
-from vrl.generation.steps.denoise.teacache import TeaCacheState
 from vrl.generation.types import VideoGenerationRequest
 from vrl.math.denoise.flow_matching import sde_step_with_logprob
 from vrl.models.interfaces import RuntimeBundle
+from vrl.scripts.perf.common.diffusion_benchmark import DIFFUSION_BENCHMARK_PROMPT
 from vrl.utils.config import cfg_path
-
-_PROMPT = "a physical scene, high quality"
 
 if TYPE_CHECKING:
     from vrl.config.precision import PrecisionPolicy
@@ -63,15 +61,15 @@ def prepare_sampling_state(model, cfg):
         seed=0,
     )
     prompt = model.encode_prompt(
-        [_PROMPT],
+        [DIFFUSION_BENCHMARK_PROMPT],
         None,
         **encode_kwargs,
     )
     return model.prepare_sampling(request, prompt)
 
 
-def make_step_fn(runtime: RuntimeBundle, cfg, teacache=None):
-    """Return a closure for one denoise step plus the optional TeaCache state."""
+def make_step_fn(runtime: RuntimeBundle, cfg):
+    """Return a closure for one production denoise step."""
 
     model = runtime.model
     sampling = cfg.sampling
@@ -80,22 +78,11 @@ def make_step_fn(runtime: RuntimeBundle, cfg, teacache=None):
     if callable(move_frozen):
         move_frozen(torch.device("cpu"))
         torch.cuda.empty_cache()
-    cache_state = (
-        TeaCacheState(teacache, int(sampling.num_steps)) if teacache is not None else None
-    )
 
     def one_step(idx: int):
         step_idx = idx % int(sampling.num_steps)
         with torch.no_grad():
-            if cache_state is not None and not cache_state.should_run(
-                state.latents,
-                step_idx,
-            ):
-                noise_pred = cache_state.cached_noise_pred
-            else:
-                noise_pred = model.forward_step(state, step_idx)["noise_pred"]
-                if cache_state is not None:
-                    cache_state.cache_noise_pred(noise_pred)
+            noise_pred = model.forward_step(state, step_idx)["noise_pred"]
             result = sde_step_with_logprob(
                 state.scheduler,
                 noise_pred.float(),
@@ -107,7 +94,7 @@ def make_step_fn(runtime: RuntimeBundle, cfg, teacache=None):
             )
             state.latents = result.prev_sample
 
-    return one_step, cache_state
+    return one_step
 
 
 def _e2e_once(runtime: RuntimeBundle, cfg):

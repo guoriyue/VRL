@@ -3,18 +3,19 @@
 状态：**DONE / 收敛为 gpu_preflight + NCU 复核（2026-06-27）**。per-op 分解、GEMM 峰值、SDPA 后端、NCU tensor SOL 四条证据把单卡无损 kernel 杠杆逐个证伪：融合 AdaLN（compile 已融）、Blackwell GEMM（bf16+fp32 累加已到消费卡有效上限）、FA-3（Hopper 专属，Blackwell 无）、SDPA 后端切换（flash≈cuDNN 在噪声内）。**cosmos video 的主 compute kernel 已按本机 bf16 上限饱和；无单卡无损 kernel 杠杆。** 唯一落地交付 = `vrl/scripts/perf/gpu_preflight.py`（perf-only，MFU probe 显式调用，不接入训练启动，根治 419 误诊）。原文（下方 §1.x/§2/§3 的"杠杆"框架）保留作推演记录，结论以 §0 为准。
 > 旧状态：planned / 经两次 probe 大幅收缩（2026-06-26）。原计划"融合 AdaLN-Zero + 融合注意力"两个无损杠杆，先被 per-op/GEMM probe 收缩，又被 2026-06-27 NCU 复核收敛为"不做 kernel"。**下方 §1 的 51% MFU、§2/§3 的 AdaLN/FA-3/GEMM 设计都是旧推演，不再是执行计划。**
 > ⚠️ 正确判饱和口径：解析 MFU 只能做筛查；真正判断必须看 NCU `sm__pipe_tensor_cycles_active.avg.pct_of_peak_sustained_elapsed`，并和同机方阵 GEMM 对照，不和 vendor headline 对照。
+> Tool lifecycle note (2026-08-10): the one-shot GEMM/MFU/op-breakdown commands cited below have been retired. Their measurements remain historical evidence; `gpu_preflight.py` is the maintained calibration entrypoint.
 
 ## 0. 一句话（NCU 复核后：主 compute kernel 已饱和，剩配置自检）
 
 **2026-06-27 NCU 复核确认：45% tensor SOL 不是"半个 tensor core 闲着"，而是 RTX 5090 上 bf16+fp32 累加的有效上限区间。**
 
 - **修正 1（P0 per-op,§1.5）**:compile 已把 AdaLN/RoPE/modulation 从 20.5% 融到 3.5% → 手写融合 AdaLN 不是杠杆,砍。
-- **修正 2（GEMM 峰值,§1.6）**:之前的 "51% MFU / 60% 时间在 Ampere GEMM = 头空间" 是**拿错峰值(419)算的**。`gemm_peak_probe` 复跑：4096³=162、8192³=215、12288³=232、16384³=233 TFLOPS。419 是 fp8/fp4 headline，不是 bf16 dense 分母。
+- **修正 2（GEMM 峰值,§1.6）**:之前的 "51% MFU / 60% 时间在 Ampere GEMM = 头空间" 是**拿错峰值(419)算的**。已退役的 `gemm_peak_probe` 当时测得：4096³=162、8192³=215、12288³=232、16384³=233 TFLOPS。419 是 fp8/fp4 headline，不是 bf16 dense 分母。
 - **修正 3（NCU tensor SOL 复核）**:8192³ 方阵 bf16 GEMM = 47.48% tensor SOL / 11.59% DRAM；cosmos 主 GEMM = 45.29-45.33% tensor SOL / 7.66-7.69% DRAM；batch=4 flash attention = 43.42% tensor SOL / 2.35% DRAM。**cosmos 主 GEMM 跟方阵 GEMM 同一上限区间，`cutlass_80` 不是慢 kernel。**
 - **注意力杠杆也死了(P3 实测 + NCU)**:① **FA-3 是 Hopper(sm_90)专属,Blackwell sm_120 根本没有 FA-3 build**;flash-attn 最新(2.8.3)是 FA-2,torch 已内置同款,装了≈零增益。② SDPA 后端 flash≈cuDNN(189 vs 182 TFLOPS,胜负随热态/warmup 翻转)，batch=4 flash attention tensor SOL 已达方阵 GEMM 的 91%。**没有稳健的注意力杠杆。**
 - **唯一真正交付 = `vrl/scripts/perf/gpu_preflight.py`(perf-only + 测试过)**:MFU probe 显式 log 本机真实 bf16 峰值(MFU 正确分母)、arch 匹配、最快 SDPA 后端。这把整段误诊的根因(用 vendor headline 419 当峰值)根治了,并把所有 MFU probe 的默认峰值改成实测值。**这是本 sprint 收敛后唯一落地的东西——cosmos 已饱和,没有单卡无损 kernel 杠杆。**
 
-## 1. 旧解析结果（cosmos-predict2.5, video_dit_mfu_probe；已被 §0/§1.6 推翻）
+## 1. 旧解析结果（cosmos-predict2.5, 已退役 video_dit_mfu_probe；已被 §0/§1.6 推翻）
 
 ```
 frames  vid_tok  attn%   ms/fwd        eager 42% → compile 51% MFU (1.23x)
@@ -26,7 +27,7 @@ frames  vid_tok  attn%   ms/fwd        eager 42% → compile 51% MFU (1.23x)
 
 旧读法是：① compile 只 1.23x(image 1.37x)→ 大量未融合 bandwidth 算子；② attention 占比随帧数升到 32-47% → 注意力成为大头。**这个读法现在只保留为历史推演；NCU 已确认主 GEMM/attention compute kernel 并不存在 45% 级别的无损头空间。**
 
-## 1.5 P0 实测：per-op 时间分解（`video_op_breakdown_probe`，cosmos 8 帧）
+## 1.5 P0 实测：per-op 时间分解（已退役 `video_op_breakdown_probe`，cosmos 8 帧）
 
 torch.profiler 把 compile 前后的 GPU self-time 按 kernel 分桶：
 
@@ -43,16 +44,16 @@ OTHER         4.5ms ( 2.0%)        0.0ms
 2. **attention 是大时间切片，但不是稳健杠杆**:占 compiled 时间 36%,跑的是 FlashAttention-2(`pytorch_flash::flash_fwd`)；后续实测 FA-3 不支持 Blackwell，flash≈cuDNN，batch=4 tensor SOL 已接近方阵上限。
 3. **GEMM 不是杠杆**:占 60%,dispatch 名称里有 **Ampere SM_80** cutlass kernel(`cutlass_80_tensorop`)，但 NCU 显示主 GEMM 45.3% tensor SOL，和同机方阵 GEMM 47.5% 同区间。这里不是没用上 Blackwell，而是 bf16+fp32 累加到有效上限。
 
-## 1.6 GEMM 峰值实测：推翻"60% 时间在慢 GEMM"（`gemm_peak_probe`）
+## 1.6 GEMM 峰值实测：推翻"60% 时间在慢 GEMM"（已退役 `gemm_peak_probe`）
 
-`vrl/scripts/perf/gemm_peak_probe.py`,cuBLAS bf16 dense fp32 累加:
+已退役的 `vrl/scripts/perf/gemm_peak_probe.py` 当时使用 cuBLAS bf16 dense fp32 累加：
 
 ```
 4096³ 162 | 8192³ 214 | 12288³ 232 | 16384³ 231 TFLOPS  → 5090 bf16 真实峰值 ~232
 torch arch_list 含 sm_120(已为 Blackwell 编译);cosmos GEMM 实测 ~245 TFLOPS = 到顶
 ```
 
-**之前 51% MFU 是拿 peak=419 算的,而 419 是 fp8/稀疏 "AI TOPS",bf16 dense(消费卡 fp32 累加半速)实测 ~232。** 按 232 重算 cosmos = 218 TFLOPS = **~94% 饱和**。`cutlass_80` 的 s16816 MMA 跑到了 bf16 上限——**不是用了旧 kernel,是 bf16 到硬件极限**。**GEMM 无损杠杆不存在**;想超过 232 只能 fp8/fp4(有损,离 policy path)。MFU 分母必须每台机器实测(`gemm_peak_probe`),别用 vendor headline——这是 51% 误诊的根因。
+**之前 51% MFU 是拿 peak=419 算的,而 419 是 fp8/稀疏 "AI TOPS",bf16 dense(消费卡 fp32 累加半速)实测 ~232。** 按 232 重算 cosmos = 218 TFLOPS = **~94% 饱和**。`cutlass_80` 的 s16816 MMA 跑到了 bf16 上限——**不是用了旧 kernel,是 bf16 到硬件极限**。**GEMM 无损杠杆不存在**;想超过 232 只能 fp8/fp4(有损,离 policy path)。MFU 分母必须每台机器通过当前 `gpu_preflight.py` 实测,别用 vendor headline——这是 51% 误诊的根因。
 
 ## 2. 旧结构诊断（保留作推演记录，非执行计划）
 
@@ -94,7 +95,7 @@ return hidden_states, gate                                # gate 之后又一次
 ### Deliverable ②：per-machine 配置自检（已保留并落地）
 GEMM 杠杆不存在(§1.6 bf16 到顶),但 51% 误诊暴露了真正的工程风险:**MFU 分母用错、或机器 torch build 不含本机 SM**。加 `vrl/scripts/perf/gpu_preflight.py` 做 perf 自检:
 - 断言 `f"sm_{cap}" in torch.cuda.get_arch_list()`(否则 PTX-JIT 退化/失败);
-- 跑一次 `gemm_peak_probe` 拿本机真实 bf16 峰值,所有 MFU probe 用它当分母(别硬编码 419);
+- 跑一次当前 `gpu_preflight.py` 拿本机真实 bf16 峰值,所有 MFU probe 用它当分母(别硬编码 419);
 - log flash-attn 是否可用 + SDPA 选了哪个后端。
 
 ### 砍掉的杠杆
@@ -123,7 +124,7 @@ GEMM 杠杆不存在(§1.6 bf16 到顶),但 51% 误诊暴露了真正的工程�
 
 ## 6. 验收（已完成）
 
-- `gemm_peak_probe`:RTX 5090 bf16 dense achieved peak = 233 TFLOPS；torch build 包含 `sm_120`。
+- 已退役 `gemm_peak_probe` 的历史结果：RTX 5090 bf16 dense achieved peak = 233 TFLOPS；torch build 包含 `sm_120`。
 - NCU 方阵 GEMM:8192³ bf16 GEMM tensor SOL 47.48%，这是同机对照上限。
 - NCU cosmos 主 GEMM:45.29-45.33% tensor SOL，DRAM 7.66-7.69%，和方阵同区间。
 - NCU batch=4 flash attention:43.42% tensor SOL，DRAM 2.35%，没有大内存瓶颈或 45% 级别无损头空间。
@@ -140,9 +141,9 @@ GEMM 杠杆不存在(§1.6 bf16 到顶),但 51% 误诊暴露了真正的工程�
 ## 8. 关键文件
 
 - `vrl/scripts/perf/gpu_preflight.py`：本 sprint 唯一保留交付，perf/probe 路径实测 bf16 峰值、arch 匹配、SDPA 后端。
-- `vrl/scripts/perf/gemm_peak_probe.py`：同机 bf16 GEMM peak 复核入口。
-- `vrl/scripts/perf/video_dit_mfu_probe.py`：解析 FLOP/time 筛查；不能单独判饱和。
-- `vrl/scripts/perf/video_op_breakdown_probe.py`：op-time attribution；不能单独证明 kernel 头空间。
+- `vrl/scripts/perf/gemm_peak_probe.py`：已退役；历史同机 bf16 GEMM peak 来源。
+- `vrl/scripts/perf/video_dit_mfu_probe.py`：已退役；历史解析 FLOP/time 筛查来源。
+- `vrl/scripts/perf/video_op_breakdown_probe.py`：已退役；历史 op-time attribution 来源。
 - `compile_benchmark.py`：仅当未来重新引入 kernel swap 时作为 parity 门。
 - Triton 基建：`~/Desktop/moemoekit`（记忆:Triton kernel 复用,CPU 需 naive fallback）
 - 证据:记忆 `project_lossless_diffusion_rl_research`、`project_rollout_bound_class_probe`

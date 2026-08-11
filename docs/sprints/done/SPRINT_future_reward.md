@@ -1,7 +1,8 @@
 # SPRINT: Future Reward —— 给 V2W 世界模型 RLHF 一个站得住的奖励
 
-状态：**done（2026-07-18 收口）**。本 sprint 的资产范围——判别探针、DINOv2 感知锚、
-RAFT motion guard、零训练 blend 与 pixel-L1 退役——均已落地并通过离线判别门。真实 GRPO
+状态：**done（2026-07-18 收口）**。本 sprint 的资产范围——离线判别证据、DINOv2 感知锚、
+RAFT motion guard、零训练 blend 与 pixel-L1 退役——均已落地。回答问题后，一次性判别脚本
+已退役；下方数值保留其结论。真实 GRPO
 学习曲线从来不是本 `done/` 文件的完成证据，现明确移交
 `docs/sprints/parked/SPRINT_cosmos_predict2_2b_trustworthy_curve.md`；IDM 仍由
 `docs/sprints/planned/SPRINT_idm_action_following_reward.md` 独立持有。
@@ -9,7 +10,7 @@ RAFT motion guard、零训练 blend 与 pixel-L1 退役——均已落地并通�
 > **IDM action-following 已拆为独立 sprint [[SPRINT_idm_action_following_reward]]（2026-06-29）。** 它是 §2 排序里唯一评 STRONG 的主信号候选，但需自训一个小 IDM（设计 + EVA 来源调查全部搬过去了），用户先走零训练路线（dino+motion）。本 doc 只保留已落地的零训练 blend 与判别探针；要做动作空间打分看那个 sprint。
 >
 > **范围边界：Phase 4 真机 GRPO run 没有在本 sprint 执行，也不是本 sprint 的残留项。**
-> 当前 PASS 都是离线判别探针（8 条 DROID target 上算分），只证明 reward 能区分糊/静止等
+> 当前 PASS 都是已记录的离线判别结果（8 条 DROID target 上算分），只证明 reward 能区分糊/静止等
 > 退化候选，不证明训练后 reward 会单调上升或 component mean 不发散。该 GPU/数据门由
 > [[SPRINT_cosmos_predict2_2b_trustworthy_curve]] 独立持有。
 
@@ -106,7 +107,7 @@ CPU 跑 CLIP/DINOv2/LPIPS/RAFT(7 clip × 33 帧,torch.hub,无 GPU);reward-pool G
 
 ## 7. 分阶段(每阶段一个 KILL-RISK 门)
 
-- **Phase 0 —— 判别探针 harness ✅**:`vrl/scripts/eval/future_reward_discrimination_probe.py`(已用现 reward 复现 0.98 失败,PASS bar 已定)。任何新 reward 先过它。
+- **Phase 0 —— 历史判别 harness ✅**：已用当时的 `future_reward_discrimination_probe.py` 复现 0.98 失败并确定 PASS bar；结论记录后该一次性脚本已退役。当前可复用的机器人候选 battery 由 `vrl/rewards/evaluation/robotics_discrimination.py` 持有。
 - **Phase 1 —— DINOv2 感知锚 ✅**:换核心 → 过探针(gap_ratio 0.298 PASS,需 temporal 项)。
 - **Phase 1.5 —— RAFT motion guard ✅**:static 塌到地板(gap_ratio 0.969 PASS)。
 - **Phase 2/3 —— IDM action-following → 拆到 [[SPRINT_idm_action_following_reward]]**(动作标签进 manifest + 自训 IDM + reward + 过探针)。
@@ -143,25 +144,23 @@ exact − 全候选最低）：
 - **DINOv2 的关键发现**:per-frame cosine 单用**过不了**(temporal-mean/static 同场景仍 ~0.76,gap_ratio 仅 0.15)。把 order-sensitive 的 temporal 项(相邻帧 embedding delta 的 cosine)权重提到和 appearance 同级(0.4/0.2/0.4)才过 —— 这正印证 §2 "per-frame cosine order-blind,需补时序项"。**默认权重已设成过探针的值;调低 temporal_weight 会重新挂。**
 - **motion**:static/blur/temporal-mean 全塌到 ~0.03 地板,exact 0.36;random(噪声)和 shuffle 反而最高(光流幅度 order-agnostic)—— 这是 guard 的预期行为,不是 bug。
 
-**落地的资产(留下来的)**:
-- 探针(keystone):`vrl/scripts/eval/future_reward_discrimination_probe.py` —— reward-agnostic,8 候选,dino/motion 两条支路 + 每家族 PASS 规则。任何新 reward 先过它。(pixel-L1 支路随 reward 一起删了;它的失败数字已存档在上表。)
+**落地的长期资产**:
+- 历史 `future_reward_discrimination_probe.py` 是一次性验证产物，结论已存档在上表后退役。当前机器人判别候选与 fail-closed policy 的 domain owner 是 `vrl/rewards/evaluation/robotics_discrimination.py`；`vrl/scripts/eval/unified_reward_robotics_discrimination_probe.py` 仅是 UnifiedReward transport/CLI adapter，并不是旧 dino/motion harness 的等价入口。
 - DINOv2 锚：`vrl/rewards/{models,functions}/target_dino_similarity.py` +
   `vrl/config/presets/reward/target_dino_similarity.yaml`。
 - RAFT motion guard：`vrl/rewards/{models,functions}/motion_dynamics.py` +
   `vrl/config/presets/reward/motion_dynamics.yaml`。
 - 共享:帧解码 helper 进 `vrl/utils/media.py`(`read_video_frames`/`sample_frames`/`align_frame_counts`/`frames_thwc_to_float`)+ `decode_artifact_frames` 进 `vrl/rewards/models/media.py`(没动被退役的 pixel model)。
-- registry 注册 dino + motion(可复用积木);两个单 reward 组 config。**probe + 这两个组 = 真资产,任何实验按需 compose。**
+- registry 注册 dino + motion(可复用积木);两个单 reward 组 config。**这两个 reward 组是长期资产，任何实验按需 compose。**
 - **历史 baseline recipes**：
   `vrl/config/presets/experiment/cosmos_predict2/online_grpo_droid_target_480p.yaml` 与
   `vrl/config/presets/experiment/cosmos_predict2/online_grpo_droid_full_target_480p_lora.yaml`
   使用 dino(1.0)+motion(0.2)。其他 experiment 可选择不同 blend；这里不声明全局默认。
-- 测试:`tests/rewards/functions/test_future_reward.py`(探针候选构造 + 各家族判定逻辑的 CPU 单测)。
+- 测试:`tests/rewards/functions/test_future_reward.py`（reward 配置契约的 CPU 单测；测试本身不延长已退役 probe 的生命周期）。
 
 **删掉的(给没在走的 IDM 路建的脚手架,从没端到端跑过)**:`vrl/rewards/{models,functions}/idm_action_following.py`、bridge scorer `idm_action_score.py`、训练脚本 `train_droid_idm.py`、`configs/reward/idm_action_following.yaml`。用户选了零训练 dino+motion;IDM 设计与重建步骤已搬到 [[SPRINT_idm_action_following_reward]],以后真要再建照那个 sprint。
 
-**怎么跑探针**：`python -m vrl.scripts.eval.future_reward_discrimination_probe --reward <name> --manifest data/external/video_world/manifests/droid_full_targets_eval.jsonl --out outputs/probe_<name>.jsonl --device cuda`
-（`<name>` = target_dino_similarity / motion_dynamics；这是 integration probe，会加载 reward
-model，不是 CPU unit test）。
+**历史探针不可重跑**：`future_reward_discrimination_probe.py` 已随问题收口退役；不要从本文复制旧 module command。dino/motion 的既有结果以上表为准。若评估当前 UnifiedReward robotics 协议，使用 `python -m vrl.scripts.eval.unified_reward_robotics_discrimination_probe --help`；它不复刻历史 dino/motion 专用判据。
 
 **IDM action-following（重建步骤 + 5 源来源调查 + EVA 架构结论）→ 全部搬到 [[SPRINT_idm_action_following_reward]]**。一句话:查证后没有现成 IDM 能直接插(契约对不上 DROID 单臂/只吃帧/7 维),只能自训一个 vision-only 小 IDM,设计与数据接线见那个 sprint。
 
@@ -175,4 +174,4 @@ model，不是 CPU unit test）。
 - Repo：已删除的 pixel-L1 核心只作为上表历史负结果保留。当前相关真源为
   `vrl/rewards/functions/registry.py`、`vrl/rewards/functions/{kling_video_reward,videoscore2,phymotion}.py`、
   `vrl/rewards/models/{videoscore2,phymotion}.py`、`vrl/trainers/data/artifacts.py`、
-  `vrl/scripts/data/video_world.py` 与 `pyproject.toml`。
+  `vrl/scripts/data/video_world/{lerobot,manifests}.py` 与 `pyproject.toml`。

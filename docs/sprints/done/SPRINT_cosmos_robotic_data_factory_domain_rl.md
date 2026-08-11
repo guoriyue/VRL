@@ -8,8 +8,10 @@ curve sprint.
 > ⚠️ **更新（2026-06-28，SPRINT_future_reward）**：本文下面引用的 `target_video_similarity`
 > reward 及其 `target_video_similarity_probe` 脚本**已删除** —— 实测证伪(pixel-L1,最优解=糊均值,
 > 判别 gap 仅 ~4%)。改用 `target_dino_similarity`(DINOv2 感知锚)+ `motion_dynamics`(RAFT 运动 guard),
-> 判别探针换成 `vrl.scripts.eval.future_reward_discrimination_probe`。下文凡提到 `target_video_similarity`
-> / 旧 probe 的命令与权重均已过时,按 SPRINT_future_reward 替换。
+> 后继 `future_reward_discrimination_probe` 也已在结论记录后退役。当前候选 battery 的 domain owner
+> 是 `vrl/rewards/evaluation/robotics_discrimination.py`；UnifiedReward 的可执行 adapter 是
+> `vrl.scripts.eval.unified_reward_robotics_discrimination_probe`。下文凡提到 `target_video_similarity`
+> / 旧 probe 的命令与权重均为历史记录，不是可重跑入口。
 
 核心边界：训练数据必须来自可下载、可解析、有 provenance 的真实公开数据集。仓库不再保留 `sidewalk_world` / `home_world` 这类本地手工 manifest bridge，也不把目标域名字伪装成数据集。
 
@@ -32,12 +34,12 @@ Sidewalk delivery 和 household chores 仍然是重要目标域，但必须等�
 
 ## 1. 已落地 substrate
 
-保留：
+本 sprint 当时保留（后续 reward cleanup 已改变的项目在条目中标明）：
 
 - `PromptExample` artifact schema 新增 `target_image` / `target_video`。
 - target artifact 从 prompt example 传到 collector metadata，再进入 reward artifact metadata。
-- `target_video_similarity` reward：读取 manifest 里的 `target_video` / `target_image`，比较生成视频和真实 target clip。
-- `target_video_similarity_probe`：离线检查 target reward 是否能正常读真实 target media。
+- 历史 `target_video_similarity` reward：读取 manifest 里的 `target_video` / `target_image`；后因 pixel-L1 可被刷分而删除。
+- 历史 `target_video_similarity_probe`：当时检查 target media 接线；已随 reward 删除。
 - `video-world-targets` importer：从公开 LeRobot/Hugging Face 数据集下载/解析真实 robot videos，生成 `reference_image` + `target_video` manifest。
 - `droid_target_v2w` dataset config。
 - `online_grpo_droid_target_240p` Cosmos config。
@@ -101,13 +103,11 @@ manifest row 形状：
 python -m vrl.scripts.data.setup for-experiment diffusion/cosmos_predict2/online_grpo_droid_target_240p
 ```
 
-实际训练仍然需要先跑 discrimination probe：
+当时要求运行 `target_video_similarity_probe` prerequisite；该模块已经退役，旧命令不可重跑。
 
-```bash
-python -m vrl.scripts.eval.target_video_similarity_probe \
-  --manifest data/external/video_world/manifests/droid_targets_eval.jsonl \
-  --out outputs/droid_target_similarity_probe.jsonl
-```
+当前 UnifiedReward robotics 判别入口是
+`python -m vrl.scripts.eval.unified_reward_robotics_discrimination_probe --help`；它验证的是当前
+公开 reward 协议，不应冒充上述已删除 pixel-L1 probe 的同一实验。
 
 ## 3. Reward 策略
 
@@ -203,7 +203,7 @@ Home chores / household manipulation 目标域下一步应该接：
 **新增配置**：`configs/experiment/cosmos_predict2/online_grpo_v2w_reference_fullparam_240p.yaml`
 = `video_world_v2w`（per_sample 机器人首帧）+ 240p_33f + full-param + 8bit Adam + ppo4。补上了 trustworthy_curve sprint §3.5 标记缺失的“真 reference + full-param”配置。
 
-**工具**（`vrl/scripts/perf/`）：`gpu_preflight`（定标 MFU 分母）+ `video_dit_mfu_probe`（隔离 DiT MFU）+ `gpm_sampler`（NVML GPM SM 级计数器，非 `nvidia-smi` 的“有 kernel 驻留”伪占用）。
+**当时工具**（`vrl/scripts/perf/`）：`gpu_preflight`（定标 MFU 分母）+ 已退役的 `video_dit_mfu_probe`（历史 DiT MFU 测量）+ `gpm_sampler`（NVML GPM SM 级计数器，非 `nvidia-smi` 的“有 kernel 驻留”伪占用）。
 
 ### 实测结果
 
@@ -257,7 +257,7 @@ Home chores / household manipulation 目标域下一步应该接：
 
 ## 6. 验证
 
-- `python -m py_compile vrl/scripts/data/video_world.py vrl/scripts/eval/target_video_similarity_probe.py`
+- `python -m py_compile vrl/scripts/data/video_world/{__init__,cli,lerobot,manifests}.py`
 - `pytest tests/data/test_setup.py tests/data/test_video_world_manifests.py tests/data/test_artifact_manifest_validation.py tests/config/test_load_all_experiments.py::test_cosmos_target_v2w_production_validation_requires_target_clip -q`
 - `pytest tests/data tests/rewards/functions tests/rewards/inference tests/config/test_load_all_experiments.py tests/config/test_schema.py -q`
 

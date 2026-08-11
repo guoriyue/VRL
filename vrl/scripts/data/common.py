@@ -1,7 +1,7 @@
 """Shared helpers for the per-dataset population scripts.
 
-Concrete, dependency-free utilities only. Each dataset lives in its own script
-(pickapic.py, danbooru.py, video_world.py, bootstrap.py); this module just holds
+Concrete, dependency-free utilities only. Each dataset lives in its own module
+(pickapic.py, danbooru/, video_world/, bootstrap.py); this module just holds
 the path/IO helpers they all need so no logic is duplicated.
 """
 

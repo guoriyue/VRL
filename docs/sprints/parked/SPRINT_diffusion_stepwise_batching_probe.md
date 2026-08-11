@@ -24,7 +24,8 @@ request C step 7
 
 ## 0.5 实测判决（2026-06-26，SD3.5-medium 1024² / RTX 5090）—— 证伪
 
-`vrl/scripts/perf/rollout_bottleneck_probe.py` 的 DiT batch-scaling（eager，同一 kernel 栈）：
+已退役的 `vrl/scripts/perf/rollout_bottleneck_probe.py` 当时测得 DiT
+batch-scaling（eager，同一 kernel 栈）：
 
 ```
 batch 1→16:  ms/sample = 161 → 155 → 158 → 155 → 155   (平)
@@ -33,7 +34,7 @@ verdict:     全部 compute-bound (saturated)
 
 ms/sample 全程平 = **同一 kernel 栈下，加 batch 不降低单样本成本**。这足以证伪 step-wise batching 在 SD3.5 1024² 这档的收益；它不等价于“没有任何 kernel 优化 headroom”（torch.compile / fp8 是另一条轴）。
 
-唯一可能有余量的是真正小 batch/低分辨率/小模型的 launch-bound 区间,但那里的第一解是直接调大 `sample_batch_size`(planner 已支持,见 `planner.py:_chunk_size`),不是先建跨请求调度器。**本 sprint 维持 parked**:除非在某个具体 under-util 配置上 `rollout_bottleneck_probe` 实测 ms/sample 随 batch 明显下降,否则不解 park。证据见记忆 `project_rollout_bound_class_probe`。
+唯一可能有余量的是真正小 batch/低分辨率/小模型的 launch-bound 区间,但那里的第一解是直接调大 `sample_batch_size`(planner 已支持,见 `planner.py:_chunk_size`),不是先建跨请求调度器。**本 sprint 维持 parked**：旧 probe 的结论已记录、命令已退役。只有出现一个具体的 under-util 生产配置，并基于当时的 production runtime 重新建立 batch-scaling 证据，才可解 park。证据见记忆 `project_rollout_bound_class_probe`。
 
 ## 1. Related work
 

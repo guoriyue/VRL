@@ -25,5 +25,5 @@ is used only for reporting.
 Rebuild the Danbooru-derived manifests with:
 
 ```bash
-python -m vrl.scripts.data.populate anime-safety-prompts
+python -m vrl.scripts.data.setup anime-safety-prompts
 ```

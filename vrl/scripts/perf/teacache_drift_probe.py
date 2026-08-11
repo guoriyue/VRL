@@ -213,7 +213,7 @@ def main(argv=None):
         "--diagnose",
         action="store_true",
         help="report per-step exact noise_pred change = the structural "
-        "skip ceiling (is the 5% wall a signal or a redundancy problem?)",
+        "skip ceiling (is the 5%% wall a signal or a redundancy problem?)",
     )
     args = p.parse_args(argv)
 

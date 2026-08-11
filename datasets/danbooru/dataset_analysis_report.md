@@ -166,7 +166,7 @@ eval unique source ids:    1000 / 1000
 ## Build Command
 
 ```bash
-python -m vrl.scripts.data.populate anime-prompts
+python -m vrl.scripts.data.setup anime-prompts
 ```
 
 ## Caveats

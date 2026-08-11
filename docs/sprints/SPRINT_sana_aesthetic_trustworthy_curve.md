@@ -457,5 +457,6 @@ Remaining convergence items (non-blocking):
 - `vrl/nn/quantization/fp8.py`
 - `vrl/scripts/eval/sana_aesthetic_curve_verdict.py`
 - `vrl/scripts/eval/sana_aesthetic_checkpoint_eval.py`
+- `vrl/scripts/eval/sana_aesthetic_report.py`
 - https://huggingface.co/docs/diffusers/v0.32.2/en/api/pipelines/sana
 - https://github.com/huggingface/diffusers/issues/10241

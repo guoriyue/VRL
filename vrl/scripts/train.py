@@ -16,7 +16,6 @@ import logging
 import os
 import signal
 from collections.abc import Awaitable, MutableMapping
-from dataclasses import dataclass
 from types import FrameType
 from typing import Any
 
@@ -31,15 +30,8 @@ async def train_online(cfg: DictConfig) -> None:
     await run_online_recipe(cfg)
 
 
-@dataclass(frozen=True, slots=True)
-class TrainTarget:
-    """Resolved implementation for one merged training config."""
-
-    import_path: str
-
-
-def resolve_train_target(cfg: DictConfig) -> TrainTarget:
-    """Resolve a merged YAML config to its declared training callable."""
+def resolve_train_target(cfg: DictConfig) -> str:
+    """Return the validated training callable import path declared by ``cfg``."""
 
     try:
         import_path = cfg.trainer.entrypoint
@@ -47,7 +39,7 @@ def resolve_train_target(cfg: DictConfig) -> TrainTarget:
         raise ValueError("config missing required field: trainer.entrypoint") from exc
     if not isinstance(import_path, str) or not import_path.strip():
         raise ValueError("trainer.entrypoint must be a non-empty import path")
-    return TrainTarget(import_path.strip())
+    return import_path.strip()
 
 
 def _import_callable(import_path: str) -> Any:
@@ -63,8 +55,7 @@ def _import_callable(import_path: str) -> Any:
 def run_config(cfg: DictConfig) -> Any:
     """Run the family trainer selected by ``cfg``."""
 
-    target = resolve_train_target(cfg)
-    trainer = _import_callable(target.import_path)
+    trainer = _import_callable(resolve_train_target(cfg))
     return trainer(cfg)
 
 

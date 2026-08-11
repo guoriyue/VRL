@@ -16,6 +16,11 @@
 > `RayGenerationConfig.allow_driver_gpu_overlap` mirror. Current code reads
 > `RayGenerationConfig.resources.colocated` directly; older tables below are
 > historical descriptions, not current APIs.
+>
+> Tool lifecycle note (2026-08-10): `inductor_cache_recompile_probe.py` was
+> retired after the cold/warm/control result below was recorded. It is no longer
+> a runnable entrypoint; `compile_benchmark.py` remains the maintained compile
+> parity and steady-state benchmark.
 
 原 sprint 是**测量 +
 生命周期正确性**,不动调度架构。聚焦 **Cosmos Predict2.5 + Kling RL**(不是旧的 Predict2)。
@@ -23,7 +28,7 @@
 > 方法:逐跳核实了 `vrl/ray/resources.py`、`vrl/generation/ray/{config,launcher,runtime}.py`、
 > `vrl/generation/execution/worker.py`、`vrl/models/diffusion/cosmos/predict2_5/`、以及
 > `configs/`。**纠正了上一版文档的多处陈旧假设**(见 §0)。`TORCHINDUCTOR_CACHE_DIR`
-> 的收益已用 `vrl/scripts/perf/inductor_cache_recompile_probe.py` 在 RTX 5090 实测(见 §4)。
+> 的收益当时由现已退役的 `vrl/scripts/perf/inductor_cache_recompile_probe.py` 在 RTX 5090 实测(见 §4)。
 
 ---
 
@@ -133,7 +138,7 @@ predict2_5_2b.yaml  model.torch_compile.enable  (当前 false)
 缓存**,下个进程读回来跳过 codegen。这个缓存 **torch 默认就开**,默认位置
 `/tmp/torchinductor_<user>`——是**稳定路径、跨进程持久**(不是 per-process temp)。
 
-**实测(RTX 5090,`inductor_cache_recompile_probe.py`,不设任何 env = 默认缓存):**
+**历史实测(RTX 5090,已退役 `inductor_cache_recompile_probe.py`,不设任何 env = 默认缓存):**
 
 | 场景 | compile wall |
 |---|---|
@@ -242,7 +247,7 @@ resident 拿全额稳态加速;release-after-collect 的每周期重编译也因
 - **parity 红线**:rollout 与 train 走等价数值路径(`SPRINT_gemm_utilization.md` §5)。
 - **mode=default,不碰 CUDA-graph**:reduce-overhead/CUDA-graph 与 PEFT LoRA + grad-ckpt 冲突
   (项目记忆 `project_torch_compile_wan`),全程 default。
-- **不把 perf 脚本接进生产**:`inductor_cache_recompile_probe.py` / `compile_benchmark.py` 是测量
+- **不把 perf 脚本接进生产**:已退役的 `inductor_cache_recompile_probe.py` 与仍维护的 `compile_benchmark.py` 都只是测量
   脚手架(`vrl/scripts/perf/`),pipeline 只需 config flag + 既有 `torch.compile` 调用。
 - **不扩到其它家族**:聚焦 Cosmos Predict2.5;sd3.5/wan 的 compile 各自在 config 里。
 
@@ -277,7 +282,7 @@ resident 拿全额稳态加速;release-after-collect 的每周期重编译也因
 - `vrl/ray/actor_pool.py:140-150` — per-chunk `execution_s` / `queue_wait_s`（first/later 来源）
 - `vrl/scripts/common/online.py:328-376` — epoch 循环 + `phase_times`
 - `vrl/trainers/online/trainer.py:80-112` — `PhaseTimer`（CUDA-sync wall-clock）
-- `vrl/scripts/perf/inductor_cache_recompile_probe.py` — codegen-cache 跨进程冷/暖 A/B（本 sprint 新增）
+- `vrl/scripts/perf/inductor_cache_recompile_probe.py` — 已退役；本 sprint 的 codegen-cache 跨进程冷/暖 A/B 历史来源
 - `vrl/scripts/perf/compile_benchmark.py --family cosmos-predict2.5` — 稳态 compile A/B（§4.3 实测来源）
 - torch 默认 inductor 缓存:`/tmp/torchinductor_<user>`（跨进程持久,无需配置）
 

@@ -14,7 +14,9 @@ from vrl.config.loading import load_config
 from vrl.config.precision import RolePrecision
 from vrl.models import checkpoint_identity
 from vrl.models.interfaces.runtime import ModelBuild
+from vrl.rewards.inference import sha256_file
 from vrl.scripts.eval import sana_aesthetic_checkpoint_eval as checkpoint_eval
+from vrl.scripts.eval import sana_aesthetic_report as sana_report
 from vrl.scripts.eval import sana_inference
 
 SANA_PRECISION = RolePrecision(
@@ -130,7 +132,7 @@ def _allow_minimal_protocol(monkeypatch) -> None:
     that, on a run dir the real gate does accept.
     """
 
-    monkeypatch.setattr(checkpoint_eval, "_normalize_run_config", lambda cfg: cfg)
+    monkeypatch.setattr(sana_report, "normalize_run_config", lambda cfg: cfg)
     monkeypatch.setattr(
         checkpoint_eval,
         "_materialize_model_snapshot",
@@ -142,8 +144,8 @@ def _allow_minimal_protocol(monkeypatch) -> None:
         lambda reward_models: reward_models,
     )
     monkeypatch.setattr(
-        checkpoint_eval,
-        "_validate_training_log_provenance",
+        sana_report,
+        "validate_training_log_provenance",
         lambda run_dir, cfg: {
             "path": "supervisor.log",
             "sha256": "test-log",
@@ -158,7 +160,7 @@ def _allow_minimal_protocol(monkeypatch) -> None:
         ]
         return path, path, prompts
 
-    monkeypatch.setattr(checkpoint_eval, "_resolve_protocol_manifests", resolve_manifests)
+    monkeypatch.setattr(sana_report, "resolve_protocol_manifests", resolve_manifests)
     monkeypatch.setattr(
         checkpoint_identity,
         "resolve_checkpoint_model_identity",
@@ -186,7 +188,7 @@ def test_main_writes_provenance_bound_report(monkeypatch, tmp_path, capsys) -> N
         assert expected_model_identity == SANA_IDENTITY
         generated = []
         for target in targets:
-            for sample_index in range(checkpoint_eval.EVAL_SAMPLES_PER_PROMPT):
+            for sample_index in range(sana_report.EVAL_SAMPLES_PER_PROMPT):
                 path = output_dir / "images" / target.label / f"sample{sample_index}.png"
                 path.parent.mkdir(parents=True, exist_ok=True)
                 path.write_bytes(f"{target.label}-{sample_index}".encode())
@@ -196,10 +198,10 @@ def test_main_writes_provenance_bound_report(monkeypatch, tmp_path, capsys) -> N
                         epoch=target.epoch,
                         prompt_index=0,
                         sample_index=sample_index,
-                        group_seed=checkpoint_eval._group_seed(0),
+                        group_seed=sana_report.group_seed(0),
                         prompt=prompts[0],
                         path=path.resolve(),
-                        image_sha256=checkpoint_eval._sha256(path),
+                        image_sha256=sha256_file(path),
                     ),
                 )
         return generated
@@ -226,12 +228,12 @@ def test_main_writes_provenance_bound_report(monkeypatch, tmp_path, capsys) -> N
     monkeypatch.setattr(checkpoint_eval, "_score_images", fake_score)
     checkpoint_eval.main(["--run-dir", str(run_dir), "--device", "cpu"])
 
-    rows = checkpoint_eval.load_report_metrics(run_dir)
+    rows = sana_report.load_report_metrics(run_dir)
     assert [row["epoch"] for row in rows] == [-1.0, 25.0]
     assert all(row["sample_count"] == 2.0 for row in rows)
-    payload = json.loads((run_dir / checkpoint_eval.REPORT_RELATIVE_PATH).read_text())
-    assert payload["schema"] == checkpoint_eval.REPORT_SCHEMA
-    assert payload["schema_version"] == checkpoint_eval.REPORT_SCHEMA_VERSION
+    payload = json.loads((run_dir / sana_report.REPORT_RELATIVE_PATH).read_text())
+    assert payload["schema"] == sana_report.REPORT_SCHEMA
+    assert payload["schema_version"] == sana_report.REPORT_SCHEMA_VERSION
     assert payload["provenance"]["seed_grid"]["base_seed"] == 20260710
     assert payload["provenance"]["evaluation_curve"] == {
         "checkpoint_interval": 25,
@@ -254,23 +256,23 @@ def test_main_writes_provenance_bound_report(monkeypatch, tmp_path, capsys) -> N
     checkpoint_bytes = checkpoint_path.read_bytes()
     checkpoint_path.write_bytes(b"X" + checkpoint_bytes[1:])
     with pytest.raises(ValueError, match="checkpoint provenance"):
-        checkpoint_eval.load_report_metrics(run_dir)
+        sana_report.load_report_metrics(run_dir)
     checkpoint_path.write_bytes(checkpoint_bytes)
 
     metrics_path = run_dir / "metrics.csv"
     metrics_text = metrics_path.read_text(encoding="utf-8")
     metrics_path.write_text(metrics_text.replace("1.0", "2.0"), encoding="utf-8")
     with pytest.raises(ValueError, match="training metrics provenance hash changed"):
-        checkpoint_eval.load_report_metrics(run_dir)
+        sana_report.load_report_metrics(run_dir)
     metrics_path.write_text(metrics_text, encoding="utf-8")
 
     payload["metrics"] = []
-    (run_dir / checkpoint_eval.REPORT_RELATIVE_PATH).write_text(
+    (run_dir / sana_report.REPORT_RELATIVE_PATH).write_text(
         json.dumps(payload),
         encoding="utf-8",
     )
     with pytest.raises(ValueError, match="report has no metric rows"):
-        checkpoint_eval.load_report_metrics(run_dir)
+        sana_report.load_report_metrics(run_dir)
 
 
 @_SNAPSHOTS_AND_GENERATION_NEED_THE_REAL_WEIGHTS
@@ -336,10 +338,10 @@ def test_report_reader_rejects_changed_config_provenance(monkeypatch, tmp_path) 
                         target.epoch,
                         0,
                         sample_index,
-                        checkpoint_eval._group_seed(0),
+                        sana_report.group_seed(0),
                         prompts[0],
                         path,
-                        checkpoint_eval._sha256(path),
+                        sha256_file(path),
                     ),
                 )
         return images
@@ -370,7 +372,7 @@ def test_report_reader_rejects_changed_config_provenance(monkeypatch, tmp_path) 
         handle.write("\n# changed\n")
 
     with pytest.raises(ValueError, match="resolved config provenance hash changed"):
-        checkpoint_eval.load_report_metrics(run_dir)
+        sana_report.load_report_metrics(run_dir)
 
 
 @_SNAPSHOTS_AND_GENERATION_NEED_THE_REAL_WEIGHTS
@@ -435,16 +437,16 @@ def test_training_metrics_preflight_requires_every_registered_update(tmp_path) -
     run_dir = _write_run(tmp_path)
     cfg = OmegaConf.load(run_dir / "resolved_config.yaml")
     metrics = run_dir / "metrics.csv"
-    checkpoint_eval._validate_training_metrics(metrics, cfg)
+    sana_report.validate_training_metrics(metrics, cfg)
     metrics.write_text("epoch,loss\n0,1.0\n", encoding="utf-8")
 
     with pytest.raises(ValueError, match="incomplete or out of order"):
-        checkpoint_eval._validate_training_metrics(metrics, cfg)
+        sana_report.validate_training_metrics(metrics, cfg)
 
 
 def test_fullparam_long_config_is_the_exact_registered_protocol() -> None:
-    canonical = load_config(checkpoint_eval.CANONICAL_CONFIG_NAME)
-    normalized = checkpoint_eval._normalize_run_config(canonical)
+    canonical = load_config(sana_report.CANONICAL_CONFIG_NAME)
+    normalized = sana_report.normalize_run_config(canonical)
 
     assert normalized.model.use_lora is False
     assert normalized.actor.ppo_epochs == 1
@@ -455,7 +457,7 @@ def test_fullparam_long_config_is_the_exact_registered_protocol() -> None:
 def test_exact_protocol_normalization_runs_typed_structural_validation(
     monkeypatch,
 ) -> None:
-    canonical = load_config(checkpoint_eval.CANONICAL_CONFIG_NAME)
+    canonical = load_config(sana_report.CANONICAL_CONFIG_NAME)
     validated: list[dict] = []
 
     def record_parse(cfg):
@@ -463,16 +465,16 @@ def test_exact_protocol_normalization_runs_typed_structural_validation(
         assert isinstance(resolved, dict)
         validated.append(resolved)
 
-    monkeypatch.setattr(checkpoint_eval, "parse_config", record_parse)
+    monkeypatch.setattr(sana_report, "parse_config", record_parse)
 
-    normalized = checkpoint_eval._normalize_run_config(canonical)
+    normalized = sana_report.normalize_run_config(canonical)
 
     assert validated == [OmegaConf.to_container(normalized, resolve=True)]
 
 
 def _historical_fullparam_config() -> DictConfig:
     raw = OmegaConf.to_container(
-        load_config(checkpoint_eval.CANONICAL_CONFIG_NAME),
+        load_config(sana_report.CANONICAL_CONFIG_NAME),
         resolve=True,
     )
     assert isinstance(raw, dict)
@@ -503,10 +505,10 @@ def _historical_fullparam_config() -> DictConfig:
 
 
 def test_historical_fullparam_shape_normalizes_to_the_live_protocol() -> None:
-    normalized = checkpoint_eval._normalize_run_config(
+    normalized = sana_report.normalize_run_config(
         _historical_fullparam_config(),
     )
-    canonical = load_config(checkpoint_eval.CANONICAL_CONFIG_NAME)
+    canonical = load_config(sana_report.CANONICAL_CONFIG_NAME)
 
     assert OmegaConf.to_container(normalized, resolve=True) == OmegaConf.to_container(
         canonical,
@@ -543,7 +545,7 @@ def test_historical_shape_normalization_rejects_behavioral_drift(
         ValueError,
         match="does not match the registered SANA full-parameter protocol",
     ):
-        checkpoint_eval._normalize_run_config(changed)
+        sana_report.normalize_run_config(changed)
 
 
 def _write_protocol_run(tmp_path: Path, *, drift: tuple[str, object] | None = None) -> Path:
@@ -612,7 +614,7 @@ def test_main_carries_the_gates_normalized_config_downstream(monkeypatch, tmp_pa
     assert "float32_precision" not in on_disk.precision  # the historical omission
 
     normalized: list[object] = []
-    real_normalize = checkpoint_eval._normalize_run_config
+    real_normalize = sana_report.normalize_run_config
 
     def normalize_spy(cfg):
         result = real_normalize(cfg)
@@ -620,14 +622,14 @@ def test_main_carries_the_gates_normalized_config_downstream(monkeypatch, tmp_pa
         return result
 
     received: list[object] = []
-    real_validate = checkpoint_eval._validate_training_metrics
+    real_validate = sana_report.validate_training_metrics
 
     def validate_spy(path, cfg):
         received.append(cfg)
         real_validate(path, cfg)
 
-    monkeypatch.setattr(checkpoint_eval, "_normalize_run_config", normalize_spy)
-    monkeypatch.setattr(checkpoint_eval, "_validate_training_metrics", validate_spy)
+    monkeypatch.setattr(sana_report, "normalize_run_config", normalize_spy)
+    monkeypatch.setattr(sana_report, "validate_training_metrics", validate_spy)
     monkeypatch.setattr(
         checkpoint_eval,
         "_generate_images",
@@ -651,7 +653,7 @@ def test_main_carries_the_gates_normalized_config_downstream(monkeypatch, tmp_pa
     ],
 )
 def test_live_entrypoint_requires_explicit_precision_protocol(path: str) -> None:
-    changed = load_config(checkpoint_eval.CANONICAL_CONFIG_NAME)
+    changed = load_config(sana_report.CANONICAL_CONFIG_NAME)
     section_path, field_name = path.rsplit(".", maxsplit=1)
     section = OmegaConf.select(changed, section_path)
     assert isinstance(section, DictConfig)
@@ -661,7 +663,7 @@ def test_live_entrypoint_requires_explicit_precision_protocol(path: str) -> None
         ValueError,
         match="does not match the registered SANA full-parameter protocol",
     ):
-        checkpoint_eval._normalize_run_config(changed)
+        sana_report.normalize_run_config(changed)
 
 
 @pytest.mark.parametrize(
@@ -675,18 +677,18 @@ def test_live_entrypoint_requires_explicit_precision_protocol(path: str) -> None
     ],
 )
 def test_fullparam_protocol_rejects_scientific_drift(path: str, value: object) -> None:
-    changed = load_config(checkpoint_eval.CANONICAL_CONFIG_NAME)
+    changed = load_config(sana_report.CANONICAL_CONFIG_NAME)
     OmegaConf.update(changed, path, value, merge=False)
 
     with pytest.raises(ValueError, match=path.replace(".", r"\.")):
-        checkpoint_eval._normalize_run_config(changed)
+        sana_report.normalize_run_config(changed)
 
 
 def test_quality_sampling_is_official_and_not_derived_from_training_sde() -> None:
-    cfg = load_config(checkpoint_eval.CANONICAL_CONFIG_NAME)
+    cfg = load_config(sana_report.CANONICAL_CONFIG_NAME)
 
     assert (cfg.sampling.width, cfg.sampling.height, cfg.sampling.num_steps) == (512, 512, 10)
-    assert checkpoint_eval._resolve_sampling() == {
+    assert sana_report.resolve_sampling() == {
         "negative_prompt": "",
         "height": 1024,
         "width": 1024,
@@ -699,39 +701,39 @@ def test_quality_sampling_is_official_and_not_derived_from_training_sde() -> Non
 
 
 def test_canonical_preset_change_requires_protocol_digest_update(monkeypatch) -> None:
-    actual = load_config(checkpoint_eval.CANONICAL_CONFIG_NAME)
-    real_load_config = checkpoint_eval.load_config
+    actual = load_config(sana_report.CANONICAL_CONFIG_NAME)
+    real_load_config = sana_report.load_config
 
     def changed_canonical(name, *args, **kwargs):
         cfg = real_load_config(name, *args, **kwargs)
-        if str(name) == checkpoint_eval.CANONICAL_CONFIG_NAME:
+        if str(name) == sana_report.CANONICAL_CONFIG_NAME:
             cfg = OmegaConf.create(OmegaConf.to_container(cfg, resolve=True))
             cfg.sampling.num_steps = 11
         return cfg
 
-    monkeypatch.setattr(checkpoint_eval, "load_config", changed_canonical)
+    monkeypatch.setattr(sana_report, "load_config", changed_canonical)
     with pytest.raises(ValueError, match="preset changed without a protocol schema update"):
-        checkpoint_eval._normalize_run_config(actual)
+        sana_report.normalize_run_config(actual)
 
 
 def test_registered_manifest_assets_are_exact_and_disjoint() -> None:
-    cfg = load_config(checkpoint_eval.CANONICAL_CONFIG_NAME)
+    cfg = load_config(sana_report.CANONICAL_CONFIG_NAME)
 
-    training_path, eval_path, eval_prompts = checkpoint_eval._resolve_protocol_manifests(cfg)
+    training_path, eval_path, eval_prompts = sana_report.resolve_protocol_manifests(cfg)
 
-    assert checkpoint_eval._sha256(training_path) == checkpoint_eval.TRAIN_MANIFEST_SHA256
-    assert checkpoint_eval._sha256(eval_path) == checkpoint_eval.EVAL_MANIFEST_SHA256
-    assert len(eval_prompts) == checkpoint_eval.EVAL_PROMPT_COUNT
+    assert sha256_file(training_path) == sana_report.TRAIN_MANIFEST_SHA256
+    assert sha256_file(eval_path) == sana_report.EVAL_MANIFEST_SHA256
+    assert len(eval_prompts) == sana_report.EVAL_PROMPT_COUNT
 
 
 def test_manifest_replacement_and_overlap_are_rejected(monkeypatch, tmp_path) -> None:
-    canonical = load_config(checkpoint_eval.CANONICAL_CONFIG_NAME)
+    canonical = load_config(sana_report.CANONICAL_CONFIG_NAME)
     replaced = OmegaConf.create(OmegaConf.to_container(canonical, resolve=True))
     changed_eval = tmp_path / "changed_eval.txt"
     changed_eval.write_text("replacement prompt\n", encoding="utf-8")
     replaced.data.eval_manifest = str(changed_eval)
     with pytest.raises(ValueError, match="does not match the registered asset"):
-        checkpoint_eval._resolve_protocol_manifests(replaced)
+        sana_report.resolve_protocol_manifests(replaced)
 
     training = tmp_path / "training.txt"
     evaluation = tmp_path / "evaluation.txt"
@@ -740,16 +742,12 @@ def test_manifest_replacement_and_overlap_are_rejected(monkeypatch, tmp_path) ->
     overlap_cfg = OmegaConf.create(
         {"data": {"manifest": str(training), "eval_manifest": str(evaluation)}},
     )
-    monkeypatch.setattr(
-        checkpoint_eval, "TRAIN_MANIFEST_SHA256", checkpoint_eval._sha256(training)
-    )
-    monkeypatch.setattr(
-        checkpoint_eval, "EVAL_MANIFEST_SHA256", checkpoint_eval._sha256(evaluation)
-    )
-    monkeypatch.setattr(checkpoint_eval, "TRAIN_PROMPT_COUNT", 2)
-    monkeypatch.setattr(checkpoint_eval, "EVAL_PROMPT_COUNT", 2)
+    monkeypatch.setattr(sana_report, "TRAIN_MANIFEST_SHA256", sha256_file(training))
+    monkeypatch.setattr(sana_report, "EVAL_MANIFEST_SHA256", sha256_file(evaluation))
+    monkeypatch.setattr(sana_report, "TRAIN_PROMPT_COUNT", 2)
+    monkeypatch.setattr(sana_report, "EVAL_PROMPT_COUNT", 2)
     with pytest.raises(ValueError, match="overlap on 1 prompts"):
-        checkpoint_eval._resolve_protocol_manifests(overlap_cfg)
+        sana_report.resolve_protocol_manifests(overlap_cfg)
 
 
 def test_reward_model_definitions_resolve_device_and_require_explicit_identity(tmp_path) -> None:
@@ -758,7 +756,7 @@ def test_reward_model_definitions_resolve_device_and_require_explicit_identity(t
     cfg.reward.kwargs.aesthetic.device = None
     cfg.reward.kwargs.pickscore.device = None
 
-    reward_models = checkpoint_eval._build_reward_model_definitions(
+    reward_models = sana_report.build_reward_model_definitions(
         cfg,
         generation_device="cuda:3",
     )
@@ -769,17 +767,17 @@ def test_reward_model_definitions_resolve_device_and_require_explicit_identity(t
 
     cfg.reward.kwargs.pickscore.model_name = None
     with pytest.raises(ValueError, match="explicit pickscore reward identity"):
-        checkpoint_eval._build_reward_model_definitions(cfg, generation_device="cuda:3")
+        sana_report.build_reward_model_definitions(cfg, generation_device="cuda:3")
 
 
 def test_reward_provenance_includes_pinned_revisions_and_asset_hash() -> None:
-    cfg = load_config(checkpoint_eval.CANONICAL_CONFIG_NAME)
+    cfg = load_config(sana_report.CANONICAL_CONFIG_NAME)
 
-    reward_models = checkpoint_eval._build_reward_model_definitions(
+    reward_models = sana_report.build_reward_model_definitions(
         cfg,
         generation_device="cuda:0",
     )
-    records = [checkpoint_eval._reward_model_record(model) for model in reward_models]
+    records = [sana_report.reward_model_record(model) for model in reward_models]
 
     assert (
         records[0]["identity"]["model"]["revision"] == cfg.reward.kwargs.aesthetic.model_revision
@@ -787,8 +785,8 @@ def test_reward_provenance_includes_pinned_revisions_and_asset_hash() -> None:
     assert records[0]["identity"]["mlp_asset"] == {
         "package": "vrl.rewards.assets",
         "name": "sac+logos+ava1-l14-linearMSE.pth",
-        "sha256": checkpoint_eval.AESTHETIC_ASSET_SHA256,
-        "bytes": checkpoint_eval.AESTHETIC_ASSET_BYTES,
+        "sha256": sana_report.AESTHETIC_ASSET_SHA256,
+        "bytes": sana_report.AESTHETIC_ASSET_BYTES,
     }
     assert (
         records[1]["identity"]["processor"]["revision"]
@@ -809,8 +807,8 @@ def test_snapshot_materialization_uses_all_four_pinned_revisions(monkeypatch) ->
         return f"/immutable/{revision}"
 
     monkeypatch.setattr(huggingface_hub, "snapshot_download", fake_snapshot_download)
-    cfg = load_config(checkpoint_eval.CANONICAL_CONFIG_NAME)
-    reward_models = checkpoint_eval._build_reward_model_definitions(
+    cfg = load_config(sana_report.CANONICAL_CONFIG_NAME)
+    reward_models = sana_report.build_reward_model_definitions(
         cfg,
         generation_device="cuda:0",
     )
@@ -844,14 +842,14 @@ def test_snapshot_materialization_uses_all_four_pinned_revisions(monkeypatch) ->
     )
     assert materialized_reward_models[1].model_config["model_name"].startswith("/immutable/")
     assert "/immutable/" not in json.dumps(
-        [checkpoint_eval._reward_model_record(model) for model in materialized_reward_models],
+        [sana_report.reward_model_record(model) for model in materialized_reward_models],
     )
 
 
 def test_training_log_binds_configured_revisions_without_network_log_scraping(tmp_path) -> None:
-    cfg = load_config(checkpoint_eval.CANONICAL_CONFIG_NAME)
+    cfg = load_config(sana_report.CANONICAL_CONFIG_NAME)
     with pytest.raises(FileNotFoundError, match=r"no supervisor\.log launch evidence"):
-        checkpoint_eval._validate_training_log_provenance(tmp_path, cfg)
+        sana_report.validate_training_log_provenance(tmp_path, cfg)
 
     reward_kwargs = OmegaConf.to_container(cfg.reward.kwargs, resolve=True)
     expected = {
@@ -865,14 +863,14 @@ def test_training_log_binds_configured_revisions_without_network_log_scraping(tm
     log = tmp_path / "supervisor.log"
     log.write_text("all artifacts were cache hits\n", encoding="utf-8")
 
-    record = checkpoint_eval._validate_training_log_provenance(tmp_path, cfg)
+    record = sana_report.validate_training_log_provenance(tmp_path, cfg)
 
     assert record["configured_model_revisions"] == expected
-    assert record["sha256"] == checkpoint_eval._sha256(log)
+    assert record["sha256"] == sha256_file(log)
 
     cfg.reward.kwargs.pickscore.model_revision = None
     with pytest.raises(ValueError, match="requires pinned"):
-        checkpoint_eval._validate_training_log_provenance(tmp_path, cfg)
+        sana_report.validate_training_log_provenance(tmp_path, cfg)
 
 
 def test_official_generation_keeps_two_images_in_one_fixed_seed_stream() -> None:
@@ -889,8 +887,8 @@ def test_official_generation_keeps_two_images_in_one_fixed_seed_stream() -> None
 
         def __call__(self, **kwargs):
             assert torch.is_inference_mode_enabled()
-            assert kwargs["generator"].initial_seed() == checkpoint_eval.EVAL_BASE_SEED
-            assert kwargs["num_images_per_prompt"] == checkpoint_eval.EVAL_SAMPLES_PER_PROMPT
+            assert kwargs["generator"].initial_seed() == sana_report.EVAL_BASE_SEED
+            assert kwargs["num_images_per_prompt"] == sana_report.EVAL_SAMPLES_PER_PROMPT
             assert kwargs["height"] == kwargs["width"] == 1024
             assert kwargs["num_inference_steps"] == 20
             return SimpleNamespace(
@@ -905,14 +903,14 @@ def test_official_generation_keeps_two_images_in_one_fixed_seed_stream() -> None
         model,
         scheduler=DPMSolverMultistepScheduler(),
         prompt="fox",
-        seed=checkpoint_eval._group_seed(0),
-        num_images=checkpoint_eval.EVAL_SAMPLES_PER_PROMPT,
+        seed=sana_report.group_seed(0),
+        num_images=sana_report.EVAL_SAMPLES_PER_PROMPT,
         device=torch.device("cpu"),
-        sampling=checkpoint_eval._resolve_sampling(),
+        sampling=sana_report.resolve_sampling(),
     )
 
-    assert len(decoded) == checkpoint_eval.EVAL_SAMPLES_PER_PROMPT
-    assert checkpoint_eval._group_seed(1) - checkpoint_eval._group_seed(0) == 2
+    assert len(decoded) == sana_report.EVAL_SAMPLES_PER_PROMPT
+    assert sana_report.group_seed(1) - sana_report.group_seed(0) == 2
 
 
 @pytest.mark.parametrize(
@@ -974,7 +972,7 @@ def test_official_generation_rejects_sampling_drift() -> None:
                 if key != "class_name"
             }
 
-    changed = checkpoint_eval._resolve_sampling()
+    changed = sana_report.resolve_sampling()
     changed["height"] = 512
 
     with pytest.raises(ValueError, match="changed from the official protocol"):

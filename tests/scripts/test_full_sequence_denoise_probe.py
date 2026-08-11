@@ -6,7 +6,7 @@ import pytest
 import torch
 
 from vrl.models.families.registry import get_model_family_entry
-from vrl.scripts.generation import full_sequence_denoise as generate
+from vrl.scripts.generation import full_sequence_denoise_probe as generate
 
 
 def test_generate_rejects_non_full_sequence_denoise_family_before_build(

@@ -1,8 +1,10 @@
 """Native denoise s/step probe — pure wall-clock, no torch.profiler.
 
-The fair native counterpart to ``vllm_omni_diffusion_profile.py``: it measures the
-SAME thing (steady-state denoise transformer forward, s/step) with the SAME clock
-(plain ``time.time()``), so native and vLLM-Omni numbers are directly comparable.
+This measures VRL's denoise loop only. ``vllm_omni_diffusion_profile.py`` measures
+the full ``Omni.generate`` request, including engine and worker boundaries, so the
+two tools share a prompt protocol but their latency numbers are not directly
+comparable. Use this probe for native before/after measurements; a fair cross-engine
+comparison needs equivalent stage-level timing from both engines.
 
 WHY a separate script from ``generation_bottleneck_profile.py``: that profiler wraps
 the timed loop in ``torch.profiler.profile(record_shapes=True)`` to get the kernel
@@ -59,7 +61,7 @@ def main(argv=None) -> None:
 
     # make_step_fn parks frozen encoders/VAE on CPU and returns a closure that runs
     # one denoise forward + SDE step (the exact rollout inner loop).
-    step_fn, _ = make_step_fn(runtime, cfg)
+    step_fn = make_step_fn(runtime, cfg)
 
     # Extra warmup when compiling so the (slow) first compiled call is excluded.
     for i in range(args.warmup + (4 if args.compile else 0)):

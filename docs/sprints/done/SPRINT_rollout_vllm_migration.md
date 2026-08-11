@@ -69,13 +69,15 @@ Skip the transformer forward on low-change denoise steps, reuse cached
   baseline=0 validates the two-pass logprob math.
 
 - 🔴 **CORRECTION — the earlier "2.3x / 50% skip" profiler number was a measurement
-  artifact, NOT real.** `vrl/scripts/perf/generation_bottleneck_profile.py --teacache` reuses ONE
+  artifact, NOT real.** The removed historical `--teacache` mode in
+  `vrl/scripts/perf/generation_bottleneck_profile.py` reused ONE
   state and steps `idx % num_steps`, so consecutive profiled "steps" are nearly
   identical → the skip machine fires far too often. On a REAL 20-step denoise
   (fresh latents, large early-step change) the v1 raw-latent signal skips only
   **~5%** at thr 0.1–0.25 → real speedup is **~5%, not 2.3x**. The profiler
   `--teacache` knob is therefore drift-blind AND skip-inflating; the drift probe /
-  executor path is authoritative. (Left the knob for quick smoke, doc-flagged.)
+  executor path is authoritative. The invalid profiler knob was removed on
+  2026-08-10; TeaCache measurement now lives only in the dedicated drift probe.
 
 - ❌ **RETIRED**：不再探索 threshold > 0.25。P0.2 已证明连续 noise prediction 没有足够
   冗余；继续调 threshold 只会增加 drift，不能建立可用收益。
@@ -240,7 +242,7 @@ assumed. No large untapped rollout headroom remains on this box.
   signal → real speedup ~5%, not 2.3x. ⇒ P0.2 (timestep-modulated signal) promoted
   from optional to REQUIRED; it's the lever, not the threshold. Drift dimension is
   done & green either way.
-- **2026-06-20 h1 (cont.)** — [SUPERSEDED by h2] profiler `--teacache` showed
+- **2026-06-20 h1 (cont.)** — [SUPERSEDED by h2; knob removed 2026-08-10] profiler `--teacache` showed
   0.56 vs 1.28 s/step "2.3x" — later found to be a state-reuse artifact.
 - **2026-06-20 h1** — P0 core landed: TeaCache module + layout/executor wiring +
   9 unit tests (green), lint clean, default-OFF. Branch `rollout-vllm-teacache`

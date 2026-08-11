@@ -34,7 +34,6 @@ from omegaconf import OmegaConf
 from vrl.config.loading import load_config
 from vrl.config.precision import normalize_precision, resolve_precision_policy
 from vrl.config.schema import parse_config
-from vrl.generation.steps.denoise.teacache import TeaCacheConfig
 from vrl.scripts.perf.common.diffusion_runtime import build_runtime, make_step_fn, run_e2e
 
 # Kernel-name -> bucket. First substring match wins; lowercased CUDA kernel name.
@@ -95,13 +94,6 @@ def main(argv=None):
         help="fp8 quant recipe (only with --precision fp8); blockwise reuses vLLM's "
         "1x128 triton block GEMM",
     )
-    p.add_argument(
-        "--teacache",
-        type=float,
-        default=None,
-        help="enable rollout TeaCache at this rel-L1 threshold (e.g. 0.15); "
-        "measures the skip speedup vs the full-forward baseline",
-    )
     args = p.parse_args(argv)
 
     cfg = load_config(args.config)
@@ -116,13 +108,6 @@ def main(argv=None):
         force_add=True,
     )
     label = f"bf16+fp8/{args.fp8_recipe}" if fp8 else "bf16+nvfp4" if nvfp4 else precision
-    teacache_cfg = (
-        TeaCacheConfig.from_sampling({"threshold": args.teacache})
-        if args.teacache is not None
-        else None
-    )
-    if teacache_cfg is not None:
-        label = f"{label}+teacache(thr={args.teacache})"
     _nf = cfg.sampling.get("num_frames", cfg.sampling.get("frame_count", 1))
     print(
         f"shape {cfg.sampling.width}x{cfg.sampling.height}x{_nf}, "
@@ -156,7 +141,7 @@ def main(argv=None):
     if args.e2e:
         run_e2e(runtime, cfg, device)
         return
-    step_fn, teacache_state = make_step_fn(runtime, cfg, teacache=teacache_cfg)
+    step_fn = make_step_fn(runtime, cfg)
 
     # extra warmup when compiling so the (slow) first compiled call is excluded
     for i in range(args.warmup + (3 if args.compile else 0)):
@@ -231,12 +216,6 @@ def main(argv=None):
         f"({n_launches / args.steps:.0f}/step) ==="
     )
     print(f"  peak GPU memory (profiled window): {peak_mb:.0f} MiB", flush=True)
-    if teacache_state is not None:
-        c = teacache_state.counters()
-        print(
-            f"  teacache: {c['teacache_skips']} skips / {c['teacache_runs']} runs "
-            f"(skip ratio {c['teacache_skip_ratio']:.0%}, incl. warmup) ==="
-        )
     print("\n--- device time by bucket (descriptive attribution, not a roofline verdict) ---")
     comp = bucket_us.get("gemm", 0) + bucket_us.get("attention", 0)
     band = (
