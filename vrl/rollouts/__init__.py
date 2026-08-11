@@ -10,8 +10,7 @@ Each subpackage owns one seam of the collection flow:
   collection runs relative to training and weight sync.
 * ``evaluators``: train-time replay signal extraction from collected batches.
 * ``stats``: the typed per-request stats accumulator that travels with items.
+
+Consumers import the concrete modules directly; this facade re-exports
+nothing.
 """
-
-from vrl.rollouts.batch import RolloutBatch
-
-__all__ = ["RolloutBatch"]

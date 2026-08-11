@@ -19,11 +19,8 @@ import torch
 from vrl.config.precision import RolePrecision
 from vrl.generation import GenerationRequest, GenerationSampleRow
 from vrl.generation.bindings.full_sequence_denoise.layout import DiffusionRequestLayout
-from vrl.generation.steps.denoise import (
-    DenoiseLoopConfig,
-    DenoiseSDEParams,
-    preallocate_denoise_buffers,
-)
+from vrl.generation.steps.denoise.config import DenoiseLoopConfig, DenoiseSDEParams
+from vrl.generation.steps.denoise.loop import preallocate_denoise_buffers
 from vrl.models.interfaces import ReplayResult, ReplaySegmentResult
 from vrl.models.steps.denoise import DiffusionModelBase
 from vrl.rollouts.batch import RolloutBatch

@@ -12,11 +12,8 @@ from types import SimpleNamespace
 
 import torch
 
-from vrl.generation.steps.denoise import (
-    DenoiseLoopConfig,
-    DenoiseSDEParams,
-    preallocate_denoise_buffers,
-)
+from vrl.generation.steps.denoise.config import DenoiseLoopConfig, DenoiseSDEParams
+from vrl.generation.steps.denoise.loop import preallocate_denoise_buffers
 
 
 def _config(*, return_prev_sample_mean: bool) -> DenoiseLoopConfig:

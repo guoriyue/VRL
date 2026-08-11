@@ -8,7 +8,7 @@ import torch
 
 from vrl.generation.bindings.full_sequence_denoise.executor import DiffusionChunkExecutorBase
 from vrl.generation.protocols import ChunkSizeProbeExecutor
-from vrl.generation.steps.denoise import DenoiseLoopConfig, DenoiseSDEParams
+from vrl.generation.steps.denoise.config import DenoiseLoopConfig, DenoiseSDEParams
 
 
 def test_diffusion_executor_base_satisfies_probe_protocol() -> None:

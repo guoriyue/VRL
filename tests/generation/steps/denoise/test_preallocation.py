@@ -10,11 +10,8 @@ import torch
 
 from vrl.generation.bindings.full_sequence_denoise import DiffusionChunkExecutorBase
 from vrl.generation.execution.chunks import SampleChunk
-from vrl.generation.steps.denoise import (
-    DenoiseLoopConfig,
-    DenoiseSDEParams,
-    preallocate_denoise_buffers,
-)
+from vrl.generation.steps.denoise.config import DenoiseLoopConfig, DenoiseSDEParams
+from vrl.generation.steps.denoise.loop import preallocate_denoise_buffers
 from vrl.generation.types import GenerationRequest
 
 

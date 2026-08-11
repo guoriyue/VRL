@@ -16,7 +16,7 @@ from vrl.generation.bindings.full_sequence_denoise import DiffusionChunkGatherer
 from vrl.generation.bindings.token_autoregressive.executor import ARDiscreteChunkGatherer
 from vrl.generation.launch_contract import GenerationRuntimeLaunchContract
 from vrl.generation.protocols import GenerationChunkExecutor
-from vrl.generation.ray import RayGenerationLaunchInputs
+from vrl.generation.ray.launch_inputs import RayGenerationLaunchInputs
 from vrl.models.families.janus_pro.runtime import JanusProR1ChunkGatherer
 from vrl.models.families.nextstep_1.runtime import NextStep1ChunkGatherer
 from vrl.models.families.registry import (

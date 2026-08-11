@@ -1,24 +1,5 @@
-"""Continuous denoise-step helpers."""
+"""Continuous denoise-step helpers.
 
-from vrl.generation.steps.denoise.config import DenoiseLoopConfig, DenoiseSDEParams
-from vrl.generation.steps.denoise.loop import (
-    DenoiseLoopResult,
-    DenoiseTrajectoryBuffers,
-    preallocate_denoise_buffers,
-    run_denoise_loop,
-)
-from vrl.generation.steps.denoise.teacache import (
-    TeaCacheConfig,
-    TeaCacheState,
-)
-
-__all__ = [
-    "DenoiseLoopConfig",
-    "DenoiseLoopResult",
-    "DenoiseSDEParams",
-    "DenoiseTrajectoryBuffers",
-    "TeaCacheConfig",
-    "TeaCacheState",
-    "preallocate_denoise_buffers",
-    "run_denoise_loop",
-]
+Consumers import ``config`` / ``loop`` / ``teacache`` directly; this facade
+re-exports nothing.
+"""
