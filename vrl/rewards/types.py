@@ -1,4 +1,12 @@
-"""Reward scoring data containers."""
+"""Reward scoring data containers.
+
+The leaf of the reward import graph — the reward-side dual of the payload
+dataclasses in vrl/generation/types.py. It lives apart from protocols.py and
+runtime.py so the collector seam (vrl/rollouts) and the contract layer stay
+importable without torch, CUDA utilities, or aiohttp. ``RewardSample.output``
+stays ``Any`` deliberately: the media's shape (frames / latents) is owned by
+whichever generation family produced it, and rewards must not constrain it.
+"""
 
 from __future__ import annotations
 
