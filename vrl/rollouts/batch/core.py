@@ -1,4 +1,11 @@
-"""Trainer-side batches produced from rollout generation outputs."""
+"""Trainer-side batches produced from rollout generation outputs.
+
+``RolloutBatch`` is the single trainer-facing contract every engine converges
+to: diffusion and token trajectories are both packed into it by the
+collector's batch builder, and schedules, trainers, and evaluators consume it
+without knowing which engine produced it. Kept separate from the operations
+(``vrl.rollouts.batch.ops``) so the type stays a dependency-light leaf.
+"""
 
 from __future__ import annotations
 
