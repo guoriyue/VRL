@@ -1,4 +1,13 @@
-"""Build trainer rollout batches from trajectory-backed generation outputs."""
+"""Build trainer rollout batches from trajectory-backed generation outputs.
+
+Owns the trajectory-format knowledge the collector itself must not carry:
+which segment is trainable, which reward view scores, and how each
+distribution family (flow-matching diffusion vs. categorical/gaussian AR,
+single- or multi-segment) packs into the engine-neutral ``RolloutBatch``. One
+builder per ``GenerationOutput`` produces both the ``RewardSample`` inputs for
+``RewardRuntime.score`` and, once scores return, the trainer batch — keeping
+``collector.core`` purely about phase ordering and GPU handoffs.
+"""
 
 from __future__ import annotations
 
