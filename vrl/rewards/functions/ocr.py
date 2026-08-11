@@ -20,7 +20,7 @@ from typing import Any
 
 from vrl.rewards.base import InferenceRewardFunction
 from vrl.rewards.models.ocr import OCRRewardModel
-from vrl.rewards.runtime import InProcessRewardInferenceRuntime
+from vrl.rewards.runtime import InProcessRewardScorer
 
 
 class OCRReward(InferenceRewardFunction):
@@ -47,7 +47,7 @@ class OCRReward(InferenceRewardFunction):
         super().__init__(
             reward_name="ocr",
             score_key="ocr",
-            inference_runtime=InProcessRewardInferenceRuntime(model=model),
+            scorer=InProcessRewardScorer(model=model),
         )
 
     @property

@@ -354,6 +354,31 @@ class GlobalRayPlacementOwner:
             ),
         )
 
+    @property
+    def reward_placement(self) -> RolePlacement | None:
+        """Placement handle for the reward role's reserved GPU bundle(s).
+
+        None when rewards run on CPU or follow the trainer device — no dedicated
+        GPU reservation exists to hand out then. The in-process reward runtime
+        consumes this as a consistency check (reservation must cover the device
+        it executes on); a future remote reward runtime schedules into it.
+        """
+
+        bundles = self._role_bundles.get("reward", ())
+        if (
+            not bundles
+            or self._placement_group is None
+            or self.resources.reward_gpus_per_worker <= 0
+        ):
+            return None
+        return RolePlacement(
+            placement_group=self._placement_group,
+            bundle_indices=bundles,
+            expected_gpu_ids=(
+                () if self.resources.cross_node else tuple(self.resources.reward_devices)
+            ),
+        )
+
     # -- role assignment (pure; unit-tested with an injected probe) ----------
 
     def assign_roles(self, probed: dict[int, int]) -> dict[str, tuple[int, ...]]:

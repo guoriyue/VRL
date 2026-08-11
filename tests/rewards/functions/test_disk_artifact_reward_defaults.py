@@ -66,6 +66,6 @@ def test_explicit_empty_request_identity_is_rejected(tmp_path, field: str) -> No
     with pytest.raises(ValueError, match=field):
         VideoScore2Reward(
             artifact_dir=str(tmp_path),
-            inference_runtime=_Runtime(),
+            scorer=_Runtime(),
             **kwargs,
         )

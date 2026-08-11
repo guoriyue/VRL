@@ -42,7 +42,7 @@ import torch
 from omegaconf import DictConfig
 
 from vrl.config import builders
-from vrl.config.builders import BuiltConfigs
+from vrl.config.builders import BuiltConfigs, RewardRuntimeConfig
 from vrl.config.precision import PrecisionPolicy
 from vrl.config.schema import RootConfig
 from vrl.generation.launch_contract import GenerationRuntimeLaunchContract
@@ -98,12 +98,44 @@ class ResolvedRun:
 
 
 @dataclass(frozen=True, slots=True)
+class ResolvedReward:
+    """Resolved reward-engine construction inputs.
+
+    The reward twin of ``RayGenerationLaunchInputs``: execution device and the
+    memory-parking requirement are derived here, once, from the resource plan;
+    the factory only constructs the reward function around them.
+    """
+
+    config: RewardRuntimeConfig
+    device: str
+    memory_parking_required: bool
+
+
+@dataclass(frozen=True, slots=True)
 class ResolvedOnlineRun(ResolvedRun):
     """Online-recipe resolution: the shared core plus run/generation/collector."""
 
     run: OnlineRunConfig
     generation: RayGenerationConfig
     collector: RolloutCollectorConfig
+
+    def reward_inputs(
+        self,
+        *,
+        trainer_device: torch.device | str | None = None,
+    ) -> ResolvedReward:
+        """Project the resolved reward-engine construction inputs.
+
+        ``trainer_device`` lets torchrun callers supply their rank-local device
+        for trainer-shared rewards; dedicated reward GPUs come from the
+        resource plan itself.
+        """
+
+        return resolve_reward_inputs(
+            self.built,
+            self.resources,
+            trainer_device=trainer_device,
+        )
 
     def ray_launch_inputs(
         self,
@@ -194,6 +226,39 @@ class ResolvedOnlineRun(ResolvedRun):
             ),
             gatherer=self.family.new_gatherer(),
         )
+
+
+def resolve_reward_inputs(
+    built: BuiltConfigs,
+    resources: ResolvedDistributedResources,
+    *,
+    trainer_device: torch.device | str | None = None,
+) -> ResolvedReward:
+    """Derive the reward engine's device and parking policy from the plan.
+
+    The single construction site for ``ResolvedReward``; the resource topology
+    is the execution-device source of truth, so no caller-chosen device can
+    contradict it.
+    """
+
+    reward = built.reward
+    if reward is None:
+        raise ValueError("online recipe requires a reward section")
+    device = resources.reward_torch_device(
+        trainer_device=None if trainer_device is None else str(trainer_device),
+    )
+    # HTTP components execute as CPU clients in this process and own no local
+    # GPU memory; only in-process rewards inherit the handoff policy.
+    memory_parking_required = (
+        False
+        if reward.all_external_inference
+        else bool(resources.lifecycle.handoff.release_reward_after_score)
+    )
+    return ResolvedReward(
+        config=reward,
+        device=device,
+        memory_parking_required=memory_parking_required,
+    )
 
 
 def _model_family(built: BuiltConfigs) -> ModelFamilyEntry:
@@ -312,8 +377,10 @@ __all__ = [
     "OnlineRunConfig",
     "ResolvedModel",
     "ResolvedOnlineRun",
+    "ResolvedReward",
     "ResolvedRun",
     "resolve_model",
     "resolve_online_run",
+    "resolve_reward_inputs",
     "resolve_run",
 ]

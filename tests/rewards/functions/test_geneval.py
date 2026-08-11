@@ -18,14 +18,14 @@ def _sample(metadata: dict) -> RewardSample:
 
 @pytest.mark.asyncio
 async def test_geneval_reward_uses_injected_scorer_metadata() -> None:
-    """Checks GenEval reward uses injected scorer metadata."""
+    """Checks GenEval reward uses injected score_fn metadata."""
 
-    def scorer(**kwargs):
+    def score_fn(**kwargs):
         assert kwargs["geneval"]["tag"] == "colors"
         assert kwargs["geneval"]["include"][0]["class"] == "bus"
         return {"score": 0.75}
 
-    reward = GenEvalReward(device="cpu", scorer=scorer)
+    reward = GenEvalReward(device="cpu", score_fn=score_fn)
     score = await reward.score(
         _sample(
             {
@@ -56,26 +56,26 @@ async def test_geneval_reward_rejects_unknown_kwarg() -> None:
     than be silently swallowed.
     """
     with pytest.raises(TypeError):
-        GenEvalReward(device="cpu", evaluator="constant", scorer=lambda **_: 0.25)
+        GenEvalReward(device="cpu", evaluator="constant", score_fn=lambda **_: 0.25)
 
 
 def test_geneval_reward_rejects_removed_timeout_knob() -> None:
     with pytest.raises(TypeError, match="timeout_s"):
-        GenEvalReward(device="cpu", timeout_s=0.0, scorer=lambda **_: 0.25)
+        GenEvalReward(device="cpu", timeout_s=0.0, score_fn=lambda **_: 0.25)
 
 
 @pytest.mark.asyncio
 async def test_geneval_reward_registered_in_multi_reward() -> None:
     """Checks GenEval reward registered in multi reward."""
 
-    def scorer(**kwargs):
+    def score_fn(**kwargs):
         assert kwargs["geneval"]["tag"] == "colors"
         return 0.25
 
     reward = MultiReward.from_dict(
         {"geneval": 1.0},
         device="cpu",
-        reward_kwargs={"geneval": {"scorer": scorer}},
+        reward_kwargs={"geneval": {"score_fn": score_fn}},
     )
 
     output = await reward.score_batch(

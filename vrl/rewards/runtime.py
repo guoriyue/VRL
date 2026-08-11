@@ -15,7 +15,8 @@ from vrl.rewards.base import RewardCleanupError, RewardFunction
 from vrl.rewards.inference import (
     RewardInferenceRequest,
     RewardInferenceResult,
-    RewardInferenceRuntime,
+    RewardScorer,
+    RewardWorkerLaunchContract,
     score_artifacts_with_model,
 )
 from vrl.rewards.types import RewardOutput, RewardSample
@@ -26,16 +27,27 @@ from vrl.utils.cuda_memory import (
     release_cuda_memory_for_parking,
     validate_parking_residual,
 )
+from vrl.utils.deadline import OperationDeadline, validate_timeout
 from vrl.utils.lifecycle import RuntimeLifecycle, RuntimePhase
+
+# Matches the HTTP reward client's default request timeout so the two
+# transports share one notion of "scoring took too long".
+_DEFAULT_SCORE_TIMEOUT_S = 1800.0
 
 
 class RewardFunctionRuntime:
     """Expose a reward function through the collector-facing runtime contract."""
 
-    def __init__(self, reward_function: RewardFunction | None) -> None:
+    def __init__(
+        self,
+        reward_function: RewardFunction | None,
+        *,
+        score_timeout_s: float = _DEFAULT_SCORE_TIMEOUT_S,
+    ) -> None:
         if reward_function is not None and not isinstance(reward_function, RewardFunction):
             raise TypeError("reward_function must be a RewardFunction or None")
         self._reward_function = reward_function
+        self._score_timeout_s = validate_timeout(score_timeout_s, name="score_timeout_s")
         self._operation_lock = asyncio.Lock()
         # Same terminal FSM as the generation runtime: RUNNING accepts work,
         # SHUTTING_DOWN closes admission (retryable teardown), TERMINATED is
@@ -67,6 +79,15 @@ class RewardFunctionRuntime:
             if reward_function is not None:
                 await reward_function.preflight()
 
+    async def activate(self) -> None:
+        """Pre-warm reward model ownership at a GPU handoff."""
+
+        async with self._operation_lock:
+            self.lifecycle.require_running("activate")
+            reward_function = self._reward_function
+            if reward_function is not None:
+                await reward_function.activate()
+
     async def score(
         self,
         samples: Sequence[RewardSample],
@@ -92,7 +113,24 @@ class RewardFunctionRuntime:
                 if reward_function is None:
                     output = RewardOutput(scores=(0.0,) * len(normalized))
                 else:
-                    output = await reward_function.score_batch(normalized)
+                    # The deadline preempts every awaitable transport (HTTP
+                    # service round-trips, overlapped async scoring) and raises
+                    # the shared terminal OperationTimeout. A component that
+                    # blocks the event loop in synchronous model code cannot be
+                    # preempted in-process — like a launched CUDA kernel, its
+                    # bound is process supervision, not this timer.
+                    deadline = OperationDeadline(
+                        "reward.score",
+                        self._score_timeout_s,
+                        context=f"samples={len(normalized)}",
+                    )
+                    try:
+                        output = await asyncio.wait_for(
+                            reward_function.score_batch(normalized),
+                            timeout=deadline.remaining_s(),
+                        )
+                    except TimeoutError as cause:
+                        raise deadline.timeout_error() from cause
                 if not isinstance(output, RewardOutput):
                     raise TypeError("reward function score_batch() must return RewardOutput")
                 if len(output.scores) != len(normalized):
@@ -193,8 +231,8 @@ def _build_prepared_model_in_pool(
         return model
 
 
-class InProcessRewardInferenceRuntime:
-    """``RewardInferenceRuntime`` that runs a ``RewardModel`` in this process.
+class InProcessRewardScorer:
+    """``RewardScorer`` that runs a ``RewardModel`` in this process.
 
     ``worker_config.sleep_offload`` opts a heavyweight model into the same
     sleep/wake semantics the rollout lease uses: the model holds no GPU memory
@@ -222,8 +260,10 @@ class InProcessRewardInferenceRuntime:
         *,
         model: Any | None = None,
     ) -> None:
-        self._worker_config = dict(worker_config or {})
-        self._sleep_offload = bool(self._worker_config.get("sleep_offload", False))
+        # Typed runtime contract; the verbatim bag still feeds the factory.
+        self._launch = RewardWorkerLaunchContract.from_worker_config(worker_config)
+        self._worker_config = self._launch.worker_config
+        self._sleep_offload = self._launch.sleep_offload
         if model is not None and self._sleep_offload:
             raise ValueError(
                 "sleep_offload requires the runtime to build the model itself "
@@ -233,17 +273,25 @@ class InProcessRewardInferenceRuntime:
         self._model = model
         self._pool: CumemPool | None = None
         self._preload_gpu_used_bytes: int | None = None
-        self._parking_residual_bytes_limit = int(
-            self._worker_config.get("memory_parking_residual_bytes_limit", 0),
-        )
-        if self._parking_residual_bytes_limit < 0:
-            raise ValueError("reward memory parking residual limit must be >= 0")
+        self._parking_residual_bytes_limit = self._launch.memory_parking_residual_bytes_limit
 
     @property
     def requires_memory_parking(self) -> bool:
         """Whether topology/config requires this runtime to release GPU pages."""
 
         return self._sleep_offload
+
+    async def activate(self) -> None:
+        """Build or wake the model so scoring starts resident.
+
+        The handoff twin of :meth:`park_memory`; ``score_batch`` performs the
+        same ensure/wake lazily, so activation only moves the load latency out
+        of the measured scoring phase.
+        """
+
+        self._ensure_model()
+        if self._pool is not None:
+            self._pool.wake()
 
     async def park_memory(self) -> None:
         """Park reward pages and validate the residual-memory gate; safe to retry."""
@@ -275,10 +323,10 @@ class InProcessRewardInferenceRuntime:
 
     def _ensure_model(self) -> Any:
         if self._model is None:
-            factory_path = str(self._worker_config.get("model_factory", "")).strip()
+            factory_path = self._launch.model_factory
             if not factory_path:
                 raise ValueError(
-                    "InProcessRewardInferenceRuntime requires worker_config.model_factory "
+                    "InProcessRewardScorer requires worker_config.model_factory "
                     "(import path to a RewardModel factory) or an explicit model",
                 )
             factory = import_from_path(factory_path)
@@ -335,9 +383,7 @@ class InProcessRewardInferenceRuntime:
         return score_artifacts_with_model(
             model,
             request,
-            reward_model_version=str(
-                self._worker_config.get("reward_model_version", ""),
-            ),
+            reward_model_version=self._launch.reward_model_version,
         )
 
     async def shutdown(self) -> None:
@@ -372,19 +418,17 @@ class InProcessRewardInferenceRuntime:
     # Instance-assignable test seams over the shared parking bookkeeping in
     # vrl.utils.cuda_memory; rewards measure their configured device only.
     def _gpu_used_bytes(self) -> int:
-        return gpu_used_bytes(str(self._worker_config.get("device", "")))
+        return gpu_used_bytes(self._launch.device)
 
     def _release_cuda_memory_for_parking(self) -> None:
-        release_cuda_memory_for_parking(
-            str(self._worker_config.get("device", "")),
-        )
+        release_cuda_memory_for_parking(self._launch.device)
 
 
-def build_reward_inference_runtime(
+def build_reward_scorer(
     worker_config: Mapping[str, Any] | None = None,
     *,
     inference: Mapping[str, Any] | RewardInferenceConfig | None = None,
-) -> RewardInferenceRuntime:
+) -> RewardScorer:
     """Build the runtime selected by the typed inference deployment config."""
 
     cfg = dict(worker_config or {})
@@ -398,19 +442,19 @@ def build_reward_inference_runtime(
         context="reward inference",
     )
     if deployment.kind == "in_process":
-        return InProcessRewardInferenceRuntime(cfg)
+        return InProcessRewardScorer(cfg)
     if cfg:
         raise ValueError(
             "HTTP reward runtime cannot consume local worker_config; model and "
             "device configuration belong to the external service",
         )
-    from vrl.rewards.service.client import HttpRewardInferenceRuntime
+    from vrl.rewards.service.client import HttpRewardScorer
 
-    return HttpRewardInferenceRuntime(deployment)
+    return HttpRewardScorer(deployment)
 
 
 __all__ = [
-    "InProcessRewardInferenceRuntime",
+    "InProcessRewardScorer",
     "RewardFunctionRuntime",
-    "build_reward_inference_runtime",
+    "build_reward_scorer",
 ]

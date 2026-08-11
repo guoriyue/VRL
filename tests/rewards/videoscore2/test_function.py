@@ -62,7 +62,7 @@ def _build_reward(tmp_path: Path, *, score_key: str = "physical_common_sense", *
         artifact_dir=str(tmp_path / "artifacts"),
         debug_dir=str(tmp_path / "debug"),
         retain_artifacts=True,
-        inference_runtime=_FakeRuntime(),
+        scorer=_FakeRuntime(),
         **kwargs,
     )
 
@@ -74,7 +74,7 @@ async def test_materializes_artifacts_and_selects_score_key(tmp_path: Path) -> N
     output = await reward.score_batch([_sample(torch.ones(1, 2, 2, 2))])
 
     assert output.scores == pytest.approx([3.25])
-    request = reward.inference_runtime.requests[0]
+    request = reward.scorer.requests[0]
     assert len(request.artifacts) == 1
     assert Path(request.artifacts[0].path).exists()
     results_file = tmp_path / "debug" / "videoscore2_results.jsonl"

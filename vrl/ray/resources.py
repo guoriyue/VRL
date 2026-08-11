@@ -608,31 +608,6 @@ def _validate_fsdp_trainer_disjoint(
         )
 
 
-def require_reward_device(resolved: ResolvedDistributedResources, device: str) -> None:
-    """Reject a caller device that contradicts the resolved reward placement."""
-
-    # Symmetric torchrun ranks keep physical ordinals in the resource plan
-    # for Ray placement, but CUDA_VISIBLE_DEVICES narrows each rank to local
-    # logical cuda:0. The caller passes that actual trainer/reward device;
-    # let an unreserved shared reward inherit it instead of comparing it to
-    # the placement-only physical ordinal.
-    placement_device = resolved.reward_torch_device()
-    expected_device = resolved.reward_torch_device(trainer_device=device).strip().lower()
-    actual_device = str(device).strip().lower()
-    same_device_kind = actual_device.startswith("cuda") == placement_device.startswith("cuda")
-    matches_resource_plan = (
-        same_device_kind
-        if resolved.reward_uses_trainer_device
-        else actual_device == expected_device
-    )
-    if not matches_resource_plan:
-        raise ValueError(
-            f"reward device {str(device)!r} conflicts with distributed resources "
-            f"resolved device {placement_device!r}; resource topology is the "
-            "execution-device source of truth.",
-        )
-
-
 def format_distributed_resource_plan(resolved: ResolvedDistributedResources) -> str:
     """Format a compact resource plan for logs and errors."""
 
@@ -1311,6 +1286,5 @@ __all__ = [
     "WorkerRoleResourceConfig",
     "build_bundle_layout",
     "format_distributed_resource_plan",
-    "require_reward_device",
     "resolve_distributed_resources",
 ]

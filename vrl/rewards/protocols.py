@@ -26,6 +26,16 @@ class RewardRuntime(Protocol):
         """Validate external scoring dependencies before generation starts."""
         ...
 
+    async def activate(self) -> None:
+        """Pre-warm reward model ownership at a GPU handoff.
+
+        The inverse of :meth:`park_memory`, mirroring the generation runtime's
+        activate/offload pair: parking-capable in-process rewards build or wake
+        their model now so the first score does not pay load latency inside the
+        measured scoring phase. CPU and remote rewards need no warm-up.
+        """
+        ...
+
     async def score(
         self,
         samples: Sequence[RewardSample],

@@ -2,9 +2,7 @@
 
 from __future__ import annotations
 
-import json
 import uuid
-from dataclasses import asdict
 from pathlib import Path
 from typing import Any, Literal, get_args
 
@@ -65,7 +63,6 @@ class VideoRewardArtifactStore:
         self.root = Path(root)
         self.media_type = media_type
         self.artifact_format = artifact_format
-        self.manifest_path = self.root / "manifest.jsonl"
         self._owned_paths: set[Path] = set()
         self.root.mkdir(parents=True, exist_ok=True)
 
@@ -129,31 +126,21 @@ class VideoRewardArtifactStore:
             else:
                 torch.save(tensor, path)
             size_bytes = path.stat().st_size
+            # Per-request audit trails are the opt-in debug_dir JSONLs owned by
+            # InferenceRewardFunction._write_debug; the store writes media only.
             artifact = RewardInferenceArtifact(
                 artifact_id=artifact_id,
                 path=str(path),
                 prompt=str(sample.prompt),
                 size_bytes=size_bytes,
                 sha256=sha256_file(path),
-                metadata={
-                    "shape": list(tensor.shape),
-                    "dtype": str(tensor.dtype),
-                    "artifact_format": self.artifact_format,
-                    "fps": fps,
-                    **_artifact_provenance(metadata),
-                },
+                metadata=_artifact_provenance(metadata),
             )
-            self._append_manifest(artifact)
         except BaseException:
             path.unlink(missing_ok=True)
             self._owned_paths.discard(path)
             raise
         return artifact
-
-    def _append_manifest(self, artifact: RewardInferenceArtifact) -> None:
-        self.manifest_path.parent.mkdir(parents=True, exist_ok=True)
-        with self.manifest_path.open("a", encoding="utf-8") as handle:
-            handle.write(json.dumps(asdict(artifact), sort_keys=True) + "\n")
 
 
 def _validate_media_shape(tensor: torch.Tensor, media_type: str) -> None:

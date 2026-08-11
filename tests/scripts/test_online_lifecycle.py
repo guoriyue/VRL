@@ -112,6 +112,10 @@ class _FakeRuntime:
     def __init__(self, state: dict[str, Any]) -> None:
         self._state = state
 
+    async def preflight(self) -> None:
+        self._state.setdefault("runtime_preflights", 0)
+        self._state["runtime_preflights"] += 1
+
     async def shutdown(self) -> None:
         self._state["runtime_shutdowns"] += 1
         self._state["shutdown_order"].append("runtime")
@@ -161,6 +165,7 @@ class _FakePlacementOwner:
         self._state = state
         self._state["placement_worker"] = self.rollout_worker
         self.rollout_placement = object()
+        self.reward_placement = None
 
     def required_local_cluster_cpus(self) -> int:
         self._state["owner_cpu_plans"] += 1
@@ -337,6 +342,7 @@ def _install_common_fakes(
         rollout_num_workers=1,
         rollout_gpus_per_worker=0,
         trainer_torch_device="cpu",
+        reward_devices=(),
         reward_torch_device=lambda *, trainer_device=None: "cpu",
         lifecycle=SimpleNamespace(
             handoff=SimpleNamespace(
@@ -399,6 +405,7 @@ def _install_common_fakes(
                 weights={"kling_video_reward": 1.0},
                 kwargs={},
                 inference_configs={},
+                all_external_inference=False,
             ),
             resume=SimpleNamespace(checkpoint_path=None, strict=True),
         ),

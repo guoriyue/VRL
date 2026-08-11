@@ -46,7 +46,7 @@ async def test_video_reward_debug_records_versions_and_latency(tmp_path: Path) -
         artifact_format="tensor",  # codec-independent wiring test (no imageio dep)
         artifact_dir=str(tmp_path / "reward_artifacts"),
         debug_dir=str(tmp_path / "reward_debug"),
-        inference_runtime=_VersionedRuntime(),
+        scorer=_VersionedRuntime(),
     )
 
     report = await reward.score_batch([_sample()])

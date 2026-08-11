@@ -25,6 +25,7 @@ def test_generation_layer_does_not_import_rollout_or_training_layers() -> None:
             "vrl.algorithms",
             "vrl.rewards",
             "vrl.rollouts",
+            "vrl.scripts",
             "vrl.trainers",
         ),
     )
@@ -38,6 +39,7 @@ def test_rewards_layer_does_not_import_generation_rollout_or_training_layers() -
         forbidden=(
             "vrl.generation",
             "vrl.rollouts",
+            "vrl.scripts",
             "vrl.trainers",
         ),
     )
@@ -293,7 +295,7 @@ def test_reward_scoring_is_in_process() -> None:
     """Rewards score in-process; the removed Ray pool transport must stay gone.
 
     The pool (actor pool + release_after_call kill/reload + resident parking)
-    was replaced by InProcessRewardInferenceRuntime sleep/wake offload. Guard against it
+    was replaced by InProcessRewardScorer sleep/wake offload. Guard against it
     creeping back as a directory, and keep the in-process runtime generic (no
     model-specific code in the shared transport).
     """
@@ -327,10 +329,10 @@ def test_reward_inference_is_a_single_domain_module() -> None:
     inference_path = VRL_ROOT / "rewards" / "inference.py"
     assert inference_path.exists()
     inference_text = inference_path.read_text(encoding="utf-8")
-    assert "build_reward_inference_runtime" not in inference_text
+    assert "build_reward_scorer" not in inference_text
     assert "vrl.ray" not in inference_text
     assert "vrl.rewards.ray" not in inference_text
-    assert not (VRL_ROOT / "rewards" / "inference_runtime.py").exists()
+    assert not (VRL_ROOT / "rewards" / "scorer.py").exists()
     assert not (VRL_ROOT / "rewards" / "inference_worker.py").exists()
     assert not (VRL_ROOT / "rewards" / "inference_scheduler.py").exists()
     assert not (VRL_ROOT / "rewards" / "scoring_worker.py").exists()

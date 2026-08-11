@@ -7,9 +7,10 @@ from dataclasses import dataclass
 from typing import Any
 
 from vrl.ray.dependencies import require_ray
-from vrl.ray.operation_deadline import get_ray_refs, validate_ray_timeout
+from vrl.ray.operation_deadline import get_ray_refs
 from vrl.ray.placement import actor_meta_get, actor_scheduling_strategy
 from vrl.ray.resource_cleanup import kill_actors, kill_and_retain
+from vrl.utils.deadline import validate_timeout
 
 
 @dataclass(frozen=True, slots=True)
@@ -56,7 +57,7 @@ class RayActorGroup:
             raise ValueError("worker_configs and worker_ids must have the same length")
         if bundle_indices is not None and len(bundle_indices) != len(worker_ids):
             raise ValueError("bundle_indices and worker_ids must have the same length")
-        rpc_timeout_s = validate_ray_timeout(
+        rpc_timeout_s = validate_timeout(
             rpc_timeout_s,
             name="rpc_timeout_s",
         )

@@ -14,11 +14,11 @@ from typing import Any, ClassVar, Literal
 
 from vrl.rewards.inference import (
     MediaType,
+    MemoryParkingScorer,
     RewardInferenceArtifact,
     RewardInferenceRequest,
     RewardInferenceResult,
-    RewardInferenceRuntime,
-    RewardMemoryParkingRuntime,
+    RewardScorer,
     validate_reward_results,
 )
 from vrl.rewards.types import RewardOutput, RewardSample
@@ -146,6 +146,11 @@ class RewardFunction:
 
         return None
 
+    async def activate(self) -> None:
+        """Pre-warm this reward at a GPU handoff; CPU/remote rewards need none."""
+
+        return None
+
     async def park_memory(self) -> bool:
         """Release reward-owned accelerator memory and report whether an owner parked."""
 
@@ -195,7 +200,7 @@ class InferenceRewardFunction(RewardFunction):
         *,
         reward_name: str,
         score_key: str,
-        inference_runtime: RewardInferenceRuntime,
+        scorer: RewardScorer,
         artifact_builder: ArtifactBuilder | None = None,
         artifact_finalizer: ArtifactFinalizer | None = None,
         artifact_retainer: ArtifactFinalizer | None = None,
@@ -210,9 +215,9 @@ class InferenceRewardFunction(RewardFunction):
         if not normalized_score_key:
             raise ValueError("score_key must be non-empty")
         for method_name in ("score_batch", "shutdown"):
-            if not callable(getattr(inference_runtime, method_name, None)):
+            if not callable(getattr(scorer, method_name, None)):
                 raise TypeError(
-                    "inference_runtime must provide async score_batch() and shutdown()",
+                    "scorer must provide async score_batch() and shutdown()",
                 )
         if artifact_builder is None:
             # In-memory media is the default transport; disk rewards inject the
@@ -225,7 +230,7 @@ class InferenceRewardFunction(RewardFunction):
         self._selected_score_keys = tuple(
             part.strip() for part in normalized_score_key.split("+") if part.strip()
         )
-        self.inference_runtime = inference_runtime
+        self.scorer = scorer
         self._artifact_builder = artifact_builder
         self._artifact_finalizer = artifact_finalizer
         self._artifact_retainer = artifact_retainer
@@ -238,7 +243,7 @@ class InferenceRewardFunction(RewardFunction):
     def scoring_is_nonblocking(self) -> bool:
         """Whether this scorer yields while inference runs elsewhere."""
 
-        return bool(getattr(self.inference_runtime, "scoring_is_nonblocking", False))
+        return bool(getattr(self.scorer, "scoring_is_nonblocking", False))
 
     @property
     def external_accelerator_isolation_verified(self) -> bool:
@@ -246,7 +251,7 @@ class InferenceRewardFunction(RewardFunction):
 
         return bool(
             getattr(
-                self.inference_runtime,
+                self.scorer,
                 "external_accelerator_isolation_verified",
                 False,
             ),
@@ -261,23 +266,36 @@ class InferenceRewardFunction(RewardFunction):
         startup instead of after the first generation batch completes.
         """
 
-        ensure_ready = getattr(self.inference_runtime, "ensure_ready", None)
+        ensure_ready = getattr(self.scorer, "ensure_ready", None)
         if callable(ensure_ready):
             await ensure_ready()
+
+    async def activate(self) -> None:
+        """Build or wake a parking-capable in-process model at a GPU handoff.
+
+        The inverse of :meth:`park_memory`. Activation marks the model as
+        started so a handoff that never scores still releases its GPU lease.
+        """
+
+        scorer = self.scorer
+        if not isinstance(scorer, MemoryParkingScorer):
+            return
+        await scorer.activate()
+        self._inference_started = True
 
     async def park_memory(self) -> bool:
         """Park this reward runtime when its model has been activated."""
 
-        inference_runtime = self.inference_runtime
-        if not isinstance(inference_runtime, RewardMemoryParkingRuntime):
+        scorer = self.scorer
+        if not isinstance(scorer, MemoryParkingScorer):
             return False
-        if not inference_runtime.requires_memory_parking:
+        if not scorer.requires_memory_parking:
             return False
         if not self._inference_started:
             # This component never activated its model (for example an earlier
             # sibling failed). There is no GPU lease to release.
             return False
-        await inference_runtime.park_memory()
+        await scorer.park_memory()
         return True
 
     async def score(self, sample: RewardSample) -> float:
@@ -288,7 +306,7 @@ class InferenceRewardFunction(RewardFunction):
     async def score_batch(self, samples: Sequence[RewardSample]) -> RewardOutput:
         """Score ordered samples through the configured inference runtime."""
 
-        return await self._score_with_inference_runtime(list(samples))
+        return await self._score_with_scorer(list(samples))
 
     def _select_score(self, scores: Mapping[str, Any]) -> float:
         missing = [key for key in self._selected_score_keys if key not in scores]
@@ -306,7 +324,7 @@ class InferenceRewardFunction(RewardFunction):
         return value
 
     async def shutdown(self) -> None:
-        await self.inference_runtime.shutdown()
+        await self.scorer.shutdown()
 
     def _init_reward_model(
         self,
@@ -318,13 +336,13 @@ class InferenceRewardFunction(RewardFunction):
     ) -> None:
         """Initialize a RewardFunction backed by a RewardModel factory."""
 
-        from vrl.rewards.runtime import build_reward_inference_runtime
+        from vrl.rewards.runtime import build_reward_scorer
 
         InferenceRewardFunction.__init__(
             self,
             reward_name=reward_name,
             score_key=score_key,
-            inference_runtime=build_reward_inference_runtime(
+            scorer=build_reward_scorer(
                 {**dict(worker_config), "model_factory": str(model_factory)},
             ),
         )
@@ -346,7 +364,7 @@ class InferenceRewardFunction(RewardFunction):
         memory_parking_residual_bytes_limit: int = 0,
         retain_artifacts: bool = False,
         worker_config: Mapping[str, Any] | None = None,
-        inference_runtime: RewardInferenceRuntime | None = None,
+        scorer: RewardScorer | None = None,
     ) -> None:
         """Initialize a reward whose media is materialized to disk before scoring.
 
@@ -361,15 +379,15 @@ class InferenceRewardFunction(RewardFunction):
         are the only per-reward differences (concrete rewards set their own
         ``reward_name`` / ``score_key`` / ``artifact_format`` defaults before
         delegating); everything else is shared wiring, so no concrete reward
-        copies this body. ``inference_runtime`` injects a ready
-        ``RewardInferenceRuntime`` (tests); it wins over the factory-built one.
+        copies this body. ``scorer`` injects a ready
+        ``RewardScorer`` (tests); it wins over the factory-built one.
         Disk files belong to this reward call and are deleted after terminal success or failure; explicit
         ``retain_artifacts`` or an ambiguous remote state transfers them to the
         debug/output owner instead.
         """
 
         from vrl.rewards.artifacts import VideoRewardArtifactStore
-        from vrl.rewards.runtime import build_reward_inference_runtime
+        from vrl.rewards.runtime import build_reward_scorer
 
         self.media_type = str(media_type)
         self.artifact_store = VideoRewardArtifactStore(
@@ -378,7 +396,7 @@ class InferenceRewardFunction(RewardFunction):
             artifact_format=str(artifact_format),
         )
 
-        if inference_runtime is None:
+        if scorer is None:
             worker_cfg = dict(worker_config or {})
             has_model_factory = bool(
                 str(worker_cfg.get("model_factory", "")).strip(),
@@ -421,13 +439,13 @@ class InferenceRewardFunction(RewardFunction):
                 worker_cfg["memory_parking_residual_bytes_limit"] = int(
                     memory_parking_residual_bytes_limit,
                 )
-            inference_runtime = build_reward_inference_runtime(worker_cfg)
+            scorer = build_reward_scorer(worker_cfg)
 
         InferenceRewardFunction.__init__(
             self,
             reward_name=str(reward_name),
             score_key=str(score_key),
-            inference_runtime=inference_runtime,
+            scorer=scorer,
             artifact_builder=self.artifact_store.materialize,
             artifact_finalizer=(
                 self.artifact_store.retain if retain_artifacts else self.artifact_store.release
@@ -438,14 +456,14 @@ class InferenceRewardFunction(RewardFunction):
             debug_basename=debug_basename,
         )
 
-    async def _score_with_inference_runtime(
+    async def _score_with_scorer(
         self,
         samples: list[RewardSample],
     ) -> RewardOutput:
         if not samples:
             return RewardOutput(scores=())
 
-        inference_runtime = self.inference_runtime
+        scorer = self.scorer
         artifact_builder = self._artifact_builder
 
         total_started = time.perf_counter()
@@ -471,7 +489,7 @@ class InferenceRewardFunction(RewardFunction):
             # so every runtime (including injected fakes) gets the same result
             # identity guard and request-order re-sort.
             self._inference_started = True
-            raw_results = await inference_runtime.score_batch(request)
+            raw_results = await scorer.score_batch(request)
             results = validate_reward_results(request, raw_results)
             inference_total_ms = (time.perf_counter() - inference_started) * 1000.0
             total_latency_ms = (time.perf_counter() - total_started) * 1000.0

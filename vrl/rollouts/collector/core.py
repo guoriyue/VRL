@@ -204,6 +204,10 @@ class RolloutCollector:
             # Shared single-GPU reward runs park rollout model memory before the
             # in-process reward model takes over the physical GPU.
             await self.generation_runtime.offload()
+        # Symmetric handoff to the generation side's activate(): pre-warm the
+        # reward model here so its build/wake latency is not billed to the
+        # measured scoring phase below.
+        await self.reward_runtime.activate()
 
         # self.config already holds these as resolved, typed fields (frozen for the
         # batch). Read them directly — feeding the typed trajectory_storage policy

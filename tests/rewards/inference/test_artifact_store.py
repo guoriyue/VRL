@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import hashlib
-import json
 from pathlib import Path
 
 import pytest
@@ -29,8 +28,8 @@ def _sample(output: torch.Tensor) -> RewardSample:
     )
 
 
-def test_video_artifact_store_writes_tensor_and_manifest(tmp_path: Path) -> None:
-    """Checks video artifact store writes tensor and manifest."""
+def test_video_artifact_store_writes_tensor_with_provenance(tmp_path: Path) -> None:
+    """Checks video artifact store writes the tensor and provenance metadata."""
     store = VideoRewardArtifactStore(tmp_path, media_type="video")
 
     artifacts = store.materialize([_sample(torch.ones(1, 2, 2, 2))])
@@ -43,11 +42,8 @@ def test_video_artifact_store_writes_tensor_and_manifest(tmp_path: Path) -> None
     assert artifact.size_bytes == Path(artifact.path).stat().st_size
     assert artifact.sha256 == hashlib.sha256(Path(artifact.path).read_bytes()).hexdigest()
     assert torch.load(artifact.path).shape == (1, 2, 2, 2)
-    rows = [json.loads(line) for line in (tmp_path / "manifest.jsonl").read_text().splitlines()]
-    assert rows[0]["artifact_id"] == artifact.artifact_id
-    assert rows[0]["metadata"]["artifact_format"] == "tensor"
-    assert rows[0]["metadata"]["reference_image"] == "/tmp/reference.png"
-    assert rows[0]["metadata"]["source_repo"] == "lerobot/droid_100"
+    assert artifact.metadata["reference_image"] == "/tmp/reference.png"
+    assert artifact.metadata["source_repo"] == "lerobot/droid_100"
 
 
 def test_video_artifact_store_writes_mp4_for_reward_models(tmp_path: Path) -> None:
@@ -60,9 +56,6 @@ def test_video_artifact_store_writes_mp4_for_reward_models(tmp_path: Path) -> No
     assert artifact.path.endswith(".mp4")
     assert Path(artifact.path).is_absolute()
     assert Path(artifact.path).exists()
-    rows = [json.loads(line) for line in (tmp_path / "manifest.jsonl").read_text().splitlines()]
-    assert rows[0]["path"].endswith(".mp4")
-    assert rows[0]["metadata"]["artifact_format"] == "mp4"
 
 
 def test_video_artifact_store_rejects_mp4_for_non_video_media_type(tmp_path: Path) -> None:

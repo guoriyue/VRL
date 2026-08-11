@@ -90,7 +90,7 @@ async def test_video_reward_materializes_artifacts_and_returns_runtime_scores(
         artifact_dir=str(tmp_path / "artifacts"),
         debug_dir=str(tmp_path / "debug"),
         retain_artifacts=True,
-        inference_runtime=runtime,
+        scorer=runtime,
     )
 
     report = await reward.score_batch([_sample(torch.ones(1, 2, 2, 2))])
@@ -100,7 +100,6 @@ async def test_video_reward_materializes_artifacts_and_returns_runtime_scores(
     request = runtime.requests[0]
     assert len(request.artifacts) == 1
     assert Path(request.artifacts[0].path).exists()
-    assert (tmp_path / "artifacts" / "manifest.jsonl").exists()
     assert (tmp_path / "debug" / "kling_video_reward_requests.jsonl").exists()
     result_rows = [
         json.loads(line)
@@ -119,7 +118,7 @@ async def test_video_reward_rejects_missing_runtime_results(tmp_path: Path) -> N
         score_key="overall_reward",
         artifact_format="tensor",  # codec-independent wiring test (no imageio dep)
         artifact_dir=str(tmp_path / "artifacts"),
-        inference_runtime=_EmptyRuntime(),
+        scorer=_EmptyRuntime(),
     )
 
     with pytest.raises(RuntimeError, match="result/artifact mismatch"):
@@ -137,7 +136,7 @@ async def test_video_reward_releases_artifacts_after_success_by_default(
         score_key="overall_reward",
         artifact_format="tensor",
         artifact_dir=str(tmp_path / "artifacts"),
-        inference_runtime=runtime,
+        scorer=runtime,
     )
 
     await reward.score_batch([_sample(torch.ones(1, 2, 2, 2))])

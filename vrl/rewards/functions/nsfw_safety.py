@@ -6,7 +6,7 @@ from typing import Any
 
 from vrl.rewards.base import InferenceRewardFunction
 from vrl.rewards.models.nsfw_safety import NSFWSafetyRewardModel
-from vrl.rewards.runtime import InProcessRewardInferenceRuntime
+from vrl.rewards.runtime import InProcessRewardScorer
 
 
 class NSFWSafetyReward(InferenceRewardFunction):
@@ -24,7 +24,7 @@ class NSFWSafetyReward(InferenceRewardFunction):
         super().__init__(
             reward_name="nsfw_safety",
             score_key="nsfw_safety",
-            inference_runtime=InProcessRewardInferenceRuntime(model=model),
+            scorer=InProcessRewardScorer(model=model),
         )
 
 

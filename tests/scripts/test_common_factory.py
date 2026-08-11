@@ -22,7 +22,7 @@ from vrl.models.families.registry import get_model_family_entry
 from vrl.ray.resources import resolve_distributed_resources
 from vrl.rewards import RewardRuntime
 from vrl.rollouts.collector.config import RolloutCollectorConfig
-from vrl.run import OnlineRunConfig
+from vrl.run import OnlineRunConfig, ResolvedReward, resolve_reward_inputs
 from vrl.scripts.common.factory import (
     build_algorithm_and_evaluator,
     build_reward_function,
@@ -234,9 +234,11 @@ def test_sana_aesthetic_keeps_cpu_observation_only_pickscore() -> None:
     built = build_configs(cfg)
 
     reward = build_reward_function(
-        built=built,
-        resources=resolve_distributed_resources(cfg),
-        device="cuda:0",
+        resolve_reward_inputs(
+            built,
+            resolve_distributed_resources(cfg),
+            trainer_device="cuda:0",
+        ),
     )
 
     assert [(name, weight) for name, weight, _ in reward.rewards] == [
@@ -244,7 +246,7 @@ def test_sana_aesthetic_keeps_cpu_observation_only_pickscore() -> None:
         ("pickscore", 0.0),
     ]
     pickscore = reward.rewards[1][2]
-    assert pickscore.inference_runtime._worker_config["device"] == "cpu"
+    assert pickscore.scorer._worker_config["device"] == "cpu"
 
 
 def test_sana_family_defaults_to_native_fp16() -> None:
@@ -360,12 +362,14 @@ def test_sana_fullparam_long_is_fresh_and_pins_reward_revisions() -> None:
         "a4e4367c6dfa7288a00c550414478f865b875800"
     )
     reward = build_reward_function(
-        built=built,
-        resources=resolve_distributed_resources(cfg),
-        device="cuda:0",
+        resolve_reward_inputs(
+            built,
+            resolve_distributed_resources(cfg),
+            trainer_device="cuda:0",
+        ),
     )
-    aesthetic_config = reward.rewards[0][2].inference_runtime._worker_config
-    pickscore_config = reward.rewards[1][2].inference_runtime._worker_config
+    aesthetic_config = reward.rewards[0][2].scorer._worker_config
+    pickscore_config = reward.rewards[1][2].scorer._worker_config
     assert aesthetic_config["model_revision"] == ("32bd64288804d66eefd0ccbe215aa642df71cc41")
     assert pickscore_config["device"] == "cpu"
     assert pickscore_config["processor_revision"] == ("1c2b8495b28150b8a4922ee1c8edee224c284c0c")
@@ -476,9 +480,11 @@ def test_reward_factory_passes_the_selected_local_device(monkeypatch) -> None:
     monkeypatch.setattr(MultiReward, "from_dict", classmethod(fake_from_dict))
 
     reward = build_reward_function(
-        built=_built_reward({"fake": 1.0}, {"fake": {"marker": True}}),
-        resources=None,
-        device="cuda:2",
+        ResolvedReward(
+            config=_built_reward({"fake": 1.0}, {"fake": {"marker": True}}).reward,
+            device="cuda:2",
+            memory_parking_required=False,
+        ),
     )
 
     assert reward is sentinel
@@ -486,7 +492,7 @@ def test_reward_factory_passes_the_selected_local_device(monkeypatch) -> None:
         "score_dict": {"fake": 1.0},
         "device": "cuda:2",
         "reward_kwargs": {"fake": {"marker": True}},
-        "memory_parking_required": None,
+        "memory_parking_required": False,
         "inference_config_keys": ("fake",),
     }
 
@@ -542,20 +548,22 @@ def test_http_reward_accepts_torchrun_rank_local_device(monkeypatch) -> None:
     )
 
     build_reward_function(
-        built=_built_reward(
-            {"unified_reward_video": 1.0},
-            {
-                "unified_reward_video": {
-                    "inference": {
-                        "kind": "http",
-                        "endpoint": "http://127.0.0.1:8300",
-                        "expected_model": "unified-reward-robotics",
+        resolve_reward_inputs(
+            _built_reward(
+                {"unified_reward_video": 1.0},
+                {
+                    "unified_reward_video": {
+                        "inference": {
+                            "kind": "http",
+                            "endpoint": "http://127.0.0.1:8300",
+                            "expected_model": "unified-reward-robotics",
+                        },
                     },
                 },
-            },
+            ),
+            resolve_distributed_resources(cfg),
+            trainer_device="cuda:0",
         ),
-        resources=resolve_distributed_resources(cfg),
-        device="cuda:0",
     )
 
     assert captured == {"device": "cuda:0", "memory_parking_required": False}
@@ -565,9 +573,11 @@ def test_reward_factory_rejects_an_all_zero_objective() -> None:
     """Checks observation-only components cannot replace the training objective."""
     with pytest.raises(ValueError, match="At least one reward component"):
         build_reward_function(
-            built=_built_reward({"pickscore": 0.0}, {}),
-            resources=None,
-            device="cpu",
+            ResolvedReward(
+                config=_built_reward({"pickscore": 0.0}, {}).reward,
+                device="cpu",
+                memory_parking_required=False,
+            ),
         )
 
 
@@ -607,9 +617,11 @@ def test_shared_reward_capability_fails_before_component_construction(monkeypatc
 
     with pytest.raises(ValueError, match="geneval"):
         build_reward_function(
-            built=_built_reward({"geneval": 1.0}, {"geneval": {}}),
-            resources=resolve_distributed_resources(cfg),
-            device="cuda:0",
+            resolve_reward_inputs(
+                _built_reward({"geneval": 1.0}, {"geneval": {}}),
+                resolve_distributed_resources(cfg),
+                trainer_device="cuda:0",
+            ),
         )
 
     assert constructed is False
@@ -657,16 +669,20 @@ def test_reward_build_consumes_resolved_inference(
         unexpected_reparse,
     )
 
-    reward = build_reward_function(built=built, resources=None, device="cpu")
+    reward = build_reward_function(
+        ResolvedReward(config=built.reward, device="cpu", memory_parking_required=False),
+    )
 
     assert [name for name, _, _ in reward.rewards] == ["ocr"]
 
 
 def test_reward_runtime_factory_exposes_the_public_runtime_protocol() -> None:
     runtime = build_reward_runtime(
-        built=_built_reward({"ocr": 1.0}, {}),
-        resources=None,
-        device="cpu",
+        ResolvedReward(
+            config=_built_reward({"ocr": 1.0}, {}).reward,
+            device="cpu",
+            memory_parking_required=False,
+        ),
     )
 
     assert isinstance(runtime, RewardRuntime)
@@ -700,9 +716,11 @@ def test_shared_reward_topology_automatically_enables_parking(monkeypatch) -> No
     cfg = _shared_reward_cfg("aesthetic")
 
     reward = build_reward_function(
-        built=_built_reward({"aesthetic": 1.0}, {"aesthetic": {}}),
-        resources=resolve_distributed_resources(cfg),
-        device="cuda:0",
+        resolve_reward_inputs(
+            _built_reward({"aesthetic": 1.0}, {"aesthetic": {}}),
+            resolve_distributed_resources(cfg),
+            trainer_device="cuda:0",
+        ),
     )
 
     assert reward is sentinel
@@ -740,9 +758,11 @@ def test_shared_reward_accepts_rank_local_cuda_after_physical_placement(
     cfg.distributed.resources.rollout.devices = [2]
 
     reward = build_reward_function(
-        built=_built_reward({"aesthetic": 1.0}, {"aesthetic": {}}),
-        resources=resolve_distributed_resources(cfg),
-        device="cuda:0",
+        resolve_reward_inputs(
+            _built_reward({"aesthetic": 1.0}, {"aesthetic": {}}),
+            resolve_distributed_resources(cfg),
+            trainer_device="cuda:0",
+        ),
     )
 
     assert reward is sentinel
@@ -772,16 +792,14 @@ def test_reward_config_rejects_yaml_lifecycle_override(key: str) -> None:
         build_reward_config(cfg)
 
 
-def test_factory_rejects_driver_device_outside_reward_resource_topology() -> None:
-    """The factory cannot replace resolved CUDA ownership with a CPU runtime."""
+def test_reward_inputs_derive_device_from_resource_topology() -> None:
+    """The resource plan, not a caller device, is the execution-device source."""
     cfg = _shared_reward_cfg("aesthetic")
-
-    with pytest.raises(ValueError, match="execution-device source of truth"):
-        build_reward_function(
-            built=_built_reward({"aesthetic": 1.0}, {"aesthetic": {}}),
-            resources=resolve_distributed_resources(cfg),
-            device="cpu",
-        )
+    shared = resolve_reward_inputs(
+        _built_reward({"aesthetic": 1.0}, {"aesthetic": {}}),
+        resolve_distributed_resources(cfg),
+    )
+    assert shared.device == "cuda:0"
 
     cpu_cfg = OmegaConf.create(
         {
@@ -801,9 +819,10 @@ def test_factory_rejects_driver_device_outside_reward_resource_topology() -> Non
             "reward": {"components": {"ocr": 1.0}, "kwargs": {"ocr": {}}},
         },
     )
-    with pytest.raises(ValueError, match="execution-device source of truth"):
-        build_reward_function(
-            built=_built_reward({"ocr": 1.0}, {"ocr": {}}),
-            resources=resolve_distributed_resources(cpu_cfg),
-            device="cuda:0",
-        )
+    # A CPU-only reward reservation wins even when the trainer runs on CUDA.
+    cpu_reward = resolve_reward_inputs(
+        _built_reward({"ocr": 1.0}, {"ocr": {}}),
+        resolve_distributed_resources(cpu_cfg),
+        trainer_device="cuda:0",
+    )
+    assert cpu_reward.device == "cpu"

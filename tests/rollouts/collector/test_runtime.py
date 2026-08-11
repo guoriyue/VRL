@@ -85,6 +85,9 @@ class _Runtime:
         self.shutdown_failures = shutdown_failures
         self.shutdown_calls = 0
 
+    async def preflight(self) -> None:
+        return None
+
     async def activate(self) -> None:
         return None
 
@@ -142,6 +145,9 @@ class _RewardRuntime:
 
     async def preflight(self) -> None:
         return None
+
+    async def activate(self) -> None:
+        self.activate_calls = getattr(self, "activate_calls", 0) + 1
 
     async def shutdown(self) -> None:
         self.shutdown_calls += 1

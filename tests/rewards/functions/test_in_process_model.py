@@ -12,7 +12,7 @@ from vrl.rewards.base import (
     RewardFunction,
 )
 from vrl.rewards.models.base import TorchRewardModel
-from vrl.rewards.runtime import InProcessRewardInferenceRuntime
+from vrl.rewards.runtime import InProcessRewardScorer
 from vrl.rewards.types import RewardSample
 from vrl.utils.config import import_from_path
 
@@ -46,7 +46,7 @@ def _reward_function_in_process() -> InferenceRewardFunction:
     return InferenceRewardFunction(
         reward_name="fake",
         score_key="fake",
-        inference_runtime=InProcessRewardInferenceRuntime(
+        scorer=InProcessRewardScorer(
             model=_FakeTorchReward({"device": "cpu"}),
         ),
         artifact_builder=lambda samples: InferenceRewardFunction.build_inmemory_artifacts(
@@ -159,7 +159,7 @@ def test_inference_reward_defaults_to_inmemory_artifact_builder() -> None:
         async def shutdown(self) -> None:
             return None
 
-    with pytest.raises(TypeError, match="inference_runtime"):
+    with pytest.raises(TypeError, match="scorer"):
         InferenceRewardFunction(
             reward_name="fake",
             score_key="fake",
@@ -168,25 +168,25 @@ def test_inference_reward_defaults_to_inmemory_artifact_builder() -> None:
     reward = InferenceRewardFunction(
         reward_name="fake",
         score_key="fake",
-        inference_runtime=_Runtime(),
+        scorer=_Runtime(),
     )
     assert reward._artifact_builder is InferenceRewardFunction.build_inmemory_artifacts
     with pytest.raises(TypeError, match="artifact_builder"):
         InferenceRewardFunction(
             reward_name="fake",
             score_key="fake",
-            inference_runtime=_Runtime(),
+            scorer=_Runtime(),
             artifact_builder="not-callable",  # type: ignore[arg-type]
         )
 
 
-@pytest.mark.parametrize("inference_runtime", [None, object()])
-def test_inference_reward_rejects_invalid_runtime(inference_runtime: object) -> None:
-    with pytest.raises(TypeError, match="inference_runtime"):
+@pytest.mark.parametrize("scorer", [None, object()])
+def test_inference_reward_rejects_invalid_runtime(scorer: object) -> None:
+    with pytest.raises(TypeError, match="scorer"):
         InferenceRewardFunction(
             reward_name="fake",
             score_key="fake",
-            inference_runtime=inference_runtime,  # type: ignore[arg-type]
+            scorer=scorer,  # type: ignore[arg-type]
             artifact_builder=InferenceRewardFunction.build_inmemory_artifacts,
         )
 
@@ -194,7 +194,7 @@ def test_inference_reward_rejects_invalid_runtime(inference_runtime: object) -> 
 def test_inference_runtime_has_an_explicit_layer_name() -> None:
     reward = _reward_function_in_process()
 
-    assert isinstance(reward.inference_runtime, InProcessRewardInferenceRuntime)
+    assert isinstance(reward.scorer, InProcessRewardScorer)
     assert not hasattr(reward, "runtime")
 
 
@@ -214,7 +214,7 @@ async def test_reward_reports_operation_and_artifact_cleanup_failures() -> None:
     reward = InferenceRewardFunction(
         reward_name="fake",
         score_key="fake",
-        inference_runtime=_FailingRuntime(),
+        scorer=_FailingRuntime(),
         artifact_builder=InferenceRewardFunction.build_inmemory_artifacts,
         artifact_finalizer=fail_cleanup,
     )
@@ -254,7 +254,7 @@ async def test_reward_retains_artifacts_when_remote_state_is_ambiguous() -> None
     reward = InferenceRewardFunction(
         reward_name="fake",
         score_key="fake",
-        inference_runtime=_AmbiguousRuntime(),
+        scorer=_AmbiguousRuntime(),
         artifact_builder=InferenceRewardFunction.build_inmemory_artifacts,
         artifact_finalizer=finalize,
         artifact_retainer=retain,

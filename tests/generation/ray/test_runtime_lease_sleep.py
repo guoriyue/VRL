@@ -15,7 +15,6 @@ from vrl.generation.execution.types import (
 )
 from vrl.generation.ray.executor import RayGenerationExecutor
 from vrl.generation.ray.health_monitor import RolloutWorkerUnreachable
-from vrl.utils.lifecycle import RuntimeLifecycleError, RuntimePhase
 from vrl.generation.ray.runtime import RayGenerationRuntime
 from vrl.generation.ray.session import RayGenerationSession
 from vrl.generation.types import GenerationRequest
@@ -24,6 +23,7 @@ from vrl.ray.actor_pool import RayActorCallError, RayActorDispatcher
 from vrl.ray.operation_deadline import RayOperationCancelled, RayOperationTimeout
 from vrl.runtime_errors import failure_identity_cause
 from vrl.trainers.weight_sync import build_runtime_weight_syncer
+from vrl.utils.lifecycle import RuntimeLifecycleError, RuntimePhase
 
 
 class _FakeSession:
@@ -424,7 +424,9 @@ async def test_worker_parking_deadline_force_kills_without_graceful_release(
     real_wait_for = asyncio.wait_for
 
     async def expire_at_test_deadline(awaitable: Any, *, timeout: float) -> Any:
-        assert timeout == 120
+        # The budget is a monotonic deadline's remainder, so it is 120s minus
+        # the (sub-millisecond) time spent since construction.
+        assert timeout == pytest.approx(120, abs=1)
         return await real_wait_for(awaitable, timeout=0.01)
 
     monkeypatch.setattr(session_module.asyncio, "wait_for", expire_at_test_deadline)

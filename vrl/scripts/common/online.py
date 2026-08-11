@@ -338,6 +338,38 @@ def _require_supported_distributed_rollout_topology(
     )
 
 
+def _validate_reward_placement(
+    placement: Any,
+    *,
+    resources: ResolvedDistributedResources,
+    reward_device: str,
+) -> None:
+    """Link the reward GPU reservation to the device the runtime executes on.
+
+    The placement group reserves the reward bundle and ``reward_torch_device``
+    independently derives the execution device from the same resolution; this
+    check fails fast if the two derivations ever drift apart.
+    """
+
+    if not resources.reward_devices:
+        return
+    if placement is None:
+        raise RuntimeError(
+            "reward GPUs are resolved "
+            f"({list(resources.reward_devices)}) but the run placement group "
+            "reserved no reward bundle; the reservation and execution device "
+            "have diverged",
+        )
+    if reward_device.startswith("cuda"):
+        ordinal = int(reward_device.split(":", 1)[1])
+        if placement.expected_gpu_ids and ordinal not in placement.expected_gpu_ids:
+            raise RuntimeError(
+                f"in-process reward executes on {reward_device} but the placement "
+                f"group reserved GPUs {list(placement.expected_gpu_ids)} for the "
+                "reward role",
+            )
+
+
 def _log_rollout_memory_plan(
     batch_plan: OnlineBatchPlan,
     *,
@@ -767,7 +799,7 @@ async def run_online_recipe(
     # Rewards execute in this driver process. A dedicated local reward reservation
     # must therefore select the reward model's actual CUDA device; cross-node reward
     # ordinals are remote budget tokens and fail here before any model is loaded.
-    reward_device = resources.reward_torch_device(trainer_device=device)
+    reward_inputs = resolved.reward_inputs(trainer_device=device)
     if family_entry.task in {"i2v", "v2w"}:
         conditioning = OmegaConf.select(
             cfg,
@@ -863,12 +895,13 @@ async def run_online_recipe(
         if resources.cross_node:
             cross_node_preflight(ray, resources)
         placement_owner.create()
-        collector_config = resolved.collector
-        reward_runtime = lifecycle.reward_runtime = build_reward_runtime(
-            built=built,
+        _validate_reward_placement(
+            placement_owner.reward_placement,
             resources=resources,
-            device=reward_device,
+            reward_device=reward_inputs.device,
         )
+        collector_config = resolved.collector
+        reward_runtime = lifecycle.reward_runtime = build_reward_runtime(reward_inputs)
         algorithm_and_evaluator = build_algorithm_and_evaluator(
             family_entry=family_entry,
             built=built,
@@ -889,13 +922,15 @@ async def run_online_recipe(
         generation_config.validate_driver_state(driver_bundle=bundle)
         generation_launch_inputs = resolved.ray_launch_inputs(resolved_model)
         log_host_memory("before_rollout_backend_build", log=logger)
-        collector.set_generation_runtime(
-            generation_launcher.create_runtime(
-                generation_config,
-                generation_launch_inputs,
-                placement=placement_owner.rollout_placement,
-            ),
+        generation_runtime = generation_launcher.create_runtime(
+            generation_config,
+            generation_launch_inputs,
+            placement=placement_owner.rollout_placement,
         )
+        # The generation twin of reward_runtime.preflight() above: a launched
+        # fleet must answer one bounded health probe before the schedule starts.
+        await generation_runtime.preflight()
+        collector.set_generation_runtime(generation_runtime)
         log_host_memory("after_rollout_backend_build", log=logger)
 
         ref_model = (

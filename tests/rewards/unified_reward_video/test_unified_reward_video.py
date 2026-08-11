@@ -110,7 +110,7 @@ async def test_facade_selects_physics_and_fails_fast(tmp_path: Path) -> None:
         score_key="physics",
         artifact_format="tensor",
         artifact_dir=str(tmp_path / "a"),
-        inference_runtime=_FakeRuntime(),
+        scorer=_FakeRuntime(),
     )
     assert (await reward.score_batch([_sample()])).scores == pytest.approx([2.0])
 
@@ -119,7 +119,7 @@ async def test_facade_selects_physics_and_fails_fast(tmp_path: Path) -> None:
         score_key="identity_consistency",
         artifact_format="tensor",
         artifact_dir=str(tmp_path / "b"),
-        inference_runtime=_FakeRuntime(),
+        scorer=_FakeRuntime(),
     )
     with pytest.raises(KeyError, match="missing score keys"):
         await bad.score_batch([_sample()])

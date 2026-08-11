@@ -37,7 +37,7 @@ if TYPE_CHECKING:
     from vrl.config.reward_inference import RewardInferenceConfig
 
 
-class HttpRewardInferenceRuntime:
+class HttpRewardScorer:
     """Score against an operator-owned reward service over async HTTP."""
 
     scoring_is_nonblocking = True
@@ -57,7 +57,7 @@ class HttpRewardInferenceRuntime:
         if isinstance(service, RewardInferenceConfig):
             if service.kind != "http":
                 raise ValueError(
-                    "HttpRewardInferenceRuntime requires inference.kind=http",
+                    "HttpRewardScorer requires inference.kind=http",
                 )
             if timeout_s is not None or expected_model is not None:
                 raise ValueError(
@@ -350,4 +350,4 @@ class HttpRewardInferenceRuntime:
             ) from error
 
 
-__all__ = ["HttpRewardInferenceRuntime", "RemoteRewardServiceError"]
+__all__ = ["HttpRewardScorer", "RemoteRewardServiceError"]

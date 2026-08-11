@@ -13,7 +13,7 @@ from vrl.config.reward_inference import (
     parse_reward_inference_config,
 )
 from vrl.rewards.base import RewardCleanupError, RewardFunction
-from vrl.rewards.runtime import build_reward_inference_runtime
+from vrl.rewards.runtime import build_reward_scorer
 from vrl.rewards.types import RewardOutput, RewardSample
 
 # Registry of reward function factories.
@@ -112,6 +112,12 @@ class MultiReward(RewardFunction):
         for _, _, fn in self.rewards:
             await fn.preflight()
 
+    async def activate(self) -> None:
+        """Pre-warm every component at a GPU handoff."""
+
+        for _, _, fn in self.rewards:
+            await fn.activate()
+
     async def shutdown(self) -> None:
         errors: list[BaseException] = []
         for _, _, fn in self.rewards:
@@ -182,7 +188,7 @@ class MultiReward(RewardFunction):
             # `or {}`: a bare YAML key (kwargs: <name>:) parses as None.
             extra = dict(reward_kwargs.get(name) or {})
             extra.pop("inference", None)
-            reserved_runtime_keys = sorted(set(extra) & {"inference_runtime", "runtime"})
+            reserved_runtime_keys = sorted(set(extra) & {"scorer", "runtime"})
             if reserved_runtime_keys:
                 raise ValueError(
                     f"reward.kwargs.{name} cannot set runtime injection keys "
@@ -218,7 +224,7 @@ class MultiReward(RewardFunction):
                         "standalone reward service",
                     )
                 component_device = "cpu"
-                extra["inference_runtime"] = build_reward_inference_runtime(inference=inference)
+                extra["scorer"] = build_reward_scorer(inference=inference)
             else:
                 component_device = reward_cls.resolve_execution_device(
                     device=device,

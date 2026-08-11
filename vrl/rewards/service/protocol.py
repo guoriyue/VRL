@@ -90,7 +90,7 @@ class RewardServiceProtocolError(ValueError):
 
 
 class RemoteRewardServiceError(RuntimeError):
-    """Typed remote failure surfaced by ``HttpRewardInferenceRuntime``."""
+    """Typed remote failure surfaced by ``HttpRewardScorer``."""
 
     def __init__(
         self,

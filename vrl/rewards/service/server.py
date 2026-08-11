@@ -17,8 +17,12 @@ from typing import TYPE_CHECKING, Any
 
 from aiohttp import web
 
-from vrl.rewards.inference import sha256_file, validate_reward_results
-from vrl.rewards.service.owner import RewardInferenceRuntimeOwner
+from vrl.rewards.inference import (
+    RewardWorkerLaunchContract,
+    sha256_file,
+    validate_reward_results,
+)
+from vrl.rewards.service.owner import RewardScorerOwner
 from vrl.rewards.service.protocol import (
     GENERATION_OVERLAP_SAFE_CAPABILITY,
     RewardServiceErrorCode,
@@ -36,7 +40,7 @@ from vrl.rewards.service.wire import (
 from vrl.utils.logging import init_logger
 
 if TYPE_CHECKING:
-    from vrl.rewards.inference import RewardInferenceRequest, RewardInferenceRuntime
+    from vrl.rewards.inference import RewardInferenceRequest, RewardScorer
 
 logger = init_logger(__name__)
 
@@ -101,7 +105,7 @@ class RewardService:
 
     def __init__(
         self,
-        runtime: RewardInferenceRuntime,
+        runtime: RewardScorer,
         *,
         artifact_roots: Sequence[str | Path],
         host: str = "127.0.0.1",
@@ -229,7 +233,7 @@ class RewardService:
         # Start the owner thread only after every fallible configuration and
         # aiohttp setup step has completed, so constructor errors cannot leak a
         # runtime thread that the caller never receives a handle to shut down.
-        self._owner = RewardInferenceRuntimeOwner(runtime)
+        self._owner = RewardScorerOwner(runtime)
 
     @property
     def address(self) -> tuple[str, int]:
@@ -652,14 +656,14 @@ class RewardService:
 def _load_service(config_path: Path) -> RewardService:
     from omegaconf import OmegaConf
 
-    from vrl.rewards.runtime import InProcessRewardInferenceRuntime
+    from vrl.rewards.runtime import InProcessRewardScorer
 
     raw = OmegaConf.to_container(OmegaConf.load(config_path), resolve=True)
     if not isinstance(raw, Mapping):
         raise TypeError("reward service config must be a mapping")
     cfg = RewardServiceConfig.from_mapping(raw)
-    worker_config = cfg.worker_config
-    if worker_config.get("sleep_offload"):
+    launch = RewardWorkerLaunchContract.from_worker_config(cfg.worker_config)
+    if launch.sleep_offload:
         raise ValueError(
             "reward service owns its device for its whole lifetime; drop "
             "worker_config.sleep_offload because parking is colocated-only",
@@ -668,20 +672,15 @@ def _load_service(config_path: Path) -> RewardService:
         path if Path(path).is_absolute() else config_path.parent / path
         for path in cfg.artifact_roots
     ]
-    configured_device = str(worker_config.get("device", "")).strip().lower()
+    configured_device = launch.device.strip().lower()
     runs_on_cpu = configured_device == "cpu" or configured_device.startswith("cpu:")
     return RewardService(
-        InProcessRewardInferenceRuntime(worker_config),
+        InProcessRewardScorer(launch.worker_config),
         artifact_roots=roots,
         host=str(cfg.host),
         port=int(cfg.port),
-        model_name=str(
-            cfg.model_name
-            or worker_config.get("reward_model_name")
-            or worker_config.get("model_factory")
-            or ""
-        ),
-        model_version=str(cfg.model_version or worker_config.get("reward_model_version") or ""),
+        model_name=str(cfg.model_name or launch.reward_model_name or launch.model_factory),
+        model_version=str(cfg.model_version or launch.reward_model_version),
         max_concurrency=int(cfg.max_concurrency),
         max_pending_requests=int(cfg.max_pending_requests),
         max_cached_requests=int(cfg.max_cached_requests),

@@ -12,8 +12,18 @@ from vrl.generation.ray.weight_sync import GenerationWeightSync
 from vrl.ray.actor_group import RayActorHandle
 from vrl.ray.dependencies import require_ray
 from vrl.ray.resource_cleanup import kill_and_retain
+from vrl.utils.deadline import OperationDeadline
 
 logger = logging.getLogger(__name__)
+
+# Parking moves whole model states between GPU and pinned host memory; the
+# bound catches a wedged CUDA runtime without tripping on a slow multi-GiB
+# offload. A timeout raises the shared terminal OperationTimeout so the runtime
+# treats the fleet as failed instead of surfacing a bare asyncio error.
+_WORKER_PARK_TIMEOUT_S = 120.0
+# Graceful policy release before actor kill; a slow release is not worth
+# delaying cleanup longer than this — the kill that follows reclaims the GPU.
+_POLICY_RELEASE_TIMEOUT_S = 60.0
 
 
 class RayGenerationSession:
@@ -69,8 +79,23 @@ class RayGenerationSession:
 
         if not self.workers:
             return ()
+        deadline = OperationDeadline(
+            "generation.worker_sleep",
+            _WORKER_PARK_TIMEOUT_S,
+            context=f"workers={len(self.workers)}",
+        )
         refs = [worker.actor.sleep.remote() for worker in self.workers]
-        values = await asyncio.wait_for(asyncio.gather(*refs), timeout=120)
+        try:
+            values = await asyncio.wait_for(
+                asyncio.gather(*refs),
+                timeout=deadline.remaining_s(),
+            )
+        except TimeoutError as cause:
+            # A worker may itself raise TimeoutError before the budget runs
+            # out; only an exhausted deadline is this barrier's own expiry.
+            if deadline.remaining_s() > 0:
+                raise
+            raise deadline.timeout_error() from cause
         snapshots: list[WorkerMemoryParkingSnapshot] = []
         for worker, value in zip(self.workers, values, strict=True):
             if not isinstance(value, WorkerMemoryParkingSnapshot):
@@ -92,8 +117,21 @@ class RayGenerationSession:
 
         if not self.workers:
             return
+        deadline = OperationDeadline(
+            "generation.worker_wake",
+            _WORKER_PARK_TIMEOUT_S,
+            context=f"workers={len(self.workers)}",
+        )
         refs = [worker.actor.wake.remote() for worker in self.workers]
-        await asyncio.wait_for(asyncio.gather(*refs), timeout=120)
+        try:
+            await asyncio.wait_for(
+                asyncio.gather(*refs),
+                timeout=deadline.remaining_s(),
+            )
+        except TimeoutError as cause:
+            if deadline.remaining_s() > 0:
+                raise
+            raise deadline.timeout_error() from cause
 
     async def close(self, *, force: bool) -> None:
         """Release worker policies, kill actors, and retain failed handles."""
@@ -123,7 +161,11 @@ class RayGenerationSession:
         try:
             if release_refs:
                 release_wait_task = asyncio.create_task(
-                    asyncio.to_thread(ray.get, release_refs, timeout=60),
+                    asyncio.to_thread(
+                        ray.get,
+                        release_refs,
+                        timeout=_POLICY_RELEASE_TIMEOUT_S,
+                    ),
                 )
                 self._release_wait_task = release_wait_task
                 try:

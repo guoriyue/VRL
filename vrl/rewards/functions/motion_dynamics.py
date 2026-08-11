@@ -6,7 +6,7 @@ from typing import Any
 
 from vrl.rewards.base import InferenceRewardFunction, reward_worker_config_with_device
 from vrl.rewards.models.motion_dynamics import MotionDynamicsModel
-from vrl.rewards.runtime import InProcessRewardInferenceRuntime
+from vrl.rewards.runtime import InProcessRewardScorer
 
 
 class MotionDynamicsReward(InferenceRewardFunction):
@@ -24,7 +24,7 @@ class MotionDynamicsReward(InferenceRewardFunction):
         super().__init__(
             reward_name=reward_name,
             score_key=score_key,
-            inference_runtime=InProcessRewardInferenceRuntime(model=model),
+            scorer=InProcessRewardScorer(model=model),
         )
 
 

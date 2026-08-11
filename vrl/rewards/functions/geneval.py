@@ -12,7 +12,7 @@ from vrl.rewards.types import RewardSample
 
 
 class GenEvalReward(RewardFunction):
-    """Delegate one sample to an injected or import-path GenEval scorer."""
+    """Delegate one sample to an injected or import-path GenEval score_fn."""
 
     def __init__(
         self,
@@ -20,13 +20,13 @@ class GenEvalReward(RewardFunction):
         import_path: str = "",
         debug_dir: str = "",
         artifact_dir: str = "",
-        scorer: Callable[..., Any] | None = None,
+        score_fn: Callable[..., Any] | None = None,
     ) -> None:
         self.device = str(device)
         self.import_path = str(import_path)
         self.debug_dir = str(debug_dir)
         self.artifact_dir = str(artifact_dir)
-        self._scorer = scorer
+        self._scorer = score_fn
 
     async def score(self, sample: RewardSample) -> float:
         """Score one generated sample without an artificial artifact transport."""
@@ -55,24 +55,24 @@ class GenEvalReward(RewardFunction):
     def _load_import_path(self) -> Callable[..., Any]:
         if not self.import_path:
             raise RuntimeError(
-                "GenEvalReward requires an injected scorer or reward.kwargs.geneval.import_path",
+                "GenEvalReward requires an injected score_fn or reward.kwargs.geneval.import_path",
             )
         module_name, separator, attribute_name = self.import_path.partition(":")
         if not separator or not module_name or not attribute_name:
             raise ValueError(
                 "GenEval import_path must have the form 'module.submodule:function'",
             )
-        scorer = getattr(importlib.import_module(module_name), attribute_name)
-        if not callable(scorer):
+        score_fn = getattr(importlib.import_module(module_name), attribute_name)
+        if not callable(score_fn):
             raise TypeError(f"GenEval import_path target is not callable: {self.import_path}")
-        self._scorer = scorer
-        return scorer
+        self._scorer = score_fn
+        return score_fn
 
 
 def _normalize_result(result: Any) -> float:
     if isinstance(result, dict):
         if "score" not in result:
-            raise ValueError("GenEval scorer dict result must contain a 'score' key")
+            raise ValueError("GenEval score_fn dict result must contain a 'score' key")
         result = result["score"]
     return float(result)
 

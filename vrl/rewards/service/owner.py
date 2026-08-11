@@ -14,14 +14,14 @@ if TYPE_CHECKING:
     from vrl.rewards.inference import (
         RewardInferenceRequest,
         RewardInferenceResult,
-        RewardInferenceRuntime,
+        RewardScorer,
     )
 
 
-class RewardInferenceRuntimeOwner:
+class RewardScorerOwner:
     """Run every runtime operation on one dedicated event-loop thread."""
 
-    def __init__(self, runtime: RewardInferenceRuntime) -> None:
+    def __init__(self, runtime: RewardScorer) -> None:
         self._runtime = runtime
         self._loop = asyncio.new_event_loop()
         self._started = threading.Event()
@@ -125,4 +125,4 @@ class RewardInferenceRuntimeOwner:
             self._loop.close()
 
 
-__all__ = ["RewardInferenceRuntimeOwner"]
+__all__ = ["RewardScorerOwner"]

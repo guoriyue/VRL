@@ -9,9 +9,10 @@ from vrl.algorithms.base import Algorithm
 from vrl.config.builders import BuiltConfigs
 from vrl.models.dtypes import resolve_torch_dtype
 from vrl.models.families.registry import ModelFamilyEntry
-from vrl.ray.resources import ResolvedDistributedResources, require_reward_device
+from vrl.ray.resources import ResolvedDistributedResources
 from vrl.rewards import RewardRuntime
 from vrl.rewards.base import RewardFunction
+from vrl.run import ResolvedReward
 
 
 @dataclass(frozen=True, slots=True)
@@ -22,72 +23,53 @@ class AlgorithmEvaluatorPair:
     evaluator: Any | None
 
 
-def build_reward_function(
-    *,
-    built: BuiltConfigs,
-    resources: ResolvedDistributedResources | None,
-    device: str = "cuda",
-) -> RewardFunction:
-    """Build the online reward function from the shared config loader output.
+def build_reward_function(reward: ResolvedReward) -> RewardFunction:
+    """Build the online reward function from the resolved reward inputs.
 
-    In-process GPU ownership decides parking: a shared reward is automatically
-    pooled and must publish a release proof, while a dedicated reward stays
-    resident. HTTP components own their deployment externally and receive no
-    local parking policy. YAML selects transport, not lifecycle behavior.
+    Device and parking policy are decided once by ``ResolvedOnlineRun.
+    reward_inputs``; this factory validates the components and constructs.
+    In-process GPU ownership decides parking: a shared reward must completely
+    park its model memory after scoring, while a dedicated reward stays resident.
+    HTTP components own their deployment externally and receive no local parking
+    policy. YAML selects transport, not lifecycle behavior.
     """
 
-    reward = built.reward
-    if reward is None:
-        raise ValueError(
-            "online recipe requires a reward section; diffusion_dpo is offline-only",
+    if not isinstance(reward, ResolvedReward):
+        raise TypeError(
+            f"reward must be a ResolvedReward, got {type(reward).__name__}",
         )
-    if not any(weight > 0 for weight in reward.weights.values()):
+    config = reward.config
+    if not any(weight > 0 for weight in config.weights.values()):
         raise ValueError("At least one reward component must have weight > 0.")
     from vrl.rewards.functions.registry import MultiReward
 
-    memory_parking_required: bool | None = None
-    if resources is not None and not reward.all_external_inference:
-        require_reward_device(resources, str(device))
-        validate_reward_memory_parking(
-            resources=resources,
-            built=built,
-            device=str(device),
+    if reward.memory_parking_required and not config.all_external_inference:
+        from vrl.rewards.functions.registry import (
+            validate_reward_memory_parking_components,
         )
-        memory_parking_required = bool(
-            resources.lifecycle.handoff.release_reward_after_score,
+
+        validate_reward_memory_parking_components(
+            tuple(config.weights),
+            device=reward.device,
+            reward_kwargs=config.kwargs,
+            inference_configs=config.inference_configs,
         )
-    elif resources is not None:
-        # HTTP components execute as CPU clients in this process; their model
-        # device belongs to the standalone service and is absent from the local
-        # resource plan. A torchrun rank's logical CUDA name is irrelevant here.
-        memory_parking_required = False
 
     return MultiReward.from_dict(
-        reward.weights,
-        device=str(device),
-        reward_kwargs=reward.kwargs,
-        memory_parking_required=memory_parking_required,
-        inference_configs=reward.inference_configs,
+        config.weights,
+        device=reward.device,
+        reward_kwargs=config.kwargs,
+        memory_parking_required=reward.memory_parking_required,
+        inference_configs=config.inference_configs,
     )
 
 
-def build_reward_runtime(
-    *,
-    built: BuiltConfigs,
-    resources: ResolvedDistributedResources | None,
-    device: str = "cuda",
-) -> RewardRuntime:
+def build_reward_runtime(reward: ResolvedReward) -> RewardRuntime:
     """Build the collector-facing runtime around the configured reward function."""
 
     from vrl.rewards.runtime import RewardFunctionRuntime
 
-    return RewardFunctionRuntime(
-        build_reward_function(
-            built=built,
-            resources=resources,
-            device=device,
-        ),
-    )
+    return RewardFunctionRuntime(build_reward_function(reward))
 
 
 def validate_reward_memory_parking(

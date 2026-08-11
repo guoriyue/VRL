@@ -15,9 +15,9 @@ from vrl.ray.operation_deadline import (
     RayOperationTimeout,
     cancel_ray_refs,
     get_ray_refs,
-    validate_ray_timeout,
 )
 from vrl.runtime_errors import TerminalRuntimeError
+from vrl.utils.deadline import validate_timeout
 
 
 class _CancelLedger:
@@ -34,7 +34,7 @@ class _CancelLedger:
 )
 def test_ray_deadline_rejects_invalid_timeout(timeout_s: float) -> None:
     with pytest.raises(ValueError, match="timeout_s must be finite and > 0"):
-        validate_ray_timeout(timeout_s)
+        validate_timeout(timeout_s)
     with pytest.raises(ValueError, match="timeout_s must be finite and > 0"):
         RayCallDeadline("test.operation", timeout_s)
 

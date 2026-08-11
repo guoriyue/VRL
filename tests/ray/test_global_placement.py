@@ -689,13 +689,14 @@ def test_owner_reserves_trainer_gpu_and_binds_roles_on_simulated_gpus(local_ray)
         owner.create()
         probed = owner._probe_gpu_bundles(ray, owner._placement_group)
         rollout = owner.rollout_placement
-        reward_bundles = owner._role_bundles["reward"]
+        reward = owner.reward_placement
         # Rollout/reward actually land on their requested GPUs.
         assert probed[rollout.bundle_indices[0]] == 1
-        assert probed[reward_bundles[0]] == 2
+        assert probed[reward.bundle_indices[0]] == 2
+        assert reward.expected_gpu_ids == (2,)
         # The bundle on GPU 0 (the trainer) is held by no role -> reserved empty.
         trainer_bundle = next(b for b, g in probed.items() if g == 0)
-        used = set(rollout.bundle_indices) | set(reward_bundles)
+        used = set(rollout.bundle_indices) | set(reward.bundle_indices)
         assert trainer_bundle not in used
     finally:
         # The cluster is shared: release the bundles, never the cluster.
@@ -725,7 +726,9 @@ def test_owner_shares_one_bundle_for_rollout_and_reward_on_simulated_gpus(local_
     try:
         owner.create()
         rollout = owner.rollout_placement
-        assert rollout.bundle_indices == owner._role_bundles["reward"]
+        reward = owner.reward_placement
+        assert reward is not None
+        assert rollout.bundle_indices == reward.bundle_indices
         probed = owner._probe_gpu_bundles(ray, owner._placement_group)
         assert probed[rollout.bundle_indices[0]] == 1
     finally:

@@ -10,10 +10,26 @@ import pytest
 from vrl.rewards import RewardOutput, RewardRuntime, RewardSample
 from vrl.rewards.base import RewardFunction
 from vrl.rewards.runtime import RewardFunctionRuntime
+from vrl.utils.deadline import OperationTimeout
 
 
 def _sample(sample_id: str = "sample-0") -> RewardSample:
     return RewardSample(prompt="prompt", output=object(), sample_id=sample_id)
+
+
+@pytest.mark.asyncio
+async def test_score_deadline_bounds_awaitable_scoring() -> None:
+    """A scorer stuck at an await point raises the shared terminal timeout."""
+
+    class _StuckReward(RewardFunction):
+        async def score_batch(self, samples: Sequence[RewardSample]) -> RewardOutput:
+            await asyncio.sleep(3600)
+            raise AssertionError("unreachable")
+
+    runtime = RewardFunctionRuntime(_StuckReward(), score_timeout_s=0.05)
+
+    with pytest.raises(OperationTimeout, match=r"reward\.score"):
+        await runtime.score((_sample(),))
 
 
 def test_reward_sample_requires_a_nonempty_string_diagnostic_id() -> None:
