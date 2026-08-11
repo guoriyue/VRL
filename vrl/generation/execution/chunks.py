@@ -1,4 +1,12 @@
-"""Sample chunk helpers for generation executors."""
+"""Sample chunk helpers for generation executors.
+
+The chunk vocabulary both sides of the driver <-> worker split must agree on:
+the driver plans and OOM-splits chunks, every family binding's gatherer
+validates and reassembles them, and neither side may import the other. So the
+chunk shape, the coverage/ordering checks, and the strict replay-merge
+helpers live here in neutral ground — a gatherer bug and a planner bug would
+otherwise disagree silently about what one chunk means.
+"""
 
 from __future__ import annotations
 
