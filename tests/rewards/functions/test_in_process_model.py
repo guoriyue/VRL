@@ -153,6 +153,9 @@ def test_reward_artifact_transport_is_registry_visible() -> None:
 
 def test_inference_reward_defaults_to_inmemory_artifact_builder() -> None:
     class _Runtime:
+        scoring_is_nonblocking = False
+        external_accelerator_isolation_verified = False
+
         async def score_batch(self, request):
             return []
 
@@ -201,6 +204,9 @@ def test_inference_runtime_has_an_explicit_layer_name() -> None:
 @pytest.mark.asyncio
 async def test_reward_reports_operation_and_artifact_cleanup_failures() -> None:
     class _FailingRuntime:
+        scoring_is_nonblocking = False
+        external_accelerator_isolation_verified = False
+
         async def score_batch(self, request):
             raise RuntimeError("score failed")
 
@@ -231,6 +237,9 @@ async def test_reward_reports_operation_and_artifact_cleanup_failures() -> None:
 @pytest.mark.asyncio
 async def test_reward_retains_artifacts_when_remote_state_is_ambiguous() -> None:
     class _AmbiguousRuntime:
+        scoring_is_nonblocking = False
+        external_accelerator_isolation_verified = False
+
         async def score_batch(self, request):
             error = RuntimeError("remote state unknown")
             error.retain_reward_artifacts = True

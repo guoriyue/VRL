@@ -22,6 +22,9 @@ _FAKE_SCORES = {
 
 
 class _FakeRuntime:
+    scoring_is_nonblocking = False
+    external_accelerator_isolation_verified = False
+
     def __init__(self) -> None:
         self.requests = []
 

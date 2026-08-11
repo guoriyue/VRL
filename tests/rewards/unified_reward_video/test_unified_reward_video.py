@@ -18,6 +18,9 @@ _FAKE_SCORES = {"alignment": 4.0, "physics": 2.0, "style": 3.0, "overall": 3.0}
 
 
 class _FakeRuntime:
+    scoring_is_nonblocking = False
+    external_accelerator_isolation_verified = False
+
     def __init__(self) -> None:
         self.requests = []
 

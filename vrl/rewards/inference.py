@@ -197,8 +197,14 @@ class RewardInferenceResult:
         object.__setattr__(self, "timing_ms", timing_ms)
 
 
+@runtime_checkable
 class RewardScorer(Protocol):
-    """Runtime boundary for model-backed reward inference."""
+    """Runtime boundary for model-backed reward inference.
+
+    Runtime-checkable so the scorer injection point validates the COMPLETE
+    protocol once (methods and capability flags together) instead of probing
+    a hand-picked subset that can drift from this declaration.
+    """
 
     @property
     def scoring_is_nonblocking(self) -> bool:
@@ -216,6 +222,30 @@ class RewardScorer(Protocol):
     ) -> list[RewardInferenceResult]: ...
 
     async def shutdown(self) -> None: ...
+
+
+@runtime_checkable
+class RemoteReadyScorer(Protocol):
+    """Optional capability: a remote scorer exposes a startup readiness check.
+
+    The in-process scorer loads lazily on the reward device and has nothing to
+    verify at preflight; remote transports check reachability and identity so
+    a broken service fails before the first generation batch is paid for.
+    """
+
+    async def ensure_ready(self) -> None: ...
+
+
+@runtime_checkable
+class ArtifactRetainingError(Protocol):
+    """Error capability: scoring state is unknown, artifacts may still be read.
+
+    Declared by the service error type (and any future transport error) so the
+    artifact owner can keep shared files alive until remote completion or
+    cancellation is confirmed — checked by isinstance, never by getattr.
+    """
+
+    retain_reward_artifacts: bool
 
 
 @runtime_checkable
@@ -308,7 +338,9 @@ def score_artifacts_with_model(
 
 __all__ = [
     "MEDIA_TYPES",
+    "ArtifactRetainingError",
     "MemoryParkingScorer",
+    "RemoteReadyScorer",
     "RewardInferenceArtifact",
     "RewardInferenceRequest",
     "RewardInferenceResult",

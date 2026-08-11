@@ -25,8 +25,10 @@ from pathlib import Path
 from typing import Any, ClassVar, Literal
 
 from vrl.rewards.inference import (
+    ArtifactRetainingError,
     MediaType,
     MemoryParkingScorer,
+    RemoteReadyScorer,
     RewardInferenceArtifact,
     RewardInferenceRequest,
     RewardInferenceResult,
@@ -226,11 +228,11 @@ class InferenceRewardFunction(RewardFunction):
         normalized_score_key = str(score_key).strip()
         if not normalized_score_key:
             raise ValueError("score_key must be non-empty")
-        for method_name in ("score_batch", "shutdown"):
-            if not callable(getattr(scorer, method_name, None)):
-                raise TypeError(
-                    "scorer must provide async score_batch() and shutdown()",
-                )
+        if not isinstance(scorer, RewardScorer):
+            raise TypeError(
+                "scorer must implement the complete RewardScorer protocol "
+                "(score_batch/shutdown plus the two capability flags)",
+            )
         if artifact_builder is None:
             # In-memory media is the default transport; disk rewards inject the
             # artifact-store builder explicitly.
@@ -255,19 +257,13 @@ class InferenceRewardFunction(RewardFunction):
     def scoring_is_nonblocking(self) -> bool:
         """Whether this scorer yields while inference runs elsewhere."""
 
-        return bool(getattr(self.scorer, "scoring_is_nonblocking", False))
+        return bool(self.scorer.scoring_is_nonblocking)
 
     @property
     def external_accelerator_isolation_verified(self) -> bool:
         """Whether out-of-plan reward accelerator work has been isolated."""
 
-        return bool(
-            getattr(
-                self.scorer,
-                "external_accelerator_isolation_verified",
-                False,
-            ),
-        )
+        return bool(self.scorer.external_accelerator_isolation_verified)
 
     async def preflight(self) -> None:
         """Fail before training starts when a remote scoring dependency is broken.
@@ -278,9 +274,9 @@ class InferenceRewardFunction(RewardFunction):
         startup instead of after the first generation batch completes.
         """
 
-        ensure_ready = getattr(self.scorer, "ensure_ready", None)
-        if callable(ensure_ready):
-            await ensure_ready()
+        scorer = self.scorer
+        if isinstance(scorer, RemoteReadyScorer):
+            await scorer.ensure_ready()
 
     async def activate(self) -> None:
         """Build or wake a parking-capable in-process model at a GPU handoff.
@@ -544,7 +540,10 @@ class InferenceRewardFunction(RewardFunction):
         artifact_finalizer = self._artifact_finalizer
         retain_for_remote = operation_error is not None and (
             isinstance(operation_error, asyncio.CancelledError)
-            or bool(getattr(operation_error, "retain_reward_artifacts", False))
+            or (
+                isinstance(operation_error, ArtifactRetainingError)
+                and operation_error.retain_reward_artifacts
+            )
         )
         if retain_for_remote:
             artifact_finalizer = self._artifact_retainer

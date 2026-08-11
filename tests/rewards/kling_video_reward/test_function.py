@@ -16,6 +16,9 @@ from vrl.rewards.types import RewardSample
 
 
 class _FakeRuntime:
+    scoring_is_nonblocking = False
+    external_accelerator_isolation_verified = False
+
     def __init__(self) -> None:
         self.requests = []
 
@@ -39,6 +42,9 @@ class _FakeRuntime:
 
 
 class _EmptyRuntime:
+    scoring_is_nonblocking = False
+    external_accelerator_isolation_verified = False
+
     async def score_batch(self, request):
         return []
 
