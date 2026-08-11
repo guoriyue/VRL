@@ -1,4 +1,12 @@
-"""Aesthetic reward (model-backed, scored in-process)."""
+"""Aesthetic reward (model-backed, scored in-process).
+
+Thin function-layer binding registered as ``aesthetic``: the registry builds it
+from YAML, and this file only pins the model factory plus the CLIP backbone
+defaults. The scoring network — the LAION aesthetic predictor MLP head
+(``sac+logos+ava1-l14-linearMSE.pth``, packaged in ``vrl.rewards.assets``) over
+CLIP ViT-L/14 image embeddings — lives in ``vrl.rewards.models.aesthetic`` and
+is built lazily by the scorer from the ``model_factory`` dotted path.
+"""
 
 from __future__ import annotations
 
