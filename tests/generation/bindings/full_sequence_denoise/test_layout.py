@@ -8,8 +8,8 @@ import pytest
 import torch
 
 from vrl.generation.bindings.full_sequence_denoise import (
-    DiffusionChunkExecutor,
     DiffusionRequestLayout,
+    GenericDiffusionChunkExecutor,
 )
 from vrl.generation.types import GenerationRequest
 from vrl.models.families.cosmos.cosmos3.runtime import Cosmos3ChunkExecutor
@@ -121,7 +121,7 @@ def test_diffusion_executor_only_projects_real_text_length(
     """An absent family/request value stays absent at both model boundaries."""
 
     model = SimpleNamespace()
-    executor = DiffusionChunkExecutor(
+    executor = GenericDiffusionChunkExecutor(
         model,
         family="test",
         task="t2i",

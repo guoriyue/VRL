@@ -551,16 +551,16 @@ class DiffusionChunkExecutorBase(ChunkExecutorBase):
 
 
 __all__ = [
-    "DiffusionChunkExecutor",
     "DiffusionChunkExecutorBase",
     "DiffusionChunkResult",
     "DiffusionRequestLayout",
     "DiffusionSamplingParams",
+    "GenericDiffusionChunkExecutor",
     "ReferenceConditionedChunks",
 ]
 
 
-class DiffusionChunkExecutor(DiffusionChunkExecutorBase):
+class GenericDiffusionChunkExecutor(DiffusionChunkExecutorBase):
     """Generic chunk executor for pure-data diffusion families.
 
     A family whose executor overrides no method (no ``build_chunk_encoded`` /
