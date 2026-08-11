@@ -1,4 +1,14 @@
-"""Model-trained prompt and parser grammars for video reward judges."""
+"""Model-trained prompt and parser grammars for video reward judges.
+
+Each block pairs a judge's evaluation prompt with the regex/pattern that parses
+its fixed output format; prompt and parser define one grammar and must change in
+lockstep, which is why they live side by side here instead of inside the model
+modules. Consumers: ``vrl.rewards.models.videoscore2`` /
+``cosmos3_reasoner`` / ``unified_reward_video`` / ``videocon_physics``. The
+UnifiedReward and VideoCon templates follow the upstream inference scripts
+those checkpoints ship with; treat every string as checkpoint-calibrated —
+rewording a prompt silently shifts the score distribution.
+"""
 
 from __future__ import annotations
 
