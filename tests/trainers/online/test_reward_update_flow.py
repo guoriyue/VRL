@@ -1012,12 +1012,12 @@ def test_rollout_memory_plan_logs_streaming_and_legacy_warning(caplog) -> None:
     with caplog.at_level(logging.INFO, logger=logger_name):
         _log_rollout_memory_plan(
             _plan(4, 4),
-            generation_samples_per_batch=2,
+            samples_per_generation_batch=2,
         )
     streaming_messages = [record.getMessage() for record in caplog.records]
     assert any("streaming accumulation enabled" in msg for msg in streaming_messages)
     assert any("microbatch_prompts=1" in msg for msg in streaming_messages)
-    assert any("generation_samples_per_batch=2" in msg for msg in streaming_messages)
+    assert any("samples_per_generation_batch=2" in msg for msg in streaming_messages)
     assert any("replay_samples_per_batch=1" in msg for msg in streaming_messages)
     assert any("target_samples_per_update=8" in msg for msg in streaming_messages)
 
@@ -1025,11 +1025,11 @@ def test_rollout_memory_plan_logs_streaming_and_legacy_warning(caplog) -> None:
     with caplog.at_level(logging.INFO, logger=logger_name):
         _log_rollout_memory_plan(
             _plan(4, 0),
-            generation_samples_per_batch=2,
+            samples_per_generation_batch=2,
         )
     legacy_messages = [record.getMessage() for record in caplog.records]
     assert any("legacy full-batch accumulation" in msg for msg in legacy_messages)
-    assert any("generation_samples_per_batch=2" in msg for msg in legacy_messages)
+    assert any("samples_per_generation_batch=2" in msg for msg in legacy_messages)
     assert any("replay_samples_per_batch=1" in msg for msg in legacy_messages)
     # The legacy path must emit a host-RAM residency WARNING. Assert the warning
     # level fired (the behavioral contract) rather than pinning its exact prose,
