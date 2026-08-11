@@ -9,18 +9,18 @@ import pytest
 import torch
 
 from vrl.generation.bindings.token_autoregressive.executor import (
-    ARChunkInputs,
-    ARDiscreteChunkExecutorBase,
+    ARBatchInputs,
+    ARDiscreteBatchExecutorBase,
 )
 from vrl.generation.bindings.token_autoregressive.layout import (
     ARRequestLayout,
     ARSamplingParams,
 )
-from vrl.generation.execution.chunks import SampleChunk
+from vrl.generation.execution.sample_batches import GenerationSampleBatch
 from vrl.generation.types import GenerationRequest
-from vrl.models.families.emu3.runtime import Emu3ChunkExecutor
-from vrl.models.families.glm_image.runtime import GlmImageChunkExecutor
-from vrl.models.families.janus_pro.runtime import JanusProChunkExecutor
+from vrl.models.families.emu3.runtime import Emu3BatchExecutor
+from vrl.models.families.glm_image.runtime import GlmImageBatchExecutor
+from vrl.models.families.janus_pro.runtime import JanusProBatchExecutor
 
 
 class _Model:
@@ -32,7 +32,7 @@ class _Model:
         return torch.zeros(token_ids.shape[0], 3, 2, 2)
 
 
-class _Executor(ARDiscreteChunkExecutorBase):
+class _Executor(ARDiscreteBatchExecutorBase):
     family = "test_ar"
     task = "ar_t2i"
 
@@ -44,17 +44,17 @@ class _Executor(ARDiscreteChunkExecutorBase):
         del request
         return object()
 
-    def prepare_chunk_inputs(
+    def prepare_batch_inputs(
         self,
         request: GenerationRequest,
-        chunk: SampleChunk,
-    ) -> ARChunkInputs:
+        batch: GenerationSampleBatch,
+    ) -> ARBatchInputs:
         del request
         self.prepare_calls += 1
-        rows = chunk.sample_count
+        rows = batch.sample_count
         ids = torch.zeros(rows, 1, dtype=torch.long)
         mask = torch.ones_like(ids)
-        return ARChunkInputs(
+        return ARBatchInputs(
             init_args=(torch.zeros(rows, 1),),
             init_kwargs={},
             image_decode_kwargs={},
@@ -83,8 +83,8 @@ def _request(batch_size: object = _MISSING) -> GenerationRequest:
     )
 
 
-def _chunk() -> SampleChunk:
-    return SampleChunk(
+def _chunk() -> GenerationSampleBatch:
+    return GenerationSampleBatch(
         prompt_index=0,
         sample_start=0,
         sample_count=3,
@@ -130,10 +130,10 @@ def test_shared_discrete_executor_passes_scheduler_policy_to_loop(
     )
     executor = _Executor()
 
-    result = executor.forward_chunk_plan(_request(batch_size), _chunk())
+    result = executor.forward_batch(_request(batch_size), _chunk())
 
     assert seen == [batch_size]
-    assert result.chunk.sample_count == 3
+    assert result.batch.sample_count == 3
     assert executor.prepare_calls == 1
 
 
@@ -149,16 +149,16 @@ def test_invalid_scheduler_policy_fails_before_family_preparation() -> None:
     executor = _Executor()
 
     with pytest.raises(ValueError, match="must be a positive integer or null"):
-        executor.forward_chunk_plan(_request(0), _chunk())
+        executor.forward_batch(_request(0), _chunk())
 
     assert executor.prepare_calls == 0
 
 
 @pytest.mark.parametrize(
     "executor_cls",
-    [JanusProChunkExecutor, Emu3ChunkExecutor, GlmImageChunkExecutor],
+    [JanusProBatchExecutor, Emu3BatchExecutor, GlmImageBatchExecutor],
 )
 def test_discrete_families_use_scheduler_consuming_shared_executor(
-    executor_cls: type[ARDiscreteChunkExecutorBase],
+    executor_cls: type[ARDiscreteBatchExecutorBase],
 ) -> None:
-    assert executor_cls.forward_chunk_plan is ARDiscreteChunkExecutorBase.forward_chunk_plan
+    assert executor_cls.forward_batch is ARDiscreteBatchExecutorBase.forward_batch

@@ -24,7 +24,7 @@ class MaskedPromptSamplingState(GuidedDiffusionSamplingStateBase):
     """Private state for (sequence embeds, attention mask) conditioning.
 
     Engine MUST NOT introspect: ``latents`` / ``timesteps`` / ``scheduler`` are
-    the only fields the chunk executor may touch.
+    the only fields the batch executor may touch.
     """
 
     prompt_embeds: torch.Tensor

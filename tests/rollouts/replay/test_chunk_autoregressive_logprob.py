@@ -1,4 +1,4 @@
-"""Grouped evaluator tests for causal temporal-chunk denoise policies."""
+"""Grouped evaluator tests for causal temporal-batch denoise policies."""
 
 from __future__ import annotations
 
@@ -79,7 +79,7 @@ class _ReplayModel:
 
 def _batch() -> RolloutBatch:
     request = GenerationRequest(
-        request_id="chunk-replay",
+        request_id="batch-replay",
         family="causvid",
         task="t2v",
         inputs=["p0", "p1"],

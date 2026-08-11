@@ -1,11 +1,11 @@
-"""Sample chunk helpers for generation executors.
+"""Sample batch helpers for generation executors.
 
-The chunk vocabulary both sides of the driver <-> worker split must agree on:
-the driver plans and OOM-splits chunks, every family binding's gatherer
+The batch vocabulary both sides of the driver <-> worker split must agree on:
+the driver plans and OOM-splits batches, every family binding's gatherer
 validates and reassembles them, and neither side may import the other. So the
-chunk shape, the coverage/ordering checks, and the strict replay-merge
+batch shape, the coverage/ordering checks, and the strict replay-merge
 helpers live here in neutral ground — a gatherer bug and a planner bug would
-otherwise disagree silently about what one chunk means.
+otherwise disagree silently about what one batch means.
 """
 
 from __future__ import annotations
@@ -34,36 +34,36 @@ class SampleAlignedValues:
             raise ValueError("SampleAlignedValues.values must be non-empty")
 
 
-def validate_chunk_range(
+def validate_batch_range(
     request: GenerationRequest,
     *,
     prompt_index: int,
     sample_start: int,
     sample_count: int,
 ) -> None:
-    """Validate a chunk's prompt/sample range against its source request."""
+    """Validate a batch's prompt/sample range against its source request."""
 
     if prompt_index < 0 or prompt_index >= len(request.prompts):
-        raise ValueError(f"chunk.prompt_index={prompt_index} is out of range")
+        raise ValueError(f"batch.prompt_index={prompt_index} is out of range")
     sample_end = sample_start + sample_count
     if sample_start < 0 or sample_count < 1:
         raise ValueError(
-            "chunk sample range must have non-negative start and positive count",
+            "batch sample range must have non-negative start and positive count",
         )
     if sample_end > request.samples_per_prompt:
         raise ValueError(
-            "chunk sample range exceeds request.samples_per_prompt: "
+            "batch sample range exceeds request.samples_per_prompt: "
             f"{sample_start}:{sample_end} > {request.samples_per_prompt}",
         )
 
 
 def _require_rows(name: str, value: Any, count: int) -> None:
-    """Require a chunk payload to have ``count`` leading batch rows.
+    """Require a batch payload to have ``count`` leading batch rows.
 
     Accepts a tensor-like ``.shape`` or a plain list/tuple length so a gatherer
     can validate both concatenated tensors and python-sequence payloads. For
     tensors (the diffusion/AR case) this is identical to a strict ``shape[0]``
-    check; the list/tuple branch is the chunk-AR superset.
+    check; the list/tuple branch is the batch-AR superset.
     """
 
     shape = getattr(value, "shape", None)
@@ -72,13 +72,13 @@ def _require_rows(name: str, value: Any, count: int) -> None:
     elif isinstance(value, (list, tuple)):
         actual = len(value)
     else:
-        raise ValueError(f"chunk {name} must have a leading batch dimension")
+        raise ValueError(f"batch {name} must have a leading batch dimension")
     if actual != count:
-        raise ValueError(f"chunk {name} has {actual} rows, expected {count}")
+        raise ValueError(f"batch {name} has {actual} rows, expected {count}")
 
 
 def concatenate_sample_values(values: Sequence[Any], *, name: str) -> Any:
-    """Concatenate one sample-aligned value from each ordered chunk."""
+    """Concatenate one sample-aligned value from each ordered batch."""
 
     import torch
 
@@ -90,7 +90,7 @@ def concatenate_sample_values(values: Sequence[Any], *, name: str) -> Any:
         return [item for value in values for item in value]
     if all(isinstance(value, tuple) for value in values):
         return tuple(item for value in values for item in value)
-    raise TypeError(f"chunk field {name!r} must use one consistent concatenable type")
+    raise TypeError(f"batch field {name!r} must use one consistent concatenable type")
 
 
 def gather_replay_tensors(
@@ -98,7 +98,7 @@ def gather_replay_tensors(
     *,
     sample_counts: Sequence[int],
 ) -> dict[str, Any]:
-    """Strictly merge sample-aligned and static replay values across chunks."""
+    """Strictly merge sample-aligned and static replay values across batches."""
 
     import torch
 
@@ -109,7 +109,7 @@ def gather_replay_tensors(
     keys = tuple(replay_mappings[0])
     expected_keys = set(keys)
     if any(set(mapping) != expected_keys for mapping in replay_mappings[1:]):
-        raise ValueError("replay_tensors keys must match across chunk results")
+        raise ValueError("replay_tensors keys must match across batch results")
 
     gathered: dict[str, Any] = {}
     for key in keys:
@@ -130,7 +130,7 @@ def gather_replay_tensors(
                 for value, sample_count in zip(aligned_values, sample_counts, strict=True)
             ):
                 raise ValueError(
-                    f"sample-aligned replay value {key!r} must match each chunk sample_count",
+                    f"sample-aligned replay value {key!r} must match each batch sample_count",
                 )
             gathered[key] = concatenate_sample_values(
                 aligned_values,
@@ -147,17 +147,17 @@ def gather_replay_tensors(
     return gathered
 
 
-def require_matching_chunk_context(
+def require_matching_batch_context(
     contexts: Sequence[Mapping[str, Any]],
 ) -> dict[str, Any]:
-    """Return shared chunk context after checking every value matches."""
+    """Return shared batch context after checking every value matches."""
 
     if not contexts:
-        raise ValueError("chunk contexts must be non-empty")
+        raise ValueError("batch contexts must be non-empty")
     first = contexts[0]
     for index, context in enumerate(contexts[1:], start=1):
         if not _values_match(context, first):
-            raise ValueError(f"chunk context at ordered index {index} does not match")
+            raise ValueError(f"batch context at ordered index {index} does not match")
     return dict(first)
 
 
@@ -194,44 +194,44 @@ def _values_match(left: Any, right: Any) -> bool:
         return False
 
 
-class ChunkResultWithIdentity(Protocol):
-    """Chunk result carrying the authoritative source chunk."""
+class BatchResultWithIdentity(Protocol):
+    """Batch result carrying the authoritative source batch."""
 
-    chunk: SampleChunk
+    batch: GenerationSampleBatch
 
 
-def ordered_covering_chunks[TChunk: ChunkResultWithIdentity](
+def ordered_covering_batches[TBatch: BatchResultWithIdentity](
     request: GenerationRequest,
     sample_rows: Sequence[GenerationSampleRow],
-    chunks: Sequence[TChunk],
+    batches: Sequence[TBatch],
     *,
     row_fields: Sequence[str] = (),
-) -> list[TChunk]:
-    """Sort prompt-major chunks and check they exactly cover ``sample_rows``.
+) -> list[TBatch]:
+    """Sort prompt-major batches and check they exactly cover ``sample_rows``.
 
-    The sort + coverage skeleton every chunk gatherer shares: prompt-major sort,
-    per-chunk range validation, optional row-count checks on ``row_fields``, and
+    The sort + coverage skeleton every batch gatherer shares: prompt-major sort,
+    per-batch range validation, optional row-count checks on ``row_fields``, and
     an exact prompt-major coverage match against the request's sample rows.
     Families layer their own homogeneity checks over the returned ordered list.
     """
 
-    if not chunks:
-        raise ValueError("chunks must be non-empty")
+    if not batches:
+        raise ValueError("batches must be non-empty")
     ordered = sorted(
-        chunks,
+        batches,
         key=lambda result: (
-            int(result.chunk.prompt_index),
-            int(result.chunk.sample_start),
+            int(result.batch.prompt_index),
+            int(result.batch.sample_start),
         ),
     )
     expected = [(row.prompt_index, row.sample_index) for row in sample_rows]
     actual: list[tuple[int, int]] = []
     for result in ordered:
-        chunk = result.chunk
-        prompt_index = int(chunk.prompt_index)
-        sample_start = int(chunk.sample_start)
-        sample_count = int(chunk.sample_count)
-        validate_chunk_range(
+        batch = result.batch
+        prompt_index = int(batch.prompt_index)
+        sample_start = int(batch.sample_start)
+        sample_count = int(batch.sample_count)
+        validate_batch_range(
             request,
             prompt_index=prompt_index,
             sample_start=sample_start,
@@ -245,14 +245,14 @@ def ordered_covering_chunks[TChunk: ChunkResultWithIdentity](
         )
     if actual != expected:
         raise ValueError(
-            "chunks do not cover sample_rows in prompt-major order",
+            "batches do not cover sample_rows in prompt-major order",
         )
     return ordered
 
 
 @dataclass(frozen=True, slots=True)
-class SampleChunk:
-    """One prompt-major sample chunk for a generation request."""
+class GenerationSampleBatch:
+    """One prompt-major sample batch for a generation request."""
 
     prompt_index: int
     sample_start: int
@@ -271,24 +271,24 @@ class SampleChunk:
         return self.sample_start + self.sample_count
 
     @property
-    def chunk_key(self) -> str:
-        """Stable key used by retry, telemetry, and chunk-result joins."""
+    def batch_key(self) -> str:
+        """Stable key used by retry, telemetry, and batch-result joins."""
 
         return f"prompt:{self.prompt_index}:samples:{self.sample_start}:{self.sample_end}"
 
-    def split(self) -> tuple[SampleChunk, SampleChunk]:
-        """Split this chunk into two ordered smaller chunks."""
+    def split(self) -> tuple[GenerationSampleBatch, GenerationSampleBatch]:
+        """Split this batch into two ordered smaller batches."""
 
         if self.sample_count <= 1:
-            raise ValueError("Cannot split a single-sample chunk")
+            raise ValueError("Cannot split a single-sample batch")
         left_count = self.sample_count // 2
         right_count = self.sample_count - left_count
-        left = SampleChunk(
+        left = GenerationSampleBatch(
             prompt_index=self.prompt_index,
             sample_start=self.sample_start,
             sample_count=left_count,
         )
-        right = SampleChunk(
+        right = GenerationSampleBatch(
             prompt_index=self.prompt_index,
             sample_start=self.sample_start + left_count,
             sample_count=right_count,
@@ -296,28 +296,28 @@ class SampleChunk:
         return left, right
 
 
-def build_prompt_chunks(
+def build_prompt_sample_batches(
     prompt_count: int,
     samples_per_prompt: int,
-    max_samples_per_chunk: int,
-) -> tuple[SampleChunk, ...]:
-    """Plan prompt-major sample chunks without changing RL group semantics."""
+    max_samples_per_batch: int,
+) -> tuple[GenerationSampleBatch, ...]:
+    """Plan prompt-major sample batches without changing RL group semantics."""
 
     if prompt_count < 1:
         raise ValueError("prompt_count must be >= 1")
     if samples_per_prompt < 1:
         raise ValueError("samples_per_prompt must be >= 1")
-    if max_samples_per_chunk < 1:
-        raise ValueError("max_samples_per_chunk must be >= 1")
+    if max_samples_per_batch < 1:
+        raise ValueError("max_samples_per_batch must be >= 1")
 
-    chunks: list[SampleChunk] = []
+    batches: list[GenerationSampleBatch] = []
     for prompt_index in range(prompt_count):
         sample_start = 0
         remaining = samples_per_prompt
         while remaining > 0:
-            sample_count = min(max_samples_per_chunk, remaining)
-            chunks.append(
-                SampleChunk(
+            sample_count = min(max_samples_per_batch, remaining)
+            batches.append(
+                GenerationSampleBatch(
                     prompt_index=prompt_index,
                     sample_start=sample_start,
                     sample_count=sample_count,
@@ -326,41 +326,41 @@ def build_prompt_chunks(
             sample_start += sample_count
             remaining -= sample_count
 
-    return tuple(chunks)
+    return tuple(batches)
 
 
-def run_sample_chunks_with_oom_retry[T](
-    chunks: Sequence[SampleChunk],
-    run_one: Callable[[SampleChunk], T],
+def run_sample_batches_with_oom_retry[T](
+    batches: Sequence[GenerationSampleBatch],
+    run_one: Callable[[GenerationSampleBatch], T],
 ) -> list[T]:
-    """Run chunks, splitting CUDA-OOM chunks until the floor is reached."""
+    """Run batches, splitting CUDA-OOM batches until the floor is reached."""
 
     results: list[T] = []
-    pending = list(chunks)
+    pending = list(batches)
     while pending:
-        chunk = pending.pop(0)
+        batch = pending.pop(0)
         try:
-            results.append(run_one(chunk))
+            results.append(run_one(batch))
         except RuntimeError as exc:
-            # A single-sample chunk cannot be split further; re-raise the
+            # A single-sample batch cannot be split further; re-raise the
             # original OOM instead of letting split() mask it with ValueError.
-            if not is_cuda_out_of_memory(exc) or chunk.sample_count <= 1:
+            if not is_cuda_out_of_memory(exc) or batch.sample_count <= 1:
                 raise
             empty_cuda_cache()
-            left, right = chunk.split()
+            left, right = batch.split()
             pending.insert(0, right)
             pending.insert(0, left)
     return results
 
 
 __all__ = [
+    "GenerationSampleBatch",
     "SampleAlignedValues",
-    "SampleChunk",
-    "build_prompt_chunks",
+    "build_prompt_sample_batches",
     "concatenate_sample_values",
     "gather_replay_tensors",
-    "ordered_covering_chunks",
-    "require_matching_chunk_context",
-    "run_sample_chunks_with_oom_retry",
-    "validate_chunk_range",
+    "ordered_covering_batches",
+    "require_matching_batch_context",
+    "run_sample_batches_with_oom_retry",
+    "validate_batch_range",
 ]

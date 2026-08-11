@@ -73,7 +73,7 @@ actor:
   ppo_epochs: 4                       # engages the trust-region clip (1 -> clip_fraction==0, flat curve)
 
 rollout:
-  samples_per_chunk: 4
+  samples_per_generation_batch: 4
 
 
 trainer:

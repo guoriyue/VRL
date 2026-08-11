@@ -6,27 +6,27 @@ from types import SimpleNamespace
 
 import torch
 
-from vrl.generation.execution.worker import _chunk_output_debug_metrics
+from vrl.generation.execution.worker import _batch_output_debug_metrics
 
 
-def test_chunk_output_debug_metrics_includes_stage_memory_and_counters() -> None:
-    """Checks runtime debug keeps chunk timing and memory counters."""
+def test_batch_output_debug_metrics_includes_stage_memory_and_counters() -> None:
+    """Checks runtime debug keeps batch timing and memory counters."""
 
     output = SimpleNamespace(
         stage_durations={"denoise": 1.25, "decode": 0.5},
         engine_counters={
-            "diffusion_samples_per_chunk": 8,
+            "diffusion_samples_per_generation_batch": 8,
             "nested": {"scalar": torch.tensor(3)},
         },
         peak_memory_mb=1234.5,
     )
 
-    metrics = _chunk_output_debug_metrics(output)
+    metrics = _batch_output_debug_metrics(output)
 
     assert metrics == {
         "stage_durations_s": {"denoise": 1.25, "decode": 0.5},
         "engine_counters": {
-            "diffusion_samples_per_chunk": 8,
+            "diffusion_samples_per_generation_batch": 8,
             "nested": {"scalar": 3},
         },
         "peak_memory_mb": 1234.5,

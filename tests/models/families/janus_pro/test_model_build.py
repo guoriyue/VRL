@@ -12,7 +12,7 @@ from vrl.config.loading import load_config
 from vrl.config.precision import resolve_precision_policy
 from vrl.config.schema import parse_config
 from vrl.generation import GenerationRequest
-from vrl.generation.execution.chunks import SampleChunk
+from vrl.generation.execution.sample_batches import GenerationSampleBatch
 from vrl.models.families.janus_pro.config import (
     JANUS_IMAGE_TOKEN_NUM,
     JanusProConfig,
@@ -24,7 +24,7 @@ from vrl.models.families.janus_pro.model import (
     JanusProConfig as ModelJanusProConfig,
 )
 from vrl.models.families.janus_pro.runtime import (
-    JanusProChunkExecutor,
+    JanusProBatchExecutor,
     janus_config_from_build,
 )
 from vrl.models.families.registry import get_model_family_entry
@@ -205,7 +205,7 @@ def test_janus_executor_layout_resolves_scheduler_batch_size() -> None:
         },
     )
 
-    layout = JanusProChunkExecutor(model=object()).layout
+    layout = JanusProBatchExecutor(model=object()).layout
 
     assert layout.resolve_scheduler_batch_size(request) == 8
 
@@ -224,7 +224,7 @@ def test_janus_chunk_sampling_uses_request_overrides_then_model_defaults(
     expected_temperature: float,
 ) -> None:
     """Replay keeps behavior sampling without duplicating model defaults."""
-    executor = JanusProChunkExecutor(
+    executor = JanusProBatchExecutor(
         model=SimpleNamespace(
             config=SimpleNamespace(
                 guidance_scale=6.25,
@@ -269,9 +269,9 @@ def test_janus_chunk_sampling_uses_request_overrides_then_model_defaults(
         },
     )
 
-    prepared = executor.prepare_chunk_inputs(
+    prepared = executor.prepare_batch_inputs(
         request,
-        SampleChunk(
+        GenerationSampleBatch(
             prompt_index=0,
             sample_start=0,
             sample_count=1,

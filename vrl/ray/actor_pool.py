@@ -33,7 +33,7 @@ class RayActorJob:
     dispatch: the pool then binds the job to whichever worker from
     ``worker_methods`` has a free slot (least inflight first). ``priority``
     orders submission (higher first, stable for ties) — with pull dispatch
-    this implements LPT: submit expensive chunks first so no worker is left
+    this implements LPT: submit expensive batches first so no worker is left
     finishing one large job at the tail. ``keyword_args`` carries the small
     number of actor methods whose wire contract is not one positional payload.
     """

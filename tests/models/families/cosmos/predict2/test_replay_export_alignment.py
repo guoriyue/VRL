@@ -4,7 +4,7 @@ The trajectory builder silently drops replay tensors whose dim-0 does not
 match the sample batch (vrl/trajectory/builders.py). predict2 holds its
 conditioning bundle (``init_latents``, masks, indicators) with a leading-1 dim
 and expands lazily in the forward, so an unaligned export lost the key whenever
-samples_per_chunk > 1 and replay restore KeyError'd on ``init_latents`` (found
+samples_per_generation_batch > 1 and replay restore KeyError'd on ``init_latents`` (found
 by the OOM-split GPU gate, 2026-06-11).
 
 predict2.5 and anima share the same shared-conditioning shape: their export

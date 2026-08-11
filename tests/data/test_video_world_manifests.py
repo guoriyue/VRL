@@ -29,7 +29,7 @@ def _source_backed_metadata(episode: str) -> dict:
         "source_repo": "lerobot/droid_100",
         "source_split": "main",
         "source_episode": episode,
-        "source_video": "videos/camera/chunk-000/file-000.mp4",
+        "source_video": "videos/camera/batch-000/file-000.mp4",
         "source_frame_index": 0,
         "decode_method": "pyav_http_first_frame",
         "conditioning": "first_frame",

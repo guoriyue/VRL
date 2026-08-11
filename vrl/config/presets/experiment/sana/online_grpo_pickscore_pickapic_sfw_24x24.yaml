@@ -34,7 +34,7 @@ actor:
 rollout:
   n_samples_per_prompt: 24
   prompts_per_batch: 24
-  samples_per_chunk: 8
+  samples_per_generation_batch: 8
 
 trainer:
   output_dir: outputs/sana_pickscore_pickapic_sfw_24x24

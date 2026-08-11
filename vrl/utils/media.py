@@ -131,8 +131,8 @@ def video_tensor_to_uint8_frames(tensor: torch.Tensor) -> np.ndarray:
             f"got shape={tuple(tensor.shape)}",
         )
     # .cpu(): this converter ends in .numpy(), which requires a host tensor. The
-    # single-worker pipelined rollout (forward_chunks_pipelined) can hand the reward
-    # an artifact whose video tensor is still on CUDA, unlike the per-chunk path's
+    # single-worker pipelined rollout (forward_batches_pipelined) can hand the reward
+    # an artifact whose video tensor is still on CUDA, unlike the per-batch path's
     # worker._to_cpu. Mirror image_to_uint8_hwc's intake so any device works.
     video = tensor.detach().cpu()
     input_is_float = torch.is_floating_point(video)

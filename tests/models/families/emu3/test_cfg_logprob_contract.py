@@ -42,7 +42,7 @@ def _state(*, forced: torch.Tensor, guidance_scale: float = 2.0) -> Emu3ARState:
 
 
 def _fixed_runner(cond: torch.Tensor, uncond: torch.Tensor) -> Emu3TokenRunner:
-    # [2B=2, L=1, V_gen]: row 0 = cond, row 1 = uncond (runner chunks dim 0).
+    # [2B=2, L=1, V_gen]: row 0 = cond, row 1 = uncond (runner batches dim 0).
     logits = torch.stack([cond, uncond]).unsqueeze(1)
     # attention_backend is unused by _sample_cfg_image_token.
     return Emu3TokenRunner(_FixedLogitsModel(logits), attention_backend=None)

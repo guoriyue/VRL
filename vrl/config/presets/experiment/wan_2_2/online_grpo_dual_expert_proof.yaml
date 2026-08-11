@@ -76,7 +76,7 @@ actor:
 rollout:
   n_samples_per_prompt: 2
   prompts_per_batch: 1
-  samples_per_chunk: 2
+  samples_per_generation_batch: 2
   denoise_mode: native
   sde:
     type: cps

@@ -475,7 +475,7 @@ class CosmosPredict2Model(CosmosReplayForward, LoraModelMixin, DiffusersPipeline
         ``init_latents`` must be aligned to the sample batch: the state holds
         it with a leading-1 dim (forward expands lazily), but the trajectory
         builder silently drops replay tensors whose dim-0 != batch_size — with
-        samples_per_chunk > 1 an unaligned export loses the key and replay
+        samples_per_generation_batch > 1 an unaligned export loses the key and replay
         restore KeyErrors on ``init_latents``.
         """
         return {
@@ -598,8 +598,8 @@ class CosmosPredict2Model(CosmosReplayForward, LoraModelMixin, DiffusersPipeline
         pipe = self.pipeline
         sigma_data = pipe.scheduler.config.sigma_data
 
-        def _transform(chunk: torch.Tensor) -> torch.Tensor:
-            x = chunk.to(pipe.vae.dtype)
+        def _transform(batch: torch.Tensor) -> torch.Tensor:
+            x = batch.to(pipe.vae.dtype)
             latents_mean = (
                 torch.tensor(pipe.vae.config.latents_mean)
                 .view(1, pipe.vae.config.z_dim, 1, 1, 1)
@@ -615,8 +615,8 @@ class CosmosPredict2Model(CosmosReplayForward, LoraModelMixin, DiffusersPipeline
         decoder = ChunkedLatentDecoder(
             LatentDecodePlan(
                 prepare_latents=_transform,
-                vae_decode=lambda chunk: pipe.vae.decode(
-                    chunk,
+                vae_decode=lambda batch: pipe.vae.decode(
+                    batch,
                     return_dict=False,
                 )[0],
                 postprocess=lambda video: pipe.video_processor.postprocess_video(

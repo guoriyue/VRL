@@ -14,7 +14,7 @@ import vrl.generation.ray.executor as executor_module
 import vrl.ray.actor_pool as actor_pool_module
 import vrl.ray.operation_deadline as deadline_module
 from vrl.generation.execution.types import (
-    ChunkProduceFence,
+    BatchProduceFence,
     PipelinedRequestOutOfMemory,
 )
 from vrl.generation.ray.executor import RayGenerationExecutor
@@ -73,7 +73,7 @@ async def _await_pipelined_through_dispatcher(
     result_ref: Any,
     progress_remote: Any,
     request_id: str,
-    total_chunks: int,
+    total_batches: int,
 ) -> Any:
     """Exercise the progress waiter under its production ObjectRef owner."""
 
@@ -82,7 +82,7 @@ async def _await_pipelined_through_dispatcher(
             result_ref=ref,
             progress_remote=progress_remote,
             request_id=request_id,
-            total_chunks=total_chunks,
+            total_batches=total_batches,
             initial_deadline=initial_deadline,
         )
 
@@ -117,20 +117,20 @@ def test_ray_worker_reports_only_the_active_pipelined_request() -> None:
         ) -> str:
             del engine_plan, sample_rows
             observed.append(worker.pipelined_progress(request.request_id))
-            completion_callback(ChunkProduceFence(completed_chunks=1, event=None))
+            completion_callback(BatchProduceFence(completed_batches=1, event=None))
             observed.append(worker.pipelined_progress(request.request_id))
-            completion_callback(ChunkProduceFence(completed_chunks=2, event=None))
+            completion_callback(BatchProduceFence(completed_batches=2, event=None))
             return "complete"
 
     worker.core = _Core()
     request = SimpleNamespace(request_id="req-progress")
-    plan = SimpleNamespace(chunks=("c0", "c1"))
+    plan = SimpleNamespace(sample_batches=("c0", "c1"))
 
     result = worker.execute_request_pipelined(request, plan, [])
 
     assert result == "complete"
-    assert [snapshot.completed_chunks for snapshot in observed if snapshot is not None] == [0, 1]
-    assert all(snapshot.total_chunks == 2 for snapshot in observed if snapshot is not None)
+    assert [snapshot.completed_batches for snapshot in observed if snapshot is not None] == [0, 1]
+    assert all(snapshot.total_batches == 2 for snapshot in observed if snapshot is not None)
     assert worker.pipelined_progress("req-progress") is None
     assert worker.pipelined_progress("another-request") is None
 
@@ -165,10 +165,10 @@ def test_ray_worker_reports_only_contiguous_completed_fences() -> None:
         ) -> str:
             del request, engine_plan, sample_rows
             completion_callback(
-                ChunkProduceFence(completed_chunks=1, event=first_completion),
+                BatchProduceFence(completed_batches=1, event=first_completion),
             )
             completion_callback(
-                ChunkProduceFence(completed_chunks=2, event=second_completion),
+                BatchProduceFence(completed_batches=2, event=second_completion),
             )
             fences_registered.set()
             assert release_request.wait(timeout=1)
@@ -180,7 +180,7 @@ def test_ray_worker_reports_only_contiguous_completed_fences() -> None:
         target=lambda: result.append(
             worker.execute_request_pipelined(
                 SimpleNamespace(request_id="req-fences"),
-                SimpleNamespace(chunks=("c0", "c1")),
+                SimpleNamespace(sample_batches=("c0", "c1")),
                 [],
             ),
         ),
@@ -188,13 +188,13 @@ def test_ray_worker_reports_only_contiguous_completed_fences() -> None:
     execution.start()
     assert fences_registered.wait(timeout=1)
 
-    assert worker.pipelined_progress("req-fences").completed_chunks == 0
+    assert worker.pipelined_progress("req-fences").completed_batches == 0
     second_completion.ready = True
-    assert worker.pipelined_progress("req-fences").completed_chunks == 0
+    assert worker.pipelined_progress("req-fences").completed_batches == 0
     assert second_completion.query_calls == 0
 
     first_completion.ready = True
-    assert worker.pipelined_progress("req-fences").completed_chunks == 2
+    assert worker.pipelined_progress("req-fences").completed_batches == 2
 
     release_request.set()
     execution.join(timeout=1)
@@ -213,13 +213,13 @@ def test_ray_worker_completion_query_failure_does_not_publish_progress() -> None
     worker._pipelined_progress_lock = threading.Lock()
     worker._pipelined_progress = PipelinedRequestProgress(
         request_id="req-query-error",
-        completed_chunks=0,
-        total_chunks=1,
+        completed_batches=0,
+        total_batches=1,
     )
     worker._pipelined_completion_fences = deque(
         [
-            ChunkProduceFence(
-                completed_chunks=1,
+            BatchProduceFence(
+                completed_batches=1,
                 event=_FailedCompletion(),
             ),
         ],
@@ -228,7 +228,7 @@ def test_ray_worker_completion_query_failure_does_not_publish_progress() -> None
     with pytest.raises(RuntimeError, match="asynchronous CUDA failure"):
         worker.pipelined_progress("req-query-error")
 
-    assert worker._pipelined_progress.completed_chunks == 0
+    assert worker._pipelined_progress.completed_batches == 0
     assert len(worker._pipelined_completion_fences) == 1
 
 
@@ -249,7 +249,7 @@ async def test_remote_pipelined_worker_requires_progress_endpoint() -> None:
     with pytest.raises(PipelinedProgressError, match="requires worker progress"):
         await executor._execute_request_pipelined(
             SimpleNamespace(request_id="req-missing-progress"),
-            SimpleNamespace(chunks=("c0", "c1")),
+            SimpleNamespace(sample_batches=("c0", "c1")),
             [],
         )
 
@@ -301,7 +301,7 @@ async def test_pipelined_submission_gets_deadline_only_after_fleet_admission(
     first = asyncio.create_task(
         executor.actor_dispatcher.run(
             [RayActorJob(0, "w0", submit_first, None)],
-            operation="rollout.generation.chunk",
+            operation="rollout.generation.batch",
             call_timeout_s=30.0,
         ),
     )
@@ -310,7 +310,7 @@ async def test_pipelined_submission_gets_deadline_only_after_fleet_admission(
     pipelined = asyncio.create_task(
         executor._execute_request_pipelined(
             SimpleNamespace(request_id="req-admission"),
-            SimpleNamespace(chunks=("c0", "c1")),
+            SimpleNamespace(sample_batches=("c0", "c1")),
             [],
         ),
     )
@@ -318,7 +318,7 @@ async def test_pipelined_submission_gets_deadline_only_after_fleet_admission(
 
     assert not pipelined.done()
     assert pipeline_calls == []
-    assert deadlines == ["rollout.generation.chunk"]
+    assert deadlines == ["rollout.generation.batch"]
 
     gate.set()
     assert await first == [(0, "first")]
@@ -326,7 +326,7 @@ async def test_pipelined_submission_gets_deadline_only_after_fleet_admission(
     assert isinstance(result, PipelinedRequestOutOfMemory)
     assert pipeline_calls == ["req-admission"]
     assert deadlines == [
-        "rollout.generation.chunk",
+        "rollout.generation.batch",
         "rollout.generation.pipelined",
     ]
 
@@ -346,8 +346,8 @@ async def test_pipelined_progress_resets_the_stall_deadline() -> None:
         return _ResolvedRef(
             PipelinedRequestProgress(
                 request_id=request_id,
-                completed_chunks=min(progress_calls, 2),
-                total_chunks=2,
+                completed_batches=min(progress_calls, 2),
+                total_batches=2,
             ),
         )
 
@@ -356,7 +356,7 @@ async def test_pipelined_progress_resets_the_stall_deadline() -> None:
         result_ref=result_ref,
         progress_remote=progress_remote,
         request_id="req-progress",
-        total_chunks=2,
+        total_batches=2,
     )
 
     assert result == "complete"
@@ -379,8 +379,8 @@ async def test_short_stall_budget_queries_progress_before_initial_expiry() -> No
         return _ResolvedRef(
             PipelinedRequestProgress(
                 request_id=request_id,
-                completed_chunks=min(progress_calls, 2),
-                total_chunks=2,
+                completed_batches=min(progress_calls, 2),
+                total_batches=2,
             ),
         )
 
@@ -389,7 +389,7 @@ async def test_short_stall_budget_queries_progress_before_initial_expiry() -> No
         result_ref=result_ref,
         progress_remote=progress_remote,
         request_id="req-short-budget",
-        total_chunks=2,
+        total_batches=2,
     )
 
     assert result == "complete"
@@ -417,8 +417,8 @@ async def test_pipelined_progress_reset_preserves_initial_deadline_identity(
         return _ResolvedRef(
             PipelinedRequestProgress(
                 request_id=request_id,
-                completed_chunks=1,
-                total_chunks=2,
+                completed_batches=1,
+                total_batches=2,
             ),
         )
 
@@ -432,7 +432,7 @@ async def test_pipelined_progress_reset_preserves_initial_deadline_identity(
             result_ref=result_ref,
             progress_remote=progress_remote,
             request_id="req-identity",
-            total_chunks=2,
+            total_batches=2,
             initial_deadline=initial,
         )
 
@@ -462,8 +462,8 @@ async def test_pipelined_stall_cancels_the_result_ref(
         return _ResolvedRef(
             PipelinedRequestProgress(
                 request_id=request_id,
-                completed_chunks=0,
-                total_chunks=2,
+                completed_batches=0,
+                total_batches=2,
             ),
         )
 
@@ -473,7 +473,7 @@ async def test_pipelined_stall_cancels_the_result_ref(
             result_ref=result_ref,
             progress_remote=progress_remote,
             request_id="req-stalled",
-            total_chunks=2,
+            total_batches=2,
         )
 
     assert result_ref in cancelled
@@ -505,8 +505,8 @@ async def test_pipelined_stall_polling_does_not_accelerate_near_deadline(
         return _ResolvedRef(
             PipelinedRequestProgress(
                 request_id=request_id,
-                completed_chunks=0,
-                total_chunks=2,
+                completed_batches=0,
+                total_batches=2,
             ),
         )
 
@@ -516,7 +516,7 @@ async def test_pipelined_stall_polling_does_not_accelerate_near_deadline(
             result_ref=result_ref,
             progress_remote=progress_remote,
             request_id="req-fixed-cadence",
-            total_chunks=2,
+            total_batches=2,
         )
 
     assert 4 <= progress_calls <= 6
@@ -545,7 +545,7 @@ async def test_pipelined_progress_rpc_stall_cancels_result_and_progress(
             result_ref=result_ref,
             progress_remote=lambda _request_id: progress_ref,
             request_id="req-progress-stalled",
-            total_chunks=2,
+            total_batches=2,
         )
 
     assert result_ref in cancelled
@@ -580,7 +580,7 @@ async def test_pipelined_caller_cancellation_cancels_active_refs(
             result_ref=result_ref,
             progress_remote=progress_remote,
             request_id="req-cancelled",
-            total_chunks=2,
+            total_batches=2,
         ),
     )
     await progress_called.wait()
@@ -621,7 +621,7 @@ async def test_pipelined_result_cancels_a_losing_progress_rpc(
         result_ref=result_ref,
         progress_remote=progress_remote,
         request_id="req-result-wins",
-        total_chunks=2,
+        total_batches=2,
     )
 
     assert result == "complete"
@@ -636,8 +636,8 @@ async def test_pipelined_result_cancels_a_losing_progress_rpc(
             [
                 PipelinedRequestProgress(
                     request_id="wrong-request",
-                    completed_chunks=0,
-                    total_chunks=2,
+                    completed_batches=0,
+                    total_batches=2,
                 ),
             ],
             "request_id mismatch",
@@ -646,23 +646,23 @@ async def test_pipelined_result_cancels_a_losing_progress_rpc(
             [
                 PipelinedRequestProgress(
                     request_id="req-protocol",
-                    completed_chunks=0,
-                    total_chunks=3,
+                    completed_batches=0,
+                    total_batches=3,
                 ),
             ],
-            "total_chunks mismatch",
+            "total_batches mismatch",
         ),
         (
             [
                 PipelinedRequestProgress(
                     request_id="req-protocol",
-                    completed_chunks=1,
-                    total_chunks=2,
+                    completed_batches=1,
+                    total_batches=2,
                 ),
                 PipelinedRequestProgress(
                     request_id="req-protocol",
-                    completed_chunks=0,
-                    total_chunks=2,
+                    completed_batches=0,
+                    total_batches=2,
                 ),
             ],
             "progress regressed",
@@ -698,7 +698,7 @@ async def test_pipelined_progress_protocol_failure_is_terminal_and_cancels_resul
             result_ref=result_ref,
             progress_remote=progress_remote,
             request_id="req-protocol",
-            total_chunks=2,
+            total_batches=2,
         )
 
     assert result_ref in cancelled

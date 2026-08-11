@@ -71,7 +71,7 @@ def test_model_build_projects_typed_sections_without_losing_falsy_presence() -> 
                     "mode": "",
                 },
                 "executor": {
-                    "chunk_passthrough_keys": [],
+                    "batch_passthrough_keys": [],
                 },
             },
             "sampling": {
@@ -355,7 +355,7 @@ def test_family_registry_entries_have_complete_protocol_wiring() -> None:
         assert entry.task
         assert entry.model_section_cls
         assert entry.sampling_section_cls
-        assert callable(entry.new_gatherer().gather_chunks)
+        assert callable(entry.new_gatherer().gather_batches)
         assert entry.policy_semantics.generation_regime in {
             "full_sequence",
             "token_autoregressive",
@@ -668,7 +668,7 @@ def test_rollout_config_is_projected_from_yaml() -> None:
                 "fps": 16,
             },
             "rollout": {
-                "samples_per_chunk": 8,
+                "samples_per_generation_batch": 8,
                 "noise_level": 1.0,
                 "sde": {
                     "type": "flow_grpo",
@@ -685,7 +685,7 @@ def test_rollout_config_is_projected_from_yaml() -> None:
 
     assert rollout.request_sampling["width"] == 1280
     assert rollout.request_sampling["num_steps"] == 35
-    assert rollout.request_sampling["samples_per_chunk"] == 8
+    assert rollout.request_sampling["samples_per_generation_batch"] == 8
     assert rollout.request_sampling["sde_window_range"] == [0, 10]
     assert rollout.request_sampling["return_kl"] is True
     assert rollout.kl_reward_coef == pytest.approx(0.25)
@@ -771,7 +771,7 @@ def test_request_sampling_projects_only_generation_owned_rollout_values() -> Non
             "rollout": {
                 "n_samples_per_prompt": 4,
                 "prompts_per_batch": 1,
-                "samples_per_chunk": 8,
+                "samples_per_generation_batch": 8,
                 "sde": {"type": "flow_grpo", "window_range": [0, 10]},
             },
             "algorithm": {"kl_reward_coef": 0.0},
@@ -782,7 +782,7 @@ def test_request_sampling_projects_only_generation_owned_rollout_values() -> Non
     sampling = rollout.generation_sampling()
 
     assert sampling["width"] == 1280
-    assert sampling["samples_per_chunk"] == 8
+    assert sampling["samples_per_generation_batch"] == 8
     assert sampling["sde_type"] == "flow_grpo"
     assert sampling["sde_window_range"] == [0, 10]
     assert sampling["return_kl"] is False
@@ -798,7 +798,7 @@ def test_all_registry_entries_build_collectors_from_the_same_entry() -> None:
             entry,
             reward_runtime=RewardFunctionRuntime(None),
             config=RolloutCollectorConfig(
-                request_sampling={"samples_per_chunk": 1},
+                request_sampling={"samples_per_generation_batch": 1},
             ),
         )
         assert collector.request_builder.entry is entry

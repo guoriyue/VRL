@@ -14,7 +14,7 @@ from omegaconf import OmegaConf
 
 from vrl.config.loading import load_config
 from vrl.config.precision import RolePrecision, resolve_precision_policy
-from vrl.generation.execution.chunks import SampleChunk
+from vrl.generation.execution.sample_batches import GenerationSampleBatch
 from vrl.generation.types import GenerationRequest
 from vrl.models.families.magi_1.model import (
     MAGI_1_SUPPORTED_SOURCE_REVISION,
@@ -27,7 +27,7 @@ from vrl.models.families.magi_1.model import (
     prepare_magi_runtime_config,
 )
 from vrl.models.families.magi_1.runtime import (
-    Magi1ChunkExecutor,
+    Magi1BatchExecutor,
     build_magi_1_runtime_bundle,
 )
 from vrl.models.interfaces.runtime import ModelBuild, RolloutBuildOptions
@@ -407,7 +407,7 @@ def test_executor_calls_generation_model_one_sample_at_a_time(
         return torch.zeros(1, 3, 48, 2, 2), 2
 
     monkeypatch.setattr(model, "_generate_one", fake_generate_one)
-    executor = Magi1ChunkExecutor(model)
+    executor = Magi1BatchExecutor(model)
     request = GenerationRequest(
         request_id="request",
         family="magi_1",
@@ -416,9 +416,9 @@ def test_executor_calls_generation_model_one_sample_at_a_time(
         samples_per_prompt=2,
     )
 
-    result = executor.forward_chunk_plan(
+    result = executor.forward_batch(
         request,
-        SampleChunk(
+        GenerationSampleBatch(
             prompt_index=0,
             sample_start=0,
             sample_count=2,
@@ -451,7 +451,7 @@ def test_executor_uses_prompt_major_flat_seed_indices(
         return torch.zeros(1, 3, 48, 2, 2), 2
 
     monkeypatch.setattr(model, "_generate_one", fake_generate_one)
-    executor = Magi1ChunkExecutor(model)
+    executor = Magi1BatchExecutor(model)
     request = GenerationRequest(
         request_id="request",
         family="magi_1",
@@ -462,9 +462,9 @@ def test_executor_uses_prompt_major_flat_seed_indices(
     )
 
     for prompt_index in range(len(request.inputs)):
-        executor.forward_chunk_plan(
+        executor.forward_batch(
             request,
-            SampleChunk(
+            GenerationSampleBatch(
                 prompt_index=prompt_index,
                 sample_start=0,
                 sample_count=2,

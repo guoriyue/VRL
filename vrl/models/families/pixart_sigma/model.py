@@ -17,9 +17,9 @@ PixArt-Sigma specifics vs SANA (the reference single-encoder t2i family):
   with ``clip_sample=False`` so the DDIM eta-SDE transition stays Gaussian.
 - LEARNED SIGMA: the transformer's ``out_channels`` is twice the latent
   channels (8 vs 4); the first half is the epsilon prediction and the second
-  half the (unused) variance. ``postprocess_branch`` chunks per branch BEFORE
-  the CFG combine — the pipeline chunks after, which is equivalent since
-  channel-chunk and the linear CFG combine commute.
+  half the (unused) variance. ``postprocess_branch`` batches per branch BEFORE
+  the CFG combine — the pipeline batches after, which is equivalent since
+  channel-batch and the linear CFG combine commute.
 - Single T5-XXL encoder (~9.5 GB bf16, parked on CPU) returning sequence
   embeds + attention masks; true batched CFG with uncond rows first. The mask
   threads through the transformer as ``encoder_attention_mask``.
@@ -134,11 +134,11 @@ class PixArtSigmaModel(
         branch: DiffusionBranch,
         raw_output: torch.Tensor,
     ) -> torch.Tensor:
-        """Chunk the learned-sigma output down to the epsilon prediction.
+        """Batch the learned-sigma output down to the epsilon prediction.
 
         The transformer outputs ``2 * latent_channels`` (learned variance in
         the second half). Chunking per branch before the CFG combine is
-        equivalent to the pipeline's chunk-after-combine (both are linear).
+        equivalent to the pipeline's batch-after-combine (both are linear).
         """
         del branch
         latent_channels = request.hidden_states.shape[1]

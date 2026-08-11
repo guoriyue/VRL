@@ -83,7 +83,7 @@ class TeaCacheConfig:
 
 
 class TeaCacheState:
-    """Per-chunk TeaCache decision machine driving the denoise loop.
+    """Per-batch TeaCache decision machine driving the denoise loop.
 
     Call :meth:`should_run` once per step with the step's input signal; when it
     returns ``False`` reuse :attr:`cached_noise_pred`; when it returns ``True``

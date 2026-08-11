@@ -251,7 +251,12 @@ def build_online_batch_plan(cfg: DictConfig) -> OnlineBatchPlan:
     }
     if active_accumulation > 0:
         payload["gradient_accumulation_steps"] = active_accumulation
-    for field_name in ("replay_samples_per_chunk", "host_memory_budget_fraction"):
+    if path_exists(cfg, "actor.replay_samples_per_chunk"):
+        raise ValueError(
+            "actor.replay_samples_per_chunk was renamed to "
+            "actor.replay_samples_per_batch; update the config key",
+        )
+    for field_name in ("replay_samples_per_batch", "host_memory_budget_fraction"):
         path = f"actor.{field_name}"
         if path_exists(cfg, path):
             payload[field_name] = require(cfg, path)

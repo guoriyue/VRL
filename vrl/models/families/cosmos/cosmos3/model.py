@@ -9,7 +9,7 @@ Two design facts that drive this file (verified against diffusers 0.39 source):
 
 1. **Strictly batch=1.** ``Cosmos3OmniPipeline`` packs one sample at a time
    (``vision_tokens=[one [1,C,T,H,W] latent]``; all packed-static index tensors
-   sized for a single sample). The chunk executor pins ``samples_per_chunk=1``;
+   sized for a single sample). The batch executor pins ``samples_per_generation_batch=1``;
    ``forward_step`` therefore runs the single sample, no dim-0 batch.
 
 2. **forward_step returns the RAW rectified-flow velocity as ``noise_pred`` —
@@ -35,7 +35,7 @@ from typing import Any
 
 import torch
 
-from vrl.generation.execution.chunks import SampleAlignedValues
+from vrl.generation.execution.sample_batches import SampleAlignedValues
 from vrl.generation.types import VideoGenerationRequest
 from vrl.models.families.cosmos import CosmosReplayForward
 from vrl.models.interfaces.runtime import ModelBuild

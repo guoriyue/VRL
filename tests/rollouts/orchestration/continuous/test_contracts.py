@@ -24,7 +24,6 @@ import torch
 
 from tests.rollouts.orchestration.continuous._helpers import _wait_until
 from vrl.generation.ray.health_monitor import RolloutWorkerUnreachable
-from vrl.utils.lifecycle import RuntimeLifecycle
 from vrl.ray.operation_deadline import RayOperationTimeout
 from vrl.rollouts.batch import RolloutBatch
 from vrl.rollouts.orchestration.continuous.consumer import ContinuousRolloutConsumer
@@ -35,6 +34,7 @@ from vrl.rollouts.orchestration.continuous.types import ContinuousRolloutItem
 from vrl.rollouts.orchestration.prompt_collection import PromptCollectionCleanupError
 from vrl.rollouts.orchestration.types import RewardCollectionMode
 from vrl.rollouts.stats import RolloutStats
+from vrl.utils.lifecycle import RuntimeLifecycle
 
 
 def _batch(prompt: str, samples: int = 2) -> RolloutBatch:
@@ -287,7 +287,7 @@ async def test_control_loop_failure_reaches_consumer_without_timeout() -> None:
 @pytest.mark.asyncio
 async def test_terminal_generation_error_is_not_retried_or_wrapped() -> None:
     error = RayOperationTimeout(
-        "rollout.generation.chunk",
+        "rollout.generation.batch",
         1.0,
         context="request_id=req-terminal",
     )
@@ -381,7 +381,7 @@ async def test_idle_health_failure_makes_next_collect_fatal_without_slot_retry()
 @pytest.mark.asyncio
 async def test_cleanup_wrapper_around_terminal_error_is_not_retried() -> None:
     timeout = RayOperationTimeout(
-        "rollout.generation.chunk",
+        "rollout.generation.batch",
         1.0,
         context="request_id=req-cleanup",
     )

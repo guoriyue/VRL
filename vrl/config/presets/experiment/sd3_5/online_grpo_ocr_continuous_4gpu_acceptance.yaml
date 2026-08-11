@@ -47,11 +47,11 @@ sampling:
   num_steps: 4
 
 rollout:
-  # Three workers each receive one two-sample chunk. Keeping the generation and
+  # Three workers each receive one two-sample batch. Keeping the generation and
   # replay batch shapes equal preserves the pre-update log-prob parity gate.
   n_samples_per_prompt: 6
   prompts_per_batch: 2
-  samples_per_chunk: 2
+  samples_per_generation_batch: 2
   sde:
     window_range: [0, 4]
 
@@ -60,7 +60,7 @@ actor:
   # same. This gate validates scheduling overlap, not reward quality.
   drop_zero_advantage: false
   gradient_accumulation_steps: 2
-  replay_samples_per_chunk: 2
+  replay_samples_per_batch: 2
 
 model:
   torch_compile:

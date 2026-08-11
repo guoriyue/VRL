@@ -3,7 +3,7 @@
 # recipe and pins the values that are unanimous across all cosmos_predict2 runs
 # (entrypoint + the flow-matching clip range + CPS SDE + the rollout group shape),
 # so experiments carry only their real per-run diffs (shape, checkpoint, reward,
-# lr/ppo_epochs/samples_per_chunk when they deviate). Override any of these in an
+# lr/ppo_epochs/samples_per_generation_batch when they deviate). Override any of these in an
 # experiment when it genuinely differs.
 defaults:
   - /recipe/online/denoise_grpo

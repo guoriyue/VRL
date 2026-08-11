@@ -35,7 +35,7 @@ from vrl.config.precision import PrecisionConfig
 from vrl.config.reward_inference import parse_reward_inference_config
 from vrl.config.sampling_schema import SamplingSection
 from vrl.config.unknown_keys import OPEN, ConfigBlock
-from vrl.generation.execution.types import ChunkPlacementStrategy
+from vrl.generation.execution.types import BatchPlacementStrategy
 from vrl.models.families.names import normalize_model_family
 from vrl.models.families.registry import FAMILY_REGISTRY, get_model_family_entry
 from vrl.ray.resources import (
@@ -263,7 +263,32 @@ class SdeConfig(ConfigBase):
     window_range: Any = None
 
 
+def _reject_renamed_keys(data: Any, renames: Mapping[str, str], section: str) -> Any:
+    """Fail loud on pre-rename keys instead of warn-and-ignore.
+
+    The unknown-key walker only warns, which would silently turn a renamed
+    knob into its default; a rename must point at the new key instead.
+    """
+
+    if isinstance(data, Mapping):
+        for old, new in renames.items():
+            if old in data:
+                raise ValueError(
+                    f"{section}.{old} was renamed to {section}.{new}; update the config key",
+                )
+    return data
+
+
 class RolloutConfig(ConfigBase):
+    @model_validator(mode="before")
+    @classmethod
+    def _reject_renamed(cls, data: Any) -> Any:
+        return _reject_renamed_keys(
+            data,
+            {"samples_per_chunk": "samples_per_generation_batch"},
+            "rollout",
+        )
+
     # readers: vrl/math/denoise/flow_matching.py window + RootConfig check
     sde: SdeConfig | None = Field(
         default=None,
@@ -301,11 +326,11 @@ class RolloutConfig(ConfigBase):
         default=None,
         json_schema_extra={"runtime_owner": "generation_request"},
     )
-    # reader: generation planner (chunk_placement.py) + diffusion layout. int =
-    # fixed chunk size; "auto" = the Ray runtime's startup chunk-size probe
+    # reader: generation planner (batch_placement.py) + diffusion layout. int =
+    # fixed batch size; "auto" = the Ray runtime's startup batch-size probe
     # resolves it before the first request (SPRINT_chunk_size_probe; Ray-only,
     # the planner rejects "auto" on other runtimes); null = samples_per_prompt.
-    samples_per_chunk: int | Literal["auto"] | None = Field(
+    samples_per_generation_batch: int | Literal["auto"] | None = Field(
         default=None,
         json_schema_extra={"runtime_owner": "generation_request"},
     )
@@ -315,16 +340,16 @@ class RolloutConfig(ConfigBase):
         json_schema_extra={"runtime_owner": "generation_request"},
     )
 
-    @field_validator("samples_per_chunk", mode="before")
+    @field_validator("samples_per_generation_batch", mode="before")
     @classmethod
-    def _validate_samples_per_chunk(cls, value: Any) -> Any:
-        """Keep fixed generation chunks positive; the runtime owns ``auto``."""
+    def _validate_samples_per_generation_batch(cls, value: Any) -> Any:
+        """Keep fixed generation batches positive; the runtime owns ``auto``."""
 
         if value is None or value == "auto":
             return value
         if isinstance(value, bool) or not isinstance(value, int) or value < 1:
             raise ValueError(
-                "rollout.samples_per_chunk must be a positive integer, 'auto', or null",
+                "rollout.samples_per_generation_batch must be a positive integer, 'auto', or null",
             )
         return value
 
@@ -731,7 +756,7 @@ class RolloutWorkerSection(ConfigBase):
     runtime knobs). Release scheduling and colocation are NOT declared here:
     colocation lives in distributed.resources.rollout.gpu_pool=trainer (mirrors
     reward.gpu_pool), and release scheduling is derived from GPU topology.
-    chunk_placement_strategy is a user-facing allow-list
+    batch_placement_strategy is a user-facing allow-list
     Literal: RayGenerationConfig is a plain dataclass whose annotations do not
     enforce, so this typed boundary is where a bad value is rejected (the runtime
     DistributedExecutionPlanner guard covers direct construction). sync_trainable_state
@@ -739,6 +764,15 @@ class RolloutWorkerSection(ConfigBase):
     (the syncer flattens whatever is trainable — lora or full-param), False
     disables the weight syncer.
     """
+
+    @model_validator(mode="before")
+    @classmethod
+    def _reject_renamed(cls, data: Any) -> Any:
+        return _reject_renamed_keys(
+            data,
+            {"chunk_placement_strategy": "batch_placement_strategy"},
+            "distributed.rollout",
+        )
 
     cpus_per_worker: float = 1.0
     # Background liveness probing of rollout workers. interval <= 0 disables it;
@@ -751,15 +785,15 @@ class RolloutWorkerSection(ConfigBase):
     # Opaque control-plane calls expose no useful progress. Bound startup,
     # metadata, capability, and weight acknowledgements independently.
     worker_rpc_timeout_s: float = 600.0
-    # Generation has a separate stall budget: a completed chunk is real progress,
+    # Generation has a separate stall budget: a completed batch is real progress,
     # and the pipelined path reports the same progress from its worker. One hour
-    # covers the observed ~30-minute cold compile plus a 733-second Cosmos chunk
+    # covers the observed ~30-minute cold compile plus a 733-second Cosmos batch
     # with margin; opaque control calls retain their tighter budget above.
     generation_stall_timeout_s: float = 3600.0
-    chunk_placement_strategy: ChunkPlacementStrategy = "round_robin"
+    batch_placement_strategy: BatchPlacementStrategy = "round_robin"
     sync_trainable_state: bool = True
     # Opt-in single-worker pipelined rollout. Config resolution rejects multiple
-    # workers; requests with fewer than two chunks use the standard per-chunk path,
+    # workers; requests with fewer than two batches use the standard per-batch path,
     # and a pipeline OOM falls back to that path's split-and-retry behavior.
     pipelined: bool = False
 
@@ -818,7 +852,7 @@ class DistributedSection(ConfigBase):
         ),
     ] = None
     # reader: vrl/generation/ray/config.py RayGenerationConfig.from_cfg (worker
-    # runtime knobs). chunk_placement_strategy / sync_trainable_state Literals reject
+    # runtime knobs). batch_placement_strategy / sync_trainable_state Literals reject
     # bad values here at parse time. Colocation lives in resources.rollout.gpu_pool.
     rollout: RolloutWorkerSection | None = None
     # reader: vrl/ray/resources.py reward runtime block. Ray reward actor-pool

@@ -24,14 +24,14 @@ def build_preview_request(
 
     overrides = dict(example.request_overrides)
     configured_chunk_size = overrides.get(
-        "samples_per_chunk",
-        builder.config.request_sampling.get("samples_per_chunk"),
+        "samples_per_generation_batch",
+        builder.config.request_sampling.get("samples_per_generation_batch"),
     )
     # Ray resolves ``auto`` from runtime memory. The direct preview has exactly
     # one sample, so only that unresolved sentinel needs a local value. Preserve
-    # every explicit numeric chunk size from the experiment YAML.
+    # every explicit numeric batch size from the experiment YAML.
     if configured_chunk_size == "auto":
-        overrides["samples_per_chunk"] = 1
+        overrides["samples_per_generation_batch"] = 1
     # Preserve the current precedence: an explicit seed in the example's
     # request_overrides wins; otherwise the deterministic preview seed is used.
     overrides.setdefault("seed", seed)

@@ -13,7 +13,6 @@ import torch
 import vrl.generation.ray.weight_sync as weight_sync_module
 import vrl.ray.actor_pool as actor_pool_module
 import vrl.ray.operation_deadline as deadline_module
-from vrl.utils.lifecycle import RuntimePhase
 from vrl.generation.ray.runtime import RayGenerationRuntime
 from vrl.generation.ray.session import RayGenerationSession
 from vrl.generation.ray.weight_sync import RayGenerationWeightSync
@@ -21,6 +20,7 @@ from vrl.generation.ray.worker import RayGenerationWorker
 from vrl.ray.actor_group import RayActorHandle
 from vrl.ray.actor_pool import RayActorDispatcher, RayActorJob
 from vrl.ray.operation_deadline import RayOperationCancelled, RayOperationTimeout
+from vrl.utils.lifecycle import RuntimePhase
 
 # Carried by the two tests that drive `_FakeRay`. They are kept, not converted:
 # `put_calls == [{"w": 1}]` is the only assertion anywhere that pins ONE put
@@ -319,7 +319,7 @@ async def test_weight_sync_gets_a_full_deadline_after_shared_worker_admission(
                     payload=None,
                 ),
             ],
-            operation="rollout.generation.chunk",
+            operation="rollout.generation.batch",
             call_timeout_s=30.0,
         ),
     )
@@ -338,14 +338,14 @@ async def test_weight_sync_gets_a_full_deadline_after_shared_worker_admission(
 
     assert not update.done()
     assert actor.update_weights.calls == []
-    assert deadlines == [("rollout.generation.chunk", 30.0)]
+    assert deadlines == [("rollout.generation.batch", 30.0)]
 
     gate.set()
     assert await generation == [(0, "generated")]
     await update
     assert actor.update_weights.calls == [(("state", {"w": 1}), 3)]
     assert deadlines == [
-        ("rollout.generation.chunk", 30.0),
+        ("rollout.generation.batch", 30.0),
         ("rollout.weight_sync", 0.01),
     ]
 
@@ -385,7 +385,7 @@ async def test_waiting_weight_sync_gets_fair_handoff_before_pending_chunks(
                 )
                 for index in range(3)
             ],
-            operation="rollout.generation.chunk",
+            operation="rollout.generation.batch",
             call_timeout_s=30.0,
         ),
     )
@@ -434,7 +434,7 @@ async def test_cancelling_weight_sync_before_submission_keeps_runtime_running(
     generation = asyncio.create_task(
         dispatcher.run(
             [RayActorJob(0, "rollout-0", submit_generation, None)],
-            operation="rollout.generation.chunk",
+            operation="rollout.generation.batch",
             call_timeout_s=30.0,
         ),
     )
@@ -606,7 +606,7 @@ async def test_cancelling_partially_completed_weight_sync_terminalizes_runtime(
     generation = asyncio.create_task(
         dispatcher.run(
             [RayActorJob(0, "w1", occupy_w1, None)],
-            operation="rollout.generation.chunk",
+            operation="rollout.generation.batch",
             call_timeout_s=30.0,
         ),
     )
@@ -786,7 +786,7 @@ async def test_real_ray_weight_sync_deadline_excludes_generation_admission_wait(
     generation = asyncio.create_task(
         dispatcher.run(
             [RayActorJob(0, "rollout-0", submit_generation, 0.6)],
-            operation="rollout.generation.chunk",
+            operation="rollout.generation.batch",
             call_timeout_s=10.0,
         ),
     )

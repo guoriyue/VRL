@@ -12,13 +12,13 @@ from omegaconf import OmegaConf
 
 from vrl.config.loading import load_config
 from vrl.config.schema import parse_config
-from vrl.generation.bindings.full_sequence_denoise import DiffusionChunkGatherer
-from vrl.generation.bindings.token_autoregressive.executor import ARDiscreteChunkGatherer
+from vrl.generation.bindings.full_sequence_denoise import DiffusionBatchGatherer
+from vrl.generation.bindings.token_autoregressive.executor import ARDiscreteBatchGatherer
 from vrl.generation.launch_contract import GenerationRuntimeLaunchContract
-from vrl.generation.protocols import GenerationChunkExecutor
+from vrl.generation.protocols import GenerationBatchExecutor
 from vrl.generation.ray.launch_inputs import RayGenerationLaunchInputs
-from vrl.models.families.janus_pro.runtime import JanusProR1ChunkGatherer
-from vrl.models.families.nextstep_1.runtime import NextStep1ChunkGatherer
+from vrl.models.families.janus_pro.runtime import JanusProR1GenerationBatchGatherer
+from vrl.models.families.nextstep_1.runtime import NextStep1GenerationBatchGatherer
 from vrl.models.families.registry import (
     FAMILY_REGISTRY,
     GENERIC_FULL_SEQUENCE_DENOISE_EXECUTOR,
@@ -33,7 +33,7 @@ from vrl.run import (
 
 
 class _TestGatherer:
-    def gather_chunks(self, *_args: Any) -> Any:
+    def gather_batches(self, *_args: Any) -> Any:
         raise AssertionError("test gatherer must not execute")
 
 
@@ -51,7 +51,7 @@ def test_ray_launch_inputs_reject_invalid_contract_type() -> None:
 
 
 def test_ray_launch_inputs_reject_invalid_gatherer_protocol() -> None:
-    with pytest.raises(TypeError, match="gatherer must implement ChunkGatherer"):
+    with pytest.raises(TypeError, match="gatherer must implement GenerationBatchGatherer"):
         RayGenerationLaunchInputs(
             launch_contract=GenerationRuntimeLaunchContract(
                 family="test",
@@ -65,7 +65,7 @@ def test_ray_launch_inputs_reject_invalid_gatherer_protocol() -> None:
 def test_ray_launch_inputs_reject_non_callable_gatherer_method() -> None:
     with pytest.raises(
         TypeError,
-        match="gatherer must implement ChunkGatherer, got SimpleNamespace",
+        match="gatherer must implement GenerationBatchGatherer, got SimpleNamespace",
     ):
         RayGenerationLaunchInputs(
             launch_contract=GenerationRuntimeLaunchContract(
@@ -73,7 +73,7 @@ def test_ray_launch_inputs_reject_non_callable_gatherer_method() -> None:
                 model_build={},
                 expected_model_identity={"schema": "test"},
             ),
-            gatherer=SimpleNamespace(gather_chunks=object()),
+            gatherer=SimpleNamespace(gather_batches=object()),
         )
 
 
@@ -140,64 +140,64 @@ def test_every_registry_entry_has_pickle_safe_ray_launch_inputs(
         f"{type(restored.gatherer).__module__}:{type(restored.gatherer).__qualname__}"
         == entry.gatherer_cls
     )
-    assert callable(restored.gatherer.gather_chunks)
-    assert not isinstance(restored.gatherer, GenerationChunkExecutor)
+    assert callable(restored.gatherer.gather_batches)
+    assert not isinstance(restored.gatherer, GenerationBatchExecutor)
 
 
 @pytest.mark.parametrize(
     ("experiment", "family", "expected_gatherer"),
     [
-        ("sd3_5/online_grpo_ocr", "sd3_5", DiffusionChunkGatherer),
+        ("sd3_5/online_grpo_ocr", "sd3_5", DiffusionBatchGatherer),
         (
             "sana/online_grpo_aesthetic",
             "sana",
-            DiffusionChunkGatherer,
+            DiffusionBatchGatherer,
         ),
-        ("wan_2_1/online_grpo_ocr", "wan_2_1", DiffusionChunkGatherer),
+        ("wan_2_1/online_grpo_ocr", "wan_2_1", DiffusionBatchGatherer),
         (
             "wan_2_1/online_grpo_kling_video_reward",
             "wan_2_1",
-            DiffusionChunkGatherer,
+            DiffusionBatchGatherer,
         ),
         (
             "wan_2_1/online_grpo_physics_i2v",
             "wan_2_1_i2v",
-            DiffusionChunkGatherer,
+            DiffusionBatchGatherer,
         ),
         (
             "wan_2_1/online_grpo_i2v_smoke_single_gpu",
             "wan_2_1_i2v",
-            DiffusionChunkGatherer,
+            DiffusionBatchGatherer,
         ),
         (
             "cosmos_predict2/online_grpo_kling_video_reward",
             "cosmos-predict2",
-            DiffusionChunkGatherer,
+            DiffusionBatchGatherer,
         ),
         (
             "anima_preview3/online_grpo_aesthetic",
             "cosmos-predict2-anima",
-            DiffusionChunkGatherer,
+            DiffusionBatchGatherer,
         ),
         (
             "anima_preview3/online_grpo_aesthetic_nsfw_safety",
             "cosmos-predict2-anima",
-            DiffusionChunkGatherer,
+            DiffusionBatchGatherer,
         ),
         (
             "janus_pro/online_grpo_ocr",
             "janus_pro",
-            ARDiscreteChunkGatherer,
+            ARDiscreteBatchGatherer,
         ),
         (
             "janus_pro/online_r1_grpo_ocr",
             "janus_pro_r1",
-            JanusProR1ChunkGatherer,
+            JanusProR1GenerationBatchGatherer,
         ),
         (
             "nextstep_1/online_grpo_ocr",
             "nextstep_1",
-            NextStep1ChunkGatherer,
+            NextStep1GenerationBatchGatherer,
         ),
     ],
 )
@@ -218,7 +218,7 @@ def test_rollout_runtime_inputs_are_serializable_and_registry_backed(
             "distributed.resources.reward.num_gpus=0",
             "distributed.resources.reward.gpus_per_worker=0",
             "distributed.rollout.cpus_per_worker=1",
-            "rollout.samples_per_chunk=2",
+            "rollout.samples_per_generation_batch=2",
         ],
     )
     entry = get_model_family_entry(family)
@@ -235,10 +235,10 @@ def test_rollout_runtime_inputs_are_serializable_and_registry_backed(
     # wiring comes from the registry, while this nested payload is per-run data.
     assert "family" not in restored.launch_contract.model_build
     assert restored.launch_contract.policy_version == 0
-    # Chunk width is per-request data (request.sampling), never executor wiring.
-    assert "samples_per_chunk" not in restored.launch_contract.executor_kwargs
+    # Batch width is per-request data (request.sampling), never executor wiring.
+    assert "samples_per_generation_batch" not in restored.launch_contract.executor_kwargs
     assert isinstance(restored.gatherer, expected_gatherer)
-    assert not isinstance(restored.gatherer, GenerationChunkExecutor)
+    assert not isinstance(restored.gatherer, GenerationBatchExecutor)
 
 
 def test_rollout_profiler_is_resolved_before_launch_contract_serialization() -> None:
@@ -381,7 +381,7 @@ def test_generation_chunk_auto_reaches_ray_runtime_without_executor_coercion() -
             "distributed.resources.rollout.num_workers=1",
             "distributed.resources.reward.num_gpus=0",
             "distributed.resources.reward.gpus_per_worker=0",
-            "rollout.samples_per_chunk=auto",
+            "rollout.samples_per_generation_batch=auto",
         ],
     )
 
@@ -390,8 +390,11 @@ def test_generation_chunk_auto_reaches_ray_runtime_without_executor_coercion() -
         get_model_family_entry("sd3_5"),
     )
 
-    assert "samples_per_chunk" not in inputs.launch_contract.executor_kwargs
-    assert RolloutCollectorConfig.from_cfg(cfg).request_sampling["samples_per_chunk"] == "auto"
+    assert "samples_per_generation_batch" not in inputs.launch_contract.executor_kwargs
+    assert (
+        RolloutCollectorConfig.from_cfg(cfg).request_sampling["samples_per_generation_batch"]
+        == "auto"
+    )
 
 
 @pytest.mark.parametrize(
@@ -446,7 +449,7 @@ def test_model_torch_compile_applies_to_all_diffusion_rollout_families(
 
 
 def test_executor_kwargs_use_configured_chunk_size() -> None:
-    """The public config is the only chunk-size input to the launch contract."""
+    """The public config is the only batch-size input to the launch contract."""
     cfg = load_config(
         "experiment/sd3_5/online_grpo_ocr",
         overrides=[
@@ -455,7 +458,7 @@ def test_executor_kwargs_use_configured_chunk_size() -> None:
             "distributed.resources.rollout.num_gpus=0",
             "distributed.resources.rollout.gpus_per_worker=0",
             "distributed.resources.rollout.num_workers=1",
-            "rollout.samples_per_chunk=8",
+            "rollout.samples_per_generation_batch=8",
         ],
     )
 
@@ -465,8 +468,10 @@ def test_executor_kwargs_use_configured_chunk_size() -> None:
     )
 
     assert isinstance(inputs, RayGenerationLaunchInputs)
-    assert "samples_per_chunk" not in inputs.launch_contract.executor_kwargs
-    assert RolloutCollectorConfig.from_cfg(cfg).request_sampling["samples_per_chunk"] == 8
+    assert "samples_per_generation_batch" not in inputs.launch_contract.executor_kwargs
+    assert (
+        RolloutCollectorConfig.from_cfg(cfg).request_sampling["samples_per_generation_batch"] == 8
+    )
 
 
 def test_generic_executor_kwargs_project_the_complete_model_block() -> None:
@@ -479,11 +484,11 @@ def test_generic_executor_kwargs_project_the_complete_model_block() -> None:
                         "num_frames": 17,
                         "max_sequence_length": 256,
                         "fps": 24,
-                        "chunk_passthrough_keys": ["text_ids"],
+                        "batch_passthrough_keys": ["text_ids"],
                     },
                     "memory": {"vae_decode": {"tiling": False}},
                 },
-                "rollout": {"samples_per_chunk": 3},
+                "rollout": {"samples_per_generation_batch": 3},
             },
         ),
     )
@@ -492,7 +497,7 @@ def test_generic_executor_kwargs_project_the_complete_model_block() -> None:
         "num_frames": 17,
         "max_sequence_length": 256,
         "fps": 24,
-        "chunk_passthrough_keys": ["text_ids"],
+        "batch_passthrough_keys": ["text_ids"],
     }
 
 
@@ -555,7 +560,7 @@ def test_custom_executor_keeps_independent_supported_memory_config() -> None:
                     "path": "unit-test",
                     "memory": {"vae_decode": {"tiling": True}},
                 },
-                "rollout": {"samples_per_chunk": 2},
+                "rollout": {"samples_per_generation_batch": 2},
             },
         ),
     )

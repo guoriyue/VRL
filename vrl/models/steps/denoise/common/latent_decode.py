@@ -39,8 +39,8 @@ class ChunkedLatentDecoder:
         self.plan = plan
 
     def __call__(self, latents: torch.Tensor) -> torch.Tensor:
-        chunks = self._chunks(latents)
-        decoded = [self._decode_chunk(chunk) for chunk in chunks]
+        batches = self._chunks(latents)
+        decoded = [self._decode_chunk(batch) for batch in batches]
         output = decoded[0] if len(decoded) == 1 else torch.cat(decoded, dim=0)
         if self.plan.output_layout == "video_btchw":
             return output.permute(0, 2, 1, 3, 4)
@@ -103,8 +103,8 @@ class VaeDecodeMixin:
 
         decoder = ChunkedLatentDecoder(
             LatentDecodePlan(
-                prepare_latents=lambda chunk: chunk.to(vae.dtype) / scaling_factor + shift_factor,
-                vae_decode=lambda chunk: vae.decode(chunk, return_dict=False)[0],
+                prepare_latents=lambda batch: batch.to(vae.dtype) / scaling_factor + shift_factor,
+                vae_decode=lambda batch: vae.decode(batch, return_dict=False)[0],
                 postprocess=postprocess,
                 output_layout=self._decode_output_layout,
                 decode_batch_size=getattr(pipe, "decode_batch_size", None),

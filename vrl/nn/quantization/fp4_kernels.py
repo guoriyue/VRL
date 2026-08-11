@@ -44,11 +44,11 @@ def _quantize_nvfp4_kernel(
     TIE_UP_1: tl.constexpr,
     TIE_UP_2: tl.constexpr,
 ):
-    """Quantize one row chunk and write cuBLAS-swizzled E4M3 scales."""
+    """Quantize one row batch and write cuBLAS-swizzled E4M3 scales."""
 
     row = tl.program_id(0)
-    chunk = tl.program_id(1)
-    block_ids = chunk * BLOCKS_PER_PROGRAM + tl.arange(0, BLOCKS_PER_PROGRAM)
+    batch = tl.program_id(1)
+    block_ids = batch * BLOCKS_PER_PROGRAM + tl.arange(0, BLOCKS_PER_PROGRAM)
     valid_blocks = block_ids < K // BLOCK_SIZE
     lanes = tl.arange(0, BLOCK_SIZE)
     offsets = block_ids[:, None] * BLOCK_SIZE + lanes[None, :]

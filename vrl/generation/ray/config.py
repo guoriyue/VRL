@@ -8,7 +8,7 @@ from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, replace
 from typing import Any
 
-from vrl.generation.execution.types import ChunkPlacementStrategy
+from vrl.generation.execution.types import BatchPlacementStrategy
 from vrl.ray.resources import (
     ResolvedDistributedResources,
 )
@@ -32,11 +32,11 @@ class RolloutWorkerConfig:
     # Opt-in single-worker pipelined rollout. Multi-worker execution is rejected
     # because per-worker request partitioning is not implemented.
     pipelined: bool
-    # Chunk->worker binding: "round_robin" binds at plan time (baseline);
+    # Batch->worker binding: "round_robin" binds at plan time (baseline);
     # "dynamic" binds at dispatch time (pull + LPT). Equivalent for 1 worker.
     # Allowed-set rejection is at the typed schema boundary (RolloutWorkerSection);
     # DistributedExecutionPlanner repeats it for direct runtime construction.
-    chunk_placement_strategy: ChunkPlacementStrategy
+    batch_placement_strategy: BatchPlacementStrategy
     # Plain on/off. True keeps rollout workers resynced to the trained policy (the
     # syncer flattens whatever is trainable — lora or full-param); False disables it.
     # Defaults ON: online runs train the policy the rollout workers must resync, so

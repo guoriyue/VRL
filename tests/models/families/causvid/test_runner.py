@@ -200,7 +200,7 @@ def test_per_sample_generators_are_repeatable_and_row_local() -> None:
     torch.testing.assert_close(repeated.latents, baseline.latents, rtol=0, atol=0)
 
     # Changing row 1's generator cannot perturb row 0, including downstream
-    # chunks whose transformer inputs depend on earlier sampled transitions.
+    # batches whose transformer inputs depend on earlier sampled transitions.
     torch.testing.assert_close(
         second_seed_changed.actions[0],
         baseline.actions[0],

@@ -187,7 +187,7 @@ def build_algorithm_and_evaluator(
                 raise ValueError(
                     f"{family_entry.family} uses grouped causal-chunk replay; "
                     f"algorithm.kind={kind!r} requires reverse-SDE dt signals that "
-                    "the chunk re-noise policy does not expose. Use grpo.",
+                    "the batch re-noise policy does not expose. Use grpo.",
                 )
             from vrl.rollouts.evaluators.denoise import (
                 ChunkAutoregressiveDenoiseLogProbEvaluator,

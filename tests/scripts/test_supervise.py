@@ -522,7 +522,7 @@ def test_train_verdict_uses_cleanup_wrapper_root_class(tmp_path) -> None:
     from vrl.rollouts.orchestration.strict_on_policy import RolloutPhaseCleanupError
     from vrl.scripts import train
 
-    root = RayOperationTimeout("rollout.generation.chunk", 1.0)
+    root = RayOperationTimeout("rollout.generation.batch", 1.0)
     collection = PromptCollectionCleanupError(
         root,
         [RuntimeError("reward cleanup failed")],

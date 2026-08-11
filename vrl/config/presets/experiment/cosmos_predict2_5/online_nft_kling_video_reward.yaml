@@ -51,11 +51,11 @@ actor:
 
 rollout:
   # Paper-shaped RL batch: 8 outputs per input condition and 32 input
-  # conditions per optimizer update. Generation still uses samples_per_chunk=1
+  # conditions per optimizer update. Generation still uses samples_per_generation_batch=1
   # so rollout denoising can stream on limited memory.
   n_samples_per_prompt: 8
   prompts_per_batch: 32
-  samples_per_chunk: 1
+  samples_per_generation_batch: 1
   noise_level: 0.7
   sde:
     type: cps

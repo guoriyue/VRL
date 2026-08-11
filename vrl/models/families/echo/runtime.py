@@ -18,10 +18,10 @@ from typing import Any
 import torch
 
 from vrl.generation.bindings.full_sequence_denoise import (
-    DiffusionChunkExecutorBase,
+    DiffusionBatchExecutorBase,
     DiffusionSamplingParams,
 )
-from vrl.generation.execution.chunks import SampleChunk
+from vrl.generation.execution.sample_batches import GenerationSampleBatch
 from vrl.generation.types import GenerationRequest, VideoGenerationRequest
 from vrl.models.interfaces.runtime import ModelBuild, RuntimeBundle
 from vrl.utils.logging import init_logger
@@ -91,7 +91,7 @@ def build_echo_replay_runtime_bundle(build: ModelBuild) -> RuntimeBundle:
     return assemble_replay_bundle(model, build)
 
 
-class EchoChunkExecutor(DiffusionChunkExecutorBase):
+class EchoBatchExecutor(DiffusionBatchExecutorBase):
     """Diffusion executor for Echo text-to-video rollouts."""
 
     family: str = "echo"
@@ -114,22 +114,22 @@ class EchoChunkExecutor(DiffusionChunkExecutorBase):
             )
         return params
 
-    def encode_prompt_for_chunk(
+    def encode_prompt_for_batch(
         self,
         *,
         generation_request: GenerationRequest,
         video_request: VideoGenerationRequest,
         params: DiffusionSamplingParams,
-        chunk: SampleChunk,
+        batch: GenerationSampleBatch,
     ) -> dict[str, Any]:
         del params
         return self.model.encode_prompt(
-            generation_request.inputs[chunk.prompt_index].prompt,
+            generation_request.inputs[batch.prompt_index].prompt,
             video_request.negative_prompt or None,
         )
 
 
 __all__ = [
-    "EchoChunkExecutor",
+    "EchoBatchExecutor",
     "build_echo_replay_runtime_bundle",
 ]

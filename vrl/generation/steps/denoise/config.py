@@ -20,7 +20,7 @@ class DenoiseSDEParams:
 
 @dataclass(frozen=True, slots=True)
 class DenoiseLoopConfig:
-    """Runtime inputs for one sample chunk's denoise loop."""
+    """Runtime inputs for one sample batch's denoise loop."""
 
     sample_start: int
     sample_count: int

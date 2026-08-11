@@ -389,7 +389,7 @@ def test_cosmos_predict25_kling_reward_uses_paper_rl_batch() -> None:
     """Checks the Kling reward recipe matches the paper RL batch geometry."""
     cfg = load_config("experiment/cosmos_predict2_5/online_nft_kling_video_reward")
 
-    # Batch geometry (n_samples_per_prompt / prompts_per_batch / samples_per_chunk /
+    # Batch geometry (n_samples_per_prompt / prompts_per_batch / samples_per_generation_batch /
     # microbatch_size) is declarative YAML a tuner is free to change. Assert the real
     # coupling instead of pinning the paper's magic numbers.
     assert cfg.rollout.prompts_per_batch % cfg.rollout.n_samples_per_prompt == 0
@@ -478,8 +478,8 @@ def test_sd35_continuous_4gpu_acceptance_resolves_disjoint_resident_topology() -
     assert built.trainer.rollout_orchestration.schedule_mode == "continuous"
     assert cfg.actor.drop_zero_advantage is False
     assert cfg.rollout.n_samples_per_prompt == 6
-    assert cfg.rollout.samples_per_chunk == 2
-    assert cfg.actor.replay_samples_per_chunk == 2
+    assert cfg.rollout.samples_per_generation_batch == 2
+    assert cfg.actor.replay_samples_per_batch == 2
 
 
 def test_cosmos_predict2_overfit_fsdp_4x_l4_resolves_rank_local_topology(
@@ -505,7 +505,7 @@ def test_cosmos_predict2_overfit_fsdp_4x_l4_resolves_rank_local_topology(
     assert cfg.distributed.training.fsdp.precision_policy == "none"
     assert cfg.model.torch_compile.enable is False
     assert cfg.sampling.guidance_scale == 7
-    assert cfg.rollout.samples_per_chunk == 1
+    assert cfg.rollout.samples_per_generation_batch == 1
     assert resources.trainer_devices == resources.rollout_devices == (0,)
     assert resources.rollout_num_workers == 1
     assert resources.reward_devices == ()
@@ -562,7 +562,7 @@ def test_cosmos_predict2_full_curve_fsdp_4x_l4_preserves_training_semantics(
 
     assert cfg.model.torch_compile.enable is False
     assert cfg.sampling.guidance_scale == 7
-    assert cfg.rollout.samples_per_chunk == 1
+    assert cfg.rollout.samples_per_generation_batch == 1
     assert cfg.trainer.save_freq == 1
     assert not Path(str(cfg.trainer.output_dir)).is_absolute()
     world_size = cfg.distributed.training.num_nodes * cfg.distributed.training.gpus_per_node
@@ -600,8 +600,8 @@ def test_cosmos_predict2_full_curve_fsdp_4x_l4_preserves_training_semantics(
     rollout = OmegaConf.to_container(cfg.rollout, resolve=True)
     parent_rollout = OmegaConf.to_container(parent.rollout, resolve=True)
     assert isinstance(rollout, dict) and isinstance(parent_rollout, dict)
-    rollout.pop("samples_per_chunk")
-    parent_rollout.pop("samples_per_chunk")
+    rollout.pop("samples_per_generation_batch")
+    parent_rollout.pop("samples_per_generation_batch")
     assert rollout == parent_rollout
 
     trainer = OmegaConf.to_container(cfg.trainer, resolve=True)
@@ -640,7 +640,7 @@ def test_wan_robotics_continuous_resolves_balanced_four_l4_topology() -> None:
     assert orchestration.continuous.max_inflight_groups == 4
     assert cfg.actor.ppo_epochs == 1
     assert cfg.actor.timestep_fraction == 0.25
-    assert cfg.actor.replay_samples_per_chunk == 1
+    assert cfg.actor.replay_samples_per_batch == 1
     assert cfg.actor.microbatch_size == cfg.rollout.prompts_per_batch == 4
     assert built.trainer.timestep_selection == "strided"
     assert built.trainer.batch_plan.gradient_accumulation_steps == 1
@@ -853,7 +853,7 @@ def test_cosmos_v2w_production_validation_accepts_source_backed_data(
         "source_repo": "lerobot/droid_100",
         "source_split": "main",
         "source_episode": "episode_train",
-        "source_video": "videos/camera/chunk-000/file-000.mp4",
+        "source_video": "videos/camera/batch-000/file-000.mp4",
         "source_frame_index": 0,
         "decode_method": "pyav_http_first_frame",
         "conditioning": "first_frame",
@@ -932,7 +932,7 @@ def test_cosmos_target_v2w_production_validation_requires_target_clip(
         "source_repo": "lerobot/droid_100",
         "source_split": "main",
         "source_episode": "episode_train",
-        "source_video": "videos/camera/chunk-000/file-000.mp4",
+        "source_video": "videos/camera/batch-000/file-000.mp4",
         "source_frame_index": 0,
         "decode_method": "pyav_http_target_clip",
         "conditioning": "first_frame",
@@ -1109,7 +1109,7 @@ def test_wan_i2v_fsdp_2x_l4_resolves_bounded_shared_topology(cuda_devices) -> No
     assert cfg.reward.components == {"motion_dynamics": 1.0}
     assert cfg.reward.kwargs.motion_dynamics.worker_config.device == "cpu"
     assert cfg.rollout.n_samples_per_prompt == 2
-    assert cfg.rollout.samples_per_chunk == cfg.actor.microbatch_size == 1
+    assert cfg.rollout.samples_per_generation_batch == cfg.actor.microbatch_size == 1
     assert (cfg.sampling.width, cfg.sampling.height, cfg.sampling.num_frames) == (128, 128, 9)
     assert cfg.sampling.num_steps == cfg.rollout.sde.window_range[1] == 4
     assert cfg.trainer.save_freq == cfg.trainer.total_epochs == 1
@@ -1159,7 +1159,7 @@ def test_cli_overrides_reach_typed_trainer_config() -> None:
             "trainer.torch_profiler.enabled=true",
             "trainer.torch_profiler.activities=[cpu]",
             "actor.drop_zero_advantage=false",
-            "rollout.samples_per_chunk=2",
+            "rollout.samples_per_generation_batch=2",
         ],
     )
     built = build_configs(cfg)
@@ -1171,30 +1171,30 @@ def test_cli_overrides_reach_typed_trainer_config() -> None:
     assert trainer.torch_profiler.activities == ("cpu",)
     assert trainer.drop_zero_advantage is False
     assert built.root.rollout is not None
-    assert built.root.rollout.samples_per_chunk == 2
+    assert built.root.rollout.samples_per_generation_batch == 2
 
 
 def test_generation_chunk_auto_does_not_change_fixed_replay_default() -> None:
     """Generation auto remains generation-owned; replay defaults safely to one."""
     cfg = load_config(
         "experiment/sd3_5/online_grpo_ocr",
-        overrides=["rollout.samples_per_chunk=auto"],
+        overrides=["rollout.samples_per_generation_batch=auto"],
     )
     built = build_configs(cfg)
 
     assert built.root.rollout is not None
-    assert built.root.rollout.samples_per_chunk == "auto"
-    assert built.trainer.batch_plan.replay_samples_per_chunk == 1
+    assert built.root.rollout.samples_per_generation_batch == "auto"
+    assert built.trainer.batch_plan.replay_samples_per_batch == 1
 
 
 @pytest.mark.parametrize("value", ["0", "-1", "largest", "true"])
 def test_generation_chunk_rejects_non_positive_or_non_integer_values(value: str) -> None:
     cfg = load_config(
         "experiment/sd3_5/online_grpo_ocr",
-        overrides=[f"rollout.samples_per_chunk={value}"],
+        overrides=[f"rollout.samples_per_generation_batch={value}"],
     )
 
-    with pytest.raises(ValueError, match=r"rollout\.samples_per_chunk"):
+    with pytest.raises(ValueError, match=r"rollout\.samples_per_generation_batch"):
         build_configs(cfg)
 
 

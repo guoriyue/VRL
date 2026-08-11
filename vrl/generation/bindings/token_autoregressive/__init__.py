@@ -1,25 +1,25 @@
 """Concrete token-autoregressive generation binding."""
 
 from vrl.generation.bindings.token_autoregressive.executor import (
-    ARChunkExecutorBase,
-    ARChunkInputs,
-    ARDiscreteChunkExecutorBase,
-    ARDiscreteChunkGatherer,
-    ARDiscreteChunkResult,
+    ARBatchExecutorBase,
+    ARBatchInputs,
+    ARDiscreteBatchExecutorBase,
+    ARDiscreteBatchGatherer,
+    ARDiscreteBatchResult,
 )
 from vrl.generation.bindings.token_autoregressive.layout import (
-    ARChunkResult,
+    ARBatchPayload,
     ARRequestLayout,
     ARSamplingParams,
 )
 
 __all__ = [
-    "ARChunkExecutorBase",
-    "ARChunkInputs",
-    "ARChunkResult",
-    "ARDiscreteChunkExecutorBase",
-    "ARDiscreteChunkGatherer",
-    "ARDiscreteChunkResult",
+    "ARBatchExecutorBase",
+    "ARBatchInputs",
+    "ARBatchPayload",
+    "ARDiscreteBatchExecutorBase",
+    "ARDiscreteBatchGatherer",
+    "ARDiscreteBatchResult",
     "ARRequestLayout",
     "ARSamplingParams",
 ]

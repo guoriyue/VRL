@@ -11,10 +11,10 @@ import ray
 
 from vrl.generation.execution.planner import EnginePlan
 from vrl.generation.execution.types import (
-    ChunkExecutionEnvelope,
-    ChunkExecutionResult,
-    ChunkProduceFence,
-    ChunkSizeProbeResult,
+    BatchProduceFence,
+    BatchSizeProbeResult,
+    GenerationBatchEnvelope,
+    GenerationBatchResult,
     PipelinedRequestOutOfMemory,
     WorkerMemoryParkingSnapshot,
 )
@@ -51,16 +51,16 @@ class RayGenerationWorker:
         )
         self._pipelined_progress_lock = threading.Lock()
         self._pipelined_progress: PipelinedRequestProgress | None = None
-        self._pipelined_completion_fences: deque[ChunkProduceFence] = deque()
+        self._pipelined_completion_fences: deque[BatchProduceFence] = deque()
 
     @ray.method(concurrency_group=HEALTH_CONCURRENCY_GROUP)
     def health(self) -> str:
         """Answer a liveness probe without touching model or GPU state.
 
         Runs in its own concurrency group so it never queues behind
-        ``execute_chunk`` — a queued probe would measure queue depth, not
+        ``execute_batch`` — a queued probe would measure queue depth, not
         liveness. The group is deliberately not a raw ``max_concurrency``
-        bump: that would also let two chunks execute concurrently on one GPU
+        bump: that would also let two batches execute concurrently on one GPU
         worker.
         """
 
@@ -99,17 +99,17 @@ class RayGenerationWorker:
             "gpu_ids": gpu_ids,
         }
 
-    def execute_chunk(self, envelope: ChunkExecutionEnvelope) -> ChunkExecutionResult:
-        return self.core.execute_chunk(envelope)
+    def execute_batch(self, envelope: GenerationBatchEnvelope) -> GenerationBatchResult:
+        return self.core.execute_batch(envelope)
 
-    def probe_chunk_size(
+    def probe_batch_size(
         self,
         request: GenerationRequest,
         *,
         max_samples: int,
-    ) -> ChunkSizeProbeResult:
-        """Startup chunk-size probe; see GenerationWorkerCore.probe_chunk_size."""
-        return self.core.probe_chunk_size(
+    ) -> BatchSizeProbeResult:
+        """Startup batch-size probe; see GenerationWorkerCore.probe_batch_size."""
+        return self.core.probe_batch_size(
             request,
             max_samples=max_samples,
         )
@@ -124,7 +124,7 @@ class RayGenerationWorker:
         path); returns a gathered output or typed OOM retry. See
         GenerationWorkerCore.execute_request_pipelined."""
         request_id = str(request.request_id)
-        total_chunks = len(engine_plan.chunks)
+        total_batches = len(engine_plan.sample_batches)
         with self._pipelined_progress_lock:
             if self._pipelined_progress is not None or self._pipelined_completion_fences:
                 active_request_id = (
@@ -138,29 +138,29 @@ class RayGenerationWorker:
                 )
             self._pipelined_progress = PipelinedRequestProgress(
                 request_id=request_id,
-                completed_chunks=0,
-                total_chunks=total_chunks,
+                completed_batches=0,
+                total_batches=total_batches,
             )
 
-        def record_completion(fence: ChunkProduceFence) -> None:
+        def record_completion(fence: BatchProduceFence) -> None:
             with self._pipelined_progress_lock:
                 current = self._pipelined_progress
                 if current is None or current.request_id != request_id:
                     raise RuntimeError(
                         f"pipelined progress lost active request {request_id!r}",
                     )
-                expected = current.completed_chunks + len(self._pipelined_completion_fences) + 1
-                if fence.completed_chunks != expected:
+                expected = current.completed_batches + len(self._pipelined_completion_fences) + 1
+                if fence.completed_batches != expected:
                     raise RuntimeError(
-                        "pipelined completion fences must register one chunk at a time "
+                        "pipelined completion fences must register one batch at a time "
                         f"(request_id={request_id!r}, previous="
-                        f"{expected - 1}, actual={fence.completed_chunks})",
+                        f"{expected - 1}, actual={fence.completed_batches})",
                     )
-                if fence.completed_chunks > total_chunks:
+                if fence.completed_batches > total_batches:
                     raise RuntimeError(
-                        "pipelined completion fence exceeds request chunk count "
-                        f"(request_id={request_id!r}, total={total_chunks}, "
-                        f"actual={fence.completed_chunks})",
+                        "pipelined completion fence exceeds request batch count "
+                        f"(request_id={request_id!r}, total={total_batches}, "
+                        f"actual={fence.completed_batches})",
                     )
                 self._pipelined_completion_fences.append(fence)
 
@@ -181,7 +181,7 @@ class RayGenerationWorker:
         self,
         request_id: str,
     ) -> PipelinedRequestProgress | None:
-        """Report strict chunk progress without joining the busy default group."""
+        """Report strict batch progress without joining the busy default group."""
 
         with self._pipelined_progress_lock:
             progress = self._pipelined_progress
@@ -194,8 +194,8 @@ class RayGenerationWorker:
                 self._pipelined_completion_fences.popleft()
                 progress = PipelinedRequestProgress(
                     request_id=request_id,
-                    completed_chunks=fence.completed_chunks,
-                    total_chunks=progress.total_chunks,
+                    completed_batches=fence.completed_batches,
+                    total_batches=progress.total_batches,
                 )
                 self._pipelined_progress = progress
             return progress

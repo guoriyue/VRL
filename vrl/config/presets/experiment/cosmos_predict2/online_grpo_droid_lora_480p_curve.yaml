@@ -6,13 +6,13 @@
 # Every knob here is either (a) inherited from the validated overfit recipe's
 # memory floor, or (b) restored to real-curve semantics:
 # - LoRA, NOT full-param: full-param 480p training measured OOM on 32GB at
-#   samples_per_chunk 4/2/1 (2026-07-02 validation runs; matches the LoRA
+#   samples_per_generation_batch 4/2/1 (2026-07-02 validation runs; matches the LoRA
 #   sibling's ~30.2GB trainer-alone peak). Full-param 480p needs multi-GPU FSDP.
 # - num_frames 93 (native; 33f/17f are OOD — 17f was a hidden reward tax in the
 #   Jun-30 flat run: baseline dino 0.42 at 93f vs 0.03-0.08 at 17f).
 # - num_steps 10 with the SDE window [0,10): every step trainable, ~3.5x faster
 #   generation than 35; 10-step output eyeballed coherent (outputs/_overfit_preflight).
-# - memory floor (all three measured on this card): samples_per_chunk 1,
+# - memory floor (all three measured on this card): samples_per_generation_batch 1,
 #   trajectory_storage.device cpu, and explicit CPU DINO/RAFT scoring. These
 #   two local rewards cannot publish a complete GPU-memory release proof.
 # - eval cadence that can actually be judged (the Jun-30 lesson: a run whose
@@ -76,20 +76,20 @@ actor:
   ppo_epochs: 2
   timestep_fraction: 0.5
   # Explicit training floor from the 2026-07-10 93f backward probe. Replay does
-  # not inherit generation's larger chunk because full-checkpointed backward has
+  # not inherit generation's larger batch because full-checkpointed backward has
   # a separate, lower memory ceiling.
-  replay_samples_per_chunk: 1
+  replay_samples_per_batch: 1
 
 
 rollout:
   n_samples_per_prompt: 16            # 16 rollouts/update (per_sample mode requires prompts_per_batch=1)
   prompts_per_batch: 1
   # Generation-side chunking: 1->4 measured 1.40x on this exact model/shape
-  # (2026-06-29 A/B: 139.6->99.5 s/chunk, gen peak 25.3GB fits, old==fresh
+  # (2026-06-29 A/B: 139.6->99.5 s/batch, gen peak 25.3GB fits, old==fresh
   # logprob bit-exact). The old memory-floor=1 applied when this knob also
   # drove the replay backward; that side is now resolved independently via
-  # actor.replay_samples_per_chunk above.
-  samples_per_chunk: 4
+  # actor.replay_samples_per_batch above.
+  samples_per_generation_batch: 4
   trajectory_storage:
     device: cpu                       # 93f trajectories on the GPU wire OOM the collect handoff
 

@@ -1,29 +1,29 @@
-"""Execution boundary for temporal-chunk autoregressive denoise families."""
+"""Execution boundary for temporal-batch autoregressive denoise families."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
 from typing import Any
 
-from vrl.generation.execution.chunks import (
-    SampleChunk,
-    validate_chunk_range,
+from vrl.generation.execution.executor_base import BatchExecutorBase
+from vrl.generation.execution.sample_batches import (
+    GenerationSampleBatch,
+    validate_batch_range,
 )
-from vrl.generation.execution.executor_base import ChunkExecutorBase
-from vrl.generation.protocols import ChunkGatherer
+from vrl.generation.protocols import GenerationBatchGatherer
 from vrl.generation.types import GenerationRequest
 
 
 @dataclass(slots=True)
 class ChunkAutoregressiveDenoiseResult:
-    """Wire payload for one prompt/sample chunk.
+    """Wire payload for one prompt/sample batch.
 
-    The outer ``SampleChunk`` is only a transport batching decision.  The
+    The outer ``GenerationSampleBatch`` is only a transport batching decision.  The
     ``temporal_chunk_count`` and optional ``[B, C, S]`` tensors describe the
     model's actual generation organization inside each sample.
     """
 
-    chunk: SampleChunk
+    batch: GenerationSampleBatch
     output: Any
     temporal_chunk_count: int
     denoise_transition_count: int | None = None
@@ -53,17 +53,17 @@ class ChunkAutoregressiveDenoiseResult:
         present = tuple(value is not None for value in transition_values)
         if any(present) and not all(present):
             raise ValueError(
-                "trainable chunk-denoise results require observations, actions, "
+                "trainable batch-denoise results require observations, actions, "
                 "old_log_prob, mask, and timesteps together",
             )
         if all(present):
             if not self.denoise_transition_count:
                 raise ValueError(
-                    "trainable chunk-denoise results require a positive denoise_transition_count",
+                    "trainable batch-denoise results require a positive denoise_transition_count",
                 )
             if self.finalized_chunk_latents is None:
                 raise ValueError(
-                    "trainable chunk-denoise results require finalized_chunk_latents",
+                    "trainable batch-denoise results require finalized_chunk_latents",
                 )
 
     @property
@@ -73,10 +73,10 @@ class ChunkAutoregressiveDenoiseResult:
         return self.old_log_prob is not None
 
 
-class ChunkAutoregressiveDenoiseExecutorBase(ChunkExecutorBase):
-    """Shared request transport around family-owned chunk generation.
+class ChunkAutoregressiveDenoiseExecutorBase(BatchExecutorBase):
+    """Shared request transport around family-owned batch generation.
 
-    Cache allocation, per-temporal-chunk scheduling, denoise math, and decode
+    Cache allocation, per-temporal-batch scheduling, denoise math, and decode
     stay in the family model's ``generate_chunk_autoregressive`` method.  This
     base only owns prompt/sample batching and the typed gather boundary.
     """
@@ -89,34 +89,34 @@ class ChunkAutoregressiveDenoiseExecutorBase(ChunkExecutorBase):
         self,
         model: Any,
         *,
-        gatherer: ChunkGatherer | None = None,
+        gatherer: GenerationBatchGatherer | None = None,
     ) -> None:
         super().__init__(gatherer=gatherer)
         self.model = model
 
-    def forward_chunk_plan(
+    def forward_batch(
         self,
         request: GenerationRequest,
-        chunk: SampleChunk,
+        batch: GenerationSampleBatch,
     ) -> ChunkAutoregressiveDenoiseResult:
-        validate_chunk_range(
+        validate_batch_range(
             request,
-            prompt_index=chunk.prompt_index,
-            sample_start=chunk.sample_start,
-            sample_count=chunk.sample_count,
+            prompt_index=batch.prompt_index,
+            sample_start=batch.sample_start,
+            sample_count=batch.sample_count,
         )
         result = self.model.generate_chunk_autoregressive(
             request=request,
-            chunk=chunk,
+            batch=batch,
         )
         if not isinstance(result, ChunkAutoregressiveDenoiseResult):
             raise TypeError(
                 "model.generate_chunk_autoregressive must return ChunkAutoregressiveDenoiseResult",
             )
-        if result.chunk != chunk:
+        if result.batch != batch:
             raise ValueError(
                 "model.generate_chunk_autoregressive returned a result for a "
-                "different prompt/sample chunk",
+                "different prompt/sample batch",
             )
         return result
 

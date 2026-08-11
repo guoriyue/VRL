@@ -52,7 +52,7 @@ def diffusion_dpo_loss(
     Tensor layout: each tensor has leading dim ``2*B`` where the first ``B``
     entries are the *winner* (preferred) samples and the last ``B`` are the
     *loser* (dispreferred) samples — matching the reference repo's
-    ``chunk(2)`` convention.
+    ``batch(2)`` convention.
 
     Works for both 4-D (image UNet) and 5-D (video transformer) tensors —
     per-sample MSE reduces over all non-batch dims.

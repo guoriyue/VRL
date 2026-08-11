@@ -136,7 +136,7 @@ class FluxModel(LoraModelMixin, DiffusersPipelineModelBase, DiffusionBackboneRun
         super().__init__(pipeline=pipeline, device=device)
         # decode_latents only receives the packed latent tensor; the executor runs
         # prepare -> denoise -> decode sequentially on this one model instance per
-        # chunk (no concurrency), so prepare_sampling records the spatial shape it
+        # batch (no concurrency), so prepare_sampling records the spatial shape it
         # must unpack to here. Defaults are overwritten on the first prepare call.
         self._decode_height = 1024
         self._decode_width = 1024
@@ -332,7 +332,7 @@ class FluxModel(LoraModelMixin, DiffusersPipelineModelBase, DiffusionBackboneRun
         )
 
         # Record the spatial shape decode_latents must unpack to (safe: same model
-        # instance runs prepare -> denoise -> decode sequentially per chunk).
+        # instance runs prepare -> denoise -> decode sequentially per batch).
         self._decode_height = int(request.height)
         self._decode_width = int(request.width)
 
@@ -579,14 +579,14 @@ class FluxModel(LoraModelMixin, DiffusersPipelineModelBase, DiffusionBackboneRun
         height = self._decode_height
         width = self._decode_width
 
-        def _transform(chunk: torch.Tensor) -> torch.Tensor:
-            unpacked = pipe._unpack_latents(chunk, height, width, vae_scale_factor)
+        def _transform(batch: torch.Tensor) -> torch.Tensor:
+            unpacked = pipe._unpack_latents(batch, height, width, vae_scale_factor)
             return unpacked.to(pipe.vae.dtype) / scaling_factor + shift_factor
 
         decoder = ChunkedLatentDecoder(
             LatentDecodePlan(
                 prepare_latents=_transform,
-                vae_decode=lambda chunk: pipe.vae.decode(chunk, return_dict=False)[0],
+                vae_decode=lambda batch: pipe.vae.decode(batch, return_dict=False)[0],
                 postprocess=lambda image: pipe.image_processor.postprocess(
                     image,
                     output_type="pt",

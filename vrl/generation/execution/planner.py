@@ -1,10 +1,13 @@
-"""Request-level sample chunk planning."""
+"""Request-level sample batch planning."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 
-from vrl.generation.execution.chunks import SampleChunk, build_prompt_chunks
+from vrl.generation.execution.sample_batches import (
+    GenerationSampleBatch,
+    build_prompt_sample_batches,
+)
 from vrl.generation.types import GenerationRequest
 
 
@@ -12,43 +15,43 @@ from vrl.generation.types import GenerationRequest
 class EnginePlan:
     """Public execution-plan envelope shared by direct and Ray runtimes."""
 
-    chunks: tuple[SampleChunk, ...]
+    sample_batches: tuple[GenerationSampleBatch, ...]
 
 
 def build_engine_plan(
     request: GenerationRequest,
     *,
-    max_samples_per_chunk: int | None = None,
+    max_samples_per_batch: int | None = None,
 ) -> EnginePlan:
-    """Build the chunk plan consumed by direct and distributed executors.
+    """Build the batch plan consumed by direct and distributed executors.
 
-    THE single chunk-width resolution: explicit ``max_samples_per_chunk``
-    argument, then the request's ``sampling["samples_per_chunk"]``, then
-    ``samples_per_prompt`` (the whole group in one chunk). Every planner —
+    THE single batch-width resolution: explicit ``max_samples_per_batch``
+    argument, then the request's ``sampling["samples_per_generation_batch"]``, then
+    ``samples_per_prompt`` (the whole group in one batch). Every planner —
     Ray placement and in-process alike — goes through this one fallback.
     """
 
     from vrl.utils.profiling import profile_range
 
-    if max_samples_per_chunk is not None:
-        chunk_size = max(1, int(max_samples_per_chunk))
+    if max_samples_per_batch is not None:
+        batch_size = max(1, int(max_samples_per_batch))
     else:
-        raw = request.sampling.get("samples_per_chunk", request.samples_per_prompt)
+        raw = request.sampling.get("samples_per_generation_batch", request.samples_per_prompt)
         if raw == "auto":
             # Resolved to an int by the Ray runtime's startup probe before a
             # request reaches planning; seeing it here means the request
             # bypassed that runtime (e.g. a local/direct executor).
             raise ValueError(
-                "sampling.samples_per_chunk: auto requires the Ray generation "
-                "runtime (startup chunk-size probe); set an explicit int here",
+                "sampling.samples_per_generation_batch: auto requires the Ray generation "
+                "runtime (startup batch-size probe); set an explicit int here",
             )
-        chunk_size = max(1, int(raw))
+        batch_size = max(1, int(raw))
     with profile_range("engine.plan"):
         return EnginePlan(
-            chunks=build_prompt_chunks(
+            sample_batches=build_prompt_sample_batches(
                 len(request.inputs),
                 samples_per_prompt=request.samples_per_prompt,
-                max_samples_per_chunk=chunk_size,
+                max_samples_per_batch=batch_size,
             ),
         )
 

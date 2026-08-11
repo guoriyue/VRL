@@ -68,9 +68,9 @@ rollout:
   # Each rank draws its own disjoint prompt slice, so per-rank batch stays small
   # while the effective global batch is prompts_per_batch * world_size.
   prompts_per_batch: 1
-  # One chunk per rank: the rank owns a single colocated rollout worker, so
+  # One batch per rank: the rank owns a single colocated rollout worker, so
   # splitting further only adds boundaries without adding parallelism.
-  samples_per_chunk: 2
+  samples_per_generation_batch: 2
 
 trainer:
   output_dir: outputs/wan_1_3b_ocr_fsdp

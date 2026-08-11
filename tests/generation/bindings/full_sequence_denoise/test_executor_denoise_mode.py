@@ -6,16 +6,16 @@ from dataclasses import dataclass
 
 import torch
 
-from vrl.generation.bindings.full_sequence_denoise.executor import DiffusionChunkExecutorBase
-from vrl.generation.protocols import ChunkSizeProbeExecutor
+from vrl.generation.bindings.full_sequence_denoise.executor import DiffusionBatchExecutorBase
+from vrl.generation.protocols import BatchSizeProbeExecutor
 from vrl.generation.steps.denoise.config import DenoiseLoopConfig, DenoiseSDEParams
 
 
 def test_diffusion_executor_base_satisfies_probe_protocol() -> None:
-    """The probe's ``samples_per_chunk: auto`` diffusion-only gate keys off this."""
-    assert issubclass(DiffusionChunkExecutorBase, ChunkSizeProbeExecutor)
-    assert isinstance(_Executor(_Model()), ChunkSizeProbeExecutor)
-    assert not isinstance(object(), ChunkSizeProbeExecutor)
+    """The probe's ``samples_per_generation_batch: auto`` diffusion-only gate keys off this."""
+    assert issubclass(DiffusionBatchExecutorBase, BatchSizeProbeExecutor)
+    assert isinstance(_Executor(_Model()), BatchSizeProbeExecutor)
+    assert not isinstance(object(), BatchSizeProbeExecutor)
 
 
 def test_native_denoise_mode_uses_scheduler_step() -> None:
@@ -50,7 +50,7 @@ def test_native_denoise_mode_uses_scheduler_step() -> None:
     assert result.log_probs.shape == (1, 1)
 
 
-class _Executor(DiffusionChunkExecutorBase):
+class _Executor(DiffusionBatchExecutorBase):
     family = "fake"
     task = "t2i"
 

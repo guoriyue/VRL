@@ -53,7 +53,7 @@ actor:
   ppo_epochs: 2
   timestep_fraction: 0.25
   timestep_selection: strided
-  replay_samples_per_chunk: 1
+  replay_samples_per_batch: 1
   ema:
     enable: false
 
@@ -67,7 +67,7 @@ rollout:
   # after both rewards have returned.
   prompts_per_batch: 2
   n_samples_per_prompt: 4
-  samples_per_chunk: 1
+  samples_per_generation_batch: 1
   noise_level: 0.7
   sde:
     type: cps

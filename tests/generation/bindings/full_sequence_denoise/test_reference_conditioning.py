@@ -5,12 +5,12 @@ from __future__ import annotations
 import pytest
 
 from vrl.generation import GenerationInput, GenerationRequest
-from vrl.generation.bindings.full_sequence_denoise.executor import ReferenceConditionedChunks
-from vrl.generation.execution.chunks import SampleChunk
+from vrl.generation.bindings.full_sequence_denoise.executor import ReferenceConditionedBatches
+from vrl.generation.execution.sample_batches import GenerationSampleBatch
 
 
-def _chunk(prompt_index: int) -> SampleChunk:
-    return SampleChunk(
+def _chunk(prompt_index: int) -> GenerationSampleBatch:
+    return GenerationSampleBatch(
         prompt_index=prompt_index,
         sample_start=0,
         sample_count=1,
@@ -32,7 +32,7 @@ def test_reference_conditioning_selects_the_chunk_prompt_input(monkeypatch) -> N
         ],
         samples_per_prompt=1,
     )
-    executor = ReferenceConditionedChunks()
+    executor = ReferenceConditionedBatches()
 
     assert executor._reference_image_for_chunk(request, _chunk(1)) == "second.png"
 
@@ -47,7 +47,7 @@ def test_reference_conditioning_rejects_missing_prompt_reference() -> None:
     )
 
     with pytest.raises(ValueError, match="requires reference_image for prompt index 0"):
-        ReferenceConditionedChunks()._reference_image_for_chunk(
+        ReferenceConditionedBatches()._reference_image_for_chunk(
             request,
             _chunk(0),
         )

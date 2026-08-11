@@ -6,8 +6,8 @@ from typing import Any
 
 import torch
 
-from vrl.generation.bindings.token_autoregressive import ARChunkInputs, ARDiscreteChunkExecutorBase
-from vrl.generation.execution.chunks import SampleChunk
+from vrl.generation.bindings.token_autoregressive import ARBatchInputs, ARDiscreteBatchExecutorBase
+from vrl.generation.execution.sample_batches import GenerationSampleBatch
 from vrl.generation.types import GenerationRequest
 from vrl.models.families.emu3.model import (
     emu3_forced_token_schedule,
@@ -28,7 +28,7 @@ def emu3_config_from_build(build: ModelBuild) -> dict[str, Any]:
     return config
 
 
-class Emu3ChunkExecutor(ARDiscreteChunkExecutorBase):
+class Emu3BatchExecutor(ARDiscreteBatchExecutorBase):
     """AR executor for Emu3 text-to-image rollouts.
 
     The collector constructs a ``GenerationRequest`` whose ``sampling``
@@ -42,7 +42,7 @@ class Emu3ChunkExecutor(ARDiscreteChunkExecutorBase):
     - ``max_text_length``: int — pad prompts to this length so ``L_text``
       is constant across multi-prompt requests (REQUIRED).
     - ``seed``: int | None — when set, ``torch.manual_seed`` is applied
-      per chunk for parity tests.
+      per batch for parity tests.
 
     Emu3 deliberately does NOT read ``image_token_num``/``image_size`` from
     sampling: the token count is fully determined by the latent grid
@@ -68,11 +68,11 @@ class Emu3ChunkExecutor(ARDiscreteChunkExecutorBase):
 
     # -- protocol ------------------------------------------------------
 
-    def prepare_chunk_inputs(
+    def prepare_batch_inputs(
         self,
         request: GenerationRequest,
-        chunk: SampleChunk,
-    ) -> ARChunkInputs:
+        batch: GenerationSampleBatch,
+    ) -> ARBatchInputs:
         """Encode cond+uncond prompts against the grid-derived token budget."""
 
         sampling = request.sampling
@@ -89,7 +89,7 @@ class Emu3ChunkExecutor(ARDiscreteChunkExecutorBase):
         image_area = sampling.get("image_area")
         ratio = sampling.get("ratio")
 
-        repeated_prompts = [request.inputs[chunk.prompt_index].prompt] * chunk.sample_count
+        repeated_prompts = [request.inputs[batch.prompt_index].prompt] * batch.sample_count
         prompt_ids, prompt_mask, (height, width) = self.model.encode_generation_prompts(
             repeated_prompts,
             max_text_length=max_text_length,
@@ -97,7 +97,7 @@ class Emu3ChunkExecutor(ARDiscreteChunkExecutorBase):
             ratio=ratio,
         )
         uncond_ids, uncond_mask, uncond_grid = self.model.encode_generation_prompts(
-            [""] * chunk.sample_count,
+            [""] * batch.sample_count,
             max_text_length=max_text_length,
             image_area=image_area,
             ratio=ratio,
@@ -118,7 +118,7 @@ class Emu3ChunkExecutor(ARDiscreteChunkExecutorBase):
         cond_embeds = self._embed(prompt_ids)
         uncond_embeds = self._embed(uncond_ids)
 
-        return ARChunkInputs(
+        return ARBatchInputs(
             init_args=(cond_embeds, uncond_embeds, prompt_mask, uncond_mask),
             init_kwargs={
                 "guidance_scale": guidance_scale,
@@ -143,7 +143,7 @@ class Emu3ChunkExecutor(ARDiscreteChunkExecutorBase):
 
     def chunk_token_mask(
         self,
-        inputs: ARChunkInputs,
+        inputs: ARBatchInputs,
         token_ids: torch.Tensor,
         token_log_probs: torch.Tensor,
     ) -> torch.Tensor:
@@ -169,6 +169,6 @@ class Emu3ChunkExecutor(ARDiscreteChunkExecutorBase):
 
 
 __all__ = [
-    "Emu3ChunkExecutor",
+    "Emu3BatchExecutor",
     "emu3_config_from_build",
 ]

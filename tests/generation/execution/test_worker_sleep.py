@@ -88,10 +88,10 @@ class _Executor:
         self.family = family
         self.task = task
 
-    def forward_chunk_plan(self, *args: Any, **kwargs: Any) -> Any:  # pragma: no cover
+    def forward_batch(self, *args: Any, **kwargs: Any) -> Any:  # pragma: no cover
         raise NotImplementedError
 
-    def gather_chunks(self, *args: Any, **kwargs: Any) -> Any:  # pragma: no cover
+    def gather_batches(self, *args: Any, **kwargs: Any) -> Any:  # pragma: no cover
         raise NotImplementedError
 
 
@@ -431,12 +431,12 @@ def test_pipeline_offload_residual_failure_does_not_commit_parked_state(
 
 
 def test_failed_forward_resets_pipeline_offload_before_returning_error() -> None:
-    from vrl.generation.execution.chunks import SampleChunk
-    from vrl.generation.execution.types import ChunkExecutionEnvelope
+    from vrl.generation.execution.sample_batches import GenerationSampleBatch
+    from vrl.generation.execution.types import GenerationBatchEnvelope
     from vrl.generation.types import GenerationRequest
 
     class _FailingExecutor(_Executor):
-        def forward_chunk_plan(self, *_args: Any, **_kwargs: Any) -> Any:
+        def forward_batch(self, *_args: Any, **_kwargs: Any) -> Any:
             raise RuntimeError("forward failed")
 
     model = _PipelineOffloadModel()
@@ -451,28 +451,28 @@ def test_failed_forward_resets_pipeline_offload_before_returning_error() -> None
         samples_per_prompt=1,
         policy_version=1,
     )
-    envelope = ChunkExecutionEnvelope(
+    envelope = GenerationBatchEnvelope(
         request=request,
-        chunk=SampleChunk(
+        batch=GenerationSampleBatch(
             prompt_index=0,
             sample_start=0,
             sample_count=1,
         ),
     )
 
-    result = core.execute_chunk(envelope)
+    result = core.execute_batch(envelope)
 
     assert result.error == "forward failed"
     assert model.reset_calls == 1
 
 
 def test_failed_forward_and_hook_reset_quarantine_without_retry() -> None:
-    from vrl.generation.execution.chunks import SampleChunk
-    from vrl.generation.execution.types import ChunkExecutionEnvelope
+    from vrl.generation.execution.sample_batches import GenerationSampleBatch
+    from vrl.generation.execution.types import GenerationBatchEnvelope
     from vrl.generation.types import GenerationRequest
 
     class _FailingExecutor(_Executor):
-        def forward_chunk_plan(self, *_args: Any, **_kwargs: Any) -> Any:
+        def forward_batch(self, *_args: Any, **_kwargs: Any) -> Any:
             raise RuntimeError("forward failed")
 
     model = _PipelineOffloadModel()
@@ -488,9 +488,9 @@ def test_failed_forward_and_hook_reset_quarantine_without_retry() -> None:
         samples_per_prompt=1,
         policy_version=1,
     )
-    envelope = ChunkExecutionEnvelope(
+    envelope = GenerationBatchEnvelope(
         request=request,
-        chunk=SampleChunk(
+        batch=GenerationSampleBatch(
             prompt_index=0,
             sample_start=0,
             sample_count=1,
@@ -498,16 +498,16 @@ def test_failed_forward_and_hook_reset_quarantine_without_retry() -> None:
     )
 
     with pytest.raises(RuntimeError, match="worker is quarantined"):
-        core.execute_chunk(envelope)
-    with pytest.raises(RuntimeError, match=r"quarantined.*refusing execute_chunk"):
-        core.execute_chunk(envelope)
+        core.execute_batch(envelope)
+    with pytest.raises(RuntimeError, match=r"quarantined.*refusing execute_batch"):
+        core.execute_batch(envelope)
 
     assert model.reset_calls == 1
 
 
 def test_partial_slot_activation_failure_is_not_returned_as_retryable_result() -> None:
-    from vrl.generation.execution.chunks import SampleChunk
-    from vrl.generation.execution.types import ChunkExecutionEnvelope
+    from vrl.generation.execution.sample_batches import GenerationSampleBatch
+    from vrl.generation.execution.types import GenerationBatchEnvelope
     from vrl.generation.types import GenerationRequest
 
     class _BrokenActivationModel(_PipelineOffloadModel):
@@ -536,9 +536,9 @@ def test_partial_slot_activation_failure_is_not_returned_as_retryable_result() -
         samples_per_prompt=1,
         policy_version=1,
     )
-    envelope = ChunkExecutionEnvelope(
+    envelope = GenerationBatchEnvelope(
         request=request,
-        chunk=SampleChunk(
+        batch=GenerationSampleBatch(
             prompt_index=0,
             sample_start=0,
             sample_count=1,
@@ -546,7 +546,7 @@ def test_partial_slot_activation_failure_is_not_returned_as_retryable_result() -
     )
 
     with pytest.raises(RuntimeError, match="worker is quarantined"):
-        core.execute_chunk(envelope)
+        core.execute_batch(envelope)
 
     assert model.reset_calls == 1
 

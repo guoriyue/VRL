@@ -1,11 +1,11 @@
-"""Chunk placement planning for distributed generation.
+"""Batch placement planning for distributed generation.
 
 The fleet-only layer above planner.py: planner builds the runtime-neutral
-chunk list every executor consumes, while this module decides which worker
-runs each chunk — a question that only exists for the Ray runtime
-(vrl/generation/ray), never for the direct in-process path. Chunk memory
+batch list every executor consumes, while this module decides which worker
+runs each batch — a question that only exists for the Ray runtime
+(vrl/generation/ray), never for the direct in-process path. Batch memory
 sizing (probe fit, occupancy snapshots, drift shadow) lives in
-``chunk_memory.py``; placement consumes none of it — the chunk width is
+``batch_memory.py``; placement consumes none of it — the batch width is
 already resolved by the time a request reaches planning.
 """
 
@@ -15,33 +15,33 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import get_args
 
-from vrl.generation.execution.chunks import SampleChunk
 from vrl.generation.execution.planner import EnginePlan, build_engine_plan
+from vrl.generation.execution.sample_batches import GenerationSampleBatch
 from vrl.generation.execution.types import (
-    ChunkExecutionEnvelope,
-    ChunkPlacementStrategy,
+    BatchPlacementStrategy,
+    GenerationBatchEnvelope,
 )
 from vrl.generation.types import GenerationRequest
 
 
 @dataclass(frozen=True, slots=True)
 class DeviceAssignment:
-    """Map one logical chunk to one generation worker.
+    """Map one logical batch to one generation worker.
 
     ``worker_id`` is ``None`` under dynamic placement — binding then happens at
     dispatch time in the actor pool, not at plan time. The envelope is the wire
-    payload and single source of truth for chunk identity.
+    payload and single source of truth for batch identity.
     """
 
     worker_id: str | None
-    envelope: ChunkExecutionEnvelope
+    envelope: GenerationBatchEnvelope
     estimated_cost: float = 0.0
 
     @property
-    def chunk(self) -> SampleChunk:
-        """Return the chunk carried by the authoritative wire envelope."""
+    def batch(self) -> GenerationSampleBatch:
+        """Return the batch carried by the authoritative wire envelope."""
 
-        return self.envelope.chunk
+        return self.envelope.batch
 
 
 @dataclass(frozen=True, slots=True)
@@ -53,21 +53,21 @@ class DistributedGenerationPlan:
 
 
 class DistributedExecutionPlanner:
-    """Plan chunk placement across generation workers.
+    """Plan batch placement across generation workers.
 
-    ``round_robin`` binds at plan time. ``dynamic`` leaves chunks unbound so
-    the dispatch loop can pull the highest-cost pending chunk onto a free worker.
+    ``round_robin`` binds at plan time. ``dynamic`` leaves batches unbound so
+    the dispatch loop can pull the highest-cost pending batch onto a free worker.
     """
 
     def __init__(
         self,
         *,
-        strategy: ChunkPlacementStrategy = "round_robin",
+        strategy: BatchPlacementStrategy = "round_robin",
     ) -> None:
-        allowed = get_args(ChunkPlacementStrategy)
+        allowed = get_args(BatchPlacementStrategy)
         if strategy not in allowed:
             raise ValueError(
-                f"chunk placement strategy must be one of {', '.join(allowed)}; got {strategy!r}",
+                f"batch placement strategy must be one of {', '.join(allowed)}; got {strategy!r}",
             )
         self.strategy = strategy
 
@@ -90,17 +90,17 @@ class DistributedExecutionPlanner:
         )
         cost_per_sample = max(1, int(steps or 1))
         assignments: list[DeviceAssignment] = []
-        for idx, chunk in enumerate(engine_plan.chunks):
+        for idx, batch in enumerate(engine_plan.sample_batches):
             worker_id = worker_ids[idx % len(worker_ids)] if bind_at_plan_time else None
-            envelope = ChunkExecutionEnvelope(
+            envelope = GenerationBatchEnvelope(
                 request=request,
-                chunk=chunk,
+                batch=batch,
             )
             assignments.append(
                 DeviceAssignment(
                     worker_id=worker_id,
                     envelope=envelope,
-                    estimated_cost=float(chunk.sample_count * cost_per_sample),
+                    estimated_cost=float(batch.sample_count * cost_per_sample),
                 ),
             )
         return DistributedGenerationPlan(

@@ -11,11 +11,11 @@ from omegaconf import OmegaConf
 from vrl.config.precision import RolePrecision, resolve_precision_policy
 from vrl.config.schema import parse_config
 from vrl.generation import GenerationRequest
-from vrl.generation.execution.chunks import SampleChunk
+from vrl.generation.execution.sample_batches import GenerationSampleBatch
 from vrl.models.families.emu3.config import Emu3Config
 from vrl.models.families.emu3.model import Emu3Config as ModelEmu3Config
 from vrl.models.families.emu3.runner import Emu3TokenRunner
-from vrl.models.families.emu3.runtime import Emu3ChunkExecutor, emu3_config_from_build
+from vrl.models.families.emu3.runtime import Emu3BatchExecutor, emu3_config_from_build
 from vrl.models.families.registry import get_model_family_entry
 
 
@@ -109,7 +109,7 @@ def test_resolve_model_build_carries_sampling_and_lora_overrides() -> None:
 
 
 def test_executor_declares_identity_and_runner() -> None:
-    executor = Emu3ChunkExecutor(model=object())
+    executor = Emu3BatchExecutor(model=object())
 
     assert executor.family == "emu3"
     assert executor.task == "ar_t2i"
@@ -156,7 +156,7 @@ def test_chunk_sampling_uses_request_overrides_then_model_defaults(
         return ids, mask, (2, 3)
 
     model.encode_generation_prompts = encode_generation_prompts
-    executor = Emu3ChunkExecutor(model)
+    executor = Emu3BatchExecutor(model)
     monkeypatch.setattr(executor, "_embed", lambda token_ids: token_ids.unsqueeze(-1).float())
     request = GenerationRequest(
         request_id="req",
@@ -172,9 +172,9 @@ def test_chunk_sampling_uses_request_overrides_then_model_defaults(
         },
     )
 
-    prepared = executor.prepare_chunk_inputs(
+    prepared = executor.prepare_batch_inputs(
         request,
-        SampleChunk(
+        GenerationSampleBatch(
             prompt_index=0,
             sample_start=0,
             sample_count=1,

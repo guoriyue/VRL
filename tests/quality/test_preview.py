@@ -31,7 +31,7 @@ def test_preview_request_uses_real_prompt_overrides_and_one_sample(
         config=RolloutCollectorConfig.from_cfg(
             OmegaConf.create(
                 {
-                    "rollout": {"samples_per_chunk": configured_chunk_size},
+                    "rollout": {"samples_per_generation_batch": configured_chunk_size},
                     "sampling": {"num_steps": 10, "guidance_scale": 4.5},
                 },
             ),
@@ -52,7 +52,7 @@ def test_preview_request_uses_real_prompt_overrides_and_one_sample(
         "guidance_scale": 4.5,
         "negative_prompt": "text",
         "num_steps": 10,
-        "samples_per_chunk": expected_chunk_size,
+        "samples_per_generation_batch": expected_chunk_size,
         "seed": 101,
     }
     assert not hasattr(request.inputs[0], "metadata")

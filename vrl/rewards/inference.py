@@ -9,7 +9,7 @@ so these dataclasses are the single schema source. It stays importable without
 torch or aiohttp (torch loads lazily inside ``as_media``) because the wire
 module, the artifact store, and the standalone service's launch parsing all
 need it. ``MemoryParkingScorer`` is an isinstance-probed optional capability,
-the reward twin of ``ChunkSizeProbeExecutor``.
+the reward twin of ``BatchSizeProbeExecutor``.
 """
 
 from __future__ import annotations

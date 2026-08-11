@@ -19,14 +19,14 @@ actor:
   optim:
     lr: 3.0e-4
   gradient_accumulation_steps: 4
-  # Symmetric 8/8 chunk shape keeps rollout and replay on the same batched-CFG
+  # Symmetric 8/8 batch shape keeps rollout and replay on the same batched-CFG
   # execution shape before the first optimizer step.
-  replay_samples_per_chunk: 8
+  replay_samples_per_batch: 8
 
 rollout:
   n_samples_per_prompt: 16
   prompts_per_batch: 8
-  samples_per_chunk: 8
+  samples_per_generation_batch: 8
 
 trainer:
   output_dir: outputs/sana_pickscore_grpo

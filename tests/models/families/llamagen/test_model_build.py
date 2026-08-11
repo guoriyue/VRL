@@ -12,7 +12,7 @@ from vrl.config.loading import load_config
 from vrl.config.precision import resolve_precision_policy
 from vrl.config.schema import parse_config
 from vrl.generation import GenerationRequest
-from vrl.generation.execution.chunks import SampleChunk
+from vrl.generation.execution.sample_batches import GenerationSampleBatch
 from vrl.models.families.llamagen.config import (
     LLAMAGEN_CAPTION_DIM,
     LLAMAGEN_CAPTION_TOKEN_NUM,
@@ -32,7 +32,7 @@ from vrl.models.families.llamagen.model import (
     LlamaGenModel,
 )
 from vrl.models.families.llamagen.runtime import (
-    LlamaGenChunkExecutor,
+    LlamaGenBatchExecutor,
     llamagen_config_from_build,
 )
 from vrl.models.families.registry import get_model_family_entry
@@ -243,7 +243,7 @@ def test_llamagen_collector_request_derives_omitted_topology_from_model() -> Non
         "image_size",
         "max_text_length",
     }.isdisjoint(request.sampling)
-    params = LlamaGenChunkExecutor(
+    params = LlamaGenBatchExecutor(
         model=_executor_model(),
     ).layout.parse_sampling_params(request)
     assert (
@@ -401,7 +401,7 @@ def test_executor_layout_defaults_match_xl_stage1_256() -> None:
         samples_per_prompt=1,
         sampling={},
     )
-    params = LlamaGenChunkExecutor(model=_executor_model()).layout.parse_sampling_params(request)
+    params = LlamaGenBatchExecutor(model=_executor_model()).layout.parse_sampling_params(request)
     assert params.image_token_num == 256
     assert params.image_size == 256
     assert params.max_text_length == 120
@@ -418,7 +418,7 @@ def test_executor_rejects_shared_attention_backend_selection() -> None:
         sampling={"attention_backend": "vllm_paged"},
     )
     with pytest.raises(ValueError, match="attention_backend"):
-        LlamaGenChunkExecutor(model=_executor_model())._ar_runner(request)
+        LlamaGenBatchExecutor(model=_executor_model())._ar_runner(request)
 
 
 @pytest.mark.parametrize(
@@ -438,7 +438,7 @@ def test_executor_allows_scheduler_bounds_covering_full_static_kv_chunk(
         sampling={"ar_scheduler_batch_size": batch_size},
     )
 
-    resolved = LlamaGenChunkExecutor(model=_executor_model()).resolve_scheduler_batch_size(
+    resolved = LlamaGenBatchExecutor(model=_executor_model()).resolve_scheduler_batch_size(
         request,
         row_count=2,
     )
@@ -449,15 +449,15 @@ def test_executor_allows_scheduler_bounds_covering_full_static_kv_chunk(
 def test_executor_rejects_partial_scheduler_before_static_kv_preparation(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    executor = LlamaGenChunkExecutor(model=_executor_model())
+    executor = LlamaGenBatchExecutor(model=_executor_model())
     prepare_calls = 0
 
-    def prepare_chunk_inputs(*_args, **_kwargs):
+    def prepare_batch_inputs(*_args, **_kwargs):
         nonlocal prepare_calls
         prepare_calls += 1
         raise AssertionError("preparation must not run")
 
-    monkeypatch.setattr(executor, "prepare_chunk_inputs", prepare_chunk_inputs)
+    monkeypatch.setattr(executor, "prepare_batch_inputs", prepare_batch_inputs)
     request = GenerationRequest(
         request_id="req",
         family="llamagen",
@@ -466,14 +466,14 @@ def test_executor_rejects_partial_scheduler_before_static_kv_preparation(
         samples_per_prompt=2,
         sampling={"ar_scheduler_batch_size": 1},
     )
-    chunk = SampleChunk(
+    batch = GenerationSampleBatch(
         prompt_index=0,
         sample_start=0,
         sample_count=2,
     )
 
-    with pytest.raises(ValueError, match="null or >= chunk sample count"):
-        executor.forward_chunk_plan(request, chunk)
+    with pytest.raises(ValueError, match="null or >= batch sample count"):
+        executor.forward_batch(request, batch)
 
     assert prepare_calls == 0
 
@@ -509,7 +509,7 @@ def test_chunk_sampling_uses_request_overrides_then_model_defaults(
         ),
         uncond_caption_embeds=lambda count: torch.zeros(count, 2, 1),
     )
-    executor = LlamaGenChunkExecutor(model)
+    executor = LlamaGenBatchExecutor(model)
     monkeypatch.setattr(
         executor,
         "_tokenize_prompts",
@@ -531,9 +531,9 @@ def test_chunk_sampling_uses_request_overrides_then_model_defaults(
         },
     )
 
-    prepared = executor.prepare_chunk_inputs(
+    prepared = executor.prepare_batch_inputs(
         request,
-        SampleChunk(
+        GenerationSampleBatch(
             prompt_index=0,
             sample_start=0,
             sample_count=1,
@@ -549,7 +549,7 @@ def test_chunk_sampling_uses_request_overrides_then_model_defaults(
 
 
 def test_executor_rejects_request_grid_different_from_model_topology() -> None:
-    executor = LlamaGenChunkExecutor(model=_executor_model(image_token_num=16))
+    executor = LlamaGenBatchExecutor(model=_executor_model(image_token_num=16))
     request = GenerationRequest(
         request_id="req",
         family="llamagen",
@@ -567,9 +567,9 @@ def test_executor_rejects_request_grid_different_from_model_topology() -> None:
         ValueError,
         match=r"image_token_num == model\.image_token_num \(16\); got 4",
     ):
-        executor.prepare_chunk_inputs(
+        executor.prepare_batch_inputs(
             request,
-            SampleChunk(
+            GenerationSampleBatch(
                 prompt_index=0,
                 sample_start=0,
                 sample_count=1,
@@ -578,7 +578,7 @@ def test_executor_rejects_request_grid_different_from_model_topology() -> None:
 
 
 def test_executor_rejects_decode_size_different_from_model_topology() -> None:
-    executor = LlamaGenChunkExecutor(model=_executor_model(image_token_num=16))
+    executor = LlamaGenBatchExecutor(model=_executor_model(image_token_num=16))
     request = GenerationRequest(
         request_id="req",
         family="llamagen",
@@ -596,9 +596,9 @@ def test_executor_rejects_decode_size_different_from_model_topology() -> None:
         ValueError,
         match=r"image_size=64.*model\.image_token_num=16.*got 32",
     ):
-        executor.prepare_chunk_inputs(
+        executor.prepare_batch_inputs(
             request,
-            SampleChunk(
+            GenerationSampleBatch(
                 prompt_index=0,
                 sample_start=0,
                 sample_count=1,
@@ -607,7 +607,7 @@ def test_executor_rejects_decode_size_different_from_model_topology() -> None:
 
 
 def test_executor_rejects_caption_length_different_from_model_topology() -> None:
-    executor = LlamaGenChunkExecutor(model=_executor_model(image_token_num=16))
+    executor = LlamaGenBatchExecutor(model=_executor_model(image_token_num=16))
     request = GenerationRequest(
         request_id="req",
         family="llamagen",
@@ -625,9 +625,9 @@ def test_executor_rejects_caption_length_different_from_model_topology() -> None
         ValueError,
         match=r"max_text_length == cls_token_num \(120\); got 80",
     ):
-        executor.prepare_chunk_inputs(
+        executor.prepare_batch_inputs(
             request,
-            SampleChunk(
+            GenerationSampleBatch(
                 prompt_index=0,
                 sample_start=0,
                 sample_count=1,

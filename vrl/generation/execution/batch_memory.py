@@ -1,15 +1,15 @@
-"""Chunk memory sizing: measure, model, and monitor per-chunk CUDA peaks.
+"""Batch memory sizing: measure, model, and monitor per-batch CUDA peaks.
 
-One topic across three moments of a chunk's life, split out of
-``chunk_placement`` because sizing and placement only ever shared consumers,
+One topic across three moments of a batch's life, split out of
+``batch_placement`` because sizing and placement only ever shared consumers,
 never meaning: ``cuda_occupancy_snapshot`` captures the pre-loop half of a
-``ChunkMemoryReading`` at chunk start (called by the regime-neutral denoise
-loop), ``AffinePeakFit`` turns two probe trials into the startup chunk-width
-proposal (the worker's ``samples_per_chunk: auto`` probe), and
-``build_chunk_memory_shadow`` flattens executed-chunk readings into the
+``BatchMemoryReading`` at batch start (called by the regime-neutral denoise
+loop), ``AffinePeakFit`` turns two probe trials into the startup batch-width
+proposal (the worker's ``samples_per_generation_batch: auto`` probe), and
+``build_batch_memory_shadow`` flattens executed-batch readings into the
 drift-calibration rows driver telemetry checks against the probe's verdict.
 The reading dataclass itself stays in ``types.py`` — it rides the Ray wire
-inside chunk results; this module owns producing and interpreting it.
+inside batch results; this module owns producing and interpreting it.
 """
 
 from __future__ import annotations
@@ -19,15 +19,15 @@ from dataclasses import dataclass, fields
 from typing import Any
 
 from vrl.generation.execution.types import (
-    ChunkExecutionResult,
-    ChunkMemoryReading,
+    BatchMemoryReading,
+    GenerationBatchResult,
 )
 
 
 def cuda_occupancy_snapshot() -> dict[str, int] | None:
-    """Device occupancy at chunk start, or None off CUDA.
+    """Device occupancy at batch start, or None off CUDA.
 
-    This is the half of a :class:`ChunkMemoryReading` that can only be measured
+    This is the half of a :class:`BatchMemoryReading` that can only be measured
     before the denoise loop starts; the executor completes the record with the
     two per-phase peaks and the sample count, and ``from_metrics``
     reassembles it. It lives beside the fit/shadow consumers rather than in the
@@ -51,17 +51,17 @@ def cuda_occupancy_snapshot() -> dict[str, int] | None:
         }
     except Exception:
         return None
-    unknown = snapshot.keys() - {f.name for f in fields(ChunkMemoryReading)}
+    unknown = snapshot.keys() - {f.name for f in fields(BatchMemoryReading)}
     if unknown:
         raise ValueError(
-            f"chunk occupancy keys are not ChunkMemoryReading fields: {sorted(unknown)}",
+            f"batch occupancy keys are not BatchMemoryReading fields: {sorted(unknown)}",
         )
     return snapshot
 
 
 @dataclass(frozen=True, slots=True)
 class AffinePeakFit:
-    """Two-point affine fit of chunk peak bytes: peak(n) = intercept + n * slope.
+    """Two-point affine fit of batch peak bytes: peak(n) = intercept + n * slope.
 
     Memory DEMAND is affine in sample count (latents, activations, trajectory
     buffers all scale per sample); what is NOT affine is the allocator layer
@@ -108,27 +108,27 @@ class AffinePeakFit:
 _FLAT_FIT_UNBOUNDED = 1 << 20
 
 
-def build_chunk_memory_shadow(
-    chunk_results: Sequence[ChunkExecutionResult],
+def build_batch_memory_shadow(
+    batch_results: Sequence[GenerationBatchResult],
 ) -> list[dict[str, Any]]:
-    """Raw per-chunk memory readings for drift monitoring (no estimation).
+    """Raw per-batch memory readings for drift monitoring (no estimation).
 
-    One row per executed chunk that carried a typed memory reading; rows
-    without one (AR chunks, CPU runs) are skipped, and no reading at all ->
+    One row per executed batch that carried a typed memory reading; rows
+    without one (AR batches, CPU runs) are skipped, and no reading at all ->
     empty list so callers emit nothing. These rows are the calibration record
-    the startup chunk-size probe is checked against: a steady-state peak that
+    the startup batch-size probe is checked against: a steady-state peak that
     drifts far from the probe's accepted trial means the probe verdict is
     stale (e.g. the colocated trainer's phase footprint changed).
     """
 
     rows: list[dict[str, Any]] = []
-    for result in chunk_results:
+    for result in batch_results:
         reading = result.memory
         if reading is None:
             continue
         rows.append(
             {
-                "chunk_key": result.chunk.chunk_key,
+                "batch_key": result.batch.batch_key,
                 "sample_count": reading.sample_count,
                 "peak_bytes": reading.peak_bytes,
                 "baseline_allocated_bytes": reading.baseline_allocated_bytes,
@@ -143,6 +143,6 @@ def build_chunk_memory_shadow(
 
 __all__ = [
     "AffinePeakFit",
-    "build_chunk_memory_shadow",
+    "build_batch_memory_shadow",
     "cuda_occupancy_snapshot",
 ]

@@ -9,9 +9,12 @@ from typing import Any
 import torch
 
 from vrl.generation.bindings.token_autoregressive.layout import ARRequestLayout, right_pad
-from vrl.generation.execution.chunks import SampleChunk, require_matching_chunk_context
-from vrl.generation.execution.executor_base import ChunkExecutorBase
-from vrl.generation.protocols import ChunkGatherer
+from vrl.generation.execution.executor_base import BatchExecutorBase
+from vrl.generation.execution.sample_batches import (
+    GenerationSampleBatch,
+    require_matching_batch_context,
+)
+from vrl.generation.protocols import GenerationBatchGatherer
 from vrl.generation.types import (
     GenerationOutput,
     GenerationRequest,
@@ -20,15 +23,15 @@ from vrl.generation.types import (
 from vrl.utils.cuda_memory import cuda_peak_allocated_mb
 
 
-class ARChunkExecutorBase(ChunkExecutorBase):
+class ARBatchExecutorBase(BatchExecutorBase):
     """Base helpers for AR family executors.
 
     Owns the request-level plumbing (the inherited ``forward_plan``),
-    mirroring ``DiffusionChunkExecutorBase``: the full-request path IS the
-    production chunk path plus the family gatherer, so there is a single
+    mirroring ``DiffusionBatchExecutorBase``: the full-request path IS the
+    production batch path plus the family gatherer, so there is a single
     trajectory/metrics assembly line. Subclasses still own
     tokenization details, sampling math, decoding, and family-specific output
-    packing (``forward_chunk_plan`` + their registered chunk gatherer).
+    packing (``forward_batch`` + their registered batch gatherer).
     """
 
     family: str
@@ -53,7 +56,7 @@ class ARChunkExecutorBase(ChunkExecutorBase):
         self,
         model: Any,
         *,
-        gatherer: ChunkGatherer | None = None,
+        gatherer: GenerationBatchGatherer | None = None,
     ) -> None:
         super().__init__(gatherer=gatherer)
         self.model = model
@@ -81,7 +84,7 @@ class ARChunkExecutorBase(ChunkExecutorBase):
         del row_count
         return self.layout.resolve_scheduler_batch_size(request)
 
-    # -- request-level plumbing (shared; families own the chunk step) ----
+    # -- request-level plumbing (shared; families own the batch step) ----
 
     def _ar_runner(self, request: GenerationRequest) -> Any:
         """Build the family AR runner with the attention backend wired."""
@@ -156,11 +159,11 @@ class ARChunkExecutorBase(ChunkExecutorBase):
 
 
 @dataclass(slots=True)
-class ARChunkInputs:
-    """Family-prepared inputs for one discrete AR sample chunk.
+class ARBatchInputs:
+    """Family-prepared inputs for one discrete AR sample batch.
 
-    ``prepare_chunk_inputs`` (the one required hook of
-    ``ARDiscreteChunkExecutorBase``) returns this: everything the shared chunk
+    ``prepare_batch_inputs`` (the one required hook of
+    ``ARDiscreteBatchExecutorBase``) returns this: everything the shared batch
     skeleton needs that only the family knows — parsed sampling knobs baked
     into decode-loop wiring, encoded prompt tensors, and the trajectory/replay
     context.
@@ -181,12 +184,12 @@ class ARChunkInputs:
 
 
 @dataclass(slots=True)
-class ARDiscreteChunkResult:
-    """Output of one prompt/sample discrete AR chunk (shared by all discrete
+class ARDiscreteBatchResult:
+    """Output of one prompt/sample discrete AR batch (shared by all discrete
     families — the field set janus_pro/emu3/glm_image/llamagen previously
     declared verbatim per family)."""
 
-    chunk: SampleChunk
+    batch: GenerationSampleBatch
     output: torch.Tensor
     token_ids: torch.Tensor
     token_log_probs: torch.Tensor
@@ -196,36 +199,36 @@ class ARDiscreteChunkResult:
     uncond_input_ids: torch.Tensor
     uncond_attention_mask: torch.Tensor
     context: dict[str, Any]
-    # Display/provenance-only: emitted through per-chunk runtime debug metrics.
+    # Display/provenance-only: emitted through per-batch runtime debug metrics.
     peak_memory_mb: float | None = None
 
 
-class ARDiscreteChunkExecutorBase(ARChunkExecutorBase):
-    """Chunk-step template for discrete-token AR families.
+class ARDiscreteBatchExecutorBase(ARBatchExecutorBase):
+    """Batch-step template for discrete-token AR families.
 
     Owns the skeleton every discrete family previously copied verbatim
     (validate -> seed -> prefill -> ``TokenAutoregressiveLoop`` -> VQ decode -> token
-    mask -> chunk result). Families implement ``prepare_chunk_inputs`` — the
+    mask -> batch result). Families implement ``prepare_batch_inputs`` — the
     readable straight-line part: knob parsing, prompt encoding, decode-loop
     wiring — and may override ``chunk_token_mask`` (emu3 masks its forced
     structural positions).
 
-    Families whose chunk step has a different shape stay off this template on
-    the plain ``ARChunkExecutorBase``: nextstep_1 (continuous tokens, 3-tuple
+    Families whose batch step has a different shape stay off this template on
+    the plain ``ARBatchExecutorBase``: nextstep_1 (continuous tokens, 3-tuple
     finalized decode payload) and janus_pro_r1 (inverted control flow through
     ``model.generate_with_refine``).
     """
 
-    def prepare_chunk_inputs(
+    def prepare_batch_inputs(
         self,
         request: GenerationRequest,
-        chunk: SampleChunk,
-    ) -> ARChunkInputs:
+        batch: GenerationSampleBatch,
+    ) -> ARBatchInputs:
         raise NotImplementedError
 
     def chunk_token_mask(
         self,
-        inputs: ARChunkInputs,
+        inputs: ARBatchInputs,
         token_ids: torch.Tensor,
         token_log_probs: torch.Tensor,
     ) -> torch.Tensor:
@@ -234,12 +237,12 @@ class ARDiscreteChunkExecutorBase(ARChunkExecutorBase):
         del inputs, token_ids
         return torch.ones_like(token_log_probs)
 
-    def forward_chunk_plan(
+    def forward_batch(
         self,
         request: GenerationRequest,
-        chunk: SampleChunk,
-    ) -> ARDiscreteChunkResult:
-        """Run one prompt-major AR chunk through the black-box sampling path."""
+        batch: GenerationSampleBatch,
+    ) -> ARDiscreteBatchResult:
+        """Run one prompt-major AR batch through the black-box sampling path."""
 
         from vrl.generation.composition.token_autoregressive.token_loop import (
             TokenAutoregressiveLoop,
@@ -247,18 +250,18 @@ class ARDiscreteChunkExecutorBase(ARChunkExecutorBase):
         from vrl.utils.profiling import profile_range
 
         self.require_native_ar_engine(request)
-        self.layout.validate_chunk(request, chunk)
+        self.layout.validate_chunk(request, batch)
         scheduler_batch_size = self.resolve_scheduler_batch_size(
             request,
-            row_count=chunk.sample_count,
+            row_count=batch.sample_count,
         )
 
         seed = request.sampling.get("seed")
         if seed is not None:
-            torch.manual_seed(int(seed) + self.layout.chunk_seed_offset(request, chunk))
+            torch.manual_seed(int(seed) + self.layout.chunk_seed_offset(request, batch))
 
         with profile_range("engine.prefill"):
-            inputs = self.prepare_chunk_inputs(request, chunk)
+            inputs = self.prepare_batch_inputs(request, batch)
 
         with (
             profile_range("engine.decode_step"),
@@ -278,8 +281,8 @@ class ARDiscreteChunkExecutorBase(ARChunkExecutorBase):
             )
         token_mask = self.chunk_token_mask(inputs, token_ids, token_log_probs)
 
-        return ARDiscreteChunkResult(
-            chunk=chunk,
+        return ARDiscreteBatchResult(
+            batch=batch,
             output=images,
             token_ids=token_ids,
             token_log_probs=token_log_probs,
@@ -293,21 +296,21 @@ class ARDiscreteChunkExecutorBase(ARChunkExecutorBase):
         )
 
 
-class ARDiscreteChunkGatherer:
-    """Pure driver-side gatherer for discrete AR chunk payloads.
+class ARDiscreteBatchGatherer:
+    """Pure driver-side gatherer for discrete AR batch payloads.
 
-    One class for every discrete family (mirroring ``DiffusionChunkGatherer``
+    One class for every discrete family (mirroring ``DiffusionBatchGatherer``
     on the diffusion side): the payload is the shared
-    ``ARDiscreteChunkResult``, so nothing here is family-specific.
+    ``ARDiscreteBatchResult``, so nothing here is family-specific.
     """
 
-    def gather_chunks(
+    def gather_batches(
         self,
         request: GenerationRequest,
         sample_rows: Sequence[GenerationSampleRow],
-        chunks: Sequence[ARDiscreteChunkResult],
+        batches: Sequence[ARDiscreteBatchResult],
     ) -> GenerationOutput:
-        """Pack prompt/sample AR chunks back into the canonical GenerationOutput."""
+        """Pack prompt/sample AR batches back into the canonical GenerationOutput."""
 
         from vrl.trajectory import build_ar_discrete_trajectory
 
@@ -322,15 +325,15 @@ class ARDiscreteChunkGatherer:
             "uncond_input_ids",
             "uncond_attention_mask",
         )
-        ordered_ar_chunks = layout.ordered_chunks(
+        ordered_ar_chunks = layout.ordered_batches(
             request,
             sample_rows,
-            chunks,
+            batches,
             row_fields=fields,
         )
-        cat = layout.cat_chunk_fields(ordered_ar_chunks, fields)
-        chunk_context = require_matching_chunk_context(
-            [chunk.context for chunk in ordered_ar_chunks],
+        cat = layout.cat_batch_fields(ordered_ar_chunks, fields)
+        batch_context = require_matching_batch_context(
+            [batch.context for batch in ordered_ar_chunks],
         )
         trajectory = build_ar_discrete_trajectory(
             request=request,
@@ -342,7 +345,7 @@ class ARDiscreteChunkGatherer:
             prompt_attention_mask=cat["prompt_attention_mask"],
             uncond_input_ids=cat["uncond_input_ids"],
             uncond_attention_mask=cat["uncond_attention_mask"],
-            context=chunk_context,
+            context=batch_context,
         )
 
         return GenerationOutput(
@@ -352,9 +355,9 @@ class ARDiscreteChunkGatherer:
 
 
 __all__ = [
-    "ARChunkExecutorBase",
-    "ARChunkInputs",
-    "ARDiscreteChunkExecutorBase",
-    "ARDiscreteChunkGatherer",
-    "ARDiscreteChunkResult",
+    "ARBatchExecutorBase",
+    "ARBatchInputs",
+    "ARDiscreteBatchExecutorBase",
+    "ARDiscreteBatchGatherer",
+    "ARDiscreteBatchResult",
 ]

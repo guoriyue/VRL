@@ -11,11 +11,6 @@ import pytest
 
 import vrl.generation.ray.session as session_module
 from vrl.generation.ray.health_monitor import RolloutWorkerUnreachable
-from vrl.utils.lifecycle import (
-    RuntimeLifecycle,
-    RuntimeLifecycleError,
-    RuntimePhase,
-)
 from vrl.generation.ray.pipeline_protocol import PipelinedProgressError
 from vrl.generation.ray.runtime import RayGenerationRuntime
 from vrl.generation.ray.session import RayGenerationSession
@@ -23,6 +18,11 @@ from vrl.ray.actor_group import RayActorHandle
 from vrl.ray.actor_pool import RayActorCallError
 from vrl.ray.operation_deadline import RayOperationCancelled, RayOperationTimeout
 from vrl.runtime_errors import failure_identity_cause
+from vrl.utils.lifecycle import (
+    RuntimeLifecycle,
+    RuntimeLifecycleError,
+    RuntimePhase,
+)
 
 
 def _runtime(
@@ -339,7 +339,7 @@ async def test_existing_failure_survives_successful_cleanup() -> None:
 
 @pytest.mark.asyncio
 async def test_generation_timeout_force_kills_without_release_rpc(monkeypatch) -> None:
-    timeout = RayOperationTimeout("rollout.generation.chunk", 1.0)
+    timeout = RayOperationTimeout("rollout.generation.batch", 1.0)
 
     class _Executor:
         async def execute(self, _request) -> None:
@@ -386,7 +386,7 @@ async def test_submitted_generation_cancellation_force_kills_and_stays_cancelled
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     terminal = RayOperationCancelled(
-        "rollout.generation.chunk",
+        "rollout.generation.batch",
         context="submitted_refs=1",
     )
     cancellation = asyncio.CancelledError()
@@ -455,7 +455,7 @@ async def test_pre_submission_generation_cancellation_keeps_runtime_running() ->
 
 @pytest.mark.asyncio
 async def test_timeout_preserves_root_when_force_cleanup_also_fails() -> None:
-    timeout = RayOperationTimeout("rollout.generation.chunk", 1.0)
+    timeout = RayOperationTimeout("rollout.generation.batch", 1.0)
     cleanup_error = RuntimeError("actor kill failed")
 
     class _Executor:
@@ -502,7 +502,7 @@ async def test_active_health_failure_escapes_as_the_first_failure_identity() -> 
     probe_timeout = TimeoutError("health probe timed out")
     health_failure = RolloutWorkerUnreachable("wedged", 0.5, probe_timeout)
     actor_error = RayActorCallError(
-        "rollout.generation.chunk",
+        "rollout.generation.batch",
         worker_id="healthy-killed-with-fleet",
         job_index=0,
     )
@@ -534,7 +534,7 @@ async def test_active_health_failure_wins_over_a_later_ordinary_error() -> None:
         0.5,
         TimeoutError("health probe timed out"),
     )
-    later_error = RuntimeError("chunk correlation failed after fleet kill")
+    later_error = RuntimeError("batch correlation failed after fleet kill")
     runtime: RayGenerationRuntime
 
     class _Executor:
@@ -561,7 +561,7 @@ async def test_active_health_failure_keeps_cancelled_surface_with_first_cause() 
         TimeoutError("health probe timed out"),
     )
     cancellation = asyncio.CancelledError()
-    cancellation.__cause__ = RayOperationCancelled("rollout.generation.chunk")
+    cancellation.__cause__ = RayOperationCancelled("rollout.generation.batch")
     runtime: RayGenerationRuntime
 
     class _Executor:
@@ -688,7 +688,7 @@ async def test_later_timeout_upgrades_ordinary_failure_to_force_cleanup(monkeypa
     )
     ordinary = RuntimeError("health failed first")
     runtime.lifecycle.fail(ordinary)
-    timeout = RayOperationTimeout("rollout.generation.chunk", 1.0)
+    timeout = RayOperationTimeout("rollout.generation.batch", 1.0)
     monkeypatch.setattr(session_module, "require_ray", lambda: _Ray)
 
     await runtime._terminalize_after_failure(timeout)
@@ -741,7 +741,7 @@ async def test_timeout_interrupts_an_already_waiting_release_barrier(monkeypatch
     graceful_shutdown = asyncio.create_task(runtime.shutdown())
     assert await asyncio.to_thread(release_entered.wait, 1.0)
 
-    timeout = RayOperationTimeout("rollout.generation.chunk", 1.0)
+    timeout = RayOperationTimeout("rollout.generation.batch", 1.0)
     try:
         await asyncio.wait_for(
             runtime._terminalize_after_failure(timeout),
@@ -764,7 +764,7 @@ async def test_timeout_interrupts_an_already_waiting_release_barrier(monkeypatch
 
 @pytest.mark.asyncio
 async def test_timeout_prevents_sibling_generation_from_returning_output() -> None:
-    timeout = RayOperationTimeout("rollout.generation.chunk", 1.0)
+    timeout = RayOperationTimeout("rollout.generation.batch", 1.0)
     timeout_entered = asyncio.Event()
     sibling_entered = asyncio.Event()
     fail_timeout = asyncio.Event()

@@ -6,8 +6,8 @@ from typing import Any
 
 import torch
 
-from vrl.generation.bindings.token_autoregressive import ARChunkInputs, ARDiscreteChunkExecutorBase
-from vrl.generation.execution.chunks import SampleChunk
+from vrl.generation.bindings.token_autoregressive import ARBatchInputs, ARDiscreteBatchExecutorBase
+from vrl.generation.execution.sample_batches import GenerationSampleBatch
 from vrl.generation.types import GenerationRequest
 from vrl.models.families.glm_image.runner import GlmImageTokenRunner
 from vrl.models.interfaces.runtime import ModelBuild
@@ -32,7 +32,7 @@ def glm_image_config_from_build(build: ModelBuild) -> dict[str, Any]:
     return config
 
 
-class GlmImageChunkExecutor(ARDiscreteChunkExecutorBase):
+class GlmImageBatchExecutor(ARDiscreteBatchExecutorBase):
     """AR executor for GLM-Image text-to-image rollouts.
 
     The collector constructs a ``GenerationRequest`` whose ``sampling``
@@ -47,7 +47,7 @@ class GlmImageChunkExecutor(ARDiscreteChunkExecutorBase):
     - ``decode_num_inference_steps`` / ``decode_guidance_scale`` — frozen
       DiT decode segment knobs (postprocess only, never trained).
     - ``seed``: int | None — when set, ``torch.manual_seed`` is applied
-      per chunk for parity tests.
+      per batch for parity tests.
 
     Family specifics vs Emu3:
 
@@ -83,11 +83,11 @@ class GlmImageChunkExecutor(ARDiscreteChunkExecutorBase):
 
     # -- protocol ------------------------------------------------------
 
-    def prepare_chunk_inputs(
+    def prepare_batch_inputs(
         self,
         request: GenerationRequest,
-        chunk: SampleChunk,
-    ) -> ARChunkInputs:
+        batch: GenerationSampleBatch,
+    ) -> ARBatchInputs:
         """Encode the single-branch prompt and wire the mrope decode loop."""
 
         sampling = request.sampling
@@ -102,7 +102,7 @@ class GlmImageChunkExecutor(ARDiscreteChunkExecutorBase):
         decode_steps = sampling.get("decode_num_inference_steps")
         decode_guidance = sampling.get("decode_guidance_scale")
 
-        repeated_prompts = [request.inputs[chunk.prompt_index].prompt] * chunk.sample_count
+        repeated_prompts = [request.inputs[batch.prompt_index].prompt] * batch.sample_count
         prompt_ids, prompt_mask, (token_h, token_w, prev_h, prev_w) = (
             self.model.encode_generation_prompts(
                 repeated_prompts,
@@ -113,7 +113,7 @@ class GlmImageChunkExecutor(ARDiscreteChunkExecutorBase):
         )
         cond_embeds = self._embed(prompt_ids)
 
-        return ARChunkInputs(
+        return ARBatchInputs(
             init_args=(cond_embeds, prompt_mask),
             init_kwargs={
                 "token_h": token_h,
@@ -150,6 +150,6 @@ class GlmImageChunkExecutor(ARDiscreteChunkExecutorBase):
 
 
 __all__ = [
-    "GlmImageChunkExecutor",
+    "GlmImageBatchExecutor",
     "glm_image_config_from_build",
 ]

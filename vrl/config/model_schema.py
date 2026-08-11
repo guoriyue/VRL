@@ -7,9 +7,10 @@ without importing torch, diffusers, or upstream model packages.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import Any
 
-from pydantic import ConfigDict, Field
+from pydantic import ConfigDict, Field, model_validator
 
 from vrl.config.base import ConfigBase
 from vrl.models.checkpoint_identity import checkpoint_identity_metadata
@@ -85,12 +86,22 @@ class TorchCompileSection(_ClosedModelSection):
 
 
 class ModelExecutorSection(_ClosedModelSection):
-    """Shared ``GenericDiffusionChunkExecutor`` constructor inputs."""
+    """Shared ``GenericDiffusionBatchExecutor`` constructor inputs."""
+
+    @model_validator(mode="before")
+    @classmethod
+    def _reject_renamed(cls, data: Any) -> Any:
+        if isinstance(data, Mapping) and "chunk_passthrough_keys" in data:
+            raise ValueError(
+                "model.executor.chunk_passthrough_keys was renamed to "
+                "model.executor.batch_passthrough_keys; update the config key",
+            )
+        return data
 
     num_frames: int | None = None
     max_sequence_length: int | None = None
     fps: int | None = None
-    chunk_passthrough_keys: list[str] | None = None
+    batch_passthrough_keys: list[str] | None = None
 
 
 class ModelSection(_ClosedModelSection):
@@ -143,7 +154,7 @@ class ModelSection(_ClosedModelSection):
         default=None,
         json_schema_extra=checkpoint_identity_metadata("value", default=False),
     )
-    # Shared GenericDiffusionChunkExecutor constructor values. The selected family
+    # Shared GenericDiffusionBatchExecutor constructor values. The selected family
     # validates this block at typed parse and again at launch projection.
     executor: ModelExecutorSection | None = Field(
         default=None,

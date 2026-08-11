@@ -1,6 +1,6 @@
 """Version-safety of GenerationWorkerCore.execute_request_pipelined (the
 per-request stage-overlap path) — it must enforce the SAME slot / stale-slot /
-version-mismatch guarantees as execute_chunk, at the request level, so a stale
+version-mismatch guarantees as execute_batch, at the request level, so a stale
 request is never run + trained off-policy."""
 
 from __future__ import annotations
@@ -11,7 +11,7 @@ import pytest
 
 from vrl.generation.execution.memory_parking import WorkerMemoryParking
 from vrl.generation.execution.types import (
-    ChunkProduceFence,
+    BatchProduceFence,
     PipelinedRequestOutOfMemory,
     StaleSlotDiscard,
 )
@@ -49,7 +49,7 @@ class _Executor:
         if self.error is not None:
             raise self.error
         if completion_callback is not None:
-            completion_callback(ChunkProduceFence(completed_chunks=1, event=None))
+            completion_callback(BatchProduceFence(completed_batches=1, event=None))
         return "GATHERED_OUTPUT"
 
 
@@ -90,7 +90,7 @@ def test_slot_mode_with_live_slot_activates_and_runs() -> None:
 
 
 def test_worker_core_forwards_pipelined_completion_callback() -> None:
-    fences: list[ChunkProduceFence] = []
+    fences: list[BatchProduceFence] = []
     core = _core(
         executor=_Executor(_Model(set())),
         uses_slots=False,
@@ -106,7 +106,7 @@ def test_worker_core_forwards_pipelined_completion_callback() -> None:
     )
 
     assert output == "GATHERED_OUTPUT"
-    assert fences == [ChunkProduceFence(completed_chunks=1, event=None)]
+    assert fences == [BatchProduceFence(completed_batches=1, event=None)]
 
 
 def test_slot_mode_with_evicted_slot_raises_stale_discard_and_does_not_run() -> None:

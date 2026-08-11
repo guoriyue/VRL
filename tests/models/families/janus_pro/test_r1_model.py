@@ -10,15 +10,15 @@ import torch.nn as nn
 
 from tests.models.steps.token.fixtures import StubVQ, build_stub_janus_model
 from vrl.generation import GenerationRequest, GenerationSampleRow, build_sample_rows
-from vrl.generation.execution.chunks import SampleChunk
 from vrl.generation.execution.planner import build_engine_plan
+from vrl.generation.execution.sample_batches import GenerationSampleBatch
 from vrl.models.families.janus_pro import JANUS_R1_SEGMENTS
 from vrl.models.families.janus_pro.model import (
     JanusProModel,
 )
 from vrl.models.families.janus_pro.runtime import (
-    JanusProR1ChunkExecutor,
-    JanusProR1ChunkGatherer,
+    JanusProR1BatchExecutor,
+    JanusProR1GenerationBatchGatherer,
 )
 from vrl.models.interfaces import ReplayRequest, ReplayResult
 from vrl.rollouts.batch import RolloutBatch
@@ -397,7 +397,7 @@ def test_r1_executor_uses_request_overrides_then_model_defaults(
     expected: tuple[float, float],
 ) -> None:
     model = _ExecutorModel()
-    executor = JanusProR1ChunkExecutor(model)
+    executor = JanusProR1BatchExecutor(model)
     monkeypatch.setattr(
         executor,
         "_r1_image_sampler",
@@ -419,9 +419,9 @@ def test_r1_executor_uses_request_overrides_then_model_defaults(
         },
     )
 
-    executor.forward_chunk_plan(
+    executor.forward_batch(
         request,
-        SampleChunk(
+        GenerationSampleBatch(
             prompt_index=0,
             sample_start=0,
             sample_count=1,
@@ -435,9 +435,9 @@ def test_r1_executor_forward_emits_canonical_family_and_segment_schema(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Checks R1 executor forward emits canonical family and segment schema."""
-    executor = JanusProR1ChunkExecutor(
+    executor = JanusProR1BatchExecutor(
         _ExecutorModel(),
-        gatherer=JanusProR1ChunkGatherer(),
+        gatherer=JanusProR1GenerationBatchGatherer(),
     )
     scheduler_batch_sizes: list[int | None] = []
     monkeypatch.setattr(

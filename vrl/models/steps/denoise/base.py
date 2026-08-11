@@ -39,7 +39,7 @@ from vrl.models.weight_utils import (
 class DiffusionSamplingStateBase:
     """Engine-contract fields shared by every family's private sampling state.
 
-    The chunk executor only ever touches ``latents`` (read/write),
+    The batch executor only ever touches ``latents`` (read/write),
     ``timesteps`` and ``scheduler`` — nothing else. Every other field a
     family declares in its subclass is private to its own ``forward_step``
     / replay path and MUST NOT be introspected by the engine.
@@ -357,7 +357,7 @@ class DiffusionModelBase(nn.Module, ABC):
         """Make slot ``version`` the live trainable state (idempotent).
 
         Skips the reload when ``version`` is already active so a request whose
-        chunks share one version pays the copy at most once.
+        batches share one version pays the copy at most once.
         """
 
         if getattr(self, "_active_slot_version", None) == int(version):

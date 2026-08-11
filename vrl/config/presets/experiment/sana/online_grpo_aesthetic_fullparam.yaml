@@ -39,12 +39,12 @@ actor:
   # samples x 4 PPO epochs and is not evidence for a 1.6B full-model update.
   ppo_epochs: 1
   gradient_accumulation_steps: 1
-  replay_samples_per_chunk: 1
+  replay_samples_per_batch: 1
 
 rollout:
   prompts_per_batch: 1
   n_samples_per_prompt: 8
-  samples_per_chunk: 1
+  samples_per_generation_batch: 1
 
 trainer:
   # Start with a bounded, checkpoint-every-update master-weight pilot; promote

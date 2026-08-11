@@ -13,13 +13,13 @@ from vrl.generation.ray.health_monitor import (
     RolloutWorkerHealthMonitor,
     RolloutWorkerUnreachable,
 )
-from vrl.utils.lifecycle import RuntimeLifecycle, RuntimePhase
 from vrl.ray.actor_group import RayActorHandle
 from vrl.runtime_errors import (
     TerminalRuntimeError,
     failure_identity_cause,
     find_error_cause,
 )
+from vrl.utils.lifecycle import RuntimeLifecycle, RuntimePhase
 
 # Carried by every test that drives `_FakeRay`. The double is the Ray wire, not
 # the monitor: scripting a probe's answer is how pause/stop/skip behaviour stays

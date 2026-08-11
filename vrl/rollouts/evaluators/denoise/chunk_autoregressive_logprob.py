@@ -19,7 +19,7 @@ class ChunkAutoregressiveDenoiseLogProbEvaluator(ReplayEvaluatorBase):
     A scalar denoise-step replay would repeatedly rebuild the temporal prefix
     and, more importantly, lose the family-owned cache finalization order. The
     trainer recognizes ``replay_granularity='trajectory'`` and invokes this
-    evaluator once per replay batch. Semantic ``[sample, chunk, transition]``
+    evaluator once per replay batch. Semantic ``[sample, batch, transition]``
     axes remain intact in ``TrajectoryBatch``; only the algorithm-facing signal
     is flattened to ``[sample, action]`` for the existing masked GRPO reduction.
     """

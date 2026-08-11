@@ -576,11 +576,11 @@ class CosmosPredict25Model(CosmosReplayForward, DiffusersPipelineModelBase):
         frame_count = int((latents.shape[2] - 1) * pipe.vae_scale_factor_temporal + 1)
         decoder = ChunkedLatentDecoder(
             LatentDecodePlan(
-                prepare_latents=lambda chunk: (chunk * latents_std + latents_mean).to(
+                prepare_latents=lambda batch: (batch * latents_std + latents_mean).to(
                     pipe.vae.dtype,
                 ),
-                vae_decode=lambda chunk: pipe.vae.decode(
-                    chunk,
+                vae_decode=lambda batch: pipe.vae.decode(
+                    batch,
                     return_dict=False,
                 )[0],
                 prepare_decoded=lambda video: pipe._match_num_frames(

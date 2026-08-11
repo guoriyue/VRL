@@ -292,7 +292,7 @@ class EchoModel(LoraModelMixin, DiffusionModelBase):
     ) -> dict[str, Any]:
         """Encode the prompt to Gemma video context (video-only: audio dropped).
 
-        Returns batch-1 tensors; the executor repeats them to the chunk's sample
+        Returns batch-1 tensors; the executor repeats them to the batch's sample
         count. Negative prompts are unsupported because Echo's DMD checkpoint
         bakes in guidance and has no classifier-free branch.
         """

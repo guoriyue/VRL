@@ -11,23 +11,23 @@ from vrl.runtime_errors import TerminalRuntimeError
 class PipelinedRequestProgress:
     """Cross-concurrency-group progress for one pipelined request.
 
-    ``completed_chunks`` is the continuous prefix whose recorded device-side
+    ``completed_batches`` is the continuous prefix whose recorded device-side
     produce fences have completed. It never counts host-side CUDA enqueue as
     completion; final teardown and gather retain the last stall window.
     """
 
     request_id: str
-    completed_chunks: int
-    total_chunks: int
+    completed_batches: int
+    total_batches: int
 
     def __post_init__(self) -> None:
         if not self.request_id:
             raise ValueError("pipelined progress request_id must be non-empty")
-        if self.total_chunks < 1:
-            raise ValueError("pipelined progress total_chunks must be >= 1")
-        if not 0 <= self.completed_chunks <= self.total_chunks:
+        if self.total_batches < 1:
+            raise ValueError("pipelined progress total_batches must be >= 1")
+        if not 0 <= self.completed_batches <= self.total_batches:
             raise ValueError(
-                "pipelined progress completed_chunks must be between 0 and total_chunks",
+                "pipelined progress completed_batches must be between 0 and total_batches",
             )
 
 

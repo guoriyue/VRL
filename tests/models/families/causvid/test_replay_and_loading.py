@@ -41,7 +41,7 @@ from vrl.models.families.causvid.runner import (
     CausVidCausalRunner,
     CausVidGeometry,
 )
-from vrl.models.families.causvid.runtime import CausVidChunkExecutor
+from vrl.models.families.causvid.runtime import CausVidBatchExecutor
 
 REPLAY_GEOMETRY = CausVidGeometry(
     latent_frames=4,
@@ -230,7 +230,7 @@ def test_full_prefix_replay_matches_rollout_and_backpropagates() -> None:
     assert current_log_probs.shape == (2, 2, 2)
     torch.testing.assert_close(current_log_probs, behavior.old_log_prob)
     # Two transitions for each current prefix. Growing 2 -> 4 proves replay did
-    # not accidentally reuse only the first chunk's causal-attention extent.
+    # not accidentally reuse only the first batch's causal-attention extent.
     assert backend.full_prefix_lengths == [2, 2, 4, 4]
     (-current_log_probs.sum()).backward()
     gradient = backend.transformer.weight.grad
@@ -643,7 +643,7 @@ def test_generation_executor_builds_trainable_chunk_trajectory() -> None:
         geometry=REPLAY_GEOMETRY,
         schedule=OFFICIAL_CAUSVID_SCHEDULE,
     )
-    executor = CausVidChunkExecutor(
+    executor = CausVidBatchExecutor(
         model,
         gatherer=ChunkAutoregressiveDenoiseGatherer(),
     )

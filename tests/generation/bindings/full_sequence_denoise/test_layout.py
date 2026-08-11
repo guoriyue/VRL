@@ -9,16 +9,16 @@ import torch
 
 from vrl.generation.bindings.full_sequence_denoise import (
     DiffusionRequestLayout,
-    GenericDiffusionChunkExecutor,
+    GenericDiffusionBatchExecutor,
 )
 from vrl.generation.types import GenerationRequest
-from vrl.models.families.cosmos.cosmos3.runtime import Cosmos3ChunkExecutor
-from vrl.models.families.cosmos.predict2.runtime import CosmosChunkExecutor
+from vrl.models.families.cosmos.cosmos3.runtime import Cosmos3BatchExecutor
+from vrl.models.families.cosmos.predict2.runtime import CosmosBatchExecutor
 from vrl.models.families.cosmos.predict2_5.runtime import (
-    CosmosPredict25ChunkExecutor,
+    CosmosPredict25BatchExecutor,
 )
-from vrl.models.families.echo.runtime import EchoChunkExecutor
-from vrl.models.families.wan_2_1.runtime import Wan_2_1I2VChunkExecutor
+from vrl.models.families.echo.runtime import EchoBatchExecutor
+from vrl.models.families.wan_2_1.runtime import Wan_2_1I2VBatchExecutor
 
 
 def test_diffusion_layout_rejects_oversized_sde_window() -> None:
@@ -121,7 +121,7 @@ def test_diffusion_executor_only_projects_real_text_length(
     """An absent family/request value stays absent at both model boundaries."""
 
     model = SimpleNamespace()
-    executor = GenericDiffusionChunkExecutor(
+    executor = GenericDiffusionBatchExecutor(
         model,
         family="test",
         task="t2i",
@@ -138,11 +138,11 @@ def test_diffusion_executor_only_projects_real_text_length(
 @pytest.mark.parametrize(
     ("executor_cls", "expected"),
     [
-        (CosmosChunkExecutor, None),
-        (Cosmos3ChunkExecutor, None),
-        (EchoChunkExecutor, None),
-        (CosmosPredict25ChunkExecutor, 512),
-        (Wan_2_1I2VChunkExecutor, 512),
+        (CosmosBatchExecutor, None),
+        (Cosmos3BatchExecutor, None),
+        (EchoBatchExecutor, None),
+        (CosmosPredict25BatchExecutor, 512),
+        (Wan_2_1I2VBatchExecutor, 512),
     ],
 )
 def test_custom_family_text_length_defaults_match_encoder_capability(
@@ -151,7 +151,7 @@ def test_custom_family_text_length_defaults_match_encoder_capability(
 ) -> None:
     model = (
         SimpleNamespace(video_height=64, video_width=64)
-        if executor_cls is EchoChunkExecutor
+        if executor_cls is EchoBatchExecutor
         else object()
     )
     executor = executor_cls(model)

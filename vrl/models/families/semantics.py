@@ -29,7 +29,7 @@ class PolicySemantics:
 
     ``full_sequence`` updates all output positions together in each policy
     step. ``token_autoregressive`` advances one ordered token from a prefix;
-    ``chunk_autoregressive`` advances one temporal chunk from earlier chunks.
+    ``chunk_autoregressive`` advances one temporal chunk from earlier batches.
     """
 
     generation_regime: GenerationRegime

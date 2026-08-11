@@ -52,14 +52,14 @@ actor:
 rollout:
   # Paper-shaped RL batch: 8 outputs per input condition (family recipe) and 32
   # input conditions per optimizer update. Generation still streams with
-  # samples_per_chunk=1 on limited memory.
+  # samples_per_generation_batch=1 on limited memory.
   prompts_per_batch: 32
   # NO streaming accumulation here (unlike the NFT sibling's microbatch_size=1):
   # streaming releases each microbatch after its backward, and ppo_epochs=4
   # must replay every microbatch across epochs — the trainer validation rejects
   # the combination outright. The cost is holding all 32 groups' rollout
   # tensors on host RAM for the update window.
-  samples_per_chunk: 1
+  samples_per_generation_batch: 1
   noise_level: 0.7
 
 trainer:

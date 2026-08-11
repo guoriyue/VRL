@@ -383,8 +383,8 @@ class AnimaModel(CosmosReplayForward, LoraModelMixin, DiffusionModelBase):
         )
 
     def decode_latents(self, latents: torch.Tensor) -> torch.Tensor:
-        def _transform(chunk: torch.Tensor) -> torch.Tensor:
-            x = chunk.to(self.vae.dtype)
+        def _transform(batch: torch.Tensor) -> torch.Tensor:
+            x = batch.to(self.vae.dtype)
             latents_mean = (
                 torch.tensor(self.vae.config.latents_mean)
                 .view(1, self.vae.config.z_dim, 1, 1, 1)
@@ -398,8 +398,8 @@ class AnimaModel(CosmosReplayForward, LoraModelMixin, DiffusionModelBase):
         decoder = ChunkedLatentDecoder(
             LatentDecodePlan(
                 prepare_latents=_transform,
-                vae_decode=lambda chunk: self.vae.decode(
-                    chunk,
+                vae_decode=lambda batch: self.vae.decode(
+                    batch,
                     return_dict=False,
                 )[0][:, :, 0],
                 postprocess=lambda image: self.image_processor.postprocess(

@@ -8,8 +8,8 @@ from typing import Any
 import pytest
 import torch
 
-from vrl.generation.bindings.full_sequence_denoise import DiffusionChunkExecutorBase
-from vrl.generation.execution.chunks import SampleChunk
+from vrl.generation.bindings.full_sequence_denoise import DiffusionBatchExecutorBase
+from vrl.generation.execution.sample_batches import GenerationSampleBatch
 from vrl.generation.steps.denoise.config import DenoiseLoopConfig, DenoiseSDEParams
 from vrl.generation.steps.denoise.loop import preallocate_denoise_buffers
 from vrl.generation.types import GenerationRequest
@@ -65,7 +65,7 @@ def test_run_denoise_steps_writes_preallocated_buffers(return_kl: bool) -> None:
     else:
         assert torch.count_nonzero(result.kl).item() == 0
     assert result.engine_counters["diffusion_num_denoise_steps"] == 2
-    assert result.engine_counters["diffusion_samples_per_chunk"] == 2
+    assert result.engine_counters["diffusion_samples_per_generation_batch"] == 2
     assert result.engine_counters["diffusion_observation_bytes"] == (
         result.observations.numel() * result.observations.element_size()
     )
@@ -80,13 +80,13 @@ def test_decode_denoise_result_does_not_serialize_model_precision() -> None:
         config=_config(sample_count=2),
     )
 
-    chunk = executor.decode_denoise_result(
-        chunk=_chunk(),
+    batch = executor.decode_denoise_result(
+        batch=_chunk(),
         config=_config(sample_count=2),
         denoise_result=result,
     )
 
-    assert chunk.context == {"model_family": "test"}
+    assert batch.context == {"model_family": "test"}
 
 
 def test_executor_adds_no_autocast_scope(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -137,17 +137,17 @@ def test_decode_denoise_result_uses_only_model_exported_context() -> None:
         config=_config(sample_count=2),
     )
 
-    chunk = executor.decode_denoise_result(
-        chunk=_chunk(),
+    batch = executor.decode_denoise_result(
+        batch=_chunk(),
         config=_config(sample_count=2),
         denoise_result=denoise,
     )
 
-    assert chunk.context == {"model_family": "test"}
+    assert batch.context == {"model_family": "test"}
 
 
-def test_forward_probe_chunk_uses_canonical_flow_with_truncated_steps() -> None:
-    """The probe reuses the production chunk flow with an explicit step bound."""
+def test_forward_probe_batch_uses_canonical_flow_with_truncated_steps() -> None:
+    """The probe reuses the production batch flow with an explicit step bound."""
     executor = _StageTrackingExecutor()
     request = GenerationRequest(
         request_id="req-1",
@@ -162,15 +162,15 @@ def test_forward_probe_chunk_uses_canonical_flow_with_truncated_steps() -> None:
             "width": 8,
         },
     )
-    chunk = _chunk()
+    batch = _chunk()
 
-    result = executor.forward_probe_chunk(
+    result = executor.forward_probe_batch(
         request,
-        chunk,
+        batch,
         execute_steps=1,
     )
 
-    assert result.chunk is chunk
+    assert result.batch is batch
     assert executor.calls == ["encode", "prepare", "denoise:1", "decode"]
 
 
@@ -188,8 +188,8 @@ def _config(*, sample_count: int = 2, return_kl: bool = False) -> DenoiseLoopCon
     )
 
 
-def _chunk(*, sample_count: int = 2) -> SampleChunk:
-    return SampleChunk(prompt_index=0, sample_start=0, sample_count=sample_count)
+def _chunk(*, sample_count: int = 2) -> GenerationSampleBatch:
+    return GenerationSampleBatch(prompt_index=0, sample_start=0, sample_count=sample_count)
 
 
 def _state(
@@ -249,7 +249,7 @@ class _Model:
         return {"model_family": "test"}
 
 
-class _Executor(DiffusionChunkExecutorBase):
+class _Executor(DiffusionBatchExecutorBase):
     family = "test"
     task = "t2i"
 
@@ -257,7 +257,7 @@ class _Executor(DiffusionChunkExecutorBase):
         super().__init__(_Model())
 
 
-class _StageTrackingExecutor(DiffusionChunkExecutorBase):
+class _StageTrackingExecutor(DiffusionBatchExecutorBase):
     family = "test"
     task = "t2i"
 
@@ -265,20 +265,20 @@ class _StageTrackingExecutor(DiffusionChunkExecutorBase):
         super().__init__(_Model())
         self.calls: list[str] = []
 
-    def encode_prompt_for_chunk(
+    def encode_prompt_for_batch(
         self,
         *,
         generation_request: GenerationRequest,
         video_request: Any,
         params: Any,
-        chunk: SampleChunk,
+        batch: GenerationSampleBatch,
     ) -> dict[str, Any]:
         self.calls.append("encode")
-        return super().encode_prompt_for_chunk(
+        return super().encode_prompt_for_batch(
             generation_request=generation_request,
             video_request=video_request,
             params=params,
-            chunk=chunk,
+            batch=batch,
         )
 
     def prepare_denoise_state(
@@ -323,7 +323,7 @@ def test_decode_denoise_result_packs_video_as_uint8() -> None:
             del latents
             return torch.linspace(0.0, 1.0, 16, dtype=torch.float32).view(1, 1, 4, 4)
 
-    class _UnitVideoExecutor(DiffusionChunkExecutorBase):
+    class _UnitVideoExecutor(DiffusionBatchExecutorBase):
         family = "test"
         task = "t2i"
 
@@ -336,22 +336,22 @@ def test_decode_denoise_result_packs_video_as_uint8() -> None:
         config=_config(sample_count=2),
     )
 
-    chunk = executor.decode_denoise_result(
-        chunk=_chunk(),
+    batch = executor.decode_denoise_result(
+        batch=_chunk(),
         config=_config(sample_count=2),
         denoise_result=denoise,
     )
 
     from vrl.utils.media import to_uint8
 
-    assert chunk.video.dtype == torch.uint8
+    assert batch.video.dtype == torch.uint8
     expected = to_uint8(torch.linspace(0.0, 1.0, 16, dtype=torch.float32).view(1, 1, 4, 4))
-    assert torch.equal(chunk.video, expected)
+    assert torch.equal(batch.video, expected)
     # One byte per element on the wire.
-    assert chunk.engine_counters["diffusion_video_bytes"] == chunk.video.numel()
+    assert batch.engine_counters["diffusion_video_bytes"] == batch.video.numel()
     # Training tensors keep their dtype.
-    assert chunk.observations.is_floating_point()
-    assert chunk.log_probs.dtype == torch.float32
+    assert batch.observations.is_floating_point()
+    assert batch.log_probs.dtype == torch.float32
 
 
 def test_apply_wire_storage_policy_downcasts_before_wire() -> None:
@@ -366,8 +366,8 @@ def test_apply_wire_storage_policy_downcasts_before_wire() -> None:
         state=_state(batch=2, steps=1),
         config=_config(sample_count=2),
     )
-    chunk = executor.decode_denoise_result(
-        chunk=_chunk(),
+    batch = executor.decode_denoise_result(
+        batch=_chunk(),
         config=_config(sample_count=2),
         denoise_result=denoise,
     )
@@ -380,7 +380,7 @@ def test_apply_wire_storage_policy_downcasts_before_wire() -> None:
         samples_per_prompt=2,
         sampling={"trajectory_storage": {"dtype": "float16"}},
     )
-    out = executor.apply_wire_storage_policy(request, chunk)
+    out = executor.apply_wire_storage_policy(request, batch)
 
     assert out.observations.dtype == torch.float16
     assert out.actions.dtype == torch.float16
@@ -388,7 +388,7 @@ def test_apply_wire_storage_policy_downcasts_before_wire() -> None:
 
     # Default policy is a strict identity: same tensor objects, no copies.
     chunk2 = executor.decode_denoise_result(
-        chunk=_chunk(),
+        batch=_chunk(),
         config=_config(sample_count=2),
         denoise_result=executor.run_denoise_steps(
             state=_state(batch=2, steps=1),

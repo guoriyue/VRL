@@ -31,7 +31,7 @@ rollout:
   # 2 images per group, 2 groups per step - 16x fewer pixels vs. baseline.
   n_samples_per_prompt: 2
   prompts_per_batch: 2
-  samples_per_chunk: 2
+  samples_per_generation_batch: 2
   # sampling.num_steps is shrunk to 4 above, but the base diffusion rollout
   # (base/rollout/denoise) sets sde.window_range=[0,10] for the
   # 10-step preset. _parse_sde_window_range validates hi <= num_steps

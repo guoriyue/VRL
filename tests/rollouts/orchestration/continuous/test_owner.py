@@ -12,13 +12,13 @@ import torch
 
 from tests.rollouts.orchestration.continuous._helpers import _wait_until, owner_snapshot
 from vrl.generation.ray.health_monitor import RolloutWorkerUnreachable
-from vrl.utils.lifecycle import RuntimePhase
 from vrl.generation.ray.runtime import RayGenerationRuntime
 from vrl.generation.ray.session import RayGenerationSession
 from vrl.rollouts.batch import RolloutBatch
 from vrl.rollouts.orchestration.continuous.owner import ContinuousRolloutOwner
 from vrl.rollouts.orchestration.continuous.types import ContinuousRolloutSettings
 from vrl.rollouts.stats import RolloutStats
+from vrl.utils.lifecycle import RuntimePhase
 
 
 def _batch(prompts: list[str], group_size: int) -> RolloutBatch:

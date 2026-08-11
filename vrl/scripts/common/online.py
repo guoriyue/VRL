@@ -373,14 +373,14 @@ def _validate_reward_placement(
 def _log_rollout_memory_plan(
     batch_plan: OnlineBatchPlan,
     *,
-    generation_samples_per_chunk: int | str | None,
+    generation_samples_per_batch: int | str | None,
 ) -> None:
     """Log how many rollout tensors one optimizer update can hold at once."""
 
     prompts_per_batch = batch_plan.prompts_per_batch
     samples_per_prompt = batch_plan.n_samples_per_prompt
     target_samples = prompts_per_batch * samples_per_prompt
-    replay_chunk = batch_plan.replay_samples_per_chunk
+    replay_chunk = batch_plan.replay_samples_per_batch
 
     def describe_chunk(value: Any) -> str:
         if value == "auto":
@@ -388,7 +388,7 @@ def _log_rollout_memory_plan(
         size = int(value or 0)
         return str(samples_per_prompt if size <= 0 else min(samples_per_prompt, size))
 
-    generation_chunk_text = describe_chunk(generation_samples_per_chunk)
+    generation_chunk_text = describe_chunk(generation_samples_per_batch)
     replay_chunk_text = describe_chunk(replay_chunk)
     gas = batch_plan.gradient_accumulation_steps
     if batch_plan.streaming:
@@ -398,7 +398,7 @@ def _log_rollout_memory_plan(
             "Rollout memory plan: streaming accumulation enabled "
             "(prompts_per_batch=%d, gradient_accumulation_steps=%d, "
             "microbatch_prompts=%d, microbatch_samples=%d, "
-            "generation_samples_per_chunk=%s, replay_samples_per_chunk=%s, "
+            "generation_samples_per_batch=%s, replay_samples_per_batch=%s, "
             "target_samples_per_update=%d)",
             prompts_per_batch,
             gas,
@@ -412,8 +412,8 @@ def _log_rollout_memory_plan(
 
     logger.info(
         "Rollout memory plan: legacy full-batch accumulation "
-        "(prompts_per_batch=%d, generation_samples_per_chunk=%s, "
-        "replay_samples_per_chunk=%s, "
+        "(prompts_per_batch=%d, generation_samples_per_batch=%s, "
+        "replay_samples_per_batch=%s, "
         "target_samples_per_update=%d)",
         prompts_per_batch,
         generation_chunk_text,
@@ -756,8 +756,10 @@ async def run_online_recipe(
         raise ValueError("online recipe requires a reward section")
     _log_rollout_memory_plan(
         batch_plan,
-        generation_samples_per_chunk=(
-            built.root.rollout.samples_per_chunk if built.root.rollout is not None else None
+        generation_samples_per_batch=(
+            built.root.rollout.samples_per_generation_batch
+            if built.root.rollout is not None
+            else None
         ),
     )
     _warn_global_std_streaming_divergence(

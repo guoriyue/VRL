@@ -48,13 +48,13 @@ actor:
 
 
 rollout:
-  samples_per_chunk: 1                # 480p_93f is token-heavy; keep 1 for memory (raise if smoke shows headroom)
+  samples_per_generation_batch: 1                # 480p_93f is token-heavy; keep 1 for memory (raise if smoke shows headroom)
 
 distributed:
   rollout:
-    # Single-worker software pipeline: hide each chunk's GPU->CPU copy + host packing
-    # behind the next chunk's denoise (bit-exact -> old_log_prob unchanged, RL-safe;
-    # auto no-op on >1 worker). Needs >=2 chunks; sbs=1 gives 8 chunks for the
+    # Single-worker software pipeline: hide each batch's GPU->CPU copy + host packing
+    # behind the next batch's denoise (bit-exact -> old_log_prob unchanged, RL-safe;
+    # auto no-op on >1 worker). Needs >=2 batches; sbs=1 gives 8 batches for the
     # 480p_93f memory-safe shape, and can be raised only after a memory smoke. NOTE: this is
     # distributed.rollout.pipelined (the Ray worker config), NOT the top-level rollout.
     pipelined: true

@@ -8,22 +8,22 @@ from typing import Any, Protocol, TypeVar
 
 import torch
 
-from vrl.generation.execution.chunks import (
-    SampleChunk,
-    ordered_covering_chunks,
-    validate_chunk_range,
+from vrl.generation.execution.sample_batches import (
+    GenerationSampleBatch,
+    ordered_covering_batches,
+    validate_batch_range,
 )
 from vrl.generation.types import GenerationRequest, GenerationSampleRow
 
 
-class ARChunkResult(Protocol):
-    """Common metadata every prompt-major AR chunk result carries."""
+class ARBatchPayload(Protocol):
+    """Common metadata every prompt-major AR batch result carries."""
 
-    chunk: SampleChunk
+    batch: GenerationSampleBatch
     peak_memory_mb: float | None
 
 
-TChunk = TypeVar("TChunk", bound=ARChunkResult)
+TBatch = TypeVar("TBatch", bound=ARBatchPayload)
 
 
 @dataclass(frozen=True, slots=True)
@@ -126,52 +126,52 @@ class ARRequestLayout:
             )
         return value
 
-    def validate_chunk(self, request: GenerationRequest, chunk: SampleChunk) -> None:
-        """Validate one prompt/sample AR chunk against its request."""
+    def validate_chunk(self, request: GenerationRequest, batch: GenerationSampleBatch) -> None:
+        """Validate one prompt/sample AR batch against its request."""
 
-        validate_chunk_range(
+        validate_batch_range(
             request,
-            prompt_index=chunk.prompt_index,
-            sample_start=chunk.sample_start,
-            sample_count=chunk.sample_count,
+            prompt_index=batch.prompt_index,
+            sample_start=batch.sample_start,
+            sample_count=batch.sample_count,
         )
 
-    def ordered_chunks(
+    def ordered_batches(
         self,
         request: GenerationRequest,
         sample_rows: Sequence[GenerationSampleRow],
-        chunks: Sequence[TChunk],
+        batches: Sequence[TBatch],
         *,
         row_fields: Sequence[str] = (),
-    ) -> list[TChunk]:
-        """Sort AR chunks and ensure they exactly cover prompt-major samples."""
+    ) -> list[TBatch]:
+        """Sort AR batches and ensure they exactly cover prompt-major samples."""
 
-        return ordered_covering_chunks(
+        return ordered_covering_batches(
             request,
             sample_rows,
-            chunks,
+            batches,
             row_fields=row_fields,
         )
 
-    def chunk_seed_offset(self, request: GenerationRequest, chunk: SampleChunk) -> int:
-        """Return the prompt-major sample offset for deterministic chunk seeding."""
+    def chunk_seed_offset(self, request: GenerationRequest, batch: GenerationSampleBatch) -> int:
+        """Return the prompt-major sample offset for deterministic batch seeding."""
 
-        return chunk.prompt_index * int(request.samples_per_prompt) + chunk.sample_start
+        return batch.prompt_index * int(request.samples_per_prompt) + batch.sample_start
 
-    def cat_chunk_fields(
+    def cat_batch_fields(
         self,
-        chunks: Sequence[Any],
+        batches: Sequence[Any],
         fields: Sequence[str],
     ) -> dict[str, torch.Tensor]:
-        """Concatenate ordered chunk payload tensors along the batch dim.
+        """Concatenate ordered batch payload tensors along the batch dim.
 
         The gatherers' cat step is pure data (a field-name list over already
-        ``ordered_chunks``-validated payloads), so it lives here once instead
+        ``ordered_batches``-validated payloads), so it lives here once instead
         of each family writing one ``torch.cat`` block per field.
         """
 
         return {
-            field: torch.cat([getattr(chunk, field) for chunk in chunks], dim=0)
+            field: torch.cat([getattr(batch, field) for batch in batches], dim=0)
             for field in fields
         }
 
@@ -203,4 +203,4 @@ class ARRequestLayout:
         return int(default)
 
 
-__all__ = ["ARChunkResult", "ARRequestLayout", "ARSamplingParams", "right_pad"]
+__all__ = ["ARBatchPayload", "ARRequestLayout", "ARSamplingParams", "right_pad"]

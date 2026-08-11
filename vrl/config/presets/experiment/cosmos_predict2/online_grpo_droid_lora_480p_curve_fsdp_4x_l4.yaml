@@ -54,9 +54,9 @@ sampling:
   guidance_scale: 7.0
 
 rollout:
-  # One production 832x480x93f guidance-7 sample fits an L4; larger chunks are
+  # One production 832x480x93f guidance-7 sample fits an L4; larger batches are
   # not part of the validated memory envelope.
-  samples_per_chunk: 1
+  samples_per_generation_batch: 1
 
 trainer:
   output_dir: outputs/cosmos_pred2_droid_lora_480p_curve_fsdp_4x_l4

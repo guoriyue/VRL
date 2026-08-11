@@ -23,8 +23,8 @@ actor:
 rollout:
   n_samples_per_prompt: 16
   prompts_per_batch: 8
-  # 17B + separate-CFG double forward: small chunks.
-  samples_per_chunk: 2
+  # 17B + separate-CFG double forward: small batches.
+  samples_per_generation_batch: 2
 
 trainer:
   output_dir: outputs/hunyuan_image_pickscore_grpo

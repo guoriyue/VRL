@@ -8,12 +8,12 @@ from vrl.generation.bindings.chunk_autoregressive_denoise import (
 from vrl.models.interfaces.runtime import ModelBuild, RuntimeBundle
 
 
-class Magi1ChunkExecutor(ChunkAutoregressiveDenoiseExecutorBase):
+class Magi1BatchExecutor(ChunkAutoregressiveDenoiseExecutorBase):
     """Generation-only chunk-autoregressive executor for MAGI-1 4.5B.
 
-    Any chunk width works: the subprocess model generates one sample at a
-    time inside the chunk, so width only sets how many sequential subprocess
-    runs share one chunk result.
+    Any batch width works: the subprocess model generates one sample at a
+    time inside the batch, so width only sets how many sequential subprocess
+    runs share one batch result.
     """
 
     family = "magi_1"
@@ -85,6 +85,6 @@ def _validate_magi_1_precision(build: ModelBuild) -> None:
 
 
 __all__ = [
-    "Magi1ChunkExecutor",
+    "Magi1BatchExecutor",
     "build_magi_1_runtime_bundle",
 ]

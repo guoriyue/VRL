@@ -852,7 +852,7 @@ async def test_active_health_race_propagates_session_first_failure() -> None:
         TimeoutError("health probe timed out"),
     )
     actor_error = RayActorCallError(
-        "rollout.generation.chunk",
+        "rollout.generation.batch",
         worker_id="healthy-killed-with-fleet",
         job_index=0,
     )
@@ -926,7 +926,7 @@ async def test_auto_probe_timeout_force_kills_the_session_owner(
     class _ProbeActor(_ReleaseActor):
         def __init__(self) -> None:
             super().__init__()
-            self.probe_chunk_size = SimpleNamespace(
+            self.probe_batch_size = SimpleNamespace(
                 remote=lambda *_args, **_kwargs: probe_ref,
             )
 
@@ -968,14 +968,14 @@ async def test_auto_probe_timeout_force_kills_the_session_owner(
         task="text_to_image",
         inputs=["prompt"],
         samples_per_prompt=2,
-        sampling={"samples_per_chunk": "auto"},
+        sampling={"samples_per_generation_batch": "auto"},
         policy_version=None,
     )
 
     with pytest.raises(RayOperationTimeout) as caught:
         await runtime.generate(request)
 
-    assert caught.value.operation == "rollout.generation.chunk_size_probe"
+    assert caught.value.operation == "rollout.generation.batch_size_probe"
     assert runtime.lifecycle.phase is RuntimePhase.TERMINATED
     assert runtime._session is None
     assert actor.release_calls == 0

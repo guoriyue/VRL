@@ -34,7 +34,7 @@ import torch
 from vrl.generation.bindings.chunk_autoregressive_denoise import (
     ChunkAutoregressiveDenoiseResult,
 )
-from vrl.generation.execution.chunks import SampleChunk
+from vrl.generation.execution.sample_batches import GenerationSampleBatch
 from vrl.generation.types import GenerationInput, GenerationRequest
 from vrl.models.interfaces.replay import ReplayRequest, ReplayResult
 from vrl.models.interfaces.runtime import ModelBuild
@@ -268,17 +268,17 @@ class Magi1SubprocessModel(torch.nn.Module):
         self,
         *,
         request: GenerationRequest,
-        chunk: SampleChunk,
+        batch: GenerationSampleBatch,
     ) -> ChunkAutoregressiveDenoiseResult:
         """Generate each requested sample through the official MAGI CLI."""
 
-        input_value = request.inputs[chunk.prompt_index]
+        input_value = request.inputs[batch.prompt_index]
         mode, conditioning_path = _magi_mode(input_value)
         videos: list[torch.Tensor] = []
         temporal_chunk_counts: list[int] = []
-        for sample_offset in range(chunk.sample_count):
-            sample_index = chunk.sample_start + sample_offset
-            flat_sample_index = chunk.prompt_index * request.samples_per_prompt + sample_index
+        for sample_offset in range(batch.sample_count):
+            sample_index = batch.sample_start + sample_offset
+            flat_sample_index = batch.prompt_index * request.samples_per_prompt + sample_index
             video, temporal_chunk_count = self._generate_one(
                 prompt=input_value.prompt,
                 mode=mode,
@@ -294,7 +294,7 @@ class Magi1SubprocessModel(torch.nn.Module):
                 "MAGI-1 returned inconsistent temporal chunk counts within one sample chunk",
             )
         return ChunkAutoregressiveDenoiseResult(
-            chunk=chunk,
+            batch=batch,
             output=torch.cat(videos, dim=0),
             temporal_chunk_count=temporal_chunk_counts[0],
             context={

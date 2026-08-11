@@ -39,7 +39,7 @@ from vrl.trainers.online.trainer import (
     PhaseTimer,
     TrainingBatch,
     _all_ranks_have_work,
-    _balanced_training_sample_chunks,
+    _balanced_training_sample_batches,
     _distributed_initial_replay_stats,
     _distributed_parity_verdict,
     _ReplayMetrics,
@@ -244,27 +244,27 @@ def test_replay_planner_pads_to_global_slot_count(monkeypatch: pytest.MonkeyPatc
         lambda value, device: 8,
     )
 
-    rank0_chunks = _balanced_training_sample_chunks(
+    rank0_chunks = _balanced_training_sample_batches(
         [_rollout_batch(8)],
         [torch.ones(8)],
-        samples_per_chunk=1,
+        replay_samples_per_batch=1,
         device=torch.device("cpu"),
     )
-    rank1_chunks = _balanced_training_sample_chunks(
+    rank1_chunks = _balanced_training_sample_batches(
         [_rollout_batch(3)],
         [torch.ones(3)],
-        samples_per_chunk=1,
+        replay_samples_per_batch=1,
         device=torch.device("cpu"),
     )
 
     assert len(rank0_chunks) == 8
     assert len(rank1_chunks) == 8
-    assert sum(chunk.is_dummy for chunk in rank0_chunks) == 0
-    assert sum(chunk.is_dummy for chunk in rank1_chunks) == 5
-    assert sum(chunk.loss_weight for chunk in rank0_chunks) == pytest.approx(1.0)
-    assert sum(chunk.loss_weight for chunk in rank1_chunks) == pytest.approx(1.0)
-    assert all(chunk.loss_weight == 0.0 for chunk in rank1_chunks[3:])
-    assert all(torch.count_nonzero(chunk.advantages) == 0 for chunk in rank1_chunks[3:])
+    assert sum(batch.is_dummy for batch in rank0_chunks) == 0
+    assert sum(batch.is_dummy for batch in rank1_chunks) == 5
+    assert sum(batch.loss_weight for batch in rank0_chunks) == pytest.approx(1.0)
+    assert sum(batch.loss_weight for batch in rank1_chunks) == pytest.approx(1.0)
+    assert all(batch.loss_weight == 0.0 for batch in rank1_chunks[3:])
+    assert all(torch.count_nonzero(batch.advantages) == 0 for batch in rank1_chunks[3:])
 
 
 def _run_replay_planner_rank(
@@ -279,18 +279,18 @@ def _run_replay_planner_rank(
     dist.init_process_group(backend="gloo", rank=rank, world_size=world_size)
     try:
         sample_count = local_counts[rank]
-        chunks = _balanced_training_sample_chunks(
+        batches = _balanced_training_sample_batches(
             [_rollout_batch(sample_count)],
             [torch.ones(sample_count)],
-            samples_per_chunk=1,
+            replay_samples_per_batch=1,
             device=torch.device("cpu"),
         )
         q.put(
             (
                 rank,
-                len(chunks),
-                sum(chunk.is_dummy for chunk in chunks),
-                sum(chunk.loss_weight for chunk in chunks),
+                len(batches),
+                sum(batch.is_dummy for batch in batches),
+                sum(batch.loss_weight for batch in batches),
             )
         )
     finally:

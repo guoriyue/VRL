@@ -212,7 +212,7 @@ def test_the_resolver_sees_a_lane_through_a_conditional_pytestmark(tmp_path) -> 
 @pytest.mark.parametrize(
     "target, expected",
     [
-        ("tests/generation/execution/test_chunks_pipelined_cuda.py", ("gpu",)),
+        ("tests/generation/execution/test_sample_batches_pipelined_cuda.py", ("gpu",)),
         ("tests/nn/layers/test_paged_attention_contract.py", ()),
     ],
 )

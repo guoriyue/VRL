@@ -1,4 +1,4 @@
-"""Tests for pure chunk gatherers."""
+"""Tests for pure batch gatherers."""
 
 from __future__ import annotations
 
@@ -10,40 +10,40 @@ import pytest
 import torch
 
 from vrl.generation.bindings.full_sequence_denoise import (
-    DiffusionChunkGatherer,
-    DiffusionChunkResult,
+    DiffusionBatchGatherer,
+    DiffusionBatchResult,
 )
-from vrl.generation.execution.chunks import (
-    SampleAlignedValues,
-    SampleChunk,
-    gather_replay_tensors,
-    require_matching_chunk_context,
-)
-from vrl.generation.execution.executor_base import ChunkExecutorBase
+from vrl.generation.execution.executor_base import BatchExecutorBase
 from vrl.generation.execution.ids import build_sample_rows
+from vrl.generation.execution.sample_batches import (
+    GenerationSampleBatch,
+    SampleAlignedValues,
+    gather_replay_tensors,
+    require_matching_batch_context,
+)
 from vrl.generation.execution.worker import GenerationWorkerCore
 from vrl.generation.launch_contract import GenerationRuntimeLaunchContract
-from vrl.generation.protocols import ChunkGatherer
+from vrl.generation.protocols import GenerationBatchGatherer
 from vrl.generation.types import GenerationRequest
 from vrl.models.families.cosmos.cosmos3.model import Cosmos3Model
 
 
 class _PureGatherer:
-    def gather_chunks(
+    def gather_batches(
         self,
         request: GenerationRequest,
         sample_rows: Sequence[Any],
-        chunks: Sequence[Any],
+        batches: Sequence[Any],
     ) -> Any:
         del request, sample_rows
-        return SimpleNamespace(output=list(chunks))
+        return SimpleNamespace(output=list(batches))
 
 
-class _Executor(ChunkExecutorBase):
+class _Executor(BatchExecutorBase):
     family = "sd3_5"
     task = "t2i"
 
-    def forward_chunk_plan(self, *args: Any, **kwargs: Any) -> Any:
+    def forward_batch(self, *args: Any, **kwargs: Any) -> Any:
         raise NotImplementedError
 
 
@@ -53,31 +53,31 @@ def test_chunk_executor_uses_injected_gatherer() -> None:
     gatherer = _PureGatherer()
     executor = _Executor(gatherer=gatherer)
 
-    output = executor.gather_chunks(request, sample_rows, ["chunk"])
+    output = executor.gather_batches(request, sample_rows, ["batch"])
 
-    assert output.output == ["chunk"]
+    assert output.output == ["batch"]
     assert executor._gatherer is gatherer
 
 
 def test_chunk_executor_rejects_request_execution_without_gatherer() -> None:
     request = _request()
 
-    with pytest.raises(RuntimeError, match="requires an injected chunk gatherer"):
-        _Executor().gather_chunks(request, build_sample_rows(request), ["chunk"])
+    with pytest.raises(RuntimeError, match="requires an injected batch gatherer"):
+        _Executor().gather_batches(request, build_sample_rows(request), ["batch"])
 
 
-def test_chunk_gatherer_accepts_pure_object_without_forward_chunk_plan() -> None:
-    """Checks chunk gatherer accepts pure object without forward chunk plan."""
+def test_chunk_gatherer_accepts_pure_object_without_forward_batch() -> None:
+    """Checks batch gatherer accepts pure object without forward batch plan."""
     request = _request()
     sample_rows = build_sample_rows(request)
     gatherer = _PureGatherer()
 
-    assert isinstance(gatherer, ChunkGatherer)
-    assert not hasattr(gatherer, "forward_chunk_plan")
+    assert isinstance(gatherer, GenerationBatchGatherer)
+    assert not hasattr(gatherer, "forward_batch")
 
-    output = gatherer.gather_chunks(request, sample_rows, ["chunk"])
+    output = gatherer.gather_batches(request, sample_rows, ["batch"])
 
-    assert output.output == ["chunk"]
+    assert output.output == ["batch"]
 
 
 def test_worker_core_rejects_invalid_launch_contract_at_process_boundary() -> None:
@@ -90,12 +90,12 @@ def test_worker_core_rejects_invalid_launch_contract_at_process_boundary() -> No
 
 @pytest.mark.parametrize(
     "gatherer",
-    [object(), SimpleNamespace(gather_chunks=object())],
+    [object(), SimpleNamespace(gather_batches=object())],
 )
 def test_worker_core_rejects_invalid_gatherer_at_process_boundary(
     gatherer: Any,
 ) -> None:
-    with pytest.raises(TypeError, match="gatherer must implement ChunkGatherer"):
+    with pytest.raises(TypeError, match="gatherer must implement GenerationBatchGatherer"):
         GenerationWorkerCore(
             "worker-0",
             GenerationRuntimeLaunchContract(
@@ -108,17 +108,17 @@ def test_worker_core_rejects_invalid_gatherer_at_process_boundary(
 
 
 def test_diffusion_chunk_gatherer_gathers_without_model_object() -> None:
-    """Checks diffusion chunk gatherer gathers without model object."""
+    """Checks diffusion batch gatherer gathers without model object."""
     request = _request(cfg=False)
     sample_rows = build_sample_rows(request)
-    gatherer = DiffusionChunkGatherer()
+    gatherer = DiffusionBatchGatherer()
     context = {
         "guidance_scale": 4.5,
         "cfg": False,
         "model_family": "sd3_5",
     }
 
-    output = gatherer.gather_chunks(request, sample_rows, _diffusion_chunks(context))
+    output = gatherer.gather_batches(request, sample_rows, _diffusion_batches(context))
 
     assert output.output.device.type == "cpu"
     assert output.trajectory is not None
@@ -130,37 +130,37 @@ def test_diffusion_chunk_gatherer_gathers_without_model_object() -> None:
 
 
 def test_diffusion_chunk_gatherer_orders_prompt_major_chunks() -> None:
-    """Checks diffusion chunk gatherer orders prompt major chunks."""
+    """Checks diffusion batch gatherer orders prompt major batches."""
     request = _request(cfg=False)
     sample_rows = build_sample_rows(request)
-    gatherer = DiffusionChunkGatherer()
+    gatherer = DiffusionBatchGatherer()
     context = {
         "guidance_scale": 4.5,
         "cfg": False,
         "model_family": "sd3_5",
     }
 
-    output = gatherer.gather_chunks(
+    output = gatherer.gather_batches(
         request,
         sample_rows,
-        list(reversed(_diffusion_chunks(context))),
+        list(reversed(_diffusion_batches(context))),
     )
 
     assert torch.equal(output.output[:, 0, 0, 0], torch.tensor([1.0, 2.0]))
 
 
 def test_diffusion_chunk_gatherer_keeps_rollout_context() -> None:
-    """Checks diffusion chunk gatherer keeps rollout context."""
+    """Checks diffusion batch gatherer keeps rollout context."""
     request = _request(family="cosmos", task="v2w", cfg=False)
     sample_rows = build_sample_rows(request)
-    gatherer = DiffusionChunkGatherer()
+    gatherer = DiffusionBatchGatherer()
     context = {
         "guidance_scale": 4.5,
         "cfg": True,
         "model_family": "cosmos",
     }
 
-    output = gatherer.gather_chunks(request, sample_rows, _diffusion_chunks(context))
+    output = gatherer.gather_batches(request, sample_rows, _diffusion_batches(context))
 
     assert output.trajectory is not None
     assert output.trajectory.context == context
@@ -169,28 +169,28 @@ def test_diffusion_chunk_gatherer_keeps_rollout_context() -> None:
 
 def test_diffusion_chunk_gatherer_strictly_merges_replay_values() -> None:
     request = _request(cfg=False)
-    chunks = _diffusion_chunks(
+    batches = _diffusion_batches(
         {
             "guidance_scale": 4.5,
             "cfg": False,
             "model_family": "sd3_5",
         },
     )
-    chunks[0].replay_tensors = {
+    batches[0].replay_tensors = {
         "prompt_embeds": torch.tensor([[1.0]]),
         "optional": None,
         "scheduler": "flow",
     }
-    chunks[1].replay_tensors = {
+    batches[1].replay_tensors = {
         "prompt_embeds": torch.tensor([[2.0]]),
         "optional": None,
         "scheduler": "flow",
     }
 
-    output = DiffusionChunkGatherer().gather_chunks(
+    output = DiffusionBatchGatherer().gather_batches(
         request,
         build_sample_rows(request),
-        chunks,
+        batches,
     )
 
     assert output.trajectory is not None
@@ -223,14 +223,14 @@ def test_replay_gather_concatenates_explicit_ragged_sample_rows() -> None:
 
 
 def test_replay_gather_validates_explicit_sample_row_count() -> None:
-    with pytest.raises(ValueError, match="must match each chunk sample_count"):
+    with pytest.raises(ValueError, match="must match each batch sample_count"):
         gather_replay_tensors(
             [{"input_ids": SampleAlignedValues(([1], [2]))}],
             sample_counts=[1],
         )
 
 
-def test_cosmos3_keeps_prompt_ids_out_of_shared_chunk_context() -> None:
+def test_cosmos3_keeps_prompt_ids_out_of_shared_batch_context() -> None:
     def state(input_ids: list[int]) -> SimpleNamespace:
         return SimpleNamespace(
             guidance_scale=7.0,
@@ -250,63 +250,63 @@ def test_cosmos3_keeps_prompt_ids_out_of_shared_chunk_context() -> None:
     contexts = [Cosmos3Model.export_batch_context(object(), value) for value in states]
     replay = [Cosmos3Model.export_replay_tensors(object(), value) for value in states]
 
-    assert require_matching_chunk_context(contexts) == contexts[0]
+    assert require_matching_batch_context(contexts) == contexts[0]
     gathered = gather_replay_tensors(replay, sample_counts=[1, 1])
     assert gathered["cond_input_ids"] == ([1, 2], [3, 4, 5])
 
 
 def test_diffusion_chunk_gatherer_rejects_mixed_none_replay_values() -> None:
     request = _request(cfg=False)
-    chunks = _diffusion_chunks({"model_family": "sd3_5"})
-    chunks[0].replay_tensors = {"prompt_embeds": None}
-    chunks[1].replay_tensors = {"prompt_embeds": torch.ones(1, 1)}
+    batches = _diffusion_batches({"model_family": "sd3_5"})
+    batches[0].replay_tensors = {"prompt_embeds": None}
+    batches[1].replay_tensors = {"prompt_embeds": torch.ones(1, 1)}
 
     with pytest.raises(ValueError, match="must be present on all results"):
-        DiffusionChunkGatherer().gather_chunks(
+        DiffusionBatchGatherer().gather_batches(
             request,
             build_sample_rows(request),
-            chunks,
+            batches,
         )
 
 
 def test_diffusion_chunk_gatherer_rejects_mismatched_static_replay_values() -> None:
     request = _request(cfg=False)
-    chunks = _diffusion_chunks({"model_family": "sd3_5"})
-    chunks[0].replay_tensors = {"scheduler": "flow"}
-    chunks[1].replay_tensors = {"scheduler": "ddim"}
+    batches = _diffusion_batches({"model_family": "sd3_5"})
+    batches[0].replay_tensors = {"scheduler": "flow"}
+    batches[1].replay_tensors = {"scheduler": "ddim"}
 
     with pytest.raises(ValueError, match="non-batched replay value 'scheduler' must match"):
-        DiffusionChunkGatherer().gather_chunks(
+        DiffusionBatchGatherer().gather_batches(
             request,
             build_sample_rows(request),
-            chunks,
+            batches,
         )
 
 
 def test_diffusion_chunk_gatherer_rejects_mismatched_replay_keys() -> None:
     request = _request(cfg=False)
-    chunks = _diffusion_chunks({"model_family": "sd3_5"})
-    chunks[0].replay_tensors = {"prompt_embeds": torch.ones(1, 1)}
-    chunks[1].replay_tensors = {"pooled_prompt_embeds": torch.ones(1, 1)}
+    batches = _diffusion_batches({"model_family": "sd3_5"})
+    batches[0].replay_tensors = {"prompt_embeds": torch.ones(1, 1)}
+    batches[1].replay_tensors = {"pooled_prompt_embeds": torch.ones(1, 1)}
 
     with pytest.raises(ValueError, match="replay_tensors keys must match"):
-        DiffusionChunkGatherer().gather_chunks(
+        DiffusionBatchGatherer().gather_batches(
             request,
             build_sample_rows(request),
-            chunks,
+            batches,
         )
 
 
 def test_diffusion_chunk_gatherer_rejects_mismatched_context() -> None:
     request = _request(cfg=False)
-    chunks = _diffusion_chunks({"model_family": "sd3_5", "cfg": False})
-    chunks[1].context = {"model_family": "sd3_5", "cfg": True}
+    batches = _diffusion_batches({"model_family": "sd3_5", "cfg": False})
+    batches[1].context = {"model_family": "sd3_5", "cfg": True}
 
-    with pytest.raises(ValueError, match="chunk context at ordered index 1 does not match"):
-        DiffusionChunkGatherer().gather_chunks(
+    with pytest.raises(ValueError, match="batch context at ordered index 1 does not match"):
+        DiffusionBatchGatherer().gather_batches(
             request,
             build_sample_rows(request),
-            chunks,
+            batches,
         )
 
 
@@ -331,7 +331,7 @@ def _request(
     )
 
 
-def _diffusion_chunks(context: dict[str, Any]) -> list[DiffusionChunkResult]:
+def _diffusion_batches(context: dict[str, Any]) -> list[DiffusionBatchResult]:
     return [
         _diffusion_chunk(1.0, context, sample_start=0, peak_memory_mb=10.0),
         _diffusion_chunk(2.0, context, sample_start=1, peak_memory_mb=20.0),
@@ -344,9 +344,9 @@ def _diffusion_chunk(
     *,
     sample_start: int,
     peak_memory_mb: float,
-) -> DiffusionChunkResult:
-    return DiffusionChunkResult(
-        chunk=SampleChunk(
+) -> DiffusionBatchResult:
+    return DiffusionBatchResult(
+        batch=GenerationSampleBatch(
             prompt_index=0,
             sample_start=sample_start,
             sample_count=1,

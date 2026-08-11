@@ -7,9 +7,9 @@ rollout collection, rewards, and trainer-ready batches live outside this layer.
 from vrl.generation.execution.ids import build_sample_rows
 from vrl.generation.launch_contract import GenerationRuntimeLaunchContract
 from vrl.generation.protocols import (
-    ChunkGatherer,
-    ChunkResult,
-    GenerationChunkExecutor,
+    BatchPayload,
+    GenerationBatchExecutor,
+    GenerationBatchGatherer,
     GenerationRuntime,
 )
 from vrl.generation.types import (
@@ -20,9 +20,9 @@ from vrl.generation.types import (
 )
 
 __all__ = [
-    "ChunkGatherer",
-    "ChunkResult",
-    "GenerationChunkExecutor",
+    "BatchPayload",
+    "GenerationBatchExecutor",
+    "GenerationBatchGatherer",
     "GenerationInput",
     "GenerationOutput",
     "GenerationRequest",

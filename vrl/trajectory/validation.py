@@ -15,7 +15,7 @@ from vrl.trajectory.types import (
 )
 from vrl.trajectory.views import RewardView
 
-# Curated denylist: engine-execution telemetry keys (chunk timing / memory
+# Curated denylist: engine-execution telemetry keys (batch timing / memory
 # counters) that must NOT leak into serialized trajectory metrics.
 # num_prompts/num_samples stay allowed.
 FORBIDDEN_TRAJECTORY_METRICS = frozenset(
@@ -23,7 +23,10 @@ FORBIDDEN_TRAJECTORY_METRICS = frozenset(
         "queue_wait_s",
         "execution_s",
         "peak_memory_mb",
+        # Both spellings: pre-rename serialized trajectories carry "chunks",
+        # the batch-vocabulary engine would carry "batches".
         "chunks",
+        "batches",
     }
 )
 # The core role triple a trainable segment must have exactly one of each.

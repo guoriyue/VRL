@@ -349,14 +349,14 @@ class CogVideoXModel(LoraModelMixin, DiffusersPipelineModelBase, DiffusionBackbo
         vae = pipe.vae
         scaling = float(pipe.vae_scaling_factor_image)
 
-        def _transform(chunk: torch.Tensor) -> torch.Tensor:
+        def _transform(batch: torch.Tensor) -> torch.Tensor:
             # [B, F, C, H, W] -> the VAE's [B, C, F, H, W], then unscale.
-            return chunk.permute(0, 2, 1, 3, 4).to(vae.dtype) / scaling
+            return batch.permute(0, 2, 1, 3, 4).to(vae.dtype) / scaling
 
         decoder = ChunkedLatentDecoder(
             LatentDecodePlan(
                 prepare_latents=_transform,
-                vae_decode=lambda chunk: vae.decode(chunk, return_dict=False)[0],
+                vae_decode=lambda batch: vae.decode(batch, return_dict=False)[0],
                 postprocess=lambda video: pipe.video_processor.postprocess_video(
                     video,
                     output_type="pt",

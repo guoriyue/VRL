@@ -9,7 +9,7 @@ from dataclasses import replace
 from functools import partial
 from typing import Any
 
-from vrl.generation.execution.chunk_placement import DistributedExecutionPlanner
+from vrl.generation.execution.batch_placement import DistributedExecutionPlanner
 from vrl.generation.ray.config import RayGenerationConfig
 from vrl.generation.ray.executor import RayGenerationExecutor
 from vrl.generation.ray.launch_inputs import RayGenerationLaunchInputs
@@ -106,7 +106,7 @@ class RayGenerationLauncher:
 
             executor = RayGenerationExecutor(
                 DistributedExecutionPlanner(
-                    strategy=worker.chunk_placement_strategy,
+                    strategy=worker.batch_placement_strategy,
                 ),
                 workers,
                 launch_inputs.gatherer,
@@ -293,7 +293,7 @@ def _all_workers_support_versioned_slots(
 ) -> bool:
     """Return whether every worker supports versioned trainable-state slots.
 
-    Non-draining weight sync needs slots on all workers because a chunk stamped
+    Non-draining weight sync needs slots on all workers because a batch stamped
     with an older policy version can be placed on any worker. A missing weight
     syncer or an empty worker set keeps the safe draining barrier. A query
     failure means the candidate fleet is broken, not merely unsupported, and

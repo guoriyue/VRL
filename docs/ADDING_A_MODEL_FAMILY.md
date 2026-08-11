@@ -27,7 +27,7 @@ The existing `sd3_5` family is the smallest complete example.
 
 Use the descriptor-driven denoise path when one trainable transformer and one
 scheduler are enough to build rollout and replay runtimes. The shared
-`GenericDiffusionChunkExecutor` in the `full_sequence_denoise` binding owns prompt, prepare,
+`GenericDiffusionBatchExecutor` in the `full_sequence_denoise` binding owns prompt, prepare,
 denoise, and decode orchestration; `DenoiseFamilyBuild` tells the shared builders
 which model classes and upstream transformer to load. The retained `Diffusion*`
 class names are implementation APIs, not model taxonomy.
@@ -111,7 +111,7 @@ still name the exact registry entry (for example, `janus_pro_r1`, not
 compatibility; it never rewrites the configured family.
 
 `executor_cls` is intentionally absent above, so `_full_sequence_denoise_entry` selects
-`vrl.generation.bindings.full_sequence_denoise.executor:GenericDiffusionChunkExecutor`. Add a
+`vrl.generation.bindings.full_sequence_denoise.executor:GenericDiffusionBatchExecutor`. Add a
 family executor only when its body performs family-specific work; a renamed
 pass-through executor is not an extension point.
 

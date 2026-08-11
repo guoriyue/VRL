@@ -629,15 +629,15 @@ class CausVidModel(_CausVidPolicyModel):
         self,
         *,
         request: Any,
-        chunk: Any,
+        batch: Any,
     ) -> ChunkAutoregressiveDenoiseResult:
-        """Generate one transport sample chunk through seven temporal chunks."""
+        """Generate one transport sample batch through seven temporal chunks."""
 
         self._validate_generation_request(request)
-        batch_size = int(chunk.sample_count)
-        prompt = request.inputs[chunk.prompt_index].prompt
+        batch_size = int(batch.sample_count)
+        prompt = request.inputs[batch.prompt_index].prompt
         encoded = self.encode_prompt([prompt] * batch_size)
-        generators = self._sample_generators(request, chunk)
+        generators = self._sample_generators(request, batch)
         noise_rows = [
             torch.randn(
                 self.geometry.latent_shape,
@@ -664,7 +664,7 @@ class CausVidModel(_CausVidPolicyModel):
             video = to_uint8(video)
         mapping = run.trajectory_mapping(context={})
         return ChunkAutoregressiveDenoiseResult(
-            chunk=chunk,
+            batch=batch,
             output=video,
             **mapping,
         )
@@ -691,17 +691,17 @@ class CausVidModel(_CausVidPolicyModel):
         if negative_prompt not in (None, ""):
             raise ValueError("released CausVid does not support a negative prompt")
 
-    def _sample_generators(self, request: Any, chunk: Any) -> tuple[torch.Generator, ...]:
+    def _sample_generators(self, request: Any, batch: Any) -> tuple[torch.Generator, ...]:
         seed = request.sampling.get("seed")
         generators: list[torch.Generator] = []
-        for local_index in range(int(chunk.sample_count)):
+        for local_index in range(int(batch.sample_count)):
             generator = torch.Generator(device=torch.device(self.device))
             if seed is None:
                 generator.seed()
             else:
                 flat_sample_index = (
-                    int(chunk.prompt_index) * int(request.samples_per_prompt)
-                    + int(chunk.sample_start)
+                    int(batch.prompt_index) * int(request.samples_per_prompt)
+                    + int(batch.sample_start)
                     + local_index
                 )
                 generator.manual_seed(int(seed) + flat_sample_index)

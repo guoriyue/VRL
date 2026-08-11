@@ -40,7 +40,7 @@ algorithm:
 rollout:
   n_samples_per_prompt: 8
   prompts_per_batch: 1
-  samples_per_chunk: 1
+  samples_per_generation_batch: 1
   noise_level: 0.7
   sde:
     type: flow_grpo

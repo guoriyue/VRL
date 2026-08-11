@@ -9,20 +9,20 @@ from typing import Any
 from vrl.generation.execution.memory_parking import WorkerMemoryParking
 from vrl.generation.execution.planner import EnginePlan
 from vrl.generation.execution.types import (
-    ChunkCompletionCallback,
-    ChunkExecutionEnvelope,
-    ChunkExecutionResult,
-    ChunkMemoryReading,
-    ChunkSizeProbeResult,
-    ChunkSizeProbeTrial,
+    BatchCompletionCallback,
+    BatchMemoryReading,
+    BatchSizeProbeResult,
+    BatchSizeProbeTrial,
+    GenerationBatchEnvelope,
+    GenerationBatchResult,
     PipelinedRequestOutOfMemory,
     WorkerMemoryParkingSnapshot,
 )
 from vrl.generation.launch_contract import GenerationRuntimeLaunchContract
 from vrl.generation.protocols import (
-    ChunkGatherer,
-    ChunkSizeProbeExecutor,
-    GenerationChunkExecutor,
+    BatchSizeProbeExecutor,
+    GenerationBatchExecutor,
+    GenerationBatchGatherer,
 )
 from vrl.generation.types import GenerationOutput, GenerationRequest, GenerationSampleRow
 from vrl.models.interfaces import require_runtime_model
@@ -33,19 +33,19 @@ from vrl.utils.profiling import TorchProfilerConfig
 
 logger = init_logger(__name__)
 
-# The chunk-size probe truncates each trial to a fixed handful of denoise steps:
+# The batch-size probe truncates each trial to a fixed handful of denoise steps:
 # it only needs the peak-memory shape (affine in samples), not a full sampling.
 _PROBE_EXECUTE_STEPS = 2
 
 
 class GenerationWorkerCore:
-    """Own one generation executor and execute plan-aware chunks."""
+    """Own one generation executor and execute plan-aware batches."""
 
     def __init__(
         self,
         worker_id: str,
         launch_contract: GenerationRuntimeLaunchContract,
-        gatherer: ChunkGatherer,
+        gatherer: GenerationBatchGatherer,
     ) -> None:
         self.worker_id = worker_id
         if not isinstance(launch_contract, GenerationRuntimeLaunchContract):
@@ -54,24 +54,24 @@ class GenerationWorkerCore:
                 f"got {type(launch_contract).__name__}",
             )
         self.launch_contract = launch_contract
-        if not isinstance(gatherer, ChunkGatherer) or not callable(
-            getattr(gatherer, "gather_chunks", None),
+        if not isinstance(gatherer, GenerationBatchGatherer) or not callable(
+            getattr(gatherer, "gather_batches", None),
         ):
             raise TypeError(
-                f"gatherer must implement ChunkGatherer, got {type(gatherer).__name__}",
+                f"gatherer must implement GenerationBatchGatherer, got {type(gatherer).__name__}",
             )
         self.gatherer = gatherer
         from vrl.models.families.registry import get_model_family_entry
 
         self.family_entry = get_model_family_entry(launch_contract.family)
-        self.executor: GenerationChunkExecutor | None = None
+        self.executor: GenerationBatchExecutor | None = None
         self._memory_parking = WorkerMemoryParking(
             worker_id,
             launch_contract,
         )
         self._policy_version: int | None = self.launch_contract.policy_version
         # Flipped on once a model that supports versioned trainable-state slots
-        # receives its first weight install; from then on execute_chunk activates
+        # receives its first weight install; from then on execute_batch activates
         # the slot for each request's stamped version instead of comparing against
         # one global version (which is what makes a non-draining sync safe).
         self._uses_versioned_slots = False
@@ -163,7 +163,7 @@ class GenerationWorkerCore:
 
         When the model supports versioned trainable-state slots, install the new
         version as a retained slot WITHOUT overwriting the slots older in-flight
-        requests still depend on (the non-draining-sync path); ``execute_chunk``
+        requests still depend on (the non-draining-sync path); ``execute_batch``
         then activates the right slot per request. Otherwise keep the single
         in-place overwrite (the draining-barrier path).
         """
@@ -197,7 +197,7 @@ class GenerationWorkerCore:
         # latest installed version even in slot mode. It reaches the producer
         # through this method's ACK (returned below) — the producer stamps NEW requests from
         # RolloutLifecycle.current_policy_version() -> runtime.current_policy_version
-        # (attribute), not by reading this worker directly. Per-chunk results take
+        # (attribute), not by reading this worker directly. Per-batch results take
         # their version from request.policy_version, not this field.
         self._policy_version = int(policy_version)
         return self._policy_version
@@ -216,14 +216,14 @@ class GenerationWorkerCore:
             and getattr(model, "supports_versioned_trainable_state", False)
         )
 
-    def execute_chunk(self, envelope: ChunkExecutionEnvelope) -> ChunkExecutionResult:
+    def execute_batch(self, envelope: GenerationBatchEnvelope) -> GenerationBatchResult:
         self._memory_parking.require_active(
-            "execute_chunk",
+            "execute_batch",
             executor=self.executor,
         )
         self.load_policy()
         request = envelope.request
-        chunk = envelope.chunk
+        batch = envelope.batch
         runtime_debug = request.runtime_debug
         expected_version = request.policy_version
         model = getattr(self.executor, "model", None)
@@ -232,23 +232,23 @@ class GenerationWorkerCore:
             # not the worker's latest. A missing slot means the request outlived
             # the retention window — a typed stale-slot result, not a mismatch.
             if not model.has_trainable_state(expected_version):
-                return ChunkExecutionResult(
+                return GenerationBatchResult(
                     request_id=request.request_id,
                     worker_id=self.worker_id,
-                    chunk=chunk,
+                    batch=batch,
                     output=None,
-                    metrics=self._chunk_metrics(runtime_debug=runtime_debug),
+                    metrics=self._batch_metrics(runtime_debug=runtime_debug),
                     policy_version=expected_version,
                     error=(f"trainable-state slot evicted for policy_version={expected_version}"),
                     stale_slot=True,
                 )
         elif expected_version is not None and self._policy_version != expected_version:
-            return ChunkExecutionResult(
+            return GenerationBatchResult(
                 request_id=request.request_id,
                 worker_id=self.worker_id,
-                chunk=chunk,
+                batch=batch,
                 output=None,
-                metrics=self._chunk_metrics(runtime_debug=runtime_debug),
+                metrics=self._batch_metrics(runtime_debug=runtime_debug),
                 policy_version=self._policy_version,
                 error=(
                     "policy_version mismatch: "
@@ -264,42 +264,42 @@ class GenerationWorkerCore:
             if self._uses_versioned_slots and expected_version is not None:
                 model.activate_trainable_state(expected_version)
             output = self._profile_forward_chunk(envelope)
-            memory = self._chunk_memory_reading(output)
-            return ChunkExecutionResult(
+            memory = self._batch_memory_reading(output)
+            return GenerationBatchResult(
                 request_id=request.request_id,
                 worker_id=self.worker_id,
-                chunk=chunk,
+                batch=batch,
                 output=self._to_cpu(output),
                 memory=memory,
-                metrics=self._chunk_metrics(
+                metrics=self._batch_metrics(
                     runtime_debug=runtime_debug,
-                    chunk_output=output,
+                    batch_output=output,
                 ),
                 policy_version=result_version,
             )
         except Exception as exc:
             self._memory_parking.recover_after_execution_error(model, exc)
-            return ChunkExecutionResult(
+            return GenerationBatchResult(
                 request_id=request.request_id,
                 worker_id=self.worker_id,
-                chunk=chunk,
+                batch=batch,
                 output=None,
-                metrics=self._chunk_metrics(runtime_debug=runtime_debug),
+                metrics=self._batch_metrics(runtime_debug=runtime_debug),
                 policy_version=result_version,
                 error=str(exc),
             )
 
-    def probe_chunk_size(
+    def probe_batch_size(
         self,
         request: Any,
         *,
         max_samples: int,
         margin: float = 0.05,
         knee_threshold: float = 0.05,
-    ) -> ChunkSizeProbeResult:
-        """Startup chunk-size probe (SPRINT_chunk_size_probe): pick the largest
-        safe ``samples_per_chunk`` for this worker by running truncated real
-        chunks — vLLM's profile-run shape, adapted to a chunked rollout.
+    ) -> BatchSizeProbeResult:
+        """Startup batch-size probe (SPRINT_chunk_size_probe): pick the largest
+        safe ``samples_per_generation_batch`` for this worker by running truncated real
+        batches — vLLM's profile-run shape, adapted to a chunked rollout.
 
         Runs BEFORE the first real request (caller contract). Trials at n=1 and
         n=min(4, max) give a two-point affine fit of peak bytes (demand is
@@ -313,7 +313,7 @@ class GenerationWorkerCore:
         """
 
         self._memory_parking.require_active(
-            "probe_chunk_size",
+            "probe_batch_size",
             executor=self.executor,
         )
 
@@ -322,43 +322,43 @@ class GenerationWorkerCore:
 
         import torch
 
-        from vrl.generation.execution.chunk_memory import AffinePeakFit
-        from vrl.generation.execution.chunks import SampleChunk
+        from vrl.generation.execution.batch_memory import AffinePeakFit
+        from vrl.generation.execution.sample_batches import GenerationSampleBatch
 
         if not torch.cuda.is_available():
-            raise RuntimeError("chunk-size probe requires CUDA")
+            raise RuntimeError("batch-size probe requires CUDA")
         if max_samples < 1:
             raise ValueError(f"probe max_samples must be >= 1, got {max_samples}")
         self.load_policy()
         executor = self.executor
         model = getattr(executor, "model", None)
-        if not isinstance(executor, ChunkSizeProbeExecutor):
+        if not isinstance(executor, BatchSizeProbeExecutor):
             raise TypeError(
                 f"{type(executor).__name__} does not expose the diffusion "
-                "chunk probe capability; samples_per_chunk: auto is diffusion-only",
+                "batch probe capability; samples_per_generation_batch: auto is diffusion-only",
             )
 
         _, total_bytes = torch.cuda.mem_get_info()
         budget_bytes = int(total_bytes)
 
-        def run_trial(n: int, *, timed_label: str) -> ChunkSizeProbeTrial:
+        def run_trial(n: int, *, timed_label: str) -> BatchSizeProbeTrial:
             probe_request = dataclass_replace(
                 request,
-                request_id=f"chunk-probe-{self.worker_id}-n{n}",
+                request_id=f"batch-probe-{self.worker_id}-n{n}",
                 inputs=[request.inputs[0]],
                 samples_per_prompt=n,
                 sampling=dict(request.sampling),
             )
-            chunk = SampleChunk(
+            batch = GenerationSampleBatch(
                 prompt_index=0,
                 sample_start=0,
                 sample_count=n,
             )
             started = time.perf_counter()
             try:
-                chunk_result = executor.forward_probe_chunk(
+                batch_result = executor.forward_probe_batch(
                     probe_request,
-                    chunk,
+                    batch,
                     execute_steps=_PROBE_EXECUTE_STEPS,
                 )
                 # CUDA work is async-launched; without a sync here the wall
@@ -371,19 +371,19 @@ class GenerationWorkerCore:
                     raise
                 torch.cuda.synchronize()
                 torch.cuda.empty_cache()
-                return ChunkSizeProbeTrial(n=n, oom=True, label=timed_label)
+                return BatchSizeProbeTrial(n=n, oom=True, label=timed_label)
             wall_s = time.perf_counter() - started
-            memory = chunk_result.memory
-            reading = ChunkMemoryReading.from_metrics(memory) if memory is not None else None
-            del chunk_result
+            memory = batch_result.memory
+            reading = BatchMemoryReading.from_metrics(memory) if memory is not None else None
+            del batch_result
             torch.cuda.synchronize()
             torch.cuda.empty_cache()
             if reading is None:
                 raise RuntimeError(
-                    "chunk-size probe trial produced no memory reading "
-                    f"(n={n}); cannot size chunks without it",
+                    "batch-size probe trial produced no memory reading "
+                    f"(n={n}); cannot size batches without it",
                 )
-            return ChunkSizeProbeTrial(
+            return BatchSizeProbeTrial(
                 n=n,
                 oom=False,
                 label=timed_label,
@@ -392,13 +392,13 @@ class GenerationWorkerCore:
                 wall_s=wall_s,
             )
 
-        trials: list[ChunkSizeProbeTrial] = []
+        trials: list[BatchSizeProbeTrial] = []
         # Warmup at n=1 (cudnn autotune, lazy init) so trial timings compare
         # warm-vs-warm; its memory verdict still counts: OOM at n=1 is terminal.
         warmup = run_trial(1, timed_label="warmup")
         if warmup.oom:
             raise RuntimeError(
-                "chunk-size probe: a single sample does not fit on this worker "
+                "batch-size probe: a single sample does not fit on this worker "
                 f"(phase budget {budget_bytes / 2**30:.1f} GiB); the recipe "
                 "shape is too large for this GPU",
             )
@@ -414,7 +414,7 @@ class GenerationWorkerCore:
             if high.oom:
                 # The fit anchor itself OOMed: bisect between the known-good 1
                 # and n_high for the largest fitting n.
-                final = self._bisect_chunk_probe(run_trial, trials, 1, n_high)
+                final = self._bisect_batch_probe(run_trial, trials, 1, n_high)
             else:
                 assert high.non_torch_bytes is not None
                 assert high.peak_bytes is not None
@@ -432,7 +432,7 @@ class GenerationWorkerCore:
                     confirm = run_trial(candidate, timed_label="confirm")
                     trials.append(confirm)
                     if confirm.oom:
-                        final = self._bisect_chunk_probe(
+                        final = self._bisect_batch_probe(
                             run_trial,
                             trials,
                             n_high,
@@ -447,16 +447,16 @@ class GenerationWorkerCore:
                         improvement = 1.0 - (confirm.per_sample_s / high.per_sample_s)
                         if improvement < knee_threshold:
                             final = n_high
-        return ChunkSizeProbeResult(
-            samples_per_chunk=int(final),
+        return BatchSizeProbeResult(
+            samples_per_generation_batch=int(final),
             budget_bytes=budget_bytes,
             trials=tuple(trials),
         )
 
     @staticmethod
-    def _bisect_chunk_probe(
-        run_trial: Callable[..., ChunkSizeProbeTrial],
-        trials: list[ChunkSizeProbeTrial],
+    def _bisect_batch_probe(
+        run_trial: Callable[..., BatchSizeProbeTrial],
+        trials: list[BatchSizeProbeTrial],
         low_good: int,
         high_bad: int,
     ) -> int:
@@ -478,22 +478,22 @@ class GenerationWorkerCore:
         engine_plan: EnginePlan,
         sample_rows: Sequence[GenerationSampleRow],
         *,
-        completion_callback: ChunkCompletionCallback | None = None,
+        completion_callback: BatchCompletionCallback | None = None,
     ) -> GenerationOutput | PipelinedRequestOutOfMemory:
-        """Run ALL of a request's chunks through the executor's software pipeline
-        (``forward_plan_pipelined``) on THIS worker, so chunk N+1's denoise overlaps
-        chunk N's GPU->CPU copy + host packing — hiding the per-chunk worker
-        boundary that per-chunk dispatch leaves serial. Single-worker only (all the
-        request's chunks must be here). Returns the gathered ``GenerationOutput``;
+        """Run ALL of a request's batches through the executor's software pipeline
+        (``forward_plan_pipelined``) on THIS worker, so batch N+1's denoise overlaps
+        batch N's GPU->CPU copy + host packing — hiding the per-batch worker
+        boundary that per-batch dispatch leaves serial. Single-worker only (all the
+        request's batches must be here). Returns the gathered ``GenerationOutput``;
         after a CUDA OOM it first joins pending copy work, clears partial request
         state, and returns ``PipelinedRequestOutOfMemory`` for driver-side retry.
 
-        Version safety mirrors ``execute_chunk`` but at the REQUEST level (every
-        chunk shares ``request.policy_version``): slot mode serves the request from
+        Version safety mirrors ``execute_batch`` but at the REQUEST level (every
+        batch shares ``request.policy_version``): slot mode serves the request from
         its stamped version's slot (stale slot -> ``StaleSlotDiscard`` so the
         producer counts a graceful discard, never an off-policy train); non-slot
         mode rejects a version mismatch. The version is checked + activated ONCE
-        here, not per chunk.
+        here, not per batch.
         """
 
         from vrl.generation.execution.types import StaleSlotDiscard
@@ -541,9 +541,9 @@ class GenerationWorkerCore:
             if not is_cuda_out_of_memory(error):
                 raise
             error_text = str(error)
-            # The exception traceback retains every partially produced chunk and
+            # The exception traceback retains every partially produced batch and
             # copy-stream object. Clear those frames before emptying the allocator
-            # cache; otherwise the driver's safe per-chunk retry can immediately
+            # cache; otherwise the driver's safe per-batch retry can immediately
             # OOM on tensors held by the failed whole-request pipeline.
             error_traceback = error.__traceback__
             if error_traceback is not None:
@@ -561,18 +561,18 @@ class GenerationWorkerCore:
 
     def _profile_forward_chunk(
         self,
-        envelope: ChunkExecutionEnvelope,
+        envelope: GenerationBatchEnvelope,
     ) -> Any:
         from vrl.utils.profiling import capture_torch_trace, profile_range
 
         assert self.executor is not None
         request = envelope.request
-        chunk = envelope.chunk
+        batch = envelope.batch
         step = self._profiler_step
         self._profiler_step += 1
         worker_name = (
             f"{self.worker_id}_{self.family_entry.family}_{self.family_entry.task}_"
-            f"policy{self._policy_version}_chunk{chunk.prompt_index}_{chunk.sample_start}"
+            f"policy{self._policy_version}_batch{batch.prompt_index}_{batch.sample_start}"
         )
         try:
             device = self._executor_device(self.executor)
@@ -587,33 +587,33 @@ class GenerationWorkerCore:
                 ),
                 profile_range("engine.forward_chunk"),
             ):
-                return self.executor.forward_chunk_plan(request, chunk)
+                return self.executor.forward_batch(request, batch)
         except Exception:
-            logger.exception("generation chunk execution failed")
+            logger.exception("generation batch execution failed")
             raise
 
-    def _chunk_metrics(
+    def _batch_metrics(
         self,
         *,
         runtime_debug: bool,
-        chunk_output: Any | None = None,
+        batch_output: Any | None = None,
     ) -> dict[str, Any]:
-        if not runtime_debug or chunk_output is None:
+        if not runtime_debug or batch_output is None:
             return {}
-        return _chunk_output_debug_metrics(chunk_output)
+        return _batch_output_debug_metrics(batch_output)
 
     @staticmethod
-    def _chunk_memory_reading(chunk_output: Any) -> ChunkMemoryReading | None:
-        memory = getattr(chunk_output, "memory", None)
+    def _batch_memory_reading(batch_output: Any) -> BatchMemoryReading | None:
+        memory = getattr(batch_output, "memory", None)
         if not isinstance(memory, Mapping):
             return None
-        reading = ChunkMemoryReading.from_metrics(memory)
+        reading = BatchMemoryReading.from_metrics(memory)
         # Memory calibration has a first-class wire field; do not serialize the
-        # binding's raw producer mapping a second time inside the chunk payload.
-        chunk_output.memory = None
+        # binding's raw producer mapping a second time inside the batch payload.
+        batch_output.memory = None
         return reading
 
-    def _build_executor(self) -> GenerationChunkExecutor:
+    def _build_executor(self) -> GenerationBatchExecutor:
         launch_contract = self.launch_contract
         from vrl.models.interfaces.runtime import ModelBuild
 
@@ -681,10 +681,10 @@ class GenerationWorkerCore:
 
     @classmethod
     def _to_cpu(cls, value: Any) -> Any:
-        """Move a chunk output to CPU with pinned, queued copies.
+        """Move a batch output to CPU with pinned, queued copies.
 
         Per-tensor ``.cpu()`` synchronizes the stream once per tensor (~376ms
-        of cudaStreamSynchronize per chunk measured on the wire-diet profile);
+        of cudaStreamSynchronize per batch measured on the wire-diet profile);
         pinned-buffer ``non_blocking`` copies queue every transfer and the
         device synchronizes once before the payload is handed to Ray.
         """
@@ -723,18 +723,18 @@ class GenerationWorkerCore:
         return copied
 
 
-def _require_chunked_executor(executor: Any) -> GenerationChunkExecutor:
-    forward_chunk_plan = getattr(executor, "forward_chunk_plan", None)
-    gather_chunks = getattr(executor, "gather_chunks", None)
-    if not callable(forward_chunk_plan) or not callable(gather_chunks):
+def _require_chunked_executor(executor: Any) -> GenerationBatchExecutor:
+    forward_batch = getattr(executor, "forward_batch", None)
+    gather_batches = getattr(executor, "gather_batches", None)
+    if not callable(forward_batch) or not callable(gather_batches):
         raise TypeError(
             f"{type(executor).__name__} does not implement "
-            "forward_chunk_plan(...) and gather_chunks(...)",
+            "forward_batch(...) and gather_batches(...)",
         )
     return executor
 
 
-def _chunk_output_debug_metrics(output: Any) -> dict[str, Any]:
+def _batch_output_debug_metrics(output: Any) -> dict[str, Any]:
     metrics: dict[str, Any] = {}
 
     stage_durations = getattr(output, "stage_durations", None)

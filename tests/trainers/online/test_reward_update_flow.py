@@ -220,7 +220,7 @@ class TestRewardUpdateFlow:
                 batch_plan=OnlineBatchPlan(
                     prompts_per_batch=1,
                     n_samples_per_prompt=2,
-                    replay_samples_per_chunk=0,
+                    replay_samples_per_batch=0,
                 ),
                 timestep_fraction=1.0,
                 drop_zero_advantage=False,
@@ -786,8 +786,8 @@ class TestRewardUpdateFlow:
         )
 
 
-def test_replay_samples_per_chunk_splits_backward_and_preserves_gradient(monkeypatch) -> None:
-    """The replay-only chunk integer changes call shape without changing gradients."""
+def test_replay_samples_per_batch_splits_backward_and_preserves_gradient(monkeypatch) -> None:
+    """The replay-only batch integer changes call shape without changing gradients."""
     import asyncio
 
     import pytest
@@ -860,7 +860,7 @@ def test_replay_samples_per_chunk_splits_backward_and_preserves_gradient(monkeyp
             return _trajectory_signals(batch, log_prob, timestep_idx)
 
     def _make_trainer(
-        replay_samples_per_chunk: int,
+        replay_samples_per_batch: int,
         *,
         streaming: bool,
     ) -> tuple[OnlineTrainer, list[int]]:
@@ -879,7 +879,7 @@ def test_replay_samples_per_chunk_splits_backward_and_preserves_gradient(monkeyp
                     prompts_per_batch=1,
                     n_samples_per_prompt=4,
                     gradient_accumulation_steps=1 if streaming else 0,
-                    replay_samples_per_chunk=replay_samples_per_chunk,
+                    replay_samples_per_batch=replay_samples_per_batch,
                 ),
                 timestep_fraction=1.0,
                 drop_zero_advantage=False,
@@ -893,13 +893,13 @@ def test_replay_samples_per_chunk_splits_backward_and_preserves_gradient(monkeyp
         return trainer, replay_calls
 
     def _run(
-        replay_samples_per_chunk: int,
+        replay_samples_per_batch: int,
         *,
         streaming: bool,
     ) -> tuple[float, list[int], list[int]]:
         device_move_sizes.clear()
         trainer, replay_calls = _make_trainer(
-            replay_samples_per_chunk,
+            replay_samples_per_batch,
             streaming=streaming,
         )
         recorded_grads: list[float] = []
@@ -927,15 +927,15 @@ def test_replay_samples_per_chunk_splits_backward_and_preserves_gradient(monkeyp
         return recorded_grads[0], replay_calls, list(device_move_sizes)
 
     full_grad, full_calls, full_device_moves = _run(
-        replay_samples_per_chunk=0,
+        replay_samples_per_batch=0,
         streaming=False,
     )
     legacy_split_grad, legacy_split_calls, legacy_split_device_moves = _run(
-        replay_samples_per_chunk=2,
+        replay_samples_per_batch=2,
         streaming=False,
     )
     streaming_split_grad, streaming_split_calls, streaming_split_device_moves = _run(
-        replay_samples_per_chunk=2,
+        replay_samples_per_batch=2,
         streaming=True,
     )
 
@@ -951,7 +951,7 @@ def test_replay_samples_per_chunk_splits_backward_and_preserves_gradient(monkeyp
 
 
 def test_fixed_replay_chunk_remains_available_to_distributed_strategies() -> None:
-    """DDP/FSDP accept the same explicit replay chunk configuration."""
+    """DDP/FSDP accept the same explicit replay batch configuration."""
     from types import SimpleNamespace
 
     import torch.nn as nn
@@ -983,7 +983,7 @@ def test_fixed_replay_chunk_remains_available_to_distributed_strategies() -> Non
                 batch_plan=OnlineBatchPlan(
                     prompts_per_batch=1,
                     n_samples_per_prompt=2,
-                    replay_samples_per_chunk=1,
+                    replay_samples_per_batch=1,
                 ),
                 timestep_fraction=1.0,
                 output_dir="x",
@@ -992,7 +992,7 @@ def test_fixed_replay_chunk_remains_available_to_distributed_strategies() -> Non
             strategy=strategy,  # type: ignore[arg-type]
             device="cpu",
         )
-        assert trainer.config.batch_plan.replay_samples_per_chunk == 1
+        assert trainer.config.batch_plan.replay_samples_per_batch == 1
 
 
 def test_rollout_memory_plan_logs_streaming_and_legacy_warning(caplog) -> None:
@@ -1012,25 +1012,25 @@ def test_rollout_memory_plan_logs_streaming_and_legacy_warning(caplog) -> None:
     with caplog.at_level(logging.INFO, logger=logger_name):
         _log_rollout_memory_plan(
             _plan(4, 4),
-            generation_samples_per_chunk=2,
+            generation_samples_per_batch=2,
         )
     streaming_messages = [record.getMessage() for record in caplog.records]
     assert any("streaming accumulation enabled" in msg for msg in streaming_messages)
     assert any("microbatch_prompts=1" in msg for msg in streaming_messages)
-    assert any("generation_samples_per_chunk=2" in msg for msg in streaming_messages)
-    assert any("replay_samples_per_chunk=1" in msg for msg in streaming_messages)
+    assert any("generation_samples_per_batch=2" in msg for msg in streaming_messages)
+    assert any("replay_samples_per_batch=1" in msg for msg in streaming_messages)
     assert any("target_samples_per_update=8" in msg for msg in streaming_messages)
 
     caplog.clear()
     with caplog.at_level(logging.INFO, logger=logger_name):
         _log_rollout_memory_plan(
             _plan(4, 0),
-            generation_samples_per_chunk=2,
+            generation_samples_per_batch=2,
         )
     legacy_messages = [record.getMessage() for record in caplog.records]
     assert any("legacy full-batch accumulation" in msg for msg in legacy_messages)
-    assert any("generation_samples_per_chunk=2" in msg for msg in legacy_messages)
-    assert any("replay_samples_per_chunk=1" in msg for msg in legacy_messages)
+    assert any("generation_samples_per_batch=2" in msg for msg in legacy_messages)
+    assert any("replay_samples_per_batch=1" in msg for msg in legacy_messages)
     # The legacy path must emit a host-RAM residency WARNING. Assert the warning
     # level fired (the behavioral contract) rather than pinning its exact prose,
     # which a benign reword would redden with no real regression.

@@ -155,7 +155,7 @@ class _FakeLauncher:
 
 
 class _FakeGatherer:
-    def gather_chunks(self, *_args: Any) -> Any:
+    def gather_batches(self, *_args: Any) -> Any:
         raise AssertionError("lifecycle test gatherer must not execute")
 
 

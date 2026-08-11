@@ -33,7 +33,7 @@ actor:
   ppo_epochs: 4
 
 rollout:
-  samples_per_chunk: 4
+  samples_per_generation_batch: 4
 
 
 distributed:

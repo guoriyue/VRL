@@ -9,12 +9,15 @@ from typing import Any
 import torch
 
 from vrl.generation.bindings.token_autoregressive import (
-    ARChunkExecutorBase,
+    ARBatchExecutorBase,
     ARRequestLayout,
     ARSamplingParams,
 )
 from vrl.generation.composition.token_autoregressive.token_loop import TokenAutoregressiveLoop
-from vrl.generation.execution.chunks import SampleChunk, require_matching_chunk_context
+from vrl.generation.execution.sample_batches import (
+    GenerationSampleBatch,
+    require_matching_batch_context,
+)
 from vrl.generation.types import (
     GenerationOutput,
     GenerationRequest,
@@ -49,10 +52,10 @@ def nextstep_config_from_build(build: ModelBuild) -> dict[str, Any]:
 
 
 @dataclass(slots=True)
-class NextStep1ARChunkResult:
-    """Output of one prompt/sample NextStep-1 AR chunk."""
+class NextStep1ARBatchResult:
+    """Output of one prompt/sample NextStep-1 AR batch."""
 
-    chunk: SampleChunk
+    batch: GenerationSampleBatch
     output: torch.Tensor
     tokens: torch.Tensor
     saved_noise: torch.Tensor
@@ -62,11 +65,11 @@ class NextStep1ARChunkResult:
     uncond_input_ids: torch.Tensor
     uncond_attention_mask: torch.Tensor
     context: dict[str, Any]
-    # Display/provenance-only: emitted through per-chunk runtime debug metrics.
+    # Display/provenance-only: emitted through per-batch runtime debug metrics.
     peak_memory_mb: float | None = None
 
 
-class NextStep1ChunkExecutor(ARChunkExecutorBase):
+class NextStep1BatchExecutor(ARBatchExecutorBase):
     """Continuous-token AR executor for NextStep-1 text-to-image rollouts.
 
     The collector constructs a ``GenerationRequest`` whose ``sampling``
@@ -97,18 +100,18 @@ class NextStep1ChunkExecutor(ARChunkExecutorBase):
 
     # -- protocol ------------------------------------------------------
 
-    def forward_chunk_plan(
+    def forward_batch(
         self,
         request: GenerationRequest,
-        chunk: SampleChunk,
-    ) -> NextStep1ARChunkResult:
-        """Run one prompt-major AR chunk through the black-box sampling path."""
+        batch: GenerationSampleBatch,
+    ) -> NextStep1ARBatchResult:
+        """Run one prompt-major AR batch through the black-box sampling path."""
 
         self.require_native_ar_engine(request)
-        self.layout.validate_chunk(request, chunk)
+        self.layout.validate_chunk(request, batch)
         scheduler_batch_size = self.resolve_scheduler_batch_size(
             request,
-            row_count=chunk.sample_count,
+            row_count=batch.sample_count,
         )
         sampling = request.sampling
         params: ARSamplingParams = self.layout.parse_sampling_params(request)
@@ -117,13 +120,13 @@ class NextStep1ChunkExecutor(ARChunkExecutorBase):
         num_steps = int(sampling["num_steps"])
         noise_level = float(sampling["noise_level"])
 
-        repeated_prompts = [request.inputs[chunk.prompt_index].prompt] * chunk.sample_count
+        repeated_prompts = [request.inputs[batch.prompt_index].prompt] * batch.sample_count
         prompt_ids, prompt_mask = self._tokenize_prompts(
             repeated_prompts,
             max_text_length=params.max_text_length,
         )
         uncond_ids, uncond_mask = self._tokenize_prompts(
-            [""] * chunk.sample_count,
+            [""] * batch.sample_count,
             max_text_length=params.max_text_length,
         )
         pad_id = getattr(self.model.processor, "pad_token_id", None) or 0
@@ -142,7 +145,7 @@ class NextStep1ChunkExecutor(ARChunkExecutorBase):
         if params.seed is not None:
             generator = torch.Generator(device=self.model.device)
             generator.manual_seed(
-                params.seed + self.layout.chunk_seed_offset(request, chunk),
+                params.seed + self.layout.chunk_seed_offset(request, batch),
             )
 
         sample_kwargs: dict[str, Any] = {
@@ -163,8 +166,8 @@ class NextStep1ChunkExecutor(ARChunkExecutorBase):
 
         images = self.model.decode_image_tokens(tokens, image_size=params.image_size)
 
-        return NextStep1ARChunkResult(
-            chunk=chunk,
+        return NextStep1ARBatchResult(
+            batch=batch,
             output=images,
             tokens=tokens,
             saved_noise=saved_noise,
@@ -216,18 +219,18 @@ class NextStep1ChunkExecutor(ARChunkExecutorBase):
         return ids.to(device), mask.to(device)
 
 
-class NextStep1ChunkGatherer:
-    """Pure driver-side gatherer for NextStep-1 AR chunk payloads."""
+class NextStep1GenerationBatchGatherer:
+    """Pure driver-side gatherer for NextStep-1 AR batch payloads."""
 
     layout = ARRequestLayout()
 
-    def gather_chunks(
+    def gather_batches(
         self,
         request: GenerationRequest,
         sample_rows: Sequence[GenerationSampleRow],
-        chunks: Sequence[NextStep1ARChunkResult],
+        batches: Sequence[NextStep1ARBatchResult],
     ) -> GenerationOutput:
-        """Pack prompt/sample AR chunks back into the canonical GenerationOutput."""
+        """Pack prompt/sample AR batches back into the canonical GenerationOutput."""
 
         fields = (
             "output",
@@ -239,15 +242,15 @@ class NextStep1ChunkGatherer:
             "uncond_input_ids",
             "uncond_attention_mask",
         )
-        ordered_ar_chunks = self.layout.ordered_chunks(
+        ordered_ar_chunks = self.layout.ordered_batches(
             request,
             sample_rows,
-            chunks,
+            batches,
             row_fields=fields,
         )
-        cat = self.layout.cat_chunk_fields(ordered_ar_chunks, fields)
-        trajectory_context = require_matching_chunk_context(
-            [chunk.context for chunk in ordered_ar_chunks],
+        cat = self.layout.cat_batch_fields(ordered_ar_chunks, fields)
+        trajectory_context = require_matching_batch_context(
+            [batch.context for batch in ordered_ar_chunks],
         )
         trajectory = build_ar_continuous_trajectory(
             request=request,
@@ -270,8 +273,8 @@ class NextStep1ChunkGatherer:
 
 
 __all__ = [
-    "NextStep1ARChunkResult",
-    "NextStep1ChunkExecutor",
-    "NextStep1ChunkGatherer",
+    "NextStep1ARBatchResult",
+    "NextStep1BatchExecutor",
+    "NextStep1GenerationBatchGatherer",
     "nextstep_config_from_build",
 ]

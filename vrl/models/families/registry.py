@@ -24,7 +24,7 @@ if TYPE_CHECKING:
 # Import-path protocol value shared by registry dispatch and generation workers.
 # Keeping it here avoids making the neutral family table import a runtime module.
 GENERIC_FULL_SEQUENCE_DENOISE_EXECUTOR = (
-    "vrl.generation.bindings.full_sequence_denoise.executor:GenericDiffusionChunkExecutor"
+    "vrl.generation.bindings.full_sequence_denoise.executor:GenericDiffusionBatchExecutor"
 )
 SHARED_MODEL_SECTION_CLS = "vrl.config.model_schema:ModelSection"
 # Lazy public-sampling schema protocol values. Families share a path only when
@@ -490,7 +490,7 @@ def _full_sequence_denoise_entry(
     supported_model_memory_sections: frozenset[str] | None = None,
 ) -> ModelFamilyEntry:
     # Default dispatch: the shared generic executor. Families with real
-    # per-chunk logic pass their own executor_cls. Per-family executor config
+    # per-batch logic pass their own executor_cls. Per-family executor config
     # (num_frames / max_sequence_length / ...) lives in the model yaml's
     # ``executor`` block, read wholesale at launch — not here.
     if executor_cls is None:
@@ -522,7 +522,7 @@ def _full_sequence_denoise_entry(
             trajectory_layout="denoise",
         ),
         executor_cls=executor_cls,
-        gatherer_cls="vrl.generation.bindings.full_sequence_denoise.gather:DiffusionChunkGatherer",
+        gatherer_cls="vrl.generation.bindings.full_sequence_denoise.gather:DiffusionBatchGatherer",
         model_section_cls=model_section_cls,
         sampling_section_cls=sampling_section_cls,
         family_build=build,
@@ -540,7 +540,7 @@ def _token_autoregressive_entry(
     build: TokenFamilyBuild,
     task: str = "ar_t2i",
     trajectory_layout: TrajectoryLayout = "token",
-    gatherer_cls: str = "vrl.generation.bindings.token_autoregressive.executor:ARDiscreteChunkGatherer",
+    gatherer_cls: str = "vrl.generation.bindings.token_autoregressive.executor:ARDiscreteBatchGatherer",
 ) -> ModelFamilyEntry:
     """Construct common wiring for current token-autoregressive policy variants."""
 
@@ -571,7 +571,7 @@ def _chunk_autoregressive_denoise_entry(
     task: str = "t2v",
     runtime_capabilities: GenerationRuntimeCapabilities | None = None,
 ) -> ModelFamilyEntry:
-    """Construct the shared typed binding for causal temporal-chunk denoising."""
+    """Construct the shared typed binding for causal temporal-batch denoising."""
 
     return ModelFamilyEntry(
         family=family,
@@ -617,7 +617,7 @@ _register_model_family(
         family="causvid",
         model_section_cls="vrl.models.families.causvid.config:CausVidModelSection",
         sampling_section_cls=VIDEO_SAMPLING_SECTION_CLS,
-        executor_cls="vrl.models.families.causvid.runtime:CausVidChunkExecutor",
+        executor_cls="vrl.models.families.causvid.runtime:CausVidBatchExecutor",
         build=DenoiseFamilyBuild(
             model_cls="vrl.models.families.causvid.model:CausVidModel",
             replay_runtime_builder=(
@@ -636,7 +636,7 @@ _register_model_family(
         family="magi_1",
         model_section_cls="vrl.models.families.magi_1.config:Magi1ModelSection",
         sampling_section_cls="vrl.config.sampling_schema:MagiSamplingSection",
-        executor_cls="vrl.models.families.magi_1.runtime:Magi1ChunkExecutor",
+        executor_cls="vrl.models.families.magi_1.runtime:Magi1BatchExecutor",
         build=DenoiseFamilyBuild(
             model_cls="vrl.models.families.magi_1.model:Magi1Model",
             rollout_runtime_builder=(
@@ -818,7 +818,7 @@ _register_model_family(
         task="i2v",
         model_section_cls="vrl.models.families.wan_2_1.config:WanModelSection",
         sampling_section_cls=TEXT_ENCODED_VIDEO_SAMPLING_SECTION_CLS,
-        executor_cls="vrl.models.families.wan_2_1.runtime:Wan_2_1I2VChunkExecutor",
+        executor_cls="vrl.models.families.wan_2_1.runtime:Wan_2_1I2VBatchExecutor",
         supported_model_memory_sections=_VAE_DECODE_MEMORY_SECTIONS,
         build=DenoiseFamilyBuild(
             model_cls="vrl.models.families.wan_2_1.model:WanI2VDiffusersModel",
@@ -838,7 +838,7 @@ _register_model_family(
         task="v2w",
         model_section_cls=SHARED_MODEL_SECTION_CLS,
         sampling_section_cls=VIDEO_SAMPLING_SECTION_CLS,
-        executor_cls="vrl.models.families.cosmos.predict2.runtime:CosmosChunkExecutor",
+        executor_cls="vrl.models.families.cosmos.predict2.runtime:CosmosBatchExecutor",
         supported_model_memory_sections=_VAE_DECODE_MEMORY_SECTIONS,
         build=DenoiseFamilyBuild(
             model_cls="vrl.models.families.cosmos.predict2.model:CosmosPredict2Model",
@@ -857,7 +857,7 @@ _register_model_family(
         ),
         sampling_section_cls=TEXT_ENCODED_VIDEO_SAMPLING_SECTION_CLS,
         executor_cls=(
-            "vrl.models.families.cosmos.predict2_5.runtime:CosmosPredict25ChunkExecutor"
+            "vrl.models.families.cosmos.predict2_5.runtime:CosmosPredict25BatchExecutor"
         ),
         supported_model_memory_sections=_VAE_DECODE_MEMORY_SECTIONS,
         build=DenoiseFamilyBuild(
@@ -880,7 +880,7 @@ _register_model_family(
         task="t2v",
         model_section_cls=SHARED_MODEL_SECTION_CLS,
         sampling_section_cls=VIDEO_SAMPLING_SECTION_CLS,
-        executor_cls="vrl.models.families.cosmos.cosmos3.runtime:Cosmos3ChunkExecutor",
+        executor_cls="vrl.models.families.cosmos.cosmos3.runtime:Cosmos3BatchExecutor",
         supported_model_memory_sections=_VAE_DECODE_MEMORY_SECTIONS,
         build=DenoiseFamilyBuild(
             model_cls="vrl.models.families.cosmos.cosmos3.model:Cosmos3Model",
@@ -912,7 +912,7 @@ _register_model_family(
         task="t2v",
         model_section_cls="vrl.models.families.echo.config:EchoModelSection",
         sampling_section_cls="vrl.config.sampling_schema:EchoSamplingSection",
-        executor_cls="vrl.models.families.echo.runtime:EchoChunkExecutor",
+        executor_cls="vrl.models.families.echo.runtime:EchoBatchExecutor",
         supported_model_memory_sections=frozenset(),
         build=DenoiseFamilyBuild(
             model_cls="vrl.models.families.echo.model:EchoModel",
@@ -938,7 +938,7 @@ _register_model_family(
         action_distribution="categorical",
         model_section_cls="vrl.models.families.janus_pro.config:JanusProModelSection",
         sampling_section_cls="vrl.config.sampling_schema:JanusProSamplingSection",
-        executor_cls="vrl.models.families.janus_pro.runtime:JanusProChunkExecutor",
+        executor_cls="vrl.models.families.janus_pro.runtime:JanusProBatchExecutor",
         build=_JANUS_PRO_BUILD,
     ),
 )
@@ -950,8 +950,8 @@ _register_model_family(
         model_section_cls="vrl.models.families.janus_pro.config:JanusProModelSection",
         sampling_section_cls="vrl.config.sampling_schema:JanusProR1SamplingSection",
         task="ar_t2i_r1",
-        executor_cls="vrl.models.families.janus_pro.runtime:JanusProR1ChunkExecutor",
-        gatherer_cls="vrl.models.families.janus_pro.runtime:JanusProR1ChunkGatherer",
+        executor_cls="vrl.models.families.janus_pro.runtime:JanusProR1BatchExecutor",
+        gatherer_cls="vrl.models.families.janus_pro.runtime:JanusProR1GenerationBatchGatherer",
         build=_JANUS_PRO_BUILD,
         trajectory_layout="multisegment_token",
     ),
@@ -963,8 +963,8 @@ _register_model_family(
         action_distribution="continuous",
         model_section_cls="vrl.models.families.nextstep_1.config:NextStep1ModelSection",
         sampling_section_cls="vrl.config.sampling_schema:NextStepSamplingSection",
-        executor_cls="vrl.models.families.nextstep_1.runtime:NextStep1ChunkExecutor",
-        gatherer_cls="vrl.models.families.nextstep_1.runtime:NextStep1ChunkGatherer",
+        executor_cls="vrl.models.families.nextstep_1.runtime:NextStep1BatchExecutor",
+        gatherer_cls="vrl.models.families.nextstep_1.runtime:NextStep1GenerationBatchGatherer",
         build=TokenFamilyBuild(
             model_cls="vrl.models.families.nextstep_1.model:NextStep1Model",
             replay_cls="vrl.models.families.nextstep_1.model:NextStep1ReplayModel",
@@ -983,7 +983,7 @@ _register_model_family(
         action_distribution="categorical",
         model_section_cls=SHARED_MODEL_SECTION_CLS,
         sampling_section_cls="vrl.config.sampling_schema:Emu3SamplingSection",
-        executor_cls="vrl.models.families.emu3.runtime:Emu3ChunkExecutor",
+        executor_cls="vrl.models.families.emu3.runtime:Emu3BatchExecutor",
         build=TokenFamilyBuild(
             model_cls="vrl.models.families.emu3.model:Emu3Model",
             replay_cls="vrl.models.families.emu3.model:Emu3ReplayModel",
@@ -1001,7 +1001,7 @@ _register_model_family(
         action_distribution="categorical",
         model_section_cls=SHARED_MODEL_SECTION_CLS,
         sampling_section_cls="vrl.config.sampling_schema:GlmImageSamplingSection",
-        executor_cls="vrl.models.families.glm_image.runtime:GlmImageChunkExecutor",
+        executor_cls="vrl.models.families.glm_image.runtime:GlmImageBatchExecutor",
         build=TokenFamilyBuild(
             model_cls="vrl.models.families.glm_image.model:GlmImageModel",
             replay_cls="vrl.models.families.glm_image.model:GlmImageReplayModel",
@@ -1019,7 +1019,7 @@ _register_model_family(
         action_distribution="categorical",
         model_section_cls="vrl.models.families.llamagen.config:LlamaGenModelSection",
         sampling_section_cls="vrl.config.sampling_schema:LlamaGenSamplingSection",
-        executor_cls="vrl.models.families.llamagen.runtime:LlamaGenChunkExecutor",
+        executor_cls="vrl.models.families.llamagen.runtime:LlamaGenBatchExecutor",
         build=TokenFamilyBuild(
             model_cls="vrl.models.families.llamagen.model:LlamaGenModel",
             replay_cls="vrl.models.families.llamagen.model:LlamaGenReplayModel",

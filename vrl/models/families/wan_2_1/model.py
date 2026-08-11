@@ -779,8 +779,8 @@ class WanT2VDiffusersModel(
         """
         pipe = self.pipeline
 
-        def _transform(chunk: torch.Tensor) -> torch.Tensor:
-            x = chunk.to(pipe.vae.dtype)
+        def _transform(batch: torch.Tensor) -> torch.Tensor:
+            x = batch.to(pipe.vae.dtype)
             latents_mean = (
                 torch.tensor(pipe.vae.config.latents_mean)
                 .view(1, pipe.vae.config.z_dim, 1, 1, 1)
@@ -794,8 +794,8 @@ class WanT2VDiffusersModel(
         decoder = ChunkedLatentDecoder(
             LatentDecodePlan(
                 prepare_latents=_transform,
-                vae_decode=lambda chunk: pipe.vae.decode(
-                    chunk,
+                vae_decode=lambda batch: pipe.vae.decode(
+                    batch,
                     return_dict=False,
                 )[0],
                 postprocess=lambda video: pipe.video_processor.postprocess_video(

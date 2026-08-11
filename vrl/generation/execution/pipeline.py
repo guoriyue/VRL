@@ -1,17 +1,17 @@
-"""Single-worker overlap between chunk compute and result teardown."""
+"""Single-worker overlap between batch compute and result teardown."""
 
 from __future__ import annotations
 
 from typing import Any
 
-from vrl.generation.execution.types import ChunkCompletionCallback, ChunkProduceFence
+from vrl.generation.execution.types import BatchCompletionCallback, BatchProduceFence
 
 
 def _move_tree_to_cpu_async(value: Any, stream: Any) -> Any:
     """Move every CUDA tensor in a (possibly nested) structure to pinned CPU on
     ``stream`` with a non-blocking copy — NO global sync. Mirrors worker._to_cpu
     but stream-scoped + event-based, so the D2H drains concurrently with the next
-    chunk's denoise instead of blocking it (the copy engine ≠ the tensor cores).
+    batch's denoise instead of blocking it (the copy engine ≠ the tensor cores).
     """
 
     import torch
@@ -27,7 +27,7 @@ def _move_tree_to_cpu_async(value: Any, stream: Any) -> Any:
             host.copy_(source, non_blocking=True)
         # The pending Event protects consumers of ``host``, but it does not keep
         # ``source`` alive. Tell the caching allocator that the source storage is
-        # still read by the copy stream so a short next chunk cannot recycle it
+        # still read by the copy stream so a short next batch cannot recycle it
         # before D2H completes.
         source.record_stream(stream)
         return host
@@ -39,26 +39,26 @@ def _move_tree_to_cpu_async(value: Any, stream: Any) -> Any:
     )
 
 
-def forward_chunks_pipelined(
+def forward_batches_pipelined(
     executor: Any,
     request: Any,
-    chunks: Any,
+    batches: Any,
     *,
-    completion_callback: ChunkCompletionCallback | None = None,
+    completion_callback: BatchCompletionCallback | None = None,
 ) -> list:
-    """In-process software pipeline over a request's chunks: while chunk N+1's
+    """In-process software pipeline over a request's batches: while batch N+1's
     PRODUCE (encode->prepare->denoise->decode, GPU compute on the default stream)
-    runs, chunk N's TEARDOWN (the GPU->CPU result copy + host packing, on a copy
-    stream) drains — hiding the copy+CPU boundary behind the next chunk's denoise.
+    runs, batch N's TEARDOWN (the GPU->CPU result copy + host packing, on a copy
+    stream) drains — hiding the copy+CPU boundary behind the next batch's denoise.
 
     BIT-EXACT by construction: the side-stream copy never changes values, and the
     only ordering it introduces (teardown(N) before produce(N+1) is launched) is
     guarded by a default-stream event so the copy never reads tensors a denoise
-    kernel is still writing (torn-read safety). Chunks are independent and gather
-    re-orders by ordered_chunks, so completion order is irrelevant to the output.
+    kernel is still writing (torn-read safety). Batches are independent and gather
+    re-orders by ordered_batches, so completion order is irrelevant to the output.
 
-    Compute uses the executor's canonical ``forward_chunk_plan`` implementation;
-    teardown is a stream-scoped GPU-to-CPU copy. Results remain in chunk order.
+    Compute uses the executor's canonical ``forward_batch`` implementation;
+    teardown is a stream-scoped GPU-to-CPU copy. Results remain in batch order.
     """
 
     import torch
@@ -71,8 +71,8 @@ def forward_chunks_pipelined(
             return result
         return _move_tree_to_cpu_async(result, copy_stream)
 
-    chunk_list = list(chunks)
-    results: list = [None] * len(chunk_list)
+    batch_list = list(batches)
+    results: list = [None] * len(batch_list)
     prev_idx = -1
     prev_result = None
     prev_done = None  # default-stream event marking prev produce complete
@@ -80,9 +80,9 @@ def forward_chunks_pipelined(
 
     failed = False
     try:
-        for idx, chunk in enumerate(chunk_list):
-            # Start the PREVIOUS chunk's teardown on the copy stream BEFORE producing
-            # this chunk, so the D2H overlaps this chunk's denoise. Wait on prev_done so
+        for idx, batch in enumerate(batch_list):
+            # Start the PREVIOUS batch's teardown on the copy stream BEFORE producing
+            # this batch, so the D2H overlaps this batch's denoise. Wait on prev_done so
             # the copy never reads tensors a denoise kernel is still writing.
             if prev_result is not None and copy_stream is not None:
                 copy_stream.wait_event(prev_done)
@@ -93,11 +93,11 @@ def forward_chunks_pipelined(
             elif prev_result is not None:
                 results[prev_idx] = _teardown(prev_result)
 
-            prev_result = executor.forward_chunk_plan(request, chunk)
+            prev_result = executor.forward_batch(request, batch)
             prev_idx = idx
             if cuda:
                 prev_done = torch.cuda.Event()
-                prev_done.record()  # default stream: this chunk's produce is enqueued
+                prev_done.record()  # default stream: this batch's produce is enqueued
             else:
                 prev_done = None
             if completion_callback is not None:
@@ -105,13 +105,13 @@ def forward_chunks_pipelined(
                 # The callback retains this fence; it does not claim completion
                 # until a later non-blocking query observes the event.
                 completion_callback(
-                    ChunkProduceFence(
-                        completed_chunks=idx + 1,
+                    BatchProduceFence(
+                        completed_batches=idx + 1,
                         event=prev_done,
                     ),
                 )
 
-        # Flush the final chunk's teardown.
+        # Flush the final batch's teardown.
         if prev_result is not None:
             if copy_stream is not None:
                 copy_stream.wait_event(prev_done)
@@ -125,7 +125,7 @@ def forward_chunks_pipelined(
         failed = True
         raise
     finally:
-        # A later produce can OOM while the previous chunk's side-stream D2H is
+        # A later produce can OOM while the previous batch's side-stream D2H is
         # still reading its source tensors. Join every submitted copy before the
         # worker clears exception frames and releases those tensors for retry.
         try:
@@ -140,5 +140,5 @@ def forward_chunks_pipelined(
 
 
 __all__ = [
-    "forward_chunks_pipelined",
+    "forward_batches_pipelined",
 ]

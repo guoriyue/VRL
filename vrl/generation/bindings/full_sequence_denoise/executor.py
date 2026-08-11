@@ -2,8 +2,8 @@
 
 Worker-side half of the full-sequence binding: everything here runs in the
 process that owns the model (encode -> prepare -> denoise -> decode per sample
-chunk), adapting the regime-independent denoise loop
-(``vrl/generation/steps/denoise``) to ``execution``'s chunk-executor contract.
+batch), adapting the regime-independent denoise loop
+(``vrl/generation/steps/denoise``) to ``execution``'s batch-executor contract.
 The driver-side half lives in ``gather.py`` (model-free reassembly), with
 ``layout.py`` holding the request parsing both halves share.
 """
@@ -20,11 +20,11 @@ from vrl.generation.bindings.full_sequence_denoise.layout import (
     DiffusionRequestLayout,
     DiffusionSamplingParams,
 )
-from vrl.generation.execution.chunks import SampleChunk
-from vrl.generation.execution.executor_base import ChunkExecutorBase
+from vrl.generation.execution.executor_base import BatchExecutorBase
 from vrl.generation.execution.planner import EnginePlan
-from vrl.generation.execution.types import ChunkCompletionCallback
-from vrl.generation.protocols import ChunkGatherer
+from vrl.generation.execution.sample_batches import GenerationSampleBatch
+from vrl.generation.execution.types import BatchCompletionCallback
+from vrl.generation.protocols import GenerationBatchGatherer
 from vrl.generation.steps.denoise.config import DenoiseLoopConfig
 from vrl.generation.steps.denoise.loop import (
     DenoiseLoopResult,
@@ -51,10 +51,10 @@ from vrl.utils.media import load_reference_image, to_uint8
 
 
 @dataclass(slots=True)
-class DiffusionChunkResult:
-    """Output of one fused diffusion sample chunk."""
+class DiffusionBatchResult:
+    """Output of one fused diffusion sample batch."""
 
-    chunk: SampleChunk
+    batch: GenerationSampleBatch
     observations: Any
     actions: Any
     log_probs: Any
@@ -63,42 +63,42 @@ class DiffusionChunkResult:
     video: Any
     replay_tensors: dict[str, Any]
     context: dict[str, Any]
-    # Display/provenance-only: emitted through per-chunk runtime debug metrics.
+    # Display/provenance-only: emitted through per-batch runtime debug metrics.
     peak_memory_mb: float | None = None
     # Binding-local memory reading consumed and cleared at the worker boundary.
     # None off-CUDA.
     memory: dict[str, int] | None = None
-    # Display/provenance-only: emitted through per-chunk runtime debug metrics.
+    # Display/provenance-only: emitted through per-batch runtime debug metrics.
     stage_durations: dict[str, float] = field(default_factory=dict)
-    # Display/provenance-only: emitted through per-chunk runtime debug metrics.
+    # Display/provenance-only: emitted through per-batch runtime debug metrics.
     engine_counters: dict[str, Any] = field(default_factory=dict)
 
 
-class ReferenceConditionedChunks:
-    """Reference-image threading for per-chunk encode/prepare.
+class ReferenceConditionedBatches:
+    """Reference-image threading for per-batch encode/prepare.
 
-    Cosmos Predict2 Video2World and Wan 2.1 I2V condition every chunk on a
+    Cosmos Predict2 Video2World and Wan 2.1 I2V condition every batch on a
     reference image carried by its ``GenerationInput``. The two executors had
     copy-pasted these
-    hooks; ``build_chunk_encoded`` stays family-specific because the encoded
+    hooks; ``build_batch_encoded`` stays family-specific because the encoded
     payloads genuinely differ (Wan carries ``image_embeds``).
     """
 
     model: Any
 
-    def encode_prompt_for_chunk(
+    def encode_prompt_for_batch(
         self,
         *,
         generation_request: GenerationRequest,
         video_request: VideoGenerationRequest,
         params: Any,
-        chunk: SampleChunk,
+        batch: GenerationSampleBatch,
     ) -> dict[str, Any]:
-        """Encode text plus the active reference-image conditioning for one chunk."""
+        """Encode text plus the active reference-image conditioning for one batch."""
 
-        reference_image = self._reference_image_for_chunk(generation_request, chunk)
+        reference_image = self._reference_image_for_chunk(generation_request, batch)
         return self.model.encode_prompt(
-            generation_request.inputs[chunk.prompt_index].prompt,
+            generation_request.inputs[batch.prompt_index].prompt,
             video_request.negative_prompt or None,
             **params.text_encode_kwargs(),
             reference_image=reference_image,
@@ -111,7 +111,7 @@ class ReferenceConditionedChunks:
         generation_request: GenerationRequest,
         video_request: VideoGenerationRequest,
         params: Any,
-        chunk: SampleChunk,
+        batch: GenerationSampleBatch,
     ) -> dict[str, Any]:
         """Thread the active reference image into family prepare_sampling."""
 
@@ -119,24 +119,24 @@ class ReferenceConditionedChunks:
         return {
             "reference_image": self._reference_image_for_chunk(
                 generation_request,
-                chunk,
+                batch,
             ),
         }
 
     def _reference_image_for_chunk(
         self,
         request: GenerationRequest,
-        chunk: SampleChunk,
+        batch: GenerationSampleBatch,
     ) -> Any:
-        ref = request.inputs[chunk.prompt_index].reference_image
+        ref = request.inputs[batch.prompt_index].reference_image
         if ref is None:
             raise ValueError(
-                f"{request.family} requires reference_image for prompt index {chunk.prompt_index}",
+                f"{request.family} requires reference_image for prompt index {batch.prompt_index}",
             )
         return load_reference_image(ref)
 
 
-class DiffusionChunkExecutorBase(ChunkExecutorBase):
+class DiffusionBatchExecutorBase(BatchExecutorBase):
     """Common GenerationRequest -> diffusion GenerationOutput execution path."""
 
     family: str
@@ -151,7 +151,7 @@ class DiffusionChunkExecutorBase(ChunkExecutorBase):
         self,
         model: Any,
         *,
-        gatherer: ChunkGatherer | None = None,
+        gatherer: GenerationBatchGatherer | None = None,
     ) -> None:
         super().__init__(gatherer=gatherer)
         self.model = model
@@ -173,14 +173,14 @@ class DiffusionChunkExecutorBase(ChunkExecutorBase):
     def build_denoise_config(
         self,
         params: DiffusionSamplingParams,
-        chunk: SampleChunk,
+        batch: GenerationSampleBatch,
     ) -> DenoiseLoopConfig:
-        """Build the SDE denoise config for one sample chunk."""
+        """Build the SDE denoise config for one sample batch."""
 
         layout = self.layout
         return DenoiseLoopConfig(
-            sample_start=chunk.sample_start,
-            sample_count=chunk.sample_count,
+            sample_start=batch.sample_start,
+            sample_count=batch.sample_count,
             seed=params.model_request.seed,
             sde=params.sde,
             sde_window=layout.select_sde_window(params),
@@ -194,60 +194,60 @@ class DiffusionChunkExecutorBase(ChunkExecutorBase):
         sample_rows: list[GenerationSampleRow],
         plan: EnginePlan,
         *,
-        completion_callback: ChunkCompletionCallback | None = None,
+        completion_callback: BatchCompletionCallback | None = None,
     ) -> GenerationOutput:
-        """In-process software-pipelined variant of forward_plan: chunk N+1's
+        """In-process software-pipelined variant of forward_plan: batch N+1's
         produce (encode->prepare->denoise->decode, GPU compute on the default
-        stream) overlaps chunk N's teardown (the GPU->CPU result copy + host
-        packing, on a copy stream), hiding the per-chunk copy+CPU boundary behind
-        the next chunk's denoise. BIT-EXACT to forward_plan: same per-chunk stage
-        methods (via forward_chunk_plan), value-preserving side-stream copy,
-        and the SAME order-preserving gather_chunks — so the gathered output is
+        stream) overlaps batch N's teardown (the GPU->CPU result copy + host
+        packing, on a copy stream), hiding the per-batch copy+CPU boundary behind
+        the next batch's denoise. BIT-EXACT to forward_plan: same per-batch stage
+        methods (via forward_batch), value-preserving side-stream copy,
+        and the SAME order-preserving gather_batches — so the gathered output is
         identical; only the wall-clock changes.
 
         This is the executor-level entry for the single-GPU stage-overlap lever; the
-        Ray worker calls it per-request (all of a request's chunks on one worker)
-        instead of dispatching one monolithic forward_chunk_plan per chunk.
+        Ray worker calls it per-request (all of a request's batches on one worker)
+        instead of dispatching one monolithic forward_batch per batch.
         """
 
-        from vrl.generation.execution.pipeline import forward_chunks_pipelined
+        from vrl.generation.execution.pipeline import forward_batches_pipelined
 
-        chunks = forward_chunks_pipelined(
+        batches = forward_batches_pipelined(
             self,
             request,
-            plan.chunks,
+            plan.sample_batches,
             completion_callback=completion_callback,
         )
-        return self.gather_chunks(request, sample_rows, chunks)
+        return self.gather_batches(request, sample_rows, batches)
 
-    def forward_chunk_plan(
+    def forward_batch(
         self,
         request: GenerationRequest,
-        chunk: SampleChunk,
-    ) -> DiffusionChunkResult:
-        """Run the canonical diffusion chunk flow and prepare its wire payload."""
+        batch: GenerationSampleBatch,
+    ) -> DiffusionBatchResult:
+        """Run the canonical diffusion batch flow and prepare its wire payload."""
 
         return self._forward_chunk(
             request,
-            chunk,
+            batch,
             execute_steps=None,
             apply_wire_storage=True,
         )
 
-    def forward_probe_chunk(
+    def forward_probe_batch(
         self,
         request: GenerationRequest,
-        chunk: SampleChunk,
+        batch: GenerationSampleBatch,
         *,
         execute_steps: int,
-    ) -> DiffusionChunkResult:
-        """Run a truncated canonical chunk for startup memory sizing."""
+    ) -> DiffusionBatchResult:
+        """Run a truncated canonical batch for startup memory sizing."""
 
         if execute_steps < 1:
             raise ValueError("execute_steps must be >= 1")
         return self._forward_chunk(
             request,
-            chunk,
+            batch,
             execute_steps=execute_steps,
             apply_wire_storage=False,
         )
@@ -255,11 +255,11 @@ class DiffusionChunkExecutorBase(ChunkExecutorBase):
     def _forward_chunk(
         self,
         request: GenerationRequest,
-        chunk: SampleChunk,
+        batch: GenerationSampleBatch,
         *,
         execute_steps: int | None,
         apply_wire_storage: bool,
-    ) -> DiffusionChunkResult:
+    ) -> DiffusionBatchResult:
         from vrl.utils.profiling import profile_range
 
         stage_durations: dict[str, float] = {}
@@ -268,35 +268,35 @@ class DiffusionChunkExecutorBase(ChunkExecutorBase):
 
         started = time.perf_counter()
         with profile_range("generation.prompt_encode"):
-            encoded = self.encode_prompt_for_chunk(
+            encoded = self.encode_prompt_for_batch(
                 generation_request=request,
                 video_request=video_request,
                 params=params,
-                chunk=chunk,
+                batch=batch,
             )
         stage_durations["encode"] = time.perf_counter() - started
 
         started = time.perf_counter()
-        chunk_encoded = self.build_chunk_encoded(
+        batch_encoded = self.build_batch_encoded(
             encoded=encoded,
             generation_request=request,
             video_request=video_request,
             params=params,
-            chunk=chunk,
+            batch=batch,
         )
         prepare_kwargs = self.build_prepare_kwargs(
             encoded=encoded,
             generation_request=request,
             video_request=video_request,
             params=params,
-            chunk=chunk,
+            batch=batch,
         )
-        config = self.build_denoise_config(params, chunk)
+        config = self.build_denoise_config(params, batch)
         if execute_steps is not None:
             config = replace(config, execute_steps=execute_steps)
         state = self.prepare_denoise_state(
             request=video_request,
-            encoded=chunk_encoded,
+            encoded=batch_encoded,
             config=config,
             prepare_kwargs=prepare_kwargs,
         )
@@ -310,22 +310,22 @@ class DiffusionChunkExecutorBase(ChunkExecutorBase):
         stage_durations["denoise"] = time.perf_counter() - started
 
         started = time.perf_counter()
-        chunk_result = self.decode_denoise_result(
-            chunk=chunk,
+        batch_result = self.decode_denoise_result(
+            batch=batch,
             config=config,
             denoise_result=denoise_result,
             stage_durations=stage_durations,
         )
-        chunk_result.stage_durations["decode"] = time.perf_counter() - started
+        batch_result.stage_durations["decode"] = time.perf_counter() - started
         if apply_wire_storage:
-            return self.apply_wire_storage_policy(request, chunk_result)
-        return chunk_result
+            return self.apply_wire_storage_policy(request, batch_result)
+        return batch_result
 
     def apply_wire_storage_policy(
         self,
         request: GenerationRequest,
-        chunk_result: DiffusionChunkResult,
-    ) -> DiffusionChunkResult:
+        batch_result: DiffusionBatchResult,
+    ) -> DiffusionBatchResult:
         """Apply rollout.trajectory_storage BEFORE tensors cross the wire.
 
         The same policy is re-applied driver-side when the trajectory batch is
@@ -339,20 +339,20 @@ class DiffusionChunkExecutorBase(ChunkExecutorBase):
             request.sampling.get("trajectory_storage"),
         )
         if policy == TrajectoryStoragePolicy():
-            return chunk_result
-        chunk_result.observations = apply_value_storage_policy(
-            chunk_result.observations,
+            return batch_result
+        batch_result.observations = apply_value_storage_policy(
+            batch_result.observations,
             policy,
         )
-        chunk_result.actions = apply_value_storage_policy(chunk_result.actions, policy)
-        chunk_result.log_probs = apply_value_storage_policy(chunk_result.log_probs, policy)
-        chunk_result.timesteps = apply_value_storage_policy(chunk_result.timesteps, policy)
-        chunk_result.kl = apply_value_storage_policy(chunk_result.kl, policy)
-        chunk_result.replay_tensors = apply_value_storage_policy(
-            chunk_result.replay_tensors,
+        batch_result.actions = apply_value_storage_policy(batch_result.actions, policy)
+        batch_result.log_probs = apply_value_storage_policy(batch_result.log_probs, policy)
+        batch_result.timesteps = apply_value_storage_policy(batch_result.timesteps, policy)
+        batch_result.kl = apply_value_storage_policy(batch_result.kl, policy)
+        batch_result.replay_tensors = apply_value_storage_policy(
+            batch_result.replay_tensors,
             policy,
         )
-        return chunk_result
+        return batch_result
 
     def prepare_denoise_state(
         self,
@@ -362,18 +362,18 @@ class DiffusionChunkExecutorBase(ChunkExecutorBase):
         config: DenoiseLoopConfig,
         prepare_kwargs: dict[str, Any] | None = None,
     ) -> Any:
-        """Prepare latent state for one diffusion sample chunk."""
+        """Prepare latent state for one diffusion sample batch."""
 
         from vrl.utils.profiling import profile_range
 
         model = self.model
         with profile_range("generation.prepare_sampling"):
             state = model.prepare_sampling(request, encoded, **(prepare_kwargs or {}))
-        chunk_batch = state.latents.shape[0]
-        if int(chunk_batch) != config.sample_count:
+        batch_rows = state.latents.shape[0]
+        if int(batch_rows) != config.sample_count:
             raise ValueError(
-                "Diffusion denoise chunk produced "
-                f"{chunk_batch} rows, expected {config.sample_count}",
+                "Diffusion denoise batch produced "
+                f"{batch_rows} rows, expected {config.sample_count}",
             )
         return state
 
@@ -394,12 +394,12 @@ class DiffusionChunkExecutorBase(ChunkExecutorBase):
     def decode_denoise_result(
         self,
         *,
-        chunk: SampleChunk,
+        batch: GenerationSampleBatch,
         config: DenoiseLoopConfig,
         denoise_result: DenoiseLoopResult,
         stage_durations: dict[str, float] | None = None,
-    ) -> DiffusionChunkResult:
-        """Decode the final latents and pack one diffusion chunk result."""
+    ) -> DiffusionBatchResult:
+        """Decode the final latents and pack one diffusion batch result."""
 
         from vrl.utils.profiling import profile_range
 
@@ -447,8 +447,8 @@ class DiffusionChunkExecutorBase(ChunkExecutorBase):
             peak for peak in (denoise_result.peak_memory_mb, decode_peak_mb) if peak is not None
         ]
 
-        return DiffusionChunkResult(
-            chunk=chunk,
+        return DiffusionBatchResult(
+            batch=batch,
             observations=denoise_result.observations,
             actions=denoise_result.actions,
             log_probs=denoise_result.log_probs,
@@ -469,49 +469,49 @@ class DiffusionChunkExecutorBase(ChunkExecutorBase):
 
     # -- family hooks --------------------------------------------------
 
-    def encode_prompt_for_chunk(
+    def encode_prompt_for_batch(
         self,
         *,
         generation_request: GenerationRequest,
         video_request: VideoGenerationRequest,
         params: DiffusionSamplingParams,
-        chunk: SampleChunk,
+        batch: GenerationSampleBatch,
     ) -> dict[str, Any]:
-        """Encode prompt conditioning for a single prompt chunk."""
+        """Encode prompt conditioning for a single prompt batch."""
 
         return self.model.encode_prompt(
-            generation_request.inputs[chunk.prompt_index].prompt,
+            generation_request.inputs[batch.prompt_index].prompt,
             video_request.negative_prompt or None,
             **params.text_encode_kwargs(),
             request=video_request,
         )
 
-    # Encoded keys copied through UNREPEATED by the default build_chunk_encoded.
+    # Encoded keys copied through UNREPEATED by the default build_batch_encoded.
     # For batch-shared tensors whose leading dim is not a batch axis (FLUX's
     # ``text_ids`` is ``[seq, 3]``), the generic repeat would corrupt the shape,
     # so the family lists them here instead of overriding the whole method.
     # Non-tensor values (PIL reference images, python lists) already pass
     # through ``repeat_batch`` untouched and need no listing.
-    chunk_passthrough_keys: tuple[str, ...] = ()
+    batch_passthrough_keys: tuple[str, ...] = ()
 
-    def build_chunk_encoded(
+    def build_batch_encoded(
         self,
         *,
         encoded: dict[str, Any],
         generation_request: GenerationRequest,
         video_request: VideoGenerationRequest,
         params: DiffusionSamplingParams,
-        chunk: SampleChunk,
+        batch: GenerationSampleBatch,
     ) -> dict[str, Any]:
-        """Build per-sample encoded tensors for one sample chunk."""
+        """Build per-sample encoded tensors for one sample batch."""
 
         del generation_request, video_request, params
-        passthrough = set(self.chunk_passthrough_keys)
+        passthrough = set(self.batch_passthrough_keys)
         return {
             key: (
                 value
                 if key in passthrough
-                else self.layout.repeat_batch(value, chunk.sample_count)
+                else self.layout.repeat_batch(value, batch.sample_count)
             )
             for key, value in encoded.items()
         }
@@ -523,35 +523,35 @@ class DiffusionChunkExecutorBase(ChunkExecutorBase):
         generation_request: GenerationRequest,
         video_request: VideoGenerationRequest,
         params: DiffusionSamplingParams,
-        chunk: SampleChunk,
+        batch: GenerationSampleBatch,
     ) -> dict[str, Any] | None:
         """Return additional family kwargs for model.prepare_sampling."""
 
-        del encoded, generation_request, video_request, params, chunk
+        del encoded, generation_request, video_request, params, batch
         return None
 
 
 __all__ = [
-    "DiffusionChunkExecutorBase",
-    "DiffusionChunkResult",
+    "DiffusionBatchExecutorBase",
+    "DiffusionBatchResult",
     "DiffusionRequestLayout",
     "DiffusionSamplingParams",
-    "GenericDiffusionChunkExecutor",
-    "ReferenceConditionedChunks",
+    "GenericDiffusionBatchExecutor",
+    "ReferenceConditionedBatches",
 ]
 
 
-class GenericDiffusionChunkExecutor(DiffusionChunkExecutorBase):
-    """Generic chunk executor for pure-data diffusion families.
+class GenericDiffusionBatchExecutor(DiffusionBatchExecutorBase):
+    """Generic batch executor for pure-data diffusion families.
 
-    A family whose executor overrides no method (no ``build_chunk_encoded`` /
-    ``encode_prompt_for_chunk``) is pure configuration: ``family`` / ``task``
+    A family whose executor overrides no method (no ``build_batch_encoded`` /
+    ``encode_prompt_for_batch``) is pure configuration: ``family`` / ``task``
     plus a few ``default_*`` values. Rather than ship a boilerplate subclass,
     it declares a ``model.executor`` block in its model config yaml and
     dispatches here; the launcher reads that block wholesale into these
     constructor kwargs (family/task come from the registry entry, the worker
     injects family/task from the launch contract). Families with real
-    per-chunk tensor logic (cosmos predict2/2.5, cosmos3, echo, wan i2v) keep
+    per-batch tensor logic (cosmos predict2/2.5, cosmos3, echo, wan i2v) keep
     their own subclass.
     """
 
@@ -561,11 +561,11 @@ class GenericDiffusionChunkExecutor(DiffusionChunkExecutorBase):
         *,
         family: str,
         task: str,
-        gatherer: ChunkGatherer | None = None,
+        gatherer: GenerationBatchGatherer | None = None,
         num_frames: int = 1,
         max_sequence_length: int | None = None,
         fps: int | None = None,
-        chunk_passthrough_keys: tuple[str, ...] = (),
+        batch_passthrough_keys: tuple[str, ...] = (),
     ) -> None:
         super().__init__(model, gatherer=gatherer)
         self.family = family
@@ -575,4 +575,4 @@ class GenericDiffusionChunkExecutor(DiffusionChunkExecutorBase):
             None if max_sequence_length is None else int(max_sequence_length)
         )
         self.default_fps = None if fps is None else int(fps)
-        self.chunk_passthrough_keys = tuple(chunk_passthrough_keys)
+        self.batch_passthrough_keys = tuple(batch_passthrough_keys)

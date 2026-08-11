@@ -12,7 +12,7 @@ import torch
 
 from vrl.config.precision import RolePrecision
 from vrl.generation.launch_contract import GenerationRuntimeLaunchContract
-from vrl.generation.protocols import ChunkResult
+from vrl.generation.protocols import BatchPayload
 from vrl.generation.ray.launch_inputs import RayGenerationLaunchInputs
 from vrl.generation.ray.worker import RayGenerationWorker
 from vrl.generation.types import GenerationOutput, GenerationRequest, GenerationSampleRow
@@ -39,14 +39,14 @@ class _TinyRuntimeModel:
 
 
 class _TinyGatherer:
-    def gather_chunks(
+    def gather_batches(
         self,
         request: GenerationRequest,
         sample_rows: Sequence[GenerationSampleRow],
-        chunks: Sequence[ChunkResult],
+        batches: Sequence[BatchPayload],
     ) -> GenerationOutput:
         return GenerationOutput(
-            output=list(chunks),
+            output=list(batches),
             trajectory=TrajectoryBatch(
                 request_id=request.request_id,
                 family=request.family,
@@ -73,17 +73,17 @@ class _TinyChunkExecutor:
         self.model = model
         self.gatherer = gatherer
 
-    def forward_chunk_plan(self, *args: Any, **kwargs: Any) -> ChunkResult:
-        raise NotImplementedError("Ray worker idempotency test never executes chunks")
+    def forward_batch(self, *args: Any, **kwargs: Any) -> BatchPayload:
+        raise NotImplementedError("Ray worker idempotency test never executes batches")
 
-    def gather_chunks(
+    def gather_batches(
         self,
         request: GenerationRequest,
         sample_rows: Sequence[GenerationSampleRow],
-        chunks: Sequence[ChunkResult],
+        batches: Sequence[BatchPayload],
     ) -> GenerationOutput:
         assert self.gatherer is not None
-        return self.gatherer.gather_chunks(request, sample_rows, chunks)
+        return self.gatherer.gather_batches(request, sample_rows, batches)
 
 
 def build_tiny_runtime_bundle(build: ModelBuild) -> RuntimeBundle:

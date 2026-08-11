@@ -2,14 +2,14 @@
 
 ``execute`` had no real-Ray coverage anywhere in the repository: its three
 consumers are production (``vrl/generation/ray/launcher.py``) and two in-process
-fake actors (``tests/ray/test_chunk_dispatch.py``,
+fake actors (``tests/ray/test_batch_dispatch.py``,
 ``tests/generation/ray/test_oom_split.py``). A fake actor is a direct call, so
-``ChunkExecutionEnvelope`` / ``GenerationRequest`` / ``SampleChunk`` /
-``ChunkExecutionResult`` were never pickled by any test — a field that turned
-unserializable would pass everywhere and fail on production's first chunk.
+``GenerationBatchEnvelope`` / ``GenerationRequest`` / ``GenerationSampleBatch`` /
+``GenerationBatchResult`` were never pickled by any test — a field that turned
+unserializable would pass everywhere and fail on production's first batch.
 
 These two run the same envelope over a real cluster, one per placement strategy.
-They deliberately do NOT assert which worker got which chunk under ``dynamic``
+They deliberately do NOT assert which worker got which batch under ``dynamic``
 (real scheduling decides that); the deterministic distribution contract stays in
 the controlled-clock tests, which point here for the wire.
 """
@@ -21,10 +21,10 @@ from typing import Any
 
 import pytest
 
-from vrl.generation.execution.chunk_placement import DistributedExecutionPlanner
+from vrl.generation.execution.batch_placement import DistributedExecutionPlanner
 from vrl.generation.execution.types import (
-    ChunkExecutionEnvelope,
-    ChunkExecutionResult,
+    GenerationBatchEnvelope,
+    GenerationBatchResult,
 )
 from vrl.generation.ray.executor import RayGenerationExecutor
 from vrl.generation.types import GenerationOutput, GenerationRequest
@@ -36,34 +36,34 @@ pytestmark = pytest.mark.slow_test
 
 
 class _ChunkWorker:
-    """Real Ray actor running the production worker-side signature of a chunk."""
+    """Real Ray actor running the production worker-side signature of a batch."""
 
     def __init__(self, worker_id: str) -> None:
         self.worker_id = worker_id
 
-    def execute_chunk(self, envelope: ChunkExecutionEnvelope) -> ChunkExecutionResult:
+    def execute_batch(self, envelope: GenerationBatchEnvelope) -> GenerationBatchResult:
         # Asserted inside the actor process: the envelope arrived as its own type
-        # with the request and chunk intact, i.e. it really survived pickling.
-        assert isinstance(envelope, ChunkExecutionEnvelope), type(envelope).__name__
+        # with the request and batch intact, i.e. it really survived pickling.
+        assert isinstance(envelope, GenerationBatchEnvelope), type(envelope).__name__
         assert isinstance(envelope.request, GenerationRequest)
-        chunk = envelope.chunk
-        return ChunkExecutionResult(
+        batch = envelope.batch
+        return GenerationBatchResult(
             request_id=envelope.request.request_id,
             worker_id=self.worker_id,
-            chunk=chunk,
-            output={"chunk_key": chunk.chunk_key, "samples": chunk.sample_count},
+            batch=batch,
+            output={"batch_key": batch.batch_key, "samples": batch.sample_count},
         )
 
 
 class _ListGatherer:
-    def gather_chunks(
+    def gather_batches(
         self,
         request: GenerationRequest,
         sample_rows: Any,
-        chunks: list[Any],
+        batches: list[Any],
     ) -> GenerationOutput:
         return GenerationOutput(
-            output=list(chunks),
+            output=list(batches),
             trajectory=TrajectoryBatch(
                 request_id=request.request_id,
                 family=request.family,
@@ -82,7 +82,7 @@ def _request() -> GenerationRequest:
         task="t2i",
         inputs=["a test prompt"],
         samples_per_prompt=8,
-        sampling={"height": 64, "width": 64, "num_steps": 10, "samples_per_chunk": 2},
+        sampling={"height": 64, "width": 64, "num_steps": 10, "samples_per_generation_batch": 2},
         runtime_debug=True,
     )
 
@@ -113,39 +113,39 @@ _EXPECTED_CHUNK_KEYS = [
 
 
 def test_real_ray_executor_round_robin_gathers_every_chunk_in_order(local_ray) -> None:
-    """Plan-time binding over a real wire: each of the four chunks comes back
-    from the worker it was bound to, and the gather is still ordered by chunk."""
+    """Plan-time binding over a real wire: each of the four batches comes back
+    from the worker it was bound to, and the gather is still ordered by batch."""
 
     executor, actors = _executor(local_ray, "round_robin")
     try:
         output = asyncio.run(executor.execute(_request()))
 
-        assert [entry["chunk_key"] for entry in output.output] == _EXPECTED_CHUNK_KEYS
+        assert [entry["batch_key"] for entry in output.output] == _EXPECTED_CHUNK_KEYS
         assert output.runtime_debug is not None
         schedule = output.runtime_debug["chunk_schedule"]
         # Round-robin binds before dispatch, so real scheduling cannot move these.
         assert [row["assigned_worker"] for row in schedule] == ["w0", "w1", "w0", "w1"]
-        assert [row["chunk_key"] for row in schedule] == _EXPECTED_CHUNK_KEYS
+        assert [row["batch_key"] for row in schedule] == _EXPECTED_CHUNK_KEYS
     finally:
         for actor in actors:
             local_ray.kill(actor, no_restart=True)
 
 
 def test_real_ray_executor_dynamic_gathers_every_chunk_in_order(local_ray) -> None:
-    """Pull dispatch over a real wire: which worker takes which chunk is up to
-    the live cluster, but every chunk is executed exactly once and the gather
+    """Pull dispatch over a real wire: which worker takes which batch is up to
+    the live cluster, but every batch is executed exactly once and the gather
     order is still the plan's."""
 
     executor, actors = _executor(local_ray, "dynamic")
     try:
         output = asyncio.run(executor.execute(_request()))
 
-        assert [entry["chunk_key"] for entry in output.output] == _EXPECTED_CHUNK_KEYS
+        assert [entry["batch_key"] for entry in output.output] == _EXPECTED_CHUNK_KEYS
         assert output.runtime_debug is not None
         schedule = output.runtime_debug["chunk_schedule"]
-        assert sorted(row["chunk_key"] for row in schedule) == _EXPECTED_CHUNK_KEYS
+        assert sorted(row["batch_key"] for row in schedule) == _EXPECTED_CHUNK_KEYS
         assert all(row["assignment_strategy"] == "dynamic" for row in schedule)
-        # Every chunk landed on a real worker of this fleet -- no unbound rows.
+        # Every batch landed on a real worker of this fleet -- no unbound rows.
         assert {row["assigned_worker"] for row in schedule} <= {"w0", "w1"}
     finally:
         for actor in actors:

@@ -10,7 +10,7 @@ from typing import Any
 import pytest
 
 from vrl.generation.launch_contract import GenerationRuntimeLaunchContract
-from vrl.generation.protocols import ChunkResult
+from vrl.generation.protocols import BatchPayload
 from vrl.generation.ray.config import RayGenerationConfig, RolloutWorkerConfig
 from vrl.generation.ray.launch_inputs import RayGenerationLaunchInputs
 from vrl.generation.ray.launcher import RayGenerationLauncher
@@ -23,14 +23,14 @@ pytestmark = pytest.mark.slow_test
 
 
 class _Gatherer:
-    def gather_chunks(
+    def gather_batches(
         self,
         request: GenerationRequest,
         sample_rows: Sequence[GenerationSampleRow],
-        chunks: Sequence[ChunkResult],
+        batches: Sequence[BatchPayload],
     ) -> GenerationOutput:
         return GenerationOutput(
-            output=list(chunks),
+            output=list(batches),
             trajectory=TrajectoryBatch(
                 request_id=request.request_id,
                 family=request.family,
@@ -74,7 +74,7 @@ def _worker_config(**overrides: Any) -> RolloutWorkerConfig:
         "worker_rpc_timeout_s": 30.0,
         "generation_stall_timeout_s": 30.0,
         "pipelined": False,
-        "chunk_placement_strategy": "round_robin",
+        "batch_placement_strategy": "round_robin",
         "sync_trainable_state": False,
     }
     values.update(overrides)
@@ -86,7 +86,7 @@ def test_ray_generation_launcher_builds_worker_runtime_with_embedded_ray(local_r
     ray = local_ray
     import vrl.generation.ray.launcher as launcher_mod
 
-    worker = _worker_config(chunk_placement_strategy="dynamic")
+    worker = _worker_config(batch_placement_strategy="dynamic")
     owner = _cpu_rollout_owner(ray, worker=worker)
     runtime: RayGenerationRuntime | None = None
     try:

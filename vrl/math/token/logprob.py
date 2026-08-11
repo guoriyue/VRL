@@ -84,10 +84,10 @@ def gather_categorical_log_probs(
     pieces: list[torch.Tensor] = []
     for start in range(0, flat_ids.numel(), chunk_size):
         end = min(start + chunk_size, flat_ids.numel())
-        chunk = flat_logits[start:end].float() / temp
+        batch = flat_logits[start:end].float() / temp
         ids = flat_ids[start:end]
-        selected = chunk.gather(-1, ids.unsqueeze(-1)).squeeze(-1)
-        pieces.append(selected - torch.logsumexp(chunk, dim=-1))
+        selected = batch.gather(-1, ids.unsqueeze(-1)).squeeze(-1)
+        pieces.append(selected - torch.logsumexp(batch, dim=-1))
     return torch.cat(pieces, dim=0).reshape(token_ids.shape)
 
 

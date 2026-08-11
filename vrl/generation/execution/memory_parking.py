@@ -22,7 +22,7 @@ from vrl.utils.cuda_memory import (
 from vrl.utils.logging import init_logger
 
 if TYPE_CHECKING:
-    from vrl.generation.protocols import GenerationChunkExecutor
+    from vrl.generation.protocols import GenerationBatchExecutor
     from vrl.models.families.registry import GenerationParkingProfile
 
 logger = init_logger(__name__)
@@ -132,8 +132,8 @@ class WorkerMemoryParking:
 
     def build(
         self,
-        build_executor: Callable[[], GenerationChunkExecutor],
-    ) -> GenerationChunkExecutor:
+        build_executor: Callable[[], GenerationBatchExecutor],
+    ) -> GenerationBatchExecutor:
         """Build once, claiming a CuMem pool only for eager-resident weights."""
 
         self.require_active("policy build", executor=None)
@@ -203,7 +203,7 @@ class WorkerMemoryParking:
         )
         return executor
 
-    def validate_loaded(self, executor: GenerationChunkExecutor) -> None:
+    def validate_loaded(self, executor: GenerationBatchExecutor) -> None:
         """Fail before serving when no complete backend owns the loaded model."""
 
         session = self._loaded_session()
@@ -243,7 +243,7 @@ class WorkerMemoryParking:
 
     def sleep(
         self,
-        executor: GenerationChunkExecutor | None,
+        executor: GenerationBatchExecutor | None,
         *,
         restore_device: Any,
     ) -> WorkerMemoryParkingSnapshot:
@@ -346,7 +346,7 @@ class WorkerMemoryParking:
         self._phase = _ParkingPhase.PARKED
         return snapshot
 
-    def wake(self, executor: GenerationChunkExecutor) -> None:
+    def wake(self, executor: GenerationBatchExecutor) -> None:
         """Restore physical residency required before generation resumes."""
 
         self.require_healthy("wake", executor=executor)
@@ -430,7 +430,7 @@ class WorkerMemoryParking:
         self,
         operation: str,
         *,
-        executor: GenerationChunkExecutor | None = None,
+        executor: GenerationBatchExecutor | None = None,
     ) -> None:
         """Reject operations after residency or policy state became unknowable."""
 
@@ -458,7 +458,7 @@ class WorkerMemoryParking:
         self,
         operation: str,
         *,
-        executor: GenerationChunkExecutor | None,
+        executor: GenerationBatchExecutor | None,
     ) -> None:
         """Reject execution while this worker is logically parked."""
 

@@ -148,7 +148,7 @@ def test_video_world_targets_rows_include_real_source_target_clip(tmp_path: Path
             "metadata": {
                 "source_repo": "lerobot/droid_100",
                 "source_split": "main",
-                "source_video": "videos/observation.images.exterior/chunk-000/file-000.mp4",
+                "source_video": "videos/observation.images.exterior/batch-000/file-000.mp4",
                 "source_frame_index": 0,
                 "decode_method": "pyav_http_target_clip",
                 "source_fps": 15.0,

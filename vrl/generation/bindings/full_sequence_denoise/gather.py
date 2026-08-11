@@ -1,10 +1,10 @@
-"""Pure gatherer for full-sequence denoise chunk payloads.
+"""Pure gatherer for full-sequence denoise batch payloads.
 
 Split from ``executor.py`` because reassembly runs driver-side, where no model
 is loaded: the gatherer crosses the Ray launch contract as a serializable
-object (see ``ChunkGatherer`` in ``vrl/generation/protocols.py``) and must not
+object (see ``GenerationBatchGatherer`` in ``vrl/generation/protocols.py``) and must not
 drag executor/model imports with it — hence the TYPE_CHECKING-only import of
-``DiffusionChunkResult``.
+``DiffusionBatchResult``.
 """
 
 from __future__ import annotations
@@ -15,11 +15,11 @@ from typing import TYPE_CHECKING, cast
 import torch
 
 from vrl.generation.bindings.full_sequence_denoise.layout import DiffusionRequestLayout
-from vrl.generation.execution.chunks import (
+from vrl.generation.execution.sample_batches import (
     gather_replay_tensors,
-    require_matching_chunk_context,
+    require_matching_batch_context,
 )
-from vrl.generation.protocols import ChunkResult
+from vrl.generation.protocols import BatchPayload
 from vrl.generation.types import (
     GenerationOutput,
     GenerationRequest,
@@ -28,39 +28,39 @@ from vrl.generation.types import (
 from vrl.trajectory import build_diffusion_trajectory
 
 if TYPE_CHECKING:
-    from vrl.generation.bindings.full_sequence_denoise.executor import DiffusionChunkResult
+    from vrl.generation.bindings.full_sequence_denoise.executor import DiffusionBatchResult
 
 
-class DiffusionChunkGatherer:
-    """Pure gatherer for shared diffusion chunk payloads."""
+class DiffusionBatchGatherer:
+    """Pure gatherer for shared diffusion batch payloads."""
 
-    def gather_chunks(
+    def gather_batches(
         self,
         request: GenerationRequest,
         sample_rows: Sequence[GenerationSampleRow],
-        chunks: Sequence[ChunkResult],
+        batches: Sequence[BatchPayload],
     ) -> GenerationOutput:
-        ordered_chunks = DiffusionRequestLayout.ordered_chunks(
+        ordered_batches = DiffusionRequestLayout.ordered_batches(
             request,
             sample_rows,
-            cast("Sequence[DiffusionChunkResult]", chunks),
+            cast("Sequence[DiffusionBatchResult]", batches),
         )
 
-        observations = torch.cat([chunk.observations for chunk in ordered_chunks], dim=0)
-        actions = torch.cat([chunk.actions for chunk in ordered_chunks], dim=0)
-        log_probs = torch.cat([chunk.log_probs for chunk in ordered_chunks], dim=0)
-        timesteps_tensor = torch.cat([chunk.timesteps for chunk in ordered_chunks], dim=0)
-        kl_tensor = torch.cat([chunk.kl for chunk in ordered_chunks], dim=0)
-        video = torch.cat([chunk.video for chunk in ordered_chunks], dim=0)
+        observations = torch.cat([batch.observations for batch in ordered_batches], dim=0)
+        actions = torch.cat([batch.actions for batch in ordered_batches], dim=0)
+        log_probs = torch.cat([batch.log_probs for batch in ordered_batches], dim=0)
+        timesteps_tensor = torch.cat([batch.timesteps for batch in ordered_batches], dim=0)
+        kl_tensor = torch.cat([batch.kl for batch in ordered_batches], dim=0)
+        video = torch.cat([batch.video for batch in ordered_batches], dim=0)
         replay_tensors = gather_replay_tensors(
-            [chunk.replay_tensors for chunk in ordered_chunks],
-            sample_counts=[chunk.chunk.sample_count for chunk in ordered_chunks],
+            [batch.replay_tensors for batch in ordered_batches],
+            sample_counts=[batch.batch.sample_count for batch in ordered_batches],
         )
-        rollout_context = require_matching_chunk_context(
-            [chunk.context for chunk in ordered_chunks],
+        rollout_context = require_matching_batch_context(
+            [batch.context for batch in ordered_batches],
         )
         if not rollout_context:
-            raise ValueError("DiffusionChunkResult.context must be non-empty")
+            raise ValueError("DiffusionBatchResult.context must be non-empty")
 
         rows = list(sample_rows)
         trajectory = build_diffusion_trajectory(
@@ -82,5 +82,5 @@ class DiffusionChunkGatherer:
 
 
 __all__ = [
-    "DiffusionChunkGatherer",
+    "DiffusionBatchGatherer",
 ]

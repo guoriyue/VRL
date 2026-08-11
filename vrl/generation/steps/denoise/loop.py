@@ -7,7 +7,7 @@ from typing import Any
 
 import torch
 
-from vrl.generation.execution.chunk_memory import cuda_occupancy_snapshot
+from vrl.generation.execution.batch_memory import cuda_occupancy_snapshot
 from vrl.generation.steps.denoise.config import DenoiseLoopConfig
 from vrl.generation.steps.denoise.teacache import TeaCacheState
 from vrl.math.denoise.flow_matching import sde_step_with_logprob
@@ -64,10 +64,10 @@ def preallocate_denoise_buffers(
     latents = state.latents
     if not isinstance(latents, torch.Tensor):
         raise TypeError("denoise state.latents must be a torch.Tensor")
-    chunk_batch = int(latents.shape[0])
-    if chunk_batch != int(config.sample_count):
+    batch_rows = int(latents.shape[0])
+    if batch_rows != int(config.sample_count):
         raise ValueError(
-            f"denoise chunk produced {chunk_batch} rows, expected {config.sample_count}",
+            f"denoise batch produced {batch_rows} rows, expected {config.sample_count}",
         )
     num_steps = len(state.timesteps)
     latent_shape = tuple(latents.shape[1:])
@@ -76,25 +76,25 @@ def preallocate_denoise_buffers(
 
     return DenoiseTrajectoryBuffers(
         observations=torch.empty(
-            (chunk_batch, num_steps, *latent_shape),
+            (batch_rows, num_steps, *latent_shape),
             dtype=latents.dtype,
             device=device,
         ),
         actions=torch.empty(
-            (chunk_batch, num_steps, *latent_shape),
+            (batch_rows, num_steps, *latent_shape),
             dtype=latents.dtype,
             device=device,
         ),
-        log_probs=torch.empty((chunk_batch, num_steps), dtype=torch.float32, device=device),
+        log_probs=torch.empty((batch_rows, num_steps), dtype=torch.float32, device=device),
         timesteps=torch.empty(
-            (chunk_batch, num_steps),
+            (batch_rows, num_steps),
             dtype=timestep_dtype,
             device=device,
         ),
-        kl=torch.empty((chunk_batch, num_steps), dtype=torch.float32, device=device),
+        kl=torch.empty((batch_rows, num_steps), dtype=torch.float32, device=device),
         prev_sample_means=(
             torch.empty(
-                (chunk_batch, num_steps, *latent_shape),
+                (batch_rows, num_steps, *latent_shape),
                 dtype=latents.dtype,
                 device=device,
             )
@@ -103,7 +103,7 @@ def preallocate_denoise_buffers(
         ),
         ref_noise_preds=(
             torch.empty(
-                (chunk_batch, num_steps, *latent_shape),
+                (batch_rows, num_steps, *latent_shape),
                 dtype=latents.dtype,
                 device=device,
             )
@@ -121,7 +121,7 @@ def run_denoise_loop(
 ) -> DenoiseLoopResult:
     """Run continuous denoise steps and collect replay tensors."""
 
-    chunk_batch = state.latents.shape[0]
+    batch_rows = state.latents.shape[0]
     device = state.latents.device
     reset_cuda_peak()
     occupancy = cuda_occupancy_snapshot()
@@ -220,7 +220,7 @@ def run_denoise_loop(
                 buffers.timesteps[:, step_idx].copy_(
                     _expand_timestep_for_buffer(
                         timestep.detach(),
-                        chunk_batch=chunk_batch,
+                        batch_rows=batch_rows,
                         dtype=buffers.timesteps.dtype,
                         device=device,
                     ),
@@ -247,7 +247,7 @@ def run_denoise_loop(
     memory = None
     if occupancy is not None and denoise_peak_bytes is not None:
         memory = {
-            "sample_count": int(chunk_batch),
+            "sample_count": int(batch_rows),
             **occupancy,
             "denoise_peak_bytes": denoise_peak_bytes,
         }
@@ -265,7 +265,7 @@ def run_denoise_loop(
         memory=memory,
         engine_counters={
             "diffusion_num_denoise_steps": int(buffers.timesteps.shape[1]),
-            "diffusion_samples_per_chunk": int(chunk_batch),
+            "diffusion_samples_per_generation_batch": int(batch_rows),
             "diffusion_observation_bytes": trajectory_tensor_bytes(buffers.observations),
             "diffusion_action_bytes": trajectory_tensor_bytes(buffers.actions),
             "diffusion_old_logprob_bytes": trajectory_tensor_bytes(buffers.log_probs),
@@ -297,7 +297,7 @@ def _timestep_dtype(timesteps: Any) -> torch.dtype:
 def _expand_timestep_for_buffer(
     timestep: Any,
     *,
-    chunk_batch: int,
+    batch_rows: int,
     dtype: torch.dtype,
     device: torch.device,
 ) -> torch.Tensor:
@@ -305,17 +305,17 @@ def _expand_timestep_for_buffer(
         timestep = torch.as_tensor(timestep)
     timestep = timestep.to(device=device, dtype=dtype)
     if timestep.ndim == 0:
-        return timestep.expand(chunk_batch)
-    if tuple(timestep.shape) == (chunk_batch,):
+        return timestep.expand(batch_rows)
+    if tuple(timestep.shape) == (batch_rows,):
         return timestep
     if timestep.numel() == 1:
-        return timestep.reshape(()).expand(chunk_batch)
+        return timestep.reshape(()).expand(batch_rows)
     try:
-        return timestep.reshape(chunk_batch)
+        return timestep.reshape(batch_rows)
     except RuntimeError as exc:
         raise ValueError(
-            "denoise timestep cannot be expanded to chunk batch "
-            f"{chunk_batch}: shape={tuple(timestep.shape)}",
+            "denoise timestep cannot be expanded to batch batch "
+            f"{batch_rows}: shape={tuple(timestep.shape)}",
         ) from exc
 
 

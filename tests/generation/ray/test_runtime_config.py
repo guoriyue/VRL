@@ -18,7 +18,7 @@ from vrl.config.builders import BuiltConfigs
 from vrl.config.loading import bundled_config_resource
 from vrl.config.precision import resolve_precision_policy
 from vrl.config.schema import parse_config
-from vrl.generation.execution.types import ChunkSizeProbeResult
+from vrl.generation.execution.types import BatchSizeProbeResult
 from vrl.generation.launch_contract import GenerationRuntimeLaunchContract
 from vrl.generation.ray.config import RayGenerationConfig
 from vrl.generation.ray.executor import RayGenerationExecutor
@@ -27,7 +27,6 @@ from vrl.generation.ray.launcher import (
     RayGenerationLauncher,
     _all_workers_support_versioned_slots,
 )
-from vrl.utils.lifecycle import RuntimePhase
 from vrl.generation.ray.runtime import RayGenerationRuntime
 from vrl.generation.ray.session import RayGenerationSession
 from vrl.generation.types import GenerationRequest
@@ -44,6 +43,7 @@ from vrl.run import (
     ResolvedOnlineRun,
 )
 from vrl.trainers.checkpointing import TrainingResumeConfig
+from vrl.utils.lifecycle import RuntimePhase
 
 
 class _CudaPolicy:
@@ -500,17 +500,17 @@ def test_launcher_capability_failure_kills_candidate_actor_group(
     assert actor_group.shutdown_calls == 1
 
 
-def test_chunk_placement_strategy_switches_from_cfg() -> None:
-    """Checks distributed.rollout.chunk_placement_strategy flips the policy."""
-    assert _ray_config(_cfg()).worker.chunk_placement_strategy == "round_robin"
+def test_batch_placement_strategy_switches_from_cfg() -> None:
+    """Checks distributed.rollout.batch_placement_strategy flips the policy."""
+    assert _ray_config(_cfg()).worker.batch_placement_strategy == "round_robin"
 
     cfg = _cfg()
-    cfg.distributed.rollout.chunk_placement_strategy = "dynamic"
+    cfg.distributed.rollout.batch_placement_strategy = "dynamic"
     dynamic = _ray_config(cfg)
-    assert dynamic.worker.chunk_placement_strategy == "dynamic"
+    assert dynamic.worker.batch_placement_strategy == "dynamic"
     # Invalid values are now rejected at the typed schema boundary
     # (RolloutWorkerSection Literal) at parse time, not in RayGenerationConfig —
-    # see tests/config/test_schema.py::test_unknown_chunk_placement_strategy_raises.
+    # see tests/config/test_schema.py::test_unknown_batch_placement_strategy_raises.
 
 
 def test_worker_defaults_and_explicit_override_project_from_public_schema() -> None:
@@ -557,7 +557,7 @@ def test_base_rollout_presets_pin_only_the_cpu_override(preset_name: str) -> Non
     assert config.worker.cpus_per_worker == 4.0
     assert config.worker.worker_rpc_timeout_s == 600.0
     assert config.worker.generation_stall_timeout_s == 3600.0
-    assert config.worker.chunk_placement_strategy == "round_robin"
+    assert config.worker.batch_placement_strategy == "round_robin"
     assert config.worker.sync_trainable_state is True
 
 
@@ -1274,7 +1274,7 @@ def test_ray_backend_allows_split_driver_cuda_when_devices_do_not_overlap() -> N
     assert config.resources.colocated is False
 
 
-# ------------------------------------- real chunk-size probe fan-out (real Ray)
+# ------------------------------------- real batch-size probe fan-out (real Ray)
 
 
 def _auto_chunk_request() -> GenerationRequest:
@@ -1284,13 +1284,13 @@ def _auto_chunk_request() -> GenerationRequest:
         task="t2i",
         inputs=["p"],
         samples_per_prompt=10,
-        sampling={"num_steps": 20, "samples_per_chunk": "auto"},
+        sampling={"num_steps": 20, "samples_per_generation_batch": "auto"},
         policy_version=1,
     )
 
 
 @pytest.mark.asyncio
-async def test_remote_chunk_size_probe_timeout_is_terminal_and_cancels_refs(
+async def test_remote_batch_size_probe_timeout_is_terminal_and_cancels_refs(
     monkeypatch,
 ) -> None:
     import vrl.ray.operation_deadline as deadline_module
@@ -1312,7 +1312,7 @@ async def test_remote_chunk_size_probe_timeout_is_terminal_and_cancels_refs(
 
     worker = RayActorHandle(
         worker_id="w0",
-        actor=SimpleNamespace(probe_chunk_size=_RemoteProbe()),
+        actor=SimpleNamespace(probe_batch_size=_RemoteProbe()),
     )
     executor = RayGenerationExecutor(
         SimpleNamespace(),
@@ -1339,7 +1339,7 @@ async def test_remote_chunk_size_probe_timeout_is_terminal_and_cancels_refs(
 
     with pytest.raises(
         RayOperationTimeout,
-        match=r"rollout\.generation\.chunk_size_probe",
+        match=r"rollout\.generation\.batch_size_probe",
     ):
         await runtime.generate(_auto_chunk_request())
 
@@ -1352,15 +1352,15 @@ async def test_concurrent_auto_chunk_requests_share_one_probe_before_submission(
     gate = asyncio.Event()
     probe_requests: list[str] = []
     executed_requests: list[GenerationRequest] = []
-    probe_result = ChunkSizeProbeResult(
-        samples_per_chunk=3,
+    probe_result = BatchSizeProbeResult(
+        samples_per_generation_batch=3,
         budget_bytes=1,
         trials=(),
     )
 
     class _ProbeRef:
         def __await__(self):
-            async def wait() -> ChunkSizeProbeResult:
+            async def wait() -> BatchSizeProbeResult:
                 await gate.wait()
                 return probe_result
 
@@ -1375,7 +1375,7 @@ async def test_concurrent_auto_chunk_requests_share_one_probe_before_submission(
 
     worker = RayActorHandle(
         worker_id="w0",
-        actor=SimpleNamespace(probe_chunk_size=_RemoteProbe()),
+        actor=SimpleNamespace(probe_batch_size=_RemoteProbe()),
     )
     executor = RayGenerationExecutor(
         SimpleNamespace(),
@@ -1405,7 +1405,10 @@ async def test_concurrent_auto_chunk_requests_share_one_probe_before_submission(
     assert await first == executed_requests[0]
     assert await second == executed_requests[1]
     assert probe_requests == ["req-probe"]
-    assert [request.sampling["samples_per_chunk"] for request in executed_requests] == [3, 3]
+    assert [request.sampling["samples_per_generation_batch"] for request in executed_requests] == [
+        3,
+        3,
+    ]
 
 
 class _Arrivals:
@@ -1423,7 +1426,7 @@ class _Arrivals:
 
 
 class _ProbeWorker:
-    """Real Ray actor exposing ``probe_chunk_size`` as a remote method.
+    """Real Ray actor exposing ``probe_batch_size`` as a remote method.
 
     It blocks until the whole fleet has arrived, so "probed concurrently" becomes
     a fact the test can fail on rather than a word in a name.
@@ -1435,7 +1438,7 @@ class _ProbeWorker:
         self._fleet_size = int(fleet_size)
         self._calls = 0
 
-    def probe_chunk_size(self, request: Any, *, max_samples: int) -> ChunkSizeProbeResult:
+    def probe_batch_size(self, request: Any, *, max_samples: int) -> BatchSizeProbeResult:
         import time
 
         import ray
@@ -1443,7 +1446,7 @@ class _ProbeWorker:
         # Asserted inside the actor process: the request really survived Ray
         # serialization with its type and fields intact. Nothing else checks this.
         assert isinstance(request, GenerationRequest), type(request).__name__
-        assert request.sampling["samples_per_chunk"] == "auto"
+        assert request.sampling["samples_per_generation_batch"] == "auto"
         assert request.inputs[0].prompt == "p"
         assert max_samples == 10
         self._calls += 1
@@ -1454,8 +1457,8 @@ class _ProbeWorker:
             if time.monotonic() > deadline:
                 raise TimeoutError("probes were dispatched sequentially, not concurrently")
             time.sleep(0.01)
-        return ChunkSizeProbeResult(
-            samples_per_chunk=self._answer,
+        return BatchSizeProbeResult(
+            samples_per_generation_batch=self._answer,
             budget_bytes=32 * 1024**3,
             trials=(),
         )
@@ -1466,7 +1469,7 @@ class _ProbeWorker:
 
 @pytest.mark.slow_test
 def test_real_ray_probe_fan_out_resolves_auto_once_across_the_fleet(local_ray) -> None:
-    """The executor-owned chunk-size probe path on a live cluster.
+    """The executor-owned batch-size probe path on a live cluster.
 
     The executor sends N remote probes through its shared actor dispatcher, so
     generation cannot enter the same synchronous actor mailbox concurrently.
@@ -1507,7 +1510,7 @@ def test_real_ray_probe_fan_out_resolves_auto_once_across_the_fleet(local_ray) -
 
         # Fleet answer is the min, and it is probed once: the second request is
         # rewritten from the cached verdict, so no actor sees a second probe.
-        assert [request.sampling["samples_per_chunk"] for request in executed] == [4, 4]
+        assert [request.sampling["samples_per_generation_batch"] for request in executed] == [4, 4]
         assert local_ray.get([actor.calls.remote() for actor in actors]) == [1, 1]
     finally:
         for actor in (*actors, arrivals):

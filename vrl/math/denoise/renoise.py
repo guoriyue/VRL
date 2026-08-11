@@ -1,6 +1,6 @@
 """Gaussian re-noise transitions for chunk-autoregressive denoise policies.
 
-CausVid predicts a clean chunk ``x0`` and then corrupts that prediction to the
+CausVid predicts a clean batch ``x0`` and then corrupts that prediction to the
 next schedule sigma before the next model forward.  This module owns the exact
 transition distribution used by both rollout and replay; cache and temporal
 orchestration remain family-owned.

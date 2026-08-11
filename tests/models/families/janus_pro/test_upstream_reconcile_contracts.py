@@ -67,7 +67,7 @@ def test_cfg_logprob_is_scored_from_cond_not_guided() -> None:
     # switching the log-prob source cond -> guided changes lp and fails here.
     cond = torch.tensor([3.0, 2.0, 1.0, 0.0])
     uncond = torch.tensor([0.0, 1.0, 2.0, 3.0])
-    # [2B=2, L=1, vocab=4]: row 0 = cond, row 1 = uncond (runner does chunk(2, dim=0)).
+    # [2B=2, L=1, vocab=4]: row 0 = cond, row 1 = uncond (runner does batch(2, dim=0)).
     logits = torch.stack([cond, uncond]).unsqueeze(1)
     runner = _runner_with_fixed_logits(logits)
     state = _state(guidance_scale=2.0, temperature=1.0)

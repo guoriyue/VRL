@@ -1,8 +1,8 @@
 """Generation sample identity helpers.
 
 Sample identity is minted exactly once, here, from the request: the driver
-derives the rows before dispatching chunks, and everything downstream joins
-on them — chunk gatherers check exact coverage against these rows,
+derives the rows before dispatching batches, and everything downstream joins
+on them — batch gatherers check exact coverage against these rows,
 ``TrajectoryBatch.sample_rows`` records them, and reward scoring keys
 ``RewardSample.sample_id`` off them (vrl/rollouts/collector/batch_builder.py).
 That cross-package join is why the derivation lives in its own neutral module

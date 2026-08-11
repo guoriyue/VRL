@@ -8,7 +8,7 @@
 # the battery builder survives in vrl/rewards/evaluation/robotics_discrimination.py).
 # Each row carries a fixed
 # request_overrides.seed so rollouts/eval are paired across epochs (a fixed seed
-# with samples_per_chunk=1 is also what makes group members share the initial
+# with samples_per_generation_batch=1 is also what makes group members share the initial
 # latent).
 data:
   loader: prompt_manifest

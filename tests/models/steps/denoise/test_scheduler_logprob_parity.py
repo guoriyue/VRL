@@ -18,7 +18,7 @@ prev_sample under unchanged inputs reproduces the collection log-prob exactly,
 at O(1) magnitude.
 
 Token-AR families (janus/nextstep) are out of scope: token-logit log-probs, no
-SDE replay path. Chunk-AR denoise families are also out of scope: they own
+SDE replay path. Batch-AR denoise families are also out of scope: they own
 grouped temporal transitions rather than the generic full-sequence scheduler
 and SDE evaluator exercised here.
 """

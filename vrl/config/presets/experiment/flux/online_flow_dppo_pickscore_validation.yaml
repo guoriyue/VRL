@@ -57,7 +57,7 @@ algorithm:
 rollout:
   n_samples_per_prompt: 16     # Flow-GRPO GenEval uses 24; <12 collapses. 16 = single-GPU floor
   prompts_per_batch: 8
-  samples_per_chunk: 1
+  samples_per_generation_batch: 1
   noise_level: 0.7
   return_prev_sample_mean: true        # REQUIRED (recipe default; explicit here)
   sde: { window_range: [0, 10] }

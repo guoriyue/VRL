@@ -40,7 +40,7 @@ actor:
   ppo_epochs: 1
   timestep_fraction: 0.25
   timestep_selection: strided
-  replay_samples_per_chunk: 1
+  replay_samples_per_batch: 1
   # Collect/train/release one prompt group at a time. Four CPU-parked Wan
   # rollout actors already consume about 68 GiB between phases; retaining both
   # prompt groups' video trajectories until backward crosses the host-memory
@@ -56,7 +56,7 @@ sampling:
 rollout:
   prompts_per_batch: 2
   n_samples_per_prompt: 4
-  samples_per_chunk: 1
+  samples_per_generation_batch: 1
   noise_level: 0.7
   sde:
     type: cps

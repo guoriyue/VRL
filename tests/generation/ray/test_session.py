@@ -54,9 +54,9 @@ class _Executor:
         self.calls.append(("generate", request))
         return "generated"
 
-    async def probe_chunk_sizes(self, request: Any, *, max_samples: int) -> list[Any]:
+    async def probe_batch_sizes(self, request: Any, *, max_samples: int) -> list[Any]:
         self.calls.append(("probe", request, max_samples))
-        return [{"samples_per_chunk": max_samples}]
+        return [{"samples_per_generation_batch": max_samples}]
 
 
 class _WeightSync:

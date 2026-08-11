@@ -1,4 +1,4 @@
-"""Deterministic tests for chunk placement and pull-based actor dispatch.
+"""Deterministic tests for batch placement and pull-based actor dispatch.
 
 These use awaitable fake refs so completion order is fully controlled — no Ray
 runtime, no slow markers. They pin the Track A contract:
@@ -9,7 +9,7 @@ The fakes are a controlled clock, not a Ray protocol fake, and the ``real_cover`
 labels below name what covers each half for real: the dispatch loop's ObjectRef
 handling by ``test_ray_actor_pool.py``, and the executor's whole
 envelope-over-the-wire-to-result crossing by the real-cluster twins in
-``tests/ray/test_real_chunk_execution.py``.
+``tests/ray/test_real_batch_execution.py``.
 """
 
 from __future__ import annotations
@@ -22,11 +22,11 @@ import pytest
 
 import vrl.ray.actor_pool as actor_pool_module
 import vrl.ray.operation_deadline as deadline_module
-from vrl.generation.execution.chunk_placement import DistributedExecutionPlanner
+from vrl.generation.execution.batch_placement import DistributedExecutionPlanner
 from vrl.generation.execution.types import (
-    ChunkExecutionEnvelope,
-    ChunkExecutionResult,
-    ChunkSizeProbeResult,
+    BatchSizeProbeResult,
+    GenerationBatchEnvelope,
+    GenerationBatchResult,
 )
 from vrl.generation.ray.executor import RayGenerationExecutor
 from vrl.generation.types import GenerationOutput, GenerationRequest
@@ -124,7 +124,12 @@ def _request(num_steps: int = 10, samples: int = 8, sbs: int = 2) -> GenerationR
         task="t2i",
         inputs=["a test prompt"],
         samples_per_prompt=samples,
-        sampling={"height": 64, "width": 64, "num_steps": num_steps, "samples_per_chunk": sbs},
+        sampling={
+            "height": 64,
+            "width": 64,
+            "num_steps": num_steps,
+            "samples_per_generation_batch": sbs,
+        },
         runtime_debug=True,
     )
 
@@ -146,7 +151,7 @@ def test_bound_jobs_keep_plan_time_binding_and_order() -> None:
             job_index=i,
             worker_id=("w0" if i % 2 == 0 else "w1"),
             remote_method=(fast.remote if i % 2 == 0 else slow.remote),
-            payload=f"chunk-{i}",
+            payload=f"batch-{i}",
         )
         for i in range(4)
     ]
@@ -160,9 +165,9 @@ def test_bound_jobs_keep_plan_time_binding_and_order() -> None:
     )
 
     assert [index for index, _ in pairs] == [0, 1, 2, 3]
-    # Even though w1 is slow, its chunks never migrate to w0.
-    assert fast.received == ["chunk-0", "chunk-2"]
-    assert slow.received == ["chunk-1", "chunk-3"]
+    # Even though w1 is slow, its batches never migrate to w0.
+    assert fast.received == ["batch-0", "batch-2"]
+    assert slow.received == ["batch-1", "batch-3"]
 
 
 @_CONTROLLED_CLOCK
@@ -171,7 +176,7 @@ def test_pull_dispatch_lets_fast_worker_take_more_chunks() -> None:
     fast = _FakeWorker("w0", speed_rank_base=0)
     slow = _FakeWorker("w1", speed_rank_base=100)
     jobs = [
-        RayActorJob(job_index=i, worker_id=None, remote_method=None, payload=f"chunk-{i}")
+        RayActorJob(job_index=i, worker_id=None, remote_method=None, payload=f"batch-{i}")
         for i in range(4)
     ]
 
@@ -185,14 +190,14 @@ def test_pull_dispatch_lets_fast_worker_take_more_chunks() -> None:
     )
 
     assert [index for index, _ in pairs] == [0, 1, 2, 3]
-    # w0 completes first every time, so it pulls every queued chunk.
-    assert fast.received == ["chunk-0", "chunk-2", "chunk-3"]
-    assert slow.received == ["chunk-1"]
+    # w0 completes first every time, so it pulls every queued batch.
+    assert fast.received == ["batch-0", "batch-2", "batch-3"]
+    assert slow.received == ["batch-1"]
 
 
 @_CONTROLLED_CLOCK
 def test_lpt_priority_orders_submission() -> None:
-    """Checks higher-priority (more expensive) chunks are submitted first."""
+    """Checks higher-priority (more expensive) batches are submitted first."""
     worker = _FakeWorker("w0", speed_rank_base=0)
     jobs = [
         RayActorJob(
@@ -306,7 +311,7 @@ async def test_actor_pool_timeout_discards_completed_partial_result(
 
         def timeout_error(self) -> RayOperationTimeout:
             return RayOperationTimeout(
-                "rollout.generation.chunk",
+                "rollout.generation.batch",
                 30.0,
                 context=self.context,
             )
@@ -704,11 +709,11 @@ def test_dynamic_planner_leaves_chunks_unbound_with_costs() -> None:
     assert all(a.worker_id is None for a in plan.assignments)
     assert len(plan.assignments) == 4
     assert all(a.estimated_cost > 0 for a in plan.assignments)
-    assert all(a.chunk is a.envelope.chunk for a in plan.assignments)
+    assert all(a.batch is a.envelope.batch for a in plan.assignments)
     assert all(not hasattr(a, "node_id") for a in plan.assignments)
     assert all(not hasattr(a, "gpu_ids") for a in plan.assignments)
-    # Chunk identity and order (the gather contract) are untouched.
-    assert [a.chunk.sample_start for a in plan.assignments] == [0, 2, 4, 6]
+    # Batch identity and order (the gather contract) are untouched.
+    assert [a.batch.sample_start for a in plan.assignments] == [0, 2, 4, 6]
 
 
 def test_planner_cost_uses_steps_axis() -> None:
@@ -717,7 +722,7 @@ def test_planner_cost_uses_steps_axis() -> None:
     plan = DistributedExecutionPlanner().plan_with_engine(request, _worker_ids(1))
 
     assignment = plan.assignments[0]
-    assert assignment.estimated_cost == assignment.chunk.sample_count * 35
+    assert assignment.estimated_cost == assignment.batch.sample_count * 35
 
 
 def test_planner_rejects_unknown_strategy() -> None:
@@ -732,20 +737,20 @@ def test_planner_rejects_unknown_strategy() -> None:
 # Carried by the three `execute` tests. Their fake actor is called in-process, so
 # no envelope is ever pickled: a field that became unserializable (a lambda, an
 # open handle, a torch device reference) would pass here and break on production's
-# first chunk. That crossing is what the twins named here run for real; the
+# first batch. That crossing is what the twins named here run for real; the
 # completion ORDER these tests pin is what a real cluster cannot give.
 _CONTROLLED_CLOCK_OVER_A_REAL_WIRE = pytest.mark.real_cover(
-    "tests/ray/test_real_chunk_execution.py",
+    "tests/ray/test_real_batch_execution.py",
     why=(
-        "a real cluster cannot make chunk completion order deterministic, which is the whole "
-        "point of the fake refs; the envelope -> pickle -> actor -> ChunkExecutionResult crossing "
+        "a real cluster cannot make batch completion order deterministic, which is the whole "
+        "point of the fake refs; the envelope -> pickle -> actor -> GenerationBatchResult crossing "
         "they therefore skip is pinned against a live cluster by both twins in the named file"
     ),
 )
 
 
 class _FakeActor:
-    """Fake Ray actor: execute_chunk.remote returns a real chunk result."""
+    """Fake Ray actor: execute_batch.remote returns a real batch result."""
 
     def __init__(self, worker_id: str, speed_rank_base: int) -> None:
         self.worker_id = worker_id
@@ -754,33 +759,33 @@ class _FakeActor:
 
         class _ExecuteChunk:
             @staticmethod
-            def remote(envelope: ChunkExecutionEnvelope) -> _FakeRef:
+            def remote(envelope: GenerationBatchEnvelope) -> _FakeRef:
                 return self._execute(envelope)
 
-        self.execute_chunk = _ExecuteChunk()
+        self.execute_batch = _ExecuteChunk()
 
-    def _execute(self, envelope: ChunkExecutionEnvelope) -> _FakeRef:
-        chunk = envelope.chunk
-        self.executed.append(chunk.chunk_key)
+    def _execute(self, envelope: GenerationBatchEnvelope) -> _FakeRef:
+        batch = envelope.batch
+        self.executed.append(batch.batch_key)
         self._rank += 1
-        result = ChunkExecutionResult(
+        result = GenerationBatchResult(
             request_id=envelope.request.request_id,
             worker_id=self.worker_id,
-            chunk=chunk,
-            output={"chunk_key": chunk.chunk_key, "samples": chunk.sample_count},
+            batch=batch,
+            output={"batch_key": batch.batch_key, "samples": batch.sample_count},
         )
         return _FakeRef(result=result, completion_rank=self._rank)
 
 
 class _ListGatherer:
-    def gather_chunks(
+    def gather_batches(
         self,
         request: GenerationRequest,
         sample_rows: Any,
-        chunks: list[Any],
+        batches: list[Any],
     ) -> GenerationOutput:
         return GenerationOutput(
-            output=list(chunks),
+            output=list(batches),
             trajectory=TrajectoryBatch(
                 request_id=request.request_id,
                 family=request.family,
@@ -815,12 +820,12 @@ def _executor(strategy: str, actors: list[_FakeActor]) -> RayGenerationExecutor:
     "tests/generation/ray/test_runtime_config.py"
     "::test_real_ray_probe_fan_out_resolves_auto_once_across_the_fleet",
     why=(
-        "the gated ref makes probe/chunk submission order deterministic; the named "
+        "the gated ref makes probe/batch submission order deterministic; the named "
         "test sends the real request and keyword arguments through live Ray actors"
     ),
 )
 @pytest.mark.asyncio
-async def test_chunk_size_probe_shares_actor_admission_with_explicit_generation() -> None:
+async def test_batch_size_probe_shares_actor_admission_with_explicit_generation() -> None:
     gate = asyncio.Event()
     probe_requests: list[str] = []
     actor = _FakeActor("w0", 0)
@@ -836,18 +841,18 @@ async def test_chunk_size_probe_shares_actor_admission_with_explicit_generation(
             probe_requests.append(request.request_id)
             return _GatedRef(
                 gate,
-                ChunkSizeProbeResult(
-                    samples_per_chunk=2,
+                BatchSizeProbeResult(
+                    samples_per_generation_batch=2,
                     budget_bytes=1,
                     trials=(),
                 ),
             )
 
-    actor.probe_chunk_size = _Probe()
+    actor.probe_batch_size = _Probe()
     executor = _executor("round_robin", [actor])
     request = _request(samples=2, sbs=1)
     probe = asyncio.create_task(
-        executor.probe_chunk_sizes(request, max_samples=8),
+        executor.probe_batch_sizes(request, max_samples=8),
     )
     await asyncio.sleep(0)
     generation = asyncio.create_task(executor.execute(request))
@@ -858,8 +863,8 @@ async def test_chunk_size_probe_shares_actor_admission_with_explicit_generation(
 
     gate.set()
     assert await probe == [
-        ChunkSizeProbeResult(
-            samples_per_chunk=2,
+        BatchSizeProbeResult(
+            samples_per_generation_batch=2,
             budget_bytes=1,
             trials=(),
         ),
@@ -882,7 +887,7 @@ async def test_executor_round_robin_dispatches_per_plan_binding() -> None:
     request = _request(num_steps=10, samples=8, sbs=2)
     output = await executor.execute(request)
 
-    # 4 chunks alternate w0/w1 even though w1 is much slower: plan-time binding.
+    # 4 batches alternate w0/w1 even though w1 is much slower: plan-time binding.
     assert actors[0].executed == ["prompt:0:samples:0:2", "prompt:0:samples:4:6"]
     assert actors[1].executed == ["prompt:0:samples:2:4", "prompt:0:samples:6:8"]
     assert output.runtime_debug is not None
@@ -904,7 +909,7 @@ async def test_executor_dynamic_dispatches_by_pull() -> None:
 
     output = await executor.execute(_request(num_steps=10, samples=8, sbs=2))
 
-    # The fast worker pulls every queued chunk once the slow one is busy.
+    # The fast worker pulls every queued batch once the slow one is busy.
     assert len(actors[0].executed) == 3
     assert len(actors[1].executed) == 1
     assert output.runtime_debug is not None
@@ -916,7 +921,7 @@ async def test_executor_dynamic_dispatches_by_pull() -> None:
     }
     assert by_worker == {"w0": 3, "w1": 1}
     # Gather order is untouched by dynamic placement.
-    assert [entry["chunk_key"] for entry in output.output] == [
+    assert [entry["batch_key"] for entry in output.output] == [
         "prompt:0:samples:0:2",
         "prompt:0:samples:2:4",
         "prompt:0:samples:4:6",
@@ -927,7 +932,7 @@ async def test_executor_dynamic_dispatches_by_pull() -> None:
 @_CONTROLLED_CLOCK_OVER_A_REAL_WIRE
 @pytest.mark.asyncio
 async def test_executor_runtime_debug_exposes_chunk_schedule() -> None:
-    """Checks runtime_debug surfaces per-chunk placement telemetry."""
+    """Checks runtime_debug surfaces per-batch placement telemetry."""
     actors = [_FakeActor("w0", 0), _FakeActor("w1", 100)]
     executor = _executor("round_robin", actors)
     request = _request(num_steps=10, samples=8, sbs=2)
@@ -940,7 +945,7 @@ async def test_executor_runtime_debug_exposes_chunk_schedule() -> None:
     assert len(debug_schedule) == 4
     for row in debug_schedule:
         assert {
-            "chunk_key",
+            "batch_key",
             "sample_count",
             "assignment_strategy",
             "estimated_cost",

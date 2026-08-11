@@ -458,18 +458,18 @@ def _mean_reward_components(
 
 
 @dataclass(frozen=True, slots=True)
-class _TrainingSampleChunk:
+class _TrainingGenerationSampleBatch:
     batch: RolloutBatch
     advantages: torch.Tensor
     loss_weight: float
     is_dummy: bool = False
 
 
-def _training_sample_chunks(
+def _training_sample_batches(
     batch: RolloutBatch,
     advantages: torch.Tensor,
-    samples_per_chunk: int,
-) -> list[_TrainingSampleChunk]:
+    replay_samples_per_batch: int,
+) -> list[_TrainingGenerationSampleBatch]:
     """Split one prompt group for replay without changing full-group loss math."""
 
     batch_size = int(batch.rewards.shape[0])
@@ -480,22 +480,24 @@ def _training_sample_chunks(
         )
     if batch_size <= 0:
         return []
-    chunk_size = int(samples_per_chunk)
-    if chunk_size <= 0 or chunk_size >= batch_size:
-        return [_TrainingSampleChunk(batch=batch, advantages=advantages, loss_weight=1.0)]
+    slice_size = int(replay_samples_per_batch)
+    if slice_size <= 0 or slice_size >= batch_size:
+        return [
+            _TrainingGenerationSampleBatch(batch=batch, advantages=advantages, loss_weight=1.0)
+        ]
 
-    chunks: list[_TrainingSampleChunk] = []
-    for start in range(0, batch_size, chunk_size):
-        stop = min(start + chunk_size, batch_size)
+    batches: list[_TrainingGenerationSampleBatch] = []
+    for start in range(0, batch_size, slice_size):
+        stop = min(start + slice_size, batch_size)
         selector = torch.arange(start, stop, device=batch.rewards.device)
-        chunks.append(
-            _TrainingSampleChunk(
+        batches.append(
+            _TrainingGenerationSampleBatch(
                 batch=select_batch(batch, selector),
                 advantages=advantages[selector.to(advantages.device)],
                 loss_weight=float(stop - start) / float(batch_size),
             ),
         )
-    return chunks
+    return batches
 
 
 def _distributed_max_int(value: int, device: torch.device) -> int:
@@ -595,7 +597,7 @@ def _distributed_initial_replay_stats(
         clip_fraction = local.clip_fraction if total_weight > 0 else 0.0
         active_clip_fraction = local.active_clip_fraction if total_weight > 0 else 0.0
 
-    # A rank with nothing to measure is neutral, not a failure: dummy chunks
+    # A rank with nothing to measure is neutral, not a failure: dummy batches
     # exist precisely so an all-filtered rank still runs matching collectives.
     # Whether ANY rank measured something is the gate's decision (it skips a
     # globally empty first update), not a per-rank finiteness verdict.
@@ -621,47 +623,47 @@ def _distributed_initial_replay_stats(
     )
 
 
-def _balanced_training_sample_chunks(
+def _balanced_training_sample_batches(
     batches: list[RolloutBatch],
     advantages: list[torch.Tensor],
-    samples_per_chunk: int,
+    replay_samples_per_batch: int,
     device: torch.device,
-) -> list[_TrainingSampleChunk]:
+) -> list[_TrainingGenerationSampleBatch]:
     """Plan replay execution slots with equal slot counts across ranks.
 
     Local zero-advantage filtering can leave different ranks with different
-    numbers of prompt groups or sample chunks. DDP/FSDP forward/backward issue
+    numbers of prompt groups or sample batches. DDP/FSDP forward/backward issue
     collectives, so the number of replay slots must be globally balanced even
     when only some slots carry training signal.
     """
 
-    chunks: list[_TrainingSampleChunk] = []
+    sample_batches: list[_TrainingGenerationSampleBatch] = []
     for batch, adv in zip(batches, advantages, strict=True):
-        chunks.extend(_training_sample_chunks(batch, adv, samples_per_chunk))
+        sample_batches.extend(_training_sample_batches(batch, adv, replay_samples_per_batch))
 
-    target_count = _distributed_max_int(len(chunks), device)
-    if target_count == len(chunks):
-        return chunks
+    target_count = _distributed_max_int(len(sample_batches), device)
+    if target_count == len(sample_batches):
+        return sample_batches
     if target_count <= 0:
         return []
-    if not chunks:
+    if not sample_batches:
         raise RuntimeError(
             "distributed replay planner cannot synthesize dummy slots without a "
-            "local real chunk; call _all_ranks_have_work before planning replay chunks",
+            "local real batch; call _all_ranks_have_work before planning replay batches",
         )
-    # Use the smallest available local chunk as the dummy template to minimize
+    # Use the smallest available local batch as the dummy template to minimize
     # the extra zero-loss forward/backward work needed for collective balance.
-    template = min(chunks, key=lambda chunk: int(chunk.batch.rewards.shape[0]))
-    chunks.extend(
-        _TrainingSampleChunk(
+    template = min(sample_batches, key=lambda batch: int(batch.batch.rewards.shape[0]))
+    sample_batches.extend(
+        _TrainingGenerationSampleBatch(
             batch=template.batch,
             advantages=torch.zeros_like(template.advantages),
             loss_weight=0.0,
             is_dummy=True,
         )
-        for _ in range(target_count - len(chunks))
+        for _ in range(target_count - len(sample_batches))
     )
-    return chunks
+    return sample_batches
 
 
 class OnlineTrainer:
@@ -867,8 +869,8 @@ class OnlineTrainer:
 
     def _compute_replay_loss(
         self,
-        chunk_batch: RolloutBatch,
-        chunk_advantages: torch.Tensor,
+        group_batch: RolloutBatch,
+        batch_advantages: torch.Tensor,
         timestep_index: int,
         *,
         algorithm_adapter: AlgorithmAdapter,
@@ -886,11 +888,11 @@ class OnlineTrainer:
                 return algorithm_adapter.compute_loss(
                     self.algorithm,
                     AlgorithmInput(
-                        rewards=chunk_batch.rewards,
-                        group_ids=chunk_batch.group_ids,
-                        advantages=chunk_advantages,
+                        rewards=group_batch.rewards,
+                        group_ids=group_batch.group_ids,
+                        advantages=batch_advantages,
                         model=self.model,
-                        rollout_batch=chunk_batch,
+                        rollout_batch=group_batch,
                         timestep_index=timestep_index,
                     ),
                 )
@@ -904,7 +906,7 @@ class OnlineTrainer:
         with profile_range("trainer.replay"):
             signals = self.evaluator.evaluate(
                 self.model,
-                chunk_batch,
+                group_batch,
                 timestep_index,
                 ref_model=self.ref_model,
                 signal_request=SignalRequest(
@@ -922,8 +924,8 @@ class OnlineTrainer:
                 self.algorithm,
                 AlgorithmInput(
                     signals=signals,
-                    advantages=chunk_advantages,
-                    group_ids=chunk_batch.group_ids,
+                    advantages=batch_advantages,
+                    group_ids=group_batch.group_ids,
                 ),
             )
 
@@ -1293,40 +1295,40 @@ class OnlineTrainer:
             cfg.timestep_selection,
         )
         loss_scale = int(total_groups) * len(train_indices)
-        samples_per_chunk = cfg.batch_plan.replay_samples_per_chunk
+        replay_samples_per_batch = cfg.batch_plan.replay_samples_per_batch
         agg = self._update_agg_metrics
-        for sample_chunk in _balanced_training_sample_chunks(
+        for sample_batch in _balanced_training_sample_batches(
             batch.batches,
             batch.advantages,
-            samples_per_chunk,
+            replay_samples_per_batch,
             self.device,
         ):
-            chunk_batch = move_training_batch_to_device(
-                sample_chunk.batch,
+            group_batch = move_training_batch_to_device(
+                sample_batch.batch,
                 self.device,
                 defer_replay_tensors=defer,
             )
-            chunk_adv = sample_chunk.advantages.to(self.device)
+            batch_adv = sample_batch.advantages.to(self.device)
             self._backward_sft_regularizer(
-                chunk_batch,
-                loss_weight=sample_chunk.loss_weight,
+                group_batch,
+                loss_weight=sample_batch.loss_weight,
                 total_groups=total_groups,
-                is_dummy=sample_chunk.is_dummy,
+                is_dummy=sample_batch.is_dummy,
                 agg=agg,
             )
             for j in train_indices:
                 loss, metrics = self._compute_replay_loss(
-                    chunk_batch,
-                    chunk_adv,
+                    group_batch,
+                    batch_adv,
                     j,
                     algorithm_adapter=algorithm_adapter,
                 )
-                loss = loss * sample_chunk.loss_weight / loss_scale
+                loss = loss * sample_batch.loss_weight / loss_scale
                 self._backward(loss)
-                if not sample_chunk.is_dummy:
+                if not sample_batch.is_dummy:
                     agg.add(
                         metrics,
-                        weight=sample_chunk.loss_weight,
+                        weight=sample_batch.loss_weight,
                         capture_initial_replay=True,
                     )
 
@@ -1474,7 +1476,7 @@ class OnlineTrainer:
             cfg.timestep_selection,
         )
 
-        samples_per_chunk = cfg.batch_plan.replay_samples_per_chunk
+        replay_samples_per_batch = cfg.batch_plan.replay_samples_per_batch
 
         # Debug first step: compare old vs fresh log-probs on first timestep
         # (using first filtered batch so memory footprint is bounded).
@@ -1484,14 +1486,14 @@ class OnlineTrainer:
             self.model,
             self.evaluator,
         )
-        first_debug_chunk = _training_sample_chunks(
+        first_debug_batch = _training_sample_batches(
             filtered_batches[0],
             filtered_advs[0],
-            samples_per_chunk,
+            replay_samples_per_batch,
         )[0]
         if cfg.debug.first_step and self.state.step == 0 and uses_evaluator:
             _dbg_batch = move_training_batch_to_device(
-                first_debug_chunk.batch,
+                first_debug_batch.batch,
                 self.device,
                 defer_replay_tensors=defer_replay_tensor_move,
             )
@@ -1590,11 +1592,11 @@ class OnlineTrainer:
             _invariant_check = getattr(self.algorithm, "first_step_invariant_check", None)
             if callable(_invariant_check):
                 _dbg_batch = move_training_batch_to_device(
-                    first_debug_chunk.batch,
+                    first_debug_batch.batch,
                     self.device,
                     defer_replay_tensors=defer_replay_tensor_move,
                 )
-                _dbg_adv = first_debug_chunk.advantages.to(self.device)
+                _dbg_adv = first_debug_batch.advantages.to(self.device)
                 with (
                     torch.no_grad(),
                     profile_range("trainer.replay"),
@@ -1638,7 +1640,7 @@ class OnlineTrainer:
         # splits; explicit warn/fail is used for same-precision acceptance runs.
         if self.state.step == 0 and uses_evaluator and self.evaluator is not None:
             _guard_batch = move_training_batch_to_device(
-                first_debug_chunk.batch,
+                first_debug_batch.batch,
                 self.device,
                 defer_replay_tensors=defer_replay_tensor_move,
             )
@@ -1712,44 +1714,44 @@ class OnlineTrainer:
             capture_initial_replay = _ppo_epoch == 0
             loss_scale = len(filtered_batches) * len(train_indices)
 
-            for sample_chunk in _balanced_training_sample_chunks(
+            for sample_batch in _balanced_training_sample_batches(
                 filtered_batches,
                 filtered_advs,
-                samples_per_chunk,
+                replay_samples_per_batch,
                 self.device,
             ):
-                chunk_batch = move_training_batch_to_device(
-                    sample_chunk.batch,
+                group_batch = move_training_batch_to_device(
+                    sample_batch.batch,
                     self.device,
                     defer_replay_tensors=defer_replay_tensor_move,
                 )
-                chunk_adv = sample_chunk.advantages.to(self.device)
+                batch_adv = sample_batch.advantages.to(self.device)
                 self._backward_sft_regularizer(
-                    chunk_batch,
-                    loss_weight=sample_chunk.loss_weight,
+                    group_batch,
+                    loss_weight=sample_batch.loss_weight,
                     total_groups=len(filtered_batches),
-                    is_dummy=sample_chunk.is_dummy,
+                    is_dummy=sample_batch.is_dummy,
                     agg=agg_metrics,
                 )
                 for j in train_indices:
                     with timer.time("evaluate"):
                         loss, metrics = self._compute_replay_loss(
-                            chunk_batch,
-                            chunk_adv,
+                            group_batch,
+                            batch_adv,
                             j,
                             algorithm_adapter=algorithm_adapter,
                         )
                         # Average across the complete optimizer target batch;
                         # step evaluators retain the per-denoise-step surrogate.
-                        loss = loss * sample_chunk.loss_weight / loss_scale
+                        loss = loss * sample_batch.loss_weight / loss_scale
 
                     with timer.time("backward"):
                         self._backward(loss)
 
-                    if not sample_chunk.is_dummy:
+                    if not sample_batch.is_dummy:
                         agg_metrics.add(
                             metrics,
-                            weight=sample_chunk.loss_weight,
+                            weight=sample_batch.loss_weight,
                             capture_initial_replay=capture_initial_replay,
                         )
 
@@ -1862,7 +1864,7 @@ class OnlineTrainer:
 
     def _backward_sft_regularizer(
         self,
-        chunk_batch: Any,
+        group_batch: Any,
         *,
         loss_weight: float,
         total_groups: int,
@@ -1873,7 +1875,7 @@ class OnlineTrainer:
 
         The policy objective accumulates over denoise timesteps; the diffusion
         pretraining regularizer does not. It therefore uses only the group and
-        sample-chunk normalization here, outside the timestep loop. Distributed
+        sample-batch normalization here, outside the timestep loop. Distributed
         dummy slots still run the forward and a zero-weight backward so FSDP/DDP
         execute the same collective sequence on every rank.
         """
@@ -1886,7 +1888,7 @@ class OnlineTrainer:
         from vrl.utils.profiling import profile_range
 
         with profile_range("trainer.sft_regularizer"):
-            sft_term = self._sft_regularizer_loss(chunk_batch)
+            sft_term = self._sft_regularizer_loss(group_batch)
             scaled_term = sft_term * float(loss_weight) / int(total_groups)
         self._backward(scaled_term)
         if not is_dummy:
@@ -1951,11 +1953,11 @@ class OnlineTrainer:
 
         return float(getattr(self.algorithm.config, "sft_weight", 0.0) or 0.0)
 
-    def _sft_regularizer_loss(self, chunk_batch: Any) -> torch.Tensor:
+    def _sft_regularizer_loss(self, group_batch: Any) -> torch.Tensor:
         """Weighted diffusion pretraining loss on clean fine-tuning latents.
 
         The Cosmos-Predict2.5 paper's anti-reward-hacking regularizer
-        (§4.2.2): noise this chunk's CLEAN target latents at a
+        (§4.2.2): noise this batch's CLEAN target latents at a
         random step of the replay schedule and penalize the policy's
         prediction error against the family's pretraining target. Everything
         family-specific is reused, not re-derived: the noising runs through
@@ -1971,7 +1973,7 @@ class OnlineTrainer:
         from vrl.trajectory import TrajectoryResolver
 
         assert self._sft_latents is not None  # ctor validated
-        reward_metadata = chunk_batch.context.get("reward_metadata", {})
+        reward_metadata = group_batch.context.get("reward_metadata", {})
         target_key = str(reward_metadata.get("target_video", "") or "").strip()
         if not target_key:
             raise ValueError(
@@ -1991,7 +1993,7 @@ class OnlineTrainer:
                 "no scheduler",
             )
 
-        resolver = TrajectoryResolver.from_batch(chunk_batch)
+        resolver = TrajectoryResolver.from_batch(group_batch)
         primary_segment = resolver.primary_trainable_segment_name()
         observations = resolver.role_value(primary_segment, "observation")
         x0 = (
@@ -2028,7 +2030,7 @@ class OnlineTrainer:
 
         noise = torch.randn_like(x0)
         noisy, target = diffusion_pretraining_pair(scheduler, x0, noise, t)
-        values = self.model.replay_forward_with_latents(chunk_batch, step_idx, noisy)
+        values = self.model.replay_forward_with_latents(group_batch, step_idx, noisy)
         model_pred = values["noise_pred"]
         return self._sft_weight * F.mse_loss(model_pred.float(), target.float())
 

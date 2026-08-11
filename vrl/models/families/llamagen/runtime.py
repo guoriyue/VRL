@@ -7,11 +7,11 @@ from typing import Any
 import torch
 
 from vrl.generation.bindings.token_autoregressive import (
-    ARChunkInputs,
-    ARDiscreteChunkExecutorBase,
+    ARBatchInputs,
+    ARDiscreteBatchExecutorBase,
     ARSamplingParams,
 )
-from vrl.generation.execution.chunks import SampleChunk
+from vrl.generation.execution.sample_batches import GenerationSampleBatch
 from vrl.generation.types import GenerationRequest
 from vrl.models.families.llamagen.config import (
     LLAMAGEN_CAPTION_TOKEN_NUM,
@@ -77,10 +77,10 @@ def llamagen_config_from_build(build: ModelBuild) -> dict[str, Any]:
     return config
 
 
-class LlamaGenChunkExecutor(ARDiscreteChunkExecutorBase):
+class LlamaGenBatchExecutor(ARDiscreteBatchExecutorBase):
     """AR executor for LlamaGen text-to-image rollouts.
 
-    Same request/output contract as ``JanusProChunkExecutor`` with these
+    Same request/output contract as ``JanusProBatchExecutor`` with these
     family specifics:
 
     - Prompts are encoded by the frozen flan-t5-xl encoder into a fixed
@@ -135,7 +135,7 @@ class LlamaGenChunkExecutor(ARDiscreteChunkExecutorBase):
         *,
         row_count: int,
     ) -> int | None:
-        """Require every native static-KV step to cover the full chunk."""
+        """Require every native static-KV step to cover the full batch."""
 
         batch_size = super().resolve_scheduler_batch_size(
             request,
@@ -144,15 +144,15 @@ class LlamaGenChunkExecutor(ARDiscreteChunkExecutorBase):
         if batch_size is not None and batch_size < row_count:
             raise ValueError(
                 "llamagen requires request.sampling.ar_scheduler_batch_size "
-                f"to be null or >= chunk sample count ({row_count}); got {batch_size}",
+                f"to be null or >= batch sample count ({row_count}); got {batch_size}",
             )
         return batch_size
 
-    def prepare_chunk_inputs(
+    def prepare_batch_inputs(
         self,
         request: GenerationRequest,
-        chunk: SampleChunk,
-    ) -> ARChunkInputs:
+        batch: GenerationSampleBatch,
+    ) -> ARBatchInputs:
         """Encode the T5 caption prefix and wire the CFG decode loop."""
 
         sampling = request.sampling
@@ -188,15 +188,15 @@ class LlamaGenChunkExecutor(ARDiscreteChunkExecutorBase):
         top_k = int(sampling.get("top_k", self.model.config.top_k))
         top_p = float(sampling.get("top_p", self.model.config.top_p))
 
-        repeated_prompts = [request.inputs[chunk.prompt_index].prompt] * chunk.sample_count
+        repeated_prompts = [request.inputs[batch.prompt_index].prompt] * batch.sample_count
         prompt_ids, prompt_mask = self._tokenize_prompts(
             repeated_prompts,
             max_text_length=params.max_text_length,
         )
         cond_embeds, cond_mask = self.model.encode_caption(prompt_ids, prompt_mask)
-        uncond_embeds = self.model.uncond_caption_embeds(chunk.sample_count)
+        uncond_embeds = self.model.uncond_caption_embeds(batch.sample_count)
 
-        return ARChunkInputs(
+        return ARBatchInputs(
             # Upstream generate() drives the uncond branch with the COND
             # prompt's mask (cat([emb_masks, emb_masks])). Full-batch
             # scheduling is a hard requirement: the vendored static KV cache
@@ -268,6 +268,6 @@ class LlamaGenChunkExecutor(ARDiscreteChunkExecutorBase):
 
 
 __all__ = [
-    "LlamaGenChunkExecutor",
+    "LlamaGenBatchExecutor",
     "llamagen_config_from_build",
 ]

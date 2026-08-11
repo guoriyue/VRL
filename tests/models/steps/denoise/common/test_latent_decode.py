@@ -9,12 +9,12 @@ from vrl.models.steps.denoise.common import (
 
 
 def test_chunked_latent_decoder_decodes_in_batch_chunks() -> None:
-    """Checks chunked latent decoder decodes in batch chunks."""
+    """Checks chunked latent decoder decodes in batch batches."""
     calls: list[torch.Tensor] = []
 
-    def decode(chunk: torch.Tensor) -> torch.Tensor:
-        calls.append(chunk)
-        return chunk + 10
+    def decode(batch: torch.Tensor) -> torch.Tensor:
+        calls.append(batch)
+        return batch + 10
 
     decoder = ChunkedLatentDecoder(
         LatentDecodePlan(

@@ -99,8 +99,8 @@ class RayGenerationRuntime:
         self._shutdown_task: asyncio.Task[None] | None = None
         self._force_shutdown = False
 
-        self._probed_samples_per_chunk: int | None = None
-        self._samples_per_chunk_probe_lock = asyncio.Lock()
+        self._probed_samples_per_generation_batch: int | None = None
+        self._samples_per_generation_batch_probe_lock = asyncio.Lock()
         self._health_check_timeout_s = float(health_check_timeout_s)
         self._health_monitor = RolloutWorkerHealthMonitor(
             self,
@@ -248,14 +248,14 @@ class RayGenerationRuntime:
                     "generate requires an active rollout runtime; "
                     "the rollout schedule must await activate() first",
                 )
-            if request.sampling.get("samples_per_chunk") == "auto":
-                resolved = await self._resolve_probed_samples_per_chunk(
+            if request.sampling.get("samples_per_generation_batch") == "auto":
+                resolved = await self._resolve_probed_samples_per_generation_batch(
                     session,
                     request,
                 )
                 request = replace(
                     request,
-                    sampling={**dict(request.sampling), "samples_per_chunk": resolved},
+                    sampling={**dict(request.sampling), "samples_per_generation_batch": resolved},
                 )
             if request.policy_version is None and self.current_policy_version is not None:
                 request = replace(
@@ -284,33 +284,33 @@ class RayGenerationRuntime:
                 raise
             raise failure from failure.__cause__
 
-    async def _resolve_probed_samples_per_chunk(
+    async def _resolve_probed_samples_per_generation_batch(
         self,
         session: RayGenerationSession,
         request: GenerationRequest,
     ) -> int:
-        """Run the startup chunk-size probe once and cache the fleet verdict."""
+        """Run the startup batch-size probe once and cache the fleet verdict."""
 
-        if self._probed_samples_per_chunk is not None:
-            return self._probed_samples_per_chunk
-        async with self._samples_per_chunk_probe_lock:
-            if self._probed_samples_per_chunk is not None:
-                return self._probed_samples_per_chunk
-            self.lifecycle.require_running("probe generation chunk size")
+        if self._probed_samples_per_generation_batch is not None:
+            return self._probed_samples_per_generation_batch
+        async with self._samples_per_generation_batch_probe_lock:
+            if self._probed_samples_per_generation_batch is not None:
+                return self._probed_samples_per_generation_batch
+            self.lifecycle.require_running("probe generation batch size")
             max_samples = max(1, int(request.samples_per_prompt))
-            local_results = await session.executor.probe_chunk_sizes(
+            local_results = await session.executor.probe_batch_sizes(
                 request,
                 max_samples=max_samples,
             )
             if not local_results:
                 raise RuntimeError(
-                    "samples_per_chunk: auto found no generation workers to probe",
+                    "samples_per_generation_batch: auto found no generation workers to probe",
                 )
-            resolved = min(result.samples_per_chunk for result in local_results)
+            resolved = min(result.samples_per_generation_batch for result in local_results)
             for result in local_results:
                 logger.info(
-                    "chunk-size probe: n=%d (budget=%.0fMB trials=%s)",
-                    result.samples_per_chunk,
+                    "batch-size probe: n=%d (budget=%.0fMB trials=%s)",
+                    result.samples_per_generation_batch,
                     result.budget_bytes / 2**20,
                     [
                         (
@@ -323,7 +323,7 @@ class RayGenerationRuntime:
                         for trial in result.trials
                     ],
                 )
-            self._probed_samples_per_chunk = resolved
+            self._probed_samples_per_generation_batch = resolved
             return resolved
 
     async def update_weights(self, state_ref: Any, policy_version: int) -> None:

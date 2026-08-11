@@ -13,8 +13,8 @@ from vrl.config.precision import resolve_precision_policy
 from vrl.config.schema import parse_config
 from vrl.generation import GenerationRequest
 from vrl.generation.bindings.token_autoregressive import ARRequestLayout
-from vrl.generation.execution.chunks import SampleChunk
 from vrl.generation.execution.ids import build_sample_rows
+from vrl.generation.execution.sample_batches import GenerationSampleBatch
 from vrl.models.families.nextstep_1 import runtime as nextstep_runtime
 from vrl.models.families.nextstep_1.config import (
     NEXTSTEP_DEFAULT_TOKEN_DIM,
@@ -31,9 +31,9 @@ from vrl.models.families.nextstep_1.model import (
     NextStep1Config as ModelNextStep1Config,
 )
 from vrl.models.families.nextstep_1.runtime import (
-    NextStep1ARChunkResult,
-    NextStep1ChunkExecutor,
-    NextStep1ChunkGatherer,
+    NextStep1ARBatchResult,
+    NextStep1BatchExecutor,
+    NextStep1GenerationBatchGatherer,
     nextstep_config_from_build,
 )
 from vrl.models.families.registry import get_model_family_entry
@@ -269,8 +269,8 @@ def test_nextstep_gather_uses_canonical_output_as_reward_source() -> None:
     )
     sample_rows = build_sample_rows(request)
     images = torch.arange(24, dtype=torch.float32).reshape(2, 3, 2, 2)
-    chunk = NextStep1ARChunkResult(
-        chunk=SampleChunk(prompt_index=0, sample_start=0, sample_count=2),
+    batch = NextStep1ARBatchResult(
+        batch=GenerationSampleBatch(prompt_index=0, sample_start=0, sample_count=2),
         output=images,
         tokens=torch.zeros(2, 2, 4),
         saved_noise=torch.zeros(2, 2, 4),
@@ -282,10 +282,10 @@ def test_nextstep_gather_uses_canonical_output_as_reward_source() -> None:
         context={},
     )
 
-    output = NextStep1ChunkGatherer().gather_chunks(
+    output = NextStep1GenerationBatchGatherer().gather_batches(
         request,
         sample_rows,
-        [chunk],
+        [batch],
     )
     assert torch.equal(output.output, images)
     assert "decoded" not in output.trajectory.segments
@@ -295,7 +295,7 @@ def test_nextstep_gather_uses_canonical_output_as_reward_source() -> None:
     }
 
 
-def test_chunk_context_keeps_only_flow_replay_parameters(
+def test_batch_context_keeps_only_flow_replay_parameters(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     loop_kwargs: dict[str, Any] = {}
@@ -320,7 +320,7 @@ def test_chunk_context_keeps_only_flow_replay_parameters(
         device=torch.device("cpu"),
         decode_image_tokens=decode_image_tokens,
     )
-    executor = NextStep1ChunkExecutor(model)
+    executor = NextStep1BatchExecutor(model)
     ids = torch.tensor([[1, 2]], dtype=torch.long)
     mask = torch.ones_like(ids)
     monkeypatch.setattr(
@@ -348,9 +348,9 @@ def test_chunk_context_keeps_only_flow_replay_parameters(
         },
     )
 
-    result = executor.forward_chunk_plan(
+    result = executor.forward_batch(
         request,
-        SampleChunk(
+        GenerationSampleBatch(
             prompt_index=0,
             sample_start=0,
             sample_count=1,

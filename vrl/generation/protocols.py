@@ -1,4 +1,4 @@
-"""Generation runtime and chunk executor protocols.
+"""Generation runtime and batch executor protocols.
 
 Each protocol here corresponds to one physical or ownership boundary of the
 engine — none exists for taste. One request flows as::
@@ -6,29 +6,29 @@ engine — none exists for taste. One request flows as::
     driver process                        |  Ray worker process (GPU + model)
                                           |
     collector -> GenerationRuntime        |
-                 split into chunks,       |
-                 dispatch to workers -----|-> GenerationChunkExecutor
-                                          |     .forward_chunk_plan(chunk)
-                 chunk results return <---|--- ChunkResult (family-owned shape)
-                 ChunkGatherer            |
-                 .gather_chunks()         |
+                 split into batches,       |
+                 dispatch to workers -----|-> GenerationBatchExecutor
+                                          |     .forward_batch(batch)
+                 batch results return <---|--- BatchPayload (family-owned shape)
+                 GenerationBatchGatherer            |
+                 .gather_batches()         |
                  reassemble full output   |
 
 - ``GenerationRuntime``: the engine's only face toward vrl/rollouts (the dual
   of ``RewardRuntime``); the collector isinstance-checks it so orchestration
   never imports Ray code.
-- ``GenerationChunkExecutor``: the model-family plugin contract (wan, sana,
+- ``GenerationBatchExecutor``: the model-family plugin contract (wan, sana,
   cosmos, ...); keeps ``if family == ...`` branches out of neutral execution.
-- ``ChunkGatherer``: the model-free slice of the executor, split out because
+- ``GenerationBatchGatherer``: the model-free slice of the executor, split out because
   reassembly runs driver-side where no model is loaded; it ships across the
   Ray launch contract as a serializable object.
-- ``ChunkSizeProbeExecutor``: an optional capability flag ("can you execute a
-  truncated chunk so the worker can measure peak memory for automatic
-  samples_per_chunk sizing"), probed by isinstance like the reward side's
+- ``BatchSizeProbeExecutor``: an optional capability flag ("can you execute a
+  truncated batch so the worker can measure peak memory for automatic
+  samples_per_generation_batch sizing"), probed by isinstance like the reward side's
   ``MemoryParkingScorer``. Only diffusion families can truncate meaningfully:
   their memory peaks in the first denoise steps, while AR peaks at the last
   token, so a truncated AR run would measure a lie.
-- ``ChunkResult``: deliberately ``Any`` — the chunk payload's shape is owned by
+- ``BatchPayload``: deliberately ``Any`` — the batch payload's shape is owned by
   the binding that produced it (diffusion latents vs AR token results share no
   useful common structure); the alias documents that ownership in signatures.
 """
@@ -39,7 +39,7 @@ from collections.abc import Sequence
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
-    from vrl.generation.execution.chunks import SampleChunk
+    from vrl.generation.execution.sample_batches import GenerationSampleBatch
     from vrl.generation.types import (
         GenerationOutput,
         GenerationRequest,
@@ -47,18 +47,18 @@ if TYPE_CHECKING:
     )
 
 
-ChunkResult = Any
+BatchPayload = Any
 
 
 @runtime_checkable
-class ChunkGatherer(Protocol):
-    """Pure chunk gather contract that does not require an executor/model."""
+class GenerationBatchGatherer(Protocol):
+    """Pure batch gather contract that does not require an executor/model."""
 
-    def gather_chunks(
+    def gather_batches(
         self,
         request: GenerationRequest,
         sample_rows: Sequence[GenerationSampleRow],
-        chunks: Sequence[ChunkResult],
+        batches: Sequence[BatchPayload],
     ) -> GenerationOutput: ...
 
 
@@ -110,49 +110,49 @@ class GenerationRuntime(Protocol):
 
 
 @runtime_checkable
-class GenerationChunkExecutor(Protocol):
-    """Family-specific distributed chunk executor."""
+class GenerationBatchExecutor(Protocol):
+    """Family-specific distributed batch executor."""
 
     family: str
     task: str
 
-    def forward_chunk_plan(
+    def forward_batch(
         self,
         request: GenerationRequest,
-        chunk: SampleChunk,
-    ) -> ChunkResult: ...
+        batch: GenerationSampleBatch,
+    ) -> BatchPayload: ...
 
-    def gather_chunks(
+    def gather_batches(
         self,
         request: GenerationRequest,
         sample_rows: Sequence[GenerationSampleRow],
-        chunks: Sequence[ChunkResult],
+        batches: Sequence[BatchPayload],
     ) -> GenerationOutput: ...
 
 
 @runtime_checkable
-class ChunkSizeProbeExecutor(Protocol):
-    """Optional capability: truncated-chunk execution for automatic sizing.
+class BatchSizeProbeExecutor(Protocol):
+    """Optional capability: truncated-batch execution for automatic sizing.
 
-    ``samples_per_chunk: auto`` makes the worker trial-run a few denoise steps
+    ``samples_per_generation_batch: auto`` makes the worker trial-run a few denoise steps
     per candidate width to measure peak memory. Only executors whose memory
     peaks early under truncation (diffusion) implement this; the worker
     isinstance-probes it and requires an explicit width otherwise.
     """
 
-    def forward_probe_chunk(
+    def forward_probe_batch(
         self,
         request: GenerationRequest,
-        chunk: SampleChunk,
+        batch: GenerationSampleBatch,
         *,
         execute_steps: int,
-    ) -> ChunkResult: ...
+    ) -> BatchPayload: ...
 
 
 __all__ = [
-    "ChunkGatherer",
-    "ChunkResult",
-    "ChunkSizeProbeExecutor",
-    "GenerationChunkExecutor",
+    "BatchPayload",
+    "BatchSizeProbeExecutor",
+    "GenerationBatchExecutor",
+    "GenerationBatchGatherer",
     "GenerationRuntime",
 ]

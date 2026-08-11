@@ -203,7 +203,7 @@ class TestAdvantageAndMetrics:
         )
         metrics = asyncio.run(trainer.train_on_rollout_batch(two_boundaries))
 
-        # One optimizer target evaluates four sample chunks x two timesteps.
+        # One optimizer target evaluates four sample batches x two timesteps.
         assert metrics.update.clip_fraction == pytest.approx(4.5)
         assert metrics.initial_replay.clip_fraction == pytest.approx(4.5)
         assert metrics.update.active_clip_fraction == pytest.approx(0.45)
@@ -227,18 +227,18 @@ class TestAdvantageAndMetrics:
 
         from vrl.algorithms.logprob_mismatch import LogprobMismatchStats
         from vrl.algorithms.types import PolicyUpdateStats, TrainStepMetrics
-        from vrl.trainers.online.trainer import _ReplayMetrics, _training_sample_chunks
+        from vrl.trainers.online.trainer import _ReplayMetrics, _training_sample_batches
 
         batch = _diffusion_rollout_batch(
             rewards=torch.zeros(10),
             group_ids=torch.zeros(10, dtype=torch.long),
             num_steps=1,
         )
-        chunks = _training_sample_chunks(batch, torch.ones(10), samples_per_chunk=8)
-        assert [chunk.loss_weight for chunk in chunks] == pytest.approx([0.8, 0.2])
+        batches = _training_sample_batches(batch, torch.ones(10), replay_samples_per_batch=8)
+        assert [batch.loss_weight for batch in batches] == pytest.approx([0.8, 0.2])
 
         aggregate = _ReplayMetrics()
-        for value, chunk in zip((1.0, 9.0), chunks, strict=True):
+        for value, batch in zip((1.0, 9.0), batches, strict=True):
             aggregate.add(
                 TrainStepMetrics(
                     loss=value,
@@ -249,7 +249,7 @@ class TestAdvantageAndMetrics:
                         logprob_abs_diff_max=value,
                     ),
                 ),
-                weight=chunk.loss_weight,
+                weight=batch.loss_weight,
                 capture_initial_replay=True,
             )
 

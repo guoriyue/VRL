@@ -9,8 +9,8 @@ from typing import Any
 import torch
 
 from vrl.generation.bindings.token_autoregressive import (
-    ARChunkInputs,
-    ARDiscreteChunkExecutorBase,
+    ARBatchInputs,
+    ARDiscreteBatchExecutorBase,
     ARRequestLayout,
     ARSamplingParams,
 )
@@ -18,7 +18,10 @@ from vrl.generation.composition.token_autoregressive.token_loop import (
     TokenAutoregressiveLoop,
     call_with_supported_kwargs,
 )
-from vrl.generation.execution.chunks import SampleChunk, require_matching_chunk_context
+from vrl.generation.execution.sample_batches import (
+    GenerationSampleBatch,
+    require_matching_batch_context,
+)
 from vrl.generation.types import (
     GenerationOutput,
     GenerationRequest,
@@ -58,7 +61,7 @@ def janus_config_from_build(build: ModelBuild) -> dict[str, Any]:
     return config
 
 
-class JanusProChunkExecutor(ARDiscreteChunkExecutorBase):
+class JanusProBatchExecutor(ARDiscreteBatchExecutorBase):
     """AR executor for Janus-Pro text-to-image rollouts.
 
     The collector constructs a ``GenerationRequest`` whose ``sampling``
@@ -103,11 +106,11 @@ class JanusProChunkExecutor(ARDiscreteChunkExecutorBase):
 
     # -- protocol ------------------------------------------------------
 
-    def prepare_chunk_inputs(
+    def prepare_batch_inputs(
         self,
         request: GenerationRequest,
-        chunk: SampleChunk,
-    ) -> ARChunkInputs:
+        batch: GenerationSampleBatch,
+    ) -> ARBatchInputs:
         """Encode cond+uncond prompts and wire the CFG decode loop."""
 
         sampling = request.sampling
@@ -120,13 +123,13 @@ class JanusProChunkExecutor(ARDiscreteChunkExecutorBase):
             sampling.get("temperature", self.model.config.temperature),
         )
 
-        repeated_prompts = [request.inputs[chunk.prompt_index].prompt] * chunk.sample_count
+        repeated_prompts = [request.inputs[batch.prompt_index].prompt] * batch.sample_count
         prompt_ids, prompt_mask = self._tokenize_prompts(
             repeated_prompts,
             max_text_length=params.max_text_length,
         )
         uncond_ids, uncond_mask = self._tokenize_prompts(
-            [""] * chunk.sample_count,
+            [""] * batch.sample_count,
             max_text_length=params.max_text_length,
         )
         pad_id = getattr(self.model.processor.tokenizer, "pad_token_id", None) or 0
@@ -141,7 +144,7 @@ class JanusProChunkExecutor(ARDiscreteChunkExecutorBase):
         cond_embeds = self._embed(prompt_ids)
         uncond_embeds = self._embed(uncond_ids)
 
-        return ARChunkInputs(
+        return ARBatchInputs(
             init_args=(cond_embeds, uncond_embeds, prompt_mask, uncond_mask),
             init_kwargs={
                 "guidance_scale": guidance_scale,
@@ -211,46 +214,46 @@ class JanusProChunkExecutor(ARDiscreteChunkExecutorBase):
 
 
 @dataclass(slots=True)
-class JanusProR1ChunkResult:
-    """Output of one prompt/sample Janus-Pro-R1 chunk."""
+class JanusProR1BatchPayload:
+    """Output of one prompt/sample Janus-Pro-R1 batch."""
 
-    chunk: SampleChunk
+    batch: GenerationSampleBatch
     initial_image: torch.Tensor
     final_image: torch.Tensor
     selfcheck: torch.Tensor
     segments: dict[str, dict[str, Any]]
     context: dict[str, Any]
-    # Display/provenance-only: emitted through per-chunk runtime debug metrics.
+    # Display/provenance-only: emitted through per-batch runtime debug metrics.
     peak_memory_mb: float | None = None
 
 
-class JanusProR1ChunkExecutor(JanusProChunkExecutor):
+class JanusProR1BatchExecutor(JanusProBatchExecutor):
     """R1-style Janus-Pro executor for three-stage AR T2I generation."""
 
     family: str = "janus_pro_r1"
     task: str = "ar_t2i_r1"
 
-    def forward_chunk_plan(
+    def forward_batch(
         self,
         request: GenerationRequest,
-        chunk: SampleChunk,
-    ) -> JanusProR1ChunkResult:
+        batch: GenerationSampleBatch,
+    ) -> JanusProR1BatchPayload:
         from vrl.utils.profiling import profile_range
 
         self.require_native_ar_engine(request)
-        self.layout.validate_chunk(request, chunk)
+        self.layout.validate_chunk(request, batch)
         scheduler_batch_size = self.resolve_scheduler_batch_size(
             request,
-            row_count=chunk.sample_count,
+            row_count=batch.sample_count,
         )
         sampling = request.sampling
         params: ARSamplingParams = self.layout.parse_sampling_params(request)
 
         if params.seed is not None:
-            torch.manual_seed(params.seed + self.layout.chunk_seed_offset(request, chunk))
+            torch.manual_seed(params.seed + self.layout.chunk_seed_offset(request, batch))
 
         with profile_range("engine.prefill"):
-            repeated_prompts = [request.inputs[chunk.prompt_index].prompt] * chunk.sample_count
+            repeated_prompts = [request.inputs[batch.prompt_index].prompt] * batch.sample_count
             prompt_ids, prompt_mask, uncond_ids, uncond_mask = self._tokenize_r1_prompts(
                 repeated_prompts,
                 max_text_length=params.max_text_length,
@@ -283,8 +286,8 @@ class JanusProR1ChunkExecutor(JanusProChunkExecutor):
                 ),
             )
 
-        return JanusProR1ChunkResult(
-            chunk=chunk,
+        return JanusProR1BatchPayload(
+            batch=batch,
             initial_image=result["initial_image"],
             final_image=result["final_image"],
             selfcheck=result["selfcheck"],
@@ -341,32 +344,32 @@ class JanusProR1ChunkExecutor(JanusProChunkExecutor):
         )
 
 
-class JanusProR1ChunkGatherer:
-    """Driver-side gatherer for Janus-Pro-R1 chunk payloads."""
+class JanusProR1GenerationBatchGatherer:
+    """Driver-side gatherer for Janus-Pro-R1 batch payloads."""
 
     layout = ARRequestLayout()
 
-    def gather_chunks(
+    def gather_batches(
         self,
         request: GenerationRequest,
         sample_rows: Sequence[GenerationSampleRow],
-        chunks: Sequence[JanusProR1ChunkResult],
+        batches: Sequence[JanusProR1BatchPayload],
     ) -> GenerationOutput:
         fields = ("initial_image", "final_image", "selfcheck")
-        ordered = self.layout.ordered_chunks(
+        ordered = self.layout.ordered_batches(
             request,
             sample_rows,
-            chunks,
+            batches,
             row_fields=fields,
         )
-        cat = self.layout.cat_chunk_fields(ordered, fields)
+        cat = self.layout.cat_batch_fields(ordered, fields)
         segment_extra = _cat_segment_extra(ordered)
         trajectory = build_ar_multisegment_trajectory(
             request=request,
             sample_rows=list(sample_rows),
             segments=segment_extra,
             primary_segment="final_image",
-            context=require_matching_chunk_context([chunk.context for chunk in ordered]),
+            context=require_matching_batch_context([batch.context for batch in ordered]),
         )
         return GenerationOutput(
             output=cat["final_image"],
@@ -387,42 +390,42 @@ def _resolve_refine_mode(sampling: dict[str, Any]) -> str:
 
 
 def _cat_segment_extra(
-    chunks: Sequence[JanusProR1ChunkResult],
+    batches: Sequence[JanusProR1BatchPayload],
 ) -> dict[str, dict[str, Any]]:
-    names = tuple(chunks[0].segments)
+    names = tuple(batches[0].segments)
     if set(names) != set(JANUS_R1_SEGMENTS):
         logger.warning("Unexpected Janus-Pro-R1 segment names: %s", names)
 
     out: dict[str, dict[str, Any]] = {}
     for name in names:
-        first = chunks[0].segments[name]
+        first = batches[0].segments[name]
         token_log_probs = None
         if first["token_log_probs"] is not None:
             token_log_probs = torch.cat(
-                [chunk.segments[name]["token_log_probs"] for chunk in chunks],
+                [batch.segments[name]["token_log_probs"] for batch in batches],
                 dim=0,
             )
         out[name] = {
             "name": name,
             "token_ids": torch.cat(
-                [chunk.segments[name]["token_ids"] for chunk in chunks],
+                [batch.segments[name]["token_ids"] for batch in batches],
                 dim=0,
             ),
             "token_log_probs": token_log_probs,
             "token_mask": torch.cat(
-                [chunk.segments[name]["token_mask"] for chunk in chunks],
+                [batch.segments[name]["token_mask"] for batch in batches],
                 dim=0,
             ),
             "prompt_embeds": torch.cat(
-                [chunk.segments[name]["prompt_embeds"] for chunk in chunks],
+                [batch.segments[name]["prompt_embeds"] for batch in batches],
                 dim=0,
             ),
             "attention_mask": torch.cat(
-                [chunk.segments[name]["attention_mask"] for chunk in chunks],
+                [batch.segments[name]["attention_mask"] for batch in batches],
                 dim=0,
             ),
             "prompt_attention_mask": torch.cat(
-                [chunk.segments[name]["prompt_attention_mask"] for chunk in chunks],
+                [batch.segments[name]["prompt_attention_mask"] for batch in batches],
                 dim=0,
             ),
             "visual": first["visual"],
@@ -432,9 +435,9 @@ def _cat_segment_extra(
 
 
 __all__ = [
-    "JanusProChunkExecutor",
-    "JanusProR1ChunkExecutor",
-    "JanusProR1ChunkGatherer",
-    "JanusProR1ChunkResult",
+    "JanusProBatchExecutor",
+    "JanusProR1BatchExecutor",
+    "JanusProR1BatchPayload",
+    "JanusProR1GenerationBatchGatherer",
     "janus_config_from_build",
 ]

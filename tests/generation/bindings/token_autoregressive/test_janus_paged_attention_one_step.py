@@ -19,7 +19,7 @@ from vrl.models.families.janus_pro.model import (
     JanusProModel,
 )
 from vrl.models.families.janus_pro.runner import JanusProARModelRunner
-from vrl.models.families.janus_pro.runtime import JanusProChunkExecutor
+from vrl.models.families.janus_pro.runtime import JanusProBatchExecutor
 from vrl.nn.layers.attention.paged import (
     ARAttentionBackend,
     ARAttentionConfig,
@@ -210,7 +210,7 @@ def test_janus_runtime_uses_vllm_paged_attention_by_default(monkeypatch) -> None
         }
     )
 
-    runner = JanusProChunkExecutor(model)._ar_runner(request)
+    runner = JanusProBatchExecutor(model)._ar_runner(request)
 
     assert isinstance(runner, JanusProARModelRunner)
     assert runner.attention_backend is backend

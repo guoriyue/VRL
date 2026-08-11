@@ -412,7 +412,7 @@ def test_generation_ray_adapter_stays_lean() -> None:
     for path in ray_adapter_files:
         text = path.read_text(encoding="utf-8")
         assert "vrl.generation.execution.planner import build_engine_plan" not in text
-        assert "vrl.generation.execution.chunks import" not in text
+        assert "vrl.generation.execution.sample_batches import" not in text
 
 
 def test_generation_execution_core_stays_flat_and_ray_neutral() -> None:
@@ -420,7 +420,7 @@ def test_generation_execution_core_stays_flat_and_ray_neutral() -> None:
     execution_root = VRL_ROOT / "generation" / "execution"
     for expected in (
         "__init__.py",
-        "chunk_placement.py",
+        "batch_placement.py",
         "types.py",
         "worker.py",
     ):

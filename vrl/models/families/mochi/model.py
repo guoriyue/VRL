@@ -261,8 +261,8 @@ class MochiModel(
         pipe = self.pipeline
         vae = pipe.vae
 
-        def _transform(chunk: torch.Tensor) -> torch.Tensor:
-            x = chunk.to(vae.dtype)
+        def _transform(batch: torch.Tensor) -> torch.Tensor:
+            x = batch.to(vae.dtype)
             mean = torch.tensor(vae.config.latents_mean).view(1, -1, 1, 1, 1).to(x.device, x.dtype)
             std = torch.tensor(vae.config.latents_std).view(1, -1, 1, 1, 1).to(x.device, x.dtype)
             return x * std / vae.config.scaling_factor + mean
@@ -270,7 +270,7 @@ class MochiModel(
         decoder = ChunkedLatentDecoder(
             LatentDecodePlan(
                 prepare_latents=_transform,
-                vae_decode=lambda chunk: vae.decode(chunk, return_dict=False)[0],
+                vae_decode=lambda batch: vae.decode(batch, return_dict=False)[0],
                 postprocess=lambda video: pipe.video_processor.postprocess_video(
                     video,
                     output_type="pt",

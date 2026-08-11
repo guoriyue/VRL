@@ -5,11 +5,11 @@ from __future__ import annotations
 import torch
 
 from vrl.generation.bindings.full_sequence_denoise import (
-    DiffusionChunkGatherer,
-    DiffusionChunkResult,
+    DiffusionBatchGatherer,
+    DiffusionBatchResult,
 )
-from vrl.generation.execution.chunks import SampleChunk
 from vrl.generation.execution.ids import build_sample_rows
+from vrl.generation.execution.sample_batches import GenerationSampleBatch
 from vrl.generation.types import GenerationRequest
 from vrl.rollouts.collector.batch_builder import (
     RolloutBatchBuildContext,
@@ -28,7 +28,7 @@ def test_diffusion_rollout_batch_builder_applies_storage_policy() -> None:
         samples_per_prompt=1,
         sampling={"num_steps": 2},
     )
-    output = DiffusionChunkGatherer().gather_chunks(
+    output = DiffusionBatchGatherer().gather_batches(
         request,
         build_sample_rows(request),
         [_chunk()],
@@ -51,9 +51,9 @@ def test_diffusion_rollout_batch_builder_applies_storage_policy() -> None:
     assert batch.trajectory is output.trajectory
 
 
-def _chunk() -> DiffusionChunkResult:
-    return DiffusionChunkResult(
-        chunk=SampleChunk(prompt_index=0, sample_start=0, sample_count=1),
+def _chunk() -> DiffusionBatchResult:
+    return DiffusionBatchResult(
+        batch=GenerationSampleBatch(prompt_index=0, sample_start=0, sample_count=1),
         observations=torch.ones(1, 2, 3, dtype=torch.float32),
         actions=torch.ones(1, 2, 3, dtype=torch.float32) * 2,
         log_probs=torch.ones(1, 2, dtype=torch.float32) * 3,

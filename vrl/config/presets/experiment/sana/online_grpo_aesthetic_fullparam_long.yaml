@@ -2,7 +2,7 @@
 #
 # This is a fresh scientific run, not a continuation of the five-update systems
 # pilot. It inherits the pilot's validated native-FP16/no-outer-autocast path,
-# FP32 master weights, GradScaler, AdamW8bit moments, 1/1 rollout-replay chunk
+# FP32 master weights, GradScaler, AdamW8bit moments, 1/1 rollout-replay batch
 # parity, and strict backend-drift gates. The separate output directory preserves
 # the pilot as immutable capacity/resume evidence.
 defaults:

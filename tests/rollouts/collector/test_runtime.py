@@ -936,7 +936,7 @@ def test_chunk_denoise_kl_reward_sums_chunk_and_transition_axes() -> None:
     """Latent Gaussian trajectories use denoise packing and per-sample KL."""
 
     request = GenerationRequest(
-        request_id="chunk-request",
+        request_id="batch-request",
         family="causvid",
         task="text_to_video",
         inputs=["p0"],

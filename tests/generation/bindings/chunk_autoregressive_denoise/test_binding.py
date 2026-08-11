@@ -12,9 +12,9 @@ from vrl.generation.bindings.chunk_autoregressive_denoise import (
     ChunkAutoregressiveDenoiseGatherer,
     ChunkAutoregressiveDenoiseResult,
 )
-from vrl.generation.execution.chunks import SampleChunk
 from vrl.generation.execution.ids import build_sample_rows
 from vrl.generation.execution.planner import build_engine_plan
+from vrl.generation.execution.sample_batches import GenerationSampleBatch
 from vrl.generation.types import GenerationRequest
 from vrl.rollouts.collector.batch_builder import (
     RolloutBatchBuildContext,
@@ -26,7 +26,7 @@ def test_trainable_trajectory_declares_temporal_chunk_and_transition_axes() -> N
     request = _request()
     sample_rows = build_sample_rows(request)
 
-    output = ChunkAutoregressiveDenoiseGatherer().gather_chunks(
+    output = ChunkAutoregressiveDenoiseGatherer().gather_batches(
         request,
         sample_rows,
         [_trainable_result(20.0, sample_start=1), _trainable_result(10.0, sample_start=0)],
@@ -62,7 +62,7 @@ def test_gatherer_orders_transport_chunks_and_concatenates_sample_rows() -> None
     request = _request()
     sample_rows = build_sample_rows(request)
 
-    output = ChunkAutoregressiveDenoiseGatherer().gather_chunks(
+    output = ChunkAutoregressiveDenoiseGatherer().gather_batches(
         request,
         sample_rows,
         [_trainable_result(20.0, sample_start=1), _trainable_result(10.0, sample_start=0)],
@@ -81,15 +81,15 @@ def test_gatherer_orders_transport_chunks_and_concatenates_sample_rows() -> None
 def test_generation_only_result_has_no_fabricated_policy_facts() -> None:
     request = _request()
     sample_rows = build_sample_rows(request)
-    chunks = [
+    batches = [
         _generation_only_result(20.0, sample_start=1),
         _generation_only_result(10.0, sample_start=0),
     ]
 
-    output = ChunkAutoregressiveDenoiseGatherer().gather_chunks(
+    output = ChunkAutoregressiveDenoiseGatherer().gather_batches(
         request,
         sample_rows,
-        chunks,
+        batches,
     )
 
     assert output.trajectory is not None
@@ -113,19 +113,19 @@ def test_generation_only_result_has_no_fabricated_policy_facts() -> None:
         builder.build(torch.ones(2))
 
 
-def test_gatherer_rejects_mismatched_chunk_context() -> None:
+def test_gatherer_rejects_mismatched_batch_context() -> None:
     request = _request()
-    chunks = [
+    batches = [
         _generation_only_result(10.0, sample_start=0),
         _generation_only_result(20.0, sample_start=1),
     ]
-    chunks[1].context = {"model_family": "different"}
+    batches[1].context = {"model_family": "different"}
 
-    with pytest.raises(ValueError, match="chunk context at ordered index 1 does not match"):
-        ChunkAutoregressiveDenoiseGatherer().gather_chunks(
+    with pytest.raises(ValueError, match="batch context at ordered index 1 does not match"):
+        ChunkAutoregressiveDenoiseGatherer().gather_batches(
             request,
             build_sample_rows(request),
-            chunks,
+            batches,
         )
 
 
@@ -145,7 +145,7 @@ def test_generic_executor_delegates_temporal_generation_to_model() -> None:
         gatherer=ChunkAutoregressiveDenoiseGatherer(),
     )
 
-    plan = build_engine_plan(request, max_samples_per_chunk=1)
+    plan = build_engine_plan(request, max_samples_per_batch=1)
     output = executor.forward_plan(request, sample_rows, plan)
 
     assert model.calls == [(0, 0, 1), (0, 1, 1)]
@@ -162,13 +162,13 @@ class _FakeChunkModel:
         self,
         *,
         request: GenerationRequest,
-        chunk: Any,
+        batch: Any,
     ) -> ChunkAutoregressiveDenoiseResult:
         del request
-        self.calls.append((chunk.prompt_index, chunk.sample_start, chunk.sample_count))
+        self.calls.append((batch.prompt_index, batch.sample_start, batch.sample_count))
         return ChunkAutoregressiveDenoiseResult(
-            chunk=chunk,
-            output=torch.full((chunk.sample_count, 1), float(chunk.sample_start)),
+            batch=batch,
+            output=torch.full((batch.sample_count, 1), float(batch.sample_start)),
             temporal_chunk_count=2,
             context={"model_family": "fake"},
         )
@@ -191,7 +191,7 @@ def _trainable_result(
     sample_start: int,
 ) -> ChunkAutoregressiveDenoiseResult:
     return ChunkAutoregressiveDenoiseResult(
-        chunk=SampleChunk(prompt_index=0, sample_start=sample_start, sample_count=1),
+        batch=GenerationSampleBatch(prompt_index=0, sample_start=sample_start, sample_count=1),
         output=torch.full((1, 1), value),
         temporal_chunk_count=2,
         denoise_transition_count=3,
@@ -215,7 +215,7 @@ def _generation_only_result(
     sample_start: int,
 ) -> ChunkAutoregressiveDenoiseResult:
     return ChunkAutoregressiveDenoiseResult(
-        chunk=SampleChunk(prompt_index=0, sample_start=sample_start, sample_count=1),
+        batch=GenerationSampleBatch(prompt_index=0, sample_start=sample_start, sample_count=1),
         output=torch.full((1, 1), value),
         temporal_chunk_count=2,
         denoise_transition_count=3,

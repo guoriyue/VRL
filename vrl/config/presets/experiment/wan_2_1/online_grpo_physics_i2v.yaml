@@ -20,7 +20,7 @@ model:
     mode: default
 
 rollout:
-  samples_per_chunk: 4   # batch the denoise forward; sbs=1 left the GPU at 25% (smoke 2026-06-09)
+  samples_per_generation_batch: 4   # batch the denoise forward; sbs=1 left the GPU at 25% (smoke 2026-06-09)
 
 trainer:
   total_epochs: 5

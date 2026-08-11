@@ -78,7 +78,7 @@ class _PayloadWorker:
 
 
 def test_actor_dispatcher_awaits_real_object_refs(local_ray) -> None:
-    """Real-Ray twin of tests/ray/test_chunk_dispatch.py: the deterministic
+    """Real-Ray twin of tests/ray/test_batch_dispatch.py: the deterministic
     fake refs there encode the assumption that real ObjectRefs are directly
     awaitable inside the dispatch loop and resolve to the task result. Pin it
     against a live cluster for both plan-time-bound and pull-dispatched jobs
@@ -173,7 +173,7 @@ async def test_hung_business_call_times_out_while_health_group_responds(local_ra
                     payload=None,
                 ),
             ],
-            operation="rollout.generation.chunk",
+            operation="rollout.generation.batch",
             call_timeout_s=1.0,
         ),
     )
@@ -188,7 +188,7 @@ async def test_hung_business_call_times_out_while_health_group_responds(local_ra
             if not business_started:
                 await asyncio.sleep(0.01)
 
-        with pytest.raises(RayOperationTimeout, match=r"rollout\.generation\.chunk"):
+        with pytest.raises(RayOperationTimeout, match=r"rollout\.generation\.batch"):
             await task
 
         assert time.monotonic() - started_at < 3.0

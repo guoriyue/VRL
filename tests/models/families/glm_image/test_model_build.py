@@ -10,13 +10,13 @@ from omegaconf import OmegaConf
 
 from vrl.config.precision import resolve_precision_policy
 from vrl.config.schema import parse_config
-from vrl.generation.execution.chunks import SampleChunk
+from vrl.generation.execution.sample_batches import GenerationSampleBatch
 from vrl.generation.types import GenerationRequest
 from vrl.models.families.glm_image.config import GlmImageConfig
 from vrl.models.families.glm_image.model import GlmImageConfig as ModelGlmImageConfig
 from vrl.models.families.glm_image.runner import GlmImageTokenRunner
 from vrl.models.families.glm_image.runtime import (
-    GlmImageChunkExecutor,
+    GlmImageBatchExecutor,
     glm_image_config_from_build,
 )
 from vrl.models.families.registry import get_model_family_entry
@@ -119,14 +119,14 @@ def test_resolve_model_build_carries_sampling_and_lora_overrides() -> None:
 
 
 def test_executor_declares_family_identity() -> None:
-    executor = GlmImageChunkExecutor(model=object())
+    executor = GlmImageBatchExecutor(model=object())
 
     assert executor.family == "glm_image"
     assert executor.task == "ar_t2i"
 
 
 def test_executor_rejects_explicit_attention_backend() -> None:
-    executor = GlmImageChunkExecutor(model=object())
+    executor = GlmImageBatchExecutor(model=object())
     request = GenerationRequest(
         request_id="req",
         family="glm_image",
@@ -150,7 +150,7 @@ def test_executor_rejects_explicit_attention_backend() -> None:
     assert isinstance(runner, GlmImageTokenRunner)
 
 
-def test_chunk_context_keeps_replay_shape_and_sampling_provenance_only(
+def test_batch_context_keeps_replay_shape_and_sampling_provenance_only(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     ids = torch.tensor([[1, 2]], dtype=torch.long)
@@ -177,7 +177,7 @@ def test_chunk_context_keeps_replay_shape_and_sampling_provenance_only(
         return ids, mask, (4, 6, 2, 3)
 
     model.encode_generation_prompts = encode_generation_prompts
-    executor = GlmImageChunkExecutor(model)
+    executor = GlmImageBatchExecutor(model)
     monkeypatch.setattr(executor, "_embed", lambda token_ids: token_ids.unsqueeze(-1).float())
     request = GenerationRequest(
         request_id="req",
@@ -195,9 +195,9 @@ def test_chunk_context_keeps_replay_shape_and_sampling_provenance_only(
         },
     )
 
-    prepared = executor.prepare_chunk_inputs(
+    prepared = executor.prepare_batch_inputs(
         request,
-        SampleChunk(
+        GenerationSampleBatch(
             prompt_index=0,
             sample_start=0,
             sample_count=1,

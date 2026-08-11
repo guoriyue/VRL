@@ -83,12 +83,12 @@ def _worker_setup_hook(repo_root: str) -> Any:
                 self.model = model
                 self.gatherer = gatherer
 
-            def forward_chunk_plan(self, *args: Any, **kwargs: Any) -> Any:
+            def forward_batch(self, *args: Any, **kwargs: Any) -> Any:
                 raise NotImplementedError(
                     "Ray launcher test only verifies worker construction",
                 )
 
-            def gather_chunks(self, *args: Any, **kwargs: Any) -> Any:
+            def gather_batches(self, *args: Any, **kwargs: Any) -> Any:
                 raise NotImplementedError(
                     "Ray launcher test only verifies worker construction",
                 )

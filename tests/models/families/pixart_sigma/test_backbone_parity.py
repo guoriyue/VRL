@@ -2,7 +2,7 @@
 
 No fake transformer: a real (tiny, cache-free) ``PixArtTransformer2DModel``
 runs through ``forward_step``; the batched classifier-free guidance, the raw
-integer timestep, and the learned-sigma channel chunk are verified against the
+integer timestep, and the learned-sigma channel batch are verified against the
 model's OWN real outputs, never a re-derived formula.
 """
 

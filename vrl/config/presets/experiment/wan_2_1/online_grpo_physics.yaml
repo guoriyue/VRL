@@ -28,7 +28,7 @@ model:
 
 rollout:
   prompts_per_batch: 1
-  samples_per_chunk: 8   # sbs=4 GPM still leaves SM occupancy at ~18%; keep one prompt per reward request.
+  samples_per_generation_batch: 8   # sbs=4 GPM still leaves SM occupancy at ~18%; keep one prompt per reward request.
   # SDE knobs below are still used to score GRPO transition logprobs.
   noise_level: 0.7
   sde:

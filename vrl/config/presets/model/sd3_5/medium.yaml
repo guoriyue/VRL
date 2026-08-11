@@ -8,7 +8,7 @@ model:
   revision: b940f670f0eda2d07fbb75229e779da1ad11eb80
 
   memory:
-    # Sliced/tiled VAE decode: b16 chunks OOM in the image VAE conv stack
+    # Sliced/tiled VAE decode: b16 batches OOM in the image VAE conv stack
     # otherwise (scale gate 2026-06-10); slicing decodes per-image.
     vae_decode:
       tiling: true

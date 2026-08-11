@@ -2,7 +2,7 @@
 
 These exercise the worker's slot branching directly: a model that supports
 versioned slots makes update_weights INSTALL (not overwrite) and makes
-execute_chunk serve each request from the slot for its OWN stamped version, so an
+execute_batch serve each request from the slot for its OWN stamped version, so an
 in-flight request generated under an older policy keeps working after a newer
 weight sync (the prerequisite for skipping the drain bubble). A model without the
 capability keeps the single in-place overwrite + global-version check.
@@ -17,8 +17,8 @@ from typing import Any
 
 import torch
 
-from vrl.generation.execution.chunks import SampleChunk
-from vrl.generation.execution.types import ChunkExecutionEnvelope
+from vrl.generation.execution.sample_batches import GenerationSampleBatch
+from vrl.generation.execution.types import GenerationBatchEnvelope
 from vrl.generation.execution.worker import GenerationWorkerCore
 from vrl.generation.launch_contract import GenerationRuntimeLaunchContract
 from vrl.generation.types import GenerationRequest
@@ -81,10 +81,10 @@ class _Executor:
     def __init__(self, model: Any) -> None:
         self.model = model
 
-    def forward_chunk_plan(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
+    def forward_batch(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
         return {"noise_pred": torch.zeros(1)}
 
-    def gather_chunks(self, *args: Any, **kwargs: Any) -> Any:
+    def gather_batches(self, *args: Any, **kwargs: Any) -> Any:
         raise NotImplementedError
 
 
@@ -106,7 +106,7 @@ def _core(
     return core
 
 
-def _envelope(version: int) -> ChunkExecutionEnvelope:
+def _envelope(version: int) -> GenerationBatchEnvelope:
     request = GenerationRequest(
         request_id=f"req-{version}",
         family="sd3_5",
@@ -115,10 +115,10 @@ def _envelope(version: int) -> ChunkExecutionEnvelope:
         samples_per_prompt=1,
         policy_version=version,
     )
-    chunk = SampleChunk(prompt_index=0, sample_start=0, sample_count=1)
-    return ChunkExecutionEnvelope(
+    batch = GenerationSampleBatch(prompt_index=0, sample_start=0, sample_count=1)
+    return GenerationBatchEnvelope(
         request=request,
-        chunk=chunk,
+        batch=batch,
     )
 
 
@@ -166,15 +166,15 @@ def test_strict_sync_overwrites_slot_capable_model_without_retaining_payloads() 
     assert core.supports_versioned_trainable_state() is False
 
 
-# -- execute_chunk ------------------------------------------------------------
+# -- execute_batch ------------------------------------------------------------
 
 
-def test_execute_chunk_missing_slot_returns_typed_stale_slot() -> None:
+def test_execute_batch_missing_slot_returns_typed_stale_slot() -> None:
     model = _SlotModel()
     core = _core(model)
     core.update_weights({"transformer.w": "v1"}, 1)  # only slot 1 exists
 
-    result = core.execute_chunk(_envelope(2))
+    result = core.execute_batch(_envelope(2))
 
     assert result.stale_slot is True
     assert result.output is None
@@ -183,14 +183,14 @@ def test_execute_chunk_missing_slot_returns_typed_stale_slot() -> None:
     assert model.activated == []  # never forwarded
 
 
-def test_execute_chunk_activates_request_version_slot() -> None:
+def test_execute_batch_activates_request_version_slot() -> None:
     model = _SlotModel()
     core = _core(model)
     core.update_weights({"transformer.w": "v1"}, 1)
     core.update_weights({"transformer.w": "v2"}, 2)
 
     # An OLD v1 request still runs after v2 was installed.
-    result = core.execute_chunk(_envelope(1))
+    result = core.execute_batch(_envelope(1))
 
     assert result.error is None
     assert result.stale_slot is False
@@ -205,7 +205,7 @@ def test_plain_model_keeps_global_version_mismatch() -> None:
     core.update_weights({"transformer.w": "v1"}, 1)
 
     # Non-slot model: a request for a different version is the classic mismatch.
-    result = core.execute_chunk(_envelope(2))
+    result = core.execute_batch(_envelope(2))
 
     assert result.stale_slot is False
     assert "policy_version mismatch" in (result.error or "")

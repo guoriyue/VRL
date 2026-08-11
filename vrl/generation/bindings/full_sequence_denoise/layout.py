@@ -9,7 +9,7 @@ from typing import Any, TypeVar
 
 import torch
 
-from vrl.generation.execution.chunks import ordered_covering_chunks
+from vrl.generation.execution.sample_batches import ordered_covering_batches
 from vrl.generation.steps.denoise.config import DenoiseSDEParams
 from vrl.generation.steps.denoise.teacache import TeaCacheConfig
 from vrl.generation.types import (
@@ -49,7 +49,7 @@ class DiffusionRequestLayout:
 
     The fallback values have NO defaults: the executor is their single source
     and always supplies its resolved values. A default here would be a silent
-    second source that drifts from the executor. Chunk width is deliberately
+    second source that drifts from the executor. Batch width is deliberately
     absent — it belongs to planning (``build_engine_plan``'s single fallback),
     not to request parsing.
     """
@@ -147,29 +147,29 @@ class DiffusionRequestLayout:
             return value
         if batch != 1:
             raise ValueError(
-                f"cannot repeat tensor batch={batch} to chunk sample count {count}",
+                f"cannot repeat tensor batch={batch} to batch sample count {count}",
             )
         repeat_shape = (count,) + (1,) * (value.ndim - 1)
         return value.repeat(*repeat_shape)
 
     @staticmethod
-    def ordered_chunks(
+    def ordered_batches(
         request: GenerationRequest,
         sample_rows: Sequence[GenerationSampleRow],
-        chunks: Sequence[TChunk],
+        batches: Sequence[TChunk],
     ) -> list[TChunk]:
-        """Sort diffusion chunks and check they exactly cover the sample rows.
+        """Sort diffusion batches and check they exactly cover the sample rows.
 
         A ``@staticmethod`` so the gatherer can sort without building a throwaway
         layout, while the ordering stays grouped with the parser it validates
-        for. Reads no parsing fallback; every row-bearing chunk tensor must carry
+        for. Reads no parsing fallback; every row-bearing batch tensor must carry
         exactly ``sample_count`` leading rows.
         """
 
-        return ordered_covering_chunks(
+        return ordered_covering_batches(
             request,
             sample_rows,
-            chunks,
+            batches,
             row_fields=("observations", "actions", "log_probs", "timesteps", "kl", "video"),
         )
 

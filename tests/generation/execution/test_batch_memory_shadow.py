@@ -1,9 +1,9 @@
-"""Chunk memory readings + startup chunk-size probe (SPRINT_chunk_size_probe).
+"""Batch memory readings + startup batch-size probe (SPRINT_chunk_size_probe).
 
 Covers the three seams: the pure affine-fit math, the worker-side probe
 contract (trials -> fit -> confirm/bisect -> knee, against the CONTRACT
 budget), and the wire plumbing (readings cross ungated; the Ray runtime
-resolves ``samples_per_chunk: auto`` once and rewrites requests).
+resolves ``samples_per_generation_batch: auto`` once and rewrites requests).
 """
 
 from __future__ import annotations
@@ -16,16 +16,16 @@ from typing import Any
 import pytest
 import torch
 
-from vrl.generation.execution.chunk_memory import (
+from vrl.generation.execution.batch_memory import (
     AffinePeakFit,
-    build_chunk_memory_shadow,
+    build_batch_memory_shadow,
 )
-from vrl.generation.execution.chunks import SampleChunk
+from vrl.generation.execution.sample_batches import GenerationSampleBatch
 from vrl.generation.execution.types import (
-    ChunkExecutionEnvelope,
-    ChunkExecutionResult,
-    ChunkMemoryReading,
-    ChunkSizeProbeResult,
+    BatchMemoryReading,
+    BatchSizeProbeResult,
+    GenerationBatchEnvelope,
+    GenerationBatchResult,
 )
 from vrl.generation.execution.worker import GenerationWorkerCore
 from vrl.generation.launch_contract import GenerationRuntimeLaunchContract
@@ -67,8 +67,8 @@ def _reading(
     reserved_start: int = 11 * GB,
     free_start: int = 18 * GB,
     total: int = 32 * GB,
-) -> ChunkMemoryReading:
-    return ChunkMemoryReading(
+) -> BatchMemoryReading:
+    return BatchMemoryReading(
         sample_count=sample_count,
         baseline_allocated_bytes=baseline,
         denoise_peak_bytes=denoise_peak,
@@ -108,41 +108,41 @@ def test_affine_fit_rejects_degenerate_points() -> None:
 def test_reading_normalizes_binding_mapping_and_rejects_partial_data() -> None:
     reading = _reading()
 
-    assert ChunkMemoryReading.from_metrics(asdict(reading)) == reading
+    assert BatchMemoryReading.from_metrics(asdict(reading)) == reading
     partial = asdict(reading)
     del partial["decode_peak_bytes"]
-    assert ChunkMemoryReading.from_metrics(partial) is None
+    assert BatchMemoryReading.from_metrics(partial) is None
     # non-torch = device-used minus torch-reserved: (32-18) - 11 = 3GB.
     assert reading.non_torch_bytes == 3 * GB
     assert reading.budget_bytes == 29 * GB
 
 
 def test_shadow_rows_are_raw_readings_without_estimation() -> None:
-    chunk = SampleChunk(prompt_index=0, sample_start=0, sample_count=4)
-    rows = build_chunk_memory_shadow(
+    batch = GenerationSampleBatch(prompt_index=0, sample_start=0, sample_count=4)
+    rows = build_batch_memory_shadow(
         [
-            ChunkExecutionResult(
+            GenerationBatchResult(
                 request_id="req",
                 worker_id="w0",
-                chunk=chunk,
+                batch=batch,
                 output=None,
                 memory=_reading(),
             ),
-            ChunkExecutionResult(
+            GenerationBatchResult(
                 request_id="req",
                 worker_id="w0",
-                chunk=chunk,
+                batch=batch,
                 output=None,
             ),
         ],
     )
 
-    assert [row["chunk_key"] for row in rows] == [chunk.chunk_key]
+    assert [row["batch_key"] for row in rows] == [batch.batch_key]
     assert rows[0]["peak_bytes"] == 18 * GB
     assert rows[0]["non_torch_bytes"] == 3 * GB
     assert "estimated_chunk_bytes" not in rows[0]
     assert "admissible_chunk_samples" not in rows[0]
-    assert build_chunk_memory_shadow([]) == []
+    assert build_batch_memory_shadow([]) == []
 
 
 # -- worker probe -------------------------------------------------------------
@@ -159,15 +159,15 @@ class _ProbeExecutor:
         self.oom_limit = oom_limit
         self.executed_steps: list[int | None] = []
 
-    def forward_probe_chunk(
+    def forward_probe_batch(
         self,
         request: Any,
-        chunk: SampleChunk,
+        batch: GenerationSampleBatch,
         *,
         execute_steps: int,
     ) -> Any:
         del request
-        n = chunk.sample_count
+        n = batch.sample_count
         if self.oom_limit is not None and n > self.oom_limit:
             raise RuntimeError("CUDA out of memory. Tried to allocate ...")
         self.executed_steps.append(execute_steps)
@@ -183,7 +183,7 @@ class _ProbeExecutor:
             ),
         )
 
-    def gather_chunks(self, *args: Any, **kwargs: Any) -> Any:
+    def gather_batches(self, *args: Any, **kwargs: Any) -> Any:
         raise NotImplementedError
 
 
@@ -206,7 +206,7 @@ def _request(samples_per_prompt: int = 10) -> GenerationRequest:
         task="t2i",
         inputs=["p"],
         samples_per_prompt=samples_per_prompt,
-        sampling={"num_steps": 20, "samples_per_chunk": "auto"},
+        sampling={"num_steps": 20, "samples_per_generation_batch": "auto"},
         policy_version=1,
     )
 
@@ -229,14 +229,14 @@ def test_probe_fits_confirms_and_truncates_steps(fake_cuda: None) -> None:
 
     # fit from (1, 12GB) and (4, 18GB) -> slope 2GB, intercept 10GB;
     # budget 32GB, margin 0 -> 11 fit, capped by samples_per_prompt=10.
-    result = core.probe_chunk_size(
+    result = core.probe_batch_size(
         _request(),
         max_samples=10,
         margin=0.0,
         knee_threshold=-1.0,  # disable the knee: this test pins the fit path
     )
 
-    assert result.samples_per_chunk == 10
+    assert result.samples_per_generation_batch == 10
     assert [trial.label for trial in result.trials] == [
         "warmup",
         "fit-low",
@@ -253,21 +253,21 @@ def test_probe_knee_refuses_growth_without_throughput_gain(fake_cuda: None) -> N
     core = _probe_core(_ProbeExecutor())
 
     # knee_threshold=2.0 can never be met -> settle at the fit anchor n=4.
-    result = core.probe_chunk_size(
+    result = core.probe_batch_size(
         _request(),
         max_samples=10,
         margin=0.0,
         knee_threshold=2.0,
     )
 
-    assert result.samples_per_chunk == 4
+    assert result.samples_per_generation_batch == 4
 
 
 @_EXACT_BYTES_NEED_A_FIXED_CARD
 def test_probe_bisects_when_confirm_ooms(fake_cuda: None) -> None:
     core = _probe_core(_ProbeExecutor(oom_limit=6))
 
-    result = core.probe_chunk_size(
+    result = core.probe_batch_size(
         _request(),
         max_samples=10,
         margin=0.0,
@@ -275,7 +275,7 @@ def test_probe_bisects_when_confirm_ooms(fake_cuda: None) -> None:
     )
 
     # candidate 10 OOMs; bisection between known-good 4 and 10 lands on 6.
-    assert result.samples_per_chunk == 6
+    assert result.samples_per_generation_batch == 6
     assert any(trial.oom for trial in result.trials)
 
 
@@ -285,14 +285,14 @@ def test_probe_budgets_against_whole_phase_gpu(fake_cuda: None) -> None:
 
     # Shared roles hand the GPU over before this probe, so rollout owns the whole
     # 32GB device for the phase rather than a persistent fractional share.
-    result = core.probe_chunk_size(
+    result = core.probe_batch_size(
         _request(),
         max_samples=10,
         margin=0.0,
         knee_threshold=-1.0,
     )
 
-    assert result.samples_per_chunk == 10
+    assert result.samples_per_generation_batch == 10
     assert result.budget_bytes == 32 * GB
 
 
@@ -302,14 +302,14 @@ def test_probe_requires_cuda_and_single_sample_fit(
     monkeypatch.setattr(torch.cuda, "is_available", lambda: False)
     core = _probe_core(_ProbeExecutor())
     with pytest.raises(RuntimeError, match="requires CUDA"):
-        core.probe_chunk_size(_request(), max_samples=4)
+        core.probe_batch_size(_request(), max_samples=4)
 
 
 @_EXACT_BYTES_NEED_A_FIXED_CARD
 def test_probe_fails_loud_when_one_sample_ooms(fake_cuda: None) -> None:
     core = _probe_core(_ProbeExecutor(oom_limit=0))
     with pytest.raises(RuntimeError, match="single sample does not fit"):
-        core.probe_chunk_size(_request(), max_samples=4)
+        core.probe_batch_size(_request(), max_samples=4)
 
 
 # -- runtime auto resolution --------------------------------------------------
@@ -326,17 +326,17 @@ def _probe_worker(
     Ray serialization or ObjectRef deadlines.
     """
 
-    def probe(request: Any, *, max_samples: int) -> ChunkSizeProbeResult:
+    def probe(request: Any, *, max_samples: int) -> BatchSizeProbeResult:
         calls.append(worker_id)
-        return ChunkSizeProbeResult(
-            samples_per_chunk=answer,
+        return BatchSizeProbeResult(
+            samples_per_generation_batch=answer,
             budget_bytes=32 * GB,
             trials=(),
         )
 
     return RayActorHandle(
         worker_id=worker_id,
-        actor=SimpleNamespace(probe_chunk_size=probe),
+        actor=SimpleNamespace(probe_batch_size=probe),
     )
 
 
@@ -383,14 +383,14 @@ def test_runtime_resolves_auto_once_and_rewrites_requests() -> None:
 
     # Fleet answer = min across workers; probed once, cached for request 2.
     assert calls == ["w0", "w1"]
-    assert [req.sampling["samples_per_chunk"] for req in executed] == [4, 4]
+    assert [req.sampling["samples_per_generation_batch"] for req in executed] == [4, 4]
 
 
 def test_planner_rejects_unresolved_auto() -> None:
-    from vrl.generation.execution.chunk_placement import DistributedExecutionPlanner
+    from vrl.generation.execution.batch_placement import DistributedExecutionPlanner
 
     planner = DistributedExecutionPlanner()
-    with pytest.raises(ValueError, match="samples_per_chunk: auto requires"):
+    with pytest.raises(ValueError, match="samples_per_generation_batch: auto requires"):
         planner.plan_with_engine(
             _request(),
             ["w0"],
@@ -407,14 +407,14 @@ class _MemoryExecutor:
     def __init__(self) -> None:
         self.model = SimpleNamespace(device="cpu")
 
-    def forward_chunk_plan(self, *args: Any, **kwargs: Any) -> Any:
+    def forward_batch(self, *args: Any, **kwargs: Any) -> Any:
         return SimpleNamespace(memory=asdict(_reading()))
 
-    def gather_chunks(self, *args: Any, **kwargs: Any) -> Any:
+    def gather_batches(self, *args: Any, **kwargs: Any) -> Any:
         raise NotImplementedError
 
 
-def test_worker_forwards_chunk_memory_without_runtime_debug() -> None:
+def test_worker_forwards_batch_memory_without_runtime_debug() -> None:
     contract = GenerationRuntimeLaunchContract(
         family="sd3_5",
         model_build={},
@@ -432,15 +432,15 @@ def test_worker_forwards_chunk_memory_without_runtime_debug() -> None:
         samples_per_prompt=1,
         policy_version=1,
     )
-    envelope = ChunkExecutionEnvelope(
+    envelope = GenerationBatchEnvelope(
         request=request,
-        chunk=SampleChunk(prompt_index=0, sample_start=0, sample_count=1),
+        batch=GenerationSampleBatch(prompt_index=0, sample_start=0, sample_count=1),
     )
 
-    result = core.execute_chunk(envelope)
+    result = core.execute_batch(envelope)
 
     assert result.error is None
     assert result.memory == _reading()
     assert result.output.memory is None
-    assert "chunk_memory" not in result.metrics
+    assert "batch_memory" not in result.metrics
     assert "engine_counters" not in result.metrics

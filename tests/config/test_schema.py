@@ -938,7 +938,7 @@ def test_shared_nested_model_sections_preserve_explicit_falsy_presence() -> None
             "num_frames": 0,
             "max_sequence_length": 0,
             "fps": None,
-            "chunk_passthrough_keys": [],
+            "batch_passthrough_keys": [],
         },
     }
 
@@ -1150,14 +1150,14 @@ def test_present_model_section_requires_a_family() -> None:
 # ── distributed.rollout knobs ─────────────────────────────────────────────────
 
 
-def test_unknown_chunk_placement_strategy_raises() -> None:
-    """A typo chunk placement strategy is rejected at parse time, not at launch."""
+def test_unknown_batch_placement_strategy_raises() -> None:
+    """A typo batch placement strategy is rejected at parse time, not at launch."""
     cfg = _minimal_grpo_cfg(
-        distributed={"rollout": {"chunk_placement_strategy": "work_stealing"}},
+        distributed={"rollout": {"batch_placement_strategy": "work_stealing"}},
     )
     with pytest.raises(
         ValueError,
-        match=r"unknown distributed\.rollout\.chunk_placement_strategy",
+        match=r"unknown distributed\.rollout\.batch_placement_strategy",
     ):
         parse_config(cfg)
 
@@ -1188,7 +1188,7 @@ def test_rollout_keys_are_registered_not_unknown() -> None:
                 "health_check_first_wait_s": 5.0,
                 "worker_rpc_timeout_s": 3600.0,
                 "generation_stall_timeout_s": 1200.0,
-                "chunk_placement_strategy": "dynamic",
+                "batch_placement_strategy": "dynamic",
                 "sync_trainable_state": False,
                 "pipelined": True,
             }

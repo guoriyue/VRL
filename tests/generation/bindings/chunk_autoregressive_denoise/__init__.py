@@ -1,1 +1,1 @@
-"""Chunk-autoregressive denoise binding tests."""
+"""Batch-autoregressive denoise binding tests."""

@@ -66,7 +66,7 @@ rollout:
   # 15-step, guidance-7 generation peaked at 15,898.9 MiB in the executor
   # (18,607 MiB observed by nvidia-smi), and passed the visual gate with DINO
   # target similarity 0.2516. This proves the rollout floor, not trainer peak.
-  samples_per_chunk: 1
+  samples_per_generation_batch: 1
 
 trainer:
   output_dir: outputs/cosmos_pred2_droid_overfit_validation_fsdp_4x_l4

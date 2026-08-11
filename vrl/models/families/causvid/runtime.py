@@ -11,7 +11,7 @@ from vrl.utils.logging import init_logger
 logger = init_logger(__name__)
 
 
-class CausVidChunkExecutor(ChunkAutoregressiveDenoiseExecutorBase):
+class CausVidBatchExecutor(ChunkAutoregressiveDenoiseExecutorBase):
     """Prompt/sample transport around CausVid's family-owned causal loop."""
 
     family: str = "causvid"
@@ -30,6 +30,6 @@ def build_causvid_replay_runtime_bundle(build: ModelBuild) -> RuntimeBundle:
 
 
 __all__ = [
-    "CausVidChunkExecutor",
+    "CausVidBatchExecutor",
     "build_causvid_replay_runtime_bundle",
 ]

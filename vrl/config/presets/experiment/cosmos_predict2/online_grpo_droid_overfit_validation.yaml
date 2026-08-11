@@ -20,7 +20,7 @@
 #   num_steps to 15 and KEEP the window at [0, 10] (flow_grpo's low-step-train /
 #   clean-tail trick) at ~1.5x gen cost.
 # - seedless rollouts + per-index eval seed: a fixed sampling.seed with
-#   samples_per_chunk=1 would make group members share the initial latent (the
+#   samples_per_generation_batch=1 would make group members share the initial latent (the
 #   seed IS the same-latent mechanism), collapsing intra-group diversity to SDE
 #   exploration noise alone. Running seedless instead gives genuine init-latent
 #   (content) diversity at group_size 8; fixed eval stays paired via its own
@@ -53,7 +53,7 @@ defaults:
 model:
   # LoRA, not full-param: full-param 480p_93f training MEASURED not to fit 32GB
   # in this validation's own runs (backward ckpt-recompute OOM at 29.95GiB with
-  # samples_per_chunk=1, after rollout release + cpu trajectories + reward
+  # samples_per_generation_batch=1, after rollout release + cpu trajectories + reward
   # gpu_pool were all in place; spc=4 and spc=2 OOM earlier in the loop).
   # Matches the ~30.2GB trainer-alone peak documented by the LoRA sibling
   # (online_grpo_droid_full_target_480p_lora.yaml) at 33f. Full-param stays
@@ -95,7 +95,7 @@ actor:
   timestep_fraction: 0.5
   # Replay capacity is independent from rollout generation chunking. Full-param
   # 480p_93f backward reached 29.9 GiB at 2, so keep the safe floor explicit.
-  replay_samples_per_chunk: 1
+  replay_samples_per_batch: 1
   ema:
     enable: false                     # validation: no averaging lag on top of the raw policy
 
@@ -105,11 +105,11 @@ rollout:
   prompts_per_batch: 1                # per_sample reference mode hard-requires 1 (cosmos/train.py);
                                       # 16 rollouts/update via the bigger group instead — same budget,
                                       # lower advantage noise, prompts rotate across epochs
-  samples_per_chunk: 1                # generation only: full-param 480p_93f OOMs at 4
+  samples_per_generation_batch: 1                # generation only: full-param 480p_93f OOMs at 4
                                       # (25.3GiB worker + 4.2GiB driver-resident); P1's 1.4x
-                                      # larger-chunk evidence measured this phase only
+                                      # larger-batch evidence measured this phase only
   # Seedless rollouts (2026-07-07): NO per-row manifest seeds. A fixed seed would
-  # make every chunk share the initial latent (the seed IS the same-latent
+  # make every batch share the initial latent (the seed IS the same-latent
   # mechanism), so the group's only diversity was SDE noise paths — run10 showed
   # GRPO then optimizes path luck. Seedless gives genuine init-latent (content)
   # diversity; fixed eval stays paired via its own per-index derived seeds.

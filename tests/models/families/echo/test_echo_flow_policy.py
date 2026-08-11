@@ -17,7 +17,7 @@ import torch.nn as nn
 from diffusers import FlowMatchEulerDiscreteScheduler
 
 from tests.models.steps.denoise.fixtures import stamp_model_precision
-from vrl.generation.execution.chunks import SampleChunk
+from vrl.generation.execution.sample_batches import GenerationSampleBatch
 from vrl.generation.types import GenerationRequest, VideoGenerationRequest
 from vrl.models.families.echo.model import (
     EchoModel,
@@ -25,7 +25,7 @@ from vrl.models.families.echo.model import (
     EchoSamplingState,
     _sigma_from_timestep,
 )
-from vrl.models.families.echo.runtime import EchoChunkExecutor
+from vrl.models.families.echo.runtime import EchoBatchExecutor
 
 
 class _FakeEcho(nn.Module):
@@ -164,10 +164,10 @@ def test_echo_encode_prompt_rejects_non_empty_negative_conditioning(
 
 def test_echo_executor_forwards_negative_prompt_to_model_contract() -> None:
     model, _ = _build_model()
-    executor = EchoChunkExecutor(model)
+    executor = EchoBatchExecutor(model)
 
     with pytest.raises(ValueError, match="does not support negative prompts"):
-        executor.encode_prompt_for_chunk(
+        executor.encode_prompt_for_batch(
             generation_request=GenerationRequest(
                 request_id="echo",
                 family="echo",
@@ -177,7 +177,7 @@ def test_echo_executor_forwards_negative_prompt_to_model_contract() -> None:
             ),
             video_request=SimpleNamespace(negative_prompt="low quality"),
             params=object(),
-            chunk=SampleChunk(prompt_index=0, sample_start=0, sample_count=1),
+            batch=GenerationSampleBatch(prompt_index=0, sample_start=0, sample_count=1),
         )
 
 
@@ -217,7 +217,7 @@ def test_prepare_sampling_rejects_dimensions_different_from_model_construction()
 
 def test_executor_rejects_dimension_mismatch_before_prompt_encoding() -> None:
     model, _ = _build_model()
-    executor = EchoChunkExecutor(model)
+    executor = EchoBatchExecutor(model)
     request = GenerationRequest(
         request_id="req",
         family="echo",

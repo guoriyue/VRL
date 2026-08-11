@@ -37,7 +37,7 @@ actor:
     lr: 3.0e-4
   # Match rollout chunking so the first-step check compares the same batch
   # shape on rollout and replay.
-  replay_samples_per_chunk: 8
+  replay_samples_per_batch: 8
   gradient_checkpointing: true
   ppo_epochs: 2
   timestep_fraction: 0.5
@@ -52,7 +52,7 @@ actor:
 rollout:
   n_samples_per_prompt: 16
   prompts_per_batch: 8
-  samples_per_chunk: 8
+  samples_per_generation_batch: 8
 
 trainer:
   output_dir: outputs/sana_pickscore_pickapic_sfw

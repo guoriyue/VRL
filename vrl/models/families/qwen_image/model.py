@@ -128,7 +128,7 @@ class QwenImageModel(LoraModelMixin, DiffusersPipelineModelBase, DiffusionBackbo
         super().__init__(pipeline=pipeline, device=device)
         # decode_latents only receives the packed latent tensor; prepare_sampling
         # records the spatial shape it must unpack to (single model instance runs
-        # prepare -> denoise -> decode sequentially per chunk).
+        # prepare -> denoise -> decode sequentially per batch).
         self._decode_height = 1024
         self._decode_width = 1024
 
@@ -384,8 +384,8 @@ class QwenImageModel(LoraModelMixin, DiffusersPipelineModelBase, DiffusionBackbo
         latents_mean = torch.tensor(vae.config.latents_mean).view(1, z_dim, 1, 1, 1)
         latents_std = torch.tensor(vae.config.latents_std).view(1, z_dim, 1, 1, 1)
 
-        def _transform(chunk: torch.Tensor) -> torch.Tensor:
-            unpacked = pipe._unpack_latents(chunk, height, width, vae_scale_factor)
+        def _transform(batch: torch.Tensor) -> torch.Tensor:
+            unpacked = pipe._unpack_latents(batch, height, width, vae_scale_factor)
             unpacked = unpacked.to(vae.dtype)
             mean = latents_mean.to(unpacked.device, unpacked.dtype)
             std = latents_std.to(unpacked.device, unpacked.dtype)
@@ -394,7 +394,7 @@ class QwenImageModel(LoraModelMixin, DiffusersPipelineModelBase, DiffusionBackbo
         decoder = ChunkedLatentDecoder(
             LatentDecodePlan(
                 prepare_latents=_transform,
-                vae_decode=lambda chunk: vae.decode(chunk, return_dict=False)[0],
+                vae_decode=lambda batch: vae.decode(batch, return_dict=False)[0],
                 # Video VAE returns [B, C, 1, H, W]; drop the temporal frame.
                 prepare_decoded=lambda decoded: decoded[:, :, 0],
                 postprocess=lambda image: pipe.image_processor.postprocess(

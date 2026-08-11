@@ -67,10 +67,10 @@ class _Algorithm(_EvaluatorAlgorithmFake):
 
 def _chunk_denoise_batch(batch_size: int = 2) -> RolloutBatch:
     request = GenerationRequest(
-        request_id="trainer-chunk-test",
-        family="test-chunk-diffusion",
+        request_id="trainer-batch-test",
+        family="test-batch-diffusion",
         task="t2v",
-        inputs=["trainer chunk test prompt"],
+        inputs=["trainer batch test prompt"],
         samples_per_prompt=batch_size,
     )
     sample_rows = [
@@ -78,7 +78,7 @@ def _chunk_denoise_batch(batch_size: int = 2) -> RolloutBatch:
             prompt_index=0,
             sample_index=index,
             prompt=request.prompts[0],
-            sample_id=f"trainer-chunk-test:sample:{index}",
+            sample_id=f"trainer-batch-test:sample:{index}",
         )
         for index in range(batch_size)
     ]
@@ -143,7 +143,7 @@ def test_trajectory_evaluator_runs_once_for_chunk_transition_axes(streaming: boo
         prompts_per_batch=1,
         n_samples_per_prompt=2,
         gradient_accumulation_steps=1 if streaming else 0,
-        replay_samples_per_chunk=0,
+        replay_samples_per_batch=0,
     )
     trainer = OnlineTrainer(
         algorithm=_Algorithm(),
@@ -179,7 +179,7 @@ def test_trajectory_evaluator_runs_once_for_chunk_transition_axes(streaming: boo
 
 def test_unknown_replay_granularity_fails_fast() -> None:
     trainer = object.__new__(OnlineTrainer)
-    trainer.evaluator = type("Evaluator", (), {"replay_granularity": "chunk"})()
+    trainer.evaluator = type("Evaluator", (), {"replay_granularity": "batch"})()
     batch = _diffusion_rollout_batch(
         rewards=torch.zeros(1),
         group_ids=torch.zeros(1, dtype=torch.long),
