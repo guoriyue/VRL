@@ -12,6 +12,7 @@ from vrl.models.families.registry import ModelFamilyEntry
 from vrl.ray.resources import ResolvedDistributedResources
 from vrl.rewards import RewardRuntime
 from vrl.rewards.base import RewardFunction
+from vrl.rollouts.evaluators.base import Evaluator
 from vrl.run import ResolvedReward
 
 
@@ -20,7 +21,7 @@ class AlgorithmEvaluatorPair:
     """Algorithm instance plus its optional evaluator."""
 
     algorithm: Algorithm
-    evaluator: Any | None
+    evaluator: Evaluator | None
 
 
 def build_reward_function(reward: ResolvedReward) -> RewardFunction:

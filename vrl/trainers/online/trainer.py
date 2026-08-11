@@ -34,6 +34,7 @@ from vrl.rollouts.batch.ops import (
     nonzero_advantage_mask,
     select_batch,
 )
+from vrl.rollouts.evaluators.base import Evaluator
 from vrl.rollouts.orchestration import build_rollout_schedule
 from vrl.rollouts.stats import (
     JsonlStatsSink,
@@ -242,7 +243,7 @@ def _model_transformer_dtype(model: Any) -> str | None:
 def _trainer_precision_metadata(
     config: TrainerConfig,
     model: Any,
-    evaluator: Any | None,
+    evaluator: Evaluator | None,
 ) -> dict[str, Any]:
     training_precision = _precision_label(config.train_precision)
     rollout_precision = _precision_label(config.rollout_precision or training_precision)
@@ -673,7 +674,7 @@ class OnlineTrainer:
         self,
         algorithm: Algorithm,
         collector: Any,
-        evaluator: Any,
+        evaluator: Evaluator | None,
         model: nn.Module,
         config: TrainerConfig,
         ref_model: nn.Module | None = None,
