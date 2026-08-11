@@ -16,10 +16,9 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
-from vrl.ray.dependencies import require_ray
+from vrl.ray.dependencies import kill_actors, kill_and_retain, require_ray
 from vrl.ray.operation_deadline import get_ray_refs
 from vrl.ray.placement import actor_meta_get, actor_scheduling_strategy
-from vrl.ray.resource_cleanup import kill_actors, kill_and_retain
 from vrl.utils.deadline import validate_timeout
 
 

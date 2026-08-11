@@ -3,7 +3,7 @@
 Engine-neutral Ray primitives: lazy import and actor metadata (dependencies),
 actor-group launch/teardown (actor_group), per-fleet call dispatch
 (actor_pool), driver-side deadlines (operation_deadline), best-effort cleanup
-that reports failures to owners (resource_cleanup), role-level GPU resolution
+that reports failures to owners (dependencies/placement), role-level GPU resolution
 (resources), and the run-level placement group (placement).
 
 Consumed by the generation engine's Ray transport (``vrl/generation/ray/``)

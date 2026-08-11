@@ -13,7 +13,7 @@ from dataclasses import dataclass
 import pytest
 from omegaconf import OmegaConf
 
-from vrl.ray import resource_cleanup
+from vrl.ray import dependencies as ray_dependencies
 from vrl.ray.operation_deadline import RayOperationTimeout
 from vrl.ray.placement import GlobalRayPlacementOwner
 from vrl.ray.resources import (
@@ -763,7 +763,7 @@ def test_probe_actor_kill_failure_is_a_create_failure(local_ray, monkeypatch) ->
     def failing_kill(ray, actors):
         # Kill them for real first, then report the failure: an abandoned probe
         # actor would hold a bundle of the shared cluster for the rest of the run.
-        resource_cleanup.kill_actors(ray, actors)
+        ray_dependencies.kill_actors(ray, actors)
         return [(actors[0], cleanup_error)]
 
     monkeypatch.setattr("vrl.ray.placement.kill_actors", failing_kill)

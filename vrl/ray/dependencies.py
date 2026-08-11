@@ -2,8 +2,12 @@
 
 from __future__ import annotations
 
+import logging
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 
 def require_ray() -> Any:
@@ -76,10 +80,57 @@ def inspect_cluster(ray: Any, *, driver_node_ip: str | None = None) -> ClusterTo
     return ClusterTopology(driver_gpus=driver_gpus, non_driver_gpus=non_driver_gpus)
 
 
+def kill_actors(ray: Any, actors: list[Any]) -> list[tuple[Any, Exception]]:
+    """Best-effort kill actors and return failures to the resource owner.
+
+    Cleanup never raises mid-sweep: failures come back so the owner (actor
+    group, placement owner, generation session, health monitor) can retain
+    the failed handles and refuse to report cleanup as complete.
+    """
+
+    failures: list[tuple[Any, Exception]] = []
+    for actor in actors:
+        try:
+            ray.kill(actor, no_restart=True)
+        except Exception as error:
+            failures.append((actor, error))
+            logger.warning("Failed to kill owned Ray actor %r", actor, exc_info=True)
+    return failures
+
+
+def kill_and_retain[OwnedItem](
+    ray: Any,
+    items: list[OwnedItem],
+    get_actor: Callable[[OwnedItem], Any],
+) -> tuple[list[OwnedItem], list[tuple[Any, Exception]]]:
+    """Kill each item's actor and retain only the items whose kill FAILED.
+
+    The two Ray resource owners (``RayActorGroup.shutdown`` and the generation
+    session) both own cleanup truth: they drop handles for actors that
+    died and keep the ones they could not kill so cleanup is not falsely reported
+    complete. ``get_actor`` maps one owned item to its Ray actor handle (or
+    ``None`` when already released). Returns ``(surviving, failures)`` where
+    ``surviving`` are the still-owned items whose actor kill raised and
+    ``failures`` are the ``(actor, error)`` pairs from :func:`kill_actors`.
+    """
+
+    actors = [actor for item in items if (actor := get_actor(item)) is not None]
+    failures = kill_actors(ray, actors)
+    failed_actor_ids = {id(actor) for actor, _ in failures}
+    surviving = [
+        item
+        for item in items
+        if (actor := get_actor(item)) is not None and id(actor) in failed_actor_ids
+    ]
+    return surviving, failures
+
+
 __all__ = [
     "ClusterTopology",
     "current_gpu_ids",
     "current_node_ip",
     "inspect_cluster",
+    "kill_actors",
+    "kill_and_retain",
     "require_ray",
 ]

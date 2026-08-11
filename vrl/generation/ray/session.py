@@ -10,8 +10,7 @@ from vrl.generation.execution.types import WorkerMemoryParkingSnapshot
 from vrl.generation.ray.executor import RayGenerationExecutor
 from vrl.generation.ray.weight_sync import GenerationWeightSync
 from vrl.ray.actor_group import RayActorHandle
-from vrl.ray.dependencies import require_ray
-from vrl.ray.resource_cleanup import kill_and_retain
+from vrl.ray.dependencies import kill_and_retain, require_ray
 from vrl.utils.deadline import OperationDeadline
 
 logger = logging.getLogger(__name__)

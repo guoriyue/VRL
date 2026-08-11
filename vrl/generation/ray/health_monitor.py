@@ -21,8 +21,7 @@ import threading
 from typing import TYPE_CHECKING, Any
 
 from vrl.ray.actor_group import RayActorHandle
-from vrl.ray.dependencies import require_ray
-from vrl.ray.resource_cleanup import kill_actors
+from vrl.ray.dependencies import kill_actors, require_ray
 from vrl.runtime_errors import TerminalRuntimeError
 
 if TYPE_CHECKING:

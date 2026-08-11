@@ -8,7 +8,8 @@ from types import SimpleNamespace
 
 import pytest
 
-from vrl.ray.resource_cleanup import kill_actors, remove_placement_group
+from vrl.ray.dependencies import kill_actors
+from vrl.ray.placement import remove_placement_group
 
 # Both tests below inject the same thing for the same reason, so the label is a
 # module constant instead of the same string twice (the `requires_fp8` precedent
@@ -32,7 +33,7 @@ def test_actor_cleanup_failure_is_logged(caplog) -> None:
             del actor, no_restart
             raise RuntimeError("kill failed")
 
-    with caplog.at_level(logging.WARNING, logger="vrl.ray.resource_cleanup"):
+    with caplog.at_level(logging.WARNING, logger="vrl.ray.dependencies"):
         failures = kill_actors(_Ray(), ["actor-1"])
 
     assert len(failures) == 1
@@ -54,7 +55,7 @@ def test_placement_cleanup_failure_is_logged(monkeypatch, caplog) -> None:
         SimpleNamespace(remove_placement_group=_remove),
     )
 
-    with caplog.at_level(logging.WARNING, logger="vrl.ray.resource_cleanup"):
+    with caplog.at_level(logging.WARNING, logger="vrl.ray.dependencies"):
         failure = remove_placement_group("pg-1")
 
     assert isinstance(failure, RuntimeError)

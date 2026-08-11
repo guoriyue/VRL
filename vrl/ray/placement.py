@@ -32,10 +32,10 @@ from vrl.ray.dependencies import (
     current_gpu_ids,
     current_node_ip,
     inspect_cluster,
+    kill_actors,
     require_ray,
 )
 from vrl.ray.operation_deadline import get_ray_refs
-from vrl.ray.resource_cleanup import kill_actors, remove_placement_group
 from vrl.ray.resources import (
     BundleLayout,
     ResolvedDistributedResources,
@@ -43,6 +43,25 @@ from vrl.ray.resources import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def remove_placement_group(placement_group: Any) -> Exception | None:
+    """Best-effort removal, returning an error to the owning lifecycle."""
+
+    if placement_group is None:
+        return None
+    try:
+        from ray.util import remove_placement_group as _remove_placement_group
+
+        _remove_placement_group(placement_group)
+    except Exception as error:
+        logger.warning(
+            "Failed to remove owned Ray placement group %r",
+            placement_group,
+            exc_info=True,
+        )
+        return error
+    return None
 
 
 class _ActorPlacementMetadata(Protocol):
